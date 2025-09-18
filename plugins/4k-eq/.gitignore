@@ -1,0 +1,32 @@
+# Build directories
+Builds/
+JuceLibraryCode/
+build/
+*.build/
+
+# Compiled objects
+*.o
+*.so
+*.a
+*.lib
+*.dll
+*.dylib
+*.vst3
+*.component
+*.exe
+
+# IDE files
+.vscode/
+*.user
+*.xcuserstate
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*~
+.*.swp
+
+# Test files
+test_lv2_extension
+test_lv2_extension.c

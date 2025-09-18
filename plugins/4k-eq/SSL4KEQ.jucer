@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<JUCERPROJECT id="SSL4K" name="SSL4KEQ" projectType="audioplug" version="1.0.0"
+              bundleIdentifier="com.sslemulation.ssl4keq" includeBinaryInAppConfig="1"
+              companyName="SSL Emulation" companyWebsite="https://example.com"
+              companyEmail="info@example.com" jucerVersion="8.0.0"
+              pluginFormats="buildLV2,buildVST3,buildAU,buildStandalone"
+              pluginCharacteristicsValue="pluginProducesMidiOut,pluginWantsMidiIn"
+              pluginManufacturerCode="SSLm" pluginCode="SSL4"
+              pluginName="SSL 4000 EQ" pluginDesc="SSL 4000 Series Console EQ Emulation"
+              pluginAUMainType="'aufx'" pluginVST3Category="Fx,EQ"
+              pluginAAXCategory="0" pluginVSTCategory="kPlugCategEffect"
+              lv2Uri="https://example.com/plugins/ssl4keq">
+
+  <MAINGROUP id="maingroup" name="SSL4KEQ">
+    <GROUP id="{7F2E4A9C-1234-5678-9ABC-DEF012345678}" name="Source">
+      <FILE id="file1" name="SSL4KEQ.h" compile="0" resource="0" file="SSL4KEQ.h"/>
+      <FILE id="file2" name="SSL4KEQ.cpp" compile="1" resource="0" file="SSL4KEQ.cpp"/>
+      <FILE id="file3" name="PluginEditor.h" compile="0" resource="0" file="PluginEditor.h"/>
+      <FILE id="file4" name="PluginEditor.cpp" compile="1" resource="0" file="PluginEditor.cpp"/>
+      <FILE id="file5" name="SSLLookAndFeel.h" compile="0" resource="0" file="SSLLookAndFeel.h"/>
+      <FILE id="file6" name="SSLLookAndFeel.cpp" compile="1" resource="0" file="SSLLookAndFeel.cpp"/>
+      <FILE id="file7" name="LV2InlineDisplay.h" compile="0" resource="0" file="LV2InlineDisplay.h"/>
+      <FILE id="file8" name="LV2InlineDisplay.cpp" compile="1" resource="0" file="LV2InlineDisplay.cpp"/>
+    </GROUP>
+  </MAINGROUP>
+
+  <EXPORTFORMATS>
+    <XCODE_MAC targetFolder="Builds/MacOSX" xcodeValidArchs="arm64,x86_64"
+               buildVST3="1" buildLV2="1" buildAU="1" buildStandalone="1">
+      <CONFIGURATIONS>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="SSL4KEQ"
+                       osxCompatibility="10.13" osxArchitecture="Native"
+                       headerPath="/usr/local/include&#10;/opt/homebrew/include"
+                       libraryPath="/usr/local/lib&#10;/opt/homebrew/lib"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="SSL4KEQ"
+                       osxCompatibility="10.13" osxArchitecture="Native"
+                       headerPath="/usr/local/include&#10;/opt/homebrew/include"
+                       libraryPath="/usr/local/lib&#10;/opt/homebrew/lib"
+                       linkTimeOptimisation="1"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_core" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_dsp" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="/home/marc/projects/JUCE/modules"/>
+      </MODULEPATHS>
+    </XCODE_MAC>
+
+    <VS2022 targetFolder="Builds/VisualStudio2022" buildVST3="1" buildLV2="0" buildStandalone="1">
+      <CONFIGURATIONS>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="SSL4KEQ"
+                       winArchitecture="x64"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="SSL4KEQ"
+                       winArchitecture="x64" linkTimeOptimisation="1"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_audio_devices" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_audio_formats" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_audio_processors" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_audio_utils" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_core" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_data_structures" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_dsp" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_events" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_graphics" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_gui_basics" path="C:\JUCE\modules"/>
+        <MODULEPATH id="juce_gui_extra" path="C:\JUCE\modules"/>
+      </MODULEPATHS>
+    </VS2022>
+
+    <LINUX_MAKE targetFolder="Builds/LinuxMakefile" buildVST3="1" buildLV2="1" buildStandalone="1">
+      <CONFIGURATIONS>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="SSL4KEQ"
+                       headerPath="/usr/include&#10;/usr/local/include"
+                       libraryPath="/usr/lib&#10;/usr/local/lib"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="SSL4KEQ"
+                       headerPath="/usr/include&#10;/usr/local/include"
+                       libraryPath="/usr/lib&#10;/usr/local/lib"
+                       linkTimeOptimisation="1"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_audio_basics" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_core" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_dsp" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="/home/marc/projects/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="/home/marc/projects/JUCE/modules"/>
+      </MODULEPATHS>
+    </LINUX_MAKE>
+  </EXPORTFORMATS>
+
+  <MODULES>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_formats" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_plugin_client" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_dsp" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0"/>
+  </MODULES>
+
+  <JUCEOPTIONS JUCE_VST3_CAN_REPLACE_VST2="0" JUCE_STRICT_REFCOUNTEDPOINTER="1"
+               JUCE_WEB_BROWSER="0" JUCE_USE_CURL="0" JUCE_DISPLAY_SPLASH_SCREEN="0"
+               JUCE_REPORT_APP_USAGE="0"/>
+
+  <LIVE_SETTINGS>
+    <LINUX buildEnabled="1"/>
+    <OSX buildEnabled="1"/>
+    <WINDOWS buildEnabled="1"/>
+  </LIVE_SETTINGS>
+</JUCERPROJECT>
