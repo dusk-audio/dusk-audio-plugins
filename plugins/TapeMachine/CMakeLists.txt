@@ -11,7 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Define the plugin
 juce_add_plugin(TapeMachine
-    COMPANY_NAME VintageAudio
+    COMPANY_NAME "Luna Co. Audio"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -21,7 +21,8 @@ juce_add_plugin(TapeMachine
     PLUGIN_MANUFACTURER_CODE VntA
     PLUGIN_CODE Tape
     FORMATS VST3
-    PRODUCT_NAME "TapeMachine")
+    PRODUCT_NAME "TapeMachine"
+    VST3_CAN_REPLACE_VST2 TRUE)
 
 # Generate JUCE header
 juce_generate_juce_header(TapeMachine)
@@ -41,10 +42,11 @@ target_compile_definitions(TapeMachine
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_VST3_CAN_REPLACE_VST2=1
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_REPORT_APP_USAGE=0
-        JUCE_STRICT_REFCOUNTEDPOINTER=1)
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1)
 
 # Link required JUCE modules
 target_link_libraries(TapeMachine

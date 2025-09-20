@@ -5,6 +5,12 @@ project(LunaPlugins VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Include global settings
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GlobalSettings.cmake)
+
+# Include common JUCE defaults
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JuceDefaults.cmake)
+
 # Build system updated to:
 # - Fix JUCE path from /home/marc/Projects/JUCE to /home/marc/projects/JUCE
 # - Add TapeMachine plugin (currently disabled due to source code compilation errors)
@@ -26,6 +32,7 @@ option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_UNIVERSAL_COMPRESSOR "Build Universal Compressor plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" ON)
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)  # Fixed compilation errors
+option(BUILD_VINTAGE_VERB "Build VintageVerb plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -42,4 +49,8 @@ endif()
 
 if(BUILD_TAPE_MACHINE)
     add_subdirectory(plugins/TapeMachine)
+endif()
+
+if(BUILD_VINTAGE_VERB)
+    add_subdirectory(plugins/VintageVerb)
 endif()

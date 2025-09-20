@@ -26,10 +26,12 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
     // LF Band
     setupKnob(lfGainSlider, "lf_gain", "GAIN", true);  // Center-detented
+    lfGainSlider.setName("lf_gain");  // Set name for color detection
     lfGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lf_gain", lfGainSlider);
 
     setupKnob(lfFreqSlider, "lf_freq", "FREQ");
+    lfFreqSlider.setName("lf_freq");
     lfFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lf_freq", lfFreqSlider);
 
@@ -39,36 +41,44 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
     // LM Band
     setupKnob(lmGainSlider, "lm_gain", "GAIN", true);
+    lmGainSlider.setName("lmf_gain");  // Use lmf for lo-mid detection
     lmGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lm_gain", lmGainSlider);
 
     setupKnob(lmFreqSlider, "lm_freq", "FREQ");
+    lmFreqSlider.setName("lmf_freq");
     lmFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lm_freq", lmFreqSlider);
 
     setupKnob(lmQSlider, "lm_q", "Q");
+    lmQSlider.setName("lmf_q");
     lmQAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lm_q", lmQSlider);
 
     // HM Band
     setupKnob(hmGainSlider, "hm_gain", "GAIN", true);
+    hmGainSlider.setName("hmf_gain");  // Use hmf for hi-mid detection
     hmGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hm_gain", hmGainSlider);
 
     setupKnob(hmFreqSlider, "hm_freq", "FREQ");
+    hmFreqSlider.setName("hmf_freq");
     hmFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hm_freq", hmFreqSlider);
 
     setupKnob(hmQSlider, "hm_q", "Q");
+    hmQSlider.setName("hmf_q");
     hmQAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hm_q", hmQSlider);
 
     // HF Band
     setupKnob(hfGainSlider, "hf_gain", "GAIN", true);
+    hfGainSlider.setName("hf_gain");  // Set name for color detection
     hfGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hf_gain", hfGainSlider);
 
     setupKnob(hfFreqSlider, "hf_freq", "FREQ");
+    hfFreqSlider.setName("hf_freq");
     hfFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hf_freq", hfFreqSlider);
 

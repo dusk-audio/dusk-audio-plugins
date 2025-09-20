@@ -397,6 +397,34 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     processorChainLeft.get<3>().setGainLinear(outputGainValue);
     processorChainRight.get<3>().setGainLinear(outputGainValue);
 
+    // Calculate input levels for metering before processing
+    float inputPeakL = 0.0f;
+    float inputPeakR = 0.0f;
+    auto* leftChannel = buffer.getWritePointer(0);
+    auto* rightChannel = buffer.getWritePointer(1);
+
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    {
+        inputPeakL = juce::jmax(inputPeakL, std::abs(leftChannel[i]));
+        inputPeakR = juce::jmax(inputPeakR, std::abs(rightChannel[i]));
+    }
+
+    // Apply exponential smoothing to the levels
+    const float attack = 0.3f;
+    const float release = 0.7f;
+    float currentInputL = inputLevelL.load();
+    float currentInputR = inputLevelR.load();
+
+    if (inputPeakL > currentInputL)
+        inputLevelL.store(currentInputL + (inputPeakL - currentInputL) * attack);
+    else
+        inputLevelL.store(currentInputL + (inputPeakL - currentInputL) * (1.0f - release));
+
+    if (inputPeakR > currentInputR)
+        inputLevelR.store(currentInputR + (inputPeakR - currentInputR) * attack);
+    else
+        inputLevelR.store(currentInputR + (inputPeakR - currentInputR) * (1.0f - release));
+
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::AudioBlock<float> oversampledBlock = oversampling.processSamplesUp(block);
 
@@ -443,6 +471,30 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     }
 
     oversampling.processSamplesDown(block);
+
+    // Calculate output levels for metering after processing
+    float outputPeakL = 0.0f;
+    float outputPeakR = 0.0f;
+
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    {
+        outputPeakL = juce::jmax(outputPeakL, std::abs(leftChannel[i]));
+        outputPeakR = juce::jmax(outputPeakR, std::abs(rightChannel[i]));
+    }
+
+    // Apply exponential smoothing to the output levels
+    float currentOutputL = outputLevelL.load();
+    float currentOutputR = outputLevelR.load();
+
+    if (outputPeakL > currentOutputL)
+        outputLevelL.store(currentOutputL + (outputPeakL - currentOutputL) * attack);
+    else
+        outputLevelL.store(currentOutputL + (outputPeakL - currentOutputL) * (1.0f - release));
+
+    if (outputPeakR > currentOutputR)
+        outputLevelR.store(currentOutputR + (outputPeakR - currentOutputR) * attack);
+    else
+        outputLevelR.store(currentOutputR + (outputPeakR - currentOutputR) * (1.0f - release));
 }
 
 bool TapeMachineAudioProcessor::hasEditor() const

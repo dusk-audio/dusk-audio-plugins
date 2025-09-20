@@ -1,7 +1,19 @@
-# Build directories
+# Build directories and artifacts
 build/
+build_*/
 */build/
 */build_*/
+*_artefacts/
+*/artefacts/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+cmake_uninstall.cmake
+*.cmake~
 
 # IDE files
 .vscode/
@@ -9,23 +21,23 @@ build/
 *.swp
 *.swo
 *~
+.clangd/
+.cache/
 
 # OS files
 .DS_Store
 Thumbs.db
+*.orig
 
-# Compiled binaries
+# Compiled binaries and libraries
 *.so
 *.dll
 *.dylib
 *.a
 *.lib
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-compile_commands.json
+*.o
+*.obj
+*.exe
 
 # JUCE specific
 JuceLibraryCode/
@@ -34,3 +46,61 @@ JuceLibraryCode/
 *.vst3/
 *.lv2/
 *.app/
+*.au
+*.aaxplugin/
+
+# Temporary and log files
+*.log
+*.tmp
+*~
+*.backup
+.*.tmp
+
+# Package manager
+node_modules/
+vcpkg_installed/
+
+# Build tools cache
+.ccache/
+.sccache/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# Visual Studio
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.aps
+*.pch
+*.vspscc
+*_i.c
+*_p.c
+*.ncb
+*.tlb
+*.tlh
+*.bak
+*.cache
+*.ilk
+*.log
+[Bb]in
+[Dd]ebug*/
+[Rr]elease*/
+
+# Profiling and debug
+*.dSYM/
+*.pdb
+*.idb
+*.pgc
+*.pgd
+
+# Documentation generated files
+html/
+latex/
+doc/
+docs/_build/

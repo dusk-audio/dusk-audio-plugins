@@ -13,7 +13,7 @@ juce_add_plugin(UniversalCompressor
     # VERSION ...                               # Set this if the plugin version is different to the project version
     # ICON_BIG ...                              # ICON_* arguments specify a path to an image file to use as an icon for the Standalone
     # ICON_SMALL ...
-    COMPANY_NAME "AudioEngineering"
+    COMPANY_NAME "Luna Co. Audio"
     BUNDLE_ID "com.AudioEngineering.UniversalCompressor"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
@@ -27,6 +27,7 @@ juce_add_plugin(UniversalCompressor
     LV2URI "https://audioengineering.com/plugins/universal-compressor"
     PRODUCT_NAME "Universal Compressor"
     DESCRIPTION "Universal compressor with Opto, FET, VCA, and Bus emulations"
+    VST3_CAN_REPLACE_VST2 TRUE
 )
 
 # Generate JuceHeader.h
@@ -46,7 +47,8 @@ target_compile_definitions(UniversalCompressor
         # JUCE_WEB_BROWSER and JUCE_USE_CURL would be on by default, but you might not need them.
         JUCE_WEB_BROWSER=0  # If you remove this, add `NEEDS_WEB_BROWSER TRUE` to the `juce_add_plugin` call
         JUCE_USE_CURL=0     # If you remove this, add `NEEDS_CURL TRUE` to the `juce_add_plugin` call
-        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_VST3_CAN_REPLACE_VST2=1
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
 )
 
 # Link libraries

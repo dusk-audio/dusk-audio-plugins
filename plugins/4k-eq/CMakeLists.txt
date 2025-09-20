@@ -13,7 +13,7 @@ juce_add_plugin(FourKEQ
     PLUGIN_CODE FKEQ
     FORMATS VST3 LV2 AU Standalone
     PRODUCT_NAME "4K EQ"
-    COMPANY_NAME "AudioPlugins"
+    COMPANY_NAME "Luna Co. Audio"
     COMPANY_WEBSITE "https://example.com"
     COMPANY_EMAIL "info@example.com"
     PLUGIN_MANUFACTURER_CODE APlu
@@ -29,6 +29,7 @@ juce_add_plugin(FourKEQ
     VST2_CATEGORY kPlugCategEffect
     LV2_URI https://example.com/plugins/fourkeq
     LV2_SHARED_LIBRARY_NAME FourKEQ
+    VST3_CAN_REPLACE_VST2 TRUE
 )
 
 # Generate JUCE header
@@ -56,10 +57,11 @@ target_compile_definitions(FourKEQ
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_VST3_CAN_REPLACE_VST2=1
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_REPORT_APP_USAGE=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
 )
 
 # Link with JUCE modules

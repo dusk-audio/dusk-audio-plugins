@@ -42,6 +42,12 @@ public:
 
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
+    // Level metering
+    float getInputLevelL() const { return inputLevelL.load(); }
+    float getInputLevelR() const { return inputLevelR.load(); }
+    float getOutputLevelL() const { return outputLevelL.load(); }
+    float getOutputLevelR() const { return outputLevelR.load(); }
+
     enum TapeMachine
     {
         StuderA800 = 0,
@@ -103,6 +109,12 @@ private:
     void updateFilters();
     float processTapeSaturation(float input, float saturation, TapeMachine machine, TapeType tape);
     std::pair<float, float> processWowFlutter(float inputL, float inputR, float amount);
+
+    // Level metering
+    std::atomic<float> inputLevelL { 0.0f };
+    std::atomic<float> inputLevelR { 0.0f };
+    std::atomic<float> outputLevelL { 0.0f };
+    std::atomic<float> outputLevelR { 0.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineAudioProcessor)
 };
