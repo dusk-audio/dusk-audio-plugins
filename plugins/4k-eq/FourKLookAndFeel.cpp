@@ -148,16 +148,19 @@ void FourKLookAndFeel::drawScaleMarkings(juce::Graphics& g, float cx, float cy, 
 void FourKLookAndFeel::drawValueReadout(juce::Graphics& g, juce::Slider& slider,
                                       int x, int y, int width, int height)
 {
-    // Draw digital readout box
+    // Draw wider digital readout box to prevent ellipsis
+    auto boxWidth = width * 0.8f;  // Increased from 0.5f to 0.8f
+    auto boxX = x + (width - boxWidth) * 0.5f;
+
     g.setColour(juce::Colour(0xff101010));
-    g.fillRoundedRectangle(x + width * 0.25f, y, width * 0.5f, height, 2.0f);
+    g.fillRoundedRectangle(boxX, y, boxWidth, height, 2.0f);
 
     g.setColour(juce::Colour(0xff303030));
-    g.drawRoundedRectangle(x + width * 0.25f, y, width * 0.5f, height, 2.0f, 0.5f);
+    g.drawRoundedRectangle(boxX, y, boxWidth, height, 2.0f, 0.5f);
 
-    // Format and display value in white with larger text
+    // Format and display value in white with slightly smaller text to fit better
     g.setColour(juce::Colour(0xffffffff));  // White text
-    g.setFont(juce::Font(juce::FontOptions(14.0f)));
+    g.setFont(juce::Font(juce::FontOptions(12.0f)));  // Reduced from 14.0f
 
     juce::String text;
     auto value = slider.getValue();
@@ -166,13 +169,13 @@ void FourKLookAndFeel::drawValueReadout(juce::Graphics& g, juce::Slider& slider,
     if (suffix.contains("Hz"))
     {
         if (value >= 1000.0f)
-            text = juce::String(value / 1000.0f, 1) + "k";
+            text = juce::String(value / 1000.0f, 1) + "kHz";
         else
-            text = juce::String((int)value);
+            text = juce::String((int)value) + "Hz";
     }
     else if (suffix.contains("dB"))
     {
-        text = (value >= 0 ? "+" : "") + juce::String(value, 1);
+        text = (value >= 0 ? "+" : "") + juce::String(value, 1) + "dB";
     }
     else if (suffix.contains("%"))
     {
@@ -183,7 +186,7 @@ void FourKLookAndFeel::drawValueReadout(juce::Graphics& g, juce::Slider& slider,
         text = juce::String(value, 2);
     }
 
-    g.drawText(text, x + width * 0.25f, y, width * 0.5f, height,
+    g.drawText(text, boxX, y, boxWidth, height,
                juce::Justification::centred);
 }
 

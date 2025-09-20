@@ -175,46 +175,67 @@ VUMeter::~VUMeter()
 void VUMeter::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    drawVintageVUMeter(g, bounds);
+    drawStereoVUMeter(g, bounds);
 }
 
 void VUMeter::timerCallback()
 {
-    // Smooth the level for realistic needle movement
-    smoothedLevel = smoothedLevel * smoothingFactor + targetLevel * (1.0f - smoothingFactor);
-    currentLevel = smoothedLevel;
+    // Smooth the levels for realistic needle movement
+    smoothedLevelL = smoothedLevelL * smoothingFactor + targetLevelL * (1.0f - smoothingFactor);
+    smoothedLevelR = smoothedLevelR * smoothingFactor + targetLevelR * (1.0f - smoothingFactor);
+    currentLevelL = smoothedLevelL;
+    currentLevelR = smoothedLevelR;
 
-    // Peak hold decay
-    if (peakHoldTime > 0.0f)
+    // Peak hold decay for left channel
+    if (peakHoldTimeL > 0.0f)
     {
-        peakHoldTime -= 0.033f; // ~30Hz timer
-        if (peakHoldTime <= 0.0f)
+        peakHoldTimeL -= 0.033f; // ~30Hz timer
+        if (peakHoldTimeL <= 0.0f)
         {
-            peakLevel = currentLevel;
+            peakLevelL = currentLevelL;
+        }
+    }
+
+    // Peak hold decay for right channel
+    if (peakHoldTimeR > 0.0f)
+    {
+        peakHoldTimeR -= 0.033f; // ~30Hz timer
+        if (peakHoldTimeR <= 0.0f)
+        {
+            peakLevelR = currentLevelR;
         }
     }
 
     repaint();
 }
 
-void VUMeter::setLevel(float newLevel)
+void VUMeter::setLevels(float leftLevel, float rightLevel)
 {
-    targetLevel = juce::jlimit(0.0f, 1.0f, newLevel);
+    targetLevelL = juce::jlimit(0.0f, 1.0f, leftLevel);
+    targetLevelR = juce::jlimit(0.0f, 1.0f, rightLevel);
 
-    if (newLevel > peakLevel)
+    if (leftLevel > peakLevelL)
     {
-        peakLevel = newLevel;
-        peakHoldTime = 2.0f; // Hold peak for 2 seconds
+        peakLevelL = leftLevel;
+        peakHoldTimeL = 2.0f; // Hold peak for 2 seconds
+    }
+
+    if (rightLevel > peakLevelR)
+    {
+        peakLevelR = rightLevel;
+        peakHoldTimeR = 2.0f; // Hold peak for 2 seconds
     }
 }
 
-void VUMeter::setPeakLevel(float peak)
+void VUMeter::setPeakLevels(float leftPeak, float rightPeak)
 {
-    peakLevel = juce::jlimit(0.0f, 1.0f, peak);
-    peakHoldTime = 2.0f;
+    peakLevelL = juce::jlimit(0.0f, 1.0f, leftPeak);
+    peakLevelR = juce::jlimit(0.0f, 1.0f, rightPeak);
+    peakHoldTimeL = 2.0f;
+    peakHoldTimeR = 2.0f;
 }
 
-void VUMeter::drawVintageVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds)
+void VUMeter::drawStereoVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds)
 {
     // Draw vintage VU meter background
     g.setColour(juce::Colour(0xff1a1a1a));
@@ -269,30 +290,52 @@ void VUMeter::drawVintageVUMeter(juce::Graphics& g, juce::Rectangle<float> bound
         g.fillEllipse(x - 2, y - 2, 4, 4);
     }
 
-    // Draw needle
-    float needleAngle = -2.356f + currentLevel * 1.571f; // Map 0-1 to needle range
+    // Draw left needle (red)
+    float needleAngleL = -2.356f + currentLevelL * 1.571f; // Map 0-1 to needle range
     auto needleLength = radius * 0.9f;
 
-    // Needle shadow
+    // Left needle shadow
     g.setColour(juce::Colour(0x40000000));
     g.drawLine(centerX + 1, centerY + 1,
-               centerX + needleLength * std::cos(needleAngle) + 1,
-               centerY + needleLength * std::sin(needleAngle) + 1, 2.0f);
+               centerX + needleLength * std::cos(needleAngleL) + 1,
+               centerY + needleLength * std::sin(needleAngleL) + 1, 2.0f);
 
-    // Main needle
-    g.setColour(juce::Colour(0xffff6b35));
+    // Left needle (red)
+    g.setColour(juce::Colour(0xffcc3333));
     g.drawLine(centerX, centerY,
-               centerX + needleLength * std::cos(needleAngle),
-               centerY + needleLength * std::sin(needleAngle), 1.5f);
+               centerX + needleLength * std::cos(needleAngleL),
+               centerY + needleLength * std::sin(needleAngleL), 1.5f);
+
+    // Draw right needle (green)
+    float needleAngleR = -2.356f + currentLevelR * 1.571f;
+
+    // Right needle shadow
+    g.setColour(juce::Colour(0x40000000));
+    g.drawLine(centerX + 1, centerY + 1,
+               centerX + needleLength * std::cos(needleAngleR) + 1,
+               centerY + needleLength * std::sin(needleAngleR) + 1, 2.0f);
+
+    // Right needle (green)
+    g.setColour(juce::Colour(0xff33cc33));
+    g.drawLine(centerX, centerY,
+               centerX + needleLength * std::cos(needleAngleR),
+               centerY + needleLength * std::sin(needleAngleR), 1.3f);
 
     // Needle pivot
     g.setColour(juce::Colour(0xff1a1a1a));
     g.fillEllipse(centerX - 3, centerY - 3, 6, 6);
 
-    // VU label
+    // VU label with L/R indicators
     g.setFont(10.0f);
     g.setColour(juce::Colour(0xffffffff));
     g.drawText("VU", meterArea.getX(), meterArea.getBottom() - 15, meterArea.getWidth(), 10, juce::Justification::centred);
+
+    // L/R labels
+    g.setFont(8.0f);
+    g.setColour(juce::Colour(0xffcc3333));
+    g.drawText("L", meterArea.getX() + 5, meterArea.getBottom() - 25, 10, 10, juce::Justification::left);
+    g.setColour(juce::Colour(0xff33cc33));
+    g.drawText("R", meterArea.getRight() - 15, meterArea.getBottom() - 25, 10, 10, juce::Justification::right);
 }
 
 TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAudioProcessor& p)
@@ -360,10 +403,8 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     rightReel.setSpeed(1.5f);
 
     // Add VU meters
-    addAndMakeVisible(inputMeterLeft);
-    addAndMakeVisible(inputMeterRight);
-    addAndMakeVisible(outputMeterLeft);
-    addAndMakeVisible(outputMeterRight);
+    addAndMakeVisible(inputMeter);
+    addAndMakeVisible(outputMeter);
 
     // Start timer for updating meters
     startTimerHz(30);
@@ -380,11 +421,15 @@ TapeMachineAudioProcessorEditor::~TapeMachineAudioProcessorEditor()
 void TapeMachineAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);  // Wider text box
+    slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xfff5f0e0));  // Cream text
+    slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff1a1a1a));
+    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff3a3a3a));
     addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffd0c0a0));  // Vintage cream label
     label.attachToComponent(&slider, false);
     addAndMakeVisible(label);
 }
@@ -467,32 +512,24 @@ void TapeMachineAudioProcessorEditor::resized()
     auto meterArea = area.removeFromTop(100);
     meterArea.reduce(20, 10);
 
-    auto meterWidth = meterArea.getWidth() / 4;
+    auto meterWidth = meterArea.getWidth() / 2;
 
-    // Input meters on the left
-    auto inputMeterArea = meterArea.removeFromLeft(meterWidth * 2);
-    inputMeterLeft.setBounds(inputMeterArea.removeFromLeft(meterWidth).reduced(10));
-    inputMeterRight.setBounds(inputMeterArea.reduced(10));
+    // Input meter on the left
+    inputMeter.setBounds(meterArea.removeFromLeft(meterWidth).reduced(20, 5));
 
-    // Output meters on the right
-    meterArea.removeFromLeft(20); // Spacing
-    auto outputMeterArea = meterArea;
-    outputMeterLeft.setBounds(outputMeterArea.removeFromLeft(meterWidth).reduced(10));
-    outputMeterRight.setBounds(outputMeterArea.removeFromLeft(meterWidth).reduced(10));
+    // Output meter on the right
+    outputMeter.setBounds(meterArea.reduced(20, 5));
 }
 
 void TapeMachineAudioProcessorEditor::timerCallback()
 {
-    // Get current audio levels from the processor
-    // For now, using dummy values - you'll need to add level detection to the processor
-    float inputL = 0.3f + (std::sin(std::clock() * 0.001f) * 0.2f);
-    float inputR = 0.3f + (std::cos(std::clock() * 0.001f) * 0.2f);
-    float outputL = 0.5f + (std::sin(std::clock() * 0.0015f) * 0.3f);
-    float outputR = 0.5f + (std::cos(std::clock() * 0.0015f) * 0.3f);
+    // Get actual audio levels from the processor
+    float inputL = audioProcessor.getInputLevelL();
+    float inputR = audioProcessor.getInputLevelR();
+    float outputL = audioProcessor.getOutputLevelL();
+    float outputR = audioProcessor.getOutputLevelR();
 
-    // Update meter levels
-    inputMeterLeft.setLevel(inputL);
-    inputMeterRight.setLevel(inputR);
-    outputMeterLeft.setLevel(outputL);
-    outputMeterRight.setLevel(outputR);
+    // Update meter levels with actual audio levels
+    inputMeter.setLevels(inputL, inputR);
+    outputMeter.setLevels(outputL, outputR);
 }
