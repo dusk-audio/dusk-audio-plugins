@@ -36,27 +36,47 @@ void VintageVerbAudioProcessorEditor::VintageVerbLookAndFeel::drawRotarySlider (
     auto rw = radius * 2.0f;
     auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // Background
-    g.setColour (juce::Colour (0xff1a1a1a));
+    // Background circle with subtle gradient
+    juce::ColourGradient knobGradient (juce::Colour (0xff2a2a2a), centreX, ry,
+                                       juce::Colour (0xff0a0a0a), centreX, ry + rw, false);
+    g.setGradientFill (knobGradient);
     g.fillEllipse (rx, ry, rw, rw);
 
-    // Outline
-    g.setColour (juce::Colour (0xff3d3d3d));
-    g.drawEllipse (rx, ry, rw, rw, 2.0f);
+    // Arc track
+    juce::Path arcPath;
+    arcPath.addCentredArc (centreX, centreY, radius - 2, radius - 2,
+                          0.0f, rotaryStartAngle, rotaryEndAngle, true);
+    g.setColour (juce::Colour (0xff303030));
+    g.strokePath (arcPath, juce::PathStrokeType (2.0f));
 
-    // Pointer
-    juce::Path p;
-    auto pointerLength = radius * 0.6f;
-    auto pointerThickness = 3.0f;
-    p.addRectangle (-pointerThickness * 0.5f, -radius, pointerThickness, pointerLength);
-    p.applyTransform (juce::AffineTransform::rotation (angle).translated (centreX, centreY));
+    // Value arc
+    juce::Path valuePath;
+    valuePath.addCentredArc (centreX, centreY, radius - 2, radius - 2,
+                            0.0f, rotaryStartAngle, angle, true);
 
-    g.setColour (juce::Colour (0xff8b7355));
-    g.fillPath (p);
+    // Gradient for value arc (orange to dark orange like Valhalla)
+    juce::ColourGradient valueGradient (juce::Colour (0xffff6b35), centreX - radius, centreY,
+                                        juce::Colour (0xffcc4422), centreX + radius, centreY, false);
+    g.setGradientFill (valueGradient);
+    g.strokePath (valuePath, juce::PathStrokeType (3.0f));
 
-    // Center dot
-    g.setColour (juce::Colour (0xff2a2a2a));
-    g.fillEllipse (centreX - 3, centreY - 3, 6, 6);
+    // Pointer dot (instead of line)
+    float pointerRadius = 4.0f;
+    float pointerDistance = radius - 8;
+    float pointerX = centreX + pointerDistance * std::cos(angle - juce::MathConstants<float>::halfPi);
+    float pointerY = centreY + pointerDistance * std::sin(angle - juce::MathConstants<float>::halfPi);
+
+    g.setColour (juce::Colour (0xffffffff));
+    g.fillEllipse (pointerX - pointerRadius, pointerY - pointerRadius,
+                  pointerRadius * 2, pointerRadius * 2);
+
+    // Inner shadow for depth
+    g.setColour (juce::Colour (0x30000000));
+    g.drawEllipse (rx + 1, ry + 1, rw - 2, rw - 2, 1.0f);
+
+    // Outer rim highlight
+    g.setColour (juce::Colour (0xff4a4a4a));
+    g.drawEllipse (rx, ry, rw, rw, 1.0f);
 }
 
 void VintageVerbAudioProcessorEditor::VintageVerbLookAndFeel::drawLinearSlider (
@@ -114,62 +134,85 @@ void VintageVerbAudioProcessorEditor::LevelMeter::setLevel (float newLevel)
     repaint();
 }
 
-// Reverb Visualizer Implementation
-VintageVerbAudioProcessorEditor::ReverbVisualizer::ReverbVisualizer()
+// Decay Time Display Implementation
+VintageVerbAudioProcessorEditor::DecayTimeDisplay::DecayTimeDisplay()
 {
 }
 
-void VintageVerbAudioProcessorEditor::ReverbVisualizer::paint (juce::Graphics& g)
+void VintageVerbAudioProcessorEditor::DecayTimeDisplay::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
+    auto centerX = bounds.getCentreX();
+    auto centerY = bounds.getCentreY();
 
-    // Background
-    g.setColour (juce::Colour (0xff1a1a1a));
-    g.fillRoundedRectangle (bounds, 4.0f);
+    // Background with subtle gradient
+    juce::ColourGradient bgGradient (juce::Colour (0xff1a1a1a), centerX, bounds.getY(),
+                                     juce::Colour (0xff0a0a0a), centerX, bounds.getBottom(), false);
+    g.setGradientFill (bgGradient);
+    g.fillRoundedRectangle (bounds, 8.0f);
 
-    // Draw frequency response curve
-    g.setColour (juce::Colour (0xff8b7355));
+    // Draw circular decay indicator (like Valhalla)
+    float radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.35f;
 
-    responseCurve.clear();
-    float width = bounds.getWidth();
-    float height = bounds.getHeight();
+    // Outer ring
+    g.setColour (juce::Colour (0xff3a3a3a));
+    g.drawEllipse (centerX - radius, centerY - radius - 10, radius * 2, radius * 2, 3.0f);
 
-    for (int x = 0; x < width; ++x)
+    // Decay arc (animated based on decay time)
+    float arcAngle = juce::jmin(decayTimeSeconds / 10.0f, 1.0f) * juce::MathConstants<float>::twoPi * 0.75f;
+    juce::Path decayArc;
+    decayArc.addCentredArc (centerX, centerY - 10, radius, radius,
+                           0.0f, -juce::MathConstants<float>::halfPi,
+                           -juce::MathConstants<float>::halfPi + arcAngle, true);
+
+    // Gradient for decay arc
+    juce::ColourGradient arcGradient (juce::Colour (0xffff6b35), centerX, centerY - radius - 10,
+                                      juce::Colour (0xff8b4513), centerX + radius, centerY - 10, false);
+    g.setGradientFill (arcGradient);
+    g.strokePath (decayArc, juce::PathStrokeType (4.0f));
+
+    // Display decay time text
+    g.setColour (juce::Colour (0xffe0e0e0));
+    g.setFont (42.0f);
+
+    juce::String timeText;
+    if (isFrozen)
     {
-        float freq = (x / width) * 20000.0f;
-        float response = 1.0f - currentDamping * (freq / 20000.0f);
-        response *= (1.0f + currentSize * 0.5f);
-        response *= (1.0f + currentDiffusion * 0.3f);
-
-        float y = bounds.getBottom() - (response * height * 0.8f + height * 0.1f);
-
-        if (x == 0)
-            responseCurve.startNewSubPath (x, y);
-        else
-            responseCurve.lineTo (x, y);
+        timeText = "FREEZE";
+        g.setColour (juce::Colour (0xff00b4d8));
+    }
+    else if (decayTimeSeconds < 10.0f)
+    {
+        timeText = juce::String (decayTimeSeconds, 2) + " s";
+    }
+    else
+    {
+        timeText = juce::String (decayTimeSeconds, 1) + " s";
     }
 
-    g.strokePath (responseCurve, juce::PathStrokeType (2.0f));
+    g.drawFittedText (timeText, bounds.reduced(10).toNearestInt(),
+                     juce::Justification::centred, 1);
 
-    // Draw grid
-    g.setColour (juce::Colour (0x20ffffff));
-    for (int i = 1; i < 4; ++i)
-    {
-        float y = bounds.getY() + (bounds.getHeight() / 4.0f) * i;
-        g.drawHorizontalLine (static_cast<int>(y), bounds.getX(), bounds.getRight());
-    }
+    // Small label
+    g.setColour (juce::Colour (0xff808080));
+    g.setFont (11.0f);
+    g.drawText ("DECAY TIME", bounds.reduced(5).withTrimmedTop(bounds.getHeight() * 0.7f),
+               juce::Justification::centred, false);
 
-    // Border
-    g.setColour (juce::Colour (0xff3d3d3d));
-    g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
+    // Border with subtle glow
+    g.setColour (juce::Colour (0xff4a4a4a));
+    g.drawRoundedRectangle (bounds.reduced(1), 8.0f, 1.0f);
 }
 
-void VintageVerbAudioProcessorEditor::ReverbVisualizer::updateDisplay (
-    float size, float damping, float diffusion)
+void VintageVerbAudioProcessorEditor::DecayTimeDisplay::setDecayTime (float seconds)
 {
-    currentSize = size;
-    currentDamping = damping;
-    currentDiffusion = diffusion;
+    decayTimeSeconds = seconds;
+    repaint();
+}
+
+void VintageVerbAudioProcessorEditor::DecayTimeDisplay::setFreeze (bool frozen)
+{
+    isFrozen = frozen;
     repaint();
 }
 
@@ -258,8 +301,8 @@ VintageVerbAudioProcessorEditor::VintageVerbAudioProcessorEditor (VintageVerbAud
     addAndMakeVisible (outputMeterL);
     addAndMakeVisible (outputMeterR);
 
-    // Set up visualizer
-    addAndMakeVisible (reverbDisplay);
+    // Set up decay display
+    addAndMakeVisible (decayDisplay);
 
     // Create parameter attachments
     auto& params = audioProcessor.getAPVTS();
@@ -288,7 +331,7 @@ VintageVerbAudioProcessorEditor::VintageVerbAudioProcessorEditor (VintageVerbAud
     inputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (params, "inputGain", inputGainSlider);
     outputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (params, "outputGain", outputGainSlider);
 
-    setSize (1100, 750);
+    setSize (900, 600);
     startTimerHz (30);
 }
 
@@ -300,98 +343,136 @@ VintageVerbAudioProcessorEditor::~VintageVerbAudioProcessorEditor()
 //==============================================================================
 void VintageVerbAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // Background gradient
-    g.fillAll (juce::Colour (0xff2a2a2a));
+    // Dark background with subtle gradient
+    juce::ColourGradient bgGradient (juce::Colour (0xff1e1e1e), getWidth() / 2.0f, 0,
+                                     juce::Colour (0xff0a0a0a), getWidth() / 2.0f, getHeight(), false);
+    g.setGradientFill (bgGradient);
+    g.fillAll();
 
-    // Title area with larger font
-    auto titleArea = getLocalBounds().removeFromTop (60);
-    g.setColour (juce::Colour (0xff8b7355));
-    g.setFont (32.0f);
-    g.drawFittedText ("VintageVerb", titleArea,
-                     juce::Justification::centred, 1);
+    // Title area - more subtle
+    auto titleArea = getLocalBounds().removeFromTop (45);
 
-    // Section dividers for better visual organization
-    g.setColour (juce::Colour (0xff3d3d3d));
-    g.drawLine (0, 60, getWidth(), 60, 2);
-    g.drawLine (0, 200, getWidth(), 200, 1);  // After main controls
-    g.drawLine (0, 360, getWidth(), 360, 1);  // After EQ/advanced
-    g.drawLine (0, 500, getWidth(), 500, 1);  // After filters/gains
+    // Title with gradient text effect
+    g.setColour (juce::Colour (0xffff6b35));
+    g.setFont (juce::Font ("Arial", 24.0f, juce::Font::bold));
+    g.drawText ("VintageVerb", titleArea.reduced(20, 0),
+               juce::Justification::left, false);
 
-    // Section labels with better positioning
-    g.setColour (juce::Colour (0xff6a6a6a));
+    // Subtitle
+    g.setColour (juce::Colour (0xff808080));
     g.setFont (12.0f);
-    g.drawText ("REVERB", 40, 65, 100, 20, juce::Justification::left);
-    g.drawText ("EQ & TONE", 40, 230, 100, 20, juce::Justification::left);
-    g.drawText ("FILTERS & OUTPUT", 40, 520, 150, 20, juce::Justification::left);
-    g.drawText ("PRESETS", 40, 670, 100, 20, juce::Justification::left);
+    g.drawText ("by Luna Co. Audio", titleArea.reduced(20, 0).withTrimmedLeft(150),
+               juce::Justification::left, false);
+
+    // Draw section backgrounds with subtle separation
+    auto mainArea = getLocalBounds().withTrimmedTop(45);
+
+    // Top section background (main controls)
+    g.setColour (juce::Colour (0x10ffffff));
+    g.fillRoundedRectangle (20, 55, 240, 200, 6);
+
+    // Decay display background glow
+    g.setColour (juce::Colour (0x15ff6b35));
+    g.fillRoundedRectangle (270, 55, 200, 200, 6);
+
+    // Right section (modulation/EQ)
+    g.setColour (juce::Colour (0x10ffffff));
+    g.fillRoundedRectangle (480, 55, 400, 200, 6);
+
+    // Bottom section (filters/advanced)
+    g.setColour (juce::Colour (0x08ffffff));
+    g.fillRoundedRectangle (20, 270, 860, 240, 6);
+
+    // Section labels
+    g.setColour (juce::Colour (0xff606060));
+    g.setFont (10.0f);
+    g.drawText ("MAIN", 30, 60, 60, 15, juce::Justification::left);
+    g.drawText ("MODULATION", 490, 60, 80, 15, juce::Justification::left);
+    g.drawText ("EQ", 690, 60, 40, 15, juce::Justification::left);
+    g.drawText ("DAMPING", 30, 275, 60, 15, juce::Justification::left);
+    g.drawText ("SHAPE", 250, 275, 60, 15, juce::Justification::left);
+    g.drawText ("DIFFUSION", 470, 275, 80, 15, juce::Justification::left);
+    g.drawText ("FILTERS", 690, 275, 60, 15, juce::Justification::left);
 }
 
 void VintageVerbAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
+    bounds.removeFromTop(45);  // Title area
 
-    // Title area
-    bounds.removeFromTop(60);
+    const int knobSize = 65;
+    const int smallKnobSize = 55;
+    const int spacing = 75;
 
-    // Main reverb controls section (top)
-    auto knobSize = 70;
-    auto knobSpacing = 80;
+    // === TOP SECTION ===
+    // Main controls on left (Mix, Size, PreDelay)
+    int topY = 85;
+    mixSlider.setBounds(35, topY, knobSize, knobSize);
+    sizeSlider.setBounds(35, topY + spacing, knobSize, knobSize);
+    predelaySlider.setBounds(115, topY, knobSize, knobSize);
+    attackSlider.setBounds(115, topY + spacing, knobSize, knobSize);
 
-    // Row 1: Main reverb parameters
-    int row1Y = 90;
-    mixSlider.setBounds(40, row1Y, knobSize, knobSize);
-    sizeSlider.setBounds(40 + knobSpacing, row1Y, knobSize, knobSize);
-    attackSlider.setBounds(40 + knobSpacing * 2, row1Y, knobSize, knobSize);
-    dampingSlider.setBounds(40 + knobSpacing * 3, row1Y, knobSize, knobSize);
-    predelaySlider.setBounds(40 + knobSpacing * 4, row1Y, knobSize, knobSize);
-    widthSlider.setBounds(40 + knobSpacing * 5, row1Y, knobSize, knobSize);
-    modulationSlider.setBounds(40 + knobSpacing * 6, row1Y, knobSize, knobSize);
+    // Central decay display
+    decayDisplay.setBounds(280, 65, 180, 180);
 
-    // Visualizer on right side
-    reverbDisplay.setBounds(getWidth() - 320, 80, 280, 130);
+    // Modulation controls (Width, Mod)
+    widthSlider.setBounds(500, topY, knobSize, knobSize);
+    modulationSlider.setBounds(500, topY + spacing, knobSize, knobSize);
 
-    // Row 2: EQ controls
-    int row2Y = 250;
-    bassFreqSlider.setBounds(40, row2Y, knobSize, knobSize);
-    bassMulSlider.setBounds(40 + knobSpacing, row2Y, knobSize, knobSize);
-    highFreqSlider.setBounds(40 + knobSpacing * 2, row2Y, knobSize, knobSize);
-    highMulSlider.setBounds(40 + knobSpacing * 3, row2Y, knobSize, knobSize);
+    // EQ controls (right side)
+    bassFreqSlider.setBounds(590, topY, smallKnobSize, smallKnobSize);
+    bassMulSlider.setBounds(655, topY, smallKnobSize, smallKnobSize);
+    highFreqSlider.setBounds(590, topY + spacing, smallKnobSize, smallKnobSize);
+    highMulSlider.setBounds(655, topY + spacing, smallKnobSize, smallKnobSize);
 
-    // Row 3: Advanced controls
-    int row3Y = 360;
-    densitySlider.setBounds(40, row3Y, knobSize, knobSize);
-    diffusionSlider.setBounds(40 + knobSpacing, row3Y, knobSize, knobSize);
-    shapeSlider.setBounds(40 + knobSpacing * 2, row3Y, knobSize, knobSize);
-    spreadSlider.setBounds(40 + knobSpacing * 3, row3Y, knobSize, knobSize);
+    // Tilt control
+    tiltGainSlider.setBounds(730, topY + 30, 140, 45);
 
-    // Mode selectors
-    int selectorY = 460;
-    reverbModeSelector.setBounds(40, selectorY, 180, 30);
-    colorModeSelector.setBounds(240, selectorY, 140, 30);
-    routingModeSelector.setBounds(400, selectorY, 140, 30);
-    engineMixSlider.setBounds(560, selectorY - 10, 180, 50);
+    // === BOTTOM SECTION ===
+    int bottomY = 300;
 
-    // Row 4: Filters and output
-    int row4Y = 540;
-    hpfFreqSlider.setBounds(40, row4Y, knobSize, knobSize);
-    lpfFreqSlider.setBounds(40 + knobSpacing, row4Y, knobSize, knobSize);
-    tiltGainSlider.setBounds(40 + knobSpacing * 2, row4Y + 15, 160, 45);
+    // Damping section
+    dampingSlider.setBounds(35, bottomY, knobSize, knobSize);
+    densitySlider.setBounds(115, bottomY, knobSize, knobSize);
 
-    inputGainSlider.setBounds(40 + knobSpacing * 4, row4Y, knobSize, knobSize);
-    outputGainSlider.setBounds(40 + knobSpacing * 5, row4Y, knobSize, knobSize);
+    // Shape section
+    shapeSlider.setBounds(265, bottomY, knobSize, knobSize);
+    spreadSlider.setBounds(345, bottomY, knobSize, knobSize);
+
+    // Diffusion section
+    diffusionSlider.setBounds(485, bottomY, knobSize, knobSize);
+    engineMixSlider.setBounds(565, bottomY + 10, 100, 45);
+
+    // Filter section
+    hpfFreqSlider.setBounds(700, bottomY, smallKnobSize, smallKnobSize);
+    lpfFreqSlider.setBounds(765, bottomY, smallKnobSize, smallKnobSize);
+
+    // Advanced settings row
+    int advancedY = 390;
+    reverbModeSelector.setBounds(35, advancedY, 180, 25);
+    colorModeSelector.setBounds(230, advancedY, 120, 25);
+    routingModeSelector.setBounds(365, advancedY, 120, 25);
+
+    // Input/Output gains
+    inputGainSlider.setBounds(520, advancedY - 10, 55, 55);
+    outputGainSlider.setBounds(590, advancedY - 10, 55, 55);
 
     // Meters
-    int meterX = 40 + knobSpacing * 6 + 30;
-    inputMeterL.setBounds(meterX, row4Y, 25, 75);
-    inputMeterR.setBounds(meterX + 30, row4Y, 25, 75);
-    outputMeterL.setBounds(meterX + 70, row4Y, 25, 75);
-    outputMeterR.setBounds(meterX + 100, row4Y, 25, 75);
+    inputMeterL.setBounds(660, advancedY - 5, 20, 60);
+    inputMeterR.setBounds(685, advancedY - 5, 20, 60);
+    outputMeterL.setBounds(715, advancedY - 5, 20, 60);
+    outputMeterR.setBounds(740, advancedY - 5, 20, 60);
 
-    // Presets at bottom
-    int presetY = getHeight() - 60;
-    presetSelector.setBounds(40, presetY, 280, 30);
-    savePresetButton.setBounds(340, presetY, 120, 30);
-    loadPresetButton.setBounds(470, presetY, 120, 30);
+    // Mode info display at bottom
+    int bottomInfoY = 465;
+    auto modeArea = juce::Rectangle<int>(35, bottomInfoY, 350, 25);
+    auto colorArea = juce::Rectangle<int>(400, bottomInfoY, 250, 25);
+
+    // Preset management at very bottom
+    int presetY = getHeight() - 45;
+    presetSelector.setBounds(35, presetY, 250, 25);
+    savePresetButton.setBounds(300, presetY, 100, 25);
+    loadPresetButton.setBounds(410, presetY, 100, 25);
 }
 
 void VintageVerbAudioProcessorEditor::timerCallback()
@@ -402,10 +483,17 @@ void VintageVerbAudioProcessorEditor::timerCallback()
     outputMeterL.setLevel (audioProcessor.getOutputLevel (0));
     outputMeterR.setLevel (audioProcessor.getOutputLevel (1));
 
-    // Update visualizer
-    reverbDisplay.updateDisplay (sizeSlider.getValue(),
-                                dampingSlider.getValue(),
-                                diffusionSlider.getValue());
+    // Update decay display based on size and damping
+    // Calculate approximate decay time from size and damping
+    float size = sizeSlider.getValue();
+    float damping = dampingSlider.getValue();
+
+    // Simplified RT60 calculation (approximate)
+    float decayTime = size * 10.0f * (1.0f - damping * 0.5f);
+    decayDisplay.setDecayTime (decayTime);
+
+    // Check for freeze mode (when size is at max)
+    decayDisplay.setFreeze (size >= 0.99f);
 }
 
 void VintageVerbAudioProcessorEditor::comboBoxChanged (juce::ComboBox* comboBoxThatHasChanged)
@@ -418,7 +506,7 @@ void VintageVerbAudioProcessorEditor::setupSlider (juce::Slider& slider, juce::L
                                                   juce::Slider::SliderStyle style)
 {
     slider.setSliderStyle (style);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 75, 20);  // Wider text box
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 65, 18);
     slider.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffd4d4d4));
     slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0xff1a1a1a));
     slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0xff3a3a3a));
@@ -426,8 +514,8 @@ void VintageVerbAudioProcessorEditor::setupSlider (juce::Slider& slider, juce::L
 
     label.setText (text, juce::dontSendNotification);
     label.setJustificationType (juce::Justification::centred);
-    label.setColour (juce::Label::textColourId, juce::Colour (0xffaaaaaa));
-    label.setFont (juce::Font (10.0f));
+    label.setColour (juce::Label::textColourId, juce::Colour (0xff909090));
+    label.setFont (juce::Font (9.0f));
     label.attachToComponent (&slider, false);
     addAndMakeVisible (label);
 }
