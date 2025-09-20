@@ -55,19 +55,18 @@ private:
         float smoothedLevel = 0.0f;
     };
 
-    // Reverb visualizer
-    class ReverbVisualizer : public juce::Component
+    // Decay time display (central display like Valhalla)
+    class DecayTimeDisplay : public juce::Component
     {
     public:
-        ReverbVisualizer();
+        DecayTimeDisplay();
         void paint (juce::Graphics&) override;
-        void updateDisplay (float size, float damping, float diffusion);
+        void setDecayTime (float seconds);
+        void setFreeze (bool frozen);
 
     private:
-        float currentSize = 0.5f;
-        float currentDamping = 0.5f;
-        float currentDiffusion = 0.5f;
-        juce::Path responseCurve;
+        float decayTimeSeconds = 2.0f;
+        bool isFrozen = false;
     };
 
     VintageVerbAudioProcessor& audioProcessor;
@@ -117,7 +116,7 @@ private:
     // Meters and visualizers
     LevelMeter inputMeterL, inputMeterR;
     LevelMeter outputMeterL, outputMeterR;
-    ReverbVisualizer reverbDisplay;
+    DecayTimeDisplay decayDisplay;
 
     // Labels
     juce::Label mixLabel, sizeLabel, attackLabel, dampingLabel;
