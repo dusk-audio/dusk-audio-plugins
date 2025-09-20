@@ -1,4 +1,5 @@
 #include "FourKLookAndFeel.h"
+#include <cmath>
 
 FourKLookAndFeel::FourKLookAndFeel()
 {
@@ -34,92 +35,98 @@ void FourKLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wid
     auto rw = radius * 2.0f;
     auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // Draw professional-style knob
+    // SSL-style knob matching reference image
 
-    // Outer bezel (raised effect)
-    g.setColour(juce::Colour(0xff1a1a1a));
-    g.fillEllipse(rx - 3, ry - 3, rw + 6, rw + 6);
-
-    // Bezel gradient ring
-    juce::ColourGradient bezelGradient(
-        juce::Colour(0xff606060), rx, ry,
-        juce::Colour(0xff303030), rx + rw, ry + rw, true);
-    g.setGradientFill(bezelGradient);
+    // Black outer ring/shadow
+    g.setColour(juce::Colour(0xff000000));
     g.fillEllipse(rx - 2, ry - 2, rw + 4, rw + 4);
 
-    // Main knob body with metallic gradient
+    // Dark metallic knob body with ridges effect
     juce::ColourGradient knobGradient(
-        juce::Colour(0xff707070), centreX - radius * 0.7f, centreY - radius * 0.7f,
-        juce::Colour(0xff404040), centreX + radius * 0.7f, centreY + radius * 0.7f, false);
+        juce::Colour(0xff4a4a4a), centreX - radius * 0.5f, centreY - radius * 0.5f,
+        juce::Colour(0xff1a1a1a), centreX + radius * 0.5f, centreY + radius * 0.5f, false);
     g.setGradientFill(knobGradient);
     g.fillEllipse(rx, ry, rw, rw);
 
-    // Inner circle (knob cap) with slight depth
-    auto capRadius = radius * 0.75f;
+    // Draw radial ridges/grooves for texture
+    g.setColour(juce::Colour(0x20000000));
+    for (int i = 0; i < 24; ++i)
+    {
+        float ridgeAngle = (i / 24.0f) * juce::MathConstants<float>::twoPi;
+        auto x1 = centreX + radius * 0.6f * std::cos(ridgeAngle);
+        auto y1 = centreY + radius * 0.6f * std::sin(ridgeAngle);
+        auto x2 = centreX + radius * 0.95f * std::cos(ridgeAngle);
+        auto y2 = centreY + radius * 0.95f * std::sin(ridgeAngle);
+        g.drawLine(x1, y1, x2, y2, 0.5f);
+    }
+
+    // Determine color for center cap based on parameter name
+    juce::Colour capColour;
+    auto paramName = slider.getName().toLowerCase();
+    if (paramName.contains("hf") || paramName.contains("high"))
+        capColour = juce::Colour(0xff4a7c9e); // Blue
+    else if (paramName.contains("hmf") || paramName.contains("hi-mid"))
+        capColour = juce::Colour(0xff5a9a5a); // Green
+    else if (paramName.contains("lmf") || paramName.contains("lo-mid"))
+        capColour = juce::Colour(0xff9a6a3a); // Brown/Orange
+    else if (paramName.contains("lf") || paramName.contains("low"))
+        capColour = juce::Colour(0xff8a4a4a); // Red
+    else
+        capColour = juce::Colour(0xff5a5a5a); // Grey default
+
+    // Colored center cap with gradient
+    auto capRadius = radius * 0.5f;
     juce::ColourGradient capGradient(
-        juce::Colour(0xff505050), centreX - capRadius * 0.5f, centreY - capRadius * 0.5f,
-        juce::Colour(0xff303030), centreX + capRadius * 0.5f, centreY + capRadius * 0.5f, false);
+        capColour.brighter(0.3f), centreX - capRadius * 0.3f, centreY - capRadius * 0.3f,
+        capColour.darker(0.3f), centreX + capRadius * 0.3f, centreY + capRadius * 0.3f, false);
     g.setGradientFill(capGradient);
     g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2, capRadius * 2);
 
-    // Pointer line (white with subtle glow)
+    // White pointer line on the colored cap
     juce::Path pointer;
-    auto pointerLength = radius * 0.9f;
-    auto pointerThickness = 3.0f;
+    auto pointerLength = capRadius * 0.8f;
+    auto pointerThickness = 2.0f;
 
-    // Glow effect
-    g.setColour(juce::Colour(0x30ffffff));
-    for (int i = 3; i > 0; --i)
-    {
-        juce::Path glowPath;
-        glowPath.addRectangle(-pointerThickness * i * 0.5f, -radius + 5,
-                              pointerThickness * i, pointerLength - 10);
-        glowPath.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
-        g.fillPath(glowPath);
-    }
-
-    // Main pointer
-    pointer.addRectangle(-pointerThickness * 0.5f, -radius + 8, pointerThickness, pointerLength - 15);
+    pointer.addRectangle(-pointerThickness * 0.5f, -pointerLength, pointerThickness, pointerLength * 0.9f);
     pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
     g.setColour(juce::Colour(0xffffffff));
     g.fillPath(pointer);
 
-    // Center screw/cap detail
-    g.setColour(juce::Colour(0xff202020));
-    g.fillEllipse(centreX - 5, centreY - 5, 10, 10);
-    g.setColour(juce::Colour(0xff606060));
-    g.drawEllipse(centreX - 5, centreY - 5, 10, 10, 1.0f);
+    // Small center dot
+    g.setColour(juce::Colour(0xff1a1a1a));
+    g.fillEllipse(centreX - 2, centreY - 2, 4, 4);
 
     // Draw scale markings
     drawScaleMarkings(g, centreX, centreY, radius, rotaryStartAngle, rotaryEndAngle);
 
     // Draw value readout below knob
-    drawValueReadout(g, slider, x, y + height - 15, width, 15);
+    drawValueReadout(g, slider, x, y + height - 20, width, 20);
 }
 
 void FourKLookAndFeel::drawScaleMarkings(juce::Graphics& g, float cx, float cy, float radius,
                                        float startAngle, float endAngle)
 {
-    // Draw tick marks around the knob
-    g.setColour(juce::Colour(0xffa0a0a0));
+    // Draw white tick marks around knob like SSL
+    g.setColour(juce::Colour(0xffffffff));
 
+    // Draw 11 main tick marks (0-10)
     for (int i = 0; i <= 10; ++i)
     {
         auto tickAngle = startAngle + (i / 10.0f) * (endAngle - startAngle);
-        auto tickStartRadius = radius + 5;
-        auto tickEndRadius = (i % 5 == 0) ? radius + 12 : radius + 8;  // Longer for 0, 5, 10
+        auto tickStartRadius = radius + 3;
+        auto tickEndRadius = radius + 8;
 
         auto startX = cx + tickStartRadius * std::cos(tickAngle);
         auto startY = cy + tickStartRadius * std::sin(tickAngle);
         auto endX = cx + tickEndRadius * std::cos(tickAngle);
         auto endY = cy + tickEndRadius * std::sin(tickAngle);
 
-        g.drawLine(startX, startY, endX, endY, (i % 5 == 0) ? 1.5f : 1.0f);
+        g.drawLine(startX, startY, endX, endY, 1.0f);
     }
 
-    // Draw scale numbers at key positions
-    g.setFont(juce::Font(juce::FontOptions(8.0f)));
-    g.setColour(juce::Colour(0xff808080));
+    // Draw scale numbers at key positions with white text
+    g.setFont(juce::Font(juce::FontOptions(9.0f)));
+    g.setColour(juce::Colour(0xffffffff));
 
     // Min value (7 o'clock)
     auto minX = cx + (radius + 18) * std::cos(startAngle);
@@ -148,9 +155,9 @@ void FourKLookAndFeel::drawValueReadout(juce::Graphics& g, juce::Slider& slider,
     g.setColour(juce::Colour(0xff303030));
     g.drawRoundedRectangle(x + width * 0.25f, y, width * 0.5f, height, 2.0f, 0.5f);
 
-    // Format and display value
-    g.setColour(juce::Colour(0xff00ff00));  // Green LED-style text
-    g.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Monospaced")));
+    // Format and display value in white with larger text
+    g.setColour(juce::Colour(0xffffffff));  // White text
+    g.setFont(juce::Font(juce::FontOptions(14.0f)));
 
     juce::String text;
     auto value = slider.getValue();

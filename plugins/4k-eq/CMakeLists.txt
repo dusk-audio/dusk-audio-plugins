@@ -5,8 +5,7 @@ project(FourKEQ VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add JUCE subdirectory
-add_subdirectory(/home/marc/Projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+# JUCE is already added by parent CMakeLists.txt
 
 # Define our VST3 and LV2 plugin target
 juce_add_plugin(FourKEQ

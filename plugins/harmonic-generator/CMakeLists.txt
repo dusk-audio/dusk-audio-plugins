@@ -6,18 +6,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# ---- JUCE Path ----
-set(JUCE_PATH "" CACHE PATH "Path to JUCE")
-if(NOT JUCE_PATH)
-    message(FATAL_ERROR "JUCE_PATH not set. Please run cmake with -DJUCE_PATH=/path/to/JUCE")
-endif()
-
 # ---- Dependencies ----
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCURL REQUIRED libcurl)
 
 # ---- JUCE ----
-add_subdirectory(${JUCE_PATH} ${CMAKE_BINARY_DIR}/JUCE)
+# JUCE is already added by parent CMakeLists.txt
 
 # ---- Plugin Definition ----
 juce_add_plugin(HarmonicGeneratorPlugin
@@ -43,7 +37,6 @@ target_sources(HarmonicGeneratorPlugin
 # ---- Include & Definitions ----
 target_include_directories(HarmonicGeneratorPlugin
     PRIVATE
-        ${JUCE_PATH}/modules
         ${LIBCURL_INCLUDE_DIRS}
 )
 

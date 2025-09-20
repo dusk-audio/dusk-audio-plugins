@@ -6,8 +6,7 @@ project(UniversalCompressor VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add JUCE as a subdirectory (using JUCE from projects folder)
-add_subdirectory(/home/marc/projects/JUCE juce_build)
+# JUCE is already added by parent CMakeLists.txt
 
 # Create plugin target
 juce_add_plugin(UniversalCompressor

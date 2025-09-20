@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
+#include <ctime>
 
 CustomLookAndFeel::CustomLookAndFeel()
 {
@@ -29,27 +31,72 @@ void CustomLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
     auto rw = radius * 2.0f;
     auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    g.setColour(juce::Colour(0xff3a3a3a));
+    // Vintage-style shadow
+    g.setColour(juce::Colour(0x60000000));
+    g.fillEllipse(rx + 3, ry + 3, rw, rw);
+
+    // Outer metallic bezel
+    juce::ColourGradient bezel(juce::Colour(0xff8a7a6a), centreX - radius, centreY,
+                               juce::Colour(0xff3a3028), centreX + radius, centreY, false);
+    g.setGradientFill(bezel);
+    g.fillEllipse(rx - 3, ry - 3, rw + 6, rw + 6);
+
+    // Inner bezel highlight (brass-like)
+    g.setColour(juce::Colour(0xffbaa080));
+    g.drawEllipse(rx - 2, ry - 2, rw + 4, rw + 4, 1.0f);
+
+    // Bakelite-style knob body with warm brown gradient
+    juce::ColourGradient bodyGradient(juce::Colour(0xff4a3828), centreX - radius * 0.7f, centreY - radius * 0.7f,
+                                      juce::Colour(0xff1a0a05), centreX + radius * 0.7f, centreY + radius * 0.7f, true);
+    g.setGradientFill(bodyGradient);
     g.fillEllipse(rx, ry, rw, rw);
 
-    g.setColour(juce::Colour(0xff1a1a1a));
-    g.drawEllipse(rx, ry, rw, rw, 2.0f);
+    // Inner ring detail
+    g.setColour(juce::Colour(0xff2a1810));
+    g.drawEllipse(rx + 4, ry + 4, rw - 8, rw - 8, 2.0f);
 
-    juce::Path p;
-    auto pointerLength = radius * 0.8f;
-    auto pointerThickness = 3.0f;
-    p.addRectangle(-pointerThickness * 0.5f, -radius, pointerThickness, pointerLength);
-    p.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+    // Center cap with vintage brass look
+    auto capRadius = radius * 0.35f;
+    juce::ColourGradient capGradient(juce::Colour(0xff8a7050), centreX - capRadius, centreY - capRadius,
+                                     juce::Colour(0xff3a2010), centreX + capRadius, centreY + capRadius, false);
+    g.setGradientFill(capGradient);
+    g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2, capRadius * 2);
 
-    g.setColour(pointerColour);
-    g.fillPath(p);
+    // Position indicator - cream colored vintage pointer
+    juce::Path pointer;
+    pointer.addRectangle(-2.0f, -radius + 6, 4.0f, radius * 0.4f);
+    pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
 
-    g.setColour(juce::Colour(0xff0a0a0a));
-    g.fillEllipse(centreX - 5.0f, centreY - 5.0f, 10.0f, 10.0f);
+    // Black outline for visibility
+    g.setColour(juce::Colour(0xff000000));
+    g.strokePath(pointer, juce::PathStrokeType(1.0f));
+    // Cream colored pointer
+    g.setColour(juce::Colour(0xfff5f0e0));
+    g.fillPath(pointer);
+
+    // Tick marks around knob - vintage style
+    for (int i = 0; i <= 10; ++i)
+    {
+        auto tickAngle = rotaryStartAngle + (i / 10.0f) * (rotaryEndAngle - rotaryStartAngle);
+        auto tickLength = (i == 0 || i == 5 || i == 10) ? radius * 0.12f : radius * 0.08f;
+
+        juce::Path tick;
+        tick.addRectangle(-1.0f, -radius - 8, 2.0f, tickLength);
+        tick.applyTransform(juce::AffineTransform::rotation(tickAngle).translated(centreX, centreY));
+
+        g.setColour(juce::Colour(0xffd0c0a0).withAlpha(0.8f));
+        g.fillPath(tick);
+    }
+
+    // Center screw detail
+    g.setColour(juce::Colour(0xff1a0a05));
+    g.fillEllipse(centreX - 3, centreY - 3, 6, 6);
+    g.setColour(juce::Colour(0xff6a5040));
+    g.drawEllipse(centreX - 3, centreY - 3, 6, 6, 0.5f);
 }
 
 void CustomLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
-                                        bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+                                        bool /*shouldDrawButtonAsHighlighted*/, bool /*shouldDrawButtonAsDown*/)
 {
     auto bounds = button.getLocalBounds().toFloat().reduced(2.0f);
 
@@ -115,6 +162,139 @@ void ReelAnimation::setSpeed(float speed)
     rotationSpeed = juce::jlimit(0.0f, 5.0f, speed);
 }
 
+VUMeter::VUMeter()
+{
+    startTimerHz(30);
+}
+
+VUMeter::~VUMeter()
+{
+    stopTimer();
+}
+
+void VUMeter::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+    drawVintageVUMeter(g, bounds);
+}
+
+void VUMeter::timerCallback()
+{
+    // Smooth the level for realistic needle movement
+    smoothedLevel = smoothedLevel * smoothingFactor + targetLevel * (1.0f - smoothingFactor);
+    currentLevel = smoothedLevel;
+
+    // Peak hold decay
+    if (peakHoldTime > 0.0f)
+    {
+        peakHoldTime -= 0.033f; // ~30Hz timer
+        if (peakHoldTime <= 0.0f)
+        {
+            peakLevel = currentLevel;
+        }
+    }
+
+    repaint();
+}
+
+void VUMeter::setLevel(float newLevel)
+{
+    targetLevel = juce::jlimit(0.0f, 1.0f, newLevel);
+
+    if (newLevel > peakLevel)
+    {
+        peakLevel = newLevel;
+        peakHoldTime = 2.0f; // Hold peak for 2 seconds
+    }
+}
+
+void VUMeter::setPeakLevel(float peak)
+{
+    peakLevel = juce::jlimit(0.0f, 1.0f, peak);
+    peakHoldTime = 2.0f;
+}
+
+void VUMeter::drawVintageVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    // Draw vintage VU meter background
+    g.setColour(juce::Colour(0xff1a1a1a));
+    g.fillRoundedRectangle(bounds, 4.0f);
+
+    g.setColour(juce::Colour(0xff2a2a2a));
+    g.fillRoundedRectangle(bounds.reduced(2), 3.0f);
+
+    auto meterArea = bounds.reduced(5);
+
+    // Draw VU meter face gradient
+    juce::ColourGradient faceGradient(
+        juce::Colour(0xff3a3a3a), meterArea.getX(), meterArea.getY(),
+        juce::Colour(0xff1a1a1a), meterArea.getX(), meterArea.getBottom(), false);
+    g.setGradientFill(faceGradient);
+    g.fillRoundedRectangle(meterArea, 2.0f);
+
+    // Draw scale arc
+    auto centerX = meterArea.getCentreX();
+    auto centerY = meterArea.getBottom() - 5;
+    auto radius = meterArea.getWidth() * 0.8f;
+
+    // Draw scale markings
+    g.setColour(juce::Colour(0xffcccccc));
+    for (int i = 0; i <= 10; ++i)
+    {
+        float angle = -2.356f + (i / 10.0f) * 1.571f; // -135° to -45°
+        float tickLength = (i % 5 == 0) ? 10.0f : 6.0f;
+
+        auto x1 = centerX + (radius - tickLength) * std::cos(angle);
+        auto y1 = centerY + (radius - tickLength) * std::sin(angle);
+        auto x2 = centerX + radius * std::cos(angle);
+        auto y2 = centerY + radius * std::sin(angle);
+
+        g.drawLine(x1, y1, x2, y2, (i % 5 == 0) ? 1.5f : 1.0f);
+    }
+
+    // Draw VU labels
+    g.setFont(8.0f);
+    g.setColour(juce::Colour(0xffcccccc));
+    g.drawText("-20", meterArea.getX() + 5, meterArea.getY() + 10, 20, 10, juce::Justification::left);
+    g.drawText("0", meterArea.getCentreX() - 5, meterArea.getY() + 5, 10, 10, juce::Justification::centred);
+    g.drawText("+3", meterArea.getRight() - 20, meterArea.getY() + 10, 15, 10, juce::Justification::right);
+
+    // Draw red zone
+    g.setColour(juce::Colour(0xffcc0000));
+    for (int i = 8; i <= 10; ++i)
+    {
+        float angle = -2.356f + (i / 10.0f) * 1.571f;
+        auto x = centerX + (radius - 8) * std::cos(angle);
+        auto y = centerY + (radius - 8) * std::sin(angle);
+        g.fillEllipse(x - 2, y - 2, 4, 4);
+    }
+
+    // Draw needle
+    float needleAngle = -2.356f + currentLevel * 1.571f; // Map 0-1 to needle range
+    auto needleLength = radius * 0.9f;
+
+    // Needle shadow
+    g.setColour(juce::Colour(0x40000000));
+    g.drawLine(centerX + 1, centerY + 1,
+               centerX + needleLength * std::cos(needleAngle) + 1,
+               centerY + needleLength * std::sin(needleAngle) + 1, 2.0f);
+
+    // Main needle
+    g.setColour(juce::Colour(0xffff6b35));
+    g.drawLine(centerX, centerY,
+               centerX + needleLength * std::cos(needleAngle),
+               centerY + needleLength * std::sin(needleAngle), 1.5f);
+
+    // Needle pivot
+    g.setColour(juce::Colour(0xff1a1a1a));
+    g.fillEllipse(centerX - 3, centerY - 3, 6, 6);
+
+    // VU label
+    g.setFont(10.0f);
+    g.setColour(juce::Colour(0xffffffff));
+    g.drawText("VU", meterArea.getX(), meterArea.getBottom() - 15, meterArea.getWidth(), 10, juce::Justification::centred);
+}
+
 TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
@@ -150,7 +330,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
         audioProcessor.getAPVTS(), "saturation", saturationSlider);
 
     setupSlider(highpassFreqSlider, highpassFreqLabel, "HPF");
-    highpassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+    highpassFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "highpassFreq", highpassFreqSlider);
 
     setupSlider(lowpassFreqSlider, lowpassFreqLabel, "LPF");
@@ -179,11 +359,21 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     leftReel.setSpeed(1.5f);
     rightReel.setSpeed(1.5f);
 
-    setSize(800, 500);
+    // Add VU meters
+    addAndMakeVisible(inputMeterLeft);
+    addAndMakeVisible(inputMeterRight);
+    addAndMakeVisible(outputMeterLeft);
+    addAndMakeVisible(outputMeterRight);
+
+    // Start timer for updating meters
+    startTimerHz(30);
+
+    setSize(900, 550);
 }
 
 TapeMachineAudioProcessorEditor::~TapeMachineAudioProcessorEditor()
 {
+    stopTimer();
     setLookAndFeel(nullptr);
 }
 
@@ -271,4 +461,38 @@ void TapeMachineAudioProcessorEditor::resized()
 
     auto buttonArea = knobRow2;
     noiseEnabledButton.setBounds(buttonArea.getCentreX() - 40, buttonArea.getCentreY() - 15, 80, 30);
+
+    // Position VU meters at the bottom
+    area.removeFromTop(10);
+    auto meterArea = area.removeFromTop(100);
+    meterArea.reduce(20, 10);
+
+    auto meterWidth = meterArea.getWidth() / 4;
+
+    // Input meters on the left
+    auto inputMeterArea = meterArea.removeFromLeft(meterWidth * 2);
+    inputMeterLeft.setBounds(inputMeterArea.removeFromLeft(meterWidth).reduced(10));
+    inputMeterRight.setBounds(inputMeterArea.reduced(10));
+
+    // Output meters on the right
+    meterArea.removeFromLeft(20); // Spacing
+    auto outputMeterArea = meterArea;
+    outputMeterLeft.setBounds(outputMeterArea.removeFromLeft(meterWidth).reduced(10));
+    outputMeterRight.setBounds(outputMeterArea.removeFromLeft(meterWidth).reduced(10));
+}
+
+void TapeMachineAudioProcessorEditor::timerCallback()
+{
+    // Get current audio levels from the processor
+    // For now, using dummy values - you'll need to add level detection to the processor
+    float inputL = 0.3f + (std::sin(std::clock() * 0.001f) * 0.2f);
+    float inputR = 0.3f + (std::cos(std::clock() * 0.001f) * 0.2f);
+    float outputL = 0.5f + (std::sin(std::clock() * 0.0015f) * 0.3f);
+    float outputR = 0.5f + (std::cos(std::clock() * 0.0015f) * 0.3f);
+
+    // Update meter levels
+    inputMeterLeft.setLevel(inputL);
+    inputMeterRight.setLevel(inputR);
+    outputMeterLeft.setLevel(outputL);
+    outputMeterRight.setLevel(outputR);
 }

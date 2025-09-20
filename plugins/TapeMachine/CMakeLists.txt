@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Add JUCE as a subdirectory
-add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+# JUCE is already added by the parent CMakeLists.txt
+# No need to add it again here
 
 # Define the plugin
 juce_add_plugin(TapeMachine
@@ -22,6 +22,9 @@ juce_add_plugin(TapeMachine
     PLUGIN_CODE Tape
     FORMATS VST3
     PRODUCT_NAME "TapeMachine")
+
+# Generate JUCE header
+juce_generate_juce_header(TapeMachine)
 
 # Set the C++ standard for the plugin target
 target_compile_features(TapeMachine PRIVATE cxx_std_17)
