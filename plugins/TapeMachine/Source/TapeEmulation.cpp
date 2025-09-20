@@ -13,10 +13,10 @@ void TapeEmulation::prepare(double sampleRate)
     currentSampleRate = sampleRate;
     reset();
 
-    preEmphasisFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighShelf(
+    preEmphasisFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
         sampleRate, 3000.0f, 0.7f, 1.5f);
 
-    deEmphasisFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowShelf(
+    deEmphasisFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
         sampleRate, 100.0f, 0.7f, 1.3f);
 
     headBumpFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
@@ -178,7 +178,6 @@ float TapeEmulation::applyCrossoverDistortion(float input, float amount)
         return 0.0f;
 
     float threshold = 0.05f * (1.0f - amount * 0.5f);
-    float sign = input < 0.0f ? -1.0f : 1.0f;
     float absInput = std::abs(input);
 
     if (absInput < threshold)
@@ -229,10 +228,10 @@ float TapeEmulation::processSample(float input, TapeMachine machine, TapeSpeed s
     processed = tapeResponseFilter.processSample(processed);
     processed = deEmphasisFilter.processSample(processed);
 
-    delayLine[delayIndex] = processed;
+    delayLine[static_cast<size_t>(delayIndex)] = processed;
     delayIndex = (delayIndex + 1) & 3;
 
-    float delayed = delayLine[delayIndex] * 0.1f;
+    float delayed = delayLine[static_cast<size_t>(delayIndex)] * 0.1f;
     processed += delayed * tapeChars.retentivity * 0.05f;
 
     float compressionAmount = machineChars.compressionRatio;

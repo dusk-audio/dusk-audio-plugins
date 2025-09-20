@@ -422,8 +422,11 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
             if (tapeEmulationLeft && tapeEmulationRight)
             {
-                leftData[i] = tapeEmulationLeft->processSample(leftData[i], machine, tapeSpeed, tapeType);
-                rightData[i] = tapeEmulationRight->processSample(rightData[i], machine, tapeSpeed, tapeType);
+                auto emulationMachine = static_cast<TapeEmulation::TapeMachine>(static_cast<int>(machine));
+                auto emulationSpeed = static_cast<TapeEmulation::TapeSpeed>(static_cast<int>(tapeSpeed));
+                auto emulationType = static_cast<TapeEmulation::TapeType>(static_cast<int>(tapeType));
+                leftData[i] = tapeEmulationLeft->processSample(leftData[i], emulationMachine, emulationSpeed, emulationType);
+                rightData[i] = tapeEmulationRight->processSample(rightData[i], emulationMachine, emulationSpeed, emulationType);
             }
 
             auto [wowL, wowR] = processWowFlutter(leftData[i], rightData[i], wowFlutter);

@@ -37,7 +37,30 @@ private:
     float rotationSpeed = 1.0f;
 };
 
-class TapeMachineAudioProcessorEditor : public juce::AudioProcessorEditor
+class VUMeter : public juce::Component, public juce::Timer
+{
+public:
+    VUMeter();
+    ~VUMeter() override;
+
+    void paint(juce::Graphics& g) override;
+    void timerCallback() override;
+    void setLevel(float newLevel);
+    void setPeakLevel(float peak);
+
+private:
+    float currentLevel = 0.0f;
+    float targetLevel = 0.0f;
+    float peakLevel = 0.0f;
+    float peakHoldTime = 0.0f;
+
+    float smoothedLevel = 0.0f;
+    const float smoothingFactor = 0.85f;
+
+    void drawVintageVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds);
+};
+
+class TapeMachineAudioProcessorEditor : public juce::AudioProcessorEditor, public juce::Timer
 {
 public:
     TapeMachineAudioProcessorEditor (TapeMachineAudioProcessor&);
@@ -45,6 +68,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void timerCallback() override;
 
 private:
     TapeMachineAudioProcessor& audioProcessor;
@@ -77,6 +101,11 @@ private:
 
     ReelAnimation leftReel;
     ReelAnimation rightReel;
+
+    VUMeter inputMeterLeft;
+    VUMeter inputMeterRight;
+    VUMeter outputMeterLeft;
+    VUMeter outputMeterRight;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeMachineAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeSpeedAttachment;
