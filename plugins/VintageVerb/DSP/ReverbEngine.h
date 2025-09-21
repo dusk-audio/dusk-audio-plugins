@@ -41,6 +41,8 @@ public:
     void setShape(float newShape);             // Early/late balance
     void setSpread(float newSpread);           // Stereo spread
     void setAttack(float newAttack);           // Build-up time
+    void setBassMultiplier(float bassFreq, float bassMul);  // Bass response control
+    void setTrebleMultiplier(float trebleFreq, float trebleMul);  // Treble response control
 
     // Mode-specific configurations
     void configureForMode(int mode);
@@ -135,6 +137,7 @@ private:
 
         float process(float input);
         void setSampleRate(double sr);
+        void setCoefficient(float coeff) { coefficient = juce::jlimit(0.0f, 0.99f, coeff); }
 
     private:
         float coefficient = 0.5f;
@@ -157,6 +160,10 @@ private:
     float shape = 0.5f;
     float spread = 1.0f;
     float attack = 0.1f;
+    float bassFreq = 150.0f;
+    float bassMul = 1.0f;
+    float trebleFreq = 6000.0f;
+    float trebleMul = 1.0f;
 
     // Prime numbers for delay times (in samples at 44.1kHz)
     static constexpr std::array<int, NUM_DELAY_LINES> primeDelays = {

@@ -12,6 +12,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "../DSP/SimpleReverbEngine.h"
 #include "../DSP/ReverbEngine.h"
 #include "../DSP/VintageColoration.h"
 #include "../DSP/DualEngineRouter.h"
@@ -125,6 +126,7 @@ public:
 private:
     //==============================================================================
     // DSP Components
+    std::unique_ptr<SimpleReverbEngine> simpleReverb;  // Simple working reverb
     std::unique_ptr<ReverbEngine> engineA;
     std::unique_ptr<ReverbEngine> engineB;
     std::unique_ptr<VintageColoration> vintageProcessor;
@@ -174,6 +176,9 @@ private:
     std::atomic<float>* colorModeParam = nullptr;
     std::atomic<float>* routingModeParam = nullptr;
     std::atomic<float>* engineMixParam = nullptr;
+    std::atomic<float>* crossFeedParam = nullptr;
+    std::atomic<float>* seriesBlendParam = nullptr;
+    std::atomic<float>* vintageIntensityParam = nullptr;
 
     std::atomic<float>* hpfFreqParam = nullptr;
     std::atomic<float>* lpfFreqParam = nullptr;

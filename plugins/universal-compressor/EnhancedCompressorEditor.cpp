@@ -10,6 +10,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     fetLookAndFeel = std::make_unique<FETLookAndFeel>();
     vcaLookAndFeel = std::make_unique<VCALookAndFeel>();
     busLookAndFeel = std::make_unique<BusLookAndFeel>();
+    modernLookAndFeel = std::make_unique<ModernLookAndFeel>();
     
     // Create background texture
     createBackgroundTexture();
@@ -29,8 +30,9 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     modeSelector->addItem("FET (1176)", 2);
     modeSelector->addItem("VCA (DBX 160)", 3);
     modeSelector->addItem("Bus (SSL G)", 4);
+    // Digital mode not yet implemented in backend
     // Don't set a default - let the attachment handle it
-    modeSelector->addListener(this);
+    // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
     
     // Create global controls
@@ -43,6 +45,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     setupFETPanel();
     setupVCAPanel();
     setupBusPanel();
+    // setupDigitalPanel(); // Not yet implemented
     
     // Create parameter attachments
     auto& params = processor.getParameters();
@@ -63,6 +66,9 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Set initial mode
     const auto* modeParam = params.getRawParameterValue("mode");
     currentMode = modeParam ? static_cast<int>(*modeParam) : 0;
+
+    // Sync combo box to initial mode (add 1 since combo box uses 1-based IDs)
+    modeSelector->setSelectedId(currentMode + 1, juce::dontSendNotification);
     updateMode(currentMode);
     
     // Start timer for meter updates
@@ -356,22 +362,31 @@ void EnhancedCompressorEditor::setupBusPanel()
     
 }
 
+void EnhancedCompressorEditor::setupDigitalPanel()
+{
+    digitalPanel = std::make_unique<DigitalCompressorPanel>(processor.getParameters());
+    addChildComponent(digitalPanel.get());
+}
+
+// Multiband panel removed
+
 void EnhancedCompressorEditor::updateMode(int newMode)
 {
-    currentMode = juce::jlimit(0, 3, newMode);
-    
+    currentMode = juce::jlimit(0, 3, newMode);  // 0-3 for 4 modes
+
     // Hide all panels
     optoPanel.container->setVisible(false);
     fetPanel.container->setVisible(false);
     vcaPanel.container->setVisible(false);
     busPanel.container->setVisible(false);
-    
+    if (digitalPanel) digitalPanel->setVisible(false);
+
     // Hide mode-specific top row buttons by default
     if (optoPanel.limitSwitch)
         optoPanel.limitSwitch->setVisible(false);
     if (vcaPanel.overEasyButton)
         vcaPanel.overEasyButton->setVisible(false);
-    
+
     // Show and set look for current mode
     switch (currentMode)
     {
@@ -381,30 +396,30 @@ void EnhancedCompressorEditor::updateMode(int newMode)
                 optoPanel.limitSwitch->setVisible(true);
             currentLookAndFeel = optoLookAndFeel.get();
             break;
-            
+
         case 1: // FET
             fetPanel.container->setVisible(true);
             currentLookAndFeel = fetLookAndFeel.get();
             break;
-            
+
         case 2: // VCA
             vcaPanel.container->setVisible(true);
             if (vcaPanel.overEasyButton)
                 vcaPanel.overEasyButton->setVisible(true);
             currentLookAndFeel = vcaLookAndFeel.get();
             break;
-            
+
         case 3: // Bus
             busPanel.container->setVisible(true);
             currentLookAndFeel = busLookAndFeel.get();
             break;
     }
-    
+
     // Apply look and feel to all components
     if (currentLookAndFeel)
     {
         setLookAndFeel(currentLookAndFeel);
-        
+
         // Set button text colors based on mode for visibility - all light for dark backgrounds
         juce::Colour buttonTextColor;
         switch (currentMode)
@@ -415,7 +430,7 @@ void EnhancedCompressorEditor::updateMode(int newMode)
             case 1: // FET - black background
                 buttonTextColor = juce::Colour(0xFFE0E0E0);  // Light gray
                 break;
-            case 2: // VCA - dark gray background  
+            case 2: // VCA - dark gray background
                 buttonTextColor = juce::Colour(0xFFDFE6E9);  // Light gray-blue
                 break;
             case 3: // Bus - dark blue background
@@ -483,6 +498,7 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         case 1: bgColor = juce::Colour(0xFF1A1A1A); break; // FET - black (keep as is)
         case 2: bgColor = juce::Colour(0xFF2D3436); break; // VCA - dark gray
         case 3: bgColor = juce::Colour(0xFF2C3E50); break; // Bus - dark blue (keep as is)
+        case 4: bgColor = juce::Colour(0xFF1A1A2E); break; // Digital - modern dark blue
         default: bgColor = juce::Colour(0xFF2A2A2A); break;
     }
     
@@ -518,9 +534,17 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
             title = "VCA COMPRESSOR"; 
             textColor = juce::Colour(0xFFDFE6E9);  // Light gray-blue
             break;
-        case 3: 
-            title = "BUS COMPRESSOR"; 
+        case 3:
+            title = "BUS COMPRESSOR";
             textColor = juce::Colour(0xFFECF0F1);  // Light gray (keep)
+            break;
+        case 4:
+            title = "DIGITAL COMPRESSOR";
+            textColor = juce::Colour(0xFF00D4FF);  // Cyan
+            break;
+        default:
+            title = "UNIVERSAL COMPRESSOR";
+            textColor = juce::Colour(0xFFE0E0E0);
             break;
     }
     
@@ -717,24 +741,24 @@ void EnhancedCompressorEditor::resized()
         
         auto outputArea = topKnobs.removeFromLeft(knobWidth);
         if (fetPanel.outputLabel)
-            fetPanel.outputLabel->setBounds(outputArea.removeFromTop(25));
+            fetPanel.outputLabel->setBounds(outputArea.removeFromTop(25 * scaleFactor));
         if (fetPanel.outputKnob)
-            fetPanel.outputKnob->setBounds(outputArea.reduced(15, 0));
-        
+            fetPanel.outputKnob->setBounds(outputArea.reduced(15 * scaleFactor, 0));
+
         auto attackArea = topKnobs.removeFromLeft(knobWidth);
         if (fetPanel.attackLabel)
-            fetPanel.attackLabel->setBounds(attackArea.removeFromTop(25));
+            fetPanel.attackLabel->setBounds(attackArea.removeFromTop(25 * scaleFactor));
         if (fetPanel.attackKnob)
-            fetPanel.attackKnob->setBounds(attackArea.reduced(15, 0));
-        
+            fetPanel.attackKnob->setBounds(attackArea.reduced(15 * scaleFactor, 0));
+
         auto releaseArea = topKnobs;
         if (fetPanel.releaseLabel)
-            fetPanel.releaseLabel->setBounds(releaseArea.removeFromTop(25));
+            fetPanel.releaseLabel->setBounds(releaseArea.removeFromTop(25 * scaleFactor));
         if (fetPanel.releaseKnob)
-            fetPanel.releaseKnob->setBounds(releaseArea.reduced(15, 0));
-        
+            fetPanel.releaseKnob->setBounds(releaseArea.reduced(15 * scaleFactor, 0));
+
         if (fetPanel.ratioButtons)
-            fetPanel.ratioButtons->setBounds(fetBounds.removeFromTop(65).reduced(30, 5));  // Larger buttons, less reduction
+            fetPanel.ratioButtons->setBounds(fetBounds.removeFromTop(90 * scaleFactor).reduced(15 * scaleFactor, 2 * scaleFactor));  // Much larger buttons, minimal reduction
     }
     
     // Layout VCA panel
@@ -744,36 +768,36 @@ void EnhancedCompressorEditor::resized()
         
         // Layout within the container's local bounds - 4 knobs in ONE row (no release for DBX 160)
         auto vcaBounds = vcaPanel.container->getLocalBounds();
-        
+
         // Define consistent knob dimensions for ALL knobs in single row
-        const int knobRowHeight = 120;
-        const int labelHeight = 25;
-        const int knobReduction = 10;  // Less reduction for more space
-        
+        const int knobRowHeight = 120 * scaleFactor;
+        const int labelHeight = 25 * scaleFactor;
+        const int knobReduction = 10 * scaleFactor;  // Less reduction for more space
+
         // Center the row vertically
         auto knobRow = vcaBounds.withHeight(knobRowHeight);
         knobRow.setY((vcaBounds.getHeight() - knobRowHeight) / 2);
-        
+
         // Calculate knob width based on 4 knobs in one row (no release)
         auto knobWidth = knobRow.getWidth() / 4;
-        
+
         // Layout all 4 knobs in order: Threshold, Ratio, Attack, Output
-        
+
         // Threshold knob
         auto thresholdBounds = knobRow.removeFromLeft(knobWidth);
         vcaPanel.thresholdLabel->setBounds(thresholdBounds.removeFromTop(labelHeight));
         vcaPanel.thresholdKnob->setBounds(thresholdBounds.reduced(knobReduction, 0));
-        
+
         // Ratio knob
         auto ratioBounds = knobRow.removeFromLeft(knobWidth);
         vcaPanel.ratioLabel->setBounds(ratioBounds.removeFromTop(labelHeight));
         vcaPanel.ratioKnob->setBounds(ratioBounds.reduced(knobReduction, 0));
-        
+
         // Attack knob
         auto attackBounds = knobRow.removeFromLeft(knobWidth);
         vcaPanel.attackLabel->setBounds(attackBounds.removeFromTop(labelHeight));
         vcaPanel.attackKnob->setBounds(attackBounds.reduced(knobReduction, 0));
-        
+
         // Output knob
         auto outputBounds = knobRow;  // Use remaining space
         vcaPanel.outputLabel->setBounds(outputBounds.removeFromTop(labelHeight));
@@ -786,39 +810,46 @@ void EnhancedCompressorEditor::resized()
     if (busPanel.container && busPanel.container->isVisible())
     {
         busPanel.container->setBounds(controlArea);
-        
+
         // Layout within the container's local bounds
         auto busBounds = busPanel.container->getLocalBounds();
-        
-        // Compact layout to fit everything in 700x500
-        auto busTopRow = busBounds.removeFromTop(100);  // Reduced from 120
-        auto bottomRow = busBounds.removeFromTop(80);   // Reduced from 100
-        
+
+        // Compact layout to fit everything in 700x500 with proper scaling
+        auto busTopRow = busBounds.removeFromTop(100 * scaleFactor);
+        auto bottomRow = busBounds.removeFromTop(80 * scaleFactor);
+
         auto controlWidth = busTopRow.getWidth() / 3;
-        
+
         auto thresholdArea = busTopRow.removeFromLeft(controlWidth);
-        busPanel.thresholdLabel->setBounds(thresholdArea.removeFromTop(20));  // Smaller labels
-        busPanel.thresholdKnob->setBounds(thresholdArea.reduced(15, 0));
-        
+        busPanel.thresholdLabel->setBounds(thresholdArea.removeFromTop(20 * scaleFactor));
+        busPanel.thresholdKnob->setBounds(thresholdArea.reduced(15 * scaleFactor, 0));
+
         auto ratioArea = busTopRow.removeFromLeft(controlWidth);
-        busPanel.ratioLabel->setBounds(ratioArea.removeFromTop(20));
-        busPanel.ratioKnob->setBounds(ratioArea.reduced(15, 0));
-        
+        busPanel.ratioLabel->setBounds(ratioArea.removeFromTop(20 * scaleFactor));
+        busPanel.ratioKnob->setBounds(ratioArea.reduced(15 * scaleFactor, 0));
+
         auto makeupArea = busTopRow;
-        busPanel.makeupLabel->setBounds(makeupArea.removeFromTop(20));
-        busPanel.makeupKnob->setBounds(makeupArea.reduced(15, 0));
-        
+        busPanel.makeupLabel->setBounds(makeupArea.removeFromTop(20 * scaleFactor));
+        busPanel.makeupKnob->setBounds(makeupArea.reduced(15 * scaleFactor, 0));
+
         controlWidth = bottomRow.getWidth() / 2;
-        
+
         auto attackArea = bottomRow.removeFromLeft(controlWidth);
-        busPanel.attackLabel->setBounds(attackArea.removeFromTop(20));  // Smaller labels
-        busPanel.attackSelector->setBounds(attackArea.reduced(40, 0).removeFromTop(25));  // Slightly smaller
-        
+        busPanel.attackLabel->setBounds(attackArea.removeFromTop(20 * scaleFactor));
+        busPanel.attackSelector->setBounds(attackArea.reduced(40 * scaleFactor, 0).removeFromTop(25 * scaleFactor));
+
         auto releaseArea = bottomRow;
-        busPanel.releaseLabel->setBounds(releaseArea.removeFromTop(20));
-        busPanel.releaseSelector->setBounds(releaseArea.reduced(40, 0).removeFromTop(25));
-        
+        busPanel.releaseLabel->setBounds(releaseArea.removeFromTop(20 * scaleFactor));
+        busPanel.releaseSelector->setBounds(releaseArea.reduced(40 * scaleFactor, 0).removeFromTop(25 * scaleFactor));
     }
+
+    // Layout Digital panel
+    if (digitalPanel && digitalPanel->isVisible())
+    {
+        digitalPanel->setBounds(controlArea);
+    }
+
+    // Multiband panel removed
 }
 
 void EnhancedCompressorEditor::timerCallback()
@@ -886,6 +917,8 @@ void EnhancedCompressorEditor::parameterChanged(const juce::String& parameterID,
         if (modeParam)
         {
             int newMode = static_cast<int>(*modeParam);
+            // Update combo box to match (add 1 for 1-based ID)
+            modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
             updateMode(newMode);
         }
     }

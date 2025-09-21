@@ -17,6 +17,7 @@ VintageVerbAudioProcessor::VintageVerbAudioProcessor()
        parameters (*this, nullptr, juce::Identifier ("VintageVerb"), createParameterLayout())
 {
     // Create DSP components
+    simpleReverb = std::make_unique<SimpleReverbEngine>();
     engineA = std::make_unique<ReverbEngine>();
     engineB = std::make_unique<ReverbEngine>();
     vintageProcessor = std::make_unique<VintageColoration>();
@@ -42,6 +43,9 @@ VintageVerbAudioProcessor::VintageVerbAudioProcessor()
     colorModeParam = parameters.getRawParameterValue("colorMode");
     routingModeParam = parameters.getRawParameterValue("routingMode");
     engineMixParam = parameters.getRawParameterValue("engineMix");
+    crossFeedParam = parameters.getRawParameterValue("crossFeed");
+    seriesBlendParam = parameters.getRawParameterValue("seriesBlend");
+    vintageIntensityParam = parameters.getRawParameterValue("vintageIntensity");
     hpfFreqParam = parameters.getRawParameterValue("hpfFreq");
     lpfFreqParam = parameters.getRawParameterValue("lpfFreq");
     tiltGainParam = parameters.getRawParameterValue("tiltGain");
@@ -127,6 +131,7 @@ void VintageVerbAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     currentBlockSize = samplesPerBlock;
 
     // Prepare DSP components
+    simpleReverb->prepare(sampleRate, samplesPerBlock);
     engineA->prepare(sampleRate, samplesPerBlock);
     engineB->prepare(sampleRate, samplesPerBlock);
     vintageProcessor->prepare(sampleRate, samplesPerBlock);
@@ -250,11 +255,21 @@ void VintageVerbAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         dryBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
 
-    // Process through dual reverb engines
-    router->process(buffer, numSamples);
+    // Use simple reverb instead of the complex router for now
+    // Update simple reverb parameters
+    simpleReverb->setRoomSize(sizeParam->load());
+    simpleReverb->setDamping(dampingParam->load());
+    simpleReverb->setWidth(widthParam->load());
+    simpleReverb->setMix(1.0f); // We'll do our own mix later
 
-    // Apply vintage coloration
-    vintageProcessor->process(buffer, numSamples);
+    // Process through simple reverb
+    simpleReverb->process(buffer);
+
+    // Skip the complex routing for now
+    // router->process(buffer, numSamples);
+
+    // Apply vintage coloration (optional)
+    // vintageProcessor->process(buffer, numSamples);
 
     // Apply low-pass filter
     lowpassFilter.setCutoffFrequency(lpfFreqParam->load());
@@ -374,15 +389,15 @@ void VintageVerbAudioProcessor::updateReverbParameters()
     engineB->setSpread(spreadParam->load());
 
     // Update vintage processor
-    vintageProcessor->setIntensity(0.5f);  // Can be made a parameter
-    vintageProcessor->setNoiseAmount(0.1f);
-    vintageProcessor->setArtifactAmount(0.3f);
+    vintageProcessor->setIntensity(vintageIntensityParam->load());
+    vintageProcessor->setNoiseAmount(vintageIntensityParam->load() * 0.2f);  // Scale noise with intensity
+    vintageProcessor->setArtifactAmount(vintageIntensityParam->load() * 0.6f);  // Scale artifacts with intensity
 
     // Update router
     router->setEngineMix(engineMixParam->load());
     router->setWidth(widthParam->load());
-    router->setCrossFeedAmount(0.3f);  // Can be made a parameter
-    router->setSeriesBlend(0.5f);
+    router->setCrossFeedAmount(crossFeedParam->load());
+    router->setSeriesBlend(seriesBlendParam->load());
 }
 
 void VintageVerbAudioProcessor::updateFilterParameters()
@@ -393,8 +408,11 @@ void VintageVerbAudioProcessor::updateFilterParameters()
     float highFreq = highFreqParam->load();
     float highMul = highMulParam->load();
 
-    // These would typically control shelving EQs
-    // For now they're placeholders for when full EQ is implemented
+    // Apply bass/treble multipliers to both engines
+    engineA->setBassMultiplier(bassFreq, bassMul);
+    engineA->setTrebleMultiplier(highFreq, highMul);
+    engineB->setBassMultiplier(bassFreq, bassMul);
+    engineB->setTrebleMultiplier(highFreq, highMul);
 }
 
 float VintageVerbAudioProcessor::getInputLevel(int channel) const
@@ -486,6 +504,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout VintageVerbAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "engineMix", "Engine Mix", 0.0f, 1.0f, 0.5f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "crossFeed", "Cross Feed", 0.0f, 1.0f, 0.3f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "seriesBlend", "Series Blend", 0.0f, 1.0f, 0.5f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "vintageIntensity", "Vintage", 0.0f, 1.0f, 0.5f));
 
     // Filter controls
     params.push_back(std::make_unique<juce::AudioParameterFloat>(

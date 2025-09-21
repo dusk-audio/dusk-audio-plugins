@@ -46,6 +46,8 @@ target_sources(VintageVerb
         Source/PluginEditor.h
 
         # DSP Components
+        DSP/SimpleReverbEngine.cpp
+        DSP/SimpleReverbEngine.h
         DSP/ReverbEngine.cpp
         DSP/ReverbEngine.h
         DSP/VintageColoration.cpp

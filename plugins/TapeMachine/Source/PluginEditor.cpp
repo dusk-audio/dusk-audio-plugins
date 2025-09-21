@@ -175,7 +175,7 @@ VUMeter::~VUMeter()
 void VUMeter::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    drawStereoVUMeter(g, bounds);
+    drawSingleVUMeter(g, bounds);
 }
 
 void VUMeter::timerCallback()
@@ -235,7 +235,7 @@ void VUMeter::setPeakLevels(float leftPeak, float rightPeak)
     peakHoldTimeR = 2.0f;
 }
 
-void VUMeter::drawStereoVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds)
+void VUMeter::drawSingleVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds)
 {
     // Draw vintage VU meter background
     g.setColour(juce::Colour(0xff1a1a1a));
@@ -402,9 +402,8 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     leftReel.setSpeed(1.5f);
     rightReel.setSpeed(1.5f);
 
-    // Add VU meters
-    addAndMakeVisible(inputMeter);
-    addAndMakeVisible(outputMeter);
+    // Add single VU meter at top
+    addAndMakeVisible(mainVUMeter);
 
     // Start timer for updating meters
     startTimerHz(30);
@@ -507,18 +506,10 @@ void TapeMachineAudioProcessorEditor::resized()
     auto buttonArea = knobRow2;
     noiseEnabledButton.setBounds(buttonArea.getCentreX() - 40, buttonArea.getCentreY() - 15, 80, 30);
 
-    // Position VU meters at the bottom
+    // Position single VU meter at the top
     area.removeFromTop(10);
-    auto meterArea = area.removeFromTop(100);
-    meterArea.reduce(20, 10);
-
-    auto meterWidth = meterArea.getWidth() / 2;
-
-    // Input meter on the left
-    inputMeter.setBounds(meterArea.removeFromLeft(meterWidth).reduced(20, 5));
-
-    // Output meter on the right
-    outputMeter.setBounds(meterArea.reduced(20, 5));
+    auto meterArea = area.removeFromTop(80);  // Single meter at top
+    mainVUMeter.setBounds(meterArea.reduced(150, 5));  // Center it with good margins
 }
 
 void TapeMachineAudioProcessorEditor::timerCallback()
@@ -529,7 +520,6 @@ void TapeMachineAudioProcessorEditor::timerCallback()
     float outputL = audioProcessor.getOutputLevelL();
     float outputR = audioProcessor.getOutputLevelR();
 
-    // Update meter levels with actual audio levels
-    inputMeter.setLevels(inputL, inputR);
-    outputMeter.setLevels(outputL, outputR);
+    // Update single meter with output levels
+    mainVUMeter.setLevels(outputL, outputR);
 }
