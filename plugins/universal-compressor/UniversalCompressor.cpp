@@ -1353,8 +1353,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     
     // Mode selection
     layout.add(std::make_unique<juce::AudioParameterChoice>(
-        "mode", "Mode", 
-        juce::StringArray{"Opto", "FET", "VCA", "Bus"}, 2)); // Default to VCA
+        "mode", "Mode",
+        juce::StringArray{"Opto", "FET", "VCA", "Bus"}, 0)); // Default to Opto
     
     // Global parameters
     // Oversample removed - saturation always runs at 2x internally now
@@ -1451,8 +1451,38 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         "bus_release", "Release", 
         juce::StringArray{"0.1s", "0.3s", "0.6s", "1.2s", "Auto"}, 1));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "bus_makeup", "Makeup", 
+        "bus_makeup", "Makeup",
         juce::NormalisableRange<float>(0.0f, 20.0f, 0.1f), 0.0f));
+
+    // Digital (Modern) Compressor parameters
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_threshold", "Threshold",
+        juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -20.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_ratio", "Ratio",
+        juce::NormalisableRange<float>(1.0f, 100.0f, 0.1f), 4.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_knee", "Knee",
+        juce::NormalisableRange<float>(0.0f, 20.0f, 0.1f), 2.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_attack", "Attack",
+        juce::NormalisableRange<float>(0.01f, 500.0f, 0.01f), 1.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_release", "Release",
+        juce::NormalisableRange<float>(1.0f, 5000.0f, 1.0f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_lookahead", "Lookahead",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f), 2.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_mix", "Mix",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_output", "Output",
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "digital_adaptive", "Adaptive Release", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "digital_sidechain_listen", "SC Listen", false));
     }
     catch (const std::exception& e) {
         DBG("Failed to create parameter layout: " << e.what());

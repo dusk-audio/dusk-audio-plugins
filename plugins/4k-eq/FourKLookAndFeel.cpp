@@ -160,7 +160,7 @@ void FourKLookAndFeel::drawValueReadout(juce::Graphics& g, juce::Slider& slider,
 
     // Format and display value in white with slightly smaller text to fit better
     g.setColour(juce::Colour(0xffffffff));  // White text
-    g.setFont(juce::Font(juce::FontOptions(12.0f)));  // Reduced from 14.0f
+    g.setFont(juce::Font(juce::FontOptions(16.0f)));  // Increased for better visibility
 
     juce::String text;
     auto value = slider.getValue();
