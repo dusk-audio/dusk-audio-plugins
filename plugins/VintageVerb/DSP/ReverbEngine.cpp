@@ -8,6 +8,7 @@
 
 #include "ReverbEngine.h"
 #include <cmath>
+#include <cstring>
 
 ReverbEngine::ReverbEngine()
 {
@@ -25,6 +26,7 @@ void ReverbEngine::prepare(double sr, int maxBlock)
         int scaledDelay = static_cast<int>(primeDelays[i] * (sampleRate / 44100.0));
         delayLines[i].prepare(MAX_DELAY_SAMPLES);
         delayLines[i].setDelayTime(scaledDelay);
+        delayLines[i].feedback = 0.85f;  // Initialize with reasonable feedback
     }
 
     // Prepare diffusion allpass filters
@@ -35,9 +37,11 @@ void ReverbEngine::prepare(double sr, int maxBlock)
 
         inputDiffusers[i].prepare(2000);
         inputDiffusers[i].setDelayTime(diffuserDelay);
+        inputDiffusers[i].feedback = 0.5f;  // Initialize allpass feedback
 
         outputDiffusers[i].prepare(2000);
         outputDiffusers[i].setDelayTime(diffuserDelay + 50);
+        outputDiffusers[i].feedback = 0.5f;  // Initialize allpass feedback
     }
 
     // Prepare early reflections
@@ -57,6 +61,11 @@ void ReverbEngine::prepare(double sr, int maxBlock)
     {
         filter.setSampleRate(sampleRate);
     }
+
+    // Initialize parameters to ensure proper feedback
+    setSize(size);
+    setDiffusion(diffusion);
+    setDamping(damping);
 
     reset();
 }
@@ -88,22 +97,33 @@ void ReverbEngine::reset()
 
 void ReverbEngine::process(juce::AudioBuffer<float>& buffer, int numSamples)
 {
-    auto* leftIn = buffer.getReadPointer(0);
-    auto* rightIn = buffer.getReadPointer(1);
+    // Create temporary buffers to avoid overwriting input while processing
+    std::vector<float> tempLeft(numSamples);
+    std::vector<float> tempRight(numSamples);
+
+    // Copy input data to temporary buffers
+    std::memcpy(tempLeft.data(), buffer.getReadPointer(0), numSamples * sizeof(float));
+    std::memcpy(tempRight.data(), buffer.getReadPointer(1), numSamples * sizeof(float));
+
     auto* leftOut = buffer.getWritePointer(0);
     auto* rightOut = buffer.getWritePointer(1);
 
-    processStereo(const_cast<float*>(leftIn), const_cast<float*>(rightIn),
-                  leftOut, rightOut, numSamples);
+    processStereo(tempLeft.data(), tempRight.data(), leftOut, rightOut, numSamples);
 }
 
 void ReverbEngine::processStereo(float* leftIn, float* rightIn,
                                  float* leftOut, float* rightOut, int numSamples)
 {
+    // Debug: Check if we have input
+    static int debugCounter = 0;
+    static float maxInput = 0.0f;
+    static float maxOutput = 0.0f;
+
     for (int sample = 0; sample < numSamples; ++sample)
     {
         // Mix input to mono for processing
         float input = (leftIn[sample] + rightIn[sample]) * 0.5f;
+        maxInput = juce::jmax(maxInput, std::abs(input));
 
         // Process early reflections
         auto [earlyL, earlyR] = earlyReflections.process(input);
@@ -133,6 +153,9 @@ void ReverbEngine::processStereo(float* leftIn, float* rightIn,
         leftOut[sample] = earlyL * earlyAmount + fdnOutL * lateAmount;
         rightOut[sample] = earlyR * earlyAmount + fdnOutR * lateAmount;
 
+        maxOutput = juce::jmax(maxOutput, std::abs(leftOut[sample]));
+        maxOutput = juce::jmax(maxOutput, std::abs(rightOut[sample]));
+
         // Apply stereo width
         if (spread < 1.0f)
         {
@@ -143,16 +166,36 @@ void ReverbEngine::processStereo(float* leftIn, float* rightIn,
             rightOut[sample] = mid - side;
         }
     }
+
+    // Debug output every 100 blocks
+    if (++debugCounter % 100 == 0)
+    {
+        DBG("ReverbEngine - Input max: " << maxInput << ", Output max: " << maxOutput);
+        DBG("  Size: " << size << ", Feedback example: " << delayLines[0].feedback);
+        DBG("  Shape: " << shape << ", Damping: " << damping);
+        maxInput = 0.0f;
+        maxOutput = 0.0f;
+    }
 }
 
 float ReverbEngine::processFDN(float input, int channel)
 {
     std::array<float, NUM_DELAY_LINES> delayOutputs;
 
-    // Read from delay lines
+    // Read from delay lines with modulation
     for (int i = 0; i < NUM_DELAY_LINES; ++i)
     {
-        delayOutputs[i] = delayLines[i].buffer[delayLines[i].writePos];
+        // Apply modulation to read position (not to size!)
+        float modAmount = modulationLFOs[i % 4].process();
+        int modSamples = static_cast<int>(modAmount * 5.0f); // Small modulation depth
+
+        // Calculate modulated read position for proper delay
+        int effectiveDelay = delayLines[i].size + modSamples;
+        effectiveDelay = juce::jlimit(1, static_cast<int>(delayLines[i].buffer.size()) - 1, effectiveDelay);
+
+        int readPos = (delayLines[i].writePos - effectiveDelay + delayLines[i].buffer.size())
+                      % delayLines[i].buffer.size();
+        delayOutputs[i] = delayLines[i].buffer[readPos];
     }
 
     // Apply Hadamard matrix mixing
@@ -167,13 +210,9 @@ float ReverbEngine::processFDN(float input, int channel)
         mixed[i] *= 0.25f;  // Normalize
     }
 
-    // Write to delay lines with feedback, damping, and modulation
+    // Write to delay lines with feedback and damping
     for (int i = 0; i < NUM_DELAY_LINES; ++i)
     {
-        // Apply modulation to delay time
-        float modAmount = modulationLFOs[i % 4].process();
-        delayLines[i].modulate(modAmount);
-
         // Apply damping
         float damped = dampingFilters[i].process(mixed[i]);
 
@@ -185,7 +224,7 @@ float ReverbEngine::processFDN(float input, int channel)
         delayLines[i].lastOut = toWrite;
 
         // Advance write position
-        delayLines[i].writePos = (delayLines[i].writePos + 1) % delayLines[i].size;
+        delayLines[i].writePos = (delayLines[i].writePos + 1) % delayLines[i].buffer.size();
     }
 
     // Sum outputs with decorrelation for stereo
@@ -233,11 +272,19 @@ void ReverbEngine::setSize(float newSize)
     float targetRT60 = 0.5f + size * 9.5f;  // 0.5 to 10 seconds
     currentDecayTime = targetRT60;
 
+    // Calculate feedback for desired RT60
+    // For RT60: after targetRT60 seconds, amplitude should drop by 60dB (factor of 0.001)
+    // feedback^n = 0.001, where n = number of feedback iterations in targetRT60 seconds
     for (auto& line : delayLines)
     {
-        // RT60 = -60dB / (feedback_per_second * 20 * log10(feedback))
-        float feedback = std::pow(0.001f, 1.0f / (targetRT60 * sampleRate / line.size));
-        line.feedback = juce::jlimit(0.0f, 0.99f, feedback);
+        // Number of times the delay recirculates in targetRT60 seconds
+        float recirculations = (targetRT60 * sampleRate) / static_cast<float>(line.size);
+
+        // Calculate required feedback per recirculation
+        float feedback = std::pow(0.001f, 1.0f / recirculations);
+
+        // Ensure reasonable feedback range
+        line.feedback = juce::jlimit(0.5f, 0.98f, feedback);
     }
 }
 
@@ -348,6 +395,34 @@ float ReverbEngine::crossfade(float a, float b, float mix)
     return a * (1.0f - mix) + b * mix;
 }
 
+void ReverbEngine::setBassMultiplier(float freq, float mul)
+{
+    bassFreq = juce::jlimit(20.0f, 500.0f, freq);
+    bassMul = juce::jlimit(0.1f, 4.0f, mul);
+
+    // Update damping filters to respond to bass multiplier
+    float dampingAdjust = 1.0f / bassMul;  // Less damping for more bass
+    for (auto& filter : dampingFilters)
+    {
+        // Adjust the damping coefficient based on bass multiplier
+        filter.setCoefficient(0.5f * dampingAdjust + damping * 0.4f);
+    }
+}
+
+void ReverbEngine::setTrebleMultiplier(float freq, float mul)
+{
+    trebleFreq = juce::jlimit(1000.0f, 20000.0f, freq);
+    trebleMul = juce::jlimit(0.1f, 4.0f, mul);
+
+    // Adjust high frequency response
+    float trebleAdjust = trebleMul;
+    for (int i = 0; i < NUM_DELAY_LINES; ++i)
+    {
+        // Modify damping to affect treble response
+        dampingFilters[i].setCoefficient(0.5f + (1.0f - trebleAdjust * 0.25f) * damping * 0.4f);
+    }
+}
+
 void ReverbEngine::configureForMode(int mode)
 {
     // Configure engine for specific reverb modes
@@ -400,27 +475,21 @@ float ReverbEngine::DelayLine::process(float input)
 {
     float output = buffer[writePos];
     buffer[writePos] = input;
-    writePos = (writePos + 1) % size;
+    writePos = (writePos + 1) % buffer.size();
     return output;
 }
 
 void ReverbEngine::DelayLine::setDelayTime(int samples)
 {
     size = juce::jlimit(1, static_cast<int>(buffer.size()) - 1, samples);
-    writePos = writePos % size;
+    writePos = writePos % buffer.size();
 }
 
 void ReverbEngine::DelayLine::modulate(float modAmount)
 {
-    // Simple pitch modulation by varying read position
-    // In a production implementation, this would use interpolation
-    int modSamples = static_cast<int>(modAmount * size);
-    int newSize = size + modSamples;
-    newSize = juce::jlimit(1, static_cast<int>(buffer.size()) - 1, newSize);
-
-    // Temporarily adjust size for this sample
-    // A more sophisticated implementation would use fractional delays
-    size = newSize;
+    // This function is no longer used - modulation is handled directly in processFDN
+    // Kept for compatibility but does nothing
+    (void)modAmount;
 }
 
 // AllpassFilter implementation
@@ -432,17 +501,19 @@ void ReverbEngine::AllpassFilter::prepare(int maxSize)
 
 float ReverbEngine::AllpassFilter::process(float input)
 {
-    float delayed = buffer[writePos];
+    // Calculate read position for proper delay
+    int readPos = (writePos - size + buffer.size()) % buffer.size();
+    float delayed = buffer[readPos];
     float output = -input + delayed;
     buffer[writePos] = input + delayed * feedback;
-    writePos = (writePos + 1) % size;
+    writePos = (writePos + 1) % buffer.size();
     return output;
 }
 
 void ReverbEngine::AllpassFilter::setDelayTime(int samples)
 {
     size = juce::jlimit(1, static_cast<int>(buffer.size()) - 1, samples);
-    writePos = writePos % size;
+    writePos = writePos % buffer.size();
 }
 
 // EarlyReflections implementation

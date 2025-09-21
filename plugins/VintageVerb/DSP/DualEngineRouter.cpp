@@ -73,7 +73,11 @@ void DualEngineRouter::setEngines(ReverbEngine* a, ReverbEngine* b)
 
 void DualEngineRouter::process(juce::AudioBuffer<float>& buffer, int numSamples)
 {
-    if (!engineA || !engineB) return;
+    if (!engineA || !engineB)
+    {
+        DBG("DualEngineRouter: Engines not set!");
+        return;
+    }
 
     const int numChannels = buffer.getNumChannels();
     if (numChannels < 2) return;
@@ -174,6 +178,15 @@ void DualEngineRouter::processSeries(float* leftIn, float* rightIn,
 void DualEngineRouter::processParallel(float* leftIn, float* rightIn,
                                       float* leftOut, float* rightOut, int numSamples)
 {
+    // Debug input
+    static int debugCount = 0;
+    float maxIn = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        maxIn = juce::jmax(maxIn, std::abs(leftIn[i]));
+        maxIn = juce::jmax(maxIn, std::abs(rightIn[i]));
+    }
+
     // Process input through both engines in parallel
     bufferA.clear();
     bufferA.copyFrom(0, 0, leftIn, numSamples);
@@ -204,6 +217,20 @@ void DualEngineRouter::processParallel(float* leftIn, float* rightIn,
         // Apply gain compensation
         applyGainCompensation(leftOut[i], Parallel);
         applyGainCompensation(rightOut[i], Parallel);
+    }
+
+    // Debug output
+    float maxOut = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        maxOut = juce::jmax(maxOut, std::abs(leftOut[i]));
+        maxOut = juce::jmax(maxOut, std::abs(rightOut[i]));
+    }
+
+    if (++debugCount % 100 == 0)
+    {
+        DBG("Router Parallel - Input: " << maxIn << ", Output: " << maxOut);
+        DBG("  Engine mix: " << smoothEngineMix.getNextValue());
     }
 }
 

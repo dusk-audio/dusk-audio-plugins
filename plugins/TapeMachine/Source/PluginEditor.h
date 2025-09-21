@@ -62,7 +62,7 @@ private:
     float smoothedLevelR = 0.0f;
     const float smoothingFactor = 0.85f;
 
-    void drawStereoVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds);
+    void drawSingleVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds);
 };
 
 class TapeMachineAudioProcessorEditor : public juce::AudioProcessorEditor, public juce::Timer
@@ -107,8 +107,7 @@ private:
     ReelAnimation leftReel;
     ReelAnimation rightReel;
 
-    VUMeter inputMeter;   // Stereo input meter
-    VUMeter outputMeter;  // Stereo output meter
+    VUMeter mainVUMeter;  // Single stereo VU meter at top
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeMachineAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeSpeedAttachment;

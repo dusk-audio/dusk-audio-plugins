@@ -383,14 +383,14 @@ void VintageVerbAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0x08ffffff));
     g.fillRoundedRectangle (20, 270, 860, 240, 6);
 
-    // Section labels
-    g.setColour (juce::Colour (0xff606060));
-    g.setFont (10.0f);
-    g.drawText ("MAIN", 30, 60, 60, 15, juce::Justification::left);
-    g.drawText ("MODULATION", 490, 60, 80, 15, juce::Justification::left);
-    g.drawText ("EQ", 690, 60, 40, 15, juce::Justification::left);
-    g.drawText ("DAMPING", 30, 275, 60, 15, juce::Justification::left);
-    g.drawText ("SHAPE", 250, 275, 60, 15, juce::Justification::left);
+    // Section labels - adjusted positions and improved visibility
+    g.setColour (juce::Colour (0xff808080));
+    g.setFont (11.0f);
+    g.drawText ("MAIN", 20, 60, 60, 15, juce::Justification::left);
+    g.drawText ("MODULATION", 475, 60, 90, 15, juce::Justification::left);
+    g.drawText ("EQ", 675, 60, 40, 15, juce::Justification::left);
+    g.drawText ("DAMPING", 20, 275, 70, 15, juce::Justification::left);
+    g.drawText ("SHAPE", 245, 275, 60, 15, juce::Justification::left);
     g.drawText ("DIFFUSION", 470, 275, 80, 15, juce::Justification::left);
     g.drawText ("FILTERS", 690, 275, 60, 15, juce::Justification::left);
 }
@@ -400,30 +400,30 @@ void VintageVerbAudioProcessorEditor::resized()
     auto bounds = getLocalBounds();
     bounds.removeFromTop(45);  // Title area
 
-    const int knobSize = 65;
-    const int smallKnobSize = 55;
-    const int spacing = 75;
+    const int knobSize = 85;  // Increased from 65
+    const int smallKnobSize = 70;  // Increased from 55
+    const int spacing = 95;  // Increased from 75 to accommodate larger knobs
 
     // === TOP SECTION ===
-    // Main controls on left (Mix, Size, PreDelay)
+    // Main controls on left (Mix, Size, PreDelay) - adjusted spacing for larger knobs
     int topY = 85;
-    mixSlider.setBounds(35, topY, knobSize, knobSize);
-    sizeSlider.setBounds(35, topY + spacing, knobSize, knobSize);
-    predelaySlider.setBounds(115, topY, knobSize, knobSize);
-    attackSlider.setBounds(115, topY + spacing, knobSize, knobSize);
+    mixSlider.setBounds(25, topY, knobSize, knobSize);
+    sizeSlider.setBounds(25, topY + spacing, knobSize, knobSize);
+    predelaySlider.setBounds(125, topY, knobSize, knobSize);
+    attackSlider.setBounds(125, topY + spacing, knobSize, knobSize);
 
     // Central decay display
-    decayDisplay.setBounds(280, 65, 180, 180);
+    decayDisplay.setBounds(270, 65, 180, 180);
 
     // Modulation controls (Width, Mod)
-    widthSlider.setBounds(500, topY, knobSize, knobSize);
-    modulationSlider.setBounds(500, topY + spacing, knobSize, knobSize);
+    widthSlider.setBounds(480, topY, knobSize, knobSize);
+    modulationSlider.setBounds(480, topY + spacing, knobSize, knobSize);
 
-    // EQ controls (right side)
-    bassFreqSlider.setBounds(590, topY, smallKnobSize, smallKnobSize);
-    bassMulSlider.setBounds(655, topY, smallKnobSize, smallKnobSize);
-    highFreqSlider.setBounds(590, topY + spacing, smallKnobSize, smallKnobSize);
-    highMulSlider.setBounds(655, topY + spacing, smallKnobSize, smallKnobSize);
+    // EQ controls (right side) - adjusted for larger knobs
+    bassFreqSlider.setBounds(580, topY, smallKnobSize, smallKnobSize);
+    bassMulSlider.setBounds(660, topY, smallKnobSize, smallKnobSize);
+    highFreqSlider.setBounds(580, topY + spacing, smallKnobSize, smallKnobSize);
+    highMulSlider.setBounds(660, topY + spacing, smallKnobSize, smallKnobSize);
 
     // Tilt control
     tiltGainSlider.setBounds(730, topY + 30, 140, 45);
@@ -431,21 +431,21 @@ void VintageVerbAudioProcessorEditor::resized()
     // === BOTTOM SECTION ===
     int bottomY = 300;
 
-    // Damping section
-    dampingSlider.setBounds(35, bottomY, knobSize, knobSize);
-    densitySlider.setBounds(115, bottomY, knobSize, knobSize);
+    // Damping section - adjusted spacing for larger knobs
+    dampingSlider.setBounds(25, bottomY, knobSize, knobSize);
+    densitySlider.setBounds(125, bottomY, knobSize, knobSize);
 
     // Shape section
-    shapeSlider.setBounds(265, bottomY, knobSize, knobSize);
-    spreadSlider.setBounds(345, bottomY, knobSize, knobSize);
+    shapeSlider.setBounds(250, bottomY, knobSize, knobSize);
+    spreadSlider.setBounds(350, bottomY, knobSize, knobSize);
 
     // Diffusion section
-    diffusionSlider.setBounds(485, bottomY, knobSize, knobSize);
-    engineMixSlider.setBounds(565, bottomY + 10, 100, 45);
+    diffusionSlider.setBounds(475, bottomY, knobSize, knobSize);
+    engineMixSlider.setBounds(575, bottomY + 15, 100, 45);
 
-    // Filter section
-    hpfFreqSlider.setBounds(700, bottomY, smallKnobSize, smallKnobSize);
-    lpfFreqSlider.setBounds(765, bottomY, smallKnobSize, smallKnobSize);
+    // Filter section - adjusted for larger knobs
+    hpfFreqSlider.setBounds(695, bottomY, smallKnobSize, smallKnobSize);
+    lpfFreqSlider.setBounds(775, bottomY, smallKnobSize, smallKnobSize);
 
     // Advanced settings row
     int advancedY = 390;
@@ -453,9 +453,9 @@ void VintageVerbAudioProcessorEditor::resized()
     colorModeSelector.setBounds(230, advancedY, 120, 25);
     routingModeSelector.setBounds(365, advancedY, 120, 25);
 
-    // Input/Output gains
-    inputGainSlider.setBounds(520, advancedY - 10, 55, 55);
-    outputGainSlider.setBounds(590, advancedY - 10, 55, 55);
+    // Input/Output gains - larger knobs
+    inputGainSlider.setBounds(510, advancedY - 15, 65, 65);
+    outputGainSlider.setBounds(585, advancedY - 15, 65, 65);
 
     // Meters
     inputMeterL.setBounds(660, advancedY - 5, 20, 60);
@@ -506,7 +506,7 @@ void VintageVerbAudioProcessorEditor::setupSlider (juce::Slider& slider, juce::L
                                                   juce::Slider::SliderStyle style)
 {
     slider.setSliderStyle (style);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 65, 18);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 80, 20);  // Increased text box size
     slider.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffd4d4d4));
     slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0xff1a1a1a));
     slider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0xff3a3a3a));
@@ -514,8 +514,8 @@ void VintageVerbAudioProcessorEditor::setupSlider (juce::Slider& slider, juce::L
 
     label.setText (text, juce::dontSendNotification);
     label.setJustificationType (juce::Justification::centred);
-    label.setColour (juce::Label::textColourId, juce::Colour (0xff909090));
-    label.setFont (juce::Font (9.0f));
+    label.setColour (juce::Label::textColourId, juce::Colour (0xffb0b0b0));  // Slightly brighter
+    label.setFont (juce::Font (11.0f));  // Increased from 9.0f for better readability
     label.attachToComponent (&slider, false);
     addAndMakeVisible (label);
 }
