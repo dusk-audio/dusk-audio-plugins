@@ -36,17 +36,17 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - Mix control for parallel compression
   - Professional metering
 
-### 4. **VintageVerb**
-- **Location**: `plugins/VintageVerb/`
-- **Description**: Classic digital reverb emulator (1970s-1980s style)
+### 4. **Studio 480**
+- **Location**: `plugins/Studio480/`
+- **Description**: Classic digital reverb processor inspired by legendary hardware
 - **Features**:
-  - 22 reverb modes (halls, rooms, plates, chambers, etc.)
-  - Dual-engine architecture (modern + vintage)
-  - 3 color modes (Clean, Vintage, Retro)
-  - FDN (Feedback Delay Network) reverb algorithm
-  - Modulation and diffusion controls
-  - 100+ factory presets
-  - Professional UI with spectrum analyzer
+  - 5 reverb algorithms (Hall, Room, Plate, Random, Twin Delay)
+  - Size and decay controls for space modeling
+  - Damping for frequency-dependent decay
+  - Predelay up to 200ms
+  - Diffusion control for density
+  - Stereo width adjustment
+  - Professional dark-themed UI
 
 ### 5. **Harmonic Generator**
 - **Location**: `plugins/harmonic-generator/`
@@ -84,7 +84,7 @@ cmake --build . -j8
 cmake --build . --target TapeMachine_All
 cmake --build . --target FourKEQ_All
 cmake --build . --target UniversalCompressor_All
-cmake --build . --target VintageVerb_All
+cmake --build . --target Studio480_All
 cmake --build . --target HarmonicGeneratorPlugin_All
 ```
 
@@ -114,7 +114,7 @@ export CXX="ccache g++"
 1. **Fixed 4K EQ knob colors**: Knobs now properly display SSL-style colors (red, yellow, blue, green)
 2. **Updated company name**: All plugins now use "Luna Co. Audio" consistently
 3. **Fixed TapeMachine VU meters**: Reduced from 4 meters to 2 stereo meters with dual-needle display
-4. **Fixed VintageVerb UI**: Improved layout with better spacing and organization
+4. **Created Studio 480 reverb**: Clean implementation of classic digital reverb processor
 5. **Created Harmonic Generator UI**: Complete analog-style interface with spectrum display
 6. **Fixed compilation issues**: Resolved all VST3 module path and parameter ID conflicts
 

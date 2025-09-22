@@ -18,21 +18,21 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JuceDefaults.cmake)
 
 # Add JUCE as a subdirectory
 # Option 1: Use system JUCE installation
-# add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+# add_subdirectory(/home/marc/Projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # Option 2: Use JUCE as git submodule (recommended)
 # Run: git submodule add https://github.com/juce-framework/JUCE.git external/JUCE
 # add_subdirectory(external/JUCE)
 
 # For now, using system installation
-add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+add_subdirectory(/home/marc/Projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # Option to build all plugins or specific ones
 option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_UNIVERSAL_COMPRESSOR "Build Universal Compressor plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" ON)
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)  # Fixed compilation errors
-option(BUILD_VINTAGE_VERB "Build VintageVerb plugin" ON)
+option(BUILD_STUDIO_REVERB "Build Studio Reverb plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -51,6 +51,6 @@ if(BUILD_TAPE_MACHINE)
     add_subdirectory(plugins/TapeMachine)
 endif()
 
-if(BUILD_VINTAGE_VERB)
-    add_subdirectory(plugins/VintageVerb)
+if(BUILD_STUDIO_REVERB)
+    add_subdirectory(plugins/StudioReverb)
 endif()
