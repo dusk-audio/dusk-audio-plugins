@@ -78,7 +78,7 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
     addParameter(dryLevel);
     addParameter(width);
 
-    reverb = std::make_unique<DragonflyReverb>();
+    reverb = std::make_unique<Freeverb3Reverb>();
 }
 
 StudioReverbAudioProcessor::~StudioReverbAudioProcessor()
@@ -200,30 +200,32 @@ void StudioReverbAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 void StudioReverbAudioProcessor::updateReverbParameters()
 {
     // Set reverb type
-    reverb->setReverbType(static_cast<DragonflyReverb::ReverbType>(reverbType->getIndex()));
+    reverb->setReverbType(static_cast<Freeverb3Reverb::ReverbType>(reverbType->getIndex()));
 
     // Set parameters
-    reverb->setSize(roomSize->get() / 100.0f);
-    reverb->setDamping(damping->get() / 100.0f);
+    reverb->setSize(roomSize->get() / 100.0f * 50.0f + 10.0f);  // Map 0-100% to 10-60 meters
     reverb->setPreDelay(preDelay->get());
-    reverb->setDecayTime(decayTime->get());
-    reverb->setDiffusion(diffusion->get() / 100.0f);
-    reverb->setDryWetMix(wetLevel->get() / 100.0f);  // Wet level controls the mix
+    reverb->setDecay(decayTime->get());
+    reverb->setDiffuse(diffusion->get() / 100.0f);
+    // Set levels matching Dragonfly's mixing model
+    float wet = wetLevel->get() / 100.0f;
+    float dry = dryLevel->get() / 100.0f;
+    reverb->setDryLevel(dry);
+    reverb->setEarlyLevel(wet * 0.4f);  // Early reflections level
+    reverb->setLateLevel(wet * 0.6f);   // Late reverb level
     reverb->setWidth(width->get() / 100.0f);
 
-    // Set early/late mix (50/50 for now, could be exposed as parameters)
-    reverb->setEarlyMix(0.5f);
-    reverb->setLateMix(0.5f);
-
-    // Set tone controls to reasonable defaults (could be exposed)
+    // Set tone controls matching Dragonfly defaults
     reverb->setLowCut(50.0f);
     reverb->setHighCut(15000.0f);
-    reverb->setLowMultiplier(1.0f);
-    reverb->setHighMultiplier(0.8f);
+    reverb->setLowCrossover(200.0f);
+    reverb->setHighCrossover(2000.0f);
+    reverb->setLowMult(1.0f);
+    reverb->setHighMult(1.0f - damping->get() / 100.0f * 0.5f);  // Map damping to high freq multiplier
 
     // Set modulation
-    reverb->setModulationRate(0.5f);
-    reverb->setModulationDepth(0.05f);
+    reverb->setModAmount(0.1f);
+    reverb->setModSpeed(0.5f);
 }
 
 //==============================================================================
