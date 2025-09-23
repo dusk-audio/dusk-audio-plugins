@@ -6,8 +6,7 @@
 class StudioReverbLookAndFeel;
 
 //==============================================================================
-class StudioReverbAudioProcessorEditor  : public juce::AudioProcessorEditor,
-                                          private juce::Timer
+class StudioReverbAudioProcessorEditor  : public juce::AudioProcessorEditor
 {
 public:
     StudioReverbAudioProcessorEditor (StudioReverbAudioProcessor&);
@@ -16,7 +15,6 @@ public:
     //==============================================================================
     void paint (juce::Graphics&) override;
     void resized() override;
-    void timerCallback() override;
 
 private:
     StudioReverbAudioProcessor& audioProcessor;
@@ -50,8 +48,19 @@ private:
     juce::Slider widthSlider;
     juce::Label widthLabel;
 
+    // APVTS attachments for thread-safe parameter binding
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> reverbTypeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> roomSizeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dampingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> preDelayAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> decayTimeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> diffusionAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wetLevelAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dryLevelAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> widthAttachment;
+
     void setupSlider(juce::Slider& slider, juce::Label& label,
-                    const juce::String& labelText, const juce::String& suffix,
+                    const juce::String& labelText,
                     int decimalPlaces = 1);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StudioReverbAudioProcessorEditor)
