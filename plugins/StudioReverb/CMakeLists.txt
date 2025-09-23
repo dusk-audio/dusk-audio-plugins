@@ -29,13 +29,36 @@ juce_add_plugin(StudioReverb
 
 juce_generate_juce_header(StudioReverb)
 
+# Plugin sources - only include necessary freeverb files
+set(FREEVERB_SOURCES
+    # Core classes used by all reverbs
+    Source/freeverb/revbase.cpp
+    Source/freeverb/slot.cpp
+    Source/freeverb/delay.cpp
+    Source/freeverb/delayline.cpp
+    Source/freeverb/comb.cpp
+    Source/freeverb/allpass.cpp
+    Source/freeverb/biquad.cpp
+    Source/freeverb/efilter.cpp
+    Source/freeverb/utils.cpp
+
+    # Specific reverb algorithms
+    Source/freeverb/earlyref.cpp
+    Source/freeverb/zrev.cpp
+    Source/freeverb/zrev2.cpp
+    Source/freeverb/progenitor.cpp
+    Source/freeverb/progenitor2.cpp
+    Source/freeverb/strev.cpp
+)
+
 target_sources(StudioReverb PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
-    Source/DSP/Freeverb3Reverb.cpp
-    Source/DSP/Freeverb3Reverb.h
+    Source/DSP/DragonflyReverb.cpp
+    Source/DSP/DragonflyReverb.h
+    ${FREEVERB_SOURCES}
 )
 
 target_compile_definitions(StudioReverb PUBLIC
@@ -46,6 +69,14 @@ target_compile_definitions(StudioReverb PUBLIC
     JUCE_REPORT_APP_USAGE=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
+    FV3_EARLYREF_PRESET_1=1
+    LIBFV3_FLOAT=1  # Use float precision for Freeverb3
+)
+
+# Include freeverb headers
+target_include_directories(StudioReverb PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/freeverb
 )
 
 target_link_libraries(StudioReverb PRIVATE

@@ -136,12 +136,10 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
 
     // Reverb Type Selector with improved styling
     addAndMakeVisible(reverbTypeCombo);
-    reverbTypeCombo.addItemList({"Early Reflections", "Room", "Plate", "Hall"}, 1);
-    reverbTypeCombo.setSelectedId(audioProcessor.reverbType->getIndex() + 1);
-    reverbTypeCombo.onChange = [this] {
-        audioProcessor.reverbType->setValueNotifyingHost((reverbTypeCombo.getSelectedId() - 1) / 3.0f);
-    };
+    reverbTypeCombo.addItemList({"Room", "Hall", "Plate", "Early Reflections"}, 1);
     reverbTypeCombo.setJustificationType(juce::Justification::centred);
+    reverbTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.apvts, "reverbType", reverbTypeCombo);
 
     addAndMakeVisible(reverbTypeLabel);
     reverbTypeLabel.setText("Reverb Type", juce::dontSendNotification);
@@ -150,64 +148,46 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     reverbTypeLabel.attachToComponent(&reverbTypeCombo, false);
 
     // Setup all sliders with consistent styling
-    setupSlider(roomSizeSlider, roomSizeLabel, "Room Size", "%", 1);
+    setupSlider(roomSizeSlider, roomSizeLabel, "Room Size", 1);
     roomSizeSlider.setRange(0.0, 100.0, 0.1);
-    roomSizeSlider.setValue(audioProcessor.roomSize->get());
-    roomSizeSlider.onValueChange = [this] {
-        audioProcessor.roomSize->setValueNotifyingHost(roomSizeSlider.getValue() / 100.0f);
-    };
+    roomSizeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "roomSize", roomSizeSlider);
 
-    setupSlider(dampingSlider, dampingLabel, "Damping", "%", 1);
+    setupSlider(dampingSlider, dampingLabel, "HF Damping", 1);
     dampingSlider.setRange(0.0, 100.0, 0.1);
-    dampingSlider.setValue(audioProcessor.damping->get());
-    dampingSlider.onValueChange = [this] {
-        audioProcessor.damping->setValueNotifyingHost(dampingSlider.getValue() / 100.0f);
-    };
+    dampingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "damping", dampingSlider);
 
-    setupSlider(preDelaySlider, preDelayLabel, "Pre-Delay", "ms", 1);
+    setupSlider(preDelaySlider, preDelayLabel, "Pre-Delay", 1);
     preDelaySlider.setRange(0.0, 200.0, 0.1);
-    preDelaySlider.setValue(audioProcessor.preDelay->get());
-    preDelaySlider.onValueChange = [this] {
-        audioProcessor.preDelay->setValueNotifyingHost(preDelaySlider.getValue() / 200.0f);
-    };
+    preDelayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "preDelay", preDelaySlider);
 
     // Decay Time with TWO decimal places
-    setupSlider(decayTimeSlider, decayTimeLabel, "Decay Time", "s", 2);
+    setupSlider(decayTimeSlider, decayTimeLabel, "Decay Time", 2);
     decayTimeSlider.setRange(0.1, 30.0, 0.01);  // Smaller step size for more precision
-    decayTimeSlider.setValue(audioProcessor.decayTime->get());
-    decayTimeSlider.onValueChange = [this] {
-        audioProcessor.decayTime->setValueNotifyingHost((decayTimeSlider.getValue() - 0.1f) / 29.9f);
-    };
+    decayTimeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "decayTime", decayTimeSlider);
 
-    setupSlider(diffusionSlider, diffusionLabel, "Diffusion", "%", 1);
+    setupSlider(diffusionSlider, diffusionLabel, "Diffusion", 1);
     diffusionSlider.setRange(0.0, 100.0, 0.1);
-    diffusionSlider.setValue(audioProcessor.diffusion->get());
-    diffusionSlider.onValueChange = [this] {
-        audioProcessor.diffusion->setValueNotifyingHost(diffusionSlider.getValue() / 100.0f);
-    };
+    diffusionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "diffusion", diffusionSlider);
 
-    setupSlider(wetLevelSlider, wetLevelLabel, "Wet", "%", 1);
+    setupSlider(wetLevelSlider, wetLevelLabel, "Wet", 1);
     wetLevelSlider.setRange(0.0, 100.0, 0.1);
-    wetLevelSlider.setValue(audioProcessor.wetLevel->get());
-    wetLevelSlider.onValueChange = [this] {
-        audioProcessor.wetLevel->setValueNotifyingHost(wetLevelSlider.getValue() / 100.0f);
-    };
+    wetLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "wetLevel", wetLevelSlider);
 
-    setupSlider(dryLevelSlider, dryLevelLabel, "Dry", "%", 1);
+    setupSlider(dryLevelSlider, dryLevelLabel, "Dry", 1);
     dryLevelSlider.setRange(0.0, 100.0, 0.1);
-    dryLevelSlider.setValue(audioProcessor.dryLevel->get());
-    dryLevelSlider.onValueChange = [this] {
-        audioProcessor.dryLevel->setValueNotifyingHost(dryLevelSlider.getValue() / 100.0f);
-    };
+    dryLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "dryLevel", dryLevelSlider);
 
-    setupSlider(widthSlider, widthLabel, "Width", "%", 1);
+    setupSlider(widthSlider, widthLabel, "Width", 1);
     widthSlider.setRange(0.0, 100.0, 0.1);
-    widthSlider.setValue(audioProcessor.width->get());
-    widthSlider.onValueChange = [this] {
-        audioProcessor.width->setValueNotifyingHost(widthSlider.getValue() / 100.0f);
-    };
-
-    startTimerHz(30);
+    widthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "width", widthSlider);
 }
 
 StudioReverbAudioProcessorEditor::~StudioReverbAudioProcessorEditor()
@@ -217,13 +197,13 @@ StudioReverbAudioProcessorEditor::~StudioReverbAudioProcessorEditor()
 
 void StudioReverbAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::Label& label,
                                                    const juce::String& labelText,
-                                                   const juce::String& suffix,
                                                    int decimalPlaces)
 {
     addAndMakeVisible(slider);
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
-    slider.setTextValueSuffix(" " + suffix);
+    // Don't set suffix here - it's already set in the parameter's lambda in PluginProcessor
+    // slider.setTextValueSuffix(" " + suffix);
     slider.setNumDecimalPlacesToDisplay(decimalPlaces);
 
     addAndMakeVisible(label);
@@ -319,33 +299,4 @@ void StudioReverbAudioProcessorEditor::resized()
     widthSlider.setBounds(bounds.getX() + startX + (sliderSize + spacing) * 3, row2.getY(), sliderSize, sliderSize);
 }
 
-void StudioReverbAudioProcessorEditor::timerCallback()
-{
-    // Update UI values from processor
-    if (reverbTypeCombo.getSelectedId() != audioProcessor.reverbType->getIndex() + 1)
-        reverbTypeCombo.setSelectedId(audioProcessor.reverbType->getIndex() + 1, juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(roomSizeSlider.getValue()), audioProcessor.roomSize->get()))
-        roomSizeSlider.setValue(audioProcessor.roomSize->get(), juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(dampingSlider.getValue()), audioProcessor.damping->get()))
-        dampingSlider.setValue(audioProcessor.damping->get(), juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(preDelaySlider.getValue()), audioProcessor.preDelay->get()))
-        preDelaySlider.setValue(audioProcessor.preDelay->get(), juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(decayTimeSlider.getValue()), audioProcessor.decayTime->get()))
-        decayTimeSlider.setValue(audioProcessor.decayTime->get(), juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(diffusionSlider.getValue()), audioProcessor.diffusion->get()))
-        diffusionSlider.setValue(audioProcessor.diffusion->get(), juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(wetLevelSlider.getValue()), audioProcessor.wetLevel->get()))
-        wetLevelSlider.setValue(audioProcessor.wetLevel->get(), juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(dryLevelSlider.getValue()), audioProcessor.dryLevel->get()))
-        dryLevelSlider.setValue(audioProcessor.dryLevel->get(), juce::dontSendNotification);
-
-    if (!juce::approximatelyEqual(static_cast<float>(widthSlider.getValue()), audioProcessor.width->get()))
-        widthSlider.setValue(audioProcessor.width->get(), juce::dontSendNotification);
-}
+// Timer callback removed - now using APVTS attachments for thread-safe parameter updates
