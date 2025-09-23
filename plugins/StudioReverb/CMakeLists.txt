@@ -34,8 +34,8 @@ target_sources(StudioReverb PRIVATE
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
-    Source/DSP/DragonflyReverb.cpp
-    Source/DSP/DragonflyReverb.h
+    Source/DSP/Freeverb3Reverb.cpp
+    Source/DSP/Freeverb3Reverb.h
 )
 
 target_compile_definitions(StudioReverb PUBLIC
