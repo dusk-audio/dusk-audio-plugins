@@ -1,7 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "DSP/DragonflyReverb.h"
+#include "DSP/Freeverb3Reverb.h"
 
 //==============================================================================
 class StudioReverbAudioProcessor  : public juce::AudioProcessor
@@ -56,7 +56,7 @@ public:
     juce::AudioParameterFloat* width;
 
 private:
-    std::unique_ptr<DragonflyReverb> reverb;
+    std::unique_ptr<Freeverb3Reverb> reverb;
     void updateReverbParameters();
 
     //==============================================================================
