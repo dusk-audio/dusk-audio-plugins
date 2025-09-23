@@ -15,6 +15,11 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
 #endif
 {
     // Initialize parameters with safe defaults
+    reverbType = new juce::AudioParameterChoice(
+        "reverbType", "Reverb Type",
+        juce::StringArray{"Room", "Hall", "Plate", "Early Reflections"},
+        1); // Default to Hall
+
     roomSize = new juce::AudioParameterFloat(
         "roomSize", "Room Size",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
@@ -23,6 +28,24 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
 
     damping = new juce::AudioParameterFloat(
         "damping", "Damping",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; });
+
+    preDelay = new juce::AudioParameterFloat(
+        "preDelay", "Pre-Delay",
+        juce::NormalisableRange<float>(0.0f, 200.0f, 0.1f), 0.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + " ms"; });
+
+    decayTime = new juce::AudioParameterFloat(
+        "decayTime", "Decay Time",
+        juce::NormalisableRange<float>(0.1f, 30.0f, 0.01f), 2.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 2) + " s"; });  // 2 decimal places
+
+    diffusion = new juce::AudioParameterFloat(
+        "diffusion", "Diffusion",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; });
@@ -45,13 +68,17 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; });
 
+    addParameter(reverbType);
     addParameter(roomSize);
     addParameter(damping);
+    addParameter(preDelay);
+    addParameter(decayTime);
+    addParameter(diffusion);
     addParameter(wetLevel);
     addParameter(dryLevel);
     addParameter(width);
 
-    reverb = std::make_unique<SimpleFreeverb>();
+    reverb = std::make_unique<DragonflyReverb>();
 }
 
 StudioReverbAudioProcessor::~StudioReverbAudioProcessor()
@@ -172,11 +199,31 @@ void StudioReverbAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
 void StudioReverbAudioProcessor::updateReverbParameters()
 {
-    reverb->setRoomSize(roomSize->get() / 100.0f);
+    // Set reverb type
+    reverb->setReverbType(static_cast<DragonflyReverb::ReverbType>(reverbType->getIndex()));
+
+    // Set parameters
+    reverb->setSize(roomSize->get() / 100.0f);
     reverb->setDamping(damping->get() / 100.0f);
-    reverb->setWetLevel(wetLevel->get() / 100.0f);
-    reverb->setDryLevel(dryLevel->get() / 100.0f);
+    reverb->setPreDelay(preDelay->get());
+    reverb->setDecayTime(decayTime->get());
+    reverb->setDiffusion(diffusion->get() / 100.0f);
+    reverb->setDryWetMix(wetLevel->get() / 100.0f);  // Wet level controls the mix
     reverb->setWidth(width->get() / 100.0f);
+
+    // Set early/late mix (50/50 for now, could be exposed as parameters)
+    reverb->setEarlyMix(0.5f);
+    reverb->setLateMix(0.5f);
+
+    // Set tone controls to reasonable defaults (could be exposed)
+    reverb->setLowCut(50.0f);
+    reverb->setHighCut(15000.0f);
+    reverb->setLowMultiplier(1.0f);
+    reverb->setHighMultiplier(0.8f);
+
+    // Set modulation
+    reverb->setModulationRate(0.5f);
+    reverb->setModulationDepth(0.05f);
 }
 
 //==============================================================================

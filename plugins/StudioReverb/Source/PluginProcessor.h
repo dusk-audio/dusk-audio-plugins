@@ -1,7 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "DSP/SimpleFreeverb.h"
+#include "DSP/DragonflyReverb.h"
 
 //==============================================================================
 class StudioReverbAudioProcessor  : public juce::AudioProcessor
@@ -45,14 +45,18 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     // Parameters
+    juce::AudioParameterChoice* reverbType;
     juce::AudioParameterFloat* roomSize;
     juce::AudioParameterFloat* damping;
+    juce::AudioParameterFloat* preDelay;
+    juce::AudioParameterFloat* decayTime;
+    juce::AudioParameterFloat* diffusion;
     juce::AudioParameterFloat* wetLevel;
     juce::AudioParameterFloat* dryLevel;
     juce::AudioParameterFloat* width;
 
 private:
-    std::unique_ptr<SimpleFreeverb> reverb;
+    std::unique_ptr<DragonflyReverb> reverb;
     void updateReverbParameters();
 
     //==============================================================================

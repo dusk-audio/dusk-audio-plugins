@@ -11,9 +11,9 @@ juce_add_plugin(StudioReverb
     PLUGIN_CODE SRvb
     FORMATS VST3 LV2 AU Standalone
     PRODUCT_NAME "StudioReverb"
-    COMPANY_NAME "Luna Audio"
-    COMPANY_WEBSITE "https://luna-audio.com"
-    COMPANY_EMAIL "info@luna-audio.com"
+    COMPANY_NAME "Luna Co. Audio"
+    COMPANY_WEBSITE "https://lunaco.audio"
+    COMPANY_EMAIL "info@lunaco.audio"
     PLUGIN_MANUFACTURER_CODE Luna
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
@@ -34,8 +34,8 @@ target_sources(StudioReverb PRIVATE
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
-    Source/DSP/SimpleFreeverb.cpp
-    Source/DSP/SimpleFreeverb.h
+    Source/DSP/DragonflyReverb.cpp
+    Source/DSP/DragonflyReverb.h
 )
 
 target_compile_definitions(StudioReverb PUBLIC
