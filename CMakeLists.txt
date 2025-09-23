@@ -25,7 +25,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JuceDefaults.cmake)
 # add_subdirectory(external/JUCE)
 
 # For now, using system installation
-add_subdirectory(/home/marc/Projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # Option to build all plugins or specific ones
 option(BUILD_4K_EQ "Build 4K EQ plugin" ON)

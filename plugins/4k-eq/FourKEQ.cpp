@@ -2,6 +2,26 @@
 #include "PluginEditor.h"
 #include <cmath>
 
+// Helper function to prevent frequency cramping at high frequencies
+static float preWarpFrequency(float freq, double sampleRate)
+{
+    // Pre-warp frequency for bilinear transform to prevent cramping
+    const float nyquist = sampleRate * 0.5f;
+
+    // Standard pre-warping formula
+    const float k = std::tan((M_PI * freq) / sampleRate);
+    float warpedFreq = (sampleRate / M_PI) * std::atan(k);
+
+    // Additional compensation for very high frequencies (above 40% of Nyquist)
+    if (freq > nyquist * 0.4f) {
+        float ratio = freq / nyquist;
+        float compensation = 1.0f + (ratio - 0.4f) * 0.25f;
+        warpedFreq = freq * compensation;
+    }
+
+    return std::min(warpedFreq, static_cast<float>(nyquist * 0.98f));
+}
+
 
 #ifndef JucePlugin_Name
 #define JucePlugin_Name "SSL4KEQ"
@@ -316,9 +336,15 @@ void FourKEQ::updateLPF(double sampleRate)
 {
     float freq = lpfFreqParam->load();
 
-    // 12dB/oct Butterworth LPF
+    // Pre-warp if close to Nyquist
+    float processFreq = freq;
+    if (freq > sampleRate * 0.3f) {
+        processFreq = preWarpFrequency(freq, sampleRate);
+    }
+
+    // 12dB/oct Butterworth LPF with pre-warped frequency
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, freq, 0.707f);
+        sampleRate, processFreq, 0.707f);
 
     lpfFilter.filter.coefficients = coeffs;
     lpfFilter.filterR.coefficients = coeffs;
@@ -378,8 +404,14 @@ void FourKEQ::updateHMBand(double sampleRate)
     if (isBlack)
         q = calculateDynamicQ(gain, q);
 
+    // Pre-warp frequency if above 3kHz to prevent cramping
+    float processFreq = freq;
+    if (freq > 3000.0f) {
+        processFreq = preWarpFrequency(freq, sampleRate);
+    }
+
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-        sampleRate, freq, q, juce::Decibels::decibelsToGain(gain));
+        sampleRate, processFreq, q, juce::Decibels::decibelsToGain(gain));
 
     hmFilter.filter.coefficients = coeffs;
     hmFilter.filterR.coefficients = coeffs;
@@ -392,19 +424,22 @@ void FourKEQ::updateHFBand(double sampleRate)
     bool isBlack = (eqTypeParam->load() > 0.5f);
     bool isBell = (hfBellParam->load() > 0.5f);
 
+    // Always pre-warp HF band frequencies to prevent cramping
+    float warpedFreq = preWarpFrequency(freq, sampleRate);
+
     if (isBlack && isBell)
     {
-        // Bell mode in Black variant
+        // Bell mode in Black variant with pre-warped frequency
         auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-            sampleRate, freq, 0.7f, juce::Decibels::decibelsToGain(gain));
+            sampleRate, warpedFreq, 0.7f, juce::Decibels::decibelsToGain(gain));
         hfFilter.filter.coefficients = coeffs;
         hfFilter.filterR.coefficients = coeffs;
     }
     else
     {
-        // Shelf mode
+        // Shelf mode with pre-warped frequency
         auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-            sampleRate, freq, 0.7f, juce::Decibels::decibelsToGain(gain));
+            sampleRate, warpedFreq, 0.7f, juce::Decibels::decibelsToGain(gain));
         hfFilter.filter.coefficients = coeffs;
         hfFilter.filterR.coefficients = coeffs;
     }
