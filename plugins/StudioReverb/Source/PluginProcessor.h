@@ -1,10 +1,11 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "DSP/Freeverb3Reverb.h"
+#include "DSP/DragonflyReverb.h"
 
 //==============================================================================
-class StudioReverbAudioProcessor  : public juce::AudioProcessor
+class StudioReverbAudioProcessor  : public juce::AudioProcessor,
+                                    public juce::AudioProcessorValueTreeState::Listener
 {
 public:
     //==============================================================================
@@ -44,7 +45,11 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // Parameters
+    // Parameters using AudioProcessorValueTreeState for better thread safety
+    juce::AudioProcessorValueTreeState apvts;
+    juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // Parameter pointers for quick access
     juce::AudioParameterChoice* reverbType;
     juce::AudioParameterFloat* roomSize;
     juce::AudioParameterFloat* damping;
@@ -55,9 +60,15 @@ public:
     juce::AudioParameterFloat* dryLevel;
     juce::AudioParameterFloat* width;
 
+    // Parameter change detection
+    std::atomic<bool> parametersChanged { true };
+
 private:
-    std::unique_ptr<Freeverb3Reverb> reverb;
+    std::unique_ptr<DragonflyReverb> reverb;
     void updateReverbParameters();
+
+    // Parameter listeners
+    void parameterChanged(const juce::String& parameterID, float newValue);
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StudioReverbAudioProcessor)
