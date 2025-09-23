@@ -131,13 +131,14 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
 
     // Make plugin resizable with reasonable limits
     setResizable(true, true);
-    setResizeLimits(500, 450, 900, 600);
-    setSize (750, 500);
+    setResizeLimits(600, 600, 1000, 750);
+    setSize (800, 650);
 
     // Reverb Type Selector with improved styling
     addAndMakeVisible(reverbTypeCombo);
     reverbTypeCombo.addItemList({"Room", "Hall", "Plate", "Early Reflections"}, 1);
     reverbTypeCombo.setJustificationType(juce::Justification::centred);
+    reverbTypeCombo.addListener(this);
     reverbTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.apvts, "reverbType", reverbTypeCombo);
 
@@ -147,51 +148,101 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     reverbTypeLabel.setFont(juce::Font(14.0f, juce::Font::bold));
     reverbTypeLabel.attachToComponent(&reverbTypeCombo, false);
 
-    // Setup all sliders with consistent styling
-    setupSlider(roomSizeSlider, roomSizeLabel, "Room Size", 1);
-    roomSizeSlider.setRange(0.0, 100.0, 0.1);
-    roomSizeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "roomSize", roomSizeSlider);
+    // Preset Selector
+    addAndMakeVisible(presetCombo);
+    presetCombo.setJustificationType(juce::Justification::centred);
+    presetCombo.addListener(this);
 
-    setupSlider(dampingSlider, dampingLabel, "HF Damping", 1);
-    dampingSlider.setRange(0.0, 100.0, 0.1);
-    dampingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "damping", dampingSlider);
+    DBG("=== StudioReverbAudioProcessorEditor Constructor ===");
+    DBG("Initial reverb type index: " << (audioProcessor.reverbType ? audioProcessor.reverbType->getIndex() : -1));
+    DBG("Initial reverb type name: " << (audioProcessor.reverbType ? audioProcessor.reverbType->getCurrentChoiceName() : "null"));
 
-    setupSlider(preDelaySlider, preDelayLabel, "Pre-Delay", 1);
-    preDelaySlider.setRange(0.0, 200.0, 0.1);
-    preDelayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "preDelay", preDelaySlider);
+    updatePresetList();
 
-    // Decay Time with TWO decimal places
-    setupSlider(decayTimeSlider, decayTimeLabel, "Decay Time", 2);
-    decayTimeSlider.setRange(0.1, 30.0, 0.01);  // Smaller step size for more precision
-    decayTimeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "decayTime", decayTimeSlider);
+    addAndMakeVisible(presetLabel);
+    presetLabel.setText("Preset", juce::dontSendNotification);
+    presetLabel.setJustificationType(juce::Justification::centred);
+    presetLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    presetLabel.attachToComponent(&presetCombo, false);
 
-    setupSlider(diffusionSlider, diffusionLabel, "Diffusion", 1);
-    diffusionSlider.setRange(0.0, 100.0, 0.1);
-    diffusionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "diffusion", diffusionSlider);
-
-    setupSlider(wetLevelSlider, wetLevelLabel, "Wet", 1);
-    wetLevelSlider.setRange(0.0, 100.0, 0.1);
-    wetLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "wetLevel", wetLevelSlider);
-
+    // === Mix Controls (4 sliders like Dragonfly) ===
     setupSlider(dryLevelSlider, dryLevelLabel, "Dry", 1);
-    dryLevelSlider.setRange(0.0, 100.0, 0.1);
     dryLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "dryLevel", dryLevelSlider);
 
+    setupSlider(earlyLevelSlider, earlyLevelLabel, "Early", 1);
+    earlyLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "earlyLevel", earlyLevelSlider);
+
+    setupSlider(earlySendSlider, earlySendLabel, "Early Send", 1);
+    earlySendAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "earlySend", earlySendSlider);
+
+    setupSlider(lateLevelSlider, lateLevelLabel, "Late", 1);
+    lateLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "lateLevel", lateLevelSlider);
+
+    // === Basic Controls ===
+    setupSlider(sizeSlider, sizeLabel, "Size", 1);
+    sizeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "size", sizeSlider);
+
     setupSlider(widthSlider, widthLabel, "Width", 1);
-    widthSlider.setRange(0.0, 100.0, 0.1);
     widthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "width", widthSlider);
+
+    setupSlider(preDelaySlider, preDelayLabel, "Pre-Delay", 1);
+    preDelayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "preDelay", preDelaySlider);
+
+    setupSlider(decaySlider, decayLabel, "Decay", 2);
+    decayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "decay", decaySlider);
+
+    setupSlider(diffuseSlider, diffuseLabel, "Diffuse", 1);
+    diffuseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "diffuse", diffuseSlider);
+
+    // === Modulation Controls ===
+    setupSlider(spinSlider, spinLabel, "Spin", 2);
+    spinAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "spin", spinSlider);
+
+    setupSlider(wanderSlider, wanderLabel, "Wander", 2);
+    wanderAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "wander", wanderSlider);
+
+    // === Filter Controls ===
+    setupSlider(highCutSlider, highCutLabel, "High Cut", 0);
+    highCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "highCut", highCutSlider);
+
+    setupSlider(lowCutSlider, lowCutLabel, "Low Cut", 0);
+    lowCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "lowCut", lowCutSlider);
+
+    // === Hall-specific Crossover Controls ===
+    setupSlider(lowCrossSlider, lowCrossLabel, "Low Cross", 0);
+    lowCrossAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "lowCross", lowCrossSlider);
+
+    setupSlider(highCrossSlider, highCrossLabel, "High Cross", 0);
+    highCrossAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "highCross", highCrossSlider);
+
+    setupSlider(lowMultSlider, lowMultLabel, "Low Mult", 2);
+    lowMultAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "lowMult", lowMultSlider);
+
+    setupSlider(highMultSlider, highMultLabel, "High Mult", 2);
+    highMultAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.apvts, "highMult", highMultSlider);
 }
 
 StudioReverbAudioProcessorEditor::~StudioReverbAudioProcessorEditor()
 {
+    reverbTypeCombo.removeListener(this);
+    presetCombo.removeListener(this);
     setLookAndFeel(nullptr);
 }
 
@@ -243,19 +294,52 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
     bounds.removeFromTop(50);
     bounds.reduce(15, 15);
 
-    // Type selector section
-    auto typeArea = bounds.removeFromTop(70);
+    // Type and Preset selector section
+    auto selectorArea = bounds.removeFromTop(120);
     g.setColour(juce::Colour(0x20ffffff));
-    g.fillRoundedRectangle(typeArea.toFloat(), 8.0f);
+    g.fillRoundedRectangle(selectorArea.toFloat(), 8.0f);
     g.setColour(juce::Colour(0x40ffffff));
-    g.drawRoundedRectangle(typeArea.toFloat(), 8.0f, 1.0f);
+    g.drawRoundedRectangle(selectorArea.toFloat(), 8.0f, 1.0f);
 
-    // Main parameters section
     bounds.removeFromTop(15);
+
+    const int sliderSize = 75;
+
+    // Mix Controls Section
+    g.setColour(juce::Colours::grey.withAlpha(0.5f));
+    g.setFont(11.0f);
+    g.drawText("MIX LEVELS", bounds.removeFromTop(15), juce::Justification::centredLeft, false);
+
+    auto mixArea = bounds.removeFromTop(sliderSize + 25);
     g.setColour(juce::Colour(0x15ffffff));
-    g.fillRoundedRectangle(bounds.toFloat(), 8.0f);
-    g.setColour(juce::Colour(0x30ffffff));
-    g.drawRoundedRectangle(bounds.toFloat(), 8.0f, 1.0f);
+    g.fillRoundedRectangle(mixArea.toFloat(), 6.0f);
+
+    // Basic Controls Section
+    g.setColour(juce::Colours::grey.withAlpha(0.5f));
+    g.drawText("REVERB CHARACTER", bounds.removeFromTop(15), juce::Justification::centredLeft, false);
+
+    auto basicArea = bounds.removeFromTop(sliderSize + 25);
+    g.setColour(juce::Colour(0x15ffffff));
+    g.fillRoundedRectangle(basicArea.toFloat(), 6.0f);
+
+    // Modulation & Filter Section
+    g.setColour(juce::Colours::grey.withAlpha(0.5f));
+    g.drawText("MODULATION & FILTERS", bounds.removeFromTop(15), juce::Justification::centredLeft, false);
+
+    auto modArea = bounds.removeFromTop(sliderSize + 25);
+    g.setColour(juce::Colour(0x15ffffff));
+    g.fillRoundedRectangle(modArea.toFloat(), 6.0f);
+
+    // Hall-specific Crossover Section (if visible)
+    if (audioProcessor.reverbType && audioProcessor.reverbType->getIndex() == 1)
+    {
+        g.setColour(juce::Colours::grey.withAlpha(0.5f));
+        g.drawText("HALL CROSSOVER", bounds.removeFromTop(15), juce::Justification::centredLeft, false);
+
+        auto crossArea = bounds.removeFromTop(sliderSize + 25);
+        g.setColour(juce::Colour(0x15ffffff));
+        g.fillRoundedRectangle(crossArea.toFloat(), 6.0f);
+    }
 }
 
 void StudioReverbAudioProcessorEditor::resized()
@@ -264,39 +348,154 @@ void StudioReverbAudioProcessorEditor::resized()
     bounds.removeFromTop(50); // Title area
     bounds.reduce(20, 20);
 
-    // Reverb Type Selector
-    auto typeArea = bounds.removeFromTop(70);
+    // Reverb Type and Preset Selectors
+    auto selectorArea = bounds.removeFromTop(120);
+
+    // Type selector
+    auto typeArea = selectorArea.removeFromTop(60);
     typeArea.removeFromTop(25); // Label space
     reverbTypeCombo.setBounds(typeArea.reduced(120, 8));
 
-    bounds.removeFromTop(25); // Spacing
+    // Preset selector
+    auto presetArea = selectorArea;
+    presetArea.removeFromTop(25); // Label space
+    presetCombo.setBounds(presetArea.reduced(120, 8));
 
-    const int sliderSize = 85;
+    bounds.removeFromTop(10); // Spacing
+
+    const int sliderSize = 75;
     const int labelHeight = 20;
-    const int spacing = 15;
+    const int spacing = 10;
 
-    // Calculate layout
-    int numColumns = 4;
-    int totalWidth = (sliderSize * numColumns) + (spacing * (numColumns - 1));
-    int startX = (bounds.getWidth() - totalWidth) / 2;
+    // === Mix Controls Section ===
+    auto mixSection = bounds.removeFromTop(sliderSize + labelHeight + 25);
+    mixSection.removeFromTop(labelHeight);
 
-    // First row - Main reverb parameters
-    auto row1 = bounds.removeFromTop(sliderSize + labelHeight + 10);
-    row1.removeFromTop(labelHeight);
+    int mixStartX = (mixSection.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
+    dryLevelSlider.setBounds(mixStartX, mixSection.getY(), sliderSize, sliderSize);
+    earlyLevelSlider.setBounds(mixStartX + (sliderSize + spacing), mixSection.getY(), sliderSize, sliderSize);
+    earlySendSlider.setBounds(mixStartX + (sliderSize + spacing) * 2, mixSection.getY(), sliderSize, sliderSize);
+    lateLevelSlider.setBounds(mixStartX + (sliderSize + spacing) * 3, mixSection.getY(), sliderSize, sliderSize);
 
-    roomSizeSlider.setBounds(bounds.getX() + startX, row1.getY(), sliderSize, sliderSize);
-    dampingSlider.setBounds(bounds.getX() + startX + (sliderSize + spacing), row1.getY(), sliderSize, sliderSize);
-    preDelaySlider.setBounds(bounds.getX() + startX + (sliderSize + spacing) * 2, row1.getY(), sliderSize, sliderSize);
-    decayTimeSlider.setBounds(bounds.getX() + startX + (sliderSize + spacing) * 3, row1.getY(), sliderSize, sliderSize);
+    // === Basic Controls Section ===
+    auto basicSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
+    basicSection.removeFromTop(labelHeight);
 
-    // Second row - Mix and modulation parameters
-    auto row2 = bounds.removeFromTop(sliderSize + labelHeight + 10);
-    row2.removeFromTop(labelHeight);
+    int basicStartX = (basicSection.getWidth() - (sliderSize * 5 + spacing * 4)) / 2;
+    sizeSlider.setBounds(basicStartX, basicSection.getY(), sliderSize, sliderSize);
+    widthSlider.setBounds(basicStartX + (sliderSize + spacing), basicSection.getY(), sliderSize, sliderSize);
+    preDelaySlider.setBounds(basicStartX + (sliderSize + spacing) * 2, basicSection.getY(), sliderSize, sliderSize);
+    decaySlider.setBounds(basicStartX + (sliderSize + spacing) * 3, basicSection.getY(), sliderSize, sliderSize);
+    diffuseSlider.setBounds(basicStartX + (sliderSize + spacing) * 4, basicSection.getY(), sliderSize, sliderSize);
 
-    diffusionSlider.setBounds(bounds.getX() + startX, row2.getY(), sliderSize, sliderSize);
-    wetLevelSlider.setBounds(bounds.getX() + startX + (sliderSize + spacing), row2.getY(), sliderSize, sliderSize);
-    dryLevelSlider.setBounds(bounds.getX() + startX + (sliderSize + spacing) * 2, row2.getY(), sliderSize, sliderSize);
-    widthSlider.setBounds(bounds.getX() + startX + (sliderSize + spacing) * 3, row2.getY(), sliderSize, sliderSize);
+    // === Modulation & Filter Controls Section ===
+    auto modSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
+    modSection.removeFromTop(labelHeight);
+
+    int modStartX = (modSection.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
+    spinSlider.setBounds(modStartX, modSection.getY(), sliderSize, sliderSize);
+    wanderSlider.setBounds(modStartX + (sliderSize + spacing), modSection.getY(), sliderSize, sliderSize);
+    highCutSlider.setBounds(modStartX + (sliderSize + spacing) * 2, modSection.getY(), sliderSize, sliderSize);
+    lowCutSlider.setBounds(modStartX + (sliderSize + spacing) * 3, modSection.getY(), sliderSize, sliderSize);
+
+    // === Hall-specific Crossover Controls (only show for Hall algorithm) ===
+    if (audioProcessor.reverbType && audioProcessor.reverbType->getIndex() == 1) // Hall
+    {
+        auto crossSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
+        crossSection.removeFromTop(labelHeight);
+
+        int crossStartX = (crossSection.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
+        lowCrossSlider.setBounds(crossStartX, crossSection.getY(), sliderSize, sliderSize);
+        highCrossSlider.setBounds(crossStartX + (sliderSize + spacing), crossSection.getY(), sliderSize, sliderSize);
+        lowMultSlider.setBounds(crossStartX + (sliderSize + spacing) * 2, crossSection.getY(), sliderSize, sliderSize);
+        highMultSlider.setBounds(crossStartX + (sliderSize + spacing) * 3, crossSection.getY(), sliderSize, sliderSize);
+
+        lowCrossSlider.setVisible(true);
+        highCrossSlider.setVisible(true);
+        lowMultSlider.setVisible(true);
+        highMultSlider.setVisible(true);
+        lowCrossLabel.setVisible(true);
+        highCrossLabel.setVisible(true);
+        lowMultLabel.setVisible(true);
+        highMultLabel.setVisible(true);
+    }
+    else
+    {
+        lowCrossSlider.setVisible(false);
+        highCrossSlider.setVisible(false);
+        lowMultSlider.setVisible(false);
+        highMultSlider.setVisible(false);
+        lowCrossLabel.setVisible(false);
+        highCrossLabel.setVisible(false);
+        lowMultLabel.setVisible(false);
+        highMultLabel.setVisible(false);
+    }
 }
 
-// Timer callback removed - now using APVTS attachments for thread-safe parameter updates
+void StudioReverbAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBoxThatHasChanged)
+{
+    if (comboBoxThatHasChanged == &reverbTypeCombo)
+    {
+        // Use the combo box's selected ID directly instead of the parameter value
+        int selectedIndex = reverbTypeCombo.getSelectedId() - 1;  // ComboBox IDs start at 1
+        DBG("Reverb Type Changed - ComboBox SelectedID: " << reverbTypeCombo.getSelectedId()
+            << ", Algorithm Index: " << selectedIndex
+            << ", Text: " << reverbTypeCombo.getText());
+
+        updateHallControlsVisibility();
+        updatePresetListForAlgorithm(selectedIndex);  // Pass the index directly
+        resized();
+    }
+    else if (comboBoxThatHasChanged == &presetCombo)
+    {
+        juce::String selectedPreset = presetCombo.getText();
+        if (selectedPreset != "-- Select Preset --" && !selectedPreset.isEmpty())
+        {
+            // Get the algorithm index from the combo box, not the parameter
+            int algorithmIndex = reverbTypeCombo.getSelectedId() - 1;
+            DBG("Loading preset: " << selectedPreset << " for algorithm " << algorithmIndex);
+            audioProcessor.loadPresetForAlgorithm(selectedPreset, algorithmIndex);
+        }
+    }
+}
+
+void StudioReverbAudioProcessorEditor::updateHallControlsVisibility()
+{
+    bool isHall = (audioProcessor.reverbType && audioProcessor.reverbType->getIndex() == 1);
+
+    lowCrossSlider.setVisible(isHall);
+    highCrossSlider.setVisible(isHall);
+    lowMultSlider.setVisible(isHall);
+    highMultSlider.setVisible(isHall);
+    lowCrossLabel.setVisible(isHall);
+    highCrossLabel.setVisible(isHall);
+    lowMultLabel.setVisible(isHall);
+    highMultLabel.setVisible(isHall);
+
+    repaint();
+}
+
+void StudioReverbAudioProcessorEditor::updatePresetList()
+{
+    // This is called on initialization - get index from parameter
+    int algorithmIndex = audioProcessor.reverbType ? audioProcessor.reverbType->getIndex() : 0;
+    updatePresetListForAlgorithm(algorithmIndex);
+}
+
+void StudioReverbAudioProcessorEditor::updatePresetListForAlgorithm(int algorithmIndex)
+{
+    presetCombo.clear();
+
+    DBG("UpdatePresetListForAlgorithm - Algorithm Index: " << algorithmIndex);
+
+    auto presetNames = audioProcessor.presetManager.getPresetNames(algorithmIndex);
+    DBG("UpdatePresetListForAlgorithm - Got " << presetNames.size() << " presets for algorithm " << algorithmIndex);
+
+    for (int i = 0; i < juce::jmin(5, presetNames.size()); ++i)
+    {
+        DBG("  Preset " << i << ": " << presetNames[i]);
+    }
+
+    presetCombo.addItemList(presetNames, 1);
+    presetCombo.setSelectedId(1, juce::dontSendNotification);
+}

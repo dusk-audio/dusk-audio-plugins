@@ -17,88 +17,63 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
 {
     // Get parameter pointers from APVTS
     reverbType = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("reverbType"));
-    roomSize = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("roomSize"));
-    damping = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("damping"));
-    preDelay = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("preDelay"));
-    decayTime = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("decayTime"));
-    diffusion = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("diffusion"));
-    wetLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("wetLevel"));
-    dryLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("dryLevel"));
-    width = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("width"));
 
-    // Add parameter listeners for change detection
-    apvts.addParameterListener("reverbType", this);
-    apvts.addParameterListener("roomSize", this);
-    apvts.addParameterListener("damping", this);
-    apvts.addParameterListener("preDelay", this);
-    apvts.addParameterListener("decayTime", this);
-    apvts.addParameterListener("diffusion", this);
-    apvts.addParameterListener("wetLevel", this);
-    apvts.addParameterListener("dryLevel", this);
-    apvts.addParameterListener("width", this);
+    // Mix controls
+    dryLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("dryLevel"));
+    earlyLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("earlyLevel"));
+    earlySend = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("earlySend"));
+    lateLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lateLevel"));
+
+    // Basic parameters
+    size = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("size"));
+    width = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("width"));
+    preDelay = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("preDelay"));
+    decay = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("decay"));
+    diffuse = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("diffuse"));
+
+    // Modulation
+    spin = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("spin"));
+    wander = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("wander"));
+
+    // Filters
+    highCut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("highCut"));
+    lowCut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lowCut"));
+
+    // Hall-specific
+    lowCross = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lowCross"));
+    highCross = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("highCross"));
+    lowMult = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lowMult"));
+    highMult = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("highMult"));
+
+    // Add parameter listeners for all parameters
+    for (const auto& id : getParameterIDs())
+    {
+        apvts.addParameterListener(id, this);
+    }
 
     reverb = std::make_unique<DragonflyReverb>();
 }
 
 StudioReverbAudioProcessor::~StudioReverbAudioProcessor()
 {
-    // Remove parameter listeners
-    apvts.removeParameterListener("reverbType", this);
-    apvts.removeParameterListener("roomSize", this);
-    apvts.removeParameterListener("damping", this);
-    apvts.removeParameterListener("preDelay", this);
-    apvts.removeParameterListener("decayTime", this);
-    apvts.removeParameterListener("diffusion", this);
-    apvts.removeParameterListener("wetLevel", this);
-    apvts.removeParameterListener("dryLevel", this);
-    apvts.removeParameterListener("width", this);
+    // Remove all parameter listeners
+    for (const auto& id : getParameterIDs())
+    {
+        apvts.removeParameterListener(id, this);
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // Algorithm selection
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "reverbType", "Reverb Type",
         juce::StringArray{"Room", "Hall", "Plate", "Early Reflections"},
         1)); // Default to Hall
 
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "roomSize", "Room Size",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + "%"; }));
-
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "damping", "Damping",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + "%"; }));
-
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "preDelay", "Pre-Delay",
-        juce::NormalisableRange<float>(0.0f, 200.0f, 0.1f), 0.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + " ms"; }));
-
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "decayTime", "Decay Time",
-        juce::NormalisableRange<float>(0.1f, 30.0f, 0.01f), 2.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 2) + " s"; }));
-
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "diffusion", "Diffusion",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + "%"; }));
-
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "wetLevel", "Wet Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 30.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + "%"; }));
-
+    // === Core Mix Controls (Dragonfly-style) ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "dryLevel", "Dry Level",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 70.0f,
@@ -106,10 +81,104 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "earlyLevel", "Early Level",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 20.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "earlySend", "Early Send",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 20.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "lateLevel", "Late Level",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 30.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; }));
+
+    // === Basic Reverb Parameters ===
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "size", "Size",
+        juce::NormalisableRange<float>(10.0f, 60.0f, 0.1f), 30.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + " m"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "width", "Width",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "preDelay", "Pre-Delay",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + " ms"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "decay", "Decay",
+        juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f), 2.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 2) + " s"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "diffuse", "Diffuse",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; }));
+
+    // === Modulation Controls ===
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "spin", "Spin",
+        juce::NormalisableRange<float>(0.0f, 5.0f, 0.01f), 0.5f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 2) + " Hz"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "wander", "Wander",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.1f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 2) + " ms"; }));
+
+    // === Filter Controls ===
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "highCut", "High Cut",
+        juce::NormalisableRange<float>(1000.0f, 20000.0f, 1.0f), 16000.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "lowCut", "Low Cut",
+        juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f), 0.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    // === Hall-specific Crossover Controls ===
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "lowCross", "Low Cross",
+        juce::NormalisableRange<float>(50.0f, 1000.0f, 1.0f), 200.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "highCross", "High Cross",
+        juce::NormalisableRange<float>(1000.0f, 10000.0f, 1.0f), 3000.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "lowMult", "Low Mult",
+        juce::NormalisableRange<float>(0.1f, 2.0f, 0.01f), 1.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 2) + "x"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "highMult", "High Mult",
+        juce::NormalisableRange<float>(0.1f, 2.0f, 0.01f), 0.8f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 2) + "x"; }));
 
     return { params.begin(), params.end() };
 }
@@ -150,7 +219,10 @@ bool StudioReverbAudioProcessor::isMidiEffect() const
 double StudioReverbAudioProcessor::getTailLengthSeconds() const
 {
     // Return the maximum possible reverb tail (decay time + predelay)
-    return decayTime->get() + (preDelay->get() / 1000.0);
+    // Add null checks to prevent crashes if parameters aren't initialized
+    double decayValue = (decay != nullptr) ? decay->get() : 0.0;
+    double preDelayValue = (preDelay != nullptr) ? preDelay->get() : 0.0;
+    return decayValue + (preDelayValue / 1000.0);
 }
 
 int StudioReverbAudioProcessor::getNumPrograms()
@@ -182,13 +254,17 @@ void StudioReverbAudioProcessor::changeProgramName (int index, const juce::Strin
 //==============================================================================
 void StudioReverbAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    reverb->prepare(sampleRate, samplesPerBlock);
-    updateReverbParameters();
+    if (reverb)
+    {
+        reverb->prepare(sampleRate, samplesPerBlock);
+        updateReverbParameters();
+    }
 }
 
 void StudioReverbAudioProcessor::releaseResources()
 {
-    reverb->reset();
+    if (reverb)
+        reverb->reset();
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -227,45 +303,133 @@ void StudioReverbAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (parametersChanged.exchange(false))
         updateReverbParameters();
 
-    reverb->processBlock(buffer);
+    if (reverb)
+        reverb->processBlock(buffer);
 }
 
 void StudioReverbAudioProcessor::updateReverbParameters()
 {
+    if (!reverb)
+        return;
+
     // Set reverb algorithm
-    reverb->setAlgorithm(static_cast<DragonflyReverb::Algorithm>(reverbType->getIndex()));
+    int algIndex = reverbType ? reverbType->getIndex() : 0;
+    DBG("updateReverbParameters - Setting algorithm to: " << algIndex
+        << " (" << reverbType->getCurrentChoiceName() << ")");
+    reverb->setAlgorithm(static_cast<DragonflyReverb::Algorithm>(algIndex));
 
-    // Set core parameters (matching Dragonfly's exact parameter scaling)
-    reverb->setSize(roomSize->get() / 100.0f * 50.0f + 10.0f);  // Map 0-100% to 10-60 meters
-    reverb->setPreDelay(preDelay->get());
-    reverb->setDecay(decayTime->get());
-    reverb->setDiffuse(diffusion->get());  // Already in 0-100% range
-    reverb->setWidth(width->get());        // Already in 0-100% range
+    // Set core parameters with null checks
+    if (size) reverb->setSize(size->get());
+    if (preDelay) reverb->setPreDelay(preDelay->get());
+    if (decay) reverb->setDecay(decay->get());
+    if (diffuse) reverb->setDiffuse(diffuse->get());
+    if (width) reverb->setWidth(width->get());
 
-    // Set mix levels
-    float wet = wetLevel->get() / 100.0f;
-    float dry = dryLevel->get() / 100.0f;
-    reverb->setDryLevel(dry);
-    reverb->setEarlyLevel(wet * 0.4f);     // 40% of wet goes to early reflections
-    reverb->setLateLevel(wet * 0.6f);      // 60% of wet goes to late reverb
-    reverb->setEarlySend(0.2f);            // Default early->late send
+    // Set mix levels with null checks
+    if (dryLevel) reverb->setDryLevel(dryLevel->get() / 100.0f);
+    if (earlyLevel) reverb->setEarlyLevel(earlyLevel->get() / 100.0f);
+    if (lateLevel) reverb->setLateLevel(lateLevel->get() / 100.0f);
+    if (earlySend) reverb->setEarlySend(earlySend->get() / 100.0f);
 
-    // Set tone controls
-    reverb->setLowCut(50.0f);              // Default high-pass
-    reverb->setHighCut(15000.0f);          // Default low-pass
-    reverb->setLowCrossover(200.0f);       // Low frequency crossover
-    reverb->setHighCrossover(2000.0f);     // High frequency crossover
-    reverb->setLowMult(1.0f);              // Full low frequency decay
-    reverb->setHighMult(1.0f - damping->get() / 200.0f);  // Map damping to HF decay
+    // Set filter controls with null checks
+    if (lowCut) reverb->setLowCut(lowCut->get());
+    if (highCut) reverb->setHighCut(highCut->get());
 
-    // Set modulation (for Hall algorithm)
-    reverb->setSpin(0.5f);                 // Default modulation speed
-    reverb->setWander(0.1f);               // Default modulation depth
+    // Set modulation controls with null checks
+    if (spin) reverb->setSpin(spin->get());
+    if (wander) reverb->setWander(wander->get());
+
+    // Set Hall-specific crossover controls with null checks
+    if (lowCross) reverb->setLowCrossover(lowCross->get());
+    if (highCross) reverb->setHighCrossover(highCross->get());
+    if (lowMult) reverb->setLowMult(lowMult->get());
+    if (highMult) reverb->setHighMult(highMult->get());
 }
 
 void StudioReverbAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
 {
-    juce::ignoreUnused(parameterID, newValue);
+    juce::ignoreUnused(newValue);
+
+    DBG("Parameter changed: " << parameterID);
+    if (parameterID == "reverbType")
+    {
+        DBG("  Reverb type changed to index: " << reverbType->getIndex()
+            << " (" << reverbType->getCurrentChoiceName() << ")");
+    }
+
+    parametersChanged = true;
+}
+
+void StudioReverbAudioProcessor::loadPreset(const juce::String& presetName)
+{
+    // Use the parameter's current algorithm index
+    int algorithmIndex = reverbType ? reverbType->getIndex() : 0;
+    loadPresetForAlgorithm(presetName, algorithmIndex);
+}
+
+void StudioReverbAudioProcessor::loadPresetForAlgorithm(const juce::String& presetName, int algorithmIndex)
+{
+    DBG("StudioReverbAudioProcessor::loadPresetForAlgorithm called with: " << presetName
+        << " for algorithm " << algorithmIndex);
+
+    if (presetName == "-- Select Preset --" || presetName.isEmpty())
+    {
+        DBG("  Ignoring preset selection header");
+        return;
+    }
+
+    DBG("  Loading preset for algorithm index: " << algorithmIndex);
+
+    auto preset = presetManager.getPreset(algorithmIndex, presetName);
+
+    if (preset.name.isEmpty())
+    {
+        DBG("  ERROR: Preset not found!");
+        return;
+    }
+
+    DBG("  Found preset: " << preset.name << " with " << preset.parameters.size() << " parameters");
+
+    // Load preset parameters
+    for (const auto& param : preset.parameters)
+    {
+        // Use the AudioParameterFloat directly for proper value conversion
+        if (param.first == "dryLevel" && dryLevel)
+            dryLevel->setValueNotifyingHost(dryLevel->convertTo0to1(param.second));
+        else if (param.first == "earlyLevel" && earlyLevel)
+            earlyLevel->setValueNotifyingHost(earlyLevel->convertTo0to1(param.second));
+        else if (param.first == "earlySend" && earlySend)
+            earlySend->setValueNotifyingHost(earlySend->convertTo0to1(param.second));
+        else if (param.first == "lateLevel" && lateLevel)
+            lateLevel->setValueNotifyingHost(lateLevel->convertTo0to1(param.second));
+        else if (param.first == "size" && size)
+            size->setValueNotifyingHost(size->convertTo0to1(param.second));
+        else if (param.first == "width" && width)
+            width->setValueNotifyingHost(width->convertTo0to1(param.second));
+        else if (param.first == "preDelay" && preDelay)
+            preDelay->setValueNotifyingHost(preDelay->convertTo0to1(param.second));
+        else if (param.first == "decay" && decay)
+            decay->setValueNotifyingHost(decay->convertTo0to1(param.second));
+        else if (param.first == "diffuse" && diffuse)
+            diffuse->setValueNotifyingHost(diffuse->convertTo0to1(param.second));
+        else if (param.first == "spin" && spin)
+            spin->setValueNotifyingHost(spin->convertTo0to1(param.second));
+        else if (param.first == "wander" && wander)
+            wander->setValueNotifyingHost(wander->convertTo0to1(param.second));
+        else if (param.first == "highCut" && highCut)
+            highCut->setValueNotifyingHost(highCut->convertTo0to1(param.second));
+        else if (param.first == "lowCut" && lowCut)
+            lowCut->setValueNotifyingHost(lowCut->convertTo0to1(param.second));
+        else if (param.first == "lowCross" && lowCross)
+            lowCross->setValueNotifyingHost(lowCross->convertTo0to1(param.second));
+        else if (param.first == "highCross" && highCross)
+            highCross->setValueNotifyingHost(highCross->convertTo0to1(param.second));
+        else if (param.first == "lowMult" && lowMult)
+            lowMult->setValueNotifyingHost(lowMult->convertTo0to1(param.second));
+        else if (param.first == "highMult" && highMult)
+            highMult->setValueNotifyingHost(highMult->convertTo0to1(param.second));
+    }
+
     parametersChanged = true;
 }
 
