@@ -14,7 +14,7 @@ DragonflyReverb::DragonflyReverb()
 {
     // Initialize early reflections (matching Dragonfly Hall)
     early.loadPresetReflection(FV3_EARLYREF_PRESET_1);
-    early.setMuteOnChange(false);
+    early.setMuteOnChange(true);  // Mute when size changes to avoid artifacts
     early.setdryr(0);  // Mute dry signal
     early.setwet(0);   // 0dB wet
     early.setwidth(0.8);
@@ -23,19 +23,19 @@ DragonflyReverb::DragonflyReverb()
     early.setDiffusionApFreq(150, 4);
 
     // Initialize Hall reverb (zrev2)
-    hall.setMuteOnChange(false);
+    hall.setMuteOnChange(true);   // Mute when size changes to avoid artifacts
     hall.setwet(0);    // 0dB
     hall.setdryr(0);   // Mute dry signal
     hall.setwidth(1.0);
 
     // Initialize Room reverb (progenitor2)
-    room.setMuteOnChange(false);
+    room.setMuteOnChange(true);   // Mute when size changes to avoid artifacts
     room.setwet(0);    // 0dB
     room.setdryr(0);   // Mute dry signal
     room.setwidth(1.0);
 
     // Initialize Plate reverb (strev)
-    plate.setMuteOnChange(false);
+    plate.setMuteOnChange(true);   // Mute when size changes to avoid artifacts
     plate.setwet(0);   // 0dB
     plate.setdryr(0);  // Mute dry signal
     plate.setwidth(1.0);
@@ -51,6 +51,10 @@ void DragonflyReverb::prepare(double sr, int samplesPerBlock)
     hall.setSampleRate(sampleRate);
     room.setSampleRate(sampleRate);
     plate.setSampleRate(sampleRate);
+
+    // Force initial size setup
+    lastSetSize = -1.0f;  // Force size to be set
+    setSize(size);        // This will now properly initialize the delay lines
 
     // Initialize with current parameters
     updateEarlyReflections();
@@ -107,23 +111,33 @@ void DragonflyReverb::setSize(float meters)
 {
     size = juce::jlimit(10.0f, 60.0f, meters);
 
-    // Update early reflections size
-    early.setRSFactor(size / 10.0f);  // Dragonfly scales by 10 for early
-
-    // Update late reverb size based on algorithm
-    switch (currentAlgorithm)
+    // Only update RSFactor if size has changed significantly
+    // This avoids delay artifacts when parameters are being smoothed
+    if (std::abs(size - lastSetSize) > 0.5f)  // Only update if changed by more than 0.5 meters
     {
-        case Algorithm::Hall:
-            hall.setRSFactor(size / 80.0f);  // Dragonfly scales by 80 for hall
-            break;
-        case Algorithm::Room:
-            room.setRSFactor(size / 50.0f);  // Smaller scaling for room
-            break;
-        case Algorithm::Plate:
-            plate.setRSFactor(size / 100.0f);
-            break;
-        default:
-            break;
+        lastSetSize = size;
+
+        // Update early reflections size
+        early.setRSFactor(size / 10.0f);  // Dragonfly scales by 10 for early
+
+        // Update late reverb size based on algorithm
+        switch (currentAlgorithm)
+        {
+            case Algorithm::Hall:
+                hall.setRSFactor(size / 80.0f);  // Dragonfly scales by 80 for hall
+                break;
+            case Algorithm::Room:
+                room.setRSFactor(size / 50.0f);  // Smaller scaling for room
+                break;
+            case Algorithm::Plate:
+                plate.setRSFactor(size / 100.0f);
+                break;
+            default:
+                break;
+        }
+
+        // Note: With setMuteOnChange(true), the reverb will automatically
+        // clear its delay lines to avoid artifacts
     }
 }
 

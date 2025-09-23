@@ -680,13 +680,12 @@ void TapeMachineAudioProcessorEditor::resized()
 
 void TapeMachineAudioProcessorEditor::timerCallback()
 {
-    // Get input levels AFTER gain staging to show tape saturation drive
-    // This gives visual feedback of how hard you're hitting the tape
-    float inputL = audioProcessor.getInputLevelL();
-    float inputR = audioProcessor.getInputLevelR();
+    // Get actual audio levels from the processor
+    float outputL = audioProcessor.getOutputLevelL();
+    float outputR = audioProcessor.getOutputLevelR();
 
-    // Update VU meter to show input drive level
-    mainVUMeter.setLevels(inputL, inputR);
+    // Update VU meter
+    mainVUMeter.setLevels(outputL, outputR);
 
     // Update reel speeds based on transport
     float speed = audioProcessor.isProcessing() ? 1.5f : 0.0f;

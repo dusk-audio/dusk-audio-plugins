@@ -58,6 +58,8 @@ target_sources(StudioReverb PRIVATE
     Source/PluginEditor.h
     Source/DSP/DragonflyReverb.cpp
     Source/DSP/DragonflyReverb.h
+    Source/PresetManager.cpp
+    Source/PresetManager.h
     ${FREEVERB_SOURCES}
 )
 

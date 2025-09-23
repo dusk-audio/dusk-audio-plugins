@@ -76,6 +76,7 @@ private:
 
     // Parameters
     float size = 30.0f;
+    float lastSetSize = -1.0f;  // Track when size actually changes
     float width = 100.0f;
     float preDelay = 0.0f;
     float diffusion = 50.0f;

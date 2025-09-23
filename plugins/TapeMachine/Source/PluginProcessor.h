@@ -48,6 +48,9 @@ public:
     float getOutputLevelL() const { return outputLevelL.load(); }
     float getOutputLevelR() const { return outputLevelR.load(); }
 
+    // Transport state for reel animation
+    bool isProcessing() const { return isProcessingAudio.load(); }
+
     enum TapeMachine
     {
         StuderA800 = 0,
@@ -115,6 +118,7 @@ private:
     std::atomic<float> inputLevelR { 0.0f };
     std::atomic<float> outputLevelL { 0.0f };
     std::atomic<float> outputLevelR { 0.0f };
+    std::atomic<bool> isProcessingAudio { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineAudioProcessor)
 };

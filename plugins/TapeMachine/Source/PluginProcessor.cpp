@@ -379,6 +379,9 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (buffer.getNumChannels() < 2 || buffer.getNumSamples() == 0)
         return;
 
+    // Set processing flag for reel animation
+    isProcessingAudio.store(buffer.getMagnitude(0, buffer.getNumSamples()) > 0.001f);
+
     updateFilters();
 
     const auto machine = static_cast<TapeMachine>(static_cast<int>(tapeMachineParam->load()));
@@ -397,16 +400,18 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     processorChainLeft.get<3>().setGainLinear(outputGainValue);
     processorChainRight.get<3>().setGainLinear(outputGainValue);
 
-    // Calculate input levels for metering before processing
+    // Calculate input levels AFTER input gain for tape saturation metering
     float inputPeakL = 0.0f;
     float inputPeakR = 0.0f;
     auto* leftChannel = buffer.getWritePointer(0);
     auto* rightChannel = buffer.getWritePointer(1);
 
+    // Measure the signal level after input gain is applied
+    // This shows how hard we're driving the tape saturation
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        inputPeakL = juce::jmax(inputPeakL, std::abs(leftChannel[i]));
-        inputPeakR = juce::jmax(inputPeakR, std::abs(rightChannel[i]));
+        inputPeakL = juce::jmax(inputPeakL, std::abs(leftChannel[i] * inputGainValue));
+        inputPeakR = juce::jmax(inputPeakR, std::abs(rightChannel[i] * inputGainValue));
     }
 
     // Apply exponential smoothing to the levels
