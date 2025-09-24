@@ -18,7 +18,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JuceDefaults.cmake)
 
 # Add JUCE as a subdirectory
 # Option 1: Use system JUCE installation
-# add_subdirectory(/home/marc/Projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+# add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # Option 2: Use JUCE as git submodule (recommended)
 # Run: git submodule add https://github.com/juce-framework/JUCE.git external/JUCE
