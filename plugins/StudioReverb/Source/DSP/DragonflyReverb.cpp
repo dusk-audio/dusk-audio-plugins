@@ -58,6 +58,11 @@ void DragonflyReverb::prepare(double sr, int samplesPerBlock)
     sampleRate = sr;
     blockSize = samplesPerBlock;
 
+    // Validate and set buffer size to ensure we don't overflow
+    currentBufferSize = juce::jmin(static_cast<size_t>(samplesPerBlock), MAX_BUFFER_SIZE);
+    if (currentBufferSize < 1)
+        currentBufferSize = DEFAULT_BUFFER_SIZE;
+
     // Set sample rates for all processors
     early.setSampleRate(sampleRate);
     hall.setSampleRate(sampleRate);
@@ -166,12 +171,16 @@ void DragonflyReverb::setWidth(float percent)
 
 void DragonflyReverb::setPreDelay(float ms)
 {
-    // Freeverb3 doesn't handle zero predelay well, use 0.1 minimum
-    preDelay = juce::jlimit(0.1f, 100.0f, ms < 0.1f ? 0.1f : ms);
+    // Handle zero predelay properly - if user sets 0, we use minimal value internally
+    // but still respect their intent for a "no predelay" sound
+    preDelay = juce::jlimit(0.0f, 100.0f, ms);
 
-    hall.setPreDelay(preDelay);
-    room.setPreDelay(preDelay);
-    plate.setPreDelay(preDelay);
+    // Only set non-zero predelay to freeverb3 (it handles 0 poorly)
+    float actualPreDelay = (preDelay < 0.1f) ? 0.1f : preDelay;
+
+    hall.setPreDelay(actualPreDelay);
+    room.setPreDelay(actualPreDelay);
+    plate.setPreDelay(actualPreDelay);
 }
 
 void DragonflyReverb::setDiffuse(float percent)
@@ -407,11 +416,11 @@ void DragonflyReverb::processHall(juce::AudioBuffer<float>& buffer)
     float* inputL = buffer.getWritePointer(0);
     float* inputR = buffer.getWritePointer(1);
 
-    // Process in chunks matching BUFFER_SIZE
+    // Process in chunks matching currentBufferSize (validated in prepare)
     int samplesProcessed = 0;
     while (samplesProcessed < numSamples)
     {
-        int samplesToProcess = juce::jmin(static_cast<int>(BUFFER_SIZE),
+        int samplesToProcess = juce::jmin(static_cast<int>(currentBufferSize),
                                          numSamples - samplesProcessed);
 
         // Clear buffers
@@ -481,7 +490,7 @@ void DragonflyReverb::processRoom(juce::AudioBuffer<float>& buffer)
     int samplesProcessed = 0;
     while (samplesProcessed < numSamples)
     {
-        int samplesToProcess = juce::jmin(static_cast<int>(BUFFER_SIZE),
+        int samplesToProcess = juce::jmin(static_cast<int>(currentBufferSize),
                                          numSamples - samplesProcessed);
 
         // Clear buffers
@@ -550,7 +559,7 @@ void DragonflyReverb::processPlate(juce::AudioBuffer<float>& buffer)
     int samplesProcessed = 0;
     while (samplesProcessed < numSamples)
     {
-        int samplesToProcess = juce::jmin(static_cast<int>(BUFFER_SIZE),
+        int samplesToProcess = juce::jmin(static_cast<int>(currentBufferSize),
                                          numSamples - samplesProcessed);
 
         // Clear buffers
@@ -614,7 +623,7 @@ void DragonflyReverb::processEarlyOnly(juce::AudioBuffer<float>& buffer)
     int samplesProcessed = 0;
     while (samplesProcessed < numSamples)
     {
-        int samplesToProcess = juce::jmin(static_cast<int>(BUFFER_SIZE),
+        int samplesToProcess = juce::jmin(static_cast<int>(currentBufferSize),
                                          numSamples - samplesProcessed);
 
         // Clear buffers
