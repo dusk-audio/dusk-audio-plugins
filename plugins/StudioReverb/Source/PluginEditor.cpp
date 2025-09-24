@@ -35,10 +35,11 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     lookAndFeel = std::make_unique<StudioReverbLookAndFeel>();
     setLookAndFeel(lookAndFeel.get());
 
-    // Unified sizing across all Luna plugins
-    setSize(800, 600);
-    setResizable(true, true);
-    setResizeLimits(600, 450, 1200, 900);
+    // Calculate required size based on max controls (Hall mode has the most)
+    // Hall has: 6 rows of controls plus title and selector
+    // Title: 60, Selector: 100, 6 control rows: 6 * 120 = 720, padding: 40
+    setSize(850, 920);
+    setResizable(false, false);
 
     // Reverb Type Selector with improved styling
     addAndMakeVisible(reverbTypeCombo);
@@ -210,7 +211,7 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillAll(juce::Colour(0xff1a1a1a));
 
     // Title area with gradient
-    auto titleBounds = getLocalBounds().removeFromTop(50);
+    auto titleBounds = getLocalBounds().removeFromTop(60);
     juce::ColourGradient titleGradient(
         juce::Colour(0xff2a2a2a), 0, 0,
         juce::Colour(0xff1a1a1a), 0, titleBounds.getHeight(), false);
@@ -219,47 +220,52 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
 
     // Title text
     g.setColour(juce::Colours::lightgrey);
-    g.setFont(juce::Font(28.0f, juce::Font::bold));
-    g.drawText("StudioReverb", titleBounds, juce::Justification::centred, true);
+    g.setFont(juce::Font(32.0f, juce::Font::bold));
+    g.drawText("StudioReverb", titleBounds.removeFromBottom(35), juce::Justification::centred, true);
 
     // Company name
     g.setFont(juce::Font(12.0f));
     g.setColour(juce::Colours::grey);
-    g.drawText("Luna Co. Audio", titleBounds.removeFromBottom(20),
+    g.drawText("Luna Co. Audio", titleBounds,
                juce::Justification::centred, true);
 
-    // Draw section backgrounds
+    // Draw section backgrounds - use exact same bounds as resized()
     auto bounds = getLocalBounds();
-    bounds.removeFromTop(50);
-    bounds.reduce(15, 15);
+    bounds.removeFromTop(60);  // Match title height
+    bounds.reduce(25, 10);  // Consistent padding
 
     // Type and Preset selector section
-    auto selectorArea = bounds.removeFromTop(120);
+    auto selectorArea = bounds.removeFromTop(100);
     g.setColour(juce::Colour(0x20ffffff));
     g.fillRoundedRectangle(selectorArea.toFloat(), 8.0f);
     g.setColour(juce::Colour(0x40ffffff));
     g.drawRoundedRectangle(selectorArea.toFloat(), 8.0f, 1.0f);
 
-    bounds.removeFromTop(15);
+    bounds.removeFromTop(10);  // Spacing between sections
 
-    const int sliderSize = 75;
+    const int sliderSize = 80;
+    const int sectionHeight = sliderSize + 40;  // Include padding for labels
 
     // Mix Control Section
     g.setColour(juce::Colours::grey.withAlpha(0.5f));
     g.setFont(11.0f);
-    g.drawText("MIX", bounds.removeFromTop(15), juce::Justification::centred, false);
+    g.drawText("MIX", bounds.removeFromTop(20), juce::Justification::centred, false);
 
-    auto mixArea = bounds.removeFromTop(sliderSize + 25);
+    auto mixArea = bounds.removeFromTop(sectionHeight);
     g.setColour(juce::Colour(0x15ffffff));
     g.fillRoundedRectangle(mixArea.toFloat(), 6.0f);
 
+    bounds.removeFromTop(10);  // Spacing
+
     // Basic Controls Section
     g.setColour(juce::Colours::grey.withAlpha(0.5f));
-    g.drawText("REVERB CHARACTER", bounds.removeFromTop(15), juce::Justification::centred, false);
+    g.drawText("REVERB CHARACTER", bounds.removeFromTop(20), juce::Justification::centred, false);
 
-    auto basicArea = bounds.removeFromTop(sliderSize + 25);
+    auto basicArea = bounds.removeFromTop(sectionHeight);
     g.setColour(juce::Colour(0x15ffffff));
     g.fillRoundedRectangle(basicArea.toFloat(), 6.0f);
+
+    bounds.removeFromTop(10);  // Spacing
 
     // Get current reverb type
     int reverbIndex = currentReverbIndex;
@@ -273,8 +279,8 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
     {
         // Early Reflections: Just filters
         g.setColour(juce::Colours::grey.withAlpha(0.5f));
-        g.drawText("FILTERS", bounds.removeFromTop(15), juce::Justification::centred, false);
-        auto filterArea = bounds.removeFromTop(sliderSize + 25);
+        g.drawText("FILTERS", bounds.removeFromTop(20), juce::Justification::centred, false);
+        auto filterArea = bounds.removeFromTop(sectionHeight);
         g.setColour(juce::Colour(0x15ffffff));
         g.fillRoundedRectangle(filterArea.toFloat(), 6.0f);
     }
@@ -282,8 +288,8 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
     {
         // Plate: Filters
         g.setColour(juce::Colours::grey.withAlpha(0.5f));
-        g.drawText("FILTERS", bounds.removeFromTop(15), juce::Justification::centred, false);
-        auto filterArea = bounds.removeFromTop(sliderSize + 25);
+        g.drawText("FILTERS", bounds.removeFromTop(20), juce::Justification::centred, false);
+        auto filterArea = bounds.removeFromTop(sectionHeight);
         g.setColour(juce::Colour(0x15ffffff));
         g.fillRoundedRectangle(filterArea.toFloat(), 6.0f);
     }
@@ -291,15 +297,17 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
     {
         // Hall: Modulation
         g.setColour(juce::Colours::grey.withAlpha(0.5f));
-        g.drawText("MODULATION", bounds.removeFromTop(15), juce::Justification::centred, false);
-        auto modArea = bounds.removeFromTop(sliderSize + 25);
+        g.drawText("MODULATION", bounds.removeFromTop(20), juce::Justification::centred, false);
+        auto modArea = bounds.removeFromTop(sectionHeight);
         g.setColour(juce::Colour(0x15ffffff));
         g.fillRoundedRectangle(modArea.toFloat(), 6.0f);
 
+        bounds.removeFromTop(10);  // Spacing
+
         // Hall: Filters & Crossover
         g.setColour(juce::Colours::grey.withAlpha(0.5f));
-        g.drawText("FILTERS & CROSSOVER", bounds.removeFromTop(15), juce::Justification::centred, false);
-        auto filterArea = bounds.removeFromTop(sliderSize + 25);
+        g.drawText("FILTERS & CROSSOVER", bounds.removeFromTop(20), juce::Justification::centred, false);
+        auto filterArea = bounds.removeFromTop(sectionHeight);
         g.setColour(juce::Colour(0x15ffffff));
         g.fillRoundedRectangle(filterArea.toFloat(), 6.0f);
     }
@@ -307,22 +315,26 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
     {
         // Room: Modulation
         g.setColour(juce::Colours::grey.withAlpha(0.5f));
-        g.drawText("MODULATION", bounds.removeFromTop(15), juce::Justification::centred, false);
-        auto modArea = bounds.removeFromTop(sliderSize + 25);
+        g.drawText("MODULATION", bounds.removeFromTop(20), juce::Justification::centred, false);
+        auto modArea = bounds.removeFromTop(sectionHeight);
         g.setColour(juce::Colour(0x15ffffff));
         g.fillRoundedRectangle(modArea.toFloat(), 6.0f);
 
+        bounds.removeFromTop(10);  // Spacing
+
         // Room: Filters & Damping
         g.setColour(juce::Colours::grey.withAlpha(0.5f));
-        g.drawText("FILTERS & DAMPING", bounds.removeFromTop(15), juce::Justification::centred, false);
-        auto filterArea = bounds.removeFromTop(sliderSize + 25);
+        g.drawText("FILTERS & DAMPING", bounds.removeFromTop(20), juce::Justification::centred, false);
+        auto filterArea = bounds.removeFromTop(sectionHeight);
         g.setColour(juce::Colour(0x15ffffff));
         g.fillRoundedRectangle(filterArea.toFloat(), 6.0f);
 
+        bounds.removeFromTop(10);  // Spacing
+
         // Room: Boost Controls
         g.setColour(juce::Colours::grey.withAlpha(0.5f));
-        g.drawText("BOOST", bounds.removeFromTop(15), juce::Justification::centred, false);
-        auto boostArea = bounds.removeFromTop(sliderSize + 25);
+        g.drawText("BOOST", bounds.removeFromTop(20), juce::Justification::centred, false);
+        auto boostArea = bounds.removeFromTop(sectionHeight);
         g.setColour(juce::Colour(0x15ffffff));
         g.fillRoundedRectangle(boostArea.toFloat(), 6.0f);
     }
@@ -331,12 +343,12 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
 void StudioReverbAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromTop(50); // Title area
-    bounds.reduce(20, 20);
+    bounds.removeFromTop(60); // Title area - match paint()
+    bounds.reduce(25, 10);  // Match paint() padding
 
     // Reverb Type and Preset Selectors - horizontal layout
-    auto selectorArea = bounds.removeFromTop(80);  // Reduced from 120
-    selectorArea.removeFromTop(30); // Label space
+    auto selectorArea = bounds.removeFromTop(100);  // Match paint()
+    selectorArea.removeFromTop(35); // Label space
 
     // Split horizontally for both selectors
     auto halfWidth = selectorArea.getWidth() / 2;
@@ -351,144 +363,174 @@ void StudioReverbAudioProcessorEditor::resized()
     presetCombo.setBounds(presetArea.reduced(40, 8));
     presetCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
 
-    bounds.removeFromTop(10); // Spacing
+    bounds.removeFromTop(10); // Spacing between sections
 
-    const int sliderSize = 75;
-    const int labelHeight = 20;
-    const int spacing = 10;
+    const int sliderSize = 80;  // Larger sliders for better visibility
+    const int labelHeight = 25;
+    const int spacing = 15;  // More space between knobs
+    const int sectionHeight = sliderSize + 40;  // Total section height
 
     // Get reverb type to determine layout
-    int reverbIndex = currentReverbIndex;  // Use the editor's tracked index
+    int reverbIndex = currentReverbIndex;
     bool isRoom = (reverbIndex == 0);
     bool isHall = (reverbIndex == 1);
     bool isPlate = (reverbIndex == 2);
     bool isEarlyOnly = (reverbIndex == 3);
 
     // === Mix Control Section ===
-    auto mixSection = bounds.removeFromTop(sliderSize + labelHeight + 25);
-    mixSection.removeFromTop(labelHeight);
+    bounds.removeFromTop(20);  // Section label space
+    auto mixSection = bounds.removeFromTop(sectionHeight);
+    auto mixKnobArea = mixSection.reduced(10, 5);  // Small padding inside section
 
     if (isRoom || isHall)
     {
-        // Room/Hall: Show dry, wet, early level, and early send
-        int mixStartX = (mixSection.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
-        dryLevelSlider.setBounds(mixStartX, mixSection.getY(), sliderSize, sliderSize);
-        wetLevelSlider.setBounds(mixStartX + (sliderSize + spacing), mixSection.getY(), sliderSize, sliderSize);
-        earlyLevelSlider.setBounds(mixStartX + (sliderSize + spacing) * 2, mixSection.getY(), sliderSize, sliderSize);
-        earlySendSlider.setBounds(mixStartX + (sliderSize + spacing) * 3, mixSection.getY(), sliderSize, sliderSize);
+        // Room/Hall: 4 mix controls
+        int mixStartX = (mixKnobArea.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
+        int yPos = mixKnobArea.getY() + (mixKnobArea.getHeight() - sliderSize) / 2;
+        dryLevelSlider.setBounds(mixKnobArea.getX() + mixStartX, yPos, sliderSize, sliderSize);
+        wetLevelSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        earlyLevelSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
+        earlySendSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing) * 3, yPos, sliderSize, sliderSize);
     }
     else
     {
-        // Plate/Early Reflections: Show dry and wet levels
-        int mixStartX = (mixSection.getWidth() - (sliderSize * 2 + spacing)) / 2;
-        dryLevelSlider.setBounds(mixStartX, mixSection.getY(), sliderSize, sliderSize);
-        wetLevelSlider.setBounds(mixStartX + (sliderSize + spacing), mixSection.getY(), sliderSize, sliderSize);
+        // Plate/Early: 2 mix controls
+        int mixStartX = (mixKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
+        int yPos = mixKnobArea.getY() + (mixKnobArea.getHeight() - sliderSize) / 2;
+        dryLevelSlider.setBounds(mixKnobArea.getX() + mixStartX, yPos, sliderSize, sliderSize);
+        wetLevelSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
     }
 
+    bounds.removeFromTop(10);  // Spacing
+
     // === Basic Controls Section ===
-    auto basicSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-    basicSection.removeFromTop(labelHeight);
+    bounds.removeFromTop(20);  // Section label space
+    auto basicSection = bounds.removeFromTop(sectionHeight);
+    auto basicKnobArea = basicSection.reduced(10, 5);
 
     if (isEarlyOnly)
     {
-        // Early Reflections: Only Size and Width
-        int basicStartX = (basicSection.getWidth() - (sliderSize * 2 + spacing)) / 2;
-        sizeSlider.setBounds(basicStartX, basicSection.getY(), sliderSize, sliderSize);
-        widthSlider.setBounds(basicStartX + (sliderSize + spacing), basicSection.getY(), sliderSize, sliderSize);
+        // Early Reflections: Size, Width only
+        int basicStartX = (basicKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
+        int yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
+        sizeSlider.setBounds(basicKnobArea.getX() + basicStartX, yPos, sliderSize, sliderSize);
+        widthSlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
     }
     else if (isPlate)
     {
-        // Plate: Width, PreDelay, Decay (no Size, no Diffuse)
-        int basicStartX = (basicSection.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
-        widthSlider.setBounds(basicStartX, basicSection.getY(), sliderSize, sliderSize);
-        preDelaySlider.setBounds(basicStartX + (sliderSize + spacing), basicSection.getY(), sliderSize, sliderSize);
-        decaySlider.setBounds(basicStartX + (sliderSize + spacing) * 2, basicSection.getY(), sliderSize, sliderSize);
+        // Plate: Width, PreDelay, Decay
+        int basicStartX = (basicKnobArea.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
+        int yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
+        widthSlider.setBounds(basicKnobArea.getX() + basicStartX, yPos, sliderSize, sliderSize);
+        preDelaySlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        decaySlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
     }
     else
     {
         // Room/Hall: All basic controls
-        int basicStartX = (basicSection.getWidth() - (sliderSize * 5 + spacing * 4)) / 2;
-        sizeSlider.setBounds(basicStartX, basicSection.getY(), sliderSize, sliderSize);
-        widthSlider.setBounds(basicStartX + (sliderSize + spacing), basicSection.getY(), sliderSize, sliderSize);
-        preDelaySlider.setBounds(basicStartX + (sliderSize + spacing) * 2, basicSection.getY(), sliderSize, sliderSize);
-        decaySlider.setBounds(basicStartX + (sliderSize + spacing) * 3, basicSection.getY(), sliderSize, sliderSize);
-        diffuseSlider.setBounds(basicStartX + (sliderSize + spacing) * 4, basicSection.getY(), sliderSize, sliderSize);
+        int basicStartX = (basicKnobArea.getWidth() - (sliderSize * 5 + spacing * 4)) / 2;
+        int yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
+        sizeSlider.setBounds(basicKnobArea.getX() + basicStartX, yPos, sliderSize, sliderSize);
+        widthSlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        preDelaySlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
+        decaySlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 3, yPos, sliderSize, sliderSize);
+        diffuseSlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 4, yPos, sliderSize, sliderSize);
     }
 
-    // === Mode-specific layout for remaining controls ===
+    bounds.removeFromTop(10);  // Spacing
+
+    // === Mode-specific sections ===
     if (isEarlyOnly)
     {
-        // Early Reflections: Only filters (low cut, high cut)
-        auto filterSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-        filterSection.removeFromTop(labelHeight);
+        // Early Reflections: Just filters
+        bounds.removeFromTop(20);  // Section label space
+        auto filterSection = bounds.removeFromTop(sectionHeight);
+        auto filterKnobArea = filterSection.reduced(10, 5);
 
-        int filterStartX = (filterSection.getWidth() - (sliderSize * 2 + spacing)) / 2;
-        lowCutSlider.setBounds(filterStartX, filterSection.getY(), sliderSize, sliderSize);
-        highCutSlider.setBounds(filterStartX + (sliderSize + spacing), filterSection.getY(), sliderSize, sliderSize);
+        int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
+        int yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
+        lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
+        highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
     }
     else if (isPlate)
     {
-        // Plate: Filters (low cut, high cut, dampen)
-        auto filterSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-        filterSection.removeFromTop(labelHeight);
+        // Plate: Filters
+        bounds.removeFromTop(20);  // Section label space
+        auto filterSection = bounds.removeFromTop(sectionHeight);
+        auto filterKnobArea = filterSection.reduced(10, 5);
 
-        int filterStartX = (filterSection.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
-        lowCutSlider.setBounds(filterStartX, filterSection.getY(), sliderSize, sliderSize);
-        highCutSlider.setBounds(filterStartX + (sliderSize + spacing), filterSection.getY(), sliderSize, sliderSize);
-        dampenSlider.setBounds(filterStartX + (sliderSize + spacing) * 2, filterSection.getY(), sliderSize, sliderSize);
+        int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
+        int yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
+        lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
+        highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        dampenSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
     }
     else if (isHall)
     {
-        // Hall: Modulation (diffuse, modulation, spin, wander)
-        auto modSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-        modSection.removeFromTop(labelHeight);
+        // Hall: Modulation
+        bounds.removeFromTop(20);  // Section label space
+        auto modSection = bounds.removeFromTop(sectionHeight);
+        auto modKnobArea = modSection.reduced(10, 5);
 
-        int modStartX = (modSection.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
-        // Note: diffuse is already placed in basic controls
-        modulationSlider.setBounds(modStartX, modSection.getY(), sliderSize, sliderSize);
-        spinSlider.setBounds(modStartX + (sliderSize + spacing), modSection.getY(), sliderSize, sliderSize);
-        wanderSlider.setBounds(modStartX + (sliderSize + spacing) * 2, modSection.getY(), sliderSize, sliderSize);
-        // 4th position left empty for layout balance
+        int modStartX = (modKnobArea.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
+        int yPos = modKnobArea.getY() + (modKnobArea.getHeight() - sliderSize) / 2;
+        modulationSlider.setBounds(modKnobArea.getX() + modStartX, yPos, sliderSize, sliderSize);
+        spinSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        wanderSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
 
-        // Hall: Filters and Crossover (high cut, high cross, high mult, low cut, low cross, low mult)
-        auto filterSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-        filterSection.removeFromTop(labelHeight);
+        bounds.removeFromTop(10);  // Spacing
 
-        int filterStartX = (filterSection.getWidth() - (sliderSize * 6 + spacing * 5)) / 2;
-        highCutSlider.setBounds(filterStartX, filterSection.getY(), sliderSize, sliderSize);
-        highCrossSlider.setBounds(filterStartX + (sliderSize + spacing), filterSection.getY(), sliderSize, sliderSize);
-        highMultSlider.setBounds(filterStartX + (sliderSize + spacing) * 2, filterSection.getY(), sliderSize, sliderSize);
-        lowCutSlider.setBounds(filterStartX + (sliderSize + spacing) * 3, filterSection.getY(), sliderSize, sliderSize);
-        lowCrossSlider.setBounds(filterStartX + (sliderSize + spacing) * 4, filterSection.getY(), sliderSize, sliderSize);
-        lowMultSlider.setBounds(filterStartX + (sliderSize + spacing) * 5, filterSection.getY(), sliderSize, sliderSize);
+        // Hall: Filters & Crossover
+        bounds.removeFromTop(20);  // Section label space
+        auto filterSection = bounds.removeFromTop(sectionHeight);
+        auto filterKnobArea = filterSection.reduced(10, 5);
+
+        int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 6 + spacing * 5)) / 2;
+        yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
+        highCutSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
+        highCrossSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        highMultSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
+        lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 3, yPos, sliderSize, sliderSize);
+        lowCrossSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 4, yPos, sliderSize, sliderSize);
+        lowMultSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 5, yPos, sliderSize, sliderSize);
     }
     else if (isRoom)
     {
-        // Room: Modulation (spin, wander)
-        auto modSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-        modSection.removeFromTop(labelHeight);
+        // Room: Modulation
+        bounds.removeFromTop(20);  // Section label space
+        auto modSection = bounds.removeFromTop(sectionHeight);
+        auto modKnobArea = modSection.reduced(10, 5);
 
-        int modStartX = (modSection.getWidth() - (sliderSize * 2 + spacing)) / 2;
-        spinSlider.setBounds(modStartX, modSection.getY(), sliderSize, sliderSize);
-        wanderSlider.setBounds(modStartX + (sliderSize + spacing), modSection.getY(), sliderSize, sliderSize);
+        int modStartX = (modKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
+        int yPos = modKnobArea.getY() + (modKnobArea.getHeight() - sliderSize) / 2;
+        spinSlider.setBounds(modKnobArea.getX() + modStartX, yPos, sliderSize, sliderSize);
+        wanderSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
 
-        // Room: Filters and Damping (high cut, early damp, late damp, low cut)
-        auto filterSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-        filterSection.removeFromTop(labelHeight);
+        bounds.removeFromTop(10);  // Spacing
 
-        int filterStartX = (filterSection.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
-        highCutSlider.setBounds(filterStartX, filterSection.getY(), sliderSize, sliderSize);
-        earlyDampSlider.setBounds(filterStartX + (sliderSize + spacing), filterSection.getY(), sliderSize, sliderSize);
-        lateDampSlider.setBounds(filterStartX + (sliderSize + spacing) * 2, filterSection.getY(), sliderSize, sliderSize);
-        lowCutSlider.setBounds(filterStartX + (sliderSize + spacing) * 3, filterSection.getY(), sliderSize, sliderSize);
+        // Room: Filters & Damping
+        bounds.removeFromTop(20);  // Section label space
+        auto filterSection = bounds.removeFromTop(sectionHeight);
+        auto filterKnobArea = filterSection.reduced(10, 5);
 
-        // Room: Boost controls (low boost, boost freq)
-        auto boostSection = bounds.removeFromTop(sliderSize + labelHeight + 15);
-        boostSection.removeFromTop(labelHeight);
+        int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
+        yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
+        highCutSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
+        earlyDampSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        lateDampSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
+        lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 3, yPos, sliderSize, sliderSize);
 
-        int boostStartX = (boostSection.getWidth() - (sliderSize * 2 + spacing)) / 2;
-        lowBoostSlider.setBounds(boostStartX, boostSection.getY(), sliderSize, sliderSize);
-        boostFreqSlider.setBounds(boostStartX + (sliderSize + spacing), boostSection.getY(), sliderSize, sliderSize);
+        bounds.removeFromTop(10);  // Spacing
+
+        // Room: Boost controls
+        bounds.removeFromTop(20);  // Section label space
+        auto boostSection = bounds.removeFromTop(sectionHeight);
+        auto boostKnobArea = boostSection.reduced(10, 5);
+
+        int boostStartX = (boostKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
+        yPos = boostKnobArea.getY() + (boostKnobArea.getHeight() - sliderSize) / 2;
+        lowBoostSlider.setBounds(boostKnobArea.getX() + boostStartX, yPos, sliderSize, sliderSize);
+        boostFreqSlider.setBounds(boostKnobArea.getX() + boostStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
     }
 }
 
