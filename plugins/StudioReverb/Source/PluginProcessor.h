@@ -89,11 +89,13 @@ public:
     juce::AudioParameterFloat* lowMult;
     juce::AudioParameterFloat* highMult;
 
-    // Parameter change detection
+    // Parameter change detection and thread safety
     std::atomic<bool> parametersChanged { true };
+    mutable juce::SpinLock parameterLock;  // Lightweight lock for parameter updates
 
     // Preset management
     PresetManager presetManager;
+    std::atomic<bool> isLoadingPreset { false };  // Prevent multiple updates during preset load
     void loadPreset(const juce::String& presetName);
     void loadPresetForAlgorithm(const juce::String& presetName, int algorithmIndex);
 

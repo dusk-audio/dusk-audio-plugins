@@ -109,10 +109,12 @@ private:
     fv3::strev_f plate;
 
     // Processing buffers (matching Dragonfly's buffer management)
-    static constexpr size_t BUFFER_SIZE = 256;
-    float earlyOutBuffer[2][BUFFER_SIZE];
-    float lateInBuffer[2][BUFFER_SIZE];
-    float lateOutBuffer[2][BUFFER_SIZE];
+    static constexpr size_t MAX_BUFFER_SIZE = 8192;  // Maximum safe buffer size
+    static constexpr size_t DEFAULT_BUFFER_SIZE = 256;
+    size_t currentBufferSize = DEFAULT_BUFFER_SIZE;
+    float earlyOutBuffer[2][MAX_BUFFER_SIZE];
+    float lateInBuffer[2][MAX_BUFFER_SIZE];
+    float lateOutBuffer[2][MAX_BUFFER_SIZE];
 
     // Update reverb parameters based on current settings
     void updateEarlyReflections();

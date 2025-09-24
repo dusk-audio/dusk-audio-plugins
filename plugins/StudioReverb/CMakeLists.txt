@@ -29,7 +29,7 @@ juce_add_plugin(StudioReverb
 
 juce_generate_juce_header(StudioReverb)
 
-# Plugin sources - only include necessary freeverb files
+# Plugin sources - only include necessary freeverb files used by our algorithms
 set(FREEVERB_SOURCES
     # Core classes used by all reverbs
     Source/freeverb/revbase.cpp
@@ -42,13 +42,19 @@ set(FREEVERB_SOURCES
     Source/freeverb/efilter.cpp
     Source/freeverb/utils.cpp
 
-    # Specific reverb algorithms
-    Source/freeverb/earlyref.cpp
-    Source/freeverb/zrev.cpp
-    Source/freeverb/zrev2.cpp
-    Source/freeverb/progenitor.cpp
-    Source/freeverb/progenitor2.cpp
-    Source/freeverb/strev.cpp
+    # Specific reverb algorithms we actually use
+    Source/freeverb/earlyref.cpp      # Early reflections (all algorithms)
+    Source/freeverb/zrev.cpp           # Base for zrev2
+    Source/freeverb/zrev2.cpp          # Hall algorithm
+    Source/freeverb/progenitor.cpp     # Base for progenitor2
+    Source/freeverb/progenitor2.cpp    # Room algorithm
+    Source/freeverb/strev.cpp          # Plate algorithm
+
+    # Note: The following files are NOT needed and have been removed:
+    # - irmodel*.cpp, nrev*.cpp, compmodel.cpp, scomp.cpp, slimit.cpp, limitmodel.cpp
+    # - fir*.cpp, firwindow.cpp, stenh.cpp, rms.cpp, mls.cpp, sweep.cpp
+    # - blockDelay.cpp, dl_gardner.cpp, frag.cpp
+    # These were compiled but never used by our Dragonfly algorithms
 )
 
 target_sources(StudioReverb PRIVATE

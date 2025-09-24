@@ -356,9 +356,13 @@ void StudioReverbAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // Only update parameters if they've changed
-    if (parametersChanged.exchange(false))
-        updateReverbParameters();
+    // Only update parameters if they've changed (with thread safety)
+    if (parametersChanged.load())
+    {
+        const juce::SpinLock::ScopedLockType lock(parameterLock);
+        if (parametersChanged.exchange(false))
+            updateReverbParameters();
+    }
 
     if (reverb)
         reverb->processBlock(buffer);
@@ -474,7 +478,12 @@ void StudioReverbAudioProcessor::parameterChanged(const juce::String& parameterI
             << " (" << reverbType->getCurrentChoiceName() << ")");
     }
 
-    parametersChanged = true;
+    // Don't trigger individual updates if we're loading a preset
+    if (!isLoadingPreset.load())
+    {
+        const juce::SpinLock::ScopedLockType lock(parameterLock);
+        parametersChanged = true;
+    }
 }
 
 void StudioReverbAudioProcessor::loadPreset(const juce::String& presetName)
@@ -506,6 +515,9 @@ void StudioReverbAudioProcessor::loadPresetForAlgorithm(const juce::String& pres
     }
 
     DBG("  Found preset: " << preset.name << " with " << preset.parameters.size() << " parameters");
+
+    // Set flag to batch parameter updates
+    isLoadingPreset = true;
 
     // Load preset parameters
     for (const auto& param : preset.parameters)
@@ -550,7 +562,12 @@ void StudioReverbAudioProcessor::loadPresetForAlgorithm(const juce::String& pres
             highMult->setValueNotifyingHost(highMult->convertTo0to1(param.second));
     }
 
-    parametersChanged = true;
+    // Clear flag and trigger single update
+    isLoadingPreset = false;
+    {
+        const juce::SpinLock::ScopedLockType lock(parameterLock);
+        parametersChanged = true;
+    }
 }
 
 //==============================================================================
