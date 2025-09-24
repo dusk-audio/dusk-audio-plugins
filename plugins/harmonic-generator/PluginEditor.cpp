@@ -1,121 +1,19 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "../../shared/LunaLookAndFeel.h"
 #include <cmath>
 
 //==============================================================================
-// AnalogLookAndFeel Implementation
+// AnalogLookAndFeel Implementation - now inherits from Luna
 HarmonicGeneratorAudioProcessorEditor::AnalogLookAndFeel::AnalogLookAndFeel()
 {
-    backgroundColour = juce::Colour(0xff1a1a1a);
-    knobColour = juce::Colour(0xff3a3a3a);
-    pointerColour = juce::Colour(0xffff6b35);
-    accentColour = juce::Colour(0xff8b4513);
-
-    setColour(juce::Slider::thumbColourId, pointerColour);
-    setColour(juce::Slider::rotarySliderFillColourId, accentColour);
-    setColour(juce::Slider::rotarySliderOutlineColourId, knobColour);
-    setColour(juce::TextButton::buttonColourId, knobColour);
-    setColour(juce::TextButton::textColourOffId, juce::Colour(0xffd4d4d4));
-    setColour(juce::ToggleButton::tickColourId, pointerColour);
+    // Inherits Luna color scheme
+    // Colors are already set in LunaLookAndFeel base class
 }
 
 HarmonicGeneratorAudioProcessorEditor::AnalogLookAndFeel::~AnalogLookAndFeel() = default;
 
-void HarmonicGeneratorAudioProcessorEditor::AnalogLookAndFeel::drawRotarySlider(
-    juce::Graphics& g, int x, int y, int width, int height,
-    float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-    juce::Slider& slider)
-{
-    auto radius = juce::jmin(width / 2, height / 2) - 4.0f;
-    auto centreX = x + width * 0.5f;
-    auto centreY = y + height * 0.5f;
-    auto rx = centreX - radius;
-    auto ry = centreY - radius;
-    auto rw = radius * 2.0f;
-    auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-
-    // Shadow
-    g.setColour(juce::Colour(0x60000000));
-    g.fillEllipse(rx + 2, ry + 2, rw, rw);
-
-    // Outer ring with metallic gradient
-    juce::ColourGradient outerGradient(
-        juce::Colour(0xff5a5a5a), centreX - radius, centreY,
-        juce::Colour(0xff2a2a2a), centreX + radius, centreY, false);
-    g.setGradientFill(outerGradient);
-    g.fillEllipse(rx - 3, ry - 3, rw + 6, rw + 6);
-
-    // Inner knob body with texture
-    juce::ColourGradient bodyGradient(
-        juce::Colour(0xff4a4a4a), centreX - radius * 0.7f, centreY - radius * 0.7f,
-        juce::Colour(0xff1a1a1a), centreX + radius * 0.7f, centreY + radius * 0.7f, true);
-    g.setGradientFill(bodyGradient);
-    g.fillEllipse(rx, ry, rw, rw);
-
-    // Inner ring detail
-    g.setColour(juce::Colour(0xff2a2a2a));
-    g.drawEllipse(rx + 4, ry + 4, rw - 8, rw - 8, 2.0f);
-
-    // Center cap
-    auto capRadius = radius * 0.3f;
-    juce::ColourGradient capGradient(
-        juce::Colour(0xff6a6a6a), centreX - capRadius, centreY - capRadius,
-        juce::Colour(0xff3a3a3a), centreX + capRadius, centreY + capRadius, false);
-    g.setGradientFill(capGradient);
-    g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2, capRadius * 2);
-
-    // Position indicator
-    juce::Path pointer;
-    pointer.addRectangle(-2.0f, -radius + 6, 4.0f, radius * 0.4f);
-    pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
-
-    // Pointer glow effect
-    g.setColour(pointerColour.withAlpha(0.3f));
-    g.strokePath(pointer, juce::PathStrokeType(6.0f));
-    g.setColour(pointerColour);
-    g.fillPath(pointer);
-
-    // Tick marks
-    for (int i = 0; i <= 10; ++i)
-    {
-        auto tickAngle = rotaryStartAngle + (i / 10.0f) * (rotaryEndAngle - rotaryStartAngle);
-        auto tickLength = (i == 0 || i == 5 || i == 10) ? radius * 0.15f : radius * 0.1f;
-
-        juce::Path tick;
-        tick.addRectangle(-1.0f, -radius - 8, 2.0f, tickLength);
-        tick.applyTransform(juce::AffineTransform::rotation(tickAngle).translated(centreX, centreY));
-
-        g.setColour(juce::Colour(0xffaaaaaa).withAlpha(0.7f));
-        g.fillPath(tick);
-    }
-}
-
-void HarmonicGeneratorAudioProcessorEditor::AnalogLookAndFeel::drawToggleButton(
-    juce::Graphics& g, juce::ToggleButton& button,
-    bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
-{
-    auto bounds = button.getLocalBounds().toFloat().reduced(2.0f);
-
-    // LED-style indicator
-    auto ledBounds = bounds.removeFromLeft(20);
-    g.setColour(button.getToggleState() ? pointerColour : juce::Colour(0xff2a2a2a));
-    g.fillEllipse(ledBounds.reduced(2));
-
-    // LED glow when on
-    if (button.getToggleState())
-    {
-        g.setColour(pointerColour.withAlpha(0.3f));
-        g.fillEllipse(ledBounds);
-    }
-
-    g.setColour(juce::Colour(0xff4a4a4a));
-    g.drawEllipse(ledBounds.reduced(2), 1.0f);
-
-    // Text
-    g.setColour(button.getToggleState() ? juce::Colours::white : juce::Colour(0xff8a8a8a));
-    g.setFont(12.0f);
-    g.drawText(button.getButtonText(), bounds, juce::Justification::centredLeft);
-}
+// drawRotarySlider and drawToggleButton are inherited from LunaLookAndFeel
 
 void HarmonicGeneratorAudioProcessorEditor::AnalogLookAndFeel::drawLinearSlider(
     juce::Graphics& g, int x, int y, int width, int height,
@@ -125,17 +23,17 @@ void HarmonicGeneratorAudioProcessorEditor::AnalogLookAndFeel::drawLinearSlider(
     if (style == juce::Slider::LinearHorizontal)
     {
         // Track
-        g.setColour(juce::Colour(0xff2a2a2a));
+        g.setColour(juce::Colour(LunaLookAndFeel::PANEL_COLOR));
         g.fillRoundedRectangle(x, y + height * 0.4f, width, height * 0.2f, 2.0f);
 
         // Fill
-        g.setColour(accentColour);
+        g.setColour(juce::Colour(LunaLookAndFeel::ACCENT_COLOR).darker(0.2f));
         g.fillRoundedRectangle(x, y + height * 0.4f, sliderPos - x, height * 0.2f, 2.0f);
 
         // Thumb
-        g.setColour(pointerColour);
+        g.setColour(juce::Colour(LunaLookAndFeel::ACCENT_COLOR));
         g.fillEllipse(sliderPos - 8, y + height * 0.5f - 8, 16, 16);
-        g.setColour(juce::Colour(0xff1a1a1a));
+        g.setColour(juce::Colour(LunaLookAndFeel::BACKGROUND_COLOR));
         g.drawEllipse(sliderPos - 8, y + height * 0.5f - 8, 16, 16, 2.0f);
     }
 }
@@ -306,6 +204,34 @@ HarmonicGeneratorAudioProcessorEditor::HarmonicGeneratorAudioProcessorEditor(Har
     oversamplingButton.setButtonText("2x Oversampling");
     addAndMakeVisible(oversamplingButton);
 
+    // Setup preset selector
+    presetSelector.addItem("-- Select Preset --", 1);
+    presetSelector.addSectionHeading("Tape Machines");
+    presetSelector.addItem("Studer A800", 2);
+    presetSelector.addItem("Ampex ATR-102", 3);
+    presetSelector.addItem("Tascam Porta", 4);
+    presetSelector.addSectionHeading("Tubes");
+    presetSelector.addItem("Fairchild 670", 5);
+    presetSelector.addItem("Pultec EQP-1A", 6);
+    presetSelector.addItem("UA 610", 7);
+    presetSelector.addSectionHeading("Transistors");
+    presetSelector.addItem("Neve 1073", 8);
+    presetSelector.addItem("API 2500", 9);
+    presetSelector.addItem("SSL 4000E", 10);
+    presetSelector.addSectionHeading("Special");
+    presetSelector.addItem("Culture Vulture", 11);
+    presetSelector.addItem("Decapitator", 12);
+    presetSelector.addItem("HG-2 Black Box", 13);
+    presetSelector.setSelectedId(1);
+    presetSelector.addListener(this);
+    addAndMakeVisible(presetSelector);
+
+    presetLabel.setText("Saturation Type", juce::dontSendNotification);
+    presetLabel.setJustificationType(juce::Justification::centred);
+    presetLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    presetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffe0e0e0));
+    addAndMakeVisible(presetLabel);
+
     // Setup visual displays
     addAndMakeVisible(spectrumDisplay);
     addAndMakeVisible(inputMeter);
@@ -418,6 +344,10 @@ void HarmonicGeneratorAudioProcessorEditor::resized()
     // Oversampling button
     oversamplingButton.setBounds(250, characterSection.getY() + 40, 150, 30);
 
+    // Preset selector
+    presetLabel.setBounds(430, characterSection.getY() + 10, 120, 25);
+    presetSelector.setBounds(430, characterSection.getY() + 35, 200, 30);
+
     // Output section
     auto outputSection = bounds.removeFromTop(90);
     driveSlider.setBounds(30, outputSection.getY() + 10, knobSize, knobSize);
@@ -456,6 +386,153 @@ void HarmonicGeneratorAudioProcessorEditor::sliderValueChanged(juce::Slider*)
 void HarmonicGeneratorAudioProcessorEditor::buttonClicked(juce::Button*)
 {
     // Handled by parameter attachments
+}
+
+void HarmonicGeneratorAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBox)
+{
+    if (comboBox == &presetSelector)
+    {
+        int presetId = presetSelector.getSelectedId();
+
+        // Apply preset harmonic values based on selection
+        switch (presetId)
+        {
+            case 2:  // Studer A800 - Warm tape with prominent 2nd harmonic
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.30f);  // Strong 2nd
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.10f);   // Some 3rd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.05f);  // Subtle 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.02f);   // Minimal 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.7f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.3f);
+                audioProcessor.warmth->setValueNotifyingHost(0.7f);
+                audioProcessor.brightness->setValueNotifyingHost(0.3f);
+                break;
+
+            case 3:  // Ampex ATR-102 - Clean mastering tape
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.20f);  // Moderate 2nd
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.08f);   // Low 3rd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.03f);  // Very subtle 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.01f);   // Minimal 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.75f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.25f);
+                audioProcessor.warmth->setValueNotifyingHost(0.6f);
+                audioProcessor.brightness->setValueNotifyingHost(0.4f);
+                break;
+
+            case 4:  // Tascam Porta - Lo-fi cassette
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.50f);  // Heavy 2nd
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.30f);   // Strong 3rd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.20f);  // Notable 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.10f);   // Some 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.6f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.4f);
+                audioProcessor.warmth->setValueNotifyingHost(0.8f);
+                audioProcessor.brightness->setValueNotifyingHost(0.2f);
+                break;
+
+            case 5:  // Fairchild 670 - Tube compressor warmth
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.40f);  // Strong even harmonics
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.05f);   // Minimal odd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.02f);  // Very subtle
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.01f);   // Almost none
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.9f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.1f);
+                audioProcessor.warmth->setValueNotifyingHost(0.85f);
+                audioProcessor.brightness->setValueNotifyingHost(0.3f);
+                break;
+
+            case 6:  // Pultec EQP-1A - Tube EQ warmth
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.25f);  // Moderate 2nd
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.03f);   // Very low 3rd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.01f);  // Minimal 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.0f);    // None
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.85f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.15f);
+                audioProcessor.warmth->setValueNotifyingHost(0.9f);
+                audioProcessor.brightness->setValueNotifyingHost(0.4f);
+                break;
+
+            case 7:  // UA 610 - Tube preamp
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.35f);  // Good amount of 2nd
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.10f);   // Some 3rd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.05f);  // Subtle 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.02f);   // Minimal 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.8f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.2f);
+                audioProcessor.warmth->setValueNotifyingHost(0.75f);
+                audioProcessor.brightness->setValueNotifyingHost(0.35f);
+                break;
+
+            case 8:  // Neve 1073 - Class A transistor
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.15f);  // Less even
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.25f);   // More odd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.05f);  // Some 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.08f);   // Notable 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.4f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.6f);
+                audioProcessor.warmth->setValueNotifyingHost(0.5f);
+                audioProcessor.brightness->setValueNotifyingHost(0.6f);
+                break;
+
+            case 9:  // API 2500 - VCA compression
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.10f);  // Low even
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.20f);   // More odd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.03f);  // Minimal 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.05f);   // Some 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.35f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.65f);
+                audioProcessor.warmth->setValueNotifyingHost(0.4f);
+                audioProcessor.brightness->setValueNotifyingHost(0.7f);
+                break;
+
+            case 10:  // SSL 4000E - Console aggression
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.08f);  // Low even
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.30f);   // Strong odd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.05f);  // Some 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.10f);   // Notable 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.3f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.7f);
+                audioProcessor.warmth->setValueNotifyingHost(0.3f);
+                audioProcessor.brightness->setValueNotifyingHost(0.8f);
+                break;
+
+            case 11:  // Culture Vulture - Tube distortion
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.60f);  // Heavy 2nd
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.40f);   // Strong 3rd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.30f);  // Notable 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.20f);   // Good amount of 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.6f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.4f);
+                audioProcessor.warmth->setValueNotifyingHost(0.7f);
+                audioProcessor.brightness->setValueNotifyingHost(0.5f);
+                break;
+
+            case 12:  // Decapitator - Analog saturation
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.40f);  // Balanced
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.35f);   // Balanced
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.20f);  // Moderate 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.15f);   // Moderate 5th
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.5f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.5f);
+                audioProcessor.warmth->setValueNotifyingHost(0.6f);
+                audioProcessor.brightness->setValueNotifyingHost(0.6f);
+                break;
+
+            case 13:  // HG-2 Black Box - Tube/transformer
+                audioProcessor.secondHarmonic->setValueNotifyingHost(0.45f);  // Strong 2nd
+                audioProcessor.thirdHarmonic->setValueNotifyingHost(0.08f);   // Low odd
+                audioProcessor.fourthHarmonic->setValueNotifyingHost(0.04f);  // Minimal 4th
+                audioProcessor.fifthHarmonic->setValueNotifyingHost(0.02f);   // Almost none
+                audioProcessor.evenHarmonics->setValueNotifyingHost(0.82f);
+                audioProcessor.oddHarmonics->setValueNotifyingHost(0.18f);
+                audioProcessor.warmth->setValueNotifyingHost(0.8f);
+                audioProcessor.brightness->setValueNotifyingHost(0.4f);
+                break;
+
+            default:
+                break;
+        }
+    }
 }
 
 void HarmonicGeneratorAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::Label& label,

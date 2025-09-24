@@ -39,10 +39,10 @@ public:
     Algorithm getAlgorithm() const { return currentAlgorithm; }
 
     // Main mix controls (matching Dragonfly exactly)
-    void setDryLevel(float level) { dryLevel = level; }
-    void setEarlyLevel(float level) { earlyLevel = level; }
-    void setLateLevel(float level) { lateLevel = level; }
-    void setEarlySend(float send) { earlySend = send; }  // How much early feeds into late
+    void setDryLevel(float level) { dryLevel = level / 100.0f; }      // Convert percentage to 0-1
+    void setEarlyLevel(float level) { earlyLevel = level / 100.0f; }  // Convert percentage to 0-1
+    void setLateLevel(float level) { lateLevel = level / 100.0f; }    // Convert percentage to 0-1
+    void setEarlySend(float send) { earlySend = send / 100.0f; }      // Convert percentage to 0-1
 
     // Core reverb parameters (matching Dragonfly's parameter scaling)
     void setSize(float meters);        // Room size in meters (10-60)
@@ -62,6 +62,18 @@ public:
     // Modulation parameters (for Hall reverb)
     void setSpin(float amount);        // Modulation speed
     void setWander(float amount);      // Modulation depth
+    void setModulation(float percent);  // Hall-specific modulation amount
+
+    // Room-specific damping controls
+    void setEarlyDamp(float freq);     // Early reflections damping
+    void setLateDamp(float freq);      // Late reverb damping
+
+    // Room-specific boost controls
+    void setLowBoost(float percent);   // Low frequency boost
+    void setBoostFreq(float freq);     // Boost frequency
+
+    // Plate-specific damping
+    void setDamping(float freq);       // Overall damping frequency
 
 private:
     double sampleRate = 44100.0;

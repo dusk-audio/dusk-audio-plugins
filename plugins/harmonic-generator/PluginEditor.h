@@ -1,12 +1,14 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "../../shared/LunaLookAndFeel.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 
 class HarmonicGeneratorAudioProcessorEditor : public juce::AudioProcessorEditor,
                                              private juce::Timer,
                                              private juce::Slider::Listener,
-                                             private juce::Button::Listener
+                                             private juce::Button::Listener,
+                                             private juce::ComboBox::Listener
 {
 public:
     HarmonicGeneratorAudioProcessorEditor(HarmonicGeneratorAudioProcessor&);
@@ -18,28 +20,18 @@ public:
 
 private:
     // Custom look and feel for analog-style interface
-    class AnalogLookAndFeel : public juce::LookAndFeel_V4
+    class AnalogLookAndFeel : public LunaLookAndFeel
     {
     public:
         AnalogLookAndFeel();
         ~AnalogLookAndFeel() override;
 
-        void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                            float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-                            juce::Slider& slider) override;
-
-        void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
-                            bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+        // Most drawing is inherited from LunaLookAndFeel
+        // Only override if specific customization is needed
 
         void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
                             float sliderPos, float minSliderPos, float maxSliderPos,
                             const juce::Slider::SliderStyle style, juce::Slider& slider) override;
-
-    private:
-        juce::Colour backgroundColour;
-        juce::Colour knobColour;
-        juce::Colour pointerColour;
-        juce::Colour accentColour;
     };
 
     // Spectrum analyzer display
@@ -74,6 +66,7 @@ private:
 
     void sliderValueChanged(juce::Slider* slider) override;
     void buttonClicked(juce::Button* button) override;
+    void comboBoxChanged(juce::ComboBox* comboBox) override;
     void setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text,
                     juce::Slider::SliderStyle style = juce::Slider::RotaryVerticalDrag);
 
@@ -114,6 +107,10 @@ private:
 
     // Oversampling switch
     juce::ToggleButton oversamplingButton;
+
+    // Preset selector
+    juce::ComboBox presetSelector;
+    juce::Label presetLabel;
 
     // Visual displays
     SpectrumDisplay spectrumDisplay;

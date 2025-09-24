@@ -12,6 +12,12 @@
 
 DragonflyReverb::DragonflyReverb()
 {
+    // Initialize mix levels to safe values (already in 0-1 range internally)
+    dryLevel = 0.8f;     // 80%
+    earlyLevel = 0.1f;   // 10%
+    lateLevel = 0.2f;    // 20%
+    earlySend = 0.2f;    // 20%
+
     // Initialize early reflections (matching Dragonfly Hall)
     early.loadPresetReflection(FV3_EARLYREF_PRESET_1);
     early.setMuteOnChange(true);  // Mute when size changes to avoid artifacts
@@ -39,6 +45,12 @@ DragonflyReverb::DragonflyReverb()
     plate.setwet(0);   // 0dB
     plate.setdryr(0);  // Mute dry signal
     plate.setwidth(1.0);
+
+    // Clear all internal buffers
+    early.mute();
+    hall.mute();
+    room.mute();
+    plate.mute();
 }
 
 void DragonflyReverb::prepare(double sr, int samplesPerBlock)
@@ -264,6 +276,62 @@ void DragonflyReverb::setWander(float amount)
     plate.setwander(amount); // strev has wander too
 }
 
+void DragonflyReverb::setModulation(float percent)
+{
+    // Hall-specific modulation depth
+    // This is already handled by spin/wander
+    // Just store the value for reference
+    // modulation = percent;
+}
+
+void DragonflyReverb::setEarlyDamp(float freq)
+{
+    // Room-specific early reflection damping
+    // Only set if we have a valid frequency
+    if (freq > 0.0f && sampleRate > 0.0)
+        early.setoutputlpf(freq);
+}
+
+void DragonflyReverb::setLateDamp(float freq)
+{
+    // Room-specific late reverb damping
+    // Ensure normalized frequency is in valid range [0, 1]
+    if (sampleRate > 0.0)
+    {
+        float normalized = juce::jlimit(0.0f, 1.0f, static_cast<float>(freq / (sampleRate * 0.5f)));
+        room.setdamp(normalized);
+    }
+}
+
+void DragonflyReverb::setLowBoost(float percent)
+{
+    // Room-specific low frequency boost
+    // idiffusion1 expects a value between 0 and 1
+    // Just map the boost percentage to a safe diffusion range
+    float diffusionValue = juce::jlimit(0.0f, 0.99f, 0.5f + (percent / 200.0f));
+    room.setidiffusion1(diffusionValue);
+}
+
+void DragonflyReverb::setBoostFreq(float freq)
+{
+    // Room-specific boost frequency center
+    // This sets the crossover for low frequency treatment
+    // Store for future use - would need custom EQ implementation
+    // boostFreq = freq;
+    juce::ignoreUnused(freq);
+}
+
+void DragonflyReverb::setDamping(float freq)
+{
+    // Plate-specific overall damping
+    // Ensure normalized frequency is in valid range [0, 1]
+    if (sampleRate > 0.0)
+    {
+        float normalized = juce::jlimit(0.0f, 1.0f, static_cast<float>(freq / (sampleRate * 0.5f)));
+        plate.setdamp(normalized);
+    }
+}
+
 //==============================================================================
 // Update functions for each reverb type
 
@@ -405,6 +473,7 @@ void DragonflyReverb::processRoom(juce::AudioBuffer<float>& buffer)
 
     if (numChannels < 2) return;
 
+
     float* inputL = buffer.getWritePointer(0);
     float* inputR = buffer.getWritePointer(1);
 
@@ -448,13 +517,13 @@ void DragonflyReverb::processRoom(juce::AudioBuffer<float>& buffer)
             samplesToProcess
         );
 
-        // Mix output
+
+        // Mix output - Room uses both early and late reverb
         for (int i = 0; i < samplesToProcess; ++i)
         {
             float outL = inputL[samplesProcessed + i] * dryLevel +
                         earlyOutBuffer[0][i] * earlyLevel +
                         lateOutBuffer[0][i] * lateLevel;
-
             float outR = inputR[samplesProcessed + i] * dryLevel +
                         earlyOutBuffer[1][i] * earlyLevel +
                         lateOutBuffer[1][i] * lateLevel;
@@ -490,7 +559,7 @@ void DragonflyReverb::processPlate(juce::AudioBuffer<float>& buffer)
         std::memset(lateOutBuffer[0], 0, sizeof(float) * samplesToProcess);
         std::memset(lateOutBuffer[1], 0, sizeof(float) * samplesToProcess);
 
-        // Process early reflections
+        // For plate, we still process early reflections but don't use them in output
         early.processreplace(
             inputL + samplesProcessed,
             inputR + samplesProcessed,
@@ -499,16 +568,14 @@ void DragonflyReverb::processPlate(juce::AudioBuffer<float>& buffer)
             samplesToProcess
         );
 
-        // Prepare late reverb input
+        // Plate gets pure input (no early send for plate reverb)
         for (int i = 0; i < samplesToProcess; ++i)
         {
-            lateInBuffer[0][i] = inputL[samplesProcessed + i] +
-                                 earlyOutBuffer[0][i] * earlySend;
-            lateInBuffer[1][i] = inputR[samplesProcessed + i] +
-                                 earlyOutBuffer[1][i] * earlySend;
+            lateInBuffer[0][i] = inputL[samplesProcessed + i];
+            lateInBuffer[1][i] = inputR[samplesProcessed + i];
         }
 
-        // Process late reverb with Plate algorithm
+        // Process plate reverb
         plate.processreplace(
             lateInBuffer[0],
             lateInBuffer[1],
@@ -517,15 +584,12 @@ void DragonflyReverb::processPlate(juce::AudioBuffer<float>& buffer)
             samplesToProcess
         );
 
-        // Mix output
+        // Mix output - Plate uses only late reverb
         for (int i = 0; i < samplesToProcess; ++i)
         {
             float outL = inputL[samplesProcessed + i] * dryLevel +
-                        earlyOutBuffer[0][i] * earlyLevel +
                         lateOutBuffer[0][i] * lateLevel;
-
             float outR = inputR[samplesProcessed + i] * dryLevel +
-                        earlyOutBuffer[1][i] * earlyLevel +
                         lateOutBuffer[1][i] * lateLevel;
 
             inputL[samplesProcessed + i] = outL;
@@ -571,7 +635,6 @@ void DragonflyReverb::processEarlyOnly(juce::AudioBuffer<float>& buffer)
         {
             float outL = inputL[samplesProcessed + i] * dryLevel +
                         earlyOutBuffer[0][i] * earlyLevel;
-
             float outR = inputR[samplesProcessed + i] * dryLevel +
                         earlyOutBuffer[1][i] * earlyLevel;
 

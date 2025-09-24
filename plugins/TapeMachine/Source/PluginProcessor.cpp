@@ -1,6 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "TapeEmulation.h"
+#include "ImprovedTapeEmulation.h"
 #include <cmath>
 
 TapeMachineAudioProcessor::TapeMachineAudioProcessor()
@@ -29,8 +29,11 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     wowFlutterParam = apvts.getRawParameterValue("wowFlutter");
     outputGainParam = apvts.getRawParameterValue("outputGain");
 
-    tapeEmulationLeft = std::make_unique<TapeEmulation>();
-    tapeEmulationRight = std::make_unique<TapeEmulation>();
+    tapeEmulationLeft = std::make_unique<ImprovedTapeEmulation>();
+    tapeEmulationRight = std::make_unique<ImprovedTapeEmulation>();
+
+    // Initialize bias parameter
+    biasParam = apvts.getRawParameterValue("bias");
 }
 
 TapeMachineAudioProcessor::~TapeMachineAudioProcessor()
@@ -65,6 +68,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "saturation", "Saturation",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; },
+        [](const juce::String& text) { return text.getFloatValue(); }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "bias", "Bias",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; },
@@ -200,9 +210,9 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     wowFlutterDelayRight.setMaximumDelayInSamples(static_cast<int>(sampleRate * 0.05));
 
     if (tapeEmulationLeft)
-        tapeEmulationLeft->prepare(sampleRate);
+        tapeEmulationLeft->prepare(sampleRate, samplesPerBlock);
     if (tapeEmulationRight)
-        tapeEmulationRight->prepare(sampleRate);
+        tapeEmulationRight->prepare(sampleRate, samplesPerBlock);
 
     updateFilters();
 }
@@ -455,11 +465,29 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
             if (tapeEmulationLeft && tapeEmulationRight)
             {
-                auto emulationMachine = static_cast<TapeEmulation::TapeMachine>(static_cast<int>(machine));
-                auto emulationSpeed = static_cast<TapeEmulation::TapeSpeed>(static_cast<int>(tapeSpeed));
-                auto emulationType = static_cast<TapeEmulation::TapeType>(static_cast<int>(tapeType));
-                leftData[i] = tapeEmulationLeft->processSample(leftData[i], emulationMachine, emulationSpeed, emulationType);
-                rightData[i] = tapeEmulationRight->processSample(rightData[i], emulationMachine, emulationSpeed, emulationType);
+                auto emulationMachine = static_cast<ImprovedTapeEmulation::TapeMachine>(static_cast<int>(machine));
+                auto emulationSpeed = static_cast<ImprovedTapeEmulation::TapeSpeed>(static_cast<int>(tapeSpeed));
+                auto emulationType = static_cast<ImprovedTapeEmulation::TapeType>(static_cast<int>(tapeType));
+
+                // Get bias parameter value (default to 0.5 if not available)
+                float biasAmount = biasParam ? biasParam->load() * 0.01f : 0.5f;
+
+                // Process with improved tape emulation including bias
+                leftData[i] = tapeEmulationLeft->processSample(leftData[i],
+                                                              emulationMachine,
+                                                              emulationSpeed,
+                                                              emulationType,
+                                                              biasAmount,
+                                                              saturation * 0.01f,
+                                                              wowFlutter * 0.01f);
+
+                rightData[i] = tapeEmulationRight->processSample(rightData[i],
+                                                                emulationMachine,
+                                                                emulationSpeed,
+                                                                emulationType,
+                                                                biasAmount,
+                                                                saturation * 0.01f,
+                                                                wowFlutter * 0.01f);
             }
 
             auto [wowL, wowR] = processWowFlutter(leftData[i], rightData[i], wowFlutter);

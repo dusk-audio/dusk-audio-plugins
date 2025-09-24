@@ -20,6 +20,7 @@ public:
 private:
     StudioReverbAudioProcessor& audioProcessor;
     std::unique_ptr<StudioReverbLookAndFeel> lookAndFeel;
+    int currentReverbIndex = 0;  // Track current reverb type in editor
 
     // UI Components
     juce::ComboBox reverbTypeCombo;
@@ -27,15 +28,15 @@ private:
     juce::ComboBox presetCombo;
     juce::Label presetLabel;
 
-    // Mix Controls (4 sliders like Dragonfly)
+    // Mix Controls - separate dry and wet levels
     juce::Slider dryLevelSlider;
     juce::Label dryLevelLabel;
+    juce::Slider wetLevelSlider;
+    juce::Label wetLevelLabel;
     juce::Slider earlyLevelSlider;
     juce::Label earlyLevelLabel;
     juce::Slider earlySendSlider;
     juce::Label earlySendLabel;
-    juce::Slider lateLevelSlider;
-    juce::Label lateLevelLabel;
 
     // Basic Controls
     juce::Slider sizeSlider;
@@ -54,12 +55,26 @@ private:
     juce::Label spinLabel;
     juce::Slider wanderSlider;
     juce::Label wanderLabel;
+    juce::Slider modulationSlider;  // Hall-specific
+    juce::Label modulationLabel;
 
     // Filter Controls
     juce::Slider highCutSlider;
     juce::Label highCutLabel;
     juce::Slider lowCutSlider;
     juce::Label lowCutLabel;
+    juce::Slider dampenSlider;      // Plate-specific
+    juce::Label dampenLabel;
+    juce::Slider earlyDampSlider;   // Room-specific
+    juce::Label earlyDampLabel;
+    juce::Slider lateDampSlider;    // Room-specific
+    juce::Label lateDampLabel;
+
+    // Room-specific Boost Controls
+    juce::Slider lowBoostSlider;
+    juce::Label lowBoostLabel;
+    juce::Slider boostFreqSlider;
+    juce::Label boostFreqLabel;
 
     // Hall-specific Crossover Controls
     juce::Slider lowCrossSlider;
@@ -76,9 +91,9 @@ private:
 
     // Mix Control Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dryLevelAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wetLevelAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> earlyLevelAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> earlySendAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lateLevelAttachment;
 
     // Basic Control Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sizeAttachment;
@@ -90,10 +105,18 @@ private:
     // Modulation Control Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> spinAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wanderAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modulationAttachment;
 
     // Filter Control Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highCutAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowCutAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dampenAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> earlyDampAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lateDampAttachment;
+
+    // Room Boost Control Attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowBoostAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> boostFreqAttachment;
 
     // Hall-specific Crossover Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowCrossAttachment;
@@ -106,7 +129,7 @@ private:
                     int decimalPlaces = 1);
 
     void comboBoxChanged(juce::ComboBox* comboBoxThatHasChanged) override;
-    void updateHallControlsVisibility();
+    void updateHallControlsVisibility(int reverbIndex);
     void updatePresetList();
     void updatePresetListForAlgorithm(int algorithmIndex);
 

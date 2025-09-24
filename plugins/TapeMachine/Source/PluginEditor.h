@@ -2,24 +2,17 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "GUI/VUMeter.h"
+#include "../../../shared/LunaVintageLookAndFeel.h"
 
-class CustomLookAndFeel : public juce::LookAndFeel_V4
+class CustomLookAndFeel : public LunaVintageLookAndFeel
 {
 public:
     CustomLookAndFeel();
     ~CustomLookAndFeel() override;
 
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                         float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-                         juce::Slider& slider) override;
-
-    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
-                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
-
-private:
-    juce::Colour backgroundColour;
-    juce::Colour knobColour;
-    juce::Colour pointerColour;
+    // Inherits drawRotarySlider and drawToggleButton from LunaVintageLookAndFeel
+    // Can override if TapeMachine-specific customization is needed
 };
 
 class ReelAnimation : public juce::Component, public juce::Timer
@@ -37,33 +30,7 @@ private:
     float rotationSpeed = 1.0f;
 };
 
-class VUMeter : public juce::Component, public juce::Timer
-{
-public:
-    VUMeter();
-    ~VUMeter() override;
-
-    void paint(juce::Graphics& g) override;
-    void timerCallback() override;
-    void setLevels(float leftLevel, float rightLevel);
-    void setPeakLevels(float leftPeak, float rightPeak);
-
-private:
-    float currentLevelL = 0.0f;
-    float currentLevelR = 0.0f;
-    float targetLevelL = 0.0f;
-    float targetLevelR = 0.0f;
-    float peakLevelL = 0.0f;
-    float peakLevelR = 0.0f;
-    float peakHoldTimeL = 0.0f;
-    float peakHoldTimeR = 0.0f;
-
-    float smoothedLevelL = 0.0f;
-    float smoothedLevelR = 0.0f;
-    const float smoothingFactor = 0.85f;
-
-    void drawSingleVUMeter(juce::Graphics& g, juce::Rectangle<float> bounds);
-};
+// VUMeter class is now imported from GUI/VUMeter.h
 
 class TapeMachineAudioProcessorEditor : public juce::AudioProcessorEditor, public juce::Timer
 {
@@ -85,6 +52,7 @@ private:
 
     juce::Slider inputGainSlider;
     juce::Slider saturationSlider;
+    juce::Slider biasSlider;
     juce::Slider highpassFreqSlider;
     juce::Slider lowpassFreqSlider;
     juce::Slider noiseAmountSlider;
@@ -98,6 +66,7 @@ private:
     juce::Label tapeTypeLabel;
     juce::Label inputGainLabel;
     juce::Label saturationLabel;
+    juce::Label biasLabel;
     juce::Label highpassFreqLabel;
     juce::Label lowpassFreqLabel;
     juce::Label noiseAmountLabel;
@@ -115,6 +84,7 @@ private:
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> saturationAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> biasAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highpassFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowpassFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noiseAmountAttachment;

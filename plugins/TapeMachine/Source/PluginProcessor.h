@@ -4,7 +4,7 @@
 #include <memory>
 #include <array>
 
-class TapeEmulation;
+class ImprovedTapeEmulation;
 
 class TapeMachineAudioProcessor : public juce::AudioProcessor
 {
@@ -76,8 +76,11 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    std::unique_ptr<TapeEmulation> tapeEmulationLeft;
-    std::unique_ptr<TapeEmulation> tapeEmulationRight;
+    std::unique_ptr<ImprovedTapeEmulation> tapeEmulationLeft;
+    std::unique_ptr<ImprovedTapeEmulation> tapeEmulationRight;
+
+    // Add bias parameter for improved tape emulation
+    std::atomic<float>* biasParam = nullptr;
 
     juce::dsp::Oversampling<float> oversampling;
 

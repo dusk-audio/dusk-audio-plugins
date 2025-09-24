@@ -1,90 +1,24 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "../../../shared/LunaVintageLookAndFeel.h"
 
-// VintageKnobLookAndFeel implementation
+// VintageKnobLookAndFeel implementation - inherits from LunaVintage
 VintageKnobLookAndFeel::VintageKnobLookAndFeel()
 {
-    setColour(juce::Slider::textBoxTextColourId, juce::Colour(200, 190, 170));
-    setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(35, 40, 25));
-    setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(55, 60, 40));
+    // Inherits vintage styling from LunaVintageLookAndFeel
+    // Can add TapeEcho-specific customizations here if needed
 }
 
-void VintageKnobLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                                               float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-                                               juce::Slider& slider)
-{
-    auto bounds = juce::Rectangle<float>(x, y, width, height);
-    auto centre = bounds.getCentre();
-    auto radius = juce::jmin(width, height) / 2.0f * 0.8f;
-
-    // Outer ring (chrome bezel effect)
-    g.setColour(juce::Colour(150, 145, 135));
-    g.fillEllipse(centre.x - radius - 3, centre.y - radius - 3,
-                  radius * 2 + 6, radius * 2 + 6);
-
-    // Inner shadow
-    g.setColour(juce::Colour(25, 30, 20));
-    g.fillEllipse(centre.x - radius - 1, centre.y - radius - 1,
-                  radius * 2 + 2, radius * 2 + 2);
-
-    // Knob body - silver/chrome with gradient
-    juce::ColourGradient gradient(juce::Colour(180, 175, 170), centre,
-                                   juce::Colour(120, 115, 110), bounds.getTopLeft(), true);
-    g.setGradientFill(gradient);
-    g.fillEllipse(centre.x - radius, centre.y - radius, radius * 2, radius * 2);
-
-    // Add radial lines for grip texture
-    g.setColour(juce::Colour(100, 95, 90).withAlpha(0.3f));
-    for (int i = 0; i < 12; ++i)
-    {
-        float lineAngle = i * juce::MathConstants<float>::twoPi / 12.0f;
-        float x1 = centre.x + radius * 0.5f * std::cos(lineAngle);
-        float y1 = centre.y + radius * 0.5f * std::sin(lineAngle);
-        float x2 = centre.x + radius * 0.9f * std::cos(lineAngle);
-        float y2 = centre.y + radius * 0.9f * std::sin(lineAngle);
-        g.drawLine(x1, y1, x2, y2, 1.0f);
-    }
-
-    // Position indicator - white line
-    auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-    auto pointerLength = radius * 0.75f;
-    auto pointerThickness = 4.0f;
-
-    juce::Path pointer;
-    pointer.addRectangle(-pointerThickness * 0.5f, -radius * 0.9f, pointerThickness, pointerLength);
-    pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centre));
-
-    // White pointer line
-    g.setColour(juce::Colours::white);
-    g.fillPath(pointer.createPathWithRoundedCorners(2.0f));
-
-    // Center screw
-    g.setColour(juce::Colour(60, 60, 55));
-    g.fillEllipse(centre.x - 5, centre.y - 5, 10, 10);
-    g.setColour(juce::Colour(40, 40, 35));
-    g.drawEllipse(centre.x - 5, centre.y - 5, 10, 10, 1.0f);
-
-    // Draw position markers around knob
-    float markerRadius = radius + 8.0f;
-    g.setColour(juce::Colour(200, 190, 170));
-
-    // Min/max markers
-    for (float normPos = 0.0f; normPos <= 1.0f; normPos += 1.0f)
-    {
-        float markerAngle = rotaryStartAngle + normPos * (rotaryEndAngle - rotaryStartAngle);
-        float mx = centre.x + markerRadius * std::cos(markerAngle);
-        float my = centre.y + markerRadius * std::sin(markerAngle);
-        g.fillEllipse(mx - 2, my - 2, 4, 4);
-    }
-}
+// drawRotarySlider is inherited from LunaVintageLookAndFeel
 
 // TapeEchoEditor implementation
 TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
-    setSize(800, 500);
+    // Unified Luna sizing
+    setSize(800, 600);
     setResizable(true, true);
-    setResizeLimits(600, 400, 1200, 750);
+    setResizeLimits(600, 450, 1200, 900);
 
     setupControls();
     setupLabels();

@@ -35,7 +35,8 @@ target_sources(TapeMachine
     PRIVATE
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
-        Source/TapeEmulation.cpp)
+        Source/ImprovedTapeEmulation.cpp
+        Source/GUI/VUMeter.cpp)
 
 # Add compile definitions
 target_compile_definitions(TapeMachine

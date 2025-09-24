@@ -98,7 +98,7 @@ void PresetManager::initializeRoomPresets()
         "Small Bright Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 8.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.2f},
+            {"size", 12.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.2f},
             {"diffuse", 60.0f}, {"spin", 0.4f}, {"wander", 0.4f},
             {"highCut", 16000.0f}, {"lowCut", 4.0f}
         }
@@ -109,7 +109,7 @@ void PresetManager::initializeRoomPresets()
         "Small Clear Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 10.0f}, {"width", 100.0f}, {"preDelay", 4.0f}, {"decay", 0.3f},
+            {"size", 14.0f}, {"width", 100.0f}, {"preDelay", 4.0f}, {"decay", 0.3f},
             {"diffuse", 65.0f}, {"spin", 0.6f}, {"wander", 0.3f},
             {"highCut", 14000.0f}, {"lowCut", 4.0f}
         }
@@ -120,7 +120,7 @@ void PresetManager::initializeRoomPresets()
         "Small Dark Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 10.0f}, {"width", 80.0f}, {"preDelay", 8.0f}, {"decay", 0.4f},
+            {"size", 15.0f}, {"width", 80.0f}, {"preDelay", 8.0f}, {"decay", 0.4f},
             {"diffuse", 70.0f}, {"spin", 0.8f}, {"wander", 0.2f},
             {"highCut", 8000.0f}, {"lowCut", 4.0f}
         }
@@ -134,7 +134,7 @@ void PresetManager::initializeRoomPresets()
         "Medium Bright Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 12.0f}, {"width", 100.0f}, {"preDelay", 8.0f}, {"decay", 0.4f},
+            {"size", 18.0f}, {"width", 100.0f}, {"preDelay", 8.0f}, {"decay", 0.4f},
             {"diffuse", 70.0f}, {"spin", 0.8f}, {"wander", 0.4f},
             {"highCut", 16000.0f}, {"lowCut", 4.0f}
         }
@@ -145,7 +145,7 @@ void PresetManager::initializeRoomPresets()
         "Medium Clear Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 12.0f}, {"width", 100.0f}, {"preDelay", 8.0f}, {"decay", 0.4f},
+            {"size", 18.0f}, {"width", 100.0f}, {"preDelay", 8.0f}, {"decay", 0.4f},
             {"diffuse", 70.0f}, {"spin", 0.8f}, {"wander", 0.4f},
             {"highCut", 10000.0f}, {"lowCut", 4.0f}
         }
@@ -156,7 +156,7 @@ void PresetManager::initializeRoomPresets()
         "Medium Dark Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 14.0f}, {"width", 90.0f}, {"preDelay", 12.0f}, {"decay", 0.6f},
+            {"size", 20.0f}, {"width", 90.0f}, {"preDelay", 12.0f}, {"decay", 0.6f},
             {"diffuse", 75.0f}, {"spin", 1.2f}, {"wander", 0.2f},
             {"highCut", 6000.0f}, {"lowCut", 4.0f}
         }
@@ -170,7 +170,7 @@ void PresetManager::initializeRoomPresets()
         "Large Bright Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 15.0f}, {"width", 100.0f}, {"preDelay", 12.0f}, {"decay", 0.6f},
+            {"size", 25.0f}, {"width", 100.0f}, {"preDelay", 12.0f}, {"decay", 0.6f},
             {"diffuse", 80.0f}, {"spin", 1.6f}, {"wander", 0.3f},
             {"highCut", 16000.0f}, {"lowCut", 4.0f}
         }
@@ -181,7 +181,7 @@ void PresetManager::initializeRoomPresets()
         "Large Clear Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 15.0f}, {"width", 100.0f}, {"preDelay", 12.0f}, {"decay", 0.7f},
+            {"size", 28.0f}, {"width", 100.0f}, {"preDelay", 12.0f}, {"decay", 0.7f},
             {"diffuse", 80.0f}, {"spin", 1.6f}, {"wander", 0.2f},
             {"highCut", 12000.0f}, {"lowCut", 4.0f}
         }
@@ -192,7 +192,7 @@ void PresetManager::initializeRoomPresets()
         "Large Dark Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 15.0f}, {"width", 100.0f}, {"preDelay", 12.0f}, {"decay", 0.8f},
+            {"size", 30.0f}, {"width", 100.0f}, {"preDelay", 12.0f}, {"decay", 0.8f},
             {"diffuse", 80.0f}, {"spin", 1.6f}, {"wander", 0.2f},
             {"highCut", 4000.0f}, {"lowCut", 4.0f}
         }
@@ -212,7 +212,7 @@ void PresetManager::initializeHallPresets()
         "Bright Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 10.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.6f},
+            {"size", 15.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.6f},
             {"diffuse", 90.0f}, {"spin", 1.0f}, {"wander", 0.25f},
             {"highCut", 16000.0f}, {"lowCut", 4.0f},
             {"lowCross", 500.0f}, {"highCross", 7900.0f}, {"lowMult", 0.8f}, {"highMult", 0.75f}
@@ -224,7 +224,7 @@ void PresetManager::initializeHallPresets()
         "Clear Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 10.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.6f},
+            {"size", 15.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.6f},
             {"diffuse", 90.0f}, {"spin", 1.0f}, {"wander", 0.25f},
             {"highCut", 13000.0f}, {"lowCut", 4.0f},
             {"lowCross", 500.0f}, {"highCross", 5800.0f}, {"lowMult", 0.9f}, {"highMult", 0.5f}
@@ -236,7 +236,7 @@ void PresetManager::initializeHallPresets()
         "Dark Room",
         {
             {"dryLevel", 80.0f}, {"earlyLevel", 10.0f}, {"earlySend", 20.0f}, {"lateLevel", 20.0f},
-            {"size", 10.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.7f},
+            {"size", 16.0f}, {"width", 90.0f}, {"preDelay", 4.0f}, {"decay", 0.7f},
             {"diffuse", 50.0f}, {"spin", 1.0f}, {"wander", 0.25f},
             {"highCut", 7300.0f}, {"lowCut", 4.0f},
             {"lowCross", 500.0f}, {"highCross", 4900.0f}, {"lowMult", 1.2f}, {"highMult", 0.35f}

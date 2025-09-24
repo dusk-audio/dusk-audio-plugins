@@ -2,22 +2,18 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "../../../shared/LunaVintageLookAndFeel.h"
 #include "GUI/VUMeter.h"
 #include "GUI/ModeSelector.h"
 
-class VintageKnobLookAndFeel : public juce::LookAndFeel_V4
+class VintageKnobLookAndFeel : public LunaVintageLookAndFeel
 {
 public:
     VintageKnobLookAndFeel();
     ~VintageKnobLookAndFeel() override = default;
 
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-                          juce::Slider& slider) override;
-
-private:
-    juce::Colour knobColour{80, 75, 70};
-    juce::Colour pointerColour{200, 180, 160};
+    // Inherits drawRotarySlider from LunaVintageLookAndFeel
+    // Can override if TapeEcho-specific customization is needed
 };
 
 class TapeEchoEditor : public juce::AudioProcessorEditor,

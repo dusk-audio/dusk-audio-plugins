@@ -18,8 +18,9 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
     // Get parameter pointers from APVTS
     reverbType = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("reverbType"));
 
-    // Mix controls
+    // Mix controls - separate dry and wet
     dryLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("dryLevel"));
+    wetLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("wetLevel"));
     earlyLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("earlyLevel"));
     earlySend = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("earlySend"));
     lateLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lateLevel"));
@@ -34,10 +35,18 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
     // Modulation
     spin = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("spin"));
     wander = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("wander"));
+    modulation = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("modulation"));
 
     // Filters
     highCut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("highCut"));
     lowCut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lowCut"));
+    dampen = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("dampen"));
+    earlyDamp = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("earlyDamp"));
+    lateDamp = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lateDamp"));
+
+    // Room-specific boost
+    lowBoost = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lowBoost"));
+    boostFreq = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("boostFreq"));
 
     // Hall-specific
     lowCross = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lowCross"));
@@ -73,13 +82,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
         juce::StringArray{"Room", "Hall", "Plate", "Early Reflections"},
         1)); // Default to Hall
 
-    // === Core Mix Controls (Dragonfly-style) ===
+    // === Mix Controls - Separate Dry and Wet for better control ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "dryLevel", "Dry Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 70.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "wetLevel", "Wet Level",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 30.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; }));
+
+    // === Internal Mix Controls ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "earlyLevel", "Early Level",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 20.0f,
@@ -142,6 +158,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 2) + " ms"; }));
 
+    // Hall-specific modulation
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "modulation", "Modulation",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + "%"; }));
+
     // === Filter Controls ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "highCut", "High Cut",
@@ -152,6 +175,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lowCut", "Low Cut",
         juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f), 0.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    // Plate-specific damping control
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "dampen", "Dampen",
+        juce::NormalisableRange<float>(1000.0f, 20000.0f, 1.0f), 10000.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    // Room-specific damping controls
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "earlyDamp", "Early Damp",
+        juce::NormalisableRange<float>(1000.0f, 16000.0f, 1.0f), 10000.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "lateDamp", "Late Damp",
+        juce::NormalisableRange<float>(1000.0f, 16000.0f, 1.0f), 9000.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String((int)value) + " Hz"; }));
+
+    // Room-specific boost controls
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "lowBoost", "Low Boost",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 0.0f,
+        juce::String(), juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 0) + "%"; }));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "boostFreq", "Boost Freq",
+        juce::NormalisableRange<float>(50.0f, 4000.0f, 1.0f), 600.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String((int)value) + " Hz"; }));
 
@@ -257,6 +313,7 @@ void StudioReverbAudioProcessor::prepareToPlay (double sampleRate, int samplesPe
     if (reverb)
     {
         reverb->prepare(sampleRate, samplesPerBlock);
+        reverb->reset();  // Ensure clean state after prepare
         updateReverbParameters();
     }
 }
@@ -325,25 +382,85 @@ void StudioReverbAudioProcessor::updateReverbParameters()
     if (diffuse) reverb->setDiffuse(diffuse->get());
     if (width) reverb->setWidth(width->get());
 
-    // Set mix levels with null checks
-    if (dryLevel) reverb->setDryLevel(dryLevel->get() / 100.0f);
-    if (earlyLevel) reverb->setEarlyLevel(earlyLevel->get() / 100.0f);
-    if (lateLevel) reverb->setLateLevel(lateLevel->get() / 100.0f);
-    if (earlySend) reverb->setEarlySend(earlySend->get() / 100.0f);
+    // Get separate dry and wet levels
+    float dryPercent = dryLevel ? dryLevel->get() : 100.0f;  // 0-100%
+    float wetPercent = wetLevel ? wetLevel->get() : 30.0f;   // 0-100%
+
+    // algIndex already declared above
+    // 0=Room, 1=Hall, 2=Plate, 3=Early Reflections
+
+    // Set mix levels - these are percentages expected by DragonflyReverb
+    reverb->setDryLevel(dryPercent);             // Dry signal percentage
+
+    // Room and Hall algorithms expose early level and early send in UI
+    if (algIndex == 0 || algIndex == 1)  // Room or Hall
+    {
+        // Use the actual early parameters from UI
+        float earlyPercent = earlyLevel ? earlyLevel->get() : 10.0f;
+        float sendPercent = earlySend ? earlySend->get() : 20.0f;
+        reverb->setEarlyLevel(earlyPercent);     // User-controlled early reflections
+        reverb->setEarlySend(sendPercent);       // User-controlled early send
+        reverb->setLateLevel(wetPercent);        // Late reverb controlled by wet/dry
+    }
+    else if (algIndex == 2)  // Plate
+    {
+        // Dragonfly Plate has NO early reflections - it's a pure plate algorithm
+        reverb->setEarlyLevel(0.0f);             // No early reflections
+        reverb->setEarlySend(0.0f);              // No early send
+        reverb->setLateLevel(wetPercent);        // Pure plate reverb only
+    }
+    else if (algIndex == 3)  // Early Reflections
+    {
+        // Early Reflections only - no late reverb
+        reverb->setEarlyLevel(wetPercent);       // Wet signal controls early reflections
+        reverb->setEarlySend(0.0f);              // No send to late (no late reverb)
+        reverb->setLateLevel(0.0f);              // No late reverb
+    }
 
     // Set filter controls with null checks
     if (lowCut) reverb->setLowCut(lowCut->get());
     if (highCut) reverb->setHighCut(highCut->get());
 
-    // Set modulation controls with null checks
-    if (spin) reverb->setSpin(spin->get());
-    if (wander) reverb->setWander(wander->get());
+    // Mode-specific parameter handling
+    if (algIndex == 0)  // Room
+    {
+        // Room-specific modulation
+        if (spin) reverb->setSpin(spin->get());
+        if (wander) reverb->setWander(wander->get());
 
-    // Set Hall-specific crossover controls with null checks
-    if (lowCross) reverb->setLowCrossover(lowCross->get());
-    if (highCross) reverb->setHighCrossover(highCross->get());
-    if (lowMult) reverb->setLowMult(lowMult->get());
-    if (highMult) reverb->setHighMult(highMult->get());
+        // Room-specific damping - only set if parameters exist and are valid
+        if (earlyDamp && earlyDamp->get() > 0.0f)
+            reverb->setEarlyDamp(earlyDamp->get());
+        if (lateDamp && lateDamp->get() > 0.0f)
+            reverb->setLateDamp(lateDamp->get());
+
+        // Room-specific boost controls - only set if valid
+        if (lowBoost && lowBoost->get() >= 0.0f)
+            reverb->setLowBoost(lowBoost->get());
+        if (boostFreq && boostFreq->get() > 0.0f)
+            reverb->setBoostFreq(boostFreq->get());
+    }
+    else if (algIndex == 1)  // Hall
+    {
+        // Hall-specific modulation
+        if (spin) reverb->setSpin(spin->get());
+        if (wander) reverb->setWander(wander->get());
+        if (modulation && modulation->get() >= 0.0f)
+            reverb->setModulation(modulation->get());
+
+        // Hall-specific crossover controls
+        if (lowCross) reverb->setLowCrossover(lowCross->get());
+        if (highCross) reverb->setHighCrossover(highCross->get());
+        if (lowMult) reverb->setLowMult(lowMult->get());
+        if (highMult) reverb->setHighMult(highMult->get());
+    }
+    else if (algIndex == 2)  // Plate
+    {
+        // Plate-specific damping - only set if valid
+        if (dampen && dampen->get() > 0.0f)
+            reverb->setDamping(dampen->get());
+    }
+    // Early Reflections (algIndex == 3) doesn't have extra parameters
 }
 
 void StudioReverbAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
@@ -402,8 +519,11 @@ void StudioReverbAudioProcessor::loadPresetForAlgorithm(const juce::String& pres
             earlySend->setValueNotifyingHost(earlySend->convertTo0to1(param.second));
         else if (param.first == "lateLevel" && lateLevel)
             lateLevel->setValueNotifyingHost(lateLevel->convertTo0to1(param.second));
-        else if (param.first == "size" && size)
+        else if (param.first == "size" && size) {
+            DBG("  Setting size to " << param.second << " (normalized: " << size->convertTo0to1(param.second) << ")");
             size->setValueNotifyingHost(size->convertTo0to1(param.second));
+            DBG("  After setting, size value is: " << size->get());
+        }
         else if (param.first == "width" && width)
             width->setValueNotifyingHost(width->convertTo0to1(param.second));
         else if (param.first == "preDelay" && preDelay)
