@@ -12,15 +12,22 @@
 
 DragonflyReverb::DragonflyReverb()
 {
-    // Initialize mix levels for typical reverb sound (matching Dragonfly defaults)
-    dryLevel = 0.5f;     // 50% - balanced dry signal
-    earlyLevel = 0.3f;   // 30% - more prominent early reflections
-    lateLevel = 0.5f;    // 50% - strong late reverb
-    earlySend = 0.35f;   // 35% - good blend into late reverb
+    // Initialize mix levels matching Dragonfly defaults exactly
+    dryLevel = 1.0f;     // 100% - full dry signal (Dragonfly default)
+    earlyLevel = 0.5f;   // 50% - matching Dragonfly Hall
+    lateLevel = 0.5f;    // 50% - matching Dragonfly Hall
+    wetLevel = 0.5f;     // 50% - for Plate algorithm
+    earlySend = 0.20f;   // 20% - exact Dragonfly Hall early send
+
+    // Initialize input filters for Plate algorithm
+    input_lpf_0.mute();
+    input_lpf_1.mute();
+    input_hpf_0.mute();
+    input_hpf_1.mute();
 
     // Initialize early reflections (matching Dragonfly Hall)
     early.loadPresetReflection(FV3_EARLYREF_PRESET_1);
-    early.setMuteOnChange(true);  // Mute when size changes to avoid artifacts
+    early.setMuteOnChange(false);  // Match Dragonfly - don't mute on change
     early.setdryr(0);  // Mute dry signal
     early.setwet(0);   // 0dB wet
     early.setwidth(0.8);
@@ -29,22 +36,25 @@ DragonflyReverb::DragonflyReverb()
     early.setDiffusionApFreq(150, 4);
 
     // Initialize Hall reverb (zrev2)
-    hall.setMuteOnChange(true);   // Mute when size changes to avoid artifacts
+    hall.setMuteOnChange(false);   // Match Dragonfly - don't mute on change
     hall.setwet(0);    // 0dB
     hall.setdryr(0);   // Mute dry signal
     hall.setwidth(1.0);
 
     // Initialize Room reverb (progenitor2)
-    room.setMuteOnChange(true);   // Mute when size changes to avoid artifacts
+    room.setMuteOnChange(false);   // Match Dragonfly - don't mute on change
     room.setwet(0);    // 0dB
     room.setdryr(0);   // Mute dry signal
     room.setwidth(1.0);
 
-    // Initialize Plate reverb (strev)
-    plate.setMuteOnChange(true);   // Mute when size changes to avoid artifacts
-    plate.setwet(0);   // 0dB
-    plate.setdryr(0);  // Mute dry signal
-    plate.setwidth(1.0);
+    // Initialize Plate reverb (strev) - match Dragonfly Plate defaults
+    plate.setMuteOnChange(false);   // Match Dragonfly - don't mute on change
+    plate.setwet(0);      // 0dB wet signal
+    plate.setdryr(0);     // Mute dry signal
+    plate.setwidth(1.0f);
+    plate.setdccutfreq(6);      // DC cut frequency
+    plate.setspinlimit(12);     // Spin limit
+    plate.setspindiff(0.15f);   // Spin diff
 
     // Clear all internal buffers
     early.mute();
@@ -67,12 +77,18 @@ void DragonflyReverb::prepare(double sr, int samplesPerBlock)
     std::memset(earlyOutBuffer, 0, sizeof(earlyOutBuffer));
     std::memset(lateInBuffer, 0, sizeof(lateInBuffer));
     std::memset(lateOutBuffer, 0, sizeof(lateOutBuffer));
+    std::memset(filteredInputBuffer, 0, sizeof(filteredInputBuffer));
 
     // Set sample rates for all processors
     early.setSampleRate(sampleRate);
     hall.setSampleRate(sampleRate);
     room.setSampleRate(sampleRate);
     plate.setSampleRate(sampleRate);
+
+    // Initialize input filters with sample rate
+    // Room algorithm needs these filters
+    setInputLPF(20000.0f);  // Default high cut
+    setInputHPF(0.0f);       // Default low cut
 
     // Initialize all processors with current algorithm settings
     // This ensures they're in a known state
@@ -145,19 +161,20 @@ void DragonflyReverb::setSize(float meters)
         lastSetSize = size;
 
         // Update early reflections size - matching Dragonfly exactly
-        early.setRSFactor(size / 33.0f);  // Dragonfly Hall uses 33 for early
+        early.setRSFactor(size / 10.0f);  // Dragonfly Hall uses 10 for early
 
         // Update late reverb size based on algorithm - exact Dragonfly values
         switch (currentAlgorithm)
         {
             case Algorithm::Hall:
-                hall.setRSFactor(size / 210.0f);  // Dragonfly Hall uses 210
+                hall.setRSFactor(size / 80.0f);  // Dragonfly Hall uses 80
                 break;
             case Algorithm::Room:
-                room.setRSFactor(size / 140.0f);  // Dragonfly Room uses 140
+                room.setRSFactor(size / 10.0f);  // Dragonfly Room uses 10
                 break;
             case Algorithm::Plate:
-                plate.setRSFactor(size / 340.0f); // Dragonfly Plate uses 340
+                // Plate size affects decay time instead of RSFactor
+                updatePlateReverb();  // Update plate with new size
                 break;
             default:
                 break;
@@ -202,7 +219,7 @@ void DragonflyReverb::setPreDelay(float ms)
 void DragonflyReverb::setDiffuse(float percent)
 {
     diffusion = juce::jlimit(0.0f, 100.0f, percent);
-    float diff = diffusion / 140.0f;  // Dragonfly scales by 140
+    float diff = diffusion / 140.0f;  // Dragonfly Hall scales by 140
 
     hall.setidiffusion1(diff);
     hall.setapfeedback(diff);
@@ -235,6 +252,9 @@ void DragonflyReverb::setLowCut(float freq)
     room.setdccutfreq(lowCut);
     // strev doesn't have setoutputhpf either
     // We'll handle this through input damping
+
+    // Update input HPF for algorithms that need it (Room, Plate)
+    setInputHPF(freq);
 }
 
 void DragonflyReverb::setHighCut(float freq)
@@ -248,6 +268,9 @@ void DragonflyReverb::setHighCut(float freq)
     float damp = 1.0f - (freq / 20000.0f);
     room.setoutputdamp(damp);
     plate.setoutputdamp(damp);  // strev also uses setoutputdamp
+
+    // Update input LPF for algorithms that need it (Room, Plate)
+    setInputLPF(freq);
 }
 
 void DragonflyReverb::setLowCrossover(float freq)
@@ -303,10 +326,10 @@ void DragonflyReverb::setWander(float amount)
 
 void DragonflyReverb::setModulation(float percent)
 {
-    // Hall-specific modulation depth
-    // This is already handled by spin/wander
-    // Just store the value for reference
-    // modulation = percent;
+    // Hall-specific modulation depth - match Dragonfly Hall exactly
+    float mod = percent == 0.0f ? 0.001f : percent / 100.0f;
+    hall.setspinfactor(mod);
+    hall.setlfofactor(mod);
 }
 
 void DragonflyReverb::setEarlyDamp(float freq)
@@ -346,15 +369,18 @@ void DragonflyReverb::setBoostFreq(float freq)
     juce::ignoreUnused(freq);
 }
 
+void DragonflyReverb::setBoostLPF(float freq)
+{
+    // Room-specific boost LPF - Dragonfly Room uses setdamp2
+    room.setdamp2(freq);
+}
+
 void DragonflyReverb::setDamping(float freq)
 {
-    // Plate-specific overall damping
-    // Ensure normalized frequency is in valid range [0, 1]
-    if (sampleRate > 0.0)
-    {
-        float normalized = juce::jlimit(0.0f, 1.0f, static_cast<float>(freq / (sampleRate * 0.5f)));
-        plate.setdamp(normalized);
-    }
+    // Plate-specific overall damping - match Dragonfly exactly
+    // Dragonfly Plate passes frequency directly to setdamp
+    plate.setdamp(freq);
+    plate.setoutputdamp(std::max(freq * 2.0f, 16000.0f));
 }
 
 //==============================================================================
@@ -362,9 +388,15 @@ void DragonflyReverb::setDamping(float freq)
 
 void DragonflyReverb::updateEarlyReflections()
 {
-    // Match Dragonfly Hall early reflections exactly
-    early.setRSFactor(size / 33.0f);  // Corrected scaling
-    early.setwidth(width / 100.0f);
+    // Match Dragonfly early reflections exactly
+    early.setRSFactor(size / 10.0f);  // Dragonfly uses 10 for early
+
+    // Width scaling depends on algorithm!
+    if (currentAlgorithm == Algorithm::Room)
+        early.setwidth(width / 120.0f);  // Room early uses /120
+    else
+        early.setwidth(width / 100.0f);  // Hall early uses /100
+
     early.setLRDelay(0.3f);  // Stereo spread
     early.setLRCrossApFreq(750, 4);  // Cross AP frequency
     early.setDiffusionApFreq(150, 4);  // Diffusion frequency
@@ -377,14 +409,14 @@ void DragonflyReverb::updateEarlyReflections()
 void DragonflyReverb::updateHallReverb()
 {
     // Match Dragonfly Hall algorithm parameters exactly
-    hall.setRSFactor(size / 210.0f);  // Corrected scaling for Hall
+    hall.setRSFactor(size / 80.0f);  // Dragonfly Hall uses 80
     hall.setwidth(width / 100.0f);
     hall.setPreDelay(preDelay);
 
-    // Diffusion settings
-    float diff = diffusion / 100.0f;
-    hall.setidiffusion1(diff * 0.75f);
-    hall.setapfeedback(diff * 0.5f);
+    // Diffusion settings - match Dragonfly Hall exactly
+    float diff = diffusion / 140.0f;
+    hall.setidiffusion1(diff);
+    hall.setapfeedback(diff);
     // zrev2 doesn't have setidiffusion2 or setodiffusion methods
 
     // Core reverb settings
@@ -398,9 +430,11 @@ void DragonflyReverb::updateHallReverb()
     hall.setrt60_factor_low(lowMult);
     hall.setrt60_factor_high(highMult);
 
-    // Modulation
-    hall.setspin(spin * 0.5f);  // Scaled for subtlety
-    hall.setwander(wander * 0.3f);  // Scaled for subtlety
+    // Modulation - match Dragonfly Hall exactly
+    hall.setspin(spin);
+    hall.setwander(wander);
+
+    // Note: setspinfactor and setlfofactor are handled by setModulation()
 
     // Ensure proper wet/dry settings
     hall.setwet(0);  // 0dB
@@ -410,32 +444,39 @@ void DragonflyReverb::updateHallReverb()
 void DragonflyReverb::updateRoomReverb()
 {
     // Match Dragonfly Room algorithm parameters exactly
-    room.setRSFactor(size / 140.0f);  // Corrected scaling for Room
-    room.setwidth(width / 100.0f);
+    room.setRSFactor(size / 10.0f);  // Dragonfly Room uses 10
+    room.setwidth(width / 100.0f);   // Room late uses 100, NOT 120!
     room.setPreDelay(preDelay);
 
-    // Diffusion settings for Progenitor2
-    float diff = diffusion / 100.0f;
-    room.setidiffusion1(diff * 0.75f);
-    room.setodiffusion1(diff * 0.7f);
+    // Diffusion settings for Progenitor2 - match Dragonfly Room
+    float diff = diffusion / 120.0f;  // Room uses 120
+    room.setidiffusion1(diff);
+    room.setodiffusion1(diff);
     // progenitor2 doesn't have setidiffusion2/setodiffusion2
 
     // Core reverb settings
     room.setrt60(decay);
     room.setdccutfreq(lowCut);  // DC cut for rumble control
 
-    // High frequency damping - properly scaled
-    float dampValue = juce::jlimit(0.0f, 0.99f, 1.0f - (highCut / 22000.0f));
-    room.setdamp(dampValue);
-    room.setoutputdamp(dampValue * 0.5f);  // Less aggressive output damping
+    // High frequency damping - match Dragonfly Room exactly
+    // Dragonfly passes direct values to setdamp and setoutputdamp
+    room.setdamp(highCut);
+    room.setoutputdamp(highCut);
 
-    // Bass controls
-    room.setbassbw(juce::jlimit(0.0f, 1.0f, lowXover / 500.0f));
-    room.setbassboost(juce::jlimit(0.0f, 0.5f, lowMult - 1.0f));
+    // Bass boost - complex formula from Dragonfly Room
+    // boost / 20.0 / pow(decay, 1.5) * (size / 10.0)
+    float boostValue = lowMult / 20.0f / std::pow(decay, 1.5f) * (size / 10.0f);
+    room.setbassboost(boostValue);
 
-    // Modulation - Room uses less modulation than Hall
-    room.setspin(spin * 0.3f);
-    room.setwander(wander * 0.2f);
+    // Note: setbassbw is not used in Dragonfly Room
+    // Instead, setdamp2 is used for boost LPF parameter
+    room.setdamp2(lowXover);  // Dragonfly uses setdamp2 for boost LPF
+
+    // Modulation - match Dragonfly Room exactly
+    room.setspin(spin);
+    room.setspin2(std::sqrt(100.0f - (10.0f - spin) * (10.0f - spin)) / 2.0f);
+    room.setwander(wander / 200.0f + 0.1f);
+    room.setwander2(wander / 200.0f + 0.1f);
 
     // Ensure proper wet/dry settings
     room.setwet(0);  // 0dB
@@ -445,31 +486,30 @@ void DragonflyReverb::updateRoomReverb()
 void DragonflyReverb::updatePlateReverb()
 {
     // Match Dragonfly Plate algorithm parameters exactly
-    plate.setRSFactor(size / 340.0f);  // Corrected scaling for Plate
-    plate.setwidth(width / 100.0f);
+    // Plate doesn't use RSFactor or size parameter in Dragonfly
+    plate.setwidth(width / 120.0f);  // Dragonfly Plate uses /120 for width
     plate.setPreDelay(preDelay);
 
-    // Diffusion settings for strev (plate algorithm)
-    float diff = diffusion / 100.0f;
-    plate.setidiffusion1(diff * 0.7f);
-    plate.setidiffusion2(diff * 0.5f);  // Second stage diffusion
-    // strev doesn't have setodiffusion methods
+    // Diffusion settings - Dragonfly Plate doesn't scale diffusion
+    // The parameters are passed directly to the plate algorithm
+    // strev doesn't have explicit diffusion controls like other algorithms
 
-    // Core reverb settings
-    plate.setrt60(decay);
+    // Core reverb settings - NO size effect for plates in Dragonfly
+    plate.setrt60(decay);  // Direct decay value, no size modulation
 
-    // Plate damping - characteristic metallic sound
-    float dampValue = juce::jlimit(0.0f, 0.99f, 1.0f - (highCut / 20000.0f));
-    plate.setdamp(dampValue * 0.7f);  // Less damping for brighter plate
-    plate.setoutputdamp(dampValue * 0.5f);
+    // Plate damping - match Dragonfly Plate exactly
+    // Dragonfly uses direct frequency for setdamp
+    // and fmax(value * 2.0, 16000) for setoutputdamp
+    plate.setdamp(highCut);  // Direct frequency value
+    plate.setoutputdamp(std::max(highCut * 2.0f, 16000.0f));  // Dragonfly formula
 
-    // Plate-specific parameters
+    // Plate-specific parameters from Dragonfly
+    // Additional plate characteristics are inherent to the algorithm
     // strev doesn't have setbandwidth or settail methods
-    // These characteristics are inherent to the algorithm
 
-    // Modulation - plates have characteristic flutter
-    plate.setspin(spin * 0.4f);
-    plate.setwander(wander * 0.25f);
+    // Modulation - match Dragonfly Plate exactly
+    plate.setspin(spin);
+    plate.setwander(wander);
 
     // Ensure proper wet/dry settings
     plate.setwet(0);  // 0dB
@@ -555,7 +595,6 @@ void DragonflyReverb::processRoom(juce::AudioBuffer<float>& buffer)
 
     if (numChannels < 2) return;
 
-
     float* inputL = buffer.getWritePointer(0);
     float* inputR = buffer.getWritePointer(1);
 
@@ -572,21 +611,28 @@ void DragonflyReverb::processRoom(juce::AudioBuffer<float>& buffer)
         std::memset(lateOutBuffer[0], 0, sizeof(float) * samplesToProcess);
         std::memset(lateOutBuffer[1], 0, sizeof(float) * samplesToProcess);
 
-        // Process early reflections
+        // Dragonfly Room processes FILTERED input for early reflections!
+        for (int i = 0; i < samplesToProcess; ++i)
+        {
+            filteredInputBuffer[0][i] = input_lpf_0.process(input_hpf_0.process(inputL[samplesProcessed + i]));
+            filteredInputBuffer[1][i] = input_lpf_1.process(input_hpf_1.process(inputR[samplesProcessed + i]));
+        }
+
+        // Process early reflections with filtered input
         early.processreplace(
-            inputL + samplesProcessed,
-            inputR + samplesProcessed,
+            filteredInputBuffer[0],
+            filteredInputBuffer[1],
             earlyOutBuffer[0],
             earlyOutBuffer[1],
             samplesToProcess
         );
 
-        // Prepare late reverb input
+        // Prepare late reverb input - use filtered input + early send
         for (int i = 0; i < samplesToProcess; ++i)
         {
-            lateInBuffer[0][i] = inputL[samplesProcessed + i] +
+            lateInBuffer[0][i] = filteredInputBuffer[0][i] +
                                  earlyOutBuffer[0][i] * earlySend;
-            lateInBuffer[1][i] = inputR[samplesProcessed + i] +
+            lateInBuffer[1][i] = filteredInputBuffer[1][i] +
                                  earlyOutBuffer[1][i] * earlySend;
         }
 
@@ -636,43 +682,32 @@ void DragonflyReverb::processPlate(juce::AudioBuffer<float>& buffer)
                                          numSamples - samplesProcessed);
 
         // Clear buffers
-        std::memset(earlyOutBuffer[0], 0, sizeof(float) * samplesToProcess);
-        std::memset(earlyOutBuffer[1], 0, sizeof(float) * samplesToProcess);
         std::memset(lateOutBuffer[0], 0, sizeof(float) * samplesToProcess);
         std::memset(lateOutBuffer[1], 0, sizeof(float) * samplesToProcess);
 
-        // For plate, we still process early reflections but don't use them in output
-        early.processreplace(
-            inputL + samplesProcessed,
-            inputR + samplesProcessed,
-            earlyOutBuffer[0],
-            earlyOutBuffer[1],
-            samplesToProcess
-        );
-
-        // Plate gets pure input (no early send for plate reverb)
+        // Dragonfly Plate processes filtered input (matching Dragonfly exactly)
         for (int i = 0; i < samplesToProcess; ++i)
         {
-            lateInBuffer[0][i] = inputL[samplesProcessed + i];
-            lateInBuffer[1][i] = inputR[samplesProcessed + i];
+            filteredInputBuffer[0][i] = input_lpf_0.process(input_hpf_0.process(inputL[samplesProcessed + i]));
+            filteredInputBuffer[1][i] = input_lpf_1.process(input_hpf_1.process(inputR[samplesProcessed + i]));
         }
 
-        // Process plate reverb
+        // Process plate reverb with filtered input
         plate.processreplace(
-            lateInBuffer[0],
-            lateInBuffer[1],
+            filteredInputBuffer[0],
+            filteredInputBuffer[1],
             lateOutBuffer[0],
             lateOutBuffer[1],
             samplesToProcess
         );
 
-        // Mix output - Plate uses only late reverb
+        // Mix output - Plate uses only late reverb (no early)
         for (int i = 0; i < samplesToProcess; ++i)
         {
             float outL = inputL[samplesProcessed + i] * dryLevel +
-                        lateOutBuffer[0][i] * lateLevel;
+                        lateOutBuffer[0][i] * wetLevel;  // Plate uses wetLevel
             float outR = inputR[samplesProcessed + i] * dryLevel +
-                        lateOutBuffer[1][i] * lateLevel;
+                        lateOutBuffer[1][i] * wetLevel;  // Plate uses wetLevel
 
             inputL[samplesProcessed + i] = outL;
             inputR[samplesProcessed + i] = outR;
@@ -726,4 +761,29 @@ void DragonflyReverb::processEarlyOnly(juce::AudioBuffer<float>& buffer)
 
         samplesProcessed += samplesToProcess;
     }
+}
+
+//==============================================================================
+// Input filter helpers (matching Dragonfly Plate)
+
+void DragonflyReverb::setInputLPF(float freq)
+{
+    if (freq < 0)
+        freq = 0;
+    else if (freq > sampleRate / 2.0)
+        freq = sampleRate / 2.0;
+
+    input_lpf_0.setLPF_BW(freq, sampleRate);
+    input_lpf_1.setLPF_BW(freq, sampleRate);
+}
+
+void DragonflyReverb::setInputHPF(float freq)
+{
+    if (freq < 0)
+        freq = 0;
+    else if (freq > sampleRate / 2.0)
+        freq = sampleRate / 2.0;
+
+    input_hpf_0.setHPF_BW(freq, sampleRate);
+    input_hpf_1.setHPF_BW(freq, sampleRate);
 }

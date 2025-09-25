@@ -42,6 +42,7 @@ public:
     void setDryLevel(float level) { dryLevel = level / 100.0f; }      // Convert percentage to 0-1
     void setEarlyLevel(float level) { earlyLevel = level / 100.0f; }  // Convert percentage to 0-1
     void setLateLevel(float level) { lateLevel = level / 100.0f; }    // Convert percentage to 0-1
+    void setWetLevel(float level) { wetLevel = level / 100.0f; }      // For Plate algorithm
     void setEarlySend(float send) { earlySend = send / 100.0f; }      // Convert percentage to 0-1
 
     // Core reverb parameters (matching Dragonfly's parameter scaling)
@@ -71,6 +72,7 @@ public:
     // Room-specific boost controls
     void setLowBoost(float percent);   // Low frequency boost
     void setBoostFreq(float freq);     // Boost frequency
+    void setBoostLPF(float freq);      // Boost LPF frequency (setdamp2)
 
     // Plate-specific damping
     void setDamping(float freq);       // Overall damping frequency
@@ -80,11 +82,12 @@ private:
     int blockSize = 512;
     Algorithm currentAlgorithm = Algorithm::Hall;
 
-    // Mix levels (0-1 range internally)
-    float dryLevel = 0.7f;
-    float earlyLevel = 0.3f;
-    float lateLevel = 0.5f;
-    float earlySend = 0.2f;
+    // Mix levels (0-1 range internally) - matching Dragonfly defaults
+    float dryLevel = 1.0f;      // 100% dry - Dragonfly default
+    float earlyLevel = 0.5f;    // 50% early - Dragonfly default
+    float lateLevel = 0.5f;     // 50% late - Dragonfly default
+    float wetLevel = 0.5f;      // 50% wet for Plate algorithm
+    float earlySend = 0.2f;     // 20% early send - Dragonfly default
 
     // Parameters
     float size = 30.0f;
@@ -108,6 +111,9 @@ private:
     fv3::progenitor2_f room;
     fv3::strev_f plate;
 
+    // Input filters for Plate algorithm (matching Dragonfly)
+    fv3::iir_1st_f input_lpf_0, input_lpf_1, input_hpf_0, input_hpf_1;
+
     // Processing buffers (matching Dragonfly's buffer management)
     static constexpr size_t MAX_BUFFER_SIZE = 8192;  // Maximum safe buffer size
     static constexpr size_t DEFAULT_BUFFER_SIZE = 256;
@@ -115,6 +121,7 @@ private:
     float earlyOutBuffer[2][MAX_BUFFER_SIZE];
     float lateInBuffer[2][MAX_BUFFER_SIZE];
     float lateOutBuffer[2][MAX_BUFFER_SIZE];
+    float filteredInputBuffer[2][MAX_BUFFER_SIZE];  // For filtered input (Plate)
 
     // Update reverb parameters based on current settings
     void updateEarlyReflections();
@@ -127,6 +134,10 @@ private:
     void processHall(juce::AudioBuffer<float>& buffer);
     void processPlate(juce::AudioBuffer<float>& buffer);
     void processEarlyOnly(juce::AudioBuffer<float>& buffer);
+
+    // Input filter helpers for Plate
+    void setInputLPF(float freq);
+    void setInputHPF(float freq);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DragonflyReverb)
 };
