@@ -46,7 +46,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "tapeMachine", "Tape Machine",
-        juce::StringArray{"Studer A800", "Ampex ATR-102", "Blend"},
+        juce::StringArray{"Swiss 800", "Classic 102", "Hybrid Blend"},
         0));
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
@@ -56,7 +56,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "tapeType", "Tape Type",
-        juce::StringArray{"Ampex 456", "GP9", "BASF 911"},
+        juce::StringArray{"Type 456", "Type GP9", "Type 911"},
         0));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -82,7 +82,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "highpassFreq", "Highpass Frequency",
-        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.5f), 30.0f,
+        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.5f), 20.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String((int)value) + " Hz"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
@@ -215,6 +215,18 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
         tapeEmulationRight->prepare(sampleRate, samplesPerBlock);
 
     updateFilters();
+
+    // Initialize smoothed parameters with a ramp time of 20ms to prevent zipper noise
+    const float rampTimeMs = 20.0f;
+    const int rampSamples = static_cast<int>(sampleRate * rampTimeMs * 0.001f);
+
+    smoothedInputGain.reset(sampleRate, rampTimeMs * 0.001f);
+    smoothedOutputGain.reset(sampleRate, rampTimeMs * 0.001f);
+    smoothedSaturation.reset(sampleRate, rampTimeMs * 0.001f);
+    smoothedNoiseAmount.reset(sampleRate, rampTimeMs * 0.001f);
+    smoothedWowFlutter.reset(sampleRate, rampTimeMs * 0.001f);
+    smoothedHighpass.reset(sampleRate, rampTimeMs * 0.001f);
+    smoothedLowpass.reset(sampleRate, rampTimeMs * 0.001f);
 }
 
 void TapeMachineAudioProcessor::releaseResources()
@@ -255,23 +267,38 @@ void TapeMachineAudioProcessor::updateFilters()
     float hpFreq = highpassFreqParam->load();
     float lpFreq = lowpassFreqParam->load();
 
+    // Check if the ON/OFF button is enabled (controls filters and noise together)
+    bool filterEnabled = noiseEnabledParam ? (noiseEnabledParam->load() > 0.5f) : false;
+
     if (currentSampleRate > 0.0f)
     {
-        processorChainLeft.get<1>().setCutoffFrequency(hpFreq);
-        processorChainLeft.get<1>().setType(juce::dsp::StateVariableTPTFilterType::highpass);
-        processorChainLeft.get<1>().setResonance(0.707f);
+        // Bypass highpass filter when at minimum (20Hz) OR when button is OFF
+        bypassHighpass = (hpFreq <= 20.0f) || !filterEnabled;
 
-        processorChainLeft.get<2>().setCutoffFrequency(lpFreq);
-        processorChainLeft.get<2>().setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-        processorChainLeft.get<2>().setResonance(0.707f);
+        if (!bypassHighpass)
+        {
+            processorChainLeft.get<1>().setCutoffFrequency(hpFreq);
+            processorChainLeft.get<1>().setType(juce::dsp::StateVariableTPTFilterType::highpass);
+            processorChainLeft.get<1>().setResonance(0.707f);
 
-        processorChainRight.get<1>().setCutoffFrequency(hpFreq);
-        processorChainRight.get<1>().setType(juce::dsp::StateVariableTPTFilterType::highpass);
-        processorChainRight.get<1>().setResonance(0.707f);
+            processorChainRight.get<1>().setCutoffFrequency(hpFreq);
+            processorChainRight.get<1>().setType(juce::dsp::StateVariableTPTFilterType::highpass);
+            processorChainRight.get<1>().setResonance(0.707f);
+        }
 
-        processorChainRight.get<2>().setCutoffFrequency(lpFreq);
-        processorChainRight.get<2>().setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-        processorChainRight.get<2>().setResonance(0.707f);
+        // Bypass lowpass filter when at maximum (20kHz) OR when button is OFF
+        bypassLowpass = (lpFreq >= 19000.0f) || !filterEnabled;
+
+        if (!bypassLowpass)
+        {
+            processorChainLeft.get<2>().setCutoffFrequency(lpFreq);
+            processorChainLeft.get<2>().setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+            processorChainLeft.get<2>().setResonance(0.707f);
+
+            processorChainRight.get<2>().setCutoffFrequency(lpFreq);
+            processorChainRight.get<2>().setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+            processorChainRight.get<2>().setResonance(0.707f);
+        }
     }
 }
 
@@ -389,39 +416,65 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (buffer.getNumChannels() < 2 || buffer.getNumSamples() == 0)
         return;
 
-    // Set processing flag for reel animation
-    isProcessingAudio.store(buffer.getMagnitude(0, buffer.getNumSamples()) > 0.001f);
+    // Set processing flag based on DAW transport state
+    if (auto* playHead = getPlayHead())
+    {
+        juce::AudioPlayHead::CurrentPositionInfo posInfo;
+        if (playHead->getCurrentPosition(posInfo))
+        {
+            // Reels spin when transport is playing OR recording
+            isProcessingAudio.store(posInfo.isPlaying || posInfo.isRecording);
+        }
+    }
 
-    updateFilters();
+    // Only update filters if parameters changed (using instance variables)
+    float currentHpFreq = highpassFreqParam->load();
+    float currentLpFreq = lowpassFreqParam->load();
+
+    if (currentHpFreq != lastHpFreq || currentLpFreq != lastLpFreq)
+    {
+        updateFilters();
+        lastHpFreq = currentHpFreq;
+        lastLpFreq = currentLpFreq;
+    }
 
     const auto machine = static_cast<TapeMachine>(static_cast<int>(tapeMachineParam->load()));
     const auto tapeType = static_cast<TapeType>(static_cast<int>(tapeTypeParam->load()));
     const auto tapeSpeed = static_cast<TapeSpeed>(static_cast<int>(tapeSpeedParam->load()));
 
-    const float inputGainValue = juce::Decibels::decibelsToGain(inputGainParam->load());
-    const float outputGainValue = juce::Decibels::decibelsToGain(outputGainParam->load());
-    const float saturation = saturationParam->load();
-    const float wowFlutter = wowFlutterParam->load();
-    const float noiseAmount = noiseAmountParam->load() * 0.01f * 0.001f;
+    // Update target values for smoothing
+    smoothedInputGain.setTargetValue(juce::Decibels::decibelsToGain(inputGainParam->load()));
+    smoothedOutputGain.setTargetValue(juce::Decibels::decibelsToGain(outputGainParam->load()));
+    smoothedSaturation.setTargetValue(saturationParam->load());
+    smoothedWowFlutter.setTargetValue(wowFlutterParam->load());
+    // Scale noise amount reasonably (0-100% becomes 0-0.01 for subtle tape hiss)
+    smoothedNoiseAmount.setTargetValue(noiseAmountParam->load() * 0.01f * 0.01f);
+    smoothedHighpass.setTargetValue(highpassFreqParam->load());
+    smoothedLowpass.setTargetValue(lowpassFreqParam->load());
+
     const bool noiseEnabled = noiseEnabledParam->load() > 0.5f;
+
+    // Apply the smoothed gain values once at the start
+    const float inputGainValue = smoothedInputGain.getNextValue();
+    const float outputGainValue = smoothedOutputGain.getNextValue();
 
     processorChainLeft.get<0>().setGainLinear(inputGainValue);
     processorChainRight.get<0>().setGainLinear(inputGainValue);
     processorChainLeft.get<3>().setGainLinear(outputGainValue);
     processorChainRight.get<3>().setGainLinear(outputGainValue);
 
-    // Calculate input levels AFTER input gain for tape saturation metering
+    // Calculate input levels BEFORE input gain to show actual signal level on VU meter
     float inputPeakL = 0.0f;
     float inputPeakR = 0.0f;
     auto* leftChannel = buffer.getWritePointer(0);
     auto* rightChannel = buffer.getWritePointer(1);
 
-    // Measure the signal level after input gain is applied
-    // This shows how hard we're driving the tape saturation
+    // Measure the raw input signal level (before any gain staging)
+    // This gives accurate VU metering of the incoming signal
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        inputPeakL = juce::jmax(inputPeakL, std::abs(leftChannel[i] * inputGainValue));
-        inputPeakR = juce::jmax(inputPeakR, std::abs(rightChannel[i] * inputGainValue));
+        inputPeakL = juce::jmax(inputPeakL, std::abs(leftChannel[i]));
+        inputPeakR = juce::jmax(inputPeakR, std::abs(rightChannel[i]));
     }
 
     // Apply exponential smoothing to the levels
@@ -449,8 +502,28 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     juce::dsp::ProcessContextReplacing<float> leftContext(leftBlock);
     juce::dsp::ProcessContextReplacing<float> rightContext(rightBlock);
 
-    processorChainLeft.process(leftContext);
-    processorChainRight.process(rightContext);
+    // Manually process the chain with bypass logic
+    // Element 0: Input gain
+    processorChainLeft.get<0>().process(leftContext);
+    processorChainRight.get<0>().process(rightContext);
+
+    // Element 1: Highpass filter (bypass if at minimum)
+    if (!bypassHighpass)
+    {
+        processorChainLeft.get<1>().process(leftContext);
+        processorChainRight.get<1>().process(rightContext);
+    }
+
+    // Element 2: Lowpass filter (bypass if at maximum)
+    if (!bypassLowpass)
+    {
+        processorChainLeft.get<2>().process(leftContext);
+        processorChainRight.get<2>().process(rightContext);
+    }
+
+    // Element 3: Output gain
+    processorChainLeft.get<3>().process(leftContext);
+    processorChainRight.get<3>().process(rightContext);
 
     float* leftData = leftBlock.getChannelPointer(0);
     float* rightData = rightBlock.getChannelPointer(0);
@@ -460,45 +533,55 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     {
         if (leftData && rightData)
         {
-            leftData[i] = processTapeSaturation(leftData[i], saturation, machine, tapeType);
-            rightData[i] = processTapeSaturation(rightData[i], saturation, machine, tapeType);
+            // Get smoothed values per sample for zipper-free parameter changes
+            const float currentSaturation = smoothedSaturation.getNextValue();
+            const float currentWowFlutter = smoothedWowFlutter.getNextValue();
+            const float currentNoiseAmount = smoothedNoiseAmount.getNextValue();
 
+            // Use only the improved tape emulation (removes redundant saturation)
             if (tapeEmulationLeft && tapeEmulationRight)
             {
                 auto emulationMachine = static_cast<ImprovedTapeEmulation::TapeMachine>(static_cast<int>(machine));
                 auto emulationSpeed = static_cast<ImprovedTapeEmulation::TapeSpeed>(static_cast<int>(tapeSpeed));
                 auto emulationType = static_cast<ImprovedTapeEmulation::TapeType>(static_cast<int>(tapeType));
 
-                // Get bias parameter value (default to 0.5 if not available)
                 float biasAmount = biasParam ? biasParam->load() * 0.01f : 0.5f;
 
-                // Process with improved tape emulation including bias
+                // Process with improved tape emulation (includes saturation and wow/flutter)
+                // Pass noise parameters to control noise from the button
                 leftData[i] = tapeEmulationLeft->processSample(leftData[i],
                                                               emulationMachine,
                                                               emulationSpeed,
                                                               emulationType,
                                                               biasAmount,
-                                                              saturation * 0.01f,
-                                                              wowFlutter * 0.01f);
+                                                              currentSaturation * 0.01f,
+                                                              currentWowFlutter * 0.01f,
+                                                              noiseEnabled,
+                                                              currentNoiseAmount * 100.0f);  // Scale back to 0-100 range
 
                 rightData[i] = tapeEmulationRight->processSample(rightData[i],
                                                                 emulationMachine,
                                                                 emulationSpeed,
                                                                 emulationType,
                                                                 biasAmount,
-                                                                saturation * 0.01f,
-                                                                wowFlutter * 0.01f);
+                                                                currentSaturation * 0.01f,
+                                                                currentWowFlutter * 0.01f,
+                                                                noiseEnabled,
+                                                                currentNoiseAmount * 100.0f);  // Scale back to 0-100 range
             }
-
-            auto [wowL, wowR] = processWowFlutter(leftData[i], rightData[i], wowFlutter);
-            leftData[i] = wowL;
-            rightData[i] = wowR;
-
-            if (noiseEnabled && noiseAmount > 0.0f)
+            else
             {
-                float noise = (noiseGenerator.nextFloat() * 2.0f - 1.0f) * noiseAmount;
-                leftData[i] += noise;
-                rightData[i] += noise;
+                // Fallback to basic saturation if improved emulation not available
+                leftData[i] = processTapeSaturation(leftData[i], currentSaturation, machine, tapeType);
+                rightData[i] = processTapeSaturation(rightData[i], currentSaturation, machine, tapeType);
+
+                // Add simple noise only in fallback mode when button is ON
+                if (noiseEnabled && currentNoiseAmount > 0.0f)
+                {
+                    float noise = (noiseGenerator.nextFloat() * 2.0f - 1.0f) * currentNoiseAmount;
+                    leftData[i] += noise;
+                    rightData[i] += noise;
+                }
             }
         }
     }

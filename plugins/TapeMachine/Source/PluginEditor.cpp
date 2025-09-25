@@ -95,9 +95,9 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     setLookAndFeel(&customLookAndFeel);
 
     setupComboBox(tapeMachineSelector, tapeMachineLabel, "MACHINE");
-    tapeMachineSelector.addItem("Studer A800", 1);
-    tapeMachineSelector.addItem("Ampex ATR-102", 2);
-    tapeMachineSelector.addItem("Blend", 3);
+    tapeMachineSelector.addItem("Swiss 800", 1);
+    tapeMachineSelector.addItem("Classic 102", 2);
+    tapeMachineSelector.addItem("Hybrid Blend", 3);
     tapeMachineAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "tapeMachine", tapeMachineSelector);
 
@@ -109,9 +109,9 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
         audioProcessor.getAPVTS(), "tapeSpeed", tapeSpeedSelector);
 
     setupComboBox(tapeTypeSelector, tapeTypeLabel, "TAPE TYPE");
-    tapeTypeSelector.addItem("Ampex 456", 1);
-    tapeTypeSelector.addItem("GP9", 2);
-    tapeTypeSelector.addItem("BASF 911", 3);
+    tapeTypeSelector.addItem("Type 456", 1);
+    tapeTypeSelector.addItem("Type GP9", 2);
+    tapeTypeSelector.addItem("Type 911", 3);
     tapeTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "tapeType", tapeTypeSelector);
 
@@ -147,7 +147,15 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     outputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "outputGain", outputGainSlider);
 
-    noiseEnabledButton.setButtonText("NOISE");
+    noiseEnabledButton.setButtonText("OFF");
+    noiseEnabledButton.setClickingTogglesState(true);
+    noiseEnabledButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a2828));
+    noiseEnabledButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff5a4838));
+    noiseEnabledButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff888888));
+    noiseEnabledButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffE8D4B0));
+    noiseEnabledButton.onStateChange = [this]() {
+        noiseEnabledButton.setButtonText(noiseEnabledButton.getToggleState() ? "ON" : "OFF");
+    };
     addAndMakeVisible(noiseEnabledButton);
     noiseEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), "noiseEnabled", noiseEnabledButton);
@@ -160,9 +168,9 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     addAndMakeVisible(mainVUMeter);
     startTimerHz(30);
 
-    setSize(800, 600);
+    setSize(900, 650);
     setResizable(true, true);
-    setResizeLimits(600, 450, 1200, 900);
+    setResizeLimits(700, 500, 1400, 1000);
 }
 
 TapeMachineAudioProcessorEditor::~TapeMachineAudioProcessorEditor()
@@ -174,33 +182,35 @@ TapeMachineAudioProcessorEditor::~TapeMachineAudioProcessorEditor()
 void TapeMachineAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 18);
-    slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffE8D4B0));
-    slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff2a2018));
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
+    slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffF8E4C0));
+    slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff3a2828));
+    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff5a4838));
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff3a3028));
     addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
-    label.setColour(juce::Label::textColourId, juce::Colour(0xffC4A878));
-    label.setFont(juce::Font(11.0f, juce::Font::bold));
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffE8D4B0));
+    label.setFont(juce::Font(12.0f, juce::Font::bold));
     label.attachToComponent(&slider, false);
     addAndMakeVisible(label);
 }
 
 void TapeMachineAudioProcessorEditor::setupComboBox(juce::ComboBox& combo, juce::Label& label, const juce::String& text)
 {
-    combo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3028));
-    combo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffE8D4B0));
-    combo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff4a3828));
-    combo.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xffC4A878));
+    combo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff4a3838));
+    combo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffF8E4C0));
+    combo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff7a5838));
+    combo.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xffE8D4B0));
+    combo.setColour(juce::ComboBox::focusedOutlineColourId, juce::Colour(0xffB8946a));
     combo.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(combo);
 
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
-    label.setColour(juce::Label::textColourId, juce::Colour(0xffC4A878));
-    label.setFont(juce::Font(11.0f, juce::Font::bold));
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffE8D4B0));
+    label.setFont(juce::Font(12.0f, juce::Font::bold));
     label.attachToComponent(&combo, false);
     addAndMakeVisible(label);
 }
@@ -242,13 +252,14 @@ void TapeMachineAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText("TAPE MACHINE", titleArea.reduced(10, 5).removeFromTop(35),
                juce::Justification::centred);
 
-    // Subtitle
-    g.setFont(juce::Font("Arial", 12.0f, juce::Font::italic));
+    // Company name in bottom right corner
+    g.setFont(juce::Font("Arial", 11.0f, juce::Font::italic));
     g.setColour(juce::Colour(0xffB8A080));
-    g.drawText("Luna Co. Audio", titleArea, juce::Justification::centred);
+    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(20).removeFromRight(120),
+               juce::Justification::centredRight);
 
     // Transport section background
-    auto transportArea = getLocalBounds().removeFromTop(180).withY(65);
+    auto transportArea = getLocalBounds().removeFromTop(220).withY(65);
     g.setColour(juce::Colour(0xff2a2018));
     g.fillRoundedRectangle(transportArea.reduced(10, 5).toFloat(), 8.0f);
 
@@ -289,36 +300,35 @@ void TapeMachineAudioProcessorEditor::resized()
     area.removeFromTop(65);
 
     // Transport section with reels and VU meter
-    auto transportArea = area.removeFromTop(180);
+    auto transportArea = area.removeFromTop(220);
     transportArea.reduce(20, 10);
 
-    // Reels on sides
-    auto reelSize = 120;
-    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(10));
-    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(10));
+    // Reels on sides - larger
+    auto reelSize = 140;
+    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(5));
+    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(5));
 
-    // VU meter in center
-    auto meterArea = transportArea.removeFromTop(100);
-    mainVUMeter.setBounds(meterArea.reduced(20, 10));
+    // VU meter in center - use MORE vertical space
+    auto meterArea = transportArea.removeFromTop(160);
+    mainVUMeter.setBounds(meterArea);  // Use full area, no reduction
 
-    // Selectors below VU meter
-    auto selectorArea = transportArea;
-    selectorArea.removeFromTop(25);
+    // Selectors below VU meter - ensure they're visible
+    auto selectorArea = transportArea.removeFromTop(40);
     auto selectorWidth = selectorArea.getWidth() / 3;
 
-    tapeMachineSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(10, 5));
-    tapeSpeedSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(10, 5));
-    tapeTypeSelector.setBounds(selectorArea.reduced(10, 5));
+    tapeMachineSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(5, 5));
+    tapeSpeedSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(5, 5));
+    tapeTypeSelector.setBounds(selectorArea.reduced(5, 5));
 
     // Control knobs
-    auto controlArea = area.removeFromBottom(330);
+    auto controlArea = area.removeFromBottom(360);
     controlArea.reduce(30, 10);
 
     // Top row - Main controls
-    auto topRow = controlArea.removeFromTop(150);
+    auto topRow = controlArea.removeFromTop(160);
     topRow.removeFromTop(25); // Space for labels
 
-    auto knobSize = 90;
+    auto knobSize = 100;
     auto spacing = (topRow.getWidth() - (knobSize * 5)) / 6;
 
     topRow.removeFromLeft(spacing);

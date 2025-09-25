@@ -12,6 +12,10 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
 
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
+
+    // Prepare wow/flutter processor with correct buffer size
+    wowFlutter.prepare(sampleRate);
+
     reset();
 
     // Initialize all filters with default coefficients for 15 IPS NAB
@@ -57,6 +61,10 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
     noiseGen.pinkingFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
         sampleRate, 3000.0f, 0.7f);
 
+    // DC blocking filter - essential to prevent subsonic rumble
+    dcBlocker.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(
+        sampleRate, 20.0f, 0.707f);  // Cut below 20Hz
+
     // Saturation envelope followers
     saturator.updateCoefficients(0.1f, 10.0f, sampleRate);
 }
@@ -80,10 +88,15 @@ void ImprovedTapeEmulation::reset()
 
     saturator.envelope = 0.0f;
 
-    wowFlutter.delayBuffer.fill(0.0f);
+    dcBlocker.reset();
+
+    if (!wowFlutter.delayBuffer.empty())
+    {
+        std::fill(wowFlutter.delayBuffer.begin(), wowFlutter.delayBuffer.end(), 0.0f);
+    }
     wowFlutter.writeIndex = 0;
-    wowFlutter.wowPhase = 0.0f;
-    wowFlutter.flutterPhase = 0.0f;
+    wowFlutter.wowPhase = 0.0;
+    wowFlutter.flutterPhase = 0.0;
 
     crosstalkBuffer = 0.0f;
 }
@@ -95,8 +108,8 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
 
     switch (machine)
     {
-        case StuderA800:
-            // Studer A800: Clean, minimal coloration, excellent transient response
+        case Swiss800:
+            // Swiss 800: Clean, minimal coloration, excellent transient response
             chars.headBumpFreq = 50.0f;
             chars.headBumpGain = 2.5f;  // Subtle head bump
             chars.headBumpQ = 0.8f;
@@ -105,7 +118,7 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.hfRolloffSlope = -12.0f;
 
             chars.saturationKnee = 0.85f;  // Hard knee (clean)
-            // Studer harmonics - balanced, clean with slight even-order emphasis
+            // Swiss precision harmonics - balanced, clean with slight even-order emphasis
             chars.saturationHarmonics[0] = 0.20f; // 2nd harmonic (subtle warmth)
             chars.saturationHarmonics[1] = 0.08f; // 3rd harmonic (minimal edge)
             chars.saturationHarmonics[2] = 0.10f; // 4th harmonic (smoothness)
@@ -120,8 +133,8 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.crosstalkAmount = -65.0f;  // Excellent channel separation
             break;
 
-        case AmpexATR102:
-            // Ampex ATR-102: Warmer, more colored, classic American sound
+        case Classic102:
+            // Classic 102: Warmer, more colored, classic American sound
             chars.headBumpFreq = 60.0f;
             chars.headBumpGain = 4.0f;  // More pronounced head bump
             chars.headBumpQ = 1.2f;
@@ -130,7 +143,7 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.hfRolloffSlope = -18.0f;
 
             chars.saturationKnee = 0.7f;   // Softer knee (warmer)
-            // Ampex harmonics - strong 2nd and 3rd for American warmth and punch
+            // Classic American harmonics - strong 2nd and 3rd for warmth and punch
             chars.saturationHarmonics[0] = 0.35f; // 2nd harmonic (lots of warmth)
             chars.saturationHarmonics[1] = 0.15f; // 3rd harmonic (punch/presence)
             chars.saturationHarmonics[2] = 0.08f; // 4th harmonic
@@ -182,7 +195,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
 
     switch (type)
     {
-        case Ampex456:
+        case Type456:
             // Standard professional tape - industry workhorse
             chars.coercivity = 0.8f;
             chars.retentivity = 0.85f;
@@ -198,7 +211,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hfLoss = 0.92f;      // Moderate HF loss
             break;
 
-        case GP9:
+        case TypeGP9:
             // High output, low noise - modern formulation
             chars.coercivity = 0.9f;
             chars.retentivity = 0.92f;
@@ -214,7 +227,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hfLoss = 0.97f;      // Better HF retention
             break;
 
-        case BASF911:
+        case Type911:
             // European formulation - warmer character
             chars.coercivity = 0.85f;
             chars.retentivity = 0.88f;
@@ -230,7 +243,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hfLoss = 0.90f;      // Softer highs
             break;
 
-        case Scotch250:
+        case Type250:
             // Classic vintage tape - lots of character
             chars.coercivity = 0.75f;
             chars.retentivity = 0.8f;
@@ -247,7 +260,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             break;
 
         default:
-            chars = getTapeCharacteristics(Ampex456);
+            chars = getTapeCharacteristics(Type456);
             break;
     }
 
@@ -344,9 +357,15 @@ void ImprovedTapeEmulation::updateFilters(TapeMachine machine, TapeSpeed speed,
     else if (speed == Speed_7_5_IPS)
         headBumpFreq *= 0.7f;  // Lower frequency at lower speed
 
+    // Prevent head bump from going too low (causes subsonic issues)
+    headBumpFreq = juce::jmax(25.0f, headBumpFreq);
+
+    // Reduce Q to prevent oscillation at low frequencies
+    float adjustedQ = juce::jmin(machineChars.headBumpQ, 0.9f);
+
     headBumpFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-        currentSampleRate, headBumpFreq, machineChars.headBumpQ,
-        juce::Decibels::decibelsToGain(headBumpGain));
+        currentSampleRate, headBumpFreq, adjustedQ,
+        juce::Decibels::decibelsToGain(headBumpGain * 0.7f));  // Reduce gain to prevent oscillation
 
     // Update HF loss based on tape speed and type
     float hfCutoff = machineChars.hfRolloffFreq * speedChars.hfExtension * tapeChars.hfLoss;
@@ -381,10 +400,22 @@ float ImprovedTapeEmulation::processSample(float input,
                                           TapeType type,
                                           float biasAmount,
                                           float saturationDepth,
-                                          float wowFlutterAmount)
+                                          float wowFlutterAmount,
+                                          bool noiseEnabled,
+                                          float noiseAmount)
 {
     // Update input level metering
     inputLevel.store(std::abs(input));
+
+    // Update filters when parameters change (using instance variables)
+    if (machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType || std::abs(biasAmount - m_lastBias) > 0.01f)
+    {
+        updateFilters(machine, speed, type, biasAmount);
+        m_lastMachine = machine;
+        m_lastSpeed = speed;
+        m_lastType = type;
+        m_lastBias = biasAmount;
+    }
 
     // Get characteristics for current settings
     auto machineChars = getMachineCharacteristics(machine);
@@ -455,14 +486,25 @@ float ImprovedTapeEmulation::processSample(float input,
     signal = deEmphasisFilter1.processSample(signal);
     signal = deEmphasisFilter2.processSample(signal);
 
-    // 12. Add tape noise
-    float noise = noiseGen.generateNoise(
-        juce::Decibels::decibelsToGain(tapeChars.noiseFloor) * speedChars.noiseReduction,
-        tapeChars.modulationNoise,
-        signal);
-    signal += noise * 0.5f;  // Subtle noise
+    // 12. Add tape noise (only when noise button is enabled)
+    // ABSOLUTELY NO NOISE when button is off
+    if (noiseEnabled)  // Only if explicitly enabled
+    {
+        if (noiseAmount > 0.001f)  // And amount is meaningful
+        {
+            float noise = noiseGen.generateNoise(
+                juce::Decibels::decibelsToGain(tapeChars.noiseFloor) * speedChars.noiseReduction * noiseAmount * 0.01f,
+                tapeChars.modulationNoise,
+                signal);
+            signal += noise * 0.05f;  // Subtle noise when enabled
+        }
+    }
+    // NO ELSE - when disabled, absolutely no noise is added
 
-    // 13. Final soft clipping
+    // 13. DC blocking disabled - main processor chain already has highpass filter
+    // signal = dcBlocker.processSample(signal);
+
+    // 14. Final soft clipping
     signal = softClip(signal, 0.95f);
 
     // Update output level metering
@@ -498,6 +540,11 @@ float ImprovedTapeEmulation::HysteresisProcessor::process(float input, float amo
     // Mix dry and wet based on amount
     float output = input * (1.0f - amount) + state * amount;
 
+    // DC blocker to prevent low frequency buildup from hysteresis
+    // Simple first-order high-pass at 5Hz
+    const float dcBlockerCutoff = 0.9995f;  // ~5Hz at 44.1kHz
+    output = output - previousInput + dcBlockerCutoff * previousOutput;
+
     // Update history
     previousInput = input;
     previousOutput = output;
@@ -525,7 +572,7 @@ float ImprovedTapeEmulation::TapeSaturator::process(float input, float threshold
 
     // Apply compression above threshold
     float gain = 1.0f;
-    if (envelope > threshold)
+    if (envelope > threshold && envelope > 0.0001f)  // Safety check for division
     {
         float excess = envelope - threshold;
         float compressedExcess = excess * (1.0f - ratio);
@@ -543,9 +590,9 @@ float ImprovedTapeEmulation::WowFlutterProcessor::process(float input, float wow
     // Write to delay buffer
     delayBuffer[writeIndex] = input;
 
-    // Calculate modulation
-    float wowMod = std::sin(wowPhase) * wowAmount * 10.0f;  // ±10 samples max
-    float flutterMod = std::sin(flutterPhase) * flutterAmount * 2.0f;  // ±2 samples max
+    // Calculate modulation using double precision phases
+    float wowMod = static_cast<float>(std::sin(wowPhase)) * wowAmount * 10.0f;  // ±10 samples max
+    float flutterMod = static_cast<float>(std::sin(flutterPhase)) * flutterAmount * 2.0f;  // ±2 samples max
     float randomMod = dist(rng) * flutterAmount * 0.5f;  // Random component
 
     float totalDelay = 20.0f + wowMod + flutterMod + randomMod;  // Base delay + modulation
@@ -563,14 +610,17 @@ float ImprovedTapeEmulation::WowFlutterProcessor::process(float input, float wow
     // Linear interpolation
     float output = sample1 * (1.0f - fraction) + sample2 * fraction;
 
-    // Update phases
-    wowPhase += 2.0f * juce::MathConstants<float>::pi * wowRate / sampleRate;
-    if (wowPhase > 2.0f * juce::MathConstants<float>::pi)
-        wowPhase -= 2.0f * juce::MathConstants<float>::pi;
+    // Update phases with double precision
+    double wowIncrement = 2.0 * juce::MathConstants<double>::pi * wowRate / sampleRate;
+    double flutterIncrement = 2.0 * juce::MathConstants<double>::pi * flutterRate / sampleRate;
 
-    flutterPhase += 2.0f * juce::MathConstants<float>::pi * flutterRate / sampleRate;
-    if (flutterPhase > 2.0f * juce::MathConstants<float>::pi)
-        flutterPhase -= 2.0f * juce::MathConstants<float>::pi;
+    wowPhase += wowIncrement;
+    if (wowPhase > 2.0 * juce::MathConstants<double>::pi)
+        wowPhase -= 2.0 * juce::MathConstants<double>::pi;
+
+    flutterPhase += flutterIncrement;
+    if (flutterPhase > 2.0 * juce::MathConstants<double>::pi)
+        flutterPhase -= 2.0 * juce::MathConstants<double>::pi;
 
     // Update write index
     writeIndex = (writeIndex + 1) % delayBuffer.size();

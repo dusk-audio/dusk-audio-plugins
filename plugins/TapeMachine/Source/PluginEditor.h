@@ -2,7 +2,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
-#include "GUI/VUMeter.h"
+#include "GUI/AnalogVUMeter.h"
 #include "../../../shared/LunaVintageLookAndFeel.h"
 
 class CustomLookAndFeel : public LunaVintageLookAndFeel
@@ -76,7 +76,7 @@ private:
     ReelAnimation leftReel;
     ReelAnimation rightReel;
 
-    VUMeter mainVUMeter;  // Single stereo VU meter at top
+    AnalogVUMeter mainVUMeter;  // Professional analog VU meter with dual needles
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeMachineAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeSpeedAttachment;

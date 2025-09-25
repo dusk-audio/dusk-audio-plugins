@@ -123,5 +123,22 @@ private:
     std::atomic<float> outputLevelR { 0.0f };
     std::atomic<bool> isProcessingAudio { false };
 
+    // Filter frequency tracking (instance variables instead of statics)
+    float lastHpFreq = -1.0f;
+    float lastLpFreq = -1.0f;
+
+    // Smoothed parameters to prevent zipper noise
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedInputGain;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedOutputGain;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedSaturation;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedNoiseAmount;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedWowFlutter;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedHighpass;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedLowpass;
+
+    // Filter bypass states
+    bool bypassHighpass = true;
+    bool bypassLowpass = true;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineAudioProcessor)
 };

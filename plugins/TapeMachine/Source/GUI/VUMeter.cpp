@@ -14,8 +14,9 @@ void VUMeter::setLevels(float leftLevel, float rightLevel)
 {
     targetLevelL = juce::jlimit(0.0f, 1.0f, leftLevel);
     targetLevelR = juce::jlimit(0.0f, 1.0f, rightLevel);
-    targetAngleL = -45.0f + targetLevelL * 90.0f;
-    targetAngleR = -45.0f + targetLevelR * 90.0f;
+    // Needle should go from -135° (left, no signal) to -45° (right, full signal)
+    targetAngleL = -135.0f + targetLevelL * 90.0f;
+    targetAngleR = -135.0f + targetLevelR * 90.0f;
 }
 
 void VUMeter::timerCallback()
@@ -49,8 +50,7 @@ void VUMeter::resized()
 void VUMeter::drawVintageVUMeter(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
-    auto size = juce::jmin(bounds.getWidth(), bounds.getHeight());
-    auto meterBounds = bounds.withSizeKeepingCentre(size, size);
+    auto meterBounds = bounds;
 
     // Black meter background
     g.setColour(juce::Colour(20, 22, 18));
@@ -62,20 +62,23 @@ void VUMeter::drawVintageVUMeter(juce::Graphics& g)
     g.setGradientFill(gradient);
     g.fillRoundedRectangle(meterBounds.reduced(5), 6.0f);
 
-    auto centre = meterBounds.getCentre();
-    auto radius = size * 0.4f;  // Good size for visibility
+    // Move center to bottom of the box for proper VU meter positioning
+    auto centre = juce::Point<float>(meterBounds.getCentreX(), meterBounds.getBottom() - 20);
+    // Make the radius MUCH wider to fill horizontal space
+    auto radius = juce::jmin(meterBounds.getWidth() * 0.55f, meterBounds.getHeight() * 0.9f);
 
     // Don't draw the scale arc - just use tick marks
     float startAngle = juce::degreesToRadians(-135.0f);
     float endAngle = juce::degreesToRadians(-45.0f);
 
-    // Scale markings
-    g.setFont(juce::Font("Arial", 8.0f, juce::Font::plain));
+    // Scale markings - larger font for wider meter
+    g.setFont(juce::Font("Arial", 14.0f, juce::Font::plain));
+    g.setColour(juce::Colour(240, 230, 210));
 
     for (int i = 0; i <= 10; ++i)
     {
         float angle = startAngle + (endAngle - startAngle) * (i / 10.0f);
-        float tickLength = (i % 5 == 0) ? 12.0f : 6.0f;
+        float tickLength = (i % 5 == 0) ? 30.0f : 18.0f;
 
         float x1 = centre.x + (radius - tickLength) * std::cos(angle);
         float y1 = centre.y + (radius - tickLength) * std::sin(angle);
@@ -88,17 +91,24 @@ void VUMeter::drawVintageVUMeter(juce::Graphics& g)
         // Numbers
         if (i % 2 == 0)
         {
-            float textX = centre.x + (radius - 25) * std::cos(angle);
-            float textY = centre.y + (radius - 25) * std::sin(angle);
+            float textX = centre.x + (radius * 0.8f) * std::cos(angle);
+            float textY = centre.y + (radius * 0.8f) * std::sin(angle);
 
             juce::String text;
-            if (i <= 6)
-                text = juce::String(i - 6);
-            else
-                text = "+" + juce::String(i - 6);
+            // VU meter scale: -20, -10, -7, -5, -3, 0, +1, +2, +3
+            switch(i) {
+                case 0: text = "-20"; break;
+                case 2: text = "-10"; break;
+                case 4: text = "-5"; break;
+                case 6: text = "0"; break;
+                case 8: text = "+2"; break;
+                case 10: text = "+3"; break;
+                default: continue;
+            }
 
-            g.setColour(juce::Colour(200, 190, 170));
-            g.drawText(text, juce::Rectangle<float>(textX - 10, textY - 6, 20, 12),
+            g.setColour(juce::Colour(250, 240, 220));
+            g.setFont(15.0f);
+            g.drawText(text, juce::Rectangle<float>(textX - 18, textY - 10, 36, 20),
                        juce::Justification::centred);
         }
     }
@@ -119,21 +129,17 @@ void VUMeter::drawVintageVUMeter(juce::Graphics& g)
         g.drawLine(x1, y1, x2, y2, 2.0f);
     }
 
-    // VU label at bottom with stereo indication
-    g.setColour(juce::Colour(200, 190, 170));
-    g.setFont(juce::Font("Arial", 11.0f, juce::Font::bold));
-    auto vuLabelBounds = bounds.removeFromBottom(20);
-    g.drawText("STEREO VU", vuLabelBounds, juce::Justification::centred);
+    // STEREO VU text removed - not needed
 
-    // "PEAK LEVEL" text at top
-    g.setFont(9.0f);
-    auto peakLabelBounds = bounds.removeFromTop(15);
-    g.drawText("PEAK LEVEL", peakLabelBounds, juce::Justification::centred);
+    // "PEAK LEVEL" text at top of the meter arc
+    g.setFont(10.0f);
+    g.drawText("PEAK LEVEL", juce::Rectangle<float>(centre.x - 50, meterBounds.getY() + 5, 100, 20),
+               juce::Justification::centred);
 
     // Draw LEFT needle
     float needleRadiansL = juce::degreesToRadians(needleAngleL);
-    float needleXL = centre.x + radius * 0.85f * std::cos(needleRadiansL);
-    float needleYL = centre.y + radius * 0.85f * std::sin(needleRadiansL);
+    float needleXL = centre.x + radius * 0.9f * std::cos(needleRadiansL);
+    float needleYL = centre.y + radius * 0.9f * std::sin(needleRadiansL);
 
     // Left needle shadow
     g.setColour(juce::Colours::black.withAlpha(0.4f));
@@ -141,12 +147,12 @@ void VUMeter::drawVintageVUMeter(juce::Graphics& g)
 
     // Left needle - slightly brighter red/orange
     g.setColour(needleColourL);
-    g.drawLine(centre.x, centre.y, needleXL, needleYL, 2.0f);
+    g.drawLine(centre.x, centre.y, needleXL, needleYL, 2.5f);
 
     // Draw RIGHT needle
     float needleRadiansR = juce::degreesToRadians(needleAngleR);
-    float needleXR = centre.x + radius * 0.85f * std::cos(needleRadiansR);
-    float needleYR = centre.y + radius * 0.85f * std::sin(needleRadiansR);
+    float needleXR = centre.x + radius * 0.9f * std::cos(needleRadiansR);
+    float needleYR = centre.y + radius * 0.9f * std::sin(needleRadiansR);
 
     // Right needle shadow
     g.setColour(juce::Colours::black.withAlpha(0.3f));
@@ -154,23 +160,17 @@ void VUMeter::drawVintageVUMeter(juce::Graphics& g)
 
     // Right needle - slightly darker red
     g.setColour(needleColourR);
-    g.drawLine(centre.x, centre.y, needleXR, needleYR, 2.0f);
+    g.drawLine(centre.x, centre.y, needleXR, needleYR, 2.5f);
 
-    // Needle hub - brass colored (drawn on top of both needles)
+    // Needle hub at bottom - brass colored (drawn on top of both needles)
     g.setColour(juce::Colour(140, 120, 80));
-    g.fillEllipse(centre.x - 6, centre.y - 6, 12, 12);
+    g.fillEllipse(centre.x - 10, centre.y - 10, 20, 20);
     g.setColour(juce::Colour(80, 70, 50));
-    g.drawEllipse(centre.x - 6, centre.y - 6, 12, 12, 1.0f);
+    g.drawEllipse(centre.x - 10, centre.y - 10, 20, 20, 2.0f);
     g.setColour(juce::Colour(180, 160, 120));
-    g.fillEllipse(centre.x - 3, centre.y - 3, 6, 6);
+    g.fillEllipse(centre.x - 5, centre.y - 5, 10, 10);
 
-    // L/R indicators near the hub
-    g.setColour(juce::Colour(200, 190, 170).withAlpha(0.7f));
-    g.setFont(juce::Font("Arial", 8.0f, juce::Font::plain));
-    g.drawText("L", juce::Rectangle<float>(centre.x - 25, centre.y + 20, 20, 10),
-               juce::Justification::centred);
-    g.drawText("R", juce::Rectangle<float>(centre.x + 5, centre.y + 20, 20, 10),
-               juce::Justification::centred);
+    // L/R indicators removed - not needed for stereo VU meter
 }
 
 void VUMeter::drawModernVUMeter(juce::Graphics& g)
