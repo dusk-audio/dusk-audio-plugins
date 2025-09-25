@@ -557,6 +557,14 @@ float ImprovedTapeEmulation::HysteresisProcessor::process(float input, float amo
 void ImprovedTapeEmulation::TapeSaturator::updateCoefficients(float attackMs, float releaseMs,
                                                              double sampleRate)
 {
+    // Protect against division by zero and invalid sample rates
+    if (sampleRate <= 0.0)
+        sampleRate = 44100.0;
+
+    // Ensure attack/release times are positive
+    attackMs = std::max(0.001f, attackMs);
+    releaseMs = std::max(0.001f, releaseMs);
+
     attackCoeff = std::exp(-1.0f / (attackMs * 0.001f * sampleRate));
     releaseCoeff = std::exp(-1.0f / (releaseMs * 0.001f * sampleRate));
 }
@@ -588,7 +596,22 @@ float ImprovedTapeEmulation::WowFlutterProcessor::process(float input, float wow
                                                          float flutterAmount, float wowRate,
                                                          float flutterRate, double sampleRate)
 {
-    // Write to delay buffer
+    // Protect against invalid sample rate and empty buffer
+    if (sampleRate <= 0.0)
+        sampleRate = 44100.0;
+
+    if (delayBuffer.empty())
+    {
+        prepare(sampleRate);
+        if (delayBuffer.empty())
+            return input;
+    }
+
+    // Write to delay buffer with bounds checking
+    if (writeIndex < 0 || writeIndex >= static_cast<int>(delayBuffer.size()))
+    {
+        writeIndex = 0;
+    }
     delayBuffer[writeIndex] = input;
 
     // Calculate modulation using double precision phases
@@ -596,14 +619,25 @@ float ImprovedTapeEmulation::WowFlutterProcessor::process(float input, float wow
     float flutterMod = static_cast<float>(std::sin(flutterPhase)) * flutterAmount * 2.0f;  // ±2 samples max
     float randomMod = dist(rng) * flutterAmount * 0.5f;  // Random component
 
+    // Calculate total delay with bounds limiting
     float totalDelay = 20.0f + wowMod + flutterMod + randomMod;  // Base delay + modulation
+    int bufferSize = static_cast<int>(delayBuffer.size());
+    if (bufferSize <= 0)
+        return input;
+
+    // Ensure delay is within valid range
+    totalDelay = std::max(1.0f, std::min(totalDelay, static_cast<float>(bufferSize - 1)));
 
     // Fractional delay interpolation
     int delaySamples = static_cast<int>(totalDelay);
     float fraction = totalDelay - delaySamples;
 
-    int readIndex1 = (writeIndex - delaySamples + delayBuffer.size()) % delayBuffer.size();
-    int readIndex2 = (readIndex1 - 1 + delayBuffer.size()) % delayBuffer.size();
+    int readIndex1 = (writeIndex - delaySamples + bufferSize) % bufferSize;
+    int readIndex2 = (readIndex1 - 1 + bufferSize) % bufferSize;
+
+    // Additional bounds checking
+    readIndex1 = std::max(0, std::min(readIndex1, bufferSize - 1));
+    readIndex2 = std::max(0, std::min(readIndex2, bufferSize - 1));
 
     float sample1 = delayBuffer[readIndex1];
     float sample2 = delayBuffer[readIndex2];
@@ -611,9 +645,10 @@ float ImprovedTapeEmulation::WowFlutterProcessor::process(float input, float wow
     // Linear interpolation
     float output = sample1 * (1.0f - fraction) + sample2 * fraction;
 
-    // Update phases with double precision
-    double wowIncrement = 2.0 * juce::MathConstants<double>::pi * wowRate / sampleRate;
-    double flutterIncrement = 2.0 * juce::MathConstants<double>::pi * flutterRate / sampleRate;
+    // Update phases with double precision (protect against division by zero)
+    double safeSampleRate = std::max(1.0, sampleRate);
+    double wowIncrement = 2.0 * juce::MathConstants<double>::pi * wowRate / safeSampleRate;
+    double flutterIncrement = 2.0 * juce::MathConstants<double>::pi * flutterRate / safeSampleRate;
 
     wowPhase += wowIncrement;
     if (wowPhase > 2.0 * juce::MathConstants<double>::pi)
@@ -623,8 +658,8 @@ float ImprovedTapeEmulation::WowFlutterProcessor::process(float input, float wow
     if (flutterPhase > 2.0 * juce::MathConstants<double>::pi)
         flutterPhase -= 2.0 * juce::MathConstants<double>::pi;
 
-    // Update write index
-    writeIndex = (writeIndex + 1) % delayBuffer.size();
+    // Update write index with bounds checking
+    writeIndex = (writeIndex + 1) % std::max(1, bufferSize);
 
     return output;
 }

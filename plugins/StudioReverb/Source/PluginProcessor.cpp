@@ -310,6 +310,13 @@ void StudioReverbAudioProcessor::changeProgramName (int index, const juce::Strin
 //==============================================================================
 void StudioReverbAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // Validate input parameters
+    if (sampleRate <= 0.0 || samplesPerBlock <= 0)
+    {
+        jassertfalse;
+        return;
+    }
+
     if (reverb)
     {
         reverb->prepare(sampleRate, samplesPerBlock);
@@ -357,10 +364,10 @@ void StudioReverbAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         buffer.clear (i, 0, buffer.getNumSamples());
 
     // Only update parameters if they've changed (with thread safety)
-    if (parametersChanged.load())
+    if (parametersChanged.load(std::memory_order_acquire))
     {
         const juce::SpinLock::ScopedLockType lock(parameterLock);
-        if (parametersChanged.exchange(false))
+        if (parametersChanged.exchange(false, std::memory_order_acq_rel))
             updateReverbParameters();
     }
 
@@ -480,10 +487,10 @@ void StudioReverbAudioProcessor::parameterChanged(const juce::String& parameterI
     }
 
     // Don't trigger individual updates if we're loading a preset
-    if (!isLoadingPreset.load())
+    if (!isLoadingPreset.load(std::memory_order_acquire))
     {
         const juce::SpinLock::ScopedLockType lock(parameterLock);
-        parametersChanged = true;
+        parametersChanged.store(true, std::memory_order_release);
     }
 }
 
