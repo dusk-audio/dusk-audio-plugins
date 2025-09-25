@@ -388,7 +388,7 @@ void StudioReverbAudioProcessor::updateReverbParameters()
 
     // Get separate dry and wet levels
     float dryPercent = dryLevel ? dryLevel->get() : 100.0f;  // 0-100%
-    float wetPercent = wetLevel ? wetLevel->get() : 30.0f;   // 0-100%
+    float wetPercent = wetLevel ? wetLevel->get() : 50.0f;   // Default 50% to match UI default
 
     // algIndex already declared above
     // 0=Room, 1=Hall, 2=Plate, 3=Early Reflections
@@ -402,16 +402,17 @@ void StudioReverbAudioProcessor::updateReverbParameters()
         // Use the actual early parameters from UI
         float earlyPercent = earlyLevel ? earlyLevel->get() : 10.0f;
         float sendPercent = earlySend ? earlySend->get() : 20.0f;
+        // For Room and Hall, wetLevel from UI controls the late reverb level
         reverb->setEarlyLevel(earlyPercent);     // User-controlled early reflections
         reverb->setEarlySend(sendPercent);       // User-controlled early send
-        reverb->setLateLevel(wetPercent);        // Late reverb controlled by wet/dry
+        reverb->setLateLevel(wetPercent);        // wetLevel slider controls late reverb
     }
     else if (algIndex == 2)  // Plate
     {
         // Dragonfly Plate has NO early reflections - it's a pure plate algorithm
         reverb->setEarlyLevel(0.0f);             // No early reflections
         reverb->setEarlySend(0.0f);              // No early send
-        reverb->setLateLevel(wetPercent);        // Pure plate reverb only
+        reverb->setWetLevel(wetPercent);         // Plate uses wetLevel, not lateLevel!
     }
     else if (algIndex == 3)  // Early Reflections
     {
