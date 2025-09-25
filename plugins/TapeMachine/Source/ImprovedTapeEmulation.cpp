@@ -543,10 +543,11 @@ float ImprovedTapeEmulation::HysteresisProcessor::process(float input, float amo
     // DC blocker to prevent low frequency buildup from hysteresis
     // Simple first-order high-pass at 5Hz
     const float dcBlockerCutoff = 0.9995f;  // ~5Hz at 44.1kHz
+    float preFilteredSample = output;  // Capture the pre-filtered sample
     output = output - previousInput + dcBlockerCutoff * previousOutput;
 
     // Update history
-    previousInput = input;
+    previousInput = preFilteredSample;  // Use the pre-filtered sample, not the raw input
     previousOutput = output;
 
     return output;

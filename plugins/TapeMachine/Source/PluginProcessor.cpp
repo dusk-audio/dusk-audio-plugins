@@ -202,6 +202,12 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     processorChainLeft.prepare(spec);
     processorChainRight.prepare(spec);
 
+    // Set ramp duration for gain processors to handle smoothing automatically
+    processorChainLeft.get<0>().setRampDurationSeconds(0.02);  // 20ms for input gain
+    processorChainRight.get<0>().setRampDurationSeconds(0.02);
+    processorChainLeft.get<3>().setRampDurationSeconds(0.02);  // 20ms for output gain
+    processorChainRight.get<3>().setRampDurationSeconds(0.02);
+
     oversampling.initProcessing(static_cast<size_t>(samplesPerBlock));
 
     wowFlutterDelayLeft.prepare(spec);
@@ -220,8 +226,7 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     const float rampTimeMs = 20.0f;
     const int rampSamples = static_cast<int>(sampleRate * rampTimeMs * 0.001f);
 
-    smoothedInputGain.reset(sampleRate, rampTimeMs * 0.001f);
-    smoothedOutputGain.reset(sampleRate, rampTimeMs * 0.001f);
+    // Note: Input/output gain smoothing is now handled by the gain processors themselves
     smoothedSaturation.reset(sampleRate, rampTimeMs * 0.001f);
     smoothedNoiseAmount.reset(sampleRate, rampTimeMs * 0.001f);
     smoothedWowFlutter.reset(sampleRate, rampTimeMs * 0.001f);
@@ -267,13 +272,10 @@ void TapeMachineAudioProcessor::updateFilters()
     float hpFreq = highpassFreqParam->load();
     float lpFreq = lowpassFreqParam->load();
 
-    // Check if the ON/OFF button is enabled (controls filters and noise together)
-    bool filterEnabled = noiseEnabledParam ? (noiseEnabledParam->load() > 0.5f) : false;
-
     if (currentSampleRate > 0.0f)
     {
-        // Bypass highpass filter when at minimum (20Hz) OR when button is OFF
-        bypassHighpass = (hpFreq <= 20.0f) || !filterEnabled;
+        // Bypass highpass filter only when at minimum frequency (20Hz)
+        bypassHighpass = (hpFreq <= 20.0f);
 
         if (!bypassHighpass)
         {
@@ -286,8 +288,8 @@ void TapeMachineAudioProcessor::updateFilters()
             processorChainRight.get<1>().setResonance(0.707f);
         }
 
-        // Bypass lowpass filter when at maximum (20kHz) OR when button is OFF
-        bypassLowpass = (lpFreq >= 19000.0f) || !filterEnabled;
+        // Bypass lowpass filter only when at maximum frequency (19kHz or above)
+        bypassLowpass = (lpFreq >= 19000.0f);
 
         if (!bypassLowpass)
         {
@@ -443,8 +445,16 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     const auto tapeSpeed = static_cast<TapeSpeed>(static_cast<int>(tapeSpeedParam->load()));
 
     // Update target values for smoothing
-    smoothedInputGain.setTargetValue(juce::Decibels::decibelsToGain(inputGainParam->load()));
-    smoothedOutputGain.setTargetValue(juce::Decibels::decibelsToGain(outputGainParam->load()));
+    const float targetInputGain = juce::Decibels::decibelsToGain(inputGainParam->load());
+    const float targetOutputGain = juce::Decibels::decibelsToGain(outputGainParam->load());
+
+    // Let the gain processors handle their own smoothing with the configured ramp time
+    processorChainLeft.get<0>().setGainLinear(targetInputGain);
+    processorChainRight.get<0>().setGainLinear(targetInputGain);
+    processorChainLeft.get<3>().setGainLinear(targetOutputGain);
+    processorChainRight.get<3>().setGainLinear(targetOutputGain);
+
+    // Keep smoothing for non-gain parameters that we process per-sample
     smoothedSaturation.setTargetValue(saturationParam->load());
     smoothedWowFlutter.setTargetValue(wowFlutterParam->load());
     // Scale noise amount reasonably (0-100% becomes 0-0.01 for subtle tape hiss)
@@ -453,15 +463,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     smoothedLowpass.setTargetValue(lowpassFreqParam->load());
 
     const bool noiseEnabled = noiseEnabledParam->load() > 0.5f;
-
-    // Apply the smoothed gain values once at the start
-    const float inputGainValue = smoothedInputGain.getNextValue();
-    const float outputGainValue = smoothedOutputGain.getNextValue();
-
-    processorChainLeft.get<0>().setGainLinear(inputGainValue);
-    processorChainRight.get<0>().setGainLinear(inputGainValue);
-    processorChainLeft.get<3>().setGainLinear(outputGainValue);
-    processorChainRight.get<3>().setGainLinear(outputGainValue);
 
     // Calculate input levels BEFORE input gain to show actual signal level on VU meter
     float inputPeakL = 0.0f;
