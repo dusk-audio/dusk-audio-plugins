@@ -1542,10 +1542,10 @@ UniversalCompressor::UniversalCompressor()
       currentSampleRate(0.0),  // Set by prepareToPlay from DAW
       currentBlockSize(512)
 {
-    // Initialize atomic values explicitly
-    inputMeter.store(-60.0f);
-    outputMeter.store(-60.0f);
-    grMeter.store(0.0f);
+    // Initialize atomic values explicitly with relaxed ordering
+    inputMeter.store(-60.0f, std::memory_order_relaxed);
+    outputMeter.store(-60.0f, std::memory_order_relaxed);
+    grMeter.store(0.0f, std::memory_order_relaxed);
     
     // Initialize lookup tables
     lookupTables = std::make_unique<LookupTables>();
@@ -1776,7 +1776,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     
     // Convert to dB - peak level gives accurate dB reading
     float inputDb = inputLevel > 0.001f ? juce::Decibels::gainToDecibels(inputLevel) : -60.0f;
-    inputMeter.store(inputDb);
+    // Use relaxed memory ordering for performance in audio thread
+    inputMeter.store(inputDb, std::memory_order_relaxed);
     
     // Process audio with reduced function call overhead
     if (oversample && antiAliasing)
@@ -1856,7 +1857,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     }
     
     float outputDb = outputLevel > 0.001f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
-    outputMeter.store(outputDb);
+    // Use relaxed memory ordering for performance in audio thread
+    outputMeter.store(outputDb, std::memory_order_relaxed);
     
     // Get gain reduction from active compressor
     float gainReduction = 0.0f;
@@ -1883,7 +1885,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 gainReduction = juce::jmin(gainReduction, busCompressor->getGainReduction(1));
             break;
     }
-    grMeter.store(gainReduction);
+    // Use relaxed memory ordering for performance in audio thread
+    grMeter.store(gainReduction, std::memory_order_relaxed);
     
     // Update the gain reduction parameter for DAW display
     if (auto* grParam = parameters.getRawParameterValue("gr_meter"))
