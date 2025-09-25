@@ -122,7 +122,7 @@ void AnalogVUMeter::paint(juce::Graphics& g)
 
     // Font setup for scale markings
     float baseFontSize = juce::jmax(10.0f, 14.0f * scaleFactor);
-    g.setFont(juce::Font(juce::FontOptions(baseFontSize)));
+    g.setFont(juce::Font(baseFontSize));
 
     // Draw scale markings
     const float dbValues[] = {-20, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3};
@@ -194,7 +194,7 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     // Draw VU text
     g.setColour(juce::Colour(0xFF2A2A2A));
     float vuFontSize = juce::jmax(14.0f, 18.0f * scaleFactor);
-    g.setFont(juce::Font(juce::FontOptions(vuFontSize)).withTypefaceStyle("Regular"));
+    g.setFont(juce::Font(vuFontSize).withTypefaceStyle("Regular"));
     float vuY = pivotY - (needleLength * 0.5f);
     g.drawText("VU", centreX - 20 * scaleFactor, vuY,
               40 * scaleFactor, 20 * scaleFactor, juce::Justification::centred);
