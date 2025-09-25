@@ -28,6 +28,12 @@ public:
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override
     {
+        // Validate parameters
+        if (sampleRate <= 0.0)
+            sampleRate = 44100.0;
+        if (samplesPerBlock <= 0)
+            samplesPerBlock = 512;
+
         oversampling.initProcessing(static_cast<size_t>(samplesPerBlock));
         oversampling.reset();
         lastSampleRate = sampleRate;
@@ -60,12 +66,16 @@ public:
         auto totalNumInputChannels = getTotalNumInputChannels();
         auto totalNumOutputChannels = getTotalNumOutputChannels();
 
+        // Safety check for empty buffer
+        if (buffer.getNumSamples() <= 0 || totalNumOutputChannels <= 0)
+            return;
+
         for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
             buffer.clear(i, 0, buffer.getNumSamples());
 
         dryBuffer.makeCopyOf(buffer);
 
-        if (*oversamplingSwitch)
+        if (oversamplingSwitch && *oversamplingSwitch)
         {
             juce::dsp::AudioBlock<float> block(buffer);
             auto oversampledBlock = oversampling.processSamplesUp(block);
@@ -78,7 +88,7 @@ public:
             processHarmonics(block);
         }
 
-        float wet = *wetDryMix;
+        float wet = wetDryMix ? *wetDryMix : 1.0f;
         float dry = 1.0f - wet;
 
         for (int channel = 0; channel < totalNumOutputChannels; ++channel)
@@ -150,8 +160,9 @@ private:
 
     void processHarmonics(juce::dsp::AudioBlock<float>& block)
     {
-        const float secondGain = *secondHarmonic * 0.25f;
-        const float thirdGain  = *thirdHarmonic * 1.5f;
+        // Protect against null parameter pointers
+        const float secondGain = secondHarmonic ? (*secondHarmonic * 0.25f) : 0.0f;
+        const float thirdGain  = thirdHarmonic ? (*thirdHarmonic * 1.5f) : 0.0f;
         const float silenceThreshold = 1.0e-4f;
         const float envelopeAttack = 0.005f;
 
@@ -174,6 +185,9 @@ private:
 
                 if (envelopes[channel] > silenceThreshold)
                 {
+                    // Clamp input to prevent overflow in harmonic calculations
+                    x = juce::jlimit(-2.0f, 2.0f, x);
+
                     float secondOrder = std::tanh(x + 0.3f * x * x) - std::tanh(x);
                     float thirdOrder  = x * x * x;
 
@@ -186,11 +200,20 @@ private:
             }
         }
 
-        auto left  = block.getSingleChannelBlock(0);
-        auto right = block.getSingleChannelBlock(1);
+        // Ensure we have at least 2 channels before accessing them
+        if (numChannels >= 2)
+        {
+            auto left  = block.getSingleChannelBlock(0);
+            auto right = block.getSingleChannelBlock(1);
 
-        highPassFilterL.process(juce::dsp::ProcessContextReplacing<float>(left));
-        highPassFilterR.process(juce::dsp::ProcessContextReplacing<float>(right));
+            highPassFilterL.process(juce::dsp::ProcessContextReplacing<float>(left));
+            highPassFilterR.process(juce::dsp::ProcessContextReplacing<float>(right));
+        }
+        else if (numChannels == 1)
+        {
+            auto mono = block.getSingleChannelBlock(0);
+            highPassFilterL.process(juce::dsp::ProcessContextReplacing<float>(mono));
+        }
     }
 
 
