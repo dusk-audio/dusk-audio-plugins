@@ -65,6 +65,10 @@ DragonflyReverb::DragonflyReverb()
 
 void DragonflyReverb::prepare(double sr, int samplesPerBlock)
 {
+    // Validate input parameters
+    if (sr <= 0.0) sr = 44100.0;
+    if (samplesPerBlock <= 0) samplesPerBlock = 512;
+
     sampleRate = sr;
     blockSize = samplesPerBlock;
 
@@ -73,11 +77,12 @@ void DragonflyReverb::prepare(double sr, int samplesPerBlock)
     if (currentBufferSize < 1)
         currentBufferSize = DEFAULT_BUFFER_SIZE;
 
-    // Clear all buffers before use
-    std::memset(earlyOutBuffer, 0, sizeof(earlyOutBuffer));
-    std::memset(lateInBuffer, 0, sizeof(lateInBuffer));
-    std::memset(lateOutBuffer, 0, sizeof(lateOutBuffer));
-    std::memset(filteredInputBuffer, 0, sizeof(filteredInputBuffer));
+    // Clear all buffers before use with proper size validation
+    const size_t totalBufferBytes = sizeof(float) * MAX_BUFFER_SIZE * 2; // 2 channels
+    std::memset(earlyOutBuffer, 0, totalBufferBytes);
+    std::memset(lateInBuffer, 0, totalBufferBytes);
+    std::memset(lateOutBuffer, 0, totalBufferBytes);
+    std::memset(filteredInputBuffer, 0, totalBufferBytes);
 
     // Set sample rates for all processors
     early.setSampleRate(sampleRate);
@@ -524,10 +529,12 @@ void DragonflyReverb::processHall(juce::AudioBuffer<float>& buffer)
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
-    if (numChannels < 2) return;
+    if (numChannels < 2 || numSamples <= 0) return;
 
+    // Ensure pointers are valid
     float* inputL = buffer.getWritePointer(0);
     float* inputR = buffer.getWritePointer(1);
+    if (!inputL || !inputR) return;
 
     // Process in chunks matching currentBufferSize (validated in prepare)
     int samplesProcessed = 0;
@@ -536,11 +543,19 @@ void DragonflyReverb::processHall(juce::AudioBuffer<float>& buffer)
         int samplesToProcess = juce::jmin(static_cast<int>(currentBufferSize),
                                          numSamples - samplesProcessed);
 
-        // Clear buffers
-        std::memset(earlyOutBuffer[0], 0, sizeof(float) * samplesToProcess);
-        std::memset(earlyOutBuffer[1], 0, sizeof(float) * samplesToProcess);
-        std::memset(lateOutBuffer[0], 0, sizeof(float) * samplesToProcess);
-        std::memset(lateOutBuffer[1], 0, sizeof(float) * samplesToProcess);
+        // Additional bounds check for safety
+        samplesToProcess = juce::jmin(samplesToProcess, static_cast<int>(MAX_BUFFER_SIZE));
+        if (samplesToProcess <= 0) break;
+
+        // Clear buffers safely with size validation
+        const size_t bytesToClear = sizeof(float) * static_cast<size_t>(samplesToProcess);
+        const size_t maxBytes = sizeof(float) * MAX_BUFFER_SIZE;
+        const size_t safeBytesToClear = juce::jmin(bytesToClear, maxBytes);
+
+        std::memset(earlyOutBuffer[0], 0, safeBytesToClear);
+        std::memset(earlyOutBuffer[1], 0, safeBytesToClear);
+        std::memset(lateOutBuffer[0], 0, safeBytesToClear);
+        std::memset(lateOutBuffer[1], 0, safeBytesToClear);
 
         // Process early reflections
         early.processreplace(

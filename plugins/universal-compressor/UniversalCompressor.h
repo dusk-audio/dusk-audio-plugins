@@ -43,10 +43,10 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // Metering
-    float getInputLevel() const { return inputMeter.load(); }
-    float getOutputLevel() const { return outputMeter.load(); }
-    float getGainReduction() const { return grMeter.load(); }
+    // Metering - use relaxed memory ordering for UI thread reads
+    float getInputLevel() const { return inputMeter.load(std::memory_order_relaxed); }
+    float getOutputLevel() const { return outputMeter.load(std::memory_order_relaxed); }
+    float getGainReduction() const { return grMeter.load(std::memory_order_relaxed); }
     
     // Parameter access
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
