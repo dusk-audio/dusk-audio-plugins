@@ -85,32 +85,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
     // === Mix Controls - Separate Dry and Wet for better control ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "dryLevel", "Dry Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,  // Better balance
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "wetLevel", "Wet Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 30.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,  // More prominent reverb
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
     // === Internal Mix Controls ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "earlyLevel", "Early Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 20.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 30.0f,  // More early reflections
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "earlySend", "Early Send",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 20.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 35.0f,  // Better blend
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lateLevel", "Late Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 30.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,  // Stronger late reverb
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
@@ -141,7 +141,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "diffuse", "Diffuse",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 75.0f,  // More diffusion for smoother sound
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
