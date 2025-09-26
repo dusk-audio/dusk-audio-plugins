@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "DSP/DragonflyReverb.h"
+//#include "DSP/SimpleReverb.h"  // Temporarily using simple reverb for testing
 #include "PresetManager.h"
 
 //==============================================================================
@@ -52,13 +53,13 @@ public:
 
     // Parameter pointers for quick access
     juce::AudioParameterChoice* reverbType;
+    juce::AudioParameterChoice* plateType;  // Plate algorithm selection
 
-    // Mix controls - separate dry and wet levels for better control
+    // Mix controls - matching Dragonfly exactly
     juce::AudioParameterFloat* dryLevel;
-    juce::AudioParameterFloat* wetLevel;
     juce::AudioParameterFloat* earlyLevel;
     juce::AudioParameterFloat* earlySend;
-    juce::AudioParameterFloat* lateLevel;
+    juce::AudioParameterFloat* lateLevel;  // This is what Dragonfly calls "Late Level" in UI
 
     // Basic reverb parameters
     juce::AudioParameterFloat* size;
@@ -103,7 +104,7 @@ public:
     static const juce::StringArray& getParameterIDs()
     {
         static const juce::StringArray ids = {
-            "reverbType", "dryLevel", "wetLevel", "earlyLevel", "earlySend", "lateLevel",
+            "reverbType", "dryLevel", "earlyLevel", "earlySend", "lateLevel",
             "size", "width", "preDelay", "decay", "diffuse",
             "spin", "wander", "modulation", "highCut", "lowCut", "dampen",
             "earlyDamp", "lateDamp", "lowBoost", "boostFreq",
@@ -114,6 +115,7 @@ public:
 
 private:
     std::unique_ptr<DragonflyReverb> reverb;
+    //std::unique_ptr<SimpleReverb> reverb;  // Temporarily using simple reverb
     void updateReverbParameters();
 
     // Parameter listeners

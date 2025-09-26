@@ -17,10 +17,10 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
 {
     // Get parameter pointers from APVTS
     reverbType = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("reverbType"));
+    plateType = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter("plateType"));
 
-    // Mix controls - separate dry and wet
+    // Mix controls - matching Dragonfly exactly
     dryLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("dryLevel"));
-    wetLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("wetLevel"));
     earlyLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("earlyLevel"));
     earlySend = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("earlySend"));
     lateLevel = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("lateLevel"));
@@ -61,6 +61,10 @@ StudioReverbAudioProcessor::StudioReverbAudioProcessor()
     }
 
     reverb = std::make_unique<DragonflyReverb>();
+    //reverb = std::make_unique<SimpleReverb>();  // Temporarily using simple reverb
+
+    // Initialize reverb with current parameter values
+    updateReverbParameters();
 }
 
 StudioReverbAudioProcessor::~StudioReverbAudioProcessor()
@@ -82,20 +86,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
         juce::StringArray{"Room", "Hall", "Plate", "Early Reflections"},
         1)); // Default to Hall
 
+    // Plate algorithm selection (only used when reverbType is Plate)
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "plateType", "Plate Type",
+        juce::StringArray{"Simple", "Nested", "Tank"}, 1));  // Default to Nested
+
     // === Mix Controls - Separate Dry and Wet for better control ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "dryLevel", "Dry Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,  // Better balance
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 80.0f,  // Default 80% dry for subtle effect
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "wetLevel", "Wet Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,  // More prominent reverb
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + "%"; }));
-
-    // === Internal Mix Controls ===
+    // === Mix Controls (matching Dragonfly) ===
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "earlyLevel", "Early Level",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 30.0f,  // More early reflections
@@ -109,8 +112,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "lateLevel", "Late Level",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,  // Stronger late reverb
+        "lateLevel", "Late Level",  // This is what Dragonfly shows in UI
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 20.0f,  // Default 20% for subtle reverb
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; }));
 
@@ -154,9 +157,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioReverbAudioProcessor::
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "wander", "Wander",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.1f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 25.0f,  // Default 25ms to match Dragonfly
         juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 2) + " ms"; }));
+        [](float value, int) { return juce::String(value, 0) + " ms"; }));
 
     // Hall-specific modulation
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -320,7 +323,8 @@ void StudioReverbAudioProcessor::prepareToPlay (double sampleRate, int samplesPe
     if (reverb)
     {
         reverb->prepare(sampleRate, samplesPerBlock);
-        reverb->reset();  // Ensure clean state after prepare
+        // DON'T call reset() here - it mutes all the reverb engines!
+        // reverb->reset();
         updateReverbParameters();
     }
 }
@@ -338,12 +342,25 @@ bool StudioReverbAudioProcessor::isBusesLayoutSupported (const BusesLayout& layo
     juce::ignoreUnused (layouts);
     return true;
   #else
+    // Accept mono or stereo output
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
      && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
    #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
+    // REVERB SPECIAL CASE: Allow mono input with stereo output (common for reverbs)
+    // Also allow matching configurations
+    auto inputChannels = layouts.getMainInputChannelSet();
+    auto outputChannels = layouts.getMainOutputChannelSet();
+
+    // Allow: mono->mono, mono->stereo, stereo->stereo
+    bool validConfig = (inputChannels == juce::AudioChannelSet::mono() &&
+                       (outputChannels == juce::AudioChannelSet::mono() ||
+                        outputChannels == juce::AudioChannelSet::stereo())) ||
+                      (inputChannels == juce::AudioChannelSet::stereo() &&
+                       outputChannels == juce::AudioChannelSet::stereo());
+
+    if (!validConfig)
         return false;
    #endif
 
@@ -372,7 +389,95 @@ void StudioReverbAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     if (reverb)
-        reverb->processBlock(buffer);
+    {
+        static int debugCounter = 0;
+        debugCounter++;
+        bool debugThisBlock = (debugCounter % 100 == 0);
+
+        // Store original for comparison in debug mode
+        juce::AudioBuffer<float> originalBuffer;
+        if (debugThisBlock)
+        {
+            originalBuffer.makeCopyOf(buffer);
+        }
+
+        // Debug: Check buffer before processing (commented out to avoid unused variable warning)
+        // float inputLevel = buffer.getMagnitude(0, buffer.getNumSamples());
+
+        // Handle mono input by duplicating to stereo for reverb processing
+        juce::AudioBuffer<float> stereoBuffer;
+        if (buffer.getNumChannels() == 1)
+        {
+            // Create stereo buffer from mono input
+            stereoBuffer.setSize(2, buffer.getNumSamples());
+            stereoBuffer.copyFrom(0, 0, buffer, 0, 0, buffer.getNumSamples());
+            stereoBuffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
+
+            // Process stereo buffer
+            reverb->processBlock(stereoBuffer);
+
+            // Copy back based on output configuration
+            if (totalNumOutputChannels == 1)
+            {
+                // Mono output: mix stereo to mono
+                buffer.copyFrom(0, 0, stereoBuffer, 0, 0, buffer.getNumSamples());
+                buffer.addFrom(0, 0, stereoBuffer, 1, 0, buffer.getNumSamples(), 1.0f);
+                buffer.applyGain(0.5f);
+            }
+            else if (totalNumOutputChannels >= 2)
+            {
+                // Stereo output from mono input
+                buffer.setSize(2, buffer.getNumSamples(), true, true, true);
+                buffer.copyFrom(0, 0, stereoBuffer, 0, 0, buffer.getNumSamples());
+                buffer.copyFrom(1, 0, stereoBuffer, 1, 0, buffer.getNumSamples());
+            }
+        }
+        else
+        {
+            // Already stereo, process directly
+            reverb->processBlock(buffer);
+        }
+
+        // Debug: Check buffer after processing (commented out to avoid unused variable warning)
+        // float outputLevel = buffer.getMagnitude(0, buffer.getNumSamples());
+
+        if (debugThisBlock)  // Print every 100 blocks to avoid spam
+        {
+            DBG("\n=== Block #" << debugCounter << " ===");
+            DBG("Input level: " << inputLevel << ", Output level: " << outputLevel);
+
+            // Calculate actual change
+            float totalDiff = 0.0f;
+            int numChannels = juce::jmin(2, buffer.getNumChannels());
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    float orig = originalBuffer.getSample(ch, i);
+                    float proc = buffer.getSample(ch, i);
+                    totalDiff += std::abs(proc - orig);
+                }
+            }
+
+            DBG("Total difference: " << totalDiff);
+
+            if (totalDiff < 0.001f)
+            {
+                DBG("WARNING: NO REVERB DETECTED!");
+                DBG("  Algorithm: " << (reverbType ? reverbType->getIndex() : -1));
+                DBG("  Dry: " << (dryLevel ? dryLevel->get() : 0.0f) << "%");
+                DBG("  Late: " << (lateLevel ? lateLevel->get() : 0.0f) << "%");
+            }
+            else
+            {
+                DBG("Reverb IS processing (difference = " << totalDiff << ")");
+            }
+        }
+    }
+    else
+    {
+        DBG("ERROR: Reverb object is NULL!");
+    }
 }
 
 void StudioReverbAudioProcessor::updateReverbParameters()
@@ -380,6 +485,10 @@ void StudioReverbAudioProcessor::updateReverbParameters()
     if (!reverb)
         return;
 
+    // TEMPORARY: Simple reverb only has dry/wet
+    // Comment out all the complex parameter setting for now
+
+    /* DISABLED FOR SIMPLE REVERB TEST
     // Set reverb algorithm
     int algIndex = reverbType ? reverbType->getIndex() : 0;
     DBG("updateReverbParameters - Setting algorithm to: " << algIndex
@@ -392,44 +501,46 @@ void StudioReverbAudioProcessor::updateReverbParameters()
     if (decay) reverb->setDecay(decay->get());
     if (diffuse) reverb->setDiffuse(diffuse->get());
     if (width) reverb->setWidth(width->get());
+    */
 
-    // Get separate dry and wet levels
-    float dryPercent = dryLevel ? dryLevel->get() : 100.0f;  // 0-100%
-    float wetPercent = wetLevel ? wetLevel->get() : 50.0f;   // Default 50% to match UI default
+    // Get separate dry and wet levels and convert to 0-1 range
+    float dryPercent = dryLevel ? dryLevel->get() : 80.0f;   // Default 80% dry
 
-    // algIndex already declared above
-    // 0=Room, 1=Hall, 2=Plate, 3=Early Reflections
+    // Convert percentages to normalized 0-1 range
+    float dryNorm = dryPercent / 100.0f;
 
-    // Set mix levels - these are percentages expected by DragonflyReverb
-    reverb->setDryLevel(dryPercent);             // Dry signal percentage
+    // Get algorithm index
+    int algIndex = reverbType ? static_cast<int>(reverbType->getIndex()) : 1;
+
+    // Set algorithm and basic parameters
+    reverb->setAlgorithm(static_cast<DragonflyReverb::Algorithm>(algIndex));
+    reverb->setPreDelay(preDelay ? preDelay->get() : 0.0f);
+    reverb->setDecay(decay ? decay->get() : 2.0f);
+    reverb->setSize(size ? size->get() : 30.0f);
+    reverb->setDiffuse(diffuse ? diffuse->get() : 75.0f);
+    reverb->setWidth(width ? width->get() : 100.0f);
+
+    // Set mix levels
+    reverb->setDryLevel(dryNorm);
 
     // Room and Hall algorithms expose early level and early send in UI
     if (algIndex == 0 || algIndex == 1)  // Room or Hall
     {
-        // Use the actual early parameters from UI
-        float earlyPercent = earlyLevel ? earlyLevel->get() : 10.0f;
-        float sendPercent = earlySend ? earlySend->get() : 20.0f;
-        // For Room and Hall, wetLevel from UI controls the late reverb level
-        reverb->setEarlyLevel(earlyPercent);     // User-controlled early reflections
-        reverb->setEarlySend(sendPercent);       // User-controlled early send
-        reverb->setLateLevel(wetPercent);        // wetLevel slider controls late reverb
-    }
-    else if (algIndex == 2)  // Plate
-    {
-        // Dragonfly Plate has NO early reflections - it's a pure plate algorithm
-        reverb->setEarlyLevel(0.0f);             // No early reflections
-        reverb->setEarlySend(0.0f);              // No early send
-        reverb->setWetLevel(wetPercent);         // Plate uses wetLevel, not lateLevel!
-    }
-    else if (algIndex == 3)  // Early Reflections
-    {
-        // Early Reflections only - no late reverb
-        reverb->setEarlyLevel(wetPercent);       // Wet signal controls early reflections
-        reverb->setEarlySend(0.0f);              // No send to late (no late reverb)
-        reverb->setLateLevel(0.0f);              // No late reverb
+        float earlyPercent = earlyLevel ? earlyLevel->get() : 30.0f;
+        float earlyNorm = earlyPercent / 100.0f;
+        reverb->setEarlyLevel(earlyNorm);
+
+        float earlySendPercent = earlySend ? earlySend->get() : 35.0f;
+        float earlySendNorm = earlySendPercent / 100.0f;
+        reverb->setEarlySend(earlySendNorm);
     }
 
-    // Set filter controls with null checks
+    // Late level - matching Dragonfly's "Late Level" UI control
+    float latePercent = lateLevel ? lateLevel->get() : 20.0f;
+    float lateNorm = latePercent / 100.0f;
+    reverb->setLateLevel(lateNorm);
+
+    // Set filter controls
     if (lowCut) reverb->setLowCut(lowCut->get());
     if (highCut) reverb->setHighCut(highCut->get());
 
@@ -440,13 +551,13 @@ void StudioReverbAudioProcessor::updateReverbParameters()
         if (spin) reverb->setSpin(spin->get());
         if (wander) reverb->setWander(wander->get());
 
-        // Room-specific damping - only set if parameters exist and are valid
+        // Room-specific damping
         if (earlyDamp && earlyDamp->get() > 0.0f)
             reverb->setEarlyDamp(earlyDamp->get());
         if (lateDamp && lateDamp->get() > 0.0f)
             reverb->setLateDamp(lateDamp->get());
 
-        // Room-specific boost controls - only set if valid
+        // Room-specific boost controls
         if (lowBoost && lowBoost->get() >= 0.0f)
             reverb->setLowBoost(lowBoost->get());
         if (boostFreq && boostFreq->get() > 0.0f)
@@ -468,11 +579,17 @@ void StudioReverbAudioProcessor::updateReverbParameters()
     }
     else if (algIndex == 2)  // Plate
     {
-        // Plate-specific damping - only set if valid
+        // Set plate algorithm based on plateType parameter
+        if (plateType)
+        {
+            int plateAlg = plateType->getIndex();
+            reverb->setPlateAlgorithm(static_cast<DragonflyReverb::PlateAlgorithm>(plateAlg));
+        }
+
+        // Plate-specific damping
         if (dampen && dampen->get() > 0.0f)
             reverb->setDamping(dampen->get());
     }
-    // Early Reflections (algIndex == 3) doesn't have extra parameters
 }
 
 void StudioReverbAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
@@ -527,6 +644,41 @@ void StudioReverbAudioProcessor::loadPresetForAlgorithm(const juce::String& pres
     // Set flag to batch parameter updates
     isLoadingPreset = true;
 
+    // Special handling for Plate algorithm selection based on preset name
+    if (algorithmIndex == 2) // Plate reverb
+    {
+        // Match Dragonfly Plate preset algorithm selection
+        if (presetName.contains("Dark") || presetName.contains("Clear") ||
+            presetName.contains("Bright") || presetName.contains("Abrupt"))
+        {
+            // These use the Nested algorithm (nrevb)
+            if (plateType) plateType->setValueNotifyingHost(1.0f / 2.0f); // Index 1 = Nested
+            reverb->setPlateAlgorithm(DragonflyReverb::PlateAlgorithm::Nested);
+            DBG("  Setting Plate algorithm to Nested for preset: " << presetName);
+        }
+        else if (presetName.contains("Foil") || presetName.contains("Metal"))
+        {
+            // These use the Simple algorithm (nrev)
+            if (plateType) plateType->setValueNotifyingHost(0.0f); // Index 0 = Simple
+            reverb->setPlateAlgorithm(DragonflyReverb::PlateAlgorithm::Simple);
+            DBG("  Setting Plate algorithm to Simple for preset: " << presetName);
+        }
+        else if (presetName.contains("Tank"))
+        {
+            // These use the Tank algorithm (strev)
+            if (plateType) plateType->setValueNotifyingHost(2.0f / 2.0f); // Index 2 = Tank (normalized to 0-1)
+            reverb->setPlateAlgorithm(DragonflyReverb::PlateAlgorithm::Tank);
+            DBG("  Setting Plate algorithm to Tank for preset: " << presetName);
+        }
+        else
+        {
+            // Default to Nested for other plate presets
+            if (plateType) plateType->setValueNotifyingHost(1.0f / 2.0f); // Index 1 = Nested
+            reverb->setPlateAlgorithm(DragonflyReverb::PlateAlgorithm::Nested);
+            DBG("  Setting Plate algorithm to Nested (default) for preset: " << presetName);
+        }
+    }
+
     // Load preset parameters
     for (const auto& param : preset.parameters)
     {
@@ -568,6 +720,8 @@ void StudioReverbAudioProcessor::loadPresetForAlgorithm(const juce::String& pres
             lowMult->setValueNotifyingHost(lowMult->convertTo0to1(param.second));
         else if (param.first == "highMult" && highMult)
             highMult->setValueNotifyingHost(highMult->convertTo0to1(param.second));
+        else if (param.first == "dampen" && dampen)
+            dampen->setValueNotifyingHost(dampen->convertTo0to1(param.second));
     }
 
     // Clear flag and trigger single update

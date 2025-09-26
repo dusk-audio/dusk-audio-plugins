@@ -1,29 +1,121 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "../../../shared/LunaLookAndFeel.h"
 
 // StudioReverb specific customization
-class StudioReverbLookAndFeel : public LunaLookAndFeel
+class StudioReverbLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     StudioReverbLookAndFeel()
     {
-        // Inherits Luna color scheme
-        // Use larger default font for combo boxes
-        setDefaultSansSerifTypeface(juce::Font(juce::FontOptions(14.0f)).getTypefacePtr());
+        // Dark color scheme for StudioReverb
+        setColour(juce::ResizableWindow::backgroundColourId, juce::Colour(0xff1a1a1a));
+        setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a2a));
+        setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe0e0e0));
+        setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff2a2a2a));
+        setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
+        setColour(juce::ComboBox::arrowColourId, juce::Colour(0xff909090));
+        setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xff2a2a2a));
+        setColour(juce::PopupMenu::textColourId, juce::Colour(0xffe0e0e0));
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xff404040));
+        setColour(juce::Slider::backgroundColourId, juce::Colour(0xff2a2a2a));
+        setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff808080));
+        setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff404040));
+        setColour(juce::Slider::thumbColourId, juce::Colour(0xffe0e0e0));
+        setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffffffff));  // Bright white text
+        setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff2a2a2a));  // Dark background
+        setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff404040));  // Subtle outline
+        setColour(juce::Label::textColourId, juce::Colour(0xffe0e0e0));
     }
 
     // Override to make combo box text larger
-    void drawComboBox(juce::Graphics& g, int width, int height, bool,
-                      int, int, int, int,
+    void drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown,
+                      int buttonX, int buttonY, int buttonW, int buttonH,
                       juce::ComboBox& box) override
     {
-        LunaLookAndFeel::drawComboBox(g, width, height, false, 0, 0, 0, 0, box);
+        g.fillAll(box.findColour(juce::ComboBox::backgroundColourId));
+
+        const auto arrowZone = juce::Rectangle<int>(buttonX, buttonY, buttonW, buttonH);
+        juce::Path path;
+        path.startNewSubPath(arrowZone.getX() + 3.0f, arrowZone.getCentreY() - 2.0f);
+        path.lineTo(arrowZone.getCentreX(), arrowZone.getCentreY() + 3.0f);
+        path.lineTo(arrowZone.getRight() - 3.0f, arrowZone.getCentreY() - 2.0f);
+
+        g.setColour(box.findColour(juce::ComboBox::arrowColourId).withAlpha(isButtonDown ? 0.9f : 0.6f));
+        g.strokePath(path, juce::PathStrokeType(2.0f));
     }
 
     juce::Font getComboBoxFont(juce::ComboBox&) override
     {
         return juce::Font(juce::FontOptions(16.0f));  // Larger font for combo box items
+    }
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                          juce::Slider& slider) override
+    {
+        auto radius = juce::jmin(width / 2, height / 2) - 8.0f;
+        auto centreX = x + width * 0.5f;
+        auto centreY = y + height * 0.5f;
+        auto rx = centreX - radius;
+        auto ry = centreY - radius;
+        auto rw = radius * 2.0f;
+        auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+
+        // Vintage knob body with gradient
+        juce::ColourGradient gradient(juce::Colour(0xff4a4a4a), centreX - radius * 0.5f, centreY - radius * 0.5f,
+                                      juce::Colour(0xff1a1a1a), centreX + radius * 0.5f, centreY + radius * 0.5f,
+                                      true);
+        g.setGradientFill(gradient);
+        g.fillEllipse(rx, ry, rw, rw);
+
+        // Vintage-style silver ring
+        g.setColour(juce::Colour(0xff606060));
+        g.drawEllipse(rx, ry, rw, rw, 2.0f);
+
+        // Inner shadow for depth
+        g.setColour(juce::Colour(0x40000000));
+        g.drawEllipse(rx + 2, ry + 2, rw - 4, rw - 4, 1.5f);
+
+        // Pointer line - thick vintage style
+        juce::Path pointer;
+        auto pointerLength = radius * 0.6f;
+        auto pointerThickness = 3.0f;
+        pointer.addRectangle(-pointerThickness * 0.5f, -radius * 0.9f, pointerThickness, pointerLength);
+
+        // Add a bright dot at the end of the pointer for visibility
+        pointer.addEllipse(-2.5f, -radius * 0.85f, 5.0f, 5.0f);
+
+        g.setColour(juce::Colour(0xffe0e0e0));
+        g.fillPath(pointer, juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+
+        // Center cap with vintage feel
+        auto capRadius = radius * 0.25f;
+        juce::ColourGradient capGradient(juce::Colour(0xff5a5a5a), centreX - capRadius * 0.5f, centreY - capRadius * 0.5f,
+                                         juce::Colour(0xff2a2a2a), centreX + capRadius * 0.5f, centreY + capRadius * 0.5f,
+                                         true);
+        g.setGradientFill(capGradient);
+        g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2.0f, capRadius * 2.0f);
+
+        // Highlight on cap
+        g.setColour(juce::Colour(0x30ffffff));
+        g.fillEllipse(centreX - capRadius * 0.7f, centreY - capRadius * 0.7f, capRadius * 0.5f, capRadius * 0.5f);
+
+        // Scale marks around the knob
+        g.setColour(juce::Colour(0xff808080));
+        auto numMarks = 11;
+        for (int i = 0; i < numMarks; ++i)
+        {
+            auto markAngle = rotaryStartAngle + (i * (rotaryEndAngle - rotaryStartAngle) / (numMarks - 1));
+            auto markRadius = radius + 5.0f;
+            auto markLength = (i == 0 || i == numMarks - 1 || i == (numMarks - 1) / 2) ? 5.0f : 3.0f;
+
+            auto x1 = centreX + std::cos(markAngle) * markRadius;
+            auto y1 = centreY + std::sin(markAngle) * markRadius;
+            auto x2 = centreX + std::cos(markAngle) * (markRadius + markLength);
+            auto y2 = centreY + std::sin(markAngle) * (markRadius + markLength);
+
+            g.drawLine(x1, y1, x2, y2, (i == 0 || i == numMarks - 1 || i == (numMarks - 1) / 2) ? 2.0f : 1.0f);
+        }
     }
 };
 
@@ -56,6 +148,20 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     reverbTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffe0e0e0));  // Brighter text
     reverbTypeLabel.attachToComponent(&reverbTypeCombo, false);
 
+    // Plate Type Selector (for Plate reverb only)
+    addAndMakeVisible(plateTypeCombo);
+    plateTypeCombo.addItemList({"Simple", "Nested", "Tank"}, 1);
+    plateTypeCombo.setJustificationType(juce::Justification::centred);
+    plateTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.apvts, "plateType", plateTypeCombo);
+
+    addAndMakeVisible(plateTypeLabel);
+    plateTypeLabel.setText("Plate Type", juce::dontSendNotification);
+    plateTypeLabel.setJustificationType(juce::Justification::centred);
+    plateTypeLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    plateTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffe0e0e0));
+    plateTypeLabel.attachToComponent(&plateTypeCombo, false);
+
     // Preset Selector
     addAndMakeVisible(presetCombo);
     presetCombo.setJustificationType(juce::Justification::centred);
@@ -79,9 +185,9 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     dryLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "dryLevel", dryLevelSlider);
 
-    setupSlider(wetLevelSlider, wetLevelLabel, "Wet Level", 1);
+    setupSlider(wetLevelSlider, wetLevelLabel, "Late Level", 1);  // Match Dragonfly's terminology
     wetLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, "wetLevel", wetLevelSlider);
+        audioProcessor.apvts, "lateLevel", wetLevelSlider);  // Connect to lateLevel parameter
 
     // Early controls (for Room and Hall only)
     setupSlider(earlyLevelSlider, earlyLevelLabel, "Early", 1);
@@ -350,28 +456,57 @@ void StudioReverbAudioProcessorEditor::resized()
     auto selectorArea = bounds.removeFromTop(100);  // Match paint()
     selectorArea.removeFromTop(35); // Label space
 
-    // Split horizontally for both selectors
-    auto halfWidth = selectorArea.getWidth() / 2;
+    // Get reverb type to determine if we need plateType combo
+    // Use currentReverbIndex for consistency with the rest of the UI
+    bool showPlateType = (currentReverbIndex == 2);  // Index 2 is Plate
 
-    // Type selector on left
-    auto typeArea = selectorArea.removeFromLeft(halfWidth - 10);
-    reverbTypeCombo.setBounds(typeArea.reduced(40, 8));
+    if (showPlateType)
+    {
+        // Three-way split for Plate mode: Type | Plate Type | Preset
+        auto thirdWidth = selectorArea.getWidth() / 3;
+
+        // Type selector on left
+        auto typeArea = selectorArea.removeFromLeft(thirdWidth - 5);
+        reverbTypeCombo.setBounds(typeArea.reduced(30, 8));
+
+        // Plate Type in middle - position it and make visible
+        auto plateArea = selectorArea.removeFromLeft(thirdWidth - 5);
+        plateTypeCombo.setBounds(plateArea.reduced(30, 8));
+
+        // Preset selector on right
+        auto presetArea = selectorArea;
+        presetCombo.setBounds(presetArea.reduced(30, 8));
+    }
+    else
+    {
+        // Two-way split for other modes
+        auto halfWidth = selectorArea.getWidth() / 2;
+
+        // Type selector on left
+        auto typeArea = selectorArea.removeFromLeft(halfWidth - 10);
+        reverbTypeCombo.setBounds(typeArea.reduced(40, 8));
+
+        // Preset selector on right
+        auto presetArea = selectorArea.removeFromRight(halfWidth - 10);
+        presetCombo.setBounds(presetArea.reduced(40, 8));
+    }
+
+    // Set visibility based on whether it's Plate mode
+    plateTypeCombo.setVisible(showPlateType);
+    plateTypeLabel.setVisible(showPlateType);
+
     reverbTypeCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
-
-    // Preset selector on right
-    auto presetArea = selectorArea.removeFromRight(halfWidth - 10);
-    presetCombo.setBounds(presetArea.reduced(40, 8));
+    plateTypeCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     presetCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
 
     bounds.removeFromTop(10); // Spacing between sections
 
     const int sliderSize = 80;  // Larger sliders for better visibility
-    const int labelHeight = 25;
     const int spacing = 15;  // More space between knobs
     const int sectionHeight = sliderSize + 40;  // Total section height
 
-    // Get reverb type to determine layout
-    int reverbIndex = currentReverbIndex;
+    // Get reverb type to determine layout - use actual parameter value, not cached index
+    int reverbIndex = audioProcessor.reverbType ? audioProcessor.reverbType->getIndex() : 0;
     bool isRoom = (reverbIndex == 0);
     bool isHall = (reverbIndex == 1);
     bool isPlate = (reverbIndex == 2);
@@ -454,16 +589,16 @@ void StudioReverbAudioProcessorEditor::resized()
     }
     else if (isPlate)
     {
-        // Plate: Filters
+        // Plate: Filters - all three in one row
         bounds.removeFromTop(20);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
         auto filterKnobArea = filterSection.reduced(10, 5);
 
         int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
         int yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
-        lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
-        highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
-        dampenSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
+        dampenSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
+        lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
     }
     else if (isHall)
     {
@@ -546,7 +681,18 @@ void StudioReverbAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBoxT
 
         updateHallControlsVisibility(currentReverbIndex);  // Pass the index directly
         updatePresetListForAlgorithm(currentReverbIndex);  // Pass the index directly
-        resized();
+
+        // Update wet level label based on reverb type
+        if (currentReverbIndex == 2)  // Plate
+        {
+            wetLevelLabel.setText("Wet Level", juce::dontSendNotification);  // Match Dragonfly Plate
+        }
+        else
+        {
+            wetLevelLabel.setText("Late Level", juce::dontSendNotification);  // Room/Hall use Late
+        }
+
+        resized();  // This will handle plateType visibility
     }
     else if (comboBoxThatHasChanged == &presetCombo)
     {
@@ -570,6 +716,10 @@ void StudioReverbAudioProcessorEditor::updateHallControlsVisibility(int reverbIn
     bool isHall = (reverbIndex == 1);
     bool isPlate = (reverbIndex == 2);
     bool isEarlyOnly = (reverbIndex == 3);
+
+    // Show plate type dropdown only for Plate reverb
+    plateTypeCombo.setVisible(isPlate);
+    plateTypeLabel.setVisible(isPlate);
 
     // === EARLY REFLECTIONS MODE ===
     // dry/wet, Size, width, low cut, high cut

@@ -25,6 +25,8 @@ private:
     // UI Components
     juce::ComboBox reverbTypeCombo;
     juce::Label reverbTypeLabel;
+    juce::ComboBox plateTypeCombo;  // Plate algorithm selection
+    juce::Label plateTypeLabel;
     juce::ComboBox presetCombo;
     juce::Label presetLabel;
 
@@ -88,6 +90,7 @@ private:
 
     // APVTS attachments for thread-safe parameter binding
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> reverbTypeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> plateTypeAttachment;
 
     // Mix Control Attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dryLevelAttachment;
