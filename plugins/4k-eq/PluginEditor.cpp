@@ -6,10 +6,10 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 {
     setLookAndFeel(&lookAndFeel);
 
-    // Set editor size - more compact height
-    setSize(800, 450);
+    // Set editor size - better height for layout
+    setSize(900, 520);
     setResizable(true, true);
-    setResizeLimits(600, 380, 1200, 600);
+    setResizeLimits(750, 450, 1400, 700);
 
     // Get parameter references
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
@@ -133,36 +133,47 @@ FourKEQEditor::~FourKEQEditor()
 void FourKEQEditor::paint(juce::Graphics& g)
 {
     // Unified Luna background
-    g.fillAll(juce::Colour(LunaLookAndFeel::BACKGROUND_COLOR));
+    g.fillAll(juce::Colour(0xff1a1a1a));  // Dark professional background
 
     auto bounds = getLocalBounds();
 
-    // Draw standard Luna header
-    LunaLookAndFeel::drawPluginHeader(g, bounds, "4K EQ", "SSL-Style Equalizer");
+    // Draw header
+    g.setColour(juce::Colour(0xff2a2a2a));
+    g.fillRect(0, 0, bounds.getWidth(), 55);
+
+    // Plugin name
+    g.setFont(juce::Font(juce::FontOptions(24.0f).withStyle("Bold")));
+    g.setColour(juce::Colour(0xffe0e0e0));
+    g.drawText("4K EQ", 60, 10, 200, 30, juce::Justification::left);
+
+    // Subtitle
+    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    g.setColour(juce::Colour(0xff909090));
+    g.drawText("SSL-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
 
     // EQ Type indicator
     bool isBlack = eqTypeParam->load() > 0.5f;
     g.setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Bold")));
     g.setColour(isBlack ? juce::Colour(0xff404040) : juce::Colour(0xff6B4423));
     g.fillRoundedRectangle(bounds.getRight() - 120, 12, 80, 26, 3);
-    g.setColour(juce::Colour(LunaLookAndFeel::TEXT_COLOR));
+    g.setColour(juce::Colour(0xffe0e0e0));
     g.drawText(isBlack ? "BLACK" : "BROWN",
                bounds.getRight() - 120, 12, 80, 26,
                juce::Justification::centred);
 
     // Main content area
-    bounds = getLocalBounds().withTrimmedTop(55);
+    bounds = getLocalBounds().withTrimmedTop(60);
 
     // Section dividers - vertical lines
-    g.setColour(juce::Colour(LunaLookAndFeel::BORDER_COLOR));
+    g.setColour(juce::Colour(0xff3a3a3a));
 
     // Filters section divider
-    int filterWidth = 180;
-    g.fillRect(filterWidth, bounds.getY(), 3, bounds.getHeight());
+    int filterWidth = 195;
+    g.fillRect(filterWidth, bounds.getY(), 2, bounds.getHeight());
 
     // EQ bands dividers
-    int bandWidth = 120;
-    int xPos = filterWidth + 3;
+    int bandWidth = 132;
+    int xPos = filterWidth + 2;
 
     // After LF
     xPos += bandWidth;
@@ -181,30 +192,30 @@ void FourKEQEditor::paint(juce::Graphics& g)
     g.fillRect(xPos, bounds.getY(), 2, bounds.getHeight());
 
     // Section headers
-    g.setColour(juce::Colour(0xff909090));
+    g.setColour(juce::Colour(0xffc0c0c0));  // Brighter color for better visibility
     g.setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Bold")));
 
-    int labelY = bounds.getY() + 10;
-    g.drawText("FILTERS", 0, labelY, filterWidth, 20,
+    int labelY = bounds.getY() + 12;
+    g.drawText("FILTERS", 0, labelY, 195, 20,
                juce::Justification::centred);
 
-    xPos = filterWidth + 3;
-    g.drawText("LF", xPos, labelY, bandWidth, 20,
+    xPos = 197;
+    g.drawText("LF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
-    xPos += bandWidth + 2;
-    g.drawText("LMF", xPos, labelY, bandWidth, 20,
+    xPos += 134;
+    g.drawText("LMF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
-    xPos += bandWidth + 2;
-    g.drawText("HMF", xPos, labelY, bandWidth, 20,
+    xPos += 134;
+    g.drawText("HMF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
-    xPos += bandWidth + 2;
-    g.drawText("HF", xPos, labelY, bandWidth, 20,
+    xPos += 134;
+    g.drawText("HF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
-    xPos += bandWidth + 2;
+    xPos += 134;
     g.drawText("MASTER", xPos, labelY, bounds.getRight() - xPos, 20,
                juce::Justification::centred);
 
@@ -220,124 +231,154 @@ void FourKEQEditor::paint(juce::Graphics& g)
     int ledX = bounds.getRight() - 40;
     int ledY = 15;
 
-    if (!bypassed) {
-        // Orange LED when active (Luna brand color)
-        g.setColour(juce::Colour(LunaLookAndFeel::ACCENT_COLOR));
-        g.fillEllipse(ledX, ledY, 12, 12);
-        g.setColour(juce::Colour(LunaLookAndFeel::ACCENT_COLOR).withAlpha(0.3f));
-        g.fillEllipse(ledX - 2, ledY - 2, 16, 16);
-    } else {
-        // Dark when bypassed
-        g.setColour(juce::Colour(0xff400000));
-        g.fillEllipse(ledX, ledY, 12, 12);
-    }
-
-    // Power indicator with Luna accent
-    g.setColour(juce::Colour(LunaLookAndFeel::ACCENT_COLOR));
-    g.fillEllipse(10, 15, 8, 8);
-    g.setColour(juce::Colour(LunaLookAndFeel::TEXT_COLOR));
-    g.setFont(juce::Font(juce::FontOptions(9.0f)));
-    g.drawText("PWR", 20, 12, 30, 15, juce::Justification::centredLeft);
+    // Removed bypass LED and power indicator
 }
 
 void FourKEQEditor::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromTop(50);  // Reduced header space
-    bounds.reduce(10, 10);
+    bounds.removeFromTop(60);  // Header space
+    bounds.reduce(15, 10);
 
     // Filters section (left)
-    auto filterSection = bounds.removeFromLeft(170);
-    filterSection.removeFromTop(25);  // Reduced section label space
+    auto filterSection = bounds.removeFromLeft(180);
+    filterSection.removeFromTop(35);  // Section label space
 
     // HPF
-    auto hpfBounds = filterSection.removeFromTop(100);  // Reduced from 140
-    hpfFreqSlider.setBounds(hpfBounds.withSizeKeepingCentre(80, 80));
+    auto hpfBounds = filterSection.removeFromTop(140);
+    hpfBounds.removeFromTop(20);  // Space for label
+    hpfFreqSlider.setBounds(hpfBounds.withSizeKeepingCentre(75, 75));
 
     // LPF
-    auto lpfBounds = filterSection.removeFromTop(100);  // Reduced from 140
-    lpfFreqSlider.setBounds(lpfBounds.withSizeKeepingCentre(80, 80));
+    auto lpfBounds = filterSection.removeFromTop(140);
+    lpfBounds.removeFromTop(20);  // Space for label
+    lpfFreqSlider.setBounds(lpfBounds.withSizeKeepingCentre(75, 75));
 
-    bounds.removeFromLeft(10);  // Gap
+    bounds.removeFromLeft(15);  // Gap
 
     // LF Band
-    auto lfSection = bounds.removeFromLeft(110);
-    lfSection.removeFromTop(25);  // Reduced from 30
+    auto lfSection = bounds.removeFromLeft(120);
+    lfSection.removeFromTop(35);  // Section label space
 
-    auto lfGainBounds = lfSection.removeFromTop(75);  // Reduced from 90
-    lfGainSlider.setBounds(lfGainBounds.withSizeKeepingCentre(70, 70));
+    auto lfGainBounds = lfSection.removeFromTop(110);
+    lfGainBounds.removeFromTop(20);  // Space for label
+    lfGainSlider.setBounds(lfGainBounds.withSizeKeepingCentre(65, 65));
 
-    auto lfFreqBounds = lfSection.removeFromTop(75);  // Reduced from 90
-    lfFreqSlider.setBounds(lfFreqBounds.withSizeKeepingCentre(70, 70));
+    auto lfFreqBounds = lfSection.removeFromTop(110);
+    lfFreqBounds.removeFromTop(20);  // Space for label
+    lfFreqSlider.setBounds(lfFreqBounds.withSizeKeepingCentre(65, 65));
 
-    lfBellButton.setBounds(lfSection.removeFromTop(30).withSizeKeepingCentre(60, 25));
+    lfBellButton.setBounds(lfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
 
-    bounds.removeFromLeft(10);
+    bounds.removeFromLeft(12);
 
     // LMF Band
-    auto lmSection = bounds.removeFromLeft(110);
-    lmSection.removeFromTop(25);  // Reduced from 30
+    auto lmSection = bounds.removeFromLeft(120);
+    lmSection.removeFromTop(35);  // Section label space
 
-    auto lmGainBounds = lmSection.removeFromTop(75);  // Reduced from 90
-    lmGainSlider.setBounds(lmGainBounds.withSizeKeepingCentre(70, 70));
+    auto lmGainBounds = lmSection.removeFromTop(110);
+    lmGainBounds.removeFromTop(20);  // Space for label
+    lmGainSlider.setBounds(lmGainBounds.withSizeKeepingCentre(65, 65));
 
-    auto lmFreqBounds = lmSection.removeFromTop(75);  // Reduced from 90
-    lmFreqSlider.setBounds(lmFreqBounds.withSizeKeepingCentre(70, 70));
+    auto lmFreqBounds = lmSection.removeFromTop(110);
+    lmFreqBounds.removeFromTop(20);  // Space for label
+    lmFreqSlider.setBounds(lmFreqBounds.withSizeKeepingCentre(65, 65));
 
-    auto lmQBounds = lmSection.removeFromTop(75);  // Reduced from 90
-    lmQSlider.setBounds(lmQBounds.withSizeKeepingCentre(70, 70));
+    auto lmQBounds = lmSection.removeFromTop(110);
+    lmQBounds.removeFromTop(20);  // Space for label
+    lmQSlider.setBounds(lmQBounds.withSizeKeepingCentre(65, 65));
 
-    bounds.removeFromLeft(10);
+    bounds.removeFromLeft(12);
 
     // HMF Band
-    auto hmSection = bounds.removeFromLeft(110);
-    hmSection.removeFromTop(25);  // Reduced from 30
+    auto hmSection = bounds.removeFromLeft(120);
+    hmSection.removeFromTop(35);  // Section label space
 
-    auto hmGainBounds = hmSection.removeFromTop(75);  // Reduced from 90
-    hmGainSlider.setBounds(hmGainBounds.withSizeKeepingCentre(70, 70));
+    auto hmGainBounds = hmSection.removeFromTop(110);
+    hmGainBounds.removeFromTop(20);  // Space for label
+    hmGainSlider.setBounds(hmGainBounds.withSizeKeepingCentre(65, 65));
 
-    auto hmFreqBounds = hmSection.removeFromTop(75);  // Reduced from 90
-    hmFreqSlider.setBounds(hmFreqBounds.withSizeKeepingCentre(70, 70));
+    auto hmFreqBounds = hmSection.removeFromTop(110);
+    hmFreqBounds.removeFromTop(20);  // Space for label
+    hmFreqSlider.setBounds(hmFreqBounds.withSizeKeepingCentre(65, 65));
 
-    auto hmQBounds = hmSection.removeFromTop(75);  // Reduced from 90
-    hmQSlider.setBounds(hmQBounds.withSizeKeepingCentre(70, 70));
+    auto hmQBounds = hmSection.removeFromTop(110);
+    hmQBounds.removeFromTop(20);  // Space for label
+    hmQSlider.setBounds(hmQBounds.withSizeKeepingCentre(65, 65));
 
-    bounds.removeFromLeft(10);
+    bounds.removeFromLeft(12);
 
     // HF Band
-    auto hfSection = bounds.removeFromLeft(110);
-    hfSection.removeFromTop(25);  // Reduced from 30
+    auto hfSection = bounds.removeFromLeft(120);
+    hfSection.removeFromTop(35);  // Section label space
 
-    auto hfGainBounds = hfSection.removeFromTop(75);  // Reduced from 90
-    hfGainSlider.setBounds(hfGainBounds.withSizeKeepingCentre(70, 70));
+    auto hfGainBounds = hfSection.removeFromTop(110);
+    hfGainBounds.removeFromTop(20);  // Space for label
+    hfGainSlider.setBounds(hfGainBounds.withSizeKeepingCentre(65, 65));
 
-    auto hfFreqBounds = hfSection.removeFromTop(75);  // Reduced from 90
-    hfFreqSlider.setBounds(hfFreqBounds.withSizeKeepingCentre(70, 70));
+    auto hfFreqBounds = hfSection.removeFromTop(110);
+    hfFreqBounds.removeFromTop(20);  // Space for label
+    hfFreqSlider.setBounds(hfFreqBounds.withSizeKeepingCentre(65, 65));
 
-    hfBellButton.setBounds(hfSection.removeFromTop(30).withSizeKeepingCentre(60, 25));
+    hfBellButton.setBounds(hfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
 
-    bounds.removeFromLeft(10);
+    bounds.removeFromLeft(12);
 
     // Master section
     auto masterSection = bounds;
-    masterSection.removeFromTop(25);  // Reduced from 30
+    masterSection.removeFromTop(35);  // Section label space
 
     // EQ Type selector
-    eqTypeSelector.setBounds(masterSection.removeFromTop(28).withSizeKeepingCentre(100, 25));
+    eqTypeSelector.setBounds(masterSection.removeFromTop(32).withSizeKeepingCentre(100, 28));
+
+    masterSection.removeFromTop(15);  // Gap
 
     // Bypass button
     bypassButton.setBounds(masterSection.removeFromTop(35).withSizeKeepingCentre(80, 30));
 
+    masterSection.removeFromTop(10);  // Gap
+
     // Output gain
-    auto outputBounds = masterSection.removeFromTop(75);  // Reduced from 90
-    outputGainSlider.setBounds(outputBounds.withSizeKeepingCentre(70, 70));
+    auto outputBounds = masterSection.removeFromTop(110);
+    outputBounds.removeFromTop(20);  // Space for label
+    outputGainSlider.setBounds(outputBounds.withSizeKeepingCentre(65, 65));
 
     // Saturation
-    auto satBounds = masterSection.removeFromTop(75);  // Reduced from 90
-    saturationSlider.setBounds(satBounds.withSizeKeepingCentre(70, 70));
+    auto satBounds = masterSection.removeFromTop(110);
+    satBounds.removeFromTop(20);  // Space for label
+    saturationSlider.setBounds(satBounds.withSizeKeepingCentre(65, 65));
+
+    masterSection.removeFromTop(10);  // Gap
 
     // Oversampling
-    oversamplingSelector.setBounds(masterSection.removeFromTop(28).withSizeKeepingCentre(80, 25));
+    oversamplingSelector.setBounds(masterSection.removeFromTop(32).withSizeKeepingCentre(80, 28));
+
+    // Position labels manually below each knob
+    auto positionLabel = [](juce::Label* label, const juce::Slider& slider, int yOffset = 5) {
+        if (label && label->isVisible()) {
+            auto sliderBounds = slider.getBounds();
+            label->setBounds(sliderBounds.getX() - 10,
+                           sliderBounds.getBottom() + yOffset,
+                           sliderBounds.getWidth() + 20, 15);
+        }
+    };
+
+    // Position all labels
+    int labelIdx = 0;
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), hpfFreqSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), lpfFreqSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), lfGainSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), lfFreqSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), lmGainSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), lmFreqSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), lmQSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), hmGainSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), hmFreqSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), hmQSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), hfGainSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), hfFreqSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), outputGainSlider);
+    if (labelIdx < knobLabels.size()) positionLabel(knobLabels[labelIdx++].get(), saturationSlider);
 }
 
 void FourKEQEditor::timerCallback()
@@ -395,9 +436,10 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
     auto knobLabel = std::make_unique<juce::Label>();
     knobLabel->setText(label, juce::dontSendNotification);
     knobLabel->setJustificationType(juce::Justification::centred);
-    knobLabel->setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));  // Larger (was 9.0f)
-    knobLabel->setColour(juce::Label::textColourId, juce::Colour(0xffe0e0e0));  // Much brighter (was 0xffc0c0c0)
-    knobLabel->attachToComponent(&slider, false);
+    knobLabel->setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
+    knobLabel->setColour(juce::Label::textColourId, juce::Colour(0xffd0d0d0));
+    knobLabel->setInterceptsMouseClicks(false, false);
+    // Add label to editor and store it
     addAndMakeVisible(knobLabel.get());
     knobLabels.push_back(std::move(knobLabel));
 }

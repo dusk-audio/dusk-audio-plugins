@@ -174,9 +174,9 @@ private:
     void updateMeters();
     void createBackgroundTexture();
     
-    juce::Slider* createKnob(const juce::String& name, float min, float max, 
-                             float defaultValue, const juce::String& suffix = "");
-    juce::Label* createLabel(const juce::String& text, juce::Justification justification = juce::Justification::centred);
+    std::unique_ptr<juce::Slider> createKnob(const juce::String& name, float min, float max,
+                                             float defaultValue, const juce::String& suffix = "");
+    std::unique_ptr<juce::Label> createLabel(const juce::String& text, juce::Justification justification = juce::Justification::centred);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EnhancedCompressorEditor)
 };

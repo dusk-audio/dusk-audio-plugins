@@ -48,10 +48,12 @@ set(FREEVERB_SOURCES
     Source/freeverb/zrev2.cpp          # Hall algorithm
     Source/freeverb/progenitor.cpp     # Base for progenitor2
     Source/freeverb/progenitor2.cpp    # Room algorithm
-    Source/freeverb/strev.cpp          # Plate algorithm
+    Source/freeverb/strev.cpp          # Plate Tank algorithm
+    Source/freeverb/nrev.cpp           # Plate Simple algorithm
+    Source/freeverb/nrevb.cpp          # Plate Nested algorithm (Dark Plate)
 
     # Note: The following files are NOT needed and have been removed:
-    # - irmodel*.cpp, nrev*.cpp, compmodel.cpp, scomp.cpp, slimit.cpp, limitmodel.cpp
+    # - irmodel*.cpp, compmodel.cpp, scomp.cpp, slimit.cpp, limitmodel.cpp
     # - fir*.cpp, firwindow.cpp, stenh.cpp, rms.cpp, mls.cpp, sweep.cpp
     # - blockDelay.cpp, dl_gardner.cpp, frag.cpp
     # These were compiled but never used by our Dragonfly algorithms
@@ -104,4 +106,82 @@ target_link_libraries(StudioReverb PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
+)
+
+# Add test executable
+add_executable(TestStudioReverb
+    Test/TestReverb.cpp
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+    Source/DSP/DragonflyReverb.cpp
+    Source/PresetManager.cpp
+    ${FREEVERB_SOURCES}
+)
+
+target_include_directories(TestStudioReverb
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_BINARY_DIR}/StudioReverb_artefacts/JuceLibraryCode
+)
+target_compile_definitions(TestStudioReverb
+    PUBLIC
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
+        FV3_EARLYREF_PRESET_1=1
+        LIBFV3_FLOAT=1
+        JucePlugin_Name="StudioReverb"
+        JucePlugin_Desc="StudioReverb"
+        JucePlugin_Manufacturer="Luna Co. Audio"
+        JucePlugin_ManufacturerWebsite="https://lunaco.audio"
+        JucePlugin_ManufacturerEmail="info@lunaco.audio"
+        JucePlugin_ManufacturerCode=0x4c756e61  # 'Luna'
+        JucePlugin_PluginCode=0x53527662         # 'SRvb'
+        JucePlugin_IsSynth=0
+        JucePlugin_WantsMidiInput=0
+        JucePlugin_ProducesMidiOutput=0
+        JucePlugin_IsMidiEffect=0
+        JucePlugin_EditorRequiresKeyboardFocus=0
+        JucePlugin_Version=1.0.0
+        JucePlugin_VersionCode=0x10000
+        JucePlugin_VersionString="1.0.0"
+        JucePlugin_VSTUniqueID=JucePlugin_PluginCode
+        JucePlugin_VSTCategory=kPlugCategEffect
+        JucePlugin_AUMainType='aufx'
+        JucePlugin_AUSubType=JucePlugin_PluginCode
+        JucePlugin_AUExportPrefix=StudioReverbAU
+        JucePlugin_AUExportPrefixQuoted="StudioReverbAU"
+        JucePlugin_AUManufacturerCode=JucePlugin_ManufacturerCode
+        JucePlugin_CFBundleIdentifier=com.lunaco.StudioReverb
+        JucePlugin_AAXIdentifier=com.lunaco.StudioReverb
+        JucePlugin_AAXManufacturerCode=JucePlugin_ManufacturerCode
+        JucePlugin_AAXProductId=JucePlugin_PluginCode
+        JucePlugin_AAXCategory=0
+        JucePlugin_AAXDisableBypass=0
+        JucePlugin_AAXDisableMultiMono=0
+        JucePlugin_IAAType=0x61757267  # 'aurx'
+        JucePlugin_IAASubType=JucePlugin_PluginCode
+        JucePlugin_IAAName="Luna Co. Audio: StudioReverb"
+        JucePlugin_VSTNumMidiInputs=0
+        JucePlugin_VSTNumMidiOutputs=0
+))
+
+target_link_libraries(TestStudioReverb
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_plugin_client
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra
 )

@@ -14,6 +14,8 @@
 #include "../freeverb/zrev2.hpp"
 #include "../freeverb/progenitor2.hpp"
 #include "../freeverb/strev.hpp"
+#include "../freeverb/nrev.hpp"
+#include "../freeverb/nrevb.hpp"
 #include <memory>
 #include <array>
 
@@ -27,6 +29,13 @@ public:
         EarlyReflections    // Early reflections only
     };
 
+    // Plate sub-algorithms (matching Dragonfly Plate)
+    enum class PlateAlgorithm {
+        Simple = 0,   // nrev algorithm
+        Nested,       // nrevb algorithm (used by Dark Plate preset)
+        Tank          // strev algorithm
+    };
+
     DragonflyReverb();
     ~DragonflyReverb() = default;
 
@@ -38,12 +47,15 @@ public:
     void setAlgorithm(Algorithm algo) { currentAlgorithm = algo; }
     Algorithm getAlgorithm() const { return currentAlgorithm; }
 
+    // Plate sub-algorithm selection
+    void setPlateAlgorithm(PlateAlgorithm algo) { plateAlgorithm = algo; }
+    PlateAlgorithm getPlateAlgorithm() const { return plateAlgorithm; }
+
     // Main mix controls (matching Dragonfly exactly)
-    void setDryLevel(float level) { dryLevel = level / 100.0f; }      // Convert percentage to 0-1
-    void setEarlyLevel(float level) { earlyLevel = level / 100.0f; }  // Convert percentage to 0-1
-    void setLateLevel(float level) { lateLevel = level / 100.0f; }    // Convert percentage to 0-1
-    void setWetLevel(float level) { wetLevel = level / 100.0f; }      // For Plate algorithm
-    void setEarlySend(float send) { earlySend = send / 100.0f; }      // Convert percentage to 0-1
+    void setDryLevel(float level) { dryLevel = level; }      // Already normalized 0-1
+    void setEarlyLevel(float level) { earlyLevel = level; }  // Already normalized 0-1
+    void setLateLevel(float level) { lateLevel = level; }    // Already normalized 0-1 ("Wet" in UI)
+    void setEarlySend(float send) { earlySend = send; }      // Already normalized 0-1
 
     // Core reverb parameters (matching Dragonfly's parameter scaling)
     void setSize(float meters);        // Room size in meters (10-60)
@@ -81,12 +93,12 @@ private:
     double sampleRate = 44100.0;
     int blockSize = 512;
     Algorithm currentAlgorithm = Algorithm::Hall;
+    PlateAlgorithm plateAlgorithm = PlateAlgorithm::Nested;  // Default to Nested for Dark Plate
 
     // Mix levels (0-1 range internally) - matching Dragonfly defaults
     float dryLevel = 1.0f;      // 100% dry - Dragonfly default
     float earlyLevel = 0.5f;    // 50% early - Dragonfly default
-    float lateLevel = 0.5f;     // 50% late - Dragonfly default
-    float wetLevel = 0.5f;      // 50% wet for Plate algorithm
+    float lateLevel = 0.5f;     // 50% late - Dragonfly default ("Wet" in UI)
     float earlySend = 0.2f;     // 20% early send - Dragonfly default
 
     // Parameters
@@ -109,7 +121,11 @@ private:
     fv3::earlyref_f early;
     fv3::zrev2_f hall;
     fv3::progenitor2_f room;
-    fv3::strev_f plate;
+
+    // Plate algorithms (matching Dragonfly Plate's three options)
+    fv3::nrev_f plateNrev;    // Simple algorithm
+    fv3::nrevb_f plateNrevb;  // Nested algorithm (used by Dark Plate)
+    fv3::strev_f plateStrev;  // Tank algorithm
 
     // Input filters for Plate algorithm (matching Dragonfly)
     fv3::iir_1st_f input_lpf_0, input_lpf_1, input_hpf_0, input_hpf_1;
