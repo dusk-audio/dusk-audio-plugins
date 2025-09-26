@@ -166,22 +166,7 @@ target_compile_definitions(TestStudioReverb
         JucePlugin_IAASubType=JucePlugin_PluginCode
         JucePlugin_IAAName="Luna Co. Audio: StudioReverb"
         JucePlugin_VSTNumMidiInputs=0
-        JucePlugin_VSTNumMidiOutputs=0
-))
+        JucePlugin_VSTNumMidiOutputs=0)
 
-target_link_libraries(TestStudioReverb
-    PRIVATE
-        juce::juce_audio_basics
-        juce::juce_audio_devices
-        juce::juce_audio_formats
-        juce::juce_audio_plugin_client
-        juce::juce_audio_processors
-        juce::juce_audio_utils
-        juce::juce_core
-        juce::juce_data_structures
-        juce::juce_dsp
-        juce::juce_events
-        juce::juce_graphics
-        juce::juce_gui_basics
-        juce::juce_gui_extra
-)
+# Test target removed - no longer needed
+# target_link_libraries(TestStudioReverb ...)
