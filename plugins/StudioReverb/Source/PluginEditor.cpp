@@ -128,9 +128,9 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     setLookAndFeel(lookAndFeel.get());
 
     // Calculate required size based on max controls (Hall mode has the most)
-    // Hall has: 6 rows of controls plus title and selector
-    // Title: 60, Selector: 100, 6 control rows: 6 * 120 = 720, padding: 40
-    setSize(850, 920);
+    // Compact layout for better usability
+    // Title: 60, Selector: 80, controls fit within remaining space
+    setSize(750, 580);
     setResizable(false, false);
 
     // Reverb Type Selector with improved styling
@@ -341,7 +341,7 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
     bounds.reduce(25, 10);  // Consistent padding
 
     // Type and Preset selector section
-    auto selectorArea = bounds.removeFromTop(100);
+    auto selectorArea = bounds.removeFromTop(75);
     g.setColour(juce::Colour(0x20ffffff));
     g.fillRoundedRectangle(selectorArea.toFloat(), 8.0f);
     g.setColour(juce::Colour(0x40ffffff));
@@ -448,13 +448,14 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
 
 void StudioReverbAudioProcessorEditor::resized()
 {
+    // Always start with fresh bounds calculation
     auto bounds = getLocalBounds();
     bounds.removeFromTop(60); // Title area - match paint()
     bounds.reduce(25, 10);  // Match paint() padding
 
     // Reverb Type and Preset Selectors - horizontal layout
-    auto selectorArea = bounds.removeFromTop(100);  // Match paint()
-    selectorArea.removeFromTop(35); // Label space
+    auto selectorArea = bounds.removeFromTop(75);  // Reduced height
+    selectorArea.removeFromTop(25); // Label space
 
     // Get reverb type to determine if we need plateType combo
     // Use currentReverbIndex for consistency with the rest of the UI
@@ -499,21 +500,21 @@ void StudioReverbAudioProcessorEditor::resized()
     plateTypeCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     presetCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
 
-    bounds.removeFromTop(10); // Spacing between sections
+    bounds.removeFromTop(5); // Minimal spacing between sections
 
-    const int sliderSize = 80;  // Larger sliders for better visibility
-    const int spacing = 15;  // More space between knobs
-    const int sectionHeight = sliderSize + 40;  // Total section height
+    const int sliderSize = 70;  // Compact size for visibility
+    const int spacing = 10;  // Tighter spacing between knobs
+    const int sectionHeight = sliderSize + 30;  // Compact section height
 
-    // Get reverb type to determine layout - use actual parameter value, not cached index
-    int reverbIndex = audioProcessor.reverbType ? audioProcessor.reverbType->getIndex() : 0;
+    // Get reverb type to determine layout - use currentReverbIndex for consistency
+    int reverbIndex = currentReverbIndex;
     bool isRoom = (reverbIndex == 0);
     bool isHall = (reverbIndex == 1);
     bool isPlate = (reverbIndex == 2);
     bool isEarlyOnly = (reverbIndex == 3);
 
     // === Mix Control Section ===
-    bounds.removeFromTop(20);  // Section label space
+    bounds.removeFromTop(15);  // Section label space
     auto mixSection = bounds.removeFromTop(sectionHeight);
     auto mixKnobArea = mixSection.reduced(10, 5);  // Small padding inside section
 
@@ -536,10 +537,10 @@ void StudioReverbAudioProcessorEditor::resized()
         wetLevelSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
     }
 
-    bounds.removeFromTop(10);  // Spacing
+    bounds.removeFromTop(5);  // Spacing
 
     // === Basic Controls Section ===
-    bounds.removeFromTop(20);  // Section label space
+    bounds.removeFromTop(15);  // Section label space
     auto basicSection = bounds.removeFromTop(sectionHeight);
     auto basicKnobArea = basicSection.reduced(10, 5);
 
@@ -572,13 +573,13 @@ void StudioReverbAudioProcessorEditor::resized()
         diffuseSlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 4, yPos, sliderSize, sliderSize);
     }
 
-    bounds.removeFromTop(10);  // Spacing
+    bounds.removeFromTop(5);  // Spacing
 
     // === Mode-specific sections ===
     if (isEarlyOnly)
     {
         // Early Reflections: Just filters
-        bounds.removeFromTop(20);  // Section label space
+        bounds.removeFromTop(15);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
         auto filterKnobArea = filterSection.reduced(10, 5);
 
@@ -586,11 +587,12 @@ void StudioReverbAudioProcessorEditor::resized()
         int yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
         lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
         highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+
     }
     else if (isPlate)
     {
         // Plate: Filters - all three in one row
-        bounds.removeFromTop(20);  // Section label space
+        bounds.removeFromTop(15);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
         auto filterKnobArea = filterSection.reduced(10, 5);
 
@@ -599,11 +601,12 @@ void StudioReverbAudioProcessorEditor::resized()
         dampenSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
         lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
         highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
+
     }
     else if (isHall)
     {
         // Hall: Modulation
-        bounds.removeFromTop(20);  // Section label space
+        bounds.removeFromTop(15);  // Section label space
         auto modSection = bounds.removeFromTop(sectionHeight);
         auto modKnobArea = modSection.reduced(10, 5);
 
@@ -613,10 +616,10 @@ void StudioReverbAudioProcessorEditor::resized()
         spinSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
         wanderSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
 
-        bounds.removeFromTop(10);  // Spacing
+        bounds.removeFromTop(5);  // Spacing
 
         // Hall: Filters & Crossover
-        bounds.removeFromTop(20);  // Section label space
+        bounds.removeFromTop(15);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
         auto filterKnobArea = filterSection.reduced(10, 5);
 
@@ -632,7 +635,7 @@ void StudioReverbAudioProcessorEditor::resized()
     else if (isRoom)
     {
         // Room: Modulation
-        bounds.removeFromTop(20);  // Section label space
+        bounds.removeFromTop(15);  // Section label space
         auto modSection = bounds.removeFromTop(sectionHeight);
         auto modKnobArea = modSection.reduced(10, 5);
 
@@ -641,10 +644,10 @@ void StudioReverbAudioProcessorEditor::resized()
         spinSlider.setBounds(modKnobArea.getX() + modStartX, yPos, sliderSize, sliderSize);
         wanderSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
 
-        bounds.removeFromTop(10);  // Spacing
+        bounds.removeFromTop(5);  // Spacing
 
         // Room: Filters & Damping
-        bounds.removeFromTop(20);  // Section label space
+        bounds.removeFromTop(15);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
         auto filterKnobArea = filterSection.reduced(10, 5);
 
@@ -655,10 +658,10 @@ void StudioReverbAudioProcessorEditor::resized()
         lateDampSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
         lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 3, yPos, sliderSize, sliderSize);
 
-        bounds.removeFromTop(10);  // Spacing
+        bounds.removeFromTop(5);  // Spacing
 
         // Room: Boost controls
-        bounds.removeFromTop(20);  // Section label space
+        bounds.removeFromTop(15);  // Section label space
         auto boostSection = bounds.removeFromTop(sectionHeight);
         auto boostKnobArea = boostSection.reduced(10, 5);
 
