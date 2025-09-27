@@ -53,7 +53,7 @@ public:
                           float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                           juce::Slider& slider) override
     {
-        auto radius = juce::jmin(width / 2, height / 2) - 8.0f;
+        auto radius = juce::jmin(width / 2, height / 2) - 4.0f;
         auto centreX = x + width * 0.5f;
         auto centreY = y + height * 0.5f;
         auto rx = centreX - radius;
@@ -61,61 +61,40 @@ public:
         auto rw = radius * 2.0f;
         auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-        // Vintage knob body with gradient
-        juce::ColourGradient gradient(juce::Colour(0xff4a4a4a), centreX - radius * 0.5f, centreY - radius * 0.5f,
-                                      juce::Colour(0xff1a1a1a), centreX + radius * 0.5f, centreY + radius * 0.5f,
-                                      true);
-        g.setGradientFill(gradient);
-        g.fillEllipse(rx, ry, rw, rw);
+        // Background track arc
+        juce::Path backgroundArc;
+        backgroundArc.addCentredArc(centreX, centreY, radius, radius, 0.0f,
+                                   rotaryStartAngle, rotaryEndAngle, true);
+        g.setColour(juce::Colour(0xff303030));
+        g.strokePath(backgroundArc, juce::PathStrokeType(3.0f));
 
-        // Vintage-style silver ring
-        g.setColour(juce::Colour(0xff606060));
-        g.drawEllipse(rx, ry, rw, rw, 2.0f);
-
-        // Inner shadow for depth
-        g.setColour(juce::Colour(0x40000000));
-        g.drawEllipse(rx + 2, ry + 2, rw - 4, rw - 4, 1.5f);
-
-        // Pointer line - thick vintage style
-        juce::Path pointer;
-        auto pointerLength = radius * 0.6f;
-        auto pointerThickness = 3.0f;
-        pointer.addRectangle(-pointerThickness * 0.5f, -radius * 0.9f, pointerThickness, pointerLength);
-
-        // Add a bright dot at the end of the pointer for visibility
-        pointer.addEllipse(-2.5f, -radius * 0.85f, 5.0f, 5.0f);
-
-        g.setColour(juce::Colour(0xffe0e0e0));
-        g.fillPath(pointer, juce::AffineTransform::rotation(angle).translated(centreX, centreY));
-
-        // Center cap with vintage feel
-        auto capRadius = radius * 0.25f;
-        juce::ColourGradient capGradient(juce::Colour(0xff5a5a5a), centreX - capRadius * 0.5f, centreY - capRadius * 0.5f,
-                                         juce::Colour(0xff2a2a2a), centreX + capRadius * 0.5f, centreY + capRadius * 0.5f,
-                                         true);
-        g.setGradientFill(capGradient);
-        g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2.0f, capRadius * 2.0f);
-
-        // Highlight on cap
-        g.setColour(juce::Colour(0x30ffffff));
-        g.fillEllipse(centreX - capRadius * 0.7f, centreY - capRadius * 0.7f, capRadius * 0.5f, capRadius * 0.5f);
-
-        // Scale marks around the knob
-        g.setColour(juce::Colour(0xff808080));
-        auto numMarks = 11;
-        for (int i = 0; i < numMarks; ++i)
+        // Value arc
+        if (sliderPos > 0.01f)
         {
-            auto markAngle = rotaryStartAngle + (i * (rotaryEndAngle - rotaryStartAngle) / (numMarks - 1));
-            auto markRadius = radius + 5.0f;
-            auto markLength = (i == 0 || i == numMarks - 1 || i == (numMarks - 1) / 2) ? 5.0f : 3.0f;
-
-            auto x1 = centreX + std::cos(markAngle) * markRadius;
-            auto y1 = centreY + std::sin(markAngle) * markRadius;
-            auto x2 = centreX + std::cos(markAngle) * (markRadius + markLength);
-            auto y2 = centreY + std::sin(markAngle) * (markRadius + markLength);
-
-            g.drawLine(x1, y1, x2, y2, (i == 0 || i == numMarks - 1 || i == (numMarks - 1) / 2) ? 2.0f : 1.0f);
+            juce::Path valueArc;
+            valueArc.addCentredArc(centreX, centreY, radius, radius, 0.0f,
+                                  rotaryStartAngle, angle, true);
+            g.setColour(juce::Colour(0xff00b4d8));
+            g.strokePath(valueArc, juce::PathStrokeType(3.0f));
         }
+
+        // Knob body
+        g.setColour(juce::Colour(0xff2a2a2a));
+        g.fillEllipse(rx + 6, ry + 6, rw - 12, rw - 12);
+
+        // Knob outline
+        g.setColour(juce::Colour(0xff505050));
+        g.drawEllipse(rx + 6, ry + 6, rw - 12, rw - 12, 1.5f);
+
+        // Pointer indicator
+        juce::Path pointer;
+        auto pointerLength = radius * 0.5f;
+        auto pointerThickness = 3.0f;
+        pointer.addRoundedRectangle(-pointerThickness * 0.5f, -radius + 8,
+                                   pointerThickness, pointerLength, 1.5f);
+
+        g.setColour(juce::Colour(0xfff0f0f0));
+        g.fillPath(pointer, juce::AffineTransform::rotation(angle).translated(centreX, centreY));
     }
 };
 
@@ -127,10 +106,10 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     lookAndFeel = std::make_unique<StudioReverbLookAndFeel>();
     setLookAndFeel(lookAndFeel.get());
 
-    // Calculate required size based on max controls (Hall mode has the most)
+    // Calculate required size based on max controls (Room mode has the most with Boost section)
     // Compact layout for better usability
     // Title: 60, Selector: 80, controls fit within remaining space
-    setSize(750, 580);
+    setSize(750, 800);  // Increased height to properly show all Room mode sections including Boost controls
     setResizable(false, false);
 
     // Reverb Type Selector with improved styling
@@ -185,7 +164,7 @@ StudioReverbAudioProcessorEditor::StudioReverbAudioProcessorEditor (StudioReverb
     dryLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "dryLevel", dryLevelSlider);
 
-    setupSlider(wetLevelSlider, wetLevelLabel, "Late Level", 1);  // Match Dragonfly's terminology
+    setupSlider(wetLevelSlider, wetLevelLabel, "Late Level", 1);  // Back to Late Level for clarity
     wetLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "lateLevel", wetLevelSlider);  // Connect to lateLevel parameter
 
@@ -349,7 +328,7 @@ void StudioReverbAudioProcessorEditor::paint (juce::Graphics& g)
 
     bounds.removeFromTop(10);  // Spacing between sections
 
-    const int sliderSize = 80;
+    const int sliderSize = 75;  // Match resized() values
     const int sectionHeight = sliderSize + 40;  // Include padding for labels
 
     // Mix Control Section
@@ -500,11 +479,11 @@ void StudioReverbAudioProcessorEditor::resized()
     plateTypeCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     presetCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
 
-    bounds.removeFromTop(5); // Minimal spacing between sections
+    bounds.removeFromTop(10); // Proper spacing between sections
 
-    const int sliderSize = 70;  // Compact size for visibility
-    const int spacing = 10;  // Tighter spacing between knobs
-    const int sectionHeight = sliderSize + 30;  // Compact section height
+    const int sliderSize = 75;  // Standard knob size
+    const int spacing = 12;  // Standard spacing between knobs
+    const int sectionHeight = sliderSize + 40;  // Section height to match background areas
 
     // Get reverb type to determine layout - use currentReverbIndex for consistency
     int reverbIndex = currentReverbIndex;
@@ -514,15 +493,17 @@ void StudioReverbAudioProcessorEditor::resized()
     bool isEarlyOnly = (reverbIndex == 3);
 
     // === Mix Control Section ===
-    bounds.removeFromTop(15);  // Section label space
+    bounds.removeFromTop(20);  // Section label space
     auto mixSection = bounds.removeFromTop(sectionHeight);
-    auto mixKnobArea = mixSection.reduced(10, 5);  // Small padding inside section
+    auto mixKnobArea = mixSection;  // Use full section area for proper alignment
 
+    // Position based on which controls are visible for better centering
+    int yPos;
     if (isRoom || isHall)
     {
         // Room/Hall: 4 mix controls
         int mixStartX = (mixKnobArea.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
-        int yPos = mixKnobArea.getY() + (mixKnobArea.getHeight() - sliderSize) / 2;
+        yPos = mixKnobArea.getY() + (mixKnobArea.getHeight() - sliderSize) / 2;
         dryLevelSlider.setBounds(mixKnobArea.getX() + mixStartX, yPos, sliderSize, sliderSize);
         wetLevelSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
         earlyLevelSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
@@ -530,42 +511,53 @@ void StudioReverbAudioProcessorEditor::resized()
     }
     else
     {
-        // Plate/Early: 2 mix controls
+        // Plate/Early: 2 mix controls - center them properly
         int mixStartX = (mixKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
-        int yPos = mixKnobArea.getY() + (mixKnobArea.getHeight() - sliderSize) / 2;
+        yPos = mixKnobArea.getY() + (mixKnobArea.getHeight() - sliderSize) / 2;
         dryLevelSlider.setBounds(mixKnobArea.getX() + mixStartX, yPos, sliderSize, sliderSize);
         wetLevelSlider.setBounds(mixKnobArea.getX() + mixStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        // Position hidden controls off-screen
+        earlyLevelSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        earlySendSlider.setBounds(-100, -100, sliderSize, sliderSize);
     }
 
-    bounds.removeFromTop(5);  // Spacing
+    bounds.removeFromTop(10);  // Spacing
 
     // === Basic Controls Section ===
-    bounds.removeFromTop(15);  // Section label space
+    bounds.removeFromTop(20);  // Section label space
     auto basicSection = bounds.removeFromTop(sectionHeight);
-    auto basicKnobArea = basicSection.reduced(10, 5);
+    auto basicKnobArea = basicSection;  // Use full section area
 
+    // Position controls based on what's visible for proper centering
     if (isEarlyOnly)
     {
-        // Early Reflections: Size, Width only
+        // Early Reflections: 2 controls - center them
         int basicStartX = (basicKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
-        int yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
+        yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
         sizeSlider.setBounds(basicKnobArea.getX() + basicStartX, yPos, sliderSize, sliderSize);
         widthSlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+        // Hide unused
+        preDelaySlider.setBounds(-100, -100, sliderSize, sliderSize);
+        decaySlider.setBounds(-100, -100, sliderSize, sliderSize);
+        diffuseSlider.setBounds(-100, -100, sliderSize, sliderSize);
     }
     else if (isPlate)
     {
-        // Plate: Width, PreDelay, Decay
+        // Plate: 3 controls - center them
         int basicStartX = (basicKnobArea.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
-        int yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
+        yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
         widthSlider.setBounds(basicKnobArea.getX() + basicStartX, yPos, sliderSize, sliderSize);
         preDelaySlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
         decaySlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
+        // Hide unused
+        sizeSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        diffuseSlider.setBounds(-100, -100, sliderSize, sliderSize);
     }
     else
     {
-        // Room/Hall: All basic controls
+        // Room/Hall: All 5 controls
         int basicStartX = (basicKnobArea.getWidth() - (sliderSize * 5 + spacing * 4)) / 2;
-        int yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
+        yPos = basicKnobArea.getY() + (basicKnobArea.getHeight() - sliderSize) / 2;
         sizeSlider.setBounds(basicKnobArea.getX() + basicStartX, yPos, sliderSize, sliderSize);
         widthSlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
         preDelaySlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
@@ -573,28 +565,41 @@ void StudioReverbAudioProcessorEditor::resized()
         diffuseSlider.setBounds(basicKnobArea.getX() + basicStartX + (sliderSize + spacing) * 4, yPos, sliderSize, sliderSize);
     }
 
-    bounds.removeFromTop(5);  // Spacing
+    bounds.removeFromTop(10);  // Spacing
 
     // === Mode-specific sections ===
     if (isEarlyOnly)
     {
         // Early Reflections: Just filters
-        bounds.removeFromTop(15);  // Section label space
+        bounds.removeFromTop(20);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
-        auto filterKnobArea = filterSection.reduced(10, 5);
+        auto filterKnobArea = filterSection;  // Use full section area
 
         int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
         int yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
         lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX, yPos, sliderSize, sliderSize);
         highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
 
+        // Hide unused controls
+        dampenSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        earlyDampSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lateDampSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        modulationSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        spinSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        wanderSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowBoostSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        boostFreqSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowCrossSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        highCrossSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowMultSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        highMultSlider.setBounds(-100, -100, sliderSize, sliderSize);
     }
     else if (isPlate)
     {
         // Plate: Filters - all three in one row
-        bounds.removeFromTop(15);  // Section label space
+        bounds.removeFromTop(20);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
-        auto filterKnobArea = filterSection.reduced(10, 5);
+        auto filterKnobArea = filterSection;  // Use full section area
 
         int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
         int yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
@@ -602,13 +607,25 @@ void StudioReverbAudioProcessorEditor::resized()
         lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
         highCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
 
+        // Hide unused controls
+        earlyDampSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lateDampSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        modulationSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        spinSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        wanderSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowBoostSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        boostFreqSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowCrossSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        highCrossSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowMultSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        highMultSlider.setBounds(-100, -100, sliderSize, sliderSize);
     }
     else if (isHall)
     {
         // Hall: Modulation
-        bounds.removeFromTop(15);  // Section label space
+        bounds.removeFromTop(20);  // Section label space
         auto modSection = bounds.removeFromTop(sectionHeight);
-        auto modKnobArea = modSection.reduced(10, 5);
+        auto modKnobArea = modSection;  // Use full section area
 
         int modStartX = (modKnobArea.getWidth() - (sliderSize * 3 + spacing * 2)) / 2;
         int yPos = modKnobArea.getY() + (modKnobArea.getHeight() - sliderSize) / 2;
@@ -616,12 +633,12 @@ void StudioReverbAudioProcessorEditor::resized()
         spinSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
         wanderSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
 
-        bounds.removeFromTop(5);  // Spacing
+        bounds.removeFromTop(10);  // Spacing
 
         // Hall: Filters & Crossover
-        bounds.removeFromTop(15);  // Section label space
+        bounds.removeFromTop(20);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
-        auto filterKnobArea = filterSection.reduced(10, 5);
+        auto filterKnobArea = filterSection;  // Use full section area
 
         int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 6 + spacing * 5)) / 2;
         yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
@@ -631,25 +648,32 @@ void StudioReverbAudioProcessorEditor::resized()
         lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 3, yPos, sliderSize, sliderSize);
         lowCrossSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 4, yPos, sliderSize, sliderSize);
         lowMultSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 5, yPos, sliderSize, sliderSize);
+
+        // Hide unused controls
+        dampenSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        earlyDampSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lateDampSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowBoostSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        boostFreqSlider.setBounds(-100, -100, sliderSize, sliderSize);
     }
     else if (isRoom)
     {
         // Room: Modulation
-        bounds.removeFromTop(15);  // Section label space
+        bounds.removeFromTop(20);  // Section label space
         auto modSection = bounds.removeFromTop(sectionHeight);
-        auto modKnobArea = modSection.reduced(10, 5);
+        auto modKnobArea = modSection;  // Use full section area
 
         int modStartX = (modKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
         int yPos = modKnobArea.getY() + (modKnobArea.getHeight() - sliderSize) / 2;
         spinSlider.setBounds(modKnobArea.getX() + modStartX, yPos, sliderSize, sliderSize);
         wanderSlider.setBounds(modKnobArea.getX() + modStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
 
-        bounds.removeFromTop(5);  // Spacing
+        bounds.removeFromTop(10);  // Spacing
 
         // Room: Filters & Damping
-        bounds.removeFromTop(15);  // Section label space
+        bounds.removeFromTop(20);  // Section label space
         auto filterSection = bounds.removeFromTop(sectionHeight);
-        auto filterKnobArea = filterSection.reduced(10, 5);
+        auto filterKnobArea = filterSection;  // Use full section area
 
         int filterStartX = (filterKnobArea.getWidth() - (sliderSize * 4 + spacing * 3)) / 2;
         yPos = filterKnobArea.getY() + (filterKnobArea.getHeight() - sliderSize) / 2;
@@ -658,17 +682,25 @@ void StudioReverbAudioProcessorEditor::resized()
         lateDampSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 2, yPos, sliderSize, sliderSize);
         lowCutSlider.setBounds(filterKnobArea.getX() + filterStartX + (sliderSize + spacing) * 3, yPos, sliderSize, sliderSize);
 
-        bounds.removeFromTop(5);  // Spacing
+        bounds.removeFromTop(10);  // Spacing
 
         // Room: Boost controls
-        bounds.removeFromTop(15);  // Section label space
+        bounds.removeFromTop(20);  // Section label space
         auto boostSection = bounds.removeFromTop(sectionHeight);
-        auto boostKnobArea = boostSection.reduced(10, 5);
+        auto boostKnobArea = boostSection;  // Use full section area
 
         int boostStartX = (boostKnobArea.getWidth() - (sliderSize * 2 + spacing)) / 2;
         yPos = boostKnobArea.getY() + (boostKnobArea.getHeight() - sliderSize) / 2;
         lowBoostSlider.setBounds(boostKnobArea.getX() + boostStartX, yPos, sliderSize, sliderSize);
         boostFreqSlider.setBounds(boostKnobArea.getX() + boostStartX + (sliderSize + spacing), yPos, sliderSize, sliderSize);
+
+        // Hide unused controls (Hall-specific)
+        lowCrossSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        highCrossSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        lowMultSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        highMultSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        modulationSlider.setBounds(-100, -100, sliderSize, sliderSize);
+        dampenSlider.setBounds(-100, -100, sliderSize, sliderSize);
     }
 }
 
@@ -685,15 +717,13 @@ void StudioReverbAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBoxT
         updateHallControlsVisibility(currentReverbIndex);  // Pass the index directly
         updatePresetListForAlgorithm(currentReverbIndex);  // Pass the index directly
 
-        // Update wet level label based on reverb type
+        // Update label based on reverb type for clarity
         if (currentReverbIndex == 2)  // Plate
-        {
-            wetLevelLabel.setText("Wet Level", juce::dontSendNotification);  // Match Dragonfly Plate
-        }
-        else
-        {
-            wetLevelLabel.setText("Late Level", juce::dontSendNotification);  // Room/Hall use Late
-        }
+            wetLevelLabel.setText("Wet Level", juce::dontSendNotification);
+        else if (currentReverbIndex == 3)  // Early Reflections
+            wetLevelLabel.setText("Level", juce::dontSendNotification);
+        else  // Room/Hall
+            wetLevelLabel.setText("Late Level", juce::dontSendNotification);
 
         resized();  // This will handle plateType visibility
     }
