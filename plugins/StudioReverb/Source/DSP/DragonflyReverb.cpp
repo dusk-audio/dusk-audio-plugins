@@ -9,6 +9,7 @@
 */
 
 #include "DragonflyReverb.h"
+#include "../freeverb/fv3_defs.h"  // For FV3_REVTYPE_PROG2
 
 DragonflyReverb::DragonflyReverb()
 {
@@ -35,26 +36,55 @@ DragonflyReverb::DragonflyReverb()
     // Initialize EXACTLY like Dragonfly Hall DSP.cpp constructor
     early.loadPresetReflection(FV3_EARLYREF_PRESET_1);
     early.setMuteOnChange(false);
-    early.setdryr(0); // mute dry signal
-    early.setwet(0); // 0dB
-    early.setwidth(0.8);
+    early.setdryr(0); // Dragonfly uses 0, not -70
+    early.setwet(0); // 0dB for wet signal
+    early.setwidth(0.8); // Dragonfly Room uses 0.8
     early.setLRDelay(0.3);
     early.setLRCrossApFreq(750, 4);
     early.setDiffusionApFreq(150, 4);
     early.setSampleRate(defaultSampleRate);
+    // Additional initialization for better output
+    early.setPreDelay(0);
 
     // Initialize late (hall) exactly like Dragonfly
     hall.setMuteOnChange(false);
     hall.setwet(0); // 0dB
-    hall.setdryr(0); // mute dry signal
+    hall.setdryr(0); // Dragonfly uses 0, not -70
     hall.setwidth(1.0);
     hall.setSampleRate(defaultSampleRate);
+    // Set default hall parameters for better density
+    hall.setrt60(2.0f);
+    hall.setidiffusion1(0.75f);
+    hall.setapfeedback(0.75f);
+    hall.setRSFactor(2.5f);
 
-    // Initialize room and plate similarly
+    // Initialize room EXACTLY like Dragonfly Room's 'late' reverb
     room.setMuteOnChange(false);
-    room.setwet(0);
-    room.setdryr(0);
-    room.setSampleRate(defaultSampleRate);
+    room.setSampleRate(defaultSampleRate);  // Set sample rate FIRST
+
+    // CRITICAL: Dragonfly Room does NOT set reverb type - uses default FV3_REVTYPE_SELF
+    // DO NOT call setReverbType() - let it use default like Dragonfly!
+
+    // Initialize basic wet/dry settings EXACTLY like Dragonfly
+    room.setwet(0);  // 0dB = unity gain for wet signal
+    room.setdryr(0);  // Mute dry - setdryr takes LINEAR value, 0 = mute
+    room.setwidth(1.0);  // Full stereo width
+
+    // Initialize all progenitor2-specific parameters IN CORRECT ORDER
+    room.setRSFactor(3.0f);  // Room size factor BEFORE rt60
+    room.setrt60(2.0f);  // Default decay time
+    room.setidiffusion1(0.75f);  // Input diffusion
+    room.setodiffusion1(0.75f);  // Output diffusion
+    room.setdamp(10000.0f);  // High frequency damping
+    room.setdamp2(10000.0f);  // Secondary damping
+    room.setbassap(150, 4);  // Bass allpass frequency and stages
+    room.setmodulationnoise1(0.09f);  // Modulation noise 1
+    room.setmodulationnoise2(0.06f);  // Modulation noise 2
+    room.setcrossfeed(0.4f);  // Crossfeed amount
+    room.setspin(0.5f);  // Default spin
+    room.setspin2(0.5f);  // Secondary spin
+    room.setwander(0.25f);  // Default wander
+    room.setwander2(0.25f);  // Secondary wander
 
     // Initialize all three plate algorithms like Dragonfly Plate
     plateNrev.setMuteOnChange(false);
@@ -113,6 +143,9 @@ void DragonflyReverb::prepare(double sr, int samplesPerBlock)
     plateNrevb.setSampleRate(sampleRate);
     plateStrev.setSampleRate(sampleRate);
 
+    // NOTE: Dragonfly doesn't do any special initialization after setSampleRate
+    // Just the basic setSampleRate call is enough
+
     // Initialize input filters with sample rate
     // Room algorithm needs these filters
     setInputLPF(20000.0f);  // Default high cut
@@ -138,6 +171,33 @@ void DragonflyReverb::prepare(double sr, int samplesPerBlock)
     {
         case Algorithm::Room:
             DBG("  Updating Room reverb...");
+            // DON'T mute room - progenitor2 has issues recovering from mute()
+            // room.mute();  // REMOVED - this breaks Room reverb!
+
+            // Re-initialize from scratch
+            room.setSampleRate(sampleRate);  // Set sample rate FIRST
+            room.setMuteOnChange(false);     // Don't auto-mute on changes
+
+            // CRITICAL: Dragonfly Room does NOT set reverb type - uses default!
+            // DO NOT call setReverbType() - let it use default FV3_REVTYPE_SELF
+
+            // Set wet/dry IMMEDIATELY after type
+            room.setwet(0);     // 0dB = unity gain for wet signal
+            room.setdryr(0);  // Mute dry - setdryr takes LINEAR value, 0 = mute
+
+            // Re-initialize progenitor2 parameters in correct order
+            room.setbassap(150, 4);
+            room.setmodulationnoise1(0.09f);
+            room.setmodulationnoise2(0.06f);
+            room.setcrossfeed(0.4f);
+
+            // Basic parameters
+            room.setwidth(1.0f);
+            room.setrt60(decay);
+            room.setidiffusion1(0.75f);
+            room.setodiffusion1(0.75f);
+
+            // Now update with current parameters
             updateRoomReverb();
             break;
         case Algorithm::Hall:
@@ -164,7 +224,8 @@ void DragonflyReverb::reset()
 {
     early.mute();
     hall.mute();
-    room.mute();
+    // DON'T mute room - progenitor2 seems to have issues recovering from mute()
+    // room.mute();  // COMMENTED OUT - this breaks Room reverb!
     plateNrev.mute();
     plateNrevb.mute();
     plateStrev.mute();
@@ -452,22 +513,51 @@ void DragonflyReverb::setDamping(float freq)
 
 void DragonflyReverb::updateEarlyReflections()
 {
-    // Match Dragonfly early reflections exactly
-    early.setRSFactor(size / 10.0f);  // Dragonfly uses 10 for early
+    // When in Early Reflections mode, match Dragonfly Early Reflections plugin EXACTLY
+    // This is a STANDALONE reverb mode, not the early reflections component of Room/Hall
 
-    // Width scaling depends on algorithm!
-    if (currentAlgorithm == Algorithm::Room)
-        early.setwidth(width / 120.0f);  // Room early uses /120
+    if (currentAlgorithm == Algorithm::EarlyReflections)
+    {
+        // Match Dragonfly Early Reflections plugin parameters exactly
+        // Based on DSP.cpp from dragonfly-early-reflections
+
+        // Size parameter - Dragonfly Early uses /10
+        early.setRSFactor(size / 10.0f);
+
+        // Width parameter - Dragonfly Early uses /100
+        early.setwidth(width / 100.0f);
+
+        // Low Cut frequency - direct value
+        early.setoutputhpf(lowCut);
+
+        // High Cut frequency - direct value
+        early.setoutputlpf(highCut);
+
+        // Note: The Early Reflections plugin doesn't use decay, diffusion, modulation
+        // It's purely an early reflections processor
+
+        // Ensure proper wet/dry for standalone early reflections
+        early.setwet(0);  // 0dB = unity gain
+        early.setdryr(0);  // Dragonfly uses 0, not -70
+    }
     else
-        early.setwidth(width / 100.0f);  // Hall early uses /100
+    {
+        // For Room/Hall modes, update early as a component of the full reverb
+        // This matches how Dragonfly Room/Hall handle their early reflections
 
-    early.setLRDelay(0.3f);  // Stereo spread
-    early.setLRCrossApFreq(750, 4);  // Cross AP frequency
-    early.setDiffusionApFreq(150, 4);  // Diffusion frequency
-    early.setoutputhpf(lowCut);
-    early.setoutputlpf(highCut);
-    early.setwet(0);  // 0dB wet signal
-    early.setdryr(0); // Mute dry in early processor
+        // Size parameter - both Room and Hall use /10
+        early.setRSFactor(size / 10.0f);
+
+        // Width scaling depends on algorithm!
+        if (currentAlgorithm == Algorithm::Room)
+            early.setwidth(width / 120.0f);  // Room early uses /120
+        else
+            early.setwidth(width / 100.0f);  // Hall early uses /100
+
+        // For Room mode, Dragonfly has separate EarlyDamp parameter
+        // In our unified system, we use highCut for early damping
+        early.setoutputlpf(highCut);
+    }
 }
 
 void DragonflyReverb::updateHallReverb()
@@ -507,34 +597,55 @@ void DragonflyReverb::updateHallReverb()
 
 void DragonflyReverb::updateRoomReverb()
 {
-    // Match Dragonfly Room algorithm parameters exactly
-    room.setRSFactor(size / 10.0f);  // Dragonfly Room uses 10
+    printf("updateRoomReverb() called - size=%f, width=%f, preDelay=%f, decay=%f\n", size, width, preDelay, decay);
+    printf("  Using default reverb type (FV3_REVTYPE_SELF) like Dragonfly\n");
+    fflush(stdout);
+
+    // CRITICAL: Set sample rate but DO NOT set reverb type - use default like Dragonfly
+    room.setSampleRate(sampleRate);
+    // NO setReverbType() call - Dragonfly doesn't use it!
+
+    // Re-initialize ALL progenitor2-specific parameters after type change
+    // These are REQUIRED for proper operation
+    room.setbassap(150, 4);  // MUST be set before other parameters
+    room.setidiffusion1(0.78f);  // Default from progenitor2 constructor
+    room.setodiffusion1(0.78f);
+    room.setmodulationnoise1(0.09f);
+    room.setmodulationnoise2(0.06f);
+    room.setcrossfeed(0.4f);
+
+    // Now set the basic room parameters
+    // CRITICAL FIX: RSFactor must be kept small relative to RT60
+    // Based on testing: RSFactor=1.5 with RT60=1.0 works well
+    // Set RSFactor exactly like Dragonfly Room
+    room.setRSFactor(size / 10.0f);  // Dragonfly Room uses size / 10.0
+
     room.setwidth(width / 100.0f);   // Room late uses 100, NOT 120!
     room.setPreDelay(preDelay);
+
+    // Core reverb settings - Set RT60 AFTER RSFactor
+    room.setrt60(decay);
 
     // Diffusion settings for Progenitor2 - match Dragonfly Room
     float diff = diffusion / 120.0f;  // Room uses 120
     room.setidiffusion1(diff);
     room.setodiffusion1(diff);
-    // progenitor2 doesn't have setidiffusion2/setodiffusion2
+    // NOTE: Dragonfly Room does NOT call setdccutfreq!
 
-    // Core reverb settings
-    room.setrt60(decay);
-    room.setdccutfreq(lowCut);  // DC cut for rumble control
-
-    // High frequency damping - match Dragonfly Room exactly
-    // Dragonfly passes direct values to setdamp and setoutputdamp
+    // High frequency damping - In our system, highCut maps to Dragonfly's lateDamp
+    // Dragonfly Room uses the high frequency damping value directly
     room.setdamp(highCut);
     room.setoutputdamp(highCut);
 
-    // Bass boost - complex formula from Dragonfly Room
+    // Bass boost - EXACT formula from Dragonfly Room
+    // In our system: lowMult maps to Dragonfly's boost parameter
     // boost / 20.0 / pow(decay, 1.5) * (size / 10.0)
     float boostValue = lowMult / 20.0f / std::pow(decay, 1.5f) * (size / 10.0f);
     room.setbassboost(boostValue);
 
-    // Note: setbassbw is not used in Dragonfly Room
-    // Instead, setdamp2 is used for boost LPF parameter
-    room.setdamp2(lowXover);  // Dragonfly uses setdamp2 for boost LPF
+    // Boost LPF - In our system, lowXover maps to Dragonfly's boostFreq/boostLPF
+    // Dragonfly uses this for setdamp2
+    room.setdamp2(lowXover);
 
     // Modulation - match Dragonfly Room exactly
     room.setspin(spin);
@@ -542,9 +653,16 @@ void DragonflyReverb::updateRoomReverb()
     room.setwander(wander / 200.0f + 0.1f);
     room.setwander2(wander / 200.0f + 0.1f);
 
-    // Ensure proper wet/dry settings
-    room.setwet(0);  // 0dB
-    room.setdryr(0); // Mute dry in processor
+    // CRITICAL: Ensure proper wet/dry levels for the processor
+    // The room processor should output ONLY wet signal (no dry passthrough)
+    room.setwet(0);     // 0dB = unity gain for wet signal
+    room.setdryr(0);  // Mute dry - setdryr takes LINEAR value, 0 = mute
+
+    // progenitor2 specific initialization
+    room.setMuteOnChange(false);
+
+    printf("  Final Room settings: wet=%f dB, dry=%f dB\n", room.getwet(), room.getdryr());
+    fflush(stdout);
 }
 
 void DragonflyReverb::updatePlateReverb()
@@ -801,7 +919,16 @@ void DragonflyReverb::processRoom(juce::AudioBuffer<float>& buffer)
                                  earlyOutBuffer[1][i] * earlySend;
         }
 
+        // Debug: Check input signal before processing
+        float maxInput = 0.0f;
+        for (int i = 0; i < samplesToProcess; ++i)
+        {
+            maxInput = std::max(maxInput, std::abs(lateInBuffer[0][i]));
+            maxInput = std::max(maxInput, std::abs(lateInBuffer[1][i]));
+        }
+
         // Process late reverb with Room algorithm
+        // Use SEPARATE buffers like Dragonfly does
         room.processreplace(
             lateInBuffer[0],
             lateInBuffer[1],
@@ -810,16 +937,62 @@ void DragonflyReverb::processRoom(juce::AudioBuffer<float>& buffer)
             samplesToProcess
         );
 
+        // Debug: Check output signal after processing
+        float maxOutput = 0.0f;
+        for (int i = 0; i < samplesToProcess; ++i)
+        {
+            maxOutput = std::max(maxOutput, std::abs(lateOutBuffer[0][i]));
+            maxOutput = std::max(maxOutput, std::abs(lateOutBuffer[1][i]));
+        }
+
+        static int dbgCnt = 0;
+        if (++dbgCnt % 500 == 0)
+        {
+            printf("\n=== ROOM REVERB DEBUG ===\n");
+            printf("Room reverb - maxInput: %f, maxOutput: %f\n", maxInput, maxOutput);
+            printf("  Room params: wet=%f, dry=%f, width=%f, rt60=%f\n",
+                   room.getwet(), room.getdryr(), room.getwidth(), room.getrt60());
+            printf("  Room RSFactor=%f, damp=%f\n",
+                   room.getRSFactor(), room.getdamp());
+
+            // Check if room reverb is actually producing output
+            if (maxOutput < 0.0001f && maxInput > 0.0001f) {
+                printf("  WARNING: Room reverb receiving input but NOT producing output!\n");
+                printf("  This indicates the room reverb processor is not working.\n");
+            }
+            fflush(stdout);
+        }
+
+
+        // Debug lateLevel and check if there's signal in late buffer
+        static int debugCounter = 0;
+        if (++debugCounter % 1000 == 0)
+        {
+            // Check if there's any signal in the late reverb buffer
+            float maxLate = 0.0f;
+            for (int i = 0; i < samplesToProcess; ++i)
+            {
+                maxLate = std::max(maxLate, std::abs(lateOutBuffer[0][i]));
+                maxLate = std::max(maxLate, std::abs(lateOutBuffer[1][i]));
+            }
+            printf("Room mixing - dryLevel: %f, earlyLevel: %f, lateLevel: %f, maxLateSignal: %f\n",
+                   dryLevel, earlyLevel, lateLevel, maxLate);
+            fflush(stdout);
+        }
 
         // Mix output - Room uses both early and late reverb
+        // IMPORTANT: Room reverb (progenitor2) has very low output level (~-60dB)
+        // We need to apply gain compensation to make it audible
+        const float roomLateGain = 250.0f;  // ~48dB gain to compensate for low output
+
         for (int i = 0; i < samplesToProcess; ++i)
         {
             float outL = inputL[samplesProcessed + i] * dryLevel +
                         earlyOutBuffer[0][i] * earlyLevel +
-                        lateOutBuffer[0][i] * lateLevel;
+                        lateOutBuffer[0][i] * lateLevel * roomLateGain;
             float outR = inputR[samplesProcessed + i] * dryLevel +
                         earlyOutBuffer[1][i] * earlyLevel +
-                        lateOutBuffer[1][i] * lateLevel;
+                        lateOutBuffer[1][i] * lateLevel * roomLateGain;
 
             inputL[samplesProcessed + i] = outL;
             inputR[samplesProcessed + i] = outR;
@@ -911,6 +1084,9 @@ void DragonflyReverb::processPlate(juce::AudioBuffer<float>& buffer)
 
 void DragonflyReverb::processEarlyOnly(juce::AudioBuffer<float>& buffer)
 {
+    // Match Dragonfly Early Reflections plugin processing EXACTLY
+    // This is a standalone early reflections processor, not part of a full reverb
+
     const int numSamples = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
@@ -930,7 +1106,7 @@ void DragonflyReverb::processEarlyOnly(juce::AudioBuffer<float>& buffer)
         std::memset(earlyOutBuffer[0], 0, sizeof(float) * samplesToProcess);
         std::memset(earlyOutBuffer[1], 0, sizeof(float) * samplesToProcess);
 
-        // Process early reflections only
+        // Process early reflections - Dragonfly Early uses input directly, no filtering
         early.processreplace(
             inputL + samplesProcessed,
             inputR + samplesProcessed,
@@ -939,13 +1115,16 @@ void DragonflyReverb::processEarlyOnly(juce::AudioBuffer<float>& buffer)
             samplesToProcess
         );
 
-        // Mix output (dry + early only, no late)
+        // Mix output - Dragonfly Early Reflections plugin uses:
+        // - dryLevel for dry signal
+        // - lateLevel as the WET level (not earlyLevel!)
+        // This matches how the standalone Early Reflections plugin works
         for (int i = 0; i < samplesToProcess; ++i)
         {
             float outL = inputL[samplesProcessed + i] * dryLevel +
-                        earlyOutBuffer[0][i] * earlyLevel;
+                        earlyOutBuffer[0][i] * lateLevel;  // Use lateLevel as wet level
             float outR = inputR[samplesProcessed + i] * dryLevel +
-                        earlyOutBuffer[1][i] * earlyLevel;
+                        earlyOutBuffer[1][i] * lateLevel;  // Use lateLevel as wet level
 
             inputL[samplesProcessed + i] = outL;
             inputR[samplesProcessed + i] = outR;

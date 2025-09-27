@@ -533,12 +533,31 @@ void StudioReverbAudioProcessor::updateReverbParameters()
         float earlySendPercent = earlySend ? earlySend->get() : 35.0f;
         float earlySendNorm = earlySendPercent / 100.0f;
         reverb->setEarlySend(earlySendNorm);
-    }
 
-    // Late level - matching Dragonfly's "Late Level" UI control
-    float latePercent = lateLevel ? lateLevel->get() : 20.0f;
-    float lateNorm = latePercent / 100.0f;
-    reverb->setLateLevel(lateNorm);
+        // Late level for Room and Hall
+        float latePercent = lateLevel ? lateLevel->get() : 20.0f;
+        float lateNorm = latePercent / 100.0f;
+        printf("updateReverbParameters: Setting late level for %s: %f%% (normalized: %f)\n",
+               (algIndex == 0 ? "Room" : "Hall"), latePercent, lateNorm);
+        fflush(stdout);
+        reverb->setLateLevel(lateNorm);
+    }
+    else if (algIndex == 3)  // Early Reflections
+    {
+        // For Early Reflections mode, the "Level" control (lateLevel parameter)
+        // actually controls the early reflections level since there's no late reverb
+        float levelPercent = lateLevel ? lateLevel->get() : 20.0f;
+        float levelNorm = levelPercent / 100.0f;
+        reverb->setEarlyLevel(levelNorm);
+        // No late level needed for Early Reflections mode
+    }
+    else  // Plate
+    {
+        // Plate uses late level as wet level
+        float latePercent = lateLevel ? lateLevel->get() : 20.0f;
+        float lateNorm = latePercent / 100.0f;
+        reverb->setLateLevel(lateNorm);
+    }
 
     // Set filter controls
     if (lowCut) reverb->setLowCut(lowCut->get());
@@ -601,6 +620,23 @@ void StudioReverbAudioProcessor::parameterChanged(const juce::String& parameterI
     {
         DBG("  Reverb type changed to index: " << reverbType->getIndex()
             << " (" << reverbType->getCurrentChoiceName() << ")");
+    }
+
+    // Debug late level parameter changes
+    if (parameterID == "lateLevel")
+    {
+        printf("Late level parameter changed to: %f (raw value)\n", newValue);
+        fflush(stdout);
+        if (lateLevel)
+        {
+            printf("  Late level get(): %f%%\n", lateLevel->get());
+            fflush(stdout);
+        }
+        else
+        {
+            printf("  ERROR: lateLevel parameter pointer is null!\n");
+            fflush(stdout);
+        }
     }
 
     // Don't trigger individual updates if we're loading a preset
