@@ -104,7 +104,7 @@ public:
     static const juce::StringArray& getParameterIDs()
     {
         static const juce::StringArray ids = {
-            "reverbType", "dryLevel", "earlyLevel", "earlySend", "lateLevel",
+            "reverbType", "plateType", "dryLevel", "earlyLevel", "earlySend", "lateLevel",
             "size", "width", "preDelay", "decay", "diffuse",
             "spin", "wander", "modulation", "highCut", "lowCut", "dampen",
             "earlyDamp", "lateDamp", "lowBoost", "boostFreq",
