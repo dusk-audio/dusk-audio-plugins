@@ -1,126 +1,119 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "DSP/DragonflyReverb.h"
-//#include "DSP/SimpleReverb.h"  // Temporarily using simple reverb for testing
-#include "PresetManager.h"
+#include <memory>
+#include <array>
+#include "DSP/ReverbProcessor.h"
 
-//==============================================================================
-class StudioReverbAudioProcessor  : public juce::AudioProcessor,
-                                    public juce::AudioProcessorValueTreeState::Listener
+// Reverb types matching Dragonfly's actual plugins
+enum class ReverbType
+{
+    Room = 0,           // Dragonfly Room Reverb
+    Hall,               // Dragonfly Hall Reverb
+    Plate,              // Dragonfly Plate Reverb
+    EarlyReflections,   // Dragonfly Early Reflections
+    NumTypes
+};
+
+class StudioReverbAudioProcessor : public juce::AudioProcessor,
+                                            public juce::AudioProcessorValueTreeState::Listener
 {
 public:
-    //==============================================================================
     StudioReverbAudioProcessor();
     ~StudioReverbAudioProcessor() override;
 
-    //==============================================================================
-    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
 
-   #ifndef JucePlugin_PreferredChannelConfigurations
-    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
-   #endif
+    #ifndef JucePlugin_PreferredChannelConfigurations
+    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
+    #endif
 
-    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
-    //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
-    bool hasEditor() const override;
+    bool hasEditor() const override { return true; }
 
-    //==============================================================================
-    const juce::String getName() const override;
+    const juce::String getName() const override { return JucePlugin_Name; }
 
-    bool acceptsMidi() const override;
-    bool producesMidi() const override;
-    bool isMidiEffect() const override;
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override;
 
-    //==============================================================================
-    int getNumPrograms() override;
-    int getCurrentProgram() override;
-    void setCurrentProgram (int index) override;
-    const juce::String getProgramName (int index) override;
-    void changeProgramName (int index, const juce::String& newName) override;
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram(int index) override {}
+    const juce::String getProgramName(int index) override { return {}; }
+    void changeProgramName(int index, const juce::String& newName) override {}
 
-    //==============================================================================
-    void getStateInformation (juce::MemoryBlock& destData) override;
-    void setStateInformation (const void* data, int sizeInBytes) override;
+    void getStateInformation(juce::MemoryBlock& destData) override;
+    void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // Parameters using AudioProcessorValueTreeState for better thread safety
+    // Parameter IDs
+    static constexpr const char* PARAM_REVERB_TYPE = "reverbType";
+    static constexpr const char* PARAM_WET_DRY = "wetDry";
+    static constexpr const char* PARAM_DECAY = "decay";
+    static constexpr const char* PARAM_PREDELAY = "preDelay";
+    static constexpr const char* PARAM_DAMPING = "damping";
+    static constexpr const char* PARAM_ROOM_SIZE = "roomSize";
+    static constexpr const char* PARAM_DIFFUSION = "diffusion";
+    static constexpr const char* PARAM_LOW_CUT = "lowCut";
+    static constexpr const char* PARAM_HIGH_CUT = "highCut";
+    static constexpr const char* PARAM_EARLY_MIX = "earlyMix";
+    static constexpr const char* PARAM_LATE_MIX = "lateMix";
+    static constexpr const char* PARAM_MODULATION = "modulation";
+    static constexpr const char* PARAM_OUTPUT_GAIN = "outputGain";
+
+    // Get current reverb type
+    ReverbType getCurrentReverbType() const;
+    void setReverbType(ReverbType type);
+
+    // Parameter tree
     juce::AudioProcessorValueTreeState apvts;
-    juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    // Parameter pointers for quick access
-    juce::AudioParameterChoice* reverbType;
-    juce::AudioParameterChoice* plateType;  // Plate algorithm selection
+    // Parameter listener callback
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
 
-    // Mix controls - matching Dragonfly exactly
-    juce::AudioParameterFloat* dryLevel;
-    juce::AudioParameterFloat* earlyLevel;
-    juce::AudioParameterFloat* earlySend;
-    juce::AudioParameterFloat* lateLevel;  // This is what Dragonfly calls "Late Level" in UI
-
-    // Basic reverb parameters
-    juce::AudioParameterFloat* size;
-    juce::AudioParameterFloat* width;
-    juce::AudioParameterFloat* preDelay;
-    juce::AudioParameterFloat* decay;
-    juce::AudioParameterFloat* diffuse;
-
-    // Modulation controls
-    juce::AudioParameterFloat* spin;
-    juce::AudioParameterFloat* wander;
-    juce::AudioParameterFloat* modulation; // Hall-specific
-
-    // Filter controls
-    juce::AudioParameterFloat* highCut;
-    juce::AudioParameterFloat* lowCut;
-    juce::AudioParameterFloat* dampen; // Plate-specific
-    juce::AudioParameterFloat* earlyDamp; // Room-specific
-    juce::AudioParameterFloat* lateDamp; // Room-specific
-
-    // Room-specific boost controls
-    juce::AudioParameterFloat* lowBoost;
-    juce::AudioParameterFloat* boostFreq;
-
-    // Hall-specific crossover controls
-    juce::AudioParameterFloat* lowCross;
-    juce::AudioParameterFloat* highCross;
-    juce::AudioParameterFloat* lowMult;
-    juce::AudioParameterFloat* highMult;
-
-    // Parameter change detection and thread safety
-    std::atomic<bool> parametersChanged { true };
-    mutable juce::SpinLock parameterLock;  // Lightweight lock for parameter updates
-
-    // Preset management
-    PresetManager presetManager;
-    std::atomic<bool> isLoadingPreset { false };  // Prevent multiple updates during preset load
-    void loadPreset(const juce::String& presetName);
-    void loadPresetForAlgorithm(const juce::String& presetName, int algorithmIndex);
-
-    // Static parameter ID list to avoid duplication
-    static const juce::StringArray& getParameterIDs()
-    {
-        static const juce::StringArray ids = {
-            "reverbType", "plateType", "dryLevel", "earlyLevel", "earlySend", "lateLevel",
-            "size", "width", "preDelay", "decay", "diffuse",
-            "spin", "wander", "modulation", "highCut", "lowCut", "dampen",
-            "earlyDamp", "lateDamp", "lowBoost", "boostFreq",
-            "lowCross", "highCross", "lowMult", "highMult"
-        };
-        return ids;
-    }
+    // Make processors accessible to editor
+    std::array<std::unique_ptr<ReverbProcessor>, 4> reverbProcessors; // 4 reverb types
 
 private:
-    std::unique_ptr<DragonflyReverb> reverb;
-    //std::unique_ptr<SimpleReverb> reverb;  // Temporarily using simple reverb
+    ReverbType currentReverbType{ReverbType::Room};
+
+    // Processing buffers
+    juce::AudioBuffer<float> wetBuffer;
+
+    // Parameters
+    std::atomic<float>* wetDryParam = nullptr;
+    std::atomic<float>* decayParam = nullptr;
+    std::atomic<float>* predelayParam = nullptr;
+    std::atomic<float>* dampingParam = nullptr;
+    std::atomic<float>* roomSizeParam = nullptr;
+    std::atomic<float>* diffusionParam = nullptr;
+    std::atomic<float>* lowCutParam = nullptr;
+    std::atomic<float>* highCutParam = nullptr;
+    std::atomic<float>* earlyMixParam = nullptr;
+    std::atomic<float>* lateMixParam = nullptr;
+    std::atomic<float>* modulationParam = nullptr;
+    std::atomic<float>* outputGainParam = nullptr;
+
+    // Smoothing for parameter changes
+    juce::LinearSmoothedValue<float> wetDrySmoothed;
+    juce::LinearSmoothedValue<float> outputGainSmoothed;
+
+    // Sample rate
+    double currentSampleRate{44100.0};
+    int currentBlockSize{512};
+
+    // Create parameter layout
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // Update reverb parameters
     void updateReverbParameters();
 
-    // Parameter listeners
-    void parameterChanged(const juce::String& parameterID, float newValue);
+    // Switch reverb type with crossfade
+    void switchReverbType(ReverbType newType);
 
-    //==============================================================================
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StudioReverbAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StudioReverbAudioProcessor)
 };
