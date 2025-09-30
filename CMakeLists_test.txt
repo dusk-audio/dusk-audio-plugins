@@ -1,0 +1,74 @@
+cmake_minimum_required(VERSION 3.15)
+project(StudioReverbTest VERSION 1.0.0)
+
+# Set C++ standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Add JUCE
+add_subdirectory(${CMAKE_SOURCE_DIR}/../JUCE ${CMAKE_BINARY_DIR}/JUCE)
+
+# Create test executable
+add_executable(test_reverb
+    test_reverb.cpp
+    plugins/StudioReverb/Source/PluginProcessor.cpp
+    plugins/StudioReverb/Source/DSP/DragonflyReverb.cpp
+    plugins/StudioReverb/Source/DSP/PresetManager.cpp
+    plugins/StudioReverb/Source/freeverb/earlyref.cpp
+    plugins/StudioReverb/Source/freeverb/zrev2.cpp
+    plugins/StudioReverb/Source/freeverb/progenitor2.cpp
+    plugins/StudioReverb/Source/freeverb/progenitor.cpp
+    plugins/StudioReverb/Source/freeverb/revbase.cpp
+    plugins/StudioReverb/Source/freeverb/nrev.cpp
+    plugins/StudioReverb/Source/freeverb/nrevb.cpp
+    plugins/StudioReverb/Source/freeverb/strev.cpp
+    plugins/StudioReverb/Source/freeverb/biquad_f.cpp
+    plugins/StudioReverb/Source/freeverb/efilter.cpp
+    plugins/StudioReverb/Source/freeverb/src.cpp
+    plugins/StudioReverb/Source/freeverb/fir.cpp
+    plugins/StudioReverb/Source/freeverb/blockDelay.cpp
+    plugins/StudioReverb/Source/freeverb/allpass.cpp
+    plugins/StudioReverb/Source/freeverb/comb.cpp
+    plugins/StudioReverb/Source/freeverb/delay.cpp
+    plugins/StudioReverb/Source/freeverb/delayline.cpp
+    plugins/StudioReverb/Source/freeverb/utils.cpp
+)
+
+# Include directories
+target_include_directories(test_reverb PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/plugins/StudioReverb/Source
+    ${CMAKE_SOURCE_DIR}/../JUCE/modules
+)
+
+# Link JUCE modules
+target_link_libraries(test_reverb
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_plugin_client
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+)
+
+# Define preprocessor macros
+target_compile_definitions(test_reverb
+    PRIVATE
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
+        JucePlugin_Name="StudioReverb"
+        JucePlugin_Manufacturer="Luna Co. Audio"
+)

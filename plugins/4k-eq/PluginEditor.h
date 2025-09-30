@@ -2,7 +2,7 @@
 
 #include <JuceHeader.h>
 #include "FourKEQ.h"
-#include "../../shared/LunaLookAndFeel.h"
+#include "FourKLookAndFeel.h"
 
 //==============================================================================
 /**
@@ -28,7 +28,7 @@ private:
     FourKEQ& audioProcessor;
 
     // Look and feel
-    LunaEQLookAndFeel lookAndFeel;
+    FourKLookAndFeel lookAndFeel;
 
     // HPF Section
     juce::Slider hpfFreqSlider;
