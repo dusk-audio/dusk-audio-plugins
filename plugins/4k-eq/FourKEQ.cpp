@@ -34,7 +34,7 @@ FourKEQ::FourKEQ()
                      .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, "SSL4KEQ", createParameterLayout())
 {
-    // Link parameters to atomic values
+    // Link parameters to atomic values with null checks
     hpfFreqParam = parameters.getRawParameterValue("hpf_freq");
     lpfFreqParam = parameters.getRawParameterValue("lpf_freq");
 
@@ -59,6 +59,13 @@ FourKEQ::FourKEQ()
     outputGainParam = parameters.getRawParameterValue("output_gain");
     saturationParam = parameters.getRawParameterValue("saturation");
     oversamplingParam = parameters.getRawParameterValue("oversampling");
+
+    // Assert all parameters are valid
+    jassert(hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
+            lfBellParam && lmGainParam && lmFreqParam && lmQParam &&
+            hmGainParam && hmFreqParam && hmQParam && hfGainParam &&
+            hfFreqParam && hfBellParam && eqTypeParam && bypassParam &&
+            outputGainParam && saturationParam && oversamplingParam);
 
 }
 
@@ -155,6 +162,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
 //==============================================================================
 void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    // Validate sample rate
+    if (sampleRate <= 0.0 || samplesPerBlock <= 0)
+    {
+        jassertfalse;
+        return;
+    }
+
     currentSampleRate = sampleRate;
 
     // Initialize oversampling
@@ -174,6 +188,14 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     spec.sampleRate = sampleRate * oversamplingFactor;
     spec.maximumBlockSize = samplesPerBlock;
     spec.numChannels = 1;
+
+    // Reset filters before preparing to ensure clean state
+    hpfFilter.reset();
+    lpfFilter.reset();
+    lfFilter.reset();
+    lmFilter.reset();
+    hmFilter.reset();
+    hfFilter.reset();
 
     hpfFilter.prepare(spec);
     lpfFilter.prepare(spec);
@@ -223,15 +245,19 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // Check bypass
-    if (bypassParam->load() > 0.5f)
+    // Check bypass with null check
+    if (!bypassParam || bypassParam->load() > 0.5f)
+        return;
+
+    // Check if oversamplers are initialized
+    if (!oversampler2x || !oversampler4x)
         return;
 
     // Update filter coefficients if needed
     updateFilters();
 
-    // Choose oversampling
-    oversamplingFactor = (oversamplingParam->load() < 0.5f) ? 2 : 4;
+    // Choose oversampling with null check
+    oversamplingFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
     auto& oversampler = (oversamplingFactor == 2) ? *oversampler2x : *oversampler4x;
 
     // Create audio block and oversample
@@ -284,6 +310,7 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
             else
                 processSample = lpfFilter.filterR.processSample(processSample);
 
+
             // Apply saturation in the oversampled domain
             float satAmount = saturationParam->load() * 0.01f;
             if (satAmount > 0.0f)
@@ -297,9 +324,12 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     oversampler.processSamplesDown(block);
 
     // Apply output gain
-    float outputGainValue = outputGainParam->load();
-    float outputGain = juce::Decibels::decibelsToGain(outputGainValue);
-    buffer.applyGain(outputGain);
+    if (outputGainParam)
+    {
+        float outputGainValue = outputGainParam->load();
+        float outputGain = juce::Decibels::decibelsToGain(outputGainValue);
+        buffer.applyGain(outputGain);
+    }
 }
 
 //==============================================================================
@@ -317,6 +347,9 @@ void FourKEQ::updateFilters()
 
 void FourKEQ::updateHPF(double sampleRate)
 {
+    if (!hpfFreqParam || sampleRate <= 0.0)
+        return;
+
     float freq = hpfFreqParam->load();
 
     // Create coefficients for a Butterworth HPF
@@ -334,6 +367,9 @@ void FourKEQ::updateHPF(double sampleRate)
 
 void FourKEQ::updateLPF(double sampleRate)
 {
+    if (!lpfFreqParam || sampleRate <= 0.0)
+        return;
+
     float freq = lpfFreqParam->load();
 
     // Pre-warp if close to Nyquist
@@ -352,6 +388,9 @@ void FourKEQ::updateLPF(double sampleRate)
 
 void FourKEQ::updateLFBand(double sampleRate)
 {
+    if (!lfGainParam || !lfFreqParam || !eqTypeParam || !lfBellParam || sampleRate <= 0.0)
+        return;
+
     float gain = lfGainParam->load();
     float freq = lfFreqParam->load();
     bool isBlack = (eqTypeParam->load() > 0.5f);
@@ -377,6 +416,9 @@ void FourKEQ::updateLFBand(double sampleRate)
 
 void FourKEQ::updateLMBand(double sampleRate)
 {
+    if (!lmGainParam || !lmFreqParam || !lmQParam || !eqTypeParam || sampleRate <= 0.0)
+        return;
+
     float gain = lmGainParam->load();
     float freq = lmFreqParam->load();
     float q = lmQParam->load();
@@ -395,6 +437,9 @@ void FourKEQ::updateLMBand(double sampleRate)
 
 void FourKEQ::updateHMBand(double sampleRate)
 {
+    if (!hmGainParam || !hmFreqParam || !hmQParam || !eqTypeParam || sampleRate <= 0.0)
+        return;
+
     float gain = hmGainParam->load();
     float freq = hmFreqParam->load();
     float q = hmQParam->load();
@@ -419,6 +464,9 @@ void FourKEQ::updateHMBand(double sampleRate)
 
 void FourKEQ::updateHFBand(double sampleRate)
 {
+    if (!hfGainParam || !hfFreqParam || !eqTypeParam || !hfBellParam || sampleRate <= 0.0)
+        return;
+
     float gain = hfGainParam->load();
     float freq = hfFreqParam->load();
     bool isBlack = (eqTypeParam->load() > 0.5f);

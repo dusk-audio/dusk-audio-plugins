@@ -36,19 +36,8 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    // Parameters
-    juce::AudioParameterBool* oversamplingSwitch;
-    juce::AudioParameterFloat* secondHarmonic;
-    juce::AudioParameterFloat* thirdHarmonic;
-    juce::AudioParameterFloat* fourthHarmonic;
-    juce::AudioParameterFloat* fifthHarmonic;
-    juce::AudioParameterFloat* evenHarmonics;
-    juce::AudioParameterFloat* oddHarmonics;
-    juce::AudioParameterFloat* warmth;
-    juce::AudioParameterFloat* brightness;
-    juce::AudioParameterFloat* drive;
-    juce::AudioParameterFloat* outputGain;
-    juce::AudioParameterFloat* wetDryMix;
+    // Parameter access via APVTS for thread safety
+    juce::AudioProcessorValueTreeState apvts;
 
     // Level metering
     std::atomic<float> inputLevelL { 0.0f };
@@ -57,6 +46,23 @@ public:
     std::atomic<float> outputLevelR { 0.0f };
 
 private:
+    // Parameter Layout
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // Parameter pointers (managed by APVTS, no manual deletion needed)
+    std::atomic<float>* oversamplingSwitch = nullptr;
+    std::atomic<float>* secondHarmonic = nullptr;
+    std::atomic<float>* thirdHarmonic = nullptr;
+    std::atomic<float>* fourthHarmonic = nullptr;
+    std::atomic<float>* fifthHarmonic = nullptr;
+    std::atomic<float>* evenHarmonics = nullptr;
+    std::atomic<float>* oddHarmonics = nullptr;
+    std::atomic<float>* warmth = nullptr;
+    std::atomic<float>* brightness = nullptr;
+    std::atomic<float>* drive = nullptr;
+    std::atomic<float>* outputGain = nullptr;
+    std::atomic<float>* wetDryMix = nullptr;
+
     void processHarmonics(juce::dsp::AudioBlock<float>& block);
     float generateHarmonics(float input, float second, float third, float fourth, float fifth);
 
