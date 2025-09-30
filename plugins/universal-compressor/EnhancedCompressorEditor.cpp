@@ -113,12 +113,12 @@ void EnhancedCompressorEditor::createBackgroundTexture()
     }
 }
 
-juce::Slider* EnhancedCompressorEditor::createKnob(const juce::String& name, 
-                                                   float min, float max, 
-                                                   float defaultValue, 
-                                                   const juce::String& suffix)
+std::unique_ptr<juce::Slider> EnhancedCompressorEditor::createKnob(const juce::String& name,
+                                                                   float min, float max,
+                                                                   float defaultValue,
+                                                                   const juce::String& suffix)
 {
-    auto* slider = new juce::Slider(name);
+    auto slider = std::make_unique<juce::Slider>(name);
     slider->setSliderStyle(juce::Slider::RotaryVerticalDrag);
     slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
     slider->setRange(min, max, 0.01);
@@ -128,10 +128,10 @@ juce::Slider* EnhancedCompressorEditor::createKnob(const juce::String& name,
     return slider;
 }
 
-juce::Label* EnhancedCompressorEditor::createLabel(const juce::String& text, 
-                                                   juce::Justification justification)
+std::unique_ptr<juce::Label> EnhancedCompressorEditor::createLabel(const juce::String& text,
+                                                                   juce::Justification justification)
 {
-    auto* label = new juce::Label(text, text);
+    auto label = std::make_unique<juce::Label>(text, text);
     label->setJustificationType(justification);
     // Font will be scaled in resized() based on window size
     label->setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
@@ -145,13 +145,13 @@ void EnhancedCompressorEditor::setupOptoPanel()
     addChildComponent(optoPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    optoPanel.peakReductionKnob.reset(createKnob("Peak Reduction", 0, 100, 50, ""));
-    optoPanel.gainKnob.reset(createKnob("Gain", -20, 20, 0, " dB"));
+    optoPanel.peakReductionKnob = createKnob("Peak Reduction", 0, 100, 50, "");
+    optoPanel.gainKnob = createKnob("Gain", -20, 20, 0, " dB");
     optoPanel.limitSwitch = std::make_unique<juce::ToggleButton>("Compress / Limit");
-    
+
     // Create labels
-    optoPanel.peakReductionLabel.reset(createLabel("PEAK REDUCTION"));
-    optoPanel.gainLabel.reset(createLabel("GAIN"));
+    optoPanel.peakReductionLabel = createLabel("PEAK REDUCTION");
+    optoPanel.gainLabel = createLabel("GAIN");
     
     // Add to container
     optoPanel.container->addAndMakeVisible(optoPanel.peakReductionKnob.get());
@@ -182,9 +182,9 @@ void EnhancedCompressorEditor::setupFETPanel()
     addChildComponent(fetPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    fetPanel.inputKnob.reset(createKnob("Input", 0, 10, 0));
-    fetPanel.outputKnob.reset(createKnob("Output", -20, 20, 0, " dB"));
-    fetPanel.attackKnob.reset(createKnob("Attack", 0.02, 0.8, 0.02, " ms"));
+    fetPanel.inputKnob = createKnob("Input", 0, 10, 0);
+    fetPanel.outputKnob = createKnob("Output", -20, 20, 0, " dB");
+    fetPanel.attackKnob = createKnob("Attack", 0.02, 0.8, 0.02, " ms");
     // Custom text display for microseconds
     fetPanel.attackKnob->textFromValueFunction = [](double value) {
         return juce::String(static_cast<int>(value * 1000.0)) + " μs";
@@ -192,15 +192,15 @@ void EnhancedCompressorEditor::setupFETPanel()
     fetPanel.attackKnob->valueFromTextFunction = [](const juce::String& text) {
         return text.getDoubleValue() / 1000.0;
     };
-    fetPanel.releaseKnob.reset(createKnob("Release", 50, 1100, 400, " ms"));
+    fetPanel.releaseKnob = createKnob("Release", 50, 1100, 400, " ms");
     fetPanel.ratioButtons = std::make_unique<RatioButtonGroup>();
     fetPanel.ratioButtons->addListener(this);
-    
+
     // Create labels
-    fetPanel.inputLabel.reset(createLabel("INPUT"));
-    fetPanel.outputLabel.reset(createLabel("OUTPUT"));
-    fetPanel.attackLabel.reset(createLabel("ATTACK"));
-    fetPanel.releaseLabel.reset(createLabel("RELEASE"));
+    fetPanel.inputLabel = createLabel("INPUT");
+    fetPanel.outputLabel = createLabel("OUTPUT");
+    fetPanel.attackLabel = createLabel("ATTACK");
+    fetPanel.releaseLabel = createLabel("RELEASE");
     
     // Add to container
     fetPanel.container->addAndMakeVisible(fetPanel.inputKnob.get());
@@ -238,19 +238,19 @@ void EnhancedCompressorEditor::setupVCAPanel()
     addChildComponent(vcaPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    vcaPanel.thresholdKnob.reset(createKnob("Threshold", -40, 0, -12, " dB"));
-    vcaPanel.ratioKnob.reset(createKnob("Ratio", 1, 20, 4, ":1"));
-    vcaPanel.attackKnob.reset(createKnob("Attack", 0.1, 100, 1, " ms"));
+    vcaPanel.thresholdKnob = createKnob("Threshold", -40, 0, -12, " dB");
+    vcaPanel.ratioKnob = createKnob("Ratio", 1, 20, 4, ":1");
+    vcaPanel.attackKnob = createKnob("Attack", 0.1, 100, 1, " ms");
     // DBX 160 has fixed release rate - no release knob needed
-    vcaPanel.outputKnob.reset(createKnob("Output", -20, 20, 0, " dB"));
+    vcaPanel.outputKnob = createKnob("Output", -20, 20, 0, " dB");
     vcaPanel.overEasyButton = std::make_unique<juce::ToggleButton>("Over Easy");
-    
+
     // Create labels
-    vcaPanel.thresholdLabel.reset(createLabel("THRESHOLD"));
-    vcaPanel.ratioLabel.reset(createLabel("RATIO"));
-    vcaPanel.attackLabel.reset(createLabel("ATTACK"));
+    vcaPanel.thresholdLabel = createLabel("THRESHOLD");
+    vcaPanel.ratioLabel = createLabel("RATIO");
+    vcaPanel.attackLabel = createLabel("ATTACK");
     // No release label for DBX 160
-    vcaPanel.outputLabel.reset(createLabel("OUTPUT"));
+    vcaPanel.outputLabel = createLabel("OUTPUT");
     
     // Add to container
     vcaPanel.container->addAndMakeVisible(vcaPanel.thresholdKnob.get());
@@ -297,9 +297,9 @@ void EnhancedCompressorEditor::setupBusPanel()
     addChildComponent(busPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    busPanel.thresholdKnob.reset(createKnob("Threshold", -20, 0, -6, " dB"));
-    busPanel.ratioKnob.reset(createKnob("Ratio", 2, 10, 4, ":1"));
-    busPanel.makeupKnob.reset(createKnob("Makeup", -10, 20, 0, " dB"));
+    busPanel.thresholdKnob = createKnob("Threshold", -20, 0, -6, " dB");
+    busPanel.ratioKnob = createKnob("Ratio", 2, 10, 4, ":1");
+    busPanel.makeupKnob = createKnob("Makeup", -10, 20, 0, " dB");
     
     busPanel.attackSelector = std::make_unique<juce::ComboBox>("Attack");
     busPanel.attackSelector->addItem("0.1 ms", 1);
@@ -320,11 +320,11 @@ void EnhancedCompressorEditor::setupBusPanel()
     
     
     // Create labels
-    busPanel.thresholdLabel.reset(createLabel("THRESHOLD"));
-    busPanel.ratioLabel.reset(createLabel("RATIO"));
-    busPanel.attackLabel.reset(createLabel("ATTACK"));
-    busPanel.releaseLabel.reset(createLabel("RELEASE"));
-    busPanel.makeupLabel.reset(createLabel("MAKEUP"));
+    busPanel.thresholdLabel = createLabel("THRESHOLD");
+    busPanel.ratioLabel = createLabel("RATIO");
+    busPanel.attackLabel = createLabel("ATTACK");
+    busPanel.releaseLabel = createLabel("RELEASE");
+    busPanel.makeupLabel = createLabel("MAKEUP");
     
     // Add to container
     busPanel.container->addAndMakeVisible(busPanel.thresholdKnob.get());

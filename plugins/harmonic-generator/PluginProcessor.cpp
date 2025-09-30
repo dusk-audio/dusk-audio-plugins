@@ -6,34 +6,88 @@ HarmonicGeneratorAudioProcessor::HarmonicGeneratorAudioProcessor()
     : AudioProcessor(BusesProperties()
         .withInput("Input", juce::AudioChannelSet::stereo(), true)
         .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts(*this, nullptr, "HarmonicGenerator", createParameterLayout()),
       oversampling(2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR)
 {
-    addParameter(oversamplingSwitch = new juce::AudioParameterBool("oversampling", "Oversampling", true));
+    // Get parameter pointers from APVTS for fast access during processing
+    oversamplingSwitch = apvts.getRawParameterValue("oversampling");
+    secondHarmonic = apvts.getRawParameterValue("secondHarmonic");
+    thirdHarmonic = apvts.getRawParameterValue("thirdHarmonic");
+    fourthHarmonic = apvts.getRawParameterValue("fourthHarmonic");
+    fifthHarmonic = apvts.getRawParameterValue("fifthHarmonic");
+    evenHarmonics = apvts.getRawParameterValue("evenHarmonics");
+    oddHarmonics = apvts.getRawParameterValue("oddHarmonics");
+    warmth = apvts.getRawParameterValue("warmth");
+    brightness = apvts.getRawParameterValue("brightness");
+    drive = apvts.getRawParameterValue("drive");
+    outputGain = apvts.getRawParameterValue("outputGain");
+    wetDryMix = apvts.getRawParameterValue("wetDryMix");
 
-    auto harmonicRange = juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f);
-    harmonicRange.setSkewForCentre(0.10f);
+    // Validate all parameters are initialized - critical for release builds
+    if (!oversamplingSwitch || !secondHarmonic || !thirdHarmonic ||
+        !fourthHarmonic || !fifthHarmonic || !evenHarmonics ||
+        !oddHarmonics || !warmth || !brightness || !drive ||
+        !outputGain || !wetDryMix)
+    {
+        // Log error for debugging
+        DBG("HarmonicGenerator: Failed to initialize one or more parameters");
+        jassertfalse;  // Trigger assertion in debug builds
 
-    addParameter(secondHarmonic = new juce::AudioParameterFloat("secondHarmonic", "2nd Harmonic", harmonicRange, 0.0f));
-    addParameter(thirdHarmonic  = new juce::AudioParameterFloat("thirdHarmonic", "3rd Harmonic", harmonicRange, 0.0f));
-    addParameter(fourthHarmonic = new juce::AudioParameterFloat("fourthHarmonic", "4th Harmonic", harmonicRange, 0.0f));
-    addParameter(fifthHarmonic  = new juce::AudioParameterFloat("fifthHarmonic", "5th Harmonic", harmonicRange, 0.0f));
-
-    addParameter(evenHarmonics = new juce::AudioParameterFloat("evenHarmonics", "Even Harmonics", 0.0f, 1.0f, 0.5f));
-    addParameter(oddHarmonics = new juce::AudioParameterFloat("oddHarmonics", "Odd Harmonics", 0.0f, 1.0f, 0.5f));
-
-    addParameter(warmth = new juce::AudioParameterFloat("warmth", "Warmth", 0.0f, 1.0f, 0.5f));
-    addParameter(brightness = new juce::AudioParameterFloat("brightness", "Brightness", 0.0f, 1.0f, 0.5f));
-
-    addParameter(drive = new juce::AudioParameterFloat("drive", "Drive",
-        juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 0.0f));
-    addParameter(outputGain = new juce::AudioParameterFloat("outputGain", "Output Gain",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
-
-    addParameter(wetDryMix = new juce::AudioParameterFloat("wetDryMix", "Wet/Dry Mix", 0.0f, 1.0f, 1.0f));
+        // In release builds, this prevents crashes but the plugin won't process audio correctly
+        // The null checks in processBlock will use safe defaults
+    }
 }
 
 HarmonicGeneratorAudioProcessor::~HarmonicGeneratorAudioProcessor()
 {
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout HarmonicGeneratorAudioProcessor::createParameterLayout()
+{
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    // Oversampling
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "oversampling", "Oversampling", true));
+
+    // Harmonic controls
+    auto harmonicRange = juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f);
+    harmonicRange.setSkewForCentre(0.10f);
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "secondHarmonic", "2nd Harmonic", harmonicRange, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "thirdHarmonic", "3rd Harmonic", harmonicRange, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "fourthHarmonic", "4th Harmonic", harmonicRange, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "fifthHarmonic", "5th Harmonic", harmonicRange, 0.0f));
+
+    // Global harmonic controls
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "evenHarmonics", "Even Harmonics", 0.0f, 1.0f, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "oddHarmonics", "Odd Harmonics", 0.0f, 1.0f, 0.5f));
+
+    // Character controls
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "warmth", "Warmth", 0.0f, 1.0f, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "brightness", "Brightness", 0.0f, 1.0f, 0.5f));
+
+    // Gain controls
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "drive", "Drive",
+        juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "outputGain", "Output Gain",
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
+
+    // Mix control
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "wetDryMix", "Wet/Dry Mix", 0.0f, 1.0f, 1.0f));
+
+    return { params.begin(), params.end() };
 }
 
 void HarmonicGeneratorAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -94,11 +148,11 @@ void HarmonicGeneratorAudioProcessor::processBlock(juce::AudioBuffer<float>& buf
 
     dryBuffer.makeCopyOf(buffer);
 
-    // Apply input drive
-    float driveGain = juce::Decibels::decibelsToGain(drive->get());
+    // Apply input drive (with null check)
+    float driveGain = drive ? juce::Decibels::decibelsToGain(drive->load()) : 1.0f;
     buffer.applyGain(driveGain);
 
-    if (*oversamplingSwitch)
+    if (oversamplingSwitch && oversamplingSwitch->load() > 0.5f)
     {
         juce::dsp::AudioBlock<float> block(buffer);
         auto oversampledBlock = oversampling.processSamplesUp(block);
@@ -111,12 +165,12 @@ void HarmonicGeneratorAudioProcessor::processBlock(juce::AudioBuffer<float>& buf
         processHarmonics(block);
     }
 
-    // Apply output gain
-    float outGain = juce::Decibels::decibelsToGain(outputGain->get());
+    // Apply output gain (with null check)
+    float outGain = outputGain ? juce::Decibels::decibelsToGain(outputGain->load()) : 1.0f;
     buffer.applyGain(outGain);
 
-    // Mix dry/wet
-    float wet = *wetDryMix;
+    // Mix dry/wet (with null check)
+    float wet = wetDryMix ? wetDryMix->load() : 1.0f;
     float dry = 1.0f - wet;
 
     for (int channel = 0; channel < totalNumOutputChannels; ++channel)
@@ -177,15 +231,16 @@ void HarmonicGeneratorAudioProcessor::processHarmonics(juce::dsp::AudioBlock<flo
     auto* leftChannel = block.getChannelPointer(0);
     auto* rightChannel = block.getNumChannels() > 1 ? block.getChannelPointer(1) : nullptr;
 
-    float second = secondHarmonic->get();
-    float third = thirdHarmonic->get();
-    float fourth = fourthHarmonic->get();
-    float fifth = fifthHarmonic->get();
+    // Get parameter values with null checks
+    float second = secondHarmonic ? secondHarmonic->load() : 0.0f;
+    float third = thirdHarmonic ? thirdHarmonic->load() : 0.0f;
+    float fourth = fourthHarmonic ? fourthHarmonic->load() : 0.0f;
+    float fifth = fifthHarmonic ? fifthHarmonic->load() : 0.0f;
 
-    float evenMix = evenHarmonics->get();
-    float oddMix = oddHarmonics->get();
-    float warmthAmount = warmth->get();
-    float brightnessAmount = brightness->get();
+    float evenMix = evenHarmonics ? evenHarmonics->load() : 0.5f;
+    float oddMix = oddHarmonics ? oddHarmonics->load() : 0.5f;
+    float warmthAmount = warmth ? warmth->load() : 0.5f;
+    float brightnessAmount = brightness ? brightness->load() : 0.5f;
 
     for (size_t sample = 0; sample < block.getNumSamples(); ++sample)
     {
@@ -267,44 +322,18 @@ juce::AudioProcessorEditor* HarmonicGeneratorAudioProcessor::createEditor()
 
 void HarmonicGeneratorAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    juce::ValueTree state("HarmonicGeneratorState");
-
-    state.setProperty("oversampling", oversamplingSwitch->get(), nullptr);
-    state.setProperty("secondHarmonic", secondHarmonic->get(), nullptr);
-    state.setProperty("thirdHarmonic", thirdHarmonic->get(), nullptr);
-    state.setProperty("fourthHarmonic", fourthHarmonic->get(), nullptr);
-    state.setProperty("fifthHarmonic", fifthHarmonic->get(), nullptr);
-    state.setProperty("evenHarmonics", evenHarmonics->get(), nullptr);
-    state.setProperty("oddHarmonics", oddHarmonics->get(), nullptr);
-    state.setProperty("warmth", warmth->get(), nullptr);
-    state.setProperty("brightness", brightness->get(), nullptr);
-    state.setProperty("drive", drive->get(), nullptr);
-    state.setProperty("outputGain", outputGain->get(), nullptr);
-    state.setProperty("wetDryMix", wetDryMix->get(), nullptr);
-
-    juce::MemoryOutputStream stream(destData, false);
-    state.writeToStream(stream);
+    // Use APVTS for state management
+    auto state = apvts.copyState();
+    std::unique_ptr<juce::XmlElement> xml(state.createXml());
+    copyXmlToBinary(*xml, destData);
 }
 
 void HarmonicGeneratorAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    juce::ValueTree state = juce::ValueTree::readFromData(data, static_cast<size_t>(sizeInBytes));
-
-    if (state.isValid())
-    {
-        oversamplingSwitch->setValueNotifyingHost(state.getProperty("oversampling", true));
-        secondHarmonic->setValueNotifyingHost(state.getProperty("secondHarmonic", 0.0f));
-        thirdHarmonic->setValueNotifyingHost(state.getProperty("thirdHarmonic", 0.0f));
-        fourthHarmonic->setValueNotifyingHost(state.getProperty("fourthHarmonic", 0.0f));
-        fifthHarmonic->setValueNotifyingHost(state.getProperty("fifthHarmonic", 0.0f));
-        evenHarmonics->setValueNotifyingHost(state.getProperty("evenHarmonics", 0.5f));
-        oddHarmonics->setValueNotifyingHost(state.getProperty("oddHarmonics", 0.5f));
-        warmth->setValueNotifyingHost(state.getProperty("warmth", 0.5f));
-        brightness->setValueNotifyingHost(state.getProperty("brightness", 0.5f));
-        drive->setValueNotifyingHost(state.getProperty("drive", 0.0f));
-        outputGain->setValueNotifyingHost(state.getProperty("outputGain", 0.0f));
-        wetDryMix->setValueNotifyingHost(state.getProperty("wetDryMix", 1.0f));
-    }
+    // Use APVTS for state management
+    std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
+    if (xmlState != nullptr && xmlState->hasTagName(apvts.state.getType()))
+        apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
