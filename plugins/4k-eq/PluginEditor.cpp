@@ -116,6 +116,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     oversamplingSelector.addItem("4x", 2);
     oversamplingSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     oversamplingSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
+    oversamplingSelector.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xff808080));
     addAndMakeVisible(oversamplingSelector);
     oversamplingAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "oversampling", oversamplingSelector);
@@ -383,14 +384,27 @@ void FourKEQEditor::resized()
 
 void FourKEQEditor::timerCallback()
 {
-    // Update UI based on EQ type
-    bool isBlack = eqTypeParam->load() > 0.5f;
-    lfBellButton.setVisible(isBlack);
-    hfBellButton.setVisible(isBlack);
-    lmQSlider.setVisible(true);  // Always visible in both modes
-    hmQSlider.setVisible(true);
+    // Only update when parameters change to reduce CPU usage
+    float currentEqType = eqTypeParam->load();
+    float currentBypass = bypassParam->load();
 
-    repaint();  // Update bypass LED
+    bool needsUpdate = (currentEqType != lastEqType) || (currentBypass != lastBypass);
+
+    if (needsUpdate)
+    {
+        // Update UI based on EQ type
+        bool isBlack = currentEqType > 0.5f;
+        lfBellButton.setVisible(isBlack);
+        hfBellButton.setVisible(isBlack);
+        lmQSlider.setVisible(true);  // Always visible in both modes
+        hmQSlider.setVisible(true);
+
+        repaint();  // Update bypass LED and other visuals
+
+        // Cache current values
+        lastEqType = currentEqType;
+        lastBypass = currentBypass;
+    }
 }
 
 //==============================================================================
