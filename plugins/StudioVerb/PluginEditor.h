@@ -99,9 +99,5 @@ private:
     void updatePresetList();
     void updateValueLabels();
 
-    // Visual components
-    void drawHeader(juce::Graphics& g);
-    void drawSectionBackground(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& title);
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StudioVerbAudioProcessorEditor)
 };
