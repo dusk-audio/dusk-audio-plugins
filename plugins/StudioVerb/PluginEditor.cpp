@@ -15,9 +15,10 @@
 //==============================================================================
 StudioVerbLookAndFeel::StudioVerbLookAndFeel()
 {
-    backgroundColour = juce::Colour(0xff1a1a1f);
-    knobColour = juce::Colour(0xff2a2a3f);
-    trackColour = juce::Colour(0xff4a7c9f);
+    // Luna unified color scheme
+    backgroundColour = juce::Colour(0xff1a1a1a);
+    knobColour = juce::Colour(0xff2a2a2a);
+    trackColour = juce::Colour(0xff4a9eff);  // Blue accent
     textColour = juce::Colour(0xffe0e0e0);
 
     setColour(juce::Slider::backgroundColourId, knobColour);
@@ -29,10 +30,10 @@ StudioVerbLookAndFeel::StudioVerbLookAndFeel()
     setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
 
-    setColour(juce::ComboBox::backgroundColourId, knobColour);
+    setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     setColour(juce::ComboBox::textColourId, textColour);
     setColour(juce::ComboBox::outlineColourId, trackColour.withAlpha(0.5f));
-    setColour(juce::ComboBox::arrowColourId, textColour);
+    setColour(juce::ComboBox::arrowColourId, juce::Colour(0xff808080));
 
     setColour(juce::Label::textColourId, textColour);
 }
@@ -44,22 +45,32 @@ void StudioVerbLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, in
     auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(10);
     auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) / 2.0f;
     auto toAngle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-    auto lineW = juce::jmin(8.0f, radius * 0.5f);
+    auto lineW = juce::jmin(6.0f, radius * 0.4f);
     auto arcRadius = radius - lineW * 0.5f;
 
-    // Background circle
-    g.setColour(knobColour);
+    // Background circle with subtle gradient
+    juce::ColourGradient grad(
+        knobColour.brighter(0.1f), bounds.getCentreX(), bounds.getY(),
+        knobColour.darker(0.2f), bounds.getCentreX(), bounds.getBottom(),
+        false
+    );
+    g.setGradientFill(grad);
     g.fillEllipse(bounds.getCentreX() - radius, bounds.getCentreY() - radius, radius * 2.0f, radius * 2.0f);
 
-    // Value arc
+    // Outer ring
+    g.setColour(juce::Colour(0xff3a3a3a));
+    g.drawEllipse(bounds.getCentreX() - radius, bounds.getCentreY() - radius, radius * 2.0f, radius * 2.0f, 1.5f);
+
+    // Track arc
     juce::Path backgroundArc;
     backgroundArc.addCentredArc(bounds.getCentreX(), bounds.getCentreY(),
                                 arcRadius, arcRadius, 0.0f,
                                 rotaryStartAngle, rotaryEndAngle, true);
 
-    g.setColour(knobColour.brighter(0.2f));
+    g.setColour(juce::Colour(0xff404040));
     g.strokePath(backgroundArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
+    // Value arc
     if (slider.isEnabled())
     {
         juce::Path valueArc;
@@ -71,12 +82,20 @@ void StudioVerbLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, in
         g.strokePath(valueArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
-    // Pointer
-    juce::Point<float> thumbPoint(bounds.getCentreX() + (arcRadius - 10) * std::cos(toAngle - juce::MathConstants<float>::halfPi),
-                                  bounds.getCentreY() + (arcRadius - 10) * std::sin(toAngle - juce::MathConstants<float>::halfPi));
+    // Pointer line
+    juce::Path pointer;
+    pointer.addLineSegment(juce::Line<float>(
+        bounds.getCentreX() + (arcRadius - 12) * std::cos(toAngle - juce::MathConstants<float>::halfPi),
+        bounds.getCentreY() + (arcRadius - 12) * std::sin(toAngle - juce::MathConstants<float>::halfPi),
+        bounds.getCentreX() + (arcRadius * 0.3f) * std::cos(toAngle - juce::MathConstants<float>::halfPi),
+        bounds.getCentreY() + (arcRadius * 0.3f) * std::sin(toAngle - juce::MathConstants<float>::halfPi)
+    ), 2.5f);
 
     g.setColour(textColour);
-    g.fillEllipse(juce::Rectangle<float>(6.0f, 6.0f).withCentre(thumbPoint));
+    g.fillPath(pointer);
+
+    // Center dot
+    g.fillEllipse(bounds.getCentreX() - 3, bounds.getCentreY() - 3, 6, 6);
 }
 
 void StudioVerbLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown,
@@ -109,13 +128,15 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
     setLookAndFeel(&lookAndFeel);
-    setSize(700, 400);
+    setSize(750, 450);
     setResizable(true, true);
-    setResizeLimits(600, 350, 1000, 600);
+    setResizeLimits(650, 400, 1000, 650);
 
     // Algorithm selector
-    algorithmLabel.setText("Algorithm", juce::dontSendNotification);
-    algorithmLabel.setJustificationType(juce::Justification::centred);
+    algorithmLabel.setText("ALGORITHM", juce::dontSendNotification);
+    algorithmLabel.setJustificationType(juce::Justification::centredLeft);
+    algorithmLabel.setFont(juce::Font(11.0f, juce::Font::bold));
+    algorithmLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
     addAndMakeVisible(algorithmLabel);
 
     algorithmSelector.addItemList({"Room", "Hall", "Plate", "Early Reflections"}, 1);
@@ -126,8 +147,10 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
         audioProcessor.getValueTreeState(), "algorithm", algorithmSelector);
 
     // Preset selector
-    presetLabel.setText("Preset", juce::dontSendNotification);
-    presetLabel.setJustificationType(juce::Justification::centred);
+    presetLabel.setText("PRESET", juce::dontSendNotification);
+    presetLabel.setJustificationType(juce::Justification::centredLeft);
+    presetLabel.setFont(juce::Font(11.0f, juce::Font::bold));
+    presetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
     addAndMakeVisible(presetLabel);
 
     presetSelector.addListener(this);
@@ -161,7 +184,7 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "mix", mixSlider);
 
-    // Value labels
+    // Value labels with Luna styling
     addAndMakeVisible(sizeValueLabel);
     addAndMakeVisible(dampValueLabel);
     addAndMakeVisible(predelayValueLabel);
@@ -171,6 +194,16 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     dampValueLabel.setJustificationType(juce::Justification::centred);
     predelayValueLabel.setJustificationType(juce::Justification::centred);
     mixValueLabel.setJustificationType(juce::Justification::centred);
+
+    sizeValueLabel.setFont(juce::Font(12.0f));
+    dampValueLabel.setFont(juce::Font(12.0f));
+    predelayValueLabel.setFont(juce::Font(12.0f));
+    mixValueLabel.setFont(juce::Font(12.0f));
+
+    sizeValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
+    dampValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
+    predelayValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
+    mixValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
 
     // Initialize preset list
     updatePresetList();
@@ -188,114 +221,103 @@ StudioVerbAudioProcessorEditor::~StudioVerbAudioProcessorEditor()
 //==============================================================================
 void StudioVerbAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& labelText)
 {
+    slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
+                               juce::MathConstants<float>::pi * 2.75f, true);
     addAndMakeVisible(slider);
+
     label.setText(labelText, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
+    label.setFont(juce::Font(11.0f, juce::Font::bold));
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
     addAndMakeVisible(label);
 }
 
 //==============================================================================
 void StudioVerbAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(lookAndFeel.findColour(juce::ResizableWindow::backgroundColourId));
+    // Luna unified background
+    g.fillAll(juce::Colour(0xff1a1a1a));
 
-    drawHeader(g);
-
-    // Draw section backgrounds
     auto bounds = getLocalBounds();
-    auto controlArea = bounds.removeFromBottom(bounds.getHeight() - 100);
 
-    // Parameters section
-    auto paramSection = controlArea.removeFromLeft(controlArea.getWidth() * 0.7f);
-    drawSectionBackground(g, paramSection, "Parameters");
-}
+    // Draw header with Luna styling
+    g.setColour(juce::Colour(0xff2a2a2a));
+    g.fillRect(0, 0, bounds.getWidth(), 55);
 
-//==============================================================================
-void StudioVerbAudioProcessorEditor::drawHeader(juce::Graphics& g)
-{
-    auto bounds = getLocalBounds().removeFromTop(60);
-
-    // Background gradient
-    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff2a2a3f), 0, 0,
-                                           juce::Colour(0xff1a1a1f), 0, static_cast<float>(bounds.getHeight()),
-                                           false));
-    g.fillRect(bounds);
-
-    // Title
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(28.0f, juce::Font::bold));
-    g.drawText("STUDIO VERB", bounds.removeFromLeft(300), juce::Justification::centred);
+    // Plugin name
+    g.setFont(juce::Font(24.0f, juce::Font::bold));
+    g.setColour(juce::Colour(0xffe0e0e0));
+    g.drawText("STUDIO VERB", 60, 10, 300, 30, juce::Justification::left);
 
     // Subtitle
-    g.setFont(juce::Font(12.0f));
-    g.setColour(juce::Colours::grey);
-    g.drawText("Luna CO. Audio", bounds, juce::Justification::centred);
+    g.setFont(juce::Font(11.0f));
+    g.setColour(juce::Colour(0xff909090));
+    g.drawText("Digital Reverb Processor", 60, 32, 300, 20, juce::Justification::left);
+
+    // Section dividers
+    g.setColour(juce::Colour(0xff3a3a3a));
+    g.drawLine(0, 55, getWidth(), 55, 2.0f);
 }
 
-//==============================================================================
-void StudioVerbAudioProcessorEditor::drawSectionBackground(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& title)
-{
-    g.setColour(juce::Colour(0xff25252a).withAlpha(0.5f));
-    g.fillRoundedRectangle(bounds.reduced(5).toFloat(), 5.0f);
-
-    g.setColour(juce::Colours::grey);
-    g.setFont(11.0f);
-    g.drawText(title, bounds.removeFromTop(20), juce::Justification::centredLeft);
-}
 
 //==============================================================================
 void StudioVerbAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromTop(60); // Header space
+    bounds.removeFromTop(65); // Header space
 
-    // Top controls row
-    auto topRow = bounds.removeFromTop(60);
-    auto selectorWidth = 150;
+    // Top controls row - Algorithm and Preset selectors
+    auto topRow = bounds.removeFromTop(70);
+    topRow.reduce(20, 10);
 
-    algorithmLabel.setBounds(topRow.removeFromLeft(60).reduced(5));
-    algorithmSelector.setBounds(topRow.removeFromLeft(selectorWidth).reduced(5));
+    auto leftSection = topRow.removeFromLeft(topRow.getWidth() / 2);
 
-    presetLabel.setBounds(topRow.removeFromLeft(60).reduced(5));
-    presetSelector.setBounds(topRow.removeFromLeft(selectorWidth).reduced(5));
+    // Algorithm selector
+    algorithmLabel.setBounds(leftSection.removeFromTop(20));
+    algorithmSelector.setBounds(leftSection.removeFromTop(35).reduced(0, 5));
 
-    // Knobs row
-    bounds.removeFromTop(20); // Spacing
-    auto knobRow = bounds.removeFromTop(180);
-    auto knobSize = 120;
-    auto knobSpacing = (knobRow.getWidth() - (knobSize * 4)) / 5;
+    // Preset selector
+    presetLabel.setBounds(topRow.removeFromTop(20));
+    presetSelector.setBounds(topRow.removeFromTop(35).reduced(0, 5));
 
-    auto knobBounds = knobRow.removeFromLeft(knobSpacing);
+    // Main controls section
+    bounds.removeFromTop(15); // Spacing
+    auto controlsArea = bounds.reduced(30, 10);
+
+    auto knobSize = 95;
+    auto labelHeight = 18;
+    auto valueHeight = 20;
+    auto totalKnobHeight = knobSize + labelHeight + valueHeight;
+    auto knobSpacing = (controlsArea.getWidth() - (knobSize * 4)) / 5;
+
+    int xPos = knobSpacing;
 
     // Size knob
-    knobBounds = knobRow.removeFromLeft(knobSize);
-    sizeSlider.setBounds(knobBounds.removeFromTop(knobSize));
-    sizeLabel.setBounds(knobBounds.removeFromTop(20));
-    sizeValueLabel.setBounds(knobBounds);
-
-    knobRow.removeFromLeft(knobSpacing);
+    auto sizeArea = juce::Rectangle<int>(xPos, controlsArea.getY(), knobSize, totalKnobHeight);
+    sizeLabel.setBounds(sizeArea.removeFromTop(labelHeight));
+    sizeSlider.setBounds(sizeArea.removeFromTop(knobSize));
+    sizeValueLabel.setBounds(sizeArea.removeFromTop(valueHeight));
+    xPos += knobSize + knobSpacing;
 
     // Damp knob
-    knobBounds = knobRow.removeFromLeft(knobSize);
-    dampSlider.setBounds(knobBounds.removeFromTop(knobSize));
-    dampLabel.setBounds(knobBounds.removeFromTop(20));
-    dampValueLabel.setBounds(knobBounds);
-
-    knobRow.removeFromLeft(knobSpacing);
+    auto dampArea = juce::Rectangle<int>(xPos, controlsArea.getY(), knobSize, totalKnobHeight);
+    dampLabel.setBounds(dampArea.removeFromTop(labelHeight));
+    dampSlider.setBounds(dampArea.removeFromTop(knobSize));
+    dampValueLabel.setBounds(dampArea.removeFromTop(valueHeight));
+    xPos += knobSize + knobSpacing;
 
     // Predelay knob
-    knobBounds = knobRow.removeFromLeft(knobSize);
-    predelaySlider.setBounds(knobBounds.removeFromTop(knobSize));
-    predelayLabel.setBounds(knobBounds.removeFromTop(20));
-    predelayValueLabel.setBounds(knobBounds);
-
-    knobRow.removeFromLeft(knobSpacing);
+    auto predelayArea = juce::Rectangle<int>(xPos, controlsArea.getY(), knobSize, totalKnobHeight);
+    predelayLabel.setBounds(predelayArea.removeFromTop(labelHeight));
+    predelaySlider.setBounds(predelayArea.removeFromTop(knobSize));
+    predelayValueLabel.setBounds(predelayArea.removeFromTop(valueHeight));
+    xPos += knobSize + knobSpacing;
 
     // Mix knob
-    knobBounds = knobRow.removeFromLeft(knobSize);
-    mixSlider.setBounds(knobBounds.removeFromTop(knobSize));
-    mixLabel.setBounds(knobBounds.removeFromTop(20));
-    mixValueLabel.setBounds(knobBounds);
+    auto mixArea = juce::Rectangle<int>(xPos, controlsArea.getY(), knobSize, totalKnobHeight);
+    mixLabel.setBounds(mixArea.removeFromTop(labelHeight));
+    mixSlider.setBounds(mixArea.removeFromTop(knobSize));
+    mixValueLabel.setBounds(mixArea.removeFromTop(valueHeight));
 }
 
 //==============================================================================

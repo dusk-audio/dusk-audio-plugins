@@ -47,14 +47,18 @@ public:
 private:
     void generateHouseholder()
     {
+        // MEDIUM PRIORITY: Use fixed seed for deterministic behavior
+        std::mt19937 randomGenerator(42);  // Fixed seed
+        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+
         // Create orthogonal matrix using Householder reflection
         std::vector<float> v(N);
         float norm = 0.0f;
 
-        // Random vector
+        // Random vector with deterministic seed
         for (int i = 0; i < N; ++i)
         {
-            v[i] = (rand() / float(RAND_MAX)) * 2.0f - 1.0f;
+            v[i] = dist(randomGenerator);
             norm += v[i] * v[i];
         }
 
@@ -79,6 +83,7 @@ private:
 //==============================================================================
 /**
     Multi-band decay control for frequency-dependent reverb time
+    MEDIUM PRIORITY: Improved with better crossover design
 */
 class MultibandDecay
 {
@@ -89,42 +94,88 @@ public:
     {
         sampleRate = sampleRate_;
 
-        // Simple 1-pole filters instead of Linkwitz-Riley
-        // Low: 250Hz lowpass
-        float omega = juce::MathConstants<float>::twoPi * 250.0f / static_cast<float>(sampleRate);
-        lowCoeff = std::sin(omega) / (std::sin(omega) + std::cos(omega));
+        // Improved 2-pole filters for better phase response
+        // Low-pass at 250Hz
+        float omega1 = juce::MathConstants<float>::twoPi * 250.0f / static_cast<float>(sampleRate);
+        float q = 0.707f;  // Butterworth response
+        float alpha = std::sin(omega1) / (2.0f * q);
 
-        // High: 2kHz highpass
-        omega = juce::MathConstants<float>::twoPi * 2000.0f / static_cast<float>(sampleRate);
-        highCoeff = std::cos(omega) / (std::sin(omega) + std::cos(omega));
+        lowB0 = (1.0f - std::cos(omega1)) / 2.0f;
+        lowB1 = 1.0f - std::cos(omega1);
+        lowB2 = lowB0;
+        lowA0 = 1.0f + alpha;
+        lowA1 = -2.0f * std::cos(omega1);
+        lowA2 = 1.0f - alpha;
+
+        // Normalize
+        lowB0 /= lowA0;
+        lowB1 /= lowA0;
+        lowB2 /= lowA0;
+        lowA1 /= lowA0;
+        lowA2 /= lowA0;
+
+        // High-pass at 2kHz
+        float omega2 = juce::MathConstants<float>::twoPi * 2000.0f / static_cast<float>(sampleRate);
+        alpha = std::sin(omega2) / (2.0f * q);
+
+        highB0 = (1.0f + std::cos(omega2)) / 2.0f;
+        highB1 = -(1.0f + std::cos(omega2));
+        highB2 = highB0;
+        highA0 = 1.0f + alpha;
+        highA1 = -2.0f * std::cos(omega2);
+        highA2 = 1.0f - alpha;
+
+        // Normalize
+        highB0 /= highA0;
+        highB1 /= highA0;
+        highB2 /= highA0;
+        highA1 /= highA0;
+        highA2 /= highA0;
     }
 
     float process(float input, float lowDecay, float midDecay, float highDecay)
     {
-        // Simple frequency splitting
-        lowState = input * lowCoeff + lowState * (1.0f - lowCoeff);
-        float low = lowState * lowDecay;
+        // Process low band (2-pole biquad)
+        float lowOut = lowB0 * input + lowB1 * lowX1 + lowB2 * lowX2
+                      - lowA1 * lowY1 - lowA2 * lowY2;
+        lowX2 = lowX1;
+        lowX1 = input;
+        lowY2 = lowY1;
+        lowY1 = lowOut;
 
-        highState = input * highCoeff + highState * (1.0f - highCoeff);
-        float high = (input - highState) * highDecay;
+        // Process high band (2-pole biquad)
+        float highOut = highB0 * input + highB1 * highX1 + highB2 * highX2
+                       - highA1 * highY1 - highA2 * highY2;
+        highX2 = highX1;
+        highX1 = input;
+        highY2 = highY1;
+        highY1 = highOut;
 
-        float mid = (input - lowState - (input - highState)) * midDecay;
+        // Mid band is what's left after subtracting low and high
+        float midOut = input - lowOut - highOut;
 
-        return low + mid + high;
+        // Apply decay gains and recombine
+        return lowOut * lowDecay + midOut * midDecay + highOut * highDecay;
     }
 
     void reset()
     {
-        lowState = 0.0f;
-        highState = 0.0f;
+        lowX1 = lowX2 = lowY1 = lowY2 = 0.0f;
+        highX1 = highX2 = highY1 = highY2 = 0.0f;
     }
 
 private:
     double sampleRate = 48000.0;
-    float lowCoeff = 0.5f;
-    float highCoeff = 0.5f;
-    float lowState = 0.0f;
-    float highState = 0.0f;
+
+    // Low-pass filter coefficients
+    float lowB0 = 0.5f, lowB1 = 0.5f, lowB2 = 0.0f;
+    float lowA0 = 1.0f, lowA1 = 0.0f, lowA2 = 0.0f;
+    float lowX1 = 0.0f, lowX2 = 0.0f, lowY1 = 0.0f, lowY2 = 0.0f;
+
+    // High-pass filter coefficients
+    float highB0 = 0.5f, highB1 = -0.5f, highB2 = 0.0f;
+    float highA0 = 1.0f, highA1 = 0.0f, highA2 = 0.0f;
+    float highX1 = 0.0f, highX2 = 0.0f, highY1 = 0.0f, highY2 = 0.0f;
 };
 
 //==============================================================================
@@ -192,12 +243,13 @@ public:
         // Apply decay and damping
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
-            // Frequency-dependent decay with clamping for stability
-            float lowDecay = juce::jlimit(0.0f, 0.999f, decay * 1.05f);  // Low frequencies decay slightly slower
-            float midDecay = decay;
-            float highDecay = juce::jlimit(0.0f, 0.999f, decay * (1.0f - damping * 0.4f));  // High frequencies decay faster
+            // HIGH PRIORITY: Frequency-dependent decay with strict clamping and safety factor for stability
+            float safetyFactor = 0.99f;  // Additional headroom to prevent oscillation
+            float lowGain = juce::jlimit(0.0f, 0.999f, decay * 1.05f * safetyFactor);  // Low frequencies decay slightly slower
+            float midGain = juce::jlimit(0.0f, 0.999f, decay * safetyFactor);
+            float highGain = juce::jlimit(0.0f, 0.999f, decay * (1.0f - damping * 0.4f) * safetyFactor);  // High frequencies decay faster
 
-            delayInputs[i] = decayFilters[i].process(delayInputs[i], lowDecay, midDecay, highDecay);
+            delayInputs[i] = decayFilters[i].process(delayInputs[i], lowGain, midGain, highGain);
 
             // Add input with decorrelation
             float input = (i % 2 == 0) ? inputL : inputR;
@@ -216,13 +268,22 @@ public:
         outputL = outputR = 0.0f;
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
+            // HIGH PRIORITY: Sanitize delay outputs before accumulation
+            float delayOut = delayOutputs[i];
+            if (std::isnan(delayOut) || std::isinf(delayOut)) delayOut = 0.0f;
+            delayOut = juce::jlimit(-10.0f, 10.0f, delayOut);  // Prevent explosive feedback
+
             // Hadamard-inspired decorrelation pattern
-            outputL += delayOutputs[i] * ((i & 1) ? 1.0f : -1.0f) * ((i & 2) ? 1.0f : -1.0f);
-            outputR += delayOutputs[i] * ((i & 4) ? 1.0f : -1.0f) * ((i & 8) ? 1.0f : -1.0f);
+            outputL += delayOut * ((i & 1) ? 1.0f : -1.0f) * ((i & 2) ? 1.0f : -1.0f);
+            outputR += delayOut * ((i & 4) ? 1.0f : -1.0f) * ((i & 8) ? 1.0f : -1.0f);
         }
 
         outputL /= NUM_DELAYS;
         outputR /= NUM_DELAYS;
+
+        // HIGH PRIORITY: Final safety clamp on FDN output
+        outputL = juce::jlimit(-10.0f, 10.0f, outputL);
+        outputR = juce::jlimit(-10.0f, 10.0f, outputR);
     }
 
     void reset()
@@ -332,6 +393,14 @@ public:
     {
         outputL = outputR = 0.0f;
 
+        // MEDIUM PRIORITY: Calculate normalization based on sum of gains (RMS)
+        float totalGain = 0.0f;
+        for (const auto& ref : reflections)
+        {
+            totalGain += ref.gain * ref.gain;  // Sum of squared gains for RMS
+        }
+        float rmsNorm = (totalGain > 0.0f) ? (1.0f / std::sqrt(totalGain)) : 1.0f;
+
         for (size_t i = 0; i < reflections.size() && i < delays.size(); ++i)
         {
             const auto& ref = reflections[i];
@@ -352,9 +421,10 @@ public:
             outputR += delayed * ref.gain * panR;
         }
 
-        // Normalize
-        outputL /= std::sqrt(static_cast<float>(reflections.size()));
-        outputR /= std::sqrt(static_cast<float>(reflections.size()));
+        // Apply RMS-based normalization with target gain of ~0.6 for headroom
+        float targetGain = 0.6f;
+        outputL *= rmsNorm * targetGain;
+        outputR *= rmsNorm * targetGain;
     }
 
     void reset()
@@ -447,6 +517,9 @@ public:
         float* leftChannel = buffer.getWritePointer(0);
         float* rightChannel = buffer.getWritePointer(1);
 
+        // HIGH PRIORITY: Set denormal flush-to-zero for this thread (prevents CPU spikes)
+        juce::ScopedNoDenormals noDenormals;
+
         for (int sample = 0; sample < numSamples; ++sample)
         {
             float inputL = leftChannel[sample];
@@ -469,18 +542,28 @@ public:
             predelayL.pushSample(0, inputL);
             predelayR.pushSample(0, inputR);
 
+            // HIGH PRIORITY: Sanitize input to prevent NaN propagation
+            if (std::isnan(delayedL) || std::isinf(delayedL)) delayedL = 0.0f;
+            if (std::isnan(delayedR) || std::isinf(delayedR)) delayedR = 0.0f;
+            delayedL = juce::jlimit(-10.0f, 10.0f, delayedL);  // Clamp extreme values
+            delayedR = juce::jlimit(-10.0f, 10.0f, delayedR);
+
             // Process early reflections
             float earlyL, earlyR;
             earlyReflections.process(delayedL, delayedR, earlyL, earlyR, smoothedSize);
+
+            // HIGH PRIORITY: Sanitize early reflections output
+            if (std::isnan(earlyL) || std::isinf(earlyL)) earlyL = 0.0f;
+            if (std::isnan(earlyR) || std::isinf(earlyR)) earlyR = 0.0f;
 
             // Process late reverb through FDN with clamped decay
             float lateL, lateR;
             float clampedDecay = juce::jlimit(0.0f, 0.999f, currentDecay);
             fdn.process(delayedL, delayedR, lateL, lateR, smoothedSize, clampedDecay, smoothedDamping);
 
-            // NaN check for debugging
-            jassert(!std::isnan(lateL) && !std::isnan(lateR));
-            jassert(!std::isnan(earlyL) && !std::isnan(earlyR));
+            // HIGH PRIORITY: Sanitize FDN output (works in release builds unlike jassert)
+            if (std::isnan(lateL) || std::isinf(lateL)) lateL = 0.0f;
+            if (std::isnan(lateR) || std::isinf(lateR)) lateR = 0.0f;
 
             // Add subtle modulation for liveliness (Task 3: Increased for plate shimmer)
             float modDepth = (currentAlgorithm == 2) ? 0.005f : 0.002f;  // More shimmer for plate
@@ -508,11 +591,16 @@ public:
             // Apply mix with smoothed value
             float wetGain = smoothedMix;
             float dryGain = 1.0f - smoothedMix;
-            leftChannel[sample] = inputL * dryGain + reverbL * wetGain;
-            rightChannel[sample] = inputR * dryGain + reverbR * wetGain;
+            float outputL = inputL * dryGain + reverbL * wetGain;
+            float outputR = inputR * dryGain + reverbR * wetGain;
 
-            // Final NaN check
-            jassert(!std::isnan(leftChannel[sample]) && !std::isnan(rightChannel[sample]));
+            // HIGH PRIORITY: Add NaN/Inf guards and output limiting
+            if (std::isnan(outputL) || std::isinf(outputL)) outputL = 0.0f;
+            if (std::isnan(outputR) || std::isinf(outputR)) outputR = 0.0f;
+
+            // Soft clipping to prevent harsh distortion
+            leftChannel[sample] = juce::jlimit(-1.0f, 1.0f, outputL);
+            rightChannel[sample] = juce::jlimit(-1.0f, 1.0f, outputR);
         }
     }
 
@@ -618,14 +706,20 @@ private:
     FeedbackDelayNetwork fdn;
     SpatialEarlyReflections earlyReflections;
 
-    juce::dsp::DelayLine<float> predelayL { 48000 };
-    juce::dsp::DelayLine<float> predelayR { 48000 };
+    // HIGH PRIORITY: Use Linear interpolation to prevent clicks on predelay changes
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> predelayL { 48000 };
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> predelayR { 48000 };
 
     juce::dsp::StateVariableTPTFilter<float> lowShelf;
     juce::dsp::StateVariableTPTFilter<float> highShelf;
 
     juce::dsp::Oscillator<float> modulationLFO1;
     juce::dsp::Oscillator<float> modulationLFO2;
+
+    // HIGH PRIORITY: Optional safety limiters for extreme protection
+    // juce::dsp::Limiter<float> outputLimiterL;
+    // juce::dsp::Limiter<float> outputLimiterR;
+    // Note: Currently using jlimit for lower CPU usage, but limiters can be enabled if needed
 
     // Parameters
     int currentAlgorithm = 0;
