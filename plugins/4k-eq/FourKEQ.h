@@ -151,6 +151,23 @@ private:
     // Processing state
     double currentSampleRate = 44100.0;
 
+    // Dirty flags for filter updates (optimization)
+    std::atomic<bool> hpfNeedsUpdate{true};
+    std::atomic<bool> lpfNeedsUpdate{true};
+    std::atomic<bool> lfNeedsUpdate{true};
+    std::atomic<bool> lmNeedsUpdate{true};
+    std::atomic<bool> hmNeedsUpdate{true};
+    std::atomic<bool> hfNeedsUpdate{true};
+
+    // Cached parameter values for change detection
+    float lastHpfFreq = -1.0f;
+    float lastLpfFreq = -1.0f;
+    float lastLfGain = -1.0f, lastLfFreq = -1.0f, lastLfBell = -1.0f;
+    float lastLmGain = -1.0f, lastLmFreq = -1.0f, lastLmQ = -1.0f;
+    float lastHmGain = -1.0f, lastHmFreq = -1.0f, lastHmQ = -1.0f;
+    float lastHfGain = -1.0f, lastHfFreq = -1.0f, lastHfBell = -1.0f;
+    float lastEqType = -1.0f;
+
     // Filter update methods
     void updateFilters();
     void updateHPF(double sampleRate);

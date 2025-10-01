@@ -9,17 +9,17 @@ static float preWarpFrequency(float freq, double sampleRate)
     const float nyquist = sampleRate * 0.5f;
 
     // Standard pre-warping formula
-    const float k = std::tan((M_PI * freq) / sampleRate);
-    float warpedFreq = (sampleRate / M_PI) * std::atan(k);
+    const float k = std::tan((juce::MathConstants<float>::pi * freq) / sampleRate);
+    float warpedFreq = (sampleRate / juce::MathConstants<float>::pi) * std::atan(k);
 
     // Additional compensation for very high frequencies (above 40% of Nyquist)
     if (freq > nyquist * 0.4f) {
         float ratio = freq / nyquist;
-        float compensation = 1.0f + (ratio - 0.4f) * 0.25f;
+        float compensation = 1.0f + (ratio - 0.4f) * 0.3f;  // Increased from 0.25f to 0.3f
         warpedFreq = freq * compensation;
     }
 
-    return std::min(warpedFreq, static_cast<float>(nyquist * 0.98f));
+    return std::min(warpedFreq, static_cast<float>(nyquist * 0.99f));  // Changed from 0.98f to 0.99f
 }
 
 
@@ -60,12 +60,42 @@ FourKEQ::FourKEQ()
     saturationParam = parameters.getRawParameterValue("saturation");
     oversamplingParam = parameters.getRawParameterValue("oversampling");
 
-    // Assert all parameters are valid
+    // Assert all parameters are valid (keeps for debug builds)
     jassert(hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
             lfBellParam && lmGainParam && lmFreqParam && lmQParam &&
             hmGainParam && hmFreqParam && hmQParam && hfGainParam &&
             hfFreqParam && hfBellParam && eqTypeParam && bypassParam &&
             outputGainParam && saturationParam && oversamplingParam);
+
+    // Runtime checks for production safety
+    if (!hpfFreqParam || !lpfFreqParam || !lfGainParam || !lfFreqParam ||
+        !lfBellParam || !lmGainParam || !lmFreqParam || !lmQParam ||
+        !hmGainParam || !hmFreqParam || !hmQParam || !hfGainParam ||
+        !hfFreqParam || !hfBellParam || !eqTypeParam || !bypassParam ||
+        !outputGainParam || !saturationParam || !oversamplingParam)
+    {
+        DBG("FourKEQ: ERROR - One or more parameters failed to initialize!");
+        // Log which specific parameters are null for debugging
+        if (!hpfFreqParam) DBG("  - hpf_freq is null");
+        if (!lpfFreqParam) DBG("  - lpf_freq is null");
+        if (!lfGainParam) DBG("  - lf_gain is null");
+        if (!lfFreqParam) DBG("  - lf_freq is null");
+        if (!lfBellParam) DBG("  - lf_bell is null");
+        if (!lmGainParam) DBG("  - lm_gain is null");
+        if (!lmFreqParam) DBG("  - lm_freq is null");
+        if (!lmQParam) DBG("  - lm_q is null");
+        if (!hmGainParam) DBG("  - hm_gain is null");
+        if (!hmFreqParam) DBG("  - hm_freq is null");
+        if (!hmQParam) DBG("  - hm_q is null");
+        if (!hfGainParam) DBG("  - hf_gain is null");
+        if (!hfFreqParam) DBG("  - hf_freq is null");
+        if (!hfBellParam) DBG("  - hf_bell is null");
+        if (!eqTypeParam) DBG("  - eq_type is null");
+        if (!bypassParam) DBG("  - bypass is null");
+        if (!outputGainParam) DBG("  - output_gain is null");
+        if (!saturationParam) DBG("  - saturation is null");
+        if (!oversamplingParam) DBG("  - oversampling is null");
+    }
 
 }
 
@@ -171,6 +201,9 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     currentSampleRate = sampleRate;
 
+    // Determine oversampling factor from parameter
+    oversamplingFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
+
     // Initialize oversampling
     oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
         getTotalNumInputChannels(), 1,
@@ -183,10 +216,10 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     oversampler2x->initProcessing(samplesPerBlock);
     oversampler4x->initProcessing(samplesPerBlock);
 
-    // Prepare filters
+    // Prepare filters with oversampled rate
     juce::dsp::ProcessSpec spec;
     spec.sampleRate = sampleRate * oversamplingFactor;
-    spec.maximumBlockSize = samplesPerBlock;
+    spec.maximumBlockSize = samplesPerBlock * oversamplingFactor;
     spec.numChannels = 1;
 
     // Reset filters before preparing to ensure clean state
@@ -267,17 +300,23 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     auto numChannels = oversampledBlock.getNumChannels();
     auto numSamples = oversampledBlock.getNumSamples();
 
+    // Determine if we're processing mono or stereo
+    const bool isMono = (numChannels == 1);
+
     // Process each channel
     for (size_t channel = 0; channel < numChannels; ++channel)
     {
         auto* channelData = oversampledBlock.getChannelPointer(channel);
+
+        // For mono, always use left channel filters; for stereo, use appropriate filter per channel
+        const bool useLeftFilter = (channel == 0) || isMono;
 
         for (size_t sample = 0; sample < numSamples; ++sample)
         {
             float processSample = channelData[sample];
 
             // Apply HPF (two stages for 18dB/oct)
-            if (channel == 0)
+            if (useLeftFilter)
             {
                 processSample = hpfFilter.stage1.filter.processSample(processSample);
                 processSample = hpfFilter.stage2.filter.processSample(processSample);
@@ -289,7 +328,7 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
             }
 
             // Apply 4-band EQ
-            if (channel == 0)
+            if (useLeftFilter)
             {
                 processSample = lfFilter.filter.processSample(processSample);
                 processSample = lmFilter.filter.processSample(processSample);
@@ -305,7 +344,7 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
             }
 
             // Apply LPF
-            if (channel == 0)
+            if (useLeftFilter)
                 processSample = lpfFilter.filter.processSample(processSample);
             else
                 processSample = lpfFilter.filterR.processSample(processSample);
@@ -337,12 +376,131 @@ void FourKEQ::updateFilters()
 {
     double oversampledRate = currentSampleRate * oversamplingFactor;
 
-    updateHPF(oversampledRate);
-    updateLPF(oversampledRate);
-    updateLFBand(oversampledRate);
-    updateLMBand(oversampledRate);
-    updateHMBand(oversampledRate);
-    updateHFBand(oversampledRate);
+    // Check for parameter changes and set dirty flags
+    if (hpfFreqParam)
+    {
+        float currentHpfFreq = hpfFreqParam->load();
+        if (currentHpfFreq != lastHpfFreq)
+        {
+            hpfNeedsUpdate = true;
+            lastHpfFreq = currentHpfFreq;
+        }
+    }
+
+    if (lpfFreqParam)
+    {
+        float currentLpfFreq = lpfFreqParam->load();
+        if (currentLpfFreq != lastLpfFreq)
+        {
+            lpfNeedsUpdate = true;
+            lastLpfFreq = currentLpfFreq;
+        }
+    }
+
+    // LF Band
+    if (lfGainParam && lfFreqParam && lfBellParam && eqTypeParam)
+    {
+        float gain = lfGainParam->load();
+        float freq = lfFreqParam->load();
+        float bell = lfBellParam->load();
+        float eqType = eqTypeParam->load();
+        if (gain != lastLfGain || freq != lastLfFreq || bell != lastLfBell || eqType != lastEqType)
+        {
+            lfNeedsUpdate = true;
+            lastLfGain = gain;
+            lastLfFreq = freq;
+            lastLfBell = bell;
+            lastEqType = eqType;
+        }
+    }
+
+    // LM Band
+    if (lmGainParam && lmFreqParam && lmQParam && eqTypeParam)
+    {
+        float gain = lmGainParam->load();
+        float freq = lmFreqParam->load();
+        float q = lmQParam->load();
+        float eqType = eqTypeParam->load();
+        if (gain != lastLmGain || freq != lastLmFreq || q != lastLmQ || eqType != lastEqType)
+        {
+            lmNeedsUpdate = true;
+            lastLmGain = gain;
+            lastLmFreq = freq;
+            lastLmQ = q;
+            lastEqType = eqType;
+        }
+    }
+
+    // HM Band
+    if (hmGainParam && hmFreqParam && hmQParam && eqTypeParam)
+    {
+        float gain = hmGainParam->load();
+        float freq = hmFreqParam->load();
+        float q = hmQParam->load();
+        float eqType = eqTypeParam->load();
+        if (gain != lastHmGain || freq != lastHmFreq || q != lastHmQ || eqType != lastEqType)
+        {
+            hmNeedsUpdate = true;
+            lastHmGain = gain;
+            lastHmFreq = freq;
+            lastHmQ = q;
+            lastEqType = eqType;
+        }
+    }
+
+    // HF Band
+    if (hfGainParam && hfFreqParam && hfBellParam && eqTypeParam)
+    {
+        float gain = hfGainParam->load();
+        float freq = hfFreqParam->load();
+        float bell = hfBellParam->load();
+        float eqType = eqTypeParam->load();
+        if (gain != lastHfGain || freq != lastHfFreq || bell != lastHfBell || eqType != lastEqType)
+        {
+            hfNeedsUpdate = true;
+            lastHfGain = gain;
+            lastHfFreq = freq;
+            lastHfBell = bell;
+            lastEqType = eqType;
+        }
+    }
+
+    // Only update filters that need updating
+    if (hpfNeedsUpdate.load())
+    {
+        updateHPF(oversampledRate);
+        hpfNeedsUpdate = false;
+    }
+
+    if (lpfNeedsUpdate.load())
+    {
+        updateLPF(oversampledRate);
+        lpfNeedsUpdate = false;
+    }
+
+    if (lfNeedsUpdate.load())
+    {
+        updateLFBand(oversampledRate);
+        lfNeedsUpdate = false;
+    }
+
+    if (lmNeedsUpdate.load())
+    {
+        updateLMBand(oversampledRate);
+        lmNeedsUpdate = false;
+    }
+
+    if (hmNeedsUpdate.load())
+    {
+        updateHMBand(oversampledRate);
+        hmNeedsUpdate = false;
+    }
+
+    if (hfNeedsUpdate.load())
+    {
+        updateHFBand(oversampledRate);
+        hfNeedsUpdate = false;
+    }
 }
 
 void FourKEQ::updateHPF(double sampleRate)
@@ -449,7 +607,7 @@ void FourKEQ::updateHMBand(double sampleRate)
     if (isBlack)
         q = calculateDynamicQ(gain, q);
 
-    // Pre-warp frequency if above 3kHz to prevent cramping
+    // Pre-warp frequency if above 3kHz to prevent cramping (updated to use improved version)
     float processFreq = freq;
     if (freq > 3000.0f) {
         processFreq = preWarpFrequency(freq, sampleRate);
@@ -495,11 +653,26 @@ void FourKEQ::updateHFBand(double sampleRate)
 
 float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
 {
-    // In Black mode, Q widens (becomes lower) at lower gains
-    // This creates a more gentle curve at lower gain settings
+    // In Black mode, Q behavior is asymmetric: wider for cuts, tighter for boosts
+    // This matches SSL console behavior where cuts are more musical and broad
     float absGain = std::abs(gain);
-    float scale = 1.0f - (absGain / 20.0f) * 0.5f;  // Scale from 1.0 to 0.5
-    float dynamicQ = baseQ * (0.5f + 0.5f * scale);
+
+    // Different scaling for boosts vs cuts
+    float scale;
+    if (gain >= 0.0f)
+    {
+        // Boosts: moderate Q reduction (tighter curves)
+        scale = 0.5f;  // Reduces Q by up to 50% at max boost
+    }
+    else
+    {
+        // Cuts: more Q reduction (wider, more gentle curves)
+        scale = 0.6f;  // Reduces Q by up to 60% at max cut
+    }
+
+    // Apply dynamic Q based on gain amount
+    // Note: Gain parameters are ±20 dB, so we divide by 20.0f for full-range modulation
+    float dynamicQ = baseQ * (1.0f - (absGain / 20.0f) * scale);
 
     return juce::jlimit(0.5f, 5.0f, dynamicQ);
 }

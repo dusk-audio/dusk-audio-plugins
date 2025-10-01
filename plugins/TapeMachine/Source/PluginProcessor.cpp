@@ -32,6 +32,9 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     tapeEmulationLeft = std::make_unique<ImprovedTapeEmulation>();
     tapeEmulationRight = std::make_unique<ImprovedTapeEmulation>();
 
+    // Initialize shared wow/flutter for stereo coherence
+    sharedWowFlutter = std::make_unique<WowFlutterProcessor>();
+
     // Initialize bias parameter
     biasParam = apvts.getRawParameterValue("bias");
 }
@@ -215,10 +218,20 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     wowFlutterDelayLeft.setMaximumDelayInSamples(static_cast<int>(sampleRate * 0.05));
     wowFlutterDelayRight.setMaximumDelayInSamples(static_cast<int>(sampleRate * 0.05));
 
+    // Calculate oversampling factor: 2^factorLog2 where factorLog2=2 gives 4x oversampling
+    const double oversamplingFactor = 4.0;  // 2^2 = 4x
+    const double oversampledRate = sampleRate * oversamplingFactor;
+    const int oversampledBlockSize = samplesPerBlock * static_cast<int>(oversamplingFactor);
+
+    // Prepare tape emulation with oversampled rate so filter cutoffs are correct
     if (tapeEmulationLeft)
-        tapeEmulationLeft->prepare(sampleRate, samplesPerBlock);
+        tapeEmulationLeft->prepare(oversampledRate, oversampledBlockSize);
     if (tapeEmulationRight)
-        tapeEmulationRight->prepare(sampleRate, samplesPerBlock);
+        tapeEmulationRight->prepare(oversampledRate, oversampledBlockSize);
+
+    // Prepare shared wow/flutter with oversampled rate
+    if (sharedWowFlutter)
+        sharedWowFlutter->prepare(oversampledRate);
 
     updateFilters();
 
@@ -503,7 +516,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     juce::dsp::ProcessContextReplacing<float> leftContext(leftBlock);
     juce::dsp::ProcessContextReplacing<float> rightContext(rightBlock);
 
-    // Manually process the chain with bypass logic
+    // Input chain: Gain → Highpass (before tape emulation)
     // Element 0: Input gain
     processorChainLeft.get<0>().process(leftContext);
     processorChainRight.get<0>().process(rightContext);
@@ -515,20 +528,13 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         processorChainRight.get<1>().process(rightContext);
     }
 
-    // Element 2: Lowpass filter (bypass if at maximum)
-    if (!bypassLowpass)
-    {
-        processorChainLeft.get<2>().process(leftContext);
-        processorChainRight.get<2>().process(rightContext);
-    }
-
-    // Element 3: Output gain
-    processorChainLeft.get<3>().process(leftContext);
-    processorChainRight.get<3>().process(rightContext);
-
     float* leftData = leftBlock.getChannelPointer(0);
     float* rightData = rightBlock.getChannelPointer(0);
     const size_t numSamples = leftBlock.getNumSamples();
+
+    // Calculate oversampled rate for wow/flutter
+    const double oversamplingFactor = 4.0;  // 4x
+    const double oversampledRate = currentSampleRate * oversamplingFactor;
 
     for (size_t i = 0; i < numSamples; ++i)
     {
@@ -538,6 +544,39 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             const float currentSaturation = smoothedSaturation.getNextValue();
             const float currentWowFlutter = smoothedWowFlutter.getNextValue();
             const float currentNoiseAmount = smoothedNoiseAmount.getNextValue();
+
+            // Calculate shared wow/flutter modulation once per sample for stereo coherence
+            float sharedModulation = 0.0f;
+            if (currentWowFlutter > 0.0f && sharedWowFlutter)
+            {
+                auto speedEnum = static_cast<ImprovedTapeEmulation::TapeSpeed>(static_cast<int>(tapeSpeed));
+                float wowRate = 0.5f;
+                float flutterRate = 5.0f;
+
+                // Get speed characteristics (simplified - could be cached)
+                switch (speedEnum)
+                {
+                    case ImprovedTapeEmulation::Speed_7_5_IPS:
+                        wowRate = 0.33f;
+                        flutterRate = 3.5f;
+                        break;
+                    case ImprovedTapeEmulation::Speed_15_IPS:
+                        wowRate = 0.5f;
+                        flutterRate = 5.0f;
+                        break;
+                    case ImprovedTapeEmulation::Speed_30_IPS:
+                        wowRate = 0.8f;
+                        flutterRate = 7.0f;
+                        break;
+                }
+
+                sharedModulation = sharedWowFlutter->calculateModulation(
+                    currentWowFlutter * 0.7f * 0.01f,   // Wow amount
+                    currentWowFlutter * 0.3f * 0.01f,   // Flutter amount
+                    wowRate,
+                    flutterRate,
+                    oversampledRate);
+            }
 
             // Use only the improved tape emulation (removes redundant saturation)
             if (tapeEmulationLeft && tapeEmulationRight)
@@ -549,7 +588,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 float biasAmount = biasParam ? biasParam->load() * 0.01f : 0.5f;
 
                 // Process with improved tape emulation (includes saturation and wow/flutter)
-                // Pass noise parameters to control noise from the button
+                // Pass shared modulation for stereo coherence
                 leftData[i] = tapeEmulationLeft->processSample(leftData[i],
                                                               emulationMachine,
                                                               emulationSpeed,
@@ -558,7 +597,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                               currentSaturation * 0.01f,
                                                               currentWowFlutter * 0.01f,
                                                               noiseEnabled,
-                                                              currentNoiseAmount * 100.0f);  // Scale back to 0-100 range
+                                                              currentNoiseAmount * 100.0f,
+                                                              &sharedModulation);  // Shared wow/flutter
 
                 rightData[i] = tapeEmulationRight->processSample(rightData[i],
                                                                 emulationMachine,
@@ -568,7 +608,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                                 currentSaturation * 0.01f,
                                                                 currentWowFlutter * 0.01f,
                                                                 noiseEnabled,
-                                                                currentNoiseAmount * 100.0f);  // Scale back to 0-100 range
+                                                                currentNoiseAmount * 100.0f,
+                                                                &sharedModulation);  // Shared wow/flutter
             }
             else
             {
@@ -586,6 +627,47 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             }
         }
     }
+
+    // Apply crosstalk simulation (L/R channel bleed from tape head)
+    // Real tape machines have subtle channel crosstalk, more pronounced in vintage machines
+    if (leftData && rightData && machine != Blend)  // Skip for blend mode
+    {
+        // Get machine-specific crosstalk amount
+        float crosstalkAmount = 0.01f;  // Default -40dB
+        switch (machine)
+        {
+            case StuderA800:
+                crosstalkAmount = 0.005f;  // -46dB (excellent separation)
+                break;
+            case AmpexATR102:
+                crosstalkAmount = 0.015f;  // -36dB (vintage character)
+                break;
+            case Blend:
+                crosstalkAmount = 0.01f;   // -40dB (balanced)
+                break;
+        }
+
+        // Apply crosstalk by mixing small amount of opposite channel
+        for (size_t i = 0; i < numSamples; ++i)
+        {
+            float tempL = leftData[i];
+            float tempR = rightData[i];
+            leftData[i] += tempR * crosstalkAmount;
+            rightData[i] += tempL * crosstalkAmount;
+        }
+    }
+
+    // Output chain: Lowpass → Output Gain (after tape emulation)
+    // Element 2: Lowpass filter (bypass if at maximum)
+    if (!bypassLowpass)
+    {
+        processorChainLeft.get<2>().process(leftContext);
+        processorChainRight.get<2>().process(rightContext);
+    }
+
+    // Element 3: Output gain
+    processorChainLeft.get<3>().process(leftContext);
+    processorChainRight.get<3>().process(rightContext);
 
     oversampling.processSamplesDown(block);
 

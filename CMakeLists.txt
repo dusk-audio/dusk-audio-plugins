@@ -53,7 +53,7 @@ if(BUILD_TAPE_MACHINE)
 endif()
 
 if(BUILD_STUDIO_REVERB)
-    add_subdirectory(plugins/StudioReverb)
+    add_subdirectory(plugins/StudioVerb)
 endif()
 
 if(BUILD_TAPE_ECHO)

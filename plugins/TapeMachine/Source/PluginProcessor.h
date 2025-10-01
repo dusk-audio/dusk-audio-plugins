@@ -5,6 +5,7 @@
 #include <array>
 
 class ImprovedTapeEmulation;
+class WowFlutterProcessor;  // Forward declaration for shared wow/flutter
 
 class TapeMachineAudioProcessor : public juce::AudioProcessor
 {
@@ -78,6 +79,9 @@ private:
 
     std::unique_ptr<ImprovedTapeEmulation> tapeEmulationLeft;
     std::unique_ptr<ImprovedTapeEmulation> tapeEmulationRight;
+
+    // Shared wow/flutter processor for stereo coherence (real tape motor affects both channels identically)
+    std::unique_ptr<WowFlutterProcessor> sharedWowFlutter;
 
     // Add bias parameter for improved tape emulation
     std::atomic<float>* biasParam = nullptr;

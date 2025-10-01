@@ -73,6 +73,10 @@ private:
     std::atomic<float>* eqTypeParam;
     std::atomic<float>* bypassParam;
 
+    // Cached values for timer optimization
+    float lastEqType = -1.0f;
+    float lastBypass = -1.0f;
+
     // Label storage
     std::vector<std::unique_ptr<juce::Label>> knobLabels;
 

@@ -5,6 +5,100 @@
 #include <cmath>
 #include <random>
 
+// Wow & Flutter processor - can be shared between channels for stereo coherence
+class WowFlutterProcessor
+{
+public:
+    std::vector<float> delayBuffer;  // Dynamic size based on sample rate
+    int writeIndex = 0;
+    double wowPhase = 0.0;     // Use double for better precision
+    double flutterPhase = 0.0;  // Use double for better precision
+    float randomPhase = 0.0f;
+    std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<float> dist{-1.0f, 1.0f};
+
+    void prepare(double sampleRate)
+    {
+        // Size for up to 50ms of delay at current sample rate
+        size_t bufferSize = static_cast<size_t>(sampleRate * 0.05);
+        delayBuffer.resize(bufferSize, 0.0f);
+        writeIndex = 0;
+    }
+
+    // Process and return modulation amount (in samples)
+    float calculateModulation(float wowAmount, float flutterAmount,
+                             float wowRate, float flutterRate, double sampleRate)
+    {
+        // Protect against invalid sample rate
+        if (sampleRate <= 0.0)
+            sampleRate = 44100.0;
+
+        // Calculate modulation
+        float wowMod = static_cast<float>(std::sin(wowPhase)) * wowAmount * 10.0f;  // ±10 samples max
+        float flutterMod = static_cast<float>(std::sin(flutterPhase)) * flutterAmount * 2.0f;  // ±2 samples max
+        float randomMod = dist(rng) * flutterAmount * 0.5f;  // Random component
+
+        // Update phases with double precision
+        double safeSampleRate = std::max(1.0, sampleRate);
+        double wowIncrement = 2.0 * juce::MathConstants<double>::pi * wowRate / safeSampleRate;
+        double flutterIncrement = 2.0 * juce::MathConstants<double>::pi * flutterRate / safeSampleRate;
+
+        wowPhase += wowIncrement;
+        if (wowPhase > 2.0 * juce::MathConstants<double>::pi)
+            wowPhase -= 2.0 * juce::MathConstants<double>::pi;
+
+        flutterPhase += flutterIncrement;
+        if (flutterPhase > 2.0 * juce::MathConstants<double>::pi)
+            flutterPhase -= 2.0 * juce::MathConstants<double>::pi;
+
+        return wowMod + flutterMod + randomMod;
+    }
+
+    // Process sample with given modulation
+    float processSample(float input, float modulationSamples)
+    {
+        if (delayBuffer.empty())
+            return input;
+
+        // Write to delay buffer with bounds checking
+        if (writeIndex < 0 || writeIndex >= static_cast<int>(delayBuffer.size()))
+            writeIndex = 0;
+
+        delayBuffer[writeIndex] = input;
+
+        // Calculate total delay with bounds limiting
+        float totalDelay = 20.0f + modulationSamples;  // Base delay + modulation
+        int bufferSize = static_cast<int>(delayBuffer.size());
+        if (bufferSize <= 0)
+            return input;
+
+        // Ensure delay is within valid range
+        totalDelay = std::max(1.0f, std::min(totalDelay, static_cast<float>(bufferSize - 1)));
+
+        // Fractional delay interpolation
+        int delaySamples = static_cast<int>(totalDelay);
+        float fraction = totalDelay - delaySamples;
+
+        int readIndex1 = (writeIndex - delaySamples + bufferSize) % bufferSize;
+        int readIndex2 = (readIndex1 - 1 + bufferSize) % bufferSize;
+
+        // Additional bounds checking
+        readIndex1 = std::max(0, std::min(readIndex1, bufferSize - 1));
+        readIndex2 = std::max(0, std::min(readIndex2, bufferSize - 1));
+
+        float sample1 = delayBuffer[readIndex1];
+        float sample2 = delayBuffer[readIndex2];
+
+        // Linear interpolation
+        float output = sample1 * (1.0f - fraction) + sample2 * fraction;
+
+        // Update write index with bounds checking
+        writeIndex = (writeIndex + 1) % std::max(1, bufferSize);
+
+        return output;
+    }
+};
+
 class ImprovedTapeEmulation
 {
 public:
@@ -45,7 +139,8 @@ public:
                        float saturationDepth, // 0-1 (tape compression)
                        float wowFlutterAmount, // 0-1 (pitch modulation)
                        bool noiseEnabled = false,  // Noise on/off
-                       float noiseAmount = 0.0f    // 0-1 (noise level)
+                       float noiseAmount = 0.0f,   // 0-1 (noise level)
+                       float* sharedWowFlutterMod = nullptr  // Shared modulation for stereo coherence
                        );
 
     // Metering
@@ -163,29 +258,8 @@ private:
     };
     TapeSaturator saturator;
 
-    // Wow & Flutter
-    struct WowFlutterProcessor
-    {
-        std::vector<float> delayBuffer;  // Dynamic size based on sample rate
-        int writeIndex = 0;
-        double wowPhase = 0.0;     // Use double for better precision
-        double flutterPhase = 0.0;  // Use double for better precision
-        float randomPhase = 0.0f;
-        std::mt19937 rng{std::random_device{}()};
-        std::uniform_real_distribution<float> dist{-1.0f, 1.0f};
-
-        void prepare(double sampleRate)
-        {
-            // Size for up to 50ms of delay at current sample rate
-            size_t bufferSize = static_cast<size_t>(sampleRate * 0.05);
-            delayBuffer.resize(bufferSize, 0.0f);
-            writeIndex = 0;
-        }
-
-        float process(float input, float wowAmount, float flutterAmount,
-                     float wowRate, float flutterRate, double sampleRate);
-    };
-    WowFlutterProcessor wowFlutter;
+    // Per-channel delay line for wow/flutter (uses shared modulation)
+    WowFlutterProcessor perChannelWowFlutter;
 
     // Tape noise generator
     struct NoiseGenerator
