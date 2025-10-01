@@ -13,8 +13,8 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
 
-    // Prepare wow/flutter processor with correct buffer size
-    wowFlutter.prepare(sampleRate);
+    // Prepare per-channel wow/flutter delay line
+    perChannelWowFlutter.prepare(sampleRate);
 
     reset();
 
@@ -90,13 +90,11 @@ void ImprovedTapeEmulation::reset()
 
     dcBlocker.reset();
 
-    if (!wowFlutter.delayBuffer.empty())
+    if (!perChannelWowFlutter.delayBuffer.empty())
     {
-        std::fill(wowFlutter.delayBuffer.begin(), wowFlutter.delayBuffer.end(), 0.0f);
+        std::fill(perChannelWowFlutter.delayBuffer.begin(), perChannelWowFlutter.delayBuffer.end(), 0.0f);
     }
-    wowFlutter.writeIndex = 0;
-    wowFlutter.wowPhase = 0.0;
-    wowFlutter.flutterPhase = 0.0;
+    perChannelWowFlutter.writeIndex = 0;
 
     crosstalkBuffer = 0.0f;
 }
@@ -402,8 +400,13 @@ float ImprovedTapeEmulation::processSample(float input,
                                           float saturationDepth,
                                           float wowFlutterAmount,
                                           bool noiseEnabled,
-                                          float noiseAmount)
+                                          float noiseAmount,
+                                          float* sharedWowFlutterMod)
 {
+    // Denormal protection at input
+    if (std::abs(input) < denormalPrevention)
+        return 0.0f;
+
     // Update input level metering
     inputLevel.store(std::abs(input));
 
@@ -471,15 +474,26 @@ float ImprovedTapeEmulation::processSample(float input,
     // 9. Head bump resonance
     signal = headBumpFilter.processSample(signal);
 
-    // 10. Wow & Flutter
+    // 10. Wow & Flutter - use shared modulation if provided for stereo coherence
     if (wowFlutterAmount > 0.0f)
     {
-        signal = wowFlutter.process(signal,
-                                   wowFlutterAmount * 0.7f,  // Wow amount
-                                   wowFlutterAmount * 0.3f,  // Flutter amount
-                                   speedChars.wowRate,
-                                   speedChars.flutterRate,
-                                   currentSampleRate);
+        if (sharedWowFlutterMod != nullptr)
+        {
+            // Use pre-calculated shared modulation for stereo coherence
+            signal = perChannelWowFlutter.processSample(signal, *sharedWowFlutterMod);
+        }
+        else
+        {
+            // Fallback: calculate own modulation (mono or legacy behavior)
+            auto speedCharsForWow = getSpeedCharacteristics(speed);
+            float modulation = perChannelWowFlutter.calculateModulation(
+                wowFlutterAmount * 0.7f,  // Wow amount
+                wowFlutterAmount * 0.3f,  // Flutter amount
+                speedCharsForWow.wowRate,
+                speedCharsForWow.flutterRate,
+                currentSampleRate);
+            signal = perChannelWowFlutter.processSample(signal, modulation);
+        }
     }
 
     // 11. De-emphasis (playback EQ)
@@ -507,6 +521,10 @@ float ImprovedTapeEmulation::processSample(float input,
     // 14. Final soft clipping
     signal = softClip(signal, 0.95f);
 
+    // Denormal protection at output
+    if (std::abs(signal) < denormalPrevention)
+        signal = 0.0f;
+
     // Update output level metering
     outputLevel.store(std::abs(signal));
     gainReduction.store(std::abs(input) - std::abs(signal));
@@ -518,6 +536,10 @@ float ImprovedTapeEmulation::processSample(float input,
 float ImprovedTapeEmulation::HysteresisProcessor::process(float input, float amount,
                                                          float asymmetry, float saturation)
 {
+    // Denormal protection
+    if (std::abs(input) < 1e-8f)
+        return 0.0f;
+
     // M-S hysteresis loop simulation
     float drive = 1.0f + amount * 4.0f;
     float x = input * drive;
@@ -591,78 +613,7 @@ float ImprovedTapeEmulation::TapeSaturator::process(float input, float threshold
     return input * gain * makeup;
 }
 
-// Wow & Flutter processor implementation
-float ImprovedTapeEmulation::WowFlutterProcessor::process(float input, float wowAmount,
-                                                         float flutterAmount, float wowRate,
-                                                         float flutterRate, double sampleRate)
-{
-    // Protect against invalid sample rate and empty buffer
-    if (sampleRate <= 0.0)
-        sampleRate = 44100.0;
-
-    if (delayBuffer.empty())
-    {
-        prepare(sampleRate);
-        if (delayBuffer.empty())
-            return input;
-    }
-
-    // Write to delay buffer with bounds checking
-    if (writeIndex < 0 || writeIndex >= static_cast<int>(delayBuffer.size()))
-    {
-        writeIndex = 0;
-    }
-    delayBuffer[writeIndex] = input;
-
-    // Calculate modulation using double precision phases
-    float wowMod = static_cast<float>(std::sin(wowPhase)) * wowAmount * 10.0f;  // ±10 samples max
-    float flutterMod = static_cast<float>(std::sin(flutterPhase)) * flutterAmount * 2.0f;  // ±2 samples max
-    float randomMod = dist(rng) * flutterAmount * 0.5f;  // Random component
-
-    // Calculate total delay with bounds limiting
-    float totalDelay = 20.0f + wowMod + flutterMod + randomMod;  // Base delay + modulation
-    int bufferSize = static_cast<int>(delayBuffer.size());
-    if (bufferSize <= 0)
-        return input;
-
-    // Ensure delay is within valid range
-    totalDelay = std::max(1.0f, std::min(totalDelay, static_cast<float>(bufferSize - 1)));
-
-    // Fractional delay interpolation
-    int delaySamples = static_cast<int>(totalDelay);
-    float fraction = totalDelay - delaySamples;
-
-    int readIndex1 = (writeIndex - delaySamples + bufferSize) % bufferSize;
-    int readIndex2 = (readIndex1 - 1 + bufferSize) % bufferSize;
-
-    // Additional bounds checking
-    readIndex1 = std::max(0, std::min(readIndex1, bufferSize - 1));
-    readIndex2 = std::max(0, std::min(readIndex2, bufferSize - 1));
-
-    float sample1 = delayBuffer[readIndex1];
-    float sample2 = delayBuffer[readIndex2];
-
-    // Linear interpolation
-    float output = sample1 * (1.0f - fraction) + sample2 * fraction;
-
-    // Update phases with double precision (protect against division by zero)
-    double safeSampleRate = std::max(1.0, sampleRate);
-    double wowIncrement = 2.0 * juce::MathConstants<double>::pi * wowRate / safeSampleRate;
-    double flutterIncrement = 2.0 * juce::MathConstants<double>::pi * flutterRate / safeSampleRate;
-
-    wowPhase += wowIncrement;
-    if (wowPhase > 2.0 * juce::MathConstants<double>::pi)
-        wowPhase -= 2.0 * juce::MathConstants<double>::pi;
-
-    flutterPhase += flutterIncrement;
-    if (flutterPhase > 2.0 * juce::MathConstants<double>::pi)
-        flutterPhase -= 2.0 * juce::MathConstants<double>::pi;
-
-    // Update write index with bounds checking
-    writeIndex = (writeIndex + 1) % std::max(1, bufferSize);
-
-    return output;
-}
+// Wow & Flutter processor implementation - moved to header as inline methods
 
 // Noise generator implementation
 float ImprovedTapeEmulation::NoiseGenerator::generateNoise(float noiseFloor,
