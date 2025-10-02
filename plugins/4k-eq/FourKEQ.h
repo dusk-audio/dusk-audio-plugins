@@ -171,9 +171,17 @@ private:
 
     // Processing state
     double currentSampleRate = 44100.0;
+    double lastPreparedSampleRate = 0.0;
+    int lastOversamplingFactor = 0;
 
     // Atomic flag for any parameter change (set by listener, checked by audio thread)
     std::atomic<bool> parametersChanged{true};
+
+    // Per-band saturation drives (subtle for SSL character)
+    static constexpr float lfSatDrive = 1.05f;   // Low shelf - gentle warmth
+    static constexpr float lmSatDrive = 1.10f;   // Low-mid - moderate color
+    static constexpr float hmSatDrive = 1.15f;   // High-mid - more aggressive (G-series)
+    static constexpr float hfSatDrive = 1.08f;   // High shelf - controlled brightness
 
     // Filter update methods
     void updateFilters();

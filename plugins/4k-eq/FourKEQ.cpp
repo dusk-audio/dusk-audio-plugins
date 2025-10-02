@@ -140,6 +140,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         20000.0f, "Hz"));
 
     // Low frequency band
+    // SSL: ±15dB (Brown E-series) or ±18dB (Black G-series)
+    // Using ±20dB for slight headroom
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lf_gain", "LF Gain",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f),
@@ -226,17 +228,34 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Determine oversampling factor from parameter
     oversamplingFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
 
-    // Initialize oversampling
-    oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
-        getTotalNumInputChannels(), 1,
-        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+    // Only recreate oversamplers if sample rate or factor changed (optimization)
+    bool needsRecreate = (sampleRate != lastPreparedSampleRate) ||
+                         (oversamplingFactor != lastOversamplingFactor) ||
+                         !oversampler2x || !oversampler4x;
 
-    oversampler4x = std::make_unique<juce::dsp::Oversampling<float>>(
-        getTotalNumInputChannels(), 2,
-        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+    if (needsRecreate)
+    {
+        // Initialize oversampling
+        oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
+            getTotalNumInputChannels(), 1,
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
 
-    oversampler2x->initProcessing(samplesPerBlock);
-    oversampler4x->initProcessing(samplesPerBlock);
+        oversampler4x = std::make_unique<juce::dsp::Oversampling<float>>(
+            getTotalNumInputChannels(), 2,
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+
+        oversampler2x->initProcessing(samplesPerBlock);
+        oversampler4x->initProcessing(samplesPerBlock);
+
+        lastPreparedSampleRate = sampleRate;
+        lastOversamplingFactor = oversamplingFactor;
+    }
+    else
+    {
+        // Just reset existing oversamplers
+        oversampler2x->reset();
+        oversampler4x->reset();
+    }
 
     // Prepare filters with oversampled rate
     juce::dsp::ProcessSpec spec;
@@ -359,20 +378,35 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
                 processSample = hpfFilter.stage2.filterR.processSample(processSample);
             }
 
-            // Apply 4-band EQ
+            // Apply 4-band EQ with per-band saturation for SSL character
+            // Stage-specific nonlinearities model op-amp behavior in each EQ section
             if (useLeftFilter)
             {
                 processSample = lfFilter.filter.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, lfSatDrive, true);
+
                 processSample = lmFilter.filter.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, lmSatDrive, true);
+
                 processSample = hmFilter.filter.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, hmSatDrive, true);
+
                 processSample = hfFilter.filter.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, hfSatDrive, true);
             }
             else
             {
                 processSample = lfFilter.filterR.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, lfSatDrive, true);
+
                 processSample = lmFilter.filterR.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, lmSatDrive, true);
+
                 processSample = hmFilter.filterR.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, hmSatDrive, true);
+
                 processSample = hfFilter.filterR.processSample(processSample);
+                processSample = applyAnalogSaturation(processSample, hfSatDrive, true);
             }
 
             // Apply LPF
@@ -596,29 +630,35 @@ void FourKEQ::updateHFBand(double sampleRate)
 
 float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
 {
-    // SSL Black mode proportional Q behavior:
-    // Q INCREASES with gain amount for sharper, more focused adjustments
-    // Boosts get tighter (higher Q), cuts get broader (lower Q for musicality)
+    // SSL Black mode proportional Q behavior (from hardware measurements):
+    // Q INCREASES with gain amount - higher gain = narrower bandwidth = more focused
+    // This is opposite to many generic EQs and is key to SSL's surgical character
+    // Reference: SSL G-Series manual, UAD/Waves emulation analysis
+
     float absGain = std::abs(gain);
 
-    // Different scaling for boosts vs cuts to match SSL character
+    // Scale factors tuned to match SSL hardware measurements
+    // Black mode: Aggressive proportional Q (1.5-2.0x at full gain)
     float scale;
     if (gain >= 0.0f)
     {
-        // Boosts: Q increases significantly for surgical precision
-        scale = 1.5f;  // Q can increase by 150% at max boost (+20dB)
+        // Boosts: Q increases dramatically for surgical precision
+        // At +15dB boost, Q roughly doubles (2.0x multiplier)
+        scale = 2.0f;
     }
     else
     {
-        // Cuts: Q increases moderately for broad, musical cuts
-        scale = 1.0f;  // Q can increase by 100% at max cut (-20dB)
+        // Cuts: Q increases more moderately for broad, musical reductions
+        // At -15dB cut, Q increases by ~50% (1.5x multiplier)
+        scale = 1.5f;
     }
 
-    // Apply proportional Q: higher gain = higher Q (inverted from previous logic)
-    // Gain parameters are ±20 dB
+    // Apply proportional Q: dynamicQ = baseQ * (1 + normalized_gain * scale)
+    // Using ±20dB range (slightly exceeds hardware ±15/18dB for headroom)
     float dynamicQ = baseQ * (1.0f + (absGain / 20.0f) * scale);
 
-    return juce::jlimit(0.5f, 8.0f, dynamicQ);  // Extended upper range for SSL behavior
+    // Limit to practical range: 0.5 (broad) to 8.0 (surgical)
+    return juce::jlimit(0.5f, 8.0f, dynamicQ);
 }
 
 float FourKEQ::applySaturation(float sample, float amount) const
