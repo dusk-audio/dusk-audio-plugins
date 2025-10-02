@@ -19,8 +19,26 @@ public:
 
     void prepare(double sampleRate)
     {
+        // Validate sampleRate to prevent overflow
+        if (sampleRate <= 0.0 || sampleRate > 1000000.0)
+            sampleRate = 44100.0;  // Use safe default
+
         // Size for up to 50ms of delay at current sample rate
-        size_t bufferSize = static_cast<size_t>(sampleRate * 0.05);
+        // Check for potential overflow before casting
+        constexpr double maxSafeRate = static_cast<double>(SIZE_MAX) / 0.05;
+        if (sampleRate > maxSafeRate)
+            sampleRate = 192000.0;  // Clamp to reasonable maximum
+
+        // Perform calculation with overflow protection
+        double bufferSizeDouble = sampleRate * 0.05;
+        size_t bufferSize = (bufferSizeDouble > static_cast<double>(SIZE_MAX))
+                            ? SIZE_MAX
+                            : static_cast<size_t>(bufferSizeDouble);
+
+        // Ensure minimum size
+        if (bufferSize < 64)
+            bufferSize = 64;
+
         delayBuffer.resize(bufferSize, 0.0f);
         writeIndex = 0;
     }
@@ -140,7 +158,8 @@ public:
                        float wowFlutterAmount, // 0-1 (pitch modulation)
                        bool noiseEnabled = false,  // Noise on/off
                        float noiseAmount = 0.0f,   // 0-1 (noise level)
-                       float* sharedWowFlutterMod = nullptr  // Shared modulation for stereo coherence
+                       float* sharedWowFlutterMod = nullptr,  // Shared modulation for stereo coherence
+                       float calibrationLevel = 0.0f  // 0/3/6/9 dB - affects headroom/saturation point
                        );
 
     // Metering

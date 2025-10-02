@@ -314,56 +314,115 @@ void ImprovedTapeEmulation::updateFilters(TapeMachine machine, TapeSpeed speed,
     auto tapeChars = getTapeCharacteristics(type);
     auto speedChars = getSpeedCharacteristics(speed);
 
-    // NAB EQ curves change with tape speed
-    // Speed-dependent EQ time constants
-    float nabLowFreq = 50.0f;    // 3180μs for all speeds
-    float nabHighFreq = 3183.0f; // 50μs for 15 IPS
+    // NAB/IEC EQ curves - UAD-accurate implementation
+    // NAB (American): Used by Ampex - more HF boost/cut
+    // IEC/CCIR (European): Used by Studer - gentler curves
 
-    // Adjust EQ based on speed (NAB standard)
+    float preEmphasisFreq = 3183.0f;   // 50μs time constant
+    float preEmphasisGain = 6.0f;       // dB
+    float deEmphasisFreq = 3183.0f;
+    float deEmphasisGain = -6.0f;       // dB
+    float lowFreqCompensation = 50.0f;  // 3180μs
+
+    // Speed-dependent EQ adjustments (UAD-accurate)
     switch (speed)
     {
         case Speed_7_5_IPS:
-            // 7.5 IPS: 3180μs + 90μs (1768 Hz)
-            nabHighFreq = 1768.0f;
+            // 7.5 IPS: 90μs = 1768 Hz, more pre-emphasis needed
+            preEmphasisFreq = 1768.0f;
+            preEmphasisGain = 9.0f;  // More boost at low speed
+            deEmphasisFreq = 1768.0f;
+            deEmphasisGain = -9.0f;
             break;
         case Speed_15_IPS:
-            // 15 IPS: 3180μs + 50μs (3183 Hz)
-            nabHighFreq = 3183.0f;
+            // 15 IPS: 50μs = 3183 Hz (reference speed)
+            preEmphasisFreq = 3183.0f;
+            preEmphasisGain = 6.0f;
+            deEmphasisFreq = 3183.0f;
+            deEmphasisGain = -6.0f;
             break;
         case Speed_30_IPS:
-            // 30 IPS: No standard, but typically 3180μs + 35μs (4547 Hz)
-            nabHighFreq = 4547.0f;
+            // 30 IPS: 35μs = 4547 Hz, extended HF response
+            preEmphasisFreq = 4547.0f;
+            preEmphasisGain = 4.5f;  // Less boost at high speed
+            deEmphasisFreq = 4547.0f;
+            deEmphasisGain = -4.5f;
             break;
     }
 
-    // Update pre-emphasis and de-emphasis based on speed
+    // Machine-specific EQ characteristics
+    if (machine == Swiss800)
+    {
+        // IEC/CCIR curves - slightly different than NAB
+        preEmphasisGain *= 0.9f;   // Gentler
+        deEmphasisGain *= 0.9f;
+    }
+    else if (machine == Classic102)
+    {
+        // Pure NAB curves - more pronounced
+        preEmphasisGain *= 1.1f;
+        deEmphasisGain *= 1.1f;
+    }
+
+    // Update pre-emphasis (recording EQ)
     preEmphasisFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        currentSampleRate, nabHighFreq, 0.707f,
-        juce::Decibels::decibelsToGain(speed == Speed_7_5_IPS ? 8.0f : 6.0f));
+        currentSampleRate, preEmphasisFreq, 0.707f,
+        juce::Decibels::decibelsToGain(preEmphasisGain));
+
+    // Add subtle mid-range presence boost (UAD characteristic)
+    preEmphasisFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+        currentSampleRate, preEmphasisFreq * 2.5f, 1.5f,
+        juce::Decibels::decibelsToGain(1.2f));
+
+    // Update de-emphasis (playback EQ) - compensates for pre-emphasis
+    deEmphasisFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
+        currentSampleRate, lowFreqCompensation, 0.707f,
+        juce::Decibels::decibelsToGain(2.5f)); // LF restoration
 
     deEmphasisFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        currentSampleRate, nabHighFreq, 0.707f,
-        juce::Decibels::decibelsToGain(speed == Speed_7_5_IPS ? -8.0f : -6.0f));
+        currentSampleRate, deEmphasisFreq, 0.707f,
+        juce::Decibels::decibelsToGain(deEmphasisGain));
 
-    // Update head bump filter based on machine and speed
+    // Update head bump filter - UAD-accurate scaling
+    // Head bump is caused by magnetic flux leakage and varies with speed/machine
     float headBumpFreq = machineChars.headBumpFreq;
     float headBumpGain = machineChars.headBumpGain * speedChars.headBumpMultiplier;
+    float headBumpQ = machineChars.headBumpQ;
 
-    // Head bump frequency shifts with speed
-    if (speed == Speed_30_IPS)
-        headBumpFreq *= 1.4f;  // Higher frequency at higher speed
-    else if (speed == Speed_7_5_IPS)
-        headBumpFreq *= 0.7f;  // Lower frequency at lower speed
+    // Speed-dependent head bump frequency (research-based)
+    // At higher speeds, tape moves faster past the head, shifting resonance up
+    switch (speed)
+    {
+        case Speed_7_5_IPS:
+            // Lower speed: more pronounced bump at lower freq
+            headBumpFreq = machineChars.headBumpFreq * 0.65f;  // ~35-40 Hz
+            headBumpGain *= 1.4f;  // More pronounced
+            headBumpQ *= 1.3f;     // Sharper peak
+            break;
+        case Speed_15_IPS:
+            // Reference speed
+            headBumpFreq = machineChars.headBumpFreq;  // ~50-60 Hz
+            // Gain and Q use machine defaults
+            break;
+        case Speed_30_IPS:
+            // Higher speed: less bump, higher freq
+            headBumpFreq = machineChars.headBumpFreq * 1.5f;  // ~75-90 Hz
+            headBumpGain *= 0.7f;  // Less pronounced
+            headBumpQ *= 0.8f;     // Broader
+            break;
+    }
 
-    // Prevent head bump from going too low (causes subsonic issues)
-    headBumpFreq = juce::jmax(25.0f, headBumpFreq);
+    // Tape type affects head bump (more output = more flux = more bump)
+    headBumpGain *= tapeChars.lfEmphasis * 0.8f;
 
-    // Reduce Q to prevent oscillation at low frequencies
-    float adjustedQ = juce::jmin(machineChars.headBumpQ, 0.9f);
+    // Safety limits
+    headBumpFreq = juce::jlimit(30.0f, 120.0f, headBumpFreq);
+    headBumpQ = juce::jlimit(0.7f, 2.0f, headBumpQ);
+    headBumpGain = juce::jlimit(1.5f, 5.0f, headBumpGain);
 
     headBumpFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-        currentSampleRate, headBumpFreq, adjustedQ,
-        juce::Decibels::decibelsToGain(headBumpGain * 0.7f));  // Reduce gain to prevent oscillation
+        currentSampleRate, headBumpFreq, headBumpQ,
+        juce::Decibels::decibelsToGain(headBumpGain));
 
     // Update HF loss based on tape speed and type
     float hfCutoff = machineChars.hfRolloffFreq * speedChars.hfExtension * tapeChars.hfLoss;
@@ -401,7 +460,8 @@ float ImprovedTapeEmulation::processSample(float input,
                                           float wowFlutterAmount,
                                           bool noiseEnabled,
                                           float noiseAmount,
-                                          float* sharedWowFlutterMod)
+                                          float* sharedWowFlutterMod,
+                                          float calibrationLevel)
 {
     // Denormal protection at input
     if (std::abs(input) < denormalPrevention)
@@ -425,8 +485,14 @@ float ImprovedTapeEmulation::processSample(float input,
     auto tapeChars = getTapeCharacteristics(type);
     auto speedChars = getSpeedCharacteristics(speed);
 
+    // Calibration level affects input gain staging and saturation threshold
+    // Higher calibration = more headroom = tape saturates at higher input levels
+    // UAD: 0dB (nominal), +3dB, +6dB, +9dB (maximum headroom)
+    float calibrationGain = juce::Decibels::decibelsToGain(calibrationLevel);
+
     // Input gain staging (important for tape saturation)
-    float signal = input * 0.95f;
+    // Higher calibration reduces effective input level, increasing headroom
+    float signal = input * 0.95f / calibrationGain;
 
     // 1. Pre-emphasis (recording EQ)
     signal = preEmphasisFilter1.processSample(signal);
@@ -452,10 +518,12 @@ float ImprovedTapeEmulation::processSample(float input,
     }
 
     // 5. Soft saturation/compression
+    // Calibration affects saturation threshold (higher cal = higher threshold)
+    float adjustedKnee = machineChars.saturationKnee * calibrationGain;
     signal = saturator.process(signal,
-                               machineChars.saturationKnee,
+                               adjustedKnee,
                                machineChars.compressionRatio * saturationDepth,
-                               1.0f);
+                               calibrationGain);  // Makeup gain to compensate
 
     // 6. Head gap loss simulation
     signal = gapLossFilter.processSample(signal);
@@ -532,7 +600,7 @@ float ImprovedTapeEmulation::processSample(float input,
     return signal;
 }
 
-// Hysteresis processor implementation
+// Hysteresis processor implementation - Physics-based Jiles-Atherton inspired
 float ImprovedTapeEmulation::HysteresisProcessor::process(float input, float amount,
                                                          float asymmetry, float saturation)
 {
@@ -540,37 +608,62 @@ float ImprovedTapeEmulation::HysteresisProcessor::process(float input, float amo
     if (std::abs(input) < 1e-8f)
         return 0.0f;
 
-    // M-S hysteresis loop simulation
-    float drive = 1.0f + amount * 4.0f;
-    float x = input * drive;
+    // Physics-based parameters (simplified Jiles-Atherton model)
+    // Ms: Saturation magnetization, a: domain coupling, c: reversibility
+    const float Ms = saturation;              // Saturation level (tape-dependent)
+    const float a = 0.01f + amount * 0.05f;   // Domain coupling strength
+    const float c = 0.1f + amount * 0.2f;     // Reversible/irreversible ratio
+    const float k = 0.5f + asymmetry * 0.3f;  // Coercivity (asymmetry factor)
 
-    // Asymmetric saturation
-    float sign = (x >= 0.0f) ? 1.0f : -1.0f;
-    float absX = std::abs(x);
-    float satX = std::tanh(absX * saturation);
+    // Input field strength
+    float H = input * (1.0f + amount * 3.0f);
 
-    // Apply asymmetry to positive and negative sides differently
-    if (sign > 0)
-        satX *= (1.0f + asymmetry * 0.2f);
+    // Anhysteretic magnetization (ideal, no losses)
+    // Langevin function approximation: M_an = Ms * tanh(H/a)
+    float M_an = Ms * std::tanh(H / (a + 1e-6f));
+
+    // Differential susceptibility (rate of magnetization change)
+    float dM_an = Ms / (a + 1e-6f) / std::cosh(H / (a + 1e-6f));
+    dM_an = dM_an * dM_an;  // Square for proper scaling
+
+    // Direction of field change
+    float dH = H - previousInput;
+    float sign_dH = (dH >= 0.0f) ? 1.0f : -1.0f;
+
+    // Irreversible magnetization component (creates hysteresis loop)
+    // This is the key to magnetic memory
+    float M_irr_delta = (M_an - state) / (k * sign_dH + 1e-6f);
+
+    // Total magnetization change (reversible + irreversible)
+    float dM = c * dM_an * dH + (1.0f - c) * M_irr_delta * std::abs(dH);
+
+    // Update magnetic state with integration
+    state += dM * amount;
+
+    // Apply saturation limits to prevent runaway
+    state = juce::jlimit(-Ms, Ms, state);
+
+    // Apply asymmetry (different saturation for positive/negative)
+    float asymmetryFactor = 1.0f + asymmetry * 0.15f;
+    float output = state;
+    if (output > 0.0f)
+        output *= asymmetryFactor;
     else
-        satX *= (1.0f - asymmetry * 0.2f);
+        output /= asymmetryFactor;
 
-    // Hysteresis state integration
-    float delta = satX * sign - state;
-    state += delta * (1.0f - amount * 0.5f);
-
-    // Mix dry and wet based on amount
-    float output = input * (1.0f - amount) + state * amount;
+    // Mix dry and processed
+    output = input * (1.0f - amount * 0.8f) + output * amount;
 
     // DC blocker to prevent low frequency buildup from hysteresis
     // Simple first-order high-pass at 5Hz
     const float dcBlockerCutoff = 0.9995f;  // ~5Hz at 44.1kHz
-    float preFilteredSample = output;  // Capture the pre-filtered sample
-    output = output - previousInput + dcBlockerCutoff * previousOutput;
+    float preFilteredSample = output;
+    output = output - previousOutput + dcBlockerCutoff * (output + previousOutput);
+    output *= 0.5f;  // Compensate for doubling
 
     // Update history
-    previousInput = preFilteredSample;  // Use the pre-filtered sample, not the raw input
-    previousOutput = output;
+    previousInput = H;  // Store field strength for next iteration
+    previousOutput = preFilteredSample;
 
     return output;
 }

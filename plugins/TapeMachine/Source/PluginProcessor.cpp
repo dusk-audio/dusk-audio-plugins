@@ -35,8 +35,9 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     // Initialize shared wow/flutter for stereo coherence
     sharedWowFlutter = std::make_unique<WowFlutterProcessor>();
 
-    // Initialize bias parameter
+    // Initialize bias and calibration parameters
     biasParam = apvts.getRawParameterValue("bias");
+    calibrationParam = apvts.getRawParameterValue("calibration");
 }
 
 TapeMachineAudioProcessor::~TapeMachineAudioProcessor()
@@ -82,6 +83,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "calibration", "Calibration",
+        juce::StringArray{"0dB", "+3dB", "+6dB", "+9dB"},
+        0));  // Default to 0dB
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "highpassFreq", "Highpass Frequency",
@@ -218,8 +224,10 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     wowFlutterDelayLeft.setMaximumDelayInSamples(static_cast<int>(sampleRate * 0.05));
     wowFlutterDelayRight.setMaximumDelayInSamples(static_cast<int>(sampleRate * 0.05));
 
-    // Calculate oversampling factor: 2^factorLog2 where factorLog2=2 gives 4x oversampling
-    const double oversamplingFactor = 4.0;  // 2^2 = 4x
+    // Calculate oversampling factor from the oversampling object configuration
+    // The oversampling object is initialized with factorLog2=2 in the constructor
+    const int factorLog2 = 2;  // Matches initialization: oversampling(2, 2, ...)
+    const double oversamplingFactor = static_cast<double>(1 << factorLog2);  // 2^factorLog2
     const double oversampledRate = sampleRate * oversamplingFactor;
     const int oversampledBlockSize = samplesPerBlock * static_cast<int>(oversamplingFactor);
 
@@ -477,35 +485,35 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     const bool noiseEnabled = noiseEnabledParam->load() > 0.5f;
 
-    // Calculate input levels BEFORE input gain to show actual signal level on VU meter
-    float inputPeakL = 0.0f;
-    float inputPeakR = 0.0f;
+    // Calculate RMS input levels BEFORE input gain for VU-accurate metering
+    // VU meters use RMS with 300ms integration time (not peak)
     auto* leftChannel = buffer.getWritePointer(0);
     auto* rightChannel = buffer.getWritePointer(1);
 
-    // Measure the raw input signal level (before any gain staging)
-    // This gives accurate VU metering of the incoming signal
+    // Calculate RMS for this block
+    float sumSquaresL = 0.0f;
+    float sumSquaresR = 0.0f;
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        inputPeakL = juce::jmax(inputPeakL, std::abs(leftChannel[i]));
-        inputPeakR = juce::jmax(inputPeakR, std::abs(rightChannel[i]));
+        sumSquaresL += leftChannel[i] * leftChannel[i];
+        sumSquaresR += rightChannel[i] * rightChannel[i];
     }
+    float rmsBlockL = std::sqrt(sumSquaresL / buffer.getNumSamples());
+    float rmsBlockR = std::sqrt(sumSquaresR / buffer.getNumSamples());
 
-    // Apply exponential smoothing to the levels
-    const float attack = 0.3f;
-    const float release = 0.7f;
-    float currentInputL = inputLevelL.load();
-    float currentInputR = inputLevelR.load();
+    // VU meter ballistics: 300ms integration (exponential moving average)
+    // Time constant: tau = 300ms, coefficient = exp(-dt/tau)
+    const float dt = buffer.getNumSamples() / currentSampleRate;  // Block duration in seconds
+    const float tau = 0.3f;  // 300ms VU standard
+    const float alpha = std::exp(-dt / tau);  // Smoothing coefficient
 
-    if (inputPeakL > currentInputL)
-        inputLevelL.store(currentInputL + (inputPeakL - currentInputL) * attack);
-    else
-        inputLevelL.store(currentInputL + (inputPeakL - currentInputL) * (1.0f - release));
+    // Update RMS with exponential moving average
+    rmsInputL = alpha * rmsInputL + (1.0f - alpha) * rmsBlockL;
+    rmsInputR = alpha * rmsInputR + (1.0f - alpha) * rmsBlockR;
 
-    if (inputPeakR > currentInputR)
-        inputLevelR.store(currentInputR + (inputPeakR - currentInputR) * attack);
-    else
-        inputLevelR.store(currentInputR + (inputPeakR - currentInputR) * (1.0f - release));
+    // Store as dB for display (VU meters show dB scale)
+    inputLevelL.store(rmsInputL);
+    inputLevelR.store(rmsInputR);
 
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::AudioBlock<float> oversampledBlock = oversampling.processSamplesUp(block);
@@ -532,8 +540,9 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     float* rightData = rightBlock.getChannelPointer(0);
     const size_t numSamples = leftBlock.getNumSamples();
 
-    // Calculate oversampled rate for wow/flutter
-    const double oversamplingFactor = 4.0;  // 4x
+    // Calculate oversampled rate for wow/flutter (same as in prepareToPlay)
+    const int factorLog2 = 2;  // Matches initialization: oversampling(2, 2, ...)
+    const double oversamplingFactor = static_cast<double>(1 << factorLog2);  // 2^factorLog2
     const double oversampledRate = currentSampleRate * oversamplingFactor;
 
     for (size_t i = 0; i < numSamples; ++i)
@@ -587,6 +596,10 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
                 float biasAmount = biasParam ? biasParam->load() * 0.01f : 0.5f;
 
+                // Get calibration level (0/3/6/9 dB)
+                int calIndex = calibrationParam ? static_cast<int>(calibrationParam->load()) : 0;
+                float calibrationDb = calIndex * 3.0f;  // 0, 3, 6, or 9 dB
+
                 // Process with improved tape emulation (includes saturation and wow/flutter)
                 // Pass shared modulation for stereo coherence
                 leftData[i] = tapeEmulationLeft->processSample(leftData[i],
@@ -598,7 +611,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                               currentWowFlutter * 0.01f,
                                                               noiseEnabled,
                                                               currentNoiseAmount * 100.0f,
-                                                              &sharedModulation);  // Shared wow/flutter
+                                                              &sharedModulation,
+                                                              calibrationDb);
 
                 rightData[i] = tapeEmulationRight->processSample(rightData[i],
                                                                 emulationMachine,
@@ -609,7 +623,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                                 currentWowFlutter * 0.01f,
                                                                 noiseEnabled,
                                                                 currentNoiseAmount * 100.0f,
-                                                                &sharedModulation);  // Shared wow/flutter
+                                                                &sharedModulation,
+                                                                calibrationDb);
             }
             else
             {
@@ -671,29 +686,24 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     oversampling.processSamplesDown(block);
 
-    // Calculate output levels for metering after processing
-    float outputPeakL = 0.0f;
-    float outputPeakR = 0.0f;
+    // Calculate RMS output levels after processing (VU-accurate)
+    float sumSquaresOutL = 0.0f;
+    float sumSquaresOutR = 0.0f;
 
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        outputPeakL = juce::jmax(outputPeakL, std::abs(leftChannel[i]));
-        outputPeakR = juce::jmax(outputPeakR, std::abs(rightChannel[i]));
+        sumSquaresOutL += leftChannel[i] * leftChannel[i];
+        sumSquaresOutR += rightChannel[i] * rightChannel[i];
     }
+    float rmsBlockOutL = std::sqrt(sumSquaresOutL / buffer.getNumSamples());
+    float rmsBlockOutR = std::sqrt(sumSquaresOutR / buffer.getNumSamples());
 
-    // Apply exponential smoothing to the output levels
-    float currentOutputL = outputLevelL.load();
-    float currentOutputR = outputLevelR.load();
+    // Apply same VU ballistics to output (reuse dt, tau, alpha from input calculation)
+    rmsOutputL = alpha * rmsOutputL + (1.0f - alpha) * rmsBlockOutL;
+    rmsOutputR = alpha * rmsOutputR + (1.0f - alpha) * rmsBlockOutR;
 
-    if (outputPeakL > currentOutputL)
-        outputLevelL.store(currentOutputL + (outputPeakL - currentOutputL) * attack);
-    else
-        outputLevelL.store(currentOutputL + (outputPeakL - currentOutputL) * (1.0f - release));
-
-    if (outputPeakR > currentOutputR)
-        outputLevelR.store(currentOutputR + (outputPeakR - currentOutputR) * attack);
-    else
-        outputLevelR.store(currentOutputR + (outputPeakR - currentOutputR) * (1.0f - release));
+    outputLevelL.store(rmsOutputL);
+    outputLevelR.store(rmsOutputR);
 }
 
 bool TapeMachineAudioProcessor::hasEditor() const
