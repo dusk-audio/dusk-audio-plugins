@@ -158,6 +158,14 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     };
     addAndMakeVisible(spectrumButton);
 
+    // Pre/Post spectrum toggle
+    spectrumPrePostButton.setButtonText("PRE");
+    spectrumPrePostButton.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
+    spectrumPrePostButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xff28a745));
+    addAndMakeVisible(spectrumPrePostButton);
+    spectrumPrePostAttachment = std::make_unique<ButtonAttachment>(
+        audioProcessor.parameters, "spectrum_prepost", spectrumPrePostButton);
+
     // Add tooltips to all controls for better UX
     hpfFreqSlider.setTooltip("High-Pass Filter Frequency (20Hz - 500Hz)");
     lpfFreqSlider.setTooltip("Low-Pass Filter Frequency (5kHz - 20kHz)");
@@ -420,8 +428,10 @@ void FourKEQEditor::resized()
 
     masterSection.removeFromTop(10);  // Gap
 
-    // Spectrum button
-    spectrumButton.setBounds(masterSection.removeFromTop(30).withSizeKeepingCentre(80, 26));
+    // Spectrum buttons
+    auto specButtonArea = masterSection.removeFromTop(30);
+    spectrumButton.setBounds(specButtonArea.removeFromLeft(80).withSizeKeepingCentre(80, 26));
+    spectrumPrePostButton.setBounds(specButtonArea.withSizeKeepingCentre(50, 26));
 
     // Spectrum analyzer (below all controls if visible)
     if (spectrumAnalyzer.isVisible())
@@ -506,10 +516,15 @@ void FourKEQEditor::timerCallback()
         lastSampleRate = currentSampleRate;
     }
 
-    // Push audio data to spectrum analyzer
+    // Push audio data to spectrum analyzer (thread-safe)
+    // Use pre-EQ buffer if toggle is on, otherwise post-EQ (default)
     if (spectrumAnalyzer.isVisible())
     {
-        spectrumAnalyzer.pushBuffer(audioProcessor.spectrumBuffer);
+        const juce::ScopedLock sl(audioProcessor.spectrumBufferLock);
+        bool usePreEQ = spectrumPrePostButton.getToggleState();
+        const auto& bufferToUse = usePreEQ ? audioProcessor.spectrumBufferPre
+                                           : audioProcessor.spectrumBuffer;
+        spectrumAnalyzer.pushBuffer(bufferToUse);
     }
 }
 
@@ -524,6 +539,9 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
     // Professional rotation range
     slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
                                juce::MathConstants<float>::pi * 2.75f, true);
+
+    // Enable mouse wheel control for fine adjustments
+    slider.setScrollWheelEnabled(true);
 
     // Color code knobs like the reference image
     if (label.contains("GAIN")) {
@@ -546,8 +564,16 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
         slider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffff8c00));
     }
 
+    // Double-click to reset - center-detented knobs reset to 0.0 (center), others to default
     if (centerDetented) {
         slider.setDoubleClickReturnValue(true, 0.0);
+    } else {
+        // Get parameter default from processor for non-center knobs
+        auto* param = audioProcessor.parameters.getParameter(paramID);
+        if (param) {
+            float defaultValue = param->getDefaultValue();
+            slider.setDoubleClickReturnValue(true, defaultValue);
+        }
     }
 
     addAndMakeVisible(slider);
@@ -580,6 +606,136 @@ void FourKEQEditor::setupButton(juce::ToggleButton& button, const juce::String& 
 
 void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
 {
-    // This would draw scale markings around knobs
-    // Left as placeholder for detailed scale graphics
+    // SSL-style knob tick markings for professional console aesthetics
+    // Different marking styles for different knob types
+
+    g.setColour(juce::Colour(0xff505050));  // Subtle gray for ticks
+
+    // Helper lambda to draw tick marks around a knob
+    auto drawTicksForKnob = [&g](juce::Rectangle<int> knobBounds,
+                                  bool isGainKnob,
+                                  bool isQKnob = false,
+                                  bool isFilterKnob = false)
+    {
+        auto center = knobBounds.getCentre().toFloat();
+        float radius = knobBounds.getWidth() / 2.0f + 8.0f;  // Ticks outside knob
+
+        // Rotation range matches setupKnob: 1.25π to 2.75π (270° total, -135° to +135°)
+        float startAngle = juce::MathConstants<float>::pi * 1.25f;
+        float endAngle = juce::MathConstants<float>::pi * 2.75f;
+        float totalRange = endAngle - startAngle;
+
+        // Different tick configurations for different knob types
+        int numMainTicks, numMinorTicks;
+        std::vector<float> labeledPositions;  // Normalized 0-1 positions for labeled ticks
+
+        if (isGainKnob)
+        {
+            // Gain: -20dB to +20dB with center detent at 0dB
+            // Major ticks at: -20, -12, -6, 0, +6, +12, +20
+            numMainTicks = 7;
+            numMinorTicks = 0;  // No minor ticks for cleaner look
+            labeledPositions = {0.0f, 0.2f, 0.35f, 0.5f, 0.65f, 0.8f, 1.0f};
+        }
+        else if (isQKnob)
+        {
+            // Q: 0.4 to 5.0 - logarithmic feel
+            // Major ticks at start, middle, end
+            numMainTicks = 5;
+            numMinorTicks = 0;
+            labeledPositions = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+        }
+        else if (isFilterKnob)
+        {
+            // HPF/LPF: frequency ranges
+            // Major ticks at key frequencies
+            numMainTicks = 5;
+            numMinorTicks = 4;  // Minor ticks between majors
+            labeledPositions = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+        }
+        else
+        {
+            // Frequency knobs: logarithmic scale
+            // Major ticks at octave points
+            numMainTicks = 7;
+            numMinorTicks = 0;
+            labeledPositions = {0.0f, 0.17f, 0.33f, 0.5f, 0.67f, 0.83f, 1.0f};
+        }
+
+        // Draw main ticks
+        for (int i = 0; i < numMainTicks; ++i)
+        {
+            float normalizedPos = static_cast<float>(i) / (numMainTicks - 1);
+            float angle = startAngle + totalRange * normalizedPos;
+
+            // Longer tick at center position (0dB for gain knobs)
+            bool isCenterTick = isGainKnob && (i == numMainTicks / 2);
+            float tickLength = isCenterTick ? 6.0f : 4.0f;
+            float tickWidth = isCenterTick ? 1.5f : 1.0f;
+
+            // Brighter tick at center
+            if (isCenterTick)
+                g.setColour(juce::Colour(0xff808080));
+            else
+                g.setColour(juce::Colour(0xff505050));
+
+            float x1 = center.x + std::cos(angle) * radius;
+            float y1 = center.y + std::sin(angle) * radius;
+            float x2 = center.x + std::cos(angle) * (radius + tickLength);
+            float y2 = center.y + std::sin(angle) * (radius + tickLength);
+
+            g.drawLine(x1, y1, x2, y2, tickWidth);
+        }
+
+        // Draw minor ticks (if any)
+        if (numMinorTicks > 0)
+        {
+            g.setColour(juce::Colour(0xff404040));  // Dimmer for minor ticks
+            int totalTicks = (numMainTicks - 1) * (numMinorTicks + 1) + 1;
+
+            for (int i = 0; i < totalTicks; ++i)
+            {
+                // Skip positions where main ticks are
+                if (i % (numMinorTicks + 1) == 0)
+                    continue;
+
+                float normalizedPos = static_cast<float>(i) / (totalTicks - 1);
+                float angle = startAngle + totalRange * normalizedPos;
+
+                float x1 = center.x + std::cos(angle) * radius;
+                float y1 = center.y + std::sin(angle) * radius;
+                float x2 = center.x + std::cos(angle) * (radius + 2.5f);  // Shorter
+                float y2 = center.y + std::sin(angle) * (radius + 2.5f);
+
+                g.drawLine(x1, y1, x2, y2, 0.5f);
+            }
+        }
+    };
+
+    // Draw ticks for all knobs with appropriate styles
+    // Filters section (75px knobs)
+    drawTicksForKnob(hpfFreqSlider.getBounds(), false, false, true);
+    drawTicksForKnob(lpfFreqSlider.getBounds(), false, false, true);
+
+    // LF Band (65px knobs)
+    drawTicksForKnob(lfGainSlider.getBounds(), true);   // Gain knob
+    drawTicksForKnob(lfFreqSlider.getBounds(), false);  // Freq knob
+
+    // LMF Band
+    drawTicksForKnob(lmGainSlider.getBounds(), true);
+    drawTicksForKnob(lmFreqSlider.getBounds(), false);
+    drawTicksForKnob(lmQSlider.getBounds(), false, true);  // Q knob
+
+    // HMF Band
+    drawTicksForKnob(hmGainSlider.getBounds(), true);
+    drawTicksForKnob(hmFreqSlider.getBounds(), false);
+    drawTicksForKnob(hmQSlider.getBounds(), false, true);
+
+    // HF Band
+    drawTicksForKnob(hfGainSlider.getBounds(), true);
+    drawTicksForKnob(hfFreqSlider.getBounds(), false);
+
+    // Master section
+    drawTicksForKnob(outputGainSlider.getBounds(), true);     // Output gain
+    drawTicksForKnob(saturationSlider.getBounds(), false);    // Saturation (0-100%)
 }

@@ -81,6 +81,7 @@ FourKEQ::FourKEQ()
     saturationParam = parameters.getRawParameterValue("saturation");
     oversamplingParam = parameters.getRawParameterValue("oversampling");
     msModeParam = parameters.getRawParameterValue("ms_mode");
+    spectrumPrePostParam = parameters.getRawParameterValue("spectrum_prepost");
 
     // Assert all parameters are valid (keeps for debug builds)
     jassert(hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
@@ -90,16 +91,16 @@ FourKEQ::FourKEQ()
             outputGainParam && saturationParam && oversamplingParam);
 
     // Verify all critical parameters are initialized
-    bool allParamsValid = hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
+    paramsValid = hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
         lfBellParam && lmGainParam && lmFreqParam && lmQParam &&
         hmGainParam && hmFreqParam && hmQParam && hfGainParam &&
         hfFreqParam && hfBellParam && eqTypeParam && bypassParam &&
-        outputGainParam && saturationParam && oversamplingParam;
+        outputGainParam && saturationParam && oversamplingParam && msModeParam;
 
-    if (!allParamsValid)
+    if (!paramsValid)
     {
-        DBG("FourKEQ: WARNING - Some parameters failed to initialize, plugin may not function correctly");
-        // Note: We continue with safe accessors that provide defaults
+        DBG("FourKEQ: CRITICAL - Parameters failed to initialize! Plugin will skip processing.");
+        // Processing will be bypassed in processBlock() when paramsValid is false
     }
 
     // Add parameter change listener for performance optimization
@@ -216,6 +217,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "ms_mode", "M/S Mode", false));
 
+    // Spectrum Pre/Post Toggle
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "spectrum_prepost", "Spectrum Pre/Post", false));  // false = post-EQ (default)
+
     return { params.begin(), params.end() };
 }
 
@@ -242,7 +247,18 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
 
     // Determine oversampling factor from parameter
-    oversamplingFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
+    // Optimization: Auto-limit to 2x at high sample rates (>96kHz) to reduce CPU load
+    int requestedFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
+
+    if (sampleRate > 96000.0 && requestedFactor == 4)
+    {
+        oversamplingFactor = 2;  // Force 2x at high sample rates
+        DBG("FourKEQ: High sample rate detected (" << sampleRate << " Hz) - limiting to 2x oversampling");
+    }
+    else
+    {
+        oversamplingFactor = requestedFactor;
+    }
 
     // Only recreate oversamplers if sample rate or factor changed (optimization)
     bool needsRecreate = (std::abs(sampleRate - lastPreparedSampleRate) > 0.01) ||
@@ -341,6 +357,13 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
+    // Critical safety check: skip processing if parameters failed to initialize
+    if (!paramsValid)
+    {
+        DBG("FourKEQ: Skipping processing - parameters not valid");
+        return;
+    }
+
     // Check bypass - skip ALL processing when bypassed (including output gain and saturation)
     if (bypassParam && bypassParam->load() > 0.5f)
         return;
@@ -354,6 +377,12 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     {
         updateFilters();
         parametersChanged.store(false);
+    }
+
+    // Capture pre-EQ buffer for spectrum analyzer (thread-safe)
+    {
+        const juce::ScopedLock sl(spectrumBufferLock);
+        spectrumBufferPre.makeCopyOf(buffer, true);
     }
 
     // Choose oversampling with null check
@@ -490,23 +519,54 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
         buffer.applyGain(totalGain);
     }
 
-    // Copy processed buffer for spectrum analyzer
-    spectrumBuffer.makeCopyOf(buffer, true);
+    // Copy processed buffer for spectrum analyzer (thread-safe)
+    {
+        const juce::ScopedLock sl(spectrumBufferLock);
+        spectrumBuffer.makeCopyOf(buffer, true);
+    }
 }
 
 //==============================================================================
 void FourKEQ::updateFilters()
 {
-    // Update all filters when parameters change
-    // Individual change detection removed for simplicity - updateFilters only called when needed
+    // Optimized: Only update filters that have changed (per-band dirty flags)
     double oversampledRate = currentSampleRate * oversamplingFactor;
 
-    updateHPF(oversampledRate);
-    updateLPF(oversampledRate);
-    updateLFBand(oversampledRate);
-    updateLMBand(oversampledRate);
-    updateHMBand(oversampledRate);
-    updateHFBand(oversampledRate);
+    if (hpfDirty.load())
+    {
+        updateHPF(oversampledRate);
+        hpfDirty.store(false);
+    }
+
+    if (lpfDirty.load())
+    {
+        updateLPF(oversampledRate);
+        lpfDirty.store(false);
+    }
+
+    if (lfDirty.load())
+    {
+        updateLFBand(oversampledRate);
+        lfDirty.store(false);
+    }
+
+    if (lmDirty.load())
+    {
+        updateLMBand(oversampledRate);
+        lmDirty.store(false);
+    }
+
+    if (hmDirty.load())
+    {
+        updateHMBand(oversampledRate);
+        hmDirty.store(false);
+    }
+
+    if (hfDirty.load())
+    {
+        updateHFBand(oversampledRate);
+        hfDirty.store(false);
+    }
 }
 
 void FourKEQ::updateHPF(double sampleRate)
@@ -536,10 +596,11 @@ void FourKEQ::updateHPF(double sampleRate)
 
 void FourKEQ::updateLPF(double sampleRate)
 {
-    if (!lpfFreqParam || sampleRate <= 0.0)
+    if (!lpfFreqParam || !eqTypeParam || sampleRate <= 0.0)
         return;
 
     float freq = lpfFreqParam->load();
+    bool isBlack = (eqTypeParam->load() > 0.5f);
 
     // Pre-warp if close to Nyquist
     float processFreq = freq;
@@ -547,9 +608,14 @@ void FourKEQ::updateLPF(double sampleRate)
         processFreq = preWarpFrequency(freq, sampleRate);
     }
 
-    // 12dB/oct Butterworth LPF with pre-warped frequency
+    // Brown (E-series): 12dB/oct (2nd-order Butterworth, Q=0.707) - gentler, musical rolloff
+    // Black (G-series): 12dB/oct (2nd-order with lower Q=0.5) - steeper initial slope
+    // Note: Both are 12dB/oct (2nd-order). Lower Q gives steeper initial rolloff but
+    // same asymptotic slope. True 18dB/oct would require 3rd-order (cascaded 1st+2nd).
+    float q = isBlack ? 0.5f : 0.707f;  // Lower Q = steeper initial rolloff
+
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, processFreq, 0.707f);
+        sampleRate, processFreq, q);
 
     lpfFilter.filter.coefficients = coeffs;
     lpfFilter.filterR.coefficients = coeffs;
@@ -760,23 +826,34 @@ float FourKEQ::calculateAutoGainCompensation() const
 {
     // Calculate approximate gain compensation based on all EQ bands
     // This maintains perceived loudness similar to SSL hardware behavior
+    // Note: getRawParameterValue returns normalized [0,1], need to get actual dB values
 
-    // Sum all band gains (negative = cut, positive = boost)
-    float lfGain = safeGetParam(lfGainParam, 0.0f);
-    float lmGain = safeGetParam(lmGainParam, 0.0f);
-    float hmGain = safeGetParam(hmGainParam, 0.0f);
-    float hfGain = safeGetParam(hfGainParam, 0.0f);
+    // Get actual dB values from parameters (not normalized)
+    auto* lfParam = parameters.getParameter("lf_gain");
+    auto* lmParam = parameters.getParameter("lm_gain");
+    auto* hmParam = parameters.getParameter("hm_gain");
+    auto* hfParam = parameters.getParameter("hf_gain");
+
+    if (!lfParam || !lmParam || !hmParam || !hfParam)
+        return 1.0f;  // No compensation if params unavailable
+
+    // Get denormalized values in dB
+    float lfGainDB = lfParam->convertFrom0to1(lfParam->getValue());
+    float lmGainDB = lmParam->convertFrom0to1(lmParam->getValue());
+    float hmGainDB = hmParam->convertFrom0to1(hmParam->getValue());
+    float hfGainDB = hfParam->convertFrom0to1(hfParam->getValue());
 
     // Weight the contributions based on how broad each band typically affects spectrum
     // Shelves (LF/HF) affect more frequencies, so weight them higher
-    float weightedSum = (lfGain * 0.3f) + (lmGain * 0.2f) + (hmGain * 0.2f) + (hfGain * 0.3f);
+    // Reduce weights for gentler, more musical compensation
+    float weightedSum = (lfGainDB * 0.35f) + (lmGainDB * 0.15f) + (hmGainDB * 0.15f) + (hfGainDB * 0.35f);
 
     // Calculate compensation: reduce output when boosting, increase when cutting
-    // Use gentler compensation (25%) to maintain SSL "bigger" sound character
-    float compensationDB = -weightedSum * 0.25f;
+    // Use 20% compensation factor to maintain SSL "bigger" sound while preventing clipping
+    float compensationDB = -weightedSum * 0.20f;
 
-    // Limit compensation range to ±6dB to avoid extreme changes
-    compensationDB = juce::jlimit(-6.0f, 6.0f, compensationDB);
+    // Limit compensation range to ±4dB for subtle, transparent adjustment
+    compensationDB = juce::jlimit(-4.0f, 4.0f, compensationDB);
 
     return juce::Decibels::decibelsToGain(compensationDB);
 }
@@ -948,7 +1025,7 @@ void FourKEQ::setStateInformation(const void* data, int sizeInBytes)
 //==============================================================================
 int FourKEQ::getNumPrograms()
 {
-    return 9;  // 8 factory presets + 1 user (default)
+    return 10;  // 9 factory presets + 1 user (default)
 }
 
 const juce::String FourKEQ::getProgramName(int index)
@@ -962,7 +1039,8 @@ const juce::String FourKEQ::getProgramName(int index)
         "Bright Mix",
         "Telephone EQ",
         "Air & Silk",
-        "Mix Bus Glue"
+        "Mix Bus Glue",
+        "Master Sheen"
     };
 
     if (index >= 0 && index < getNumPrograms())
@@ -1092,6 +1170,15 @@ void FourKEQ::loadFactoryPreset(int index)
             parameters.getParameter("hf_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 10kHz
             parameters.getParameter("saturation")->setValueNotifyingHost(0.30f);  // 30% saturation
             break;
+
+        case 9:  // Master Sheen - Polished top-end sparkle for mastering
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.525f);  // +1dB @ 5kHz (presence)
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.69f);   // 5kHz
+            parameters.getParameter("hm_q")->setValueNotifyingHost(0.35f);      // Q=0.7 (smooth/broad)
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.537f);  // +1.5dB @ 16kHz (air)
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.78f);   // 16kHz
+            parameters.getParameter("saturation")->setValueNotifyingHost(0.10f);  // 10% saturation (subtle glue)
+            break;
     }
 
     parametersChanged.store(true);
@@ -1111,15 +1198,6 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 }
 
 //==============================================================================
-// LV2 extension data export
-#ifdef JucePlugin_Build_LV2
-
-#ifndef LV2_SYMBOL_EXPORT
-#ifdef _WIN32
-#define LV2_SYMBOL_EXPORT __declspec(dllexport)
-#else
-#define LV2_SYMBOL_EXPORT __attribute__((visibility("default")))
-#endif
-#endif
-
-#endif
+// LV2 inline display removed - JUCE doesn't natively support this extension
+// and manual export conflicts with JUCE's internal LV2 wrapper.
+// The full GUI works fine in all LV2 hosts.

@@ -86,6 +86,7 @@ private:
     // Spectrum analyzer
     SpectrumAnalyzer spectrumAnalyzer;
     juce::ToggleButton spectrumButton;
+    juce::ToggleButton spectrumPrePostButton;
 
     // Attachment classes for parameter binding
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -117,6 +118,7 @@ private:
     std::unique_ptr<SliderAttachment> outputGainAttachment;
     std::unique_ptr<SliderAttachment> saturationAttachment;
     std::unique_ptr<ComboBoxAttachment> oversamplingAttachment;
+    std::unique_ptr<ButtonAttachment> spectrumPrePostAttachment;
 
     // Helper methods
     void setupKnob(juce::Slider& slider, const juce::String& paramID,

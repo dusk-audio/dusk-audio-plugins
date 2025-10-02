@@ -63,11 +63,10 @@ public:
     // Public parameter access for GUI and inline display
     juce::AudioProcessorValueTreeState parameters;
 
-    // Audio buffer for spectrum analyzer
-    juce::AudioBuffer<float> spectrumBuffer;
-
-    #ifdef JucePlugin_Build_LV2
-    #endif
+    // Audio buffers for spectrum analyzer (accessed from both audio and UI threads)
+    juce::AudioBuffer<float> spectrumBuffer;      // Post-EQ (default)
+    juce::AudioBuffer<float> spectrumBufferPre;   // Pre-EQ
+    juce::CriticalSection spectrumBufferLock;
 
 private:
     //==============================================================================
@@ -76,6 +75,28 @@ private:
     {
         // Signal that parameters have changed for filter update
         parametersChanged.store(true);
+
+        // Set specific dirty flags for optimized updates
+        if (parameterID == "hpf_freq")
+            hpfDirty.store(true);
+        else if (parameterID == "lpf_freq")
+            lpfDirty.store(true);
+        else if (parameterID == "lf_gain" || parameterID == "lf_freq" || parameterID == "lf_bell")
+            lfDirty.store(true);
+        else if (parameterID == "lm_gain" || parameterID == "lm_freq" || parameterID == "lm_q")
+            lmDirty.store(true);
+        else if (parameterID == "hm_gain" || parameterID == "hm_freq" || parameterID == "hm_q")
+            hmDirty.store(true);
+        else if (parameterID == "hf_gain" || parameterID == "hf_freq" || parameterID == "hf_bell")
+            hfDirty.store(true);
+        else if (parameterID == "eq_type")
+        {
+            // EQ type change affects all bands
+            lfDirty.store(true);
+            lmDirty.store(true);
+            hmDirty.store(true);
+            hfDirty.store(true);
+        }
     }
 
     //==============================================================================
@@ -166,6 +187,7 @@ private:
     std::atomic<float>* saturationParam = nullptr;
     std::atomic<float>* oversamplingParam = nullptr; // 0 = 2x, 1 = 4x
     std::atomic<float>* msModeParam = nullptr;  // M/S processing
+    std::atomic<float>* spectrumPrePostParam = nullptr;  // 0 = post-EQ, 1 = pre-EQ
 
     // Safe parameter accessors with fallback defaults
     inline float safeGetParam(std::atomic<float>* param, float defaultValue) const
@@ -178,8 +200,19 @@ private:
     double lastPreparedSampleRate = 0.0;
     int lastOversamplingFactor = 0;
 
+    // Validation flags
+    bool paramsValid = false;  // Set true only if all critical params initialized
+
     // Atomic flag for any parameter change (set by listener, checked by audio thread)
     std::atomic<bool> parametersChanged{true};
+
+    // Per-band dirty flags for optimized filter updates
+    std::atomic<bool> hpfDirty{true};
+    std::atomic<bool> lpfDirty{true};
+    std::atomic<bool> lfDirty{true};
+    std::atomic<bool> lmDirty{true};
+    std::atomic<bool> hmDirty{true};
+    std::atomic<bool> hfDirty{true};
 
     // Per-band saturation drives (subtle for SSL character)
     static constexpr float lfSatDrive = 1.05f;   // Low shelf - gentle warmth
