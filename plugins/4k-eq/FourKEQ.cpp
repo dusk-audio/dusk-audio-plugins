@@ -173,7 +173,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hm_freq", "HM Frequency",
-        juce::NormalisableRange<float>(600.0f, 13000.0f, 1.0f, 0.3f),  // Extended for Black mode
+        juce::NormalisableRange<float>(600.0f, 7000.0f, 1.0f, 0.3f),
         2000.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hm_q", "HM Q",
