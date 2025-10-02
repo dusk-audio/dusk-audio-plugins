@@ -65,6 +65,7 @@ private:
 
     // Global Controls
     juce::ComboBox eqTypeSelector;
+    juce::ComboBox presetSelector;
     juce::ToggleButton bypassButton;
     juce::Slider outputGainSlider;
     juce::Slider saturationSlider;
@@ -77,6 +78,7 @@ private:
     // Cached values for timer optimization
     float lastEqType = -1.0f;
     float lastBypass = -1.0f;
+    double lastSampleRate = 0.0;
 
     // Label storage
     std::vector<std::unique_ptr<juce::Label>> knobLabels;
