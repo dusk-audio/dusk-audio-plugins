@@ -85,6 +85,7 @@ private:
 
     // Add bias parameter for improved tape emulation
     std::atomic<float>* biasParam = nullptr;
+    std::atomic<float>* calibrationParam = nullptr;
 
     juce::dsp::Oversampling<float> oversampling;
 
@@ -120,12 +121,18 @@ private:
     float processTapeSaturation(float input, float saturation, TapeMachine machine, TapeType tape);
     std::pair<float, float> processWowFlutter(float inputL, float inputR, float amount);
 
-    // Level metering
+    // Level metering (RMS-based for VU accuracy)
     std::atomic<float> inputLevelL { 0.0f };
     std::atomic<float> inputLevelR { 0.0f };
     std::atomic<float> outputLevelL { 0.0f };
     std::atomic<float> outputLevelR { 0.0f };
     std::atomic<bool> isProcessingAudio { false };
+
+    // RMS integration for VU-accurate metering (300ms time constant)
+    float rmsInputL = 0.0f;
+    float rmsInputR = 0.0f;
+    float rmsOutputL = 0.0f;
+    float rmsOutputR = 0.0f;
 
     // Filter frequency tracking (instance variables instead of statics)
     float lastHpFreq = -1.0f;

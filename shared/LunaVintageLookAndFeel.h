@@ -81,17 +81,17 @@ public:
     {
         auto headerArea = bounds.removeFromTop(60);
 
-        // Draw plugin name
+        // Draw plugin name in its own area
+        auto nameArea = headerArea.removeFromTop(30).reduced(10, 5);
         g.setColour(juce::Colour(TEXT_COLOR));
         g.setFont(juce::Font(juce::FontOptions(24.0f)).withStyle(juce::Font::bold));
-        g.drawText(pluginName, headerArea.reduced(10, 5).removeFromTop(30),
-                   juce::Justification::centredLeft);
+        g.drawText(pluginName, nameArea, juce::Justification::centredLeft);
 
-        // Draw subtitle
+        // Draw subtitle in the remaining area
+        auto subtitleArea = headerArea.reduced(10, 0);
         g.setColour(juce::Colour(0xff888888));
         g.setFont(juce::Font(juce::FontOptions(12.0f)).withStyle(juce::Font::italic));
-        g.drawText(subtitle, headerArea.reduced(10, 0),
-                   juce::Justification::centredLeft);
+        g.drawText(subtitle, subtitleArea, juce::Justification::centredLeft);
     }
 };
 
