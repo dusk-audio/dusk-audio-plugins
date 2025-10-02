@@ -18,7 +18,8 @@
     - 2x/4x oversampling for anti-aliasing
     - Analog-modeled nonlinearities
 */
-class FourKEQ : public juce::AudioProcessor
+class FourKEQ : public juce::AudioProcessor,
+                private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     //==============================================================================
@@ -67,6 +68,14 @@ public:
 
 private:
     //==============================================================================
+    // AudioProcessorValueTreeState::Listener implementation
+    void parameterChanged(const juce::String& parameterID, float newValue) override
+    {
+        // Signal that parameters have changed for filter update
+        parametersChanged.store(true);
+    }
+
+    //==============================================================================
     // Filter chain for stereo processing
     struct FilterBand
     {
@@ -86,21 +95,27 @@ private:
         }
     };
 
-    // HPF: 3rd order (18 dB/oct) implemented as cascaded filters
+    // HPF: True 3rd order (18 dB/oct) - 1st order + 2nd order Butterworth
     struct HighPassFilter
     {
-        FilterBand stage1;  // First biquad
-        FilterBand stage2;  // Second biquad (combined gives ~18dB/oct)
+        // 1st order HPF stage (6dB/oct)
+        juce::dsp::IIR::Filter<float> stage1L;
+        juce::dsp::IIR::Filter<float> stage1R;
+
+        // 2nd order HPF stage (12dB/oct, Butterworth Q=0.707)
+        FilterBand stage2;
 
         void reset()
         {
-            stage1.reset();
+            stage1L.reset();
+            stage1R.reset();
             stage2.reset();
         }
 
         void prepare(const juce::dsp::ProcessSpec& spec)
         {
-            stage1.prepare(spec);
+            stage1L.prepare(spec);
+            stage1R.prepare(spec);
             stage2.prepare(spec);
         }
     };
@@ -122,7 +137,7 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
     int oversamplingFactor = 2;
 
-    // Parameter pointers
+    // Parameter pointers with safe accessors
     std::atomic<float>* hpfFreqParam = nullptr;
     std::atomic<float>* lpfFreqParam = nullptr;
 
@@ -148,25 +163,17 @@ private:
     std::atomic<float>* saturationParam = nullptr;
     std::atomic<float>* oversamplingParam = nullptr; // 0 = 2x, 1 = 4x
 
+    // Safe parameter accessors with fallback defaults
+    inline float safeGetParam(std::atomic<float>* param, float defaultValue) const
+    {
+        return param ? param->load() : defaultValue;
+    }
+
     // Processing state
     double currentSampleRate = 44100.0;
 
-    // Dirty flags for filter updates (optimization)
-    std::atomic<bool> hpfNeedsUpdate{true};
-    std::atomic<bool> lpfNeedsUpdate{true};
-    std::atomic<bool> lfNeedsUpdate{true};
-    std::atomic<bool> lmNeedsUpdate{true};
-    std::atomic<bool> hmNeedsUpdate{true};
-    std::atomic<bool> hfNeedsUpdate{true};
-
-    // Cached parameter values for change detection
-    float lastHpfFreq = -1.0f;
-    float lastLpfFreq = -1.0f;
-    float lastLfGain = -1.0f, lastLfFreq = -1.0f, lastLfBell = -1.0f;
-    float lastLmGain = -1.0f, lastLmFreq = -1.0f, lastLmQ = -1.0f;
-    float lastHmGain = -1.0f, lastHmFreq = -1.0f, lastHmQ = -1.0f;
-    float lastHfGain = -1.0f, lastHfFreq = -1.0f, lastHfBell = -1.0f;
-    float lastEqType = -1.0f;
+    // Atomic flag for any parameter change (set by listener, checked by audio thread)
+    std::atomic<bool> parametersChanged{true};
 
     // Filter update methods
     void updateFilters();
@@ -180,9 +187,11 @@ private:
     // Helper methods
     float calculateDynamicQ(float gain, float baseQ) const;
     float applySaturation(float sample, float amount) const;
+    float applyAnalogSaturation(float sample, float drive, bool isAsymmetric = true) const;
+    float calculateAutoGainCompensation() const;
 
     // Parameter creation
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQ)
-};// Test change
+};

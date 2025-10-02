@@ -226,13 +226,6 @@ void FourKEQEditor::paint(juce::Graphics& g)
 
     // Draw knob scale markings around each knob
     drawKnobMarkings(g);
-
-    // Bypass LED
-    bool bypassed = bypassParam->load() > 0.5f;
-    int ledX = bounds.getRight() - 40;
-    int ledY = 15;
-
-    // Removed bypass LED and power indicator
 }
 
 void FourKEQEditor::resized()
