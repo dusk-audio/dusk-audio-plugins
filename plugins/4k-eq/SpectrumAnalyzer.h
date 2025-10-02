@@ -42,7 +42,12 @@ public:
 
         const int numSamples = buffer.getNumSamples();
 
+        // Validate sample count
+        if (numSamples <= 0)
+            return;
+
         // Mix to mono and push to FIFO
+        // No per-sample clamping - normalization happens before FFT to preserve signal shape
         for (int i = 0; i < numSamples; ++i)
         {
             float monoSample = 0.0f;
@@ -118,26 +123,52 @@ private:
 
     void performFFT()
     {
+        // Normalize buffer before FFT to prevent clipping artifacts
+        // Find peak absolute value in the FFT buffer
+        float maxPeak = 0.0f;
+        for (int i = 0; i < fftSize; ++i)
+        {
+            float absSample = std::abs(fftData[static_cast<size_t>(fftSize + i)]);
+            if (absSample > maxPeak)
+                maxPeak = absSample;
+        }
+
+        // Apply peak normalization if needed (only if signal exceeds ±1.0)
+        // Use epsilon to guard against divide-by-zero
+        constexpr float epsilon = 1e-9f;
+        if (maxPeak > 1.0f)
+        {
+            float normFactor = 1.0f / (maxPeak + epsilon);
+            for (int i = 0; i < fftSize; ++i)
+                fftData[static_cast<size_t>(fftSize + i)] *= normFactor;
+        }
+
         // Apply windowing
         window.multiplyWithWindowingTable(fftData.data() + fftSize, fftSize);
 
         // Perform FFT
         forwardFFT.performFrequencyOnlyForwardTransform(fftData.data() + fftSize);
 
-        // Convert to dB and smooth
+        // Convert to dB and smooth (SIMD-optimized)
         const float smoothing = 0.8f;
+        const float oneMinusSmoothing = 1.0f - smoothing;
 
+        // Process FFT bins to dB values
         for (int i = 0; i < scopeSize; ++i)
         {
             float level = fftData[static_cast<size_t>(fftSize + i)];
             level = juce::jlimit(0.0001f, 1.0f, level);
             float db = juce::Decibels::gainToDecibels(level) - 100.0f;  // Normalize
-
             scopeData[static_cast<size_t>(i)] = db;
-            scopeDataSmoothed[static_cast<size_t>(i)] =
-                scopeDataSmoothed[static_cast<size_t>(i)] * smoothing +
-                db * (1.0f - smoothing);
         }
+
+        // SIMD-optimized smoothing: smoothed = smoothed * a + data * (1-a)
+        // Equivalent to: smoothed += (data - smoothed) * (1-a), but using multiply-add
+        juce::FloatVectorOperations::multiply(scopeDataSmoothed.data(), smoothing, scopeSize);
+        juce::FloatVectorOperations::addWithMultiply(scopeDataSmoothed.data(),
+                                                     scopeData.data(),
+                                                     oneMinusSmoothing,
+                                                     scopeSize);
     }
 
     void drawGrid(juce::Graphics& g, juce::Rectangle<float> bounds)
