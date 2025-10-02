@@ -229,13 +229,23 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         return;
     }
 
+    // Validate sample rate to prevent division-by-zero and invalid filter calculations
+    if (sampleRate <= 0.0 || std::isnan(sampleRate) || std::isinf(sampleRate))
+    {
+        DBG("FourKEQ: Invalid sample rate received: " << sampleRate);
+        return;  // Skip preparation - retain last valid state
+    }
+
+    // Clamp sample rate to reasonable range (8kHz to 192kHz)
+    sampleRate = juce::jlimit(8000.0, 192000.0, sampleRate);
+
     currentSampleRate = sampleRate;
 
     // Determine oversampling factor from parameter
     oversamplingFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
 
     // Only recreate oversamplers if sample rate or factor changed (optimization)
-    bool needsRecreate = (sampleRate != lastPreparedSampleRate) ||
+    bool needsRecreate = (std::abs(sampleRate - lastPreparedSampleRate) > 0.01) ||
                          (oversamplingFactor != lastOversamplingFactor) ||
                          !oversampler2x || !oversampler4x;
 
@@ -972,82 +982,115 @@ void FourKEQ::setCurrentProgram(int index)
 
 void FourKEQ::loadFactoryPreset(int index)
 {
-    // Load factory preset parameters
+    // Reset all parameters to default first for clean preset loading
+    auto resetToFlat = [this]()
+    {
+        parameters.getParameter("lf_gain")->setValueNotifyingHost(0.5f);  // 0dB
+        parameters.getParameter("lf_freq")->setValueNotifyingHost(0.14f);  // 100Hz
+        parameters.getParameter("lf_bell")->setValueNotifyingHost(0.0f);   // Shelf
+        parameters.getParameter("lm_gain")->setValueNotifyingHost(0.5f);
+        parameters.getParameter("lm_freq")->setValueNotifyingHost(0.26f);  // 600Hz
+        parameters.getParameter("lm_q")->setValueNotifyingHost(0.5f);      // Q=1.0
+        parameters.getParameter("hm_gain")->setValueNotifyingHost(0.5f);
+        parameters.getParameter("hm_freq")->setValueNotifyingHost(0.48f);  // 3kHz
+        parameters.getParameter("hm_q")->setValueNotifyingHost(0.5f);
+        parameters.getParameter("hf_gain")->setValueNotifyingHost(0.5f);
+        parameters.getParameter("hf_freq")->setValueNotifyingHost(0.46f);  // 10kHz
+        parameters.getParameter("hf_bell")->setValueNotifyingHost(0.0f);   // Shelf
+        parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.0f);  // Off
+        parameters.getParameter("lpf_freq")->setValueNotifyingHost(1.0f);  // Off
+        parameters.getParameter("saturation")->setValueNotifyingHost(0.0f);
+        parameters.getParameter("output_gain")->setValueNotifyingHost(0.5f);  // 0dB
+    };
+
+    // Reset first, then apply preset-specific changes
+    resetToFlat();
+
+    // Load factory preset parameters (SSL-inspired, musical settings)
     switch (index)
     {
-        case 0:  // Default - neutral starting point
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.5f);  // 0dB
-            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.14f);  // ~100Hz
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.5f);
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.26f);  // ~600Hz
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.5f);
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.38f);  // ~2kHz
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.5f);
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.35f);  // ~8kHz
+        case 0:  // Default - Flat/Reset (already set by resetToFlat)
+            // All parameters at neutral
             break;
 
-        case 1:  // Vocal Presence
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 100Hz
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 1kHz
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.35f);
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 3kHz
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.48f);
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.4f);   // -4dB @ 10kHz
+        case 1:  // Vocal Clarity - Subtle presence boost without harshness
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 100Hz (warmth)
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.40f);  // -3dB @ 300Hz (reduce mud)
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.08f);  // 300Hz
+            parameters.getParameter("lm_q")->setValueNotifyingHost(0.65f);     // Q=1.3 (tighter)
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 3.5kHz (presence)
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.53f);  // 3.5kHz
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 10kHz (air)
+            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.25f); // HPF @ 80Hz
             break;
 
-        case 2:  // Kick Punch
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 60Hz
-            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.07f);
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.3f);   // -8dB @ 400Hz
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.17f);
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 4kHz
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.53f);
+        case 2:  // Kick Tighten - Punch without mud
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.70f);  // +6dB @ 50Hz (thump)
+            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.00f);  // 50Hz
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.37f);  // -4dB @ 200Hz (tighten)
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.05f);  // 200Hz
+            parameters.getParameter("lm_q")->setValueNotifyingHost(0.40f);     // Q=0.8 (broad)
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 2kHz (attack)
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.37f);  // 2kHz
+            parameters.getParameter("hm_q")->setValueNotifyingHost(0.75f);     // Q=1.5 (focused)
+            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.10f); // HPF @ 30Hz
             break;
 
-        case 3:  // Snare Crack
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 200Hz
-            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.31f);
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.75f);  // +10dB @ 5kHz
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.69f);
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 12kHz
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.57f);
+        case 3:  // Snare Bite - Body and crack
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 250Hz (body)
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.07f);  // 250Hz
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.67f);  // +5dB @ 5kHz (snap)
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.69f);  // 5kHz
+            parameters.getParameter("hm_q")->setValueNotifyingHost(0.60f);     // Q=1.2
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 8kHz (sizzle)
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.35f);  // 8kHz
+            parameters.getParameter("hf_bell")->setValueNotifyingHost(1.0f);   // Bell mode
+            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.55f); // HPF @ 150Hz
             break;
 
-        case 4:  // Bass Warmth
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 80Hz
-            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.10f);
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 300Hz
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.09f);
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 8kHz
+        case 4:  // Bass Definition - Punch without boom
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 80Hz
+            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.10f);  // 80Hz
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.40f);  // -3dB @ 400Hz (reduce mud)
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.17f);  // 400Hz
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 1.5kHz (definition)
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.24f);  // 1.5kHz
+            parameters.getParameter("hm_q")->setValueNotifyingHost(0.35f);     // Q=0.7 (musical)
+            parameters.getParameter("lpf_freq")->setValueNotifyingHost(0.45f); // LPF @ 10kHz
             break;
 
-        case 5:  // Bright Mix
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 6kHz
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.84f);
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 12kHz
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.57f);
+        case 5:  // Mix Polish - Subtle master bus enhancement
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 60Hz
+            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.03f);  // 60Hz
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.47f);  // -2dB @ 2.5kHz (smooth)
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.43f);  // 2.5kHz
+            parameters.getParameter("hm_q")->setValueNotifyingHost(0.40f);     // Q=0.8 (gentle)
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 12kHz (sheen)
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.57f);  // 12kHz
+            parameters.getParameter("saturation")->setValueNotifyingHost(0.20f);  // 20% saturation (glue)
             break;
 
-        case 6:  // Telephone EQ
-            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.75f);  // ~400Hz
-            parameters.getParameter("lpf_freq")->setValueNotifyingHost(0.12f);  // ~5kHz
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 1.5kHz
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.57f);
+        case 6:  // Telephone Effect - Lo-fi narrow bandwidth
+            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.85f); // HPF @ 300Hz
+            parameters.getParameter("lpf_freq")->setValueNotifyingHost(0.15f); // LPF @ 3kHz
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.70f);  // +6dB @ 1kHz
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.35f);  // 1kHz
+            parameters.getParameter("lm_q")->setValueNotifyingHost(0.75f);     // Q=1.5 (narrow)
             break;
 
-        case 7:  // Air & Silk
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.6f);   // +4dB @ 8kHz
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.97f);
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.75f);  // +10dB @ 16kHz
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.79f);
+        case 7:  // Air Lift - High-end sparkle
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 7kHz
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.90f);  // 7kHz
+            parameters.getParameter("hm_q")->setValueNotifyingHost(0.35f);     // Q=0.7 (smooth)
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 15kHz (air)
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.73f);  // 15kHz
             break;
 
-        case 8:  // Mix Bus Glue
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.55f);  // +2dB @ 100Hz
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.45f);  // -2dB @ 3kHz
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.48f);
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.55f);  // +2dB @ 10kHz
-            parameters.getParameter("saturation")->setValueNotifyingHost(0.4f);  // 40% saturation
+        case 8:  // Glue Bus - Very subtle cohesion
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.55f);  // +1.5dB @ 100Hz
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.45f);  // -1.5dB @ 3kHz
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 10kHz
+            parameters.getParameter("saturation")->setValueNotifyingHost(0.30f);  // 30% saturation
             break;
     }
 

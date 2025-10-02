@@ -158,6 +158,35 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     };
     addAndMakeVisible(spectrumButton);
 
+    // Add tooltips to all controls for better UX
+    hpfFreqSlider.setTooltip("High-Pass Filter Frequency (20Hz - 500Hz)");
+    lpfFreqSlider.setTooltip("Low-Pass Filter Frequency (5kHz - 20kHz)");
+
+    lfGainSlider.setTooltip("Low Frequency Gain (\u00B115dB)");
+    lfFreqSlider.setTooltip("Low Frequency (30Hz - 450Hz)");
+    lfBellButton.setTooltip("Toggle between Shelf and Bell curve");
+
+    lmGainSlider.setTooltip("Low-Mid Frequency Gain (\u00B115dB)");
+    lmFreqSlider.setTooltip("Low-Mid Frequency (200Hz - 2.5kHz)");
+    lmQSlider.setTooltip("Low-Mid Q/Bandwidth (0.5 - 4.0)");
+
+    hmGainSlider.setTooltip("High-Mid Frequency Gain (\u00B115dB)");
+    hmFreqSlider.setTooltip("High-Mid Frequency (600Hz - 7kHz)");
+    hmQSlider.setTooltip("High-Mid Q/Bandwidth (0.5 - 4.0)");
+
+    hfGainSlider.setTooltip("High Frequency Gain (\u00B115dB)");
+    hfFreqSlider.setTooltip("High Frequency (3kHz - 20kHz)");
+    hfBellButton.setTooltip("Toggle between Shelf and Bell curve");
+
+    outputGainSlider.setTooltip("Output Gain (\u00B118dB)");
+    saturationSlider.setTooltip("Analog Saturation Amount (0-100%)");
+
+    eqTypeSelector.setTooltip("Brown: E-Series (musical, fixed Q) | Black: G-Series (surgical, variable Q)");
+    presetSelector.setTooltip("Select factory preset");
+    oversamplingSelector.setTooltip("Oversampling: 2x or 4x for alias-free processing");
+    bypassButton.setTooltip("Bypass all EQ processing");
+    spectrumButton.setTooltip("Toggle real-time spectrum analyzer display");
+
     // Start timer for UI updates
     startTimerHz(30);
 }
