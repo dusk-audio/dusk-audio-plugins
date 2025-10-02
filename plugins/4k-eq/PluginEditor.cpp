@@ -121,6 +121,18 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     oversamplingAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "oversampling", oversamplingSelector);
 
+    // Spectrum analyzer setup
+    addAndMakeVisible(spectrumAnalyzer);
+    spectrumAnalyzer.setVisible(false);  // Hidden by default
+
+    spectrumButton.setButtonText("SPECTRUM");
+    spectrumButton.onClick = [this]()
+    {
+        spectrumAnalyzer.setVisible(spectrumButton.getToggleState());
+        resized();
+    };
+    addAndMakeVisible(spectrumButton);
+
     // Start timer for UI updates
     startTimerHz(30);
 }
@@ -347,6 +359,22 @@ void FourKEQEditor::resized()
     // Oversampling
     oversamplingSelector.setBounds(masterSection.removeFromTop(32).withSizeKeepingCentre(80, 28));
 
+    masterSection.removeFromTop(10);  // Gap
+
+    // Spectrum button
+    spectrumButton.setBounds(masterSection.removeFromTop(30).withSizeKeepingCentre(80, 26));
+
+    // Spectrum analyzer (overlay at bottom if visible)
+    if (spectrumAnalyzer.isVisible())
+    {
+        auto specBounds = getLocalBounds();
+        specBounds.removeFromTop(60);  // Below header
+        specBounds.removeFromBottom(10);  // Margin
+        specBounds = specBounds.removeFromBottom(120);  // 120px height
+        specBounds.reduce(10, 0);
+        spectrumAnalyzer.setBounds(specBounds);
+    }
+
     // Position labels manually below each knob
     auto positionLabel = [](juce::Label* label, const juce::Slider& slider, int yOffset = 5) {
         if (label && label->isVisible()) {
@@ -397,6 +425,12 @@ void FourKEQEditor::timerCallback()
         // Cache current values
         lastEqType = currentEqType;
         lastBypass = currentBypass;
+    }
+
+    // Push audio data to spectrum analyzer
+    if (spectrumAnalyzer.isVisible())
+    {
+        spectrumAnalyzer.pushBuffer(audioProcessor.spectrumBuffer);
     }
 }
 

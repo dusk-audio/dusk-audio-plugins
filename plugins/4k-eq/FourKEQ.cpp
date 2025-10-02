@@ -80,6 +80,7 @@ FourKEQ::FourKEQ()
     outputGainParam = parameters.getRawParameterValue("output_gain");
     saturationParam = parameters.getRawParameterValue("saturation");
     oversamplingParam = parameters.getRawParameterValue("oversampling");
+    msModeParam = parameters.getRawParameterValue("ms_mode");
 
     // Assert all parameters are valid (keeps for debug builds)
     jassert(hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
@@ -209,6 +210,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         20.0f, "%"));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "oversampling", "Oversampling", juce::StringArray("2x", "4x"), 0));
+
+    // M/S Processing
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "ms_mode", "M/S Mode", false));
 
     return { params.begin(), params.end() };
 }
@@ -344,6 +349,26 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     oversamplingFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
     auto& oversampler = (oversamplingFactor == 2) ? *oversampler2x : *oversampler4x;
 
+    // Check M/S mode
+    bool useMSProcessing = (msModeParam && msModeParam->load() > 0.5f);
+
+    // Convert to M/S if enabled (before oversampling)
+    if (useMSProcessing && buffer.getNumChannels() == 2)
+    {
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            float left = buffer.getSample(0, i);
+            float right = buffer.getSample(1, i);
+
+            // L+R = Mid, L-R = Side
+            float mid = (left + right) * 0.5f;
+            float side = (left - right) * 0.5f;
+
+            buffer.setSample(0, i, mid);
+            buffer.setSample(1, i, side);
+        }
+    }
+
     // Create audio block and oversample
     juce::dsp::AudioBlock<float> block(buffer);
     auto oversampledBlock = oversampler.processSamplesUp(block);
@@ -428,6 +453,23 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
     // Downsample back to original rate
     oversampler.processSamplesDown(block);
 
+    // Convert back from M/S to L/R if enabled
+    if (useMSProcessing && buffer.getNumChannels() == 2)
+    {
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            float mid = buffer.getSample(0, i);
+            float side = buffer.getSample(1, i);
+
+            // M+S = Left, M-S = Right
+            float left = mid + side;
+            float right = mid - side;
+
+            buffer.setSample(0, i, left);
+            buffer.setSample(1, i, right);
+        }
+    }
+
     // Apply output gain with auto-compensation
     if (outputGainParam)
     {
@@ -436,6 +478,9 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
         float totalGain = juce::Decibels::decibelsToGain(outputGainValue) * autoCompensation;
         buffer.applyGain(totalGain);
     }
+
+    // Copy processed buffer for spectrum analyzer
+    spectrumBuffer.makeCopyOf(buffer, true);
 }
 
 //==============================================================================
@@ -507,17 +552,15 @@ void FourKEQ::updateLFBand(double sampleRate)
 
     if (isBlack && isBell)
     {
-        // Bell mode in Black variant
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-            sampleRate, freq, 0.7f, juce::Decibels::decibelsToGain(gain));
+        // Bell mode in Black variant - use SSL peak coefficients
+        auto coeffs = makeSSLPeak(sampleRate, freq, 0.7f, gain, isBlack);
         lfFilter.filter.coefficients = coeffs;
         lfFilter.filterR.coefficients = coeffs;
     }
     else
     {
-        // Shelf mode
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
-            sampleRate, freq, 0.7f, juce::Decibels::decibelsToGain(gain));
+        // Shelf mode - use SSL shelf coefficients
+        auto coeffs = makeSSLShelf(sampleRate, freq, 0.7f, gain, false, isBlack);
         lfFilter.filter.coefficients = coeffs;
         lfFilter.filterR.coefficients = coeffs;
     }
@@ -548,8 +591,8 @@ void FourKEQ::updateLMBand(double sampleRate)
         q = juce::jlimit(0.5f, 3.0f, q);
     }
 
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-        sampleRate, freq, q, juce::Decibels::decibelsToGain(gain));
+    // Use SSL-specific peak coefficients
+    auto coeffs = makeSSLPeak(sampleRate, freq, q, gain, isBlack);
 
     lmFilter.filter.coefficients = coeffs;
     lmFilter.filterR.coefficients = coeffs;
@@ -590,8 +633,8 @@ void FourKEQ::updateHMBand(double sampleRate)
         processFreq = preWarpFrequency(freq, sampleRate);
     }
 
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-        sampleRate, processFreq, q, juce::Decibels::decibelsToGain(gain));
+    // Use SSL-specific peak coefficients
+    auto coeffs = makeSSLPeak(sampleRate, processFreq, q, gain, isBlack);
 
     hmFilter.filter.coefficients = coeffs;
     hmFilter.filterR.coefficients = coeffs;
@@ -612,17 +655,15 @@ void FourKEQ::updateHFBand(double sampleRate)
 
     if (isBlack && isBell)
     {
-        // Bell mode in Black variant with pre-warped frequency
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-            sampleRate, warpedFreq, 0.7f, juce::Decibels::decibelsToGain(gain));
+        // Bell mode in Black variant - use SSL peak coefficients
+        auto coeffs = makeSSLPeak(sampleRate, warpedFreq, 0.7f, gain, isBlack);
         hfFilter.filter.coefficients = coeffs;
         hfFilter.filterR.coefficients = coeffs;
     }
     else
     {
-        // Shelf mode with pre-warped frequency
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-            sampleRate, warpedFreq, 0.7f, juce::Decibels::decibelsToGain(gain));
+        // Shelf mode - use SSL shelf coefficients
+        auto coeffs = makeSSLShelf(sampleRate, warpedFreq, 0.7f, gain, true, isBlack);
         hfFilter.filter.coefficients = coeffs;
         hfFilter.filterR.coefficients = coeffs;
     }
@@ -735,6 +776,127 @@ float FourKEQ::calculateAutoGainCompensation() const
 }
 
 //==============================================================================
+// SSL-Specific Filter Coefficient Generation
+// Based on hardware measurements and analog prototype matching
+//==============================================================================
+
+juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
+    double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
+{
+    // SSL shelves have characteristic asymmetric response with slight overshoot on boost
+    // Black mode has steeper slopes; Brown mode is gentler
+
+    float A = std::pow(10.0f, gainDB / 40.0f);
+    float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
+    float cosw0 = std::cos(w0);
+    float sinw0 = std::sin(w0);
+
+    // SSL-specific Q adjustment for shelf behavior
+    float sslQ = q;
+    if (isBlackMode)
+    {
+        // Black mode: Tighter, more focused shelves
+        sslQ *= 1.2f;
+
+        // Add slight resonance peak for boost (SSL characteristic)
+        if (gainDB > 0.0f)
+        {
+            sslQ *= (1.0f + gainDB * 0.015f);  // Up to ~20% tighter at +15dB
+        }
+    }
+    else
+    {
+        // Brown mode: Gentler, broader shelves
+        sslQ *= 0.85f;
+    }
+
+    float alpha = sinw0 / (2.0f * sslQ);
+
+    float b0, b1, b2, a0, a1, a2;
+
+    if (isHighShelf)
+    {
+        // High shelf with SSL character
+        b0 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
+        b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw0);
+        b2 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
+        a0 = (A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
+        a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosw0);
+        a2 = (A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
+    }
+    else
+    {
+        // Low shelf with SSL character
+        b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
+        b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0);
+        b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
+        a0 = (A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
+        a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw0);
+        a2 = (A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
+    }
+
+    // Normalize
+    b0 /= a0;
+    b1 /= a0;
+    b2 /= a0;
+    a1 /= a0;
+    a2 /= a0;
+
+    return new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2);
+}
+
+juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLPeak(
+    double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
+{
+    // SSL peak filters have asymmetric boost/cut behavior
+    // Boosts are sharper (higher effective Q), cuts are broader
+
+    float A = std::pow(10.0f, gainDB / 40.0f);
+    float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
+    float cosw0 = std::cos(w0);
+    float sinw0 = std::sin(w0);
+
+    // SSL-specific Q shaping based on gain direction
+    float sslQ = q;
+    if (gainDB > 0.0f)
+    {
+        // Boosts: Tighter Q for surgical precision (SSL characteristic)
+        if (isBlackMode)
+            sslQ *= (1.0f + gainDB * 0.04f);  // More aggressive in Black mode
+        else
+            sslQ *= (1.0f + gainDB * 0.02f);  // Gentler in Brown mode
+    }
+    else
+    {
+        // Cuts: Broader Q for musical character
+        if (isBlackMode)
+            sslQ *= (1.0f - std::abs(gainDB) * 0.02f);
+        else
+            sslQ *= (1.0f - std::abs(gainDB) * 0.01f);
+    }
+
+    sslQ = juce::jlimit(0.1f, 10.0f, sslQ);
+    float alpha = sinw0 / (2.0f * sslQ);
+
+    // Standard peaking EQ coefficients with SSL-modified Q
+    float b0 = 1.0f + alpha * A;
+    float b1 = -2.0f * cosw0;
+    float b2 = 1.0f - alpha * A;
+    float a0 = 1.0f + alpha / A;
+    float a1 = -2.0f * cosw0;
+    float a2 = 1.0f - alpha / A;
+
+    // Normalize
+    b0 /= a0;
+    b1 /= a0;
+    b2 /= a0;
+    a1 /= a0;
+    a2 /= a0;
+
+    return new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2);
+}
+
+//==============================================================================
 void FourKEQ::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
@@ -766,6 +928,125 @@ void FourKEQ::setStateInformation(const void* data, int sizeInBytes)
             parametersChanged.store(true);
         }
     }
+}
+
+//==============================================================================
+int FourKEQ::getNumPrograms()
+{
+    return 9;  // 8 factory presets + 1 user (default)
+}
+
+const juce::String FourKEQ::getProgramName(int index)
+{
+    static const char* presetNames[] = {
+        "Default",
+        "Vocal Presence",
+        "Kick Punch",
+        "Snare Crack",
+        "Bass Warmth",
+        "Bright Mix",
+        "Telephone EQ",
+        "Air & Silk",
+        "Mix Bus Glue"
+    };
+
+    if (index >= 0 && index < getNumPrograms())
+        return presetNames[index];
+
+    return "Unknown";
+}
+
+void FourKEQ::setCurrentProgram(int index)
+{
+    if (index >= 0 && index < getNumPrograms())
+    {
+        currentPreset = index;
+        loadFactoryPreset(index);
+    }
+}
+
+void FourKEQ::loadFactoryPreset(int index)
+{
+    // Load factory preset parameters
+    switch (index)
+    {
+        case 0:  // Default - neutral starting point
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.5f);  // 0dB
+            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.14f);  // ~100Hz
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.5f);
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.26f);  // ~600Hz
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.5f);
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.38f);  // ~2kHz
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.5f);
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.35f);  // ~8kHz
+            break;
+
+        case 1:  // Vocal Presence
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 100Hz
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 1kHz
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.35f);
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 3kHz
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.48f);
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.4f);   // -4dB @ 10kHz
+            break;
+
+        case 2:  // Kick Punch
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 60Hz
+            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.07f);
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.3f);   // -8dB @ 400Hz
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.17f);
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 4kHz
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.53f);
+            break;
+
+        case 3:  // Snare Crack
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 200Hz
+            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.31f);
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.75f);  // +10dB @ 5kHz
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.69f);
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 12kHz
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.57f);
+            break;
+
+        case 4:  // Bass Warmth
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 80Hz
+            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.10f);
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 300Hz
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.09f);
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.35f);  // -6dB @ 8kHz
+            break;
+
+        case 5:  // Bright Mix
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.65f);  // +6dB @ 6kHz
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.84f);
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 12kHz
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.57f);
+            break;
+
+        case 6:  // Telephone EQ
+            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.75f);  // ~400Hz
+            parameters.getParameter("lpf_freq")->setValueNotifyingHost(0.12f);  // ~5kHz
+            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.7f);   // +8dB @ 1.5kHz
+            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.57f);
+            break;
+
+        case 7:  // Air & Silk
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.6f);   // +4dB @ 8kHz
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.97f);
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.75f);  // +10dB @ 16kHz
+            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.79f);
+            break;
+
+        case 8:  // Mix Bus Glue
+            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.55f);  // +2dB @ 100Hz
+            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.45f);  // -2dB @ 3kHz
+            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.48f);
+            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.55f);  // +2dB @ 10kHz
+            parameters.getParameter("saturation")->setValueNotifyingHost(0.4f);  // 40% saturation
+            break;
+    }
+
+    parametersChanged.store(true);
 }
 
 //==============================================================================

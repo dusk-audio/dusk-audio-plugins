@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "FourKEQ.h"
 #include "FourKLookAndFeel.h"
+#include "SpectrumAnalyzer.h"
 
 //==============================================================================
 /**
@@ -79,6 +80,10 @@ private:
 
     // Label storage
     std::vector<std::unique_ptr<juce::Label>> knobLabels;
+
+    // Spectrum analyzer
+    SpectrumAnalyzer spectrumAnalyzer;
+    juce::ToggleButton spectrumButton;
 
     // Attachment classes for parameter binding
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;

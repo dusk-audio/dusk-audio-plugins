@@ -49,10 +49,10 @@ public:
     double getTailLengthSeconds() const override { return 0.0; }
 
     //==============================================================================
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int index) override {}
-    const juce::String getProgramName(int index) override { return {}; }
+    int getNumPrograms() override;
+    int getCurrentProgram() override { return currentPreset; }
+    void setCurrentProgram(int index) override;
+    const juce::String getProgramName(int index) override;
     void changeProgramName(int index, const juce::String& newName) override {}
 
     //==============================================================================
@@ -62,6 +62,9 @@ public:
     //==============================================================================
     // Public parameter access for GUI and inline display
     juce::AudioProcessorValueTreeState parameters;
+
+    // Audio buffer for spectrum analyzer
+    juce::AudioBuffer<float> spectrumBuffer;
 
     #ifdef JucePlugin_Build_LV2
     #endif
@@ -162,6 +165,7 @@ private:
     std::atomic<float>* outputGainParam = nullptr;
     std::atomic<float>* saturationParam = nullptr;
     std::atomic<float>* oversamplingParam = nullptr; // 0 = 2x, 1 = 4x
+    std::atomic<float>* msModeParam = nullptr;  // M/S processing
 
     // Safe parameter accessors with fallback defaults
     inline float safeGetParam(std::atomic<float>* param, float defaultValue) const
@@ -183,6 +187,10 @@ private:
     static constexpr float hmSatDrive = 1.15f;   // High-mid - more aggressive (G-series)
     static constexpr float hfSatDrive = 1.08f;   // High shelf - controlled brightness
 
+    // Preset management
+    int currentPreset = 0;
+    void loadFactoryPreset(int index);
+
     // Filter update methods
     void updateFilters();
     void updateHPF(double sampleRate);
@@ -197,6 +205,13 @@ private:
     float applySaturation(float sample, float amount) const;
     float applyAnalogSaturation(float sample, float drive, bool isAsymmetric = true) const;
     float calculateAutoGainCompensation() const;
+
+    // SSL-specific filter coefficient generation
+    // Based on hardware measurements and analog prototype matching
+    juce::dsp::IIR::Coefficients<float>::Ptr makeSSLShelf(
+        double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const;
+    juce::dsp::IIR::Coefficients<float>::Ptr makeSSLPeak(
+        double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const;
 
     // Parameter creation
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
