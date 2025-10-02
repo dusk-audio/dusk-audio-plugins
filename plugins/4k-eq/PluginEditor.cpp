@@ -111,6 +111,25 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     eqTypeAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "eq_type", eqTypeSelector);
 
+    // Preset selector
+    for (int i = 0; i < audioProcessor.getNumPrograms(); ++i)
+    {
+        presetSelector.addItem(audioProcessor.getProgramName(i), i + 1);
+    }
+    presetSelector.setSelectedId(audioProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
+    presetSelector.onChange = [this]()
+    {
+        int presetIndex = presetSelector.getSelectedId() - 1;
+        if (presetIndex >= 0 && presetIndex < audioProcessor.getNumPrograms())
+        {
+            audioProcessor.setCurrentProgram(presetIndex);
+        }
+    };
+    presetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
+    presetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
+    presetSelector.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xff808080));
+    addAndMakeVisible(presetSelector);
+
     // Oversampling selector
     oversamplingSelector.addItem("2x", 1);
     oversamplingSelector.addItem("4x", 2);
@@ -122,14 +141,20 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
         audioProcessor.parameters, "oversampling", oversamplingSelector);
 
     // Spectrum analyzer setup
+    spectrumAnalyzer.setSampleRate(audioProcessor.getSampleRate());
     addAndMakeVisible(spectrumAnalyzer);
     spectrumAnalyzer.setVisible(false);  // Hidden by default
 
     spectrumButton.setButtonText("SPECTRUM");
     spectrumButton.onClick = [this]()
     {
-        spectrumAnalyzer.setVisible(spectrumButton.getToggleState());
-        resized();
+        bool showSpectrum = spectrumButton.getToggleState();
+        spectrumAnalyzer.setVisible(showSpectrum);
+
+        // Auto-resize window to accommodate spectrum analyzer
+        int baseHeight = 520;
+        int spectrumHeight = showSpectrum ? 150 : 0;
+        setSize(getWidth(), baseHeight + spectrumHeight);
     };
     addAndMakeVisible(spectrumButton);
 
@@ -162,7 +187,7 @@ void FourKEQEditor::paint(juce::Graphics& g)
     // Subtitle
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
     g.setColour(juce::Colour(0xff909090));
-    g.drawText("SSL-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
+    g.drawText("Console-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
 
     // EQ Type indicator
     bool isBlack = eqTypeParam->load() > 0.5f;
@@ -243,7 +268,12 @@ void FourKEQEditor::paint(juce::Graphics& g)
 void FourKEQEditor::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromTop(60);  // Header space
+
+    // Preset selector in header (centered at top)
+    auto headerBounds = bounds.removeFromTop(60);
+    int centerX = headerBounds.getCentreX();
+    presetSelector.setBounds(centerX - 100, 15, 200, 28);
+
     bounds.reduce(15, 10);
 
     // Filters section (left)
@@ -364,13 +394,25 @@ void FourKEQEditor::resized()
     // Spectrum button
     spectrumButton.setBounds(masterSection.removeFromTop(30).withSizeKeepingCentre(80, 26));
 
-    // Spectrum analyzer (overlay at bottom if visible)
+    // Spectrum analyzer (below all controls if visible)
     if (spectrumAnalyzer.isVisible())
     {
         auto specBounds = getLocalBounds();
         specBounds.removeFromTop(60);  // Below header
-        specBounds.removeFromBottom(10);  // Margin
-        specBounds = specBounds.removeFromBottom(120);  // 120px height
+
+        // Start below the knobs - find the bottom of the deepest control section
+        int controlsBottom = 0;
+        controlsBottom = juce::jmax(controlsBottom, hpfFreqSlider.getBottom());
+        controlsBottom = juce::jmax(controlsBottom, lpfFreqSlider.getBottom());
+        controlsBottom = juce::jmax(controlsBottom, lfBellButton.getBottom());
+        controlsBottom = juce::jmax(controlsBottom, lmQSlider.getBottom());
+        controlsBottom = juce::jmax(controlsBottom, hmQSlider.getBottom());
+        controlsBottom = juce::jmax(controlsBottom, hfBellButton.getBottom());
+        controlsBottom = juce::jmax(controlsBottom, saturationSlider.getBottom());
+
+        // Position spectrum below controls with gap
+        specBounds.removeFromTop(controlsBottom - 60 + 15);  // +15 for gap
+        specBounds.removeFromBottom(10);  // Bottom margin
         specBounds.reduce(10, 0);
         spectrumAnalyzer.setBounds(specBounds);
     }
@@ -425,6 +467,14 @@ void FourKEQEditor::timerCallback()
         // Cache current values
         lastEqType = currentEqType;
         lastBypass = currentBypass;
+    }
+
+    // Update spectrum analyzer sample rate if changed
+    double currentSampleRate = audioProcessor.getSampleRate();
+    if (currentSampleRate > 0.0 && currentSampleRate != lastSampleRate)
+    {
+        spectrumAnalyzer.setSampleRate(currentSampleRate);
+        lastSampleRate = currentSampleRate;
     }
 
     // Push audio data to spectrum analyzer

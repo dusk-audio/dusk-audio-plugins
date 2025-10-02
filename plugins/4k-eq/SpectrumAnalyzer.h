@@ -19,6 +19,17 @@ public:
         startTimerHz(30);  // 30 Hz refresh rate
     }
 
+    void setSampleRate(double newSampleRate)
+    {
+        // Validate sample rate
+        if (!std::isfinite(newSampleRate))
+            return;
+
+        // Clamp to reasonable audio range
+        newSampleRate = juce::jlimit(8000.0, 192000.0, newSampleRate);
+        sampleRate = newSampleRate;
+    }
+
     ~SpectrumAnalyzer() override
     {
         stopTimer();
@@ -83,6 +94,7 @@ private:
     int fifoIndex = 0;
     std::atomic<bool> nextFFTBlockReady{false};
 
+    double sampleRate = 48000.0;
     float minFreq = 20.0f;
     float maxFreq = 20000.0f;
     float minDB = -90.0f;
@@ -196,7 +208,7 @@ private:
 
     float binToFreq(int bin) const
     {
-        return bin * 48000.0f / static_cast<float>(fftSize);  // Assuming 48kHz
+        return bin * static_cast<float>(sampleRate) / static_cast<float>(fftSize);
     }
 
     float freqToX(float freq, juce::Rectangle<float> bounds) const

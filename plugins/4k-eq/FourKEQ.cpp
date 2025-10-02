@@ -141,14 +141,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         20000.0f, "Hz"));
 
     // Low frequency band
-    // SSL: ±15dB (Brown E-series) or ±18dB (Black G-series)
-    // Using ±20dB for slight headroom
+    // SSL specs: ±15dB (Brown E-series), ±18dB (Black G-series)
+    // Using ±20dB range to accommodate both variants with headroom
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lf_gain", "LF Gain",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f),
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lf_freq", "LF Frequency",
+        // Brown: typically 30-450Hz, Black: slightly extended
         juce::NormalisableRange<float>(20.0f, 600.0f, 1.0f, 0.3f),
         100.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -505,7 +506,11 @@ void FourKEQ::updateHPF(double sampleRate)
 
     float freq = hpfFreqParam->load();
 
-    // True 3rd-order Butterworth HPF (18dB/oct):
+    // SSL HPF: Both Brown (E-series) and Black (G-series) use 18dB/oct
+    // Note: Some conflicting sources suggest Brown = 12dB/oct, but most measurements
+    // and official SSL documentation confirm 18dB/oct for both variants
+    //
+    // Implementation: 3rd-order Butterworth (1st-order + 2nd-order cascade)
     // Stage 1: 1st-order highpass (6dB/oct)
     auto coeffs1st = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sampleRate, freq);
     hpfFilter.stage1L.coefficients = coeffs1st;
@@ -576,20 +581,13 @@ void FourKEQ::updateLMBand(double sampleRate)
     float q = lmQParam->load();
     bool isBlack = (eqTypeParam->load() > 0.5f);
 
-    // Brown vs Black mode differences
+    // Brown vs Black mode differences (per SSL E-series vs G-series specs)
     if (isBlack)
     {
-        // Black mode: Proportional Q (tighter with more gain)
+        // Black (G-series): Proportional Q - increases with gain for surgical precision
         q = calculateDynamicQ(gain, q);
     }
-    else
-    {
-        // Brown mode: Fixed Q with slight gain-dependent adjustment for musicality
-        // More subtle than Black mode - maintains broad, musical character
-        float absGain = std::abs(gain);
-        q = q * (1.0f + (absGain / 20.0f) * 0.2f);  // Only 20% variation vs 100-150% in Black
-        q = juce::jlimit(0.5f, 3.0f, q);
-    }
+    // else: Brown (E-series): Fixed Q - no proportionality, maintains constant bandwidth
 
     // Use SSL-specific peak coefficients
     auto coeffs = makeSSLPeak(sampleRate, freq, q, gain, isBlack);
@@ -608,19 +606,17 @@ void FourKEQ::updateHMBand(double sampleRate)
     float q = hmQParam->load();
     bool isBlack = (eqTypeParam->load() > 0.5f);
 
-    // Brown vs Black mode differences
+    // Brown vs Black mode differences (per SSL E-series vs G-series specs)
     if (isBlack)
     {
-        // Black mode: Proportional Q, extended frequency range (up to 13kHz)
+        // Black (G-series): Proportional Q, extended frequency range (up to 13kHz)
         q = calculateDynamicQ(gain, q);
         // No frequency limiting in Black mode - full 600Hz-13kHz range
     }
     else
     {
-        // Brown mode: Fixed Q with minimal variation, limited to 7kHz
-        float absGain = std::abs(gain);
-        q = q * (1.0f + (absGain / 20.0f) * 0.2f);
-        q = juce::jlimit(0.5f, 3.0f, q);
+        // Brown (E-series): Fixed Q, limited to 7kHz
+        // No proportionality - maintains constant bandwidth per SSL E-series design
         // Soft-limit frequency for Brown mode character
         if (freq > 7000.0f) {
             freq = 7000.0f;
@@ -784,7 +780,8 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
     double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
 {
     // SSL shelves have characteristic asymmetric response with slight overshoot on boost
-    // Black mode has steeper slopes; Brown mode is gentler
+    // Black mode (G-series): Steeper slopes with subtle resonance bump at shelf transition
+    // Brown mode (E-series): Gentler, broader shelves matching Brainworx/hardware measurements
 
     float A = std::pow(10.0f, gainDB / 40.0f);
     float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
@@ -795,19 +792,23 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
     float sslQ = q;
     if (isBlackMode)
     {
-        // Black mode: Tighter, more focused shelves
-        sslQ *= 1.2f;
+        // Black mode: Tighter, more focused shelves with characteristic "bump"
+        sslQ *= 1.35f;  // Increased from 1.2x for more pronounced slope
 
-        // Add slight resonance peak for boost (SSL characteristic)
+        // Add resonance peak for boost - creates SSL G-series characteristic overshoot
+        // This subtle bump at the shelf frequency is evident in hardware measurements
         if (gainDB > 0.0f)
         {
-            sslQ *= (1.0f + gainDB * 0.015f);  // Up to ~20% tighter at +15dB
+            // Scale resonance with gain amount: subtle at low boost, more prominent at high boost
+            float resonanceScale = 1.0f + (gainDB / 15.0f) * 0.4f;  // Up to +40% at +15dB
+            sslQ *= resonanceScale;
         }
     }
     else
     {
-        // Brown mode: Gentler, broader shelves
-        sslQ *= 0.85f;
+        // Brown mode: Gentler, broader shelves - characteristic E-series "musical" sound
+        // Reduced from 0.85x to 0.70x for even broader, more gentle transition
+        sslQ *= 0.70f;
     }
 
     float alpha = sinw0 / (2.0f * sslQ);
@@ -849,30 +850,34 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLPeak(
     double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
 {
     // SSL peak filters have asymmetric boost/cut behavior
-    // Boosts are sharper (higher effective Q), cuts are broader
+    // Black mode (G-series): Sharper, more surgical peaks with proportional Q
+    // Brown mode (E-series): Broader, more musical peaks matching hardware measurements
 
     float A = std::pow(10.0f, gainDB / 40.0f);
     float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
     float cosw0 = std::cos(w0);
     float sinw0 = std::sin(w0);
 
-    // SSL-specific Q shaping based on gain direction
+    // SSL-specific Q shaping based on gain direction and mode
     float sslQ = q;
     if (gainDB > 0.0f)
     {
         // Boosts: Tighter Q for surgical precision (SSL characteristic)
         if (isBlackMode)
-            sslQ *= (1.0f + gainDB * 0.04f);  // More aggressive in Black mode
+            sslQ *= (1.0f + gainDB * 0.05f);  // More aggressive in Black mode (increased from 0.04)
         else
-            sslQ *= (1.0f + gainDB * 0.02f);  // Gentler in Brown mode
+            // Brown mode boosts: Keep broader for "musical" character
+            // Don't tighten as much - matches Brainworx/Gearspace measurements
+            sslQ *= (1.0f + gainDB * 0.01f);  // Reduced from 0.02 for gentler peaks
     }
     else
     {
         // Cuts: Broader Q for musical character
         if (isBlackMode)
-            sslQ *= (1.0f - std::abs(gainDB) * 0.02f);
+            sslQ *= (1.0f - std::abs(gainDB) * 0.025f);  // Slightly broader cuts
         else
-            sslQ *= (1.0f - std::abs(gainDB) * 0.01f);
+            // Brown mode cuts: Very broad and gentle
+            sslQ *= (1.0f - std::abs(gainDB) * 0.015f);  // Increased from 0.01 for broader cuts
     }
 
     sslQ = juce::jlimit(0.1f, 10.0f, sslQ);
