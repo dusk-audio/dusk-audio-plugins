@@ -10,8 +10,30 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
+# Build options
+option(BUILD_AU "Build AU format" ON)
+option(BUILD_VST3 "Build VST3 format" ON)
+option(BUILD_LV2 "Build LV2 format" ON)
+option(BUILD_STANDALONE "Build Standalone format" ON)
+option(ENABLE_ASAN "Enable AddressSanitizer for debug builds" OFF)
+
+# Determine formats to build
+set(FORMATS "")
+if(BUILD_AU AND APPLE)
+    list(APPEND FORMATS AU)
+endif()
+if(BUILD_VST3)
+    list(APPEND FORMATS VST3)
+endif()
+if(BUILD_LV2)
+    list(APPEND FORMATS LV2)
+endif()
+if(BUILD_STANDALONE)
+    list(APPEND FORMATS Standalone)
+endif()
+
 # Add JUCE as a subdirectory
-add_subdirectory(JUCE)
+# JUCE is already added in the parent CMakeLists.txt
 
 # Add the plugin target
 juce_add_plugin(StudioVerb
@@ -22,7 +44,7 @@ juce_add_plugin(StudioVerb
     PLUGIN_MANUFACTURER_CODE LuCo
     PLUGIN_CODE StuV
 
-    FORMATS AU VST3 LV2 Standalone  # Task 6: Added LV2 support
+    FORMATS ${FORMATS}  # Configurable formats
 
     PRODUCT_NAME "Studio Verb"
 
@@ -70,6 +92,7 @@ target_compile_definitions(StudioVerb
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1  # Fix VST3 parameter conflict
         JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_REPORT_APP_USAGE=0
 )
@@ -84,6 +107,31 @@ target_link_libraries(StudioVerb
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+# Enable AddressSanitizer for debug builds if requested
+if(ENABLE_ASAN)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # GCC and Clang support
+        target_compile_options(StudioVerb PRIVATE
+            $<$<CONFIG:Debug>:-fsanitize=address>
+            $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
+            $<$<CONFIG:Debug>:-g>
+        )
+        target_link_options(StudioVerb PRIVATE
+            $<$<CONFIG:Debug>:-fsanitize=address>
+        )
+        message(STATUS "AddressSanitizer enabled for StudioVerb (Debug builds only) - Compiler: ${CMAKE_CXX_COMPILER_ID}")
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        # MSVC support (requires Visual Studio 2019 16.9 or later)
+        target_compile_options(StudioVerb PRIVATE
+            $<$<CONFIG:Debug>:/fsanitize=address>
+        )
+        # MSVC automatically links ASAN runtime when /fsanitize=address is used
+        message(STATUS "AddressSanitizer enabled for StudioVerb (Debug builds only) - MSVC")
+    else()
+        message(WARNING "AddressSanitizer requested but not supported for compiler: ${CMAKE_CXX_COMPILER_ID}")
+    endif()
+endif()
 
 # Set binary output directory
 set_target_properties(StudioVerb PROPERTIES

@@ -161,35 +161,58 @@ void StudioVerbAudioProcessor::initializePresets()
 //==============================================================================
 void StudioVerbAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
 {
+    // Thread safety: Lock to prevent artifacts during audio processing
+    const juce::ScopedLock sl(processLock);
+
+    // Input validation and bounds checking
     if (parameterID == ALGORITHM_ID)
     {
-        currentAlgorithm.store(static_cast<Algorithm>(static_cast<int>(newValue)));
-        reverbEngine->setAlgorithm(static_cast<int>(currentAlgorithm.load()));
+        int algorithmInt = static_cast<int>(newValue);
+        algorithmInt = juce::jlimit(0, static_cast<int>(NumAlgorithms) - 1, algorithmInt);
+        currentAlgorithm.store(static_cast<Algorithm>(algorithmInt));
+
+        if (reverbEngine)
+            reverbEngine->setAlgorithm(algorithmInt);
     }
     else if (parameterID == SIZE_ID)
     {
-        currentSize.store(newValue);
-        reverbEngine->setSize(currentSize.load());
+        float clampedSize = juce::jlimit(0.0f, 1.0f, newValue);
+        currentSize.store(clampedSize);
+
+        if (reverbEngine)
+            reverbEngine->setSize(clampedSize);
     }
     else if (parameterID == DAMP_ID)
     {
-        currentDamp.store(newValue);
-        reverbEngine->setDamping(currentDamp.load());
+        float clampedDamp = juce::jlimit(0.0f, 1.0f, newValue);
+        currentDamp.store(clampedDamp);
+
+        if (reverbEngine)
+            reverbEngine->setDamping(clampedDamp);
     }
     else if (parameterID == PREDELAY_ID)
     {
-        currentPredelay.store(newValue);
-        reverbEngine->setPredelay(currentPredelay.load());
+        float clampedPredelay = juce::jlimit(0.0f, 200.0f, newValue);
+        currentPredelay.store(clampedPredelay);
+
+        if (reverbEngine)
+            reverbEngine->setPredelay(clampedPredelay);
     }
     else if (parameterID == MIX_ID)
     {
-        currentMix.store(newValue);
-        reverbEngine->setMix(currentMix.load());
+        float clampedMix = juce::jlimit(0.0f, 1.0f, newValue);
+        currentMix.store(clampedMix);
+
+        if (reverbEngine)
+            reverbEngine->setMix(clampedMix);
     }
     else if (parameterID == WIDTH_ID)  // Task 10
     {
-        currentWidth.store(newValue);
-        reverbEngine->setWidth(currentWidth.load());
+        float clampedWidth = juce::jlimit(0.0f, 1.0f, newValue);
+        currentWidth.store(clampedWidth);
+
+        if (reverbEngine)
+            reverbEngine->setWidth(clampedWidth);
     }
 }
 
@@ -324,39 +347,77 @@ void StudioVerbAudioProcessor::changeProgramName(int index, const juce::String& 
 // Task 4: Save user preset
 void StudioVerbAudioProcessor::saveUserPreset(const juce::String& name)
 {
-    Preset preset;
-    preset.name = name;
-    preset.algorithm = currentAlgorithm.load();
-    preset.size = currentSize.load();
-    preset.damp = currentDamp.load();
-    preset.predelay = currentPredelay.load();
-    preset.mix = currentMix.load();
+    // Validate preset name
+    if (name.isEmpty())
+    {
+        DBG("Warning: Cannot save preset with empty name");
+        return;
+    }
 
-    userPresets.push_back(preset);
+    // Limit number of user presets to prevent excessive memory usage
+    constexpr size_t maxUserPresets = 100;
+    if (userPresets.size() >= maxUserPresets)
+    {
+        DBG("Warning: Maximum number of user presets (" << maxUserPresets << ") reached");
+        return;
+    }
 
-    // Store in parameters state
-    auto userPresetsNode = parameters.state.getOrCreateChildWithName("UserPresets", nullptr);
-    juce::ValueTree presetNode("Preset");
-    presetNode.setProperty("name", name, nullptr);
-    presetNode.setProperty("algorithm", static_cast<int>(preset.algorithm), nullptr);
-    presetNode.setProperty("size", preset.size, nullptr);
-    presetNode.setProperty("damp", preset.damp, nullptr);
-    presetNode.setProperty("predelay", preset.predelay, nullptr);
-    presetNode.setProperty("mix", preset.mix, nullptr);
-    userPresetsNode.appendChild(presetNode, nullptr);
+    try
+    {
+        Preset preset;
+        preset.name = name;
+        preset.algorithm = currentAlgorithm.load();
+        preset.size = currentSize.load();
+        preset.damp = currentDamp.load();
+        preset.predelay = currentPredelay.load();
+        preset.mix = currentMix.load();
+
+        userPresets.push_back(preset);
+
+        // Store in parameters state
+        auto userPresetsNode = parameters.state.getOrCreateChildWithName("UserPresets", nullptr);
+        juce::ValueTree presetNode("Preset");
+        presetNode.setProperty("name", name, nullptr);
+        presetNode.setProperty("algorithm", static_cast<int>(preset.algorithm), nullptr);
+        presetNode.setProperty("size", preset.size, nullptr);
+        presetNode.setProperty("damp", preset.damp, nullptr);
+        presetNode.setProperty("predelay", preset.predelay, nullptr);
+        presetNode.setProperty("mix", preset.mix, nullptr);
+        userPresetsNode.appendChild(presetNode, nullptr);
+    }
+    catch (const std::exception& e)
+    {
+        DBG("Error saving user preset: " << e.what());
+    }
 }
 
 // Task 4: Delete user preset
 void StudioVerbAudioProcessor::deleteUserPreset(int index)
 {
-    if (index >= 0 && index < static_cast<int>(userPresets.size()))
+    if (index < 0 || index >= static_cast<int>(userPresets.size()))
+    {
+        DBG("Warning: Invalid preset index for deletion: " << index);
+        return;
+    }
+
+    try
     {
         userPresets.erase(userPresets.begin() + index);
 
         // Update parameters state
         auto userPresetsNode = parameters.state.getChildWithName("UserPresets");
         if (userPresetsNode.isValid() && index < userPresetsNode.getNumChildren())
+        {
             userPresetsNode.removeChild(index, nullptr);
+        }
+        else
+        {
+            DBG("Warning: Preset tree inconsistency during deletion");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        DBG("Error deleting user preset: " << e.what());
     }
 }
 
@@ -408,15 +469,24 @@ void StudioVerbAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
 
     juce::ScopedNoDenormals noDenormals;
 
+    // Thread safety: Try to acquire lock, but don't block audio thread
+    const juce::ScopedTryLock sl(processLock);
+    if (!sl.isLocked())
+        return; // Skip processing if we can't get the lock immediately
+
+    // Validate buffer
+    if (buffer.getNumChannels() == 0 || buffer.getNumSamples() == 0)
+        return;
+
     // Handle mono input by duplicating to stereo
     if (getTotalNumInputChannels() == 1 && buffer.getNumChannels() >= 2)
     {
         buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
     }
 
-    // Task 5: Thread safety around reverb processing
+    // Process with reverb engine (lock already acquired above)
+    if (reverbEngine)
     {
-        juce::ScopedLock lock(processLock);
         reverbEngine->process(buffer);
     }
 }
