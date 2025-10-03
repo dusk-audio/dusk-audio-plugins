@@ -18,8 +18,10 @@ StudioVerbAudioProcessor::StudioVerbAudioProcessor()
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
        parameters(*this, nullptr, "Parameters", createParameterLayout())
 {
-    reverbEngine = std::make_unique<ReverbEngineEnhanced>();  // Task 3: Using enhanced engine
+    // Initialize the reverb engine
+    reverbEngine = std::make_unique<ReverbEngineEnhanced>();
 
+    // Initialize factory presets
     initializePresets();
 
     // Add parameter listeners (Task 10: Added width)
@@ -30,20 +32,13 @@ StudioVerbAudioProcessor::StudioVerbAudioProcessor()
     parameters.addParameterListener(MIX_ID, this);
     parameters.addParameterListener(WIDTH_ID, this);
 
-    // Load default values
-    auto* algorithmParam = parameters.getRawParameterValue(ALGORITHM_ID);
-    auto* sizeParam = parameters.getRawParameterValue(SIZE_ID);
-    auto* dampParam = parameters.getRawParameterValue(DAMP_ID);
-    auto* predelayParam = parameters.getRawParameterValue(PREDELAY_ID);
-    auto* mixParam = parameters.getRawParameterValue(MIX_ID);
-    auto* widthParam = parameters.getRawParameterValue(WIDTH_ID);
-
-    currentAlgorithm.store(static_cast<Algorithm>(static_cast<int>(*algorithmParam)));
-    currentSize.store(*sizeParam);
-    currentDamp.store(*dampParam);
-    currentPredelay.store(*predelayParam);
-    currentMix.store(*mixParam);
-    currentWidth.store(*widthParam);
+    // Initialize with default values - parameters may not be ready yet
+    currentAlgorithm.store(Room);
+    currentSize.store(0.5f);
+    currentDamp.store(0.5f);
+    currentPredelay.store(20.0f);
+    currentMix.store(0.3f);
+    currentWidth.store(1.0f);
 }
 
 StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
