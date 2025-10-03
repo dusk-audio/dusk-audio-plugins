@@ -149,7 +149,7 @@ if(BUILD_UNIVERSAL_COMPRESSOR_TESTS)
             -fsanitize=address
             -fsanitize=undefined
         )
-        message(STATUS "AddressSanitizer enabled for UniversalCompressorTests")
+        message(STATUS "AddressSanitizer and UndefinedBehaviorSanitizer enabled for UniversalCompressorTests")
     endif()
 
     # Generate JUCE header for tests

@@ -340,7 +340,7 @@ private:
         std::atomic<bool> audioThreadRunning{true};
         std::atomic<int> readCount{0};
         std::atomic<int> writeCount{0};
-        bool hadRaceCondition = false;
+        std::atomic<bool> hadRaceCondition{false};
 
         // Simulate audio thread processing
         std::thread audioThread([&]() {
@@ -375,14 +375,14 @@ private:
                         std::isnan(linked0) || std::isinf(linked0) ||
                         std::isnan(linked1) || std::isinf(linked1))
                     {
-                        hadRaceCondition = true;
+                        hadRaceCondition.store(true);
                     }
 
                     readCount++;
                     std::this_thread::sleep_for(std::chrono::microseconds(5));
                 }
                 catch (...) {
-                    hadRaceCondition = true;
+                    hadRaceCondition.store(true);
                 }
             }
         });
@@ -390,7 +390,7 @@ private:
         audioThread.join();
         uiThread.join();
 
-        expect(!hadRaceCondition, "No race conditions detected in multi-threaded meter access");
+        expect(!hadRaceCondition.load(), "No race conditions detected in multi-threaded meter access");
         expect(readCount >= 100, "UI thread completed reads: " + juce::String(readCount.load()));
         expect(writeCount == 100, "Audio thread completed writes: " + juce::String(writeCount.load()));
 
