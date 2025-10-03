@@ -52,10 +52,9 @@ if(BUILD_TAPE_MACHINE)
     add_subdirectory(plugins/TapeMachine)
 endif()
 
-# Temporarily disabled due to missing JUCE directory
-# if(BUILD_STUDIO_REVERB)
-#     add_subdirectory(plugins/StudioVerb)
-# endif()
+if(BUILD_STUDIO_REVERB)
+    add_subdirectory(plugins/StudioVerb)
+endif()
 
 if(BUILD_TAPE_ECHO)
     add_subdirectory(plugins/TapeEcho)
