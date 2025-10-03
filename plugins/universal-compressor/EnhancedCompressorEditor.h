@@ -2,7 +2,6 @@
 
 #include "UniversalCompressor.h"
 #include "AnalogLookAndFeel.h"
-#include "ModernCompressorPanels.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
@@ -35,8 +34,7 @@ private:
     std::unique_ptr<FETLookAndFeel> fetLookAndFeel;
     std::unique_ptr<VCALookAndFeel> vcaLookAndFeel;
     std::unique_ptr<BusLookAndFeel> busLookAndFeel;
-    std::unique_ptr<ModernLookAndFeel> modernLookAndFeel;
-    
+
     // Current active look
     juce::LookAndFeel* currentLookAndFeel = nullptr;
     
@@ -142,10 +140,6 @@ private:
     VCAPanel vcaPanel;
     BusPanel busPanel;
 
-    // Modern mode panels
-    std::unique_ptr<DigitalCompressorPanel> digitalPanel;
-    // Multiband panel removed
-    
     // Current mode
     int currentMode = 0;
     

@@ -2,6 +2,107 @@
 #include "EnhancedCompressorEditor.h"
 #include <cmath>
 
+// SIMD helper utilities for vectorizable operations
+namespace SIMDHelpers {
+    using FloatVec = juce::dsp::SIMDRegister<float>;
+
+    // Fast absolute value for SIMD
+    inline FloatVec abs(FloatVec x) {
+        return FloatVec::max(x, FloatVec(0.0f) - x);
+    }
+
+    // Fast max for peak detection
+    inline float horizontalMax(FloatVec x) {
+        float result = x.get(0);
+        for (size_t i = 1; i < FloatVec::SIMDNumElements; ++i)
+            result = juce::jmax(result, x.get(i));
+        return result;
+    }
+
+    // Process buffer to get peak with SIMD (optimized metering)
+    inline float getPeakLevel(const float* data, int numSamples) {
+        constexpr size_t simdSize = FloatVec::SIMDNumElements;
+        FloatVec peak(0.0f);
+
+        int i = 0;
+        // Process SIMD-aligned chunks
+        for (; i + (int)simdSize <= numSamples; i += simdSize) {
+            FloatVec samples = FloatVec::fromRawArray(data + i);
+            peak = FloatVec::max(peak, abs(samples));
+        }
+
+        // Get horizontal max from SIMD register
+        float scalarPeak = horizontalMax(peak);
+
+        // Process remaining samples
+        for (; i < numSamples; ++i)
+            scalarPeak = juce::jmax(scalarPeak, std::abs(data[i]));
+
+        return scalarPeak;
+    }
+
+    // Apply gain to buffer with SIMD
+    inline void applyGain(float* data, int numSamples, float gain) {
+        constexpr size_t simdSize = FloatVec::SIMDNumElements;
+        FloatVec gainVec(gain);
+
+        int i = 0;
+        // Process SIMD-aligned chunks
+        for (; i + (int)simdSize <= numSamples; i += simdSize) {
+            FloatVec samples = FloatVec::fromRawArray(data + i);
+            samples = samples * gainVec;
+            samples.copyToRawArray(data + i);
+        }
+
+        // Process remaining samples
+        for (; i < numSamples; ++i)
+            data[i] *= gain;
+    }
+
+    // Mix two buffers with SIMD (for parallel compression)
+    inline void mixBuffers(float* dest, const float* src, int numSamples, float wetAmount) {
+        constexpr size_t simdSize = FloatVec::SIMDNumElements;
+        FloatVec wetVec(wetAmount);
+        FloatVec dryVec(1.0f - wetAmount);
+
+        int i = 0;
+        // Process SIMD-aligned chunks
+        for (; i + (int)simdSize <= numSamples; i += simdSize) {
+            FloatVec destSamples = FloatVec::fromRawArray(dest + i);
+            FloatVec srcSamples = FloatVec::fromRawArray(src + i);
+            FloatVec mixed = destSamples * dryVec + srcSamples * wetVec;
+            mixed.copyToRawArray(dest + i);
+        }
+
+        // Process remaining samples
+        for (; i < numSamples; ++i)
+            dest[i] = dest[i] * (1.0f - wetAmount) + src[i] * wetAmount;
+    }
+
+    // Add analog noise with SIMD (for authenticity)
+    inline void addNoise(float* data, int numSamples, float noiseLevel, juce::Random& random) {
+        constexpr size_t simdSize = FloatVec::SIMDNumElements;
+
+        int i = 0;
+        // Process SIMD-aligned chunks
+        for (; i + (int)simdSize <= numSamples; i += simdSize) {
+            // Generate SIMD-width random values
+            alignas(16) float noiseValues[FloatVec::SIMDNumElements];
+            for (size_t j = 0; j < FloatVec::SIMDNumElements; ++j)
+                noiseValues[j] = (random.nextFloat() * 2.0f - 1.0f) * noiseLevel;
+
+            FloatVec samples = FloatVec::fromRawArray(data + i);
+            FloatVec noise = FloatVec::fromRawArray(noiseValues);
+            samples = samples + noise;
+            samples.copyToRawArray(data + i);
+        }
+
+        // Process remaining samples
+        for (; i < numSamples; ++i)
+            data[i] += (random.nextFloat() * 2.0f - 1.0f) * noiseLevel;
+    }
+}
+
 // Named constants for improved code readability
 namespace Constants {
     // Filter coefficients
@@ -38,7 +139,7 @@ namespace Constants {
     constexpr float BUS_OVEREASY_KNEE_WIDTH = 10.0f; // dB
     
     // Anti-aliasing
-    constexpr float NYQUIST_SAFETY_FACTOR = 0.45f; // 45% of sample rate
+    constexpr float NYQUIST_SAFETY_FACTOR = 0.4f; // 40% of sample rate for tighter anti-aliasing
     constexpr float MAX_CUTOFF_FREQ = 20000.0f; // 20kHz
     
     // Safety limits
@@ -47,8 +148,13 @@ namespace Constants {
 
     // Transient detection constants
     constexpr float TRANSIENT_MULTIPLIER = 2.5f; // Threshold multiplier for transient detection
-    constexpr int TRANSIENT_WINDOW_SAMPLES = 4800; // ~100ms at 48kHz
+    constexpr float TRANSIENT_WINDOW_TIME = 0.1f; // 100ms window
     constexpr float TRANSIENT_NORMALIZE_COUNT = 10.0f; // 10+ transients = dense
+
+    // Helper function to get transient window samples based on sample rate
+    inline int getTransientWindowSamples(double sampleRate) {
+        return static_cast<int>(TRANSIENT_WINDOW_TIME * sampleRate); // ~100ms at any sample rate
+    }
 }
 
 // Unified Anti-aliasing system for all compressor types
@@ -100,16 +206,16 @@ public:
     float preProcessSample(float input, int channel)
     {
         if (channel >= numChannels) return input;
-        
+
         // Gentle high-frequency reduction before any saturation
         // This prevents high frequencies from creating aliases
-        // Use gentler filtering to preserve harmonics
-        const float cutoffFreq = 20000.0f;  // Fixed higher cutoff to preserve harmonics
+        // Tightened to 0.4 of sample rate for better anti-aliasing
+        const float cutoffFreq = std::min(20000.0f, static_cast<float>(sampleRate * 0.4f));
         const float filterCoeff = std::exp(-2.0f * 3.14159f * cutoffFreq / static_cast<float>(sampleRate));
-        
-        channelStates[channel].preFilterState = input * (1.0f - filterCoeff * 0.1f) + 
+
+        channelStates[channel].preFilterState = input * (1.0f - filterCoeff * 0.1f) +
                                                 channelStates[channel].preFilterState * filterCoeff * 0.1f;
-        
+
         return channelStates[channel].preFilterState;
     }
     
@@ -117,22 +223,42 @@ public:
     float postProcessSample(float input, int channel)
     {
         if (channel >= numChannels) return input;
-        
+
         // Remove any harmonics above Nyquist/2
         // Only process if we have a valid sample rate from DAW
         if (sampleRate <= 0.0) return input;
-        const float cutoffFreq = std::min(20000.0f, static_cast<float>(sampleRate * 0.45f));  // 45% of sample rate, max 20kHz
+        const float cutoffFreq = std::min(20000.0f, static_cast<float>(sampleRate * 0.4f));  // 40% of sample rate for tighter anti-aliasing
         const float filterCoeff = std::exp(-2.0f * 3.14159f * cutoffFreq / static_cast<float>(sampleRate));
-        
-        channelStates[channel].postFilterState = input * (1.0f - filterCoeff * 0.05f) + 
+
+        channelStates[channel].postFilterState = input * (1.0f - filterCoeff * 0.05f) +
                                                  channelStates[channel].postFilterState * filterCoeff * 0.05f;
-        
+
+        // Cubic soft clipping for analog warmth (applied to all modes)
+        float filtered = channelStates[channel].postFilterState;
+        float clipped;
+        float absFiltered = std::abs(filtered);
+
+        if (absFiltered < 1.0f / 3.0f)
+        {
+            clipped = filtered; // Linear region
+        }
+        else if (absFiltered > 2.0f / 3.0f)
+        {
+            clipped = filtered > 0.0f ? 1.0f : -1.0f; // Hard clip
+        }
+        else
+        {
+            // Cubic soft knee
+            float sign = filtered > 0.0f ? 1.0f : -1.0f;
+            clipped = sign * (absFiltered - (absFiltered * absFiltered * absFiltered) / 3.0f);
+        }
+
         // DC blocker to remove any DC offset from saturation
-        float dcBlocked = channelStates[channel].postFilterState - channelStates[channel].dcBlockerPrev + 
+        float dcBlocked = clipped - channelStates[channel].dcBlockerPrev +
                          channelStates[channel].dcBlockerState * 0.995f;
-        channelStates[channel].dcBlockerPrev = channelStates[channel].postFilterState;
+        channelStates[channel].dcBlockerPrev = clipped;
         channelStates[channel].dcBlockerState = dcBlocked;
-        
+
         return dcBlocked;
     }
     
@@ -247,6 +373,9 @@ public:
             // T4B dual time-constant components
             detector.fastMemory = 0.0f;
             detector.slowMemory = 0.0f;
+
+            // Program-dependent release tracking
+            detector.prevInput = 0.0f;
         }
         
         // PROFESSIONAL FIX: Always create 2x oversampler for saturation
@@ -316,12 +445,19 @@ public:
 
         float lightInput = detectionLevel;
 
+        // Program-dependent release: faster on transients (LA-2A characteristic)
+        float absInput = std::abs(input);
+        float inputDelta = absInput - detector.prevInput;
+        detector.prevInput = absInput;
+        // Scale release faster when detecting transients (positive delta)
+        float releaseScale = inputDelta > 0.05f ? 0.6f : 1.0f; // 40% faster on transients
+
         // Calculate time constants at current sample rate
         float fastAttackCoeff = std::exp(-1.0f / (Constants::T4B_FAST_ATTACK * static_cast<float>(sampleRate)));
-        float fastReleaseCoeff = std::exp(-1.0f / (Constants::T4B_FAST_RELEASE * static_cast<float>(sampleRate)));
+        float fastReleaseCoeff = std::exp(-1.0f / (Constants::T4B_FAST_RELEASE * static_cast<float>(sampleRate) * releaseScale));
         float slowPersistCoeff = std::exp(-1.0f / (Constants::T4B_SLOW_PERSISTENCE * static_cast<float>(sampleRate)));
 
-        // Fast photoresistor component: quick attack, moderate release
+        // Fast photoresistor component: quick attack, program-dependent release
         if (lightInput > detector.fastMemory)
             detector.fastMemory = lightInput + (detector.fastMemory - lightInput) * fastAttackCoeff;
         else
@@ -343,7 +479,17 @@ public:
         // LA-2A ratio varies from ~3:1 (low levels) to ~10:1 (high levels)
         // This is a key characteristic of the T4 optical cell
         float reduction = 0.0f;
-        float internalThreshold = 0.5f; // Internal reference level
+
+        // Input-dependent threshold: lower threshold for louder inputs (LA-2A characteristic)
+        // This creates program-dependent behavior where the compressor becomes more sensitive
+        // to loud signals, mimicking the T4 cell's nonlinear light response
+        float baseThreshold = 0.5f; // Base internal reference level
+        float inputLevel = std::abs(input);
+
+        // Dynamic threshold adjustment based on recent input level
+        // Louder inputs lower the threshold by up to 20%
+        float thresholdReduction = juce::jlimit(0.0f, 0.2f, inputLevel * 0.3f);
+        float internalThreshold = baseThreshold * (1.0f - thresholdReduction);
 
         if (lightLevel > internalThreshold)
         {
@@ -383,7 +529,7 @@ public:
 
         // Update signal history for adaptive release behavior
         // Track peak and average levels for transient detection
-        float absInput = std::abs(input);
+        // Reuse absInput calculated earlier
         detector.peakLevel = juce::jmax(detector.peakLevel * 0.999f, absInput);
         detector.averageLevel = detector.averageLevel * 0.9999f + absInput * 0.0001f;
 
@@ -399,9 +545,10 @@ public:
             detector.samplesSinceTransient++;
         }
 
-        // Update transient density periodically (every ~100ms at 48kHz)
+        // Update transient density periodically (every ~100ms, scaled to sample rate)
         detector.sampleWindowCounter++;
-        if (detector.sampleWindowCounter >= Constants::TRANSIENT_WINDOW_SAMPLES)
+        int transientWindowSamples = Constants::getTransientWindowSamples(sampleRate);
+        if (detector.sampleWindowCounter >= transientWindowSamples)
         {
             // Normalize to 0-1 range (10+ transients in 100ms = dense)
             detector.transientDensity = juce::jlimit(0.0f, 1.0f, detector.transientCount / Constants::TRANSIENT_NORMALIZE_COUNT);
@@ -821,7 +968,14 @@ public:
         // Ensure envelope stays within valid range for stability
         // In feedback topology, we need to prevent runaway gain
         detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
-        
+
+        // Envelope hysteresis: blend with previous gain reduction for analog memory
+        // This creates smoother transitions and mimics analog circuit capacitance
+        float currentGR = 1.0f - detector.envelope; // Convert to gain reduction amount
+        currentGR = 0.85f * currentGR + 0.15f * detector.previousGR; // 15% memory
+        detector.previousGR = currentGR;
+        detector.envelope = 1.0f - currentGR; // Convert back to envelope
+
         // NaN/Inf safety check
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
@@ -836,7 +990,7 @@ public:
         // At -18dB input: 2nd harmonic at -100dB, 3rd at -110dB
         float absOutput = std::abs(output);
         
-        // Very subtle FET harmonics - only when compressing
+        // FET non-linearity and harmonics
         // All-buttons mode: 3x more harmonic distortion
         if (reduction > 3.0f && absOutput > 0.001f)
         {
@@ -845,23 +999,41 @@ public:
             // All-buttons mode increases harmonic content significantly
             float allButtonsMultiplier = (ratioIndex == 4) ? 3.0f : 1.0f;
 
-            // 1176 spec: 2nd harmonic at -100dB, 3rd at -110dB at -18dB input
-            // Scale based on compression amount
-            float compressionScale = juce::jmin(1.0f, reduction / 20.0f);
+            // Dynamic harmonics: scale with gain reduction for authentic 1176 behavior
+            // More compression = more harmonic distortion (FET characteristic)
+            float grAmount = juce::jlimit(0.0f, 1.0f, reduction / 20.0f); // 0-1 scaling
+
+            // Tanh-based FET saturation for authentic character
+            // Saturation increases dynamically with gain reduction
+            float saturationAmount = grAmount * allButtonsMultiplier;
+            float tanhDrive = 1.0f + saturationAmount * 0.5f; // Gentle overdrive
+            float distorted = std::tanh(output * tanhDrive) / tanhDrive;
+
+            // Blend original with distorted - blend amount scales with GR
+            float blendAmount = 0.2f + (grAmount * 0.3f); // 20-50% blend based on GR
+            output = output * (1.0f - blendAmount) + distorted * blendAmount;
+
+            // Dynamic harmonic generation - scales with gain reduction amount
+            // Light compression: minimal harmonics (~0.2x)
+            // Heavy compression: full harmonics (1.0x)
+            float harmonicScale = 0.2f + (grAmount * 0.8f); // 0.2 to 1.0 range
 
             // 2nd harmonic: -100dB absolute (-82dB relative at -18dB)
-            // At -18dB with compression, target -100dB (0.00001 linear)
-            // Scale = 0.00001 / (0.126²) = 0.00063
-            float h2_scale = 0.00063f * allButtonsMultiplier;  // 3x in all-buttons mode
-            float h2 = output * output * h2_scale * compressionScale;
+            // Scales more aggressively with GR for dynamic character
+            float h2_scale = 0.00063f * allButtonsMultiplier * harmonicScale;
+            float h2 = output * output * h2_scale;
 
-            // 3rd harmonic: -110dB absolute (-92dB relative at -18dB)
-            // At -18dB with compression, target -110dB (0.00000316 linear)
-            // Adjusted to match 1176 hardware (very clean)
-            float h3_scale = 0.0005f * allButtonsMultiplier;  // 3x in all-buttons mode
-            float h3 = output * output * output * h3_scale * compressionScale;
+            // 3rd harmonic (odd-order for FET character)
+            // Odd harmonics scale even more with GR (squared relationship)
+            float h3_scale = 0.0005f * allButtonsMultiplier * (harmonicScale * harmonicScale);
+            float h3 = output * output * output * h3_scale;
 
-            output += h2 * sign + h3;
+            // 5th harmonic (additional odd-order for FET)
+            // Most aggressive scaling for aggressive compression
+            float h5_scale = 0.0001f * allButtonsMultiplier * (grAmount * grAmount);
+            float h5 = std::pow(output, 5) * h5_scale;
+
+            output += h2 * sign + h3 + h5;
         }
         
         // Hard limiting if we're clipping
@@ -908,6 +1080,7 @@ private:
         float envelope = 1.0f;
         float prevOutput = 0.0f;
         float previousLevel = 0.0f; // For program-dependent behavior
+        float previousGR = 0.0f;    // For envelope hysteresis
     };
     
     std::vector<Detector> detectors;
@@ -931,6 +1104,7 @@ public:
             detector.signalEnvelope = 0.0f;
             detector.envelopeRate = 0.0f;
             detector.previousInput = 0.0f;
+            detector.overshootAmount = 0.0f; // For DBX 160 attack overshoot
         }
     }
     
@@ -1078,11 +1252,32 @@ public:
         {
             // Attack phase - DBX feed-forward design for fast, stable response
             detector.envelope = targetGain + (detector.envelope - targetGain) * attackCoeff;
+
+            // DBX 160 attack overshoot on fast attacks (1-2dB characteristic)
+            // Fast attacks (< 5ms) produce slight overshoot for transient emphasis
+            if (attackTime < 0.005f && reduction > 5.0f)
+            {
+                // Calculate overshoot amount based on attack speed and reduction depth
+                // Faster attack = more overshoot, up to ~2dB
+                float overshootFactor = (0.005f - attackTime) / 0.004f; // 0-1 range
+                float reductionFactor = juce::jlimit(0.0f, 1.0f, reduction / 20.0f); // 0-1 range
+
+                // Overshoot peaks at ~2dB (1.26 gain factor) for very fast attacks on heavy compression
+                detector.overshootAmount = overshootFactor * reductionFactor * 0.02f; // Up to 2dB
+            }
+            else
+            {
+                // Decay overshoot gradually when not in fast attack
+                detector.overshootAmount *= 0.95f;
+            }
         }
         else
         {
             // Release phase - constant 120dB/second release rate
             detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
+
+            // No overshoot during release
+            detector.overshootAmount *= 0.98f; // Quick decay
         }
         
         // Feed-forward stability: ensure envelope stays within bounds
@@ -1095,10 +1290,14 @@ public:
         
         // Store previous reduction for program dependency tracking
         detector.previousReduction = reduction;
-        
+
+        // Apply overshoot to envelope for DBX 160 attack characteristic
+        float envelopeWithOvershoot = detector.envelope * (1.0f + detector.overshootAmount);
+        envelopeWithOvershoot = juce::jlimit(0.0001f, 1.0f, envelopeWithOvershoot);
+
         // DBX 160 feed-forward topology: apply compression to input signal
         // This is different from feedback compressors - much more stable
-        float compressed = input * detector.envelope;
+        float compressed = input * envelopeWithOvershoot;
         
         // DBX VCA characteristics (DBX 202 series VCA chip used in 160)
         // The DBX 160 is renowned for being EXTREMELY clean - much cleaner than most compressors
@@ -1202,6 +1401,7 @@ private:
         float signalEnvelope = 0.0f;    // Signal envelope for program-dependent timing
         float envelopeRate = 0.0f;      // Rate of envelope change
         float previousInput = 0.0f;     // Previous input for envelope tracking
+        float overshootAmount = 0.0f;   // Attack overshoot for DBX 160 characteristic
     };
     
     std::vector<Detector> detectors;
@@ -1250,8 +1450,8 @@ public:
         }
     }
     
-    float process(float input, int channel, float threshold, float ratio, 
-                  int attackIndex, int releaseIndex, float makeupGain, bool oversample = false)
+    float process(float input, int channel, float threshold, float ratio,
+                  int attackIndex, int releaseIndex, float makeupGain, float mixAmount = 1.0f, bool oversample = false)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
@@ -1350,10 +1550,17 @@ public:
             detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
         }
         
+        // Envelope hysteresis: blend with previous gain reduction for SSL memory effect
+        // SSL circuitry has capacitance that creates slight "memory" in the envelope
+        float currentGR = 1.0f - detector.envelope;
+        currentGR = 0.9f * currentGR + 0.1f * detector.previousGR; // 10% memory for SSL smoothness
+        detector.previousGR = currentGR;
+        detector.envelope = 1.0f - currentGR;
+
         // NaN/Inf safety check
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
-        
+
         // Apply the gain reduction envelope to the input signal
         float compressed = input * detector.envelope;
         
@@ -1430,8 +1637,12 @@ public:
         }
         
         // Apply makeup gain
-        float output = processed * juce::Decibels::decibelsToGain(makeupGain);
-        
+        float compressed_output = processed * juce::Decibels::decibelsToGain(makeupGain);
+
+        // SSL-style parallel compression (New York compression)
+        // Blend dry and wet signals for "glue" effect
+        float output = input * (1.0f - mixAmount) + compressed_output * mixAmount;
+
         // Final output limiting
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
     }
@@ -1451,6 +1662,7 @@ private:
         float previousLevel = 0.0f; // For auto-release tracking
         float hpState = 0.0f;       // Simple highpass filter state
         float prevInput = 0.0f;     // Previous input for filter
+        float previousGR = 0.0f;    // For envelope hysteresis
         std::unique_ptr<juce::dsp::ProcessorChain<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Filter<float>>> sidechainFilter;
     };
     
@@ -1500,7 +1712,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     // External sidechain enable
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "sidechain_enable", "External Sidechain", false));
-    
+
+    // Analog noise floor enable (optional for CPU savings)
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "noise_enable", "Analog Noise", true)); // Default ON for analog character
+
     // Add read-only gain reduction meter parameter for DAW display (LV2/VST3)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "gr_meter", "GR", 
@@ -1567,6 +1783,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "bus_makeup", "Makeup",
         juce::NormalisableRange<float>(0.0f, 20.0f, 0.1f), 0.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "bus_mix", "Bus Mix",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%"))); // SSL parallel compression
 
     // Digital (Modern) Compressor parameters
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -1707,7 +1927,10 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     if (sampleRate <= 0.0 || samplesPerBlock <= 0)
         return;
-        
+
+    // Disable denormal numbers globally for this processor
+    juce::FloatVectorOperations::disableDenormalisedNumberSupport(true);
+
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
     
@@ -1855,6 +2078,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p3 = parameters.getRawParameterValue("bus_attack");
             auto* p4 = parameters.getRawParameterValue("bus_release");
             auto* p5 = parameters.getRawParameterValue("bus_makeup");
+            auto* p6 = parameters.getRawParameterValue("bus_mix");
             if (p1 && p2 && p3 && p4 && p5) {
                 cachedParams[0] = *p1;
                 // Convert discrete ratio choice to actual ratio value
@@ -1868,6 +2092,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 cachedParams[2] = *p3;
                 cachedParams[3] = *p4;
                 cachedParams[4] = *p5;
+                cachedParams[5] = p6 ? (*p6 * 0.01f) : 1.0f; // Convert 0-100 to 0-1, default 100%
             } else validParams = false;
             break;
         }
@@ -1879,17 +2104,18 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Input metering - use peak level for accurate dB display
     const int numChannels = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
-    
-    // Get peak level which corresponds to actual dB values
+
+    // Get peak level - SIMD optimized metering
     float inputLevel = 0.0f;
     for (int ch = 0; ch < numChannels; ++ch)
     {
-        float channelPeak = buffer.getMagnitude(ch, 0, numSamples);
+        const float* data = buffer.getReadPointer(ch);
+        float channelPeak = SIMDHelpers::getPeakLevel(data, numSamples);
         inputLevel = juce::jmax(inputLevel, channelPeak);
     }
-    
+
     // Convert to dB - peak level gives accurate dB reading
-    float inputDb = inputLevel > 0.001f ? juce::Decibels::gainToDecibels(inputLevel) : -60.0f;
+    float inputDb = inputLevel > 1e-5f ? juce::Decibels::gainToDecibels(inputLevel) : -60.0f;
     // Use relaxed memory ordering for performance in audio thread
     inputMeter.store(inputDb, std::memory_order_relaxed);
     
@@ -1923,7 +2149,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     break;
                 case CompressorMode::Bus:
                     for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], true);
+                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true);
                     break;
             }
         }
@@ -1956,21 +2182,22 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     break;
                 case CompressorMode::Bus:
                     for (int i = 0; i < numSamples; ++i)
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], false) * compensationGain;
+                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false) * compensationGain;
                     break;
             }
         }
     }
     
-    // Output metering - use peak level for accurate dB display
+    // Output metering - SIMD optimized
     float outputLevel = 0.0f;
     for (int ch = 0; ch < numChannels; ++ch)
     {
-        float channelPeak = buffer.getMagnitude(ch, 0, numSamples);
+        const float* data = buffer.getReadPointer(ch);
+        float channelPeak = SIMDHelpers::getPeakLevel(data, numSamples);
         outputLevel = juce::jmax(outputLevel, channelPeak);
     }
-    
-    float outputDb = outputLevel > 0.001f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
+
+    float outputDb = outputLevel > 1e-5f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
     // Use relaxed memory ordering for performance in audio thread
     outputMeter.store(outputDb, std::memory_order_relaxed);
     
@@ -2006,7 +2233,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (auto* grParam = parameters.getRawParameterValue("gr_meter"))
         *grParam = gainReduction;
     
-    // Apply mix control for parallel compression
+    // Apply mix control for parallel compression (SIMD-optimized)
     if (mixAmount < 1.0f && dryBuffer.getNumChannels() > 0)
     {
         // Blend dry and wet signals
@@ -2014,11 +2241,23 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         {
             float* wet = buffer.getWritePointer(ch);
             const float* dry = dryBuffer.getReadPointer(ch);
-            
-            for (int i = 0; i < numSamples; ++i)
-            {
-                wet[i] = dry[i] * (1.0f - mixAmount) + wet[i] * mixAmount;
-            }
+            SIMDHelpers::mixBuffers(wet, dry, numSamples, mixAmount);
+        }
+    }
+
+    // Add subtle analog noise for authenticity (-80dB) if enabled (SIMD-optimized)
+    // This adds character and prevents complete digital silence
+    auto* noiseEnableParam = parameters.getRawParameterValue("noise_enable");
+    bool noiseEnabled = noiseEnableParam ? (*noiseEnableParam > 0.5f) : true; // Default ON
+
+    if (noiseEnabled)
+    {
+        juce::Random random;
+        const float noiseLevel = 0.0001f; // -80dB
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* data = buffer.getWritePointer(ch);
+            SIMDHelpers::addNoise(data, numSamples, noiseLevel, random);
         }
     }
 }
@@ -2069,7 +2308,11 @@ CompressorMode UniversalCompressor::getCurrentMode() const
 
 double UniversalCompressor::getLatencyInSamples() const
 {
-    // No latency since main path oversampling is disabled
+    // Report latency from oversampler if active
+    if (antiAliasing)
+    {
+        return static_cast<double>(antiAliasing->getLatency());
+    }
     return 0.0;
 }
 

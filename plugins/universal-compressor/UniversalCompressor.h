@@ -47,6 +47,9 @@ public:
     float getInputLevel() const { return inputMeter.load(std::memory_order_relaxed); }
     float getOutputLevel() const { return outputMeter.load(std::memory_order_relaxed); }
     float getGainReduction() const { return grMeter.load(std::memory_order_relaxed); }
+    float getLinkedGainReduction(int channel) const {
+        return channel >= 0 && channel < 2 ? linkedGainReduction[channel].load(std::memory_order_relaxed) : 0.0f;
+    }
     
     // Parameter access
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
@@ -74,9 +77,9 @@ private:
     std::atomic<float> inputMeter{-60.0f};
     std::atomic<float> outputMeter{-60.0f};
     std::atomic<float> grMeter{0.0f};
-    
-    // Stereo linking
-    float linkedGainReduction[2] = {0.0f, 0.0f};
+
+    // Stereo linking (thread-safe for UI/audio thread access)
+    std::atomic<float> linkedGainReduction[2];
     // stereoLinkAmount now controlled by parameter
     
     // Processing state
