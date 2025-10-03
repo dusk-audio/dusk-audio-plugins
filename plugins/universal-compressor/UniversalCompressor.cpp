@@ -6,6 +6,12 @@
 namespace SIMDHelpers {
     using FloatVec = juce::dsp::SIMDRegister<float>;
 
+    // Check if pointer is properly aligned for SIMD operations
+    inline bool isAligned(const void* ptr) {
+        constexpr size_t alignment = FloatVec::SIMDRegisterSize;
+        return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0;
+    }
+
     // Fast absolute value for SIMD
     inline FloatVec abs(FloatVec x) {
         return FloatVec::max(x, FloatVec(0.0f) - x);
@@ -21,6 +27,14 @@ namespace SIMDHelpers {
 
     // Process buffer to get peak with SIMD (optimized metering)
     inline float getPeakLevel(const float* data, int numSamples) {
+        // Use scalar fallback if data is not aligned for SIMD
+        if (!isAligned(data)) {
+            float peak = 0.0f;
+            for (int i = 0; i < numSamples; ++i)
+                peak = juce::jmax(peak, std::abs(data[i]));
+            return peak;
+        }
+
         constexpr size_t simdSize = FloatVec::SIMDNumElements;
         FloatVec peak(0.0f);
 
@@ -43,6 +57,13 @@ namespace SIMDHelpers {
 
     // Apply gain to buffer with SIMD
     inline void applyGain(float* data, int numSamples, float gain) {
+        // Use scalar fallback if data is not aligned for SIMD
+        if (!isAligned(data)) {
+            for (int i = 0; i < numSamples; ++i)
+                data[i] *= gain;
+            return;
+        }
+
         constexpr size_t simdSize = FloatVec::SIMDNumElements;
         FloatVec gainVec(gain);
 
@@ -61,6 +82,13 @@ namespace SIMDHelpers {
 
     // Mix two buffers with SIMD (for parallel compression)
     inline void mixBuffers(float* dest, const float* src, int numSamples, float wetAmount) {
+        // Use scalar fallback if either buffer is not aligned for SIMD
+        if (!isAligned(dest) || !isAligned(src)) {
+            for (int i = 0; i < numSamples; ++i)
+                dest[i] = dest[i] * (1.0f - wetAmount) + src[i] * wetAmount;
+            return;
+        }
+
         constexpr size_t simdSize = FloatVec::SIMDNumElements;
         FloatVec wetVec(wetAmount);
         FloatVec dryVec(1.0f - wetAmount);
@@ -81,6 +109,13 @@ namespace SIMDHelpers {
 
     // Add analog noise with SIMD (for authenticity)
     inline void addNoise(float* data, int numSamples, float noiseLevel, juce::Random& random) {
+        // Use scalar fallback if data is not aligned for SIMD
+        if (!isAligned(data)) {
+            for (int i = 0; i < numSamples; ++i)
+                data[i] += (random.nextFloat() * 2.0f - 1.0f) * noiseLevel;
+            return;
+        }
+
         constexpr size_t simdSize = FloatVec::SIMDNumElements;
 
         int i = 0;
@@ -626,7 +661,7 @@ public:
             if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
                 detector.envelope = 1.0f;
         }
-        
+
         // Track compression history for program dependency
         if (reduction > detector.maxReduction)
             detector.maxReduction = reduction;
@@ -1294,11 +1329,11 @@ public:
         // Feed-forward stability: ensure envelope stays within bounds
         // This prevents the instability that plagues feedback compressors at high ratios
         detector.envelope = juce::jlimit(0.0001f, 1.0f, detector.envelope);
-        
+
         // NaN/Inf safety check
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
-        
+
         // Store previous reduction for program dependency tracking
         detector.previousReduction = reduction;
 
@@ -1720,7 +1755,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         "saturation_mode", "Saturation Mode", 
         juce::StringArray{"Vintage (Warm)", "Modern (Clean)", "Pristine (Minimal)"}, 0));
     
-    // External sidechain enable
+    // External sidechain enable (keep for parameter compatibility, not implemented)
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "sidechain_enable", "External Sidechain", false));
 
@@ -1826,8 +1861,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "digital_adaptive", "Adaptive Release", false));
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        "digital_sidechain_listen", "SC Listen", false));
+    // Sidechain removed
+    // layout.add(std::make_unique<juce::AudioParameterBool>(
+    //     "digital_sidechain_listen", "SC Listen", false));
     }
     catch (const std::exception& e) {
         DBG("Failed to create parameter layout: " << e.what());
@@ -1881,7 +1917,6 @@ inline float UniversalCompressor::LookupTables::fastLog(float x) const
 UniversalCompressor::UniversalCompressor()
     : AudioProcessor(BusesProperties()
                      .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                     .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)  // Optional sidechain input
                      .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, "UniversalCompressor", createParameterLayout()),
       currentSampleRate(0.0),  // Set by prepareToPlay from DAW
@@ -2003,32 +2038,19 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Get stereo link and mix parameters
     auto* stereoLinkParam = parameters.getRawParameterValue("stereo_link");
     auto* mixParam = parameters.getRawParameterValue("mix");
-    auto* sidechainEnableParam = parameters.getRawParameterValue("sidechain_enable");
     float stereoLinkAmount = stereoLinkParam ? (*stereoLinkParam * 0.01f) : 1.0f; // Convert to 0-1
     float mixAmount = mixParam ? (*mixParam * 0.01f) : 1.0f; // Convert to 0-1
-    bool useSidechain = sidechainEnableParam ? (*sidechainEnableParam > 0.5f) : false;
-    
+
     // Store dry signal for parallel compression
     juce::AudioBuffer<float> dryBuffer;
     if (mixAmount < 1.0f)
     {
         dryBuffer.makeCopyOf(buffer);
     }
-    
-    // Get sidechain buffer if available and enabled
-    juce::AudioBuffer<float> sidechainBuffer;
-    if (useSidechain && getTotalNumInputChannels() > 2)
-    {
-        // Create a temporary buffer for sidechain (channels 2 and 3 if they exist)
-        const int sidechainChannels = juce::jmin(2, getTotalNumInputChannels() - 2);
-        if (sidechainChannels > 0)
-        {
-            sidechainBuffer.setSize(sidechainChannels, buffer.getNumSamples());
-            // Note: In a real implementation, you'd get the sidechain from the second input bus
-            // For now, we'll use a simplified approach
-            // This would need proper multi-bus support in the processBlock override
-        }
-    }
+
+    // Sidechain removed - was causing crashes
+    // auto* sidechainEnableParam = parameters.getRawParameterValue("sidechain_enable");
+    // bool useSidechain = sidechainEnableParam ? (*sidechainEnableParam > 0.5f) : false;
     
     // Internal oversampling is always enabled for better quality
     bool oversample = true; // Always use oversampling internally
@@ -2309,7 +2331,6 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<double>& buffer, juce::
 
 juce::AudioProcessorEditor* UniversalCompressor::createEditor()
 {
-    // Use the enhanced analog-style editor
     return new EnhancedCompressorEditor(*this);
 }
 

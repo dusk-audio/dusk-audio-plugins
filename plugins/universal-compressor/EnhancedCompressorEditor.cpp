@@ -10,7 +10,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     fetLookAndFeel = std::make_unique<FETLookAndFeel>();
     vcaLookAndFeel = std::make_unique<VCALookAndFeel>();
     busLookAndFeel = std::make_unique<BusLookAndFeel>();
-    // Modern look and feel removed
+    modernLookAndFeel = std::make_unique<ModernLookAndFeel>();
     
     // Create background texture
     createBackgroundTexture();
@@ -53,14 +53,10 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     if (params.getRawParameterValue("mode"))
         modeSelectorAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             params, "mode", *modeSelector);
-    else
-        jassertfalse; // Missing 'mode' parameter
-
+    
     if (params.getRawParameterValue("bypass"))
         bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             params, "bypass", *bypassButton);
-    else
-        jassertfalse; // Missing 'bypass' parameter
     
     // Oversample attachment removed - no longer user-controllable
     
@@ -368,7 +364,8 @@ void EnhancedCompressorEditor::setupBusPanel()
 
 void EnhancedCompressorEditor::setupDigitalPanel()
 {
-    // Digital panel removed - functionality integrated into main panels
+    digitalPanel = std::make_unique<DigitalCompressorPanel>(processor.getParameters());
+    addChildComponent(digitalPanel.get());
 }
 
 // Multiband panel removed
@@ -382,6 +379,7 @@ void EnhancedCompressorEditor::updateMode(int newMode)
     fetPanel.container->setVisible(false);
     vcaPanel.container->setVisible(false);
     busPanel.container->setVisible(false);
+    if (digitalPanel) digitalPanel->setVisible(false);
 
     // Hide mode-specific top row buttons by default
     if (optoPanel.limitSwitch)
@@ -845,7 +843,11 @@ void EnhancedCompressorEditor::resized()
         busPanel.releaseSelector->setBounds(releaseArea.reduced(40 * scaleFactor, 0).removeFromTop(25 * scaleFactor));
     }
 
-    // Digital panel removed - functionality integrated into main panels
+    // Layout Digital panel
+    if (digitalPanel && digitalPanel->isVisible())
+    {
+        digitalPanel->setBounds(controlArea);
+    }
 
     // Multiband panel removed
 }
