@@ -34,12 +34,71 @@ public:
 
     void process(float* inputs, float* outputs)
     {
+        // Ensure inputs and outputs are not null
+        jassert(inputs != nullptr && outputs != nullptr);
+        if (!inputs || !outputs)
+            return;
+
+        // SIMD-optimized matrix multiplication for better performance
+        using FloatSIMD = juce::dsp::SIMDRegister<float>;
+        constexpr int simdSize = FloatSIMD::SIMDNumElements;
+
         for (int i = 0; i < N; ++i)
         {
-            outputs[i] = 0.0f;
-            for (int j = 0; j < N; ++j)
+            if (N >= simdSize && juce::dsp::SIMDRegister<float>::isSIMDAligned(inputs))
             {
-                outputs[i] += matrix[i * N + j] * inputs[j];
+                FloatSIMD sum(0.0f);
+                int j = 0;
+
+                // SIMD vectorized loop - only if data is aligned
+                for (; j <= N - simdSize; j += simdSize)
+                {
+                    // Check alignment before SIMD operations
+                    if (juce::dsp::SIMDRegister<float>::isSIMDAligned(&matrix[i * N + j]))
+                    {
+                        FloatSIMD matrixVec = FloatSIMD::fromRawArray(&matrix[i * N + j]);
+                        FloatSIMD inputVec = FloatSIMD::fromRawArray(&inputs[j]);
+                        sum = sum + (matrixVec * inputVec);
+                    }
+                    else
+                    {
+                        // Fallback to scalar for unaligned data
+                        float tempSum[simdSize];
+                        for (int k = 0; k < simdSize; ++k)
+                        {
+                            tempSum[k] = sum[k] + matrix[i * N + j + k] * inputs[j + k];
+                        }
+                        sum = FloatSIMD::fromRawArray(tempSum);
+                    }
+                }
+
+                // Sum SIMD elements with denormal prevention
+                float result = sum.sum();
+                if (std::abs(result) < 1e-10f)
+                    result = 0.0f;
+
+                // Handle remaining elements
+                for (; j < N; ++j)
+                {
+                    result += matrix[i * N + j] * inputs[j];
+                }
+
+                outputs[i] = result;
+            }
+            else
+            {
+                // Fallback for small matrices or unaligned data
+                float sum = 0.0f;
+                for (int j = 0; j < N; ++j)
+                {
+                    sum += matrix[i * N + j] * inputs[j];
+                }
+
+                // Denormal prevention
+                if (std::abs(sum) < 1e-10f)
+                    sum = 0.0f;
+
+                outputs[i] = sum;
             }
         }
     }
@@ -393,6 +452,15 @@ public:
     {
         outputL = outputR = 0.0f;
 
+        // Program-dependent scaling based on input energy
+        float inputEnergy = std::sqrt((inputL * inputL + inputR * inputR) * 0.5f);
+        float energyScale = juce::jlimit(0.3f, 1.2f, inputEnergy + 0.7f);  // Dynamic response
+
+        // Add subtle time modulation for more natural reflections
+        modPhase += 0.0002f;
+        if (modPhase > 1.0f) modPhase -= 1.0f;
+        float timeModulation = 1.0f + std::sin(modPhase * juce::MathConstants<float>::twoPi) * 0.003f;
+
         // MEDIUM PRIORITY: Calculate normalization based on sum of gains (RMS)
         float totalGain = 0.0f;
         for (const auto& ref : reflections)
@@ -405,13 +473,13 @@ public:
         {
             const auto& ref = reflections[i];
 
-            // Adjust delay by size parameter
-            float scaledDelay = ref.delay * (0.5f + size * 1.5f) * sampleRate / 1000.0f;
+            // Adjust delay by size parameter with natural modulation
+            float scaledDelay = ref.delay * (0.5f + size * 1.5f) * timeModulation * sampleRate / 1000.0f;
             delays[i].setDelay(scaledDelay);
 
-            // Get delayed sample
+            // Get delayed sample with energy-dependent scaling
             float delayed = delays[i].popSample(0);
-            delays[i].pushSample(0, (inputL + inputR) * 0.5f);
+            delays[i].pushSample(0, (inputL + inputR) * 0.5f * energyScale);
 
             // Apply HRTF-inspired panning based on azimuth
             float panL = (1.0f + std::cos((ref.azimuth + 90.0f) * M_PI / 180.0f)) * 0.5f;
@@ -436,6 +504,9 @@ public:
             for (int j = 0; j < 10; ++j)
                 delay.pushSample(0, 0.0f);
         }
+
+        // Reset modulation phase to restart from zero
+        modPhase = 0.0f;
     }
 
     void setRoomDimensions(float width, float height, float depth)
@@ -448,6 +519,7 @@ private:
     double sampleRate = 48000.0;
     std::vector<Reflection> reflections;
     std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>, 50> delays;
+    float modPhase = 0.0f;  // For natural time modulation
 };
 
 //==============================================================================
@@ -483,6 +555,12 @@ public:
         highShelf.prepare(spec);
         highShelf.setType(juce::dsp::StateVariableTPTFilterType::highpass);
         highShelf.setCutoffFrequency(100.0f);
+
+        // Metallic peaking filter for plate emulation (around 2.5kHz for shimmer)
+        plateMetallicFilter.prepare(spec);
+        plateMetallicFilter.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
+        plateMetallicFilter.setCutoffFrequency(2500.0f);
+        plateMetallicFilter.setResonance(2.5f); // High resonance for metallic character
 
         // Modulation LFOs
         modulationLFO1.initialise([](float x) { return std::sin(x); });
@@ -578,6 +656,18 @@ public:
             lateL = highShelf.processSample(0, lateL);
             lateR = highShelf.processSample(1, lateR);
 
+            // Apply metallic filtering for plate mode
+            if (currentAlgorithm == 2) // Plate mode
+            {
+                // Add metallic resonance using peaking filter
+                float metallicL = plateMetallicFilter.processSample(0, lateL);
+                float metallicR = plateMetallicFilter.processSample(1, lateR);
+
+                // Mix original and filtered for bright metallic character
+                lateL = lateL * 0.6f + metallicL * 0.4f;
+                lateR = lateR * 0.6f + metallicR * 0.4f;
+            }
+
             // Mix early and late
             float reverbL = earlyL * earlyGain + lateL * lateGain;
             float reverbR = earlyR * earlyGain + lateR * lateGain;
@@ -646,6 +736,7 @@ public:
         predelayR.reset();
         lowShelf.reset();
         highShelf.reset();
+        plateMetallicFilter.reset();
 
         // Clear predelay buffers completely
         for (int i = 0; i < 1000; ++i)
@@ -712,6 +803,9 @@ private:
 
     juce::dsp::StateVariableTPTFilter<float> lowShelf;
     juce::dsp::StateVariableTPTFilter<float> highShelf;
+
+    // Metallic peaking filter for plate emulation
+    juce::dsp::StateVariableTPTFilter<float> plateMetallicFilter;
 
     juce::dsp::Oscillator<float> modulationLFO1;
     juce::dsp::Oscillator<float> modulationLFO2;
