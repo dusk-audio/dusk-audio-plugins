@@ -84,11 +84,23 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_compile_options(UniversalCompressor PRIVATE -O3 -ffast-math)
 endif()
 
-# Enable AddressSanitizer in debug builds for memory error detection
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(UniversalCompressor PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(UniversalCompressor PRIVATE -fsanitize=address)
+# AddressSanitizer options
+option(ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
+
+# Enable AddressSanitizer in debug builds or when explicitly requested
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR ENABLE_ASAN)
+    target_compile_options(UniversalCompressor PRIVATE
+        -fsanitize=address
+        -fsanitize=undefined
+        -fno-omit-frame-pointer
+        -fno-optimize-sibling-calls
+    )
+    target_link_options(UniversalCompressor PRIVATE
+        -fsanitize=address
+        -fsanitize=undefined
+    )
     message(STATUS "AddressSanitizer enabled for UniversalCompressor")
+    message(STATUS "Run with: ASAN_OPTIONS=detect_leaks=1:abort_on_error=1")
 endif()
 
 # Enable all warnings
@@ -125,10 +137,18 @@ if(BUILD_UNIVERSAL_COMPRESSOR_TESTS)
             JUCE_USE_CURL=0
     )
 
-    # Enable AddressSanitizer for tests in debug builds
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        target_compile_options(UniversalCompressorTests PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-        target_link_options(UniversalCompressorTests PRIVATE -fsanitize=address)
+    # Enable AddressSanitizer for tests in debug builds or when explicitly requested
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR ENABLE_ASAN)
+        target_compile_options(UniversalCompressorTests PRIVATE
+            -fsanitize=address
+            -fsanitize=undefined
+            -fno-omit-frame-pointer
+            -fno-optimize-sibling-calls
+        )
+        target_link_options(UniversalCompressorTests PRIVATE
+            -fsanitize=address
+            -fsanitize=undefined
+        )
         message(STATUS "AddressSanitizer enabled for UniversalCompressorTests")
     endif()
 
