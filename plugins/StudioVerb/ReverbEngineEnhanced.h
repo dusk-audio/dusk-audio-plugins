@@ -273,9 +273,10 @@ public:
             float decorrelatedInput = inputDiffusion[i].popSample(0);
             delayInputs[i] += decorrelatedInput * 0.3f;  // Reduced gain to prevent buildup
 
-            // Feed back into delays with size modulation
+            // Feed back into delays with size modulation - CRITICAL: Clamp to max delay to prevent crashes
             float modulatedLength = baseDelayLengths[i] * (0.5f + size * 1.5f) * (sampleRate / 48000.0f);
-            modulatedLength = juce::jmax(1.0f, modulatedLength);  // Prevent zero delay
+            int maxDelayInSamples = delays[i].getMaximumDelayInSamples();
+            modulatedLength = juce::jlimit(1.0f, static_cast<float>(maxDelayInSamples - 1), modulatedLength);
             delays[i].setDelay(modulatedLength);
             delays[i].pushSample(0, delayInputs[i]);
         }
@@ -430,8 +431,10 @@ public:
         {
             const auto& ref = reflections[i];
 
-            // Adjust delay by size parameter with natural modulation
+            // Adjust delay by size parameter with natural modulation - CRITICAL: Clamp to prevent crashes
             float scaledDelay = ref.delay * (0.5f + size * 1.5f) * timeModulation * sampleRate / 1000.0f;
+            int maxDelayInSamples = delays[i].getMaximumDelayInSamples();
+            scaledDelay = juce::jlimit(0.0f, static_cast<float>(maxDelayInSamples - 1), scaledDelay);
             delays[i].setDelay(scaledDelay);
 
             // Get delayed sample with energy-dependent scaling
@@ -519,11 +522,12 @@ public:
         plateMetallicFilter.setCutoffFrequency(2500.0f);
         plateMetallicFilter.setResonance(2.5f); // High resonance for metallic character
 
-        // Modulation LFOs
+        // Modulation LFOs - frequencies will be updated based on size parameter
         modulationLFO1.initialise([](float x) { return std::sin(x); });
         modulationLFO2.initialise([](float x) { return std::sin(x); });
-        modulationLFO1.setFrequency(0.5f);
-        modulationLFO2.setFrequency(0.7f);
+        // Initial frequencies - will be modulated by size
+        modulationLFO1.setFrequency(0.3f);
+        modulationLFO2.setFrequency(0.5f);
         modulationLFO1.prepare(spec);
         modulationLFO2.prepare(spec);
 
@@ -567,7 +571,9 @@ public:
             float smoothedWidth = widthSmooth.getNextValue();
             float smoothedPredelaySamples = predelaySmooth.getNextValue();
 
-            // Update predelay with smoothed value
+            // Update predelay with smoothed value - CRITICAL: Clamp to prevent crashes
+            int maxPredelayInSamples = predelayL.getMaximumDelayInSamples();
+            smoothedPredelaySamples = juce::jlimit(0.0f, static_cast<float>(maxPredelayInSamples - 1), smoothedPredelaySamples);
             predelayL.setDelay(smoothedPredelaySamples);
             predelayR.setDelay(smoothedPredelaySamples);
 
@@ -600,8 +606,16 @@ public:
             if (std::isnan(lateL) || std::isinf(lateL)) lateL = 0.0f;
             if (std::isnan(lateR) || std::isinf(lateR)) lateR = 0.0f;
 
-            // Add subtle modulation for liveliness (Task 3: Increased for plate shimmer)
-            float modDepth = (currentAlgorithm == 2) ? 0.005f : 0.002f;  // More shimmer for plate
+            // Size-dependent modulation for realistic shimmer (larger spaces = slower modulation)
+            // Update LFO rates based on size (smaller size = faster rates for tighter spaces)
+            float lfoRate1 = 0.2f + (1.0f - smoothedSize) * 0.6f;  // 0.2Hz to 0.8Hz
+            float lfoRate2 = 0.3f + (1.0f - smoothedSize) * 0.8f;  // 0.3Hz to 1.1Hz
+            modulationLFO1.setFrequency(lfoRate1);
+            modulationLFO2.setFrequency(lfoRate2);
+
+            // Depth also scales with size (larger spaces = more shimmer)
+            float baseDepth = (currentAlgorithm == 2) ? 0.005f : 0.002f;  // More shimmer for plate
+            float modDepth = baseDepth * (0.5f + smoothedSize * 0.5f);  // Scale depth with size
             float mod1 = modulationLFO1.processSample(0.0f) * modDepth;
             float mod2 = modulationLFO2.processSample(0.0f) * modDepth;
             lateL *= (1.0f + mod1);
