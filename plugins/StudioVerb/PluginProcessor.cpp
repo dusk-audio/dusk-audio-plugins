@@ -424,12 +424,29 @@ void StudioVerbAudioProcessor::deleteUserPreset(int index)
 //==============================================================================
 void StudioVerbAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    // Validate spec to prevent crashes
+    if (sampleRate <= 0.0 || samplesPerBlock <= 0)
+    {
+        DBG("StudioVerb: Invalid prepare spec - sampleRate=" << sampleRate
+            << " samplesPerBlock=" << samplesPerBlock);
+        return;
+    }
+
+    if (!reverbEngine)
+    {
+        DBG("StudioVerb: Reverb engine is null in prepareToPlay!");
+        return;
+    }
+
     juce::dsp::ProcessSpec spec;
     spec.sampleRate = sampleRate;
     spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
     spec.numChannels = 2;
 
     reverbEngine->prepare(spec);
+
+    // Reset to clear any previous state and prevent artifacts
+    reverbEngine->reset();
 
     // Apply current parameters (Task 10: Added width)
     reverbEngine->setAlgorithm(static_cast<int>(currentAlgorithm.load()));
