@@ -2035,11 +2035,22 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (!bypassParam || *bypassParam > 0.5f)
         return;
     
-    // Get stereo link and mix parameters
+    // Get stereo link and mix parameters with proper null checks
     auto* stereoLinkParam = parameters.getRawParameterValue("stereo_link");
     auto* mixParam = parameters.getRawParameterValue("mix");
-    float stereoLinkAmount = stereoLinkParam ? (*stereoLinkParam * 0.01f) : 1.0f; // Convert to 0-1
-    float mixAmount = mixParam ? (*mixParam * 0.01f) : 1.0f; // Convert to 0-1
+
+    // Safely dereference with null checks
+    float stereoLinkAmount = 1.0f;
+    if (stereoLinkParam != nullptr)
+    {
+        stereoLinkAmount = *stereoLinkParam * 0.01f; // Convert to 0-1
+    }
+
+    float mixAmount = 1.0f;
+    if (mixParam != nullptr)
+    {
+        mixAmount = *mixParam * 0.01f; // Convert to 0-1
+    }
 
     // Store dry signal for parallel compression
     juce::AudioBuffer<float> dryBuffer;
@@ -2048,10 +2059,6 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         dryBuffer.makeCopyOf(buffer);
     }
 
-    // Sidechain removed - was causing crashes
-    // auto* sidechainEnableParam = parameters.getRawParameterValue("sidechain_enable");
-    // bool useSidechain = sidechainEnableParam ? (*sidechainEnableParam > 0.5f) : false;
-    
     // Internal oversampling is always enabled for better quality
     bool oversample = true; // Always use oversampling internally
     CompressorMode mode = getCurrentMode();

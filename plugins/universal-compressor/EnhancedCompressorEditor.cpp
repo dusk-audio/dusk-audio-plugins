@@ -10,7 +10,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     fetLookAndFeel = std::make_unique<FETLookAndFeel>();
     vcaLookAndFeel = std::make_unique<VCALookAndFeel>();
     busLookAndFeel = std::make_unique<BusLookAndFeel>();
-    modernLookAndFeel = std::make_unique<ModernLookAndFeel>();
+    // modernLookAndFeel = std::make_unique<ModernLookAndFeel>(); // TODO: Enable when Digital mode is implemented
     
     // Create background texture
     createBackgroundTexture();
@@ -45,7 +45,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     setupFETPanel();
     setupVCAPanel();
     setupBusPanel();
-    // setupDigitalPanel(); // Not yet implemented
+    setupDigitalPanel();
     
     // Create parameter attachments
     auto& params = processor.getParameters();
@@ -372,7 +372,7 @@ void EnhancedCompressorEditor::setupDigitalPanel()
 
 void EnhancedCompressorEditor::updateMode(int newMode)
 {
-    currentMode = juce::jlimit(0, 3, newMode);  // 0-3 for 4 modes
+    currentMode = juce::jlimit(0, 4, newMode);  // 0-4 for 5 modes (including Digital)
 
     // Hide all panels
     optoPanel.container->setVisible(false);
@@ -412,6 +412,13 @@ void EnhancedCompressorEditor::updateMode(int newMode)
         case 3: // Bus
             busPanel.container->setVisible(true);
             currentLookAndFeel = busLookAndFeel.get();
+            break;
+
+        case 4: // Digital (not yet implemented)
+            if (digitalPanel)
+                digitalPanel->setVisible(true);
+            // currentLookAndFeel = modernLookAndFeel.get(); // TODO: Enable when Digital mode is implemented
+            currentLookAndFeel = busLookAndFeel.get(); // Fallback to Bus look for now
             break;
     }
 
