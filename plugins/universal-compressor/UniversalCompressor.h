@@ -51,11 +51,6 @@ public:
     // Parameter access
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
     CompressorMode getCurrentMode() const;
-    
-    // LV2 inline display support
-    #if JucePlugin_Build_LV2
-    void lv2_inline_display(void* context, uint32_t w, uint32_t h) const;
-    #endif
 
 private:
     // Core DSP classes
