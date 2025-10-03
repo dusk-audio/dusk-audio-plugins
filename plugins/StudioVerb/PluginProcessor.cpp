@@ -474,9 +474,27 @@ void StudioVerbAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     if (!sl.isLocked())
         return; // Skip processing if we can't get the lock immediately
 
-    // Validate buffer
+    // Critical buffer validation to prevent crashes
     if (buffer.getNumChannels() == 0 || buffer.getNumSamples() == 0)
+    {
+        DBG("StudioVerb: Invalid buffer - channels=" << buffer.getNumChannels()
+            << " samples=" << buffer.getNumSamples());
         return;
+    }
+
+    // Validate reverb engine exists
+    if (!reverbEngine)
+    {
+        DBG("StudioVerb: Reverb engine is null!");
+        return;
+    }
+
+    // Ensure we have at least 2 channels for stereo processing
+    if (buffer.getNumChannels() < 2)
+    {
+        DBG("StudioVerb: Insufficient channels for stereo processing");
+        return;
+    }
 
     // Handle mono input by duplicating to stereo
     if (getTotalNumInputChannels() == 1 && buffer.getNumChannels() >= 2)

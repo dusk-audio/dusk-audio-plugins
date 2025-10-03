@@ -15,7 +15,7 @@ option(BUILD_AU "Build AU format" ON)
 option(BUILD_VST3 "Build VST3 format" ON)
 option(BUILD_LV2 "Build LV2 format" ON)
 option(BUILD_STANDALONE "Build Standalone format" ON)
-option(ENABLE_ASAN "Enable AddressSanitizer for debug builds" OFF)
+option(ENABLE_ASAN "Enable AddressSanitizer for debug builds" ON)  # ON by default to catch bugs early
 
 # Determine formats to build
 set(FORMATS "")
