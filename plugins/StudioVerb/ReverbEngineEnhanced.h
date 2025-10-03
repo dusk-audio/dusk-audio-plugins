@@ -34,72 +34,29 @@ public:
 
     void process(float* inputs, float* outputs)
     {
-        // Ensure inputs and outputs are not null
+        // Critical safety checks to prevent segfaults
         jassert(inputs != nullptr && outputs != nullptr);
         if (!inputs || !outputs)
+        {
+            DBG("HouseholderMatrix::process - null pointer detected!");
             return;
+        }
 
-        // SIMD-optimized matrix multiplication for better performance
-        using FloatSIMD = juce::dsp::SIMDRegister<float>;
-        constexpr int simdSize = FloatSIMD::SIMDNumElements;
-
+        // Use safe scalar fallback - SIMD disabled to prevent alignment issues causing segfaults
+        // The previous SIMD code was causing crashes due to alignment assumptions
         for (int i = 0; i < N; ++i)
         {
-            if (N >= simdSize && juce::dsp::SIMDRegister<float>::isSIMDAligned(inputs))
+            float sum = 0.0f;
+            for (int j = 0; j < N; ++j)
             {
-                FloatSIMD sum(0.0f);
-                int j = 0;
-
-                // SIMD vectorized loop - only if data is aligned
-                for (; j <= N - simdSize; j += simdSize)
-                {
-                    // Check alignment before SIMD operations
-                    if (juce::dsp::SIMDRegister<float>::isSIMDAligned(&matrix[i * N + j]))
-                    {
-                        FloatSIMD matrixVec = FloatSIMD::fromRawArray(&matrix[i * N + j]);
-                        FloatSIMD inputVec = FloatSIMD::fromRawArray(&inputs[j]);
-                        sum = sum + (matrixVec * inputVec);
-                    }
-                    else
-                    {
-                        // Fallback to scalar for unaligned data
-                        float tempSum[simdSize];
-                        for (int k = 0; k < simdSize; ++k)
-                        {
-                            tempSum[k] = sum[k] + matrix[i * N + j + k] * inputs[j + k];
-                        }
-                        sum = FloatSIMD::fromRawArray(tempSum);
-                    }
-                }
-
-                // Sum SIMD elements with denormal prevention
-                float result = sum.sum();
-                if (std::abs(result) < 1e-10f)
-                    result = 0.0f;
-
-                // Handle remaining elements
-                for (; j < N; ++j)
-                {
-                    result += matrix[i * N + j] * inputs[j];
-                }
-
-                outputs[i] = result;
+                sum += matrix[i * N + j] * inputs[j];
             }
-            else
-            {
-                // Fallback for small matrices or unaligned data
-                float sum = 0.0f;
-                for (int j = 0; j < N; ++j)
-                {
-                    sum += matrix[i * N + j] * inputs[j];
-                }
 
-                // Denormal prevention
-                if (std::abs(sum) < 1e-10f)
-                    sum = 0.0f;
+            // Denormal prevention
+            if (std::abs(sum) < 1e-10f)
+                sum = 0.0f;
 
-                outputs[i] = sum;
-            }
+            outputs[i] = sum;
         }
     }
 
@@ -656,16 +613,26 @@ public:
             lateL = highShelf.processSample(0, lateL);
             lateR = highShelf.processSample(1, lateR);
 
-            // Apply metallic filtering for plate mode
+            // Apply metallic filtering for plate mode with dynamic parameters
             if (currentAlgorithm == 2) // Plate mode
             {
+                // Adjust plate filter cutoff based on size (larger size = higher frequency)
+                float plateCutoff = 2000.0f + smoothedSize * 3000.0f;  // 2kHz to 5kHz
+                plateMetallicFilter.setCutoffFrequency(plateCutoff);
+
+                // Adjust resonance based on damping (less damping = more resonance)
+                float plateResonance = 2.0f + (1.0f - smoothedDamping) * 1.5f;  // 2.0 to 3.5
+                plateMetallicFilter.setResonance(plateResonance);
+
                 // Add metallic resonance using peaking filter
                 float metallicL = plateMetallicFilter.processSample(0, lateL);
                 float metallicR = plateMetallicFilter.processSample(1, lateR);
 
                 // Mix original and filtered for bright metallic character
-                lateL = lateL * 0.6f + metallicL * 0.4f;
-                lateR = lateR * 0.6f + metallicR * 0.4f;
+                // More prominent metallic sound with less damping
+                float metallicMix = 0.3f + (1.0f - smoothedDamping) * 0.3f;  // 0.3 to 0.6
+                lateL = lateL * (1.0f - metallicMix) + metallicL * metallicMix;
+                lateR = lateR * (1.0f - metallicMix) + metallicR * metallicMix;
             }
 
             // Mix early and late
