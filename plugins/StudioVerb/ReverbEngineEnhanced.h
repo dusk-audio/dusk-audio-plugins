@@ -223,11 +223,19 @@ public:
     {
         sampleRate = spec.sampleRate;
 
+        // Calculate max delay needed accounting for size modulation (up to 2x) and sample rate scaling
+        // Base delay * 2.0 (max modulation) * (sampleRate/48000) with safety margin
+        int maxNeededDelay = static_cast<int>(baseDelayLengths[NUM_DELAYS - 1] * 2.0f * (sampleRate / 48000.0) * 1.2);  // 20% safety margin
+
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
             delays[i].prepare(spec);
-            delays[i].setMaximumDelayInSamples(10000);
-            delays[i].setDelay(baseDelayLengths[i] * (sampleRate / 48000.0f));
+            delays[i].setMaximumDelayInSamples(maxNeededDelay);
+
+            // Set initial delay
+            float initialDelay = baseDelayLengths[i] * (sampleRate / 48000.0f);
+            initialDelay = juce::jlimit(1.0f, static_cast<float>(maxNeededDelay - 1), initialDelay);
+            delays[i].setDelay(initialDelay);
 
             decayFilters[i].prepare(sampleRate);
             inputDiffusion[i].prepare(spec);
