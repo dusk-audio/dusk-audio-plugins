@@ -172,7 +172,7 @@ PLUGINS=(
     "FourKEQ_All"
     "TapeMachine_All"
     "UniversalCompressor_All"
-    "StudioReverb_All"
+    "StudioVerb_All"
     "HarmonicGeneratorPlugin_All"
 )
 
