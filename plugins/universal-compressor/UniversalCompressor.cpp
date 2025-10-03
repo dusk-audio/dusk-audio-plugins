@@ -161,15 +161,26 @@ namespace Constants {
 class UniversalCompressor::AntiAliasing
 {
 public:
-    AntiAliasing() = default;
-    
+    AntiAliasing()
+    {
+        // Initialize with stereo by default to prevent crashes
+        channelStates.resize(2);
+        for (auto& state : channelStates)
+        {
+            state.preFilterState = 0.0f;
+            state.postFilterState = 0.0f;
+            state.dcBlockerState = 0.0f;
+            state.dcBlockerPrev = 0.0f;
+        }
+    }
+
     void prepare(double sampleRate, int blockSize, int numChannels)
     {
         this->sampleRate = sampleRate;
-        this->numChannels = numChannels;
-        
+
         if (blockSize > 0 && numChannels > 0)
         {
+            this->numChannels = numChannels;
             // Use 2x oversampling (1 stage) for better performance
             // 1 stage = 2x oversampling as the button indicates
             oversampler = std::make_unique<juce::dsp::Oversampling<float>>(
@@ -205,7 +216,7 @@ public:
     // Unified pre-saturation filtering to prevent aliasing
     float preProcessSample(float input, int channel)
     {
-        if (channel >= numChannels) return input;
+        if (channel < 0 || channel >= static_cast<int>(channelStates.size())) return input;
 
         // Gentle high-frequency reduction before any saturation
         // This prevents high frequencies from creating aliases
@@ -222,7 +233,7 @@ public:
     // Unified post-saturation filtering to remove any remaining aliases
     float postProcessSample(float input, int channel)
     {
-        if (channel >= numChannels) return input;
+        if (channel < 0 || channel >= static_cast<int>(channelStates.size())) return input;
 
         // Remove any harmonics above Nyquist/2
         // Only process if we have a valid sample rate from DAW
@@ -1880,6 +1891,8 @@ UniversalCompressor::UniversalCompressor()
     inputMeter.store(-60.0f, std::memory_order_relaxed);
     outputMeter.store(-60.0f, std::memory_order_relaxed);
     grMeter.store(0.0f, std::memory_order_relaxed);
+    linkedGainReduction[0].store(0.0f, std::memory_order_relaxed);
+    linkedGainReduction[1].store(0.0f, std::memory_order_relaxed);
     
     // Initialize lookup tables
     lookupTables = std::make_unique<LookupTables>();
@@ -1948,10 +1961,15 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     
     // Prepare anti-aliasing for internal oversampling
     if (antiAliasing)
+    {
         antiAliasing->prepare(sampleRate, samplesPerBlock, numChannels);
-    
-    // Set latency based on oversampling
-    setLatencySamples(antiAliasing ? antiAliasing->getLatency() : 0);
+        // Set latency based on oversampling
+        setLatencySamples(antiAliasing->getLatency());
+    }
+    else
+    {
+        setLatencySamples(0);
+    }
 }
 
 void UniversalCompressor::releaseResources()
