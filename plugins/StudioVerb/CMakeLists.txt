@@ -84,6 +84,8 @@ target_sources(StudioVerb
         PluginEditor.h
         ReverbEngine.cpp
         ReverbEngine.h
+        ReverbEngineEnhanced.h
+        ReverbEngineEnhanced.cpp
 )
 
 # Compile definitions
