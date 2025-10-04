@@ -23,6 +23,7 @@ StudioVerbAudioProcessor::StudioVerbAudioProcessor()
     currentSize.store(0.5f);
     currentDamp.store(0.5f);
     currentPredelay.store(20.0f);
+    manualPredelay.store(20.0f);  // Initialize to match currentPredelay
     currentMix.store(0.3f);
     currentWidth.store(1.0f);
 
@@ -45,6 +46,9 @@ StudioVerbAudioProcessor::StudioVerbAudioProcessor()
     parameters.addParameterListener(HIGH_RT60_ID, this);
     parameters.addParameterListener(INFINITE_ID, this);
     parameters.addParameterListener(OVERSAMPLING_ID, this);
+    parameters.addParameterListener(ROOM_SHAPE_ID, this);
+    parameters.addParameterListener(VINTAGE_ID, this);
+    parameters.addParameterListener(PREDELAY_BEATS_ID, this);
 }
 
 StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
@@ -60,6 +64,9 @@ StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
     parameters.removeParameterListener(HIGH_RT60_ID, this);
     parameters.removeParameterListener(INFINITE_ID, this);
     parameters.removeParameterListener(OVERSAMPLING_ID, this);
+    parameters.removeParameterListener(ROOM_SHAPE_ID, this);
+    parameters.removeParameterListener(VINTAGE_ID, this);
+    parameters.removeParameterListener(PREDELAY_BEATS_ID, this);
 }
 
 //==============================================================================
@@ -71,7 +78,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioVerbAudioProcessor::cr
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         ALGORITHM_ID,
         "Algorithm",
-        juce::StringArray { "Room", "Hall", "Plate", "Early Reflections" },
+        juce::StringArray { "Room", "Hall", "Plate", "Early Reflections", "Gated", "Reverse" },
         0));
 
     // Size parameter (0-1)
@@ -173,6 +180,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioVerbAudioProcessor::cr
         juce::StringArray { "Off", "2x", "4x" },
         0));
 
+    // Room shape parameter
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        ROOM_SHAPE_ID,
+        "Room Shape",
+        juce::StringArray { "Studio Room", "Small Room", "Large Hall", "Cathedral", "Chamber", "Warehouse", "Booth", "Tunnel" },
+        0));
+
+    // Vintage/warmth parameter
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        VINTAGE_ID,
+        "Vintage",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f,
+        "",
+        juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(static_cast<int>(value * 100)) + "%"; },
+        [](const juce::String& text) { return text.getFloatValue() / 100.0f; }));
+
+    // Tempo-synced predelay
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        PREDELAY_BEATS_ID,
+        "Predelay Sync",
+        juce::StringArray { "Off", "1/16", "1/8", "1/4", "1/2" },
+        0));
+
     return layout;
 }
 
@@ -206,6 +238,13 @@ void StudioVerbAudioProcessor::initializePresets()
     factoryPresets.push_back({ "Distant Echo", EarlyReflections, 0.6f, 0.0f, 50.0f, 0.4f });
     factoryPresets.push_back({ "Ambience", EarlyReflections, 0.5f, 0.0f, 30.0f, 0.3f });
     factoryPresets.push_back({ "Pre-Verb", EarlyReflections, 0.3f, 0.0f, 15.0f, 0.7f });
+
+    // Showcase presets highlighting new features
+    factoryPresets.push_back({ "Lush Hall", Hall, 0.85f, 0.35f, 40.0f, 0.5f });  // Uses 32-channel FDN modulation
+    factoryPresets.push_back({ "Infinite Pad", Hall, 0.9f, 0.1f, 60.0f, 0.6f });  // For infinite mode
+    factoryPresets.push_back({ "Bright Dattorro", Plate, 0.6f, 0.1f, 15.0f, 0.45f });  // Bright plate with output diffusion
+    factoryPresets.push_back({ "Dark Dattorro", Plate, 0.7f, 0.8f, 20.0f, 0.4f });  // Dark plate with heavy damping
+    factoryPresets.push_back({ "Crystal Cathedral", Hall, 0.95f, 0.15f, 75.0f, 0.55f });  // Multiband RT60 showcase
 }
 
 //==============================================================================
@@ -245,7 +284,11 @@ void StudioVerbAudioProcessor::parameterChanged(const juce::String& parameterID,
         float clampedPredelay = juce::jlimit(0.0f, 200.0f, newValue);
         currentPredelay.store(clampedPredelay);
 
-        if (reverbEngine)
+        // Save as manual predelay (preserves user setting when tempo sync is off)
+        manualPredelay.store(clampedPredelay);
+
+        // Only apply if tempo sync is off
+        if (currentPredelayBeats.load() == 0 && reverbEngine)
             reverbEngine->setPredelay(clampedPredelay);
     }
     else if (parameterID == MIX_ID)
@@ -309,6 +352,85 @@ void StudioVerbAudioProcessor::parameterChanged(const juce::String& parameterID,
             // Convert choice to actual factor
             int factor = (oversamplingChoice == 0) ? 1 : (oversamplingChoice == 1) ? 2 : 4;
             reverbEngine->setOversamplingFactor(factor);
+
+            // Update latency reporting
+            setLatencySamples(reverbEngine->getOversamplingLatency());
+        }
+    }
+    else if (parameterID == ROOM_SHAPE_ID)
+    {
+        int shape = static_cast<int>(newValue);
+        currentRoomShape.store(shape);
+
+        if (reverbEngine)
+            reverbEngine->setRoomShape(shape);
+    }
+    else if (parameterID == VINTAGE_ID)
+    {
+        float clampedVintage = juce::jlimit(0.0f, 1.0f, newValue);
+        currentVintage.store(clampedVintage);
+
+        if (reverbEngine)
+            reverbEngine->setVintage(clampedVintage);
+    }
+    else if (parameterID == PREDELAY_BEATS_ID)
+    {
+        int beatChoice = static_cast<int>(newValue);
+        int previousBeatChoice = currentPredelayBeats.load();
+        currentPredelayBeats.store(beatChoice);
+
+        if (beatChoice > 0 && reverbEngine)
+        {
+            // Save manual predelay before switching to tempo sync
+            if (previousBeatChoice == 0)
+                manualPredelay.store(currentPredelay.load());
+
+            // Get tempo from host
+            if (auto* playHead = getPlayHead())
+            {
+                auto positionInfo = playHead->getPosition();
+                if (positionInfo && positionInfo->getBpm().hasValue())
+                {
+                    double bpm = *positionInfo->getBpm();
+                    float msPerBeat = 60000.0f / static_cast<float>(bpm);  // Corrected variable name
+
+                    // Calculate predelay in ms based on beat division
+                    float beats = 0.0f;
+                    switch (beatChoice)
+                    {
+                        case 1: beats = 0.0625f; break;  // 1/16
+                        case 2: beats = 0.125f; break;   // 1/8
+                        case 3: beats = 0.25f; break;    // 1/4
+                        case 4: beats = 0.5f; break;     // 1/2
+                    }
+
+                    float predelayMs = beats * msPerBeat;
+                    reverbEngine->setPredelay(predelayMs);
+                    // Don't overwrite currentPredelay - keep manual value intact via manualPredelay
+                }
+                else
+                {
+                    DBG("StudioVerb: Tempo sync requires host tempo information (not available)");
+                }
+            }
+            else
+            {
+                DBG("StudioVerb: No AudioPlayHead available for tempo sync");
+            }
+        }
+        else if (beatChoice == 0)
+        {
+            // Restore manual predelay when switching back to manual mode
+            if (reverbEngine)
+            {
+                float restoredPredelay = manualPredelay.load();
+                currentPredelay.store(restoredPredelay);
+                reverbEngine->setPredelay(restoredPredelay);
+
+                // Update the parameter to reflect restored value
+                if (auto* param = parameters.getParameter(PREDELAY_ID))
+                    param->setValueNotifyingHost(restoredPredelay / 200.0f);
+            }
         }
     }
 }
@@ -335,7 +457,7 @@ void StudioVerbAudioProcessor::loadPreset(int presetIndex)
 
     if (preset != nullptr)
     {
-        // Update parameters
+        // Update basic parameters
         if (auto* param = parameters.getParameter(ALGORITHM_ID))
             param->setValueNotifyingHost(static_cast<float>(preset->algorithm) / (NumAlgorithms - 1));
 
@@ -350,6 +472,34 @@ void StudioVerbAudioProcessor::loadPreset(int presetIndex)
 
         if (auto* param = parameters.getParameter(MIX_ID))
             param->setValueNotifyingHost(preset->mix);
+
+        if (auto* param = parameters.getParameter(WIDTH_ID))
+            param->setValueNotifyingHost(preset->width);
+
+        // Update advanced parameters
+        if (auto* param = parameters.getParameter(LOW_RT60_ID))
+            param->setValueNotifyingHost((preset->lowRT60 - 0.1f) / 9.9f);
+
+        if (auto* param = parameters.getParameter(MID_RT60_ID))
+            param->setValueNotifyingHost((preset->midRT60 - 0.1f) / 9.9f);
+
+        if (auto* param = parameters.getParameter(HIGH_RT60_ID))
+            param->setValueNotifyingHost((preset->highRT60 - 0.1f) / 9.9f);
+
+        if (auto* param = parameters.getParameter(INFINITE_ID))
+            param->setValueNotifyingHost(preset->infinite ? 1.0f : 0.0f);
+
+        if (auto* param = parameters.getParameter(OVERSAMPLING_ID))
+            param->setValueNotifyingHost(static_cast<float>(preset->oversampling) / 2.0f);
+
+        if (auto* param = parameters.getParameter(ROOM_SHAPE_ID))
+            param->setValueNotifyingHost(static_cast<float>(preset->roomShape) / 7.0f);
+
+        if (auto* param = parameters.getParameter(PREDELAY_BEATS_ID))
+            param->setValueNotifyingHost(static_cast<float>(preset->predelayBeats) / 4.0f);
+
+        if (auto* param = parameters.getParameter(VINTAGE_ID))
+            param->setValueNotifyingHost(preset->vintage);
 
         currentPresetIndex = presetIndex;
     }
@@ -393,6 +543,10 @@ bool StudioVerbAudioProcessor::isMidiEffect() const
 // Task 7: Improved latency reporting
 double StudioVerbAudioProcessor::getTailLengthSeconds() const
 {
+    // Return infinity if infinite mode is enabled
+    if (currentInfinite.load())
+        return std::numeric_limits<double>::infinity();
+
     if (reverbEngine && getSampleRate() > 0)
         return static_cast<double>(reverbEngine->getMaxTailSamples()) / getSampleRate();
 
@@ -468,6 +622,15 @@ void StudioVerbAudioProcessor::saveUserPreset(const juce::String& name)
         preset.damp = currentDamp.load();
         preset.predelay = currentPredelay.load();
         preset.mix = currentMix.load();
+        preset.width = currentWidth.load();
+        preset.lowRT60 = currentLowRT60.load();
+        preset.midRT60 = currentMidRT60.load();
+        preset.highRT60 = currentHighRT60.load();
+        preset.infinite = currentInfinite.load();
+        preset.oversampling = currentOversampling.load();
+        preset.roomShape = currentRoomShape.load();
+        preset.predelayBeats = currentPredelayBeats.load();
+        preset.vintage = currentVintage.load();
 
         userPresets.push_back(preset);
 
@@ -480,6 +643,15 @@ void StudioVerbAudioProcessor::saveUserPreset(const juce::String& name)
         presetNode.setProperty("damp", preset.damp, nullptr);
         presetNode.setProperty("predelay", preset.predelay, nullptr);
         presetNode.setProperty("mix", preset.mix, nullptr);
+        presetNode.setProperty("width", preset.width, nullptr);
+        presetNode.setProperty("lowRT60", preset.lowRT60, nullptr);
+        presetNode.setProperty("midRT60", preset.midRT60, nullptr);
+        presetNode.setProperty("highRT60", preset.highRT60, nullptr);
+        presetNode.setProperty("infinite", preset.infinite, nullptr);
+        presetNode.setProperty("oversampling", preset.oversampling, nullptr);
+        presetNode.setProperty("roomShape", preset.roomShape, nullptr);
+        presetNode.setProperty("predelayBeats", preset.predelayBeats, nullptr);
+        presetNode.setProperty("vintage", preset.vintage, nullptr);
         userPresetsNode.appendChild(presetNode, nullptr);
     }
     catch (const std::exception& e)
@@ -547,13 +719,31 @@ void StudioVerbAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBl
     // Reset to clear any previous state and prevent artifacts
     reverbEngine->reset();
 
-    // Apply current parameters (Task 10: Added width)
+    // Apply current parameters including advanced controls
     reverbEngine->setAlgorithm(static_cast<int>(currentAlgorithm.load()));
     reverbEngine->setSize(currentSize.load());
     reverbEngine->setDamping(currentDamp.load());
     reverbEngine->setPredelay(currentPredelay.load());
     reverbEngine->setMix(currentMix.load());
     reverbEngine->setWidth(currentWidth.load());
+
+    // Apply advanced parameters
+    reverbEngine->setLowDecayTime(currentLowRT60.load());
+    reverbEngine->setMidDecayTime(currentMidRT60.load());
+    reverbEngine->setHighDecayTime(currentHighRT60.load());
+    reverbEngine->setInfiniteDecay(currentInfinite.load());
+
+    int oversamplingChoice = currentOversampling.load();
+    reverbEngine->setOversamplingEnabled(oversamplingChoice > 0);
+    int factor = (oversamplingChoice == 0) ? 1 : (oversamplingChoice == 1) ? 2 : 4;
+    reverbEngine->setOversamplingFactor(factor);
+
+    // Apply room shape and vintage
+    reverbEngine->setRoomShape(currentRoomShape.load());
+    reverbEngine->setVintage(currentVintage.load());
+
+    // Report latency from oversampling (use accurate method)
+    setLatencySamples(reverbEngine->getOversamplingLatency());
 }
 
 void StudioVerbAudioProcessor::releaseResources()
@@ -669,6 +859,15 @@ void StudioVerbAudioProcessor::setStateInformation(const void* data, int sizeInB
                     preset.damp = presetNode.getProperty("damp", 0.5f);
                     preset.predelay = presetNode.getProperty("predelay", 0.0f);
                     preset.mix = presetNode.getProperty("mix", 0.5f);
+                    preset.width = presetNode.getProperty("width", 0.5f);
+                    preset.lowRT60 = presetNode.getProperty("lowRT60", 2.0f);
+                    preset.midRT60 = presetNode.getProperty("midRT60", 2.0f);
+                    preset.highRT60 = presetNode.getProperty("highRT60", 1.5f);
+                    preset.infinite = presetNode.getProperty("infinite", false);
+                    preset.oversampling = presetNode.getProperty("oversampling", 0);
+                    preset.roomShape = presetNode.getProperty("roomShape", 0);
+                    preset.predelayBeats = presetNode.getProperty("predelayBeats", 0);
+                    preset.vintage = presetNode.getProperty("vintage", 0.0f);
                     userPresets.push_back(preset);
                 }
             }

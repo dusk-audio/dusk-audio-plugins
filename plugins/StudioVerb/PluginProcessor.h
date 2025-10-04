@@ -86,6 +86,9 @@ public:
     static constexpr const char* HIGH_RT60_ID = "highRT60";
     static constexpr const char* INFINITE_ID = "infinite";
     static constexpr const char* OVERSAMPLING_ID = "oversampling";
+    static constexpr const char* ROOM_SHAPE_ID = "roomShape";
+    static constexpr const char* VINTAGE_ID = "vintage";
+    static constexpr const char* PREDELAY_BEATS_ID = "predelayBeats";
 
     // Algorithm types
     enum Algorithm
@@ -94,6 +97,8 @@ public:
         Hall,
         Plate,
         EarlyReflections,
+        Gated,      // Non-linear gated reverb
+        Reverse,    // Non-linear reverse reverb
         NumAlgorithms
     };
 
@@ -106,6 +111,15 @@ public:
         float damp;
         float predelay;
         float mix;
+        float width = 0.5f;
+        float lowRT60 = 2.0f;
+        float midRT60 = 2.0f;
+        float highRT60 = 1.5f;
+        bool infinite = false;
+        int oversampling = 0;
+        int roomShape = 0;
+        int predelayBeats = 0;
+        float vintage = 0.0f;
     };
 
     // Get parameters
@@ -141,7 +155,13 @@ private:
     std::atomic<float> currentMidRT60 { 2.0f };
     std::atomic<float> currentHighRT60 { 1.5f };
     std::atomic<bool> currentInfinite { false };
-    std::atomic<int> currentOversampling { 1 };  // 1x, 2x, or 4x
+    std::atomic<int> currentOversampling { 0 };  // 0=off, 1=2x, 2=4x
+    std::atomic<int> currentRoomShape { 0 };
+    std::atomic<float> currentVintage { 0.0f };
+    std::atomic<int> currentPredelayBeats { 0 };  // 0=off, 1=1/16, 2=1/8, etc.
+
+    // Store manual predelay separately to preserve it during tempo sync
+    std::atomic<float> manualPredelay { 0.0f };
 
     // Reverb engine (Task 3: Integrated Enhanced FDN Engine)
     std::unique_ptr<ReverbEngineEnhanced> reverbEngine;
