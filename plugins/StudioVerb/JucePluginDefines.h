@@ -10,7 +10,7 @@
 
 #define JucePlugin_Name                 "Studio Verb"
 #define JucePlugin_Desc                 "Professional Reverb Plugin"
-#define JucePlugin_Manufacturer         "Luna CO. Audio"
+#define JucePlugin_Manufacturer         "Luna Co. Audio"
 #define JucePlugin_ManufacturerWebsite  "https://lunaco.audio"
 #define JucePlugin_ManufacturerEmail    "support@lunaco.audio"
 #define JucePlugin_ManufacturerCode     0x4c75436f  // 'LuCo'
@@ -45,7 +45,7 @@
 #define JucePlugin_AAXDisableMultiMono  0
 #define JucePlugin_IAAType              0x61757278  // 'aurx'
 #define JucePlugin_IAASubType           JucePlugin_PluginCode
-#define JucePlugin_IAAName              "Luna CO. Audio: Studio Verb"
+#define JucePlugin_IAAName              "Luna Co. Audio: Studio Verb"
 #define JucePlugin_VSTNumMidiInputs     0
 #define JucePlugin_VSTNumMidiOutputs    0
 #define JucePlugin_MaxNumInputChannels  2

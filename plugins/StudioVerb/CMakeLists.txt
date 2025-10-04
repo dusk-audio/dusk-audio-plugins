@@ -37,7 +37,7 @@ endif()
 
 # Add the plugin target
 juce_add_plugin(StudioVerb
-    COMPANY_NAME "Luna CO. Audio"
+    COMPANY_NAME "Luna Co. Audio"
     COMPANY_WEBSITE "https://lunaco.audio"
     COMPANY_EMAIL "support@lunaco.audio"
 

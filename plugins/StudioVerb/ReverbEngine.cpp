@@ -3,7 +3,7 @@
 
     ReverbEngine.cpp
     Studio Verb - Reverb DSP Engine
-    Copyright (c) 2024 Luna CO. Audio
+    Copyright (c) 2024 Luna Co. Audio
 
   ==============================================================================
 */

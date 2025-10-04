@@ -3,7 +3,7 @@
 
     ReverbEngineEnhanced.h
     Studio Verb - Enhanced Realistic Reverb DSP Engine
-    Copyright (c) 2024 Luna CO. Audio
+    Copyright (c) 2024 Luna Co. Audio
 
     Using Feedback Delay Networks (FDN) and modern reverb techniques
     for much more realistic sound
@@ -110,10 +110,20 @@ public:
     void prepare(double sampleRate_)
     {
         sampleRate = sampleRate_;
+        updateCrossoverFilters();
+    }
 
+    void setBassCrossover(float freqHz)
+    {
+        lowCrossoverFreq = juce::jlimit(50.0f, 500.0f, freqHz);
+        updateCrossoverFilters();
+    }
+
+    void updateCrossoverFilters()
+    {
         // Linkwitz-Riley 4th order = two cascaded Butterworth 2nd order filters
-        // Low-pass at 250Hz
-        float omega1 = juce::MathConstants<float>::twoPi * 250.0f / static_cast<float>(sampleRate);
+        // Low-pass at user-defined bass crossover
+        float omega1 = juce::MathConstants<float>::twoPi * lowCrossoverFreq / static_cast<float>(sampleRate);
         float q = 0.707f;  // Butterworth Q for each stage
         float alpha = std::sin(omega1) / (2.0f * q);
 
@@ -222,6 +232,7 @@ public:
 
 private:
     double sampleRate = 48000.0;
+    float lowCrossoverFreq = 150.0f;  // Bass crossover frequency (50-500 Hz)
 
     // Linkwitz-Riley low-pass filter coefficients (two stages)
     float lowB0_stage1 = 0.5f, lowB1_stage1 = 0.5f, lowB2_stage1 = 0.0f;
@@ -296,24 +307,33 @@ public:
             // Initialize per-channel modulation LFOs for lush, detuned character
             modulationLFOs[i].initialise([](float x) { return std::sin(x); });
 
-            // Multiple LFO rates for rich modulation - mix of sine and random-like modulation
+            // Multiple LFO rates for rich modulation - vary between 0.2-2.0 Hz to reduce metallic artifacts
             if (i < NUM_DELAYS / 2)
             {
-                // First half: slow sine waves (0.1 Hz to 1.5 Hz)
-                float rate = 0.1f + (i * 0.045f);
+                // First half: slow to medium rates (0.2 Hz to 1.2 Hz)
+                float rate = 0.2f + (i * 0.0625f);  // 16 channels span 0.2 to 1.2 Hz
                 modulationLFOs[i].setFrequency(rate);
             }
             else
             {
-                // Second half: complex waveforms for random-like modulation
+                // Second half: medium to fast rates with complex waveforms (0.8 Hz to 2.0 Hz)
                 modulationLFOs[i].initialise([](float x) {
                     return (std::sin(x) + std::sin(x * 3.7f) * 0.3f + std::sin(x * 7.3f) * 0.1f) / 1.4f;
                 });
-                float rate = 0.05f + ((i - NUM_DELAYS/2) * 0.04f);
+                float rate = 0.8f + ((i - NUM_DELAYS/2) * 0.075f);  // 16 channels span 0.8 to 2.0 Hz
                 modulationLFOs[i].setFrequency(rate);
             }
 
             modulationLFOs[i].prepare(spec);
+
+            // Randomize initial phase to break up periodic patterns
+            juce::Random phaseRandom;
+            phaseRandom.setSeedRandomly();
+            float randomPhase = phaseRandom.nextFloat() * juce::MathConstants<float>::twoPi;
+            modulationLFOs[i].reset();  // Reset first
+            // Process dummy samples to advance to random phase
+            for (int p = 0; p < static_cast<int>(randomPhase * 1000.0f); ++p)
+                modulationLFOs[i].processSample(0.0f);
         }
     }
 
@@ -329,8 +349,15 @@ public:
         float delayOutputs[NUM_DELAYS];
         float delayInputs[NUM_DELAYS];
 
-        // Read from delays with per-channel modulation for lush character
-        for (int i = 0; i < NUM_DELAYS; ++i)
+        // Initialize unused channels to zero for quality settings
+        for (int i = activeChannelCount; i < NUM_DELAYS; ++i)
+        {
+            delayOutputs[i] = 0.0f;
+            delayInputs[i] = 0.0f;
+        }
+
+        // Read from delays with per-channel modulation for lush character (only active channels)
+        for (int i = 0; i < activeChannelCount; ++i)
         {
             // Apply per-channel modulation
             float modulation = modulationLFOs[i].processSample(0.0f);
@@ -345,6 +372,10 @@ public:
             delays[i].setDelay(modulatedLength);
 
             delayOutputs[i] = delays[i].popSample(0);
+
+            // Flush denormals to prevent CPU spikes
+            if (std::abs(delayOutputs[i]) < 1e-15f)
+                delayOutputs[i] = 0.0f;
         }
 
         // Mix through Householder matrix for perfect diffusion
@@ -384,9 +415,9 @@ public:
             delays[i].pushSample(0, delayInputs[i]);
         }
 
-        // Enhanced decorrelated stereo output with better spatial imaging
+        // Enhanced decorrelated stereo output with better spatial imaging (only active channels)
         outputL = outputR = 0.0f;
-        for (int i = 0; i < NUM_DELAYS; ++i)
+        for (int i = 0; i < activeChannelCount; ++i)
         {
             // HIGH PRIORITY: Sanitize delay outputs before accumulation
             float delayOut = delayOutputs[i];
@@ -394,14 +425,14 @@ public:
             delayOut = juce::jlimit(-10.0f, 10.0f, delayOut);  // Prevent explosive feedback
 
             // More sophisticated decorrelation using circular panning
-            float angle = (i * juce::MathConstants<float>::pi * 2.0f) / NUM_DELAYS;
+            float angle = (i * juce::MathConstants<float>::pi * 2.0f) / activeChannelCount;
             outputL += delayOut * std::cos(angle);
             outputR += delayOut * std::sin(angle);
         }
 
-        // Energy-normalized output
-        outputL /= std::sqrt(static_cast<float>(NUM_DELAYS));
-        outputR /= std::sqrt(static_cast<float>(NUM_DELAYS));
+        // Energy-normalized output (normalize by active channel count)
+        outputL /= std::sqrt(static_cast<float>(activeChannelCount));
+        outputR /= std::sqrt(static_cast<float>(activeChannelCount));
 
         // HIGH PRIORITY: Final safety clamp on FDN output
         outputL = juce::jlimit(-10.0f, 10.0f, outputL);
@@ -482,6 +513,24 @@ public:
         usePerBandRT60 = false;
     }
 
+    // Set bass crossover frequency for multiband decay
+    void setBassCrossover(float freqHz)
+    {
+        for (auto& filter : decayFilters)
+            filter.setBassCrossover(freqHz);
+    }
+
+    // Set active channel count for CPU/quality tradeoff
+    void setActiveChannelCount(int count)
+    {
+        activeChannelCount = juce::jlimit(8, NUM_DELAYS, count);
+        // Round to nearest power-of-2-ish value for efficiency: 8, 16, 24, or 32
+        if (activeChannelCount <= 12) activeChannelCount = 8;
+        else if (activeChannelCount <= 20) activeChannelCount = 16;
+        else if (activeChannelCount <= 28) activeChannelCount = 24;
+        else activeChannelCount = 32;
+    }
+
 private:
     double sampleRate = 48000.0;
     float baseDelayLengths[NUM_DELAYS];
@@ -498,6 +547,9 @@ private:
     float lowBandFeedback = 0.9f;
     float midBandFeedback = 0.9f;
     float highBandFeedback = 0.85f;
+
+    // Active channel count for CPU/quality tradeoff (8, 16, 24, or 32)
+    int activeChannelCount = 32;  // Default to high quality
 };
 
 //==============================================================================
@@ -806,13 +858,29 @@ public:
         saturator.functionToUse = [](float x) { return std::tanh(x * 1.5f) / 1.5f; };  // Soft saturation
         saturator.prepare(spec);
 
-        // Prepare wow/flutter LFO for analog tape character
+        // Prepare organic modulation - nested LFOs for unpredictable character
+        // Primary wow/flutter LFO with complex waveform
         wowFlutterLFO.initialise([](float x) {
             // Combine sine with subtle randomness for organic wow/flutter
             return std::sin(x) * 0.7f + std::sin(x * 2.3f) * 0.3f;
         });
         wowFlutterLFO.setFrequency(0.3f);  // Slow, tape-like modulation (0.3 Hz)
         wowFlutterLFO.prepare(spec);
+
+        // Nested modulator - modulates the primary LFO for chaotic movement
+        nestedModLFO.initialise([](float x) {
+            // Very slow triangle-like wave for gradual pitch drift
+            return std::sin(x) * 0.6f + std::sin(x * 0.5f) * 0.4f;
+        });
+        nestedModLFO.setFrequency(0.07f);  // Very slow drift (0.07 Hz = ~14 second period)
+        nestedModLFO.prepare(spec);
+
+        // Prepare color mode filters
+        colorHighCutL.prepare(spec);
+        colorHighCutR.prepare(spec);
+        colorLowBoostL.prepare(spec);
+        colorLowBoostR.prepare(spec);
+        updateColorFilters();
 
         // Initialize parameter smoothers with optimized ramp times per parameter type
         // Faster smoothing for mix/width (10ms) - need immediate response for mix changes
@@ -831,11 +899,26 @@ public:
         widthSmooth.setCurrentAndTargetValue(currentWidth);
         predelaySmooth.setCurrentAndTargetValue(0.0f);
 
+        // Prepare enhanced input diffusion (4 cascaded allpass filters)
+        for (int i = 0; i < 4; ++i)
+        {
+            inputDiffusionAPF[i].prepare(spec);
+            inputDiffusionAPF[i].setMaximumDelayInSamples(1000);
+            float scaledDelay = inputDiffusionDelays[i] * (sampleRate / 48000.0f);
+            inputDiffusionAPF[i].setDelay(scaledDelay);
+        }
+
         // Initialize reverse buffers for reverse reverb mode (1 second buffer)
         reverseBufferSize = static_cast<int>(sampleRate);
         reverseBufferL.resize(reverseBufferSize, 0.0f);
         reverseBufferR.resize(reverseBufferSize, 0.0f);
         reverseBufferPos = 0;
+
+        // Initialize shimmer pitch shifter buffers (0.5 second for pitch shifting)
+        shimmerBufferSize = static_cast<int>(sampleRate * 0.5);
+        shimmerBufferL.resize(shimmerBufferSize, 0.0f);
+        shimmerBufferR.resize(shimmerBufferSize, 0.0f);
+        shimmerBufferPos = 0;
 
         // Reset everything to clear any garbage
         reset();
@@ -896,12 +979,17 @@ public:
             int maxPredelayInSamples = predelayL.getMaximumDelayInSamples();
             smoothedPredelaySamples = juce::jlimit(0.0f, static_cast<float>(maxPredelayInSamples - 1), smoothedPredelaySamples);
 
-            // Apply wow/flutter when vintage is enabled
+            // Organic modulation - nested LFOs create chaotic, unpredictable character
             float wowFlutterMod = 0.0f;
-            if (currentVintage > 0.001f)
+            if (currentVintage > 0.001f || currentModDepth > 0.1f)
             {
-                // Subtle delay modulation (0.2% max depth) for tape-like wow/flutter
-                wowFlutterMod = wowFlutterLFO.processSample(0.0f) * 0.002f * currentVintage;
+                // Nested modulation: slow LFO modulates the depth of the fast LFO
+                float nestedMod = nestedModLFO.processSample(0.0f);  // -1 to 1
+                float dynamicDepth = 0.002f * (1.0f + nestedMod * 0.5f);  // Depth varies 0.1% to 0.3%
+
+                // Primary wow/flutter with nested depth modulation
+                float primaryWow = wowFlutterLFO.processSample(0.0f);
+                wowFlutterMod = primaryWow * dynamicDepth * (currentVintage + currentModDepth * 0.3f);
             }
 
             float modulatedPredelayL = smoothedPredelaySamples * (1.0f + wowFlutterMod);
@@ -933,29 +1021,65 @@ public:
             if (std::isnan(earlyL) || std::isinf(earlyL)) earlyL = 0.0f;
             if (std::isnan(earlyR) || std::isinf(earlyR)) earlyR = 0.0f;
 
-            // Process late reverb through FDN with clamped decay and modulation
+            // SERIES CONFIGURATION: Feed ER output into FDN for natural evolution from early to late
+            // Mix dry input with early reflections before feeding to FDN (balance for natural transition)
+            float erToFdnMix = 0.7f;  // 70% early reflections, 30% dry for smooth evolution
+            float fdnInputL = earlyL * erToFdnMix + delayedL * (1.0f - erToFdnMix);
+            float fdnInputR = earlyR * erToFdnMix + delayedR * (1.0f - erToFdnMix);
+
+            // ENHANCED INPUT DIFFUSION: Pre-diffuse signal through cascaded allpass filters
+            // This prevents "ringy" or metallic artifacts in the FDN
+            const float apfFeedback = 0.7f;  // Allpass feedback coefficient
+            for (int i = 0; i < 4; ++i)
+            {
+                // Allpass processing: y[n] = -g*x[n] + x[n-d] + g*y[n-d]
+                float delayedSample = inputDiffusionAPF[i].popSample(0);
+                float apfOut = -apfFeedback * fdnInputL + delayedSample;
+                inputDiffusionAPF[i].pushSample(0, fdnInputL + apfFeedback * apfOut);
+                fdnInputL = apfOut;
+
+                // Process right channel (slightly different feedback for decorrelation)
+                delayedSample = inputDiffusionAPF[i].popSample(1);
+                apfOut = -apfFeedback * 0.95f * fdnInputR + delayedSample;
+                inputDiffusionAPF[i].pushSample(1, fdnInputR + apfFeedback * 0.95f * apfOut);
+                fdnInputR = apfOut;
+            }
+
+            // Process late reverb through FDN with diffused series-fed input
             float lateL, lateR;
             float clampedDecay = juce::jlimit(0.0f, 0.999f, currentDecay);
 
             // Reduce modulation depth in infinite mode to prevent buildup from constructive interference
             float fdnModDepth = infiniteMode ? 0.3f : 1.0f;  // Conservative in infinite mode, full otherwise
 
-            fdn.process(delayedL, delayedR, lateL, lateR, smoothedSize, clampedDecay, smoothedDamping, fdnModDepth);
+            fdn.process(fdnInputL, fdnInputR, lateL, lateR, smoothedSize, clampedDecay, smoothedDamping, fdnModDepth);
 
             // HIGH PRIORITY: Sanitize FDN output (works in release builds unlike jassert)
             if (std::isnan(lateL) || std::isinf(lateL)) lateL = 0.0f;
             if (std::isnan(lateR) || std::isinf(lateR)) lateR = 0.0f;
 
             // Size-dependent modulation for realistic shimmer (larger spaces = slower modulation)
-            // Update LFO rates based on size (smaller size = faster rates for tighter spaces)
-            float lfoRate1 = 0.2f + (1.0f - smoothedSize) * 0.6f;  // 0.2Hz to 0.8Hz
-            float lfoRate2 = 0.3f + (1.0f - smoothedSize) * 0.8f;  // 0.3Hz to 1.1Hz
+            // Update LFO rates based on user control and size
+            // Base rate from user parameter (0.1-5.0 Hz), slightly offset for LFO2
+            float lfoRate1 = currentModRate;
+            float lfoRate2 = currentModRate * 1.3f;  // Slightly different rate for stereo movement
             modulationLFO1.setFrequency(lfoRate1);
             modulationLFO2.setFrequency(lfoRate2);
 
-            // Depth also scales with size (larger spaces = more shimmer)
-            float baseDepth = (currentAlgorithm == 2) ? 0.005f : 0.002f;  // More shimmer for plate
-            float shimmerModDepth = baseDepth * (0.5f + smoothedSize * 0.5f);  // Scale depth with size
+            // Depth combines user parameter with algorithm-specific scaling
+            float algorithmDepthScale = 0.004f;  // Base depth
+
+            // Algorithm-specific modulation depth scaling
+            switch (currentAlgorithm)
+            {
+                case 2:  algorithmDepthScale = 0.01f; break;   // Plate - more shimmer
+                case 7:  algorithmDepthScale = 0.003f; break;  // Bright Chamber - less modulation
+                case 9:  algorithmDepthScale = 0.012f; break;  // Sanctuary - ethereal movement
+                case 11: algorithmDepthScale = 0.015f; break;  // Shimmer - maximum modulation
+                default: algorithmDepthScale = 0.004f; break;
+            }
+
+            float shimmerModDepth = algorithmDepthScale * currentModDepth * (0.5f + smoothedSize * 0.5f);
             float mod1 = modulationLFO1.processSample(0.0f) * shimmerModDepth;
             float mod2 = modulationLFO2.processSample(0.0f) * shimmerModDepth;
             lateL *= (1.0f + mod1);
@@ -1000,6 +1124,60 @@ public:
                 float metallicMix = 0.25f + (1.0f - smoothedDamping) * 0.35f;  // 0.25 to 0.6
                 lateL = lateL * (1.0f - metallicMix) + metallicL * metallicMix;
                 lateR = lateR * (1.0f - metallicMix) + metallicR * metallicMix;
+            }
+
+            // Algorithm-specific tone character
+            if (currentAlgorithm == 7) // Bright Chamber - enhance highs
+            {
+                // Boost highs for brightness
+                lateL = highShelf.processSample(0, lateL);
+                lateR = highShelf.processSample(1, lateR);
+            }
+            else if (currentAlgorithm == 8) // Dark Hall - reduce highs
+            {
+                // Additional lowpass for warmth
+                lateL = lowShelf.processSample(0, lateL);
+                lateR = lowShelf.processSample(1, lateR);
+            }
+            else if (currentAlgorithm == 11) // Shimmer - authentic pitch shift up (+12 semitones)
+            {
+                // Simple pitch shifter using dual delay lines with crossfading
+                // Pitch ratio for +12 semitones (1 octave) = 2.0
+                const float pitchRatio = 2.0f;  // Octave up
+                const int grainSize = 2048;  // Grain size in samples
+
+                // Use shimmerBufferPos as grain position counter
+                static int grainPos = 0;
+                static float shimmerPhase = 0.0f;
+
+                // Write to shimmer buffer (circular)
+                shimmerBufferL[shimmerBufferPos] = lateL;
+                shimmerBufferR[shimmerBufferPos] = lateR;
+
+                // Read with pitch shift (read faster than write for upward shift)
+                shimmerPhase += pitchRatio;
+                if (shimmerPhase >= static_cast<float>(shimmerBufferSize))
+                    shimmerPhase -= static_cast<float>(shimmerBufferSize);
+
+                int readPos = static_cast<int>(shimmerPhase);
+                float frac = shimmerPhase - readPos;
+
+                // Linear interpolation
+                int readPos2 = (readPos + 1) % shimmerBufferSize;
+                float shiftedL = shimmerBufferL[readPos] * (1.0f - frac) + shimmerBufferL[readPos2] * frac;
+                float shiftedR = shimmerBufferR[readPos] * (1.0f - frac) + shimmerBufferR[readPos2] * frac;
+
+                // Crossfade to avoid clicks
+                float fadePos = static_cast<float>(grainPos) / static_cast<float>(grainSize);
+                float fade = 0.5f + 0.5f * std::cos(fadePos * juce::MathConstants<float>::twoPi);
+
+                // Mix: 60% dry, 40% pitched
+                lateL = lateL * 0.6f + shiftedL * 0.4f * fade;
+                lateR = lateR * 0.6f + shiftedR * 0.4f * fade;
+
+                // Advance counters
+                shimmerBufferPos = (shimmerBufferPos + 1) % shimmerBufferSize;
+                grainPos = (grainPos + 1) % grainSize;
             }
 
             // Apply non-linear reverb modes (Gated or Reverse)
@@ -1063,12 +1241,24 @@ public:
             reverbR = mid - side;
 
             // Apply vintage character (analog noise + saturation + hysteresis) to wet signal only
-            if (currentVintage > 0.001f)
+            if (currentVintage > 0.1f)  // Only add noise above 10% to avoid constant hiss
             {
-                // Add subtle pink-noise-like character
-                float noise = (noiseGenerator.nextFloat() * 2.0f - 1.0f) * 0.001f * currentVintage;
-                reverbL += noise;
-                reverbR += noise * 0.9f;  // Slightly decorrelated
+                // Add subtle pink-filtered noise (scaled by vintage amount)
+                float rawNoise = noiseGenerator.nextFloat() * 2.0f - 1.0f;
+
+                // Simple pink filter using 1-pole lowpass cascade (approximates -3dB/octave)
+                pinkState1L = pinkState1L * 0.99765f + rawNoise * 0.0555179f;
+                pinkState2L = pinkState2L * 0.96300f + rawNoise * 0.0750759f;
+                float pinkL = (pinkState1L + pinkState2L + rawNoise * 0.1848f) * 0.11f;
+
+                pinkState1R = pinkState1R * 0.99765f + rawNoise * 0.9f * 0.0555179f;  // Slightly decorrelated
+                pinkState2R = pinkState2R * 0.96300f + rawNoise * 0.9f * 0.0750759f;
+                float pinkR = (pinkState1R + pinkState2R + rawNoise * 0.9f * 0.1848f) * 0.11f;
+
+                // Scale noise amplitude by vintage amount and noise amount control
+                float noiseScale = (currentVintage - 0.1f) * 0.0011f * currentNoiseAmount;  // Scale from 0 at 10% to max at 100%
+                reverbL += pinkL * noiseScale;
+                reverbR += pinkR * noiseScale;
 
                 // Apply soft tape-like saturation
                 float satAmount = currentVintage * 0.3f;
@@ -1086,6 +1276,24 @@ public:
                 reverbR = reverbR * (1.0f - currentVintage * 0.3f) + hysteresisStateR * (currentVintage * 0.3f);
             }
 
+            // Apply color mode filtering (vintage hardware emulation)
+            if (currentColorMode != 2)  // Skip processing if "Now" mode (transparent)
+            {
+                // Apply color filters
+                reverbL = colorHighCutL.processSample(0, reverbL);
+                reverbR = colorHighCutR.processSample(1, reverbR);
+                reverbL = colorLowBoostL.processSample(0, reverbL);
+                reverbR = colorLowBoostR.processSample(1, reverbR);
+
+                // Apply bit crushing for 1980s mode
+                if (bitCrushAmount > 0.0f)
+                {
+                    float quantize = 1.0f / bitCrushAmount;
+                    reverbL = std::floor(reverbL * quantize) / quantize;
+                    reverbR = std::floor(reverbR * quantize) / quantize;
+                }
+            }
+
             // Apply mix with smoothed value
             float wetGain = smoothedMix;
             float dryGain = 1.0f - smoothedMix;
@@ -1095,6 +1303,33 @@ public:
             // HIGH PRIORITY: Add NaN/Inf guards and output limiting
             if (std::isnan(outputL) || std::isinf(outputL)) outputL = 0.0f;
             if (std::isnan(outputR) || std::isinf(outputR)) outputR = 0.0f;
+
+            // Noise floor diagnostic - track RMS of reverb tail for debugging
+            static int noiseDiagCounter = 0;
+            static float noiseAccumL = 0.0f;
+            static float noiseAccumR = 0.0f;
+
+            if (currentVintage > 0.0f || currentNoiseAmount > 0.0f)
+            {
+                noiseAccumL += reverbL * reverbL;
+                noiseAccumR += reverbR * reverbR;
+                noiseDiagCounter++;
+
+                // Report noise floor every ~1 second (48000 samples @ 48kHz)
+                if (noiseDiagCounter >= 48000)
+                {
+                    float rmsL = std::sqrt(noiseAccumL / noiseDiagCounter);
+                    float rmsR = std::sqrt(noiseAccumR / noiseDiagCounter);
+                    float rmsDB = 20.0f * std::log10(std::max(rmsL, rmsR) + 1e-10f);
+
+                    DBG("StudioVerb Noise Floor: " << rmsDB << " dBFS (Vintage=" << currentVintage
+                        << ", NoiseAmt=" << currentNoiseAmount << ")");
+
+                    noiseAccumL = 0.0f;
+                    noiseAccumR = 0.0f;
+                    noiseDiagCounter = 0;
+                }
+            }
 
             // Soft clipping to prevent harsh distortion
             leftChannel[sample] = juce::jlimit(-1.0f, 1.0f, outputL);
@@ -1129,9 +1364,73 @@ public:
                 lateGain = 0.9f;
                 break;
 
-            case 3: // Early Only
+            case 3: // Early Reflections Only
                 earlyGain = 1.0f;
                 lateGain = 0.0f;
+                break;
+
+            case 4: // Gated (handled in process loop)
+                earlyReflections.setRoomDimensions(12.0f, 4.0f, 15.0f);
+                currentDecay = 0.90f;
+                earlyGain = 0.4f;
+                lateGain = 0.6f;
+                break;
+
+            case 5: // Reverse (handled in process loop)
+                earlyReflections.setRoomDimensions(20.0f, 8.0f, 30.0f);
+                currentDecay = 0.92f;
+                earlyGain = 0.2f;
+                lateGain = 0.8f;
+                break;
+
+            case 6: // Concert Hall - Large diffuse hall with longer decay
+                earlyReflections.setRoomDimensions(40.0f, 15.0f, 60.0f);
+                currentDecay = 0.95f;
+                earlyGain = 0.2f;
+                lateGain = 0.8f;
+                break;
+
+            case 7: // Bright Chamber - Reflective chamber with high-frequency emphasis
+                earlyReflections.setRoomDimensions(15.0f, 6.0f, 20.0f);
+                currentDecay = 0.88f;
+                earlyGain = 0.5f;
+                lateGain = 0.5f;
+                break;
+
+            case 8: // Dark Hall - Warm smooth hall with reduced highs
+                earlyReflections.setRoomDimensions(30.0f, 12.0f, 45.0f);
+                currentDecay = 0.94f;
+                earlyGain = 0.3f;
+                lateGain = 0.7f;
+                break;
+
+            case 9: // Sanctuary - Ethereal non-realistic space
+                earlyReflections.setRoomDimensions(50.0f, 20.0f, 80.0f);
+                currentDecay = 0.96f;
+                earlyGain = 0.15f;
+                lateGain = 0.85f;
+                break;
+
+            case 10: // Tight Room - Small room with quick reflections
+                earlyReflections.setRoomDimensions(5.0f, 2.5f, 6.0f);
+                currentDecay = 0.80f;
+                earlyGain = 0.7f;
+                lateGain = 0.3f;
+                break;
+
+            case 11: // Shimmer - Upward pitch-shifted reverb tail
+                earlyReflections.setRoomDimensions(35.0f, 14.0f, 50.0f);
+                currentDecay = 0.97f;
+                earlyGain = 0.2f;
+                lateGain = 0.8f;
+                break;
+
+            default:
+                // Fallback to Room
+                earlyReflections.setRoomDimensions(8.0f, 3.5f, 10.0f);
+                currentDecay = 0.85f;
+                earlyGain = 0.6f;
+                lateGain = 0.4f;
                 break;
         }
     }
@@ -1142,6 +1441,13 @@ public:
         earlyReflections.reset();
         predelayL.reset();
         predelayR.reset();
+
+        // ==========================================================
+        // == ADD THIS LOOP TO FIX THE CONSTANT NOISE ISSUE ==
+        for (auto& apf : inputDiffusionAPF)
+            apf.reset();
+        // ==========================================================
+
         lowShelf.reset();
         highShelf.reset();
 
@@ -1151,6 +1457,12 @@ public:
 
         // Reset gate smoothing state
         lastGateGain = 0.0f;
+
+        // Reset pink noise filter states
+        pinkState1L = 0.0f;
+        pinkState2L = 0.0f;
+        pinkState1R = 0.0f;
+        pinkState2R = 0.0f;
 
         // Clear predelay buffers completely
         for (int i = 0; i < 1000; ++i)
@@ -1208,6 +1520,37 @@ public:
         widthSmooth.setTargetValue(currentWidth);
     }
 
+    // Modulation controls
+    void setModulationRate(float rateHz)
+    {
+        currentModRate = juce::jlimit(0.1f, 5.0f, rateHz);
+    }
+
+    void setModulationDepth(float depth)
+    {
+        currentModDepth = juce::jlimit(0.0f, 1.0f, depth);
+    }
+
+    // Color Mode (vintage hardware emulation)
+    void setColorMode(int mode)
+    {
+        currentColorMode = juce::jlimit(0, 2, mode);
+        updateColorFilters();
+    }
+
+    // Bass controls for independent low-end decay
+    void setBassMultiplier(float mult)
+    {
+        bassMult = juce::jlimit(0.5f, 2.0f, mult);
+        updateMultibandDecay();
+    }
+
+    void setBassCrossover(float freqHz)
+    {
+        bassXover = juce::jlimit(50.0f, 500.0f, freqHz);
+        updateMultibandDecay();
+    }
+
     // Multiband RT60 control
     void setLowDecayTime(float seconds)
     {
@@ -1225,6 +1568,12 @@ public:
     {
         highRT60 = juce::jlimit(0.1f, 10.0f, seconds);
         updateMultibandDecay();
+    }
+
+    // Quality setting - adjust FDN channel count for CPU/quality tradeoff
+    void setFDNChannelCount(int count)
+    {
+        fdn.setActiveChannelCount(count);
     }
 
     // Infinite decay mode
@@ -1271,6 +1620,12 @@ public:
         currentVintage = juce::jlimit(0.0f, 1.0f, vintage);
     }
 
+    // Noise amount control
+    void setNoiseAmount(float amount)
+    {
+        currentNoiseAmount = juce::jlimit(0.0f, 1.0f, amount);
+    }
+
     // Get oversampling latency for host reporting
     int getOversamplingLatency() const
     {
@@ -1304,15 +1659,80 @@ public:
         return static_cast<int>(sampleRate * totalTailSeconds);
     }
 
+    void updateColorFilters()
+    {
+        switch (currentColorMode)
+        {
+            case 0: // 1970s - Dark/Warm with reduced highs
+                colorHighCutL.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+                colorHighCutR.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+                colorHighCutL.setCutoffFrequency(7000.0f);  // Roll off highs for warmth
+                colorHighCutR.setCutoffFrequency(7000.0f);
+                colorHighCutL.setResonance(0.5f);  // Gentle rolloff
+                colorHighCutR.setResonance(0.5f);
+
+                colorLowBoostL.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
+                colorLowBoostR.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
+                colorLowBoostL.setCutoffFrequency(150.0f);  // Enhance low-mids for warmth
+                colorLowBoostR.setCutoffFrequency(150.0f);
+                colorLowBoostL.setResonance(2.0f);  // Moderate boost
+                colorLowBoostR.setResonance(2.0f);
+                bitCrushAmount = 0.0f;
+                break;
+
+            case 1: // 1980s - Bright/Noisy with bit reduction
+                colorHighCutL.setType(juce::dsp::StateVariableTPTFilterType::highpass);
+                colorHighCutR.setType(juce::dsp::StateVariableTPTFilterType::highpass);
+                colorHighCutL.setCutoffFrequency(100.0f);  // Transparent highpass
+                colorHighCutR.setCutoffFrequency(100.0f);
+                colorHighCutL.setResonance(0.707f);
+                colorHighCutR.setResonance(0.707f);
+
+                colorLowBoostL.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
+                colorLowBoostR.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
+                colorLowBoostL.setCutoffFrequency(6000.0f);  // Enhance highs for brightness
+                colorLowBoostR.setCutoffFrequency(6000.0f);
+                colorLowBoostL.setResonance(2.5f);  // Strong boost for 80s character
+                colorLowBoostR.setResonance(2.5f);
+                bitCrushAmount = 0.003f;  // Subtle bit reduction for noise
+                break;
+
+            case 2: // Now - Clean/High-res (transparent)
+            default:
+                colorHighCutL.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+                colorHighCutR.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+                colorHighCutL.setCutoffFrequency(20000.0f);  // Transparent
+                colorHighCutR.setCutoffFrequency(20000.0f);
+                colorHighCutL.setResonance(0.707f);
+                colorHighCutR.setResonance(0.707f);
+
+                colorLowBoostL.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+                colorLowBoostR.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
+                colorLowBoostL.setCutoffFrequency(20000.0f);  // Transparent
+                colorLowBoostR.setCutoffFrequency(20000.0f);
+                colorLowBoostL.setResonance(0.707f);
+                colorLowBoostR.setResonance(0.707f);
+                bitCrushAmount = 0.0f;
+                break;
+        }
+    }
+
     void updateMultibandDecay()
     {
         if (!infiniteMode)
         {
-            // Use accurate per-band RT60 control for FDN
-            fdn.setPerBandRT60(lowRT60, midRT60, highRT60);
+            // Apply bass multiplier to low RT60 for independent bass control
+            // The bass multiplier affects frequencies below the crossover
+            float adjustedLowRT60 = lowRT60 * bassMult;
+
+            // Use accurate per-band RT60 control for FDN with bass adjustment
+            fdn.setPerBandRT60(adjustedLowRT60, midRT60, highRT60);
+
+            // Update the crossover frequency for the multiband decay filters
+            fdn.setBassCrossover(bassXover);
 
             // Also update legacy currentDecay for algorithm switching (average for compatibility)
-            float avgRT60 = (lowRT60 + midRT60 + highRT60) / 3.0f;
+            float avgRT60 = (adjustedLowRT60 + midRT60 + highRT60) / 3.0f;
             currentDecay = std::exp(-6.9078f / (avgRT60 * sampleRate));
             currentDecay = juce::jlimit(0.0f, 0.999f, currentDecay);
         }
@@ -1352,12 +1772,30 @@ public:
     juce::Random noiseGenerator;
     float currentVintage = 0.0f;
 
+    // Modulation parameters
+    float currentModRate = 0.5f;   // 0.1-5.0 Hz
+    float currentModDepth = 0.5f;  // 0-1
+    float currentNoiseAmount = 0.5f;  // Noise amount (0-1)
+
+    // Color mode and filters
+    int currentColorMode = 2;  // 0=1970s, 1=1980s, 2=Now
+    juce::dsp::StateVariableTPTFilter<float> colorHighCutL, colorHighCutR;
+    juce::dsp::StateVariableTPTFilter<float> colorLowBoostL, colorLowBoostR;
+    float bitCrushAmount = 0.0f;  // For 1980s mode noise/bit reduction
+
     // Hysteresis for tape-like saturation
     float hysteresisStateL = 0.0f;
     float hysteresisStateR = 0.0f;
 
-    // Wow/flutter LFO for analog tape character
-    juce::dsp::Oscillator<float> wowFlutterLFO;
+    // Pink noise filter states (per-instance to avoid cross-contamination)
+    float pinkState1L = 0.0f;
+    float pinkState2L = 0.0f;
+    float pinkState1R = 0.0f;
+    float pinkState2R = 0.0f;
+
+    // Organic modulation - nested LFOs for chaotic, unpredictable character
+    juce::dsp::Oscillator<float> wowFlutterLFO;        // Primary wow/flutter (0.3 Hz)
+    juce::dsp::Oscillator<float> nestedModLFO;         // Nested modulator (0.07 Hz)
     juce::Random wowFlutterRandom;
 
     // Non-linear reverb modes (Gated and Reverse)
@@ -1365,6 +1803,12 @@ public:
     std::vector<float> reverseBufferR;
     int reverseBufferPos = 0;
     int reverseBufferSize = 0;
+
+    // Shimmer pitch shifter buffers (reuse reverse buffers for efficiency)
+    std::vector<float> shimmerBufferL;
+    std::vector<float> shimmerBufferR;
+    int shimmerBufferPos = 0;
+    int shimmerBufferSize = 0;
     float envelopeFollower = 0.0f;
     float gateThreshold = 0.1f;
     float gateRelease = 0.99f;  // Envelope release coefficient
@@ -1389,11 +1833,19 @@ public:
     float midRT60 = 2.0f;
     float highRT60 = 1.5f;
 
+    // Bass control parameters
+    float bassMult = 1.0f;    // Bass decay multiplier (0.5-2.0)
+    float bassXover = 150.0f; // Bass crossover frequency (50-500 Hz)
+
     // Infinite decay mode
     bool infiniteMode = false;
 
     float earlyGain = 0.5f;
     float lateGain = 0.5f;
+
+    // Enhanced input diffusion - pre-diffuse signal before FDN to prevent metallic artifacts
+    std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>, 4> inputDiffusionAPF;
+    std::array<float, 4> inputDiffusionDelays = { 97.0f, 211.0f, 359.0f, 463.0f };  // Prime-based delays
 
     // Parameter smoothers to prevent zipper noise
     juce::SmoothedValue<float> sizeSmooth;

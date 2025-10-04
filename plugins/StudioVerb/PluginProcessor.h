@@ -2,12 +2,12 @@
   ==============================================================================
 
     Studio Verb - Professional Reverb Plugin
-    Copyright (c) 2024 Luna CO. Audio
+    Copyright (c) 2024 Luna Co. Audio
 
     A high-quality reverb processor with four distinct algorithms:
     Room, Hall, Plate, and Early Reflections
 
-    Developed by Luna CO. Audio
+    Developed by Luna Co. Audio
     https://lunaco.audio
 
   ==============================================================================
@@ -89,6 +89,13 @@ public:
     static constexpr const char* ROOM_SHAPE_ID = "roomShape";
     static constexpr const char* VINTAGE_ID = "vintage";
     static constexpr const char* PREDELAY_BEATS_ID = "predelayBeats";
+    static constexpr const char* MOD_RATE_ID = "modRate";
+    static constexpr const char* MOD_DEPTH_ID = "modDepth";
+    static constexpr const char* COLOR_MODE_ID = "colorMode";
+    static constexpr const char* BASS_MULT_ID = "bassMult";
+    static constexpr const char* BASS_XOVER_ID = "bassXover";
+    static constexpr const char* NOISE_AMOUNT_ID = "noiseAmount";
+    static constexpr const char* QUALITY_ID = "quality";
 
     // Algorithm types
     enum Algorithm
@@ -97,8 +104,14 @@ public:
         Hall,
         Plate,
         EarlyReflections,
-        Gated,      // Non-linear gated reverb
-        Reverse,    // Non-linear reverse reverb
+        Gated,          // Non-linear gated reverb
+        Reverse,        // Non-linear reverse reverb
+        ConcertHall,    // Large diffuse hall with longer decay
+        BrightChamber,  // Reflective chamber with high-frequency emphasis
+        DarkHall,       // Warm smooth hall with reduced highs
+        Sanctuary,      // Ethereal non-realistic space
+        TightRoom,      // Small room with quick reflections
+        Shimmer,        // Upward pitch-shifted reverb tail
         NumAlgorithms
     };
 
@@ -120,6 +133,11 @@ public:
         int roomShape = 0;
         int predelayBeats = 0;
         float vintage = 0.0f;
+        float modRate = 0.5f;
+        float modDepth = 0.5f;
+        int colorMode = 2;  // Default to "Now" (clean)
+        float bassMult = 1.0f;
+        float bassXover = 150.0f;
     };
 
     // Get parameters
@@ -159,6 +177,13 @@ private:
     std::atomic<int> currentRoomShape { 0 };
     std::atomic<float> currentVintage { 0.0f };
     std::atomic<int> currentPredelayBeats { 0 };  // 0=off, 1=1/16, 2=1/8, etc.
+    std::atomic<float> currentModRate { 0.5f };   // Modulation rate (0.1-5.0 Hz)
+    std::atomic<float> currentModDepth { 0.5f };  // Modulation depth (0-1)
+    std::atomic<int> currentColorMode { 2 };      // 0=1970s, 1=1980s, 2=Now (default)
+    std::atomic<float> currentBassMult { 1.0f };  // Bass decay multiplier (0.5-2.0)
+    std::atomic<float> currentBassXover { 150.0f }; // Bass crossover frequency (50-500 Hz)
+    std::atomic<float> currentNoiseAmount { 0.5f }; // Vintage noise amount (0-1)
+    std::atomic<int> currentQuality { 1 };  // Quality: 0=Eco(16ch), 1=High(32ch)
 
     // Store manual predelay separately to preserve it during tempo sync
     std::atomic<float> manualPredelay { 0.0f };

@@ -79,17 +79,31 @@ public:
         }
 
         // Initialize modulation LFOs
+        juce::Random phaseRandom;
+        phaseRandom.setSeedRandomly();
+
         for (int i = 0; i < 8; ++i)
         {
             modulationLFOs[i].initialise([](float x) { return std::sin(x); });
 
-            // Different rates for each LFO (0.1 Hz to 2.0 Hz)
-            float rate = 0.1f + (i * 0.24f);
+            // Different rates for each LFO (0.2 Hz to 1.81 Hz) - wider spread to break up metallic artifacts
+            float rate = 0.2f + (i * 0.23f);  // Spans 0.2 to 1.81 Hz (for i=0..7)
             modulationLFOs[i].setFrequency(rate);
             modulationLFOs[i].prepare(spec);
 
-            // Random phase offset for each LFO
-            modulationPhase[i] = (i * 0.137f) * juce::MathConstants<float>::twoPi;
+            // Truly random phase offset for each LFO to break periodic patterns
+            modulationPhase[i] = phaseRandom.nextFloat() * juce::MathConstants<float>::twoPi;
+            modulationLFOs[i].reset();
+
+            // Advance LFO to random phase
+            // Calculate exact number of samples needed to reach target phase
+            // numSamples = (targetPhase / 2π) * (sampleRate / lfoFrequency)
+            int numSamples = static_cast<int>((modulationPhase[i] / juce::MathConstants<float>::twoPi) *
+                                               (sampleRate / rate));
+            numSamples = juce::jmax(0, numSamples);  // Ensure non-negative
+
+            for (int p = 0; p < numSamples; ++p)
+                modulationLFOs[i].processSample(0.0f);
         }
 
         // Damping filters
@@ -151,8 +165,9 @@ public:
         // Process tank with modulation and cross-feedback
         for (int i = 0; i < 8; ++i)
         {
-            // Get modulated delay time
-            float modulation = modulationLFOs[i].processSample(0.0f) * modDepth * 20.0f;
+            // Get modulated delay time - scale depth by user parameter for stronger resonance breaking
+            // modDepth is user parameter (0-1), scale to 5 samples max for effective detuning
+            float modulation = modulationLFOs[i].processSample(0.0f) * modDepth * 5.0f;
             float delayTime = tankDelays[i].getDelay() + modulation;
             delayTime = juce::jmax(1.0f, delayTime);
             tankDelays[i].setDelay(delayTime);
