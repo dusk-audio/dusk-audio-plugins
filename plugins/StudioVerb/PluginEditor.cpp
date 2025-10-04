@@ -139,7 +139,7 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     algorithmLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
     addAndMakeVisible(algorithmLabel);
 
-    algorithmSelector.addItemList({"Room", "Hall", "Plate", "Early Reflections"}, 1);
+    algorithmSelector.addItemList({"Room", "Hall", "Plate", "Early Reflections", "Gated", "Reverse"}, 1);
     algorithmSelector.addListener(this);
     addAndMakeVisible(algorithmSelector);
 
@@ -315,6 +315,12 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
 
     // Initialize preset list
     updatePresetList();
+
+    // Set initial room shape visibility based on algorithm
+    int currentAlgorithm = algorithmSelector.getSelectedId() - 1;
+    bool showRoomShape = (currentAlgorithm == 0 || currentAlgorithm == 3);  // Room or Early Reflections
+    roomShapeLabel.setVisible(showRoomShape);
+    roomShapeSelector.setVisible(showRoomShape);
 
     // Detect display scale for high-DPI support
     if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
@@ -530,9 +536,8 @@ void StudioVerbAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBoxTha
 {
     if (comboBoxThatHasChanged == &algorithmSelector)
     {
-        updatePresetList();
-        // Auto-load first preset when algorithm changes
-        presetSelector.setSelectedId(1);
+        // Don't reload preset list here - let timerCallback handle it to avoid race conditions
+        // The timerCallback will detect the algorithm change and update accordingly
     }
     else if (comboBoxThatHasChanged == &presetSelector)
     {
@@ -542,16 +547,21 @@ void StudioVerbAudioProcessorEditor::comboBoxChanged(juce::ComboBox* comboBoxTha
             // Find the actual preset index in the full list
             auto currentAlgo = static_cast<StudioVerbAudioProcessor::Algorithm>(algorithmSelector.getSelectedId() - 1);
             auto presetNames = audioProcessor.getPresetNamesForAlgorithm(currentAlgo);
-            auto selectedName = presetNames[selectedIndex];
 
-            // Find this preset in the factory presets
-            const auto& presets = audioProcessor.getFactoryPresets();
-            for (size_t i = 0; i < presets.size(); ++i)
+            // Bounds check
+            if (selectedIndex < presetNames.size())
             {
-                if (presets[i].name == selectedName && presets[i].algorithm == currentAlgo)
+                auto selectedName = presetNames[selectedIndex];
+
+                // Find this preset in the factory presets
+                const auto& presets = audioProcessor.getFactoryPresets();
+                for (size_t i = 0; i < presets.size(); ++i)
                 {
-                    audioProcessor.loadPreset(static_cast<int>(i));
-                    break;
+                    if (presets[i].name == selectedName && presets[i].algorithm == currentAlgo)
+                    {
+                        audioProcessor.loadPreset(static_cast<int>(i));
+                        break;
+                    }
                 }
             }
         }
@@ -566,7 +576,26 @@ void StudioVerbAudioProcessorEditor::updatePresetList()
     auto presetNames = audioProcessor.getPresetNamesForAlgorithm(currentAlgo);
 
     presetSelector.addItemList(presetNames, 1);
-    presetSelector.setSelectedId(0);
+
+    // Auto-load first preset if available
+    if (presetNames.size() > 0)
+    {
+        // Find and load the first preset for this algorithm
+        const auto& presets = audioProcessor.getFactoryPresets();
+        for (size_t i = 0; i < presets.size(); ++i)
+        {
+            if (presets[i].algorithm == currentAlgo)
+            {
+                audioProcessor.loadPreset(static_cast<int>(i));
+                presetSelector.setSelectedId(1, juce::dontSendNotification);
+                break;
+            }
+        }
+    }
+    else
+    {
+        presetSelector.setSelectedId(0, juce::dontSendNotification);
+    }
 }
 
 //==============================================================================
@@ -580,6 +609,11 @@ void StudioVerbAudioProcessorEditor::timerCallback()
     {
         updatePresetList();
         lastAlgorithm = currentAlgorithm;
+
+        // Show room shape selector only for Room and Early Reflections algorithms
+        bool showRoomShape = (currentAlgorithm == 0 || currentAlgorithm == 3);  // Room or Early Reflections
+        roomShapeLabel.setVisible(showRoomShape);
+        roomShapeSelector.setVisible(showRoomShape);
     }
 }
 

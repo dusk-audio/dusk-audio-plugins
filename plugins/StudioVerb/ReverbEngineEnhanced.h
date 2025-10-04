@@ -1333,8 +1333,9 @@ public:
     int oversamplingFactor = 1;  // 1=off, 2=2x, 4=4x
 
     // HIGH PRIORITY: Use Linear interpolation to prevent clicks on predelay changes
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> predelayL { 48000 };
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> predelayR { 48000 };
+    // Predelay buffers sized for 200ms at 192kHz (38400 samples, rounded up to 40000 for safety)
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> predelayL { 40000 };
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> predelayR { 40000 };
 
     juce::dsp::StateVariableTPTFilter<float> lowShelf;
     juce::dsp::StateVariableTPTFilter<float> highShelf;
