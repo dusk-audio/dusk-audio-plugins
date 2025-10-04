@@ -353,11 +353,24 @@ public:
         // Apply decay and damping
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
-            // HIGH PRIORITY: Frequency-dependent decay with strict clamping and safety factor for stability
-            float safetyFactor = 0.99f;  // Additional headroom to prevent oscillation
-            float lowGain = juce::jlimit(0.0f, 0.999f, decay * 1.05f * safetyFactor);  // Low frequencies decay slightly slower
-            float midGain = juce::jlimit(0.0f, 0.999f, decay * safetyFactor);
-            float highGain = juce::jlimit(0.0f, 0.999f, decay * (1.0f - damping * 0.4f) * safetyFactor);  // High frequencies decay faster
+            // Use per-band feedback coefficients if set, otherwise fall back to decay parameter
+            float lowGain, midGain, highGain;
+
+            if (usePerBandRT60)
+            {
+                // Use pre-calculated per-band feedback coefficients for accurate RT60 control
+                lowGain = lowBandFeedback;
+                midGain = midBandFeedback;
+                highGain = highBandFeedback;
+            }
+            else
+            {
+                // Legacy mode: derive from single decay parameter
+                float safetyFactor = 0.99f;  // Additional headroom to prevent oscillation
+                lowGain = juce::jlimit(0.0f, 0.999f, decay * 1.05f * safetyFactor);  // Low frequencies decay slightly slower
+                midGain = juce::jlimit(0.0f, 0.999f, decay * safetyFactor);
+                highGain = juce::jlimit(0.0f, 0.999f, decay * (1.0f - damping * 0.4f) * safetyFactor);  // High frequencies decay faster
+            }
 
             delayInputs[i] = decayFilters[i].process(delayInputs[i], lowGain, midGain, highGain);
 
@@ -413,6 +426,62 @@ public:
         }
     }
 
+    // Set per-band RT60 times for accurate frequency-dependent decay control
+    void setPerBandRT60(float lowRT60, float midRT60, float highRT60)
+    {
+        // Convert RT60 times to feedback coefficients using proper formula
+        // RT60 is the time for signal to decay by 60dB (-60dB = 0.001 in linear)
+        // For a feedback system: output(n) = input * feedback^n
+        // After RT60 seconds: 0.001 = feedback^(RT60 * sampleRate)
+        // feedback = 0.001^(1 / (RT60 * sampleRate))
+        // Using natural log: feedback = exp(ln(0.001) / (RT60 * sampleRate))
+        // ln(0.001) ≈ -6.9078
+
+        const float ln_001 = -6.9078f;  // ln(0.001)
+        float safetyFactor = 0.99f;  // Additional headroom to prevent oscillation
+
+        // Low band feedback
+        if (lowRT60 > 0.01f)
+        {
+            lowBandFeedback = std::exp(ln_001 / (lowRT60 * static_cast<float>(sampleRate)));
+            lowBandFeedback = juce::jlimit(0.0f, 0.999f, lowBandFeedback * safetyFactor);
+        }
+        else
+        {
+            lowBandFeedback = 0.0f;
+        }
+
+        // Mid band feedback
+        if (midRT60 > 0.01f)
+        {
+            midBandFeedback = std::exp(ln_001 / (midRT60 * static_cast<float>(sampleRate)));
+            midBandFeedback = juce::jlimit(0.0f, 0.999f, midBandFeedback * safetyFactor);
+        }
+        else
+        {
+            midBandFeedback = 0.0f;
+        }
+
+        // High band feedback
+        if (highRT60 > 0.01f)
+        {
+            highBandFeedback = std::exp(ln_001 / (highRT60 * static_cast<float>(sampleRate)));
+            highBandFeedback = juce::jlimit(0.0f, 0.999f, highBandFeedback * safetyFactor);
+        }
+        else
+        {
+            highBandFeedback = 0.0f;
+        }
+
+        usePerBandRT60 = true;
+    }
+
+    // Disable per-band RT60 and use legacy decay parameter
+    void disablePerBandRT60()
+    {
+        usePerBandRT60 = false;
+    }
+
 private:
     double sampleRate = 48000.0;
     float baseDelayLengths[NUM_DELAYS];
@@ -423,6 +492,12 @@ private:
     std::array<juce::dsp::Oscillator<float>, NUM_DELAYS> modulationLFOs;
 
     HouseholderMatrix mixingMatrix;
+
+    // Per-band RT60 feedback coefficients for accurate frequency-dependent decay
+    bool usePerBandRT60 = false;
+    float lowBandFeedback = 0.9f;
+    float midBandFeedback = 0.9f;
+    float highBandFeedback = 0.85f;
 };
 
 //==============================================================================
@@ -458,13 +533,17 @@ public:
         // Image source method for realistic early reflections
         reflections.clear();
 
-        // Room dimensions (meters) - varies by algorithm
-        float width = 8.0f;
-        float height = 3.5f;
-        float depth = 10.0f;
+        // Use member variables for room dimensions
+        float width = roomWidth;
+        float height = roomHeight;
+        float depth = roomDepth;
 
-        // Generate first-order and second-order reflections
-        for (int order = 1; order <= 2; ++order)
+        // Adjust reflection order based on density (more density = more reflections)
+        int maxOrder = static_cast<int>(std::ceil(1.0f + reflectionDensity));
+        maxOrder = juce::jlimit(1, 3, maxOrder);  // Limit 1-3 for performance
+
+        // Generate reflections up to calculated order
+        for (int order = 1; order <= maxOrder; ++order)
         {
             for (int x = -order; x <= order; ++x)
             {
@@ -474,6 +553,10 @@ public:
                     {
                         if (std::abs(x) + std::abs(y) + std::abs(z) == order)
                         {
+                            // Skip some reflections for lower density
+                            if (reflectionDensity < 1.0f && (std::abs(x) + std::abs(y) + std::abs(z)) % 2 == 0)
+                                continue;
+
                             // Calculate reflection position
                             float rx = x * width;
                             float ry = y * height;
@@ -481,13 +564,18 @@ public:
 
                             // Distance and delay
                             float distance = std::sqrt(rx*rx + ry*ry + rz*rz);
-                            float delay = (distance / 343.0f) * 1000.0f;  // Speed of sound
+                            float delay = (distance / 343.0f) * 1000.0f;  // Speed of sound = 343 m/s
 
                             if (delay < 200.0f)  // Only early reflections
                             {
                                 Reflection ref;
                                 ref.delay = delay;
-                                ref.gain = 1.0f / (1.0f + distance * 0.1f);  // Distance attenuation
+
+                                // Apply distance attenuation and wall absorption
+                                float distanceAtten = 1.0f / (1.0f + distance * 0.1f);
+                                float absorptionFactor = std::pow(1.0f - wallAbsorption, static_cast<float>(order));
+                                ref.gain = distanceAtten * absorptionFactor;
+
                                 ref.azimuth = std::atan2(rx, rz) * 180.0f / M_PI;
                                 ref.elevation = std::atan2(ry, std::sqrt(rx*rx + rz*rz)) * 180.0f / M_PI;
 
@@ -565,8 +653,62 @@ public:
 
     void setRoomDimensions(float width, float height, float depth)
     {
-        // Update room model and regenerate reflections
+        roomWidth = width;
+        roomHeight = height;
+        roomDepth = depth;
         generateReflectionPattern();
+    }
+
+    // Enhanced room shape presets with realistic acoustic characteristics
+    void setRoomShape(int shape)
+    {
+        switch (shape)
+        {
+            case 0: // Studio Room - balanced, tight reflections
+                setRoomDimensions(8.0f, 3.5f, 10.0f);
+                reflectionDensity = 1.0f;
+                wallAbsorption = 0.3f;  // Moderate absorption
+                break;
+            case 1: // Small Room - intimate, fast buildup
+                setRoomDimensions(5.0f, 2.5f, 6.0f);
+                reflectionDensity = 1.5f;  // Dense reflections
+                wallAbsorption = 0.4f;  // More absorption (soft furnishings)
+                break;
+            case 2: // Large Hall - spacious, slow buildup
+                setRoomDimensions(25.0f, 10.0f, 40.0f);
+                reflectionDensity = 0.7f;  // Sparser reflections
+                wallAbsorption = 0.15f;  // Less absorption (hard walls)
+                break;
+            case 3: // Cathedral - enormous, diffuse
+                setRoomDimensions(40.0f, 18.0f, 60.0f);
+                reflectionDensity = 0.5f;  // Very sparse
+                wallAbsorption = 0.1f;  // Very reflective (stone)
+                break;
+            case 4: // Chamber - small, live
+                setRoomDimensions(6.0f, 4.0f, 7.0f);
+                reflectionDensity = 1.3f;  // Fairly dense
+                wallAbsorption = 0.2f;  // Live (wood/tile)
+                break;
+            case 5: // Warehouse - large, asymmetric
+                setRoomDimensions(30.0f, 8.0f, 35.0f);
+                reflectionDensity = 0.8f;  // Moderate density
+                wallAbsorption = 0.25f;  // Mixed surfaces
+                break;
+            case 6: // Booth - tiny, dead
+                setRoomDimensions(3.0f, 2.2f, 3.5f);
+                reflectionDensity = 2.0f;  // Very dense (close walls)
+                wallAbsorption = 0.7f;  // Highly absorptive (foam)
+                break;
+            case 7: // Tunnel - long, narrow
+                setRoomDimensions(4.0f, 3.0f, 50.0f);
+                reflectionDensity = 0.6f;  // Sparse
+                wallAbsorption = 0.2f;  // Concrete
+                break;
+            default:
+                setRoomDimensions(8.0f, 3.5f, 10.0f);
+                reflectionDensity = 1.0f;
+                wallAbsorption = 0.3f;
+        }
     }
 
 protected:
@@ -574,6 +716,15 @@ protected:
     std::vector<Reflection> reflections;
     std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>, 50> delays;
     float modPhase = 0.0f;  // For natural time modulation
+
+    // Room dimensions for early reflections
+    float roomWidth = 8.0f;
+    float roomHeight = 3.5f;
+    float roomDepth = 10.0f;
+
+    // Room acoustic characteristics
+    float reflectionDensity = 1.0f;  // Controls reflection spacing/count (0.5 = sparse, 2.0 = dense)
+    float wallAbsorption = 0.3f;     // Controls reflection amplitude (0.0 = none, 1.0 = full)
 };
 
 //==============================================================================
@@ -620,11 +771,27 @@ public:
         highShelf.setType(juce::dsp::StateVariableTPTFilterType::highpass);
         highShelf.setCutoffFrequency(100.0f);
 
-        // Metallic peaking filter for plate emulation (around 2.5kHz for shimmer)
-        plateMetallicFilter.prepare(spec);
-        plateMetallicFilter.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
-        plateMetallicFilter.setCutoffFrequency(2500.0f);
-        plateMetallicFilter.setResonance(2.5f); // High resonance for metallic character
+        // Cascade of 5 peaking filters for realistic plate emulation (EMT 140 characteristics)
+        // Each filter models specific resonant modes of the metal plate
+        // Frequencies based on physical plate resonances: 800Hz, 1.5kHz, 2.8kHz, 5kHz, 8kHz
+        const float plateFrequencies[5] = { 800.0f, 1500.0f, 2800.0f, 5000.0f, 8000.0f };
+        // Convert Q values to normalized resonance (resonance = 1/Q, clamped to valid range)
+        // Original Q values: 3.0, 4.0, 5.0, 3.5, 2.5
+        const float plateResonances[5] = {
+            std::min(1.0f, 1.0f / 3.0f),   // 0.333
+            std::min(1.0f, 1.0f / 4.0f),   // 0.250
+            std::min(1.0f, 1.0f / 5.0f),   // 0.200
+            std::min(1.0f, 1.0f / 3.5f),   // 0.286
+            std::min(1.0f, 1.0f / 2.5f)    // 0.400
+        };
+
+        for (int i = 0; i < 5; ++i)
+        {
+            plateCascadeFilters[i].prepare(spec);
+            plateCascadeFilters[i].setType(juce::dsp::StateVariableTPTFilterType::bandpass);
+            plateCascadeFilters[i].setCutoffFrequency(plateFrequencies[i]);
+            plateCascadeFilters[i].setResonance(plateResonances[i]);
+        }
 
         // Modulation LFOs - frequencies will be updated based on size parameter
         modulationLFO1.initialise([](float x) { return std::sin(x); });
@@ -635,13 +802,27 @@ public:
         modulationLFO1.prepare(spec);
         modulationLFO2.prepare(spec);
 
-        // Initialize parameter smoothers with 50ms ramp time
-        float rampLengthSeconds = 0.05f;
-        sizeSmooth.reset(sampleRate, rampLengthSeconds);
-        dampingSmooth.reset(sampleRate, rampLengthSeconds);
-        mixSmooth.reset(sampleRate, rampLengthSeconds);
-        widthSmooth.reset(sampleRate, rampLengthSeconds);
-        predelaySmooth.reset(sampleRate, rampLengthSeconds);
+        // Prepare vintage/saturation
+        saturator.functionToUse = [](float x) { return std::tanh(x * 1.5f) / 1.5f; };  // Soft saturation
+        saturator.prepare(spec);
+
+        // Prepare wow/flutter LFO for analog tape character
+        wowFlutterLFO.initialise([](float x) {
+            // Combine sine with subtle randomness for organic wow/flutter
+            return std::sin(x) * 0.7f + std::sin(x * 2.3f) * 0.3f;
+        });
+        wowFlutterLFO.setFrequency(0.3f);  // Slow, tape-like modulation (0.3 Hz)
+        wowFlutterLFO.prepare(spec);
+
+        // Initialize parameter smoothers with optimized ramp times per parameter type
+        // Faster smoothing for mix/width (10ms) - need immediate response for mix changes
+        // Medium smoothing for size/damping (20ms) - balance between response and artifacts
+        // Slower smoothing for predelay (50ms) - prevent pitch artifacts from delay modulation
+        sizeSmooth.reset(sampleRate, 0.020f);      // 20ms - moderate smoothing for reverb density
+        dampingSmooth.reset(sampleRate, 0.020f);   // 20ms - moderate smoothing for tone changes
+        mixSmooth.reset(sampleRate, 0.010f);       // 10ms - fast response for dry/wet balance
+        widthSmooth.reset(sampleRate, 0.010f);     // 10ms - fast response for stereo width
+        predelaySmooth.reset(sampleRate, 0.050f);  // 50ms - slow smoothing prevents pitch artifacts
 
         // Set initial values
         sizeSmooth.setCurrentAndTargetValue(currentSize);
@@ -649,6 +830,12 @@ public:
         mixSmooth.setCurrentAndTargetValue(currentMix);
         widthSmooth.setCurrentAndTargetValue(currentWidth);
         predelaySmooth.setCurrentAndTargetValue(0.0f);
+
+        // Initialize reverse buffers for reverse reverb mode (1 second buffer)
+        reverseBufferSize = static_cast<int>(sampleRate);
+        reverseBufferL.resize(reverseBufferSize, 0.0f);
+        reverseBufferR.resize(reverseBufferSize, 0.0f);
+        reverseBufferPos = 0;
 
         // Reset everything to clear any garbage
         reset();
@@ -705,11 +892,26 @@ public:
             float smoothedWidth = widthSmooth.getNextValue();
             float smoothedPredelaySamples = predelaySmooth.getNextValue();
 
-            // Update predelay with smoothed value - CRITICAL: Clamp to prevent crashes
+            // Update predelay with wow/flutter modulation for analog tape character
             int maxPredelayInSamples = predelayL.getMaximumDelayInSamples();
             smoothedPredelaySamples = juce::jlimit(0.0f, static_cast<float>(maxPredelayInSamples - 1), smoothedPredelaySamples);
-            predelayL.setDelay(smoothedPredelaySamples);
-            predelayR.setDelay(smoothedPredelaySamples);
+
+            // Apply wow/flutter when vintage is enabled
+            float wowFlutterMod = 0.0f;
+            if (currentVintage > 0.001f)
+            {
+                // Subtle delay modulation (0.2% max depth) for tape-like wow/flutter
+                wowFlutterMod = wowFlutterLFO.processSample(0.0f) * 0.002f * currentVintage;
+            }
+
+            float modulatedPredelayL = smoothedPredelaySamples * (1.0f + wowFlutterMod);
+            float modulatedPredelayR = smoothedPredelaySamples * (1.0f + wowFlutterMod * 0.9f);  // Slightly decorrelated
+
+            modulatedPredelayL = juce::jlimit(1.0f, static_cast<float>(maxPredelayInSamples - 1), modulatedPredelayL);
+            modulatedPredelayR = juce::jlimit(1.0f, static_cast<float>(maxPredelayInSamples - 1), modulatedPredelayR);
+
+            predelayL.setDelay(modulatedPredelayL);
+            predelayR.setDelay(modulatedPredelayR);
 
             // Apply predelay
             float delayedL = predelayL.popSample(0);
@@ -734,7 +936,10 @@ public:
             // Process late reverb through FDN with clamped decay and modulation
             float lateL, lateR;
             float clampedDecay = juce::jlimit(0.0f, 0.999f, currentDecay);
-            float fdnModDepth = 1.0f;  // Full modulation depth for lush character
+
+            // Reduce modulation depth in infinite mode to prevent buildup from constructive interference
+            float fdnModDepth = infiniteMode ? 0.3f : 1.0f;  // Conservative in infinite mode, full otherwise
+
             fdn.process(delayedL, delayedR, lateL, lateR, smoothedSize, clampedDecay, smoothedDamping, fdnModDepth);
 
             // HIGH PRIORITY: Sanitize FDN output (works in release builds unlike jassert)
@@ -762,26 +967,89 @@ public:
             lateL = highShelf.processSample(0, lateL);
             lateR = highShelf.processSample(1, lateR);
 
-            // Apply metallic filtering for plate mode with dynamic parameters
+            // Apply cascade of metallic resonances for plate mode (EMT 140 modeling)
             if (currentAlgorithm == 2) // Plate mode
             {
-                // Adjust plate filter cutoff based on size (larger size = higher frequency)
-                float plateCutoff = 2000.0f + smoothedSize * 3000.0f;  // 2kHz to 5kHz
-                plateMetallicFilter.setCutoffFrequency(plateCutoff);
+                // Damping affects the Q-factor of all resonances (less damping = sharper peaks)
+                float qScale = 0.5f + (1.0f - smoothedDamping) * 1.5f;  // 0.5 to 2.0
 
-                // Adjust resonance based on damping (less damping = more resonance)
-                float plateResonance = 2.0f + (1.0f - smoothedDamping) * 1.5f;  // 2.0 to 3.5
-                plateMetallicFilter.setResonance(plateResonance);
+                // Size affects frequency scaling (larger = higher resonances)
+                float freqScale = 0.8f + smoothedSize * 0.4f;  // 0.8 to 1.2
 
-                // Add metallic resonance using peaking filter
-                float metallicL = plateMetallicFilter.processSample(0, lateL);
-                float metallicR = plateMetallicFilter.processSample(1, lateR);
+                float metallicL = lateL;
+                float metallicR = lateR;
 
-                // Mix original and filtered for bright metallic character
-                // More prominent metallic sound with less damping
-                float metallicMix = 0.3f + (1.0f - smoothedDamping) * 0.3f;  // 0.3 to 0.6
+                // Process through cascade of 5 resonant filters
+                const float baseFreqs[5] = { 800.0f, 1500.0f, 2800.0f, 5000.0f, 8000.0f };
+                const float baseQs[5] = { 3.0f, 4.0f, 5.0f, 3.5f, 2.5f };
+
+                for (int i = 0; i < 5; ++i)
+                {
+                    float scaledFreq = baseFreqs[i] * freqScale;
+                    float scaledQ = baseQs[i] * qScale;
+
+                    plateCascadeFilters[i].setCutoffFrequency(scaledFreq);
+                    plateCascadeFilters[i].setResonance(scaledQ);
+
+                    metallicL = plateCascadeFilters[i].processSample(0, metallicL);
+                    metallicR = plateCascadeFilters[i].processSample(1, metallicR);
+                }
+
+                // Mix cascaded resonances with dry for natural plate character
+                // More resonance with less damping
+                float metallicMix = 0.25f + (1.0f - smoothedDamping) * 0.35f;  // 0.25 to 0.6
                 lateL = lateL * (1.0f - metallicMix) + metallicL * metallicMix;
                 lateR = lateR * (1.0f - metallicMix) + metallicR * metallicMix;
+            }
+
+            // Apply non-linear reverb modes (Gated or Reverse)
+            if (currentAlgorithm == 4) // Gated mode
+            {
+                // Envelope follower tracks input amplitude
+                float inputEnvelope = std::max(std::abs(inputL), std::abs(inputR));
+
+                // Fast attack, slow release
+                if (inputEnvelope > envelopeFollower)
+                    envelopeFollower = inputEnvelope;  // Instant attack
+                else
+                    envelopeFollower = envelopeFollower * gateRelease;  // Slow release (0.99 = ~100ms @ 48kHz)
+
+                // Apply gate - reverb only audible when envelope above threshold
+                float gateGain = (envelopeFollower > gateThreshold) ? 1.0f : 0.0f;
+
+                // Smooth gate transitions with small amount of hysteresis
+                gateGain = this->lastGateGain * 0.95f + gateGain * 0.05f;  // 95% previous, 5% new
+                this->lastGateGain = gateGain;
+
+                lateL *= gateGain;
+                lateR *= gateGain;
+            }
+            else if (currentAlgorithm == 5) // Reverse mode
+            {
+                // Write current reverb to circular buffer
+                reverseBufferL[reverseBufferPos] = lateL;
+                reverseBufferR[reverseBufferPos] = lateR;
+
+                // Read from buffer in reverse (1 second ago, going backwards)
+                int readPos = (reverseBufferPos - 1 + reverseBufferSize) % reverseBufferSize;
+                lateL = reverseBufferL[readPos];
+                lateR = reverseBufferR[readPos];
+
+                // Calculate sample age relative to current write position
+                int age = (reverseBufferPos - readPos + reverseBufferSize) % reverseBufferSize;
+                float normalizedAge = static_cast<float>(age) / static_cast<float>(reverseBufferSize);
+
+                // Create reverse swell based on sample age (newer samples are louder)
+                // Using 1.0 - normalizedAge so newer samples (low age) have higher gain
+                float reverseFade = 1.0f - normalizedAge;
+                // Optional: apply a curve for more dramatic shaping
+                // reverseFade = powf(reverseFade, 2.0f);  // Square for faster buildup
+
+                lateL *= reverseFade;
+                lateR *= reverseFade;
+
+                // Advance write position
+                reverseBufferPos = (reverseBufferPos + 1) % reverseBufferSize;
             }
 
             // Mix early and late
@@ -793,6 +1061,30 @@ public:
             float side = (reverbL - reverbR) * 0.5f * smoothedWidth;
             reverbL = mid + side;
             reverbR = mid - side;
+
+            // Apply vintage character (analog noise + saturation + hysteresis) to wet signal only
+            if (currentVintage > 0.001f)
+            {
+                // Add subtle pink-noise-like character
+                float noise = (noiseGenerator.nextFloat() * 2.0f - 1.0f) * 0.001f * currentVintage;
+                reverbL += noise;
+                reverbR += noise * 0.9f;  // Slightly decorrelated
+
+                // Apply soft tape-like saturation
+                float satAmount = currentVintage * 0.3f;
+                reverbL = saturator.processSample(reverbL * (1.0f + satAmount)) / (1.0f + satAmount);
+                reverbR = saturator.processSample(reverbR * (1.0f + satAmount)) / (1.0f + satAmount);
+
+                // Apply tape-like hysteresis (magnetic memory effect)
+                // This creates a subtle low-pass filtering and smearing characteristic of tape
+                float hysteresisAlpha = 0.05f + (currentVintage * 0.15f);  // 5-20% blend based on vintage amount
+                hysteresisStateL = reverbL * hysteresisAlpha + hysteresisStateL * (1.0f - hysteresisAlpha);
+                hysteresisStateR = reverbR * hysteresisAlpha + hysteresisStateR * (1.0f - hysteresisAlpha);
+
+                // Blend hysteresis with direct signal for subtle effect
+                reverbL = reverbL * (1.0f - currentVintage * 0.3f) + hysteresisStateL * (currentVintage * 0.3f);
+                reverbR = reverbR * (1.0f - currentVintage * 0.3f) + hysteresisStateR * (currentVintage * 0.3f);
+            }
 
             // Apply mix with smoothed value
             float wetGain = smoothedMix;
@@ -852,7 +1144,13 @@ public:
         predelayR.reset();
         lowShelf.reset();
         highShelf.reset();
-        plateMetallicFilter.reset();
+
+        // Reset plate cascade filters
+        for (auto& filter : plateCascadeFilters)
+            filter.reset();
+
+        // Reset gate smoothing state
+        lastGateGain = 0.0f;
 
         // Clear predelay buffers completely
         for (int i = 0; i < 1000; ++i)
@@ -935,7 +1233,13 @@ public:
         infiniteMode = infinite;
         if (infinite)
         {
-            currentDecay = 0.999f; // Near-infinite feedback
+            // Set to 0.995 with additional headroom for modulation-induced energy buildup
+            // Per-delay modulation can cause constructive interference, so we need lower feedback
+            currentDecay = 0.995f; // Stable near-infinite feedback (0.999 risks instability at high SR)
+
+            // Also set FDN to use conservative per-band feedback for infinite mode
+            // This prevents modulation-induced buildup across frequency bands
+            fdn.setPerBandRT60(100.0f, 100.0f, 80.0f);  // Very long but stable RT60 times
         }
         else
         {
@@ -955,27 +1259,65 @@ public:
         oversamplingFactor = juce::jlimit(1, 4, factor);
     }
 
-    // Task 7: Return max tail samples for latency reporting
+    // Room shape presets
+    void setRoomShape(int shape)
+    {
+        earlyReflections.setRoomShape(shape);
+    }
+
+    // Vintage/warmth control
+    void setVintage(float vintage)
+    {
+        currentVintage = juce::jlimit(0.0f, 1.0f, vintage);
+    }
+
+    // Get oversampling latency for host reporting
+    int getOversamplingLatency() const
+    {
+        if (!oversamplingEnabled || oversamplingFactor <= 1)
+            return 0;
+
+        // Approximate latency values for polyphase IIR oversampling
+        return (oversamplingFactor == 2) ? 128 : 256;
+    }
+
+    // Return max tail samples for accurate DAW rendering (dynamic based on RT60 and size)
     int getMaxTailSamples() const
     {
-        // Max delay in FDN (2s) + max predelay (200ms)
         // Return a reasonable default if not prepared yet
         if (sampleRate <= 0)
-            return static_cast<int>(48000 * 2.2);  // Assume 48kHz as default
-        return static_cast<int>(sampleRate * 2.2);
+            return static_cast<int>(48000 * 5.0);  // Assume 48kHz, 5s default tail
+
+        // Calculate tail based on longest RT60 band (60dB decay time)
+        // Add safety factor for size parameter which scales delay times
+        float maxRT60 = std::max(lowRT60, std::max(midRT60, highRT60));
+
+        // Account for size parameter scaling (size can extend reverb up to 2x)
+        float sizeScale = 0.5f + currentSize * 1.5f;  // Range: 0.5 to 2.0
+
+        // Add predelay to total tail length (max 200ms = 0.2s)
+        float totalTailSeconds = (maxRT60 * sizeScale) + 0.2f;
+
+        // Ensure minimum tail of 1 second for short RT60 settings
+        totalTailSeconds = std::max(1.0f, totalTailSeconds);
+
+        return static_cast<int>(sampleRate * totalTailSeconds);
     }
 
     void updateMultibandDecay()
     {
         if (!infiniteMode)
         {
-            // Convert RT60 times to feedback coefficients
-            // RT60 = -60dB / (feedback_coefficient * sample_rate)
-            // Simplified approximation for demo
+            // Use accurate per-band RT60 control for FDN
+            fdn.setPerBandRT60(lowRT60, midRT60, highRT60);
+
+            // Also update legacy currentDecay for algorithm switching (average for compatibility)
             float avgRT60 = (lowRT60 + midRT60 + highRT60) / 3.0f;
-            currentDecay = std::exp(-3.0f / (avgRT60 * sampleRate / 1000.0f));
+            currentDecay = std::exp(-6.9078f / (avgRT60 * sampleRate));
             currentDecay = juce::jlimit(0.0f, 0.999f, currentDecay);
         }
+        // Note: Infinite mode sets its own per-band RT60 values in setInfiniteDecay()
+        // to prevent modulation-induced buildup, so we don't override it here
     }
 
     double sampleRate = 48000.0;
@@ -997,11 +1339,35 @@ public:
     juce::dsp::StateVariableTPTFilter<float> lowShelf;
     juce::dsp::StateVariableTPTFilter<float> highShelf;
 
-    // Metallic peaking filter for plate emulation
-    juce::dsp::StateVariableTPTFilter<float> plateMetallicFilter;
+    // Cascade of peaking filters for realistic plate emulation
+    // Models complex frequency response of physical EMT 140 plate
+    std::array<juce::dsp::StateVariableTPTFilter<float>, 5> plateCascadeFilters;
 
     juce::dsp::Oscillator<float> modulationLFO1;
     juce::dsp::Oscillator<float> modulationLFO2;
+
+    // Vintage/analog character
+    juce::dsp::WaveShaper<float> saturator;
+    juce::Random noiseGenerator;
+    float currentVintage = 0.0f;
+
+    // Hysteresis for tape-like saturation
+    float hysteresisStateL = 0.0f;
+    float hysteresisStateR = 0.0f;
+
+    // Wow/flutter LFO for analog tape character
+    juce::dsp::Oscillator<float> wowFlutterLFO;
+    juce::Random wowFlutterRandom;
+
+    // Non-linear reverb modes (Gated and Reverse)
+    std::vector<float> reverseBufferL;
+    std::vector<float> reverseBufferR;
+    int reverseBufferPos = 0;
+    int reverseBufferSize = 0;
+    float envelopeFollower = 0.0f;
+    float gateThreshold = 0.1f;
+    float gateRelease = 0.99f;  // Envelope release coefficient
+    float lastGateGain = 0.0f;  // Per-instance gate smoothing state
 
     // HIGH PRIORITY: Optional safety limiters for extreme protection
     // juce::dsp::Limiter<float> outputLimiterL;

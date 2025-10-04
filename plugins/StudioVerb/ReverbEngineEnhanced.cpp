@@ -115,6 +115,10 @@ public:
             outputDiffusionAPF[i].setDelay(delaySamples);
         }
 
+        // Initialize envelope followers for amplitude-dependent damping
+        envelopeAttackCoeff = std::exp(-1.0f / (0.001f * sampleRate));   // 1ms attack
+        envelopeReleaseCoeff = std::exp(-1.0f / (0.050f * sampleRate));  // 50ms release
+
         reset();
     }
 
@@ -156,10 +160,27 @@ public:
             // Read from delay
             float delayOut = tankDelays[i].popSample(0);
 
-            // Apply dynamic damping (user-controllable for bright/dark plates)
-            // damping=0 -> bright (high cutoff), damping=1 -> dark (low cutoff)
-            float dampFreq = 8000.0f * (1.0f - damping * 0.85f) + 400.0f;  // 8kHz to 1.6kHz range
-            dampingFilters[i].setCutoffFrequency(dampFreq);
+            // Track signal envelope for amplitude-dependent damping (per-channel)
+            float inputLevel = std::abs(delayOut);
+            float envelopeCoeff = (inputLevel > envelopeState[i]) ? envelopeAttackCoeff : envelopeReleaseCoeff;
+            envelopeState[i] = envelopeCoeff * envelopeState[i] + (1.0f - envelopeCoeff) * inputLevel;
+            // Clamp envelope to prevent out-of-bounds values from hot input samples
+            envelopeState[i] = std::max(0.0f, std::min(1.0f, envelopeState[i]));
+
+            // Apply non-linear (amplitude-dependent) damping for plate "sizzle"
+            // At high levels: more HF rolloff (darker)
+            // At low levels: less HF rolloff (brighter, adding shimmer/sizzle to decay tail)
+            float baseDampFreq = 8000.0f * (1.0f - damping * 0.85f) + 400.0f;  // 8kHz to 1.6kHz range
+
+            // Amplitude modulation factor (0.5 to 1.5 range)
+            // Higher envelope = lower cutoff (more damping at loud levels)
+            float envelopeFactor = 1.5f - envelopeState[i];  // Inverted: loud = less bright
+            envelopeFactor = juce::jlimit(0.5f, 1.5f, envelopeFactor);
+
+            float dynamicDampFreq = baseDampFreq * envelopeFactor;
+            dynamicDampFreq = juce::jlimit(300.0f, 12000.0f, dynamicDampFreq);
+
+            dampingFilters[i].setCutoffFrequency(dynamicDampFreq);
             delayOut = dampingFilters[i].processSample(0, delayOut);
 
             // Process through tank APF for additional diffusion
@@ -227,6 +248,7 @@ public:
             tankAPF[i].reset();
             dampingFilters[i].reset();
             modulationLFOs[i].reset();
+            envelopeState[i] = 0.0f;  // Reset envelope followers
         }
     }
 
@@ -247,6 +269,11 @@ private:
     // Modulation
     std::array<juce::dsp::Oscillator<float>, 8> modulationLFOs;
     std::array<float, 8> modulationPhase;
+
+    // Envelope followers for amplitude-dependent damping (adds plate "sizzle")
+    std::array<float, 8> envelopeState = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    float envelopeAttackCoeff = 0.999f;   // 1ms attack
+    float envelopeReleaseCoeff = 0.990f;  // 50ms release
 
     // Output tap gains (decorrelated pattern)
     const float outputTapGains[8] = {

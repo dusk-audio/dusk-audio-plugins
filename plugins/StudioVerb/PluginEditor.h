@@ -62,7 +62,7 @@ private:
     // Look and feel
     StudioVerbLookAndFeel lookAndFeel;
 
-    // UI Components
+    // UI Components - Main
     juce::ComboBox algorithmSelector;
     juce::ComboBox presetSelector;
 
@@ -70,6 +70,7 @@ private:
     juce::Slider dampSlider;
     juce::Slider predelaySlider;
     juce::Slider mixSlider;
+    juce::Slider widthSlider;
 
     juce::Label algorithmLabel;
     juce::Label presetLabel;
@@ -77,12 +78,42 @@ private:
     juce::Label dampLabel;
     juce::Label predelayLabel;
     juce::Label mixLabel;
+    juce::Label widthLabel;
+
+    // Advanced parameters
+    juce::Slider lowRT60Slider;
+    juce::Slider midRT60Slider;
+    juce::Slider highRT60Slider;
+    juce::ToggleButton infiniteButton;
+    juce::ComboBox oversamplingSelector;
+
+    juce::Label lowRT60Label;
+    juce::Label midRT60Label;
+    juce::Label highRT60Label;
+    juce::Label infiniteLabel;
+    juce::Label oversamplingLabel;
+    juce::Label advancedSectionLabel;
+
+    // Room shape selector
+    juce::ComboBox roomShapeSelector;
+    juce::Label roomShapeLabel;
+
+    // Vintage and tempo sync
+    juce::Slider vintageSlider;
+    juce::ComboBox predelayBeatsSelector;
+    juce::Label vintageLabel;
+    juce::Label predelayBeatsLabel;
 
     // Value labels (showing current values)
     juce::Label sizeValueLabel;
     juce::Label dampValueLabel;
     juce::Label predelayValueLabel;
     juce::Label mixValueLabel;
+    juce::Label widthValueLabel;
+    juce::Label lowRT60ValueLabel;
+    juce::Label midRT60ValueLabel;
+    juce::Label highRT60ValueLabel;
+    juce::Label vintageValueLabel;
 
     // Attachments for parameter binding
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> algorithmAttachment;
@@ -90,14 +121,28 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dampAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> predelayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> widthAttachment;
+
+    // Advanced parameter attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowRT60Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> midRT60Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highRT60Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> infiniteAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oversamplingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> roomShapeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> vintageAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> predelayBeatsAttachment;
 
     // UI State
     int lastAlgorithm = -1;
+    float uiScale = 1.0f;  // UI scale factor for high-DPI displays
 
     // Helper methods
     void setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& labelText);
     void updatePresetList();
     void updateValueLabels();
+    int scaled(int value) const { return static_cast<int>(value * uiScale); }
+    float scaledf(float value) const { return value * uiScale; }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StudioVerbAudioProcessorEditor)
 };
