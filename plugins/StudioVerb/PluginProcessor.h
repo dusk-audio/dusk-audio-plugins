@@ -77,8 +77,15 @@ public:
     static constexpr const char* DAMP_ID = "damp";
     static constexpr const char* PREDELAY_ID = "predelay";
     static constexpr const char* MIX_ID = "mix";
-    static constexpr const char* WIDTH_ID = "width";  // Task 10: Added width control
+    static constexpr const char* WIDTH_ID = "width";
     static constexpr const char* PRESET_ID = "preset";
+
+    // Advanced parameters
+    static constexpr const char* LOW_RT60_ID = "lowRT60";
+    static constexpr const char* MID_RT60_ID = "midRT60";
+    static constexpr const char* HIGH_RT60_ID = "highRT60";
+    static constexpr const char* INFINITE_ID = "infinite";
+    static constexpr const char* OVERSAMPLING_ID = "oversampling";
 
     // Algorithm types
     enum Algorithm
@@ -127,7 +134,14 @@ private:
     std::atomic<float> currentDamp { 0.5f };
     std::atomic<float> currentPredelay { 0.0f };
     std::atomic<float> currentMix { 0.5f };
-    std::atomic<float> currentWidth { 0.5f };  // Task 10: Width parameter
+    std::atomic<float> currentWidth { 0.5f };
+
+    // Advanced parameters
+    std::atomic<float> currentLowRT60 { 2.0f };
+    std::atomic<float> currentMidRT60 { 2.0f };
+    std::atomic<float> currentHighRT60 { 1.5f };
+    std::atomic<bool> currentInfinite { false };
+    std::atomic<int> currentOversampling { 1 };  // 1x, 2x, or 4x
 
     // Reverb engine (Task 3: Integrated Enhanced FDN Engine)
     std::unique_ptr<ReverbEngineEnhanced> reverbEngine;
