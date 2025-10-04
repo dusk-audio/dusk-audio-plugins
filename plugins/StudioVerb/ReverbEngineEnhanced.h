@@ -776,6 +776,9 @@ public:
     int getMaxTailSamples() const
     {
         // Max delay in FDN (2s) + max predelay (200ms)
+        // Return a reasonable default if not prepared yet
+        if (sampleRate <= 0)
+            return static_cast<int>(48000 * 2.2);  // Assume 48kHz as default
         return static_cast<int>(sampleRate * 2.2);
     }
 
