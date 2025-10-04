@@ -40,6 +40,11 @@ StudioVerbAudioProcessor::StudioVerbAudioProcessor()
     parameters.addParameterListener(PREDELAY_ID, this);
     parameters.addParameterListener(MIX_ID, this);
     parameters.addParameterListener(WIDTH_ID, this);
+    parameters.addParameterListener(LOW_RT60_ID, this);
+    parameters.addParameterListener(MID_RT60_ID, this);
+    parameters.addParameterListener(HIGH_RT60_ID, this);
+    parameters.addParameterListener(INFINITE_ID, this);
+    parameters.addParameterListener(OVERSAMPLING_ID, this);
 }
 
 StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
@@ -49,7 +54,12 @@ StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
     parameters.removeParameterListener(DAMP_ID, this);
     parameters.removeParameterListener(PREDELAY_ID, this);
     parameters.removeParameterListener(MIX_ID, this);
-    parameters.removeParameterListener(WIDTH_ID, this);  // Task 10
+    parameters.removeParameterListener(WIDTH_ID, this);
+    parameters.removeParameterListener(LOW_RT60_ID, this);
+    parameters.removeParameterListener(MID_RT60_ID, this);
+    parameters.removeParameterListener(HIGH_RT60_ID, this);
+    parameters.removeParameterListener(INFINITE_ID, this);
+    parameters.removeParameterListener(OVERSAMPLING_ID, this);
 }
 
 //==============================================================================
@@ -108,7 +118,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioVerbAudioProcessor::cr
         [](float value, int) { return juce::String(static_cast<int>(value * 100)) + "%"; },
         [](const juce::String& text) { return text.getFloatValue() / 100.0f; }));
 
-    // Task 10: Width parameter (0-1)
+    // Width parameter (0-1)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         WIDTH_ID,
         "Width",
@@ -118,6 +128,50 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioVerbAudioProcessor::cr
         juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(static_cast<int>(value * 100)) + "%"; },
         [](const juce::String& text) { return text.getFloatValue() / 100.0f; }));
+
+    // Advanced RT60 parameters
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        LOW_RT60_ID,
+        "Low RT60",
+        juce::NormalisableRange<float>(0.1f, 10.0f, 0.1f),
+        2.0f,
+        "s",
+        juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + " s"; },
+        [](const juce::String& text) { return text.getFloatValue(); }));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        MID_RT60_ID,
+        "Mid RT60",
+        juce::NormalisableRange<float>(0.1f, 10.0f, 0.1f),
+        2.0f,
+        "s",
+        juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + " s"; },
+        [](const juce::String& text) { return text.getFloatValue(); }));
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        HIGH_RT60_ID,
+        "High RT60",
+        juce::NormalisableRange<float>(0.1f, 10.0f, 0.1f),
+        1.5f,
+        "s",
+        juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + " s"; },
+        [](const juce::String& text) { return text.getFloatValue(); }));
+
+    // Infinite decay mode
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        INFINITE_ID,
+        "Infinite",
+        false));
+
+    // Oversampling factor (1x, 2x, 4x)
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        OVERSAMPLING_ID,
+        "Oversampling",
+        juce::StringArray { "Off", "2x", "4x" },
+        0));
 
     return layout;
 }
@@ -202,13 +256,60 @@ void StudioVerbAudioProcessor::parameterChanged(const juce::String& parameterID,
         if (reverbEngine)
             reverbEngine->setMix(clampedMix);
     }
-    else if (parameterID == WIDTH_ID)  // Task 10
+    else if (parameterID == WIDTH_ID)
     {
         float clampedWidth = juce::jlimit(0.0f, 1.0f, newValue);
         currentWidth.store(clampedWidth);
 
         if (reverbEngine)
             reverbEngine->setWidth(clampedWidth);
+    }
+    else if (parameterID == LOW_RT60_ID)
+    {
+        float clampedRT60 = juce::jlimit(0.1f, 10.0f, newValue);
+        currentLowRT60.store(clampedRT60);
+
+        if (reverbEngine)
+            reverbEngine->setLowDecayTime(clampedRT60);
+    }
+    else if (parameterID == MID_RT60_ID)
+    {
+        float clampedRT60 = juce::jlimit(0.1f, 10.0f, newValue);
+        currentMidRT60.store(clampedRT60);
+
+        if (reverbEngine)
+            reverbEngine->setMidDecayTime(clampedRT60);
+    }
+    else if (parameterID == HIGH_RT60_ID)
+    {
+        float clampedRT60 = juce::jlimit(0.1f, 10.0f, newValue);
+        currentHighRT60.store(clampedRT60);
+
+        if (reverbEngine)
+            reverbEngine->setHighDecayTime(clampedRT60);
+    }
+    else if (parameterID == INFINITE_ID)
+    {
+        bool infinite = (newValue >= 0.5f);
+        currentInfinite.store(infinite);
+
+        if (reverbEngine)
+            reverbEngine->setInfiniteDecay(infinite);
+    }
+    else if (parameterID == OVERSAMPLING_ID)
+    {
+        int oversamplingChoice = static_cast<int>(newValue);
+        currentOversampling.store(oversamplingChoice);
+
+        if (reverbEngine)
+        {
+            // 0 = Off, 1 = 2x, 2 = 4x
+            reverbEngine->setOversamplingEnabled(oversamplingChoice > 0);
+
+            // Convert choice to actual factor
+            int factor = (oversamplingChoice == 0) ? 1 : (oversamplingChoice == 1) ? 2 : 4;
+            reverbEngine->setOversamplingFactor(factor);
+        }
     }
 }
 

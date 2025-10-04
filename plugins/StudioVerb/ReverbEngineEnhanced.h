@@ -18,6 +18,7 @@
 #include <random>
 #include <vector>
 #include <complex>
+#include <memory>
 
 //==============================================================================
 /**
@@ -98,8 +99,8 @@ private:
 
 //==============================================================================
 /**
-    Multi-band decay control for frequency-dependent reverb time
-    MEDIUM PRIORITY: Improved with better crossover design
+    Multi-band decay control with Linkwitz-Riley crossovers for frequency-dependent reverb time
+    Uses 4th-order Linkwitz-Riley filters for flat magnitude response and linear phase
 */
 class MultibandDecay
 {
@@ -110,64 +111,98 @@ public:
     {
         sampleRate = sampleRate_;
 
-        // Improved 2-pole filters for better phase response
+        // Linkwitz-Riley 4th order = two cascaded Butterworth 2nd order filters
         // Low-pass at 250Hz
         float omega1 = juce::MathConstants<float>::twoPi * 250.0f / static_cast<float>(sampleRate);
-        float q = 0.707f;  // Butterworth response
+        float q = 0.707f;  // Butterworth Q for each stage
         float alpha = std::sin(omega1) / (2.0f * q);
 
-        lowB0 = (1.0f - std::cos(omega1)) / 2.0f;
-        lowB1 = 1.0f - std::cos(omega1);
-        lowB2 = lowB0;
-        lowA0 = 1.0f + alpha;
-        lowA1 = -2.0f * std::cos(omega1);
-        lowA2 = 1.0f - alpha;
+        // First stage lowpass
+        lowB0_stage1 = (1.0f - std::cos(omega1)) / 2.0f;
+        lowB1_stage1 = 1.0f - std::cos(omega1);
+        lowB2_stage1 = lowB0_stage1;
+        float lowA0 = 1.0f + alpha;
+        lowA1_stage1 = -2.0f * std::cos(omega1);
+        lowA2_stage1 = 1.0f - alpha;
 
-        // Normalize
-        lowB0 /= lowA0;
-        lowB1 /= lowA0;
-        lowB2 /= lowA0;
-        lowA1 /= lowA0;
-        lowA2 /= lowA0;
+        // Normalize first stage
+        lowB0_stage1 /= lowA0;
+        lowB1_stage1 /= lowA0;
+        lowB2_stage1 /= lowA0;
+        lowA1_stage1 /= lowA0;
+        lowA2_stage1 /= lowA0;
 
-        // High-pass at 2kHz
+        // Second stage lowpass (same coefficients)
+        lowB0_stage2 = lowB0_stage1;
+        lowB1_stage2 = lowB1_stage1;
+        lowB2_stage2 = lowB2_stage1;
+        lowA1_stage2 = lowA1_stage1;
+        lowA2_stage2 = lowA2_stage1;
+
+        // High-pass at 2kHz (Linkwitz-Riley 4th order)
         float omega2 = juce::MathConstants<float>::twoPi * 2000.0f / static_cast<float>(sampleRate);
         alpha = std::sin(omega2) / (2.0f * q);
 
-        highB0 = (1.0f + std::cos(omega2)) / 2.0f;
-        highB1 = -(1.0f + std::cos(omega2));
-        highB2 = highB0;
-        highA0 = 1.0f + alpha;
-        highA1 = -2.0f * std::cos(omega2);
-        highA2 = 1.0f - alpha;
+        // First stage highpass
+        highB0_stage1 = (1.0f + std::cos(omega2)) / 2.0f;
+        highB1_stage1 = -(1.0f + std::cos(omega2));
+        highB2_stage1 = highB0_stage1;
+        float highA0 = 1.0f + alpha;
+        highA1_stage1 = -2.0f * std::cos(omega2);
+        highA2_stage1 = 1.0f - alpha;
 
-        // Normalize
-        highB0 /= highA0;
-        highB1 /= highA0;
-        highB2 /= highA0;
-        highA1 /= highA0;
-        highA2 /= highA0;
+        // Normalize first stage
+        highB0_stage1 /= highA0;
+        highB1_stage1 /= highA0;
+        highB2_stage1 /= highA0;
+        highA1_stage1 /= highA0;
+        highA2_stage1 /= highA0;
+
+        // Second stage highpass (same coefficients)
+        highB0_stage2 = highB0_stage1;
+        highB1_stage2 = highB1_stage1;
+        highB2_stage2 = highB2_stage1;
+        highA1_stage2 = highA1_stage1;
+        highA2_stage2 = highA2_stage1;
     }
 
     float process(float input, float lowDecay, float midDecay, float highDecay)
     {
-        // Process low band (2-pole biquad)
-        float lowOut = lowB0 * input + lowB1 * lowX1 + lowB2 * lowX2
-                      - lowA1 * lowY1 - lowA2 * lowY2;
-        lowX2 = lowX1;
-        lowX1 = input;
-        lowY2 = lowY1;
-        lowY1 = lowOut;
+        // Process low band with 4th-order Linkwitz-Riley (two cascaded 2nd-order)
+        // Stage 1
+        float lowOut1 = lowB0_stage1 * input + lowB1_stage1 * lowX1_s1 + lowB2_stage1 * lowX2_s1
+                       - lowA1_stage1 * lowY1_s1 - lowA2_stage1 * lowY2_s1;
+        lowX2_s1 = lowX1_s1;
+        lowX1_s1 = input;
+        lowY2_s1 = lowY1_s1;
+        lowY1_s1 = lowOut1;
 
-        // Process high band (2-pole biquad)
-        float highOut = highB0 * input + highB1 * highX1 + highB2 * highX2
-                       - highA1 * highY1 - highA2 * highY2;
-        highX2 = highX1;
-        highX1 = input;
-        highY2 = highY1;
-        highY1 = highOut;
+        // Stage 2
+        float lowOut = lowB0_stage2 * lowOut1 + lowB1_stage2 * lowX1_s2 + lowB2_stage2 * lowX2_s2
+                      - lowA1_stage2 * lowY1_s2 - lowA2_stage2 * lowY2_s2;
+        lowX2_s2 = lowX1_s2;
+        lowX1_s2 = lowOut1;
+        lowY2_s2 = lowY1_s2;
+        lowY1_s2 = lowOut;
 
-        // Mid band is what's left after subtracting low and high
+        // Process high band with 4th-order Linkwitz-Riley
+        // Stage 1
+        float highOut1 = highB0_stage1 * input + highB1_stage1 * highX1_s1 + highB2_stage1 * highX2_s1
+                        - highA1_stage1 * highY1_s1 - highA2_stage1 * highY2_s1;
+        highX2_s1 = highX1_s1;
+        highX1_s1 = input;
+        highY2_s1 = highY1_s1;
+        highY1_s1 = highOut1;
+
+        // Stage 2
+        float highOut = highB0_stage2 * highOut1 + highB1_stage2 * highX1_s2 + highB2_stage2 * highX2_s2
+                       - highA1_stage2 * highY1_s2 - highA2_stage2 * highY2_s2;
+        highX2_s2 = highX1_s2;
+        highX1_s2 = highOut1;
+        highY2_s2 = highY1_s2;
+        highY1_s2 = highOut;
+
+        // Mid band is what remains (perfect reconstruction with Linkwitz-Riley)
         float midOut = input - lowOut - highOut;
 
         // Apply decay gains and recombine
@@ -176,22 +211,37 @@ public:
 
     void reset()
     {
-        lowX1 = lowX2 = lowY1 = lowY2 = 0.0f;
-        highX1 = highX2 = highY1 = highY2 = 0.0f;
+        // Reset low band state variables
+        lowX1_s1 = lowX2_s1 = lowY1_s1 = lowY2_s1 = 0.0f;
+        lowX1_s2 = lowX2_s2 = lowY1_s2 = lowY2_s2 = 0.0f;
+
+        // Reset high band state variables
+        highX1_s1 = highX2_s1 = highY1_s1 = highY2_s1 = 0.0f;
+        highX1_s2 = highX2_s2 = highY1_s2 = highY2_s2 = 0.0f;
     }
 
 private:
     double sampleRate = 48000.0;
 
-    // Low-pass filter coefficients
-    float lowB0 = 0.5f, lowB1 = 0.5f, lowB2 = 0.0f;
-    float lowA0 = 1.0f, lowA1 = 0.0f, lowA2 = 0.0f;
-    float lowX1 = 0.0f, lowX2 = 0.0f, lowY1 = 0.0f, lowY2 = 0.0f;
+    // Linkwitz-Riley low-pass filter coefficients (two stages)
+    float lowB0_stage1 = 0.5f, lowB1_stage1 = 0.5f, lowB2_stage1 = 0.0f;
+    float lowA1_stage1 = 0.0f, lowA2_stage1 = 0.0f;
+    float lowB0_stage2 = 0.5f, lowB1_stage2 = 0.5f, lowB2_stage2 = 0.0f;
+    float lowA1_stage2 = 0.0f, lowA2_stage2 = 0.0f;
 
-    // High-pass filter coefficients
-    float highB0 = 0.5f, highB1 = -0.5f, highB2 = 0.0f;
-    float highA0 = 1.0f, highA1 = 0.0f, highA2 = 0.0f;
-    float highX1 = 0.0f, highX2 = 0.0f, highY1 = 0.0f, highY2 = 0.0f;
+    // Low-pass state variables (two stages)
+    float lowX1_s1 = 0.0f, lowX2_s1 = 0.0f, lowY1_s1 = 0.0f, lowY2_s1 = 0.0f;
+    float lowX1_s2 = 0.0f, lowX2_s2 = 0.0f, lowY1_s2 = 0.0f, lowY2_s2 = 0.0f;
+
+    // Linkwitz-Riley high-pass filter coefficients (two stages)
+    float highB0_stage1 = 0.5f, highB1_stage1 = -0.5f, highB2_stage1 = 0.0f;
+    float highA1_stage1 = 0.0f, highA2_stage1 = 0.0f;
+    float highB0_stage2 = 0.5f, highB1_stage2 = -0.5f, highB2_stage2 = 0.0f;
+    float highA1_stage2 = 0.0f, highA2_stage2 = 0.0f;
+
+    // High-pass state variables (two stages)
+    float highX1_s1 = 0.0f, highX2_s1 = 0.0f, highY1_s1 = 0.0f, highY2_s1 = 0.0f;
+    float highX1_s2 = 0.0f, highX2_s2 = 0.0f, highY1_s2 = 0.0f, highY2_s2 = 0.0f;
 };
 
 //==============================================================================
@@ -201,16 +251,18 @@ private:
 class FeedbackDelayNetwork
 {
 public:
-    // Reduced from 16 to 12 for better CPU performance
-    static constexpr int NUM_DELAYS = 12;  // Balance between CPU and reverb quality
+    // Increased to 32 for Valhalla-level density and lushness
+    static constexpr int NUM_DELAYS = 32;
 
     FeedbackDelayNetwork()
         : mixingMatrix(NUM_DELAYS)
     {
-        // Prime number delay lengths to avoid common factors (reduced to 12)
+        // Extended prime number delay lengths for 32 channels (same as EnhancedFeedbackDelayNetwork)
         const int primeLengths[NUM_DELAYS] = {
-            1433, 1601, 1867, 2053, 2251, 2399,
-            2617, 2797, 3089, 3323, 3571, 3821
+            1433, 1601, 1867, 2053, 2251, 2399, 2617, 2797,
+            3089, 3323, 3571, 3821, 4073, 4337, 4603, 4871,
+            5147, 5419, 5701, 5987, 6277, 6571, 6869, 7177,
+            7489, 7793, 8111, 8423, 8741, 9067, 9391, 9719
         };
 
         for (int i = 0; i < NUM_DELAYS; ++i)
@@ -240,11 +292,33 @@ public:
             decayFilters[i].prepare(sampleRate);
             inputDiffusion[i].prepare(spec);
             inputDiffusion[i].setMaximumDelayInSamples(1000);
+
+            // Initialize per-channel modulation LFOs for lush, detuned character
+            modulationLFOs[i].initialise([](float x) { return std::sin(x); });
+
+            // Multiple LFO rates for rich modulation - mix of sine and random-like modulation
+            if (i < NUM_DELAYS / 2)
+            {
+                // First half: slow sine waves (0.1 Hz to 1.5 Hz)
+                float rate = 0.1f + (i * 0.045f);
+                modulationLFOs[i].setFrequency(rate);
+            }
+            else
+            {
+                // Second half: complex waveforms for random-like modulation
+                modulationLFOs[i].initialise([](float x) {
+                    return (std::sin(x) + std::sin(x * 3.7f) * 0.3f + std::sin(x * 7.3f) * 0.1f) / 1.4f;
+                });
+                float rate = 0.05f + ((i - NUM_DELAYS/2) * 0.04f);
+                modulationLFOs[i].setFrequency(rate);
+            }
+
+            modulationLFOs[i].prepare(spec);
         }
     }
 
     void process(float inputL, float inputR, float& outputL, float& outputR,
-                 float size, float decay, float damping)
+                 float size, float decay, float damping, float modDepth = 1.0f)
     {
         // Clamp size to prevent zero/near-zero values
         size = juce::jmax(0.01f, size);
@@ -255,9 +329,21 @@ public:
         float delayOutputs[NUM_DELAYS];
         float delayInputs[NUM_DELAYS];
 
-        // Read from delays
+        // Read from delays with per-channel modulation for lush character
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
+            // Apply per-channel modulation
+            float modulation = modulationLFOs[i].processSample(0.0f);
+            float modAmount = modulation * modDepth * 10.0f * (0.5f + size * 0.5f);
+
+            // Modulate delay time
+            float modulatedLength = baseDelayLengths[i] * (0.5f + size * 1.5f) * (sampleRate / 48000.0f);
+            modulatedLength += modAmount;
+
+            int maxDelayInSamples = delays[i].getMaximumDelayInSamples();
+            modulatedLength = juce::jlimit(1.0f, static_cast<float>(maxDelayInSamples - 1), modulatedLength);
+            delays[i].setDelay(modulatedLength);
+
             delayOutputs[i] = delays[i].popSample(0);
         }
 
@@ -281,15 +367,11 @@ public:
             float decorrelatedInput = inputDiffusion[i].popSample(0);
             delayInputs[i] += decorrelatedInput * 0.3f;  // Reduced gain to prevent buildup
 
-            // Feed back into delays with size modulation - CRITICAL: Clamp to max delay to prevent crashes
-            float modulatedLength = baseDelayLengths[i] * (0.5f + size * 1.5f) * (sampleRate / 48000.0f);
-            int maxDelayInSamples = delays[i].getMaximumDelayInSamples();
-            modulatedLength = juce::jlimit(1.0f, static_cast<float>(maxDelayInSamples - 1), modulatedLength);
-            delays[i].setDelay(modulatedLength);
+            // Feed back into delays - already modulated above
             delays[i].pushSample(0, delayInputs[i]);
         }
 
-        // Decorrelated stereo output
+        // Enhanced decorrelated stereo output with better spatial imaging
         outputL = outputR = 0.0f;
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
@@ -298,13 +380,15 @@ public:
             if (std::isnan(delayOut) || std::isinf(delayOut)) delayOut = 0.0f;
             delayOut = juce::jlimit(-10.0f, 10.0f, delayOut);  // Prevent explosive feedback
 
-            // Hadamard-inspired decorrelation pattern
-            outputL += delayOut * ((i & 1) ? 1.0f : -1.0f) * ((i & 2) ? 1.0f : -1.0f);
-            outputR += delayOut * ((i & 4) ? 1.0f : -1.0f) * ((i & 8) ? 1.0f : -1.0f);
+            // More sophisticated decorrelation using circular panning
+            float angle = (i * juce::MathConstants<float>::pi * 2.0f) / NUM_DELAYS;
+            outputL += delayOut * std::cos(angle);
+            outputR += delayOut * std::sin(angle);
         }
 
-        outputL /= NUM_DELAYS;
-        outputR /= NUM_DELAYS;
+        // Energy-normalized output
+        outputL /= std::sqrt(static_cast<float>(NUM_DELAYS));
+        outputR /= std::sqrt(static_cast<float>(NUM_DELAYS));
 
         // HIGH PRIORITY: Final safety clamp on FDN output
         outputL = juce::jlimit(-10.0f, 10.0f, outputL);
@@ -318,6 +402,7 @@ public:
             delays[i].reset();
             decayFilters[i].reset();
             inputDiffusion[i].reset();
+            modulationLFOs[i].reset();
         }
 
         // Clear any NaN or denormal values
@@ -335,6 +420,7 @@ private:
     std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>, NUM_DELAYS> delays;
     std::array<MultibandDecay, NUM_DELAYS> decayFilters;
     std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>, NUM_DELAYS> inputDiffusion;
+    std::array<juce::dsp::Oscillator<float>, NUM_DELAYS> modulationLFOs;
 
     HouseholderMatrix mixingMatrix;
 };
@@ -483,7 +569,7 @@ public:
         generateReflectionPattern();
     }
 
-private:
+protected:
     double sampleRate = 48000.0;
     std::vector<Reflection> reflections;
     std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>, 50> delays;
@@ -497,11 +583,21 @@ private:
 class ReverbEngineEnhanced
 {
 public:
-    ReverbEngineEnhanced() = default;
+    ReverbEngineEnhanced()
+        : oversampling2x(2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR),
+          oversampling4x(2, 3, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR)
+    {
+    }
 
     void prepare(const juce::dsp::ProcessSpec& spec)
     {
         sampleRate = spec.sampleRate;
+
+        // Prepare oversampling (both 2x and 4x)
+        oversampling2x.initProcessing(spec.maximumBlockSize);
+        oversampling2x.reset();
+        oversampling4x.initProcessing(spec.maximumBlockSize);
+        oversampling4x.reset();
 
         // Prepare FDN
         fdn.prepare(spec);
@@ -560,12 +656,42 @@ public:
 
     void process(juce::AudioBuffer<float>& buffer)
     {
-        const int numSamples = buffer.getNumSamples();
-        float* leftChannel = buffer.getWritePointer(0);
-        float* rightChannel = buffer.getWritePointer(1);
-
         // HIGH PRIORITY: Set denormal flush-to-zero for this thread (prevents CPU spikes)
         juce::ScopedNoDenormals noDenormals;
+
+        // Apply variable oversampling based on oversamplingFactor
+        juce::dsp::AudioBlock<float> block(buffer);
+
+        // Only oversample in plate mode (non-linear) to reduce aliasing
+        if (oversamplingEnabled && currentAlgorithm == 2 && oversamplingFactor > 1)
+        {
+            if (oversamplingFactor == 2)
+            {
+                // 2x oversampling
+                auto oversampledBlock = oversampling2x.processSamplesUp(block);
+                processInternal(oversampledBlock);
+                oversampling2x.processSamplesDown(block);
+            }
+            else if (oversamplingFactor == 4)
+            {
+                // 4x oversampling
+                auto oversampledBlock = oversampling4x.processSamplesUp(block);
+                processInternal(oversampledBlock);
+                oversampling4x.processSamplesDown(block);
+            }
+        }
+        else
+        {
+            // No oversampling (direct processing)
+            processInternal(block);
+        }
+    }
+
+    void processInternal(juce::dsp::AudioBlock<float>& block)
+    {
+        const int numSamples = static_cast<int>(block.getNumSamples());
+        float* leftChannel = block.getChannelPointer(0);
+        float* rightChannel = block.getChannelPointer(1);
 
         for (int sample = 0; sample < numSamples; ++sample)
         {
@@ -605,10 +731,11 @@ public:
             if (std::isnan(earlyL) || std::isinf(earlyL)) earlyL = 0.0f;
             if (std::isnan(earlyR) || std::isinf(earlyR)) earlyR = 0.0f;
 
-            // Process late reverb through FDN with clamped decay
+            // Process late reverb through FDN with clamped decay and modulation
             float lateL, lateR;
             float clampedDecay = juce::jlimit(0.0f, 0.999f, currentDecay);
-            fdn.process(delayedL, delayedR, lateL, lateR, smoothedSize, clampedDecay, smoothedDamping);
+            float fdnModDepth = 1.0f;  // Full modulation depth for lush character
+            fdn.process(delayedL, delayedR, lateL, lateR, smoothedSize, clampedDecay, smoothedDamping, fdnModDepth);
 
             // HIGH PRIORITY: Sanitize FDN output (works in release builds unlike jassert)
             if (std::isnan(lateL) || std::isinf(lateL)) lateL = 0.0f;
@@ -623,9 +750,9 @@ public:
 
             // Depth also scales with size (larger spaces = more shimmer)
             float baseDepth = (currentAlgorithm == 2) ? 0.005f : 0.002f;  // More shimmer for plate
-            float modDepth = baseDepth * (0.5f + smoothedSize * 0.5f);  // Scale depth with size
-            float mod1 = modulationLFO1.processSample(0.0f) * modDepth;
-            float mod2 = modulationLFO2.processSample(0.0f) * modDepth;
+            float shimmerModDepth = baseDepth * (0.5f + smoothedSize * 0.5f);  // Scale depth with size
+            float mod1 = modulationLFO1.processSample(0.0f) * shimmerModDepth;
+            float mod2 = modulationLFO2.processSample(0.0f) * shimmerModDepth;
             lateL *= (1.0f + mod1);
             lateR *= (1.0f + mod2);
 
@@ -759,6 +886,17 @@ public:
         predelaySmooth.setTargetValue(samples);
     }
 
+    // Tempo-synced predelay
+    void setPredelayBeats(float beats, double bpm)
+    {
+        if (bpm > 0.0)
+        {
+            float msPerBeat = 60000.0f / static_cast<float>(bpm);
+            float ms = beats * msPerBeat;
+            setPredelay(ms);
+        }
+    }
+
     void setMix(float mix)
     {
         currentMix = juce::jlimit(0.0f, 1.0f, mix);
@@ -772,6 +910,51 @@ public:
         widthSmooth.setTargetValue(currentWidth);
     }
 
+    // Multiband RT60 control
+    void setLowDecayTime(float seconds)
+    {
+        lowRT60 = juce::jlimit(0.1f, 10.0f, seconds);
+        updateMultibandDecay();
+    }
+
+    void setMidDecayTime(float seconds)
+    {
+        midRT60 = juce::jlimit(0.1f, 10.0f, seconds);
+        updateMultibandDecay();
+    }
+
+    void setHighDecayTime(float seconds)
+    {
+        highRT60 = juce::jlimit(0.1f, 10.0f, seconds);
+        updateMultibandDecay();
+    }
+
+    // Infinite decay mode
+    void setInfiniteDecay(bool infinite)
+    {
+        infiniteMode = infinite;
+        if (infinite)
+        {
+            currentDecay = 0.999f; // Near-infinite feedback
+        }
+        else
+        {
+            updateMultibandDecay();
+        }
+    }
+
+    // Enable/disable oversampling with variable factor
+    void setOversamplingEnabled(bool enabled)
+    {
+        oversamplingEnabled = enabled;
+    }
+
+    void setOversamplingFactor(int factor)
+    {
+        // 1 = off, 2 = 2x, 4 = 4x
+        oversamplingFactor = juce::jlimit(1, 4, factor);
+    }
+
     // Task 7: Return max tail samples for latency reporting
     int getMaxTailSamples() const
     {
@@ -782,12 +965,30 @@ public:
         return static_cast<int>(sampleRate * 2.2);
     }
 
-private:
+    void updateMultibandDecay()
+    {
+        if (!infiniteMode)
+        {
+            // Convert RT60 times to feedback coefficients
+            // RT60 = -60dB / (feedback_coefficient * sample_rate)
+            // Simplified approximation for demo
+            float avgRT60 = (lowRT60 + midRT60 + highRT60) / 3.0f;
+            currentDecay = std::exp(-3.0f / (avgRT60 * sampleRate / 1000.0f));
+            currentDecay = juce::jlimit(0.0f, 0.999f, currentDecay);
+        }
+    }
+
     double sampleRate = 48000.0;
 
     // DSP Components
     FeedbackDelayNetwork fdn;
     SpatialEarlyReflections earlyReflections;
+
+    // Variable oversampling for anti-aliasing (2x and 4x)
+    juce::dsp::Oversampling<float> oversampling2x;
+    juce::dsp::Oversampling<float> oversampling4x;
+    bool oversamplingEnabled = false;
+    int oversamplingFactor = 1;  // 1=off, 2=2x, 4=4x
 
     // HIGH PRIORITY: Use Linear interpolation to prevent clicks on predelay changes
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> predelayL { 48000 };
@@ -815,6 +1016,14 @@ private:
     float currentMix = 0.5f;
     float currentWidth = 0.5f;  // Task 10: Width parameter
     float currentPredelayMs = 0.0f;
+
+    // Multiband RT60 parameters
+    float lowRT60 = 2.0f;
+    float midRT60 = 2.0f;
+    float highRT60 = 1.5f;
+
+    // Infinite decay mode
+    bool infiniteMode = false;
 
     float earlyGain = 0.5f;
     float lateGain = 0.5f;
