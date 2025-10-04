@@ -18,27 +18,28 @@ StudioVerbAudioProcessor::StudioVerbAudioProcessor()
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
        parameters(*this, nullptr, "Parameters", createParameterLayout())
 {
-    // Initialize the reverb engine
-    reverbEngine = std::make_unique<ReverbEngineEnhanced>();
-
-    // Initialize factory presets
-    initializePresets();
-
-    // Add parameter listeners (Task 10: Added width)
-    parameters.addParameterListener(ALGORITHM_ID, this);
-    parameters.addParameterListener(SIZE_ID, this);
-    parameters.addParameterListener(DAMP_ID, this);
-    parameters.addParameterListener(PREDELAY_ID, this);
-    parameters.addParameterListener(MIX_ID, this);
-    parameters.addParameterListener(WIDTH_ID, this);
-
-    // Initialize with default values - parameters may not be ready yet
+    // Initialize with default values first - lightweight operations only
     currentAlgorithm.store(Room);
     currentSize.store(0.5f);
     currentDamp.store(0.5f);
     currentPredelay.store(20.0f);
     currentMix.store(0.3f);
     currentWidth.store(1.0f);
+
+    // Don't create the reverb engine in constructor - defer to prepareToPlay
+    // This avoids heavy initialization during plugin scanning
+    reverbEngine = nullptr;
+
+    // Initialize factory presets - lightweight
+    initializePresets();
+
+    // Add parameter listeners
+    parameters.addParameterListener(ALGORITHM_ID, this);
+    parameters.addParameterListener(SIZE_ID, this);
+    parameters.addParameterListener(DAMP_ID, this);
+    parameters.addParameterListener(PREDELAY_ID, this);
+    parameters.addParameterListener(MIX_ID, this);
+    parameters.addParameterListener(WIDTH_ID, this);
 }
 
 StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
@@ -427,10 +428,12 @@ void StudioVerbAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBl
         return;
     }
 
+    // Lazy initialization - create reverb engine on first prepareToPlay
+    // This avoids heavy initialization during plugin scanning
     if (!reverbEngine)
     {
-        DBG("StudioVerb: Reverb engine is null in prepareToPlay!");
-        return;
+        DBG("StudioVerb: Creating reverb engine in prepareToPlay");
+        reverbEngine = std::make_unique<ReverbEngineEnhanced>();
     }
 
     juce::dsp::ProcessSpec spec;
