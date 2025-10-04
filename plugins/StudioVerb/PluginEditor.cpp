@@ -2,7 +2,7 @@
   ==============================================================================
 
     Studio Verb - Plugin Editor
-    Copyright (c) 2024 Luna CO. Audio
+    Copyright (c) 2024 Luna Co. Audio
 
   ==============================================================================
 */
@@ -139,7 +139,8 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     algorithmLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
     addAndMakeVisible(algorithmLabel);
 
-    algorithmSelector.addItemList({"Room", "Hall", "Plate", "Early Reflections", "Gated", "Reverse"}, 1);
+    algorithmSelector.addItemList({"Room", "Hall", "Plate", "Early Reflections", "Gated", "Reverse",
+                                   "Concert Hall", "Bright Chamber", "Dark Hall", "Sanctuary", "Tight Room", "Shimmer"}, 1);
     algorithmSelector.addListener(this);
     addAndMakeVisible(algorithmSelector);
 
