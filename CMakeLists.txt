@@ -32,8 +32,9 @@ option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_UNIVERSAL_COMPRESSOR "Build Universal Compressor plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" ON)
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)  # Fixed compilation errors
-option(BUILD_STUDIO_REVERB "Build Studio Reverb plugin" ON)
+#option(BUILD_STUDIO_REVERB "Build Studio Reverb plugin" OFF)  # Removed - replaced with PlateReverb
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
+option(BUILD_PLATE_REVERB "Build Plate Reverb plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -58,4 +59,8 @@ endif()
 
 if(BUILD_TAPE_ECHO)
     add_subdirectory(plugins/TapeEcho)
+endif()
+
+if(BUILD_PLATE_REVERB)
+    add_subdirectory(plugins/PlateReverb)
 endif()
