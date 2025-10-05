@@ -22,8 +22,8 @@
 
 //==============================================================================
 // Forward declarations
-class ReverbEngine;
-class ReverbEngineEnhanced;
+class DattorroReverb;
+class FreverbAlgorithm;
 
 //==============================================================================
 /**
@@ -97,25 +97,16 @@ public:
     static constexpr const char* NOISE_AMOUNT_ID = "noiseAmount";
     static constexpr const char* QUALITY_ID = "quality";
 
-    // Algorithm types
+    // Algorithm types - 3 clean, proven algorithms
     enum Algorithm
     {
-        Room = 0,
-        Hall,
-        Plate,
-        EarlyReflections,
-        Gated,          // Non-linear gated reverb
-        Reverse,        // Non-linear reverse reverb
-        ConcertHall,    // Large diffuse hall with longer decay
-        BrightChamber,  // Reflective chamber with high-frequency emphasis
-        DarkHall,       // Warm smooth hall with reduced highs
-        Sanctuary,      // Ethereal non-realistic space
-        TightRoom,      // Small room with quick reflections
-        Shimmer,        // Upward pitch-shifted reverb tail
+        Plate = 0,      // Dattorro plate reverb
+        Room,           // Freeverb (small space)
+        Hall,           // Freeverb (large space)
         NumAlgorithms
     };
 
-    // Preset structure
+    // Preset structure - simplified to core 6 parameters
     struct Preset
     {
         juce::String name;
@@ -125,19 +116,6 @@ public:
         float predelay;
         float mix;
         float width = 0.5f;
-        float lowRT60 = 2.0f;
-        float midRT60 = 2.0f;
-        float highRT60 = 1.5f;
-        bool infinite = false;
-        int oversampling = 0;
-        int roomShape = 0;
-        int predelayBeats = 0;
-        float vintage = 0.0f;
-        float modRate = 0.5f;
-        float modDepth = 0.5f;
-        int colorMode = 2;  // Default to "Now" (clean)
-        float bassMult = 1.0f;
-        float bassXover = 150.0f;
     };
 
     // Get parameters
@@ -168,28 +146,9 @@ private:
     std::atomic<float> currentMix { 0.5f };
     std::atomic<float> currentWidth { 0.5f };
 
-    // Advanced parameters
-    std::atomic<float> currentLowRT60 { 2.0f };
-    std::atomic<float> currentMidRT60 { 2.0f };
-    std::atomic<float> currentHighRT60 { 1.5f };
-    std::atomic<bool> currentInfinite { false };
-    std::atomic<int> currentOversampling { 0 };  // 0=off, 1=2x, 2=4x
-    std::atomic<int> currentRoomShape { 0 };
-    std::atomic<float> currentVintage { 0.0f };
-    std::atomic<int> currentPredelayBeats { 0 };  // 0=off, 1=1/16, 2=1/8, etc.
-    std::atomic<float> currentModRate { 0.5f };   // Modulation rate (0.1-5.0 Hz)
-    std::atomic<float> currentModDepth { 0.5f };  // Modulation depth (0-1)
-    std::atomic<int> currentColorMode { 2 };      // 0=1970s, 1=1980s, 2=Now (default)
-    std::atomic<float> currentBassMult { 1.0f };  // Bass decay multiplier (0.5-2.0)
-    std::atomic<float> currentBassXover { 150.0f }; // Bass crossover frequency (50-500 Hz)
-    std::atomic<float> currentNoiseAmount { 0.5f }; // Vintage noise amount (0-1)
-    std::atomic<int> currentQuality { 1 };  // Quality: 0=Eco(16ch), 1=High(32ch)
-
-    // Store manual predelay separately to preserve it during tempo sync
-    std::atomic<float> manualPredelay { 0.0f };
-
-    // Reverb engine (Task 3: Integrated Enhanced FDN Engine)
-    std::unique_ptr<ReverbEngineEnhanced> reverbEngine;
+    // Reverb engines - clean, proven algorithms
+    std::unique_ptr<DattorroReverb> dattorroReverb;
+    std::unique_ptr<FreverbAlgorithm> freeverb;
 
     // Preset management (Task 4: Added user preset support)
     std::vector<Preset> factoryPresets;

@@ -101,8 +101,30 @@ private:
     // Vintage and tempo sync
     juce::Slider vintageSlider;
     juce::ComboBox predelayBeatsSelector;
+    juce::ComboBox colorModeSelector;
     juce::Label vintageLabel;
     juce::Label predelayBeatsLabel;
+    juce::Label colorModeLabel;
+
+    // Modulation controls
+    juce::Slider modRateSlider;
+    juce::Slider modDepthSlider;
+    juce::Label modRateLabel;
+    juce::Label modDepthLabel;
+
+    // Noise control
+    juce::Slider noiseAmountSlider;
+    juce::Label noiseAmountLabel;
+
+    // Bass controls
+    juce::Slider bassMultSlider;
+    juce::Slider bassXoverSlider;
+    juce::Label bassMultLabel;
+    juce::Label bassXoverLabel;
+
+    // Quality selector
+    juce::ComboBox qualitySelector;
+    juce::Label qualityLabel;
 
     // Value labels (showing current values)
     juce::Label sizeValueLabel;
@@ -114,6 +136,11 @@ private:
     juce::Label midRT60ValueLabel;
     juce::Label highRT60ValueLabel;
     juce::Label vintageValueLabel;
+    juce::Label modRateValueLabel;
+    juce::Label modDepthValueLabel;
+    juce::Label noiseAmountValueLabel;
+    juce::Label bassMultValueLabel;
+    juce::Label bassXoverValueLabel;
 
     // Attachments for parameter binding
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> algorithmAttachment;
@@ -132,6 +159,13 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> roomShapeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> vintageAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> predelayBeatsAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> colorModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modRateAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modDepthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noiseAmountAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bassMultAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bassXoverAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> qualityAttachment;
 
     // UI State
     int lastAlgorithm = -1;
