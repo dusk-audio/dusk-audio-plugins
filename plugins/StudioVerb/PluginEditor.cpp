@@ -139,23 +139,11 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     algorithmLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
     addAndMakeVisible(algorithmLabel);
 
-    algorithmSelector.addItemList({"Room", "Hall", "Plate", "Early Reflections", "Gated", "Reverse",
-                                   "Concert Hall", "Bright Chamber", "Dark Hall", "Sanctuary", "Tight Room", "Shimmer"}, 1);
-    algorithmSelector.addListener(this);
+    algorithmSelector.addItemList({"Plate", "Room", "Hall"}, 1);
     addAndMakeVisible(algorithmSelector);
 
     algorithmAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "algorithm", algorithmSelector);
-
-    // Preset selector
-    presetLabel.setText("PRESET", juce::dontSendNotification);
-    presetLabel.setJustificationType(juce::Justification::centredLeft);
-    presetLabel.setFont(juce::Font(11.0f, juce::Font::bold));
-    presetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
-    addAndMakeVisible(presetLabel);
-
-    presetSelector.addListener(this);
-    addAndMakeVisible(presetSelector);
 
     // Size slider
     setupSlider(sizeSlider, sizeLabel, "Size");
@@ -192,6 +180,7 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     widthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "width", widthSlider);
 
+    /* Removed advanced parameters - simplified to 6 core controls only
     // Advanced section label
     advancedSectionLabel.setText("ADVANCED", juce::dontSendNotification);
     advancedSectionLabel.setFont(juce::Font(13.0f, juce::Font::bold));
@@ -273,74 +262,115 @@ StudioVerbAudioProcessorEditor::StudioVerbAudioProcessorEditor(StudioVerbAudioPr
     predelayBeatsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "predelayBeats", predelayBeatsSelector);
 
-    // Value labels with Luna styling
+    // Color mode selector (1970s/1980s/Now)
+    colorModeLabel.setText("Era", juce::dontSendNotification);
+    colorModeLabel.setFont(juce::Font(11.0f));
+    colorModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    addAndMakeVisible(colorModeLabel);
+
+    colorModeSelector.addItemList({"1970s", "1980s", "Now"}, 1);
+    addAndMakeVisible(colorModeSelector);
+    colorModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "colorMode", colorModeSelector);
+
+    // Modulation Rate slider
+    modRateLabel.setText("Mod Rate", juce::dontSendNotification);
+    modRateLabel.setFont(juce::Font(11.0f));
+    modRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    addAndMakeVisible(modRateLabel);
+
+    modRateSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    modRateSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    addAndMakeVisible(modRateSlider);
+    modRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "modRate", modRateSlider);
+
+    // Modulation Depth slider
+    modDepthLabel.setText("Mod Depth", juce::dontSendNotification);
+    modDepthLabel.setFont(juce::Font(11.0f));
+    modDepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    addAndMakeVisible(modDepthLabel);
+
+    modDepthSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    modDepthSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    addAndMakeVisible(modDepthSlider);
+    modDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "modDepth", modDepthSlider);
+
+    // Noise Amount slider
+    noiseAmountLabel.setText("Noise Amt", juce::dontSendNotification);
+    noiseAmountLabel.setFont(juce::Font(11.0f));
+    noiseAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    addAndMakeVisible(noiseAmountLabel);
+
+    noiseAmountSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    noiseAmountSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    addAndMakeVisible(noiseAmountSlider);
+    noiseAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "noiseAmount", noiseAmountSlider);
+
+    // Bass Multiplier slider
+    bassMultLabel.setText("Bass Mult", juce::dontSendNotification);
+    bassMultLabel.setFont(juce::Font(11.0f));
+    bassMultLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    addAndMakeVisible(bassMultLabel);
+
+    bassMultSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    bassMultSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    addAndMakeVisible(bassMultSlider);
+    bassMultAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "bassMult", bassMultSlider);
+
+    // Bass Crossover slider
+    bassXoverLabel.setText("Bass Xover", juce::dontSendNotification);
+    bassXoverLabel.setFont(juce::Font(11.0f));
+    bassXoverLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    addAndMakeVisible(bassXoverLabel);
+
+    bassXoverSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    bassXoverSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    addAndMakeVisible(bassXoverSlider);
+    bassXoverAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "bassXover", bassXoverSlider);
+
+    // Quality selector
+    qualityLabel.setText("Quality", juce::dontSendNotification);
+    qualityLabel.setFont(juce::Font(11.0f));
+    qualityLabel.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    addAndMakeVisible(qualityLabel);
+
+    */
+
+    // Value labels for core parameters only
     addAndMakeVisible(sizeValueLabel);
     addAndMakeVisible(dampValueLabel);
     addAndMakeVisible(predelayValueLabel);
     addAndMakeVisible(mixValueLabel);
     addAndMakeVisible(widthValueLabel);
-    addAndMakeVisible(lowRT60ValueLabel);
-    addAndMakeVisible(midRT60ValueLabel);
-    addAndMakeVisible(highRT60ValueLabel);
-    addAndMakeVisible(vintageValueLabel);
 
     sizeValueLabel.setJustificationType(juce::Justification::centred);
     dampValueLabel.setJustificationType(juce::Justification::centred);
     predelayValueLabel.setJustificationType(juce::Justification::centred);
     mixValueLabel.setJustificationType(juce::Justification::centred);
     widthValueLabel.setJustificationType(juce::Justification::centred);
-    lowRT60ValueLabel.setJustificationType(juce::Justification::centred);
-    midRT60ValueLabel.setJustificationType(juce::Justification::centred);
-    highRT60ValueLabel.setJustificationType(juce::Justification::centred);
-    vintageValueLabel.setJustificationType(juce::Justification::centred);
 
     sizeValueLabel.setFont(juce::Font(12.0f));
     dampValueLabel.setFont(juce::Font(12.0f));
     predelayValueLabel.setFont(juce::Font(12.0f));
     mixValueLabel.setFont(juce::Font(12.0f));
     widthValueLabel.setFont(juce::Font(12.0f));
-    lowRT60ValueLabel.setFont(juce::Font(12.0f));
-    midRT60ValueLabel.setFont(juce::Font(12.0f));
-    highRT60ValueLabel.setFont(juce::Font(12.0f));
-    vintageValueLabel.setFont(juce::Font(12.0f));
 
     sizeValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     dampValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     predelayValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     mixValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     widthValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
-    lowRT60ValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
-    midRT60ValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
-    highRT60ValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
-    vintageValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
 
-    // Initialize preset list
-    updatePresetList();
+    // Set simplified window size
+    setSize(600, 300);
+    setResizable(false, false);
 
-    // Set initial room shape visibility based on algorithm
-    int currentAlgorithm = algorithmSelector.getSelectedId() - 1;
-    bool showRoomShape = (currentAlgorithm == 0 || currentAlgorithm == 3);  // Room or Early Reflections
-    roomShapeLabel.setVisible(showRoomShape);
-    roomShapeSelector.setVisible(showRoomShape);
-
-    // Detect display scale for high-DPI support
-    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
-    {
-        uiScale = display->scale;
-        // Clamp to reasonable range (1.0 to 2.0)
-        uiScale = juce::jlimit(1.0f, 2.0f, uiScale);
-    }
-
-    // Set window size with DPI awareness
-    int baseWidth = 750;
-    int baseHeight = 550;
-    setSize(scaled(baseWidth), scaled(baseHeight));
-
-    // Make window resizable with proportional limits
-    setResizable(true, true);
-    setResizeLimits(scaled(650), scaled(500), scaled(1200), scaled(900));
-
-    // Start timer for updating value labels (lower frequency for efficiency)
+    // Start timer for updating value labels
     startTimer(50);
 }
 
@@ -530,6 +560,53 @@ void StudioVerbAudioProcessorEditor::resized()
     auto syncRow = rightColumn.removeFromTop(optionRowHeight);
     predelayBeatsLabel.setBounds(syncRow.removeFromLeft(optionLabelWidth));
     predelayBeatsSelector.setBounds(syncRow.removeFromLeft(selectorWidth));
+
+    // Color mode (Era) selector row
+    rightColumn.removeFromTop(controlSpacing);
+    auto eraRow = rightColumn.removeFromTop(optionRowHeight);
+    colorModeLabel.setBounds(eraRow.removeFromLeft(optionLabelWidth));
+    colorModeSelector.setBounds(eraRow.removeFromLeft(selectorWidth));
+
+    // Modulation Rate slider row
+    rightColumn.removeFromTop(controlSpacing);
+    auto modRateRow = leftColumn.removeFromTop(optionRowHeight);
+    modRateLabel.setBounds(modRateRow.removeFromLeft(vintageLabelWidth));
+    modRateValueLabel.setBounds(modRateRow.removeFromRight(valueLabelWidth));
+    modRateSlider.setBounds(modRateRow);
+
+    // Modulation Depth slider row
+    leftColumn.removeFromTop(controlSpacing);
+    auto modDepthRow = leftColumn.removeFromTop(optionRowHeight);
+    modDepthLabel.setBounds(modDepthRow.removeFromLeft(vintageLabelWidth));
+    modDepthValueLabel.setBounds(modDepthRow.removeFromRight(valueLabelWidth));
+    modDepthSlider.setBounds(modDepthRow);
+
+    // Noise Amount slider row
+    leftColumn.removeFromTop(controlSpacing);
+    auto noiseRow = leftColumn.removeFromTop(optionRowHeight);
+    noiseAmountLabel.setBounds(noiseRow.removeFromLeft(vintageLabelWidth));
+    noiseAmountValueLabel.setBounds(noiseRow.removeFromRight(valueLabelWidth));
+    noiseAmountSlider.setBounds(noiseRow);
+
+    // Bass Multiplier slider row
+    rightColumn.removeFromTop(controlSpacing);
+    auto bassMultRow = rightColumn.removeFromTop(optionRowHeight);
+    bassMultLabel.setBounds(bassMultRow.removeFromLeft(optionLabelWidth));
+    bassMultValueLabel.setBounds(bassMultRow.removeFromRight(valueLabelWidth));
+    bassMultSlider.setBounds(bassMultRow);
+
+    // Bass Crossover slider row
+    rightColumn.removeFromTop(controlSpacing);
+    auto bassXoverRow = rightColumn.removeFromTop(optionRowHeight);
+    bassXoverLabel.setBounds(bassXoverRow.removeFromLeft(optionLabelWidth));
+    bassXoverValueLabel.setBounds(bassXoverRow.removeFromRight(valueLabelWidth));
+    bassXoverSlider.setBounds(bassXoverRow);
+
+    // Quality selector row
+    rightColumn.removeFromTop(controlSpacing);
+    auto qualityRow = rightColumn.removeFromTop(optionRowHeight);
+    qualityLabel.setBounds(qualityRow.removeFromLeft(optionLabelWidth));
+    qualitySelector.setBounds(qualityRow.removeFromLeft(selectorWidth));
 }
 
 //==============================================================================
@@ -635,4 +712,15 @@ void StudioVerbAudioProcessorEditor::updateValueLabels()
 
     // Vintage parameter
     vintageValueLabel.setText(juce::String(static_cast<int>(vintageSlider.getValue() * 100)) + "%", juce::dontSendNotification);
+
+    // Modulation parameters
+    modRateValueLabel.setText(juce::String(modRateSlider.getValue(), 2) + " Hz", juce::dontSendNotification);
+    modDepthValueLabel.setText(juce::String(static_cast<int>(modDepthSlider.getValue() * 100)) + "%", juce::dontSendNotification);
+
+    // Noise Amount parameter
+    noiseAmountValueLabel.setText(juce::String(static_cast<int>(noiseAmountSlider.getValue() * 100)) + "%", juce::dontSendNotification);
+
+    // Bass parameters
+    bassMultValueLabel.setText(juce::String(bassMultSlider.getValue(), 2) + "x", juce::dontSendNotification);
+    bassXoverValueLabel.setText(juce::String(static_cast<int>(bassXoverSlider.getValue())) + " Hz", juce::dontSendNotification);
 }

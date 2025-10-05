@@ -9,7 +9,8 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "ReverbEngineEnhanced.h"  // Task 3: Using enhanced engine
+#include "DattorroReverb.h"
+#include "FreverbAlgorithm.h"
 
 //==============================================================================
 StudioVerbAudioProcessor::StudioVerbAudioProcessor()
@@ -19,43 +20,28 @@ StudioVerbAudioProcessor::StudioVerbAudioProcessor()
        parameters(*this, nullptr, "Parameters", createParameterLayout())
 {
     // Initialize with default values first - lightweight operations only
-    currentAlgorithm.store(Room);
+    currentAlgorithm.store(Plate);
     currentSize.store(0.5f);
     currentDamp.store(0.5f);
     currentPredelay.store(20.0f);
-    manualPredelay.store(20.0f);  // Initialize to match currentPredelay
     currentMix.store(0.3f);
     currentWidth.store(1.0f);
 
-    // Don't create the reverb engine in constructor - defer to prepareToPlay
+    // Don't create the reverb engines in constructor - defer to prepareToPlay
     // This avoids heavy initialization during plugin scanning
-    reverbEngine = nullptr;
+    dattorroReverb = nullptr;
+    freeverb = nullptr;
 
     // Initialize factory presets - lightweight
     initializePresets();
 
-    // Add parameter listeners
+    // Add parameter listeners for core parameters only
     parameters.addParameterListener(ALGORITHM_ID, this);
     parameters.addParameterListener(SIZE_ID, this);
     parameters.addParameterListener(DAMP_ID, this);
     parameters.addParameterListener(PREDELAY_ID, this);
     parameters.addParameterListener(MIX_ID, this);
     parameters.addParameterListener(WIDTH_ID, this);
-    parameters.addParameterListener(LOW_RT60_ID, this);
-    parameters.addParameterListener(MID_RT60_ID, this);
-    parameters.addParameterListener(HIGH_RT60_ID, this);
-    parameters.addParameterListener(INFINITE_ID, this);
-    parameters.addParameterListener(OVERSAMPLING_ID, this);
-    parameters.addParameterListener(ROOM_SHAPE_ID, this);
-    parameters.addParameterListener(VINTAGE_ID, this);
-    parameters.addParameterListener(PREDELAY_BEATS_ID, this);
-    parameters.addParameterListener(MOD_RATE_ID, this);
-    parameters.addParameterListener(MOD_DEPTH_ID, this);
-    parameters.addParameterListener(COLOR_MODE_ID, this);
-    parameters.addParameterListener(BASS_MULT_ID, this);
-    parameters.addParameterListener(BASS_XOVER_ID, this);
-    parameters.addParameterListener(NOISE_AMOUNT_ID, this);
-    parameters.addParameterListener(QUALITY_ID, this);
 }
 
 StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
@@ -66,21 +52,6 @@ StudioVerbAudioProcessor::~StudioVerbAudioProcessor()
     parameters.removeParameterListener(PREDELAY_ID, this);
     parameters.removeParameterListener(MIX_ID, this);
     parameters.removeParameterListener(WIDTH_ID, this);
-    parameters.removeParameterListener(LOW_RT60_ID, this);
-    parameters.removeParameterListener(MID_RT60_ID, this);
-    parameters.removeParameterListener(HIGH_RT60_ID, this);
-    parameters.removeParameterListener(INFINITE_ID, this);
-    parameters.removeParameterListener(OVERSAMPLING_ID, this);
-    parameters.removeParameterListener(ROOM_SHAPE_ID, this);
-    parameters.removeParameterListener(VINTAGE_ID, this);
-    parameters.removeParameterListener(PREDELAY_BEATS_ID, this);
-    parameters.removeParameterListener(MOD_RATE_ID, this);
-    parameters.removeParameterListener(MOD_DEPTH_ID, this);
-    parameters.removeParameterListener(COLOR_MODE_ID, this);
-    parameters.removeParameterListener(BASS_MULT_ID, this);
-    parameters.removeParameterListener(BASS_XOVER_ID, this);
-    parameters.removeParameterListener(NOISE_AMOUNT_ID, this);
-    parameters.removeParameterListener(QUALITY_ID, this);
 }
 
 //==============================================================================
@@ -88,12 +59,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioVerbAudioProcessor::cr
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // Algorithm selector
+    // Algorithm selector - 3 clean, proven algorithms
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         ALGORITHM_ID,
         "Algorithm",
-        juce::StringArray { "Room", "Hall", "Plate", "Early Reflections", "Gated", "Reverse",
-                           "Concert Hall", "Bright Chamber", "Dark Hall", "Sanctuary", "Tight Room", "Shimmer" },
+        juce::StringArray { "Plate", "Room", "Hall" },
         0));
 
     // Size parameter (0-1)
@@ -151,282 +121,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout StudioVerbAudioProcessor::cr
         [](float value, int) { return juce::String(static_cast<int>(value * 100)) + "%"; },
         [](const juce::String& text) { return text.getFloatValue() / 100.0f; }));
 
-    // Advanced RT60 parameters
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        LOW_RT60_ID,
-        "Low RT60",
-        juce::NormalisableRange<float>(0.1f, 10.0f, 0.1f),
-        2.0f,
-        "s",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + " s"; },
-        [](const juce::String& text) { return text.getFloatValue(); }));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        MID_RT60_ID,
-        "Mid RT60",
-        juce::NormalisableRange<float>(0.1f, 10.0f, 0.1f),
-        2.0f,
-        "s",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + " s"; },
-        [](const juce::String& text) { return text.getFloatValue(); }));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        HIGH_RT60_ID,
-        "High RT60",
-        juce::NormalisableRange<float>(0.1f, 10.0f, 0.1f),
-        1.5f,
-        "s",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + " s"; },
-        [](const juce::String& text) { return text.getFloatValue(); }));
-
-    // Infinite decay mode
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        INFINITE_ID,
-        "Infinite",
-        false));
-
-    // Oversampling factor (1x, 2x, 4x)
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        OVERSAMPLING_ID,
-        "Oversampling",
-        juce::StringArray { "Off", "2x", "4x" },
-        0));
-
-    // Room shape parameter
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        ROOM_SHAPE_ID,
-        "Room Shape",
-        juce::StringArray { "Studio Room", "Small Room", "Large Hall", "Cathedral", "Chamber", "Warehouse", "Booth", "Tunnel" },
-        0));
-
-    // Vintage/warmth parameter
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        VINTAGE_ID,
-        "Vintage",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.0f,
-        "",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(static_cast<int>(value * 100)) + "%"; },
-        [](const juce::String& text) { return text.getFloatValue() / 100.0f; }));
-
-    // Tempo-synced predelay
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        PREDELAY_BEATS_ID,
-        "Predelay Sync",
-        juce::StringArray { "Off", "1/16", "1/8", "1/4", "1/2" },
-        0));
-
-    // Modulation Rate (0.1-5.0 Hz)
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        MOD_RATE_ID,
-        "Mod Rate",
-        juce::NormalisableRange<float>(0.1f, 5.0f, 0.01f, 0.5f),  // Skew toward lower values
-        0.5f,
-        "",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 2) + " Hz"; },
-        [](const juce::String& text) { return text.getFloatValue(); }));
-
-    // Modulation Depth (0-100%)
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        MOD_DEPTH_ID,
-        "Mod Depth",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.5f,
-        "",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(static_cast<int>(value * 100)) + "%"; },
-        [](const juce::String& text) { return text.getFloatValue() / 100.0f; }));
-
-    // Color Mode (vintage hardware emulation)
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        COLOR_MODE_ID,
-        "Color",
-        juce::StringArray { "1970s", "1980s", "Now" },
-        2));  // Default to "Now" (clean)
-
-    // Bass Multiplier (bass decay time multiplier, 0.5-2.0)
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        BASS_MULT_ID,
-        "Bass Mult",
-        juce::NormalisableRange<float>(0.5f, 2.0f, 0.01f),
-        1.0f,
-        "",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 2) + "x"; },
-        [](const juce::String& text) { return text.getFloatValue(); }));
-
-    // Bass Crossover (frequency where bass mult applies, 50-500 Hz)
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        BASS_XOVER_ID,
-        "Bass Xover",
-        juce::NormalisableRange<float>(50.0f, 500.0f, 1.0f, 0.4f),  // Skew toward lower frequencies
-        150.0f,
-        "",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(static_cast<int>(value)) + " Hz"; },
-        [](const juce::String& text) { return text.getFloatValue(); }));
-
-    // Noise Amount (0-100%)
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        NOISE_AMOUNT_ID,
-        "Noise Amount",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.5f,
-        "",
-        juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(static_cast<int>(value * 100)) + "%"; },
-        [](const juce::String& text) { return text.getFloatValue() / 100.0f; }));
-
-    // Quality/CPU setting
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        QUALITY_ID,
-        "Quality",
-        juce::StringArray { "Eco (16ch)", "High (32ch)" },
-        1));  // Default to High quality
-
     return layout;
 }
 
 //==============================================================================
 void StudioVerbAudioProcessor::initializePresets()
 {
-    // VOCAL PRESETS - Optimized for voice
-    factoryPresets.push_back({ "Vocal Tight", TightRoom, 0.3f, 0.5f, 8.0f, 0.25f, 0.6f, 1.5f, 1.8f, 1.3f, false, 0, 0, 0, 0.0f, 0.3f, 0.4f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Vocal Chamber", BrightChamber, 0.5f, 0.3f, 15.0f, 0.30f, 0.7f, 2.0f, 2.2f, 1.6f, false, 0, 0, 0, 0.0f, 0.4f, 0.5f, 2, 0.9f, 180.0f });
-    factoryPresets.push_back({ "Vocal Hall", Hall, 0.6f, 0.4f, 20.0f, 0.35f, 0.65f, 2.5f, 2.8f, 2.0f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Vocal Plate", Plate, 0.5f, 0.3f, 12.0f, 0.32f, 0.8f, 2.0f, 2.3f, 1.7f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Vocal Vintage 70s", BrightChamber, 0.4f, 0.5f, 18.0f, 0.28f, 0.6f, 1.8f, 2.0f, 1.4f, false, 0, 0, 0, 0.3f, 0.4f, 0.5f, 0, 1.2f, 120.0f });
-    factoryPresets.push_back({ "Vocal Shimmer", Shimmer, 0.7f, 0.2f, 25.0f, 0.35f, 0.75f, 3.0f, 3.5f, 2.8f, false, 0, 0, 0, 0.1f, 0.8f, 0.8f, 2, 1.0f, 150.0f });
+    // Simple presets using only Plate, Room, Hall algorithms
+    factoryPresets.push_back({ "Small Room", Room, 0.3f, 0.5f, 8.0f, 0.25f, 0.6f });
+    factoryPresets.push_back({ "Medium Room", Room, 0.5f, 0.4f, 12.0f, 0.35f, 0.7f });
+    factoryPresets.push_back({ "Large Room", Room, 0.7f, 0.35f, 18.0f, 0.40f, 0.8f });
 
-    // DRUM PRESETS - Punchy and controlled
-    factoryPresets.push_back({ "Drum Tight", TightRoom, 0.2f, 0.7f, 5.0f, 0.35f, 0.5f, 1.0f, 1.2f, 0.8f, false, 0, 0, 0, 0.0f, 0.3f, 0.4f, 2, 0.7f, 100.0f });
-    factoryPresets.push_back({ "Drum Room", Room, 0.4f, 0.6f, 8.0f, 0.40f, 0.6f, 1.5f, 1.7f, 1.2f, false, 0, 0, 0, 0.0f, 0.4f, 0.5f, 2, 0.8f, 120.0f });
-    factoryPresets.push_back({ "Drum Hall", Hall, 0.5f, 0.5f, 12.0f, 0.35f, 0.7f, 2.0f, 2.2f, 1.5f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 0.9f, 150.0f });
-    factoryPresets.push_back({ "Drum Plate", Plate, 0.4f, 0.4f, 10.0f, 0.38f, 0.75f, 1.8f, 2.0f, 1.4f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 0.8f, 100.0f });
-    factoryPresets.push_back({ "Drum Gated", Gated, 0.5f, 0.6f, 5.0f, 0.50f, 0.8f, 1.5f, 1.5f, 1.5f, false, 0, 0, 0, 0.0f, 0.3f, 0.4f, 2, 0.7f, 80.0f });
-    factoryPresets.push_back({ "Drum Ambience", Room, 0.6f, 0.3f, 15.0f, 0.25f, 0.9f, 2.5f, 2.5f, 2.0f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.2f, 150.0f });
+    factoryPresets.push_back({ "Small Hall", Hall, 0.5f, 0.4f, 18.0f, 0.30f, 0.7f });
+    factoryPresets.push_back({ "Medium Hall", Hall, 0.7f, 0.35f, 25.0f, 0.35f, 0.8f });
+    factoryPresets.push_back({ "Large Hall", Hall, 0.85f, 0.3f, 32.0f, 0.40f, 0.9f });
 
-    // PAD/SYNTH PRESETS - Lush and spacious
-    factoryPresets.push_back({ "Pad Sanctuary", Sanctuary, 0.8f, 0.2f, 30.0f, 0.45f, 0.9f, 4.0f, 4.5f, 3.5f, false, 0, 0, 0, 0.2f, 1.2f, 0.9f, 2, 1.3f, 180.0f });
-    factoryPresets.push_back({ "Pad Shimmer", Shimmer, 0.9f, 0.15f, 40.0f, 0.50f, 0.95f, 4.5f, 5.0f, 4.0f, false, 0, 0, 0, 0.1f, 1.5f, 1.0f, 2, 1.4f, 200.0f });
-    factoryPresets.push_back({ "Pad Dark Hall", DarkHall, 0.85f, 0.4f, 35.0f, 0.48f, 0.85f, 4.2f, 4.8f, 3.8f, false, 0, 0, 0, 0.2f, 0.8f, 0.8f, 0, 1.5f, 180.0f });
-    factoryPresets.push_back({ "Pad Infinite", Sanctuary, 0.95f, 0.1f, 50.0f, 0.55f, 1.0f, 8.0f, 8.0f, 7.0f, true, 0, 0, 0, 0.3f, 1.0f, 0.9f, 2, 1.6f, 200.0f });
-    factoryPresets.push_back({ "Pad Warm Vintage", DarkHall, 0.75f, 0.5f, 28.0f, 0.42f, 0.8f, 3.5f, 4.0f, 3.0f, false, 0, 0, 0, 0.4f, 0.7f, 0.8f, 0, 1.6f, 150.0f });
-    factoryPresets.push_back({ "Pad Concert Hall", ConcertHall, 0.9f, 0.25f, 45.0f, 0.50f, 0.95f, 4.8f, 5.2f, 4.2f, false, 0, 0, 0, 0.1f, 1.0f, 0.9f, 2, 1.4f, 180.0f });
-
-    // GUITAR PRESETS - Natural and musical
-    factoryPresets.push_back({ "Guitar Room", Room, 0.45f, 0.4f, 10.0f, 0.30f, 0.7f, 2.0f, 2.2f, 1.8f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Guitar Hall", Hall, 0.6f, 0.35f, 18.0f, 0.35f, 0.75f, 2.5f, 2.8f, 2.2f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.1f, 150.0f });
-    factoryPresets.push_back({ "Guitar Plate", Plate, 0.5f, 0.3f, 12.0f, 0.32f, 0.8f, 2.2f, 2.5f, 2.0f, false, 0, 0, 0, 0.0f, 0.7f, 0.8f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Guitar Chamber", BrightChamber, 0.55f, 0.4f, 15.0f, 0.33f, 0.7f, 2.3f, 2.6f, 2.1f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Guitar Spring", Plate, 0.4f, 0.2f, 8.0f, 0.35f, 0.85f, 1.8f, 2.0f, 1.6f, false, 0, 0, 0, 0.2f, 0.9f, 0.9f, 1, 0.9f, 120.0f });
-
-    // PIANO PRESETS - Rich and resonant
-    factoryPresets.push_back({ "Piano Room", Room, 0.5f, 0.35f, 12.0f, 0.28f, 0.75f, 2.5f, 2.8f, 2.2f, false, 0, 0, 0, 0.0f, 0.4f, 0.5f, 2, 1.1f, 180.0f });
-    factoryPresets.push_back({ "Piano Hall", ConcertHall, 0.7f, 0.3f, 22.0f, 0.35f, 0.8f, 3.0f, 3.5f, 2.8f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.2f, 180.0f });
-    factoryPresets.push_back({ "Piano Chamber", BrightChamber, 0.6f, 0.35f, 18.0f, 0.32f, 0.78f, 2.8f, 3.2f, 2.5f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.1f, 180.0f });
-    factoryPresets.push_back({ "Piano Ballad", Hall, 0.75f, 0.25f, 25.0f, 0.38f, 0.85f, 3.5f, 4.0f, 3.2f, false, 0, 0, 0, 0.1f, 0.6f, 0.7f, 2, 1.3f, 200.0f });
-
-    // SPECIAL FX PRESETS - Creative and unusual
-    factoryPresets.push_back({ "FX Reverse Swell", Reverse, 0.8f, 0.3f, 35.0f, 0.55f, 0.9f, 3.5f, 3.5f, 3.5f, false, 0, 0, 0, 0.2f, 0.8f, 0.9f, 2, 1.2f, 150.0f });
-    factoryPresets.push_back({ "FX Shimmer Dream", Shimmer, 0.95f, 0.1f, 50.0f, 0.60f, 1.0f, 5.0f, 5.5f, 4.5f, false, 0, 0, 0, 0.3f, 2.0f, 1.0f, 2, 1.5f, 200.0f });
-    factoryPresets.push_back({ "FX Gated Snare", Gated, 0.6f, 0.7f, 8.0f, 0.65f, 0.9f, 1.5f, 1.5f, 1.5f, false, 0, 0, 0, 0.0f, 0.3f, 0.4f, 2, 0.6f, 80.0f });
-    factoryPresets.push_back({ "FX 80s Verb", BrightChamber, 0.7f, 0.2f, 20.0f, 0.50f, 0.95f, 2.5f, 2.8f, 2.2f, false, 0, 0, 0, 0.3f, 0.6f, 0.7f, 1, 1.0f, 150.0f });
-    factoryPresets.push_back({ "FX 70s Dark", DarkHall, 0.65f, 0.6f, 18.0f, 0.45f, 0.8f, 2.8f, 3.2f, 2.5f, false, 0, 0, 0, 0.5f, 0.5f, 0.6f, 0, 1.4f, 120.0f });
-    factoryPresets.push_back({ "FX Lo-Fi", TightRoom, 0.4f, 0.8f, 10.0f, 0.48f, 0.7f, 1.2f, 1.5f, 1.0f, false, 0, 0, 0, 0.6f, 0.4f, 0.5f, 1, 0.8f, 100.0f });
-
-    // ORCHESTRAL PRESETS - Grand and spacious
-    factoryPresets.push_back({ "Orchestra Hall", ConcertHall, 0.85f, 0.25f, 30.0f, 0.42f, 0.9f, 3.8f, 4.2f, 3.5f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.3f, 200.0f });
-    factoryPresets.push_back({ "Orchestra Chamber", BrightChamber, 0.7f, 0.3f, 22.0f, 0.38f, 0.85f, 3.2f, 3.6f, 3.0f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.2f, 180.0f });
-    factoryPresets.push_back({ "Orchestra Cathedral", Sanctuary, 0.92f, 0.15f, 40.0f, 0.48f, 0.95f, 4.5f, 5.0f, 4.0f, false, 0, 0, 0, 0.1f, 0.7f, 0.8f, 2, 1.4f, 200.0f });
-
-    // STRINGS PRESETS - Smooth and lush
-    factoryPresets.push_back({ "Strings Hall", ConcertHall, 0.8f, 0.28f, 28.0f, 0.40f, 0.88f, 3.5f, 4.0f, 3.3f, false, 0, 0, 0, 0.1f, 0.7f, 0.8f, 2, 1.3f, 180.0f });
-    factoryPresets.push_back({ "Strings Chamber", BrightChamber, 0.7f, 0.32f, 20.0f, 0.38f, 0.82f, 3.0f, 3.5f, 2.8f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.2f, 180.0f });
-    factoryPresets.push_back({ "Strings Shimmer", Shimmer, 0.85f, 0.2f, 35.0f, 0.45f, 0.92f, 4.0f, 4.5f, 3.8f, false, 0, 0, 0, 0.2f, 1.2f, 0.9f, 2, 1.4f, 200.0f });
-
-    // ROOM PRESETS - Natural spaces
-    factoryPresets.push_back({ "Small Room", Room, 0.3f, 0.5f, 8.0f, 0.28f, 0.6f, 1.5f, 1.8f, 1.3f, false, 0, 0, 0, 0.0f, 0.4f, 0.5f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Medium Room", Room, 0.5f, 0.4f, 12.0f, 0.32f, 0.7f, 2.0f, 2.3f, 1.8f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Large Room", Room, 0.7f, 0.35f, 18.0f, 0.38f, 0.8f, 2.5f, 2.8f, 2.2f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.1f, 150.0f });
-    factoryPresets.push_back({ "Studio A", Room, 0.55f, 0.42f, 14.0f, 0.30f, 0.75f, 2.2f, 2.5f, 2.0f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.0f, 150.0f });
-
-    // PLATE PRESETS - Classic hardware emulation
-    factoryPresets.push_back({ "Bright Plate", Plate, 0.4f, 0.15f, 8.0f, 0.35f, 0.85f, 2.0f, 2.3f, 1.8f, false, 0, 0, 0, 0.0f, 0.8f, 0.9f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Vintage Plate", Plate, 0.6f, 0.4f, 10.0f, 0.40f, 0.8f, 2.5f, 2.8f, 2.2f, false, 0, 0, 0, 0.4f, 0.6f, 0.7f, 0, 1.1f, 150.0f });
-    factoryPresets.push_back({ "Dark Plate", Plate, 0.65f, 0.65f, 12.0f, 0.38f, 0.75f, 2.8f, 3.2f, 2.5f, false, 0, 0, 0, 0.1f, 0.5f, 0.6f, 0, 1.3f, 180.0f });
-    factoryPresets.push_back({ "Studio Plate", Plate, 0.55f, 0.3f, 10.0f, 0.35f, 0.8f, 2.3f, 2.6f, 2.1f, false, 0, 0, 0, 0.0f, 0.7f, 0.8f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "EMT 140 Plate", Plate, 0.5f, 0.25f, 9.0f, 0.37f, 0.82f, 2.1f, 2.4f, 1.9f, false, 0, 0, 0, 0.3f, 0.75f, 0.85f, 0, 1.0f, 150.0f });
-
-    // HALL PRESETS - Various hall sizes
-    factoryPresets.push_back({ "Small Hall", Hall, 0.5f, 0.42f, 18.0f, 0.35f, 0.7f, 2.2f, 2.5f, 2.0f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Medium Hall", Hall, 0.7f, 0.35f, 25.0f, 0.40f, 0.8f, 3.0f, 3.3f, 2.8f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.1f, 150.0f });
-    factoryPresets.push_back({ "Large Hall", ConcertHall, 0.85f, 0.28f, 32.0f, 0.45f, 0.9f, 3.8f, 4.2f, 3.5f, false, 0, 0, 0, 0.0f, 0.7f, 0.8f, 2, 1.3f, 180.0f });
-    factoryPresets.push_back({ "Cathedral", Sanctuary, 0.9f, 0.2f, 42.0f, 0.48f, 0.92f, 4.5f, 5.0f, 4.2f, false, 0, 0, 0, 0.1f, 0.6f, 0.7f, 2, 1.4f, 200.0f });
-    factoryPresets.push_back({ "Theater", Hall, 0.65f, 0.38f, 22.0f, 0.38f, 0.78f, 2.8f, 3.2f, 2.6f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.1f, 150.0f });
-
-    // CHAMBER PRESETS - Intimate spaces
-    factoryPresets.push_back({ "Bright Chamber", BrightChamber, 0.6f, 0.3f, 15.0f, 0.35f, 0.75f, 2.5f, 2.8f, 2.3f, false, 0, 0, 0, 0.0f, 0.5f, 0.6f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Warm Chamber", BrightChamber, 0.65f, 0.5f, 18.0f, 0.38f, 0.7f, 2.8f, 3.2f, 2.5f, false, 0, 0, 0, 0.2f, 0.4f, 0.5f, 0, 1.3f, 180.0f });
-    factoryPresets.push_back({ "Vocal Booth", TightRoom, 0.25f, 0.6f, 6.0f, 0.22f, 0.55f, 1.2f, 1.5f, 1.0f, false, 0, 6, 0, 0.0f, 0.3f, 0.4f, 2, 0.8f, 100.0f });
-
-    // EARLY REFLECTIONS - Ambience and doubling
-    factoryPresets.push_back({ "Tight Slap", EarlyReflections, 0.2f, 0.0f, 0.0f, 0.45f, 0.6f, 0.5f, 0.5f, 0.5f, false, 0, 0, 0, 0.0f, 0.2f, 0.3f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Room Ambience", EarlyReflections, 0.4f, 0.0f, 15.0f, 0.35f, 0.7f, 0.8f, 0.8f, 0.8f, false, 0, 1, 0, 0.0f, 0.3f, 0.4f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Studio Slap", EarlyReflections, 0.3f, 0.0f, 8.0f, 0.50f, 0.65f, 0.6f, 0.6f, 0.6f, false, 0, 0, 0, 0.0f, 0.2f, 0.3f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Cathedral ER", EarlyReflections, 0.8f, 0.0f, 40.0f, 0.40f, 0.85f, 1.5f, 1.5f, 1.5f, false, 0, 3, 0, 0.0f, 0.4f, 0.5f, 2, 1.0f, 150.0f });
-
-    // AMBIENT/CINEMATIC - Creative soundscapes
-    factoryPresets.push_back({ "Ambient Wash", Sanctuary, 0.88f, 0.25f, 38.0f, 0.50f, 0.95f, 4.2f, 4.8f, 4.0f, false, 0, 0, 0, 0.3f, 0.9f, 0.9f, 2, 1.5f, 200.0f });
-    factoryPresets.push_back({ "Cinematic Hall", ConcertHall, 0.9f, 0.22f, 42.0f, 0.48f, 0.92f, 4.5f, 5.0f, 4.2f, false, 0, 0, 0, 0.2f, 0.8f, 0.85f, 2, 1.4f, 200.0f });
-    factoryPresets.push_back({ "Dream State", Shimmer, 0.92f, 0.18f, 48.0f, 0.55f, 0.98f, 5.0f, 5.5f, 4.8f, false, 0, 0, 0, 0.4f, 1.8f, 1.0f, 2, 1.6f, 220.0f });
-    factoryPresets.push_back({ "Dark Ambience", DarkHall, 0.82f, 0.55f, 32.0f, 0.45f, 0.88f, 4.0f, 4.5f, 3.5f, false, 0, 0, 0, 0.4f, 0.7f, 0.8f, 0, 1.5f, 150.0f });
-    factoryPresets.push_back({ "Ethereal Space", Sanctuary, 0.95f, 0.12f, 55.0f, 0.58f, 1.0f, 6.0f, 6.5f, 5.5f, false, 0, 0, 0, 0.3f, 1.3f, 0.95f, 2, 1.7f, 250.0f });
-
-    // MIX BUS - Subtle enhancement
-    factoryPresets.push_back({ "Mix Glue", Room, 0.35f, 0.48f, 5.0f, 0.15f, 0.6f, 1.8f, 2.0f, 1.6f, false, 0, 0, 0, 0.0f, 0.4f, 0.4f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Mix Depth", Hall, 0.55f, 0.4f, 12.0f, 0.20f, 0.7f, 2.2f, 2.5f, 2.0f, false, 0, 0, 0, 0.0f, 0.5f, 0.5f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Mix Vintage", Room, 0.4f, 0.5f, 8.0f, 0.18f, 0.65f, 1.9f, 2.1f, 1.7f, false, 0, 0, 0, 0.4f, 0.4f, 0.5f, 0, 1.2f, 120.0f });
-
-    // CONCERT HALL - Large venues
-    factoryPresets.push_back({ "Concert Natural", ConcertHall, 0.75f, 0.32f, 28.0f, 0.42f, 0.88f, 3.5f, 4.0f, 3.2f, false, 0, 0, 0, 0.0f, 0.6f, 0.7f, 2, 1.2f, 180.0f });
-    factoryPresets.push_back({ "Concert Lush", ConcertHall, 0.88f, 0.25f, 35.0f, 0.48f, 0.93f, 4.2f, 4.8f, 3.8f, false, 0, 0, 0, 0.1f, 0.8f, 0.85f, 2, 1.4f, 200.0f });
-    factoryPresets.push_back({ "Concert Warm", ConcertHall, 0.8f, 0.45f, 30.0f, 0.45f, 0.85f, 3.8f, 4.5f, 3.5f, false, 0, 0, 0, 0.2f, 0.6f, 0.7f, 0, 1.5f, 180.0f });
-
-    // TIGHT ROOM - Close miking and control rooms
-    factoryPresets.push_back({ "Control Room", TightRoom, 0.35f, 0.55f, 7.0f, 0.25f, 0.6f, 1.3f, 1.6f, 1.1f, false, 0, 0, 0, 0.0f, 0.3f, 0.4f, 2, 0.9f, 120.0f });
-    factoryPresets.push_back({ "Iso Booth", TightRoom, 0.22f, 0.7f, 4.0f, 0.28f, 0.5f, 0.9f, 1.1f, 0.7f, false, 0, 6, 0, 0.0f, 0.2f, 0.3f, 2, 0.7f, 80.0f });
-    factoryPresets.push_back({ "Living Room", TightRoom, 0.4f, 0.48f, 10.0f, 0.30f, 0.68f, 1.6f, 1.9f, 1.4f, false, 0, 1, 0, 0.0f, 0.4f, 0.5f, 2, 1.0f, 150.0f });
-
-    // DARK HALL - Warm and smooth
-    factoryPresets.push_back({ "Dark Natural", DarkHall, 0.75f, 0.5f, 25.0f, 0.42f, 0.82f, 3.2f, 3.8f, 3.0f, false, 0, 0, 0, 0.2f, 0.6f, 0.7f, 0, 1.4f, 150.0f });
-    factoryPresets.push_back({ "Dark Cathedral", DarkHall, 0.88f, 0.45f, 38.0f, 0.48f, 0.9f, 4.0f, 4.8f, 3.8f, false, 0, 0, 0, 0.3f, 0.7f, 0.8f, 0, 1.6f, 180.0f });
-    factoryPresets.push_back({ "Smooth Jazz", DarkHall, 0.65f, 0.55f, 20.0f, 0.35f, 0.75f, 2.8f, 3.3f, 2.6f, false, 0, 0, 0, 0.4f, 0.5f, 0.6f, 0, 1.3f, 150.0f });
-
-    // SANCTUARY - Ethereal and otherworldly
-    factoryPresets.push_back({ "Sanctuary Pure", Sanctuary, 0.85f, 0.22f, 35.0f, 0.48f, 0.92f, 4.2f, 4.8f, 4.0f, false, 0, 0, 0, 0.2f, 0.8f, 0.85f, 2, 1.4f, 200.0f });
-    factoryPresets.push_back({ "Heaven", Sanctuary, 0.93f, 0.15f, 48.0f, 0.55f, 0.98f, 5.5f, 6.0f, 5.0f, false, 0, 0, 0, 0.3f, 1.0f, 0.95f, 2, 1.6f, 220.0f });
-    factoryPresets.push_back({ "Church", Sanctuary, 0.88f, 0.28f, 40.0f, 0.50f, 0.9f, 4.8f, 5.2f, 4.5f, false, 0, 3, 0, 0.1f, 0.7f, 0.8f, 2, 1.5f, 200.0f });
-
-    // SHIMMER - Pitch-shifted tails
-    factoryPresets.push_back({ "Shimmer Subtle", Shimmer, 0.7f, 0.25f, 28.0f, 0.40f, 0.85f, 3.5f, 4.0f, 3.3f, false, 0, 0, 0, 0.1f, 1.0f, 0.85f, 2, 1.2f, 180.0f });
-    factoryPresets.push_back({ "Shimmer Extreme", Shimmer, 0.95f, 0.12f, 52.0f, 0.58f, 0.98f, 5.2f, 5.8f, 5.0f, false, 0, 0, 0, 0.4f, 2.5f, 1.0f, 2, 1.7f, 250.0f });
-    factoryPresets.push_back({ "Shimmer Octave", Shimmer, 0.88f, 0.18f, 45.0f, 0.52f, 0.95f, 4.5f, 5.0f, 4.3f, false, 0, 0, 0, 0.2f, 1.8f, 0.95f, 2, 1.5f, 200.0f });
-
-    // GATED - Non-linear effects
-    factoryPresets.push_back({ "Gated Short", Gated, 0.45f, 0.65f, 6.0f, 0.55f, 0.8f, 1.3f, 1.3f, 1.3f, false, 0, 0, 0, 0.0f, 0.3f, 0.4f, 2, 0.6f, 80.0f });
-    factoryPresets.push_back({ "Gated Medium", Gated, 0.6f, 0.6f, 10.0f, 0.60f, 0.85f, 1.8f, 1.8f, 1.8f, false, 0, 0, 0, 0.0f, 0.4f, 0.5f, 2, 0.8f, 100.0f });
-    factoryPresets.push_back({ "Gated 80s", Gated, 0.7f, 0.5f, 8.0f, 0.65f, 0.95f, 2.0f, 2.0f, 2.0f, false, 0, 0, 0, 0.3f, 0.5f, 0.6f, 1, 0.7f, 80.0f });
-
-    // REVERSE - Backwards reverb
-    factoryPresets.push_back({ "Reverse Short", Reverse, 0.6f, 0.4f, 20.0f, 0.50f, 0.85f, 2.5f, 2.5f, 2.5f, false, 0, 0, 0, 0.1f, 0.6f, 0.7f, 2, 1.0f, 150.0f });
-    factoryPresets.push_back({ "Reverse Long", Reverse, 0.85f, 0.3f, 40.0f, 0.58f, 0.92f, 3.8f, 3.8f, 3.8f, false, 0, 0, 0, 0.2f, 0.8f, 0.9f, 2, 1.3f, 180.0f });
-    factoryPresets.push_back({ "Reverse Ethereal", Reverse, 0.9f, 0.2f, 48.0f, 0.62f, 0.95f, 4.5f, 4.5f, 4.5f, false, 0, 0, 0, 0.4f, 1.0f, 0.95f, 2, 1.5f, 200.0f });
+    factoryPresets.push_back({ "Bright Plate", Plate, 0.4f, 0.15f, 8.0f, 0.35f, 0.85f });
+    factoryPresets.push_back({ "Vintage Plate", Plate, 0.6f, 0.4f, 10.0f, 0.40f, 0.8f });
+    factoryPresets.push_back({ "Dark Plate", Plate, 0.65f, 0.65f, 12.0f, 0.38f, 0.75f });
 }
 
 //==============================================================================
@@ -435,238 +147,32 @@ void StudioVerbAudioProcessor::parameterChanged(const juce::String& parameterID,
     // Thread safety: Lock to prevent artifacts during audio processing
     const juce::ScopedLock sl(processLock);
 
-    // Input validation and bounds checking
+    // Input validation and bounds checking - only handle core 6 parameters
     if (parameterID == ALGORITHM_ID)
     {
         int algorithmInt = static_cast<int>(newValue);
         algorithmInt = juce::jlimit(0, static_cast<int>(NumAlgorithms) - 1, algorithmInt);
         currentAlgorithm.store(static_cast<Algorithm>(algorithmInt));
-
-        if (reverbEngine)
-        {
-            reverbEngine->setAlgorithm(algorithmInt);
-            // Reset DSP state when changing algorithms to clear stale reverb tail
-            reverbEngine->reset();
-        }
     }
     else if (parameterID == SIZE_ID)
     {
-        float clampedSize = juce::jlimit(0.0f, 1.0f, newValue);
-        currentSize.store(clampedSize);
-
-        if (reverbEngine)
-            reverbEngine->setSize(clampedSize);
+        currentSize.store(juce::jlimit(0.0f, 1.0f, newValue));
     }
     else if (parameterID == DAMP_ID)
     {
-        float clampedDamp = juce::jlimit(0.0f, 1.0f, newValue);
-        currentDamp.store(clampedDamp);
-
-        if (reverbEngine)
-            reverbEngine->setDamping(clampedDamp);
+        currentDamp.store(juce::jlimit(0.0f, 1.0f, newValue));
     }
     else if (parameterID == PREDELAY_ID)
     {
-        float clampedPredelay = juce::jlimit(0.0f, 200.0f, newValue);
-        currentPredelay.store(clampedPredelay);
-
-        // Save as manual predelay (preserves user setting when tempo sync is off)
-        manualPredelay.store(clampedPredelay);
-
-        // Only apply if tempo sync is off
-        if (currentPredelayBeats.load() == 0 && reverbEngine)
-            reverbEngine->setPredelay(clampedPredelay);
+        currentPredelay.store(juce::jlimit(0.0f, 200.0f, newValue));
     }
     else if (parameterID == MIX_ID)
     {
-        float clampedMix = juce::jlimit(0.0f, 1.0f, newValue);
-        currentMix.store(clampedMix);
-
-        if (reverbEngine)
-            reverbEngine->setMix(clampedMix);
+        currentMix.store(juce::jlimit(0.0f, 1.0f, newValue));
     }
     else if (parameterID == WIDTH_ID)
     {
-        float clampedWidth = juce::jlimit(0.0f, 1.0f, newValue);
-        currentWidth.store(clampedWidth);
-
-        if (reverbEngine)
-            reverbEngine->setWidth(clampedWidth);
-    }
-    else if (parameterID == LOW_RT60_ID)
-    {
-        float clampedRT60 = juce::jlimit(0.1f, 10.0f, newValue);
-        currentLowRT60.store(clampedRT60);
-
-        if (reverbEngine)
-            reverbEngine->setLowDecayTime(clampedRT60);
-    }
-    else if (parameterID == MID_RT60_ID)
-    {
-        float clampedRT60 = juce::jlimit(0.1f, 10.0f, newValue);
-        currentMidRT60.store(clampedRT60);
-
-        if (reverbEngine)
-            reverbEngine->setMidDecayTime(clampedRT60);
-    }
-    else if (parameterID == HIGH_RT60_ID)
-    {
-        float clampedRT60 = juce::jlimit(0.1f, 10.0f, newValue);
-        currentHighRT60.store(clampedRT60);
-
-        if (reverbEngine)
-            reverbEngine->setHighDecayTime(clampedRT60);
-    }
-    else if (parameterID == INFINITE_ID)
-    {
-        bool infinite = (newValue >= 0.5f);
-        currentInfinite.store(infinite);
-
-        if (reverbEngine)
-            reverbEngine->setInfiniteDecay(infinite);
-    }
-    else if (parameterID == OVERSAMPLING_ID)
-    {
-        int oversamplingChoice = static_cast<int>(newValue);
-        currentOversampling.store(oversamplingChoice);
-
-        if (reverbEngine)
-        {
-            // 0 = Off, 1 = 2x, 2 = 4x
-            reverbEngine->setOversamplingEnabled(oversamplingChoice > 0);
-
-            // Convert choice to actual factor
-            int factor = (oversamplingChoice == 0) ? 1 : (oversamplingChoice == 1) ? 2 : 4;
-            reverbEngine->setOversamplingFactor(factor);
-
-            // Update latency reporting
-            setLatencySamples(reverbEngine->getOversamplingLatency());
-        }
-    }
-    else if (parameterID == ROOM_SHAPE_ID)
-    {
-        int shape = static_cast<int>(newValue);
-        currentRoomShape.store(shape);
-
-        if (reverbEngine)
-            reverbEngine->setRoomShape(shape);
-    }
-    else if (parameterID == VINTAGE_ID)
-    {
-        float clampedVintage = juce::jlimit(0.0f, 1.0f, newValue);
-        currentVintage.store(clampedVintage);
-
-        if (reverbEngine)
-            reverbEngine->setVintage(clampedVintage);
-    }
-    else if (parameterID == PREDELAY_BEATS_ID)
-    {
-        int beatChoice = static_cast<int>(newValue);
-        int previousBeatChoice = currentPredelayBeats.load();
-        currentPredelayBeats.store(beatChoice);
-
-        if (beatChoice > 0 && reverbEngine)
-        {
-            // Save manual predelay before switching to tempo sync
-            if (previousBeatChoice == 0)
-                manualPredelay.store(currentPredelay.load());
-
-            // Get tempo from host
-            if (auto* playHead = getPlayHead())
-            {
-                auto positionInfo = playHead->getPosition();
-                if (positionInfo && positionInfo->getBpm().hasValue())
-                {
-                    double bpm = *positionInfo->getBpm();
-                    float msPerBeat = 60000.0f / static_cast<float>(bpm);  // Corrected variable name
-
-                    // Calculate predelay in ms based on beat division
-                    // This is the CORRECTED calculation for fractions of a quarter note beat.
-                    float beatFraction = 0.0f;
-                    switch (beatChoice)
-                    {
-                        case 1: beatFraction = 0.25f; break;    // 1/16 note
-                        case 2: beatFraction = 0.5f; break;     // 1/8 note
-                        case 3: beatFraction = 1.0f; break;     // 1/4 note
-                        case 4: beatFraction = 2.0f; break;     // 1/2 note
-                    }
-
-                    float predelayMs = beatFraction * msPerBeat;
-                    reverbEngine->setPredelay(predelayMs);
-                    // Don't overwrite currentPredelay - keep manual value intact via manualPredelay
-                }
-                else
-                {
-                    DBG("StudioVerb: Tempo sync requires host tempo information (not available)");
-                }
-            }
-            else
-            {
-                DBG("StudioVerb: No AudioPlayHead available for tempo sync");
-            }
-        }
-        else if (beatChoice == 0)
-        {
-            // Restore manual predelay when switching back to manual mode
-            if (reverbEngine)
-            {
-                float restoredPredelay = manualPredelay.load();
-                currentPredelay.store(restoredPredelay);
-                reverbEngine->setPredelay(restoredPredelay);
-
-                // Update the parameter to reflect restored value
-                if (auto* param = parameters.getParameter(PREDELAY_ID))
-                    param->setValueNotifyingHost(restoredPredelay / 200.0f);
-            }
-        }
-    }
-    else if (parameterID == MOD_RATE_ID)
-    {
-        currentModRate.store(newValue);
-        if (reverbEngine)
-            reverbEngine->setModulationRate(newValue);
-    }
-    else if (parameterID == MOD_DEPTH_ID)
-    {
-        currentModDepth.store(newValue);
-        if (reverbEngine)
-            reverbEngine->setModulationDepth(newValue);
-    }
-    else if (parameterID == COLOR_MODE_ID)
-    {
-        int colorMode = static_cast<int>(newValue);
-        currentColorMode.store(colorMode);
-        if (reverbEngine)
-            reverbEngine->setColorMode(colorMode);
-    }
-    else if (parameterID == BASS_MULT_ID)
-    {
-        currentBassMult.store(newValue);
-        if (reverbEngine)
-            reverbEngine->setBassMultiplier(newValue);
-    }
-    else if (parameterID == BASS_XOVER_ID)
-    {
-        currentBassXover.store(newValue);
-        if (reverbEngine)
-            reverbEngine->setBassCrossover(newValue);
-    }
-    else if (parameterID == NOISE_AMOUNT_ID)
-    {
-        currentNoiseAmount.store(newValue);
-        if (reverbEngine)
-            reverbEngine->setNoiseAmount(newValue);
-    }
-    else if (parameterID == QUALITY_ID)
-    {
-        int quality = static_cast<int>(newValue);
-        currentQuality.store(quality);
-        if (reverbEngine)
-        {
-            // Quality: 0=Eco(16ch), 1=High(32ch)
-            int channelCount = (quality == 0) ? 16 : 32;
-            reverbEngine->setFDNChannelCount(channelCount);
-        }
+        currentWidth.store(juce::jlimit(0.0f, 1.0f, newValue));
     }
 }
 
@@ -692,7 +198,7 @@ void StudioVerbAudioProcessor::loadPreset(int presetIndex)
 
     if (preset != nullptr)
     {
-        // Update basic parameters
+        // Update only core 6 parameters
         if (auto* param = parameters.getParameter(ALGORITHM_ID))
             param->setValueNotifyingHost(static_cast<float>(preset->algorithm) / (NumAlgorithms - 1));
 
@@ -710,46 +216,6 @@ void StudioVerbAudioProcessor::loadPreset(int presetIndex)
 
         if (auto* param = parameters.getParameter(WIDTH_ID))
             param->setValueNotifyingHost(preset->width);
-
-        // Update advanced parameters
-        if (auto* param = parameters.getParameter(LOW_RT60_ID))
-            param->setValueNotifyingHost((preset->lowRT60 - 0.1f) / 9.9f);
-
-        if (auto* param = parameters.getParameter(MID_RT60_ID))
-            param->setValueNotifyingHost((preset->midRT60 - 0.1f) / 9.9f);
-
-        if (auto* param = parameters.getParameter(HIGH_RT60_ID))
-            param->setValueNotifyingHost((preset->highRT60 - 0.1f) / 9.9f);
-
-        if (auto* param = parameters.getParameter(INFINITE_ID))
-            param->setValueNotifyingHost(preset->infinite ? 1.0f : 0.0f);
-
-        if (auto* param = parameters.getParameter(OVERSAMPLING_ID))
-            param->setValueNotifyingHost(static_cast<float>(preset->oversampling) / 2.0f);
-
-        if (auto* param = parameters.getParameter(ROOM_SHAPE_ID))
-            param->setValueNotifyingHost(static_cast<float>(preset->roomShape) / 7.0f);
-
-        if (auto* param = parameters.getParameter(PREDELAY_BEATS_ID))
-            param->setValueNotifyingHost(static_cast<float>(preset->predelayBeats) / 4.0f);
-
-        if (auto* param = parameters.getParameter(VINTAGE_ID))
-            param->setValueNotifyingHost(preset->vintage);
-
-        if (auto* param = parameters.getParameter(MOD_RATE_ID))
-            param->setValueNotifyingHost((preset->modRate - 0.1f) / 4.9f);  // Normalize 0.1-5.0 to 0-1
-
-        if (auto* param = parameters.getParameter(MOD_DEPTH_ID))
-            param->setValueNotifyingHost(preset->modDepth);
-
-        if (auto* param = parameters.getParameter(COLOR_MODE_ID))
-            param->setValueNotifyingHost(static_cast<float>(preset->colorMode) / 2.0f);
-
-        if (auto* param = parameters.getParameter(BASS_MULT_ID))
-            param->setValueNotifyingHost((preset->bassMult - 0.5f) / 1.5f);  // Normalize 0.5-2.0 to 0-1
-
-        if (auto* param = parameters.getParameter(BASS_XOVER_ID))
-            param->setValueNotifyingHost((preset->bassXover - 50.0f) / 450.0f);  // Normalize 50-500 to 0-1
 
         currentPresetIndex = presetIndex;
     }
@@ -793,14 +259,8 @@ bool StudioVerbAudioProcessor::isMidiEffect() const
 // Task 7: Improved latency reporting
 double StudioVerbAudioProcessor::getTailLengthSeconds() const
 {
-    // Return infinity if infinite mode is enabled
-    if (currentInfinite.load())
-        return std::numeric_limits<double>::infinity();
-
-    if (reverbEngine && getSampleRate() > 0)
-        return static_cast<double>(reverbEngine->getMaxTailSamples()) / getSampleRate();
-
-    return 5.0; // Fallback
+    // Simple fallback - no complex tail calculation
+    return 5.0;
 }
 
 //==============================================================================
@@ -873,14 +333,6 @@ void StudioVerbAudioProcessor::saveUserPreset(const juce::String& name)
         preset.predelay = currentPredelay.load();
         preset.mix = currentMix.load();
         preset.width = currentWidth.load();
-        preset.lowRT60 = currentLowRT60.load();
-        preset.midRT60 = currentMidRT60.load();
-        preset.highRT60 = currentHighRT60.load();
-        preset.infinite = currentInfinite.load();
-        preset.oversampling = currentOversampling.load();
-        preset.roomShape = currentRoomShape.load();
-        preset.predelayBeats = currentPredelayBeats.load();
-        preset.vintage = currentVintage.load();
 
         userPresets.push_back(preset);
 
@@ -894,14 +346,6 @@ void StudioVerbAudioProcessor::saveUserPreset(const juce::String& name)
         presetNode.setProperty("predelay", preset.predelay, nullptr);
         presetNode.setProperty("mix", preset.mix, nullptr);
         presetNode.setProperty("width", preset.width, nullptr);
-        presetNode.setProperty("lowRT60", preset.lowRT60, nullptr);
-        presetNode.setProperty("midRT60", preset.midRT60, nullptr);
-        presetNode.setProperty("highRT60", preset.highRT60, nullptr);
-        presetNode.setProperty("infinite", preset.infinite, nullptr);
-        presetNode.setProperty("oversampling", preset.oversampling, nullptr);
-        presetNode.setProperty("roomShape", preset.roomShape, nullptr);
-        presetNode.setProperty("predelayBeats", preset.predelayBeats, nullptr);
-        presetNode.setProperty("vintage", preset.vintage, nullptr);
         userPresetsNode.appendChild(presetNode, nullptr);
     }
     catch (const std::exception& e)
@@ -951,70 +395,39 @@ void StudioVerbAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBl
         return;
     }
 
-    // Lazy initialization - create reverb engine on first prepareToPlay
+    // Lazy initialization - create reverb engines on first prepareToPlay
     // This avoids heavy initialization during plugin scanning
-    if (!reverbEngine)
+    if (!dattorroReverb)
     {
-        DBG("StudioVerb: Creating reverb engine in prepareToPlay");
-        reverbEngine = std::make_unique<ReverbEngineEnhanced>();
+        DBG("StudioVerb: Creating Dattorro reverb engine in prepareToPlay");
+        dattorroReverb = std::make_unique<DattorroReverb>();
+    }
+
+    if (!freeverb)
+    {
+        DBG("StudioVerb: Creating Freeverb engine in prepareToPlay");
+        freeverb = std::make_unique<FreverbAlgorithm>();
     }
 
     // Disable denormalized number support to prevent CPU spikes
     juce::FloatVectorOperations::disableDenormalisedNumberSupport(true);
 
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate = sampleRate;
-    spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
-    spec.numChannels = 2;
-
-    reverbEngine->prepare(spec);
+    // Prepare both reverb engines
+    dattorroReverb->prepare(sampleRate, samplesPerBlock);
+    freeverb->prepare(sampleRate, samplesPerBlock);
 
     // Reset to clear any previous state and prevent artifacts
-    reverbEngine->reset();
-
-    // Apply current parameters including advanced controls
-    reverbEngine->setAlgorithm(static_cast<int>(currentAlgorithm.load()));
-    reverbEngine->setSize(currentSize.load());
-    reverbEngine->setDamping(currentDamp.load());
-    reverbEngine->setPredelay(currentPredelay.load());
-    reverbEngine->setMix(currentMix.load());
-    reverbEngine->setWidth(currentWidth.load());
-
-    // Apply advanced parameters
-    reverbEngine->setLowDecayTime(currentLowRT60.load());
-    reverbEngine->setMidDecayTime(currentMidRT60.load());
-    reverbEngine->setHighDecayTime(currentHighRT60.load());
-    reverbEngine->setInfiniteDecay(currentInfinite.load());
-    reverbEngine->setModulationRate(currentModRate.load());
-    reverbEngine->setModulationDepth(currentModDepth.load());
-    reverbEngine->setColorMode(currentColorMode.load());
-    reverbEngine->setBassMultiplier(currentBassMult.load());
-    reverbEngine->setBassCrossover(currentBassXover.load());
-    reverbEngine->setNoiseAmount(currentNoiseAmount.load());
-
-    // Apply quality setting
-    int quality = currentQuality.load();
-    int channelCount = (quality == 0) ? 16 : 32;
-    reverbEngine->setFDNChannelCount(channelCount);
-
-    int oversamplingChoice = currentOversampling.load();
-    reverbEngine->setOversamplingEnabled(oversamplingChoice > 0);
-    int factor = (oversamplingChoice == 0) ? 1 : (oversamplingChoice == 1) ? 2 : 4;
-    reverbEngine->setOversamplingFactor(factor);
-
-    // Apply room shape and vintage
-    reverbEngine->setRoomShape(currentRoomShape.load());
-    reverbEngine->setVintage(currentVintage.load());
-
-    // Report latency from oversampling (use accurate method)
-    setLatencySamples(reverbEngine->getOversamplingLatency());
+    dattorroReverb->reset();
+    freeverb->reset();
 }
 
 void StudioVerbAudioProcessor::releaseResources()
 {
     // Clear reverb state when stopping playback
-    if (reverbEngine)
-        reverbEngine->reset();
+    if (dattorroReverb)
+        dattorroReverb->reset();
+    if (freeverb)
+        freeverb->reset();
 }
 
 //==============================================================================
@@ -1036,84 +449,73 @@ bool StudioVerbAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts
 void StudioVerbAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ignoreUnused(midiMessages);
-
     juce::ScopedNoDenormals noDenormals;
 
-    // Thread safety: Try to acquire lock, but don't block audio thread
-    const juce::ScopedTryLock sl(processLock);
-    if (!sl.isLocked())
-        return; // Skip processing if we can't get the lock immediately
-
-    // Critical buffer validation to prevent crashes
-    if (buffer.getNumChannels() == 0 || buffer.getNumSamples() == 0)
-    {
-        DBG("StudioVerb: Invalid buffer - channels=" << buffer.getNumChannels()
-            << " samples=" << buffer.getNumSamples());
+    // Critical buffer validation
+    if (buffer.getNumChannels() < 2 || buffer.getNumSamples() == 0)
         return;
-    }
 
-    // Validate reverb engine exists
-    if (!reverbEngine)
-    {
-        DBG("StudioVerb: Reverb engine is null!");
+    // Validate engines exist
+    if (!dattorroReverb || !freeverb)
         return;
-    }
-
-    // Ensure we have at least 2 channels for stereo processing
-    if (buffer.getNumChannels() < 2)
-    {
-        DBG("StudioVerb: Insufficient channels for stereo processing");
-        return;
-    }
 
     // Handle mono input by duplicating to stereo
-    if (getTotalNumInputChannels() == 1 && buffer.getNumChannels() >= 2)
+    if (getTotalNumInputChannels() == 1)
     {
         buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
     }
 
-    // Update tempo-synced predelay if enabled
-    int beatChoice = currentPredelayBeats.load();
-    if (beatChoice > 0)
+    // Get current parameters
+    Algorithm algo = currentAlgorithm.load();
+    float size = currentSize.load();
+    float damp = currentDamp.load();
+    float predelay = currentPredelay.load();
+    float mix = currentMix.load();
+    float width = currentWidth.load();
+
+    // Get input/output channels
+    auto* channelDataL = buffer.getWritePointer(0);
+    auto* channelDataR = buffer.getWritePointer(1);
+
+    // Process sample by sample (simple but stable)
+    for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
     {
-        if (auto* playHead = getPlayHead())
+        float inL = channelDataL[sample];
+        float inR = channelDataR[sample];
+
+        // Store dry signal
+        float dryL = inL;
+        float dryR = inR;
+
+        // Process based on algorithm
+        float wetL = 0.0f, wetR = 0.0f;
+
+        if (algo == Plate)
         {
-            if (auto positionInfo = playHead->getPosition())
-            {
-                if (auto bpm = positionInfo->getBpm())
-                {
-                    double tempo = *bpm;
-                    float msPerBeat = 60000.0f / static_cast<float>(tempo);
-
-                    // Calculate predelay based on beat division (as fraction of quarter note)
-                    // This is the CORRECTED calculation for fractions of a quarter note beat.
-                    float beatFraction = 0.0f;
-                    switch (beatChoice)
-                    {
-                        case 1: beatFraction = 0.25f; break;    // 1/16 note
-                        case 2: beatFraction = 0.5f; break;     // 1/8 note
-                        case 3: beatFraction = 1.0f; break;     // 1/4 note
-                        case 4: beatFraction = 2.0f; break;     // 1/2 note
-                    }
-
-                    float syncedPredelay = juce::jlimit(0.0f, 200.0f, msPerBeat * beatFraction);
-
-                    // Only update if tempo changed significantly (avoid constant updates)
-                    if (std::abs(syncedPredelay - currentPredelay.load()) > 0.1f)
-                    {
-                        currentPredelay.store(syncedPredelay);
-                        if (reverbEngine)
-                            reverbEngine->setPredelay(syncedPredelay);
-                    }
-                }
-            }
+            // Dattorro plate reverb
+            // Map Size to decay: 0.85-0.999 for lush plate reverb
+            float decay = 0.85f + (size * 0.149f);
+            dattorroReverb->process(inL, inR, wetL, wetR, size, decay, damp, predelay);
         }
-    }
+        else // Room or Hall
+        {
+            // Freeverb - Map Size to both room size and decay
+            // Room uses smaller sizes (0-1), Hall uses larger (0.3-1.0)
+            float scaledSize = (algo == Hall) ? (size * 0.7f + 0.3f) : size;
+            // Higher decay for more reverb tail: 0.9-0.999
+            float decay = 0.9f + (size * 0.099f);
+            freeverb->process(inL, inR, wetL, wetR, scaledSize, decay, damp, predelay);
+        }
 
-    // Process with reverb engine (lock already acquired above)
-    if (reverbEngine)
-    {
-        reverbEngine->process(buffer);
+        // Stereo width control
+        float mid = (wetL + wetR) * 0.5f;
+        float side = (wetL - wetR) * 0.5f * width;
+        wetL = mid + side;
+        wetR = mid - side;
+
+        // Dry/wet mix
+        channelDataL[sample] = dryL * (1.0f - mix) + wetL * mix;
+        channelDataR[sample] = dryR * (1.0f - mix) + wetR * mix;
     }
 }
 
@@ -1162,14 +564,6 @@ void StudioVerbAudioProcessor::setStateInformation(const void* data, int sizeInB
                     preset.predelay = presetNode.getProperty("predelay", 0.0f);
                     preset.mix = presetNode.getProperty("mix", 0.5f);
                     preset.width = presetNode.getProperty("width", 0.5f);
-                    preset.lowRT60 = presetNode.getProperty("lowRT60", 2.0f);
-                    preset.midRT60 = presetNode.getProperty("midRT60", 2.0f);
-                    preset.highRT60 = presetNode.getProperty("highRT60", 1.5f);
-                    preset.infinite = presetNode.getProperty("infinite", false);
-                    preset.oversampling = presetNode.getProperty("oversampling", 0);
-                    preset.roomShape = presetNode.getProperty("roomShape", 0);
-                    preset.predelayBeats = presetNode.getProperty("predelayBeats", 0);
-                    preset.vintage = presetNode.getProperty("vintage", 0.0f);
                     userPresets.push_back(preset);
                 }
             }
