@@ -203,13 +203,23 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
 
     currentSampleRate = static_cast<float>(sampleRate);
 
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate = sampleRate;
-    spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
-    spec.numChannels = 1;
+    // Get the actual oversampling factor from the oversampling object
+    // The object was initialized with 2 stages, giving 2^2 = 4x oversampling
+    const auto oversamplingFactor = oversampling.getOversamplingFactor();
+    const double oversampledRate = sampleRate * static_cast<double>(oversamplingFactor);
+    const int oversampledBlockSize = samplesPerBlock * static_cast<int>(oversamplingFactor);
 
-    processorChainLeft.prepare(spec);
-    processorChainRight.prepare(spec);
+    // Store oversampled rate for filter updates
+    currentOversampledRate = static_cast<float>(oversampledRate);
+
+    // Prepare processor chains with OVERSAMPLED rate since they process oversampled audio
+    juce::dsp::ProcessSpec oversampledSpec;
+    oversampledSpec.sampleRate = oversampledRate;
+    oversampledSpec.maximumBlockSize = static_cast<juce::uint32>(oversampledBlockSize);
+    oversampledSpec.numChannels = 1;
+
+    processorChainLeft.prepare(oversampledSpec);
+    processorChainRight.prepare(oversampledSpec);
 
     // Set ramp duration for gain processors to handle smoothing automatically
     processorChainLeft.get<0>().setRampDurationSeconds(0.02);  // 20ms for input gain
@@ -218,18 +228,6 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     processorChainRight.get<3>().setRampDurationSeconds(0.02);
 
     oversampling.initProcessing(static_cast<size_t>(samplesPerBlock));
-
-    wowFlutterDelayLeft.prepare(spec);
-    wowFlutterDelayRight.prepare(spec);
-    wowFlutterDelayLeft.setMaximumDelayInSamples(static_cast<int>(sampleRate * 0.05));
-    wowFlutterDelayRight.setMaximumDelayInSamples(static_cast<int>(sampleRate * 0.05));
-
-    // Calculate oversampling factor from the oversampling object configuration
-    // The oversampling object is initialized with factorLog2=2 in the constructor
-    const int factorLog2 = 2;  // Matches initialization: oversampling(2, 2, ...)
-    const double oversamplingFactor = static_cast<double>(1 << factorLog2);  // 2^factorLog2
-    const double oversampledRate = sampleRate * oversamplingFactor;
-    const int oversampledBlockSize = samplesPerBlock * static_cast<int>(oversamplingFactor);
 
     // Prepare tape emulation with oversampled rate so filter cutoffs are correct
     if (tapeEmulationLeft)
@@ -245,14 +243,11 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
 
     // Initialize smoothed parameters with a ramp time of 20ms to prevent zipper noise
     const float rampTimeMs = 20.0f;
-    const int rampSamples = static_cast<int>(sampleRate * rampTimeMs * 0.001f);
 
     // Note: Input/output gain smoothing is now handled by the gain processors themselves
     smoothedSaturation.reset(sampleRate, rampTimeMs * 0.001f);
     smoothedNoiseAmount.reset(sampleRate, rampTimeMs * 0.001f);
     smoothedWowFlutter.reset(sampleRate, rampTimeMs * 0.001f);
-    smoothedHighpass.reset(sampleRate, rampTimeMs * 0.001f);
-    smoothedLowpass.reset(sampleRate, rampTimeMs * 0.001f);
 }
 
 void TapeMachineAudioProcessor::releaseResources()
@@ -260,8 +255,6 @@ void TapeMachineAudioProcessor::releaseResources()
     processorChainLeft.reset();
     processorChainRight.reset();
     oversampling.reset();
-    wowFlutterDelayLeft.reset();
-    wowFlutterDelayRight.reset();
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -293,7 +286,8 @@ void TapeMachineAudioProcessor::updateFilters()
     float hpFreq = highpassFreqParam->load();
     float lpFreq = lowpassFreqParam->load();
 
-    if (currentSampleRate > 0.0f)
+    // Use oversampled rate since filters process oversampled audio
+    if (currentOversampledRate > 0.0f)
     {
         // Bypass highpass filter only when at minimum frequency (20Hz)
         bypassHighpass = (hpFreq <= 20.0f);
@@ -325,110 +319,22 @@ void TapeMachineAudioProcessor::updateFilters()
     }
 }
 
-float TapeMachineAudioProcessor::processTapeSaturation(float input, float saturation,
-                                                       TapeMachine machine, TapeType tape)
-{
-    if (std::abs(input) < 1e-8f)
-        return 0.0f;
-
-    float drive = 1.0f + (saturation * 0.01f) * 4.0f;
-    float tapeCoeff = 1.0f;
-    float harmonicMix = 0.5f;
-
-    switch (tape)
-    {
-        case Ampex456:
-            tapeCoeff = 1.2f;
-            harmonicMix = 0.6f;
-            break;
-        case GP9:
-            tapeCoeff = 0.9f;
-            harmonicMix = 0.4f;
-            break;
-        case BASF911:
-            tapeCoeff = 1.1f;
-            harmonicMix = 0.5f;
-            break;
-    }
-
-    float machineCharacter = 1.0f;
-    float warmth = 0.0f;
-
-    switch (machine)
-    {
-        case StuderA800:
-            machineCharacter = 0.95f;
-            warmth = 0.15f;
-            break;
-        case AmpexATR102:
-            machineCharacter = 1.05f;
-            warmth = 0.08f;
-            break;
-        case Blend:
-            machineCharacter = 1.0f;
-            warmth = 0.12f;
-            break;
-    }
-
-    float driven = input * drive * tapeCoeff * machineCharacter;
-
-    float tanh_sat = std::tanh(driven * 0.7f);
-    float poly_sat = driven - (driven * driven * driven) / 3.0f;
-    poly_sat = juce::jlimit(-1.0f, 1.0f, poly_sat);
-
-    float saturated = tanh_sat * (1.0f - harmonicMix) + poly_sat * harmonicMix;
-
-    float even_harmonic = driven * driven * 0.05f * warmth;
-    even_harmonic = juce::jlimit(-0.1f, 0.1f, even_harmonic);
-    saturated += even_harmonic;
-
-    return saturated * 0.9f;
-}
-
-std::pair<float, float> TapeMachineAudioProcessor::processWowFlutter(float inputL, float inputR, float amount)
-{
-    if (currentSampleRate <= 0.0f || amount < 0.01f)
-        return {inputL, inputR};
-
-    const float wowRate = 0.3f;
-    const float flutterRate = 7.0f;
-    const float maxDelay = 0.002f;
-
-    float wowIncrement = 2.0f * juce::MathConstants<float>::pi * wowRate / currentSampleRate;
-    float flutterIncrement = 2.0f * juce::MathConstants<float>::pi * flutterRate / currentSampleRate;
-
-    wowPhase += wowIncrement;
-    if (wowPhase > 2.0f * juce::MathConstants<float>::pi)
-        wowPhase -= 2.0f * juce::MathConstants<float>::pi;
-
-    flutterPhase += flutterIncrement;
-    if (flutterPhase > 2.0f * juce::MathConstants<float>::pi)
-        flutterPhase -= 2.0f * juce::MathConstants<float>::pi;
-
-    float wowMod = std::sin(wowPhase) * 0.7f;
-    float flutterMod = std::sin(flutterPhase) * 0.3f;
-    float totalMod = (wowMod + flutterMod) * amount * 0.01f * maxDelay;
-
-    float delaySamples = juce::jmax(0.0f, currentSampleRate * totalMod);
-
-    wowFlutterDelayLeft.setDelay(delaySamples);
-    wowFlutterDelayRight.setDelay(delaySamples);
-
-    wowFlutterDelayLeft.pushSample(0, inputL);
-    wowFlutterDelayRight.pushSample(0, inputR);
-
-    return {wowFlutterDelayLeft.popSample(0), wowFlutterDelayRight.popSample(0)};
-}
 
 void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ignoreUnused(midiMessages);
     juce::ScopedNoDenormals noDenormals;
 
+    // Critical safety check - if parameters failed to initialize, don't process
     if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !inputGainParam ||
-        !saturationParam || !noiseAmountParam || !noiseEnabledParam ||
-        !wowFlutterParam || !outputGainParam)
+        !saturationParam || !highpassFreqParam || !lowpassFreqParam ||
+        !noiseAmountParam || !noiseEnabledParam || !wowFlutterParam || !outputGainParam)
+    {
+        // This should never happen in production, but if it does, pass audio through
+        // rather than producing silence
+        jassertfalse; // Alert during debug builds
         return;
+    }
 
     const int totalNumInputChannels = getTotalNumInputChannels();
     const int totalNumOutputChannels = getTotalNumOutputChannels();
@@ -454,7 +360,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     float currentHpFreq = highpassFreqParam->load();
     float currentLpFreq = lowpassFreqParam->load();
 
-    if (currentHpFreq != lastHpFreq || currentLpFreq != lastLpFreq)
+    if (std::abs(currentHpFreq - lastHpFreq) > 0.01f || std::abs(currentLpFreq - lastLpFreq) > 0.01f)
     {
         updateFilters();
         lastHpFreq = currentHpFreq;
@@ -480,8 +386,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     smoothedWowFlutter.setTargetValue(wowFlutterParam->load());
     // Scale noise amount reasonably (0-100% becomes 0-0.01 for subtle tape hiss)
     smoothedNoiseAmount.setTargetValue(noiseAmountParam->load() * 0.01f * 0.01f);
-    smoothedHighpass.setTargetValue(highpassFreqParam->load());
-    smoothedLowpass.setTargetValue(lowpassFreqParam->load());
 
     const bool noiseEnabled = noiseEnabledParam->load() > 0.5f;
 
@@ -540,10 +444,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     float* rightData = rightBlock.getChannelPointer(0);
     const size_t numSamples = leftBlock.getNumSamples();
 
-    // Calculate oversampled rate for wow/flutter (same as in prepareToPlay)
-    const int factorLog2 = 2;  // Matches initialization: oversampling(2, 2, ...)
-    const double oversamplingFactor = static_cast<double>(1 << factorLog2);  // 2^factorLog2
-    const double oversampledRate = currentSampleRate * oversamplingFactor;
+    // Use the stored oversampled rate (calculated in prepareToPlay)
+    const double oversampledRate = static_cast<double>(currentOversampledRate);
 
     for (size_t i = 0; i < numSamples; ++i)
     {
@@ -587,59 +489,42 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                     oversampledRate);
             }
 
-            // Use only the improved tape emulation (removes redundant saturation)
-            if (tapeEmulationLeft && tapeEmulationRight)
-            {
-                auto emulationMachine = static_cast<ImprovedTapeEmulation::TapeMachine>(static_cast<int>(machine));
-                auto emulationSpeed = static_cast<ImprovedTapeEmulation::TapeSpeed>(static_cast<int>(tapeSpeed));
-                auto emulationType = static_cast<ImprovedTapeEmulation::TapeType>(static_cast<int>(tapeType));
+            // Use improved tape emulation
+            auto emulationMachine = static_cast<ImprovedTapeEmulation::TapeMachine>(static_cast<int>(machine));
+            auto emulationSpeed = static_cast<ImprovedTapeEmulation::TapeSpeed>(static_cast<int>(tapeSpeed));
+            auto emulationType = static_cast<ImprovedTapeEmulation::TapeType>(static_cast<int>(tapeType));
 
-                float biasAmount = biasParam ? biasParam->load() * 0.01f : 0.5f;
+            float biasAmount = biasParam ? biasParam->load() * 0.01f : 0.5f;
 
-                // Get calibration level (0/3/6/9 dB)
-                int calIndex = calibrationParam ? static_cast<int>(calibrationParam->load()) : 0;
-                float calibrationDb = calIndex * 3.0f;  // 0, 3, 6, or 9 dB
+            // Get calibration level (0/3/6/9 dB)
+            int calIndex = calibrationParam ? static_cast<int>(calibrationParam->load()) : 0;
+            float calibrationDb = calIndex * 3.0f;  // 0, 3, 6, or 9 dB
 
-                // Process with improved tape emulation (includes saturation and wow/flutter)
-                // Pass shared modulation for stereo coherence
-                leftData[i] = tapeEmulationLeft->processSample(leftData[i],
-                                                              emulationMachine,
-                                                              emulationSpeed,
-                                                              emulationType,
-                                                              biasAmount,
-                                                              currentSaturation * 0.01f,
-                                                              currentWowFlutter * 0.01f,
-                                                              noiseEnabled,
-                                                              currentNoiseAmount * 100.0f,
-                                                              &sharedModulation,
-                                                              calibrationDb);
+            // Process with improved tape emulation (includes saturation and wow/flutter)
+            // Pass shared modulation for stereo coherence
+            leftData[i] = tapeEmulationLeft->processSample(leftData[i],
+                                                          emulationMachine,
+                                                          emulationSpeed,
+                                                          emulationType,
+                                                          biasAmount,
+                                                          currentSaturation * 0.01f,
+                                                          currentWowFlutter * 0.01f,
+                                                          noiseEnabled,
+                                                          currentNoiseAmount * 100.0f,
+                                                          &sharedModulation,
+                                                          calibrationDb);
 
-                rightData[i] = tapeEmulationRight->processSample(rightData[i],
-                                                                emulationMachine,
-                                                                emulationSpeed,
-                                                                emulationType,
-                                                                biasAmount,
-                                                                currentSaturation * 0.01f,
-                                                                currentWowFlutter * 0.01f,
-                                                                noiseEnabled,
-                                                                currentNoiseAmount * 100.0f,
-                                                                &sharedModulation,
-                                                                calibrationDb);
-            }
-            else
-            {
-                // Fallback to basic saturation if improved emulation not available
-                leftData[i] = processTapeSaturation(leftData[i], currentSaturation, machine, tapeType);
-                rightData[i] = processTapeSaturation(rightData[i], currentSaturation, machine, tapeType);
-
-                // Add simple noise only in fallback mode when button is ON
-                if (noiseEnabled && currentNoiseAmount > 0.0f)
-                {
-                    float noise = (noiseGenerator.nextFloat() * 2.0f - 1.0f) * currentNoiseAmount;
-                    leftData[i] += noise;
-                    rightData[i] += noise;
-                }
-            }
+            rightData[i] = tapeEmulationRight->processSample(rightData[i],
+                                                            emulationMachine,
+                                                            emulationSpeed,
+                                                            emulationType,
+                                                            biasAmount,
+                                                            currentSaturation * 0.01f,
+                                                            currentWowFlutter * 0.01f,
+                                                            noiseEnabled,
+                                                            currentNoiseAmount * 100.0f,
+                                                            &sharedModulation,
+                                                            calibrationDb);
         }
     }
 

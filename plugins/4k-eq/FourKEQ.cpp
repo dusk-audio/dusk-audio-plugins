@@ -373,8 +373,46 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
         return;
 
     // Only update filters if parameters have changed (performance optimization)
+    // Copy all parameter values atomically while flag is set to ensure consistency
     if (parametersChanged.load())
     {
+        // Create local copies of all parameters to avoid race conditions
+        // These values are guaranteed to be from the same "snapshot" since we read them
+        // immediately after detecting the change flag
+        float hpfFreq = hpfFreqParam ? hpfFreqParam->load() : 20.0f;
+        float lpfFreq = lpfFreqParam ? lpfFreqParam->load() : 20000.0f;
+        float lfGain = lfGainParam ? lfGainParam->load() : 0.0f;
+        float lfFreq = lfFreqParam ? lfFreqParam->load() : 100.0f;
+        float lfBell = lfBellParam ? lfBellParam->load() : 0.0f;
+        float lmGain = lmGainParam ? lmGainParam->load() : 0.0f;
+        float lmFreq = lmFreqParam ? lmFreqParam->load() : 600.0f;
+        float lmQ = lmQParam ? lmQParam->load() : 0.7f;
+        float hmGain = hmGainParam ? hmGainParam->load() : 0.0f;
+        float hmFreq = hmFreqParam ? hmFreqParam->load() : 2000.0f;
+        float hmQ = hmQParam ? hmQParam->load() : 0.7f;
+        float hfGain = hfGainParam ? hfGainParam->load() : 0.0f;
+        float hfFreq = hfFreqParam ? hfFreqParam->load() : 8000.0f;
+        float hfBell = hfBellParam ? hfBellParam->load() : 0.0f;
+        float eqType = eqTypeParam ? eqTypeParam->load() : 0.0f;
+        float oversampling = oversamplingParam ? oversamplingParam->load() : 0.0f;
+
+        // Store in temporary structure for updateFilters to use
+        cachedParams.hpfFreq = hpfFreq;
+        cachedParams.lpfFreq = lpfFreq;
+        cachedParams.lfGain = lfGain;
+        cachedParams.lfFreq = lfFreq;
+        cachedParams.lfBell = lfBell;
+        cachedParams.lmGain = lmGain;
+        cachedParams.lmFreq = lmFreq;
+        cachedParams.lmQ = lmQ;
+        cachedParams.hmGain = hmGain;
+        cachedParams.hmFreq = hmFreq;
+        cachedParams.hmQ = hmQ;
+        cachedParams.hfGain = hfGain;
+        cachedParams.hfFreq = hfFreq;
+        cachedParams.hfBell = hfBell;
+        cachedParams.eqType = eqType;
+
         updateFilters();
         parametersChanged.store(false);
     }
@@ -432,54 +470,24 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
             float processSample = channelData[sample];
 
             // Apply HPF (3rd-order: 1st-order + 2nd-order stages = 18dB/oct)
-            if (useLeftFilter)
-            {
-                processSample = hpfFilter.stage1L.processSample(processSample);
-                processSample = hpfFilter.stage2.filter.processSample(processSample);
-            }
-            else
-            {
-                processSample = hpfFilter.stage1R.processSample(processSample);
-                processSample = hpfFilter.stage2.filterR.processSample(processSample);
-            }
+            processSample = hpfFilter.processSample(processSample, useLeftFilter);
 
             // Apply 4-band EQ with per-band saturation for SSL character
             // Stage-specific nonlinearities model op-amp behavior in each EQ section
-            if (useLeftFilter)
-            {
-                processSample = lfFilter.filter.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, lfSatDrive, true);
+            processSample = lfFilter.processSample(processSample, useLeftFilter);
+            processSample = applyAnalogSaturation(processSample, lfSatDrive, true);
 
-                processSample = lmFilter.filter.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, lmSatDrive, true);
+            processSample = lmFilter.processSample(processSample, useLeftFilter);
+            processSample = applyAnalogSaturation(processSample, lmSatDrive, true);
 
-                processSample = hmFilter.filter.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, hmSatDrive, true);
+            processSample = hmFilter.processSample(processSample, useLeftFilter);
+            processSample = applyAnalogSaturation(processSample, hmSatDrive, true);
 
-                processSample = hfFilter.filter.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, hfSatDrive, true);
-            }
-            else
-            {
-                processSample = lfFilter.filterR.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, lfSatDrive, true);
-
-                processSample = lmFilter.filterR.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, lmSatDrive, true);
-
-                processSample = hmFilter.filterR.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, hmSatDrive, true);
-
-                processSample = hfFilter.filterR.processSample(processSample);
-                processSample = applyAnalogSaturation(processSample, hfSatDrive, true);
-            }
+            processSample = hfFilter.processSample(processSample, useLeftFilter);
+            processSample = applyAnalogSaturation(processSample, hfSatDrive, true);
 
             // Apply LPF
-            if (useLeftFilter)
-                processSample = lpfFilter.filter.processSample(processSample);
-            else
-                processSample = lpfFilter.filterR.processSample(processSample);
-
+            processSample = lpfFilter.processSample(processSample, useLeftFilter);
 
             // Apply saturation in the oversampled domain
             float satAmount = saturationParam->load() * 0.01f;
@@ -571,10 +579,10 @@ void FourKEQ::updateFilters()
 
 void FourKEQ::updateHPF(double sampleRate)
 {
-    if (!hpfFreqParam || sampleRate <= 0.0)
+    if (sampleRate <= 0.0)
         return;
 
-    float freq = hpfFreqParam->load();
+    float freq = cachedParams.hpfFreq;
 
     // SSL HPF: Both Brown (E-series) and Black (G-series) use 18dB/oct
     // Note: Some conflicting sources suggest Brown = 12dB/oct, but most measurements
@@ -596,11 +604,11 @@ void FourKEQ::updateHPF(double sampleRate)
 
 void FourKEQ::updateLPF(double sampleRate)
 {
-    if (!lpfFreqParam || !eqTypeParam || sampleRate <= 0.0)
+    if (sampleRate <= 0.0)
         return;
 
-    float freq = lpfFreqParam->load();
-    bool isBlack = (eqTypeParam->load() > 0.5f);
+    float freq = cachedParams.lpfFreq;
+    bool isBlack = (cachedParams.eqType > 0.5f);
 
     // Pre-warp if close to Nyquist
     float processFreq = freq;
@@ -623,13 +631,13 @@ void FourKEQ::updateLPF(double sampleRate)
 
 void FourKEQ::updateLFBand(double sampleRate)
 {
-    if (!lfGainParam || !lfFreqParam || !eqTypeParam || !lfBellParam || sampleRate <= 0.0)
+    if (sampleRate <= 0.0)
         return;
 
-    float gain = lfGainParam->load();
-    float freq = lfFreqParam->load();
-    bool isBlack = (eqTypeParam->load() > 0.5f);
-    bool isBell = (lfBellParam->load() > 0.5f);
+    float gain = cachedParams.lfGain;
+    float freq = cachedParams.lfFreq;
+    bool isBlack = (cachedParams.eqType > 0.5f);
+    bool isBell = (cachedParams.lfBell > 0.5f);
 
     if (isBlack && isBell)
     {
@@ -649,13 +657,13 @@ void FourKEQ::updateLFBand(double sampleRate)
 
 void FourKEQ::updateLMBand(double sampleRate)
 {
-    if (!lmGainParam || !lmFreqParam || !lmQParam || !eqTypeParam || sampleRate <= 0.0)
+    if (sampleRate <= 0.0)
         return;
 
-    float gain = lmGainParam->load();
-    float freq = lmFreqParam->load();
-    float q = lmQParam->load();
-    bool isBlack = (eqTypeParam->load() > 0.5f);
+    float gain = cachedParams.lmGain;
+    float freq = cachedParams.lmFreq;
+    float q = cachedParams.lmQ;
+    bool isBlack = (cachedParams.eqType > 0.5f);
 
     // Brown vs Black mode differences (per SSL E-series vs G-series specs)
     if (isBlack)
@@ -674,13 +682,13 @@ void FourKEQ::updateLMBand(double sampleRate)
 
 void FourKEQ::updateHMBand(double sampleRate)
 {
-    if (!hmGainParam || !hmFreqParam || !hmQParam || !eqTypeParam || sampleRate <= 0.0)
+    if (sampleRate <= 0.0)
         return;
 
-    float gain = hmGainParam->load();
-    float freq = hmFreqParam->load();
-    float q = hmQParam->load();
-    bool isBlack = (eqTypeParam->load() > 0.5f);
+    float gain = cachedParams.hmGain;
+    float freq = cachedParams.hmFreq;
+    float q = cachedParams.hmQ;
+    bool isBlack = (cachedParams.eqType > 0.5f);
 
     // Brown vs Black mode differences (per SSL E-series vs G-series specs)
     if (isBlack)
@@ -714,13 +722,13 @@ void FourKEQ::updateHMBand(double sampleRate)
 
 void FourKEQ::updateHFBand(double sampleRate)
 {
-    if (!hfGainParam || !hfFreqParam || !eqTypeParam || !hfBellParam || sampleRate <= 0.0)
+    if (sampleRate <= 0.0)
         return;
 
-    float gain = hfGainParam->load();
-    float freq = hfFreqParam->load();
-    bool isBlack = (eqTypeParam->load() > 0.5f);
-    bool isBell = (hfBellParam->load() > 0.5f);
+    float gain = cachedParams.hfGain;
+    float freq = cachedParams.hfFreq;
+    bool isBlack = (cachedParams.eqType > 0.5f);
+    bool isBell = (cachedParams.hfBell > 0.5f);
 
     // Always pre-warp HF band frequencies to prevent cramping
     float warpedFreq = preWarpFrequency(freq, sampleRate);
@@ -1060,25 +1068,35 @@ void FourKEQ::setCurrentProgram(int index)
 
 void FourKEQ::loadFactoryPreset(int index)
 {
-    // Reset all parameters to default first for clean preset loading
-    auto resetToFlat = [this]()
+    // Helper lambda to set parameter by actual value (not normalized)
+    auto setParam = [this](const juce::String& paramID, float actualValue)
     {
-        parameters.getParameter("lf_gain")->setValueNotifyingHost(0.5f);  // 0dB
-        parameters.getParameter("lf_freq")->setValueNotifyingHost(0.14f);  // 100Hz
-        parameters.getParameter("lf_bell")->setValueNotifyingHost(0.0f);   // Shelf
-        parameters.getParameter("lm_gain")->setValueNotifyingHost(0.5f);
-        parameters.getParameter("lm_freq")->setValueNotifyingHost(0.26f);  // 600Hz
-        parameters.getParameter("lm_q")->setValueNotifyingHost(0.5f);      // Q=1.0
-        parameters.getParameter("hm_gain")->setValueNotifyingHost(0.5f);
-        parameters.getParameter("hm_freq")->setValueNotifyingHost(0.48f);  // 3kHz
-        parameters.getParameter("hm_q")->setValueNotifyingHost(0.5f);
-        parameters.getParameter("hf_gain")->setValueNotifyingHost(0.5f);
-        parameters.getParameter("hf_freq")->setValueNotifyingHost(0.46f);  // 10kHz
-        parameters.getParameter("hf_bell")->setValueNotifyingHost(0.0f);   // Shelf
-        parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.0f);  // Off
-        parameters.getParameter("lpf_freq")->setValueNotifyingHost(1.0f);  // Off
-        parameters.getParameter("saturation")->setValueNotifyingHost(0.0f);
-        parameters.getParameter("output_gain")->setValueNotifyingHost(0.5f);  // 0dB
+        if (auto* param = parameters.getParameter(paramID))
+        {
+            float normalized = param->convertTo0to1(actualValue);
+            param->setValueNotifyingHost(normalized);
+        }
+    };
+
+    // Reset all parameters to default first for clean preset loading
+    auto resetToFlat = [&setParam]()
+    {
+        setParam("lf_gain", 0.0f);       // 0dB
+        setParam("lf_freq", 100.0f);     // 100Hz
+        setParam("lf_bell", 0.0f);       // Shelf
+        setParam("lm_gain", 0.0f);       // 0dB
+        setParam("lm_freq", 600.0f);     // 600Hz
+        setParam("lm_q", 0.7f);          // Q=0.7
+        setParam("hm_gain", 0.0f);       // 0dB
+        setParam("hm_freq", 2000.0f);    // 2kHz
+        setParam("hm_q", 0.7f);          // Q=0.7
+        setParam("hf_gain", 0.0f);       // 0dB
+        setParam("hf_freq", 8000.0f);    // 8kHz
+        setParam("hf_bell", 0.0f);       // Shelf
+        setParam("hpf_freq", 20.0f);     // Minimum (off)
+        setParam("lpf_freq", 20000.0f);  // Maximum (off)
+        setParam("saturation", 0.0f);    // 0%
+        setParam("output_gain", 0.0f);   // 0dB
     };
 
     // Reset first, then apply preset-specific changes
@@ -1092,92 +1110,93 @@ void FourKEQ::loadFactoryPreset(int index)
             break;
 
         case 1:  // Vocal Clarity - Subtle presence boost without harshness
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 100Hz (warmth)
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.40f);  // -3dB @ 300Hz (reduce mud)
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.08f);  // 300Hz
-            parameters.getParameter("lm_q")->setValueNotifyingHost(0.65f);     // Q=1.3 (tighter)
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 3.5kHz (presence)
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.53f);  // 3.5kHz
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 10kHz (air)
-            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.25f); // HPF @ 80Hz
+            setParam("lf_gain", 3.0f);      // +3dB @ 100Hz (warmth)
+            setParam("lm_gain", -3.0f);     // -3dB @ 300Hz (reduce mud)
+            setParam("lm_freq", 300.0f);    // 300Hz
+            setParam("lm_q", 1.3f);         // Q=1.3 (tighter)
+            setParam("hm_gain", 4.0f);      // +4dB @ 3.5kHz (presence)
+            setParam("hm_freq", 3500.0f);   // 3.5kHz
+            setParam("hf_gain", 2.0f);      // +2dB @ 10kHz (air)
+            setParam("hpf_freq", 80.0f);    // HPF @ 80Hz
             break;
 
         case 2:  // Kick Tighten - Punch without mud
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.70f);  // +6dB @ 50Hz (thump)
-            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.00f);  // 50Hz
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.37f);  // -4dB @ 200Hz (tighten)
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.05f);  // 200Hz
-            parameters.getParameter("lm_q")->setValueNotifyingHost(0.40f);     // Q=0.8 (broad)
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 2kHz (attack)
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.37f);  // 2kHz
-            parameters.getParameter("hm_q")->setValueNotifyingHost(0.75f);     // Q=1.5 (focused)
-            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.10f); // HPF @ 30Hz
+            setParam("lf_gain", 6.0f);      // +6dB @ 50Hz (thump)
+            setParam("lf_freq", 50.0f);     // 50Hz
+            setParam("lm_gain", -4.0f);     // -4dB @ 200Hz (tighten)
+            setParam("lm_freq", 200.0f);    // 200Hz
+            setParam("lm_q", 0.8f);         // Q=0.8 (broad)
+            setParam("hm_gain", 3.0f);      // +3dB @ 2kHz (attack)
+            setParam("hm_freq", 2000.0f);   // 2kHz
+            setParam("hm_q", 1.5f);         // Q=1.5 (focused)
+            setParam("hpf_freq", 30.0f);    // HPF @ 30Hz
             break;
 
         case 3:  // Snare Bite - Body and crack
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 250Hz (body)
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.07f);  // 250Hz
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.67f);  // +5dB @ 5kHz (snap)
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.69f);  // 5kHz
-            parameters.getParameter("hm_q")->setValueNotifyingHost(0.60f);     // Q=1.2
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 8kHz (sizzle)
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.35f);  // 8kHz
-            parameters.getParameter("hf_bell")->setValueNotifyingHost(1.0f);   // Bell mode
-            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.55f); // HPF @ 150Hz
+            setParam("lm_gain", 4.0f);      // +4dB @ 250Hz (body)
+            setParam("lm_freq", 250.0f);    // 250Hz
+            setParam("hm_gain", 5.0f);      // +5dB @ 5kHz (snap)
+            setParam("hm_freq", 5000.0f);   // 5kHz
+            setParam("hm_q", 1.2f);         // Q=1.2
+            setParam("hf_gain", 3.0f);      // +3dB @ 8kHz (sizzle)
+            setParam("hf_freq", 8000.0f);   // 8kHz
+            setParam("hf_bell", 1.0f);      // Bell mode
+            setParam("hpf_freq", 150.0f);   // HPF @ 150Hz
             break;
 
         case 4:  // Bass Definition - Punch without boom
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 80Hz
-            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.10f);  // 80Hz
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.40f);  // -3dB @ 400Hz (reduce mud)
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.17f);  // 400Hz
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 1.5kHz (definition)
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.24f);  // 1.5kHz
-            parameters.getParameter("hm_q")->setValueNotifyingHost(0.35f);     // Q=0.7 (musical)
-            parameters.getParameter("lpf_freq")->setValueNotifyingHost(0.45f); // LPF @ 10kHz
+            setParam("lf_gain", 4.0f);      // +4dB @ 80Hz
+            setParam("lf_freq", 80.0f);     // 80Hz
+            setParam("lm_gain", -3.0f);     // -3dB @ 400Hz (reduce mud)
+            setParam("lm_freq", 400.0f);    // 400Hz
+            setParam("hm_gain", 2.0f);      // +2dB @ 1.5kHz (definition)
+            setParam("hm_freq", 1500.0f);   // 1.5kHz
+            setParam("hm_q", 0.7f);         // Q=0.7 (musical)
+            setParam("lpf_freq", 10000.0f); // LPF @ 10kHz
             break;
 
         case 5:  // Mix Polish - Subtle master bus enhancement
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 60Hz
-            parameters.getParameter("lf_freq")->setValueNotifyingHost(0.03f);  // 60Hz
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.47f);  // -2dB @ 2.5kHz (smooth)
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.43f);  // 2.5kHz
-            parameters.getParameter("hm_q")->setValueNotifyingHost(0.40f);     // Q=0.8 (gentle)
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 12kHz (sheen)
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.57f);  // 12kHz
-            parameters.getParameter("saturation")->setValueNotifyingHost(0.20f);  // 20% saturation (glue)
+            setParam("lf_gain", 2.0f);      // +2dB @ 60Hz
+            setParam("lf_freq", 60.0f);     // 60Hz
+            setParam("hm_gain", -2.0f);     // -2dB @ 2.5kHz (smooth)
+            setParam("hm_freq", 2500.0f);   // 2.5kHz
+            setParam("hm_q", 0.8f);         // Q=0.8 (gentle)
+            setParam("hf_gain", 3.0f);      // +3dB @ 12kHz (sheen)
+            setParam("hf_freq", 12000.0f);  // 12kHz
+            setParam("saturation", 20.0f);  // 20% saturation (glue)
             break;
 
         case 6:  // Telephone Effect - Lo-fi narrow bandwidth
-            parameters.getParameter("hpf_freq")->setValueNotifyingHost(0.85f); // HPF @ 300Hz
-            parameters.getParameter("lpf_freq")->setValueNotifyingHost(0.15f); // LPF @ 3kHz
-            parameters.getParameter("lm_gain")->setValueNotifyingHost(0.70f);  // +6dB @ 1kHz
-            parameters.getParameter("lm_freq")->setValueNotifyingHost(0.35f);  // 1kHz
-            parameters.getParameter("lm_q")->setValueNotifyingHost(0.75f);     // Q=1.5 (narrow)
+            setParam("hpf_freq", 300.0f);   // HPF @ 300Hz
+            setParam("lpf_freq", 3000.0f);  // LPF @ 3kHz
+            setParam("lm_gain", 6.0f);      // +6dB @ 1kHz
+            setParam("lm_freq", 1000.0f);   // 1kHz
+            setParam("lm_q", 1.5f);         // Q=1.5 (narrow)
             break;
 
         case 7:  // Air Lift - High-end sparkle
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.60f);  // +3dB @ 7kHz
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.90f);  // 7kHz
-            parameters.getParameter("hm_q")->setValueNotifyingHost(0.35f);     // Q=0.7 (smooth)
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.63f);  // +4dB @ 15kHz (air)
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.73f);  // 15kHz
+            setParam("hm_gain", 3.0f);      // +3dB @ 7kHz
+            setParam("hm_freq", 7000.0f);   // 7kHz
+            setParam("hm_q", 0.7f);         // Q=0.7 (smooth)
+            setParam("hf_gain", 4.0f);      // +4dB @ 15kHz (air)
+            setParam("hf_freq", 15000.0f);  // 15kHz
             break;
 
         case 8:  // Glue Bus - Very subtle cohesion
-            parameters.getParameter("lf_gain")->setValueNotifyingHost(0.55f);  // +1.5dB @ 100Hz
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.45f);  // -1.5dB @ 3kHz
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.57f);  // +2dB @ 10kHz
-            parameters.getParameter("saturation")->setValueNotifyingHost(0.30f);  // 30% saturation
+            setParam("lf_gain", 1.5f);      // +1.5dB @ 100Hz
+            setParam("hm_gain", -1.5f);     // -1.5dB @ 3kHz
+            setParam("hm_freq", 3000.0f);   // 3kHz
+            setParam("hf_gain", 2.0f);      // +2dB @ 10kHz
+            setParam("saturation", 30.0f);  // 30% saturation
             break;
 
         case 9:  // Master Sheen - Polished top-end sparkle for mastering
-            parameters.getParameter("hm_gain")->setValueNotifyingHost(0.525f);  // +1dB @ 5kHz (presence)
-            parameters.getParameter("hm_freq")->setValueNotifyingHost(0.69f);   // 5kHz
-            parameters.getParameter("hm_q")->setValueNotifyingHost(0.35f);      // Q=0.7 (smooth/broad)
-            parameters.getParameter("hf_gain")->setValueNotifyingHost(0.537f);  // +1.5dB @ 16kHz (air)
-            parameters.getParameter("hf_freq")->setValueNotifyingHost(0.78f);   // 16kHz
-            parameters.getParameter("saturation")->setValueNotifyingHost(0.10f);  // 10% saturation (subtle glue)
+            setParam("hm_gain", 1.0f);      // +1dB @ 5kHz (presence)
+            setParam("hm_freq", 5000.0f);   // 5kHz
+            setParam("hm_q", 0.7f);         // Q=0.7 (smooth/broad)
+            setParam("hf_gain", 1.5f);      // +1.5dB @ 16kHz (air)
+            setParam("hf_freq", 16000.0f);  // 16kHz
+            setParam("saturation", 10.0f);  // 10% saturation (subtle glue)
             break;
     }
 

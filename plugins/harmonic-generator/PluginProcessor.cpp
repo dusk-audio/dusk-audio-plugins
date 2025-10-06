@@ -10,6 +10,7 @@ HarmonicGeneratorAudioProcessor::HarmonicGeneratorAudioProcessor()
       oversampling(2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR)
 {
     // Get parameter pointers from APVTS for fast access during processing
+    hardwareMode = apvts.getRawParameterValue("hardwareMode");
     oversamplingSwitch = apvts.getRawParameterValue("oversampling");
     secondHarmonic = apvts.getRawParameterValue("secondHarmonic");
     thirdHarmonic = apvts.getRawParameterValue("thirdHarmonic");
@@ -22,12 +23,13 @@ HarmonicGeneratorAudioProcessor::HarmonicGeneratorAudioProcessor()
     drive = apvts.getRawParameterValue("drive");
     outputGain = apvts.getRawParameterValue("outputGain");
     wetDryMix = apvts.getRawParameterValue("wetDryMix");
+    tone = apvts.getRawParameterValue("tone");
 
     // Validate all parameters are initialized - critical for release builds
-    if (!oversamplingSwitch || !secondHarmonic || !thirdHarmonic ||
+    if (!hardwareMode || !oversamplingSwitch || !secondHarmonic || !thirdHarmonic ||
         !fourthHarmonic || !fifthHarmonic || !evenHarmonics ||
         !oddHarmonics || !warmth || !brightness || !drive ||
-        !outputGain || !wetDryMix)
+        !outputGain || !wetDryMix || !tone)
     {
         // Log error for debugging
         DBG("HarmonicGenerator: Failed to initialize one or more parameters");
@@ -46,11 +48,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout HarmonicGeneratorAudioProces
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
+    // Hardware Mode Selection
+    juce::StringArray hardwareModes;
+    hardwareModes.add("Custom");  // Index 0 - uses individual harmonic controls
+    hardwareModes.add("Studer A800");
+    hardwareModes.add("Ampex ATR-102");
+    hardwareModes.add("Tascam Porta");
+    hardwareModes.add("Fairchild 670");
+    hardwareModes.add("Pultec EQP-1A");
+    hardwareModes.add("UA 610");
+    hardwareModes.add("Neve 1073");
+    hardwareModes.add("API 2500");
+    hardwareModes.add("SSL 4000E");
+    hardwareModes.add("Culture Vulture");
+    hardwareModes.add("Decapitator");
+    hardwareModes.add("HG-2 Black Box");
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "hardwareMode", "Hardware Mode", hardwareModes, 0));
+
     // Oversampling
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "oversampling", "Oversampling", true));
 
-    // Harmonic controls
+    // Harmonic controls (used in Custom mode)
     auto harmonicRange = juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f);
     harmonicRange.setSkewForCentre(0.10f);
 
@@ -78,14 +99,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout HarmonicGeneratorAudioProces
     // Gain controls
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "drive", "Drive",
-        juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 0.0f));
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f));  // 0-100%
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "outputGain", "Output Gain",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f), 0.0f));
+
+    // Tone control (brightness/darkness)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "tone", "Tone",
+        juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f), 0.0f));
 
     // Mix control
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "wetDryMix", "Wet/Dry Mix", 0.0f, 1.0f, 1.0f));
+        "wetDryMix", "Wet/Dry Mix", 0.0f, 100.0f, 100.0f));
 
     return { params.begin(), params.end() };
 }
@@ -95,6 +121,9 @@ void HarmonicGeneratorAudioProcessor::prepareToPlay(double sampleRate, int sampl
     oversampling.initProcessing(static_cast<size_t>(samplesPerBlock));
     oversampling.reset();
     lastSampleRate = sampleRate;
+
+    // Prepare hardware saturation
+    hardwareSaturation.prepare(sampleRate);
 
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 10.0);
     highPassFilterL.state = *coeffs;
@@ -128,30 +157,27 @@ void HarmonicGeneratorAudioProcessor::processBlock(juce::AudioBuffer<float>& buf
         buffer.clear(i, 0, buffer.getNumSamples());
 
     // Calculate input levels
-    float peakL = 0.0f, peakR = 0.0f;
+    float inputPeakL = 0.0f, inputPeakR = 0.0f;
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        peakL = juce::jmax(peakL, std::abs(buffer.getSample(0, i)));
+        inputPeakL = juce::jmax(inputPeakL, std::abs(buffer.getSample(0, i)));
         if (totalNumOutputChannels > 1)
-            peakR = juce::jmax(peakR, std::abs(buffer.getSample(1, i)));
+            inputPeakR = juce::jmax(inputPeakR, std::abs(buffer.getSample(1, i)));
     }
 
-    const float attackTime = 0.3f;
-    const float releaseTime = 0.7f;
+    const float attackTime = 0.3f;   // Fast attack
+    const float releaseTime = 0.1f;  // Slow release
 
-    inputLevelL = inputLevelL < peakL ?
-        inputLevelL + (peakL - inputLevelL) * attackTime :
-        inputLevelL + (peakL - inputLevelL) * (1.0f - releaseTime);
-    inputLevelR = inputLevelR < peakR ?
-        inputLevelR + (peakR - inputLevelR) * attackTime :
-        inputLevelR + (peakR - inputLevelR) * (1.0f - releaseTime);
+    inputLevelL = inputLevelL < inputPeakL ?
+        inputLevelL + (inputPeakL - inputLevelL) * attackTime :
+        inputLevelL + (inputPeakL - inputLevelL) * releaseTime;
+    inputLevelR = inputLevelR < inputPeakR ?
+        inputLevelR + (inputPeakR - inputLevelR) * attackTime :
+        inputLevelR + (inputPeakR - inputLevelR) * releaseTime;
 
     dryBuffer.makeCopyOf(buffer);
 
-    // Apply input drive (with null check)
-    float driveGain = drive ? juce::Decibels::decibelsToGain(drive->load()) : 1.0f;
-    buffer.applyGain(driveGain);
-
+    // Process with oversampling if enabled
     if (oversamplingSwitch && oversamplingSwitch->load() > 0.5f)
     {
         juce::dsp::AudioBlock<float> block(buffer);
@@ -165,40 +191,24 @@ void HarmonicGeneratorAudioProcessor::processBlock(juce::AudioBuffer<float>& buf
         processHarmonics(block);
     }
 
-    // Apply output gain (with null check)
-    float outGain = outputGain ? juce::Decibels::decibelsToGain(outputGain->load()) : 1.0f;
-    buffer.applyGain(outGain);
-
-    // Mix dry/wet (with null check)
-    float wet = wetDryMix ? wetDryMix->load() : 1.0f;
-    float dry = 1.0f - wet;
-
-    for (int channel = 0; channel < totalNumOutputChannels; ++channel)
-    {
-        auto* outputData = buffer.getWritePointer(channel);
-        auto* dryData = dryBuffer.getReadPointer(channel);
-
-        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
-        {
-            outputData[sample] = outputData[sample] * wet + dryData[sample] * dry;
-        }
-    }
+    // Note: Drive, output gain, and mix are handled inside processHarmonics in both hardware and custom modes
+    // generateHarmonics only performs harmonic generation (no drive/gain/mix processing)
 
     // Calculate output levels
-    peakL = peakR = 0.0f;
+    float outputPeakL = 0.0f, outputPeakR = 0.0f;
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        peakL = juce::jmax(peakL, std::abs(buffer.getSample(0, i)));
+        outputPeakL = juce::jmax(outputPeakL, std::abs(buffer.getSample(0, i)));
         if (totalNumOutputChannels > 1)
-            peakR = juce::jmax(peakR, std::abs(buffer.getSample(1, i)));
+            outputPeakR = juce::jmax(outputPeakR, std::abs(buffer.getSample(1, i)));
     }
 
-    outputLevelL = outputLevelL < peakL ?
-        outputLevelL + (peakL - outputLevelL) * attackTime :
-        outputLevelL + (peakL - outputLevelL) * (1.0f - releaseTime);
-    outputLevelR = outputLevelR < peakR ?
-        outputLevelR + (peakR - outputLevelR) * attackTime :
-        outputLevelR + (peakR - outputLevelR) * (1.0f - releaseTime);
+    outputLevelL = outputLevelL < outputPeakL ?
+        outputLevelL + (outputPeakL - outputLevelL) * attackTime :
+        outputLevelL + (outputPeakL - outputLevelL) * releaseTime;
+    outputLevelR = outputLevelR < outputPeakR ?
+        outputLevelR + (outputPeakR - outputLevelR) * attackTime :
+        outputLevelR + (outputPeakR - outputLevelR) * releaseTime;
 }
 
 void HarmonicGeneratorAudioProcessor::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& midiMessages)
@@ -231,41 +241,83 @@ void HarmonicGeneratorAudioProcessor::processHarmonics(juce::dsp::AudioBlock<flo
     auto* leftChannel = block.getChannelPointer(0);
     auto* rightChannel = block.getNumChannels() > 1 ? block.getChannelPointer(1) : nullptr;
 
-    // Get parameter values with null checks
-    float second = secondHarmonic ? secondHarmonic->load() : 0.0f;
-    float third = thirdHarmonic ? thirdHarmonic->load() : 0.0f;
-    float fourth = fourthHarmonic ? fourthHarmonic->load() : 0.0f;
-    float fifth = fifthHarmonic ? fifthHarmonic->load() : 0.0f;
+    // Get hardware mode
+    int mode = hardwareMode ? static_cast<int>(hardwareMode->load()) : 0;
 
-    float evenMix = evenHarmonics ? evenHarmonics->load() : 0.5f;
-    float oddMix = oddHarmonics ? oddHarmonics->load() : 0.5f;
-    float warmthAmount = warmth ? warmth->load() : 0.5f;
-    float brightnessAmount = brightness ? brightness->load() : 0.5f;
+    // Update hardware saturation parameters
+    float driveValue = drive ? drive->load() / 100.0f : 0.5f;  // Convert 0-100 to 0-1
+    float mixValue = wetDryMix ? wetDryMix->load() / 100.0f : 1.0f;  // Convert 0-100 to 0-1
+    float outGain = outputGain ? outputGain->load() : 0.0f;
+    float toneValue = tone ? tone->load() / 100.0f : 0.0f;  // Convert -100 to +100 to -1 to +1
 
-    for (size_t sample = 0; sample < block.getNumSamples(); ++sample)
+    hardwareSaturation.setDrive(driveValue);
+    hardwareSaturation.setMix(mixValue);
+    hardwareSaturation.setOutput(outGain);
+    hardwareSaturation.setTone(toneValue);
+
+    if (mode > 0)
     {
-        // Process left channel
-        float inputL = leftChannel[sample];
-        float processedL = generateHarmonics(inputL,
-            second * evenMix * (1.0f + warmthAmount),
-            third * oddMix * (1.0f + brightnessAmount * 0.5f),
-            fourth * evenMix * warmthAmount,
-            fifth * oddMix * brightnessAmount);
+        // Hardware mode - use HardwareSaturation
+        // mode-1 because mode 0 is "Custom"
+        hardwareSaturation.setMode(static_cast<HardwareSaturation::Mode>(mode - 1));
 
-        // Simply store the processed sample (filtering is handled at channel level)
-        leftChannel[sample] = processedL;
-
-        // Process right channel if stereo
-        if (rightChannel != nullptr)
+        for (size_t sample = 0; sample < block.getNumSamples(); ++sample)
         {
-            float inputR = rightChannel[sample];
-            float processedR = generateHarmonics(inputR,
+            leftChannel[sample] = hardwareSaturation.processSample(leftChannel[sample], 0);
+
+            if (rightChannel != nullptr)
+                rightChannel[sample] = hardwareSaturation.processSample(rightChannel[sample], 1);
+        }
+    }
+    else
+    {
+        // Custom mode - use individual harmonic controls (legacy mode)
+        float second = secondHarmonic ? secondHarmonic->load() : 0.0f;
+        float third = thirdHarmonic ? thirdHarmonic->load() : 0.0f;
+        float fourth = fourthHarmonic ? fourthHarmonic->load() : 0.0f;
+        float fifth = fifthHarmonic ? fifthHarmonic->load() : 0.0f;
+
+        float evenMix = evenHarmonics ? evenHarmonics->load() : 0.5f;
+        float oddMix = oddHarmonics ? oddHarmonics->load() : 0.5f;
+        float warmthAmount = warmth ? warmth->load() : 0.5f;
+        float brightnessAmount = brightness ? brightness->load() : 0.5f;
+
+        // Apply drive as gain multiplier
+        float driveGain = 1.0f + (driveValue * 4.0f);  // Up to 5x gain
+        float outputGainLinear = juce::Decibels::decibelsToGain(outGain);
+
+        for (size_t sample = 0; sample < block.getNumSamples(); ++sample)
+        {
+            // Store dry samples
+            float dryL = leftChannel[sample];
+            float dryR = rightChannel ? rightChannel[sample] : 0.0f;
+
+            // Process left channel
+            float inputL = dryL * driveGain;
+            float processedL = generateHarmonics(inputL,
                 second * evenMix * (1.0f + warmthAmount),
                 third * oddMix * (1.0f + brightnessAmount * 0.5f),
                 fourth * evenMix * warmthAmount,
                 fifth * oddMix * brightnessAmount);
 
-            rightChannel[sample] = processedR;
+            // Apply output gain and mix
+            processedL *= outputGainLinear;
+            leftChannel[sample] = processedL * mixValue + dryL * (1.0f - mixValue);
+
+            // Process right channel if stereo
+            if (rightChannel != nullptr)
+            {
+                float inputR = dryR * driveGain;
+                float processedR = generateHarmonics(inputR,
+                    second * evenMix * (1.0f + warmthAmount),
+                    third * oddMix * (1.0f + brightnessAmount * 0.5f),
+                    fourth * evenMix * warmthAmount,
+                    fifth * oddMix * brightnessAmount);
+
+                // Apply output gain and mix
+                processedR *= outputGainLinear;
+                rightChannel[sample] = processedR * mixValue + dryR * (1.0f - mixValue);
+            }
         }
     }
 
@@ -298,13 +350,13 @@ float HarmonicGeneratorAudioProcessor::generateHarmonics(float input, float seco
     float output = input;
 
     // 2nd harmonic (even - warmth)
-    output += second * 0.5f * x2 * (input >= 0 ? 1.0f : -1.0f);
+    output += second * 0.5f * x2;
 
     // 3rd harmonic (odd - presence)
     output += third * 0.3f * x3;
 
     // 4th harmonic (even - body)
-    output += fourth * 0.2f * x4 * (input >= 0 ? 1.0f : -1.0f);
+    output += fourth * 0.2f * x4;
 
     // 5th harmonic (odd - edge)
     output += fifth * 0.15f * x5;
@@ -334,6 +386,24 @@ void HarmonicGeneratorAudioProcessor::setStateInformation(const void* data, int 
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
     if (xmlState != nullptr && xmlState->hasTagName(apvts.state.getType()))
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+}
+
+void HarmonicGeneratorAudioProcessor::setHardwareMode(HardwareSaturation::Mode mode)
+{
+    // Convert mode to parameter index (+1 because 0 is "Custom")
+    int paramValue = static_cast<int>(mode) + 1;
+    if (auto* param = apvts.getParameter("hardwareMode"))
+    {
+        param->setValueNotifyingHost(param->convertTo0to1(static_cast<float>(paramValue)));
+    }
+}
+
+HardwareSaturation::Mode HarmonicGeneratorAudioProcessor::getHardwareMode() const
+{
+    int mode = hardwareMode ? static_cast<int>(hardwareMode->load()) : 0;
+    if (mode > 0)
+        return static_cast<HardwareSaturation::Mode>(mode - 1);
+    return HardwareSaturation::Mode::StuderA800;  // Default
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

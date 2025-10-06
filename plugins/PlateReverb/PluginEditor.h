@@ -59,14 +59,12 @@ private:
     juce::Slider sizeSlider;
     juce::Slider decaySlider;
     juce::Slider dampingSlider;
-    juce::Slider predelaySlider;
     juce::Slider widthSlider;
     juce::Slider mixSlider;
 
     juce::Label sizeLabel;
     juce::Label decayLabel;
     juce::Label dampingLabel;
-    juce::Label predelayLabel;
     juce::Label widthLabel;
     juce::Label mixLabel;
 
@@ -74,7 +72,6 @@ private:
     juce::Label sizeValueLabel;
     juce::Label decayValueLabel;
     juce::Label dampingValueLabel;
-    juce::Label predelayValueLabel;
     juce::Label widthValueLabel;
     juce::Label mixValueLabel;
 
@@ -82,7 +79,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sizeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> decayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dampingAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> predelayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> widthAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
 

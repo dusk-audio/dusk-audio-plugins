@@ -58,15 +58,13 @@ private:
     //==============================================================================
     juce::AudioProcessorValueTreeState parameters;
 
-    // DSP
-    DattorroPlate reverbLeft;
-    DattorroPlate reverbRight;
+    // DSP - Dattorro is inherently mono-in, stereo-out, so we only need one instance
+    DattorroPlate reverb;
 
     // Parameter pointers
     std::atomic<float>* sizeParam = nullptr;
     std::atomic<float>* decayParam = nullptr;
     std::atomic<float>* dampingParam = nullptr;
-    std::atomic<float>* predelayParam = nullptr;
     std::atomic<float>* widthParam = nullptr;
     std::atomic<float>* mixParam = nullptr;
 
