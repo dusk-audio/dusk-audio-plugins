@@ -117,6 +117,12 @@ private:
             filter.prepare(spec);
             filterR.prepare(spec);
         }
+
+        // Process a single sample through the appropriate channel filter
+        inline float processSample(float sample, bool useLeftChannel)
+        {
+            return useLeftChannel ? filter.processSample(sample) : filterR.processSample(sample);
+        }
     };
 
     // HPF: True 3rd order (18 dB/oct) - 1st order + 2nd order Butterworth
@@ -141,6 +147,15 @@ private:
             stage1L.prepare(spec);
             stage1R.prepare(spec);
             stage2.prepare(spec);
+        }
+
+        // Process a single sample through HPF stages
+        inline float processSample(float sample, bool useLeftChannel)
+        {
+            // Stage 1: 1st-order filter
+            float processed = useLeftChannel ? stage1L.processSample(sample) : stage1R.processSample(sample);
+            // Stage 2: 2nd-order filter
+            return stage2.processSample(processed, useLeftChannel);
         }
     };
 
@@ -202,6 +217,26 @@ private:
 
     // Validation flags
     bool paramsValid = false;  // Set true only if all critical params initialized
+
+    // Thread-safe parameter cache (updated atomically in processBlock)
+    struct CachedParams
+    {
+        float hpfFreq = 20.0f;
+        float lpfFreq = 20000.0f;
+        float lfGain = 0.0f;
+        float lfFreq = 100.0f;
+        float lfBell = 0.0f;
+        float lmGain = 0.0f;
+        float lmFreq = 600.0f;
+        float lmQ = 0.7f;
+        float hmGain = 0.0f;
+        float hmFreq = 2000.0f;
+        float hmQ = 0.7f;
+        float hfGain = 0.0f;
+        float hfFreq = 8000.0f;
+        float hfBell = 0.0f;
+        float eqType = 0.0f;
+    } cachedParams;
 
     // Atomic flag for any parameter change (set by listener, checked by audio thread)
     std::atomic<bool> parametersChanged{true};

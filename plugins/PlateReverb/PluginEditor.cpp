@@ -124,13 +124,6 @@ PlateReverbAudioProcessorEditor::PlateReverbAudioProcessorEditor(PlateReverbAudi
     dampingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "damping", dampingSlider);
 
-    // Predelay slider
-    setupSlider(predelaySlider, predelayLabel, "PREDELAY");
-    predelaySlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    predelaySlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    predelayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "predelay", predelaySlider);
-
     // Width slider
     setupSlider(widthSlider, widthLabel, "WIDTH");
     widthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -149,28 +142,24 @@ PlateReverbAudioProcessorEditor::PlateReverbAudioProcessorEditor(PlateReverbAudi
     addAndMakeVisible(sizeValueLabel);
     addAndMakeVisible(decayValueLabel);
     addAndMakeVisible(dampingValueLabel);
-    addAndMakeVisible(predelayValueLabel);
     addAndMakeVisible(widthValueLabel);
     addAndMakeVisible(mixValueLabel);
 
     sizeValueLabel.setJustificationType(juce::Justification::centred);
     decayValueLabel.setJustificationType(juce::Justification::centred);
     dampingValueLabel.setJustificationType(juce::Justification::centred);
-    predelayValueLabel.setJustificationType(juce::Justification::centred);
     widthValueLabel.setJustificationType(juce::Justification::centred);
     mixValueLabel.setJustificationType(juce::Justification::centred);
 
     sizeValueLabel.setFont(juce::Font(12.0f));
     decayValueLabel.setFont(juce::Font(12.0f));
     dampingValueLabel.setFont(juce::Font(12.0f));
-    predelayValueLabel.setFont(juce::Font(12.0f));
     widthValueLabel.setFont(juce::Font(12.0f));
     mixValueLabel.setFont(juce::Font(12.0f));
 
     sizeValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     decayValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     dampingValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
-    predelayValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     widthValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
     mixValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
 
@@ -249,7 +238,7 @@ void PlateReverbAudioProcessorEditor::resized()
     int labelHeight = 20;
     int valueHeight = 20;
     int totalKnobHeight = knobSize + labelHeight + valueHeight;
-    int knobSpacing = (controlsArea.getWidth() - (knobSize * 6)) / 7;
+    int knobSpacing = (controlsArea.getWidth() - (knobSize * 5)) / 6;
 
     int xPos = knobSpacing;
 
@@ -272,13 +261,6 @@ void PlateReverbAudioProcessorEditor::resized()
     dampingLabel.setBounds(dampingArea.removeFromTop(labelHeight));
     dampingSlider.setBounds(dampingArea.removeFromTop(knobSize));
     dampingValueLabel.setBounds(dampingArea.removeFromTop(valueHeight));
-    xPos += knobSize + knobSpacing;
-
-    // Predelay knob
-    auto predelayArea = juce::Rectangle<int>(xPos, controlsArea.getY(), knobSize, totalKnobHeight);
-    predelayLabel.setBounds(predelayArea.removeFromTop(labelHeight));
-    predelaySlider.setBounds(predelayArea.removeFromTop(knobSize));
-    predelayValueLabel.setBounds(predelayArea.removeFromTop(valueHeight));
     xPos += knobSize + knobSpacing;
 
     // Width knob
@@ -307,7 +289,6 @@ void PlateReverbAudioProcessorEditor::updateValueLabels()
     sizeValueLabel.setText(juce::String(sizeSlider.getValue(), 2), juce::dontSendNotification);
     decayValueLabel.setText(juce::String(static_cast<int>(decaySlider.getValue() * 100)) + "%", juce::dontSendNotification);
     dampingValueLabel.setText(juce::String(static_cast<int>(dampingSlider.getValue() * 100)) + "%", juce::dontSendNotification);
-    predelayValueLabel.setText(juce::String(static_cast<int>(predelaySlider.getValue())) + " ms", juce::dontSendNotification);
     widthValueLabel.setText(juce::String(static_cast<int>(widthSlider.getValue() * 100)) + "%", juce::dontSendNotification);
     mixValueLabel.setText(juce::String(static_cast<int>(mixSlider.getValue() * 100)) + "%", juce::dontSendNotification);
 }

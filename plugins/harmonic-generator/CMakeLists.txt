@@ -41,6 +41,8 @@ target_sources(HarmonicGeneratorPlugin
         PluginProcessor.h
         PluginEditor.cpp
         PluginEditor.h
+        HardwarePresets.cpp
+        HardwarePresets.h
 )
 
 # ---- Include & Definitions ----

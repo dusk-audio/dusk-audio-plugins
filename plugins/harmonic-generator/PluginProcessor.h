@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include "HardwarePresets.h"
 
 class HarmonicGeneratorAudioProcessor : public juce::AudioProcessor
 {
@@ -45,11 +46,16 @@ public:
     std::atomic<float> outputLevelL { 0.0f };
     std::atomic<float> outputLevelR { 0.0f };
 
+    // Hardware saturation control (public for UI access)
+    void setHardwareMode(HardwareSaturation::Mode mode);
+    HardwareSaturation::Mode getHardwareMode() const;
+
 private:
     // Parameter Layout
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     // Parameter pointers (managed by APVTS, no manual deletion needed)
+    std::atomic<float>* hardwareMode = nullptr;  // Hardware preset selector
     std::atomic<float>* oversamplingSwitch = nullptr;
     std::atomic<float>* secondHarmonic = nullptr;
     std::atomic<float>* thirdHarmonic = nullptr;
@@ -62,9 +68,13 @@ private:
     std::atomic<float>* drive = nullptr;
     std::atomic<float>* outputGain = nullptr;
     std::atomic<float>* wetDryMix = nullptr;
+    std::atomic<float>* tone = nullptr;
 
     void processHarmonics(juce::dsp::AudioBlock<float>& block);
     float generateHarmonics(float input, float second, float third, float fourth, float fifth);
+
+    // Hardware saturation engine
+    HardwareSaturation hardwareSaturation;
 
     juce::dsp::Oversampling<float> oversampling;
     juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>> highPassFilterL, highPassFilterR;

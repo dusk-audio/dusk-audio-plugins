@@ -33,11 +33,6 @@ PlateReverbAudioProcessor::PlateReverbAudioProcessor()
                          juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
                          0.5f),
                      std::make_unique<juce::AudioParameterFloat>(
-                         "predelay",
-                         "Predelay",
-                         juce::NormalisableRange<float>(0.0f, 200.0f, 1.0f),
-                         0.0f),
-                     std::make_unique<juce::AudioParameterFloat>(
                          "width",
                          "Width",
                          juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
@@ -53,7 +48,6 @@ PlateReverbAudioProcessor::PlateReverbAudioProcessor()
     sizeParam = parameters.getRawParameterValue("size");
     decayParam = parameters.getRawParameterValue("decay");
     dampingParam = parameters.getRawParameterValue("damping");
-    predelayParam = parameters.getRawParameterValue("predelay");
     widthParam = parameters.getRawParameterValue("width");
     mixParam = parameters.getRawParameterValue("mix");
 }
@@ -117,8 +111,7 @@ void PlateReverbAudioProcessor::changeProgramName(int index, const juce::String&
 //==============================================================================
 void PlateReverbAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    reverbLeft.prepare(sampleRate, samplesPerBlock);
-    reverbRight.prepare(sampleRate, samplesPerBlock);
+    reverb.prepare(sampleRate, samplesPerBlock);
 }
 
 void PlateReverbAudioProcessor::releaseResources()
@@ -147,7 +140,6 @@ void PlateReverbAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     float size = sizeParam->load();
     float decay = decayParam->load();
     float damping = dampingParam->load();
-    float predelay = predelayParam->load();
     float width = widthParam->load();
     float mix = mixParam->load();
 
@@ -159,8 +151,8 @@ void PlateReverbAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
         float wetL, wetR;
 
-        // Process reverb
-        reverbLeft.process(inL, inR, wetL, wetR, size, decay, damping, predelay, width);
+        // Process reverb (Dattorro is mono-in, stereo-out)
+        reverb.process(inL, inR, wetL, wetR, size, decay, damping, width);
 
         // Mix wet and dry
         float outL = inL * (1.0f - mix) + wetL * mix;
