@@ -102,8 +102,8 @@ private:
     double sampleRate = 48000.0;
     float minFreq = 20.0f;
     float maxFreq = 20000.0f;
-    float minDB = -90.0f;
-    float maxDB = 0.0f;
+    float minDB = -60.0f;  // More useful range for typical audio
+    float maxDB = 6.0f;    // Allow for some headroom display
 
     void pushSampleToFifo(float sample)
     {
@@ -158,7 +158,9 @@ private:
         {
             float level = fftData[static_cast<size_t>(fftSize + i)];
             level = juce::jlimit(0.0001f, 1.0f, level);
-            float db = juce::Decibels::gainToDecibels(level) - 100.0f;  // Normalize
+            // Convert to dB with reasonable offset for typical mix levels
+            // Most audio hovers around -20 to -6 dB, so offset by -30 for better visibility
+            float db = juce::Decibels::gainToDecibels(level) - 30.0f;
             scopeData[static_cast<size_t>(i)] = db;
         }
 

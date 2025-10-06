@@ -172,8 +172,8 @@ PLUGINS=(
     "FourKEQ_All"
     "TapeMachine_All"
     "UniversalCompressor_All"
-    "StudioVerb_All"
-    "HarmonicGeneratorPlugin_All"
+    "PlateReverb_All"
+    "TapeEcho_All"
 )
 
 # Build all plugins

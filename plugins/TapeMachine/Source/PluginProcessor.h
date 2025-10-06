@@ -96,14 +96,8 @@ private:
         juce::dsp::Gain<float>
     > processorChainLeft, processorChainRight;
 
-    juce::dsp::DelayLine<float> wowFlutterDelayLeft{48000};
-    juce::dsp::DelayLine<float> wowFlutterDelayRight{48000};
-
-    juce::Random noiseGenerator;
-
-    float wowPhase = 0.0f;
-    float flutterPhase = 0.0f;
     float currentSampleRate = 44100.0f;
+    float currentOversampledRate = 176400.0f;  // Default value; computed dynamically in prepareToPlay()
 
     std::atomic<float>* tapeMachineParam = nullptr;
     std::atomic<float>* tapeSpeedParam = nullptr;
@@ -118,8 +112,6 @@ private:
     std::atomic<float>* outputGainParam = nullptr;
 
     void updateFilters();
-    float processTapeSaturation(float input, float saturation, TapeMachine machine, TapeType tape);
-    std::pair<float, float> processWowFlutter(float inputL, float inputR, float amount);
 
     // Level metering (RMS-based for VU accuracy)
     std::atomic<float> inputLevelL { 0.0f };
@@ -139,13 +131,9 @@ private:
     float lastLpFreq = -1.0f;
 
     // Smoothed parameters to prevent zipper noise
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedInputGain;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedOutputGain;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedSaturation;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedNoiseAmount;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedWowFlutter;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedHighpass;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedLowpass;
 
     // Filter bypass states
     bool bypassHighpass = true;

@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
 #include <array>
 
 class HardwareSaturation
@@ -59,14 +60,6 @@ public:
     static juce::String getModeDescription(Mode mode);
 
 private:
-    Mode currentMode = Mode::StuderA800;
-
-    // Parameters
-    float drive = 0.5f;
-    float mix = 1.0f;
-    float output = 1.0f;
-    float tone = 0.0f;
-
     // Harmonic profiles for each mode
     struct HarmonicProfile
     {
@@ -82,13 +75,25 @@ private:
         float compressionAmount = 0.0f;  // Soft compression
     };
 
-    HarmonicProfile getProfileForMode(Mode mode);
+    Mode currentMode = Mode::StuderA800;
+    mutable Mode cachedMode = Mode::StuderA800;
+    mutable HarmonicProfile cachedProfile;
+
+    // Parameters
+    float drive = 0.5f;
+    float mix = 1.0f;
+    float output = 1.0f;
+    float tone = 0.0f;
+
+    HarmonicProfile getProfileForMode(Mode mode) const;
+    const HarmonicProfile& getCachedProfile() const;
 
     // Processing components
     class TapeEmulation
     {
     public:
         void prepare(double sampleRate);
+        void reset();
         float process(float input, const HarmonicProfile& profile);
 
     private:
@@ -99,6 +104,10 @@ private:
         // Bias
         float biasAmount = 0.5f;
 
+        // Lowpass filter state for high frequency rolloff
+        float lpState = 0.0f;
+        double sampleRate = 48000.0;
+
         juce::dsp::IIR::Filter<float> preEmphasis;
         juce::dsp::IIR::Filter<float> deEmphasis;
     };
@@ -107,6 +116,7 @@ private:
     {
     public:
         void prepare(double sampleRate);
+        void reset();
         float process(float input, const HarmonicProfile& profile);
 
     private:
@@ -125,6 +135,7 @@ private:
     {
     public:
         void prepare(double sampleRate);
+        void reset();
         float process(float input, const HarmonicProfile& profile);
 
     private:
@@ -134,6 +145,7 @@ private:
         // Slew rate limiting
         float slewRateLimit = 10.0f;  // V/μs
         float previousOutput = 0.0f;
+        double sampleRate = 48000.0;
     };
 
     TapeEmulation tapeEmulation;
@@ -227,7 +239,7 @@ inline juce::String HardwareSaturation::getModeDescription(Mode mode)
 //==============================================================================
 // Harmonic profiles for each hardware unit
 //==============================================================================
-inline HardwareSaturation::HarmonicProfile HardwareSaturation::getProfileForMode(Mode mode)
+inline HardwareSaturation::HarmonicProfile HardwareSaturation::getProfileForMode(Mode mode) const
 {
     HarmonicProfile profile;
 
@@ -261,7 +273,7 @@ inline HardwareSaturation::HarmonicProfile HardwareSaturation::getProfileForMode
             profile.h5 = 0.01f;
             profile.evenOddRatio = 0.6f;
             profile.saturationCurve = 0.5f;
-            profile.highFreqRolloff = 10000.0f;  // Heavy high-freq loss
+            profile.highFreqRolloff = 8000.0f;  // Cassette tape HF loss (was 10kHz)
             profile.compressionAmount = 0.2f;
             break;
 
@@ -305,7 +317,7 @@ inline HardwareSaturation::HarmonicProfile HardwareSaturation::getProfileForMode
             profile.h5 = 0.005f;
             profile.evenOddRatio = 0.35f;
             profile.saturationCurve = 0.7f;
-            profile.compressionAmount = 0.08f;
+            profile.compressionAmount = 0.25f;  // Increased for famous "glue" compression (was 0.08)
             break;
 
         case Mode::SSL4000E:
@@ -318,13 +330,13 @@ inline HardwareSaturation::HarmonicProfile HardwareSaturation::getProfileForMode
             break;
 
         case Mode::CultureVulture:
-            profile.h2 = 0.06f;
-            profile.h3 = 0.04f;
-            profile.h4 = 0.03f;
-            profile.h5 = 0.02f;
+            profile.h2 = 0.08f;   // Increased for more extreme saturation (was 0.06)
+            profile.h3 = 0.06f;   // Increased (was 0.04)
+            profile.h4 = 0.04f;   // Increased (was 0.03)
+            profile.h5 = 0.03f;   // Increased (was 0.02)
             profile.evenOddRatio = 0.6f;
-            profile.saturationCurve = 0.4f;
-            profile.lowFreqEmphasis = 0.2f;
+            profile.saturationCurve = 0.65f;  // More aggressive (was 0.4) for "destruction"
+            profile.lowFreqEmphasis = 0.3f;   // More bass emphasis (was 0.2)
             break;
 
         case Mode::Decapitator:

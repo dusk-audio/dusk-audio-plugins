@@ -71,6 +71,9 @@ target_sources(PlateReverb
         PluginEditor.cpp
         PluginEditor.h
         DattorroPlate.h
+        CustomDelays.cpp
+        CustomDelays.h
+        Utilities.h
 )
 
 # Compile definitions

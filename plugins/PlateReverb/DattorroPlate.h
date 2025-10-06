@@ -2,12 +2,9 @@
   ==============================================================================
 
     DattorroPlate.h
-    Created: 2025
-    Author:  Luna Co. Audio
-
-    Professional Dattorro Plate Reverb Implementation
-    Based on "Effect Design, Part 1: Reverberator and Other Filters"
-    by Jon Dattorro, J. Audio Eng. Soc., Vol 45, No. 9, 1997 September
+    Based on RSAlgorithmicVerb implementation
+    Dattorro Plate Reverb - "Effect Design Part 1: Reverberator and Other Filters"
+    Jon Dattorro, J. Audio Eng. Soc., 1997
 
   ==============================================================================
 */
@@ -15,215 +12,267 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include <array>
-#include <cmath>
+#include "CustomDelays.h"
 
 class DattorroPlate
 {
 public:
     DattorroPlate() = default;
+    ~DattorroPlate() = default;
 
     void prepare(double sampleRate, int samplesPerBlock)
     {
-        fs = sampleRate;
+        juce::dsp::ProcessSpec monoSpec;
+        monoSpec.sampleRate = sampleRate;
+        monoSpec.maximumBlockSize = samplesPerBlock;
+        monoSpec.numChannels = 1;
 
-        // Calculate scaling factor for delay times (based on 29.761kHz reference)
-        scale = static_cast<float>(sampleRate / 29761.0);
+        // Prepare all delay lines and allpasses
+        allpass1.prepare(monoSpec);
+        allpass2.prepare(monoSpec);
+        allpass3.prepare(monoSpec);
+        allpass4.prepare(monoSpec);
+        allpass5.prepare(monoSpec);
+        allpass6.prepare(monoSpec);
 
-        // Pre-delay
-        preDelay.resize(static_cast<size_t>(sampleRate * 0.5)); // 500ms max
+        decayAPF1.prepare(monoSpec);
+        decayAPF2.prepare(monoSpec);
 
-        // Input diffusion network (4 allpass filters)
-        inputAPF1.resize(static_cast<size_t>(142 * scale + 1));
-        inputAPF2.resize(static_cast<size_t>(107 * scale + 1));
-        inputAPF3.resize(static_cast<size_t>(379 * scale + 1));
-        inputAPF4.resize(static_cast<size_t>(277 * scale + 1));
+        delay1.prepare(monoSpec);
+        delay2.prepare(monoSpec);
+        delay3.prepare(monoSpec);
+        delay4.prepare(monoSpec);
 
-        // Left tank
-        leftAPF1.resize(static_cast<size_t>(672 * scale + 1));
-        leftDelay1.resize(static_cast<size_t>(4453 * scale + 1));
-        leftAPF2.resize(static_cast<size_t>(1800 * scale + 1));
-        leftDelay2.resize(static_cast<size_t>(3720 * scale + 1));
-
-        // Right tank
-        rightAPF1.resize(static_cast<size_t>(908 * scale + 1));
-        rightDelay1.resize(static_cast<size_t>(4217 * scale + 1));
-        rightAPF2.resize(static_cast<size_t>(2656 * scale + 1));
-        rightDelay2.resize(static_cast<size_t>(3163 * scale + 1));
+        inputFilter.prepare(monoSpec);
+        dampingFilter1.prepare(monoSpec);
+        dampingFilter2.prepare(monoSpec);
 
         reset();
     }
 
     void reset()
     {
-        std::fill(preDelay.begin(), preDelay.end(), 0.0f);
+        allpass1.reset();
+        allpass2.reset();
+        allpass3.reset();
+        allpass4.reset();
+        allpass5.reset();
+        allpass6.reset();
 
-        std::fill(inputAPF1.begin(), inputAPF1.end(), 0.0f);
-        std::fill(inputAPF2.begin(), inputAPF2.end(), 0.0f);
-        std::fill(inputAPF3.begin(), inputAPF3.end(), 0.0f);
-        std::fill(inputAPF4.begin(), inputAPF4.end(), 0.0f);
+        decayAPF1.reset();
+        decayAPF2.reset();
 
-        std::fill(leftAPF1.begin(), leftAPF1.end(), 0.0f);
-        std::fill(leftDelay1.begin(), leftDelay1.end(), 0.0f);
-        std::fill(leftAPF2.begin(), leftAPF2.end(), 0.0f);
-        std::fill(leftDelay2.begin(), leftDelay2.end(), 0.0f);
+        delay1.reset();
+        delay2.reset();
+        delay3.reset();
+        delay4.reset();
 
-        std::fill(rightAPF1.begin(), rightAPF1.end(), 0.0f);
-        std::fill(rightDelay1.begin(), rightDelay1.end(), 0.0f);
-        std::fill(rightAPF2.begin(), rightAPF2.end(), 0.0f);
-        std::fill(rightDelay2.begin(), rightDelay2.end(), 0.0f);
+        inputFilter.reset();
+        dampingFilter1.reset();
+        dampingFilter2.reset();
 
-        preDelayIndex = 0;
-
-        inputAPF1_idx = 0;
-        inputAPF2_idx = 0;
-        inputAPF3_idx = 0;
-        inputAPF4_idx = 0;
-
-        leftAPF1_idx = 0;
-        leftDelay1_idx = 0;
-        leftAPF2_idx = 0;
-        leftDelay2_idx = 0;
-
-        rightAPF1_idx = 0;
-        rightDelay1_idx = 0;
-        rightAPF2_idx = 0;
-        rightDelay2_idx = 0;
-
-        leftLPF = 0.0f;
-        rightLPF = 0.0f;
+        allpassOutput = 0;
+        feedback = 0;
+        feedforward = 0;
+        summingA = 0;
+        summingB = 0;
+        channel0Output = 0;
+        channel1Output = 0;
     }
 
     void process(float inL, float inR, float& outL, float& outR,
-                 float size, float decay, float damping, float predelayMs, float width)
+                 float roomSize, float decayTime, float dampingFreq, float width)
     {
-        // Clamp parameters
-        size = juce::jlimit(0.0f, 1.0f, size);
-        decay = juce::jlimit(0.0f, 1.0f, decay);
-        damping = juce::jlimit(0.0f, 1.0f, damping);
-        width = juce::jlimit(0.0f, 1.0f, width);
+        const int channel = 0;
 
-        // Pre-delay
-        int preDelaySamples = static_cast<int>(predelayMs * 0.001f * fs);
-        preDelaySamples = juce::jlimit(0, static_cast<int>(preDelay.size()) - 1, preDelaySamples);
+        // Map parameters to match RSAlgorithmicVerb
+        // Damping: 0-1 maps to 20000-200 Hz (inverted - higher value = more damping)
+        float dampingCutoff = 200.0f + (1.0f - dampingFreq) * 19800.0f;
+        dampingFilter1.setCutoffFrequency(dampingCutoff);
+        dampingFilter2.setCutoffFrequency(dampingCutoff);
 
-        float mono = (inL + inR) * 0.5f;
+        // Input filter at 13.5 kHz
+        inputFilter.setCutoffFrequency(13500.0f);
 
-        // Write to pre-delay
-        preDelay[preDelayIndex] = mono;
+        // Room size scales delay times (0.5 to 1.5 range)
+        float size = 0.5f + roomSize * 1.0f;
 
-        // Read from pre-delay
-        int readIdx = (preDelayIndex - preDelaySamples + preDelay.size()) % preDelay.size();
-        float delayedInput = preDelay[readIdx];
+        // Set input diffusion network delays
+        allpass1.setDelay(210.0f * size);
+        allpass2.setDelay(158.0f * size);
+        allpass3.setDelay(561.0f * size);
+        allpass4.setDelay(410.0f * size);
 
-        preDelayIndex = (preDelayIndex + 1) % preDelay.size();
+        // Set tank allpass delays
+        allpass5.setDelay(3931.0f * size);
+        allpass6.setDelay(2664.0f * size);
 
-        // Input diffusion (4 allpass filters in series)
-        float diffused = delayedInput * 0.75f; // Input gain
+        // Decay tank allpasses (fixed delays, no modulation)
+        float decayAPF1Delay = 1343.0f * size;
+        float decayAPF2Delay = 995.0f * size;
+        decayAPF1.setDelay(decayAPF1Delay);
+        decayAPF2.setDelay(decayAPF2Delay);
 
-        diffused = processAllpass(inputAPF1, inputAPF1_idx, diffused, 0.75f);
-        diffused = processAllpass(inputAPF2, inputAPF2_idx, diffused, 0.75f);
-        diffused = processAllpass(inputAPF3, inputAPF3_idx, diffused, 0.625f);
-        diffused = processAllpass(inputAPF4, inputAPF4_idx, diffused, 0.625f);
+        // Set tank delays
+        delay1.setDelay(6241.0f * size);
+        delay2.setDelay(4641.0f * size);
+        delay3.setDelay(6590.0f * size);
+        delay4.setDelay(5505.0f * size);
 
-        // Calculate decay coefficient
-        float decayCoeff = decay;
+        // Mono sum input
+        float input = (inL + inR) * 0.5f;
 
-        // Calculate damping coefficient for one-pole lowpass
-        float dampingCoeff = 1.0f - damping;
+        // Input filter
+        input = inputFilter.processSample(channel, input);
 
-        // Figure-8 tank
-        // Left tank input = diffused input + feedback from right tank
-        float leftInput = diffused + rightDelay2[rightDelay2_idx] * decayCoeff;
+        // Input diffusion network
+        // Diffusion coefficients from Dattorro paper
+        float inputDiffusion1 = 0.75f;
+        float inputDiffusion2 = 0.625f;
 
-        // Left tank processing
-        float leftOut1 = processAllpass(leftAPF1, leftAPF1_idx, leftInput, -0.7f);
+        allpassOutput = allpass1.popSample(channel);
+        feedback = allpassOutput * inputDiffusion1;
+        feedforward = -input - feedback;
+        allpass1.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
 
-        leftDelay1[leftDelay1_idx] = leftOut1;
-        leftDelay1_idx = (leftDelay1_idx + 1) % leftDelay1.size();
+        allpassOutput = allpass2.popSample(channel);
+        feedback = allpassOutput * inputDiffusion1;
+        feedforward = -input - feedback;
+        allpass2.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
 
-        float leftDelayed = leftDelay1[leftDelay1_idx];
+        allpassOutput = allpass3.popSample(channel);
+        feedback = allpassOutput * inputDiffusion2;
+        feedforward = -input - feedback;
+        allpass3.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
 
-        // Damping filter (one-pole lowpass)
-        leftLPF = leftDelayed * dampingCoeff + leftLPF * damping;
+        allpassOutput = allpass4.popSample(channel);
+        feedback = allpassOutput * inputDiffusion2;
+        feedforward = -input - feedback;
+        allpass4.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
 
-        float leftOut2 = processAllpass(leftAPF2, leftAPF2_idx, leftLPF, 0.5f);
+        // ===== TANK 1 (Left) =====
+        input += summingB * decayTime;
 
-        leftDelay2[leftDelay2_idx] = leftOut2;
-        leftDelay2_idx = (leftDelay2_idx + 1) % leftDelay2.size();
+        // Decay APF1 (decay diffusion 1)
+        float decayDiffusion1 = 0.7f;  // Reduced from 0.93 for stability
+        allpassOutput = decayAPF1.popSample(channel);
+        feedback = allpassOutput * decayDiffusion1;
+        feedforward = -input - feedback;
+        decayAPF1.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
 
-        // Right tank input = diffused input + feedback from left tank
-        float rightInput = diffused + leftDelay2[leftDelay2_idx] * decayCoeff;
+        // Delay 1
+        delay1.pushSample(channel, input);
+        input = dampingFilter1.processSample(channel, delay1.popSample(channel));
 
-        // Right tank processing
-        float rightOut1 = processAllpass(rightAPF1, rightAPF1_idx, rightInput, -0.7f);
+        // OUTPUT NODE A
+        channel0Output = delay1.getSampleAtDelay(channel, 394 * size) * 0.6f;
+        channel0Output += delay1.getSampleAtDelay(channel, 4401 * size) * 0.6f;
+        channel1Output = -delay1.getSampleAtDelay(channel, 3124 * size) * 0.6f;
 
-        rightDelay1[rightDelay1_idx] = rightOut1;
-        rightDelay1_idx = (rightDelay1_idx + 1) % rightDelay1.size();
+        // APF5
+        allpassOutput = allpass5.popSample(channel);
+        feedback = allpassOutput * decayDiffusion1;
+        feedforward = -input - feedback;
+        allpass5.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
 
-        float rightDelayed = rightDelay1[rightDelay1_idx];
+        // OUTPUT NODE B
+        channel0Output -= allpass5.getSampleAtDelay(channel, 2831 * size) * 0.6f;
+        channel1Output -= allpass5.getSampleAtDelay(channel, 496 * size) * 0.6f;
 
-        // Damping filter (one-pole lowpass)
-        rightLPF = rightDelayed * dampingCoeff + rightLPF * damping;
+        // Delay 2
+        delay2.pushSample(channel, input);
+        input = delay2.popSample(channel);
 
-        float rightOut2 = processAllpass(rightAPF2, rightAPF2_idx, rightLPF, 0.5f);
+        // OUTPUT NODE C
+        channel0Output += delay2.getSampleAtDelay(channel, 2954 * size) * 0.6f;
+        channel1Output -= delay2.getSampleAtDelay(channel, 179 * size) * 0.6f;
 
-        rightDelay2[rightDelay2_idx] = rightOut2;
-        rightDelay2_idx = (rightDelay2_idx + 1) % rightDelay2.size();
+        summingA = input;
 
-        // Output taps (as per Dattorro paper)
-        // Left output
-        outL = 0.6f * leftDelay1[(leftDelay1_idx + static_cast<int>(266 * scale)) % leftDelay1.size()]
-             + 0.6f * leftDelay1[(leftDelay1_idx + static_cast<int>(2974 * scale)) % leftDelay1.size()]
-             - 0.6f * leftAPF2[(leftAPF2_idx + static_cast<int>(1913 * scale)) % leftAPF2.size()]
-             + 0.6f * leftDelay2[(leftDelay2_idx + static_cast<int>(1996 * scale)) % leftDelay2.size()]
-             - 0.6f * rightDelay1[(rightDelay1_idx + static_cast<int>(353 * scale)) % rightDelay1.size()]
-             - 0.6f * rightAPF2[(rightAPF2_idx + static_cast<int>(1990 * scale)) % rightAPF2.size()];
+        // ===== TANK 2 (Right) =====
+        input += summingA * decayTime;
 
-        // Right output
-        outR = 0.6f * rightDelay1[(rightDelay1_idx + static_cast<int>(353 * scale)) % rightDelay1.size()]
-             + 0.6f * rightDelay1[(rightDelay1_idx + static_cast<int>(3627 * scale)) % rightDelay1.size()]
-             - 0.6f * rightAPF2[(rightAPF2_idx + static_cast<int>(1990 * scale)) % rightAPF2.size()]
-             + 0.6f * rightDelay2[(rightDelay2_idx + static_cast<int>(1066 * scale)) % rightDelay2.size()]
-             - 0.6f * leftDelay1[(leftDelay1_idx + static_cast<int>(266 * scale)) % leftDelay1.size()]
-             - 0.6f * leftAPF2[(leftAPF2_idx + static_cast<int>(1913 * scale)) % leftAPF2.size()];
+        // Decay APF2 (decay diffusion 2)
+        float decayDiffusion2 = 0.5f;  // Reduced from 0.67 for stability
+        allpassOutput = decayAPF2.popSample(channel);
+        feedback = allpassOutput * decayDiffusion2;
+        feedforward = -input - feedback;
+        decayAPF2.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
 
-        // Apply width control
-        float mid = (outL + outR) * 0.5f;
-        float side = (outL - outR) * 0.5f * width;
+        // Delay 3
+        delay3.pushSample(channel, input);
+        input = dampingFilter2.processSample(channel, delay3.popSample(channel));
 
+        // OUTPUT NODE D
+        channel0Output -= delay3.getSampleAtDelay(channel, 2945 * size) * 0.6f;
+        channel1Output += delay3.getSampleAtDelay(channel, 522 * size) * 0.6f;
+        channel1Output += delay3.getSampleAtDelay(channel, 5368 * size) * 0.6f;
+
+        // APF6
+        allpassOutput = allpass6.popSample(channel);
+        feedback = allpassOutput * decayDiffusion2;
+        feedforward = -input - feedback;
+        allpass6.pushSample(channel, input + feedback);
+        input = allpassOutput + feedforward;
+
+        // OUTPUT NODE E
+        channel0Output -= allpass6.getSampleAtDelay(channel, 277 * size) * 0.6f;
+        channel1Output -= allpass6.getSampleAtDelay(channel, 1817 * size) * 0.6f;
+
+        // Delay 4
+        delay4.pushSample(channel, input);
+        input = delay4.popSample(channel);
+
+        summingB = input;
+
+        // OUTPUT NODE F
+        channel0Output -= delay4.getSampleAtDelay(channel, 1578 * size) * 0.6f;
+        channel1Output += delay4.getSampleAtDelay(channel, 3956 * size) * 0.6f;
+
+        // Apply width (M/S processing)
+        float mid = (channel0Output + channel1Output) * 0.5f;
+        float side = (channel0Output - channel1Output) * 0.5f * width;
         outL = mid + side;
         outR = mid - side;
     }
 
 private:
-    float processAllpass(std::vector<float>& buffer, size_t& index, float input, float gain)
-    {
-        float buffered = buffer[index];
-        float output = -input + buffered;
-        buffer[index] = input + gain * buffered;
-        index = (index + 1) % buffer.size();
-        return output;
-    }
+    // Input diffusion allpasses
+    juce::dsp::DelayLine<float> allpass1 {22050};
+    juce::dsp::DelayLine<float> allpass2 {22050};
+    juce::dsp::DelayLine<float> allpass3 {22050};
+    juce::dsp::DelayLine<float> allpass4 {22050};
+    DelayLineWithSampleAccess<float> allpass5 {22050};
+    DelayLineWithSampleAccess<float> allpass6 {22050};
 
-    double fs = 48000.0;
-    float scale = 1.0f;
+    // Decay tank allpasses (fixed delays, no modulation)
+    juce::dsp::DelayLine<float> decayAPF1 {22050};
+    juce::dsp::DelayLine<float> decayAPF2 {22050};
 
-    // Pre-delay
-    std::vector<float> preDelay;
-    size_t preDelayIndex = 0;
+    // Tank delays
+    DelayLineWithSampleAccess<float> delay1 {22050};
+    DelayLineWithSampleAccess<float> delay2 {22050};
+    DelayLineWithSampleAccess<float> delay3 {22050};
+    DelayLineWithSampleAccess<float> delay4 {22050};
 
-    // Input diffusion network
-    std::vector<float> inputAPF1, inputAPF2, inputAPF3, inputAPF4;
-    size_t inputAPF1_idx = 0, inputAPF2_idx = 0, inputAPF3_idx = 0, inputAPF4_idx = 0;
+    // Filters
+    juce::dsp::FirstOrderTPTFilter<float> inputFilter;
+    juce::dsp::FirstOrderTPTFilter<float> dampingFilter1;
+    juce::dsp::FirstOrderTPTFilter<float> dampingFilter2;
 
-    // Left tank
-    std::vector<float> leftAPF1, leftDelay1, leftAPF2, leftDelay2;
-    size_t leftAPF1_idx = 0, leftDelay1_idx = 0, leftAPF2_idx = 0, leftDelay2_idx = 0;
-    float leftLPF = 0.0f;
-
-    // Right tank
-    std::vector<float> rightAPF1, rightDelay1, rightAPF2, rightDelay2;
-    size_t rightAPF1_idx = 0, rightDelay1_idx = 0, rightAPF2_idx = 0, rightDelay2_idx = 0;
-    float rightLPF = 0.0f;
+    // Processing variables
+    float allpassOutput = 0.0f;
+    float feedback = 0.0f;
+    float feedforward = 0.0f;
+    float summingA = 0.0f;
+    float summingB = 0.0f;
+    float channel0Output = 0.0f;
+    float channel1Output = 0.0f;
 };
