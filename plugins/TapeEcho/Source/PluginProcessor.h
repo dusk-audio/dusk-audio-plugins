@@ -54,8 +54,6 @@ public:
     static const juce::String PARAM_STEREO_MODE;
     static const juce::String PARAM_LFO_SHAPE;
     static const juce::String PARAM_LFO_RATE;
-    static const juce::String PARAM_LFO_DEPTH;
-    static const juce::String PARAM_TEMPO_SYNC;
 
     // Get current peak level for VU meter
     float getCurrentPeakLevel() const { return currentPeakLevel.load(); }
@@ -109,6 +107,10 @@ private:
     // EQ filters
     juce::IIRFilter bassFilterL, bassFilterR;
     juce::IIRFilter trebleFilterL, trebleFilterR;
+
+    // Feedback storage (for routing delay output through EQ before feedback)
+    float lastDelayOutputL = 0.0f;
+    float lastDelayOutputR = 0.0f;
 
     // Level monitoring
     std::atomic<float> currentPeakLevel{0.0f};

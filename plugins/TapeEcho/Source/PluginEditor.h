@@ -84,7 +84,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tapeAgeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> motorTorqueAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> stereoModeAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAttachment;
 
     bool isVintageMode = true;
 

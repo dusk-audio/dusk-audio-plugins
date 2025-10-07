@@ -16,8 +16,6 @@ const juce::String TapeEchoProcessor::PARAM_MOTOR_TORQUE = "motor_torque";
 const juce::String TapeEchoProcessor::PARAM_STEREO_MODE = "stereo_mode";
 const juce::String TapeEchoProcessor::PARAM_LFO_SHAPE = "lfo_shape";
 const juce::String TapeEchoProcessor::PARAM_LFO_RATE = "lfo_rate";
-const juce::String TapeEchoProcessor::PARAM_LFO_DEPTH = "lfo_depth";
-const juce::String TapeEchoProcessor::PARAM_TEMPO_SYNC = "tempo_sync";
 
 TapeEchoProcessor::TapeEchoProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -85,18 +83,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeEchoProcessor::createPar
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         PARAM_STEREO_MODE, "Stereo Mode", false));
 
-    // LFO parameters
+    // LFO parameters (internal - not exposed to user)
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         PARAM_LFO_SHAPE, "LFO Shape", 0, 5, 0));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         PARAM_LFO_RATE, "LFO Rate", 0.1f, 10.0f, 1.0f));
-
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        PARAM_LFO_DEPTH, "LFO Depth", 0.0f, 50.0f, 10.0f));
-
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        PARAM_TEMPO_SYNC, "Tempo Sync", false));
 
     return { params.begin(), params.end() };
 }
@@ -261,10 +253,17 @@ void TapeEchoProcessor::updateDelayConfiguration()
     float intensity = apvts.getRawParameterValue(PARAM_INTENSITY)->load() / 100.0f;
     tapeDelay.setFeedback(intensity * 0.95f);
 
+    // Motor torque affects wow and flutter: lower torque = more pitch instability
     float wowFlutter = apvts.getRawParameterValue(PARAM_WOW_FLUTTER)->load() / 100.0f;
+    float motorTorque = apvts.getRawParameterValue(PARAM_MOTOR_TORQUE)->load() / 100.0f;
+
+    // Map motor torque inversely: 0% torque = 2x flutter, 100% torque = 1x flutter
+    float torqueMultiplier = 1.0f + (1.0f - motorTorque);
+    float effectiveWowFlutter = wowFlutter * torqueMultiplier;
+
     float lfoRate = apvts.getRawParameterValue(PARAM_LFO_RATE)->load();
     int lfoShape = apvts.getRawParameterValue(PARAM_LFO_SHAPE)->load();
-    tapeDelay.setWowFlutter(wowFlutter, lfoRate, lfoShape);
+    tapeDelay.setWowFlutter(effectiveWowFlutter, lfoRate, lfoShape);
 
     float tapeAge = apvts.getRawParameterValue(PARAM_TAPE_AGE)->load() / 100.0f;
     tapeDelay.setTapeAge(tapeAge);
@@ -300,7 +299,7 @@ void TapeEchoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     updateDelayConfiguration();
     updateEQFilters();
 
-    float inputVolume = apvts.getRawParameterValue(PARAM_INPUT_VOLUME)->load() / 100.0f * 2.0f;
+    float inputVolume = apvts.getRawParameterValue(PARAM_INPUT_VOLUME)->load() / 50.0f;  // 50% = 1.0 (unity gain)
     float echoVolume = apvts.getRawParameterValue(PARAM_ECHO_VOLUME)->load() / 100.0f;
     float reverbVolume = apvts.getRawParameterValue(PARAM_REVERB_VOLUME)->load() / 100.0f;
 
@@ -322,20 +321,28 @@ void TapeEchoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
             // Apply preamp saturation
             float processed = preamp.processSample(input);
 
-            // Process through tape delay
-            float delayed = tapeDelay.processSample(processed, channel);
-
-            // Apply EQ to echo signal
+            // Get the previous delay output and apply EQ to it for feedback
+            // This is the key change: EQ is now in the feedback path
+            float filteredFeedback = 0.0f;
             if (channel == 0)
             {
-                delayed = bassFilterL.processSingleSampleRaw(delayed);
-                delayed = trebleFilterL.processSingleSampleRaw(delayed);
+                filteredFeedback = bassFilterL.processSingleSampleRaw(lastDelayOutputL);
+                filteredFeedback = trebleFilterL.processSingleSampleRaw(filteredFeedback);
             }
             else
             {
-                delayed = bassFilterR.processSingleSampleRaw(delayed);
-                delayed = trebleFilterR.processSingleSampleRaw(delayed);
+                filteredFeedback = bassFilterR.processSingleSampleRaw(lastDelayOutputR);
+                filteredFeedback = trebleFilterR.processSingleSampleRaw(filteredFeedback);
             }
+
+            // Process through tape delay with the filtered feedback
+            float delayed = tapeDelay.processSample(processed, filteredFeedback, channel);
+
+            // Store the raw delay output for next sample's feedback
+            if (channel == 0)
+                lastDelayOutputL = delayed;
+            else
+                lastDelayOutputR = delayed;
 
             // Process through spring reverb if enabled
             float reverbed = 0.0f;

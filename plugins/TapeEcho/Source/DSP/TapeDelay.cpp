@@ -137,13 +137,16 @@ float TapeDelay::getInterpolatedSample(const std::vector<float>& buffer, float d
     return buffer[readPos] * (1.0f - fraction) + buffer[nextPos] * fraction;
 }
 
-float TapeDelay::processSample(float input, int channel)
+float TapeDelay::processSample(float input, float externalFeedback, int channel)
 {
     float output = 0.0f;
 
-    // Update LFO phase
-    lfoPhase += wowFlutterRate / sampleRate;
-    if (lfoPhase >= 1.0f) lfoPhase -= 1.0f;
+    // Update LFO phase (only on channel 0 to avoid double updates)
+    if (channel == 0)
+    {
+        lfoPhase += wowFlutterRate / sampleRate;
+        if (lfoPhase >= 1.0f) lfoPhase -= 1.0f;
+    }
 
     // Get modulation value for wow and flutter
     float modulation = getLFOValue();
@@ -156,8 +159,11 @@ float TapeDelay::processSample(float input, int channel)
         // Apply wow and flutter modulation to delay time
         float modulatedDelay = head.delaySamples * (1.0f + modulation * 0.02f);
 
-        // Smooth delay changes to avoid clicks
-        head.smoothedDelay += (modulatedDelay - head.smoothedDelay) * 0.001f;
+        // Smooth delay changes to avoid clicks (only on channel 0)
+        if (channel == 0)
+        {
+            head.smoothedDelay += (modulatedDelay - head.smoothedDelay) * 0.001f;
+        }
 
         // Get delayed sample with interpolation
         if (channel == 0)
@@ -177,12 +183,11 @@ float TapeDelay::processSample(float input, int channel)
     }
 
     // Apply feedback (with smoothing)
+    // Note: externalFeedback has already been filtered by the Bass/Treble EQ
     smoothedFeedback += (feedback - smoothedFeedback) * 0.01f;
+    float inputWithFeedback = input + externalFeedback * smoothedFeedback;
 
-    float feedbackSignal = channel == 0 ? lastOutputL : lastOutputR;
-    float inputWithFeedback = input + feedbackSignal * smoothedFeedback;
-
-    // Apply tape coloration filters
+    // Apply tape coloration filters (age/damping only, not tone controls)
     if (channel == 0)
     {
         inputWithFeedback = lowpassL.processSingleSampleRaw(inputWithFeedback);
@@ -191,6 +196,11 @@ float TapeDelay::processSample(float input, int channel)
         // Write to delay buffer
         delayBufferL[writePosition] = inputWithFeedback;
         lastOutputL = output;
+
+        // Update write position after channel 0 is written
+        // This ensures it works for both mono (1 channel) and stereo (2 channels)
+        writePosition++;
+        if (writePosition >= bufferSize) writePosition = 0;
     }
     else
     {
@@ -200,13 +210,6 @@ float TapeDelay::processSample(float input, int channel)
         // Write to delay buffer
         delayBufferR[writePosition] = inputWithFeedback;
         lastOutputR = output;
-    }
-
-    // Update write position (only once for both channels)
-    if (channel == 1)
-    {
-        writePosition++;
-        if (writePosition >= bufferSize) writePosition = 0;
     }
 
     return output;

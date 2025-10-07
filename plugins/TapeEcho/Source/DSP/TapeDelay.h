@@ -20,7 +20,8 @@ public:
     void setTapeAge(float age);
     void setHeadEnabled(int head, bool enabled);
 
-    float processSample(float input, int channel);
+    // New interface: pass in the feedback signal that has been externally filtered
+    float processSample(float input, float externalFeedback, int channel);
 
     enum LFOShape
     {

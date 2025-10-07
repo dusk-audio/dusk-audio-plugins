@@ -16,6 +16,15 @@ void VUMeter::setLevel(float newLevel)
     targetAngle = -45.0f + targetLevel * 90.0f;
 }
 
+void VUMeter::setVintageMode(bool vintageMode)
+{
+    if (isVintage != vintageMode)
+    {
+        isVintage = vintageMode;
+        repaint();
+    }
+}
+
 void VUMeter::timerCallback()
 {
     // Smooth needle movement
