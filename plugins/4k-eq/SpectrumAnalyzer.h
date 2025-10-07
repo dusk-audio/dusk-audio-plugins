@@ -322,10 +322,10 @@ private:
         float w2 = w * w;
 
         // Low shelf: gain applied at low frequencies, flat at high frequencies
-        // H(w) = A * sqrt((1 + w^2) / (A^2 + w^2))
+        // H(w) = sqrt((A^2 + w^2) / (1 + w^2))
         float numerator = A * A + w2;
         float denominator = 1.0f + w2;
-        float mag = A * std::sqrt(numerator / denominator);
+        float mag = std::sqrt(numerator / denominator);
 
         return 20.0f * std::log10(std::max(0.0001f, mag));
     }
@@ -341,8 +341,8 @@ private:
         float w2 = w * w;
 
         // High shelf: flat at low frequencies, gain applied at high frequencies
-        // H(w) = A * sqrt((A^2 + w^2) / (1 + w^2))
-        float numerator = A * A + w2;
+        // H(w) = sqrt((1 + A^2 * w^2) / (1 + w^2))
+        float numerator = 1.0f + A * A * w2;
         float denominator = 1.0f + w2;
         float mag = std::sqrt(numerator / denominator);
 
