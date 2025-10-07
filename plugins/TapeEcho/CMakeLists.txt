@@ -20,7 +20,7 @@ juce_add_plugin(TapeEcho
     COPY_PLUGIN_AFTER_BUILD TRUE
     VST3_CATEGORIES "Fx" "Delay" "Reverb"
     AU_MAIN_TYPE "kAudioUnitType_Effect"
-    LV2_URI "https://lunaco.audio/plugins/tapeecho"
+    LV2_URI https://lunaco.audio/plugins/tapeecho
 )
 
 # Add source files

@@ -422,5 +422,8 @@ void TapeEchoEditor::updateAppearance()
         vintageToggle.setColour(juce::ToggleButton::tickColourId, juce::Colours::cyan);
     }
 
+    // Update VU meter appearance
+    vuMeter.setVintageMode(isVintageMode);
+
     repaint();
 }

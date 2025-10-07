@@ -12,6 +12,7 @@ public:
     void resized() override;
 
     void setLevel(float newLevel);
+    void setVintageMode(bool vintageMode);
     void timerCallback() override;
 
 private:
