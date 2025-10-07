@@ -8,6 +8,36 @@ class SpectrumAnalyzer : public juce::Component,
                          private juce::Timer
 {
 public:
+    // EQ parameters structure for frequency response calculation
+    struct EQParams
+    {
+        // HPF/LPF
+        float hpfFreq = 20.0f;
+        float lpfFreq = 20000.0f;
+
+        // LF Band
+        float lfGain = 0.0f;
+        float lfFreq = 100.0f;
+        bool lfBell = false;
+
+        // LMF Band
+        float lmGain = 0.0f;
+        float lmFreq = 600.0f;
+        float lmQ = 0.7f;
+
+        // HMF Band
+        float hmGain = 0.0f;
+        float hmFreq = 2000.0f;
+        float hmQ = 0.7f;
+
+        // HF Band
+        float hfGain = 0.0f;
+        float hfFreq = 8000.0f;
+        bool hfBell = false;
+
+        bool bypass = false;
+    };
+
     SpectrumAnalyzer()
         : forwardFFT(fftOrder),
           window(fftSize, juce::dsp::WindowingFunction<float>::hann)
@@ -15,6 +45,7 @@ public:
         std::fill(fftData.begin(), fftData.end(), 0.0f);
         std::fill(scopeData.begin(), scopeData.end(), 0.0f);
         std::fill(scopeDataSmoothed.begin(), scopeDataSmoothed.end(), 0.0f);
+        std::fill(eqCurveData.begin(), eqCurveData.end(), 0.0f);
 
         startTimerHz(30);  // 30 Hz refresh rate
     }
@@ -28,6 +59,13 @@ public:
         // Clamp to reasonable audio range
         newSampleRate = juce::jlimit(8000.0, 192000.0, newSampleRate);
         sampleRate = newSampleRate;
+        eqCurveDirty = true;
+    }
+
+    void setEQParams(const EQParams& params)
+    {
+        eqParams = params;
+        eqCurveDirty = true;
     }
 
     ~SpectrumAnalyzer() override
@@ -65,11 +103,17 @@ public:
 
         auto bounds = getLocalBounds().toFloat();
 
+        // Update EQ curve if parameters changed
+        updateEQCurve();
+
         // Draw grid
         drawGrid(g, bounds);
 
-        // Draw spectrum
+        // Draw audio spectrum (behind EQ curve)
         drawSpectrum(g, bounds);
+
+        // Draw EQ response curve (on top)
+        drawEQCurve(g, bounds);
     }
 
     void resized() override {}
@@ -95,6 +139,7 @@ private:
     std::array<float, fftSize * 2> fftData;
     std::array<float, scopeSize> scopeData;
     std::array<float, scopeSize> scopeDataSmoothed;
+    std::array<float, 512> eqCurveData;  // Pre-calculated EQ curve for drawing
 
     int fifoIndex = 0;
     std::atomic<bool> nextFFTBlockReady{false};
@@ -104,6 +149,13 @@ private:
     float maxFreq = 20000.0f;
     float minDB = -60.0f;  // More useful range for typical audio
     float maxDB = 6.0f;    // Allow for some headroom display
+
+    // Separate range for EQ curve display (centered around 0 dB)
+    float eqMinDB = -20.0f;  // -20 dB at bottom
+    float eqMaxDB = 20.0f;   // +20 dB at top
+
+    EQParams eqParams;
+    bool eqCurveDirty = true;  // Recalculate EQ curve when parameters change
 
     void pushSampleToFifo(float sample)
     {
@@ -150,7 +202,8 @@ private:
         forwardFFT.performFrequencyOnlyForwardTransform(fftData.data() + fftSize);
 
         // Convert to dB and smooth (SIMD-optimized)
-        const float smoothing = 0.8f;
+        // Higher smoothing = more stable display, less responsive
+        const float smoothing = 0.92f;  // Increased from 0.8 for more stability
         const float oneMinusSmoothing = 1.0f - smoothing;
 
         // Process FFT bins to dB values
@@ -171,6 +224,145 @@ private:
                                                      scopeData.data(),
                                                      oneMinusSmoothing,
                                                      scopeSize);
+    }
+
+    void updateEQCurve()
+    {
+        if (!eqCurveDirty)
+            return;
+
+        // Calculate frequency response for display
+        const int numPoints = static_cast<int>(eqCurveData.size());
+
+        for (int i = 0; i < numPoints; ++i)
+        {
+            // Logarithmically spaced frequency
+            float t = static_cast<float>(i) / (numPoints - 1);
+            float freq = minFreq * std::pow(maxFreq / minFreq, t);
+
+            // Calculate combined frequency response in dB
+            float totalGainDB = 0.0f;
+
+            if (!eqParams.bypass)
+            {
+                // HPF response (18 dB/oct = 3rd order)
+                if (freq < eqParams.hpfFreq)
+                {
+                    float ratio = freq / eqParams.hpfFreq;
+                    totalGainDB += 20.0f * std::log10(ratio) * 3.0f;  // 3rd order = 18dB/oct
+                }
+
+                // LPF response (12 dB/oct = 2nd order)
+                if (freq > eqParams.lpfFreq)
+                {
+                    float ratio = freq / eqParams.lpfFreq;
+                    totalGainDB += -20.0f * std::log10(ratio) * 2.0f;  // 2nd order = 12dB/oct
+                }
+
+                // LF Band (low shelf or bell)
+                if (std::abs(eqParams.lfGain) > 0.01f)
+                {
+                    totalGainDB += calculateBellOrShelfResponse(
+                        freq, eqParams.lfFreq, 0.7f, eqParams.lfGain, eqParams.lfBell, false);
+                }
+
+                // LMF Band (always bell)
+                if (std::abs(eqParams.lmGain) > 0.01f)
+                {
+                    totalGainDB += calculateBellResponse(
+                        freq, eqParams.lmFreq, eqParams.lmQ, eqParams.lmGain);
+                }
+
+                // HMF Band (always bell)
+                if (std::abs(eqParams.hmGain) > 0.01f)
+                {
+                    totalGainDB += calculateBellResponse(
+                        freq, eqParams.hmFreq, eqParams.hmQ, eqParams.hmGain);
+                }
+
+                // HF Band (high shelf or bell)
+                if (std::abs(eqParams.hfGain) > 0.01f)
+                {
+                    totalGainDB += calculateBellOrShelfResponse(
+                        freq, eqParams.hfFreq, 0.7f, eqParams.hfGain, eqParams.hfBell, true);
+                }
+            }
+
+            eqCurveData[static_cast<size_t>(i)] = totalGainDB;
+        }
+
+        eqCurveDirty = false;
+    }
+
+    // Approximate bell filter response
+    float calculateBellResponse(float freq, float centerFreq, float q, float gainDB) const
+    {
+        if (std::abs(gainDB) < 0.01f)
+            return 0.0f;
+
+        float w = freq / centerFreq;
+        float w2 = w * w;
+
+        // Bell/peak filter magnitude approximation
+        float denom = 1.0f + (1.0f / (q * q)) * (w2 + 1.0f / w2 - 2.0f);
+        float gain = std::pow(10.0f, gainDB / 20.0f);
+        float mag = std::abs(1.0f + (gain - 1.0f) / denom);
+
+        return 20.0f * std::log10(std::max(0.0001f, mag));
+    }
+
+    // Approximate low shelf response
+    float calculateLowShelfResponse(float freq, float cornerFreq, float q, float gainDB) const
+    {
+        if (std::abs(gainDB) < 0.01f)
+            return 0.0f;
+
+        float w = freq / cornerFreq;
+        float A = std::pow(10.0f, gainDB / 40.0f);  // amplitude factor
+        float w2 = w * w;
+
+        // Low shelf: gain applied at low frequencies, flat at high frequencies
+        // H(w) = A * sqrt((1 + w^2) / (A^2 + w^2))
+        float numerator = A * A + w2;
+        float denominator = 1.0f + w2;
+        float mag = A * std::sqrt(numerator / denominator);
+
+        return 20.0f * std::log10(std::max(0.0001f, mag));
+    }
+
+    // Approximate high shelf response
+    float calculateHighShelfResponse(float freq, float cornerFreq, float q, float gainDB) const
+    {
+        if (std::abs(gainDB) < 0.01f)
+            return 0.0f;
+
+        float w = freq / cornerFreq;
+        float A = std::pow(10.0f, gainDB / 40.0f);  // amplitude factor
+        float w2 = w * w;
+
+        // High shelf: flat at low frequencies, gain applied at high frequencies
+        // H(w) = A * sqrt((A^2 + w^2) / (1 + w^2))
+        float numerator = A * A + w2;
+        float denominator = 1.0f + w2;
+        float mag = std::sqrt(numerator / denominator);
+
+        return 20.0f * std::log10(std::max(0.0001f, mag));
+    }
+
+    // Approximate shelf or bell response
+    float calculateBellOrShelfResponse(float freq, float cornerFreq, float q, float gainDB, bool isBell, bool isHighShelf = false) const
+    {
+        if (isBell)
+        {
+            return calculateBellResponse(freq, cornerFreq, q, gainDB);
+        }
+        else
+        {
+            if (isHighShelf)
+                return calculateHighShelfResponse(freq, cornerFreq, q, gainDB);
+            else
+                return calculateLowShelfResponse(freq, cornerFreq, q, gainDB);
+        }
     }
 
     void drawGrid(juce::Graphics& g, juce::Rectangle<float> bounds)
@@ -235,8 +427,50 @@ private:
             }
         }
 
-        g.setColour(juce::Colour(0xff4080ff));
+        // Draw spectrum with transparency so EQ curve shows through
+        g.setColour(juce::Colour(0xff4080ff).withAlpha(0.6f));
         g.strokePath(spectrumPath, juce::PathStrokeType(1.5f));
+    }
+
+    void drawEQCurve(juce::Graphics& g, juce::Rectangle<float> bounds)
+    {
+        juce::Path eqPath;
+
+        const int numPoints = static_cast<int>(eqCurveData.size());
+
+        for (int i = 0; i < numPoints; ++i)
+        {
+            // Calculate frequency for this point
+            float t = static_cast<float>(i) / (numPoints - 1);
+            float freq = minFreq * std::pow(maxFreq / minFreq, t);
+
+            float x = freqToX(freq, bounds);
+            float db = eqCurveData[static_cast<size_t>(i)];
+            float y = eqDbToY(db, bounds);  // Use EQ-specific mapping (centered around 0 dB)
+
+            if (i == 0)
+                eqPath.startNewSubPath(x, y);
+            else
+                eqPath.lineTo(x, y);
+        }
+
+        // Draw 0 dB reference line (should be in the middle)
+        float zeroDbY = eqDbToY(0.0f, bounds);
+        g.setColour(juce::Colour(0xff404040));  // Dark gray
+        g.drawHorizontalLine(static_cast<int>(zeroDbY), bounds.getX(), bounds.getRight());
+
+        // Draw EQ curve in bright yellow/green for visibility
+        g.setColour(juce::Colour(0xffffff00));  // Bright yellow
+        g.strokePath(eqPath, juce::PathStrokeType(2.0f));  // Thicker line
+
+        // Optional: Draw semi-transparent fill to show EQ gain/cut regions
+        juce::Path fillPath = eqPath;
+        fillPath.lineTo(bounds.getRight(), zeroDbY);
+        fillPath.lineTo(bounds.getX(), zeroDbY);
+        fillPath.closeSubPath();
+
+        g.setColour(juce::Colour(0xffffff00).withAlpha(0.1f));  // Very transparent yellow
+        g.fillPath(fillPath);
     }
 
     float binToFreq(int bin) const
@@ -256,7 +490,20 @@ private:
 
     float dbToY(float db, juce::Rectangle<float> bounds) const
     {
+        // Map dB to Y coordinate: higher dB (loud) should be at top (low Y value)
+        // minDB (-60) should be at bottom (normalized = 1.0)
+        // maxDB (+6) should be at top (normalized = 0.0)
         float normalized = juce::jmap(db, minDB, maxDB, 1.0f, 0.0f);
+        return bounds.getY() + normalized * bounds.getHeight();
+    }
+
+    float eqDbToY(float db, juce::Rectangle<float> bounds) const
+    {
+        // Map EQ gain to Y coordinate (centered around 0 dB)
+        // eqMaxDB (+20) should be at top (normalized = 0.0)
+        // 0 dB should be in middle (normalized = 0.5)
+        // eqMinDB (-20) should be at bottom (normalized = 1.0)
+        float normalized = juce::jmap(db, eqMinDB, eqMaxDB, 1.0f, 0.0f);
         return bounds.getY() + normalized * bounds.getHeight();
     }
 

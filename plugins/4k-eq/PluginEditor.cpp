@@ -525,6 +525,31 @@ void FourKEQEditor::timerCallback()
         const auto& bufferToUse = usePreEQ ? audioProcessor.spectrumBufferPre
                                            : audioProcessor.spectrumBuffer;
         spectrumAnalyzer.pushBuffer(bufferToUse);
+
+        // Update EQ parameters for curve display
+        SpectrumAnalyzer::EQParams params;
+        params.hpfFreq = audioProcessor.parameters.getRawParameterValue("hpf_freq")->load();
+        params.lpfFreq = audioProcessor.parameters.getRawParameterValue("lpf_freq")->load();
+
+        params.lfGain = audioProcessor.parameters.getRawParameterValue("lf_gain")->load();
+        params.lfFreq = audioProcessor.parameters.getRawParameterValue("lf_freq")->load();
+        params.lfBell = audioProcessor.parameters.getRawParameterValue("lf_bell")->load() > 0.5f;
+
+        params.lmGain = audioProcessor.parameters.getRawParameterValue("lm_gain")->load();
+        params.lmFreq = audioProcessor.parameters.getRawParameterValue("lm_freq")->load();
+        params.lmQ = audioProcessor.parameters.getRawParameterValue("lm_q")->load();
+
+        params.hmGain = audioProcessor.parameters.getRawParameterValue("hm_gain")->load();
+        params.hmFreq = audioProcessor.parameters.getRawParameterValue("hm_freq")->load();
+        params.hmQ = audioProcessor.parameters.getRawParameterValue("hm_q")->load();
+
+        params.hfGain = audioProcessor.parameters.getRawParameterValue("hf_gain")->load();
+        params.hfFreq = audioProcessor.parameters.getRawParameterValue("hf_freq")->load();
+        params.hfBell = audioProcessor.parameters.getRawParameterValue("hf_bell")->load() > 0.5f;
+
+        params.bypass = bypassParam->load() > 0.5f;
+
+        spectrumAnalyzer.setEQParams(params);
     }
 }
 
