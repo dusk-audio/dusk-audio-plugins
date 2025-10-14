@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include "SSLSaturation.h"
 
 // Forward declaration for LV2 inline display
 
@@ -17,11 +18,20 @@
     - Brown/Black knob variants
     - 2x/4x oversampling for anti-aliasing
     - Analog-modeled nonlinearities
+
+    Version: 1.0.0
+    Build information available via BUILD_DATE and BUILD_TIME constants
 */
 class FourKEQ : public juce::AudioProcessor,
                 private juce::AudioProcessorValueTreeState::Listener
 {
 public:
+    //==============================================================================
+    // Version information
+    static constexpr const char* PLUGIN_VERSION = "1.0.0";
+    static constexpr const char* BUILD_DATE = __DATE__;
+    static constexpr const char* BUILD_TIME = __TIME__;
+
     //==============================================================================
     FourKEQ();
     ~FourKEQ() override;
@@ -35,6 +45,7 @@ public:
     #endif
 
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlock(juce::AudioBuffer<double>&, juce::MidiBuffer&) override;
 
     //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
@@ -53,7 +64,7 @@ public:
     int getCurrentProgram() override { return currentPreset; }
     void setCurrentProgram(int index) override;
     const juce::String getProgramName(int index) override;
-    void changeProgramName(int index, const juce::String& newName) override {}
+    void changeProgramName(int /*index*/, const juce::String& /*newName*/) override {}
 
     //==============================================================================
     void getStateInformation(juce::MemoryBlock& destData) override;
@@ -176,6 +187,9 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
     int oversamplingFactor = 2;
 
+    // SSL-accurate saturation modeling
+    SSLSaturation sslSaturation;
+
     // Parameter pointers with safe accessors
     std::atomic<float>* hpfFreqParam = nullptr;
     std::atomic<float>* lpfFreqParam = nullptr;
@@ -270,8 +284,6 @@ private:
 
     // Helper methods
     float calculateDynamicQ(float gain, float baseQ) const;
-    float applySaturation(float sample, float amount) const;
-    float applyAnalogSaturation(float sample, float drive, bool isAsymmetric = true) const;
     float calculateAutoGainCompensation() const;
 
     // SSL-specific filter coefficient generation

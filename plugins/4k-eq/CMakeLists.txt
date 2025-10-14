@@ -11,12 +11,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 juce_add_plugin(FourKEQ
     PLUGIN_NAME "4K EQ"
     PLUGIN_CODE FKEQ
-    PLUGIN_MANUFACTURER_CODE APlu
+    PLUGIN_MANUFACTURER_CODE LunC
     FORMATS VST3 LV2 AU Standalone
     PRODUCT_NAME "4K EQ"
     COMPANY_NAME "Luna Co. Audio"
-    COMPANY_WEBSITE "https://example.com"
-    COMPANY_EMAIL "info@example.com"
+    COMPANY_WEBSITE "https://lunaco.audio"
+    COMPANY_EMAIL "support@lunaco.audio"
+    BUNDLE_ID "com.LunaCoAudio.FourKEQ"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -25,7 +26,7 @@ juce_add_plugin(FourKEQ
     COPY_PLUGIN_AFTER_BUILD TRUE
     VST3_CATEGORIES Fx EQ
     AU_MAIN_TYPE kAudioUnitType_Effect
-    LV2_URI https://example.com/plugins/fourkeq
+    LV2_URI "https://lunaco.audio/plugins/4keq"
     LV2_SHARED_LIBRARY_NAME FourKEQ
 )
 

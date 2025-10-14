@@ -6,10 +6,10 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 {
     setLookAndFeel(&lookAndFeel);
 
-    // Set editor size - better height for layout
-    setSize(900, 520);
+    // Set editor size - compact layout with analyzer removed
+    setSize(900, 440);
     setResizable(true, true);
-    setResizeLimits(750, 450, 1400, 700);
+    setResizeLimits(750, 380, 1400, 600);
 
     // Get parameter references
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
@@ -140,32 +140,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     oversamplingAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "oversampling", oversamplingSelector);
 
-    // Spectrum analyzer setup
-    spectrumAnalyzer.setSampleRate(audioProcessor.getSampleRate());
-    addAndMakeVisible(spectrumAnalyzer);
-    spectrumAnalyzer.setVisible(false);  // Hidden by default
-
-    spectrumButton.setButtonText("SPECTRUM");
-    spectrumButton.onClick = [this]()
-    {
-        bool showSpectrum = spectrumButton.getToggleState();
-        spectrumAnalyzer.setVisible(showSpectrum);
-
-        // Auto-resize window to accommodate spectrum analyzer
-        int baseHeight = 520;
-        int spectrumHeight = showSpectrum ? 150 : 0;
-        setSize(getWidth(), baseHeight + spectrumHeight);
-    };
-    addAndMakeVisible(spectrumButton);
-
-    // Pre/Post spectrum toggle
-    spectrumPrePostButton.setButtonText("PRE");
-    spectrumPrePostButton.setColour(juce::ToggleButton::textColourId, juce::Colours::white);
-    spectrumPrePostButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xff28a745));
-    addAndMakeVisible(spectrumPrePostButton);
-    spectrumPrePostAttachment = std::make_unique<ButtonAttachment>(
-        audioProcessor.parameters, "spectrum_prepost", spectrumPrePostButton);
-
     // Add tooltips to all controls for better UX
     hpfFreqSlider.setTooltip("High-Pass Filter Frequency (20Hz - 500Hz)");
     lpfFreqSlider.setTooltip("Low-Pass Filter Frequency (5kHz - 20kHz)");
@@ -191,9 +165,8 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
     eqTypeSelector.setTooltip("Brown: E-Series (musical, fixed Q) | Black: G-Series (surgical, variable Q)");
     presetSelector.setTooltip("Select factory preset");
-    oversamplingSelector.setTooltip("Oversampling: 2x or 4x for alias-free processing");
+    oversamplingSelector.setTooltip("Oversampling (2x/4x): Eliminates aliasing for cleaner high-frequency EQ, at the cost of increased CPU usage");
     bypassButton.setTooltip("Bypass all EQ processing");
-    spectrumButton.setTooltip("Toggle real-time spectrum analyzer display");
 
     // Start timer for UI updates
     startTimerHz(30);
@@ -306,10 +279,15 @@ void FourKEQEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // Preset selector in header (centered at top)
+    // Header controls - preset and oversampling selectors
     auto headerBounds = bounds.removeFromTop(60);
     int centerX = headerBounds.getCentreX();
-    presetSelector.setBounds(centerX - 100, 15, 200, 28);
+
+    // Preset selector (left of center)
+    presetSelector.setBounds(centerX - 210, 15, 200, 28);
+
+    // Oversampling selector (right of center)
+    oversamplingSelector.setBounds(centerX + 10, 15, 80, 28);
 
     bounds.reduce(15, 10);
 
@@ -421,41 +399,6 @@ void FourKEQEditor::resized()
     satBounds.removeFromTop(20);  // Space for label
     saturationSlider.setBounds(satBounds.withSizeKeepingCentre(65, 65));
 
-    masterSection.removeFromTop(10);  // Gap
-
-    // Oversampling
-    oversamplingSelector.setBounds(masterSection.removeFromTop(32).withSizeKeepingCentre(80, 28));
-
-    masterSection.removeFromTop(10);  // Gap
-
-    // Spectrum buttons
-    auto specButtonArea = masterSection.removeFromTop(30);
-    spectrumButton.setBounds(specButtonArea.removeFromLeft(80).withSizeKeepingCentre(80, 26));
-    spectrumPrePostButton.setBounds(specButtonArea.withSizeKeepingCentre(50, 26));
-
-    // Spectrum analyzer (below all controls if visible)
-    if (spectrumAnalyzer.isVisible())
-    {
-        auto specBounds = getLocalBounds();
-        specBounds.removeFromTop(60);  // Below header
-
-        // Start below the knobs - find the bottom of the deepest control section
-        int controlsBottom = 0;
-        controlsBottom = juce::jmax(controlsBottom, hpfFreqSlider.getBottom());
-        controlsBottom = juce::jmax(controlsBottom, lpfFreqSlider.getBottom());
-        controlsBottom = juce::jmax(controlsBottom, lfBellButton.getBottom());
-        controlsBottom = juce::jmax(controlsBottom, lmQSlider.getBottom());
-        controlsBottom = juce::jmax(controlsBottom, hmQSlider.getBottom());
-        controlsBottom = juce::jmax(controlsBottom, hfBellButton.getBottom());
-        controlsBottom = juce::jmax(controlsBottom, saturationSlider.getBottom());
-
-        // Position spectrum below controls with gap
-        specBounds.removeFromTop(controlsBottom - 60 + 15);  // +15 for gap
-        specBounds.removeFromBottom(10);  // Bottom margin
-        specBounds.reduce(10, 0);
-        spectrumAnalyzer.setBounds(specBounds);
-    }
-
     // Position labels manually below each knob
     auto positionLabel = [](juce::Label* label, const juce::Slider& slider, int yOffset = 5) {
         if (label && label->isVisible()) {
@@ -508,49 +451,6 @@ void FourKEQEditor::timerCallback()
         lastBypass = currentBypass;
     }
 
-    // Update spectrum analyzer sample rate if changed
-    double currentSampleRate = audioProcessor.getSampleRate();
-    if (currentSampleRate > 0.0 && currentSampleRate != lastSampleRate)
-    {
-        spectrumAnalyzer.setSampleRate(currentSampleRate);
-        lastSampleRate = currentSampleRate;
-    }
-
-    // Push audio data to spectrum analyzer (thread-safe)
-    // Use pre-EQ buffer if toggle is on, otherwise post-EQ (default)
-    if (spectrumAnalyzer.isVisible())
-    {
-        const juce::ScopedLock sl(audioProcessor.spectrumBufferLock);
-        bool usePreEQ = spectrumPrePostButton.getToggleState();
-        const auto& bufferToUse = usePreEQ ? audioProcessor.spectrumBufferPre
-                                           : audioProcessor.spectrumBuffer;
-        spectrumAnalyzer.pushBuffer(bufferToUse);
-
-        // Update EQ parameters for curve display
-        SpectrumAnalyzer::EQParams params;
-        params.hpfFreq = audioProcessor.parameters.getRawParameterValue("hpf_freq")->load();
-        params.lpfFreq = audioProcessor.parameters.getRawParameterValue("lpf_freq")->load();
-
-        params.lfGain = audioProcessor.parameters.getRawParameterValue("lf_gain")->load();
-        params.lfFreq = audioProcessor.parameters.getRawParameterValue("lf_freq")->load();
-        params.lfBell = audioProcessor.parameters.getRawParameterValue("lf_bell")->load() > 0.5f;
-
-        params.lmGain = audioProcessor.parameters.getRawParameterValue("lm_gain")->load();
-        params.lmFreq = audioProcessor.parameters.getRawParameterValue("lm_freq")->load();
-        params.lmQ = audioProcessor.parameters.getRawParameterValue("lm_q")->load();
-
-        params.hmGain = audioProcessor.parameters.getRawParameterValue("hm_gain")->load();
-        params.hmFreq = audioProcessor.parameters.getRawParameterValue("hm_freq")->load();
-        params.hmQ = audioProcessor.parameters.getRawParameterValue("hm_q")->load();
-
-        params.hfGain = audioProcessor.parameters.getRawParameterValue("hf_gain")->load();
-        params.hfFreq = audioProcessor.parameters.getRawParameterValue("hf_freq")->load();
-        params.hfBell = audioProcessor.parameters.getRawParameterValue("hf_bell")->load() > 0.5f;
-
-        params.bypass = bypassParam->load() > 0.5f;
-
-        spectrumAnalyzer.setEQParams(params);
-    }
 }
 
 //==============================================================================
