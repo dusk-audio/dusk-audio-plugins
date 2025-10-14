@@ -307,6 +307,10 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     lpfFilter.prepare(spec);
     lfFilter.prepare(spec);
     lmFilter.prepare(spec);
+
+    // Initialize SSL saturation with oversampled rate
+    sslSaturation.setSampleRate(spec.sampleRate);
+    sslSaturation.reset();
     hmFilter.prepare(spec);
     hfFilter.prepare(spec);
 
@@ -348,7 +352,35 @@ bool FourKEQ::isBusesLayoutSupported(const BusesLayout& layouts) const
 #endif
 
 //==============================================================================
-void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void FourKEQ::processBlock(juce::AudioBuffer<double>& buffer, juce::MidiBuffer& midiMessages)
+{
+    // For now, convert to float, process, and convert back
+    // This maintains compatibility while avoiding the virtual function hiding warning
+    juce::AudioBuffer<float> floatBuffer(buffer.getNumChannels(), buffer.getNumSamples());
+
+    // Copy double to float
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        const double* src = buffer.getReadPointer(ch);
+        float* dst = floatBuffer.getWritePointer(ch);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+            dst[i] = static_cast<float>(src[i]);
+    }
+
+    // Process as float
+    processBlock(floatBuffer, midiMessages);
+
+    // Copy float back to double
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        const float* src = floatBuffer.getReadPointer(ch);
+        double* dst = buffer.getWritePointer(ch);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+            dst[i] = static_cast<double>(src[i]);
+    }
+}
+
+void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/)
 {
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels = getTotalNumInputChannels();
@@ -394,7 +426,6 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
         float hfFreq = hfFreqParam ? hfFreqParam->load() : 8000.0f;
         float hfBell = hfBellParam ? hfBellParam->load() : 0.0f;
         float eqType = eqTypeParam ? eqTypeParam->load() : 0.0f;
-        float oversampling = oversamplingParam ? oversamplingParam->load() : 0.0f;
 
         // Store in temporary structure for updateFilters to use
         cachedParams.hpfFreq = hpfFreq;
@@ -472,27 +503,31 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& m
             // Apply HPF (3rd-order: 1st-order + 2nd-order stages = 18dB/oct)
             processSample = hpfFilter.processSample(processSample, useLeftFilter);
 
-            // Apply 4-band EQ with per-band saturation for SSL character
-            // Stage-specific nonlinearities model op-amp behavior in each EQ section
+            // Apply 4-band EQ with SSL-accurate saturation
+            // Only apply per-band saturation when boosting (SSL is clean when flat or cutting)
             processSample = lfFilter.processSample(processSample, useLeftFilter);
-            processSample = applyAnalogSaturation(processSample, lfSatDrive, true);
+            if (lfSatDrive > 0.01f)  // Only saturate when boosting
+                processSample = sslSaturation.processSample(processSample, lfSatDrive * 0.05f, useLeftFilter);
 
             processSample = lmFilter.processSample(processSample, useLeftFilter);
-            processSample = applyAnalogSaturation(processSample, lmSatDrive, true);
+            if (lmSatDrive > 0.01f)
+                processSample = sslSaturation.processSample(processSample, lmSatDrive * 0.05f, useLeftFilter);
 
             processSample = hmFilter.processSample(processSample, useLeftFilter);
-            processSample = applyAnalogSaturation(processSample, hmSatDrive, true);
+            if (hmSatDrive > 0.01f)
+                processSample = sslSaturation.processSample(processSample, hmSatDrive * 0.05f, useLeftFilter);
 
             processSample = hfFilter.processSample(processSample, useLeftFilter);
-            processSample = applyAnalogSaturation(processSample, hfSatDrive, true);
+            if (hfSatDrive > 0.01f)
+                processSample = sslSaturation.processSample(processSample, hfSatDrive * 0.05f, useLeftFilter);
 
             // Apply LPF
             processSample = lpfFilter.processSample(processSample, useLeftFilter);
 
-            // Apply saturation in the oversampled domain
-            float satAmount = saturationParam->load() * 0.01f;
-            if (satAmount > 0.0f)
-                processSample = applySaturation(processSample, satAmount);
+            // Apply global SSL saturation (user-controlled amount)
+            float satAmount = saturationParam->load() * 0.01f;  // 0-100% to 0.0-1.0
+            if (satAmount > 0.001f)
+                processSample = sslSaturation.processSample(processSample, satAmount, useLeftFilter);
 
             channelData[sample] = processSample;
         }
@@ -539,6 +574,14 @@ void FourKEQ::updateFilters()
 {
     // Optimized: Only update filters that have changed (per-band dirty flags)
     double oversampledRate = currentSampleRate * oversamplingFactor;
+
+    // Update SSL saturation console type based on EQ type
+    if (eqTypeParam)
+    {
+        bool isBlack = eqTypeParam->load() > 0.5f;
+        sslSaturation.setConsoleType(isBlack ? SSLSaturation::ConsoleType::GSeries
+                                              : SSLSaturation::ConsoleType::ESeries);
+    }
 
     if (hpfDirty.load())
     {
@@ -782,53 +825,7 @@ float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
     return juce::jlimit(0.5f, 8.0f, dynamicQ);
 }
 
-float FourKEQ::applySaturation(float sample, float amount) const
-{
-    // Analog-style saturation using asymmetric clipping to model op-amp behavior
-    // SSL consoles use NE5534 op-amps with characteristic asymmetric distortion
-    float drive = 1.0f + amount * 3.0f;  // More aggressive drive range
-
-    // Apply analog saturation model
-    float saturated = applyAnalogSaturation(sample, drive, true);
-
-    // Mix dry and wet signals based on amount
-    return sample * (1.0f - amount) + saturated * amount;
-}
-
-float FourKEQ::applyAnalogSaturation(float sample, float drive, bool isAsymmetric) const
-{
-    // SSL-style op-amp saturation model
-    // Based on asymmetric soft-clipping with different thresholds for positive/negative
-    float driven = sample * drive;
-
-    if (isAsymmetric)
-    {
-        // Asymmetric clipping: positive clips softer (NE5534 characteristic)
-        if (driven > 0.0f)
-        {
-            // Positive: softer knee, lower threshold
-            const float threshold = 0.7f;
-            if (driven < threshold)
-                return driven / drive;
-            else
-                return (threshold + std::tanh((driven - threshold) * 2.0f) * 0.3f) / drive;
-        }
-        else
-        {
-            // Negative: harder knee, higher threshold
-            const float threshold = -0.85f;
-            if (driven > threshold)
-                return driven / drive;
-            else
-                return (threshold + std::tanh((driven - threshold) * 1.5f) * 0.15f) / drive;
-        }
-    }
-    else
-    {
-        // Symmetric soft clipping (fallback)
-        return std::tanh(driven) / drive;
-    }
-}
+// Old saturation functions removed - now using SSLSaturation class for accurate modeling
 
 float FourKEQ::calculateAutoGainCompensation() const
 {
@@ -1033,7 +1030,7 @@ void FourKEQ::setStateInformation(const void* data, int sizeInBytes)
 //==============================================================================
 int FourKEQ::getNumPrograms()
 {
-    return 10;  // 9 factory presets + 1 user (default)
+    return 15;  // 14 factory presets + 1 user (default)
 }
 
 const juce::String FourKEQ::getProgramName(int index)
@@ -1048,7 +1045,12 @@ const juce::String FourKEQ::getProgramName(int index)
         "Telephone EQ",
         "Air & Silk",
         "Mix Bus Glue",
-        "Master Sheen"
+        "Master Sheen",
+        "Bass Guitar Polish",
+        "Drum Bus Punch",
+        "Acoustic Guitar",
+        "Piano Brilliance",
+        "Master Bus Sweetening"
     };
 
     if (index >= 0 && index < getNumPrograms())
@@ -1197,6 +1199,79 @@ void FourKEQ::loadFactoryPreset(int index)
             setParam("hf_gain", 1.5f);      // +1.5dB @ 16kHz (air)
             setParam("hf_freq", 16000.0f);  // 16kHz
             setParam("saturation", 10.0f);  // 10% saturation (subtle glue)
+            break;
+
+        case 10:  // Bass Guitar Polish - Definition and punch for bass guitar
+            setParam("lf_gain", 5.0f);      // +5dB @ 60Hz (fundamental)
+            setParam("lf_freq", 60.0f);     // 60Hz
+            setParam("lm_gain", -2.0f);     // -2dB @ 250Hz (reduce boxiness)
+            setParam("lm_freq", 250.0f);    // 250Hz
+            setParam("lm_q", 1.0f);         // Q=1.0
+            setParam("hm_gain", 4.0f);      // +4dB @ 800Hz (growl)
+            setParam("hm_freq", 800.0f);    // 800Hz
+            setParam("hm_q", 0.8f);         // Q=0.8
+            setParam("hf_gain", 2.0f);      // +2dB @ 3kHz (attack)
+            setParam("hf_freq", 3000.0f);   // 3kHz
+            setParam("hf_bell", 1.0f);      // Bell mode
+            setParam("hpf_freq", 35.0f);    // HPF @ 35Hz (tighten low end)
+            break;
+
+        case 11:  // Drum Bus Punch - Cohesive drum processing
+            setParam("lf_gain", 4.0f);      // +4dB @ 70Hz (kick weight)
+            setParam("lf_freq", 70.0f);     // 70Hz
+            setParam("lm_gain", -3.0f);     // -3dB @ 350Hz (clear boxiness)
+            setParam("lm_freq", 350.0f);    // 350Hz
+            setParam("lm_q", 0.6f);         // Q=0.6 (broad)
+            setParam("hm_gain", 3.0f);      // +3dB @ 3.5kHz (attack)
+            setParam("hm_freq", 3500.0f);   // 3.5kHz
+            setParam("hm_q", 1.0f);         // Q=1.0
+            setParam("hf_gain", 2.5f);      // +2.5dB @ 10kHz (cymbals)
+            setParam("hf_freq", 10000.0f);  // 10kHz
+            setParam("saturation", 25.0f);  // 25% saturation (glue)
+            setParam("eq_type", 1.0f);      // Black mode (more aggressive)
+            break;
+
+        case 12:  // Acoustic Guitar - Clarity and sparkle
+            setParam("lf_gain", -2.0f);     // -2dB @ 100Hz (reduce boom)
+            setParam("lf_freq", 100.0f);    // 100Hz
+            setParam("lm_gain", 2.0f);      // +2dB @ 200Hz (body)
+            setParam("lm_freq", 200.0f);    // 200Hz
+            setParam("lm_q", 0.7f);         // Q=0.7
+            setParam("hm_gain", 3.0f);      // +3dB @ 2.5kHz (presence)
+            setParam("hm_freq", 2500.0f);   // 2.5kHz
+            setParam("hm_q", 0.9f);         // Q=0.9
+            setParam("hf_gain", 4.0f);      // +4dB @ 12kHz (sparkle)
+            setParam("hf_freq", 12000.0f);  // 12kHz
+            setParam("hpf_freq", 80.0f);    // HPF @ 80Hz
+            break;
+
+        case 13:  // Piano Brilliance - Clarity and presence
+            setParam("lf_gain", 2.0f);      // +2dB @ 80Hz (warmth)
+            setParam("lf_freq", 80.0f);     // 80Hz
+            setParam("lm_gain", -2.5f);     // -2.5dB @ 500Hz (reduce muddiness)
+            setParam("lm_freq", 500.0f);    // 500Hz
+            setParam("lm_q", 0.8f);         // Q=0.8
+            setParam("hm_gain", 3.0f);      // +3dB @ 2kHz (presence)
+            setParam("hm_freq", 2000.0f);   // 2kHz
+            setParam("hm_q", 0.7f);         // Q=0.7
+            setParam("hf_gain", 3.5f);      // +3.5dB @ 8kHz (brilliance)
+            setParam("hf_freq", 8000.0f);   // 8kHz
+            setParam("hpf_freq", 30.0f);    // HPF @ 30Hz
+            break;
+
+        case 14:  // Master Bus Sweetening - Final polish for mastering
+            setParam("lf_gain", 1.0f);      // +1dB @ 50Hz (subtle warmth)
+            setParam("lf_freq", 50.0f);     // 50Hz
+            setParam("lm_gain", -1.0f);     // -1dB @ 600Hz (slight de-mud)
+            setParam("lm_freq", 600.0f);    // 600Hz
+            setParam("lm_q", 0.5f);         // Q=0.5 (very broad)
+            setParam("hm_gain", 0.5f);      // +0.5dB @ 4kHz (subtle presence)
+            setParam("hm_freq", 4000.0f);   // 4kHz
+            setParam("hm_q", 0.6f);         // Q=0.6
+            setParam("hf_gain", 1.5f);      // +1.5dB @ 15kHz (air)
+            setParam("hf_freq", 15000.0f);  // 15kHz
+            setParam("saturation", 15.0f);  // 15% saturation (cohesion)
+            setParam("output_gain", -0.5f); // -0.5dB output (headroom)
             break;
     }
 
