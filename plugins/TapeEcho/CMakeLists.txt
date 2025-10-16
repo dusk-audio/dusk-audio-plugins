@@ -9,9 +9,10 @@ juce_add_plugin(TapeEcho
     COMPANY_NAME "Luna Co. Audio"
     PLUGIN_MANUFACTURER_CODE Luna
     PLUGIN_CODE TpEc
-    FORMATS VST3 AU LV2
+    FORMATS VST3 Standalone
     PRODUCT_NAME "Vintage Tape Echo"
     BUNDLE_ID "com.lunaco.tapeecho"
+    LV2_URI "https://lunaco.audio/plugins/tapeecho"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -19,8 +20,6 @@ juce_add_plugin(TapeEcho
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
     VST3_CATEGORIES "Fx" "Delay" "Reverb"
-    AU_MAIN_TYPE "kAudioUnitType_Effect"
-    LV2_URI https://lunaco.audio/plugins/tapeecho
 )
 
 # Add source files

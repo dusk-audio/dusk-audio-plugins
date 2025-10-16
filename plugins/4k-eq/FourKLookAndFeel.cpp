@@ -95,21 +95,12 @@ void FourKLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wid
     // Small center dot
     g.setColour(juce::Colour(0xff1a1a1a));
     g.fillEllipse(centreX - 2, centreY - 2, 4, 4);
-
-    // Draw scale markings
-    drawScaleMarkings(g, centreX, centreY, radius, rotaryStartAngle, rotaryEndAngle);
-
-    // Draw value readout below knob
-    drawValueReadout(g, slider, x, y + height - 20, width, 20);
 }
 
 void FourKLookAndFeel::drawScaleMarkings(juce::Graphics& g, float cx, float cy, float radius,
                                        float startAngle, float endAngle)
 {
-    // Draw white tick marks around knob like SSL
-    g.setColour(juce::Colour(0xffffffff));
-
-    // Draw 11 main tick marks (0-10)
+    // Draw 11 main tick marks (0-10) with better visibility
     for (int i = 0; i <= 10; ++i)
     {
         auto tickAngle = startAngle + (i / 10.0f) * (endAngle - startAngle);
@@ -121,28 +112,44 @@ void FourKLookAndFeel::drawScaleMarkings(juce::Graphics& g, float cx, float cy, 
         auto endX = cx + tickEndRadius * std::cos(tickAngle);
         auto endY = cy + tickEndRadius * std::sin(tickAngle);
 
-        g.drawLine(startX, startY, endX, endY, 1.0f);
+        // Draw black shadow for contrast
+        g.setColour(juce::Colour(0xff000000));
+        g.drawLine(startX + 0.5f, startY + 0.5f, endX + 0.5f, endY + 0.5f, 1.5f);
+
+        // Draw bright white tick mark on top (thicker for visibility)
+        g.setColour(juce::Colour(0xffffffff));
+        g.drawLine(startX, startY, endX, endY, 1.5f);
     }
 
-    // Draw scale numbers at key positions with white text
-    g.setFont(juce::Font(juce::FontOptions(9.0f)));
-    g.setColour(juce::Colour(0xffffffff));
+    // Draw scale numbers at key positions with enhanced visibility
+    g.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
+
+    auto drawValueWithShadow = [&g](const juce::String& text, float x, float y, int w, int h)
+    {
+        // Draw dark shadow/outline for contrast
+        g.setColour(juce::Colour(0xff000000));
+        g.drawText(text, x - 10 + 1, y - 5 + 1, w, h, juce::Justification::centred);
+
+        // Draw bright white text on top
+        g.setColour(juce::Colour(0xffffffff));
+        g.drawText(text, x - 10, y - 5, w, h, juce::Justification::centred);
+    };
 
     // Min value (7 o'clock)
     auto minX = cx + (radius + 18) * std::cos(startAngle);
     auto minY = cy + (radius + 18) * std::sin(startAngle);
-    g.drawText("0", minX - 10, minY - 5, 20, 10, juce::Justification::centred);
+    drawValueWithShadow("0", minX, minY, 20, 12);
 
     // Center value (12 o'clock)
     auto centerAngle = (startAngle + endAngle) * 0.5f;
     auto centerX = cx + (radius + 18) * std::cos(centerAngle);
     auto centerY = cy + (radius + 18) * std::sin(centerAngle);
-    g.drawText("5", centerX - 10, centerY - 5, 20, 10, juce::Justification::centred);
+    drawValueWithShadow("5", centerX, centerY, 20, 12);
 
     // Max value (5 o'clock)
     auto maxX = cx + (radius + 18) * std::cos(endAngle);
     auto maxY = cy + (radius + 18) * std::sin(endAngle);
-    g.drawText("10", maxX - 10, maxY - 5, 20, 10, juce::Justification::centred);
+    drawValueWithShadow("10", maxX, maxY, 20, 12);
 }
 
 void FourKLookAndFeel::drawValueReadout(juce::Graphics& g, juce::Slider& slider,

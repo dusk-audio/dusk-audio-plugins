@@ -11,7 +11,6 @@ HarmonicGeneratorAudioProcessor::HarmonicGeneratorAudioProcessor()
 {
     // Get parameter pointers from APVTS for fast access during processing
     hardwareMode = apvts.getRawParameterValue("hardwareMode");
-    oversamplingSwitch = apvts.getRawParameterValue("oversampling");
     secondHarmonic = apvts.getRawParameterValue("secondHarmonic");
     thirdHarmonic = apvts.getRawParameterValue("thirdHarmonic");
     fourthHarmonic = apvts.getRawParameterValue("fourthHarmonic");
@@ -26,7 +25,7 @@ HarmonicGeneratorAudioProcessor::HarmonicGeneratorAudioProcessor()
     tone = apvts.getRawParameterValue("tone");
 
     // Validate all parameters are initialized - critical for release builds
-    if (!hardwareMode || !oversamplingSwitch || !secondHarmonic || !thirdHarmonic ||
+    if (!hardwareMode || !secondHarmonic || !thirdHarmonic ||
         !fourthHarmonic || !fifthHarmonic || !evenHarmonics ||
         !oddHarmonics || !warmth || !brightness || !drive ||
         !outputGain || !wetDryMix || !tone)
@@ -67,9 +66,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout HarmonicGeneratorAudioProces
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "hardwareMode", "Hardware Mode", hardwareModes, 0));
 
-    // Oversampling
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        "oversampling", "Oversampling", true));
+    // Note: 2x Oversampling is now always enabled to prevent aliasing
+    // No user control needed - quality is guaranteed
 
     // Harmonic controls (used in Custom mode)
     auto harmonicRange = juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f);
@@ -177,19 +175,12 @@ void HarmonicGeneratorAudioProcessor::processBlock(juce::AudioBuffer<float>& buf
 
     dryBuffer.makeCopyOf(buffer);
 
-    // Process with oversampling if enabled
-    if (oversamplingSwitch && oversamplingSwitch->load() > 0.5f)
-    {
-        juce::dsp::AudioBlock<float> block(buffer);
-        auto oversampledBlock = oversampling.processSamplesUp(block);
-        processHarmonics(oversampledBlock);
-        oversampling.processSamplesDown(block);
-    }
-    else
-    {
-        juce::dsp::AudioBlock<float> block(buffer);
-        processHarmonics(block);
-    }
+    // Always process with 2x oversampling to prevent aliasing
+    // Harmonic generation creates high-frequency content that requires oversampling
+    juce::dsp::AudioBlock<float> block(buffer);
+    auto oversampledBlock = oversampling.processSamplesUp(block);
+    processHarmonics(oversampledBlock);
+    oversampling.processSamplesDown(block);
 
     // Note: Drive, output gain, and mix are handled inside processHarmonics in both hardware and custom modes
     // generateHarmonics only performs harmonic generation (no drive/gain/mix processing)

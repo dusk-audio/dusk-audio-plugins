@@ -146,11 +146,8 @@ HarmonicGeneratorAudioProcessorEditor::HarmonicGeneratorAudioProcessorEditor(
     auto* brightnessParam = setupSlider(brightnessSlider, brightnessLabel, "Bright", "brightness");
     brightnessAttachment = std::make_unique<juce::SliderParameterAttachment>(*brightnessParam, brightnessSlider);
 
-    // Oversampling
-    oversamplingButton.setButtonText("2x Oversampling");
-    addAndMakeVisible(oversamplingButton);
-    oversamplingAttachment = std::make_unique<juce::ButtonParameterAttachment>(
-        *audioProcessor.apvts.getParameter("oversampling"), oversamplingButton);
+    // Note: 2x Oversampling is now always enabled (no UI control needed)
+    // This ensures alias-free harmonic generation at all times
 
     // Level meters
     addAndMakeVisible(inputMeter);
@@ -312,7 +309,7 @@ void HarmonicGeneratorAudioProcessorEditor::resized()
         brightnessSlider.setBounds(brightArea.reduced(10, 0));
     }
 
-    // Bottom area for meters and oversampling
+    // Bottom area for meters (oversampling always enabled)
     area.removeFromTop(10);
     auto bottomArea = area.removeFromBottom(80);
     bottomArea.reduce(20, 10);
@@ -321,8 +318,6 @@ void HarmonicGeneratorAudioProcessorEditor::resized()
     inputMeter.setBounds(meterArea.removeFromLeft(30));
     meterArea.removeFromLeft(10);
     outputMeter.setBounds(meterArea.removeFromLeft(30));
-    meterArea.removeFromLeft(20);
-    oversamplingButton.setBounds(meterArea);
 }
 
 void HarmonicGeneratorAudioProcessorEditor::timerCallback()

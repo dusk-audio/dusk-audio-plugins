@@ -56,7 +56,6 @@ private:
 
     // Parameter pointers (managed by APVTS, no manual deletion needed)
     std::atomic<float>* hardwareMode = nullptr;  // Hardware preset selector
-    std::atomic<float>* oversamplingSwitch = nullptr;
     std::atomic<float>* secondHarmonic = nullptr;
     std::atomic<float>* thirdHarmonic = nullptr;
     std::atomic<float>* fourthHarmonic = nullptr;
