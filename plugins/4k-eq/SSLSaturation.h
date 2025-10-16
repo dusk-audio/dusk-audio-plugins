@@ -81,9 +81,8 @@ public:
         output = processDCBlocker(output, isLeftChannel);
 
         // Mix with dry signal based on drive amount
-        // At low drive levels, SSL should be essentially transparent
-        // Only blend in saturation when really pushed
-        float wetMix = juce::jlimit(0.0f, 0.7f, drive * drive * 1.5f);  // Squared = needs more drive
+        // At 100% drive, use 100% wet for maximum saturation effect
+        float wetMix = juce::jlimit(0.0f, 1.0f, drive * 1.4f);  // Linear ramp, full wet at high drive
         return input * (1.0f - wetMix) + output * wetMix;
     }
 
@@ -104,7 +103,8 @@ private:
     {
         // SSL transformers are very linear at normal levels
         // Only apply saturation when driven hard (above ~0dB)
-        const float transformerDrive = 1.0f + drive * 8.0f;  // Higher multiplier = needs more drive
+        // Reduced multiplier for better anti-aliasing at high drive levels
+        const float transformerDrive = 1.0f + drive * 4.0f;  // Gentler for alias-free processing
         float driven = input * transformerDrive;
 
         // Transformer saturation using modified Jiles-Atherton approximation
@@ -135,19 +135,29 @@ private:
             saturated = (driven > 0.0f) ? compressed : -compressed;
         }
 
-        // Add very subtle asymmetry for even-harmonic content
-        // Only at high levels where transformer actually saturates
-        if (abs_x > 0.9f)
+        // Add console-specific harmonic coloration
+        // SSL transformers are very linear until driven moderately hard
+        // E-Series saturates earlier than G-Series (more colored)
+        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.45f;
+
+        if (abs_x > threshold)
         {
+            // Scale harmonic generation based on how hard we're driving
+            float saturationAmount = (abs_x - threshold) / (1.2f - threshold);
+            saturationAmount = juce::jlimit(0.0f, 1.0f, saturationAmount);
+
             if (consoleType == ConsoleType::ESeries)
             {
-                // E-Series: More asymmetry = more 2nd harmonic
-                saturated += saturated * saturated * 0.03f;
+                // E-Series (Brown): 2nd harmonic DOMINANT (E-Series signature)
+                // Must be strong enough that 2nd > 3rd at all drive levels
+                saturated += saturated * saturated * (0.12f * saturationAmount);
             }
             else
             {
-                // G-Series: Less transformer coloration
-                saturated += saturated * saturated * 0.015f;
+                // G-Series (Black): 3rd harmonic DOMINANT (G-Series signature)
+                // Black is ~2x cleaner overall, 3rd harmonic is the key differentiator
+                saturated += saturated * saturated * (0.02f * saturationAmount);  // 2nd harmonic
+                saturated += saturated * saturated * saturated * (0.10f * saturationAmount);  // 3rd harmonic DOMINANT
             }
         }
 
@@ -163,8 +173,9 @@ private:
         // NE5534 has different characteristics than generic op-amps
         // SSL designs keep op-amps in linear region at normal levels
         // THD only becomes measurable when driven very hot
+        // Reduced multiplier for better anti-aliasing at high drive levels
 
-        const float opAmpDrive = 1.0f + drive * 10.0f;  // Much higher = needs more drive
+        const float opAmpDrive = 1.0f + drive * 5.0f;  // Gentler for alias-free processing
         float driven = input * opAmpDrive;
 
         // NE5534 specific characteristics:
@@ -219,18 +230,28 @@ private:
             }
         }
 
-        // Console-specific harmonic shaping - only when saturating
-        if (std::abs(driven) > 1.0f)
+        // Console-specific harmonic shaping - SSL op-amps are very linear until driven hard
+        // E-Series saturates earlier than G-Series (more colored)
+        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.45f;
+
+        if (std::abs(driven) > threshold)
         {
+            // Scale harmonic generation based on drive level
+            float saturationAmount = (std::abs(driven) - threshold) / (1.5f - threshold);
+            saturationAmount = juce::jlimit(0.0f, 1.0f, saturationAmount);
+
             if (consoleType == ConsoleType::ESeries)
             {
-                // E-Series: Emphasize 2nd harmonic, warmer sound
-                output += output * output * std::copysign(0.025f, output);
+                // E-Series: 2nd harmonic DOMINANT (E-Series signature)
+                // Must be strong enough that 2nd > 3rd at all drive levels
+                output += output * output * std::copysign(0.10f * saturationAmount, output);
             }
             else
             {
-                // G-Series: More neutral, slight emphasis on 3rd harmonic
-                output += output * output * output * 0.015f;
+                // G-Series: 3rd harmonic DOMINANT over 2nd (G-Series signature)
+                // Black is ~2x cleaner overall, 3rd harmonic is the distinguishing feature
+                output += output * output * std::copysign(0.02f * saturationAmount, output);  // 2nd harmonic
+                output += output * output * output * (0.10f * saturationAmount);  // 3rd harmonic DOMINANT
             }
         }
 

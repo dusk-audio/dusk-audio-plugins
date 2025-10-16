@@ -82,6 +82,7 @@ FourKEQ::FourKEQ()
     oversamplingParam = parameters.getRawParameterValue("oversampling");
     msModeParam = parameters.getRawParameterValue("ms_mode");
     spectrumPrePostParam = parameters.getRawParameterValue("spectrum_prepost");
+    autoGainParam = parameters.getRawParameterValue("auto_gain");
 
     // Assert all parameters are valid (keeps for debug builds)
     jassert(hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
@@ -150,8 +151,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lf_freq", "LF Frequency",
-        // Brown: typically 30-450Hz, Black: slightly extended
-        juce::NormalisableRange<float>(20.0f, 600.0f, 1.0f, 0.3f),
+        // SSL Hardware: 30-480Hz (both Brown E and Black G series)
+        juce::NormalisableRange<float>(30.0f, 480.0f, 1.0f, 0.3f),
         100.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "lf_bell", "LF Bell Mode", false));
@@ -167,7 +168,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         600.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lm_q", "LM Q",
-        juce::NormalisableRange<float>(0.5f, 5.0f, 0.01f),
+        // SSL Hardware: Typical Q range 0.4-4.0 (realistic for both Brown and Black)
+        juce::NormalisableRange<float>(0.4f, 4.0f, 0.01f),
         0.7f));
 
     // High-mid band
@@ -182,7 +184,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         2000.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hm_q", "HM Q",
-        juce::NormalisableRange<float>(0.4f, 5.0f, 0.01f),  // Wider range for both modes
+        // SSL Hardware: Typical Q range 0.4-4.0 (realistic for both Brown and Black)
+        juce::NormalisableRange<float>(0.4f, 4.0f, 0.01f),
         0.7f));
 
     // High frequency band
@@ -192,7 +195,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hf_freq", "HF Frequency",
-        juce::NormalisableRange<float>(1500.0f, 20000.0f, 1.0f, 0.3f),
+        // SSL Hardware: Brown E = 3kHz-16kHz, Black G = 1.5kHz-16kHz (using 1.5kHz for flexibility)
+        juce::NormalisableRange<float>(1500.0f, 16000.0f, 1.0f, 0.3f),
         8000.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "hf_bell", "HF Bell Mode", false));
@@ -209,7 +213,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "saturation", "Saturation",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f),
-        20.0f, "%"));
+        0.0f, "%"));  // SSL is clean by default - only saturates when driven
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "oversampling", "Oversampling", juce::StringArray("2x", "4x"), 0));
 
@@ -220,6 +224,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
     // Spectrum Pre/Post Toggle
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "spectrum_prepost", "Spectrum Pre/Post", false));  // false = post-EQ (default)
+
+    // Auto-Gain Compensation
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "auto_gain", "Auto Gain Compensation", true));  // Enable by default for transparent workflow
 
     return { params.begin(), params.end() };
 }
@@ -267,14 +275,15 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     if (needsRecreate)
     {
-        // Initialize oversampling
+        // Initialize oversampling with high-quality FIR filters for better anti-aliasing
+        // FIR equiripple provides superior alias rejection compared to IIR, essential for aggressive saturation
         oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
             getTotalNumInputChannels(), 1,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
 
         oversampler4x = std::make_unique<juce::dsp::Oversampling<float>>(
             getTotalNumInputChannels(), 2,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
 
         oversampler2x->initProcessing(samplesPerBlock);
         oversampler4x->initProcessing(samplesPerBlock);
@@ -503,23 +512,12 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
             // Apply HPF (3rd-order: 1st-order + 2nd-order stages = 18dB/oct)
             processSample = hpfFilter.processSample(processSample, useLeftFilter);
 
-            // Apply 4-band EQ with SSL-accurate saturation
-            // Only apply per-band saturation when boosting (SSL is clean when flat or cutting)
+            // Apply 4-band EQ (no per-band saturation - removed for SSL accuracy)
+            // Real SSL console saturation is from the channel strip, not individual EQ bands
             processSample = lfFilter.processSample(processSample, useLeftFilter);
-            if (lfSatDrive > 0.01f)  // Only saturate when boosting
-                processSample = sslSaturation.processSample(processSample, lfSatDrive * 0.05f, useLeftFilter);
-
             processSample = lmFilter.processSample(processSample, useLeftFilter);
-            if (lmSatDrive > 0.01f)
-                processSample = sslSaturation.processSample(processSample, lmSatDrive * 0.05f, useLeftFilter);
-
             processSample = hmFilter.processSample(processSample, useLeftFilter);
-            if (hmSatDrive > 0.01f)
-                processSample = sslSaturation.processSample(processSample, hmSatDrive * 0.05f, useLeftFilter);
-
             processSample = hfFilter.processSample(processSample, useLeftFilter);
-            if (hfSatDrive > 0.01f)
-                processSample = sslSaturation.processSample(processSample, hfSatDrive * 0.05f, useLeftFilter);
 
             // Apply LPF
             processSample = lpfFilter.processSample(processSample, useLeftFilter);
@@ -553,11 +551,18 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         }
     }
 
-    // Apply output gain with auto-compensation
+    // Apply output gain with optional auto-compensation
     if (outputGainParam)
     {
         float outputGainValue = outputGainParam->load();
-        float autoCompensation = calculateAutoGainCompensation();
+
+        // Apply auto-gain compensation only if enabled
+        float autoCompensation = 1.0f;
+        if (autoGainParam && autoGainParam->load() > 0.5f)
+        {
+            autoCompensation = calculateAutoGainCompensation();
+        }
+
         float totalGain = juce::Decibels::decibelsToGain(outputGainValue) * autoCompensation;
         buffer.applyGain(totalGain);
     }
@@ -1122,10 +1127,10 @@ void FourKEQ::loadFactoryPreset(int index)
             setParam("hpf_freq", 80.0f);    // HPF @ 80Hz
             break;
 
-        case 2:  // Kick Tighten - Punch without mud
-            setParam("lf_gain", 6.0f);      // +6dB @ 50Hz (thump)
+        case 2:  // Kick Punch - Punch without mud (SSL-authentic settings)
+            setParam("lf_gain", 4.0f);      // +4dB @ 50Hz (punchy but controlled)
             setParam("lf_freq", 50.0f);     // 50Hz
-            setParam("lm_gain", -4.0f);     // -4dB @ 200Hz (tighten)
+            setParam("lm_gain", -2.5f);     // -2.5dB @ 200Hz (gentler tightening)
             setParam("lm_freq", 200.0f);    // 200Hz
             setParam("lm_q", 0.8f);         // Q=0.8 (broad)
             setParam("hm_gain", 3.0f);      // +3dB @ 2kHz (attack)
@@ -1163,8 +1168,8 @@ void FourKEQ::loadFactoryPreset(int index)
             setParam("hm_gain", -2.0f);     // -2dB @ 2.5kHz (smooth)
             setParam("hm_freq", 2500.0f);   // 2.5kHz
             setParam("hm_q", 0.8f);         // Q=0.8 (gentle)
-            setParam("hf_gain", 3.0f);      // +3dB @ 12kHz (sheen)
-            setParam("hf_freq", 12000.0f);  // 12kHz
+            setParam("hf_gain", 2.5f);      // +2.5dB @ 10kHz (polish, not too bright)
+            setParam("hf_freq", 10000.0f);  // 10kHz
             setParam("saturation", 20.0f);  // 20% saturation (glue)
             break;
 
@@ -1184,12 +1189,12 @@ void FourKEQ::loadFactoryPreset(int index)
             setParam("hf_freq", 15000.0f);  // 15kHz
             break;
 
-        case 8:  // Glue Bus - Very subtle cohesion
-            setParam("lf_gain", 1.5f);      // +1.5dB @ 100Hz
+        case 8:  // Glue Bus - Subtle cohesion (SSL-authentic glue settings)
+            setParam("lf_gain", 2.0f);      // +2dB @ 100Hz (more audible warmth)
             setParam("hm_gain", -1.5f);     // -1.5dB @ 3kHz
             setParam("hm_freq", 3000.0f);   // 3kHz
             setParam("hf_gain", 2.0f);      // +2dB @ 10kHz
-            setParam("saturation", 30.0f);  // 30% saturation
+            setParam("saturation", 20.0f);  // 20% saturation (balanced glue)
             break;
 
         case 9:  // Master Sheen - Polished top-end sparkle for mastering
@@ -1207,11 +1212,11 @@ void FourKEQ::loadFactoryPreset(int index)
             setParam("lm_gain", -2.0f);     // -2dB @ 250Hz (reduce boxiness)
             setParam("lm_freq", 250.0f);    // 250Hz
             setParam("lm_q", 1.0f);         // Q=1.0
-            setParam("hm_gain", 4.0f);      // +4dB @ 800Hz (growl)
-            setParam("hm_freq", 800.0f);    // 800Hz
+            setParam("hm_gain", 3.0f);      // +3dB @ 1.2kHz (actual growl/grind)
+            setParam("hm_freq", 1200.0f);   // 1.2kHz (growl sweet spot)
             setParam("hm_q", 0.8f);         // Q=0.8
-            setParam("hf_gain", 2.0f);      // +2dB @ 3kHz (attack)
-            setParam("hf_freq", 3000.0f);   // 3kHz
+            setParam("hf_gain", 2.0f);      // +2dB @ 4.5kHz (string attack/definition)
+            setParam("hf_freq", 4500.0f);   // 4.5kHz
             setParam("hf_bell", 1.0f);      // Bell mode
             setParam("hpf_freq", 35.0f);    // HPF @ 35Hz (tighten low end)
             break;

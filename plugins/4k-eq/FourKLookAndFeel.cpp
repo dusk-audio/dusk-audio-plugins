@@ -321,7 +321,7 @@ void FourKLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bo
 
 juce::Font FourKLookAndFeel::getComboBoxFont(juce::ComboBox&)
 {
-    return juce::Font(juce::FontOptions(14.0f).withStyle("Bold"));
+    return juce::Font(juce::FontOptions(16.0f).withStyle("Bold"));  // Larger for better readability
 }
 
 juce::Font FourKLookAndFeel::getLabelFont(juce::Label&)

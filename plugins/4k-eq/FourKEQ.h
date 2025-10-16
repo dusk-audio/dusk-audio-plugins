@@ -217,6 +217,7 @@ private:
     std::atomic<float>* oversamplingParam = nullptr; // 0 = 2x, 1 = 4x
     std::atomic<float>* msModeParam = nullptr;  // M/S processing
     std::atomic<float>* spectrumPrePostParam = nullptr;  // 0 = post-EQ, 1 = pre-EQ
+    std::atomic<float>* autoGainParam = nullptr;  // Auto-gain compensation toggle
 
     // Safe parameter accessors with fallback defaults
     inline float safeGetParam(std::atomic<float>* param, float defaultValue) const
@@ -262,12 +263,6 @@ private:
     std::atomic<bool> lmDirty{true};
     std::atomic<bool> hmDirty{true};
     std::atomic<bool> hfDirty{true};
-
-    // Per-band saturation drives (subtle for SSL character)
-    static constexpr float lfSatDrive = 1.05f;   // Low shelf - gentle warmth
-    static constexpr float lmSatDrive = 1.10f;   // Low-mid - moderate color
-    static constexpr float hmSatDrive = 1.15f;   // High-mid - more aggressive (G-series)
-    static constexpr float hfSatDrive = 1.08f;   // High shelf - controlled brightness
 
     // Preset management
     int currentPreset = 0;

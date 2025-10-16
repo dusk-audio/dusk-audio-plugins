@@ -60,6 +60,7 @@ private:
     juce::ComboBox eqTypeSelector;
     juce::ComboBox presetSelector;
     juce::ToggleButton bypassButton;
+    juce::ToggleButton autoGainButton;  // Auto-gain compensation toggle
     juce::Slider outputGainSlider;
     juce::Slider saturationSlider;
     juce::ComboBox oversamplingSelector;
@@ -111,6 +112,7 @@ private:
 
     std::unique_ptr<ComboBoxAttachment> eqTypeAttachment;
     std::unique_ptr<ButtonAttachment> bypassAttachment;
+    std::unique_ptr<ButtonAttachment> autoGainAttachment;  // Auto-gain toggle
     std::unique_ptr<SliderAttachment> outputGainAttachment;
     std::unique_ptr<SliderAttachment> saturationAttachment;
     std::unique_ptr<ComboBoxAttachment> oversamplingAttachment;

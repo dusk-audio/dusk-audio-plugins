@@ -88,10 +88,15 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
         audioProcessor.parameters, "hf_bell", hfBellButton);
 
     // Master Section
-    setupButton(bypassButton, "IN");
+    setupButton(bypassButton, "BYPASS");
     bypassButton.setClickingTogglesState(true);
     bypassAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.parameters, "bypass", bypassButton);
+
+    setupButton(autoGainButton, "AUTO GAIN");
+    autoGainButton.setClickingTogglesState(true);
+    autoGainAttachment = std::make_unique<ButtonAttachment>(
+        audioProcessor.parameters, "auto_gain", autoGainButton);
 
     setupKnob(outputGainSlider, "output_gain", "OUTPUT", true);
     outputGainAttachment = std::make_unique<SliderAttachment>(
@@ -140,18 +145,8 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     oversamplingAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "oversampling", oversamplingSelector);
 
-    // Setup section labels (positioned to left of knob groups)
-    auto setupSectionLabel = [this](juce::Label& label, const juce::String& text) {
-        label.setText(text, juce::dontSendNotification);
-        label.setJustificationType(juce::Justification::centredLeft);
-        label.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
-        label.setColour(juce::Label::textColourId, juce::Colour(0xffb0b0b0));
-        label.setInterceptsMouseClicks(false, false);
-        addAndMakeVisible(label);
-    };
-
-    setupSectionLabel(filtersLabel, "FILTERS");
-    // Band labels removed - section headers at top are sufficient
+    // Section labels removed - section headers at top are sufficient
+    // (FILTERS, LF, LMF, HMF, HF labels not needed)
 
     // Setup parameter labels (small text below each knob like SSL)
     auto setupParamLabel = [this](juce::Label& label, const juce::String& text) {
@@ -163,29 +158,21 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
         addAndMakeVisible(label);
     };
 
-    // Filter labels (actual parameter ranges)
-    setupParamLabel(hpfLabel, "20-500Hz");
-    setupParamLabel(lpfLabel, "3k-20k");
+    // Frequency range labels removed - tick marks now show all frequencies
+    // Adding functional labels for all knobs
 
-    // LF band labels (actual parameter ranges)
+    setupParamLabel(hpfLabel, "HPF");
+    setupParamLabel(lpfLabel, "LPF");
     setupParamLabel(lfGainLabel, "GAIN");
-    setupParamLabel(lfFreqLabel, "20-600Hz");
-
-    // LMF band labels
+    setupParamLabel(lfFreqLabel, "FREQ");
     setupParamLabel(lmGainLabel, "GAIN");
-    setupParamLabel(lmFreqLabel, "200Hz-2.5k");
+    setupParamLabel(lmFreqLabel, "FREQ");
     setupParamLabel(lmQLabel, "Q");
-
-    // HMF band labels
     setupParamLabel(hmGainLabel, "GAIN");
-    setupParamLabel(hmFreqLabel, "600Hz-7k");
+    setupParamLabel(hmFreqLabel, "FREQ");
     setupParamLabel(hmQLabel, "Q");
-
-    // HF band labels (actual parameter range)
     setupParamLabel(hfGainLabel, "GAIN");
-    setupParamLabel(hfFreqLabel, "1.5k-20k");
-
-    // Master section labels
+    setupParamLabel(hfFreqLabel, "FREQ");
     setupParamLabel(outputLabel, "OUTPUT");
     setupParamLabel(satLabel, "DRIVE");
 
@@ -216,6 +203,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     presetSelector.setTooltip("Select factory preset");
     oversamplingSelector.setTooltip("Oversampling (2x/4x): Eliminates aliasing for cleaner high-frequency EQ, at the cost of increased CPU usage");
     bypassButton.setTooltip("Bypass all EQ processing");
+    autoGainButton.setTooltip("Auto Gain Compensation: Automatically adjusts output to maintain consistent loudness when boosting/cutting");
 
     // Start timer for UI updates
     startTimerHz(30);
@@ -347,79 +335,81 @@ void FourKEQEditor::resized()
     // HPF
     auto hpfBounds = filterSection.removeFromTop(160);  // Space for knob + labels
     hpfBounds.removeFromTop(5);  // Small gap from section label
-    hpfFreqSlider.setBounds(hpfBounds.withSizeKeepingCentre(100, 100));  // Room for tick marks & value
+    hpfFreqSlider.setBounds(hpfBounds.withSizeKeepingCentre(70, 70));  // Same size as OUTPUT/DRIVE
 
     // LPF
     auto lpfBounds = filterSection.removeFromTop(160);  // Space for knob + labels
     lpfBounds.removeFromTop(5);  // Small gap
-    lpfFreqSlider.setBounds(lpfBounds.withSizeKeepingCentre(100, 100));  // Room for tick marks & value
+    lpfFreqSlider.setBounds(lpfBounds.withSizeKeepingCentre(70, 70));  // Same size as OUTPUT/DRIVE
 
     bounds.removeFromLeft(15);  // Gap
 
     // LF Band
-    auto lfSection = bounds.removeFromLeft(120);
+    auto lfSection = bounds.removeFromLeft(132);  // Match section header width
     lfSection.removeFromTop(35);  // Section label space
 
     auto lfGainBounds = lfSection.removeFromTop(130);  // Space for knob + labels
     lfGainBounds.removeFromTop(5);  // Small gap
-    lfGainSlider.setBounds(lfGainBounds.withSizeKeepingCentre(85, 85));  // Compact but room for tick marks
+    lfGainSlider.setBounds(lfGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     auto lfFreqBounds = lfSection.removeFromTop(130);  // Space for knob + labels
-    lfFreqBounds.removeFromTop(5);  // Small gap
-    lfFreqSlider.setBounds(lfFreqBounds.withSizeKeepingCentre(85, 85));  // Compact but room for tick marks
+    lfFreqBounds.removeFromTop(30);  // More space below GAIN label
+    lfFreqSlider.setBounds(lfFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
+    lfSection.removeFromTop(10);  // Extra space below FREQ label
     lfBellButton.setBounds(lfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
 
-    bounds.removeFromLeft(12);
+    bounds.removeFromLeft(2);  // Just the divider width
 
     // LMF Band
-    auto lmSection = bounds.removeFromLeft(120);
+    auto lmSection = bounds.removeFromLeft(132);  // Match section header width
     lmSection.removeFromTop(35);  // Section label space
 
     auto lmGainBounds = lmSection.removeFromTop(130);  // Increased for value readout space
-    lmGainBounds.removeFromTop(20);  // Space for label
-    lmGainSlider.setBounds(lmGainBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    lmGainBounds.removeFromTop(5);  // Space for label - aligned with LF
+    lmGainSlider.setBounds(lmGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     auto lmFreqBounds = lmSection.removeFromTop(130);  // Increased for value readout space
-    lmFreqBounds.removeFromTop(20);  // Space for label
-    lmFreqSlider.setBounds(lmFreqBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    lmFreqBounds.removeFromTop(30);  // More space below GAIN label
+    lmFreqSlider.setBounds(lmFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     auto lmQBounds = lmSection.removeFromTop(130);  // Increased for value readout space
-    lmQBounds.removeFromTop(20);  // Space for label
-    lmQSlider.setBounds(lmQBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    lmQBounds.removeFromTop(30);  // More space below FREQ label
+    lmQSlider.setBounds(lmQBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
-    bounds.removeFromLeft(12);
+    bounds.removeFromLeft(2);  // Just the divider width
 
     // HMF Band
-    auto hmSection = bounds.removeFromLeft(120);
+    auto hmSection = bounds.removeFromLeft(132);  // Match section header width
     hmSection.removeFromTop(35);  // Section label space
 
     auto hmGainBounds = hmSection.removeFromTop(130);  // Increased for value readout space
-    hmGainBounds.removeFromTop(20);  // Space for label
-    hmGainSlider.setBounds(hmGainBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    hmGainBounds.removeFromTop(5);  // Space for label - aligned with LF
+    hmGainSlider.setBounds(hmGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     auto hmFreqBounds = hmSection.removeFromTop(130);  // Increased for value readout space
-    hmFreqBounds.removeFromTop(20);  // Space for label
-    hmFreqSlider.setBounds(hmFreqBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    hmFreqBounds.removeFromTop(30);  // More space below GAIN label
+    hmFreqSlider.setBounds(hmFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     auto hmQBounds = hmSection.removeFromTop(130);  // Increased for value readout space
-    hmQBounds.removeFromTop(20);  // Space for label
-    hmQSlider.setBounds(hmQBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    hmQBounds.removeFromTop(30);  // More space below FREQ label
+    hmQSlider.setBounds(hmQBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
-    bounds.removeFromLeft(12);
+    bounds.removeFromLeft(2);  // Just the divider width
 
     // HF Band
-    auto hfSection = bounds.removeFromLeft(120);
+    auto hfSection = bounds.removeFromLeft(132);  // Match section header width
     hfSection.removeFromTop(35);  // Section label space
 
     auto hfGainBounds = hfSection.removeFromTop(130);  // Increased for value readout space
-    hfGainBounds.removeFromTop(20);  // Space for label
-    hfGainSlider.setBounds(hfGainBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    hfGainBounds.removeFromTop(5);  // Space for label - aligned with LF
+    hfGainSlider.setBounds(hfGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     auto hfFreqBounds = hfSection.removeFromTop(130);  // Increased for value readout space
-    hfFreqBounds.removeFromTop(20);  // Space for label
-    hfFreqSlider.setBounds(hfFreqBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    hfFreqBounds.removeFromTop(30);  // More space below GAIN label
+    hfFreqSlider.setBounds(hfFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
+    hfSection.removeFromTop(10);  // Extra space below FREQ label
     hfBellButton.setBounds(hfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
 
     bounds.removeFromLeft(12);
@@ -436,22 +426,26 @@ void FourKEQEditor::resized()
     // Bypass button
     bypassButton.setBounds(masterSection.removeFromTop(35).withSizeKeepingCentre(80, 30));
 
-    masterSection.removeFromTop(10);  // Gap
+    masterSection.removeFromTop(5);  // Small gap
+
+    // Auto-gain button
+    autoGainButton.setBounds(masterSection.removeFromTop(35).withSizeKeepingCentre(80, 30));
+
+    masterSection.removeFromTop(5);  // Small gap
 
     // Output gain
     auto outputBounds = masterSection.removeFromTop(130);  // Increased for value readout space
     outputBounds.removeFromTop(20);  // Space for label
-    outputGainSlider.setBounds(outputBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    outputGainSlider.setBounds(outputBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     // Saturation
     auto satBounds = masterSection.removeFromTop(130);  // Increased for value readout space
     satBounds.removeFromTop(20);  // Space for label
-    saturationSlider.setBounds(satBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
+    saturationSlider.setBounds(satBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
 
     // Position section labels
-    // FILTERS label - positioned vertically between HPF and LPF
-    auto filtersMidY = (hpfFreqSlider.getY() + lpfFreqSlider.getY() + lpfFreqSlider.getHeight()) / 2;
-    filtersLabel.setBounds(10, filtersMidY - 10, 60, 20);
+    // FILTERS label removed - section header at top is sufficient
+    // filtersLabel.setBounds(10, filtersMidY - 10, 60, 20);
 
     // Band labels (LF, LMF, HMF, HF) removed - section headers are sufficient
 
@@ -460,13 +454,27 @@ void FourKEQEditor::resized()
     auto positionLabelBelow = [](juce::Label& label, const juce::Slider& slider) {
         int labelWidth = 50;
         int labelHeight = 18;
-        int yOffset = slider.getHeight() / 2 + 5;  // Position below knob
+        // Position closer to the knob, just below tick marks (about 45 pixels from center)
+        int yOffset = slider.getHeight() / 2 + 45;
         label.setBounds(slider.getX() + (slider.getWidth() - labelWidth) / 2,
                        slider.getY() + yOffset,
                        labelWidth, labelHeight);
     };
 
-    // Filter labels
+    // Helper for master section labels (OUTPUT/DRIVE) - positioned even closer
+    auto positionLabelCloser = [](juce::Label& label, const juce::Slider& slider) {
+        int labelWidth = 60;  // Slightly wider for OUTPUT
+        int labelHeight = 18;
+        // Position very close to the knob (about 38 pixels from center)
+        int yOffset = slider.getHeight() / 2 + 38;
+        label.setBounds(slider.getX() + (slider.getWidth() - labelWidth) / 2,
+                       slider.getY() + yOffset,
+                       labelWidth, labelHeight);
+    };
+
+    // Position all functional labels below knobs
+
+    // Filter section
     positionLabelBelow(hpfLabel, hpfFreqSlider);
     positionLabelBelow(lpfLabel, lpfFreqSlider);
 
@@ -488,9 +496,9 @@ void FourKEQEditor::resized()
     positionLabelBelow(hfGainLabel, hfGainSlider);
     positionLabelBelow(hfFreqLabel, hfFreqSlider);
 
-    // Master section
-    positionLabelBelow(outputLabel, outputGainSlider);
-    positionLabelBelow(satLabel, saturationSlider);
+    // Master section - positioned closer to knobs
+    positionLabelCloser(outputLabel, outputGainSlider);
+    positionLabelCloser(satLabel, saturationSlider);
 }
 
 void FourKEQEditor::timerCallback()
@@ -599,45 +607,56 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
         auto center = knobBounds.getCentre().toFloat();
         float radius = knobBounds.getWidth() / 2.0f + 3.0f;
 
-        // Rotation range: 1.25π to 2.75π (270° sweep)
-        float startAngle = juce::MathConstants<float>::pi * 1.25f;
-        float endAngle = juce::MathConstants<float>::pi * 2.75f;
-        float totalRange = endAngle - startAngle;
+        // Rotation range: 1.25π to 2.75π (270° sweep from 7 o'clock to 5 o'clock)
+        // IMPORTANT: These angles match the rotaryParameters set in setupKnob()
+        float startAngle = juce::MathConstants<float>::pi * 1.25f;  // 225° = 7 o'clock
+        float endAngle = juce::MathConstants<float>::pi * 2.75f;    // 495° = 5 o'clock
+        float totalRange = endAngle - startAngle;  // 270° total sweep
 
         int numTicks = values.size();
 
         for (int i = 0; i < numTicks; ++i)
         {
+            // Calculate normalized position (0.0 to 1.0) for this tick
             float normalizedPos = static_cast<float>(i) / (numTicks - 1);
+
+            // Calculate the angle for this tick position
+            // This matches how JUCE's rotary slider calculates its rotation angle
             float angle = startAngle + totalRange * normalizedPos;
 
-            // Longer tick for center position
+            // IMPORTANT: The knob pointer is drawn with an implicit -90° offset (pointing up at angle=0)
+            // So we need to subtract π/2 from our tick mark angles to match the pointer's coordinate system
+            float tickAngle = angle - juce::MathConstants<float>::halfPi;
+
+            // Longer tick for center position (for center-detented knobs)
             bool isCenterTick = showCenterDot && (i == numTicks / 2);
             float tickLength = isCenterTick ? 5.0f : 3.0f;
 
-            // Draw tick mark
+            // Draw tick mark using adjusted angle that matches the knob pointer's coordinate system
             g.setColour(isCenterTick ? juce::Colour(0xff909090) : juce::Colour(0xff606060));
-            float x1 = center.x + std::cos(angle) * radius;
-            float y1 = center.y + std::sin(angle) * radius;
-            float x2 = center.x + std::cos(angle) * (radius + tickLength);
-            float y2 = center.y + std::sin(angle) * (radius + tickLength);
+            float x1 = center.x + std::cos(tickAngle) * radius;
+            float y1 = center.y + std::sin(tickAngle) * radius;
+            float x2 = center.x + std::cos(tickAngle) * (radius + tickLength);
+            float y2 = center.y + std::sin(tickAngle) * (radius + tickLength);
             g.drawLine(x1, y1, x2, y2, isCenterTick ? 1.5f : 1.0f);
 
-            // Draw value label at key positions (start, middle, end)
-            if (!values[i].isEmpty() && (i == 0 || i == numTicks / 2 || i == numTicks - 1))
+            // Draw value label at all positions with non-empty values
+            if (!values[i].isEmpty())
             {
-                g.setFont(juce::Font(juce::FontOptions(8.0f)));
-                g.setColour(juce::Colour(0xff808080));
+                g.setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));  // Larger, bold for readability
 
-                float labelRadius = radius + tickLength + 8.0f;
-                float labelX = center.x + std::cos(angle) * labelRadius;
-                float labelY = center.y + std::sin(angle) * labelRadius;
+                float labelRadius = radius + tickLength + 10.0f;  // More space from knob
+                // Use the same adjusted angle for label positioning
+                float labelX = center.x + std::cos(tickAngle) * labelRadius;
+                float labelY = center.y + std::sin(tickAngle) * labelRadius;
 
-                // Draw label with shadow for contrast
+                // Draw label with dark shadow for strong contrast
                 g.setColour(juce::Colour(0xff000000));
-                g.drawText(values[i], labelX - 15 + 1, labelY - 6 + 1, 30, 12, juce::Justification::centred);
-                g.setColour(juce::Colour(0xff909090));
-                g.drawText(values[i], labelX - 15, labelY - 6, 30, 12, juce::Justification::centred);
+                g.drawText(values[i], labelX - 18 + 1, labelY - 7 + 1, 36, 14, juce::Justification::centred);
+
+                // Draw bright label on top (much brighter than before)
+                g.setColour(juce::Colour(0xffd0d0d0));  // Brighter grey, almost white
+                g.drawText(values[i], labelX - 18, labelY - 7, 36, 14, juce::Justification::centred);
             }
         }
     };
@@ -646,27 +665,27 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
     // Gain knobs: -20 to +20 dB (center at 0 dB)
     std::vector<juce::String> gainValues = {"-20", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+20"};
 
-    // LF Frequency: 20-600 Hz (actual range from FourKEQ.cpp line 154)
-    std::vector<juce::String> lfFreqValues = {"20", "", "", "", "", "", "200", "", "", "", "", "", "", "600", ""};
+    // LF Frequency: 30, 50, 100, 200, 300, 400, 480 Hz
+    std::vector<juce::String> lfFreqValues = {"30", "50", "100", "200", "300", "400", "480"};
 
-    // LMF Frequency: 200Hz - 2.5kHz (actual range from line 166)
-    std::vector<juce::String> lmfFreqValues = {"200", "", "", "", "", "800", "", "", "", "", "", "2.5k", "", "", ""};
+    // LMF Frequency: 200, 300, 800, 1k, 1.5k, 2k, 2.5k Hz
+    std::vector<juce::String> lmfFreqValues = {"200", "300", "800", "1k", "1.5k", "2k", "2.5k"};
 
-    // HMF Frequency: 600Hz - 7kHz (actual range from line 181)
-    std::vector<juce::String> hmfFreqValues = {"600", "", "", "", "", "2k", "", "", "", "", "", "7k", "", "", ""};
+    // HMF Frequency: 600, 800, 1.5k, 3k, 4.5k, 6k, 7k Hz
+    std::vector<juce::String> hmfFreqValues = {"600", "800", "1.5k", "3k", "4.5k", "6k", "7k"};
 
-    // HF Frequency: 1.5kHz - 20kHz (actual range from line 195)
-    std::vector<juce::String> hfFreqValues = {"1.5k", "", "", "", "", "", "8k", "", "", "", "", "", "", "20k", ""};
+    // HF Frequency: 1.5k, 2k, 5k, 8k, 10k, 14k, 16k Hz
+    std::vector<juce::String> hfFreqValues = {"1.5k", "2k", "5k", "8k", "10k", "14k", "16k"};
 
-    // Q values: LM is 0.5-5.0 (line 170), HM is 0.4-5.0 (line 185)
-    std::vector<juce::String> lmQValues = {"0.5", "", "", "", "", "", "2.5", "", "", "", "", "", "", "5.0", ""};
-    std::vector<juce::String> hmQValues = {"0.4", "", "", "", "", "", "2.5", "", "", "", "", "", "", "5.0", ""};
+    // Q values: 0.4-4.0 (SSL hardware realistic range)
+    std::vector<juce::String> lmQValues = {"4", "3", "2", "1.5", "1", ".5", ".4"};
+    std::vector<juce::String> hmQValues = {"4", "3", "2", "1.5", "1", ".5", ".4"};
 
-    // HPF: 20-500 Hz (actual range from line 134)
-    std::vector<juce::String> hpfValues = {"20", "", "", "", "", "200", "", "", "", "", "", "", "500", "", ""};
+    // HPF: 16, 20, 70, 120, 200, 300, 350 Hz
+    std::vector<juce::String> hpfValues = {"16", "20", "70", "120", "200", "300", "350"};
 
-    // LPF: 3k-20k Hz (actual range from line 140)
-    std::vector<juce::String> lpfValues = {"3k", "", "", "", "", "", "10k", "", "", "", "", "", "", "20k", ""};
+    // LPF: 22k, 12k, 8k, 5k, 4k, 3.5k, 3k Hz
+    std::vector<juce::String> lpfValues = {"22k", "12k", "8k", "5k", "4k", "3.5k", "3k"};
 
     // Draw tick marks with values for each knob
     drawTicksWithValues(hpfFreqSlider.getBounds(), hpfValues, false);
@@ -690,7 +709,7 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
     std::vector<juce::String> outputGainValues = {"-12", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+12"};
     drawTicksWithValues(outputGainSlider.getBounds(), outputGainValues, true);
 
-    // Saturation: 0-100% (actual range from line 211)
-    std::vector<juce::String> satValues = {"0", "", "", "", "", "", "", "50", "", "", "", "", "", "", "100"};
+    // Saturation (DRIVE): 0-100% in increments of 10
+    std::vector<juce::String> satValues = {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"};
     drawTicksWithValues(saturationSlider.getBounds(), satValues, false);
 }
