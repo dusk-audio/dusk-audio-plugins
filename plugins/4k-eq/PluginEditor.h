@@ -32,35 +32,29 @@ private:
 
     // HPF Section
     juce::Slider hpfFreqSlider;
-    juce::Label hpfLabel;
 
     // LPF Section
     juce::Slider lpfFreqSlider;
-    juce::Label lpfLabel;
 
     // LF Band
     juce::Slider lfGainSlider;
     juce::Slider lfFreqSlider;
     juce::ToggleButton lfBellButton;
-    juce::Label lfLabel;
 
     // LM Band
     juce::Slider lmGainSlider;
     juce::Slider lmFreqSlider;
     juce::Slider lmQSlider;
-    juce::Label lmLabel;
 
     // HM Band
     juce::Slider hmGainSlider;
     juce::Slider hmFreqSlider;
     juce::Slider hmQSlider;
-    juce::Label hmLabel;
 
     // HF Band
     juce::Slider hfGainSlider;
     juce::Slider hfFreqSlider;
     juce::ToggleButton hfBellButton;
-    juce::Label hfLabel;
 
     // Global Controls
     juce::ComboBox eqTypeSelector;
@@ -79,8 +73,16 @@ private:
     float lastBypass = -1.0f;
     double lastSampleRate = 0.0;
 
-    // Label storage
-    std::vector<std::unique_ptr<juce::Label>> knobLabels;
+    // Section labels (LF, LMF, HMF, HF, FILTERS)
+    juce::Label filtersLabel, lfLabel, lmfLabel, hmfLabel, hfLabel;
+
+    // Parameter labels for each knob (positioned near knobs like SSL)
+    juce::Label hpfLabel, lpfLabel;  // Filter labels
+    juce::Label lfGainLabel, lfFreqLabel;  // LF band
+    juce::Label lmGainLabel, lmFreqLabel, lmQLabel;  // LMF band
+    juce::Label hmGainLabel, hmFreqLabel, hmQLabel;  // HMF band
+    juce::Label hfGainLabel, hfFreqLabel;  // HF band
+    juce::Label outputLabel, satLabel;  // Master section
 
     // Attachment classes for parameter binding
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;

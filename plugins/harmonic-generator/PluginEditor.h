@@ -72,9 +72,6 @@ private:
     juce::Label warmthLabel;
     juce::Label brightnessLabel;
 
-    // Oversampling switch
-    juce::ToggleButton oversamplingButton;
-
     // Visual displays
     LevelMeter inputMeter;
     LevelMeter outputMeter;
@@ -85,7 +82,6 @@ private:
     std::unique_ptr<juce::SliderParameterAttachment> outputGainAttachment;
     std::unique_ptr<juce::SliderParameterAttachment> mixAttachment;
     std::unique_ptr<juce::SliderParameterAttachment> toneAttachment;
-    std::unique_ptr<juce::ButtonParameterAttachment> oversamplingAttachment;
 
     // Custom mode attachments
     std::unique_ptr<juce::SliderParameterAttachment> secondHarmonicAttachment;
