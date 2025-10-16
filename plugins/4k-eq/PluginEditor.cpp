@@ -151,10 +151,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     };
 
     setupSectionLabel(filtersLabel, "FILTERS");
-    setupSectionLabel(lfLabel, "LF");
-    setupSectionLabel(lmfLabel, "LMF");
-    setupSectionLabel(hmfLabel, "HMF");
-    setupSectionLabel(hfLabel, "HF");
+    // Band labels removed - section headers at top are sufficient
 
     // Setup parameter labels (small text below each knob like SSL)
     auto setupParamLabel = [this](juce::Label& label, const juce::String& text) {
@@ -166,13 +163,13 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
         addAndMakeVisible(label);
     };
 
-    // Filter labels (SSL shows Hz ranges)
+    // Filter labels (actual parameter ranges)
     setupParamLabel(hpfLabel, "20-500Hz");
-    setupParamLabel(lpfLabel, "5k-20k");
+    setupParamLabel(lpfLabel, "3k-20k");
 
-    // LF band labels (SSL shows parameter name and range)
+    // LF band labels (actual parameter ranges)
     setupParamLabel(lfGainLabel, "GAIN");
-    setupParamLabel(lfFreqLabel, "30-450Hz");
+    setupParamLabel(lfFreqLabel, "20-600Hz");
 
     // LMF band labels
     setupParamLabel(lmGainLabel, "GAIN");
@@ -184,9 +181,9 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     setupParamLabel(hmFreqLabel, "600Hz-7k");
     setupParamLabel(hmQLabel, "Q");
 
-    // HF band labels
+    // HF band labels (actual parameter range)
     setupParamLabel(hfGainLabel, "GAIN");
-    setupParamLabel(hfFreqLabel, "3k-20kHz");
+    setupParamLabel(hfFreqLabel, "1.5k-20k");
 
     // Master section labels
     setupParamLabel(outputLabel, "OUTPUT");
@@ -451,22 +448,12 @@ void FourKEQEditor::resized()
     satBounds.removeFromTop(20);  // Space for label
     saturationSlider.setBounds(satBounds.withSizeKeepingCentre(85, 85));  // Larger to include tick labels
 
-    // Position section labels to the left of each knob group
+    // Position section labels
     // FILTERS label - positioned vertically between HPF and LPF
     auto filtersMidY = (hpfFreqSlider.getY() + lpfFreqSlider.getY() + lpfFreqSlider.getHeight()) / 2;
     filtersLabel.setBounds(10, filtersMidY - 10, 60, 20);
 
-    // LF label - positioned to left of LF gain knob
-    lfLabel.setBounds(lfGainSlider.getX() - 35, lfGainSlider.getY() + 30, 30, 20);
-
-    // LMF label - positioned to left of LM gain knob
-    lmfLabel.setBounds(lmGainSlider.getX() - 40, lmGainSlider.getY() + 30, 35, 20);
-
-    // HMF label - positioned to left of HM gain knob
-    hmfLabel.setBounds(hmGainSlider.getX() - 40, hmGainSlider.getY() + 30, 35, 20);
-
-    // HF label - positioned to left of HF gain knob
-    hfLabel.setBounds(hfGainSlider.getX() - 35, hfGainSlider.getY() + 30, 30, 20);
+    // Band labels (LF, LMF, HMF, HF) removed - section headers are sufficient
 
     // Position parameter labels below each knob (SSL style)
     // Helper to position a label centered below a knob
@@ -655,29 +642,31 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
         }
     };
 
-    // Gain knobs: -15 to +15 dB
-    std::vector<juce::String> gainValues = {"-15", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+15"};
+    // ACTUAL PARAMETER RANGES (must match FourKEQ.cpp parameter definitions)
+    // Gain knobs: -20 to +20 dB (center at 0 dB)
+    std::vector<juce::String> gainValues = {"-20", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+20"};
 
-    // LF Frequency: 30-450 Hz
-    std::vector<juce::String> lfFreqValues = {"30", "", "", "", "", "", "200", "", "", "", "", "", "", "450", ""};
+    // LF Frequency: 20-600 Hz (actual range from FourKEQ.cpp line 154)
+    std::vector<juce::String> lfFreqValues = {"20", "", "", "", "", "", "200", "", "", "", "", "", "", "600", ""};
 
-    // LMF Frequency: 200Hz - 2.5kHz
+    // LMF Frequency: 200Hz - 2.5kHz (actual range from line 166)
     std::vector<juce::String> lmfFreqValues = {"200", "", "", "", "", "800", "", "", "", "", "", "2.5k", "", "", ""};
 
-    // HMF Frequency: 600Hz - 7kHz
+    // HMF Frequency: 600Hz - 7kHz (actual range from line 181)
     std::vector<juce::String> hmfFreqValues = {"600", "", "", "", "", "2k", "", "", "", "", "", "7k", "", "", ""};
 
-    // HF Frequency: 3kHz - 20kHz
-    std::vector<juce::String> hfFreqValues = {"3k", "", "", "", "", "", "10k", "", "", "", "", "", "", "20k", ""};
+    // HF Frequency: 1.5kHz - 20kHz (actual range from line 195)
+    std::vector<juce::String> hfFreqValues = {"1.5k", "", "", "", "", "", "8k", "", "", "", "", "", "", "20k", ""};
 
-    // Q values: 0.4 - 4.0
-    std::vector<juce::String> qValues = {"0.4", "", "", "", "", "", "2.0", "", "", "", "", "", "", "4.0", ""};
+    // Q values: LM is 0.5-5.0 (line 170), HM is 0.4-5.0 (line 185)
+    std::vector<juce::String> lmQValues = {"0.5", "", "", "", "", "", "2.5", "", "", "", "", "", "", "5.0", ""};
+    std::vector<juce::String> hmQValues = {"0.4", "", "", "", "", "", "2.5", "", "", "", "", "", "", "5.0", ""};
 
-    // HPF: 20-500 Hz
+    // HPF: 20-500 Hz (actual range from line 134)
     std::vector<juce::String> hpfValues = {"20", "", "", "", "", "200", "", "", "", "", "", "", "500", "", ""};
 
-    // LPF: 5k-20k Hz
-    std::vector<juce::String> lpfValues = {"5k", "", "", "", "", "", "12k", "", "", "", "", "", "", "20k", ""};
+    // LPF: 3k-20k Hz (actual range from line 140)
+    std::vector<juce::String> lpfValues = {"3k", "", "", "", "", "", "10k", "", "", "", "", "", "", "20k", ""};
 
     // Draw tick marks with values for each knob
     drawTicksWithValues(hpfFreqSlider.getBounds(), hpfValues, false);
@@ -688,20 +677,20 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
 
     drawTicksWithValues(lmGainSlider.getBounds(), gainValues, true);
     drawTicksWithValues(lmFreqSlider.getBounds(), lmfFreqValues, false);
-    drawTicksWithValues(lmQSlider.getBounds(), qValues, false);
+    drawTicksWithValues(lmQSlider.getBounds(), lmQValues, false);
 
     drawTicksWithValues(hmGainSlider.getBounds(), gainValues, true);
     drawTicksWithValues(hmFreqSlider.getBounds(), hmfFreqValues, false);
-    drawTicksWithValues(hmQSlider.getBounds(), qValues, false);
+    drawTicksWithValues(hmQSlider.getBounds(), hmQValues, false);
 
     drawTicksWithValues(hfGainSlider.getBounds(), gainValues, true);
     drawTicksWithValues(hfFreqSlider.getBounds(), hfFreqValues, false);
 
-    // Master section - Output gain: -18 to +18 dB
-    std::vector<juce::String> outputGainValues = {"-18", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+18"};
+    // Master section - Output gain: -12 to +12 dB (actual range from line 207)
+    std::vector<juce::String> outputGainValues = {"-12", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+12"};
     drawTicksWithValues(outputGainSlider.getBounds(), outputGainValues, true);
 
-    // Saturation: 0-100%
+    // Saturation: 0-100% (actual range from line 211)
     std::vector<juce::String> satValues = {"0", "", "", "", "", "", "", "50", "", "", "", "", "", "", "100"};
     drawTicksWithValues(saturationSlider.getBounds(), satValues, false);
 }
