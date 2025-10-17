@@ -137,8 +137,15 @@ private:
 
         // Add console-specific harmonic coloration
         // SSL transformers are very linear until driven moderately hard
-        // E-Series saturates earlier than G-Series (more colored)
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.45f;
+        //
+        // DESIGN DECISION: Threshold difference dominates harmonic behavior
+        // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
+        // G-Series (0.05 threshold): Subtle harmonics across entire drive range
+        //
+        // At low-to-moderate drive (0.1-0.5), G-Series produces MORE total harmonic
+        // content due to much lower threshold, despite smaller coefficients.
+        // E-Series delivers stronger saturation punch when driven hard (>0.6).
+        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
 
         if (abs_x > threshold)
         {
@@ -149,15 +156,15 @@ private:
             if (consoleType == ConsoleType::ESeries)
             {
                 // E-Series (Brown): 2nd harmonic DOMINANT (E-Series signature)
-                // Must be strong enough that 2nd > 3rd at all drive levels
+                // High threshold (0.6) + strong coefficients = clean low-end, saturated highs
                 saturated += saturated * saturated * (0.12f * saturationAmount);
             }
             else
             {
                 // G-Series (Black): 3rd harmonic DOMINANT (G-Series signature)
-                // Black is ~2x cleaner overall, 3rd harmonic is the key differentiator
-                saturated += saturated * saturated * (0.02f * saturationAmount);  // 2nd harmonic
-                saturated += saturated * saturated * saturated * (0.10f * saturationAmount);  // 3rd harmonic DOMINANT
+                // Low threshold (0.05) + subtle coefficients = gentle coloration throughout
+                saturated += saturated * saturated * (0.025f * saturationAmount);  // 2nd harmonic (subtle)
+                saturated += saturated * saturated * saturated * (0.050f * saturationAmount);  // 3rd harmonic DOMINANT
             }
         }
 
@@ -231,8 +238,15 @@ private:
         }
 
         // Console-specific harmonic shaping - SSL op-amps are very linear until driven hard
-        // E-Series saturates earlier than G-Series (more colored)
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.45f;
+        //
+        // DESIGN DECISION: Threshold difference dominates harmonic behavior
+        // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
+        // G-Series (0.05 threshold): Subtle harmonics across entire drive range
+        //
+        // At low-to-moderate drive (0.1-0.5), G-Series produces MORE total harmonic
+        // content due to much lower threshold, despite smaller coefficients.
+        // E-Series delivers stronger saturation punch when driven hard (>0.6).
+        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
 
         if (std::abs(driven) > threshold)
         {
@@ -243,15 +257,15 @@ private:
             if (consoleType == ConsoleType::ESeries)
             {
                 // E-Series: 2nd harmonic DOMINANT (E-Series signature)
-                // Must be strong enough that 2nd > 3rd at all drive levels
+                // High threshold (0.6) + strong coefficients = clean low-end, saturated highs
                 output += output * output * std::copysign(0.10f * saturationAmount, output);
             }
             else
             {
                 // G-Series: 3rd harmonic DOMINANT over 2nd (G-Series signature)
-                // Black is ~2x cleaner overall, 3rd harmonic is the distinguishing feature
-                output += output * output * std::copysign(0.02f * saturationAmount, output);  // 2nd harmonic
-                output += output * output * output * (0.10f * saturationAmount);  // 3rd harmonic DOMINANT
+                // Low threshold (0.05) + subtle coefficients = gentle coloration throughout
+                output += output * output * std::copysign(0.022f * saturationAmount, output);  // 2nd harmonic (subtle)
+                output += output * output * output * (0.040f * saturationAmount);  // 3rd harmonic DOMINANT
             }
         }
 
