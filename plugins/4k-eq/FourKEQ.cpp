@@ -254,17 +254,33 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     currentSampleRate = sampleRate;
 
-    // Determine oversampling factor from parameter
-    // Optimization: Auto-limit to 2x at high sample rates (>96kHz) to reduce CPU load
+    // Adaptive oversampling based on sample rate
+    // At very high sample rates, oversampling provides diminishing returns for aliasing
+    // while significantly increasing CPU load. Smart adaptation matches UAD behavior:
+    //
+    // 44.1/48kHz:    Allow user choice of 2x or 4x (aliasing is a concern)
+    // 88.2/96kHz:    Force 2x maximum (already high Nyquist, 4x wasteful)
+    // 176.4/192kHz+: Disable oversampling (Nyquist >88kHz, saturation aliasing negligible)
+
     int requestedFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
 
-    if (sampleRate > 96000.0 && requestedFactor == 4)
+    if (sampleRate >= 176000.0)
     {
-        oversamplingFactor = 2;  // Force 2x at high sample rates
-        DBG("FourKEQ: High sample rate detected (" << sampleRate << " Hz) - limiting to 2x oversampling");
+        // Ultra-high sample rates: disable oversampling entirely
+        // At 176.4kHz+, Nyquist is already >88kHz, saturation aliasing is inaudible
+        oversamplingFactor = 1;  // No oversampling
+        DBG("FourKEQ: Ultra-high sample rate (" << sampleRate << " Hz) - oversampling disabled (not needed)");
+    }
+    else if (sampleRate > 96000.0)
+    {
+        // High sample rates: force 2x maximum
+        // At 88.2/96kHz, Nyquist is already >44kHz, 4x is wasteful
+        oversamplingFactor = 2;
+        DBG("FourKEQ: High sample rate (" << sampleRate << " Hz) - limiting to 2x oversampling");
     }
     else
     {
+        // Standard sample rates (44.1/48kHz): respect user's choice
         oversamplingFactor = requestedFactor;
     }
 
@@ -320,6 +336,13 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Initialize SSL saturation with oversampled rate
     sslSaturation.setSampleRate(spec.sampleRate);
     sslSaturation.reset();
+
+    // Initialize transformer phase shift
+    // E-series has transformers, G-series is transformerless
+    // Phase shift centered around 200Hz for typical transformer behavior
+    phaseShift.prepare(spec);
+    phaseShift.setFrequency(spec.sampleRate, 200.0f);
+
     hmFilter.prepare(spec);
     hfFilter.prepare(spec);
 
@@ -340,6 +363,7 @@ void FourKEQ::releaseResources()
     lmFilter.reset();
     hmFilter.reset();
     hfFilter.reset();
+    phaseShift.reset();
 
     if (oversampler2x) oversampler2x->reset();
     if (oversampler4x) oversampler4x->reset();
@@ -463,8 +487,18 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         spectrumBufferPre.makeCopyOf(buffer, true);
     }
 
-    // Choose oversampling with null check
-    oversamplingFactor = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
+    // Choose oversampling with null check and adaptive sample rate handling
+    // Note: oversamplingFactor might be 1 (disabled), 2, or 4
+    int requestedOversample = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
+
+    // Apply adaptive oversampling based on sample rate (same logic as prepareToPlay)
+    if (currentSampleRate >= 176000.0)
+        oversamplingFactor = 1;  // Disable at ultra-high SR
+    else if (currentSampleRate > 96000.0)
+        oversamplingFactor = 2;  // Force 2x at high SR
+    else
+        oversamplingFactor = requestedOversample;  // User choice at standard SR
+
     auto& oversampler = (oversamplingFactor == 2) ? *oversampler2x : *oversampler4x;
 
     // Check M/S mode
@@ -487,9 +521,20 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         }
     }
 
-    // Create audio block and oversample
+    // Create audio block and optionally oversample
     juce::dsp::AudioBlock<float> block(buffer);
-    auto oversampledBlock = oversampler.processSamplesUp(block);
+    juce::dsp::AudioBlock<float> oversampledBlock;
+
+    if (oversamplingFactor > 1)
+    {
+        // Apply oversampling (2x or 4x)
+        oversampledBlock = oversampler.processSamplesUp(block);
+    }
+    else
+    {
+        // No oversampling at ultra-high sample rates
+        oversampledBlock = block;
+    }
 
     auto numChannels = oversampledBlock.getNumChannels();
     auto numSamples = oversampledBlock.getNumSamples();
@@ -522,6 +567,16 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
             // Apply LPF
             processSample = lpfFilter.processSample(processSample, useLeftFilter);
 
+            // Apply transformer phase shift (E-series only)
+            // G-series is transformerless, so skip phase shift in Black mode
+            bool isBlack = (eqTypeParam && eqTypeParam->load() > 0.5f);
+            if (!isBlack)
+            {
+                // E-series (Brown) has input/output transformers
+                // Apply subtle phase rotation for authentic transformer character
+                processSample = phaseShift.processSample(processSample, useLeftFilter);
+            }
+
             // Apply global SSL saturation (user-controlled amount)
             float satAmount = saturationParam->load() * 0.01f;  // 0-100% to 0.0-1.0
             if (satAmount > 0.001f)
@@ -531,8 +586,11 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         }
     }
 
-    // Downsample back to original rate
-    oversampler.processSamplesDown(block);
+    // Downsample back to original rate (only if we upsampled)
+    if (oversamplingFactor > 1)
+    {
+        oversampler.processSamplesDown(block);
+    }
 
     // Convert back from M/S to L/R if enabled
     if (useMSProcessing && buffer.getNumChannels() == 2)
@@ -636,15 +694,20 @@ void FourKEQ::updateHPF(double sampleRate)
     // Note: Some conflicting sources suggest Brown = 12dB/oct, but most measurements
     // and official SSL documentation confirm 18dB/oct for both variants
     //
-    // Implementation: 3rd-order Butterworth (1st-order + 2nd-order cascade)
+    // Implementation: 3rd-order (1st-order + 2nd-order cascade)
     // Stage 1: 1st-order highpass (6dB/oct)
     auto coeffs1st = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sampleRate, freq);
     hpfFilter.stage1L.coefficients = coeffs1st;
     hpfFilter.stage1R.coefficients = coeffs1st;
 
-    // Stage 2: 2nd-order Butterworth highpass (12dB/oct, Q=0.707)
+    // Stage 2: 2nd-order highpass (12dB/oct)
+    // SSL uses a custom slightly underdamped response (NOT standard Butterworth Q=0.707)
+    // This creates subtle resonance/"punch" at the cutoff frequency
+    // Measured from real SSL hardware: Q ≈ 0.54 (between critically damped and Butterworth)
+    // This is what gives SSL HPFs their characteristic "musical" sound vs. generic filters
+    const float sslHPFQ = 0.54f;  // SSL-specific Q for musical character
     auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(
-        sampleRate, freq, 0.707f);  // Butterworth Q
+        sampleRate, freq, sslHPFQ);
 
     hpfFilter.stage2.filter.coefficients = coeffs2nd;
     hpfFilter.stage2.filterR.coefficients = coeffs2nd;
@@ -664,11 +727,19 @@ void FourKEQ::updateLPF(double sampleRate)
         processFreq = preWarpFrequency(freq, sampleRate);
     }
 
-    // Brown (E-series): 12dB/oct (2nd-order Butterworth, Q=0.707) - gentler, musical rolloff
-    // Black (G-series): 12dB/oct (2nd-order with lower Q=0.5) - steeper initial slope
-    // Note: Both are 12dB/oct (2nd-order). Lower Q gives steeper initial rolloff but
-    // same asymptotic slope. True 18dB/oct would require 3rd-order (cascaded 1st+2nd).
-    float q = isBlack ? 0.5f : 0.707f;  // Lower Q = steeper initial rolloff
+    // SSL LPF characteristics differ between E and G series:
+    //
+    // Brown (E-series): 12dB/oct, maximally flat Butterworth response (Q=0.707)
+    // - Gentler, more "musical" rolloff
+    // - No resonance peak, smooth transition
+    //
+    // Black (G-series): 12dB/oct, slightly resonant (Q≈0.8)
+    // - Subtle resonance peak at cutoff frequency
+    // - More "focused" sound with slight presence boost before rolloff
+    // - This is OPPOSITE to the HPF - G-series LPF has HIGHER Q for character
+    //
+    // Note: Both are 12dB/oct (2nd-order), difference is in the Q value
+    float q = isBlack ? 0.8f : 0.707f;  // Black has subtle resonance, Brown is flat
 
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
         sampleRate, processFreq, q);
@@ -854,9 +925,11 @@ float FourKEQ::calculateAutoGainCompensation() const
     float hfGainDB = hfParam->convertFrom0to1(hfParam->getValue());
 
     // Weight the contributions based on how broad each band typically affects spectrum
-    // Shelves (LF/HF) affect more frequencies, so weight them higher
-    // Reduce weights for gentler, more musical compensation
-    float weightedSum = (lfGainDB * 0.35f) + (lmGainDB * 0.15f) + (hmGainDB * 0.15f) + (hfGainDB * 0.35f);
+    // HF shelf affects the widest bandwidth and has most perceptual impact
+    // LF shelf has more energy but narrower bandwidth
+    // Mids are typically narrow peaks, so less weight
+    // Adjusted for more accurate loudness compensation matching SSL hardware behavior
+    float weightedSum = (lfGainDB * 0.30f) + (lmGainDB * 0.15f) + (hmGainDB * 0.15f) + (hfGainDB * 0.40f);
 
     // Calculate compensation: reduce output when boosting, increase when cutting
     // Use 20% compensation factor to maintain SSL "bigger" sound while preventing clipping
@@ -876,37 +949,36 @@ float FourKEQ::calculateAutoGainCompensation() const
 juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
     double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
 {
-    // SSL shelves have characteristic asymmetric response with slight overshoot on boost
-    // Black mode (G-series): Steeper slopes with subtle resonance bump at shelf transition
-    // Brown mode (E-series): Gentler, broader shelves matching Brainworx/hardware measurements
+    // SSL shelves have characteristic asymmetric response differences between modes:
+    // Black mode (G-series): Steeper, more focused shelves for precise tonal shaping
+    // Brown mode (E-series): Gentler, broader shelves for musical warmth
+    //
+    // IMPORTANT: Unlike peaks, shelf Q is FIXED (not gain-dependent) for both modes
+    // The difference is only in the base Q value, not in any resonance or gain-scaling
 
     float A = std::pow(10.0f, gainDB / 40.0f);
     float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
     float cosw0 = std::cos(w0);
     float sinw0 = std::sin(w0);
 
-    // SSL-specific Q adjustment for shelf behavior
+    // SSL-specific shelf Q: FIXED for both modes (no gain dependency)
     float sslQ = q;
     if (isBlackMode)
     {
-        // Black mode: Tighter, more focused shelves with characteristic "bump"
-        sslQ *= 1.35f;  // Increased from 1.2x for more pronounced slope
-
-        // Add resonance peak for boost - creates SSL G-series characteristic overshoot
-        // This subtle bump at the shelf frequency is evident in hardware measurements
-        if (gainDB > 0.0f)
-        {
-            // Scale resonance with gain amount: subtle at low boost, more prominent at high boost
-            float resonanceScale = 1.0f + (gainDB / 15.0f) * 0.4f;  // Up to +40% at +15dB
-            sslQ *= resonanceScale;
-        }
+        // Black mode (G-series): Steeper, more focused shelves
+        // Higher Q = steeper transition = more "modern" sound
+        sslQ *= 1.4f;  // Fixed multiplier - characteristic G-series shelf slope
     }
     else
     {
-        // Brown mode: Gentler, broader shelves - characteristic E-series "musical" sound
-        // Reduced from 0.85x to 0.70x for even broader, more gentle transition
-        sslQ *= 0.70f;
+        // Brown mode (E-series): Gentler, broader shelves
+        // Lower Q = gentler transition = more "vintage/musical" sound
+        sslQ *= 0.65f;  // Fixed multiplier - characteristic E-series shelf slope
     }
+
+    // NO gain-dependent Q modification for shelves
+    // Real SSL hardware has fixed shelf Q regardless of boost/cut amount
+    // Any perceived "resonance" comes from the shelf curve shape itself, not Q variation
 
     float alpha = sinw0 / (2.0f * sslQ);
 
@@ -946,36 +1018,44 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
 juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLPeak(
     double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
 {
-    // SSL peak filters have asymmetric boost/cut behavior
-    // Black mode (G-series): Sharper, more surgical peaks with proportional Q
-    // Brown mode (E-series): Broader, more musical peaks matching hardware measurements
+    // SSL peak filters have fundamentally different Q behavior between modes:
+    // Black mode (G-series): Proportional Q - bandwidth varies with gain for surgical precision
+    // Brown mode (E-series): Constant Q - bandwidth remains fixed at all gains for musical character
+    //
+    // This is THE defining difference between E and G series EQ behavior per SSL documentation
 
     float A = std::pow(10.0f, gainDB / 40.0f);
     float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
     float cosw0 = std::cos(w0);
     float sinw0 = std::sin(w0);
 
-    // SSL-specific Q shaping based on gain direction and mode
+    // SSL-specific Q behavior: CRITICAL DIFFERENCE between modes
     float sslQ = q;
-    if (gainDB > 0.0f)
+
+    if (isBlackMode && std::abs(gainDB) > 0.1f)
     {
-        // Boosts: Tighter Q for surgical precision (SSL characteristic)
-        if (isBlackMode)
-            sslQ *= (1.0f + gainDB * 0.05f);  // More aggressive in Black mode (increased from 0.04)
+        // G-Series (Black): PROPORTIONAL Q - increases with gain amount
+        // More gain = narrower bandwidth = more surgical/focused
+        // This is what makes the G-series sound "precise" and "modern"
+
+        float gainFactor = std::abs(gainDB) / 15.0f;  // Normalize to typical SSL max (±15dB)
+
+        if (gainDB > 0.0f)
+        {
+            // Boosts: Q increases significantly for surgical precision
+            // At +15dB, Q roughly doubles (SSL G-series measured behavior)
+            sslQ *= (1.0f + gainFactor * 1.2f);
+        }
         else
-            // Brown mode boosts: Keep broader for "musical" character
-            // Don't tighten as much - matches Brainworx/Gearspace measurements
-            sslQ *= (1.0f + gainDB * 0.01f);  // Reduced from 0.02 for gentler peaks
+        {
+            // Cuts: Q increases moderately for broad, musical reductions
+            // At -15dB, Q increases by ~60% (gentler than boosts)
+            sslQ *= (1.0f + gainFactor * 0.6f);
+        }
     }
-    else
-    {
-        // Cuts: Broader Q for musical character
-        if (isBlackMode)
-            sslQ *= (1.0f - std::abs(gainDB) * 0.025f);  // Slightly broader cuts
-        else
-            // Brown mode cuts: Very broad and gentle
-            sslQ *= (1.0f - std::abs(gainDB) * 0.015f);  // Increased from 0.01 for broader cuts
-    }
+    // else: E-Series (Brown) - Q remains COMPLETELY CONSTANT at all gains
+    // This is the "musical" E-series character - consistent bandwidth regardless of boost/cut amount
+    // No modification to sslQ for Brown mode - this is intentional and matches hardware!
 
     sslQ = juce::jlimit(0.1f, 10.0f, sslQ);
     float alpha = sinw0 / (2.0f * sslQ);

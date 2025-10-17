@@ -190,6 +190,53 @@ private:
     // SSL-accurate saturation modeling
     SSLSaturation sslSaturation;
 
+    // Transformer phase shift modeling (all-pass filters for phase rotation)
+    // Models the low-frequency phase shift characteristic of SSL transformers
+    // This contributes to the "3D" quality and depth of SSL EQ
+    struct TransformerPhaseShift
+    {
+        juce::dsp::IIR::Filter<float> allPassL;
+        juce::dsp::IIR::Filter<float> allPassR;
+
+        void reset()
+        {
+            allPassL.reset();
+            allPassR.reset();
+        }
+
+        void prepare(const juce::dsp::ProcessSpec& spec)
+        {
+            allPassL.prepare(spec);
+            allPassR.prepare(spec);
+        }
+
+        void setFrequency(double sampleRate, float freq)
+        {
+            // All-pass filter for phase rotation without magnitude change
+            // Models transformer low-frequency phase shift (typically 100-500Hz)
+            // Uses first-order all-pass: H(s) = (s - a) / (s + a)
+            float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
+            float tan_w0 = std::tan(w0 / 2.0f);
+
+            // First-order all-pass coefficients
+            float a0 = 1.0f + tan_w0;
+            float a1 = (1.0f - tan_w0) / a0;
+            float b0 = a1;
+            float b1 = 1.0f;
+
+            auto coeffs = new juce::dsp::IIR::Coefficients<float>(b0, b1, 0.0f, 1.0f, a1, 0.0f);
+            allPassL.coefficients = coeffs;
+            allPassR.coefficients = coeffs;
+        }
+
+        inline float processSample(float sample, bool useLeftChannel)
+        {
+            return useLeftChannel ? allPassL.processSample(sample) : allPassR.processSample(sample);
+        }
+    };
+
+    TransformerPhaseShift phaseShift;
+
     // Parameter pointers with safe accessors
     std::atomic<float>* hpfFreqParam = nullptr;
     std::atomic<float>* lpfFreqParam = nullptr;
