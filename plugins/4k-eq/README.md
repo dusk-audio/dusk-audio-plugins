@@ -155,12 +155,12 @@ cmake --build . --target FourKEQ_All -j8
 4k-eq/
 ├── FourKEQ.cpp              # Audio processor (DSP engine)
 ├── FourKEQ.h                # Processor header
-├── PluginEditor.cpp         # GUI implementation
+├── PluginEditor.cpp         # GUI implementation (includes spectrum analyzer)
 ├── PluginEditor.h           # Editor header
 ├── FourKLookAndFeel.cpp     # Custom SSL-style UI theme
 ├── FourKLookAndFeel.h       # Look and feel header
 ├── SSLSaturation.h          # SSL console saturation modeling (E/G series)
-├── SpectrumAnalyzer.h       # FFT-based spectrum display
+├── PatreonBackers.h         # Patreon supporters credits list
 ├── CMakeLists.txt           # Build configuration
 └── README.md                # This file
 ```
@@ -179,7 +179,7 @@ cmake --build . --target FourKEQ_All -j8
 
 ## Changelog
 
-### v1.0.2 (2025-10-16) - Professional SSL Accuracy Update
+### v1.0.2 (2025-10-21) - Professional SSL Accuracy Update
 - ✅ **CRITICAL**: Fixed frequency ranges to match SSL hardware specs
   - LF: 30-480Hz (was 20-600Hz)
   - HF: 1.5kHz-16kHz (was 1.5kHz-20kHz)
@@ -222,6 +222,30 @@ cmake --build . --target FourKEQ_All -j8
 **License**: GPL-2.0 (plugin code) + JUCE license
 
 **Disclaimer**: This is an independent emulation inspired by SSL 4000 series consoles. SSL and Solid State Logic are trademarks of Solid State Logic Ltd. This project is not affiliated with or endorsed by SSL.
+
+---
+
+## 💖 Special Thanks to Our Patreon Backers
+
+This plugin is made possible by the generous support of our Patreon community:
+
+### 🌟 Platinum Supporters
+<!-- Add your platinum tier backers here -->
+- *Your name could be here!*
+
+### ⭐ Gold Supporters
+<!-- Add your gold tier backers here -->
+- *Your name could be here!*
+
+### ✨ Silver Supporters
+<!-- Add your silver tier backers here -->
+- *Your name could be here!*
+
+### 💙 Supporters
+<!-- Add all other backers here -->
+- *Your name could be here!*
+
+**Want to support development?** [Become a Patreon backer](https://patreon.com/YourPatreonPage) and get your name listed here, plus early access to new plugins and exclusive presets!
 
 ## Support
 

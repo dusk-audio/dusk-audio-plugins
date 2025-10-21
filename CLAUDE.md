@@ -11,25 +11,41 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 - **Features**:
   - 4-band parametric EQ (LF, LMF, HMF, HF) with SSL-style colored knobs
   - High-pass and low-pass filters
-  - Brown/Black knob variants
+  - Brown/Black knob variants (E-Series/G-Series console emulation)
   - 2x/4x oversampling for anti-aliasing
-  - Analog-modeled nonlinearities (SSL saturation)
+  - Advanced SSL saturation modeling (SSLSaturation.h):
+    - E-Series (Brown knobs) vs G-Series (Black knobs) console types with different harmonic signatures
+    - Multi-stage processing: Input transformer → NE5534 op-amp → Output transformer (E-Series only)
+    - Frequency-dependent saturation (transformers saturate more at low frequencies)
+    - Asymmetric op-amp clipping with slew-rate limiting
+    - Drive range up to 13x-16x gain for authentic "pushed" console sound
+    - DC blocker to prevent offset accumulation
+    - Real-time high-frequency content estimation for dynamic response
   - Input/Output gain controls
   - Professional metering
 - **Build Target**: `FourKEQ_All`
 
 ### 2. **TapeMachine**
 - **Location**: `plugins/TapeMachine/`
-- **Description**: Analog tape machine emulation (Studer A800 & Ampex ATR-102)
+- **Description**: Analog tape machine emulation (Swiss800 & Classic102)
 - **Features**:
-  - Multiple tape machine models (Studer A800, Ampex ATR-102, Blend)
+  - Multiple tape machine models (Swiss800 [Studer A800], Classic102 [Ampex ATR-102], Blend)
   - Multiple tape types
   - Tape speed selection (7.5, 15, 30 IPS)
-  - Advanced saturation and hysteresis modeling
-  - Wow & flutter simulation with shared processing
+  - Advanced saturation and hysteresis modeling (ImprovedTapeEmulation.h)
+  - Wow & flutter simulation with shared stereo processing:
+    - Single WowFlutterProcessor instance shared between channels for coherent modulation
+    - Dynamic delay buffer (up to 50ms) sized based on sample rate
+    - Double-precision phase tracking
+    - Linear interpolation for fractional delay samples
+    - Random modulation component for natural flutter
   - Dual stereo VU meters with vintage analog styling
   - Real-time level monitoring (input/output)
-  - Reel animation based on transport state
+  - Animated reel components (ReelAnimation class):
+    - Realistic reel rendering with shadow effects
+    - Metal reel body with gradient fill
+    - Animated tape spokes
+    - Speed control synced to transport state
 - **Build Target**: `TapeMachine_All`
 
 ### 3. **Universal Compressor**
@@ -173,11 +189,18 @@ The build script will automatically detect and use these tools when available.
 ## Recent Changes
 
 ### Plugin Updates
-1. **Removed Studio 480**: Replaced with Plate Reverb (Dattorro algorithm implementation)
+1. **Removed StudioVerb/Studio 480**: Replaced with Plate Reverb (Dattorro algorithm implementation). StudioVerb directory still exists but is disabled in build configuration.
 2. **Added Vintage Tape Echo**: Full-featured tape echo with 12 modes, spring reverb, and extensive modulation
-3. **Enhanced TapeMachine**: Added shared wow/flutter processing and improved reel animation
-4. **Updated 4K EQ**: SSL saturation modeling with proper knob color variants
-5. **Enhanced Universal Compressor**: Added linked gain reduction metering for stereo tracking
+3. **Enhanced TapeMachine**:
+   - Added shared wow/flutter processing with coherent stereo modulation
+   - Improved reel animation with realistic visual components
+   - Model names: Swiss800 (Studer A800) and Classic102 (Ampex ATR-102)
+4. **Updated 4K EQ**:
+   - Advanced SSL saturation modeling with E-Series/G-Series console emulation
+   - Multi-stage signal path with transformer and op-amp modeling
+   - Frequency-dependent saturation characteristics
+   - Real-time spectral analysis for dynamic response
+5. **Enhanced Universal Compressor**: Added linked gain reduction metering for stereo tracking with thread-safe atomic operations
 
 ### Build System Improvements
 1. **Comprehensive rebuild script**: Color-coded output, progress tracking, error logging
@@ -218,13 +241,14 @@ plugins/
 │   ├── GlobalSettings.cmake
 │   └── JuceDefaults.cmake
 ├── plugins/                  # Individual plugin directories
-│   ├── 4k-eq/
-│   ├── TapeMachine/
-│   ├── universal-compressor/
-│   ├── PlateReverb/
-│   ├── TapeEcho/
-│   ├── harmonic-generator/
-│   └── shared/              # Shared utilities (if any)
+│   ├── 4k-eq/               # SSL 4000 Series EQ
+│   ├── TapeMachine/         # Tape machine emulation
+│   ├── universal-compressor/ # Multi-mode compressor
+│   ├── PlateReverb/         # Dattorro plate reverb
+│   ├── TapeEcho/            # Vintage tape echo
+│   ├── harmonic-generator/  # Harmonic saturation processor
+│   ├── StudioVerb/          # (Deprecated - disabled in build)
+│   └── shared/              # Shared utilities
 ├── build/                    # Build output (gitignored)
 ├── CMakeLists.txt           # Root build configuration
 └── rebuild_all.sh           # Comprehensive build script
@@ -243,6 +267,9 @@ plugins/
 - **Level metering**: Use `std::atomic<float>` with relaxed memory ordering for UI updates
 - **Parameter smoothing**: Use `juce::SmoothedValue` or APVTS built-in smoothing
 - **Custom delays**: See PlateReverb's CustomDelays class for efficient implementations
+- **Saturation modeling**: See 4K-EQ's SSLSaturation.h for multi-stage analog emulation
+- **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
+- **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations
 
 ### UI Design Guidelines
 - **Color schemes**: Dark themes with analog-inspired controls
@@ -291,6 +318,6 @@ For issues or questions about these plugins:
 - Check JUCE forum for framework-related questions
 
 ---
-*Last updated: October 2024*
+*Last updated: January 2025*
 *Company: Luna Co. Audio*
 *Build System: CMake + JUCE 7.x*
