@@ -236,6 +236,13 @@ void FourKEQEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xff909090));
     g.drawText("Console-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
 
+    // Patreon credits in header (right side)
+    g.setFont(juce::Font(juce::FontOptions(9.0f)));
+    g.setColour(juce::Colour(0xff707070));
+    g.drawText("Made with support from Patreon backers 💖",
+               bounds.getRight() - 320, 38, 200, 15,
+               juce::Justification::right);
+
     // EQ Type indicator
     bool isBlack = eqTypeParam->load() > 0.5f;
     g.setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Bold")));

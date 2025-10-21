@@ -28,7 +28,7 @@ class FourKEQ : public juce::AudioProcessor,
 public:
     //==============================================================================
     // Version information
-    static constexpr const char* PLUGIN_VERSION = "1.0.0";
+    static constexpr const char* PLUGIN_VERSION = "1.0.2";
     static constexpr const char* BUILD_DATE = __DATE__;
     static constexpr const char* BUILD_TIME = __TIME__;
 
