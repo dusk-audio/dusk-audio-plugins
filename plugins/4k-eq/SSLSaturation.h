@@ -46,9 +46,9 @@ public:
 
         // Update DC blocker coefficients
         // High-pass at ~5Hz to remove any DC offset from saturation
-        const double cutoffFreq = 5.0;
-        const double RC = 1.0 / (juce::MathConstants<double>::twoPi * cutoffFreq);
-        dcBlockerCoeff = RC / (RC + 1.0 / sampleRate);
+        const float cutoffFreq = 5.0f;
+        const float RC = 1.0f / (juce::MathConstants<float>::twoPi * cutoffFreq);
+        dcBlockerCoeff = RC / (RC + 1.0f / static_cast<float>(sampleRate));
     }
 
     void reset()
@@ -65,26 +65,40 @@ public:
         if (drive < 0.001f)
             return input;
 
+        // Gentle pre-saturation limiting to prevent extreme aliasing
+        // This soft clips peaks before they hit the transformer stage
+        // Only active at very high levels (>0.95) to maintain SSL character
+        float limited = input;
+        float absInput = std::abs(input);
+        if (absInput > 0.95f)
+        {
+            // Soft knee limiting using tanh for smooth transition
+            float excess = absInput - 0.95f;
+            float compressed = 0.95f + std::tanh(excess * 3.0f) * 0.05f;
+            limited = (input > 0.0f) ? compressed : -compressed;
+        }
+
         // Estimate frequency content for frequency-dependent saturation
         // Real SSL hardware has subtle frequency-dependent behavior:
         // - Transformers saturate MORE at low frequencies (core saturation - physics-based)
         // - Op-amps have slew-rate limiting at high frequencies (only at extreme overdrive)
-        // This is SUBTLE - only audible when driven hard (>50% drive)
-        float highFreqContent = estimateHighFrequencyContent(input, isLeftChannel);
+        // Modern enhancement: reduce HF saturation to prevent aliasing while maintaining character
+        float highFreqContent = estimateHighFrequencyContent(limited, isLeftChannel);
+
+        // Progressive HF drive reduction for anti-aliasing
+        // This mimics real SSL behavior: transformers naturally saturate less at HF
+        // Scaling increases with both drive amount and frequency content
+        float hfReduction = highFreqContent * (0.25f + drive * 0.35f);  // 25-60% reduction based on drive
+        float effectiveDrive = drive * (1.0f - hfReduction);
 
         // Stage 1: Input transformer saturation
         // SSL uses Marinair (E-Series) or Carnhill (G-Series) transformers
-        // Transformers saturate more at LF, but effect is subtle
-        // Only apply frequency-dependent behavior at higher drive levels
-        float freqScaling = (drive > 0.5f) ? (drive - 0.5f) * 2.0f : 0.0f;  // 0 at <50% drive, ramps up
-        float transformerDrive = drive * (1.0f - highFreqContent * 0.15f * freqScaling);  // Subtle: max 15% reduction
-        float transformed = processInputTransformer(input, transformerDrive);
+        float transformed = processInputTransformer(limited, effectiveDrive);
 
         // Stage 2: Op-amp gain stage (NE5534)
         // This is where most of the harmonic coloration happens
-        // Slew-rate limiting is very subtle on NE5534, only at extreme levels
-        float opAmpDrive = drive * (1.0f + highFreqContent * 0.10f * freqScaling);  // Subtle: max 10% increase
-        float opAmpOut = processOpAmpStage(transformed, opAmpDrive);
+        // Apply same frequency-dependent drive reduction for consistency
+        float opAmpOut = processOpAmpStage(transformed, effectiveDrive);
 
         // Stage 3: Output transformer (if applicable)
         // E-Series has output transformers, G-Series is transformerless
@@ -108,7 +122,7 @@ private:
     // DC blocker state
     float dcBlockerX1_L = 0.0f, dcBlockerY1_L = 0.0f;
     float dcBlockerX1_R = 0.0f, dcBlockerY1_R = 0.0f;
-    double dcBlockerCoeff = 0.999;
+    float dcBlockerCoeff = 0.999f;
 
     // Frequency content estimation state
     float lastSample_L = 0.0f, lastSample_R = 0.0f;
@@ -153,9 +167,9 @@ private:
     {
         // SSL transformers are very linear at normal levels
         // Only apply saturation when driven hard (above ~0dB)
-        // Increased drive range to match UAD's ability to overdrive for authentic SSL "pushed" sound
-        // At 100% drive, allows ~22dB of headroom (13x gain) matching real console overdrive capability
-        const float transformerDrive = 1.0f + drive * 12.0f;  // Max 13x gain at full drive
+        // Drive range allows authentic SSL "pushed" sound without excessive aliasing
+        // At 100% drive, allows ~18dB of headroom (8x gain) - reduced for cleaner operation
+        const float transformerDrive = 1.0f + drive * 7.0f;  // Max 8x gain at full drive
         float driven = input * transformerDrive;
 
         // Transformer saturation using modified Jiles-Atherton approximation
@@ -231,10 +245,10 @@ private:
         // NE5534 has different characteristics than generic op-amps
         // SSL designs keep op-amps in linear region at normal levels
         // THD only becomes measurable when driven very hot
-        // Increased drive range to match UAD's ability to overdrive for authentic SSL character
-        // At 100% drive, allows ~24dB of headroom (16x gain) matching real console op-amp overdrive
+        // Drive range allows authentic SSL character without excessive aliasing
+        // At 100% drive, allows ~20dB of headroom (10x gain) - reduced for cleaner operation
 
-        const float opAmpDrive = 1.0f + drive * 15.0f;  // Max 16x gain at full drive
+        const float opAmpDrive = 1.0f + drive * 9.0f;  // Max 10x gain at full drive
         float driven = input * opAmpDrive;
 
         // NE5534 specific characteristics:
