@@ -235,17 +235,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
 //==============================================================================
 void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Validate sample rate
-    if (sampleRate <= 0.0 || samplesPerBlock <= 0)
+    // Validate sample rate and buffer size to prevent invalid filter calculations
+    if (sampleRate <= 0.0 || std::isnan(sampleRate) || std::isinf(sampleRate) || samplesPerBlock <= 0)
     {
+        DBG("FourKEQ: Invalid sample rate (" << sampleRate << ") or buffer size (" << samplesPerBlock << ")");
         jassertfalse;
-        return;
-    }
-
-    // Validate sample rate to prevent division-by-zero and invalid filter calculations
-    if (sampleRate <= 0.0 || std::isnan(sampleRate) || std::isinf(sampleRate))
-    {
-        DBG("FourKEQ: Invalid sample rate received: " << sampleRate);
         return;  // Skip preparation - retain last valid state
     }
 
@@ -487,18 +481,9 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         spectrumBufferPre.makeCopyOf(buffer, true);
     }
 
-    // Choose oversampling with null check and adaptive sample rate handling
-    // Note: oversamplingFactor might be 1 (disabled), 2, or 4
-    int requestedOversample = (!oversamplingParam || oversamplingParam->load() < 0.5f) ? 2 : 4;
-
-    // Apply adaptive oversampling based on sample rate (same logic as prepareToPlay)
-    if (currentSampleRate >= 176000.0)
-        oversamplingFactor = 1;  // Disable at ultra-high SR
-    else if (currentSampleRate > 96000.0)
-        oversamplingFactor = 2;  // Force 2x at high SR
-    else
-        oversamplingFactor = requestedOversample;  // User choice at standard SR
-
+    // Use oversampling factor already calculated in prepareToPlay()
+    // Note: oversamplingFactor is adaptively set based on sample rate (1, 2, or 4)
+    // No need to recalculate here - prepareToPlay() handles this optimization
     auto& oversampler = (oversamplingFactor == 2) ? *oversampler2x : *oversampler4x;
 
     // Check M/S mode
@@ -915,10 +900,14 @@ float FourKEQ::calculateAutoGainCompensation() const
     auto* hmParam = parameters.getParameter("hm_gain");
     auto* hfParam = parameters.getParameter("hf_gain");
 
+    // Safety check: return unity gain if any parameter is unavailable
     if (!lfParam || !lmParam || !hmParam || !hfParam)
+    {
+        jassertfalse;  // Should never happen in production, but fail gracefully
         return 1.0f;  // No compensation if params unavailable
+    }
 
-    // Get denormalized values in dB
+    // Get denormalized values in dB (safe now after null check)
     float lfGainDB = lfParam->convertFrom0to1(lfParam->getValue());
     float lmGainDB = lmParam->convertFrom0to1(lmParam->getValue());
     float hmGainDB = hmParam->convertFrom0to1(hmParam->getValue());
