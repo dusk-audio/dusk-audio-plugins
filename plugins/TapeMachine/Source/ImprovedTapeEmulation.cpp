@@ -116,12 +116,12 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.hfRolloffSlope = -12.0f;
 
             chars.saturationKnee = 0.85f;  // Hard knee (clean)
-            // Swiss precision harmonics - balanced, clean with slight even-order emphasis
-            chars.saturationHarmonics[0] = 0.20f; // 2nd harmonic (subtle warmth)
-            chars.saturationHarmonics[1] = 0.08f; // 3rd harmonic (minimal edge)
-            chars.saturationHarmonics[2] = 0.10f; // 4th harmonic (smoothness)
-            chars.saturationHarmonics[3] = 0.03f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.05f; // 6th harmonic
+            // Swiss precision harmonics - very subtle, only when driven hard
+            chars.saturationHarmonics[0] = 0.06f; // 2nd harmonic (subtle warmth)
+            chars.saturationHarmonics[1] = 0.02f; // 3rd harmonic (minimal edge)
+            chars.saturationHarmonics[2] = 0.03f; // 4th harmonic (smoothness)
+            chars.saturationHarmonics[3] = 0.01f; // 5th harmonic
+            chars.saturationHarmonics[4] = 0.015f; // 6th harmonic
 
             chars.compressionRatio = 0.08f;  // Subtle compression
             chars.compressionAttack = 0.1f;
@@ -141,12 +141,12 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.hfRolloffSlope = -18.0f;
 
             chars.saturationKnee = 0.7f;   // Softer knee (warmer)
-            // Classic American harmonics - strong 2nd and 3rd for warmth and punch
-            chars.saturationHarmonics[0] = 0.35f; // 2nd harmonic (lots of warmth)
-            chars.saturationHarmonics[1] = 0.15f; // 3rd harmonic (punch/presence)
-            chars.saturationHarmonics[2] = 0.08f; // 4th harmonic
-            chars.saturationHarmonics[3] = 0.05f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.03f; // 6th harmonic
+            // Classic American harmonics - more warmth when driven, but still subtle
+            chars.saturationHarmonics[0] = 0.12f; // 2nd harmonic (warmth)
+            chars.saturationHarmonics[1] = 0.05f; // 3rd harmonic (punch/presence)
+            chars.saturationHarmonics[2] = 0.03f; // 4th harmonic
+            chars.saturationHarmonics[3] = 0.018f; // 5th harmonic
+            chars.saturationHarmonics[4] = 0.012f; // 6th harmonic
 
             chars.compressionRatio = 0.12f;  // More "glue"
             chars.compressionAttack = 0.2f;
@@ -168,11 +168,11 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
 
             chars.saturationKnee = 0.77f;  // Balanced
             // Balanced harmonic profile - best of both worlds
-            chars.saturationHarmonics[0] = 0.27f; // 2nd harmonic (warmth)
-            chars.saturationHarmonics[1] = 0.11f; // 3rd harmonic (presence)
-            chars.saturationHarmonics[2] = 0.09f; // 4th harmonic
-            chars.saturationHarmonics[3] = 0.04f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.04f; // 6th harmonic
+            chars.saturationHarmonics[0] = 0.09f; // 2nd harmonic (warmth)
+            chars.saturationHarmonics[1] = 0.035f; // 3rd harmonic (presence)
+            chars.saturationHarmonics[2] = 0.03f; // 4th harmonic
+            chars.saturationHarmonics[3] = 0.015f; // 5th harmonic
+            chars.saturationHarmonics[4] = 0.013f; // 6th harmonic
 
             chars.compressionRatio = 0.10f;  // Moderate
             chars.compressionAttack = 0.15f;
@@ -199,8 +199,8 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.retentivity = 0.85f;
             chars.saturationPoint = 0.9f;
 
-            chars.hysteresisAmount = 0.35f;  // Moderate hysteresis
-            chars.hysteresisAsymmetry = 0.1f;
+            chars.hysteresisAmount = 0.18f;  // Moderate hysteresis (reduced)
+            chars.hysteresisAsymmetry = 0.05f;
 
             chars.noiseFloor = -65.0f;
             chars.modulationNoise = 0.02f;
@@ -215,8 +215,8 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.retentivity = 0.92f;
             chars.saturationPoint = 0.95f;
 
-            chars.hysteresisAmount = 0.25f;  // Lower hysteresis (cleaner)
-            chars.hysteresisAsymmetry = 0.05f;
+            chars.hysteresisAmount = 0.12f;  // Lower hysteresis (cleaner, reduced)
+            chars.hysteresisAsymmetry = 0.03f;
 
             chars.noiseFloor = -68.0f;  // Lower noise floor
             chars.modulationNoise = 0.015f;
@@ -231,8 +231,8 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.retentivity = 0.88f;
             chars.saturationPoint = 0.88f;
 
-            chars.hysteresisAmount = 0.40f;  // Higher hysteresis (more color)
-            chars.hysteresisAsymmetry = 0.15f;
+            chars.hysteresisAmount = 0.22f;  // Higher hysteresis (more color, reduced)
+            chars.hysteresisAsymmetry = 0.08f;
 
             chars.noiseFloor = -64.0f;
             chars.modulationNoise = 0.025f;
@@ -247,8 +247,8 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.retentivity = 0.8f;
             chars.saturationPoint = 0.85f;
 
-            chars.hysteresisAmount = 0.45f;  // High hysteresis (vintage color)
-            chars.hysteresisAsymmetry = 0.2f;  // More asymmetry
+            chars.hysteresisAmount = 0.28f;  // High hysteresis (vintage color, reduced)
+            chars.hysteresisAsymmetry = 0.10f;  // More asymmetry
 
             chars.noiseFloor = -62.0f;  // Higher noise (vintage)
             chars.modulationNoise = 0.03f;
@@ -504,26 +504,42 @@ float ImprovedTapeEmulation::processSample(float input,
         signal = biasFilter.processSample(signal);
     }
 
-    // 3. Tape hysteresis (magnetic non-linearity)
+    // Calculate input level for level-dependent processing
+    // 0 VU ≈ -12dBFS = 0.25 linear
+    // Tape should be clean below 0 VU and saturate progressively above it
+    float inputLevel = std::abs(signal);
+    const float zeroVU = 0.25f;  // -12dBFS reference level
+
+    // Level-dependent saturation amount: 0 below threshold, increases above
+    // This makes tape nearly transparent at low levels
+    float levelAboveThreshold = std::max(0.0f, (inputLevel - zeroVU) / (1.0f - zeroVU));
+    float levelDependentSat = levelAboveThreshold * saturationDepth;
+
+    // 3. Tape hysteresis (magnetic non-linearity) - level dependent
+    // Hysteresis is minimal at low levels, increases when tape is driven
+    float hysteresisDepth = tapeChars.hysteresisAmount * levelDependentSat * 0.8f;
     signal = hysteresisProc.process(signal,
-                                    tapeChars.hysteresisAmount * saturationDepth,
+                                    hysteresisDepth,
                                     tapeChars.hysteresisAsymmetry,
                                     tapeChars.saturationPoint);
 
-    // 4. Harmonic generation (tape saturation)
-    if (saturationDepth > 0.0f)
+    // 4. Harmonic generation (tape saturation) - level dependent
+    // Only generate significant harmonics when tape is being driven hard
+    if (levelDependentSat > 0.01f)
     {
         float harmonics = generateHarmonics(signal, machineChars.saturationHarmonics, 5);
-        signal = signal * (1.0f - saturationDepth * 0.3f) + harmonics * saturationDepth;
+        // Mix in harmonics proportionally to how hard we're driving the tape
+        signal = signal * (1.0f - levelDependentSat * 0.15f) + harmonics * levelDependentSat * 2.0f;
     }
 
     // 5. Soft saturation/compression
     // Calibration affects saturation threshold (higher cal = higher threshold)
     float adjustedKnee = machineChars.saturationKnee * calibrationGain;
+    float makeupGain = calibrationGain;  // Compensate for input level reduction
     signal = saturator.process(signal,
                                adjustedKnee,
-                               machineChars.compressionRatio * saturationDepth,
-                               calibrationGain);  // Makeup gain to compensate
+                               machineChars.compressionRatio * levelDependentSat,
+                               makeupGain);
 
     // 6. Head gap loss simulation
     signal = gapLossFilter.processSample(signal);

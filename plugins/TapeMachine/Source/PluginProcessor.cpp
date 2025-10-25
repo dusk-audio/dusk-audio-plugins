@@ -72,14 +72,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "saturation", "Saturation",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 4.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "bias", "Bias",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 40.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
