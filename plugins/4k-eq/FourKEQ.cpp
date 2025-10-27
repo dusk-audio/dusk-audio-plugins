@@ -604,6 +604,14 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         if (autoGainParam && autoGainParam->load() > 0.5f)
         {
             autoCompensation = calculateAutoGainCompensation();
+
+            // Debug logging
+            static int debugCounter = 0;
+            if (++debugCounter > 100)
+            {
+                debugCounter = 0;
+                DBG("Auto Gain Enabled - Compensation: " << juce::Decibels::gainToDecibels(autoCompensation) << " dB");
+            }
         }
 
         float totalGain = juce::Decibels::decibelsToGain(outputGainValue) * autoCompensation;
@@ -921,11 +929,21 @@ float FourKEQ::calculateAutoGainCompensation() const
     float weightedSum = (lfGainDB * 0.30f) + (lmGainDB * 0.15f) + (hmGainDB * 0.15f) + (hfGainDB * 0.40f);
 
     // Calculate compensation: reduce output when boosting, increase when cutting
-    // Use 20% compensation factor to maintain SSL "bigger" sound while preventing clipping
-    float compensationDB = -weightedSum * 0.20f;
+    // Use 60% compensation factor for noticeable level matching while preserving some EQ "character"
+    // This balances transparent operation with the SSL "bigger" sound when pushed hard
+    float compensationDB = -weightedSum * 0.60f;
 
-    // Limit compensation range to ±4dB for subtle, transparent adjustment
-    compensationDB = juce::jlimit(-4.0f, 4.0f, compensationDB);
+    // Limit compensation range to ±6dB for effective level matching
+    compensationDB = juce::jlimit(-6.0f, 6.0f, compensationDB);
+
+    // Debug logging
+    static int debugCounter = 0;
+    if (++debugCounter > 200)
+    {
+        debugCounter = 0;
+        DBG("AutoGain Calc - LF:" << lfGainDB << " LM:" << lmGainDB << " HM:" << hmGainDB << " HF:" << hfGainDB);
+        DBG("Weighted Sum: " << weightedSum << " dB, Compensation: " << compensationDB << " dB");
+    }
 
     return juce::Decibels::decibelsToGain(compensationDB);
 }
