@@ -155,7 +155,10 @@ Auto Gain: ON
 
 ## Next Steps
 
-1. **Experiment with presets** - Try all 15 on different sources
+1. **Experiment with presets** - Try all 15 on different sources:
+   - Default, Vocal Presence, Kick Punch, Snare Crack, Bass Warmth
+   - Bright Mix, Telephone EQ, Air & Silk, Mix Bus Glue, Master Sheen
+   - Bass Guitar Polish, Drum Bus Punch, Acoustic Guitar, Piano Brilliance, Master Bus Sweetening
 2. **Learn Brown vs Black** - Compare on same material
 3. **Practice subtle moves** - Less is often more
 4. **Compare to bypassed** - Always A/B your changes

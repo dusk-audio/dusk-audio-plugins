@@ -6,12 +6,137 @@
 CustomLookAndFeel::CustomLookAndFeel()
 {
     // Inherits vintage palette from LunaVintageLookAndFeel
-    // Can add TapeMachine-specific customizations here if needed
+    // TapeMachine-specific customizations
 }
 
 CustomLookAndFeel::~CustomLookAndFeel() = default;
 
-// Note: drawRotarySlider and drawToggleButton are inherited from LunaVintageLookAndFeel
+void CustomLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                                         float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                                         juce::Slider& slider)
+{
+    // Professional tape machine style rotary knob with 3D appearance
+    auto radius = juce::jmin(width / 2, height / 2) - 6.0f;
+    auto centreX = x + width * 0.5f;
+    auto centreY = y + height * 0.5f;
+    auto rx = centreX - radius;
+    auto ry = centreY - radius;
+    auto rw = radius * 2.0f;
+    auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+
+    // Drop shadow for depth
+    g.setColour(juce::Colour(0x40000000));
+    g.fillEllipse(rx + 3, ry + 3, rw, rw);
+
+    // Knob body with metallic gradient
+    juce::ColourGradient bodyGradient(
+        juce::Colour(0xff4a4038), centreX - radius * 0.7f, centreY - radius * 0.7f,
+        juce::Colour(0xff2a2018), centreX + radius * 0.7f, centreY + radius * 0.7f,
+        true);
+    g.setGradientFill(bodyGradient);
+    g.fillEllipse(rx, ry, rw, rw);
+
+    // Outer ring for definition
+    g.setColour(juce::Colour(0xff6a5848));
+    g.drawEllipse(rx, ry, rw, rw, 2.5f);
+
+    // Inner ring detail
+    g.setColour(juce::Colour(0xff1a1510));
+    g.drawEllipse(rx + 4, ry + 4, rw - 8, rw - 8, 1.5f);
+
+    // Center cap with gradient
+    auto capRadius = radius * 0.25f;
+    juce::ColourGradient capGradient(
+        juce::Colour(0xff5a4838), centreX - capRadius, centreY - capRadius,
+        juce::Colour(0xff2a2018), centreX + capRadius, centreY + capRadius,
+        false);
+    g.setGradientFill(capGradient);
+    g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2, capRadius * 2);
+
+    // Pointer - highly visible line style
+    juce::Path pointer;
+    auto pointerLength = radius * 0.75f;
+    auto pointerThickness = 3.5f;
+
+    // Main pointer line (bright cream color for maximum visibility)
+    pointer.addRoundedRectangle(-pointerThickness * 0.5f, -radius + 6,
+                                pointerThickness, pointerLength, 1.5f);
+    pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+    g.setColour(juce::Colour(0xffF8E4C0));
+    g.fillPath(pointer);
+
+    // Pointer outline for contrast against knob
+    juce::Path pointerOutline;
+    pointerOutline.addRoundedRectangle(-pointerThickness * 0.5f - 0.5f, -radius + 6,
+                                       pointerThickness + 1.0f, pointerLength, 1.5f);
+    pointerOutline.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+    g.setColour(juce::Colour(0xff1a1510));
+    g.strokePath(pointerOutline, juce::PathStrokeType(0.8f));
+}
+
+void CustomLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+{
+    auto bounds = button.getLocalBounds().toFloat().reduced(2);
+    auto isOn = button.getToggleState();
+
+    // LED-style indicator background
+    if (isOn)
+    {
+        // Glowing effect when ON
+        g.setColour(juce::Colour(0xff8a6a3a).withAlpha(0.3f));
+        g.fillRoundedRectangle(bounds.expanded(2), 6.0f);
+    }
+
+    // Button body with gradient
+    juce::ColourGradient buttonGradient(
+        isOn ? juce::Colour(0xff6a5438) : juce::Colour(0xff3a2828),
+        bounds.getCentreX(), bounds.getY(),
+        isOn ? juce::Colour(0xff4a3828) : juce::Colour(0xff2a1818),
+        bounds.getCentreX(), bounds.getBottom(),
+        false);
+    g.setGradientFill(buttonGradient);
+    g.fillRoundedRectangle(bounds, 5.0f);
+
+    // Border
+    g.setColour(isOn ? juce::Colour(0xff8a6838) : juce::Colour(0xff5a4838));
+    g.drawRoundedRectangle(bounds, 5.0f, 2.0f);
+
+    // LED indicator dot on the left side
+    auto ledSize = bounds.getHeight() * 0.35f;
+    auto ledBounds = juce::Rectangle<float>(bounds.getX() + 8,
+                                             bounds.getCentreY() - ledSize / 2,
+                                             ledSize, ledSize);
+
+    if (isOn)
+    {
+        // Glow
+        g.setColour(juce::Colour(0xffaa8a4a).withAlpha(0.5f));
+        g.fillEllipse(ledBounds.expanded(2));
+
+        // LED on
+        g.setColour(juce::Colour(0xffF8E4C0));
+        g.fillEllipse(ledBounds);
+
+        // Highlight
+        g.setColour(juce::Colour(0xffffffff));
+        g.fillEllipse(ledBounds.reduced(2).withY(ledBounds.getY() + 1));
+    }
+    else
+    {
+        // LED off (dark)
+        g.setColour(juce::Colour(0xff2a2018));
+        g.fillEllipse(ledBounds);
+        g.setColour(juce::Colour(0xff4a3828));
+        g.drawEllipse(ledBounds, 1.0f);
+    }
+
+    // Text - centered in remaining space
+    auto textBounds = bounds.withTrimmedLeft(ledSize + 16);
+    g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0xff888888));
+    g.setFont(juce::Font(juce::FontOptions(13.0f)).withStyle(juce::Font::bold));
+    g.drawText(button.getButtonText(), textBounds, juce::Justification::centred);
+}
 
 ReelAnimation::ReelAnimation()
 {
@@ -119,10 +244,6 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     inputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "inputGain", inputGainSlider);
 
-    setupSlider(saturationSlider, saturationLabel, "SATURATION");
-    saturationAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "saturation", saturationSlider);
-
     setupSlider(biasSlider, biasLabel, "BIAS");
     biasAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "bias", biasSlider);
@@ -159,6 +280,16 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     addAndMakeVisible(noiseEnabledButton);
     noiseEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), "noiseEnabled", noiseEnabledButton);
+
+    autoCompButton.setButtonText("AUTO COMP");
+    autoCompButton.setClickingTogglesState(true);
+    autoCompButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a2828));
+    autoCompButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff5a4838));
+    autoCompButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff888888));
+    autoCompButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffE8D4B0));
+    addAndMakeVisible(autoCompButton);
+    autoCompAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getAPVTS(), "autoComp", autoCompButton);
 
     addAndMakeVisible(leftReel);
     addAndMakeVisible(rightReel);
@@ -232,132 +363,128 @@ void TapeMachineAudioProcessorEditor::paint (juce::Graphics& g)
         g.drawHorizontalLine(y, 0, getWidth());
     }
 
-    // Title section area (already handled by header)
-    auto titleArea = getLocalBounds().removeFromTop(50);
-
-    // Title background panel
-    juce::ColourGradient titleGradient(
-        juce::Colour(0xff4a3828), titleArea.getX(), titleArea.getY(),
-        juce::Colour(0xff2a2018), titleArea.getX(), titleArea.getBottom(), false);
-    g.setGradientFill(titleGradient);
-    g.fillRect(titleArea);
-
-    // Title border
-    g.setColour(juce::Colour(0xff5a4838));
-    g.drawRect(titleArea.reduced(1), 2);
-
-    // Main title
-    g.setFont(juce::Font("Arial Black", 32.0f, juce::Font::bold));
-    g.setColour(juce::Colour(0xffE8D4B0));
-    g.drawText("TAPE MACHINE", titleArea.reduced(10, 5).removeFromTop(35),
+    // Company name centered at bottom
+    g.setFont(juce::Font("Arial", 10.0f, juce::Font::italic));
+    g.setColour(juce::Colour(0x88B8A080));  // More subtle/transparent
+    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(18),
                juce::Justification::centred);
 
-    // Company name in bottom right corner
-    g.setFont(juce::Font("Arial", 11.0f, juce::Font::italic));
-    g.setColour(juce::Colour(0xffB8A080));
-    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(20).removeFromRight(120),
-               juce::Justification::centredRight);
+    // Transport section background (moved down below header)
+    auto workArea = getLocalBounds();
+    workArea.removeFromTop(50); // Skip header
 
-    // Transport section background
-    auto transportArea = getLocalBounds().removeFromTop(220).withY(65);
+    auto transportArea = workArea.removeFromTop(240);
+    transportArea.reduce(15, 10);
+
     g.setColour(juce::Colour(0xff2a2018));
-    g.fillRoundedRectangle(transportArea.reduced(10, 5).toFloat(), 8.0f);
-
-    // Transport section frame
+    g.fillRoundedRectangle(transportArea.toFloat(), 8.0f);
     g.setColour(juce::Colour(0xff4a3828));
-    g.drawRoundedRectangle(transportArea.reduced(10, 5).toFloat(), 8.0f, 2.0f);
+    g.drawRoundedRectangle(transportArea.toFloat(), 8.0f, 2.0f);
 
-    // Control panel backgrounds
-    auto controlArea = getLocalBounds().removeFromBottom(330);
+    // Transport section - no label needed, visually distinct by VU meter and selectors
 
-    // Top control row background
-    auto topControls = controlArea.removeFromTop(150);
+    // Main controls section
+    workArea.removeFromTop(10);
+    auto mainControlsArea = workArea.removeFromTop(150);
+    mainControlsArea.reduce(15, 5);
+
     g.setColour(juce::Colour(0xff2a2018));
-    g.fillRoundedRectangle(topControls.reduced(10, 5).toFloat(), 8.0f);
+    g.fillRoundedRectangle(mainControlsArea.toFloat(), 8.0f);
     g.setColour(juce::Colour(0xff4a3828));
-    g.drawRoundedRectangle(topControls.reduced(10, 5).toFloat(), 8.0f, 2.0f);
+    g.drawRoundedRectangle(mainControlsArea.toFloat(), 8.0f, 2.0f);
 
-    // Bottom control row background
-    auto bottomControls = controlArea.removeFromTop(150);
+    // Main controls section - no label needed, knobs are self-explanatory
+
+    // Character controls section
+    workArea.removeFromTop(10);
+    auto characterArea = workArea.removeFromTop(150);
+    characterArea.reduce(15, 5);
+
     g.setColour(juce::Colour(0xff2a2018));
-    g.fillRoundedRectangle(bottomControls.reduced(10, 5).toFloat(), 8.0f);
+    g.fillRoundedRectangle(characterArea.toFloat(), 8.0f);
     g.setColour(juce::Colour(0xff4a3828));
-    g.drawRoundedRectangle(bottomControls.reduced(10, 5).toFloat(), 8.0f, 2.0f);
+    g.drawRoundedRectangle(characterArea.toFloat(), 8.0f, 2.0f);
 
-    // Section labels
-    g.setFont(juce::Font(10.0f, juce::Font::bold));
-    g.setColour(juce::Colour(0xff8a7050));
-    g.drawText("TRANSPORT", 20, 70, 100, 20, juce::Justification::left);
-    g.drawText("TONE SHAPING", 20, 250, 100, 20, juce::Justification::left);
-    g.drawText("CHARACTER", 20, 400, 100, 20, juce::Justification::left);
+    // Character controls section - no label needed, knobs are self-explanatory
 }
 
 void TapeMachineAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
 
-    // Title area
-    area.removeFromTop(65);
+    // Header area
+    area.removeFromTop(50);
 
-    // Transport section with reels and VU meter
-    auto transportArea = area.removeFromTop(220);
-    transportArea.reduce(20, 10);
+    // Transport section with reels and VU meter - ENLARGED
+    auto transportArea = area.removeFromTop(240);
+    transportArea.reduce(20, 12);
 
-    // Reels on sides - larger
-    auto reelSize = 140;
-    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(5));
-    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(5));
+    // Reels on sides - slightly larger
+    auto reelSize = 150;
+    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(8));
+    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(8));
 
-    // VU meter in center - use MORE vertical space
-    auto meterArea = transportArea.removeFromTop(160);
-    mainVUMeter.setBounds(meterArea);  // Use full area, no reduction
+    // Center area for VU meter and selectors
+    transportArea.removeFromTop(28); // Space for "TRANSPORT" label
 
-    // Selectors below VU meter - ensure they're visible
-    auto selectorArea = transportArea.removeFromTop(40);
+    // VU meter in center - MUCH LARGER and more prominent
+    auto meterArea = transportArea.removeFromTop(150);
+    mainVUMeter.setBounds(meterArea.reduced(8, 3));
+
+    // Selectors below VU meter
+    transportArea.removeFromTop(12); // Gap for labels
+    auto selectorArea = transportArea.removeFromTop(42); // Increased height for labels
     auto selectorWidth = selectorArea.getWidth() / 3;
 
-    tapeMachineSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(5, 5));
-    tapeSpeedSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(5, 5));
-    tapeTypeSelector.setBounds(selectorArea.reduced(5, 5));
+    tapeMachineSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(6, 2));
+    tapeSpeedSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(6, 2));
+    tapeTypeSelector.setBounds(selectorArea.reduced(6, 2));
 
-    // Control knobs
-    auto controlArea = area.removeFromBottom(360);
-    controlArea.reduce(30, 10);
+    area.removeFromTop(8); // Gap between sections
 
-    // Top row - Main controls
-    auto topRow = controlArea.removeFromTop(160);
-    topRow.removeFromTop(25); // Space for labels
+    // Main controls section
+    auto mainControlsArea = area.removeFromTop(150);
+    mainControlsArea.reduce(20, 8);
+    mainControlsArea.removeFromTop(28); // Space for "MAIN CONTROLS" label
 
-    auto knobSize = 100;
-    auto spacing = (topRow.getWidth() - (knobSize * 5)) / 6;
+    auto knobSize = 108;
+    auto mainSpacing = (mainControlsArea.getWidth() - (knobSize * 4)) / 5;
 
-    topRow.removeFromLeft(spacing);
-    inputGainSlider.setBounds(topRow.removeFromLeft(knobSize).withHeight(knobSize));
-    topRow.removeFromLeft(spacing);
-    saturationSlider.setBounds(topRow.removeFromLeft(knobSize).withHeight(knobSize));
-    topRow.removeFromLeft(spacing);
-    biasSlider.setBounds(topRow.removeFromLeft(knobSize).withHeight(knobSize));
-    topRow.removeFromLeft(spacing);
-    wowFlutterSlider.setBounds(topRow.removeFromLeft(knobSize).withHeight(knobSize));
-    topRow.removeFromLeft(spacing);
-    outputGainSlider.setBounds(topRow.removeFromLeft(knobSize).withHeight(knobSize));
+    mainControlsArea.removeFromLeft(mainSpacing);
+    inputGainSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
+    mainControlsArea.removeFromLeft(mainSpacing);
+    biasSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
+    mainControlsArea.removeFromLeft(mainSpacing);
+    wowFlutterSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
+    mainControlsArea.removeFromLeft(mainSpacing);
+    outputGainSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
 
-    // Bottom row - Filter and noise controls
-    auto bottomRow = controlArea.removeFromTop(150);
-    bottomRow.removeFromTop(25); // Space for labels
+    area.removeFromTop(8); // Gap between sections
 
-    spacing = (bottomRow.getWidth() - (knobSize * 3) - 100) / 5;
+    // Character & filtering section
+    auto characterArea = area.removeFromTop(150);
+    characterArea.reduce(20, 8);
+    characterArea.removeFromTop(28); // Space for "CHARACTER & FILTERING" label
 
-    bottomRow.removeFromLeft(spacing);
-    highpassFreqSlider.setBounds(bottomRow.removeFromLeft(knobSize).withHeight(knobSize));
-    bottomRow.removeFromLeft(spacing);
-    lowpassFreqSlider.setBounds(bottomRow.removeFromLeft(knobSize).withHeight(knobSize));
-    bottomRow.removeFromLeft(spacing);
-    noiseAmountSlider.setBounds(bottomRow.removeFromLeft(knobSize).withHeight(knobSize));
-    bottomRow.removeFromLeft(spacing);
+    // Center the 5 controls (3 knobs + 2 buttons: 110px + 120px)
+    auto charSpacing = (characterArea.getWidth() - (knobSize * 3) - 230) / 6;
 
-    // Noise enable button
-    noiseEnabledButton.setBounds(bottomRow.removeFromLeft(100).withSizeKeepingCentre(80, 35));
+    characterArea.removeFromLeft(charSpacing);
+    highpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
+    characterArea.removeFromLeft(charSpacing);
+    lowpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
+    characterArea.removeFromLeft(charSpacing);
+    noiseAmountSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
+    characterArea.removeFromLeft(charSpacing);
+
+    // Noise enable button - aligned with knobs, more prominent
+    auto buttonArea = characterArea.removeFromLeft(110);
+    noiseEnabledButton.setBounds(buttonArea.withSizeKeepingCentre(95, 45));
+    characterArea.removeFromLeft(charSpacing);
+
+    // Auto-comp button (wider to fit "AUTO COMP" text)
+    auto autoCompButtonArea = characterArea.removeFromLeft(120);
+    autoCompButton.setBounds(autoCompButtonArea.withSizeKeepingCentre(115, 45));
 }
 
 void TapeMachineAudioProcessorEditor::timerCallback()
@@ -367,7 +494,7 @@ void TapeMachineAudioProcessorEditor::timerCallback()
     float inputL = audioProcessor.getInputLevelL();
     float inputR = audioProcessor.getInputLevelR();
 
-    // Update VU meter to show input drive level
+    // Update VU meter to show tape drive (input level after input gain)
     mainVUMeter.setLevels(inputL, inputR);
 
     // Update reel speeds based on transport
