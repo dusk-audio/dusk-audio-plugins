@@ -11,8 +11,13 @@ public:
     CustomLookAndFeel();
     ~CustomLookAndFeel() override;
 
-    // Inherits drawRotarySlider and drawToggleButton from LunaVintageLookAndFeel
-    // Can override if TapeMachine-specific customization is needed
+    // TapeMachine-specific knob and button styling
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                         float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                         juce::Slider& slider) override;
+
+    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
 };
 
 class ReelAnimation : public juce::Component, public juce::Timer
@@ -51,7 +56,6 @@ private:
     juce::ComboBox tapeTypeSelector;
 
     juce::Slider inputGainSlider;
-    juce::Slider saturationSlider;
     juce::Slider biasSlider;
     juce::Slider highpassFreqSlider;
     juce::Slider lowpassFreqSlider;
@@ -60,12 +64,12 @@ private:
     juce::Slider outputGainSlider;
 
     juce::ToggleButton noiseEnabledButton;
+    juce::ToggleButton autoCompButton;
 
     juce::Label tapeMachineLabel;
     juce::Label tapeSpeedLabel;
     juce::Label tapeTypeLabel;
     juce::Label inputGainLabel;
-    juce::Label saturationLabel;
     juce::Label biasLabel;
     juce::Label highpassFreqLabel;
     juce::Label lowpassFreqLabel;
@@ -83,7 +87,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeTypeAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputGainAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> saturationAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> biasAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highpassFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowpassFreqAttachment;
@@ -92,6 +95,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> noiseEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoCompAttachment;
 
     void setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text);
     void setupComboBox(juce::ComboBox& combo, juce::Label& label, const juce::String& text);

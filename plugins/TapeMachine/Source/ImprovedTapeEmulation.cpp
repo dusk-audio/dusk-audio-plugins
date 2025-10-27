@@ -61,9 +61,10 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
     noiseGen.pinkingFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
         sampleRate, 3000.0f, 0.7f);
 
-    // DC blocking filter - essential to prevent subsonic rumble
+    // Subsonic filter - authentic to real tape machines (Studer/Ampex have 20-30Hz filters)
+    // Removes mechanical rumble and subsonic artifacts while preserving head bump (35Hz+)
     dcBlocker.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(
-        sampleRate, 20.0f, 0.707f);  // Cut below 20Hz
+        sampleRate, 25.0f, 0.707f);  // Professional mastering standard
 
     // Saturation envelope followers
     saturator.updateCoefficients(0.1f, 10.0f, sampleRate);
@@ -202,7 +203,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hysteresisAmount = 0.18f;  // Moderate hysteresis (reduced)
             chars.hysteresisAsymmetry = 0.05f;
 
-            chars.noiseFloor = -65.0f;
+            chars.noiseFloor = -58.0f;  // Moderate noise floor
             chars.modulationNoise = 0.02f;
 
             chars.lfEmphasis = 1.15f;  // Slight low-end emphasis
@@ -218,7 +219,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hysteresisAmount = 0.12f;  // Lower hysteresis (cleaner, reduced)
             chars.hysteresisAsymmetry = 0.03f;
 
-            chars.noiseFloor = -68.0f;  // Lower noise floor
+            chars.noiseFloor = -62.0f;  // Low noise floor (quietest tape)
             chars.modulationNoise = 0.015f;
 
             chars.lfEmphasis = 1.05f;  // Flatter response
@@ -234,7 +235,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hysteresisAmount = 0.22f;  // Higher hysteresis (more color, reduced)
             chars.hysteresisAsymmetry = 0.08f;
 
-            chars.noiseFloor = -64.0f;
+            chars.noiseFloor = -56.0f;  // Higher noise floor (vintage character)
             chars.modulationNoise = 0.025f;
 
             chars.lfEmphasis = 1.20f;  // More low-end warmth
@@ -250,7 +251,7 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
             chars.hysteresisAmount = 0.28f;  // High hysteresis (vintage color, reduced)
             chars.hysteresisAsymmetry = 0.10f;  // More asymmetry
 
-            chars.noiseFloor = -62.0f;  // Higher noise (vintage)
+            chars.noiseFloor = -54.0f;  // Highest noise floor (vintage = noisiest)
             chars.modulationNoise = 0.03f;
 
             chars.lfEmphasis = 1.25f;  // Strong low-end coloration
@@ -507,12 +508,12 @@ float ImprovedTapeEmulation::processSample(float input,
     // Calculate input level for level-dependent processing
     // 0 VU ≈ -12dBFS = 0.25 linear
     // Tape should be clean below 0 VU and saturate progressively above it
-    float inputLevel = std::abs(signal);
+    float absInput = std::abs(signal);
     const float zeroVU = 0.25f;  // -12dBFS reference level
 
     // Level-dependent saturation amount: 0 below threshold, increases above
     // This makes tape nearly transparent at low levels
-    float levelAboveThreshold = std::max(0.0f, (inputLevel - zeroVU) / (1.0f - zeroVU));
+    float levelAboveThreshold = std::max(0.0f, (absInput - zeroVU) / (1.0f - zeroVU));
     float levelDependentSat = levelAboveThreshold * saturationDepth;
 
     // 3. Tape hysteresis (magnetic non-linearity) - level dependent
@@ -590,17 +591,26 @@ float ImprovedTapeEmulation::processSample(float input,
     {
         if (noiseAmount > 0.001f)  // And amount is meaningful
         {
+            // Calculate noise level: noiseAmount is 0-1 range (parameter already divided by 100)
+            // Tape noise floor is -62dB to -68dB depending on tape type
+            // Speed reduction: 7.5 IPS = more noise, 30 IPS = less noise
+            float noiseLevel = juce::Decibels::decibelsToGain(tapeChars.noiseFloor) *
+                              speedChars.noiseReduction *
+                              noiseAmount;  // noiseAmount already 0-1 from parameter scaling
+
             float noise = noiseGen.generateNoise(
-                juce::Decibels::decibelsToGain(tapeChars.noiseFloor) * speedChars.noiseReduction * noiseAmount * 0.01f,
+                noiseLevel,
                 tapeChars.modulationNoise,
                 signal);
-            signal += noise * 0.05f;  // Subtle noise when enabled
+
+            // Add noise at full strength - it's already scaled appropriately
+            signal += noise;
         }
     }
     // NO ELSE - when disabled, absolutely no noise is added
 
-    // 13. DC blocking disabled - main processor chain already has highpass filter
-    // signal = dcBlocker.processSample(signal);
+    // 13. DC blocking - removes subsonic rumble below 20Hz
+    signal = dcBlocker.processSample(signal);
 
     // 14. Final soft clipping
     signal = softClip(signal, 0.95f);

@@ -103,13 +103,13 @@ private:
     std::atomic<float>* tapeSpeedParam = nullptr;
     std::atomic<float>* tapeTypeParam = nullptr;
     std::atomic<float>* inputGainParam = nullptr;
-    std::atomic<float>* saturationParam = nullptr;
     std::atomic<float>* highpassFreqParam = nullptr;
     std::atomic<float>* lowpassFreqParam = nullptr;
     std::atomic<float>* noiseAmountParam = nullptr;
     std::atomic<float>* noiseEnabledParam = nullptr;
     std::atomic<float>* wowFlutterParam = nullptr;
     std::atomic<float>* outputGainParam = nullptr;
+    std::atomic<float>* autoCompParam = nullptr;
 
     void updateFilters();
 

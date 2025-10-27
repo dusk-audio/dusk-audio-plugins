@@ -12,12 +12,30 @@ AnalogVUMeter::~AnalogVUMeter()
 
 void AnalogVUMeter::setLevels(float leftLevel, float rightLevel)
 {
-    // Convert linear to dB
+    // Convert linear to dB (no calibration offset - VU shows dBFS directly)
     float dbL = 20.0f * std::log10(std::max(0.001f, leftLevel));
     float dbR = 20.0f * std::log10(std::max(0.001f, rightLevel));
 
     targetLevelL = dbL;
     targetLevelR = dbR;
+
+    // Debug: Log what the VU meter is receiving
+    static int debugCounter = 0;
+    if (++debugCounter > 60)  // Log every ~1 second
+    {
+        debugCounter = 0;
+        juce::File logFile("/tmp/tapemachine_vu_display.txt");
+        juce::String logText;
+        logText << "=== VU METER DISPLAY ===" << juce::newLine;
+        logText << "Received Linear L: " << juce::String(leftLevel, 4) << juce::newLine;
+        logText << "Received Linear R: " << juce::String(rightLevel, 4) << juce::newLine;
+        logText << "Converted to dB L: " << juce::String(dbL, 2) << " dB" << juce::newLine;
+        logText << "Converted to dB R: " << juce::String(dbR, 2) << " dB" << juce::newLine;
+        logText << "Target Level L:    " << juce::String(targetLevelL, 2) << " dB" << juce::newLine;
+        logText << "Target Level R:    " << juce::String(targetLevelR, 2) << " dB" << juce::newLine;
+        logText << juce::newLine;
+        logFile.appendText(logText);
+    }
 
     // Update peaks
     if (dbL > peakLevelL)
@@ -113,12 +131,7 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     const float scaleStart = -2.7f;
     const float scaleEnd = -0.44f;
 
-    // Draw scale arc
-    g.setColour(juce::Colour(0xFF1A1A1A).withAlpha(0.7f));
-    juce::Path scaleArc;
-    scaleArc.addCentredArc(centreX, pivotY, needleLength * 0.95f, needleLength * 0.95f,
-                          0, scaleStart, scaleEnd, true);
-    g.strokePath(scaleArc, juce::PathStrokeType(2.0f * scaleFactor));
+    // Scale arc removed - was creating dark line that obscured markings
 
     // Font setup for scale markings
     float baseFontSize = juce::jmax(10.0f, 14.0f * scaleFactor);
@@ -199,23 +212,36 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     g.drawText("VU", centreX - 20 * scaleFactor, vuY,
               40 * scaleFactor, 20 * scaleFactor, juce::Justification::centred);
 
-    // Draw LEFT needle (red/orange)
-    float needleAngleL = scaleStart + needlePositionL * (scaleEnd - scaleStart);
-    g.setColour(juce::Colour(0xFFCC3333));  // Red-orange for left
-    juce::Path needleL;
-    needleL.startNewSubPath(centreX, pivotY);
-    needleL.lineTo(centreX + needleLength * 0.96f * std::cos(needleAngleL),
-                  pivotY + needleLength * 0.96f * std::sin(needleAngleL));
-    g.strokePath(needleL, juce::PathStrokeType(2.0f * scaleFactor));
+    // Draw single needle showing max of L/R (works for both mono and stereo)
+    float avgNeedlePos = juce::jmax(needlePositionL, needlePositionR);
+    float needleAngle = scaleStart + avgNeedlePos * (scaleEnd - scaleStart);
 
-    // Draw RIGHT needle (darker red)
-    float needleAngleR = scaleStart + needlePositionR * (scaleEnd - scaleStart);
-    g.setColour(juce::Colour(0xFF992222));  // Darker red for right
-    juce::Path needleR;
-    needleR.startNewSubPath(centreX, pivotY);
-    needleR.lineTo(centreX + needleLength * 0.96f * std::cos(needleAngleR),
-                  pivotY + needleLength * 0.96f * std::sin(needleAngleR));
-    g.strokePath(needleR, juce::PathStrokeType(1.8f * scaleFactor));
+    // Debug: Log needle position calculation
+    static int paintDebugCounter = 0;
+    if (++paintDebugCounter > 60)
+    {
+        paintDebugCounter = 0;
+        juce::File logFile("/tmp/tapemachine_vu_needle.txt");
+        juce::String logText;
+        logText << "=== NEEDLE CALCULATION ===" << juce::newLine;
+        logText << "currentLevelL:   " << juce::String(currentLevelL, 2) << " dB" << juce::newLine;
+        logText << "currentLevelR:   " << juce::String(currentLevelR, 2) << " dB" << juce::newLine;
+        logText << "targetLevelL:    " << juce::String(targetLevelL, 2) << " dB" << juce::newLine;
+        logText << "targetLevelR:    " << juce::String(targetLevelR, 2) << " dB" << juce::newLine;
+        logText << "needlePositionL: " << juce::String(needlePositionL, 4) << juce::newLine;
+        logText << "needlePositionR: " << juce::String(needlePositionR, 4) << juce::newLine;
+        logText << "avgNeedlePos:    " << juce::String(avgNeedlePos, 4) << " (should be avg of L and R)" << juce::newLine;
+        logText << "needleAngle:     " << juce::String(needleAngle, 4) << " rad" << juce::newLine;
+        logText << juce::newLine;
+        logFile.appendText(logText);
+    }
+
+    g.setColour(juce::Colour(0xFFCC3333));  // Classic VU red
+    juce::Path needle;
+    needle.startNewSubPath(centreX, pivotY);
+    needle.lineTo(centreX + needleLength * 0.96f * std::cos(needleAngle),
+                  pivotY + needleLength * 0.96f * std::sin(needleAngle));
+    g.strokePath(needle, juce::PathStrokeType(2.5f * scaleFactor));
 
     // Draw needle pivot
     float pivotRadius = 4 * scaleFactor;

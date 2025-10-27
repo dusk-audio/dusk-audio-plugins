@@ -15,19 +15,19 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
                        ),
 #endif
        apvts(*this, nullptr, "Parameters", createParameterLayout()),
-       oversampling(2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false)
+       oversampling(2, 2, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple)
 {
     tapeMachineParam = apvts.getRawParameterValue("tapeMachine");
     tapeSpeedParam = apvts.getRawParameterValue("tapeSpeed");
     tapeTypeParam = apvts.getRawParameterValue("tapeType");
     inputGainParam = apvts.getRawParameterValue("inputGain");
-    saturationParam = apvts.getRawParameterValue("saturation");
     highpassFreqParam = apvts.getRawParameterValue("highpassFreq");
     lowpassFreqParam = apvts.getRawParameterValue("lowpassFreq");
     noiseAmountParam = apvts.getRawParameterValue("noiseAmount");
     noiseEnabledParam = apvts.getRawParameterValue("noiseEnabled");
     wowFlutterParam = apvts.getRawParameterValue("wowFlutter");
     outputGainParam = apvts.getRawParameterValue("outputGain");
+    autoCompParam = apvts.getRawParameterValue("autoComp");
 
     tapeEmulationLeft = std::make_unique<ImprovedTapeEmulation>();
     tapeEmulationRight = std::make_unique<ImprovedTapeEmulation>();
@@ -126,6 +126,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + " dB"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "autoComp", "Auto Compensation", true));
 
     return { params.begin(), params.end() };
 }
@@ -243,9 +246,10 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
 
     // Initialize smoothed parameters with a ramp time of 20ms to prevent zipper noise
     const float rampTimeMs = 20.0f;
+    const float saturationRampTimeMs = 150.0f;  // Slower smoothing for saturation to avoid jumps
 
     // Note: Input/output gain smoothing is now handled by the gain processors themselves
-    smoothedSaturation.reset(sampleRate, rampTimeMs * 0.001f);
+    smoothedSaturation.reset(sampleRate, saturationRampTimeMs * 0.001f);
     smoothedNoiseAmount.reset(sampleRate, rampTimeMs * 0.001f);
     smoothedWowFlutter.reset(sampleRate, rampTimeMs * 0.001f);
 }
@@ -264,16 +268,21 @@ bool TapeMachineAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
     juce::ignoreUnused (layouts);
     return true;
   #else
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+    auto in = layouts.getMainInputChannelSet();
+    auto out = layouts.getMainOutputChannelSet();
+
+    // Support mono and stereo
+    if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
         return false;
 
-   #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
-        return false;
-   #endif
+    // Support: mono→mono, mono→stereo, stereo→stereo
+    if (in == juce::AudioChannelSet::mono() && (out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo()))
+        return true;
 
-    return true;
+    if (in == juce::AudioChannelSet::stereo() && out == juce::AudioChannelSet::stereo())
+        return true;
+
+    return false;
   #endif
 }
 #endif
@@ -289,10 +298,9 @@ void TapeMachineAudioProcessor::updateFilters()
     // Use oversampled rate since filters process oversampled audio
     if (currentOversampledRate > 0.0f)
     {
-        // Bypass highpass filter only when at minimum frequency (20Hz)
-        bypassHighpass = (hpFreq <= 20.0f);
+        // Always apply highpass filter to remove subsonic rumble from tape nonlinearities
+        bypassHighpass = false;
 
-        if (!bypassHighpass)
         {
             processorChainLeft.get<1>().setCutoffFrequency(hpFreq);
             processorChainLeft.get<1>().setType(juce::dsp::StateVariableTPTFilterType::highpass);
@@ -325,14 +333,35 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     juce::ignoreUnused(midiMessages);
     juce::ScopedNoDenormals noDenormals;
 
+    // Debug: Log when processBlock is called
+    static int processCallCount = 0;
+    static bool loggedProcessing = false;
+    if (!loggedProcessing && ++processCallCount > 10)
+    {
+        loggedProcessing = true;
+        juce::File logFile("/tmp/tapemachine_processing.txt");
+        juce::String logText;
+        logText << "ProcessBlock called, channels=" << buffer.getNumChannels()
+                << ", samples=" << buffer.getNumSamples() << juce::newLine;
+        logFile.appendText(logText);
+    }
+
     // Critical safety check - if parameters failed to initialize, don't process
     if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !inputGainParam ||
-        !saturationParam || !highpassFreqParam || !lowpassFreqParam ||
+        !highpassFreqParam || !lowpassFreqParam ||
         !noiseAmountParam || !noiseEnabledParam || !wowFlutterParam || !outputGainParam)
     {
         // This should never happen in production, but if it does, pass audio through
         // rather than producing silence
         jassertfalse; // Alert during debug builds
+
+        static bool loggedParamError = false;
+        if (!loggedParamError)
+        {
+            loggedParamError = true;
+            juce::File logFile("/tmp/tapemachine_param_error.txt");
+            logFile.appendText("PARAMETER INITIALIZATION FAILED - bypassing\n");
+        }
         return;
     }
 
@@ -342,8 +371,20 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     for (int i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    if (buffer.getNumChannels() < 2 || buffer.getNumSamples() == 0)
+    if (buffer.getNumSamples() == 0)
         return;
+
+    // For mono processing: duplicate channel 0 to channel 1 temporarily
+    const bool isMono = (buffer.getNumChannels() == 1);
+    if (isMono)
+    {
+        // Add a second channel for processing
+        buffer.setSize(2, buffer.getNumSamples(), true, false, false);
+        buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
+    }
+
+    if (buffer.getNumChannels() < 2)
+        return;  // Safety check - should never happen now
 
     // Set processing flag based on DAW transport state
     if (auto* playHead = getPlayHead())
@@ -373,7 +414,32 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     // Update target values for smoothing
     const float targetInputGain = juce::Decibels::decibelsToGain(inputGainParam->load());
-    const float targetOutputGain = juce::Decibels::decibelsToGain(outputGainParam->load());
+    float targetOutputGain = juce::Decibels::decibelsToGain(outputGainParam->load());
+
+    // Auto-compensation: compensate output for input gain if enabled
+    // Account for saturation's level-dependent harmonic content
+    if (autoCompParam && autoCompParam->load() > 0.5f)
+    {
+        float inputGainDB = inputGainParam->load();
+
+        // Calculate saturation amount (0-100%)
+        float saturationAmount = juce::jlimit(0.0f, 100.0f, ((inputGainDB + 12.0f) / 24.0f) * 100.0f);
+
+        // Tape saturation is level-dependent - harmonics only appear above 0 VU (-12dBFS)
+        // The harmonic gain increases non-linearly with both input level and saturation amount
+        // Use empirical curve that matches tape behavior:
+        // - Below 0dB input: minimal harmonic gain (mostly 1:1 compensation)
+        // - At +12dB input with 100% saturation: ~3-4dB of harmonic gain
+        float normalizedInput = juce::jlimit(0.0f, 1.0f, (inputGainDB + 12.0f) / 24.0f);  // 0 to 1
+        float saturationNormalized = saturationAmount / 100.0f;  // 0 to 1
+
+        // Harmonic gain increases with square of both input level and saturation
+        // This matches the level-dependent behavior in the tape emulation
+        float harmonicGainDB = normalizedInput * normalizedInput * saturationNormalized * 4.0f;
+
+        float compensationDB = -inputGainDB - harmonicGainDB;
+        targetOutputGain *= juce::Decibels::decibelsToGain(compensationDB);
+    }
 
     // Let the gain processors handle their own smoothing with the configured ramp time
     processorChainLeft.get<0>().setGainLinear(targetInputGain);
@@ -382,44 +448,69 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     processorChainRight.get<3>().setGainLinear(targetOutputGain);
 
     // Keep smoothing for non-gain parameters that we process per-sample
-    smoothedSaturation.setTargetValue(saturationParam->load());
+    // Drive saturation from input gain: -12dB to +12dB maps to 0% to 100%
+    float inputGainDB = inputGainParam->load();
+    float saturationAmount = juce::jlimit(0.0f, 100.0f, ((inputGainDB + 12.0f) / 24.0f) * 100.0f);
+    smoothedSaturation.setTargetValue(saturationAmount);
     smoothedWowFlutter.setTargetValue(wowFlutterParam->load());
-    // Scale noise amount reasonably (0-100% becomes 0-0.01 for subtle tape hiss)
-    smoothedNoiseAmount.setTargetValue(noiseAmountParam->load() * 0.01f * 0.01f);
+    // Scale noise amount: 0-100% becomes 0-1.0 range for proper noise level control
+    // The actual noise floor level is determined by tape characteristics (-62dB to -68dB)
+    smoothedNoiseAmount.setTargetValue(noiseAmountParam->load() * 0.01f);
 
     const bool noiseEnabled = noiseEnabledParam->load() > 0.5f;
 
-    // Calculate RMS input levels BEFORE input gain for VU-accurate metering
-    // VU meters use RMS with 300ms integration time (not peak)
-    auto* leftChannel = buffer.getWritePointer(0);
-    auto* rightChannel = buffer.getWritePointer(1);
+    // Apply input gain in non-oversampled domain for accurate VU metering
+    juce::dsp::AudioBlock<float> block(buffer);
+    auto blockLeftChan = block.getSingleChannelBlock(0);
+    auto blockRightChan = block.getSingleChannelBlock(1);
 
-    // Calculate RMS for this block
+    juce::dsp::ProcessContextReplacing<float> blockLeftContext(blockLeftChan);
+    juce::dsp::ProcessContextReplacing<float> blockRightContext(blockRightChan);
+
+    // Apply input gain at original sample rate
+    processorChainLeft.get<0>().process(blockLeftContext);
+    processorChainRight.get<0>().process(blockRightContext);
+
+    // Calculate RMS input levels AFTER input gain for tape drive metering
+    // VU meter shows how hard you're driving the tape (measure at original sample rate)
+    const float* leftChannel = buffer.getReadPointer(0);
+    const float* rightChannel = buffer.getReadPointer(1);
+    const int numSamplesOriginal = buffer.getNumSamples();
+
+    // Calculate RMS for this block (input gain already applied above)
     float sumSquaresL = 0.0f;
     float sumSquaresR = 0.0f;
-    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    for (int i = 0; i < numSamplesOriginal; ++i)
     {
-        sumSquaresL += leftChannel[i] * leftChannel[i];
-        sumSquaresR += rightChannel[i] * rightChannel[i];
+        float sampleL = leftChannel[i];
+        float sampleR = rightChannel[i];
+        sumSquaresL += sampleL * sampleL;
+        sumSquaresR += sampleR * sampleR;
     }
-    float rmsBlockL = std::sqrt(sumSquaresL / buffer.getNumSamples());
-    float rmsBlockR = std::sqrt(sumSquaresR / buffer.getNumSamples());
+    float rmsBlockL = std::sqrt(sumSquaresL / numSamplesOriginal);
+    float rmsBlockR = std::sqrt(sumSquaresR / numSamplesOriginal);
 
     // VU meter ballistics: 300ms integration (exponential moving average)
-    // Time constant: tau = 300ms, coefficient = exp(-dt/tau)
-    const float dt = buffer.getNumSamples() / currentSampleRate;  // Block duration in seconds
+    const float dt = numSamplesOriginal / currentSampleRate;
     const float tau = 0.3f;  // 300ms VU standard
-    const float alpha = std::exp(-dt / tau);  // Smoothing coefficient
+    const float alpha = std::exp(-dt / tau);
 
-    // Update RMS with exponential moving average
     rmsInputL = alpha * rmsInputL + (1.0f - alpha) * rmsBlockL;
     rmsInputR = alpha * rmsInputR + (1.0f - alpha) * rmsBlockR;
 
-    // Store as dB for display (VU meters show dB scale)
     inputLevelL.store(rmsInputL);
     inputLevelR.store(rmsInputR);
 
-    juce::dsp::AudioBlock<float> block(buffer);
+    // Debug: Print VU meter values periodically
+    static int debugCounter = 0;
+    if (++debugCounter > 100)
+    {
+        debugCounter = 0;
+        DBG("RMS Level: " << juce::Decibels::gainToDecibels(rmsInputL) << " dBFS");
+        DBG("VU Reading: " << (juce::Decibels::gainToDecibels(rmsInputL) + 12.0f) << " VU");
+    }
+
+    // Now oversample for high-quality processing
     juce::dsp::AudioBlock<float> oversampledBlock = oversampling.processSamplesUp(block);
 
     auto leftBlock = oversampledBlock.getSingleChannelBlock(0);
@@ -427,11 +518,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     juce::dsp::ProcessContextReplacing<float> leftContext(leftBlock);
     juce::dsp::ProcessContextReplacing<float> rightContext(rightBlock);
-
-    // Input chain: Gain → Highpass (before tape emulation)
-    // Element 0: Input gain
-    processorChainLeft.get<0>().process(leftContext);
-    processorChainRight.get<0>().process(rightContext);
 
     // Element 1: Highpass filter (bypass if at minimum)
     if (!bypassHighpass)
@@ -572,23 +658,55 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     oversampling.processSamplesDown(block);
 
     // Calculate RMS output levels after processing (VU-accurate)
+    const float* outputLeftChannel = buffer.getReadPointer(0);
+    const float* outputRightChannel = buffer.getReadPointer(1);
+
     float sumSquaresOutL = 0.0f;
     float sumSquaresOutR = 0.0f;
+    float peakOutL = 0.0f;
+    float peakOutR = 0.0f;
 
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        sumSquaresOutL += leftChannel[i] * leftChannel[i];
-        sumSquaresOutR += rightChannel[i] * rightChannel[i];
+        float sampleL = outputLeftChannel[i];
+        float sampleR = outputRightChannel[i];
+        sumSquaresOutL += sampleL * sampleL;
+        sumSquaresOutR += sampleR * sampleR;
+        peakOutL = std::max(peakOutL, std::abs(sampleL));
+        peakOutR = std::max(peakOutR, std::abs(sampleR));
     }
     float rmsBlockOutL = std::sqrt(sumSquaresOutL / buffer.getNumSamples());
     float rmsBlockOutR = std::sqrt(sumSquaresOutR / buffer.getNumSamples());
 
-    // Apply same VU ballistics to output (reuse dt, tau, alpha from input calculation)
-    rmsOutputL = alpha * rmsOutputL + (1.0f - alpha) * rmsBlockOutL;
-    rmsOutputR = alpha * rmsOutputR + (1.0f - alpha) * rmsBlockOutR;
+    // VU meter ballistics: 300ms integration (exponential moving average)
+    const float dtOut = buffer.getNumSamples() / currentSampleRate;
+    const float tauOut = 0.3f;  // 300ms VU standard
+    const float alphaOut = std::exp(-dtOut / tauOut);
+
+    rmsOutputL = alphaOut * rmsOutputL + (1.0f - alphaOut) * rmsBlockOutL;
+    rmsOutputR = alphaOut * rmsOutputR + (1.0f - alphaOut) * rmsBlockOutR;
 
     outputLevelL.store(rmsOutputL);
     outputLevelR.store(rmsOutputR);
+
+    // Debug: Write output levels to file
+    static int debugCounterOut = 0;
+    if (++debugCounterOut > 48)  // Write ~once per second
+    {
+        debugCounterOut = 0;
+        float peakDB = juce::Decibels::gainToDecibels(peakOutL);
+        float rmsDB = juce::Decibels::gainToDecibels(rmsOutputL);
+
+        juce::File logFile("/tmp/tapemachine_debug.txt");
+        juce::String logText;
+        logText << "=== OUTPUT LEVELS ===" << juce::newLine;
+        logText << "Peak: " << juce::String(peakDB, 2) << " dBFS" << juce::newLine;
+        logText << "RMS:  " << juce::String(rmsDB, 2) << " dBFS (VU shows this)" << juce::newLine;
+        logText << "RMS Linear: " << juce::String(rmsOutputL, 4) << juce::newLine;
+        logText << "Difference: " << juce::String(peakDB - rmsDB, 2) << " dB" << juce::newLine;
+        logText << juce::newLine;
+        logFile.appendText(logText);
+    }
 }
 
 bool TapeMachineAudioProcessor::hasEditor() const

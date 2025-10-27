@@ -342,12 +342,12 @@ void FourKEQEditor::resized()
     // HPF
     auto hpfBounds = filterSection.removeFromTop(160);  // Space for knob + labels
     hpfBounds.removeFromTop(5);  // Small gap from section label
-    hpfFreqSlider.setBounds(hpfBounds.withSizeKeepingCentre(70, 70));  // Same size as OUTPUT/DRIVE
+    hpfFreqSlider.setBounds(hpfBounds.withSizeKeepingCentre(80, 80));
 
     // LPF
     auto lpfBounds = filterSection.removeFromTop(160);  // Space for knob + labels
     lpfBounds.removeFromTop(5);  // Small gap
-    lpfFreqSlider.setBounds(lpfBounds.withSizeKeepingCentre(70, 70));  // Same size as OUTPUT/DRIVE
+    lpfFreqSlider.setBounds(lpfBounds.withSizeKeepingCentre(80, 80));
 
     bounds.removeFromLeft(15);  // Gap
 
@@ -357,11 +357,11 @@ void FourKEQEditor::resized()
 
     auto lfGainBounds = lfSection.removeFromTop(130);  // Space for knob + labels
     lfGainBounds.removeFromTop(5);  // Small gap
-    lfGainSlider.setBounds(lfGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    lfGainSlider.setBounds(lfGainBounds.withSizeKeepingCentre(80, 80));
 
     auto lfFreqBounds = lfSection.removeFromTop(130);  // Space for knob + labels
     lfFreqBounds.removeFromTop(30);  // More space below GAIN label
-    lfFreqSlider.setBounds(lfFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    lfFreqSlider.setBounds(lfFreqBounds.withSizeKeepingCentre(80, 80));
 
     lfSection.removeFromTop(10);  // Extra space below FREQ label
     lfBellButton.setBounds(lfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
@@ -372,17 +372,17 @@ void FourKEQEditor::resized()
     auto lmSection = bounds.removeFromLeft(132);  // Match section header width
     lmSection.removeFromTop(35);  // Section label space
 
-    auto lmGainBounds = lmSection.removeFromTop(130);  // Increased for value readout space
+    auto lmGainBounds = lmSection.removeFromTop(130);  // Space for knob + labels
     lmGainBounds.removeFromTop(5);  // Space for label - aligned with LF
-    lmGainSlider.setBounds(lmGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    lmGainSlider.setBounds(lmGainBounds.withSizeKeepingCentre(80, 80));
 
-    auto lmFreqBounds = lmSection.removeFromTop(130);  // Increased for value readout space
+    auto lmFreqBounds = lmSection.removeFromTop(130);  // Space for knob + labels
     lmFreqBounds.removeFromTop(30);  // More space below GAIN label
-    lmFreqSlider.setBounds(lmFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    lmFreqSlider.setBounds(lmFreqBounds.withSizeKeepingCentre(80, 80));
 
-    auto lmQBounds = lmSection.removeFromTop(130);  // Increased for value readout space
+    auto lmQBounds = lmSection.removeFromTop(130);  // Space for knob + labels
     lmQBounds.removeFromTop(30);  // More space below FREQ label
-    lmQSlider.setBounds(lmQBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    lmQSlider.setBounds(lmQBounds.withSizeKeepingCentre(80, 80));
 
     bounds.removeFromLeft(2);  // Just the divider width
 
@@ -390,17 +390,17 @@ void FourKEQEditor::resized()
     auto hmSection = bounds.removeFromLeft(132);  // Match section header width
     hmSection.removeFromTop(35);  // Section label space
 
-    auto hmGainBounds = hmSection.removeFromTop(130);  // Increased for value readout space
+    auto hmGainBounds = hmSection.removeFromTop(130);  // Space for knob + labels
     hmGainBounds.removeFromTop(5);  // Space for label - aligned with LF
-    hmGainSlider.setBounds(hmGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    hmGainSlider.setBounds(hmGainBounds.withSizeKeepingCentre(80, 80));
 
-    auto hmFreqBounds = hmSection.removeFromTop(130);  // Increased for value readout space
+    auto hmFreqBounds = hmSection.removeFromTop(130);  // Space for knob + labels
     hmFreqBounds.removeFromTop(30);  // More space below GAIN label
-    hmFreqSlider.setBounds(hmFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    hmFreqSlider.setBounds(hmFreqBounds.withSizeKeepingCentre(80, 80));
 
-    auto hmQBounds = hmSection.removeFromTop(130);  // Increased for value readout space
+    auto hmQBounds = hmSection.removeFromTop(130);  // Space for knob + labels
     hmQBounds.removeFromTop(30);  // More space below FREQ label
-    hmQSlider.setBounds(hmQBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    hmQSlider.setBounds(hmQBounds.withSizeKeepingCentre(80, 80));
 
     bounds.removeFromLeft(2);  // Just the divider width
 
@@ -408,13 +408,13 @@ void FourKEQEditor::resized()
     auto hfSection = bounds.removeFromLeft(132);  // Match section header width
     hfSection.removeFromTop(35);  // Section label space
 
-    auto hfGainBounds = hfSection.removeFromTop(130);  // Increased for value readout space
+    auto hfGainBounds = hfSection.removeFromTop(130);  // Space for knob + labels
     hfGainBounds.removeFromTop(5);  // Space for label - aligned with LF
-    hfGainSlider.setBounds(hfGainBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    hfGainSlider.setBounds(hfGainBounds.withSizeKeepingCentre(80, 80));
 
-    auto hfFreqBounds = hfSection.removeFromTop(130);  // Increased for value readout space
+    auto hfFreqBounds = hfSection.removeFromTop(130);  // Space for knob + labels
     hfFreqBounds.removeFromTop(30);  // More space below GAIN label
-    hfFreqSlider.setBounds(hfFreqBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    hfFreqSlider.setBounds(hfFreqBounds.withSizeKeepingCentre(80, 80));
 
     hfSection.removeFromTop(10);  // Extra space below FREQ label
     hfBellButton.setBounds(hfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
@@ -441,14 +441,14 @@ void FourKEQEditor::resized()
     masterSection.removeFromTop(5);  // Small gap
 
     // Output gain
-    auto outputBounds = masterSection.removeFromTop(130);  // Increased for value readout space
+    auto outputBounds = masterSection.removeFromTop(130);  // Space for knob + labels
     outputBounds.removeFromTop(20);  // Space for label
-    outputGainSlider.setBounds(outputBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    outputGainSlider.setBounds(outputBounds.withSizeKeepingCentre(80, 80));
 
     // Saturation
-    auto satBounds = masterSection.removeFromTop(130);  // Increased for value readout space
+    auto satBounds = masterSection.removeFromTop(130);  // Space for knob + labels
     satBounds.removeFromTop(20);  // Space for label
-    saturationSlider.setBounds(satBounds.withSizeKeepingCentre(70, 70));  // Reduced for larger labels
+    saturationSlider.setBounds(satBounds.withSizeKeepingCentre(80, 80));
 
     // Position section labels
     // FILTERS label removed - section header at top is sufficient
@@ -539,8 +539,10 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
                               const juce::String& label, bool centerDetented)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    // No text box - keep clean knob design
     slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    slider.setPopupDisplayEnabled(false, false, this);
+    // Enable popup for value display and double-click text entry
+    slider.setPopupDisplayEnabled(true, true, this);
 
     // Professional rotation range
     slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
