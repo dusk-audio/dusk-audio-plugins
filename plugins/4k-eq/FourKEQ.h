@@ -79,6 +79,12 @@ public:
     juce::AudioBuffer<float> spectrumBufferPre;   // Pre-EQ
     juce::CriticalSection spectrumBufferLock;
 
+    // Level meters (thread-safe atomic values for GUI display)
+    std::atomic<float> inputLevelL{0.0f};   // Input level left channel (dBFS)
+    std::atomic<float> inputLevelR{0.0f};   // Input level right channel (dBFS)
+    std::atomic<float> outputLevelL{0.0f};  // Output level left channel (dBFS)
+    std::atomic<float> outputLevelR{0.0f};  // Output level right channel (dBFS)
+
 private:
     //==============================================================================
     // AudioProcessorValueTreeState::Listener implementation

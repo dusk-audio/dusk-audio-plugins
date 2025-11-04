@@ -702,8 +702,8 @@ public:
             // LA-2A has more harmonic content than 1176
             if (levelDb > -40.0f)  // Add harmonics above -40dB
             {
-                // 2nd harmonic - LA-2A manual spec: < 0.35% THD at +10dBm
-                float thd_target = levelDb > 6.0f ? 0.0075f : 0.0035f;
+                // 2nd harmonic - LA-2A manual spec: < 0.5% THD (0.25% typical) at ±10dBm
+                float thd_target = levelDb > 6.0f ? 0.005f : 0.0025f;  // 0.5% max / 0.25% typical
                 float h2_scale = thd_target * 0.85f;
                 h2_level = absDriven * absDriven * h2_scale;
 
@@ -1064,19 +1064,22 @@ public:
             // Heavy compression: full harmonics (1.0x)
             float harmonicScale = 0.2f + (grAmount * 0.8f); // 0.2 to 1.0 range
 
-            // 2nd harmonic: -100dB absolute (-82dB relative at -18dB)
+            // 1176 manual spec: < 0.5% THD from 50 Hz to 15 kHz with limiting
+            // Target ~0.45% total at maximum compression for authentic character
+
+            // 2nd harmonic: dominant harmonic in FET compressors
             // Scales more aggressively with GR for dynamic character
-            float h2_scale = 0.00063f * allButtonsMultiplier * harmonicScale;
+            float h2_scale = 0.0010f * allButtonsMultiplier * harmonicScale;  // Increased from 0.00063f
             float h2 = output * output * h2_scale;
 
             // 3rd harmonic (odd-order for FET character)
             // Odd harmonics scale even more with GR (squared relationship)
-            float h3_scale = 0.0005f * allButtonsMultiplier * (harmonicScale * harmonicScale);
+            float h3_scale = 0.00075f * allButtonsMultiplier * (harmonicScale * harmonicScale);  // Increased from 0.0005f
             float h3 = output * output * output * h3_scale;
 
             // 5th harmonic (additional odd-order for FET)
             // Most aggressive scaling for aggressive compression
-            float h5_scale = 0.0001f * allButtonsMultiplier * (grAmount * grAmount);
+            float h5_scale = 0.00015f * allButtonsMultiplier * (grAmount * grAmount);  // Increased from 0.0001f
             float h5 = std::pow(output, 5) * h5_scale;
 
             output += h2 * sign + h3 + h5;
@@ -1370,24 +1373,24 @@ public:
             float h2Boost = harmonicCompensation;
             float h3Boost = harmonicCompensation;
             
-            // DBX 160 stays very clean even when compressing hard
-            // Only add harmonics when really compressing
-            if (levelDb > -20.0f && reduction > 5.0f)
+            // DBX 160 harmonic generation - per actual manual specification
+            // Manual spec: 0.75% 2nd harmonic, 0.5% 3rd harmonic at infinite compression
+            // Logic Pro shows similar levels (~-60dB to -81dB for 3rd harmonic)
+            if (levelDb > -30.0f && reduction > 2.0f)
             {
-                // DBX 160 manual spec: 0.075% 2nd harmonic at infinite compression at +4dBm output
-                // 2nd harmonic = 0.00075 linear
+                // Compression factor scales harmonics based on how hard we're compressing
                 float compressionFactor = juce::jmin(1.0f, reduction / 30.0f);
-                
-                // Scale for 0.075% 2nd harmonic
-                float h2_scale = 0.00075f / (absLevel * absLevel + 0.0001f);  // Direct calculation
+
+                // 2nd harmonic - DBX 160 manual: 0.75% at infinite compression at +4dBm output
+                // 0.75% = 0.0075 linear = -42.5dB
+                float h2_scale = 0.0075f / (absLevel * absLevel + 0.0001f);
                 h2_level = absLevel * absLevel * h2_scale * compressionFactor * h2Boost;
-                
-                // DBX 160 manual spec: 0.5% 3rd harmonic typical at infinite compression
-                // Note: 3rd harmonic decreases linearly with frequency (1/2 at 100Hz vs 50Hz)
-                if (reduction > 15.0f)
+
+                // 3rd harmonic - DBX 160 manual: 0.5% typical at infinite compression
+                // 0.5% = 0.005 linear = -46dB
+                // Account for frequency dependence (decreases linearly with frequency)
+                if (reduction > 10.0f)
                 {
-                    // 3rd harmonic = 0.005 linear (0.5%)
-                    // Account for frequency dependence (we're testing at 1kHz)
                     float freqFactor = 50.0f / 1000.0f;  // Linear decrease with frequency
                     float h3_scale = (0.005f * freqFactor) / (absLevel * absLevel * absLevel + 0.0001f);
                     h3_level = absLevel * absLevel * absLevel * h3_scale * compressionFactor * h3Boost;

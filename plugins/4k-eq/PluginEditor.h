@@ -74,6 +74,12 @@ private:
     float lastBypass = -1.0f;
     double lastSampleRate = 0.0;
 
+    // Level meter state (smoothed for display)
+    float smoothedInputL = -96.0f;
+    float smoothedInputR = -96.0f;
+    float smoothedOutputL = -96.0f;
+    float smoothedOutputR = -96.0f;
+
     // Section labels (LF, LMF, HMF, HF, FILTERS)
     juce::Label filtersLabel, lfLabel, lmfLabel, hmfLabel, hfLabel;
 
@@ -122,6 +128,8 @@ private:
                    const juce::String& label, bool centerDetented = false);
     void setupButton(juce::ToggleButton& button, const juce::String& text);
     void drawKnobMarkings(juce::Graphics& g);
+    void drawLevelMeter(juce::Graphics& g, juce::Rectangle<int> bounds,
+                       float levelDB, const juce::String& label);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQEditor)
 };

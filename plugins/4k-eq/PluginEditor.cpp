@@ -317,6 +317,30 @@ void FourKEQEditor::paint(juce::Graphics& g)
 
     // Draw knob scale markings around each knob
     drawKnobMarkings(g);
+
+    // Draw level meters like Universal Compressor:
+    // Input meters on the LEFT side, Output meters on the RIGHT side
+    int meterWidth = 10;
+    int meterHeight = 38;
+    int meterY = 11;
+    int meterSpacing = 4;  // Small gap between L/R channels
+
+    // INPUT METERS - Left side (after plugin title)
+    // Start at x=15 (left edge padding)
+    int inputMeterX = 15;
+    drawLevelMeter(g, juce::Rectangle<int>(inputMeterX, meterY, meterWidth, meterHeight),
+                  smoothedInputL, "IL");
+    drawLevelMeter(g, juce::Rectangle<int>(inputMeterX + meterWidth + meterSpacing, meterY, meterWidth, meterHeight),
+                  smoothedInputR, "IR");
+
+    // OUTPUT METERS - Right side (before BROWN/BLACK indicator)
+    // BROWN/BLACK indicator is at bounds.getRight() - 120
+    // Place output meters at bounds.getRight() - 120 - (2 meters + gap) - 10px padding
+    int outputMeterX = bounds.getRight() - 120 - (meterWidth * 2 + meterSpacing) - 10;
+    drawLevelMeter(g, juce::Rectangle<int>(outputMeterX, meterY, meterWidth, meterHeight),
+                  smoothedOutputL, "OL");
+    drawLevelMeter(g, juce::Rectangle<int>(outputMeterX + meterWidth + meterSpacing, meterY, meterWidth, meterHeight),
+                  smoothedOutputR, "OR");
 }
 
 void FourKEQEditor::resized()
@@ -525,13 +549,40 @@ void FourKEQEditor::timerCallback()
         lmQSlider.setVisible(true);  // Always visible in both modes
         hmQSlider.setVisible(true);
 
-        repaint();  // Update bypass LED and other visuals
-
         // Cache current values
         lastEqType = currentEqType;
         lastBypass = currentBypass;
     }
 
+    // Update level meters with ballistics (smooth attack/decay)
+    const float attack = 0.7f;   // Fast rise
+    const float decay = 0.95f;   // Slower fall
+
+    // Get current levels from processor
+    float inL = audioProcessor.inputLevelL.load(std::memory_order_relaxed);
+    float inR = audioProcessor.inputLevelR.load(std::memory_order_relaxed);
+    float outL = audioProcessor.outputLevelL.load(std::memory_order_relaxed);
+    float outR = audioProcessor.outputLevelR.load(std::memory_order_relaxed);
+
+    // Apply ballistics (attack/release)
+    smoothedInputL = (inL > smoothedInputL) ?
+        smoothedInputL * attack + inL * (1.0f - attack) :
+        smoothedInputL * decay + inL * (1.0f - decay);
+
+    smoothedInputR = (inR > smoothedInputR) ?
+        smoothedInputR * attack + inR * (1.0f - attack) :
+        smoothedInputR * decay + inR * (1.0f - decay);
+
+    smoothedOutputL = (outL > smoothedOutputL) ?
+        smoothedOutputL * attack + outL * (1.0f - attack) :
+        smoothedOutputL * decay + outL * (1.0f - decay);
+
+    smoothedOutputR = (outR > smoothedOutputR) ?
+        smoothedOutputR * attack + outR * (1.0f - attack) :
+        smoothedOutputR * decay + outR * (1.0f - decay);
+
+    // Always repaint for meter updates
+    repaint();
 }
 
 //==============================================================================
@@ -721,4 +772,64 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
     // Saturation (DRIVE): 0-100% in increments of 10
     std::vector<juce::String> satValues = {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"};
     drawTicksWithValues(saturationSlider.getBounds(), satValues, false);
+}
+
+void FourKEQEditor::drawLevelMeter(juce::Graphics& g, juce::Rectangle<int> bounds,
+                                   float levelDB, const juce::String& label)
+{
+    // Draw meter background
+    g.setColour(juce::Colour(0xff2a2a2a));
+    g.fillRect(bounds);
+
+    // Draw meter border
+    g.setColour(juce::Colour(0xff505050));
+    g.drawRect(bounds, 1);
+
+    // Calculate meter fill height (-60dB to 0dB range)
+    float normalizedLevel = juce::jmap(levelDB, -60.0f, 0.0f, 0.0f, 1.0f);
+    normalizedLevel = juce::jlimit(0.0f, 1.0f, normalizedLevel);
+
+    int fillHeight = static_cast<int>(normalizedLevel * bounds.getHeight());
+
+    if (fillHeight > 0)
+    {
+        // Draw meter fill with gradient (green -> yellow -> red)
+        juce::Rectangle<int> fillArea = bounds.withTop(bounds.getBottom() - fillHeight);
+
+        // Color based on level
+        juce::Colour meterColour;
+        if (levelDB < -18.0f)
+            meterColour = juce::Colour(0xff00ff00);  // Green
+        else if (levelDB < -6.0f)
+            meterColour = juce::Colour(0xffffff00);  // Yellow
+        else if (levelDB < -3.0f)
+            meterColour = juce::Colour(0xffff8800);  // Orange
+        else
+            meterColour = juce::Colour(0xffff0000);  // Red
+
+        g.setColour(meterColour);
+        g.fillRect(fillArea);
+    }
+
+    // Draw dB scale marks (-60, -30, -12, -6, -3, 0)
+    g.setColour(juce::Colour(0xff606060));
+    auto drawScaleMark = [&](float dbValue)
+    {
+        float normalized = juce::jmap(dbValue, -60.0f, 0.0f, 0.0f, 1.0f);
+        int y = bounds.getBottom() - static_cast<int>(normalized * bounds.getHeight());
+        g.drawHorizontalLine(y, bounds.getX(), bounds.getRight());
+    };
+
+    drawScaleMark(-60.0f);
+    drawScaleMark(-30.0f);
+    drawScaleMark(-12.0f);
+    drawScaleMark(-6.0f);
+    drawScaleMark(-3.0f);
+    drawScaleMark(0.0f);
+
+    // Draw label below meter
+    g.setColour(juce::Colour(0xffa0a0a0));
+    g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
+    g.drawText(label, bounds.getX(), bounds.getBottom() + 2, bounds.getWidth(), 12,
+               juce::Justification::centred);
 }

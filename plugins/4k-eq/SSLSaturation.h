@@ -23,6 +23,7 @@
 
 #include <JuceHeader.h>
 #include <cmath>
+#include <random>
 
 class SSLSaturation
 {
@@ -33,7 +34,24 @@ public:
         GSeries     // G-Series (Black knobs) - cleaner, more 3rd harmonic
     };
 
-    SSLSaturation() = default;
+    SSLSaturation()
+    {
+        // Initialize component tolerance variation (±5% per instance)
+        // This simulates real hardware where resistors/capacitors have tolerances
+        // Each plugin instance gets unique "hardware" characteristics
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
+
+        // Different tolerances for different circuit stages
+        transformerTolerance = 1.0f + dist(gen);     // Input transformer variation
+        opAmpTolerance = 1.0f + dist(gen);           // Op-amp gain variation
+        outputTransformerTolerance = 1.0f + dist(gen); // Output transformer variation
+
+        // Initialize noise generator seed
+        noiseGen = std::mt19937(rd());
+        noiseDist = std::uniform_real_distribution<float>(-1.0f, 1.0f);
+    }
 
     void setConsoleType(ConsoleType type)
     {
@@ -93,18 +111,25 @@ public:
 
         // Stage 1: Input transformer saturation
         // SSL uses Marinair (E-Series) or Carnhill (G-Series) transformers
-        float transformed = processInputTransformer(limited, effectiveDrive);
+        // Apply component tolerance for per-instance variation
+        float transformed = processInputTransformer(limited, effectiveDrive * transformerTolerance);
 
         // Stage 2: Op-amp gain stage (NE5534)
         // This is where most of the harmonic coloration happens
         // Apply same frequency-dependent drive reduction for consistency
-        float opAmpOut = processOpAmpStage(transformed, effectiveDrive);
+        float opAmpOut = processOpAmpStage(transformed, effectiveDrive * opAmpTolerance);
 
         // Stage 3: Output transformer (if applicable)
         // E-Series has output transformers, G-Series is transformerless
         float output = (consoleType == ConsoleType::ESeries)
-            ? processOutputTransformer(opAmpOut, drive * 0.7f)  // Less drive on output
+            ? processOutputTransformer(opAmpOut, drive * 0.7f * outputTransformerTolerance)
             : opAmpOut;
+
+        // Add console noise floor (-90dB RMS, typical for SSL)
+        // Noise increases slightly with drive (like real hardware)
+        // This adds realism and subtle analog character
+        float noiseLevel = 0.00003162f * (1.0f + drive * 0.5f); // -90dB base, increases with drive
+        output += noiseDist(noiseGen) * noiseLevel;
 
         // DC blocking filter to prevent DC offset buildup
         output = processDCBlocker(output, isLeftChannel);
@@ -132,6 +157,16 @@ private:
     // Can be tuned or exposed to tests/parameters for extreme test signals
     // Reduced from 4.0f to 3.0f to prevent saturation on very dynamic material
     float highFreqScale = 3.0f;
+
+    // Component tolerance variation (±5% per instance)
+    // Simulates real hardware component tolerances for unique analog character
+    float transformerTolerance = 1.0f;
+    float opAmpTolerance = 1.0f;
+    float outputTransformerTolerance = 1.0f;
+
+    // Noise generation for console noise floor
+    std::mt19937 noiseGen;
+    std::uniform_real_distribution<float> noiseDist;
 
     // Estimate high-frequency content using simple differentiator
     // This provides a fast, computationally cheap estimate of spectral content

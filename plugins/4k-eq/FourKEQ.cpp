@@ -475,6 +475,18 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         parametersChanged.store(false);
     }
 
+    // Capture input levels for metering (before processing)
+    if (buffer.getNumChannels() >= 1)
+    {
+        float peakL = buffer.getMagnitude(0, 0, buffer.getNumSamples());
+        inputLevelL.store(juce::Decibels::gainToDecibels(peakL, -96.0f), std::memory_order_relaxed);
+    }
+    if (buffer.getNumChannels() >= 2)
+    {
+        float peakR = buffer.getMagnitude(1, 0, buffer.getNumSamples());
+        inputLevelR.store(juce::Decibels::gainToDecibels(peakR, -96.0f), std::memory_order_relaxed);
+    }
+
     // Capture pre-EQ buffer for spectrum analyzer (thread-safe)
     {
         const juce::ScopedLock sl(spectrumBufferLock);
@@ -577,6 +589,27 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         oversampler.processSamplesDown(block);
     }
 
+    // Apply stereo crosstalk (before M/S decode)
+    // SSL consoles have ~-60dB crosstalk between channels due to:
+    // - PCB trace proximity
+    // - Shared power supply rails
+    // - Magnetic coupling in transformers
+    // This adds subtle stereo width and "glue"
+    if (!useMSProcessing && buffer.getNumChannels() == 2)
+    {
+        const float crosstalkAmount = 0.001f;  // -60dB (0.1%)
+
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            float left = buffer.getSample(0, i);
+            float right = buffer.getSample(1, i);
+
+            // Each channel gets a tiny bit of the opposite channel
+            buffer.setSample(0, i, left + right * crosstalkAmount);
+            buffer.setSample(1, i, right + left * crosstalkAmount);
+        }
+    }
+
     // Convert back from M/S to L/R if enabled
     if (useMSProcessing && buffer.getNumChannels() == 2)
     {
@@ -616,6 +649,18 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
 
         float totalGain = juce::Decibels::decibelsToGain(outputGainValue) * autoCompensation;
         buffer.applyGain(totalGain);
+    }
+
+    // Capture output levels for metering (after processing)
+    if (buffer.getNumChannels() >= 1)
+    {
+        float peakL = buffer.getMagnitude(0, 0, buffer.getNumSamples());
+        outputLevelL.store(juce::Decibels::gainToDecibels(peakL, -96.0f), std::memory_order_relaxed);
+    }
+    if (buffer.getNumChannels() >= 2)
+    {
+        float peakR = buffer.getMagnitude(1, 0, buffer.getNumSamples());
+        outputLevelR.store(juce::Decibels::gainToDecibels(peakR, -96.0f), std::memory_order_relaxed);
     }
 
     // Copy processed buffer for spectrum analyzer (thread-safe)
