@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(FourKEQ VERSION 1.0.2)
+project(FourKEQ VERSION 1.0.3)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -42,14 +42,19 @@ target_sources(FourKEQ
         PluginEditor.h
         FourKLookAndFeel.cpp
         FourKLookAndFeel.h
+        EQCurveDisplay.cpp
+        EQCurveDisplay.h
         SSLSaturation.h
         PatreonBackers.h
+        ../shared/LEDMeter.cpp
+        ../shared/LEDMeter.h
 )
 
 # Set include directories
 target_include_directories(FourKEQ
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared
 )
 
 # Compile definitions

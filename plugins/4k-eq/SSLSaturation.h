@@ -80,6 +80,9 @@ public:
     // Main processing function with drive amount (0.0 to 1.0)
     float processSample(float input, float drive, bool isLeftChannel)
     {
+        // Suppress denormals for performance (prevents CPU spikes on older processors)
+        juce::ScopedNoDenormals noDenormals;
+
         if (drive < 0.001f)
             return input;
 
