@@ -6,10 +6,10 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 {
     setLookAndFeel(&lookAndFeel);
 
-    // Set editor size - increased height for tick marks and value readouts
-    setSize(900, 540);
+    // Set editor size - increased height for EQ curve display
+    setSize(950, 640);
     setResizable(true, true);
-    setResizeLimits(750, 480, 1400, 700);
+    setResizeLimits(800, 580, 1400, 800);
 
     // Get parameter references
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
@@ -24,6 +24,11 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     setupKnob(lpfFreqSlider, "lpf_freq", "LPF");
     lpfFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lpf_freq", lpfFreqSlider);
+
+    // Input Gain (below filters)
+    setupKnob(inputGainSlider, "input_gain", "INPUT", true);
+    inputGainAttachment = std::make_unique<SliderAttachment>(
+        audioProcessor.parameters, "input_gain", inputGainSlider);
 
     // LF Band
     setupKnob(lfGainSlider, "lf_gain", "GAIN", true);  // Center-detented
@@ -163,6 +168,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
     setupParamLabel(hpfLabel, "HPF");
     setupParamLabel(lpfLabel, "LPF");
+    setupParamLabel(inputLabel, "INPUT");
     setupParamLabel(lfGainLabel, "GAIN");
     setupParamLabel(lfFreqLabel, "FREQ");
     setupParamLabel(lmGainLabel, "GAIN");
@@ -205,6 +211,32 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     bypassButton.setTooltip("Bypass all EQ processing");
     autoGainButton.setTooltip("Auto Gain Compensation: Automatically adjusts output to maintain consistent loudness when boosting/cutting");
 
+    // EQ Curve Display - add before meters so meters appear on top
+    eqCurveDisplay = std::make_unique<EQCurveDisplay>(audioProcessor);
+    addAndMakeVisible(eqCurveDisplay.get());
+
+    // Set initial bounds for EQ curve display so it's visible on first paint
+    int curveX = 35;
+    int curveY = 58;
+    int curveWidth = 950 - 70;  // Initial width based on default size
+    int curveHeight = 105;
+    eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
+
+    // Professional LED meters - add LAST so they're on top of other components
+    inputMeterL = std::make_unique<LEDMeter>(LEDMeter::Vertical);
+    outputMeterL = std::make_unique<LEDMeter>(LEDMeter::Vertical);
+    addAndMakeVisible(inputMeterL.get());
+    addAndMakeVisible(outputMeterL.get());
+
+    // Set initial bounds so meters are visible on first paint
+    int initialMeterY = 185;  // Start lower to make room for EQ curve and labels
+    int initialMeterHeight = 640 - initialMeterY - 20;  // Adjusted for new height
+    inputMeterL->setBounds(10, initialMeterY, 16, initialMeterHeight);
+    outputMeterL->setBounds(950 - 16 - 10, initialMeterY, 16, initialMeterHeight);  // 10px from right edge
+
+    // Note: Value readout labels removed - the tick marks around knobs already
+    // show the parameter range, and current values can be seen from knob position
+
     // Start timer for UI updates
     startTimerHz(30);
 }
@@ -222,9 +254,16 @@ void FourKEQEditor::paint(juce::Graphics& g)
 
     auto bounds = getLocalBounds();
 
-    // Draw header
-    g.setColour(juce::Colour(0xff2a2a2a));
+    // Draw header with subtle gradient
+    juce::ColourGradient headerGradient(
+        juce::Colour(0xff2d2d2d), 0, 0,
+        juce::Colour(0xff252525), 0, 55, false);
+    g.setGradientFill(headerGradient);
     g.fillRect(0, 0, bounds.getWidth(), 55);
+
+    // Header bottom border
+    g.setColour(juce::Colour(0xff3a3a3a));
+    g.fillRect(0, 54, bounds.getWidth(), 1);
 
     // Plugin name
     g.setFont(juce::Font(juce::FontOptions(24.0f).withStyle("Bold")));
@@ -238,23 +277,40 @@ void FourKEQEditor::paint(juce::Graphics& g)
 
     // Patreon credits in header (right side)
     g.setFont(juce::Font(juce::FontOptions(9.0f)));
-    g.setColour(juce::Colour(0xff707070));
-    g.drawText("Made with support from Patreon backers 💖",
-               bounds.getRight() - 320, 38, 200, 15,
+    g.setColour(juce::Colour(0xff606060));
+    g.drawText("Made with support from Patreon backers",
+               bounds.getRight() - 260, 38, 160, 15,
                juce::Justification::right);
 
-    // EQ Type indicator
+    // EQ Type indicator badge - styled as muted amber/gold for Brown, dark grey for Black
     bool isBlack = eqTypeParam->load() > 0.5f;
-    g.setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Bold")));
-    g.setColour(isBlack ? juce::Colour(0xff404040) : juce::Colour(0xff6B4423));
-    g.fillRoundedRectangle(bounds.getRight() - 120, 12, 80, 26, 3);
-    g.setColour(juce::Colour(0xffe0e0e0));
-    g.drawText(isBlack ? "BLACK" : "BROWN",
-               bounds.getRight() - 120, 12, 80, 26,
-               juce::Justification::centred);
+    g.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
 
-    // Main content area
-    bounds = getLocalBounds().withTrimmedTop(60);
+    // Position badge to the left of the dropdown (dropdown is at getWidth() - 110)
+    auto eqTypeRect = juce::Rectangle<float>(static_cast<float>(getWidth()) - 190.0f, 15.0f, 70.0f, 24.0f);
+
+    // Draw button background with subtle gradient
+    juce::ColourGradient btnGradient(
+        isBlack ? juce::Colour(0xff3a3a3a) : juce::Colour(0xff7a5a30),
+        eqTypeRect.getX(), eqTypeRect.getY(),
+        isBlack ? juce::Colour(0xff2a2a2a) : juce::Colour(0xff5a4020),
+        eqTypeRect.getX(), eqTypeRect.getBottom(), false);
+    g.setGradientFill(btnGradient);
+    g.fillRoundedRectangle(eqTypeRect, 4.0f);
+
+    // Border
+    g.setColour(isBlack ? juce::Colour(0xff505050) : juce::Colour(0xff9a7040));
+    g.drawRoundedRectangle(eqTypeRect.reduced(0.5f), 4.0f, 1.0f);
+
+    // Text
+    g.setColour(juce::Colour(0xffe0e0e0));
+    g.drawText(isBlack ? "BLACK" : "BROWN", eqTypeRect, juce::Justification::centred);
+
+    // EQ Curve display area background
+    auto curveArea = juce::Rectangle<int>(40, 60, bounds.getWidth() - 80, 100);
+
+    // Main content area - starts below EQ curve with gap
+    bounds = getLocalBounds().withTrimmedTop(170);  // Account for header + curve display + gap
 
     // Section dividers - vertical lines
     g.setColour(juce::Colour(0xff3a3a3a));
@@ -283,32 +339,56 @@ void FourKEQEditor::paint(juce::Graphics& g)
     xPos += bandWidth + 2;
     g.fillRect(xPos, bounds.getY(), 2, bounds.getHeight());
 
-    // Section headers
-    g.setColour(juce::Colour(0xffc0c0c0));  // Brighter color for better visibility
-    g.setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Bold")));
+    // Section headers - larger with subtle background for visibility
+    g.setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
 
-    int labelY = bounds.getY() + 12;
+    int labelY = bounds.getY() + 6;
+    int labelHeight = 22;
+
+    // Draw subtle background strips for section headers
+    g.setColour(juce::Colour(0xff222222));
+    g.fillRect(0, labelY - 2, filterWidth, labelHeight);
+
+    // Draw section header text
+    g.setColour(juce::Colour(0xffd0d0d0));
     g.drawText("FILTERS", 0, labelY, 195, 20,
                juce::Justification::centred);
 
     xPos = 197;
+    g.setColour(juce::Colour(0xff222222));
+    g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
+    g.setColour(juce::Colour(0xffd0d0d0));
     g.drawText("LF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
     xPos += 134;
+    g.setColour(juce::Colour(0xff222222));
+    g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
+    g.setColour(juce::Colour(0xffd0d0d0));
     g.drawText("LMF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
     xPos += 134;
+    g.setColour(juce::Colour(0xff222222));
+    g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
+    g.setColour(juce::Colour(0xffd0d0d0));
     g.drawText("HMF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
     xPos += 134;
+    g.setColour(juce::Colour(0xff222222));
+    g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
+    g.setColour(juce::Colour(0xffd0d0d0));
     g.drawText("HF", xPos, labelY, 132, 20,
                juce::Justification::centred);
 
     xPos += 134;
-    g.drawText("MASTER", xPos, labelY, bounds.getRight() - xPos, 20,
+    // MASTER label width: calculate from xPos to right edge, minus output meter space (16px + 10px margin + 30px padding = 56px)
+    int masterWidth = bounds.getRight() - xPos - 56;
+    g.setColour(juce::Colour(0xff222222));
+    g.fillRect(xPos, labelY - 2, masterWidth, labelHeight);
+    g.setColour(juce::Colour(0xffd0d0d0));
+    g.drawText("MASTER", xPos, labelY, masterWidth, 20,
                juce::Justification::centred);
 
     // Frequency range indicators
@@ -318,29 +398,28 @@ void FourKEQEditor::paint(juce::Graphics& g)
     // Draw knob scale markings around each knob
     drawKnobMarkings(g);
 
-    // Draw level meters like Universal Compressor:
-    // Input meters on the LEFT side, Output meters on the RIGHT side
-    int meterWidth = 10;
-    int meterHeight = 38;
-    int meterY = 11;
-    int meterSpacing = 4;  // Small gap between L/R channels
+    // Draw meter labels centered over meters, below header bar
+    g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
+    g.setColour(juce::Colour(0xffe0e0e0));
 
-    // INPUT METERS - Left side (after plugin title)
-    // Start at x=15 (left edge padding)
-    int inputMeterX = 15;
-    drawLevelMeter(g, juce::Rectangle<int>(inputMeterX, meterY, meterWidth, meterHeight),
-                  smoothedInputL, "IL");
-    drawLevelMeter(g, juce::Rectangle<int>(inputMeterX + meterWidth + meterSpacing, meterY, meterWidth, meterHeight),
-                  smoothedInputR, "IR");
+    if (inputMeterL)
+    {
+        auto inputBounds = inputMeterL->getBounds();
+        // Center label over meter, but keep within left edge (start at x=0)
+        int labelX = std::max(0, inputBounds.getCentreX() - 20);  // 40px width / 2 = 20
+        g.drawText("INPUT", labelX, inputBounds.getY() - 16,
+                   40, 15, juce::Justification::centred);
+    }
 
-    // OUTPUT METERS - Right side (before BROWN/BLACK indicator)
-    // BROWN/BLACK indicator is at bounds.getRight() - 120
-    // Place output meters at bounds.getRight() - 120 - (2 meters + gap) - 10px padding
-    int outputMeterX = bounds.getRight() - 120 - (meterWidth * 2 + meterSpacing) - 10;
-    drawLevelMeter(g, juce::Rectangle<int>(outputMeterX, meterY, meterWidth, meterHeight),
-                  smoothedOutputL, "OL");
-    drawLevelMeter(g, juce::Rectangle<int>(outputMeterX + meterWidth + meterSpacing, meterY, meterWidth, meterHeight),
-                  smoothedOutputR, "OR");
+    if (outputMeterL)
+    {
+        auto outputBounds = outputMeterL->getBounds();
+        // Center label over meter, ensuring it doesn't extend past right edge
+        int labelWidth = 45;
+        int labelX = std::min(getWidth() - labelWidth, outputBounds.getCentreX() - labelWidth / 2);
+        g.drawText("OUTPUT", labelX, outputBounds.getY() - 16,
+                   labelWidth, 15, juce::Justification::centred);
+    }
 }
 
 void FourKEQEditor::resized()
@@ -357,122 +436,152 @@ void FourKEQEditor::resized()
     // Oversampling selector (right of center) - wider for "Oversample:" text
     oversamplingSelector.setBounds(centerX + 10, 15, 130, 28);
 
-    bounds.reduce(15, 10);
+    // EQ Type selector in header (upper right)
+    eqTypeSelector.setBounds(getWidth() - 110, 15, 95, 28);
 
-    // Filters section (left)
-    auto filterSection = bounds.removeFromLeft(180);
-    filterSection.removeFromTop(35);  // Section label space
+    // EQ Curve Display - spans across the top area below header
+    if (eqCurveDisplay)
+    {
+        int curveX = 35;
+        int curveY = 58;
+        int curveWidth = getWidth() - 70;
+        int curveHeight = 105;  // Taller to better fill the space
+        eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
+    }
+
+    // LED Meters - start below the curve display
+    int meterWidth = 16;
+    int meterY = 185;  // Start lower to make room for curve and labels
+    int meterHeight = getHeight() - meterY - 20;
+
+    if (inputMeterL)
+        inputMeterL->setBounds(10, meterY, meterWidth, meterHeight);
+
+    if (outputMeterL)
+        outputMeterL->setBounds(getWidth() - meterWidth - 10, meterY, meterWidth, meterHeight);
+
+    // Use absolute positioning based on section divider positions from paint()
+    // This ensures knobs are perfectly centered between dividers
+
+    int contentY = 170;  // Top of content area (below header + curve) - increased for spacing
+    int sectionLabelHeight = 30;  // Space for section headers like "FILTERS", "LF", etc.
+    int knobSize = 75;  // Slightly smaller knobs to prevent label overlap
+    int knobRowHeight = 125;  // Vertical space for each knob row (knob + labels)
+
+    // Section X boundaries (matching paint() divider positions exactly)
+    int filtersStart = 0;
+    int filtersEnd = 195;  // First divider
+    int lfStart = filtersEnd + 2;
+    int lfEnd = lfStart + 132;  // Second divider
+    int lmfStart = lfEnd + 2;
+    int lmfEnd = lmfStart + 132;  // Third divider
+    int hmfStart = lmfEnd + 2;
+    int hmfEnd = hmfStart + 132;  // Fourth divider
+    int hfStart = hmfEnd + 2;
+    int hfEnd = hfStart + 132;  // Fifth divider
+    int masterStart = hfEnd + 2;
+    int masterEnd = getWidth() - 56;  // Leave space for output meter
+
+    // Helper to center a knob within a section
+    auto centerKnobInSection = [&](juce::Slider& slider, int sectionStart, int sectionEnd, int yPos) {
+        int sectionCenter = (sectionStart + sectionEnd) / 2;
+        slider.setBounds(sectionCenter - knobSize / 2, yPos, knobSize, knobSize);
+    };
+
+    // Helper to center a button within a section
+    auto centerButtonInSection = [&](juce::Component& button, int sectionStart, int sectionEnd, int yPos, int width, int height) {
+        int sectionCenter = (sectionStart + sectionEnd) / 2;
+        button.setBounds(sectionCenter - width / 2, yPos, width, height);
+    };
+
+    // ===== FILTERS SECTION =====
+    int y = contentY + sectionLabelHeight + 25;  // Extra space to avoid overlap with section headers
 
     // HPF
-    auto hpfBounds = filterSection.removeFromTop(160);  // Space for knob + labels
-    hpfBounds.removeFromTop(5);  // Small gap from section label
-    hpfFreqSlider.setBounds(hpfBounds.withSizeKeepingCentre(80, 80));
+    centerKnobInSection(hpfFreqSlider, filtersStart, filtersEnd, y);
+    y += knobRowHeight;
 
     // LPF
-    auto lpfBounds = filterSection.removeFromTop(160);  // Space for knob + labels
-    lpfBounds.removeFromTop(5);  // Small gap
-    lpfFreqSlider.setBounds(lpfBounds.withSizeKeepingCentre(80, 80));
+    centerKnobInSection(lpfFreqSlider, filtersStart, filtersEnd, y);
+    y += knobRowHeight;
 
-    bounds.removeFromLeft(15);  // Gap
+    // Input Gain
+    centerKnobInSection(inputGainSlider, filtersStart, filtersEnd, y);
 
-    // LF Band
-    auto lfSection = bounds.removeFromLeft(132);  // Match section header width
-    lfSection.removeFromTop(35);  // Section label space
+    // ===== LF BAND =====
+    y = contentY + sectionLabelHeight + 25;
 
-    auto lfGainBounds = lfSection.removeFromTop(130);  // Space for knob + labels
-    lfGainBounds.removeFromTop(5);  // Small gap
-    lfGainSlider.setBounds(lfGainBounds.withSizeKeepingCentre(80, 80));
+    // LF Gain
+    centerKnobInSection(lfGainSlider, lfStart, lfEnd, y);
+    y += knobRowHeight;
 
-    auto lfFreqBounds = lfSection.removeFromTop(130);  // Space for knob + labels
-    lfFreqBounds.removeFromTop(30);  // More space below GAIN label
-    lfFreqSlider.setBounds(lfFreqBounds.withSizeKeepingCentre(80, 80));
+    // LF Freq
+    centerKnobInSection(lfFreqSlider, lfStart, lfEnd, y);
+    y += knobRowHeight;
 
-    lfSection.removeFromTop(10);  // Extra space below FREQ label
-    lfBellButton.setBounds(lfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
+    // LF Bell button
+    centerButtonInSection(lfBellButton, lfStart, lfEnd, y + 20, 60, 25);
 
-    bounds.removeFromLeft(2);  // Just the divider width
+    // ===== LMF BAND =====
+    y = contentY + sectionLabelHeight + 25;
 
-    // LMF Band
-    auto lmSection = bounds.removeFromLeft(132);  // Match section header width
-    lmSection.removeFromTop(35);  // Section label space
+    // LMF Gain
+    centerKnobInSection(lmGainSlider, lmfStart, lmfEnd, y);
+    y += knobRowHeight;
 
-    auto lmGainBounds = lmSection.removeFromTop(130);  // Space for knob + labels
-    lmGainBounds.removeFromTop(5);  // Space for label - aligned with LF
-    lmGainSlider.setBounds(lmGainBounds.withSizeKeepingCentre(80, 80));
+    // LMF Freq
+    centerKnobInSection(lmFreqSlider, lmfStart, lmfEnd, y);
+    y += knobRowHeight;
 
-    auto lmFreqBounds = lmSection.removeFromTop(130);  // Space for knob + labels
-    lmFreqBounds.removeFromTop(30);  // More space below GAIN label
-    lmFreqSlider.setBounds(lmFreqBounds.withSizeKeepingCentre(80, 80));
+    // LMF Q
+    centerKnobInSection(lmQSlider, lmfStart, lmfEnd, y);
 
-    auto lmQBounds = lmSection.removeFromTop(130);  // Space for knob + labels
-    lmQBounds.removeFromTop(30);  // More space below FREQ label
-    lmQSlider.setBounds(lmQBounds.withSizeKeepingCentre(80, 80));
+    // ===== HMF BAND =====
+    y = contentY + sectionLabelHeight + 25;
 
-    bounds.removeFromLeft(2);  // Just the divider width
+    // HMF Gain
+    centerKnobInSection(hmGainSlider, hmfStart, hmfEnd, y);
+    y += knobRowHeight;
 
-    // HMF Band
-    auto hmSection = bounds.removeFromLeft(132);  // Match section header width
-    hmSection.removeFromTop(35);  // Section label space
+    // HMF Freq
+    centerKnobInSection(hmFreqSlider, hmfStart, hmfEnd, y);
+    y += knobRowHeight;
 
-    auto hmGainBounds = hmSection.removeFromTop(130);  // Space for knob + labels
-    hmGainBounds.removeFromTop(5);  // Space for label - aligned with LF
-    hmGainSlider.setBounds(hmGainBounds.withSizeKeepingCentre(80, 80));
+    // HMF Q
+    centerKnobInSection(hmQSlider, hmfStart, hmfEnd, y);
 
-    auto hmFreqBounds = hmSection.removeFromTop(130);  // Space for knob + labels
-    hmFreqBounds.removeFromTop(30);  // More space below GAIN label
-    hmFreqSlider.setBounds(hmFreqBounds.withSizeKeepingCentre(80, 80));
+    // ===== HF BAND =====
+    y = contentY + sectionLabelHeight + 25;
 
-    auto hmQBounds = hmSection.removeFromTop(130);  // Space for knob + labels
-    hmQBounds.removeFromTop(30);  // More space below FREQ label
-    hmQSlider.setBounds(hmQBounds.withSizeKeepingCentre(80, 80));
+    // HF Gain
+    centerKnobInSection(hfGainSlider, hfStart, hfEnd, y);
+    y += knobRowHeight;
 
-    bounds.removeFromLeft(2);  // Just the divider width
+    // HF Freq
+    centerKnobInSection(hfFreqSlider, hfStart, hfEnd, y);
+    y += knobRowHeight;
 
-    // HF Band
-    auto hfSection = bounds.removeFromLeft(132);  // Match section header width
-    hfSection.removeFromTop(35);  // Section label space
+    // HF Bell button
+    centerButtonInSection(hfBellButton, hfStart, hfEnd, y + 20, 60, 25);
 
-    auto hfGainBounds = hfSection.removeFromTop(130);  // Space for knob + labels
-    hfGainBounds.removeFromTop(5);  // Space for label - aligned with LF
-    hfGainSlider.setBounds(hfGainBounds.withSizeKeepingCentre(80, 80));
-
-    auto hfFreqBounds = hfSection.removeFromTop(130);  // Space for knob + labels
-    hfFreqBounds.removeFromTop(30);  // More space below GAIN label
-    hfFreqSlider.setBounds(hfFreqBounds.withSizeKeepingCentre(80, 80));
-
-    hfSection.removeFromTop(10);  // Extra space below FREQ label
-    hfBellButton.setBounds(hfSection.removeFromTop(35).withSizeKeepingCentre(60, 25));
-
-    bounds.removeFromLeft(12);
-
-    // Master section
-    auto masterSection = bounds;
-    masterSection.removeFromTop(35);  // Section label space
-
-    // EQ Type selector
-    eqTypeSelector.setBounds(masterSection.removeFromTop(32).withSizeKeepingCentre(100, 28));
-
-    masterSection.removeFromTop(15);  // Gap
+    // ===== MASTER SECTION =====
+    // EQ Type selector moved to header - start with buttons
+    y = contentY + sectionLabelHeight + 25;
 
     // Bypass button
-    bypassButton.setBounds(masterSection.removeFromTop(35).withSizeKeepingCentre(80, 30));
-
-    masterSection.removeFromTop(5);  // Small gap
+    centerButtonInSection(bypassButton, masterStart, masterEnd, y, 80, 30);
+    y += 40;
 
     // Auto-gain button
-    autoGainButton.setBounds(masterSection.removeFromTop(35).withSizeKeepingCentre(80, 30));
+    centerButtonInSection(autoGainButton, masterStart, masterEnd, y, 80, 30);
+    y += 70;  // Increased gap to prevent overlap with drive knob labels
 
-    masterSection.removeFromTop(5);  // Small gap
+    // Drive/Saturation knob
+    centerKnobInSection(saturationSlider, masterStart, masterEnd, y);
 
-    // Output gain
-    auto outputBounds = masterSection.removeFromTop(130);  // Space for knob + labels
-    outputBounds.removeFromTop(20);  // Space for label
-    outputGainSlider.setBounds(outputBounds.withSizeKeepingCentre(80, 80));
-
-    // Saturation
-    auto satBounds = masterSection.removeFromTop(130);  // Space for knob + labels
-    satBounds.removeFromTop(20);  // Space for label
-    saturationSlider.setBounds(satBounds.withSizeKeepingCentre(80, 80));
+    // Output gain knob - align with Input knob (third row in filters section)
+    int inputKnobY = contentY + sectionLabelHeight + 25 + knobRowHeight * 2;  // Same Y as input knob
+    centerKnobInSection(outputGainSlider, masterStart, masterEnd, inputKnobY);
 
     // Position section labels
     // FILTERS label removed - section header at top is sufficient
@@ -508,6 +617,7 @@ void FourKEQEditor::resized()
     // Filter section
     positionLabelBelow(hpfLabel, hpfFreqSlider);
     positionLabelBelow(lpfLabel, lpfFreqSlider);
+    positionLabelBelow(inputLabel, inputGainSlider);
 
     // LF band
     positionLabelBelow(lfGainLabel, lfGainSlider);
@@ -552,37 +662,29 @@ void FourKEQEditor::timerCallback()
         // Cache current values
         lastEqType = currentEqType;
         lastBypass = currentBypass;
+
+        // Repaint to update EQ type indicator
+        repaint();
     }
 
-    // Update level meters with ballistics (smooth attack/decay)
-    const float attack = 0.7f;   // Fast rise
-    const float decay = 0.95f;   // Slower fall
+    // Note: Value readout labels removed - tick marks show parameter range
 
-    // Get current levels from processor
+    // Update LED meters directly (they handle their own ballistics internally)
+    // Get current levels from processor (L+R averaged for mono meter)
     float inL = audioProcessor.inputLevelL.load(std::memory_order_relaxed);
     float inR = audioProcessor.inputLevelR.load(std::memory_order_relaxed);
     float outL = audioProcessor.outputLevelL.load(std::memory_order_relaxed);
     float outR = audioProcessor.outputLevelR.load(std::memory_order_relaxed);
 
-    // Apply ballistics (attack/release)
-    smoothedInputL = (inL > smoothedInputL) ?
-        smoothedInputL * attack + inL * (1.0f - attack) :
-        smoothedInputL * decay + inL * (1.0f - decay);
+    // Average L/R channels for single meter display
+    float inputAvg = (inL + inR) * 0.5f;
+    float outputAvg = (outL + outR) * 0.5f;
 
-    smoothedInputR = (inR > smoothedInputR) ?
-        smoothedInputR * attack + inR * (1.0f - attack) :
-        smoothedInputR * decay + inR * (1.0f - decay);
+    if (inputMeterL)
+        inputMeterL->setLevel(inputAvg);
 
-    smoothedOutputL = (outL > smoothedOutputL) ?
-        smoothedOutputL * attack + outL * (1.0f - attack) :
-        smoothedOutputL * decay + outL * (1.0f - decay);
-
-    smoothedOutputR = (outR > smoothedOutputR) ?
-        smoothedOutputR * attack + outR * (1.0f - attack) :
-        smoothedOutputR * decay + outR * (1.0f - decay);
-
-    // Always repaint for meter updates
-    repaint();
+    if (outputMeterL)
+        outputMeterL->setLevel(outputAvg);
 }
 
 //==============================================================================
@@ -615,8 +717,8 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
     } else if (label.contains("HPF") || label.contains("LPF")) {
         // Brown/orange for filters
         slider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffb8860b));
-    } else if (label.contains("OUTPUT")) {
-        // Blue for output
+    } else if (label.contains("INPUT") || label.contains("OUTPUT")) {
+        // Blue for input/output gain
         slider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff007bff));
     } else if (label.contains("SAT")) {
         // Orange for saturation
@@ -774,62 +876,100 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
     drawTicksWithValues(saturationSlider.getBounds(), satValues, false);
 }
 
-void FourKEQEditor::drawLevelMeter(juce::Graphics& g, juce::Rectangle<int> bounds,
-                                   float levelDB, const juce::String& label)
+void FourKEQEditor::setupValueLabel(juce::Label& label)
 {
-    // Draw meter background
-    g.setColour(juce::Colour(0xff2a2a2a));
-    g.fillRect(bounds);
+    label.setJustificationType(juce::Justification::centred);
+    label.setFont(juce::Font(juce::FontOptions(10.0f)));
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffc0c0c0));
+    label.setColour(juce::Label::backgroundColourId, juce::Colour(0x00000000));
+    label.setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(label);
+}
 
-    // Draw meter border
-    g.setColour(juce::Colour(0xff505050));
-    g.drawRect(bounds, 1);
-
-    // Calculate meter fill height (-60dB to 0dB range)
-    float normalizedLevel = juce::jmap(levelDB, -60.0f, 0.0f, 0.0f, 1.0f);
-    normalizedLevel = juce::jlimit(0.0f, 1.0f, normalizedLevel);
-
-    int fillHeight = static_cast<int>(normalizedLevel * bounds.getHeight());
-
-    if (fillHeight > 0)
+juce::String FourKEQEditor::formatValue(float value, const juce::String& suffix)
+{
+    if (suffix.containsIgnoreCase("Hz"))
     {
-        // Draw meter fill with gradient (green -> yellow -> red)
-        juce::Rectangle<int> fillArea = bounds.withTop(bounds.getBottom() - fillHeight);
-
-        // Color based on level
-        juce::Colour meterColour;
-        if (levelDB < -18.0f)
-            meterColour = juce::Colour(0xff00ff00);  // Green
-        else if (levelDB < -6.0f)
-            meterColour = juce::Colour(0xffffff00);  // Yellow
-        else if (levelDB < -3.0f)
-            meterColour = juce::Colour(0xffff8800);  // Orange
+        if (value >= 1000.0f)
+            return juce::String(value / 1000.0f, 1) + " kHz";
         else
-            meterColour = juce::Colour(0xffff0000);  // Red
-
-        g.setColour(meterColour);
-        g.fillRect(fillArea);
+            return juce::String(static_cast<int>(value)) + " Hz";
     }
-
-    // Draw dB scale marks (-60, -30, -12, -6, -3, 0)
-    g.setColour(juce::Colour(0xff606060));
-    auto drawScaleMark = [&](float dbValue)
+    else if (suffix.containsIgnoreCase("dB"))
     {
-        float normalized = juce::jmap(dbValue, -60.0f, 0.0f, 0.0f, 1.0f);
-        int y = bounds.getBottom() - static_cast<int>(normalized * bounds.getHeight());
-        g.drawHorizontalLine(y, bounds.getX(), bounds.getRight());
+        juce::String sign = (value >= 0) ? "+" : "";
+        return sign + juce::String(value, 1) + " dB";
+    }
+    else if (suffix.containsIgnoreCase("%"))
+    {
+        return juce::String(static_cast<int>(value)) + "%";
+    }
+    else
+    {
+        return juce::String(value, 2);
+    }
+}
+
+void FourKEQEditor::updateValueLabels()
+{
+    // Helper to position value label below a slider
+    auto positionValueLabel = [](juce::Label& label, const juce::Slider& slider, int yOffset = 48) {
+        int labelWidth = 60;
+        int labelHeight = 14;
+        label.setBounds(slider.getX() + (slider.getWidth() - labelWidth) / 2,
+                        slider.getY() + slider.getHeight() / 2 + yOffset,
+                        labelWidth, labelHeight);
     };
 
-    drawScaleMark(-60.0f);
-    drawScaleMark(-30.0f);
-    drawScaleMark(-12.0f);
-    drawScaleMark(-6.0f);
-    drawScaleMark(-3.0f);
-    drawScaleMark(0.0f);
+    // Update and position all value labels
+    // Filter section
+    hpfValueLabel.setText(formatValue(hpfFreqSlider.getValue(), "Hz"), juce::dontSendNotification);
+    positionValueLabel(hpfValueLabel, hpfFreqSlider);
 
-    // Draw label below meter
-    g.setColour(juce::Colour(0xffa0a0a0));
-    g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
-    g.drawText(label, bounds.getX(), bounds.getBottom() + 2, bounds.getWidth(), 12,
-               juce::Justification::centred);
+    lpfValueLabel.setText(formatValue(lpfFreqSlider.getValue(), "Hz"), juce::dontSendNotification);
+    positionValueLabel(lpfValueLabel, lpfFreqSlider);
+
+    inputValueLabel.setText(formatValue(inputGainSlider.getValue(), "dB"), juce::dontSendNotification);
+    positionValueLabel(inputValueLabel, inputGainSlider);
+
+    // LF band
+    lfGainValueLabel.setText(formatValue(lfGainSlider.getValue(), "dB"), juce::dontSendNotification);
+    positionValueLabel(lfGainValueLabel, lfGainSlider);
+
+    lfFreqValueLabel.setText(formatValue(lfFreqSlider.getValue(), "Hz"), juce::dontSendNotification);
+    positionValueLabel(lfFreqValueLabel, lfFreqSlider);
+
+    // LMF band
+    lmGainValueLabel.setText(formatValue(lmGainSlider.getValue(), "dB"), juce::dontSendNotification);
+    positionValueLabel(lmGainValueLabel, lmGainSlider);
+
+    lmFreqValueLabel.setText(formatValue(lmFreqSlider.getValue(), "Hz"), juce::dontSendNotification);
+    positionValueLabel(lmFreqValueLabel, lmFreqSlider);
+
+    lmQValueLabel.setText(juce::String(lmQSlider.getValue(), 2), juce::dontSendNotification);
+    positionValueLabel(lmQValueLabel, lmQSlider);
+
+    // HMF band
+    hmGainValueLabel.setText(formatValue(hmGainSlider.getValue(), "dB"), juce::dontSendNotification);
+    positionValueLabel(hmGainValueLabel, hmGainSlider);
+
+    hmFreqValueLabel.setText(formatValue(hmFreqSlider.getValue(), "Hz"), juce::dontSendNotification);
+    positionValueLabel(hmFreqValueLabel, hmFreqSlider);
+
+    hmQValueLabel.setText(juce::String(hmQSlider.getValue(), 2), juce::dontSendNotification);
+    positionValueLabel(hmQValueLabel, hmQSlider);
+
+    // HF band
+    hfGainValueLabel.setText(formatValue(hfGainSlider.getValue(), "dB"), juce::dontSendNotification);
+    positionValueLabel(hfGainValueLabel, hfGainSlider);
+
+    hfFreqValueLabel.setText(formatValue(hfFreqSlider.getValue(), "Hz"), juce::dontSendNotification);
+    positionValueLabel(hfFreqValueLabel, hfFreqSlider);
+
+    // Master section
+    outputValueLabel.setText(formatValue(outputGainSlider.getValue(), "dB"), juce::dontSendNotification);
+    positionValueLabel(outputValueLabel, outputGainSlider, 42);
+
+    satValueLabel.setText(formatValue(saturationSlider.getValue(), "%"), juce::dontSendNotification);
+    positionValueLabel(satValueLabel, saturationSlider, 42);
 }

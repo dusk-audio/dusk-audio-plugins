@@ -77,6 +77,7 @@ FourKEQ::FourKEQ()
 
     eqTypeParam = parameters.getRawParameterValue("eq_type");
     bypassParam = parameters.getRawParameterValue("bypass");
+    inputGainParam = parameters.getRawParameterValue("input_gain");
     outputGainParam = parameters.getRawParameterValue("output_gain");
     saturationParam = parameters.getRawParameterValue("saturation");
     oversamplingParam = parameters.getRawParameterValue("oversampling");
@@ -207,6 +208,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "bypass", "Bypass", false));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "input_gain", "Input Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f, "dB"));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "output_gain", "Output Gain",
         juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
         0.0f, "dB"));
@@ -247,6 +252,11 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     sampleRate = juce::jlimit(8000.0, 192000.0, sampleRate);
 
     currentSampleRate = sampleRate;
+
+    // Initialize spectrum buffers with proper size to prevent crashes
+    const int numChannels = getTotalNumInputChannels();
+    spectrumBuffer.setSize(numChannels, samplesPerBlock, false, true, true);
+    spectrumBufferPre.setSize(numChannels, samplesPerBlock, false, true, true);
 
     // Adaptive oversampling based on sample rate
     // At very high sample rates, oversampling provides diminishing returns for aliasing
@@ -432,8 +442,9 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         return;
 
     // Only update filters if parameters have changed (performance optimization)
-    // Copy all parameter values atomically while flag is set to ensure consistency
-    if (parametersChanged.load())
+    // Atomically read AND clear the flag to prevent race conditions
+    // Use exchange() instead of load() + store() to ensure atomicity
+    if (parametersChanged.exchange(false))
     {
         // Create local copies of all parameters to avoid race conditions
         // These values are guaranteed to be from the same "snapshot" since we read them
@@ -472,10 +483,9 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         cachedParams.eqType = eqType;
 
         updateFilters();
-        parametersChanged.store(false);
     }
 
-    // Capture input levels for metering (before processing)
+    // Capture input levels for metering (before gain)
     if (buffer.getNumChannels() >= 1)
     {
         float peakL = buffer.getMagnitude(0, 0, buffer.getNumSamples());
@@ -485,6 +495,14 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
     {
         float peakR = buffer.getMagnitude(1, 0, buffer.getNumSamples());
         inputLevelR.store(juce::Decibels::gainToDecibels(peakR, -96.0f), std::memory_order_relaxed);
+    }
+
+    // Apply input gain
+    if (inputGainParam)
+    {
+        float inputGainValue = inputGainParam->load();
+        float inputGainLinear = juce::Decibels::decibelsToGain(inputGainValue);
+        buffer.applyGain(inputGainLinear);
     }
 
     // Capture pre-EQ buffer for spectrum analyzer (thread-safe)
@@ -637,14 +655,6 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         if (autoGainParam && autoGainParam->load() > 0.5f)
         {
             autoCompensation = calculateAutoGainCompensation();
-
-            // Debug logging
-            static int debugCounter = 0;
-            if (++debugCounter > 100)
-            {
-                debugCounter = 0;
-                DBG("Auto Gain Enabled - Compensation: " << juce::Decibels::gainToDecibels(autoCompensation) << " dB");
-            }
         }
 
         float totalGain = juce::Decibels::decibelsToGain(outputGainValue) * autoCompensation;
@@ -735,8 +745,11 @@ void FourKEQ::updateHPF(double sampleRate)
     // Implementation: 3rd-order (1st-order + 2nd-order cascade)
     // Stage 1: 1st-order highpass (6dB/oct)
     auto coeffs1st = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sampleRate, freq);
-    hpfFilter.stage1L.coefficients = coeffs1st;
-    hpfFilter.stage1R.coefficients = coeffs1st;
+    if (coeffs1st)
+    {
+        hpfFilter.stage1L.coefficients = coeffs1st;
+        hpfFilter.stage1R.coefficients = coeffs1st;
+    }
 
     // Stage 2: 2nd-order highpass (12dB/oct)
     // SSL uses a custom slightly underdamped response (NOT standard Butterworth Q=0.707)
@@ -747,8 +760,11 @@ void FourKEQ::updateHPF(double sampleRate)
     auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(
         sampleRate, freq, sslHPFQ);
 
-    hpfFilter.stage2.filter.coefficients = coeffs2nd;
-    hpfFilter.stage2.filterR.coefficients = coeffs2nd;
+    if (coeffs2nd)
+    {
+        hpfFilter.stage2.filter.coefficients = coeffs2nd;
+        hpfFilter.stage2.filterR.coefficients = coeffs2nd;
+    }
 }
 
 void FourKEQ::updateLPF(double sampleRate)
@@ -782,8 +798,11 @@ void FourKEQ::updateLPF(double sampleRate)
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
         sampleRate, processFreq, q);
 
-    lpfFilter.filter.coefficients = coeffs;
-    lpfFilter.filterR.coefficients = coeffs;
+    if (coeffs)
+    {
+        lpfFilter.filter.coefficients = coeffs;
+        lpfFilter.filterR.coefficients = coeffs;
+    }
 }
 
 void FourKEQ::updateLFBand(double sampleRate)
@@ -966,6 +985,14 @@ float FourKEQ::calculateAutoGainCompensation() const
     float hmGainDB = hmParam->convertFrom0to1(hmParam->getValue());
     float hfGainDB = hfParam->convertFrom0to1(hfParam->getValue());
 
+    // Validate parameter values to prevent NaN/Inf propagation
+    if (!std::isfinite(lfGainDB) || !std::isfinite(lmGainDB) ||
+        !std::isfinite(hmGainDB) || !std::isfinite(hfGainDB))
+    {
+        DBG("FourKEQ: Invalid gain values in auto-gain calculation - returning unity gain");
+        return 1.0f;  // Safe default
+    }
+
     // Weight the contributions based on how broad each band typically affects spectrum
     // HF shelf affects the widest bandwidth and has most perceptual impact
     // LF shelf has more energy but narrower bandwidth
@@ -980,15 +1007,6 @@ float FourKEQ::calculateAutoGainCompensation() const
 
     // Limit compensation range to ±6dB for effective level matching
     compensationDB = juce::jlimit(-6.0f, 6.0f, compensationDB);
-
-    // Debug logging
-    static int debugCounter = 0;
-    if (++debugCounter > 200)
-    {
-        debugCounter = 0;
-        DBG("AutoGain Calc - LF:" << lfGainDB << " LM:" << lmGainDB << " HM:" << hmGainDB << " HF:" << hfGainDB);
-        DBG("Weighted Sum: " << weightedSum << " dB, Compensation: " << compensationDB << " dB");
-    }
 
     return juce::Decibels::decibelsToGain(compensationDB);
 }
@@ -1064,7 +1082,8 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
     a1 /= a0;
     a2 /= a0;
 
-    return new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2);
+    // Use JUCE's smart pointer system to avoid memory leaks
+    return juce::dsp::IIR::Coefficients<float>::Ptr(new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
 }
 
 juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLPeak(
@@ -1127,7 +1146,8 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLPeak(
     a1 /= a0;
     a2 /= a0;
 
-    return new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2);
+    // Use JUCE's smart pointer system to avoid memory leaks
+    return juce::dsp::IIR::Coefficients<float>::Ptr(new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
 }
 
 //==============================================================================

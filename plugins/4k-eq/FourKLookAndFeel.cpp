@@ -35,21 +35,40 @@ void FourKLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wid
     auto rw = radius * 2.0f;
     auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // SSL-style knob matching reference image
+    // Check if mouse is over or dragging
+    bool isMouseOver = slider.isMouseOverOrDragging();
+    bool isDragging = slider.isMouseButtonDown();
 
-    // Black outer ring/shadow
-    g.setColour(juce::Colour(0xff000000));
+    // Outer shadow/glow
+    {
+        juce::ColourGradient shadowGradient(
+            juce::Colour(0x40000000), centreX, centreY,
+            juce::Colour(0x00000000), centreX, centreY + radius + 6, true);
+        g.setGradientFill(shadowGradient);
+        g.fillEllipse(rx - 4, ry - 2, rw + 8, rw + 10);
+    }
+
+    // Black outer ring
+    g.setColour(juce::Colour(0xff0a0a0a));
     g.fillEllipse(rx - 2, ry - 2, rw + 4, rw + 4);
 
-    // Dark metallic knob body with ridges effect
-    juce::ColourGradient knobGradient(
-        juce::Colour(0xff4a4a4a), centreX - radius * 0.5f, centreY - radius * 0.5f,
-        juce::Colour(0xff1a1a1a), centreX + radius * 0.5f, centreY + radius * 0.5f, false);
-    g.setGradientFill(knobGradient);
-    g.fillEllipse(rx, ry, rw, rw);
+    // Dark metallic knob body with improved 3D gradient (light from top-left)
+    {
+        juce::ColourGradient knobGradient(
+            juce::Colour(0xff606060), centreX - radius * 0.7f, centreY - radius * 0.7f,
+            juce::Colour(0xff181818), centreX + radius * 0.5f, centreY + radius * 0.7f, true);
+        g.setGradientFill(knobGradient);
+        g.fillEllipse(rx, ry, rw, rw);
+    }
+
+    // Inner highlight ring (simulates 3D bevel)
+    {
+        g.setColour(juce::Colour(0x20ffffff));
+        g.drawEllipse(rx + 1, ry + 1, rw - 2, rw - 2, 1.0f);
+    }
 
     // Draw radial ridges/grooves for texture
-    g.setColour(juce::Colour(0x20000000));
+    g.setColour(juce::Colour(0x18000000));
     for (int i = 0; i < 24; ++i)
     {
         float ridgeAngle = (i / 24.0f) * juce::MathConstants<float>::twoPi;
@@ -66,35 +85,72 @@ void FourKLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wid
     if (paramName.contains("hf") || paramName.contains("high"))
         capColour = juce::Colour(0xff4a7c9e); // Blue
     else if (paramName.contains("hmf") || paramName.contains("hi-mid"))
-        capColour = juce::Colour(0xff5a9a5a); // Green
+        capColour = juce::Colour(0xff5c9a5c); // Green
     else if (paramName.contains("lmf") || paramName.contains("lo-mid"))
-        capColour = juce::Colour(0xff9a6a3a); // Brown/Orange
+        capColour = juce::Colour(0xffc47a44); // Orange
     else if (paramName.contains("lf") || paramName.contains("low"))
-        capColour = juce::Colour(0xff8a4a4a); // Red
+        capColour = juce::Colour(0xffc44444); // Red
     else
         capColour = juce::Colour(0xff5a5a5a); // Grey default
 
-    // Colored center cap with gradient
-    auto capRadius = radius * 0.5f;
-    juce::ColourGradient capGradient(
-        capColour.brighter(0.3f), centreX - capRadius * 0.3f, centreY - capRadius * 0.3f,
-        capColour.darker(0.3f), centreX + capRadius * 0.3f, centreY + capRadius * 0.3f, false);
-    g.setGradientFill(capGradient);
-    g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2, capRadius * 2);
+    // Hover state: brighten the cap
+    if (isMouseOver && !isDragging)
+        capColour = capColour.brighter(0.15f);
 
-    // White pointer line on the colored cap
-    juce::Path pointer;
-    auto pointerLength = capRadius * 0.8f;
-    auto pointerThickness = 2.0f;
+    // Colored center cap with improved 3D gradient
+    auto capRadius = radius * 0.52f;
+    {
+        // Cap shadow
+        g.setColour(juce::Colour(0x40000000));
+        g.fillEllipse(centreX - capRadius + 1, centreY - capRadius + 2, capRadius * 2, capRadius * 2);
 
-    pointer.addRectangle(-pointerThickness * 0.5f, -pointerLength, pointerThickness, pointerLength * 0.9f);
-    pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
-    g.setColour(juce::Colour(0xffffffff));
-    g.fillPath(pointer);
+        // Main cap with gradient
+        juce::ColourGradient capGradient(
+            capColour.brighter(0.4f), centreX - capRadius * 0.4f, centreY - capRadius * 0.5f,
+            capColour.darker(0.35f), centreX + capRadius * 0.3f, centreY + capRadius * 0.5f, true);
+        g.setGradientFill(capGradient);
+        g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2, capRadius * 2);
 
-    // Small center dot
-    g.setColour(juce::Colour(0xff1a1a1a));
-    g.fillEllipse(centreX - 2, centreY - 2, 4, 4);
+        // Cap highlight arc
+        g.setColour(capColour.brighter(0.6f).withAlpha(0.3f));
+        juce::Path highlightArc;
+        highlightArc.addArc(centreX - capRadius + 2, centreY - capRadius + 2,
+                           (capRadius - 2) * 2, (capRadius - 2) * 2,
+                           juce::MathConstants<float>::pi * 1.2f,
+                           juce::MathConstants<float>::pi * 1.8f, true);
+        g.strokePath(highlightArc, juce::PathStrokeType(1.5f));
+    }
+
+    // Dragging state: colored ring around the knob
+    if (isDragging)
+    {
+        g.setColour(capColour.withAlpha(0.4f));
+        g.drawEllipse(rx - 3, ry - 3, rw + 6, rw + 6, 2.0f);
+    }
+
+    // White pointer line on the colored cap (brighter and slightly thicker)
+    {
+        juce::Path pointer;
+        auto pointerLength = capRadius * 0.85f;
+        auto pointerThickness = 2.5f;
+
+        pointer.addRectangle(-pointerThickness * 0.5f, -pointerLength, pointerThickness, pointerLength * 0.9f);
+        pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+
+        // Pointer shadow
+        g.setColour(juce::Colour(0x40000000));
+        g.fillPath(pointer, juce::AffineTransform::translation(0.5f, 1.0f));
+
+        // Main pointer
+        g.setColour(juce::Colour(0xffffffff));
+        g.fillPath(pointer);
+    }
+
+    // Small center dot with subtle highlight
+    g.setColour(juce::Colour(0xff151515));
+    g.fillEllipse(centreX - 2.5f, centreY - 2.5f, 5, 5);
+    g.setColour(juce::Colour(0x30ffffff));
+    g.fillEllipse(centreX - 1.5f, centreY - 2.0f, 2, 2);
 }
 
 void FourKLookAndFeel::drawScaleMarkings(juce::Graphics& g, float cx, float cy, float radius,
@@ -253,39 +309,97 @@ void FourKLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& b
 {
     auto bounds = button.getLocalBounds().toFloat();
     auto isOn = button.getToggleState();
+    auto buttonText = button.getButtonText();
+    bool isBypass = buttonText.containsIgnoreCase("BYPASS");
+    bool isAutoGain = buttonText.containsIgnoreCase("AUTO");
 
-    // SSL-style illuminated push button
+    // SSL-style illuminated push button with improved styling
+
+    // Outer bezel/shadow
+    g.setColour(juce::Colour(0xff151515));
+    g.fillRoundedRectangle(bounds.expanded(1), 4.0f);
 
     // Button bezel
     g.setColour(juce::Colour(0xff2a2a2a));
-    g.fillRoundedRectangle(bounds, 3.0f);
+    g.fillRoundedRectangle(bounds, 4.0f);
 
-    // Button face
-    juce::ColourGradient buttonGradient(
-        isOn ? juce::Colour(0xff602020) : juce::Colour(0xff404040),
-        bounds.getX(), bounds.getY(),
-        isOn ? juce::Colour(0xff301010) : juce::Colour(0xff202020),
-        bounds.getX(), bounds.getBottom(), false);
-    g.setGradientFill(buttonGradient);
-    g.fillRoundedRectangle(bounds.reduced(2), 2.0f);
-
-    // LED indicator (SSL-style)
-    if (isOn)
+    // Button face with gradient
+    juce::Colour baseColor;
+    if (isBypass)
     {
-        // Red illumination when on
-        g.setColour(juce::Colour(0xffff0000));
-        auto ledBounds = bounds.reduced(bounds.getWidth() * 0.3f, bounds.getHeight() * 0.3f);
-        g.fillEllipse(ledBounds);
-
-        // Glow effect
-        g.setColour(juce::Colour(0x40ff0000));
-        g.fillEllipse(ledBounds.expanded(3));
+        // BYPASS uses orange/amber when active for high visibility
+        baseColor = isOn ? juce::Colour(0xff8a5020) : juce::Colour(0xff454545);
+    }
+    else if (isAutoGain)
+    {
+        // AUTO GAIN uses green when active
+        baseColor = isOn ? juce::Colour(0xff2a6a2a) : juce::Colour(0xff404040);
+    }
+    else
+    {
+        // Default red for other toggle buttons
+        baseColor = isOn ? juce::Colour(0xff6a2020) : juce::Colour(0xff404040);
     }
 
+    juce::ColourGradient buttonGradient(
+        baseColor.brighter(0.2f), bounds.getX(), bounds.getY(),
+        baseColor.darker(0.3f), bounds.getX(), bounds.getBottom(), false);
+    g.setGradientFill(buttonGradient);
+    g.fillRoundedRectangle(bounds.reduced(2), 3.0f);
+
+    // Highlight effect when hovered
+    if (shouldDrawButtonAsHighlighted && !shouldDrawButtonAsDown)
+    {
+        g.setColour(juce::Colour(0x15ffffff));
+        g.fillRoundedRectangle(bounds.reduced(2), 3.0f);
+    }
+
+    // Pressed effect
+    if (shouldDrawButtonAsDown)
+    {
+        g.setColour(juce::Colour(0x20000000));
+        g.fillRoundedRectangle(bounds.reduced(2), 3.0f);
+    }
+
+    // Inner highlight (top edge)
+    g.setColour(juce::Colour(0x15ffffff));
+    g.drawLine(bounds.getX() + 4, bounds.getY() + 3, bounds.getRight() - 4, bounds.getY() + 3, 1.0f);
+
+    // LED indicator strip at top of button when on
+    if (isOn)
+    {
+        juce::Colour ledColor;
+        if (isBypass)
+            ledColor = juce::Colour(0xffff8000);  // Orange
+        else if (isAutoGain)
+            ledColor = juce::Colour(0xff00cc00);  // Green
+        else
+            ledColor = juce::Colour(0xffff3030);  // Red
+
+        // LED strip
+        auto ledRect = juce::Rectangle<float>(bounds.getX() + 4, bounds.getY() + 2,
+                                               bounds.getWidth() - 8, 3.0f);
+        g.setColour(ledColor);
+        g.fillRoundedRectangle(ledRect, 1.0f);
+
+        // Glow effect
+        g.setColour(ledColor.withAlpha(0.3f));
+        g.fillRoundedRectangle(ledRect.expanded(2, 1), 2.0f);
+    }
+
+    // Border
+    g.setColour(isOn ? baseColor.brighter(0.3f) : juce::Colour(0xff505050));
+    g.drawRoundedRectangle(bounds.reduced(1), 3.0f, 1.0f);
+
     // Button text
-    g.setColour(isOn ? juce::Colours::white : textColour);
+    g.setColour(isOn ? juce::Colours::white : juce::Colour(0xffc0c0c0));
     g.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
-    g.drawFittedText(button.getButtonText(), bounds.toNearestInt(),
+
+    // Offset text down slightly to account for LED strip
+    auto textBounds = bounds;
+    if (isOn) textBounds.translate(0, 1);
+
+    g.drawFittedText(buttonText, textBounds.toNearestInt(),
                     juce::Justification::centred, 1);
 }
 
@@ -293,29 +407,63 @@ void FourKLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bo
                                   int buttonX, int buttonY, int buttonW, int buttonH,
                                   juce::ComboBox& box)
 {
-    auto bounds = juce::Rectangle<float>(0, 0, width, height);
+    auto bounds = juce::Rectangle<float>(0, 0, static_cast<float>(width), static_cast<float>(height));
 
-    // SSL-style selector switch
-    g.setColour(juce::Colour(0xff2a2a2a));
-    g.fillRoundedRectangle(bounds, 3.0f);
+    // SSL-style selector with improved styling
 
-    // Inner face
-    g.setColour(juce::Colour(0xff3a3a3a));
-    g.fillRoundedRectangle(bounds.reduced(2), 2.0f);
+    // Outer shadow
+    g.setColour(juce::Colour(0xff151515));
+    g.fillRoundedRectangle(bounds.expanded(1), 5.0f);
+
+    // Main background with gradient
+    juce::ColourGradient bgGradient(
+        juce::Colour(0xff3a3a3a), 0, 0,
+        juce::Colour(0xff2a2a2a), 0, static_cast<float>(height), false);
+    g.setGradientFill(bgGradient);
+    g.fillRoundedRectangle(bounds, 4.0f);
+
+    // Inner highlight at top
+    g.setColour(juce::Colour(0x10ffffff));
+    g.drawLine(4, 2, static_cast<float>(width) - 4, 2, 1.0f);
+
+    // Border
+    g.setColour(juce::Colour(0xff4a4a4a));
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+
+    // Pressed state
+    if (isButtonDown)
+    {
+        g.setColour(juce::Colour(0x15000000));
+        g.fillRoundedRectangle(bounds.reduced(1), 3.0f);
+    }
 
     // Highlight if focused
     if (box.hasKeyboardFocus(false))
     {
-        g.setColour(highlightColour.withAlpha(0.3f));
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 3.0f, 1.5f);
+        g.setColour(highlightColour.withAlpha(0.25f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.5f);
     }
 
-    // Down arrow
+    // Arrow button separator line
+    g.setColour(juce::Colour(0xff3a3a3a));
+    g.drawLine(static_cast<float>(buttonX), 4.0f, static_cast<float>(buttonX), static_cast<float>(height) - 4.0f, 1.0f);
+
+    // Custom arrow with shadow
+    float arrowCenterX = buttonX + buttonW * 0.5f;
+    float arrowCenterY = buttonY + buttonH * 0.5f;
+    float arrowSize = 5.0f;
+
     juce::Path arrow;
-    arrow.addTriangle(buttonX + buttonW * 0.3f, buttonY + buttonH * 0.45f,
-                     buttonX + buttonW * 0.7f, buttonY + buttonH * 0.45f,
-                     buttonX + buttonW * 0.5f, buttonY + buttonH * 0.6f);
-    g.setColour(textColour);
+    arrow.addTriangle(arrowCenterX - arrowSize, arrowCenterY - arrowSize * 0.3f,
+                     arrowCenterX + arrowSize, arrowCenterY - arrowSize * 0.3f,
+                     arrowCenterX, arrowCenterY + arrowSize * 0.6f);
+
+    // Arrow shadow
+    g.setColour(juce::Colour(0x40000000));
+    g.fillPath(arrow, juce::AffineTransform::translation(0.5f, 1.0f));
+
+    // Arrow
+    g.setColour(juce::Colour(0xffc0c0c0));
     g.fillPath(arrow);
 }
 

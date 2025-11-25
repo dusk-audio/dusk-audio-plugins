@@ -80,10 +80,10 @@ public:
     juce::CriticalSection spectrumBufferLock;
 
     // Level meters (thread-safe atomic values for GUI display)
-    std::atomic<float> inputLevelL{0.0f};   // Input level left channel (dBFS)
-    std::atomic<float> inputLevelR{0.0f};   // Input level right channel (dBFS)
-    std::atomic<float> outputLevelL{0.0f};  // Output level left channel (dBFS)
-    std::atomic<float> outputLevelR{0.0f};  // Output level right channel (dBFS)
+    std::atomic<float> inputLevelL{-96.0f};   // Input level left channel (dBFS)
+    std::atomic<float> inputLevelR{-96.0f};   // Input level right channel (dBFS)
+    std::atomic<float> outputLevelL{-96.0f};  // Output level left channel (dBFS)
+    std::atomic<float> outputLevelR{-96.0f};  // Output level right channel (dBFS)
 
 private:
     //==============================================================================
@@ -265,6 +265,7 @@ private:
 
     std::atomic<float>* eqTypeParam = nullptr;     // 0 = Brown, 1 = Black
     std::atomic<float>* bypassParam = nullptr;
+    std::atomic<float>* inputGainParam = nullptr;   // Input gain control
     std::atomic<float>* outputGainParam = nullptr;
     std::atomic<float>* saturationParam = nullptr;
     std::atomic<float>* oversamplingParam = nullptr; // 0 = 2x, 1 = 4x

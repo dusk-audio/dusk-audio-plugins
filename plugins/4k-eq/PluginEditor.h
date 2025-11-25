@@ -3,6 +3,8 @@
 #include <JuceHeader.h>
 #include "FourKEQ.h"
 #include "FourKLookAndFeel.h"
+#include "EQCurveDisplay.h"
+#include "../shared/LEDMeter.h"
 
 //==============================================================================
 /**
@@ -61,6 +63,7 @@ private:
     juce::ComboBox presetSelector;
     juce::ToggleButton bypassButton;
     juce::ToggleButton autoGainButton;  // Auto-gain compensation toggle
+    juce::Slider inputGainSlider;   // Input gain control
     juce::Slider outputGainSlider;
     juce::Slider saturationSlider;
     juce::ComboBox oversamplingSelector;
@@ -74,11 +77,20 @@ private:
     float lastBypass = -1.0f;
     double lastSampleRate = 0.0;
 
-    // Level meter state (smoothed for display)
-    float smoothedInputL = -96.0f;
-    float smoothedInputR = -96.0f;
-    float smoothedOutputL = -96.0f;
-    float smoothedOutputR = -96.0f;
+    // Level meters (professional LED-style like Universal Compressor)
+    std::unique_ptr<LEDMeter> inputMeterL;
+    std::unique_ptr<LEDMeter> outputMeterL;
+
+    // EQ Curve Display
+    std::unique_ptr<EQCurveDisplay> eqCurveDisplay;
+
+    // Value readout labels (show current parameter value below each knob)
+    juce::Label hpfValueLabel, lpfValueLabel, inputValueLabel;
+    juce::Label lfGainValueLabel, lfFreqValueLabel;
+    juce::Label lmGainValueLabel, lmFreqValueLabel, lmQValueLabel;
+    juce::Label hmGainValueLabel, hmFreqValueLabel, hmQValueLabel;
+    juce::Label hfGainValueLabel, hfFreqValueLabel;
+    juce::Label outputValueLabel, satValueLabel;
 
     // Section labels (LF, LMF, HMF, HF, FILTERS)
     juce::Label filtersLabel, lfLabel, lmfLabel, hmfLabel, hfLabel;
@@ -89,7 +101,7 @@ private:
     juce::Label lmGainLabel, lmFreqLabel, lmQLabel;  // LMF band
     juce::Label hmGainLabel, hmFreqLabel, hmQLabel;  // HMF band
     juce::Label hfGainLabel, hfFreqLabel;  // HF band
-    juce::Label outputLabel, satLabel;  // Master section
+    juce::Label inputLabel, outputLabel, satLabel;  // Input/Output/Drive labels
 
     // Attachment classes for parameter binding
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -119,6 +131,7 @@ private:
     std::unique_ptr<ComboBoxAttachment> eqTypeAttachment;
     std::unique_ptr<ButtonAttachment> bypassAttachment;
     std::unique_ptr<ButtonAttachment> autoGainAttachment;  // Auto-gain toggle
+    std::unique_ptr<SliderAttachment> inputGainAttachment;   // Input gain
     std::unique_ptr<SliderAttachment> outputGainAttachment;
     std::unique_ptr<SliderAttachment> saturationAttachment;
     std::unique_ptr<ComboBoxAttachment> oversamplingAttachment;
@@ -127,9 +140,10 @@ private:
     void setupKnob(juce::Slider& slider, const juce::String& paramID,
                    const juce::String& label, bool centerDetented = false);
     void setupButton(juce::ToggleButton& button, const juce::String& text);
+    void setupValueLabel(juce::Label& label);
+    void updateValueLabels();
     void drawKnobMarkings(juce::Graphics& g);
-    void drawLevelMeter(juce::Graphics& g, juce::Rectangle<int> bounds,
-                       float levelDB, const juce::String& label);
+    juce::String formatValue(float value, const juce::String& suffix);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQEditor)
 };
