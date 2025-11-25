@@ -757,123 +757,158 @@ void FourKEQEditor::setupButton(juce::ToggleButton& button, const juce::String& 
 void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
 {
     // SSL-style knob tick markings with value labels
-    // The real SSL console shows specific dB/Hz/Q values around the knobs
+    // Labels are positioned at the correct angular positions based on parameter skew
 
-    // Helper to draw tick marks with optional value labels (SSL style)
-    auto drawTicksWithValues = [&g](juce::Rectangle<int> knobBounds,
-                                     const std::vector<juce::String>& values,
-                                     bool showCenterDot = false)
+    // Rotation range constants (must match setupKnob rotaryParameters)
+    const float startAngle = juce::MathConstants<float>::pi * 1.25f;  // 225° = 7 o'clock
+    const float endAngle = juce::MathConstants<float>::pi * 2.75f;    // 495° = 5 o'clock
+    const float totalRange = endAngle - startAngle;  // 270° total sweep
+
+    // Helper to calculate normalized position for a value with skew
+    // Formula: normalizedPos = ((value - min) / (max - min))^skew
+    auto valueToNormalized = [](float value, float minVal, float maxVal, float skew) -> float {
+        float proportion = (value - minVal) / (maxVal - minVal);
+        return std::pow(proportion, skew);
+    };
+
+    // Helper to draw a single tick with label at the correct skewed position
+    auto drawTickAtValue = [&](juce::Rectangle<int> knobBounds, float value,
+                               float minVal, float maxVal, float skew,
+                               const juce::String& label, bool isCenter = false)
     {
-        if (values.empty()) return;
-
         auto center = knobBounds.getCentre().toFloat();
         float radius = knobBounds.getWidth() / 2.0f + 3.0f;
 
-        // Rotation range: 1.25π to 2.75π (270° sweep from 7 o'clock to 5 o'clock)
-        // IMPORTANT: These angles match the rotaryParameters set in setupKnob()
-        float startAngle = juce::MathConstants<float>::pi * 1.25f;  // 225° = 7 o'clock
-        float endAngle = juce::MathConstants<float>::pi * 2.75f;    // 495° = 5 o'clock
-        float totalRange = endAngle - startAngle;  // 270° total sweep
+        // Calculate the normalized position (0-1) for this value with skew
+        float normalizedPos = valueToNormalized(value, minVal, maxVal, skew);
 
-        int numTicks = values.size();
+        // Calculate angle and adjust for knob pointer coordinate system
+        float angle = startAngle + totalRange * normalizedPos;
+        float tickAngle = angle - juce::MathConstants<float>::halfPi;
 
-        for (int i = 0; i < numTicks; ++i)
+        float tickLength = isCenter ? 5.0f : 3.0f;
+
+        // Draw tick mark
+        g.setColour(isCenter ? juce::Colour(0xff909090) : juce::Colour(0xff606060));
+        float x1 = center.x + std::cos(tickAngle) * radius;
+        float y1 = center.y + std::sin(tickAngle) * radius;
+        float x2 = center.x + std::cos(tickAngle) * (radius + tickLength);
+        float y2 = center.y + std::sin(tickAngle) * (radius + tickLength);
+        g.drawLine(x1, y1, x2, y2, isCenter ? 1.5f : 1.0f);
+
+        // Draw label if provided
+        if (label.isNotEmpty())
         {
-            // Calculate normalized position (0.0 to 1.0) for this tick
-            float normalizedPos = static_cast<float>(i) / (numTicks - 1);
+            g.setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));
 
-            // Calculate the angle for this tick position
-            // This matches how JUCE's rotary slider calculates its rotation angle
-            float angle = startAngle + totalRange * normalizedPos;
+            float labelRadius = radius + tickLength + 10.0f;
+            float labelX = center.x + std::cos(tickAngle) * labelRadius;
+            float labelY = center.y + std::sin(tickAngle) * labelRadius;
 
-            // IMPORTANT: The knob pointer is drawn with an implicit -90° offset (pointing up at angle=0)
-            // So we need to subtract π/2 from our tick mark angles to match the pointer's coordinate system
-            float tickAngle = angle - juce::MathConstants<float>::halfPi;
+            // Shadow
+            g.setColour(juce::Colour(0xff000000));
+            g.drawText(label, labelX - 18 + 1, labelY - 7 + 1, 36, 14, juce::Justification::centred);
 
-            // Longer tick for center position (for center-detented knobs)
-            bool isCenterTick = showCenterDot && (i == numTicks / 2);
-            float tickLength = isCenterTick ? 5.0f : 3.0f;
-
-            // Draw tick mark using adjusted angle that matches the knob pointer's coordinate system
-            g.setColour(isCenterTick ? juce::Colour(0xff909090) : juce::Colour(0xff606060));
-            float x1 = center.x + std::cos(tickAngle) * radius;
-            float y1 = center.y + std::sin(tickAngle) * radius;
-            float x2 = center.x + std::cos(tickAngle) * (radius + tickLength);
-            float y2 = center.y + std::sin(tickAngle) * (radius + tickLength);
-            g.drawLine(x1, y1, x2, y2, isCenterTick ? 1.5f : 1.0f);
-
-            // Draw value label at all positions with non-empty values
-            if (!values[i].isEmpty())
-            {
-                g.setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));  // Larger, bold for readability
-
-                float labelRadius = radius + tickLength + 10.0f;  // More space from knob
-                // Use the same adjusted angle for label positioning
-                float labelX = center.x + std::cos(tickAngle) * labelRadius;
-                float labelY = center.y + std::sin(tickAngle) * labelRadius;
-
-                // Draw label with dark shadow for strong contrast
-                g.setColour(juce::Colour(0xff000000));
-                g.drawText(values[i], labelX - 18 + 1, labelY - 7 + 1, 36, 14, juce::Justification::centred);
-
-                // Draw bright label on top (much brighter than before)
-                g.setColour(juce::Colour(0xffd0d0d0));  // Brighter grey, almost white
-                g.drawText(values[i], labelX - 18, labelY - 7, 36, 14, juce::Justification::centred);
-            }
+            // Label
+            g.setColour(juce::Colour(0xffd0d0d0));
+            g.drawText(label, labelX - 18, labelY - 7, 36, 14, juce::Justification::centred);
         }
     };
 
-    // ACTUAL PARAMETER RANGES (must match FourKEQ.cpp parameter definitions)
-    // Gain knobs: -20 to +20 dB (center at 0 dB)
-    std::vector<juce::String> gainValues = {"-20", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+20"};
+    // Helper for linear (non-skewed) parameters
+    auto drawTicksLinear = [&](juce::Rectangle<int> knobBounds,
+                               const std::vector<std::pair<float, juce::String>>& ticks,
+                               float minVal, float maxVal, bool hasCenter = false)
+    {
+        float centerVal = (minVal + maxVal) / 2.0f;
+        for (const auto& tick : ticks)
+        {
+            bool isCenter = hasCenter && std::abs(tick.first - centerVal) < 0.01f;
+            drawTickAtValue(knobBounds, tick.first, minVal, maxVal, 1.0f, tick.second, isCenter);
+        }
+    };
 
-    // LF Frequency: 30, 50, 100, 200, 300, 400, 480 Hz
-    std::vector<juce::String> lfFreqValues = {"30", "50", "100", "200", "300", "400", "480"};
+    // Helper for skewed parameters
+    auto drawTicksSkewed = [&](juce::Rectangle<int> knobBounds,
+                               const std::vector<std::pair<float, juce::String>>& ticks,
+                               float minVal, float maxVal, float skew)
+    {
+        for (const auto& tick : ticks)
+        {
+            drawTickAtValue(knobBounds, tick.first, minVal, maxVal, skew, tick.second, false);
+        }
+    };
 
-    // LMF Frequency: 200, 300, 800, 1k, 1.5k, 2k, 2.5k Hz
-    std::vector<juce::String> lmfFreqValues = {"200", "300", "800", "1k", "1.5k", "2k", "2.5k"};
+    // ===== GAIN KNOBS (linear, -20 to +20 dB) =====
+    std::vector<std::pair<float, juce::String>> gainTicks = {
+        {-20.0f, "-20"}, {0.0f, "0"}, {20.0f, "+20"}
+    };
 
-    // HMF Frequency: 600, 800, 1.5k, 3k, 4.5k, 6k, 7k Hz
-    std::vector<juce::String> hmfFreqValues = {"600", "800", "1.5k", "3k", "4.5k", "6k", "7k"};
+    drawTicksLinear(lfGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
+    drawTicksLinear(lmGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
+    drawTicksLinear(hmGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
+    drawTicksLinear(hfGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
 
-    // HF Frequency: 1.5k, 2k, 5k, 8k, 10k, 14k, 16k Hz
-    std::vector<juce::String> hfFreqValues = {"1.5k", "2k", "5k", "8k", "10k", "14k", "16k"};
+    // ===== HPF (20-500Hz, skew 0.3) =====
+    std::vector<std::pair<float, juce::String>> hpfTicks = {
+        {20.0f, "20"}, {50.0f, "50"}, {100.0f, "100"}, {200.0f, "200"}, {350.0f, "350"}, {500.0f, "500"}
+    };
+    drawTicksSkewed(hpfFreqSlider.getBounds(), hpfTicks, 20.0f, 500.0f, 0.3f);
 
-    // Q values: 0.4-4.0 (SSL hardware realistic range)
-    std::vector<juce::String> lmQValues = {"4", "3", "2", "1.5", "1", ".5", ".4"};
-    std::vector<juce::String> hmQValues = {"4", "3", "2", "1.5", "1", ".5", ".4"};
+    // ===== LPF (3000-20000Hz, skew 0.3) =====
+    std::vector<std::pair<float, juce::String>> lpfTicks = {
+        {3000.0f, "3k"}, {5000.0f, "5k"}, {8000.0f, "8k"}, {12000.0f, "12k"}, {20000.0f, "20k"}
+    };
+    drawTicksSkewed(lpfFreqSlider.getBounds(), lpfTicks, 3000.0f, 20000.0f, 0.3f);
 
-    // HPF: 16, 20, 70, 120, 200, 300, 350 Hz
-    std::vector<juce::String> hpfValues = {"16", "20", "70", "120", "200", "300", "350"};
+    // ===== LF Frequency (30-480Hz, skew 0.3) =====
+    std::vector<std::pair<float, juce::String>> lfFreqTicks = {
+        {30.0f, "30"}, {60.0f, "60"}, {100.0f, "100"}, {200.0f, "200"}, {350.0f, "350"}, {480.0f, "480"}
+    };
+    drawTicksSkewed(lfFreqSlider.getBounds(), lfFreqTicks, 30.0f, 480.0f, 0.3f);
 
-    // LPF: 22k, 12k, 8k, 5k, 4k, 3.5k, 3k Hz
-    std::vector<juce::String> lpfValues = {"22k", "12k", "8k", "5k", "4k", "3.5k", "3k"};
+    // ===== LMF Frequency (200-2500Hz, skew 0.3) =====
+    std::vector<std::pair<float, juce::String>> lmfFreqTicks = {
+        {200.0f, "200"}, {400.0f, "400"}, {800.0f, "800"}, {1200.0f, "1.2k"}, {1800.0f, "1.8k"}, {2500.0f, "2.5k"}
+    };
+    drawTicksSkewed(lmFreqSlider.getBounds(), lmfFreqTicks, 200.0f, 2500.0f, 0.3f);
 
-    // Draw tick marks with values for each knob
-    drawTicksWithValues(hpfFreqSlider.getBounds(), hpfValues, false);
-    drawTicksWithValues(lpfFreqSlider.getBounds(), lpfValues, false);
+    // ===== HMF Frequency (600-7000Hz, skew 0.3) =====
+    std::vector<std::pair<float, juce::String>> hmfFreqTicks = {
+        {600.0f, "600"}, {1000.0f, "1k"}, {2000.0f, "2k"}, {3500.0f, "3.5k"}, {5000.0f, "5k"}, {7000.0f, "7k"}
+    };
+    drawTicksSkewed(hmFreqSlider.getBounds(), hmfFreqTicks, 600.0f, 7000.0f, 0.3f);
 
-    drawTicksWithValues(lfGainSlider.getBounds(), gainValues, true);
-    drawTicksWithValues(lfFreqSlider.getBounds(), lfFreqValues, false);
+    // ===== HF Frequency (1500-16000Hz, skew 0.3) =====
+    std::vector<std::pair<float, juce::String>> hfFreqTicks = {
+        {1500.0f, "1.5k"}, {3000.0f, "3k"}, {5000.0f, "5k"}, {8000.0f, "8k"}, {12000.0f, "12k"}, {16000.0f, "16k"}
+    };
+    drawTicksSkewed(hfFreqSlider.getBounds(), hfFreqTicks, 1500.0f, 16000.0f, 0.3f);
 
-    drawTicksWithValues(lmGainSlider.getBounds(), gainValues, true);
-    drawTicksWithValues(lmFreqSlider.getBounds(), lmfFreqValues, false);
-    drawTicksWithValues(lmQSlider.getBounds(), lmQValues, false);
+    // ===== Q knobs (0.4-4.0, linear) =====
+    std::vector<std::pair<float, juce::String>> qTicks = {
+        {0.4f, ".4"}, {1.0f, "1"}, {2.0f, "2"}, {3.0f, "3"}, {4.0f, "4"}
+    };
+    drawTicksLinear(lmQSlider.getBounds(), qTicks, 0.4f, 4.0f, false);
+    drawTicksLinear(hmQSlider.getBounds(), qTicks, 0.4f, 4.0f, false);
 
-    drawTicksWithValues(hmGainSlider.getBounds(), gainValues, true);
-    drawTicksWithValues(hmFreqSlider.getBounds(), hmfFreqValues, false);
-    drawTicksWithValues(hmQSlider.getBounds(), hmQValues, false);
+    // ===== Input gain (-12 to +12 dB, linear) =====
+    std::vector<std::pair<float, juce::String>> inputGainTicks = {
+        {-12.0f, "-12"}, {0.0f, "0"}, {12.0f, "+12"}
+    };
+    drawTicksLinear(inputGainSlider.getBounds(), inputGainTicks, -12.0f, 12.0f, true);
 
-    drawTicksWithValues(hfGainSlider.getBounds(), gainValues, true);
-    drawTicksWithValues(hfFreqSlider.getBounds(), hfFreqValues, false);
+    // ===== Output gain (-12 to +12 dB, linear) =====
+    std::vector<std::pair<float, juce::String>> outputGainTicks = {
+        {-12.0f, "-12"}, {0.0f, "0"}, {12.0f, "+12"}
+    };
+    drawTicksLinear(outputGainSlider.getBounds(), outputGainTicks, -12.0f, 12.0f, true);
 
-    // Master section - Output gain: -12 to +12 dB (actual range from line 207)
-    std::vector<juce::String> outputGainValues = {"-12", "", "", "", "", "", "", "0", "", "", "", "", "", "", "+12"};
-    drawTicksWithValues(outputGainSlider.getBounds(), outputGainValues, true);
-
-    // Saturation (DRIVE): 0-100% in increments of 10
-    std::vector<juce::String> satValues = {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"};
-    drawTicksWithValues(saturationSlider.getBounds(), satValues, false);
+    // ===== Saturation/Drive (0-100%, linear) =====
+    std::vector<std::pair<float, juce::String>> satTicks = {
+        {0.0f, "0"}, {20.0f, "20"}, {40.0f, "40"}, {60.0f, "60"}, {80.0f, "80"}, {100.0f, "100"}
+    };
+    drawTicksLinear(saturationSlider.getBounds(), satTicks, 0.0f, 100.0f, false);
 }
 
 void FourKEQEditor::setupValueLabel(juce::Label& label)
