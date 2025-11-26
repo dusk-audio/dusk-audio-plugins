@@ -174,6 +174,7 @@ PLUGINS=(
     "UniversalCompressor_All"
     "PlateReverb_All"
     "TapeEcho_All"
+    "DrummerClone_All"
 )
 
 # Build all plugins
