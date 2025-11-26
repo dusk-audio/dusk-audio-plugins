@@ -35,6 +35,7 @@ option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)  # Fixed compilation er
 #option(BUILD_STUDIO_REVERB "Build Studio Reverb plugin" OFF)  # Removed - replaced with PlateReverb
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
 option(BUILD_PLATE_REVERB "Build Plate Reverb plugin" ON)
+option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -63,4 +64,8 @@ endif()
 
 if(BUILD_PLATE_REVERB)
     add_subdirectory(plugins/PlateReverb)
+endif()
+
+if(BUILD_DRUMMER_CLONE)
+    add_subdirectory(plugins/DrummerClone)
 endif()
