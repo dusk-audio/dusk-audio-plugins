@@ -6,6 +6,7 @@
 #include "FollowModePanel.h"
 #include "MidiExporter.h"
 #include "StepSequencer.h"
+#include "ProfileEditorPanel.h"
 
 /**
  * Custom XY Pad component for Swing/Drive control
@@ -127,6 +128,22 @@ private:
     juce::TextButton humanToggleButton;
     bool humanPanelVisible = false;
 
+    // ========== MIDI CC CONTROL PANEL ==========
+    juce::Label midiCCLabel;
+    juce::ToggleButton midiCCEnableToggle;
+    juce::Slider sectionCCSlider;
+    juce::Label sectionCCLabel;
+    juce::Slider fillCCSlider;
+    juce::Label fillCCLabel;
+    juce::TextButton midiCCToggleButton;
+    bool midiCCPanelVisible = false;
+    juce::Label midiCCSourceIndicator;  // Shows when section is being controlled via MIDI
+
+    // ========== PROFILE EDITOR PANEL ==========
+    ProfileEditorPanel profileEditorPanel;
+    juce::TextButton profileEditorToggleButton;
+    bool profileEditorVisible = false;
+
     // ========== STATUS BAR ==========
     juce::Label statusLabel;
 
@@ -150,6 +167,11 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> humanPushAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> humanGrooveAttachment;
 
+    // MIDI CC attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> midiCCEnableAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sectionCCAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> fillCCAttachment;
+
     // Setup helpers
     void setupLibraryPanel();
     void setupXYPad();
@@ -160,6 +182,8 @@ private:
     void setupFillsPanel();
     void setupStepSequencer();
     void setupHumanizationPanel();
+    void setupMidiCCPanel();
+    void setupProfileEditorPanel();
     void setupStatusBar();
 
     void updateStatusBar();

@@ -98,7 +98,8 @@ void XYPad::setPosition(float x, float y)
 DrummerCloneAudioProcessorEditor::DrummerCloneAudioProcessorEditor(DrummerCloneAudioProcessor& p)
     : AudioProcessorEditor(&p),
       audioProcessor(p),
-      followModePanel(p)
+      followModePanel(p),
+      profileEditorPanel(p)
 {
     // Set up dark theme
     darkLookAndFeel.setColourScheme(juce::LookAndFeel_V4::getDarkColourScheme());
@@ -119,6 +120,8 @@ DrummerCloneAudioProcessorEditor::DrummerCloneAudioProcessorEditor(DrummerCloneA
     setupFillsPanel();
     setupStepSequencer();
     setupHumanizationPanel();
+    setupMidiCCPanel();
+    setupProfileEditorPanel();
     setupStatusBar();
 
     // Start timer for UI updates
@@ -162,10 +165,49 @@ void DrummerCloneAudioProcessorEditor::setupLibraryPanel()
     drummerLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible(drummerLabel);
 
+    // All 29 drummers matching DrummerDNA order
+    // Rock (0-2)
     drummerComboBox.addItem("Kyle - Rock", 1);
-    drummerComboBox.addItem("Logan - Alternative", 2);
-    drummerComboBox.addItem("Brooklyn - R&B", 3);
-    drummerComboBox.addItem("Austin - HipHop", 4);
+    drummerComboBox.addItem("Anders - Rock", 2);
+    drummerComboBox.addItem("Max - Rock", 3);
+    // Alternative (3-4)
+    drummerComboBox.addItem("Logan - Alternative", 4);
+    drummerComboBox.addItem("Aidan - Alternative", 5);
+    // HipHop (5-6)
+    drummerComboBox.addItem("Austin - HipHop", 6);
+    drummerComboBox.addItem("Tyrell - HipHop", 7);
+    // R&B (7-8)
+    drummerComboBox.addItem("Brooklyn - R&B", 8);
+    drummerComboBox.addItem("Darnell - R&B", 9);
+    // Electronic (9-10)
+    drummerComboBox.addItem("Niklas - Electronic", 10);
+    drummerComboBox.addItem("Lexi - Electronic", 11);
+    // Songwriter (11-14)
+    drummerComboBox.addItem("Jesse - Songwriter", 12);
+    drummerComboBox.addItem("Maya - Songwriter", 13);
+    drummerComboBox.addItem("Emily - Songwriter", 14);
+    drummerComboBox.addItem("Sam - Songwriter", 15);
+    // Trap (15-18)
+    drummerComboBox.addItem("Xavier - Trap", 16);
+    drummerComboBox.addItem("Jayden - Trap", 17);
+    drummerComboBox.addItem("Zion - Trap", 18);
+    drummerComboBox.addItem("Luna - Trap", 19);
+    // Additional Rock (19-20)
+    drummerComboBox.addItem("Ricky - Rock", 20);
+    drummerComboBox.addItem("Jake - Rock", 21);
+    // Additional Alternative (21-22)
+    drummerComboBox.addItem("River - Alternative", 22);
+    drummerComboBox.addItem("Quinn - Alternative", 23);
+    // Additional HipHop (23-24)
+    drummerComboBox.addItem("Marcus - HipHop", 24);
+    drummerComboBox.addItem("Kira - HipHop", 25);
+    // Additional R&B (25-26)
+    drummerComboBox.addItem("Aaliyah - R&B", 26);
+    drummerComboBox.addItem("Andre - R&B", 27);
+    // Additional Electronic (27-28)
+    drummerComboBox.addItem("Sasha - Electronic", 28);
+    drummerComboBox.addItem("Felix - Electronic", 29);
+
     drummerComboBox.setSelectedId(1);
     addAndMakeVisible(drummerComboBox);
 
@@ -425,12 +467,23 @@ void DrummerCloneAudioProcessorEditor::setupFillsPanel()
 
 void DrummerCloneAudioProcessorEditor::setupStepSequencer()
 {
-    // Toggle button
+    // Toggle button - now also enables/disables step sequencer mode
     stepSeqToggleButton.setButtonText("Step Sequencer");
+    stepSeqToggleButton.setClickingTogglesState(true);
+    stepSeqToggleButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(80, 150, 80));
     stepSeqToggleButton.onClick = [this]()
     {
-        stepSeqVisible = !stepSeqVisible;
+        stepSeqVisible = stepSeqToggleButton.getToggleState();
         stepSequencer.setVisible(stepSeqVisible);
+
+        // Enable/disable step sequencer mode in processor
+        audioProcessor.setStepSequencerEnabled(stepSeqVisible);
+
+        if (stepSeqVisible)
+            statusLabel.setText("Step Sequencer: ON", juce::dontSendNotification);
+        else
+            statusLabel.setText("Step Sequencer: OFF", juce::dontSendNotification);
+
         resized();
     };
     addAndMakeVisible(stepSeqToggleButton);
@@ -439,8 +492,26 @@ void DrummerCloneAudioProcessorEditor::setupStepSequencer()
     stepSequencer.setVisible(false);
     addAndMakeVisible(stepSequencer);
 
+    // Wire up the pattern changed callback to update the processor
     stepSequencer.onPatternChanged = [this]()
     {
+        // Convert UI pattern to processor format
+        const auto& uiPattern = stepSequencer.getPattern();
+
+        StepSequencerPattern procPattern;
+        procPattern.enabled = audioProcessor.isStepSequencerEnabled();
+
+        for (int lane = 0; lane < StepSequencerPattern::NumLanes; ++lane)
+        {
+            for (int step = 0; step < StepSequencerPattern::NumSteps; ++step)
+            {
+                const auto& uiStep = uiPattern[static_cast<size_t>(lane)][static_cast<size_t>(step)];
+                procPattern.pattern[static_cast<size_t>(lane)][static_cast<size_t>(step)].active = uiStep.active;
+                procPattern.pattern[static_cast<size_t>(lane)][static_cast<size_t>(step)].velocity = uiStep.velocity;
+            }
+        }
+
+        audioProcessor.setStepSequencerPattern(procPattern);
         statusLabel.setText("Pattern modified", juce::dontSendNotification);
     };
 }
@@ -544,6 +615,111 @@ void DrummerCloneAudioProcessorEditor::setupHumanizationPanel()
     addAndMakeVisible(humanToggleButton);
 }
 
+void DrummerCloneAudioProcessorEditor::setupMidiCCPanel()
+{
+    // Section label (hidden by default)
+    midiCCLabel.setText("MIDI CC CONTROL", juce::dontSendNotification);
+    midiCCLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    midiCCLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    midiCCLabel.setVisible(false);
+    addAndMakeVisible(midiCCLabel);
+
+    // Enable toggle
+    midiCCEnableToggle.setButtonText("Enable MIDI CC");
+    midiCCEnableToggle.setVisible(false);
+    addAndMakeVisible(midiCCEnableToggle);
+
+    midiCCEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "midiCCEnabled", midiCCEnableToggle);
+
+    // Section CC# slider
+    sectionCCSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    sectionCCSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 35, 16);
+    sectionCCSlider.setRange(1.0, 127.0, 1.0);
+    sectionCCSlider.setValue(102.0);
+    sectionCCSlider.setVisible(false);
+    addAndMakeVisible(sectionCCSlider);
+
+    sectionCCAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "sectionCC", sectionCCSlider);
+
+    sectionCCLabel.setText("Section CC#", juce::dontSendNotification);
+    sectionCCLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    sectionCCLabel.setFont(juce::Font(10.0f));
+    sectionCCLabel.setVisible(false);
+    addAndMakeVisible(sectionCCLabel);
+
+    // Fill trigger CC# slider
+    fillCCSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    fillCCSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 35, 16);
+    fillCCSlider.setRange(1.0, 127.0, 1.0);
+    fillCCSlider.setValue(103.0);
+    fillCCSlider.setVisible(false);
+    addAndMakeVisible(fillCCSlider);
+
+    fillCCAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "fillTriggerCC", fillCCSlider);
+
+    fillCCLabel.setText("Fill CC#", juce::dontSendNotification);
+    fillCCLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    fillCCLabel.setFont(juce::Font(10.0f));
+    fillCCLabel.setVisible(false);
+    addAndMakeVisible(fillCCLabel);
+
+    // Source indicator (shows "MIDI" when section is controlled via MIDI)
+    midiCCSourceIndicator.setText("", juce::dontSendNotification);
+    midiCCSourceIndicator.setFont(juce::Font(9.0f, juce::Font::bold));
+    midiCCSourceIndicator.setColour(juce::Label::textColourId, juce::Colour(100, 200, 100));
+    midiCCSourceIndicator.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(midiCCSourceIndicator);
+
+    // Toggle button for MIDI CC panel
+    midiCCToggleButton.setButtonText("MIDI Control");
+    midiCCToggleButton.onClick = [this]()
+    {
+        midiCCPanelVisible = !midiCCPanelVisible;
+        midiCCLabel.setVisible(midiCCPanelVisible);
+        midiCCEnableToggle.setVisible(midiCCPanelVisible);
+        sectionCCSlider.setVisible(midiCCPanelVisible);
+        sectionCCLabel.setVisible(midiCCPanelVisible);
+        fillCCSlider.setVisible(midiCCPanelVisible);
+        fillCCLabel.setVisible(midiCCPanelVisible);
+        resized();
+    };
+    addAndMakeVisible(midiCCToggleButton);
+}
+
+void DrummerCloneAudioProcessorEditor::setupProfileEditorPanel()
+{
+    // Profile editor panel (hidden by default)
+    profileEditorPanel.setVisible(false);
+    addAndMakeVisible(profileEditorPanel);
+
+    // Profile editor toggle button
+    profileEditorToggleButton.setButtonText("Profile Editor");
+    profileEditorToggleButton.onClick = [this]()
+    {
+        profileEditorVisible = !profileEditorVisible;
+        profileEditorPanel.setVisible(profileEditorVisible);
+
+        if (profileEditorVisible)
+            statusLabel.setText("Profile Editor: ON", juce::dontSendNotification);
+        else
+            statusLabel.setText("Profile Editor: OFF", juce::dontSendNotification);
+
+        resized();
+    };
+    addAndMakeVisible(profileEditorToggleButton);
+
+    // Set up callback when profile changes
+    profileEditorPanel.onProfileChanged = [this](const DrummerProfile& profile)
+    {
+        // TODO: Apply custom profile to the drummer engine
+        // For now just show the profile name in the status bar
+        statusLabel.setText("Editing: " + profile.name, juce::dontSendNotification);
+    };
+}
+
 void DrummerCloneAudioProcessorEditor::setupStatusBar()
 {
     statusLabel.setText("Ready", juce::dontSendNotification);
@@ -608,7 +784,9 @@ void DrummerCloneAudioProcessorEditor::resized()
     leftPanel.removeFromTop(20);
 
     // Section selector
-    sectionLabel.setBounds(leftPanel.removeFromTop(18));
+    auto sectionLabelRow = leftPanel.removeFromTop(18);
+    sectionLabel.setBounds(sectionLabelRow.removeFromLeft(60));
+    midiCCSourceIndicator.setBounds(sectionLabelRow);  // Shows "MIDI" indicator when CC controlling
     leftPanel.removeFromTop(5);
     sectionComboBox.setBounds(leftPanel.removeFromTop(28).reduced(0, 2));
     leftPanel.removeFromTop(15);
@@ -641,6 +819,30 @@ void DrummerCloneAudioProcessorEditor::resized()
         auto grooveRow = leftPanel.removeFromTop(22);
         humanGrooveLabel.setBounds(grooveRow.removeFromLeft(50));
         humanGrooveSlider.setBounds(grooveRow);
+    }
+
+    // MIDI CC toggle button
+    leftPanel.removeFromTop(10);
+    midiCCToggleButton.setBounds(leftPanel.removeFromTop(25).reduced(0, 2));
+
+    // MIDI CC panel (collapsible)
+    if (midiCCPanelVisible)
+    {
+        leftPanel.removeFromTop(10);
+        midiCCLabel.setBounds(leftPanel.removeFromTop(18));
+        leftPanel.removeFromTop(5);
+
+        midiCCEnableToggle.setBounds(leftPanel.removeFromTop(22));
+        leftPanel.removeFromTop(5);
+
+        auto sectionCCRow = leftPanel.removeFromTop(22);
+        sectionCCLabel.setBounds(sectionCCRow.removeFromLeft(65));
+        sectionCCSlider.setBounds(sectionCCRow);
+        leftPanel.removeFromTop(3);
+
+        auto fillCCRow = leftPanel.removeFromTop(22);
+        fillCCLabel.setBounds(fillCCRow.removeFromLeft(65));
+        fillCCSlider.setBounds(fillCCRow);
     }
 
     // ========== TOP BAR ==========
@@ -744,17 +946,27 @@ void DrummerCloneAudioProcessorEditor::resized()
         percussionToggle.setVisible(false);
     }
 
-    // ========== CENTER (XY PAD + STEP SEQUENCER) ==========
+    // ========== CENTER (XY PAD + STEP SEQUENCER + PROFILE EDITOR) ==========
     auto centerArea = bounds.reduced(20);
 
-    // Step sequencer toggle button at top
+    // Toggle buttons at top
     auto topRow = centerArea.removeFromTop(25);
     stepSeqToggleButton.setBounds(topRow.removeFromRight(120));
+    topRow.removeFromRight(5);
+    profileEditorToggleButton.setBounds(topRow.removeFromRight(100));
 
     xyLabel.setBounds(topRow.removeFromLeft(120));
     centerArea.removeFromTop(5);
 
-    // Step sequencer takes up space if visible
+    // Profile editor takes right side if visible
+    if (profileEditorVisible)
+    {
+        auto profileEditorArea = centerArea.removeFromRight(320);
+        centerArea.removeFromRight(10);  // Gap
+        profileEditorPanel.setBounds(profileEditorArea);
+    }
+
+    // Step sequencer takes up space at bottom if visible
     if (stepSeqVisible)
     {
         // Calculate step sequencer height: header + 8 lanes * lane height
@@ -771,6 +983,16 @@ void DrummerCloneAudioProcessorEditor::timerCallback()
 {
     updateStatusBar();
     followModePanel.updateDisplay();
+
+    // Update MIDI source indicator
+    if (audioProcessor.isSectionControlledByMidi())
+    {
+        midiCCSourceIndicator.setText("MIDI", juce::dontSendNotification);
+    }
+    else
+    {
+        midiCCSourceIndicator.setText("", juce::dontSendNotification);
+    }
 }
 
 void DrummerCloneAudioProcessorEditor::updateStatusBar()
