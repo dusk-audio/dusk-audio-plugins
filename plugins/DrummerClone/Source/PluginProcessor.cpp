@@ -37,9 +37,26 @@ static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         juce::ParameterID("style", 1), "Style",
         juce::StringArray{"Rock", "HipHop", "Alternative", "R&B", "Electronic", "Trap", "Songwriter"}, 0));
 
+    // Build drummer list to match DrummerDNA profiles order in createDefaultProfiles()
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID("drummer", 1), "Drummer",
-        juce::StringArray{"Kyle - Rock", "Logan - Alternative", "Brooklyn - R&B", "Austin - HipHop"}, 0));
+        juce::StringArray{
+            // Original drummers (indices 0-11)
+            "Kyle - Rock", "Anders - Rock", "Max - Rock",           // Rock (0-2)
+            "Logan - Alternative", "Aidan - Alternative",           // Alternative (3-4)
+            "Austin - HipHop", "Tyrell - HipHop",                   // HipHop (5-6)
+            "Brooklyn - R&B", "Darnell - R&B",                      // R&B (7-8)
+            "Niklas - Electronic", "Lexi - Electronic",             // Electronic (9-10)
+            "Jesse - Songwriter", "Maya - Songwriter",              // Songwriter (11-12)
+            // New drummers (indices 13-27)
+            "Emily - Songwriter", "Sam - Songwriter",               // Songwriter (13-14)
+            "Xavier - Trap", "Jayden - Trap", "Zion - Trap", "Luna - Trap",  // Trap (15-18)
+            "Ricky - Rock", "Jake - Rock",                          // Additional Rock (19-20)
+            "River - Alternative", "Quinn - Alternative",           // Additional Alternative (21-22)
+            "Marcus - HipHop", "Kira - HipHop",                     // Additional HipHop (23-24)
+            "Aaliyah - R&B", "Andre - R&B",                         // Additional R&B (25-26)
+            "Sasha - Electronic", "Felix - Electronic"              // Additional Electronic (27-28)
+        }, 0));
 
     // Fill parameters
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -78,6 +95,18 @@ static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID("humanGroove", 1), "Groove Depth",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 50.0f));  // How much groove template applies
+
+    // MIDI CC Control parameters
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("midiCCEnabled", 1), "MIDI CC Control", true));  // Enable MIDI CC for section/fill
+
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID("sectionCC", 1), "Section CC#",
+        1, 127, 102));  // CC number for section control (default CC 102)
+
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID("fillTriggerCC", 1), "Fill Trigger CC#",
+        1, 127, 103));  // CC number for fill trigger (default CC 103)
 
     return { params.begin(), params.end() };
 }
@@ -212,24 +241,19 @@ void DrummerCloneAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
 
+    // Update MIDI section indicator decay (show "MIDI" for 2 seconds after last CC)
+    double blockDuration = static_cast<double>(buffer.getNumSamples()) / currentSampleRate;
+    timeSinceLastMidiSection += blockDuration;
+    if (timeSinceLastMidiSection > 2.0)
+    {
+        midiSectionActive = false;
+    }
+
     // Get playhead information
     updatePlayheadInfo(getPlayHead());
 
-    // Store incoming MIDI for Follow Mode
-    if (followModeActive && !followSourceIsAudio)
-    {
-        for (const auto metadata : midiMessages)
-            midiRingBuffer.push_back(metadata.getMessage());
-
-        // Keep only last 2 seconds worth of MIDI
-        auto currentTime = juce::Time::getMillisecondCounterHiRes() * 0.001;
-        midiRingBuffer.erase(
-            std::remove_if(midiRingBuffer.begin(), midiRingBuffer.end(),
-                [currentTime](const juce::MidiMessage& m) {
-                    return (currentTime - m.getTimeStamp()) > 2.0;
-                }),
-            midiRingBuffer.end());
-    }
+    // Process incoming MIDI for CC control and Follow Mode
+    processMidiInput(midiMessages);
 
     // Process Follow Mode if enabled
     if (followModeActive)
@@ -238,10 +262,10 @@ void DrummerCloneAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     // Generate drum pattern if needed
-    if (isPlaying && (needsRegeneration || isBarBoundary(ppqPosition, currentBPM)))
+    if (isPlaying && (needsRegeneration.load() || isBarBoundary(ppqPosition, currentBPM)))
     {
         generateDrumPattern();
-        needsRegeneration = false;
+        needsRegeneration.store(false);
     }
 
     // Clear input MIDI and add our generated MIDI
@@ -307,6 +331,96 @@ void DrummerCloneAudioProcessor::processFollowMode(const juce::AudioBuffer<float
     }
 }
 
+void DrummerCloneAudioProcessor::processMidiInput(const juce::MidiBuffer& midiMessages)
+{
+    // Check if MIDI CC control is enabled
+    auto midiCCEnabledParam = parameters.getRawParameterValue("midiCCEnabled");
+    bool midiCCEnabled = midiCCEnabledParam ? midiCCEnabledParam->load() > 0.5f : true;
+
+    if (!midiCCEnabled)
+    {
+        // Still process for Follow Mode ring buffer if needed
+        if (followModeActive && !followSourceIsAudio)
+        {
+            for (const auto metadata : midiMessages)
+            {
+                if (metadata.getMessage().isNoteOn())
+                    midiRingBuffer.push_back(metadata.getMessage());
+            }
+            pruneOldMidiEvents();
+        }
+        return;
+    }
+
+    // Get CC numbers for section and fill control
+    auto sectionCCParam = parameters.getRawParameterValue("sectionCC");
+    auto fillCCParam = parameters.getRawParameterValue("fillTriggerCC");
+    int sectionCCNumber = sectionCCParam ? static_cast<int>(sectionCCParam->load()) : 102;
+    int fillCCNumber = fillCCParam ? static_cast<int>(fillCCParam->load()) : 103;
+
+    for (const auto metadata : midiMessages)
+    {
+        const auto& message = metadata.getMessage();
+
+        // Handle CC messages
+        if (message.isController())
+        {
+            int ccNumber = message.getControllerNumber();
+            int ccValue = message.getControllerValue();
+
+            // Section control via CC
+            // CC value 0-127 maps to 7 sections:
+            // 0-17 = Intro, 18-35 = Verse, 36-53 = Pre-Chorus, 54-71 = Chorus,
+            // 72-89 = Bridge, 90-107 = Breakdown, 108-127 = Outro
+            if (ccNumber == sectionCCNumber)
+            {
+                int sectionIndex = ccValue / 18;  // Map 0-127 to 0-6 (0-17→0, 18-35→1, etc.)
+                sectionIndex = juce::jlimit(0, 6, sectionIndex);
+
+                if (auto* param = parameters.getParameter("section"))
+                {
+                    // Convert to normalized value (0.0 to 1.0)
+                    float normalizedValue = static_cast<float>(sectionIndex) / 6.0f;
+                    param->setValueNotifyingHost(normalizedValue);
+                }
+
+                lastMidiSectionChange = true;
+                midiSectionActive = true;
+                timeSinceLastMidiSection = 0.0;
+                needsRegeneration.store(true);
+            }
+            // Fill trigger via CC (any value > 64 triggers)
+            else if (ccNumber == fillCCNumber && ccValue > 64)
+            {
+                if (auto* param = parameters.getParameter("fillTrigger"))
+                {
+                    param->setValueNotifyingHost(1.0f);
+                }
+            }
+        }
+
+        // Store note-ons for Follow Mode
+        if (followModeActive && !followSourceIsAudio && message.isNoteOn())
+        {
+            midiRingBuffer.push_back(message);
+        }
+    }
+
+    // Prune old MIDI events from ring buffer
+    pruneOldMidiEvents();
+}
+
+void DrummerCloneAudioProcessor::pruneOldMidiEvents()
+{
+    auto currentTime = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    midiRingBuffer.erase(
+        std::remove_if(midiRingBuffer.begin(), midiRingBuffer.end(),
+            [currentTime](const juce::MidiMessage& m) {
+                return (currentTime - m.getTimeStamp()) > 2.0;
+            }),
+        midiRingBuffer.end());
+}
+
 void DrummerCloneAudioProcessor::generateDrumPattern()
 {
     // Get current bar number
@@ -315,26 +429,99 @@ void DrummerCloneAudioProcessor::generateDrumPattern()
     // Only regenerate if we're at a new bar
     if (currentBar != lastGeneratedBar)
     {
-        // Get parameters
+        // Get core parameters
         auto complexity = parameters.getRawParameterValue(PARAM_COMPLEXITY)->load();
         auto loudness = parameters.getRawParameterValue(PARAM_LOUDNESS)->load();
         auto swing = parameters.getRawParameterValue(PARAM_SWING)->load();
         auto style = parameters.getParameter(PARAM_STYLE)->getValue();
 
+        // Get section parameter
+        auto sectionParam = parameters.getRawParameterValue("section");
+        int sectionIndex = sectionParam ? static_cast<int>(sectionParam->load()) : 1;  // Default to Verse
+        DrumSection section = static_cast<DrumSection>(sectionIndex);
+
+        // Get humanization parameters
+        HumanizeSettings humanize;
+        if (auto* p = parameters.getRawParameterValue("humanTiming"))
+            humanize.timingVariation = p->load();
+        if (auto* p = parameters.getRawParameterValue("humanVelocity"))
+            humanize.velocityVariation = p->load();
+        if (auto* p = parameters.getRawParameterValue("humanPush"))
+            humanize.pushDrag = p->load();
+        if (auto* p = parameters.getRawParameterValue("humanGroove"))
+            humanize.grooveDepth = p->load();
+
+        // Get fill parameters
+        FillSettings fill;
+        if (auto* p = parameters.getRawParameterValue("fillFrequency"))
+            fill.frequency = p->load();
+        if (auto* p = parameters.getRawParameterValue("fillIntensity"))
+            fill.intensity = p->load();
+        if (auto* p = parameters.getRawParameterValue("fillLength"))
+        {
+            int lengthIndex = static_cast<int>(p->load());
+            fill.lengthBeats = (lengthIndex == 0) ? 1 : (lengthIndex == 1) ? 2 : 4;
+        }
+        if (auto* p = parameters.getRawParameterValue("fillTrigger"))
+        {
+            fill.manualTrigger = p->load() > 0.5f;
+            // Reset trigger after reading
+            if (fill.manualTrigger)
+            {
+                if (auto* param = parameters.getParameter("fillTrigger"))
+                    param->setValueNotifyingHost(0.0f);
+            }
+        }
+
         // Apply Follow Mode groove if active
         GrooveTemplate grooveToUse = followModeActive ?
             grooveFollower.getCurrent(ppqPosition) : GrooveTemplate();
 
-        // Generate pattern
-        generatedMidiBuffer = drummerEngine.generateRegion(
-            1,  // Generate 1 bar at a time
-            currentBPM,
-            static_cast<int>(style * 7),  // Convert to style index
-            grooveToUse,
-            complexity,
-            loudness,
-            swing
-        );
+        // Check if step sequencer override is active (thread-safe read)
+        bool useStepSeq = false;
+        std::array<std::array<std::pair<bool, float>, 16>, 8> stepPattern;
+        {
+            const juce::SpinLock::ScopedLockType lock(stepSeqPatternLock);
+            useStepSeq = stepSeqPattern.enabled;
+            if (useStepSeq)
+            {
+                // Convert step sequencer pattern to the format expected by DrummerEngine
+                for (int lane = 0; lane < StepSequencerPattern::NumLanes; ++lane)
+                {
+                    for (int step = 0; step < StepSequencerPattern::NumSteps; ++step)
+                    {
+                        const auto& stepData = stepSeqPattern.pattern[static_cast<size_t>(lane)][static_cast<size_t>(step)];
+                        stepPattern[static_cast<size_t>(lane)][static_cast<size_t>(step)] = {stepData.active, stepData.velocity};
+                    }
+                }
+            }
+        }
+
+        if (useStepSeq)
+        {
+            // Generate from step sequencer
+            generatedMidiBuffer = drummerEngine.generateFromStepSequencer(
+                stepPattern,
+                currentBPM,
+                humanize
+            );
+        }
+        else
+        {
+            // Generate pattern with all parameters (normal mode)
+            generatedMidiBuffer = drummerEngine.generateRegion(
+                1,  // Generate 1 bar at a time
+                currentBPM,
+                static_cast<int>(style * 7),  // Convert to style index
+                grooveToUse,
+                complexity,
+                loudness,
+                swing,
+                section,
+                humanize,
+                fill
+            );
+        }
 
         lastGeneratedBar = currentBar;
     }
@@ -364,10 +551,16 @@ void DrummerCloneAudioProcessor::parameterChanged(const juce::String& parameterI
         followSensitivity = newValue;
         transientDetector.setSensitivity(newValue);
     }
+    else if (parameterID == "fillTrigger")
+    {
+        // Ignore fillTrigger changes - this is a momentary trigger that gets
+        // reset programmatically after being read. We don't want the reset
+        // to trigger regeneration since the fill is already being processed.
+    }
     else
     {
         // Any other parameter change triggers regeneration
-        needsRegeneration = true;
+        needsRegeneration.store(true);
     }
 }
 
@@ -375,6 +568,36 @@ void DrummerCloneAudioProcessor::timerCallback()
 {
     // This timer is for UI updates
     // The editor will poll for current state
+}
+
+void DrummerCloneAudioProcessor::setStepSequencerPattern(const StepSequencerPattern& pattern)
+{
+    {
+        const juce::SpinLock::ScopedLockType lock(stepSeqPatternLock);
+        stepSeqPattern = pattern;
+    }
+    needsRegeneration.store(true);
+}
+
+void DrummerCloneAudioProcessor::setStepSequencerEnabled(bool enabled)
+{
+    {
+        const juce::SpinLock::ScopedLockType lock(stepSeqPatternLock);
+        stepSeqPattern.enabled = enabled;
+    }
+    needsRegeneration.store(true);
+}
+
+bool DrummerCloneAudioProcessor::isStepSequencerEnabled() const
+{
+    const juce::SpinLock::ScopedLockType lock(stepSeqPatternLock);
+    return stepSeqPattern.enabled;
+}
+
+StepSequencerPattern DrummerCloneAudioProcessor::getStepSequencerPattern() const
+{
+    const juce::SpinLock::ScopedLockType lock(stepSeqPatternLock);
+    return stepSeqPattern;
 }
 
 //==============================================================================

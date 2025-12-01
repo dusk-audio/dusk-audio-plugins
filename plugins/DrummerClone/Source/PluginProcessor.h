@@ -2,12 +2,30 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
+#include <atomic>
 #include "DrumMapping.h"
 #include "TransientDetector.h"
 #include "MidiGrooveExtractor.h"
 #include "GrooveTemplateGenerator.h"
 #include "GrooveFollower.h"
 #include "DrummerEngine.h"
+
+// Step sequencer data structure (matches StepSequencer.h)
+struct StepSequencerPattern
+{
+    static constexpr int NumLanes = 8;
+    static constexpr int NumSteps = 16;
+
+    struct Step
+    {
+        bool active = false;
+        float velocity = 0.8f;
+    };
+
+    std::array<std::array<Step, NumSteps>, NumLanes> pattern;
+    bool enabled = false;  // Whether to use step sequencer override
+};
 
 //==============================================================================
 /**
@@ -71,6 +89,16 @@ public:
     float getGrooveLockPercentage() const { return grooveLockPercentage; }
     bool isFollowModeActive() const { return followModeActive; }
 
+    // MIDI CC control
+    bool isSectionControlledByMidi() const { return midiSectionActive; }
+    double getTimeSinceLastMidiSection() const { return timeSinceLastMidiSection; }
+
+    // Step sequencer pattern (thread-safe accessors)
+    void setStepSequencerPattern(const StepSequencerPattern& pattern);
+    void setStepSequencerEnabled(bool enabled);
+    bool isStepSequencerEnabled() const;
+    StepSequencerPattern getStepSequencerPattern() const;
+
 private:
     //==============================================================================
     // Core components
@@ -106,8 +134,17 @@ private:
     float grooveLockPercentage = 0.0f;
 
     // Generation state
-    bool needsRegeneration = true;
+    std::atomic<bool> needsRegeneration{true};
     int lastGeneratedBar = -1;
+
+    // MIDI CC control state
+    bool lastMidiSectionChange = false;
+    bool midiSectionActive = false;       // true when section is being controlled via MIDI
+    double timeSinceLastMidiSection = 0.0; // seconds since last MIDI section change
+
+    // Step sequencer pattern (protected by spinlock for thread safety)
+    mutable juce::SpinLock stepSeqPatternLock;
+    StepSequencerPattern stepSeqPattern;
 
     // Parameter IDs
     static constexpr const char* PARAM_COMPLEXITY = "complexity";
@@ -122,6 +159,8 @@ private:
     // Helper methods
     void updatePlayheadInfo(juce::AudioPlayHead* playHead);
     void processFollowMode(const juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi);
+    void processMidiInput(const juce::MidiBuffer& midiMessages);
+    void pruneOldMidiEvents();
     void generateDrumPattern();
     bool isBarBoundary(double ppq, double bpm);
 

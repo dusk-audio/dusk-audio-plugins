@@ -256,6 +256,308 @@ void DrummerDNA::createDefaultProfiles()
         p.velocityCeiling = 100;
         profiles.push_back(p);
     }
+    {
+        DrummerProfile p;
+        p.name = "Emily";
+        p.style = "Songwriter";
+        p.bio = "Country and Americana influenced. Steady grooves with tasteful fills.";
+        p.aggression = 0.35f;
+        p.grooveBias = 0.35f;
+        p.ghostNotes = 0.25f;
+        p.fillHunger = 0.2f;
+        p.tomLove = 0.35f;
+        p.ridePreference = 0.5f;
+        p.crashHappiness = 0.3f;
+        p.simplicity = 0.65f;
+        p.laidBack = 0.05f;
+        p.preferredDivision = 8;
+        p.swingDefault = 0.1f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Sam";
+        p.style = "Songwriter";
+        p.bio = "Coffee shop acoustic vibe. Minimal and supportive.";
+        p.aggression = 0.2f;
+        p.grooveBias = 0.45f;
+        p.ghostNotes = 0.35f;
+        p.fillHunger = 0.05f;
+        p.tomLove = 0.1f;
+        p.ridePreference = 0.8f;
+        p.crashHappiness = 0.1f;
+        p.simplicity = 0.85f;
+        p.laidBack = 0.15f;
+        p.preferredDivision = 8;
+        p.swingDefault = 0.18f;
+        p.velocityFloor = 25;
+        p.velocityCeiling = 90;
+        profiles.push_back(p);
+    }
+
+    // ========== TRAP DRUMMERS ==========
+    {
+        DrummerProfile p;
+        p.name = "Xavier";
+        p.style = "Trap";
+        p.bio = "Atlanta trap style. Rolling hi-hats and hard-hitting 808s.";
+        p.aggression = 0.75f;
+        p.grooveBias = 0.1f;
+        p.ghostNotes = 0.05f;
+        p.fillHunger = 0.05f;
+        p.tomLove = 0.05f;
+        p.ridePreference = 0.0f;
+        p.crashHappiness = 0.2f;
+        p.simplicity = 0.3f;
+        p.laidBack = 0.0f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.0f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Jayden";
+        p.style = "Trap";
+        p.bio = "Melodic trap producer style. Bouncy patterns with space.";
+        p.aggression = 0.6f;
+        p.grooveBias = 0.15f;
+        p.ghostNotes = 0.1f;
+        p.fillHunger = 0.1f;
+        p.tomLove = 0.1f;
+        p.ridePreference = 0.0f;
+        p.crashHappiness = 0.25f;
+        p.simplicity = 0.4f;
+        p.laidBack = 0.05f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.05f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Zion";
+        p.style = "Trap";
+        p.bio = "Dark trap aesthetics. Heavy 808s and aggressive patterns.";
+        p.aggression = 0.9f;
+        p.grooveBias = 0.05f;
+        p.ghostNotes = 0.0f;
+        p.fillHunger = 0.08f;
+        p.tomLove = 0.0f;
+        p.ridePreference = 0.0f;
+        p.crashHappiness = 0.35f;
+        p.simplicity = 0.5f;
+        p.laidBack = -0.05f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.0f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Luna";
+        p.style = "Trap";
+        p.bio = "Lo-fi trap style. Chill but with attitude.";
+        p.aggression = 0.5f;
+        p.grooveBias = 0.25f;
+        p.ghostNotes = 0.15f;
+        p.fillHunger = 0.12f;
+        p.tomLove = 0.15f;
+        p.ridePreference = 0.1f;
+        p.crashHappiness = 0.2f;
+        p.simplicity = 0.55f;
+        p.laidBack = 0.1f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.1f;
+        profiles.push_back(p);
+    }
+
+    // ========== ADDITIONAL ROCK DRUMMERS ==========
+    {
+        DrummerProfile p;
+        p.name = "Ricky";
+        p.style = "Rock";
+        p.bio = "Metal and hard rock specialist. Double bass and aggressive fills.";
+        p.aggression = 0.95f;
+        p.grooveBias = 0.0f;
+        p.ghostNotes = 0.05f;
+        p.fillHunger = 0.45f;
+        p.tomLove = 0.85f;
+        p.ridePreference = 0.15f;
+        p.crashHappiness = 0.8f;
+        p.simplicity = 0.2f;
+        p.laidBack = -0.2f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.0f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Jake";
+        p.style = "Rock";
+        p.bio = "Classic rock legend vibes. Pocket player with tasteful fills.";
+        p.aggression = 0.65f;
+        p.grooveBias = 0.25f;
+        p.ghostNotes = 0.3f;
+        p.fillHunger = 0.3f;
+        p.tomLove = 0.55f;
+        p.ridePreference = 0.4f;
+        p.crashHappiness = 0.45f;
+        p.simplicity = 0.55f;
+        p.laidBack = 0.05f;
+        p.preferredDivision = 8;
+        p.swingDefault = 0.08f;
+        profiles.push_back(p);
+    }
+
+    // ========== ADDITIONAL ALTERNATIVE DRUMMERS ==========
+    {
+        DrummerProfile p;
+        p.name = "River";
+        p.style = "Alternative";
+        p.bio = "Shoegaze and dreampop influenced. Washes of cymbals and dynamic builds.";
+        p.aggression = 0.45f;
+        p.grooveBias = 0.35f;
+        p.ghostNotes = 0.25f;
+        p.fillHunger = 0.25f;
+        p.tomLove = 0.4f;
+        p.ridePreference = 0.8f;
+        p.crashHappiness = 0.55f;
+        p.simplicity = 0.45f;
+        p.laidBack = 0.2f;
+        p.preferredDivision = 8;
+        p.swingDefault = 0.0f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Quinn";
+        p.style = "Alternative";
+        p.bio = "Math rock precision. Complex time signatures and intricate patterns.";
+        p.aggression = 0.6f;
+        p.grooveBias = 0.1f;
+        p.ghostNotes = 0.5f;
+        p.fillHunger = 0.35f;
+        p.tomLove = 0.6f;
+        p.ridePreference = 0.45f;
+        p.crashHappiness = 0.4f;
+        p.simplicity = 0.1f;
+        p.laidBack = 0.0f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.0f;
+        profiles.push_back(p);
+    }
+
+    // ========== ADDITIONAL HIP-HOP DRUMMERS ==========
+    {
+        DrummerProfile p;
+        p.name = "Marcus";
+        p.style = "HipHop";
+        p.bio = "J Dilla inspired. Off-grid swing and soulful grooves.";
+        p.aggression = 0.5f;
+        p.grooveBias = 0.8f;
+        p.ghostNotes = 0.4f;
+        p.fillHunger = 0.1f;
+        p.tomLove = 0.15f;
+        p.ridePreference = 0.05f;
+        p.crashHappiness = 0.15f;
+        p.simplicity = 0.5f;
+        p.laidBack = 0.3f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.35f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Kira";
+        p.style = "HipHop";
+        p.bio = "West coast G-funk style. Laid back with funky bounce.";
+        p.aggression = 0.55f;
+        p.grooveBias = 0.7f;
+        p.ghostNotes = 0.35f;
+        p.fillHunger = 0.15f;
+        p.tomLove = 0.2f;
+        p.ridePreference = 0.1f;
+        p.crashHappiness = 0.2f;
+        p.simplicity = 0.55f;
+        p.laidBack = 0.25f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.3f;
+        profiles.push_back(p);
+    }
+
+    // ========== ADDITIONAL R&B DRUMMERS ==========
+    {
+        DrummerProfile p;
+        p.name = "Aaliyah";
+        p.style = "R&B";
+        p.bio = "90s R&B throwback. Smooth pocket with swing.";
+        p.aggression = 0.45f;
+        p.grooveBias = 0.65f;
+        p.ghostNotes = 0.6f;
+        p.fillHunger = 0.18f;
+        p.tomLove = 0.25f;
+        p.ridePreference = 0.35f;
+        p.crashHappiness = 0.2f;
+        p.simplicity = 0.6f;
+        p.laidBack = 0.2f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.25f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Andre";
+        p.style = "R&B";
+        p.bio = "Modern R&B and PBR&B fusion. Minimalist yet impactful.";
+        p.aggression = 0.55f;
+        p.grooveBias = 0.5f;
+        p.ghostNotes = 0.45f;
+        p.fillHunger = 0.15f;
+        p.tomLove = 0.2f;
+        p.ridePreference = 0.2f;
+        p.crashHappiness = 0.25f;
+        p.simplicity = 0.65f;
+        p.laidBack = 0.15f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.15f;
+        profiles.push_back(p);
+    }
+
+    // ========== ADDITIONAL ELECTRONIC DRUMMERS ==========
+    {
+        DrummerProfile p;
+        p.name = "Sasha";
+        p.style = "Electronic";
+        p.bio = "Techno and house specialist. Hypnotic and driving.";
+        p.aggression = 0.7f;
+        p.grooveBias = 0.05f;
+        p.ghostNotes = 0.05f;
+        p.fillHunger = 0.05f;
+        p.tomLove = 0.05f;
+        p.ridePreference = 0.15f;
+        p.crashHappiness = 0.25f;
+        p.simplicity = 0.75f;
+        p.laidBack = 0.0f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.0f;
+        profiles.push_back(p);
+    }
+    {
+        DrummerProfile p;
+        p.name = "Felix";
+        p.style = "Electronic";
+        p.bio = "Breakbeat and jungle influenced. Complex rhythms with energy.";
+        p.aggression = 0.75f;
+        p.grooveBias = 0.2f;
+        p.ghostNotes = 0.3f;
+        p.fillHunger = 0.25f;
+        p.tomLove = 0.3f;
+        p.ridePreference = 0.2f;
+        p.crashHappiness = 0.35f;
+        p.simplicity = 0.2f;
+        p.laidBack = -0.1f;
+        p.preferredDivision = 16;
+        p.swingDefault = 0.1f;
+        profiles.push_back(p);
+    }
 
     // Set default profile
     defaultProfile = profiles[0];
