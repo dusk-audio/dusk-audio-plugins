@@ -849,39 +849,39 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
     drawTicksLinear(hmGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
     drawTicksLinear(hfGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
 
-    // ===== HPF (20-500Hz, skew 0.3) =====
+    // ===== HPF (20-500Hz, skew 0.3) - SSL 4000 E values: 20, 70, 120, 200, 300, 350 =====
     std::vector<std::pair<float, juce::String>> hpfTicks = {
-        {20.0f, "20"}, {50.0f, "50"}, {100.0f, "100"}, {200.0f, "200"}, {350.0f, "350"}, {500.0f, "500"}
+        {20.0f, "20"}, {70.0f, "70"}, {120.0f, "120"}, {200.0f, "200"}, {300.0f, "300"}, {500.0f, "500"}
     };
     drawTicksSkewed(hpfFreqSlider.getBounds(), hpfTicks, 20.0f, 500.0f, 0.3f);
 
-    // ===== LPF (3000-20000Hz, skew 0.3) =====
+    // ===== LPF (3000-20000Hz, skew 0.3) - SSL style =====
     std::vector<std::pair<float, juce::String>> lpfTicks = {
         {3000.0f, "3k"}, {5000.0f, "5k"}, {8000.0f, "8k"}, {12000.0f, "12k"}, {20000.0f, "20k"}
     };
     drawTicksSkewed(lpfFreqSlider.getBounds(), lpfTicks, 3000.0f, 20000.0f, 0.3f);
 
-    // ===== LF Frequency (30-480Hz, skew 0.3) =====
+    // ===== LF Frequency (30-480Hz, skew 0.3) - SSL 4000 E values: 30, 50, 100, 200, 300, 400, 450 =====
     std::vector<std::pair<float, juce::String>> lfFreqTicks = {
-        {30.0f, "30"}, {60.0f, "60"}, {100.0f, "100"}, {200.0f, "200"}, {350.0f, "350"}, {480.0f, "480"}
+        {30.0f, "30"}, {50.0f, "50"}, {100.0f, "100"}, {200.0f, "200"}, {300.0f, "300"}, {480.0f, "480"}
     };
     drawTicksSkewed(lfFreqSlider.getBounds(), lfFreqTicks, 30.0f, 480.0f, 0.3f);
 
-    // ===== LMF Frequency (200-2500Hz, skew 0.3) =====
+    // ===== LMF Frequency (200-2500Hz, skew 0.3) - SSL 4000 E values: .2, .5, .8, 1, 2 kHz =====
     std::vector<std::pair<float, juce::String>> lmfFreqTicks = {
-        {200.0f, "200"}, {400.0f, "400"}, {800.0f, "800"}, {1200.0f, "1.2k"}, {1800.0f, "1.8k"}, {2500.0f, "2.5k"}
+        {200.0f, ".2"}, {500.0f, ".5"}, {800.0f, ".8"}, {1000.0f, "1"}, {2000.0f, "2"}, {2500.0f, "2.5"}
     };
     drawTicksSkewed(lmFreqSlider.getBounds(), lmfFreqTicks, 200.0f, 2500.0f, 0.3f);
 
-    // ===== HMF Frequency (600-7000Hz, skew 0.3) =====
+    // ===== HMF Frequency (600-7000Hz, skew 0.3) - SSL 4000 E values: .6, 1.5, 3, 4.5, 6, 7 kHz =====
     std::vector<std::pair<float, juce::String>> hmfFreqTicks = {
-        {600.0f, "600"}, {1000.0f, "1k"}, {2000.0f, "2k"}, {3500.0f, "3.5k"}, {5000.0f, "5k"}, {7000.0f, "7k"}
+        {600.0f, ".6"}, {1500.0f, "1.5"}, {3000.0f, "3"}, {4500.0f, "4.5"}, {6000.0f, "6"}, {7000.0f, "7"}
     };
     drawTicksSkewed(hmFreqSlider.getBounds(), hmfFreqTicks, 600.0f, 7000.0f, 0.3f);
 
-    // ===== HF Frequency (1500-16000Hz, skew 0.3) =====
+    // ===== HF Frequency (1500-16000Hz, skew 0.3) - SSL 4000 E values: 1.5, 8, 10, 14, 16 kHz =====
     std::vector<std::pair<float, juce::String>> hfFreqTicks = {
-        {1500.0f, "1.5k"}, {3000.0f, "3k"}, {5000.0f, "5k"}, {8000.0f, "8k"}, {12000.0f, "12k"}, {16000.0f, "16k"}
+        {1500.0f, "1.5"}, {8000.0f, "8"}, {10000.0f, "10"}, {14000.0f, "14"}, {16000.0f, "16"}
     };
     drawTicksSkewed(hfFreqSlider.getBounds(), hfFreqTicks, 1500.0f, 16000.0f, 0.3f);
 
