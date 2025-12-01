@@ -42,12 +42,26 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
                                                const GrooveTemplate& groove,
                                                float complexity,
                                                float loudness,
-                                               float swingOverride)
+                                               float swingOverride,
+                                               DrumSection section,
+                                               HumanizeSettings humanize,
+                                               FillSettings fill)
 {
     juce::MidiBuffer buffer;
 
     if (bars <= 0 || bpm <= 0.0)
         return buffer;
+
+    // Cache humanization settings for use in generation methods
+    currentHumanize = humanize;
+
+    // Apply section-based modifiers
+    float sectionDensity = getSectionDensityMultiplier(section);
+    float sectionLoudness = getSectionLoudnessMultiplier(section);
+
+    // Adjust complexity and loudness based on section
+    float effectiveComplexity = complexity * sectionDensity;
+    float effectiveLoudnessBase = loudness * sectionLoudness;
 
     // Get style hints
     juce::String styleName = styleNames[juce::jlimit(0, styleNames.size() - 1, styleIndex)];
@@ -67,56 +81,98 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
         effectiveGroove.swing8 = effectiveSwing / 250.0f;   // Slightly less for 8ths
     }
 
-    // Apply drummer's laid-back feel to micro-timing
-    if (std::abs(currentProfile.laidBack) > 0.01f)
+    // Apply drummer's laid-back feel to micro-timing, combined with push/drag from humanization
+    float laidBackMs = currentProfile.laidBack * 20.0f;  // -20ms to +20ms from drummer personality
+    laidBackMs += humanize.pushDrag * 0.4f;  // Add -20ms to +20ms from push/drag control
+    if (std::abs(laidBackMs) > 0.1f)
     {
-        float laidBackMs = currentProfile.laidBack * 20.0f;  // -20ms to +20ms
         for (int i = 0; i < 32; ++i)
             effectiveGroove.microOffset[static_cast<size_t>(i)] += laidBackMs;
     }
 
+    // Apply groove depth from humanization - scales how much the groove template affects timing
+    float grooveDepthScale = humanize.grooveDepth / 100.0f;
+    for (int i = 0; i < 32; ++i)
+        effectiveGroove.microOffset[static_cast<size_t>(i)] *= grooveDepthScale;
+
     // Get energy variation from Perlin noise for natural drift
     float energyVar = variationEngine.getEnergyVariation(static_cast<double>(barsSinceLastFill));
-    float effectiveLoudness = loudness * energyVar;
+    float effectiveLoudness = effectiveLoudnessBase * energyVar;
 
     // Apply drummer's aggression to velocity range
     effectiveLoudness *= (0.7f + currentProfile.aggression * 0.6f);
 
     // Generate each element
-    generateKickPattern(buffer, bars, bpm, hints, effectiveGroove, complexity, effectiveLoudness);
-    generateSnarePattern(buffer, bars, bpm, hints, effectiveGroove, complexity, effectiveLoudness);
-    generateHiHatPattern(buffer, bars, bpm, hints, effectiveGroove, complexity, effectiveLoudness);
+    generateKickPattern(buffer, bars, bpm, hints, effectiveGroove, effectiveComplexity, effectiveLoudness);
+    generateSnarePattern(buffer, bars, bpm, hints, effectiveGroove, effectiveComplexity, effectiveLoudness);
+    generateHiHatPattern(buffer, bars, bpm, hints, effectiveGroove, effectiveComplexity, effectiveLoudness);
+
+    // Add crash at start of sections that need emphasis
+    if (shouldAddCrashForSection(section))
+    {
+        int crashNote = DrumMapping::getNoteForElement(DrumMapping::CRASH_1);
+        int kickNote = DrumMapping::getNoteForElement(DrumMapping::KICK);
+        int vel = applyVelocityHumanization(static_cast<int>(110.0f * (effectiveLoudness / 100.0f)), humanize);
+        addNote(buffer, crashNote, vel, 0, PPQ);
+        int kickVel = std::clamp(vel - 10, 1, 127);
+        addNote(buffer, kickNote, kickVel, 0, PPQ / 2);  // Kick with crash
+    }
 
     // Add cymbals based on complexity and drummer preferences
     float cymbalThreshold = 3.0f * (1.0f - currentProfile.crashHappiness);  // Crash-happy drummers add cymbals earlier
-    if (complexity > cymbalThreshold)
+    if (effectiveComplexity > cymbalThreshold)
     {
         // Use ride vs hi-hat based on drummer preference
         hints.useRide = variationEngine.nextRandom() < currentProfile.ridePreference;
-        generateCymbals(buffer, bars, bpm, hints, effectiveGroove, complexity, effectiveLoudness);
+        generateCymbals(buffer, bars, bpm, hints, effectiveGroove, effectiveComplexity, effectiveLoudness);
     }
 
     // Add ghost notes based on complexity and drummer preference
     float ghostThreshold = 5.0f * (1.0f - currentProfile.ghostNotes);  // Ghost-loving drummers add ghosts earlier
-    if (complexity > ghostThreshold && hints.ghostNoteProb > 0.0f)
+    if (effectiveComplexity > ghostThreshold && hints.ghostNoteProb > 0.0f)
     {
-        generateGhostNotes(buffer, bars, bpm, hints, effectiveGroove, complexity);
+        generateGhostNotes(buffer, bars, bpm, hints, effectiveGroove, effectiveComplexity);
     }
 
-    // Check if we should trigger a fill
+    // Handle fill generation
     barsSinceLastFill++;
-    float fillProb = variationEngine.getFillProbability(barsSinceLastFill, currentProfile.fillHunger);
-    float variationProb = variationEngine.getVariationProbability(barsSinceLastFill);
+    bool triggerFill = false;
+    int fillBeats = fill.lengthBeats;
+    float fillIntensity = fill.intensity / 100.0f;
 
-    if (variationEngine.nextRandom() < fillProb * variationProb)
+    // Manual trigger overrides automatic fill
+    if (fill.manualTrigger)
     {
-        // Generate a fill at the end of this bar
-        int fillBeats = (variationEngine.nextRandom() < 0.7f) ? 1 : 2;  // Usually 1-beat fills
-        float fillIntensity = 0.5f + currentProfile.aggression * 0.5f;
+        triggerFill = true;
+    }
+    else
+    {
+        // Calculate fill probability based on fill frequency setting and drummer personality
+        float baseFillProb = fill.frequency / 100.0f;  // User's fill frequency
+        float fillProb = variationEngine.getFillProbability(barsSinceLastFill, currentProfile.fillHunger);
+        float variationProb = variationEngine.getVariationProbability(barsSinceLastFill);
+
+        // Combine user setting with drummer personality
+        float combinedProb = baseFillProb * fillProb * variationProb;
+
+        // Increase fill probability at section transitions (end of Verse, Pre-Chorus, etc.)
+        if (section == DrumSection::PreChorus || section == DrumSection::Bridge)
+            combinedProb *= 1.5f;
+
+        if (variationEngine.nextRandom() < combinedProb)
+        {
+            triggerFill = true;
+        }
+    }
+
+    if (triggerFill)
+    {
+        // Apply drummer personality to fill intensity
+        float effectiveFillIntensity = fillIntensity * (0.5f + currentProfile.aggression * 0.5f);
 
         // Use toms based on drummer's tom preference
         int startTick = (bars - 1) * ticksPerBar(bpm) + (4 - fillBeats) * PPQ;
-        juce::MidiBuffer fillBuffer = generateFill(fillBeats, bpm, fillIntensity * currentProfile.tomLove, startTick);
+        juce::MidiBuffer fillBuffer = generateFill(fillBeats, bpm, effectiveFillIntensity * currentProfile.tomLove, startTick);
         buffer.addEvents(fillBuffer, 0, -1, 0);
 
         barsSinceLastFill = 0;
@@ -146,16 +202,18 @@ void DrummerEngine::generateKickPattern(juce::MidiBuffer& buffer, int bars, doub
             if (beat == 0 || beat == 2)
             {
                 int vel = calculateVelocity(110, loudness, groove, tick);
+                vel = applyVelocityHumanization(vel, currentHumanize);
                 tick = applyMicroTiming(tick, groove, bpm);
-                tick = applyHumanization(tick, 5);
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                 addNote(buffer, kickNote, vel, tick, PPQ / 4);
             }
             // Add variations on beats 2 and 4 based on complexity
             else if (complexity > 5.0f && shouldTrigger(hints.syncopation * 0.3f))
             {
                 int vel = calculateVelocity(90, loudness, groove, tick);
+                vel = applyVelocityHumanization(vel, currentHumanize);
                 tick = applyMicroTiming(tick, groove, bpm);
-                tick = applyHumanization(tick, 8);
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                 addNote(buffer, kickNote, vel, tick, PPQ / 4);
             }
         }
@@ -172,9 +230,10 @@ void DrummerEngine::generateKickPattern(juce::MidiBuffer& buffer, int bars, doub
                 {
                     int tick = barOffset + (pos * ticksPerSixteenth());
                     int vel = calculateVelocity(85, loudness, groove, tick);
+                    vel = applyVelocityHumanization(vel, currentHumanize);
                     tick = applySwing(tick, groove.swing16, 16);
                     tick = applyMicroTiming(tick, groove, bpm);
-                    tick = applyHumanization(tick, 10);
+                    tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                     addNote(buffer, kickNote, vel, tick, PPQ / 4);
                 }
             }
@@ -202,8 +261,9 @@ void DrummerEngine::generateSnarePattern(juce::MidiBuffer& buffer, int bars, dou
             if (beat == 1 || beat == 3)
             {
                 int vel = calculateVelocity(100, loudness, groove, tick);
+                vel = applyVelocityHumanization(vel, currentHumanize);
                 tick = applyMicroTiming(tick, groove, bpm);
-                tick = applyHumanization(tick, 5);
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                 addNote(buffer, snareNote, vel, tick, PPQ / 4);
             }
         }
@@ -220,8 +280,10 @@ void DrummerEngine::generateSnarePattern(juce::MidiBuffer& buffer, int bars, dou
                 {
                     int tick = barOffset + (pos * ticksPerSixteenth());
                     int vel = calculateVelocity(70, loudness, groove, tick);
+                    vel = applyVelocityHumanization(vel, currentHumanize);
                     tick = applySwing(tick, groove.swing16, 16);
-                    tick = applyHumanization(tick, 10);
+                    tick = applyMicroTiming(tick, groove, bpm);
+                    tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                     addNote(buffer, snareNote, vel, tick, PPQ / 4);
                 }
             }
@@ -261,6 +323,7 @@ void DrummerEngine::generateHiHatPattern(juce::MidiBuffer& buffer, int bars, dou
             baseVel = static_cast<int>(baseVel * accent);
 
             int vel = calculateVelocity(baseVel, loudness, groove, tick, 8);
+            vel = applyVelocityHumanization(vel, currentHumanize);
 
             // Apply swing for upbeats
             if (hit % 2 == 1)
@@ -269,7 +332,7 @@ void DrummerEngine::generateHiHatPattern(juce::MidiBuffer& buffer, int bars, dou
             }
 
             tick = applyMicroTiming(tick, groove, bpm);
-            tick = applyHumanization(tick, 4);
+            tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
 
             // Skip some hits at lower complexity
             if (complexity < 4.0f && division == 16 && hit % 2 == 1)
@@ -296,6 +359,7 @@ void DrummerEngine::generateCymbals(juce::MidiBuffer& buffer, int bars, double b
     if (shouldTrigger(0.3f))
     {
         int vel = calculateVelocity(110, loudness, groove, 0);
+        vel = applyVelocityHumanization(vel, currentHumanize);
         addNote(buffer, crashNote, vel, 0, PPQ);
     }
 
@@ -311,7 +375,8 @@ void DrummerEngine::generateCymbals(juce::MidiBuffer& buffer, int bars, double b
             {
                 int tick = barOffset + (beat * PPQ);
                 int vel = calculateVelocity(85, loudness, groove, tick);
-                tick = applyHumanization(tick, 5);
+                vel = applyVelocityHumanization(vel, currentHumanize);
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                 addNote(buffer, rideNote, vel, tick, PPQ / 2);
 
                 // Add 8th note ride hits
@@ -319,8 +384,9 @@ void DrummerEngine::generateCymbals(juce::MidiBuffer& buffer, int bars, double b
                 {
                     tick = barOffset + (beat * PPQ) + ticksPerEighth();
                     vel = calculateVelocity(70, loudness, groove, tick);
+                    vel = applyVelocityHumanization(vel, currentHumanize);
                     tick = applySwing(tick, groove.swing8, 8);
-                    tick = applyHumanization(tick, 8);
+                    tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                     addNote(buffer, rideNote, vel, tick, PPQ / 4);
                 }
             }
@@ -356,10 +422,11 @@ void DrummerEngine::generateGhostNotes(juce::MidiBuffer& buffer, int bars, doubl
 
                 // Ghost notes are quiet
                 int vel = 30 + random.nextInt(20);  // 30-50 range
+                vel = applyVelocityHumanization(vel, currentHumanize);
 
                 tick = applySwing(tick, groove.swing16, 16);
                 tick = applyMicroTiming(tick, groove, bpm);
-                tick = applyHumanization(tick, 15);
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
 
                 addNote(buffer, snareNote, vel, tick, ticksPerSixteenth() / 2);
             }
@@ -447,14 +514,18 @@ juce::MidiBuffer DrummerEngine::generateFill(int beats, double bpm, float intens
                 break;
         }
 
+        // Apply humanization
+        vel = applyVelocityHumanization(vel, currentHumanize);
+        int humanizedTick = applyAdvancedHumanization(tick, currentHumanize, 120.0);  // Use approx BPM for fills
+
         // Add kick on downbeats for aggressive drummers
         if (currentProfile.aggression > 0.6f && i % 4 == 0)
         {
-            addNote(buffer, kickNote, vel - 10, tick, ticksPerDiv / 2);
+            int kickVel = applyVelocityHumanization(vel - 10, currentHumanize);
+            addNote(buffer, kickNote, kickVel, humanizedTick, ticksPerDiv / 2);
         }
 
-        tick = applyHumanization(tick, 8);
-        addNote(buffer, note, vel, tick, ticksPerDiv / 2);
+        addNote(buffer, note, vel, humanizedTick, ticksPerDiv / 2);
     }
 
     // Crash at end of fill based on drummer's crash happiness
@@ -463,12 +534,14 @@ juce::MidiBuffer DrummerEngine::generateFill(int beats, double bpm, float intens
         int crashTick = startTick + fillTicks;
         int crashVel = currentProfile.velocityFloor +
                        static_cast<int>(static_cast<float>(currentProfile.velocityCeiling - currentProfile.velocityFloor) * 0.9f);
+        crashVel = applyVelocityHumanization(crashVel, currentHumanize);
         addNote(buffer, crashNote, crashVel, crashTick, PPQ);
 
         // Add kick with crash for aggressive drummers
         if (currentProfile.aggression > 0.5f)
         {
-            addNote(buffer, kickNote, crashVel - 10, crashTick, PPQ / 2);
+            int kickVel = applyVelocityHumanization(crashVel - 10, currentHumanize);
+            addNote(buffer, kickNote, kickVel, crashTick, PPQ / 2);
         }
     }
 
@@ -567,4 +640,155 @@ void DrummerEngine::addNote(juce::MidiBuffer& buffer, int pitch, int velocity, i
     auto noteOff = juce::MidiMessage::noteOff(10, pitch);
     noteOff.setTimeStamp(startTick + durationTicks);
     buffer.addEvent(noteOff, (startTick + durationTicks) % samplesPerBlock);
+}
+
+//==============================================================================
+// Section-based modifiers
+
+float DrummerEngine::getSectionDensityMultiplier(DrumSection section) const
+{
+    // Returns a multiplier for pattern complexity based on section type
+    switch (section)
+    {
+        case DrumSection::Intro:      return 0.5f;   // Sparse intro
+        case DrumSection::Verse:      return 0.8f;   // Standard verse
+        case DrumSection::PreChorus:  return 1.0f;   // Building energy
+        case DrumSection::Chorus:     return 1.2f;   // Full energy
+        case DrumSection::Bridge:     return 0.7f;   // Pull back a bit
+        case DrumSection::Breakdown:  return 0.4f;   // Minimal
+        case DrumSection::Outro:      return 0.6f;   // Winding down
+        default:                      return 1.0f;
+    }
+}
+
+float DrummerEngine::getSectionLoudnessMultiplier(DrumSection section) const
+{
+    // Returns a multiplier for loudness based on section type
+    switch (section)
+    {
+        case DrumSection::Intro:      return 0.7f;   // Quieter intro
+        case DrumSection::Verse:      return 0.85f;  // Medium verse
+        case DrumSection::PreChorus:  return 0.95f;  // Building
+        case DrumSection::Chorus:     return 1.1f;   // Loud chorus
+        case DrumSection::Bridge:     return 0.8f;   // Pull back
+        case DrumSection::Breakdown:  return 0.6f;   // Quiet breakdown
+        case DrumSection::Outro:      return 0.75f;  // Fading out
+        default:                      return 1.0f;
+    }
+}
+
+bool DrummerEngine::shouldAddCrashForSection(DrumSection section)
+{
+    // Crash cymbal at the start of certain sections
+    switch (section)
+    {
+        case DrumSection::Chorus:     return true;   // Always crash on chorus
+        case DrumSection::Bridge:     return variationEngine.nextRandom() < 0.7f;  // Usually crash on bridge
+        case DrumSection::Outro:      return variationEngine.nextRandom() < 0.5f;  // Sometimes on outro
+        case DrumSection::Intro:      return false;
+        case DrumSection::Verse:      return false;
+        case DrumSection::PreChorus:  return false;
+        case DrumSection::Breakdown:  return false;
+    }
+    return false;
+}
+
+//==============================================================================
+// Humanization helpers
+
+int DrummerEngine::applyAdvancedHumanization(int tick, const HumanizeSettings& humanize, double bpm)
+{
+    // Calculate timing variation in ticks
+    // 100% timing variation = up to ±30ms of random variation
+    float maxVariationMs = (humanize.timingVariation / 100.0f) * 30.0f;
+
+    // Convert ms to ticks
+    double ticksPerMs = (PPQ * bpm) / 60000.0;
+    int maxVariationTicks = static_cast<int>(maxVariationMs * ticksPerMs);
+
+    if (maxVariationTicks <= 0)
+        return tick;
+
+    // Generate random variation
+    int variation = random.nextInt(maxVariationTicks * 2 + 1) - maxVariationTicks;
+
+    return std::max(0, tick + variation);
+}
+
+int DrummerEngine::applyVelocityHumanization(int baseVel, const HumanizeSettings& humanize)
+{
+    // Calculate velocity variation
+    // 100% velocity variation = up to ±20 velocity units of random variation
+    float maxVariation = (humanize.velocityVariation / 100.0f) * 20.0f;
+    int maxVariationInt = static_cast<int>(maxVariation);
+
+    if (maxVariationInt <= 0)
+        return juce::jlimit(1, 127, baseVel);
+
+    // Generate random variation
+    int variation = random.nextInt(maxVariationInt * 2 + 1) - maxVariationInt;
+
+    return juce::jlimit(1, 127, baseVel + variation);
+}
+
+//==============================================================================
+// Step sequencer pattern generation
+
+juce::MidiBuffer DrummerEngine::generateFromStepSequencer(
+    const std::array<std::array<std::pair<bool, float>, STEP_SEQUENCER_STEPS>, STEP_SEQUENCER_LANES>& pattern,
+    double bpm,
+    HumanizeSettings humanize)
+{
+    juce::MidiBuffer buffer;
+
+    if (bpm <= 0.0)
+        return buffer;
+
+    // Cache humanization settings
+    currentHumanize = humanize;
+
+    // Map step sequencer lanes to MIDI notes (order must match StepSeqLane enum)
+    static_assert(STEP_SEQUENCER_LANES == 8, "STEP_SEQUENCER_LANES must be 8 for laneToNote array");
+    const std::array<int, STEP_SEQUENCER_LANES> laneToNote = {{
+        DrumMapping::getNoteForElement(DrumMapping::KICK),           // StepSeqLane::SEQ_KICK
+        DrumMapping::getNoteForElement(DrumMapping::SNARE),          // StepSeqLane::SEQ_SNARE
+        DrumMapping::getNoteForElement(DrumMapping::HI_HAT_CLOSED),  // StepSeqLane::SEQ_CLOSED_HIHAT
+        DrumMapping::getNoteForElement(DrumMapping::HI_HAT_OPEN),    // StepSeqLane::SEQ_OPEN_HIHAT
+        DrumMapping::getNoteForElement(DrumMapping::CLAP),           // StepSeqLane::SEQ_CLAP
+        DrumMapping::getNoteForElement(DrumMapping::TOM_HIGH),       // StepSeqLane::SEQ_TOM1
+        DrumMapping::getNoteForElement(DrumMapping::TOM_MID),        // StepSeqLane::SEQ_TOM2
+        DrumMapping::getNoteForElement(DrumMapping::CRASH_1)         // StepSeqLane::SEQ_CRASH
+    }};
+
+    // STEP_SEQUENCER_STEPS steps = 1 bar of 16th notes
+    int ticksPerStep = ticksPerSixteenth();
+
+    // Iterate through each lane and step
+    for (int lane = 0; lane < STEP_SEQUENCER_LANES; ++lane)
+    {
+        int note = laneToNote[lane];
+
+        for (int step = 0; step < STEP_SEQUENCER_STEPS; ++step)
+        {
+            const auto& [active, velocity] = pattern[static_cast<size_t>(lane)][static_cast<size_t>(step)];
+
+            if (active)
+            {
+                int tick = step * ticksPerStep;
+
+                // Calculate velocity (0.0-1.0 -> 1-127)
+                int vel = static_cast<int>(velocity * 127.0f);
+                vel = juce::jlimit(1, 127, vel);
+
+                // Apply humanization
+                vel = applyVelocityHumanization(vel, humanize);
+                tick = applyAdvancedHumanization(tick, humanize, bpm);
+
+                // Add the note
+                addNote(buffer, note, vel, tick, ticksPerStep / 2);
+            }
+        }
+    }
+
+    return buffer;
 }

@@ -11,6 +11,42 @@
 #include "VariationEngine.h"
 
 /**
+ * Section types for pattern variation
+ */
+enum class DrumSection
+{
+    Intro = 0,
+    Verse,
+    PreChorus,
+    Chorus,
+    Bridge,
+    Breakdown,
+    Outro
+};
+
+/**
+ * Humanization settings from UI
+ */
+struct HumanizeSettings
+{
+    float timingVariation = 20.0f;   // 0-100%
+    float velocityVariation = 15.0f; // 0-100%
+    float pushDrag = 0.0f;           // -50 to +50
+    float grooveDepth = 50.0f;       // 0-100%
+};
+
+/**
+ * Fill settings from UI
+ */
+struct FillSettings
+{
+    float frequency = 30.0f;    // 0-100% chance per bar
+    float intensity = 50.0f;    // 0-100%
+    int lengthBeats = 1;        // 1, 2, or 4 beats
+    bool manualTrigger = false; // Manual trigger button pressed
+};
+
+/**
  * DrummerEngine - Core MIDI drum pattern generator
  *
  * Generates intelligent, musical drum patterns based on:
@@ -32,6 +68,9 @@ public:
      */
     void prepare(double sampleRate, int samplesPerBlock);
 
+    // Type alias for backward compatibility
+    using Section = DrumSection;
+
     /**
      * Generate a region of drum MIDI
      * @param bars Number of bars to generate
@@ -41,6 +80,9 @@ public:
      * @param complexity Complexity parameter (1-10)
      * @param loudness Loudness parameter (0-100)
      * @param swingOverride Swing override parameter (0-100)
+     * @param section Current section type
+     * @param humanize Humanization settings
+     * @param fill Fill settings
      * @return MidiBuffer containing generated drum events
      */
     juce::MidiBuffer generateRegion(int bars,
@@ -49,7 +91,10 @@ public:
                                     const GrooveTemplate& groove,
                                     float complexity,
                                     float loudness,
-                                    float swingOverride);
+                                    float swingOverride,
+                                    DrumSection section = DrumSection::Verse,
+                                    HumanizeSettings humanize = HumanizeSettings(),
+                                    FillSettings fill = FillSettings());
 
     /**
      * Generate a fill
@@ -60,6 +105,50 @@ public:
      * @return MidiBuffer containing fill
      */
     juce::MidiBuffer generateFill(int beats, double bpm, float intensity, int startTick);
+
+    /**
+     * Step sequencer lane indices - eight lanes (Kick through Crash).
+     * SEQ_NUM_LANES is a sentinel value representing the lane count.
+     *
+     * IMPORTANT: These values must remain synchronized with StepSequencer::DrumLane
+     * in StepSequencer.h. Any changes to ordering or values must be reflected in both.
+     */
+    enum class StepSeqLane : int
+    {
+        SEQ_KICK = 0,
+        SEQ_SNARE = 1,
+        SEQ_CLOSED_HIHAT = 2,
+        SEQ_OPEN_HIHAT = 3,
+        SEQ_CLAP = 4,
+        SEQ_TOM1 = 5,
+        SEQ_TOM2 = 6,
+        SEQ_CRASH = 7,
+        SEQ_NUM_LANES = 8
+    };
+
+    /** Number of steps in the step sequencer (16th notes per bar) */
+    static constexpr int STEP_SEQUENCER_STEPS = 16;
+
+    /** Number of lanes in the step sequencer (8 lanes: Kick through Crash) */
+    static constexpr int STEP_SEQUENCER_LANES = static_cast<int>(StepSeqLane::SEQ_NUM_LANES);
+
+    /**
+     * Generate MIDI from step sequencer pattern
+     *
+     * @param pattern Step pattern data indexed as pattern[lane][step], where:
+     *                - lane: 0 to STEP_SEQUENCER_LANES-1 (use StepSeqLane enum)
+     *                - step: 0 to STEP_SEQUENCER_STEPS-1 (16th note positions)
+     *                Each element is std::pair<bool, float>:
+     *                - first (bool): true if step is active/enabled
+     *                - second (float): velocity from 0.0 to 1.0 (maps to MIDI 1-127)
+     * @param bpm Tempo in beats per minute (must be > 0)
+     * @param humanize Humanization settings (timing/velocity variation)
+     * @return MidiBuffer containing the generated MIDI pattern
+     */
+    juce::MidiBuffer generateFromStepSequencer(
+        const std::array<std::array<std::pair<bool, float>, STEP_SEQUENCER_STEPS>, STEP_SEQUENCER_LANES>& pattern,
+        double bpm,
+        HumanizeSettings humanize = HumanizeSettings());
 
     /**
      * Set the drummer "personality" index
@@ -134,6 +223,18 @@ private:
     // Probability helpers
     bool shouldTrigger(float probability);
     float getComplexityProbability(float complexity, float baseProb);
+
+    // Section-based modifiers
+    float getSectionDensityMultiplier(DrumSection section) const;
+    float getSectionLoudnessMultiplier(DrumSection section) const;
+    bool shouldAddCrashForSection(DrumSection section);
+
+    // Humanization helpers
+    int applyAdvancedHumanization(int tick, const HumanizeSettings& humanize, double bpm);
+    int applyVelocityHumanization(int baseVel, const HumanizeSettings& humanize);
+
+    // Current humanization settings (cached for use in generation methods)
+    HumanizeSettings currentHumanize;
 
     // MIDI helpers
     void addNote(juce::MidiBuffer& buffer, int pitch, int velocity, int startTick, int durationTicks);

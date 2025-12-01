@@ -63,6 +63,8 @@ target_sources(DrummerClone
         Source/MidiExporter.h
         Source/StepSequencer.cpp
         Source/StepSequencer.h
+        Source/ProfileEditorPanel.cpp
+        Source/ProfileEditorPanel.h
 )
 
 # Preprocessor definitions
