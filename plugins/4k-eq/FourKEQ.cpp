@@ -964,51 +964,74 @@ float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
 
 float FourKEQ::calculateAutoGainCompensation() const
 {
-    // Calculate approximate gain compensation based on all EQ bands
-    // This maintains perceived loudness similar to SSL hardware behavior
-    // Note: getRawParameterValue returns normalized [0,1], need to get actual dB values
+    // Calculate auto-gain compensation based on EQ energy contribution
+    // Uses a bandwidth-weighted approach that accounts for filter shapes
 
-    // Get actual dB values from parameters (not normalized)
-    auto* lfParam = parameters.getParameter("lf_gain");
-    auto* lmParam = parameters.getParameter("lm_gain");
-    auto* hmParam = parameters.getParameter("hm_gain");
-    auto* hfParam = parameters.getParameter("hf_gain");
+    // Get gain parameters
+    auto* lfGainP = parameters.getParameter("lf_gain");
+    auto* lmGainP = parameters.getParameter("lm_gain");
+    auto* hmGainP = parameters.getParameter("hm_gain");
+    auto* hfGainP = parameters.getParameter("hf_gain");
 
-    // Safety check: return unity gain if any parameter is unavailable
-    if (!lfParam || !lmParam || !hmParam || !hfParam)
-    {
-        jassertfalse;  // Should never happen in production, but fail gracefully
-        return 1.0f;  // No compensation if params unavailable
-    }
+    // Get Q parameters for mid bands
+    auto* lmQP = parameters.getParameter("lm_q");
+    auto* hmQP = parameters.getParameter("hm_q");
 
-    // Get denormalized values in dB (safe now after null check)
-    float lfGainDB = lfParam->convertFrom0to1(lfParam->getValue());
-    float lmGainDB = lmParam->convertFrom0to1(lmParam->getValue());
-    float hmGainDB = hmParam->convertFrom0to1(hmParam->getValue());
-    float hfGainDB = hfParam->convertFrom0to1(hfParam->getValue());
+    // Get bell/shelf mode for LF and HF
+    auto* lfBellP = parameters.getParameter("lf_bell");
+    auto* hfBellP = parameters.getParameter("hf_bell");
 
-    // Validate parameter values to prevent NaN/Inf propagation
+    // Safety check
+    if (!lfGainP || !lmGainP || !hmGainP || !hfGainP)
+        return 1.0f;
+
+    // Get denormalized values
+    float lfGainDB = lfGainP->convertFrom0to1(lfGainP->getValue());
+    float lmGainDB = lmGainP->convertFrom0to1(lmGainP->getValue());
+    float hmGainDB = hmGainP->convertFrom0to1(hmGainP->getValue());
+    float hfGainDB = hfGainP->convertFrom0to1(hfGainP->getValue());
+
+    float lmQ = lmQP ? lmQP->convertFrom0to1(lmQP->getValue()) : 1.0f;
+    float hmQ = hmQP ? hmQP->convertFrom0to1(hmQP->getValue()) : 1.0f;
+
+    bool lfBell = lfBellP && lfBellP->getValue() > 0.5f;
+    bool hfBell = hfBellP && hfBellP->getValue() > 0.5f;
+
+    // Validate values
     if (!std::isfinite(lfGainDB) || !std::isfinite(lmGainDB) ||
         !std::isfinite(hmGainDB) || !std::isfinite(hfGainDB))
-    {
-        DBG("FourKEQ: Invalid gain values in auto-gain calculation - returning unity gain");
-        return 1.0f;  // Safe default
-    }
+        return 1.0f;
 
-    // Weight the contributions based on how broad each band typically affects spectrum
-    // HF shelf affects the widest bandwidth and has most perceptual impact
-    // LF shelf has more energy but narrower bandwidth
-    // Mids are typically narrow peaks, so less weight
-    // Adjusted for more accurate loudness compensation matching SSL hardware behavior
-    float weightedSum = (lfGainDB * 0.30f) + (lmGainDB * 0.15f) + (hmGainDB * 0.15f) + (hfGainDB * 0.40f);
+    // Calculate bandwidth-weighted energy contribution for each band
+    // Shelves contribute more energy than narrow peaks
+    // Higher Q = narrower bandwidth = less energy contribution
 
-    // Calculate compensation: reduce output when boosting, increase when cutting
-    // Use 60% compensation factor for noticeable level matching while preserving some EQ "character"
-    // This balances transparent operation with the SSL "bigger" sound when pushed hard
-    float compensationDB = -weightedSum * 0.60f;
+    // LF band: shelf mode affects ~1 octave, bell ~0.5 octaves
+    float lfBandwidth = lfBell ? 0.3f : 0.5f;
+    float lfEnergy = lfGainDB * lfBandwidth;
 
-    // Limit compensation range to ±6dB for effective level matching
-    compensationDB = juce::jlimit(-6.0f, 6.0f, compensationDB);
+    // LMF band: Q determines bandwidth (Q=1 is ~1 octave, Q=4 is ~0.25 octaves)
+    float lmBandwidth = 0.7f / lmQ;  // Inverse relationship with Q
+    float lmEnergy = lmGainDB * juce::jmin(lmBandwidth, 0.5f);
+
+    // HMF band: same as LMF
+    float hmBandwidth = 0.7f / hmQ;
+    float hmEnergy = hmGainDB * juce::jmin(hmBandwidth, 0.5f);
+
+    // HF band: shelf affects more octaves due to position in spectrum
+    float hfBandwidth = hfBell ? 0.3f : 0.6f;
+    float hfEnergy = hfGainDB * hfBandwidth;
+
+    // Sum the energy contributions
+    // This represents the approximate dB change in overall energy
+    float totalEnergyDB = lfEnergy + lmEnergy + hmEnergy + hfEnergy;
+
+    // Compensation: invert the energy change
+    // Use 100% compensation for accurate loudness matching
+    float compensationDB = -totalEnergyDB;
+
+    // Limit to reasonable range
+    compensationDB = juce::jlimit(-12.0f, 12.0f, compensationDB);
 
     return juce::Decibels::decibelsToGain(compensationDB);
 }

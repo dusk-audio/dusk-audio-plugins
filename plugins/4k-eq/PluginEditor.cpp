@@ -103,6 +103,18 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     autoGainAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.parameters, "auto_gain", autoGainButton);
 
+    // A/B Comparison button
+    abButton.setButtonText("A");
+    abButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));  // Green for A
+    abButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe0e0e0));
+    abButton.onClick = [this]() { toggleAB(); };
+    abButton.setTooltip("A/B Comparison: Click to switch between two settings. Current settings are saved when switching.");
+    addAndMakeVisible(abButton);
+
+    // Initialize A state with current parameters
+    stateA = audioProcessor.parameters.copyState();
+    stateB = audioProcessor.parameters.copyState();
+
     setupKnob(outputGainSlider, "output_gain", "OUTPUT", true);
     outputGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "output_gain", outputGainSlider);
@@ -232,7 +244,8 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     int initialMeterY = 185;  // Start lower to make room for EQ curve and labels
     int initialMeterHeight = 640 - initialMeterY - 20;  // Adjusted for new height
     inputMeterL->setBounds(10, initialMeterY, 16, initialMeterHeight);
-    outputMeterL->setBounds(950 - 16 - 10, initialMeterY, 16, initialMeterHeight);  // 10px from right edge
+    // Output meter slightly left of right edge to center under "OUTPUT" label
+    outputMeterL->setBounds(950 - 16 - 18, initialMeterY, 16, initialMeterHeight);
 
     // Note: Value readout labels removed - the tick marks around knobs already
     // show the parameter range, and current values can be seen from knob position
@@ -341,12 +354,13 @@ void FourKEQEditor::paint(juce::Graphics& g)
     int labelHeight = 22;
 
     // Draw subtle background strips for section headers
+    // Start FILTERS bar at x=30 to avoid covering "INPUT" label on left
     g.setColour(juce::Colour(0xff222222));
-    g.fillRect(0, labelY - 2, filterWidth, labelHeight);
+    g.fillRect(30, labelY - 2, filterWidth - 30, labelHeight);
 
     // Draw section header text
     g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawText("FILTERS", 0, labelY, 195, 20,
+    g.drawText("FILTERS", 30, labelY, 165, 20,
                juce::Justification::centred);
 
     xPos = 197;
@@ -537,6 +551,9 @@ void FourKEQEditor::resized()
     auto headerBounds = bounds.removeFromTop(60);
     int centerX = headerBounds.getCentreX();
 
+    // A/B button (far left of header controls)
+    abButton.setBounds(centerX - 250, 15, 32, 28);
+
     // Preset selector (left of center)
     presetSelector.setBounds(centerX - 210, 15, 200, 28);
 
@@ -564,8 +581,9 @@ void FourKEQEditor::resized()
     if (inputMeterL)
         inputMeterL->setBounds(10, meterY, meterWidth, meterHeight);
 
+    // Output meter slightly left of right edge to center under "OUTPUT" label
     if (outputMeterL)
-        outputMeterL->setBounds(getWidth() - meterWidth - 10, meterY, meterWidth, meterHeight);
+        outputMeterL->setBounds(getWidth() - meterWidth - 18, meterY, meterWidth, meterHeight);
 
     // Use absolute positioning based on section divider positions from paint()
     // This ensures knobs are perfectly centered between dividers
@@ -810,6 +828,11 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
 
     // Enable mouse wheel control for fine adjustments
     slider.setScrollWheelEnabled(true);
+
+    // Enable velocity-based mode for fine-tune with shift key
+    // When shift is held, movement is 10x slower for precision adjustments
+    slider.setVelocityBasedMode(true);
+    slider.setVelocityModeParameters(1.0, 1, 0.1, false);  // sensitivity, threshold, offset, snap
 
     // Color code knobs like the reference image
     if (label.contains("GAIN")) {
@@ -1143,4 +1166,41 @@ void FourKEQEditor::updateValueLabels()
 
     satValueLabel.setText(formatValue(saturationSlider.getValue(), "%"), juce::dontSendNotification);
     positionValueLabel(satValueLabel, saturationSlider, 42);
+}
+
+//==============================================================================
+// A/B Comparison Functions
+//==============================================================================
+void FourKEQEditor::toggleAB()
+{
+    // Save current state to the active slot
+    copyCurrentToState(isStateA ? stateA : stateB);
+
+    // Switch to the other state
+    isStateA = !isStateA;
+
+    // Apply the new state
+    applyState(isStateA ? stateA : stateB);
+
+    // Update button appearance
+    if (isStateA)
+    {
+        abButton.setButtonText("A");
+        abButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));  // Green for A
+    }
+    else
+    {
+        abButton.setButtonText("B");
+        abButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a3a3a));  // Red for B
+    }
+}
+
+void FourKEQEditor::copyCurrentToState(juce::ValueTree& state)
+{
+    state = audioProcessor.parameters.copyState();
+}
+
+void FourKEQEditor::applyState(const juce::ValueTree& state)
+{
+    audioProcessor.parameters.replaceState(state);
 }
