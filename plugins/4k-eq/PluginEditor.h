@@ -4,6 +4,7 @@
 #include "FourKEQ.h"
 #include "FourKLookAndFeel.h"
 #include "EQCurveDisplay.h"
+#include "PatreonBackers.h"
 #include "../shared/LEDMeter.h"
 
 //==============================================================================
@@ -23,6 +24,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void timerCallback() override;
+    void mouseDown(const juce::MouseEvent& e) override;
 
 private:
     //==============================================================================
@@ -144,6 +146,21 @@ private:
     void updateValueLabels();
     void drawKnobMarkings(juce::Graphics& g);
     juce::String formatValue(float value, const juce::String& suffix);
+    // Supporters overlay component - renders on top of everything
+    class SupportersOverlay : public juce::Component
+    {
+    public:
+        SupportersOverlay() { setInterceptsMouseClicks(true, false); }
+        void paint(juce::Graphics& g) override;
+        void mouseDown(const juce::MouseEvent&) override;
+        std::function<void()> onDismiss;
+    };
+
+    std::unique_ptr<SupportersOverlay> supportersOverlay;
+    juce::Rectangle<int> titleClickArea;  // Clickable area for "4K EQ" title
+
+    void showSupportersPanel();
+    void hideSupportersPanel();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQEditor)
 };

@@ -222,8 +222,8 @@ void EQCurveDisplay::drawGrid(juce::Graphics& g, const juce::Rectangle<float>& a
         g.drawLine(x, area.getY(), x, area.getBottom(), isMajor ? 1.0f : 0.5f);
     }
 
-    // Horizontal grid lines at key dB levels
-    const float dbLines[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
+    // Horizontal grid lines at key dB levels (±25dB range with headroom beyond ±20dB knobs)
+    const float dbLines[] = { -20.0f, -10.0f, 0.0f, 10.0f, 20.0f };
 
     for (float db : dbLines)
     {
@@ -254,9 +254,9 @@ void EQCurveDisplay::drawGrid(juce::Graphics& g, const juce::Rectangle<float>& a
         g.drawText(text, 4, static_cast<int>(y) - 7, 24, 14, juce::Justification::right);
     };
 
-    drawDbLabel(12.0f, "+12");
+    drawDbLabel(20.0f, "+20");
     drawDbLabel(0.0f, "0");
-    drawDbLabel(-12.0f, "-12");
+    drawDbLabel(-20.0f, "-20");
 }
 
 void EQCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<float>& area,
@@ -272,8 +272,8 @@ void EQCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<floa
         float freq = xToFreq(x, area);
         float db = getMagnitude(freq);
 
-        // Clamp dB to visible range
-        db = juce::jlimit(minDB - 5.0f, maxDB + 5.0f, db);
+        // Clamp dB to visible range (strict clamping to prevent drawing outside bounds)
+        db = juce::jlimit(minDB, maxDB, db);
 
         float y = dbToY(db, area);
 
@@ -307,8 +307,8 @@ void EQCurveDisplay::drawCombinedCurve(juce::Graphics& g, const juce::Rectangle<
         float freq = xToFreq(x, area);
         float db = calculateCombinedResponse(freq);
 
-        // Clamp dB to visible range
-        db = juce::jlimit(minDB - 5.0f, maxDB + 5.0f, db);
+        // Clamp dB to visible range (strict clamping to prevent drawing outside bounds)
+        db = juce::jlimit(minDB, maxDB, db);
 
         float y = dbToY(db, area);
 
