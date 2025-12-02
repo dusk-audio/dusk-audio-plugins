@@ -38,8 +38,8 @@ private:
     // Frequency range
     static constexpr float minFreq = 20.0f;
     static constexpr float maxFreq = 20000.0f;
-    static constexpr float minDB = -20.0f;
-    static constexpr float maxDB = 20.0f;
+    static constexpr float minDB = -25.0f;
+    static constexpr float maxDB = 25.0f;
 
     // Cached parameter values for change detection
     struct CachedParams {

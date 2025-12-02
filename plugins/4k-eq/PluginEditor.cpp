@@ -265,29 +265,24 @@ void FourKEQEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xff3a3a3a));
     g.fillRect(0, 54, bounds.getWidth(), 1);
 
-    // Plugin name
+    // Plugin name (clickable - shows supporters panel)
+    titleClickArea = juce::Rectangle<int>(60, 10, 200, 40);
     g.setFont(juce::Font(juce::FontOptions(24.0f).withStyle("Bold")));
     g.setColour(juce::Colour(0xffe0e0e0));
     g.drawText("4K EQ", 60, 10, 200, 30, juce::Justification::left);
 
-    // Subtitle
+    // Subtitle with hint
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
     g.setColour(juce::Colour(0xff909090));
     g.drawText("Console-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
-
-    // Patreon credits in header (right side)
-    g.setFont(juce::Font(juce::FontOptions(9.0f)));
-    g.setColour(juce::Colour(0xff606060));
-    g.drawText("Made with support from Patreon backers",
-               bounds.getRight() - 260, 38, 160, 15,
-               juce::Justification::right);
 
     // EQ Type indicator badge - styled as muted amber/gold for Brown, dark grey for Black
     bool isBlack = eqTypeParam->load() > 0.5f;
     g.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
 
-    // Position badge to the left of the dropdown (dropdown is at getWidth() - 110)
-    auto eqTypeRect = juce::Rectangle<float>(static_cast<float>(getWidth()) - 190.0f, 15.0f, 70.0f, 24.0f);
+    // Position badge to the left of the dropdown (dropdown is at getWidth() - 110, height 28)
+    // Vertically center badge (height 24) with dropdown: dropdown center = 15 + 14 = 29, badge Y = 29 - 12 = 17
+    auto eqTypeRect = juce::Rectangle<float>(static_cast<float>(getWidth()) - 190.0f, 17.0f, 70.0f, 24.0f);
 
     // Draw button background with subtle gradient
     juce::ColourGradient btnGradient(
@@ -419,6 +414,118 @@ void FourKEQEditor::paint(juce::Graphics& g)
         int labelX = std::min(getWidth() - labelWidth, outputBounds.getCentreX() - labelWidth / 2);
         g.drawText("OUTPUT", labelX, outputBounds.getY() - 16,
                    labelWidth, 15, juce::Justification::centred);
+    }
+
+}
+
+// SupportersOverlay implementation
+void FourKEQEditor::SupportersOverlay::paint(juce::Graphics& g)
+{
+    int w = getWidth();
+    int h = getHeight();
+
+    // Dark overlay covering everything
+    g.setColour(juce::Colour(0xf0101010));
+    g.fillRect(0, 0, w, h);
+
+    // Panel area - centered
+    int panelWidth = juce::jmin(600, w - 80);
+    int panelHeight = juce::jmin(450, h - 80);
+    auto panelBounds = juce::Rectangle<int>(
+        (w - panelWidth) / 2,
+        (h - panelHeight) / 2,
+        panelWidth, panelHeight);
+
+    // Panel background with gradient
+    juce::ColourGradient panelGradient(
+        juce::Colour(0xff2d2d2d), static_cast<float>(panelBounds.getX()), static_cast<float>(panelBounds.getY()),
+        juce::Colour(0xff1a1a1a), static_cast<float>(panelBounds.getX()), static_cast<float>(panelBounds.getBottom()), false);
+    g.setGradientFill(panelGradient);
+    g.fillRoundedRectangle(panelBounds.toFloat(), 12.0f);
+
+    // Panel border
+    g.setColour(juce::Colour(0xff505050));
+    g.drawRoundedRectangle(panelBounds.toFloat().reduced(0.5f), 12.0f, 2.0f);
+
+    // Header
+    g.setFont(juce::Font(juce::FontOptions(24.0f).withStyle("Bold")));
+    g.setColour(juce::Colour(0xffe8e8e8));
+    g.drawText("Special Thanks", panelBounds.getX(), panelBounds.getY() + 25,
+               panelBounds.getWidth(), 32, juce::Justification::centred);
+
+    // Subheading
+    g.setFont(juce::Font(juce::FontOptions(13.0f)));
+    g.setColour(juce::Colour(0xff909090));
+    g.drawText("To our amazing supporters who make this plugin possible",
+               panelBounds.getX(), panelBounds.getY() + 60,
+               panelBounds.getWidth(), 20, juce::Justification::centred);
+
+    // Divider line
+    g.setColour(juce::Colour(0xff404040));
+    g.fillRect(panelBounds.getX() + 40, panelBounds.getY() + 90, panelBounds.getWidth() - 80, 1);
+
+    // Supporters list
+    auto supportersText = PatreonCredits::getAllBackersFormatted();
+
+    // Text area for supporters
+    auto textArea = panelBounds.reduced(40, 0);
+    textArea.setY(panelBounds.getY() + 105);
+    textArea.setHeight(panelBounds.getHeight() - 170);
+
+    g.setFont(juce::Font(juce::FontOptions(14.0f)));
+    g.setColour(juce::Colour(0xffd0d0d0));
+    g.drawFittedText(supportersText, textArea,
+                     juce::Justification::centred, 30);
+
+    // Footer divider
+    g.setColour(juce::Colour(0xff404040));
+    g.fillRect(panelBounds.getX() + 40, panelBounds.getBottom() - 55, panelBounds.getWidth() - 80, 1);
+
+    // Footer with click-to-close hint
+    g.setFont(juce::Font(juce::FontOptions(12.0f)));
+    g.setColour(juce::Colour(0xff808080));
+    g.drawText("Click anywhere to return to EQ",
+               panelBounds.getX(), panelBounds.getBottom() - 45,
+               panelBounds.getWidth(), 20, juce::Justification::centred);
+
+    // Luna Co. Audio credit
+    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    g.setColour(juce::Colour(0xff606060));
+    g.drawText("4K EQ by Luna Co. Audio",
+               panelBounds.getX(), panelBounds.getBottom() - 25,
+               panelBounds.getWidth(), 18, juce::Justification::centred);
+}
+
+void FourKEQEditor::SupportersOverlay::mouseDown(const juce::MouseEvent&)
+{
+    if (onDismiss)
+        onDismiss();
+}
+
+void FourKEQEditor::showSupportersPanel()
+{
+    if (!supportersOverlay)
+    {
+        supportersOverlay = std::make_unique<SupportersOverlay>();
+        supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+        addAndMakeVisible(supportersOverlay.get());
+    }
+    supportersOverlay->setBounds(getLocalBounds());
+    supportersOverlay->toFront(true);
+    supportersOverlay->setVisible(true);
+}
+
+void FourKEQEditor::hideSupportersPanel()
+{
+    if (supportersOverlay)
+        supportersOverlay->setVisible(false);
+}
+
+void FourKEQEditor::mouseDown(const juce::MouseEvent& e)
+{
+    if (titleClickArea.contains(e.getPosition()))
+    {
+        showSupportersPanel();
     }
 }
 
@@ -828,7 +935,7 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
         }
     };
 
-    // Helper for skewed parameters
+    // Helper for skewed parameters - positions ticks at actual parameter values
     auto drawTicksSkewed = [&](juce::Rectangle<int> knobBounds,
                                const std::vector<std::pair<float, juce::String>>& ticks,
                                float minVal, float maxVal, float skew)
@@ -836,6 +943,53 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
         for (const auto& tick : ticks)
         {
             drawTickAtValue(knobBounds, tick.first, minVal, maxVal, skew, tick.second, false);
+        }
+    };
+
+    // Helper for SSL-style evenly spaced ticks - draws labels at equal angular intervals
+    // The labels show what frequency you GET at each evenly-spaced position
+    auto drawTicksEvenlySpaced = [&](juce::Rectangle<int> knobBounds,
+                                      const std::vector<juce::String>& labels)
+    {
+        auto center = knobBounds.getCentre().toFloat();
+        float radius = knobBounds.getWidth() / 2.0f + 3.0f;
+        int numTicks = static_cast<int>(labels.size());
+
+        for (int i = 0; i < numTicks; ++i)
+        {
+            // Evenly space ticks from 0.0 to 1.0
+            float normalizedPos = (numTicks > 1) ? static_cast<float>(i) / static_cast<float>(numTicks - 1) : 0.0f;
+
+            float angle = startAngle + totalRange * normalizedPos;
+            float tickAngle = angle - juce::MathConstants<float>::halfPi;
+
+            float tickLength = 3.0f;
+
+            // Draw tick mark
+            g.setColour(juce::Colour(0xff606060));
+            float x1 = center.x + std::cos(tickAngle) * radius;
+            float y1 = center.y + std::sin(tickAngle) * radius;
+            float x2 = center.x + std::cos(tickAngle) * (radius + tickLength);
+            float y2 = center.y + std::sin(tickAngle) * (radius + tickLength);
+            g.drawLine(x1, y1, x2, y2, 1.0f);
+
+            // Draw label
+            if (labels[static_cast<size_t>(i)].isNotEmpty())
+            {
+                g.setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));
+
+                float labelRadius = radius + tickLength + 10.0f;
+                float labelX = center.x + std::cos(tickAngle) * labelRadius;
+                float labelY = center.y + std::sin(tickAngle) * labelRadius;
+
+                // Shadow
+                g.setColour(juce::Colour(0xff000000));
+                g.drawText(labels[static_cast<size_t>(i)], labelX - 18 + 1, labelY - 7 + 1, 36, 14, juce::Justification::centred);
+
+                // Label
+                g.setColour(juce::Colour(0xffd0d0d0));
+                g.drawText(labels[static_cast<size_t>(i)], labelX - 18, labelY - 7, 36, 14, juce::Justification::centred);
+            }
         }
     };
 
@@ -849,41 +1003,23 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
     drawTicksLinear(hmGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
     drawTicksLinear(hfGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
 
-    // ===== HPF (20-500Hz, skew 0.3) - SSL 4000 E values: 20, 70, 120, 200, 300, 350 =====
-    std::vector<std::pair<float, juce::String>> hpfTicks = {
-        {20.0f, "20"}, {70.0f, "70"}, {120.0f, "120"}, {200.0f, "200"}, {300.0f, "300"}, {500.0f, "500"}
-    };
-    drawTicksSkewed(hpfFreqSlider.getBounds(), hpfTicks, 20.0f, 500.0f, 0.3f);
+    // ===== HPF (20-500Hz) - SSL 4000 E style evenly spaced =====
+    drawTicksEvenlySpaced(hpfFreqSlider.getBounds(), {"20", "70", "120", "200", "300", "500"});
 
-    // ===== LPF (3000-20000Hz, skew 0.3) - SSL style =====
-    std::vector<std::pair<float, juce::String>> lpfTicks = {
-        {3000.0f, "3k"}, {5000.0f, "5k"}, {8000.0f, "8k"}, {12000.0f, "12k"}, {20000.0f, "20k"}
-    };
-    drawTicksSkewed(lpfFreqSlider.getBounds(), lpfTicks, 3000.0f, 20000.0f, 0.3f);
+    // ===== LPF (3000-20000Hz) - SSL style evenly spaced =====
+    drawTicksEvenlySpaced(lpfFreqSlider.getBounds(), {"3k", "5k", "8k", "12k", "20k"});
 
-    // ===== LF Frequency (30-480Hz, skew 0.3) - SSL 4000 E values: 30, 50, 100, 200, 300, 400, 450 =====
-    std::vector<std::pair<float, juce::String>> lfFreqTicks = {
-        {30.0f, "30"}, {50.0f, "50"}, {100.0f, "100"}, {200.0f, "200"}, {300.0f, "300"}, {480.0f, "480"}
-    };
-    drawTicksSkewed(lfFreqSlider.getBounds(), lfFreqTicks, 30.0f, 480.0f, 0.3f);
+    // ===== LF Frequency (30-480Hz) - SSL 4000 E style evenly spaced =====
+    drawTicksEvenlySpaced(lfFreqSlider.getBounds(), {"30", "50", "100", "200", "300", "480"});
 
-    // ===== LMF Frequency (200-2500Hz, skew 0.3) - SSL 4000 E values: .2, .5, .8, 1, 2 kHz =====
-    std::vector<std::pair<float, juce::String>> lmfFreqTicks = {
-        {200.0f, ".2"}, {500.0f, ".5"}, {800.0f, ".8"}, {1000.0f, "1"}, {2000.0f, "2"}, {2500.0f, "2.5"}
-    };
-    drawTicksSkewed(lmFreqSlider.getBounds(), lmfFreqTicks, 200.0f, 2500.0f, 0.3f);
+    // ===== LMF Frequency (200-2500Hz) - SSL 4000 E style evenly spaced =====
+    drawTicksEvenlySpaced(lmFreqSlider.getBounds(), {".2", ".5", ".8", "1", "2", "2.5"});
 
-    // ===== HMF Frequency (600-7000Hz, skew 0.3) - SSL 4000 E values: .6, 1.5, 3, 4.5, 6, 7 kHz =====
-    std::vector<std::pair<float, juce::String>> hmfFreqTicks = {
-        {600.0f, ".6"}, {1500.0f, "1.5"}, {3000.0f, "3"}, {4500.0f, "4.5"}, {6000.0f, "6"}, {7000.0f, "7"}
-    };
-    drawTicksSkewed(hmFreqSlider.getBounds(), hmfFreqTicks, 600.0f, 7000.0f, 0.3f);
+    // ===== HMF Frequency (600-7000Hz) - SSL 4000 E style evenly spaced =====
+    drawTicksEvenlySpaced(hmFreqSlider.getBounds(), {".6", "1.5", "3", "4.5", "6", "7"});
 
-    // ===== HF Frequency (1500-16000Hz, skew 0.3) - SSL 4000 E values: 1.5, 8, 10, 14, 16 kHz =====
-    std::vector<std::pair<float, juce::String>> hfFreqTicks = {
-        {1500.0f, "1.5"}, {8000.0f, "8"}, {10000.0f, "10"}, {14000.0f, "14"}, {16000.0f, "16"}
-    };
-    drawTicksSkewed(hfFreqSlider.getBounds(), hfFreqTicks, 1500.0f, 16000.0f, 0.3f);
+    // ===== HF Frequency (1500-16000Hz) - SSL 4000 E style evenly spaced =====
+    drawTicksEvenlySpaced(hfFreqSlider.getBounds(), {"1.5", "8", "10", "14", "16"});
 
     // ===== Q knobs (0.4-4.0, linear) =====
     std::vector<std::pair<float, juce::String>> qTicks = {

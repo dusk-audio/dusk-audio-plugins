@@ -112,6 +112,44 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - Professional analog-styled UI
 - **Build Target**: `HarmonicGeneratorPlugin_All` (Note: not currently in rebuild_all.sh)
 
+### 7. **DrummerClone**
+- **Location**: `plugins/DrummerClone/`
+- **Description**: Logic Pro Drummer-inspired intelligent MIDI drum pattern generator
+- **Features**:
+  - **Follow Mode**: Real-time groove analysis from audio transients or MIDI input
+    - TransientDetector for audio onset detection
+    - MidiGrooveExtractor for MIDI timing/velocity analysis
+    - GrooveFollower with groove lock percentage indicator
+  - **Pattern Generation**:
+    - 12+ virtual drummer personalities with unique DNA (aggression, ghost notes, fill hunger, etc.)
+    - 7 musical styles: Rock, HipHop, Alternative, R&B, Electronic, Trap, Songwriter
+    - Section-aware patterns: Intro, Verse, Pre-Chorus, Chorus, Bridge, Breakdown, Outro
+    - Intelligent fills with configurable frequency, intensity, and length
+    - Ghost notes, cymbal patterns, and kick/snare variations
+    - VariationEngine using Perlin noise for anti-repetition
+  - **Humanization**:
+    - Timing variation (jitter)
+    - Velocity variation
+    - Push/Drag (ahead/behind beat)
+    - Groove depth control
+  - **MIDI CC Control** (for DAW automation):
+    - Section control via CC (default: 102)
+    - Fill trigger via CC (default: 103)
+    - Visual "MIDI" indicator when externally controlled
+  - **User Interface**:
+    - XY Pad for Swing/Intensity (Logic Pro style)
+    - Follow Mode panel with groove lock indicator
+    - Fills panel with manual trigger button
+    - Humanization panel (collapsible)
+    - MIDI CC control panel (collapsible)
+    - Step Sequencer component (UI ready, not wired)
+    - MIDI export to file (4/8/16/32 bars)
+- **Technical Details**:
+  - MIDI-only output (route to any drum sampler)
+  - 960 PPQ timing resolution
+  - 2-second analysis buffer for Follow Mode
+- **Build Target**: `DrummerClone_All`
+
 ## Build System
 
 ### Comprehensive Build Script
@@ -132,6 +170,7 @@ A single script handles everything - clean, build, and install:
 - UniversalCompressor_All
 - PlateReverb_All
 - TapeEcho_All
+- DrummerClone_All
 
 **Note**: The Harmonic Generator is not currently included in the rebuild_all.sh script but can be built via CMake options.
 
@@ -149,6 +188,7 @@ cmake --build . --target TapeMachine_All
 cmake --build . --target UniversalCompressor_All
 cmake --build . --target PlateReverb_All
 cmake --build . --target TapeEcho_All
+cmake --build . --target DrummerClone_All
 cmake --build . --target HarmonicGeneratorPlugin_All
 ```
 
@@ -160,6 +200,7 @@ Available in the root CMakeLists.txt:
 - `BUILD_TAPE_MACHINE` (default: ON)
 - `BUILD_TAPE_ECHO` (default: ON)
 - `BUILD_PLATE_REVERB` (default: ON)
+- `BUILD_DRUMMER_CLONE` (default: ON)
 
 ### Installation Paths
 - **VST3**: `~/.vst3/`
@@ -201,6 +242,7 @@ The build script will automatically detect and use these tools when available.
    - Frequency-dependent saturation characteristics
    - Real-time spectral analysis for dynamic response
 5. **Enhanced Universal Compressor**: Added linked gain reduction metering for stereo tracking with thread-safe atomic operations
+6. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
 
 ### Build System Improvements
 1. **Comprehensive rebuild script**: Color-coded output, progress tracking, error logging
@@ -247,6 +289,7 @@ plugins/
 │   ├── PlateReverb/         # Dattorro plate reverb
 │   ├── TapeEcho/            # Vintage tape echo
 │   ├── harmonic-generator/  # Harmonic saturation processor
+│   ├── DrummerClone/        # Intelligent MIDI drum generator
 │   ├── StudioVerb/          # (Deprecated - disabled in build)
 │   └── shared/              # Shared utilities
 ├── build/                    # Build output (gitignored)
@@ -270,6 +313,8 @@ plugins/
 - **Saturation modeling**: See 4K-EQ's SSLSaturation.h for multi-stage analog emulation
 - **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
 - **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations
+- **MIDI Generation**: See DrummerClone's DrummerEngine for procedural pattern generation with Perlin noise variation
+- **Groove Analysis**: See DrummerClone's TransientDetector and MidiGrooveExtractor for real-time groove extraction
 
 ### UI Design Guidelines
 - **Color schemes**: Dark themes with analog-inspired controls
@@ -318,6 +363,5 @@ For issues or questions about these plugins:
 - Check JUCE forum for framework-related questions
 
 ---
-*Last updated: January 2025*
-*Company: Luna Co. Audio*
+*Last updated: December 2025**Company: Luna Co. Audio*
 *Build System: CMake + JUCE 7.x*

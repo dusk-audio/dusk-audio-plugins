@@ -131,16 +131,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    // High-pass filter
+    // High-pass filter - SSL 4000 E style (skew optimized for SSL tick values)
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hpf_freq", "HPF Frequency",
-        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.3f),
+        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.58f),
         20.0f, "Hz"));
 
-    // Low-pass filter
+    // Low-pass filter - SSL 4000 E style
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lpf_freq", "LPF Frequency",
-        juce::NormalisableRange<float>(3000.0f, 20000.0f, 1.0f, 0.3f),
+        juce::NormalisableRange<float>(3000.0f, 20000.0f, 1.0f, 0.57f),
         20000.0f, "Hz"));
 
     // Low frequency band
@@ -152,8 +152,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lf_freq", "LF Frequency",
-        // SSL Hardware: 30-480Hz (both Brown E and Black G series)
-        juce::NormalisableRange<float>(30.0f, 480.0f, 1.0f, 0.3f),
+        // SSL Hardware: 30-480Hz - skew 0.51 optimized for SSL tick values
+        juce::NormalisableRange<float>(30.0f, 480.0f, 1.0f, 0.51f),
         100.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "lf_bell", "LF Bell Mode", false));
@@ -165,7 +165,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lm_freq", "LM Frequency",
-        juce::NormalisableRange<float>(200.0f, 2500.0f, 1.0f, 0.3f),
+        // SSL 4000 E style - skew 0.68 optimized for SSL tick values
+        juce::NormalisableRange<float>(200.0f, 2500.0f, 1.0f, 0.68f),
         600.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lm_q", "LM Q",
@@ -181,7 +182,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hm_freq", "HM Frequency",
-        juce::NormalisableRange<float>(600.0f, 7000.0f, 1.0f, 0.3f),
+        // SSL 4000 E style - skew 0.93 optimized for SSL tick values
+        juce::NormalisableRange<float>(600.0f, 7000.0f, 1.0f, 0.93f),
         2000.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hm_q", "HM Q",
@@ -196,8 +198,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hf_freq", "HF Frequency",
-        // SSL Hardware: Brown E = 3kHz-16kHz, Black G = 1.5kHz-16kHz (using 1.5kHz for flexibility)
-        juce::NormalisableRange<float>(1500.0f, 16000.0f, 1.0f, 0.3f),
+        // SSL 4000 E style - skew 1.73 optimized for SSL tick values (1.5kHz-16kHz)
+        juce::NormalisableRange<float>(1500.0f, 16000.0f, 1.0f, 1.73f),
         8000.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "hf_bell", "HF Bell Mode", false));
