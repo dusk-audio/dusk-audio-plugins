@@ -79,6 +79,14 @@ private:
     float lastBypass = -1.0f;
     double lastSampleRate = 0.0;
 
+    // A/B Comparison
+    juce::TextButton abButton;
+    bool isStateA = true;  // true = A, false = B
+    juce::ValueTree stateA, stateB;  // Stored parameter states
+    void toggleAB();
+    void copyCurrentToState(juce::ValueTree& state);
+    void applyState(const juce::ValueTree& state);
+
     // Level meters (professional LED-style like Universal Compressor)
     std::unique_ptr<LEDMeter> inputMeterL;
     std::unique_ptr<LEDMeter> outputMeterL;
