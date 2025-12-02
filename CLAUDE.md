@@ -363,5 +363,6 @@ For issues or questions about these plugins:
 - Check JUCE forum for framework-related questions
 
 ---
-*Last updated: December 2025**Company: Luna Co. Audio*
+*Last updated: December 2025*
+*Company: Luna Co. Audio*
 *Build System: CMake + JUCE 7.x*
