@@ -795,21 +795,24 @@ void FourKEQEditor::timerCallback()
     // Note: Value readout labels removed - tick marks show parameter range
 
     // Update LED meters directly (they handle their own ballistics internally)
-    // Get current levels from processor (L+R averaged for mono meter)
+    // Get current levels from processor
     float inL = audioProcessor.inputLevelL.load(std::memory_order_relaxed);
     float inR = audioProcessor.inputLevelR.load(std::memory_order_relaxed);
     float outL = audioProcessor.outputLevelL.load(std::memory_order_relaxed);
     float outR = audioProcessor.outputLevelR.load(std::memory_order_relaxed);
 
-    // Average L/R channels for single meter display
-    float inputAvg = (inL + inR) * 0.5f;
-    float outputAvg = (outL + outR) * 0.5f;
+    // Use maximum of L/R channels for single meter display
+    // This correctly handles mono signals and shows the loudest channel for stereo
+    // Note: averaging dB values directly is mathematically incorrect and causes
+    // mono signals to appear ~40dB quieter when only one channel has signal
+    float inputLevel = juce::jmax(inL, inR);
+    float outputLevel = juce::jmax(outL, outR);
 
     if (inputMeterL)
-        inputMeterL->setLevel(inputAvg);
+        inputMeterL->setLevel(inputLevel);
 
     if (outputMeterL)
-        outputMeterL->setLevel(outputAvg);
+        outputMeterL->setLevel(outputLevel);
 }
 
 //==============================================================================
