@@ -132,7 +132,8 @@ static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
 //==============================================================================
 DrummerCloneAudioProcessor::DrummerCloneAudioProcessor()
      : AudioProcessor (BusesProperties()
-                       .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), true)),  // Sidechain for audio Follow Mode (no audio output - MIDI only)
+                       .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), true)   // Sidechain for audio Follow Mode
+                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),    // Required for DAW audio routing (output is silenced)
        parameters(*this, nullptr, juce::Identifier("DrummerCloneParameters"), createParameterLayout()),
        audioInputBuffer(2, 44100 * 2),  // 2 seconds stereo buffer at 44.1kHz
        drummerEngine(parameters)
@@ -236,22 +237,20 @@ void DrummerCloneAudioProcessor::releaseResources()
 
 bool DrummerCloneAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    // This is a MIDI-only plugin - we accept sidechain input for Follow Mode
-    // but don't produce audio output (only MIDI)
+    // Plugin needs audio routing for sidechain Follow Mode
+    // Output is required for DAW routing but audio is silenced (we only produce MIDI)
     auto inputSet = layouts.getMainInputChannelSet();
     auto outputSet = layouts.getMainOutputChannelSet();
 
-    // Allow stereo/mono/disabled input (sidechain is optional for Follow Mode)
+    // Allow stereo or mono sidechain input
     if (inputSet != juce::AudioChannelSet::stereo() &&
         inputSet != juce::AudioChannelSet::mono() &&
         !inputSet.isDisabled())
         return false;
 
-    // Output should be disabled or minimal (we're MIDI-only)
-    // But some DAWs require at least a mono output for plugin to work
+    // Output must be stereo or mono for DAW compatibility
     if (outputSet != juce::AudioChannelSet::stereo() &&
-        outputSet != juce::AudioChannelSet::mono() &&
-        !outputSet.isDisabled())
+        outputSet != juce::AudioChannelSet::mono())
         return false;
 
     return true;
@@ -442,12 +441,60 @@ void DrummerCloneAudioProcessor::processFollowMode(const juce::AudioBuffer<float
     }
     else
     {
-        // Analyze MIDI for groove (real-time only for now)
+        // Analyze MIDI for groove
         auto extractedGroove = midiGrooveExtractor.extractFromBuffer(midi);
 
-        if (extractedGroove.noteCount > 0)
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+
+        auto learnerState = grooveLearner.getState();
+
+        if (learnerState == GrooveLearner::State::Learning)
         {
-            const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+            // Update learner with tempo and time signature
+            grooveLearner.setBPM(currentBPM);
+            grooveLearner.setTimeSignature(timeSignatureNumerator, timeSignatureDenominator);
+
+            // Convert ExtractedGroove to format expected by GrooveLearner
+            if (extractedGroove.noteCount > 0)
+            {
+                std::vector<std::tuple<double, int, int>> midiOnsets;
+                size_t numNotes = std::min({extractedGroove.noteOnTimes.size(),
+                                            extractedGroove.velocities.size(),
+                                            extractedGroove.pitches.size()});
+                midiOnsets.reserve(numNotes);
+
+                // Convert note times (seconds) to PPQ positions
+                double secondsPerBeat = 60.0 / currentBPM;
+                for (size_t i = 0; i < numNotes; ++i)
+                {
+                    double notePPQ = ppqPosition + (extractedGroove.noteOnTimes[i] / secondsPerBeat);
+                    int velocity = extractedGroove.velocities[i];
+                    int pitch = extractedGroove.pitches[i];
+                    midiOnsets.emplace_back(notePPQ, velocity, pitch);
+                }
+
+                grooveLearner.processMidiOnsets(midiOnsets, ppqPosition);
+            }
+
+            // Update progress display
+            grooveLockPercentage = grooveLearner.getLearningProgress() * 100.0f;
+
+            // Check if learning auto-completed (locked)
+            if (grooveLearner.getState() == GrooveLearner::State::Locked)
+            {
+                currentGroove = grooveLearner.getGrooveTemplate();
+                DBG("DrummerClone: MIDI groove learning auto-locked after " << grooveLearner.getBarsLearned() << " bars");
+            }
+        }
+        else if (learnerState == GrooveLearner::State::Locked)
+        {
+            // Use the locked groove
+            currentGroove = grooveLearner.getGrooveTemplate();
+            grooveLockPercentage = 100.0f;
+        }
+        else if (extractedGroove.noteCount > 0)
+        {
+            // Idle state with MIDI - do real-time analysis (no learning)
             currentGroove = grooveTemplateGenerator.generateFromMidi(
                 extractedGroove, currentBPM);
 
@@ -644,8 +691,23 @@ void DrummerCloneAudioProcessor::generateDrumPattern()
         }
 
         // Apply Follow Mode groove if active
-        GrooveTemplate grooveToUse = followModeActive ?
-            grooveFollower.getCurrent(ppqPosition) : GrooveTemplate();
+        GrooveTemplate grooveToUse;
+        if (followModeActive)
+        {
+            // Lock once and check state atomically to avoid TOCTOU race
+            const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+            auto learnerState = grooveLearner.getState();
+            if (learnerState == GrooveLearner::State::Learning ||
+                learnerState == GrooveLearner::State::Locked)
+            {
+                grooveToUse = grooveLearner.getGrooveTemplate();
+            }
+            else
+            {
+                // Idle state - use real-time follower
+                grooveToUse = grooveFollower.getCurrent(ppqPosition);
+            }
+        }
 
         // Check if step sequencer override is active (thread-safe read)
         bool useStepSeq = false;
@@ -679,6 +741,7 @@ void DrummerCloneAudioProcessor::generateDrumPattern()
         else
         {
             // Generate pattern with all parameters (normal mode)
+            // Pass currentBar for deterministic seeding - ensures same bar = same pattern
             generatedMidiBuffer = drummerEngine.generateRegion(
                 1,  // Generate 1 bar at a time
                 currentBPM,
@@ -689,7 +752,8 @@ void DrummerCloneAudioProcessor::generateDrumPattern()
                 swing,
                 section,
                 humanize,
-                fill
+                fill,
+                currentBar  // Bar number for deterministic pattern generation
             );
         }
 

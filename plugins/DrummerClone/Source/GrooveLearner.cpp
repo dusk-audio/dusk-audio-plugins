@@ -209,21 +209,30 @@ void GrooveLearner::processOnsets(const std::vector<double>& onsets, double ppqP
 
             // Auto-lock check - lock if we have enough data OR if we've waited too long
             int lockBars = autoLockBars.load(std::memory_order_relaxed);
-            if (autoLockEnabled.load(std::memory_order_relaxed) && bars >= lockBars)
+            bool autoLockEnabled_ = autoLockEnabled.load(std::memory_order_relaxed);
+            int hits = totalHits.load(std::memory_order_relaxed);
+
+            DBG("GrooveLearner: bar " << bars << "/" << lockBars
+                << " autoLock=" << (autoLockEnabled_ ? "yes" : "no")
+                << " hits=" << hits << " ready=" << (isGrooveReady() ? "yes" : "no"));
+
+            if (autoLockEnabled_ && bars >= lockBars)
             {
                 if (isGrooveReady())
                 {
                     // We have enough transient data - lock with learned groove
+                    DBG("GrooveLearner: Auto-locking with valid groove after " << bars << " bars, " << hits << " hits");
                     analyzeTransients();
                     analyzeGenre();  // Final genre detection
                     currentState.store(State::Locked, std::memory_order_release);
                     return;
                 }
-                else if (bars >= lockBars * 4)
+                else if (bars >= lockBars * 2)
                 {
-                    // Fallback: if we've waited 4x the target bars with no valid groove,
-                    // lock anyway with a neutral/default groove
-                    DBG("GrooveLearner: No transients detected after " << bars << " bars, locking with default groove");
+                    // Fallback: if we've waited 2x the target bars with no valid groove,
+                    // lock anyway with a neutral/default groove (reduced from 4x to 2x)
+                    DBG("GrooveLearner: Auto-locking with default groove after " << bars << " bars (insufficient transients: " << hits << " hits)");
+                    analyzeTransients();  // Still try to use what we have
                     currentState.store(State::Locked, std::memory_order_release);
                     return;
                 }

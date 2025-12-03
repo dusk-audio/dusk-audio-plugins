@@ -139,7 +139,7 @@ void DrummerCloneAudioProcessorEditor::setupLibraryPanel()
 {
     // Library label
     libraryLabel.setText("LIBRARY", juce::dontSendNotification);
-    libraryLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    libraryLabel.setFont(juce::Font(juce::FontOptions().withHeight(14.0f).withStyle("Bold")));
     libraryLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(libraryLabel);
 
@@ -289,7 +289,7 @@ void DrummerCloneAudioProcessorEditor::setupXYPad()
     };
 
     xyLabel.setText("Simple ← → Complex  /  Soft ↑ Loud", juce::dontSendNotification);
-    xyLabel.setFont(juce::Font(12.0f));
+    xyLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f)));
     xyLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     xyLabel.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(xyLabel);
@@ -438,7 +438,7 @@ void DrummerCloneAudioProcessorEditor::setupSectionPanel()
 {
     // Section label
     sectionLabel.setText("SECTION", juce::dontSendNotification);
-    sectionLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    sectionLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
     sectionLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(sectionLabel);
 
@@ -461,7 +461,7 @@ void DrummerCloneAudioProcessorEditor::setupFillsPanel()
 {
     // Section label
     fillsLabel.setText("FILLS", juce::dontSendNotification);
-    fillsLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    fillsLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
     fillsLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(fillsLabel);
 
@@ -479,7 +479,7 @@ void DrummerCloneAudioProcessorEditor::setupFillsPanel()
     fillFrequencyLabel.setText("Frequency", juce::dontSendNotification);
     fillFrequencyLabel.setJustificationType(juce::Justification::centred);
     fillFrequencyLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    fillFrequencyLabel.setFont(juce::Font(10.0f));
+    fillFrequencyLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     addAndMakeVisible(fillFrequencyLabel);
 
     // Fill intensity slider
@@ -496,7 +496,7 @@ void DrummerCloneAudioProcessorEditor::setupFillsPanel()
     fillIntensityLabel.setText("Intensity", juce::dontSendNotification);
     fillIntensityLabel.setJustificationType(juce::Justification::centred);
     fillIntensityLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    fillIntensityLabel.setFont(juce::Font(10.0f));
+    fillIntensityLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     addAndMakeVisible(fillIntensityLabel);
 
     // Fill length combo box
@@ -512,7 +512,7 @@ void DrummerCloneAudioProcessorEditor::setupFillsPanel()
     fillLengthLabel.setText("Length", juce::dontSendNotification);
     fillLengthLabel.setJustificationType(juce::Justification::centred);
     fillLengthLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    fillLengthLabel.setFont(juce::Font(10.0f));
+    fillLengthLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     addAndMakeVisible(fillLengthLabel);
 
     // Manual fill trigger button
@@ -591,7 +591,7 @@ void DrummerCloneAudioProcessorEditor::setupHumanizationPanel()
 {
     // Section label
     humanLabel.setText("HUMANIZE", juce::dontSendNotification);
-    humanLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    humanLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
     humanLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     humanLabel.setVisible(false);
     addAndMakeVisible(humanLabel);
@@ -610,7 +610,7 @@ void DrummerCloneAudioProcessorEditor::setupHumanizationPanel()
 
     humanTimingLabel.setText("Timing", juce::dontSendNotification);
     humanTimingLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    humanTimingLabel.setFont(juce::Font(10.0f));
+    humanTimingLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     humanTimingLabel.setVisible(false);
     addAndMakeVisible(humanTimingLabel);
 
@@ -628,7 +628,7 @@ void DrummerCloneAudioProcessorEditor::setupHumanizationPanel()
 
     humanVelocityLabel.setText("Velocity", juce::dontSendNotification);
     humanVelocityLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    humanVelocityLabel.setFont(juce::Font(10.0f));
+    humanVelocityLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     humanVelocityLabel.setVisible(false);
     addAndMakeVisible(humanVelocityLabel);
 
@@ -645,7 +645,7 @@ void DrummerCloneAudioProcessorEditor::setupHumanizationPanel()
 
     humanPushLabel.setText("Push/Drag", juce::dontSendNotification);
     humanPushLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    humanPushLabel.setFont(juce::Font(10.0f));
+    humanPushLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     humanPushLabel.setVisible(false);
     addAndMakeVisible(humanPushLabel);
 
@@ -663,7 +663,7 @@ void DrummerCloneAudioProcessorEditor::setupHumanizationPanel()
 
     humanGrooveLabel.setText("Groove", juce::dontSendNotification);
     humanGrooveLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    humanGrooveLabel.setFont(juce::Font(10.0f));
+    humanGrooveLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     humanGrooveLabel.setVisible(false);
     addAndMakeVisible(humanGrooveLabel);
 
@@ -690,7 +690,7 @@ void DrummerCloneAudioProcessorEditor::setupMidiCCPanel()
 {
     // Section label (hidden by default)
     midiCCLabel.setText("MIDI CC CONTROL", juce::dontSendNotification);
-    midiCCLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    midiCCLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
     midiCCLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     midiCCLabel.setVisible(false);
     addAndMakeVisible(midiCCLabel);
@@ -716,7 +716,7 @@ void DrummerCloneAudioProcessorEditor::setupMidiCCPanel()
 
     sectionCCLabel.setText("Section CC#", juce::dontSendNotification);
     sectionCCLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    sectionCCLabel.setFont(juce::Font(10.0f));
+    sectionCCLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     sectionCCLabel.setVisible(false);
     addAndMakeVisible(sectionCCLabel);
 
@@ -733,13 +733,13 @@ void DrummerCloneAudioProcessorEditor::setupMidiCCPanel()
 
     fillCCLabel.setText("Fill CC#", juce::dontSendNotification);
     fillCCLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    fillCCLabel.setFont(juce::Font(10.0f));
+    fillCCLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     fillCCLabel.setVisible(false);
     addAndMakeVisible(fillCCLabel);
 
     // Source indicator (shows "MIDI" when section is controlled via MIDI)
     midiCCSourceIndicator.setText("", juce::dontSendNotification);
-    midiCCSourceIndicator.setFont(juce::Font(9.0f, juce::Font::bold));
+    midiCCSourceIndicator.setFont(juce::Font(juce::FontOptions().withHeight(9.0f).withStyle("Bold")));
     midiCCSourceIndicator.setColour(juce::Label::textColourId, juce::Colour(100, 200, 100));
     midiCCSourceIndicator.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(midiCCSourceIndicator);
@@ -795,7 +795,7 @@ void DrummerCloneAudioProcessorEditor::setupKitPanel()
 {
     // Kit enable label (hidden by default)
     kitLabel.setText("KIT PIECES", juce::dontSendNotification);
-    kitLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    kitLabel.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
     kitLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     kitLabel.setVisible(false);
     addAndMakeVisible(kitLabel);
@@ -863,7 +863,7 @@ void DrummerCloneAudioProcessorEditor::setupKitPanel()
 void DrummerCloneAudioProcessorEditor::setupStatusBar()
 {
     statusLabel.setText("Ready", juce::dontSendNotification);
-    statusLabel.setFont(juce::Font(11.0f));
+    statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
     statusLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
     addAndMakeVisible(statusLabel);
 }
@@ -1253,7 +1253,11 @@ void DrummerCloneAudioProcessorEditor::exportToMidiFile()
                     emptyGroove,
                     complexity,
                     loudness,
-                    swing
+                    swing,
+                    DrumSection::Verse,  // Default section
+                    HumanizeSettings(),  // Default humanization
+                    FillSettings(),      // Default fill settings
+                    bar                  // Bar number for deterministic patterns
                 );
 
                 int tickOffset = bar * PPQ * 4;  // 4 beats per bar
