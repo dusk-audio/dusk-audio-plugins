@@ -33,13 +33,13 @@ void XYPad::paint(juce::Graphics& g)
     // Horizontal center line
     g.drawLine(bounds.getX() + 10, centerY, bounds.getRight() - 10, centerY, 0.5f);
 
-    // Labels
+    // Labels - X axis: Swing (left=none, right=full), Y axis: Loudness (top=loud, bottom=soft)
     g.setColour(juce::Colour(120, 120, 130));
     g.setFont(10.0f);
-    g.drawText("Simple", bounds.getX() + 5, bounds.getBottom() - 15, 40, 12, juce::Justification::left);
-    g.drawText("Complex", bounds.getRight() - 50, bounds.getBottom() - 15, 45, 12, juce::Justification::right);
-    g.drawText("Soft", bounds.getX() + 5, bounds.getY() + 3, 30, 12, juce::Justification::left);
-    g.drawText("Loud", bounds.getX() + 5, bounds.getBottom() - 30, 30, 12, juce::Justification::left);
+    g.drawText("No Swing", bounds.getX() + 5, bounds.getBottom() - 15, 55, 12, juce::Justification::left);
+    g.drawText("Full Swing", bounds.getRight() - 60, bounds.getBottom() - 15, 55, 12, juce::Justification::right);
+    g.drawText("Loud", bounds.getX() + 5, bounds.getY() + 3, 30, 12, juce::Justification::left);
+    g.drawText("Soft", bounds.getX() + 5, bounds.getBottom() - 30, 30, 12, juce::Justification::left);
 
     // Position indicator
     float indicatorX = bounds.getX() + (posX * bounds.getWidth());
@@ -106,9 +106,9 @@ DrummerCloneAudioProcessorEditor::DrummerCloneAudioProcessorEditor(DrummerCloneA
     setLookAndFeel(&darkLookAndFeel);
 
     // Set window size
-    setSize(800, 600);
+    setSize(850, 700);
     setResizable(true, true);
-    setResizeLimits(600, 400, 1200, 900);
+    setResizeLimits(700, 550, 1200, 900);
 
     // Setup all panels
     setupLibraryPanel();
@@ -122,6 +122,7 @@ DrummerCloneAudioProcessorEditor::DrummerCloneAudioProcessorEditor(DrummerCloneA
     setupHumanizationPanel();
     setupMidiCCPanel();
     setupProfileEditorPanel();
+    setupKitPanel();
     setupStatusBar();
 
     // Start timer for UI updates
@@ -142,8 +143,8 @@ void DrummerCloneAudioProcessorEditor::setupLibraryPanel()
     libraryLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     addAndMakeVisible(libraryLabel);
 
-    // Style selection
-    styleLabel.setText("Style", juce::dontSendNotification);
+    // Style selection (genre filter)
+    styleLabel.setText("Genre", juce::dontSendNotification);
     styleLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible(styleLabel);
 
@@ -154,8 +155,14 @@ void DrummerCloneAudioProcessorEditor::setupLibraryPanel()
     styleComboBox.addItem("Electronic", 5);
     styleComboBox.addItem("Trap", 6);
     styleComboBox.addItem("Songwriter", 7);
-    styleComboBox.setSelectedId(1);
     addAndMakeVisible(styleComboBox);
+
+    // When genre changes, update the drummer list
+    styleComboBox.onChange = [this]()
+    {
+        int styleIndex = styleComboBox.getSelectedId() - 1;  // 0-based index
+        updateDrummerListForStyle(styleIndex);
+    };
 
     styleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "style", styleComboBox);
@@ -165,54 +172,103 @@ void DrummerCloneAudioProcessorEditor::setupLibraryPanel()
     drummerLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible(drummerLabel);
 
-    // All 29 drummers matching DrummerDNA order
-    // Rock (0-2)
-    drummerComboBox.addItem("Kyle - Rock", 1);
-    drummerComboBox.addItem("Anders - Rock", 2);
-    drummerComboBox.addItem("Max - Rock", 3);
-    // Alternative (3-4)
-    drummerComboBox.addItem("Logan - Alternative", 4);
-    drummerComboBox.addItem("Aidan - Alternative", 5);
-    // HipHop (5-6)
-    drummerComboBox.addItem("Austin - HipHop", 6);
-    drummerComboBox.addItem("Tyrell - HipHop", 7);
-    // R&B (7-8)
-    drummerComboBox.addItem("Brooklyn - R&B", 8);
-    drummerComboBox.addItem("Darnell - R&B", 9);
-    // Electronic (9-10)
-    drummerComboBox.addItem("Niklas - Electronic", 10);
-    drummerComboBox.addItem("Lexi - Electronic", 11);
-    // Songwriter (11-14)
-    drummerComboBox.addItem("Jesse - Songwriter", 12);
-    drummerComboBox.addItem("Maya - Songwriter", 13);
-    drummerComboBox.addItem("Emily - Songwriter", 14);
-    drummerComboBox.addItem("Sam - Songwriter", 15);
-    // Trap (15-18)
-    drummerComboBox.addItem("Xavier - Trap", 16);
-    drummerComboBox.addItem("Jayden - Trap", 17);
-    drummerComboBox.addItem("Zion - Trap", 18);
-    drummerComboBox.addItem("Luna - Trap", 19);
-    // Additional Rock (19-20)
-    drummerComboBox.addItem("Ricky - Rock", 20);
-    drummerComboBox.addItem("Jake - Rock", 21);
-    // Additional Alternative (21-22)
-    drummerComboBox.addItem("River - Alternative", 22);
-    drummerComboBox.addItem("Quinn - Alternative", 23);
-    // Additional HipHop (23-24)
-    drummerComboBox.addItem("Marcus - HipHop", 24);
-    drummerComboBox.addItem("Kira - HipHop", 25);
-    // Additional R&B (25-26)
-    drummerComboBox.addItem("Aaliyah - R&B", 26);
-    drummerComboBox.addItem("Andre - R&B", 27);
-    // Additional Electronic (27-28)
-    drummerComboBox.addItem("Sasha - Electronic", 28);
-    drummerComboBox.addItem("Felix - Electronic", 29);
-
-    drummerComboBox.setSelectedId(1);
     addAndMakeVisible(drummerComboBox);
 
-    drummerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "drummer", drummerComboBox);
+    // When drummer changes, update the processor with the correct drummer index
+    drummerComboBox.onChange = [this]()
+    {
+        int comboIndex = drummerComboBox.getSelectedId() - 1;  // 0-based
+        if (comboIndex >= 0 && comboIndex < static_cast<int>(filteredDrummerIndices.size()))
+        {
+            int globalDrummerIndex = filteredDrummerIndices[static_cast<size_t>(comboIndex)];
+            // Set the drummer parameter (normalized 0-1)
+            auto* drummerParam = audioProcessor.getValueTreeState().getParameter("drummer");
+            if (drummerParam)
+            {
+                // Normalize: 29 drummers total, so drummer N = N/28
+                float normalized = static_cast<float>(globalDrummerIndex) / 28.0f;
+                drummerParam->setValueNotifyingHost(normalized);
+            }
+        }
+    };
+
+    // Initialize with Rock genre drummers
+    updateDrummerListForStyle(0);
+}
+
+void DrummerCloneAudioProcessorEditor::updateDrummerListForStyle(int styleIndex)
+{
+    // Style names matching DrummerDNA order
+    static const juce::StringArray styleNames = {"Rock", "HipHop", "Alternative", "R&B", "Electronic", "Trap", "Songwriter"};
+
+    // All drummers with their global indices and styles
+    // This must match the order in DrummerDNA::createDefaultProfiles()
+    static const std::vector<std::pair<juce::String, juce::String>> allDrummers = {
+        // Rock (0-2)
+        {"Kyle", "Rock"},
+        {"Anders", "Rock"},
+        {"Max", "Rock"},
+        // Alternative (3-4)
+        {"Logan", "Alternative"},
+        {"Aidan", "Alternative"},
+        // HipHop (5-6)
+        {"Austin", "HipHop"},
+        {"Tyrell", "HipHop"},
+        // R&B (7-8)
+        {"Brooklyn", "R&B"},
+        {"Darnell", "R&B"},
+        // Electronic (9-10)
+        {"Niklas", "Electronic"},
+        {"Lexi", "Electronic"},
+        // Songwriter (11-14)
+        {"Jesse", "Songwriter"},
+        {"Maya", "Songwriter"},
+        {"Emily", "Songwriter"},
+        {"Sam", "Songwriter"},
+        // Trap (15-18)
+        {"Xavier", "Trap"},
+        {"Jayden", "Trap"},
+        {"Zion", "Trap"},
+        {"Luna", "Trap"},
+        // Additional Rock (19-20)
+        {"Ricky", "Rock"},
+        {"Jake", "Rock"},
+        // Additional Alternative (21-22)
+        {"River", "Alternative"},
+        {"Quinn", "Alternative"},
+        // Additional HipHop (23-24)
+        {"Marcus", "HipHop"},
+        {"Kira", "HipHop"},
+        // Additional R&B (25-26)
+        {"Aaliyah", "R&B"},
+        {"Andre", "R&B"},
+        // Additional Electronic (27-28)
+        {"Sasha", "Electronic"},
+        {"Felix", "Electronic"}
+    };
+
+    juce::String targetStyle = styleNames[juce::jlimit(0, styleNames.size() - 1, styleIndex)];
+
+    // Clear and rebuild the drummer list
+    drummerComboBox.clear(juce::dontSendNotification);
+    filteredDrummerIndices.clear();
+
+    int comboId = 1;
+    for (size_t i = 0; i < allDrummers.size(); ++i)
+    {
+        if (allDrummers[i].second == targetStyle)
+        {
+            drummerComboBox.addItem(allDrummers[i].first, comboId);
+            filteredDrummerIndices.push_back(static_cast<int>(i));
+            comboId++;
+        }
+    }
+
+    // Select the first drummer in this genre
+    if (drummerComboBox.getNumItems() > 0)
+    {
+        drummerComboBox.setSelectedId(1, juce::sendNotificationSync);
+    }
 }
 
 void DrummerCloneAudioProcessorEditor::setupXYPad()
@@ -221,18 +277,18 @@ void DrummerCloneAudioProcessorEditor::setupXYPad()
 
     xyPad.onPositionChanged = [this](float x, float y)
     {
-        // Map XY to swing and drive/intensity
-        auto* swingParam = audioProcessor.getValueTreeState().getParameter("swing");
-        if (swingParam)
-            swingParam->setValueNotifyingHost(x);
+        // X axis: Complexity (simple → complex) - matches Logic Pro Drummer
+        auto* complexityParam = audioProcessor.getValueTreeState().getParameter("complexity");
+        if (complexityParam)
+            complexityParam->setValueNotifyingHost(x);
 
-        // Y axis could control another parameter like complexity or loudness
+        // Y axis: Loudness (soft → loud) - matches Logic Pro Drummer
         auto* loudnessParam = audioProcessor.getValueTreeState().getParameter("loudness");
         if (loudnessParam)
             loudnessParam->setValueNotifyingHost(y);
     };
 
-    xyLabel.setText("Swing / Intensity", juce::dontSendNotification);
+    xyLabel.setText("Simple ← → Complex  /  Soft ↑ Loud", juce::dontSendNotification);
     xyLabel.setFont(juce::Font(12.0f));
     xyLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     xyLabel.setJustificationType(juce::Justification::centred);
@@ -241,7 +297,22 @@ void DrummerCloneAudioProcessorEditor::setupXYPad()
 
 void DrummerCloneAudioProcessorEditor::setupGlobalControls()
 {
-    // Complexity slider
+    // Swing slider (moved from XY pad - now XY pad controls Complexity/Loudness like Logic)
+    swingSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    swingSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
+    swingSlider.setRange(0.0, 100.0, 1.0);
+    swingSlider.setValue(0.0);
+    addAndMakeVisible(swingSlider);
+
+    swingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "swing", swingSlider);
+
+    swingLabel.setText("Swing", juce::dontSendNotification);
+    swingLabel.setJustificationType(juce::Justification::centred);
+    swingLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible(swingLabel);
+
+    // Complexity slider (also controlled via XY pad X-axis for Logic-style control)
     complexitySlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     complexitySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
     complexitySlider.setRange(1.0, 10.0, 0.1);
@@ -256,7 +327,7 @@ void DrummerCloneAudioProcessorEditor::setupGlobalControls()
     complexityLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     addAndMakeVisible(complexityLabel);
 
-    // Loudness slider
+    // Loudness slider (also controlled via XY pad Y-axis for Logic-style control)
     loudnessSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     loudnessSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
     loudnessSlider.setRange(0.0, 100.0, 1.0);
@@ -720,6 +791,75 @@ void DrummerCloneAudioProcessorEditor::setupProfileEditorPanel()
     };
 }
 
+void DrummerCloneAudioProcessorEditor::setupKitPanel()
+{
+    // Kit enable label (hidden by default)
+    kitLabel.setText("KIT PIECES", juce::dontSendNotification);
+    kitLabel.setFont(juce::Font(12.0f, juce::Font::bold));
+    kitLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    kitLabel.setVisible(false);
+    addAndMakeVisible(kitLabel);
+
+    // Kit piece toggles
+    kitKickToggle.setButtonText("Kick");
+    kitKickToggle.setToggleState(true, juce::dontSendNotification);
+    kitKickToggle.setVisible(false);
+    addAndMakeVisible(kitKickToggle);
+    kitKickAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "kitKick", kitKickToggle);
+
+    kitSnareToggle.setButtonText("Snare");
+    kitSnareToggle.setToggleState(true, juce::dontSendNotification);
+    kitSnareToggle.setVisible(false);
+    addAndMakeVisible(kitSnareToggle);
+    kitSnareAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "kitSnare", kitSnareToggle);
+
+    kitHiHatToggle.setButtonText("Hi-Hat");
+    kitHiHatToggle.setToggleState(true, juce::dontSendNotification);
+    kitHiHatToggle.setVisible(false);
+    addAndMakeVisible(kitHiHatToggle);
+    kitHiHatAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "kitHiHat", kitHiHatToggle);
+
+    kitTomsToggle.setButtonText("Toms");
+    kitTomsToggle.setToggleState(true, juce::dontSendNotification);
+    kitTomsToggle.setVisible(false);
+    addAndMakeVisible(kitTomsToggle);
+    kitTomsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "kitToms", kitTomsToggle);
+
+    kitCymbalsToggle.setButtonText("Cymbals");
+    kitCymbalsToggle.setToggleState(true, juce::dontSendNotification);
+    kitCymbalsToggle.setVisible(false);
+    addAndMakeVisible(kitCymbalsToggle);
+    kitCymbalsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "kitCymbals", kitCymbalsToggle);
+
+    kitPercussionToggle.setButtonText("Percussion");
+    kitPercussionToggle.setToggleState(true, juce::dontSendNotification);
+    kitPercussionToggle.setVisible(false);
+    addAndMakeVisible(kitPercussionToggle);
+    kitPercussionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "kitPercussion", kitPercussionToggle);
+
+    // Toggle button for kit panel
+    kitToggleButton.setButtonText("Kit Pieces");
+    kitToggleButton.onClick = [this]()
+    {
+        kitPanelVisible = !kitPanelVisible;
+        kitLabel.setVisible(kitPanelVisible);
+        kitKickToggle.setVisible(kitPanelVisible);
+        kitSnareToggle.setVisible(kitPanelVisible);
+        kitHiHatToggle.setVisible(kitPanelVisible);
+        kitTomsToggle.setVisible(kitPanelVisible);
+        kitCymbalsToggle.setVisible(kitPanelVisible);
+        kitPercussionToggle.setVisible(kitPanelVisible);
+        resized();
+    };
+    addAndMakeVisible(kitToggleButton);
+}
+
 void DrummerCloneAudioProcessorEditor::setupStatusBar()
 {
     statusLabel.setText("Ready", juce::dontSendNotification);
@@ -766,7 +906,7 @@ void DrummerCloneAudioProcessorEditor::resized()
     auto bounds = getLocalBounds();
     int leftPanelWidth = 180;
     int topBarHeight = 80;
-    int bottomPanelHeight = 150;
+    int bottomPanelHeight = 240;  // Increased for Follow Mode Learn/Lock buttons
     int statusBarHeight = 25;
 
     // ========== LEFT PANEL ==========
@@ -845,21 +985,46 @@ void DrummerCloneAudioProcessorEditor::resized()
         fillCCSlider.setBounds(fillCCRow);
     }
 
+    // Kit pieces toggle button
+    leftPanel.removeFromTop(10);
+    kitToggleButton.setBounds(leftPanel.removeFromTop(25).reduced(0, 2));
+
+    // Kit pieces panel (collapsible)
+    if (kitPanelVisible)
+    {
+        leftPanel.removeFromTop(10);
+        kitLabel.setBounds(leftPanel.removeFromTop(18));
+        leftPanel.removeFromTop(5);
+
+        kitKickToggle.setBounds(leftPanel.removeFromTop(20));
+        kitSnareToggle.setBounds(leftPanel.removeFromTop(20));
+        kitHiHatToggle.setBounds(leftPanel.removeFromTop(20));
+        kitTomsToggle.setBounds(leftPanel.removeFromTop(20));
+        kitCymbalsToggle.setBounds(leftPanel.removeFromTop(20));
+        kitPercussionToggle.setBounds(leftPanel.removeFromTop(20));
+    }
+
     // ========== TOP BAR ==========
     auto topBar = bounds.removeFromTop(topBarHeight);
     topBar = topBar.reduced(20, 10);
 
-    auto complexityArea = topBar.removeFromLeft(80);
+    auto swingArea = topBar.removeFromLeft(70);
+    swingSlider.setBounds(swingArea.removeFromTop(50));
+    swingLabel.setBounds(swingArea);
+
+    topBar.removeFromLeft(15);
+
+    auto complexityArea = topBar.removeFromLeft(70);
     complexitySlider.setBounds(complexityArea.removeFromTop(50));
     complexityLabel.setBounds(complexityArea);
 
-    topBar.removeFromLeft(20);
+    topBar.removeFromLeft(15);
 
-    auto loudnessArea = topBar.removeFromLeft(80);
+    auto loudnessArea = topBar.removeFromLeft(70);
     loudnessSlider.setBounds(loudnessArea.removeFromTop(50));
     loudnessLabel.setBounds(loudnessArea);
 
-    topBar.removeFromLeft(20);
+    topBar.removeFromLeft(15);
     generateButton.setBounds(topBar.removeFromLeft(100).reduced(0, 15));
 
     // Export controls on the right side of top bar
@@ -1075,7 +1240,9 @@ void DrummerCloneAudioProcessorEditor::exportToMidiFile()
             // Use a local DrummerEngine for export
             DrummerEngine exportEngine(audioProcessor.getValueTreeState());
             exportEngine.prepare(44100.0, 512);
-            exportEngine.setDrummer(static_cast<int>(params.getParameter("drummer")->getValue() * 12));
+            // Convert normalized parameter (0-1) to drummer index (0-28)
+            int drummerIndex = static_cast<int>(std::round(params.getParameter("drummer")->getValue() * 28.0f));
+            exportEngine.setDrummer(drummerIndex);
 
             for (int bar = 0; bar < numBars; ++bar)
             {

@@ -5,10 +5,12 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <memory>
 #include "DrumMapping.h"
 #include "GrooveTemplateGenerator.h"
 #include "DrummerDNA.h"
 #include "VariationEngine.h"
+#include "PatternLibrary.h"
 
 /**
  * Section types for pattern variation
@@ -161,6 +163,123 @@ public:
      */
     void reset();
 
+    /**
+     * Kit piece enable/disable (for filtering output)
+     */
+    struct KitEnableMask
+    {
+        bool kick = true;
+        bool snare = true;
+        bool hihat = true;
+        bool toms = true;
+        bool cymbals = true;
+        bool percussion = true;
+    };
+
+    /**
+     * Set which kit pieces are enabled (affects output generation)
+     */
+    void setKitEnableMask(const KitEnableMask& mask) { kitMask = mask; }
+
+    /**
+     * Get current kit enable mask
+     */
+    const KitEnableMask& getKitEnableMask() const { return kitMask; }
+
+    /**
+     * Check if a drum element is enabled based on kit mask
+     */
+    bool isElementEnabled(DrumMapping::DrumElement element) const;
+
+    /**
+     * Get the MIDI note map (for reading current mappings)
+     */
+    const DrumMapping::MidiNoteMap& getMidiNoteMap() const { return midiNoteMap; }
+
+    /**
+     * Get a mutable reference to the MIDI note map (for modifying mappings)
+     */
+    DrumMapping::MidiNoteMap& getMidiNoteMap() { return midiNoteMap; }
+
+    /**
+     * Set a custom MIDI note for a drum element
+     * @param element The drum element to map
+     * @param midiNote MIDI note number (0-127)
+     */
+    void setMidiNote(DrumMapping::DrumElement element, int midiNote) {
+        if (midiNote < 0 || midiNote > 127) {
+            DBG("DrummerEngine::setMidiNote: Invalid MIDI note " << midiNote << ", clamping to 0-127");
+            midiNote = juce::jlimit(0, 127, midiNote);
+        }
+        midiNoteMap.setNoteForElement(element, midiNote);
+    }
+
+    /**
+     * Get the MIDI note for a drum element (uses custom mapping)
+     * @param element The drum element
+     * @return MIDI note number
+     */
+    int getMidiNote(DrumMapping::DrumElement element) const {
+        return midiNoteMap.getNoteForElement(element);
+    }
+
+    /**
+     * Load a preset MIDI mapping
+     * @param preset Preset name: "GM", "SuperiorDrummer", "EZdrummer", "SSD", "BFD"
+     */
+    void loadMidiPreset(const juce::String& preset) {
+        if (preset == "SuperiorDrummer")
+            midiNoteMap.loadSuperiorDrummerMapping();
+        else if (preset == "EZdrummer")
+            midiNoteMap.loadEZdrummerMapping();
+        else if (preset == "SSD")
+            midiNoteMap.loadSSDMapping();
+        else if (preset == "BFD")
+            midiNoteMap.loadBFDMapping();
+        else {
+            if (!preset.isEmpty() && preset != "GM") {
+                DBG("DrummerEngine::loadMidiPreset: Unknown preset '" << preset << "', defaulting to GM");
+            }
+            midiNoteMap.resetToDefaults();  // GM default
+        }
+    }
+
+    /**
+     * Set the time signature (from DAW transport)
+     *
+     * Validates inputs to prevent division by zero and invalid time signatures:
+     * - numerator must be > 0 (clamped to 1 if invalid)
+     * - denominator must be a power of two (1,2,4,8,16,...); clamped to nearest valid value
+     *
+     * @param numerator Beats per bar (must be > 0)
+     * @param denominator Beat unit (4 = quarter note, 8 = eighth note); must be power of 2
+     */
+    void setTimeSignature(int numerator, int denominator) {
+        // Validate numerator: must be positive
+        if (numerator <= 0) {
+            DBG("DrummerEngine::setTimeSignature: Invalid numerator " << numerator << ", clamping to 1");
+            numerator = 1;
+        }
+
+        // Validate denominator: must be positive power of two
+        if (denominator <= 0) {
+            DBG("DrummerEngine::setTimeSignature: Invalid denominator " << denominator << ", defaulting to 4");
+            denominator = 4;
+        } else if ((denominator & (denominator - 1)) != 0) {
+            // Not a power of two - find nearest power of two
+            int original = denominator;
+            int lower = 1;
+            while (lower * 2 < denominator) lower *= 2;
+            int upper = lower * 2;
+            denominator = (denominator - lower < upper - denominator) ? lower : upper;
+            DBG("DrummerEngine::setTimeSignature: Denominator " << original
+                << " is not a power of two, clamping to " << denominator);
+        }
+
+        timeSignatureNumerator = numerator;
+        timeSignatureDenominator = denominator;
+    }
+
     // PPQ resolution (ticks per quarter note)
     static constexpr int PPQ = 960;
 
@@ -178,6 +297,39 @@ private:
     DrummerProfile currentProfile;
     VariationEngine variationEngine;
     int barsSinceLastFill = 0;
+
+    // Pattern library system (Phase 2) - lazily initialized
+    std::unique_ptr<PatternLibrary> patternLibrary;
+    std::unique_ptr<PatternVariator> patternVariator;
+    bool usePatternLibrary = false;  // Driven by parameter, default off until initialized
+    bool patternLibraryInitialized = false;  // Track initialization state
+    bool patternLibraryFailed = false;  // Track if initialization failed
+
+    // Lazy initialization of pattern library
+    void initPatternLibraryIfNeeded();
+
+    // Cached parameter pointer for usePatternLibrary setting
+    std::atomic<float>* usePatternLibraryParam = nullptr;
+
+    // Pattern-based generation methods
+    juce::MidiBuffer generateFromPatternLibrary(int bars, double bpm,
+                                                 const juce::String& style,
+                                                 const GrooveTemplate& groove,
+                                                 float complexity, float loudness,
+                                                 DrumSection section,
+                                                 HumanizeSettings humanize);
+
+    juce::MidiBuffer generateFillFromLibrary(int beats, double bpm,
+                                              float intensity,
+                                              const juce::String& style,
+                                              int startTick);
+
+    // Convert PatternPhrase to MidiBuffer with humanization
+    juce::MidiBuffer patternToMidi(const PatternPhrase& pattern,
+                                    double bpm,
+                                    const GrooveTemplate& groove,
+                                    const HumanizeSettings& humanize,
+                                    int tickOffset = 0);
 
     // Style names for lookup
     const juce::StringArray styleNames = {
@@ -197,6 +349,9 @@ private:
                              const DrumMapping::StyleHints& hints, const GrooveTemplate& groove,
                              float complexity, float loudness);
 
+    void generateTrapHiHats(juce::MidiBuffer& buffer, int bars, double bpm,
+                           float loudnessScale, float complexity);
+
     void generateCymbals(juce::MidiBuffer& buffer, int bars, double bpm,
                         const DrumMapping::StyleHints& hints, const GrooveTemplate& groove,
                         float complexity, float loudness);
@@ -205,9 +360,26 @@ private:
                            const DrumMapping::StyleHints& hints, const GrooveTemplate& groove,
                            float complexity);
 
-    // Timing helpers
-    int ticksPerBar(double bpm) const { return PPQ * 4; }  // 4/4 time
-    int ticksPerBeat() const { return PPQ; }
+    void generatePercussionPattern(juce::MidiBuffer& buffer, int bars, double bpm,
+                                   const DrumMapping::StyleHints& hints, const GrooveTemplate& groove,
+                                   float complexity, float loudness);
+
+    // Time signature (set from processor, defaults to 4/4)
+    int timeSignatureNumerator = 4;
+    int timeSignatureDenominator = 4;
+
+    // Timing helpers - use current time signature
+    int ticksPerBar(double bpm) const {
+        (void)bpm; // Unused but kept for API compatibility
+        // PPQ is ticks per quarter note
+        // For 4/4: 4 beats * PPQ = 4 * PPQ
+        // For 3/4: 3 beats * PPQ = 3 * PPQ
+        // For 6/8: 6 eighth notes = 3 quarter notes = 3 * PPQ
+        return PPQ * timeSignatureNumerator * 4 / timeSignatureDenominator;
+    }
+    int beatsPerBar() const { return timeSignatureNumerator; }
+    int sixteenthsPerBar() const { return (timeSignatureNumerator * 16) / timeSignatureDenominator; }  // 16 for 4/4, 12 for 3/4
+    int ticksPerBeat() const { return PPQ * 4 / timeSignatureDenominator; }
     int ticksPerEighth() const { return PPQ / 2; }
     int ticksPerSixteenth() const { return PPQ / 4; }
 
@@ -236,6 +408,20 @@ private:
     // Current humanization settings (cached for use in generation methods)
     HumanizeSettings currentHumanize;
 
-    // MIDI helpers
+    // Configurable MIDI note mapping
+    DrumMapping::MidiNoteMap midiNoteMap;
+
+    // Kit piece enable/disable mask
+    KitEnableMask kitMask;
+
+    // MIDI helpers - uses midiNoteMap for note lookup
     void addNote(juce::MidiBuffer& buffer, int pitch, int velocity, int startTick, int durationTicks);
+
+    // Helper to add note with kit mask filtering (skips if element is disabled)
+    void addNoteFiltered(juce::MidiBuffer& buffer, DrumMapping::DrumElement element, int velocity, int startTick, int durationTicks);
+
+    // Helper to get MIDI note for element using the configurable map
+    int getNoteForElement(DrumMapping::DrumElement element) const {
+        return midiNoteMap.getNoteForElement(element);
+    }
 };

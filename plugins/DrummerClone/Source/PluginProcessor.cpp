@@ -108,14 +108,31 @@ static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout
         juce::ParameterID("fillTriggerCC", 1), "Fill Trigger CC#",
         1, 127, 103));  // CC number for fill trigger (default CC 103)
 
+    // Engine mode parameters
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("usePatternLibrary", 1), "Use Pattern Library", true));  // Enable pattern-based generation
+
+    // Kit piece enable/disable parameters
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("kitKick", 1), "Kick Enabled", true));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("kitSnare", 1), "Snare Enabled", true));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("kitHiHat", 1), "Hi-Hat Enabled", true));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("kitToms", 1), "Toms Enabled", true));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("kitCymbals", 1), "Cymbals Enabled", true));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("kitPercussion", 1), "Percussion Enabled", true));
+
     return { params.begin(), params.end() };
 }
 
 //==============================================================================
 DrummerCloneAudioProcessor::DrummerCloneAudioProcessor()
      : AudioProcessor (BusesProperties()
-                       .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), true)  // Sidechain for bass/audio Follow Mode
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+                       .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), true)),  // Sidechain for audio Follow Mode (no audio output - MIDI only)
        parameters(*this, nullptr, juce::Identifier("DrummerCloneParameters"), createParameterLayout()),
        audioInputBuffer(2, 44100 * 2),  // 2 seconds stereo buffer at 44.1kHz
        drummerEngine(parameters)
@@ -206,6 +223,7 @@ void DrummerCloneAudioProcessor::prepareToPlay (double sampleRate, int samplesPe
     transientDetector.prepare(sampleRate);
     midiGrooveExtractor.prepare(sampleRate);
     grooveTemplateGenerator.prepare(sampleRate);
+    grooveLearner.prepare(sampleRate, currentBPM);
 
     // Prepare drum engine
     drummerEngine.prepare(sampleRate, samplesPerBlock);
@@ -218,19 +236,22 @@ void DrummerCloneAudioProcessor::releaseResources()
 
 bool DrummerCloneAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    // Support stereo sidechain input and stereo output
-    // Also support mono configurations for compatibility
+    // This is a MIDI-only plugin - we accept sidechain input for Follow Mode
+    // but don't produce audio output (only MIDI)
     auto inputSet = layouts.getMainInputChannelSet();
     auto outputSet = layouts.getMainOutputChannelSet();
 
-    // Allow stereo or mono configurations
+    // Allow stereo/mono/disabled input (sidechain is optional for Follow Mode)
     if (inputSet != juce::AudioChannelSet::stereo() &&
         inputSet != juce::AudioChannelSet::mono() &&
         !inputSet.isDisabled())
         return false;
 
+    // Output should be disabled or minimal (we're MIDI-only)
+    // But some DAWs require at least a mono output for plugin to work
     if (outputSet != juce::AudioChannelSet::stereo() &&
-        outputSet != juce::AudioChannelSet::mono())
+        outputSet != juce::AudioChannelSet::mono() &&
+        !outputSet.isDisabled())
         return false;
 
     return true;
@@ -258,26 +279,80 @@ void DrummerCloneAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Process Follow Mode if enabled
     if (followModeActive)
     {
-        processFollowMode(buffer, midiMessages);
+        // Get the sidechain input bus (bus index 0 is the first input bus)
+        // The sidechain audio is used for Follow Mode transient detection
+        auto sidechainInput = getBusBuffer(buffer, true, 0);  // true = input bus, 0 = first input bus
+
+        if (sidechainInput.getNumChannels() > 0 && sidechainInput.getNumSamples() > 0)
+        {
+            processFollowMode(sidechainInput, midiMessages);
+        }
     }
 
-    // Generate drum pattern if needed
-    if (isPlaying && (needsRegeneration.load() || isBarBoundary(ppqPosition, currentBPM)))
-    {
-        generateDrumPattern();
-        needsRegeneration.store(false);
-    }
-
-    // Clear input MIDI and add our generated MIDI
+    // Clear input MIDI - we generate our own
     midiMessages.clear();
 
-    if (!generatedMidiBuffer.isEmpty())
+    // Only generate and output MIDI when DAW is playing
+    if (isPlaying)
     {
-        midiMessages.addEvents(generatedMidiBuffer, 0, buffer.getNumSamples(), 0);
+        // Calculate bar length
+        double barLengthPpq = timeSignatureNumerator * (4.0 / timeSignatureDenominator);
+        int currentBar = static_cast<int>(std::floor(ppqPosition / barLengthPpq));
+
+        // Generate drum pattern if needed (at bar boundaries or first time)
+        if (needsRegeneration.load() || currentBar != lastGeneratedBar)
+        {
+            generateDrumPattern();
+            needsRegeneration.store(false);
+        }
+
+        // Convert generated MIDI from PPQ ticks to sample positions for this buffer
+        if (!generatedMidiBuffer.isEmpty())
+        {
+            // Calculate timing values
+            double samplesPerBeat = (currentSampleRate * 60.0) / currentBPM;
+            double bufferStartPpq = ppqPosition;
+            double bufferDurationPpq = buffer.getNumSamples() / samplesPerBeat;
+            double bufferEndPpq = bufferStartPpq + bufferDurationPpq;
+
+            // Current bar start in PPQ
+            double currentBarStartPpq = currentBar * barLengthPpq;
+
+            // Ticks per quarter note in the generated buffer
+            const double ticksPerQuarter = 960.0;  // DrummerEngine::PPQ
+
+            for (const auto metadata : generatedMidiBuffer)
+            {
+                auto msg = metadata.getMessage();
+
+                // Convert tick timestamp to PPQ position relative to bar start
+                double eventTickInBar = msg.getTimeStamp();
+                double eventPpqInBar = eventTickInBar / ticksPerQuarter;
+                double eventAbsolutePpq = currentBarStartPpq + eventPpqInBar;
+
+                // Check if event falls within this buffer's time range
+                if (eventAbsolutePpq >= bufferStartPpq && eventAbsolutePpq < bufferEndPpq)
+                {
+                    // Convert to sample position within buffer
+                    double ppqOffset = eventAbsolutePpq - bufferStartPpq;
+                    int samplePosition = static_cast<int>(ppqOffset * samplesPerBeat);
+                    samplePosition = juce::jlimit(0, buffer.getNumSamples() - 1, samplePosition);
+
+                    midiMessages.addEvent(msg, samplePosition);
+                }
+            }
+        }
+    }
+    else
+    {
+        // Not playing - reset state
+        generatedMidiBuffer.clear();
+        lastGeneratedBar = -1;  // Reset so we regenerate when play starts
     }
 
-    // Pass through audio unchanged (we're a MIDI effect)
-    // The audio is only used for Follow Mode analysis
+    // Clear output audio - we're a MIDI-only plugin
+    // Audio input is only used for Follow Mode analysis, we don't pass it through
+    buffer.clear();
 }
 
 void DrummerCloneAudioProcessor::updatePlayheadInfo(juce::AudioPlayHead* head)
@@ -286,42 +361,93 @@ void DrummerCloneAudioProcessor::updatePlayheadInfo(juce::AudioPlayHead* head)
     {
         if (auto position = head->getPosition())
         {
+            // Get tempo from DAW
             if (position->getBpm().hasValue())
                 currentBPM = *position->getBpm();
 
+            // Get position from DAW
             if (position->getPpqPosition().hasValue())
                 ppqPosition = *position->getPpqPosition();
 
+            // Get time signature from DAW
+            if (position->getTimeSignature().hasValue())
+            {
+                auto timeSig = *position->getTimeSignature();
+                timeSignatureNumerator = timeSig.numerator;
+                timeSignatureDenominator = timeSig.denominator;
+            }
+
+            // Get transport state from DAW
             isPlaying = position->getIsPlaying();
         }
+    }
+    else
+    {
+        // No playhead - can't generate properly synced MIDI
+        isPlaying = false;
     }
 }
 
 void DrummerCloneAudioProcessor::processFollowMode(const juce::AudioBuffer<float>& buffer,
                                                    const juce::MidiBuffer& midi)
 {
+    // Only process follow mode when DAW is playing
+    if (!isPlaying)
+        return;
+
     if (followSourceIsAudio)
     {
         // Analyze audio for transients
         auto detectedOnsets = transientDetector.process(buffer);
 
-        if (!detectedOnsets.empty())
+        // Feed transients to the groove learner (protected by lock)
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+
+        auto learnerState = grooveLearner.getState();
+
+        // Only process if we're learning or have onsets to analyze
+        if (learnerState == GrooveLearner::State::Learning)
         {
-            // Generate groove template from audio transients
+            // Update learner with tempo and time signature
+            grooveLearner.setBPM(currentBPM);
+            grooveLearner.setTimeSignature(timeSignatureNumerator, timeSignatureDenominator);
+
+            // Process onsets through the learner
+            grooveLearner.processOnsets(detectedOnsets, ppqPosition, buffer.getNumSamples());
+
+            // Update progress display
+            grooveLockPercentage = grooveLearner.getLearningProgress() * 100.0f;
+
+            // Check if learning auto-completed (locked)
+            if (grooveLearner.getState() == GrooveLearner::State::Locked)
+            {
+                currentGroove = grooveLearner.getGrooveTemplate();
+                DBG("DrummerClone: Groove learning auto-locked after " << grooveLearner.getBarsLearned() << " bars");
+            }
+        }
+        else if (learnerState == GrooveLearner::State::Locked)
+        {
+            // Use the locked groove
+            currentGroove = grooveLearner.getGrooveTemplate();
+            grooveLockPercentage = 100.0f;
+        }
+        else if (!detectedOnsets.empty())
+        {
+            // Idle state with onsets - do real-time analysis (no learning)
             currentGroove = grooveTemplateGenerator.generateFromOnsets(
                 detectedOnsets, currentBPM, currentSampleRate);
-
             grooveFollower.update(currentGroove);
             grooveLockPercentage = grooveFollower.getLockPercentage();
         }
     }
     else
     {
-        // Analyze MIDI for groove
+        // Analyze MIDI for groove (real-time only for now)
         auto extractedGroove = midiGrooveExtractor.extractFromBuffer(midi);
 
         if (extractedGroove.noteCount > 0)
         {
+            const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
             currentGroove = grooveTemplateGenerator.generateFromMidi(
                 extractedGroove, currentBPM);
 
@@ -329,6 +455,29 @@ void DrummerCloneAudioProcessor::processFollowMode(const juce::AudioBuffer<float
             grooveLockPercentage = grooveFollower.getLockPercentage();
         }
     }
+}
+
+void DrummerCloneAudioProcessor::startGrooveLearning()
+{
+    const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+    grooveLearner.startLearning();
+    needsRegeneration.store(true);
+}
+
+void DrummerCloneAudioProcessor::lockGroove()
+{
+    const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+    grooveLearner.lockGroove();
+    needsRegeneration.store(true);
+}
+
+void DrummerCloneAudioProcessor::resetGrooveLearning()
+{
+    const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+    grooveLearner.reset();
+    currentGroove.reset();
+    grooveLockPercentage = 0.0f;
+    needsRegeneration.store(true);
 }
 
 void DrummerCloneAudioProcessor::processMidiInput(const juce::MidiBuffer& midiMessages)
@@ -423,8 +572,29 @@ void DrummerCloneAudioProcessor::pruneOldMidiEvents()
 
 void DrummerCloneAudioProcessor::generateDrumPattern()
 {
-    // Get current bar number
-    int currentBar = static_cast<int>(ppqPosition / 4.0);
+    // Update engine with current time signature from DAW
+    drummerEngine.setTimeSignature(timeSignatureNumerator, timeSignatureDenominator);
+
+    // Update kit piece enable mask from parameters
+    DrummerEngine::KitEnableMask kitMask;
+    if (auto* p = parameters.getRawParameterValue("kitKick"))
+        kitMask.kick = p->load() > 0.5f;
+    if (auto* p = parameters.getRawParameterValue("kitSnare"))
+        kitMask.snare = p->load() > 0.5f;
+    if (auto* p = parameters.getRawParameterValue("kitHiHat"))
+        kitMask.hihat = p->load() > 0.5f;
+    if (auto* p = parameters.getRawParameterValue("kitToms"))
+        kitMask.toms = p->load() > 0.5f;
+    if (auto* p = parameters.getRawParameterValue("kitCymbals"))
+        kitMask.cymbals = p->load() > 0.5f;
+    if (auto* p = parameters.getRawParameterValue("kitPercussion"))
+        kitMask.percussion = p->load() > 0.5f;
+    drummerEngine.setKitEnableMask(kitMask);
+
+    // Calculate bar length based on time signature
+    // PPQ position is in quarter notes
+    double barLengthInQuarters = timeSignatureNumerator * (4.0 / timeSignatureDenominator);
+    int currentBar = static_cast<int>(ppqPosition / barLengthInQuarters);
 
     // Only regenerate if we're at a new bar
     if (currentBar != lastGeneratedBar)
@@ -530,10 +700,23 @@ void DrummerCloneAudioProcessor::generateDrumPattern()
 bool DrummerCloneAudioProcessor::isBarBoundary(double ppq, double bpm)
 {
     juce::ignoreUnused(bpm);
-    // Check if we're within a small window of a bar boundary
-    double barLength = 4.0;  // 4 beats per bar
-    double position = std::fmod(ppq, barLength);
-    return position < 0.01 || position > (barLength - 0.01);
+    // Use time signature from DAW to determine bar length
+    double barLength = timeSignatureNumerator * (4.0 / timeSignatureDenominator);
+    int currentBar = static_cast<int>(std::floor(ppq / barLength));
+
+    // Only return true when we've entered a new bar
+    if (currentBar != lastGeneratedBar && lastGeneratedBar >= 0)
+    {
+        return true;
+    }
+
+    // First bar after starting playback
+    if (lastGeneratedBar < 0)
+    {
+        return true;
+    }
+
+    return false;
 }
 
 void DrummerCloneAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
@@ -550,6 +733,14 @@ void DrummerCloneAudioProcessor::parameterChanged(const juce::String& parameterI
     {
         followSensitivity = newValue;
         transientDetector.setSensitivity(newValue);
+    }
+    else if (parameterID == PARAM_DRUMMER)
+    {
+        // Update the drummer engine when drummer selection changes
+        // The parameter is normalized 0-1, so convert to drummer index (0-28)
+        int drummerIndex = static_cast<int>(std::round(newValue * 28.0f));
+        drummerEngine.setDrummer(drummerIndex);
+        needsRegeneration.store(true);
     }
     else if (parameterID == "fillTrigger")
     {
