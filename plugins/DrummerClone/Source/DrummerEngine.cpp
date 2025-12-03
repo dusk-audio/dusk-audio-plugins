@@ -158,13 +158,18 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
                                                float swingOverride,
                                                DrumSection section,
                                                HumanizeSettings humanize,
-                                               FillSettings fill)
+                                               FillSettings fill,
+                                               int barNumber)
 {
     juce::MidiBuffer buffer;
     juce::ignoreUnused(styleIndex);  // Style now comes from drummer's profile
 
     if (bars <= 0 || bpm <= 0.0)
         return buffer;
+
+    // CRITICAL: Seed random generator deterministically based on bar number
+    // This ensures the same bar always produces the same pattern
+    seedForBar(barNumber, static_cast<int>(section));
 
     // Get style from drummer profile
     juce::String style = currentProfile.style;
@@ -1253,6 +1258,29 @@ bool DrummerEngine::shouldTrigger(float probability)
     return random.nextFloat() < probability;
 }
 
+void DrummerEngine::seedForBar(int barNumber, int sectionIndex)
+{
+    // Create a deterministic seed from bar number, drummer, and section
+    // This ensures:
+    // 1. Same bar number + drummer + section = same pattern
+    // 2. Different bars get different patterns
+    // 3. Patterns repeat when looping (same bar number)
+    //
+    // Use bar number modulo 8 to create 8-bar phrase cycles
+    // This gives variety within an 8-bar phrase but repeats for longer loops
+    int barInPhrase = barNumber % 8;
+
+    uint64_t seed = baseSeed;
+    seed ^= static_cast<uint64_t>(barInPhrase) * 0x9E3779B97F4A7C15ULL;  // Golden ratio hash
+    seed ^= static_cast<uint64_t>(currentDrummer) * 0x517CC1B727220A95ULL;
+    seed ^= static_cast<uint64_t>(sectionIndex) * 0x2545F4914F6CDD1DULL;
+
+    random.setSeed(static_cast<juce::int64>(seed));
+
+    // Also seed the variation engine to keep it deterministic
+    variationEngine.prepare(static_cast<uint32_t>(seed & 0xFFFFFFFF));
+}
+
 float DrummerEngine::getComplexityProbability(float complexity, float baseProb)
 {
     // Scale probability by complexity (1-10)
@@ -1262,6 +1290,11 @@ float DrummerEngine::getComplexityProbability(float complexity, float baseProb)
 
 void DrummerEngine::addNote(juce::MidiBuffer& buffer, int pitch, int velocity, int startTick, int durationTicks)
 {
+    // Check kit mask - reverse lookup pitch to element and verify it's enabled
+    auto element = midiNoteMap.getElementForNote(pitch);
+    if (element != DrumMapping::NUM_ELEMENTS && !isElementEnabled(element))
+        return;  // Skip this note - kit piece is disabled
+
     // Store tick position in the timestamp - the processor will convert to sample positions
     // based on the current playhead position and tempo
     // Using tick value directly as sample position for storage (processor does conversion)

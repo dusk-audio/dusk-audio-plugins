@@ -115,6 +115,18 @@ namespace DrumMapping
             return 36; // Default to kick
         }
 
+        // Reverse lookup: get the drum element for a MIDI note
+        // Returns NUM_ELEMENTS if note not found in current mapping
+        DrumElement getElementForNote(int midiNote) const
+        {
+            for (int i = 0; i < NUM_ELEMENTS; ++i)
+            {
+                if (noteMap[i] == midiNote)
+                    return static_cast<DrumElement>(i);
+            }
+            return NUM_ELEMENTS; // Not found
+        }
+
         // Set a custom MIDI note for a drum element
         void setNoteForElement(DrumElement element, int midiNote)
         {

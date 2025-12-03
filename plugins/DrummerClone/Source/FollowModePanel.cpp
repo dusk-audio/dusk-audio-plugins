@@ -42,7 +42,7 @@ FollowModePanel::FollowModePanel(DrummerCloneAudioProcessor& processor)
     instructionLabel.setText("Route audio via sidechain, press Learn, play 4 bars",
                             juce::dontSendNotification);
     instructionLabel.setColour(juce::Label::textColourId, juce::Colour(120, 120, 130));
-    instructionLabel.setFont(juce::Font(10.0f));
+    instructionLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     instructionLabel.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(instructionLabel);
 
@@ -66,7 +66,7 @@ FollowModePanel::FollowModePanel(DrummerCloneAudioProcessor& processor)
     // Status label
     statusLabel.setText("Idle", juce::dontSendNotification);
     statusLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
-    statusLabel.setFont(juce::Font(11.0f));
+    statusLabel.setFont(juce::Font(juce::FontOptions().withHeight(11.0f)));
     statusLabel.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(statusLabel);
 
@@ -78,24 +78,24 @@ FollowModePanel::FollowModePanel(DrummerCloneAudioProcessor& processor)
     // Phase 3: Genre detection label
     genreLabel.setText("Genre:", juce::dontSendNotification);
     genreLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    genreLabel.setFont(juce::Font(10.0f));
+    genreLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     addAndMakeVisible(genreLabel);
 
     detectedGenreLabel.setText("--", juce::dontSendNotification);
     detectedGenreLabel.setColour(juce::Label::textColourId, juce::Colour(150, 200, 255));
-    detectedGenreLabel.setFont(juce::Font(10.0f, juce::Font::bold));
+    detectedGenreLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Bold")));
     addAndMakeVisible(detectedGenreLabel);
 
     // Phase 3: Tempo drift label
     tempoDriftLabel.setText("Timing: --", juce::dontSendNotification);
     tempoDriftLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    tempoDriftLabel.setFont(juce::Font(10.0f));
+    tempoDriftLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     addAndMakeVisible(tempoDriftLabel);
 
     // Phase 3: Confidence label
     confidenceLabel.setText("Confidence: 0%", juce::dontSendNotification);
     confidenceLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    confidenceLabel.setFont(juce::Font(10.0f));
+    confidenceLabel.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
     addAndMakeVisible(confidenceLabel);
 }
 
@@ -170,7 +170,7 @@ void FollowModePanel::paint(juce::Graphics& g)
 
     // Title
     g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(12.0f, juce::Font::bold));
+    g.setFont(juce::Font(juce::FontOptions().withHeight(12.0f).withStyle("Bold")));
     g.drawText("FOLLOW MODE", bounds.removeFromTop(25).reduced(10, 5), juce::Justification::left);
 
     // Activity LED

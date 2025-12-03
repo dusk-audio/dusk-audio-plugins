@@ -96,7 +96,8 @@ public:
                                     float swingOverride,
                                     DrumSection section = DrumSection::Verse,
                                     HumanizeSettings humanize = HumanizeSettings(),
-                                    FillSettings fill = FillSettings());
+                                    FillSettings fill = FillSettings(),
+                                    int barNumber = 0);  // Bar number for deterministic seeding
 
     /**
      * Generate a fill
@@ -267,11 +268,12 @@ public:
             denominator = 4;
         } else if ((denominator & (denominator - 1)) != 0) {
             // Not a power of two - find nearest power of two
-            int original = denominator;
             int lower = 1;
             while (lower * 2 < denominator) lower *= 2;
             int upper = lower * 2;
+            int original = denominator;  // Store before changing
             denominator = (denominator - lower < upper - denominator) ? lower : upper;
+            juce::ignoreUnused(original);  // Used in debug builds
             DBG("DrummerEngine::setTimeSignature: Denominator " << original
                 << " is not a power of two, clamping to " << denominator);
         }
@@ -291,6 +293,13 @@ private:
     int samplesPerBlock = 512;
     int currentDrummer = 0;
     juce::Random random;
+
+    // Base seed for deterministic pattern generation
+    // This creates repeatable patterns while still allowing variation between bars
+    uint64_t baseSeed = 0x12345678;
+
+    // Seed the random generator for a specific bar to ensure deterministic patterns
+    void seedForBar(int barNumber, int sectionIndex);
 
     // Drummer personality system
     DrummerDNA drummerDNA;
