@@ -26,6 +26,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.1f;
         p.preferredDivision = 8;
         p.swingDefault = 0.05f;
+        p.velocityFloor = 55;     // Consistent, solid foundation
+        p.velocityCeiling = 120;  // Strong but controlled
         profiles.push_back(p);
     }
     {
@@ -44,6 +46,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = -0.1f;
         p.preferredDivision = 8;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 60;     // Heavy hitter, always loud
+        p.velocityCeiling = 127;  // Max power
         profiles.push_back(p);
     }
     {
@@ -62,6 +66,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = -0.15f;
         p.preferredDivision = 8;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 70;     // Punk energy, always attacking
+        p.velocityCeiling = 125;  // Consistent high energy
         profiles.push_back(p);
     }
 
@@ -82,6 +88,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.0f;
         p.preferredDivision = 16;
         p.swingDefault = 0.1f;
+        p.velocityFloor = 35;     // Wide dynamic range for expression
+        p.velocityCeiling = 115;  // Not too loud, subtle peaks
         profiles.push_back(p);
     }
     {
@@ -100,6 +108,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.15f;
         p.preferredDivision = 16;
         p.swingDefault = 0.05f;
+        p.velocityFloor = 30;     // Very dynamic, soft sections
+        p.velocityCeiling = 110;  // Restrained peaks
         profiles.push_back(p);
     }
 
@@ -120,6 +130,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.2f;
         p.preferredDivision = 16;
         p.swingDefault = 0.25f;
+        p.velocityFloor = 50;     // Consistent groove foundation
+        p.velocityCeiling = 118;  // Snappy but not overwhelming
         profiles.push_back(p);
     }
     {
@@ -138,6 +150,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.05f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 60;     // Punchy trap sound
+        p.velocityCeiling = 125;  // Hard hitting
         profiles.push_back(p);
     }
 
@@ -158,6 +172,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.25f;
         p.preferredDivision = 16;
         p.swingDefault = 0.3f;
+        p.velocityFloor = 25;     // Whisper-soft ghost notes
+        p.velocityCeiling = 100;  // Smooth, never harsh
         profiles.push_back(p);
     }
     {
@@ -176,6 +192,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.1f;
         p.preferredDivision = 16;
         p.swingDefault = 0.2f;
+        p.velocityFloor = 30;     // Wide range for gospel dynamics
+        p.velocityCeiling = 120;  // Big dynamic peaks
         profiles.push_back(p);
     }
 
@@ -196,6 +214,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.0f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 80;     // Consistent machine-like
+        p.velocityCeiling = 110;  // Compressed, punchy
         profiles.push_back(p);
     }
     {
@@ -214,6 +234,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.0f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 70;     // Tight, programmed feel
+        p.velocityCeiling = 115;  // Some dynamics allowed
         profiles.push_back(p);
     }
 
@@ -234,6 +256,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.1f;
         p.preferredDivision = 8;
         p.swingDefault = 0.15f;
+        p.velocityFloor = 30;     // Delicate touch
+        p.velocityCeiling = 95;   // Never overpowers vocalist
         profiles.push_back(p);
     }
     {
@@ -252,8 +276,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.2f;
         p.preferredDivision = 8;
         p.swingDefault = 0.2f;
-        p.velocityFloor = 30;
-        p.velocityCeiling = 100;
+        p.velocityFloor = 25;     // Brush dynamics, very soft
+        p.velocityCeiling = 90;   // Warm, organic peaks
         profiles.push_back(p);
     }
     {
@@ -272,6 +296,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.05f;
         p.preferredDivision = 8;
         p.swingDefault = 0.1f;
+        p.velocityFloor = 40;     // Country consistency
+        p.velocityCeiling = 105;  // Room for accents
         profiles.push_back(p);
     }
     {
@@ -290,8 +316,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.15f;
         p.preferredDivision = 8;
         p.swingDefault = 0.18f;
-        p.velocityFloor = 25;
-        p.velocityCeiling = 90;
+        p.velocityFloor = 20;     // Whisper quiet possible
+        p.velocityCeiling = 85;   // Intimate, never loud
         profiles.push_back(p);
     }
 
@@ -312,6 +338,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.0f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 75;     // Hard trap hits
+        p.velocityCeiling = 127;  // Maximum impact
         profiles.push_back(p);
     }
     {
@@ -330,6 +358,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.05f;
         p.preferredDivision = 16;
         p.swingDefault = 0.05f;
+        p.velocityFloor = 65;     // Melodic trap balance
+        p.velocityCeiling = 118;  // Room for dynamics
         profiles.push_back(p);
     }
     {
@@ -348,6 +378,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = -0.05f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 85;     // Dark and heavy
+        p.velocityCeiling = 127;  // Brutal maximum
         profiles.push_back(p);
     }
     {
@@ -366,6 +398,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.1f;
         p.preferredDivision = 16;
         p.swingDefault = 0.1f;
+        p.velocityFloor = 50;     // Lo-fi laid back
+        p.velocityCeiling = 105;  // Not too aggressive
         profiles.push_back(p);
     }
 
@@ -386,6 +420,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = -0.2f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 80;     // Metal intensity
+        p.velocityCeiling = 127;  // Full power
         profiles.push_back(p);
     }
     {
@@ -404,6 +440,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.05f;
         p.preferredDivision = 8;
         p.swingDefault = 0.08f;
+        p.velocityFloor = 50;     // Classic rock dynamics
+        p.velocityCeiling = 115;  // Tasteful, not excessive
         profiles.push_back(p);
     }
 
@@ -424,6 +462,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.2f;
         p.preferredDivision = 8;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 35;     // Atmospheric dynamics
+        p.velocityCeiling = 120;  // Build to crescendos
         profiles.push_back(p);
     }
     {
@@ -442,6 +482,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.0f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 40;     // Precise control needed
+        p.velocityCeiling = 118;  // Technical but not harsh
         profiles.push_back(p);
     }
 
@@ -462,6 +504,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.3f;
         p.preferredDivision = 16;
         p.swingDefault = 0.35f;
+        p.velocityFloor = 40;     // Soulful dynamics
+        p.velocityCeiling = 110;  // Warm, never harsh
         profiles.push_back(p);
     }
     {
@@ -480,6 +524,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.25f;
         p.preferredDivision = 16;
         p.swingDefault = 0.3f;
+        p.velocityFloor = 45;     // G-funk bounce
+        p.velocityCeiling = 112;  // Funky but smooth
         profiles.push_back(p);
     }
 
@@ -500,6 +546,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.2f;
         p.preferredDivision = 16;
         p.swingDefault = 0.25f;
+        p.velocityFloor = 30;     // 90s smooth dynamics
+        p.velocityCeiling = 100;  // Silky smooth peaks
         profiles.push_back(p);
     }
     {
@@ -518,6 +566,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.15f;
         p.preferredDivision = 16;
         p.swingDefault = 0.15f;
+        p.velocityFloor = 35;     // Modern R&B precision
+        p.velocityCeiling = 108;  // Impactful but controlled
         profiles.push_back(p);
     }
 
@@ -538,6 +588,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = 0.0f;
         p.preferredDivision = 16;
         p.swingDefault = 0.0f;
+        p.velocityFloor = 85;     // Techno machine consistency
+        p.velocityCeiling = 115;  // Driving but not fatiguing
         profiles.push_back(p);
     }
     {
@@ -556,6 +608,8 @@ void DrummerDNA::createDefaultProfiles()
         p.laidBack = -0.1f;
         p.preferredDivision = 16;
         p.swingDefault = 0.1f;
+        p.velocityFloor = 60;     // Breakbeat dynamics
+        p.velocityCeiling = 125;  // Energy and power
         profiles.push_back(p);
     }
 

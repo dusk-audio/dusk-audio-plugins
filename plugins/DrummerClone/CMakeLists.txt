@@ -51,6 +51,8 @@ target_sources(DrummerClone
         Source/GrooveTemplateGenerator.h
         Source/GrooveFollower.cpp
         Source/GrooveFollower.h
+        Source/GrooveLearner.cpp
+        Source/GrooveLearner.h
         Source/DrummerEngine.cpp
         Source/DrummerEngine.h
         Source/FollowModePanel.cpp
@@ -65,6 +67,8 @@ target_sources(DrummerClone
         Source/StepSequencer.h
         Source/ProfileEditorPanel.cpp
         Source/ProfileEditorPanel.h
+        Source/PatternLibrary.cpp
+        Source/PatternLibrary.h
 )
 
 # Preprocessor definitions

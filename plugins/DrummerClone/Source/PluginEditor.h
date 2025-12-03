@@ -73,6 +73,8 @@ private:
     juce::Label xyLabel;
 
     // ========== TOP BAR (Global Controls) ==========
+    juce::Slider swingSlider;
+    juce::Label swingLabel;
     juce::Slider complexitySlider;
     juce::Label complexityLabel;
     juce::Slider loudnessSlider;
@@ -144,10 +146,22 @@ private:
     juce::TextButton profileEditorToggleButton;
     bool profileEditorVisible = false;
 
+    // ========== KIT ENABLE PANEL ==========
+    juce::Label kitLabel;
+    juce::ToggleButton kitKickToggle;
+    juce::ToggleButton kitSnareToggle;
+    juce::ToggleButton kitHiHatToggle;
+    juce::ToggleButton kitTomsToggle;
+    juce::ToggleButton kitCymbalsToggle;
+    juce::ToggleButton kitPercussionToggle;
+    juce::TextButton kitToggleButton;
+    bool kitPanelVisible = false;
+
     // ========== STATUS BAR ==========
     juce::Label statusLabel;
 
     // Parameter attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> swingAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> complexityAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loudnessAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> styleAttachment;
@@ -172,6 +186,14 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sectionCCAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> fillCCAttachment;
 
+    // Kit enable attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitKickAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitSnareAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitHiHatAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitTomsAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitCymbalsAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> kitPercussionAttachment;
+
     // Setup helpers
     void setupLibraryPanel();
     void setupXYPad();
@@ -184,10 +206,15 @@ private:
     void setupHumanizationPanel();
     void setupMidiCCPanel();
     void setupProfileEditorPanel();
+    void setupKitPanel();
     void setupStatusBar();
 
     void updateStatusBar();
     void exportToMidiFile();
+    void updateDrummerListForStyle(int styleIndex);
+
+    // Mapping from filtered drummer combo index to global drummer index
+    std::vector<int> filteredDrummerIndices;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DrummerCloneAudioProcessorEditor)
 };

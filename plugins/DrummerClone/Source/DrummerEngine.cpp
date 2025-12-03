@@ -9,6 +9,14 @@ DrummerEngine::DrummerEngine(juce::AudioProcessorValueTreeState& params)
     // Load default drummer profile
     currentProfile = drummerDNA.getProfile(0);
     variationEngine.prepare(static_cast<uint32_t>(random.nextInt()));
+
+    // Get parameter pointer for usePatternLibrary setting
+    // Parameter is added in PluginProcessor - if not found, default to enabled
+    if (auto* param = parameters.getRawParameterValue("usePatternLibrary"))
+        usePatternLibraryParam = param;
+
+    // Pattern library is lazily initialized on first use when parameter is enabled
+    // This avoids unnecessary construction overhead when disabled
 }
 
 void DrummerEngine::prepare(double sr, int blockSize)
@@ -25,6 +33,111 @@ void DrummerEngine::reset()
     random.setSeedRandomly();
     variationEngine.reset();
     barsSinceLastFill = 0;
+}
+
+bool DrummerEngine::isElementEnabled(DrumMapping::DrumElement element) const
+{
+    using DE = DrumMapping::DrumElement;
+
+    switch (element)
+    {
+        case DE::KICK:
+            return kitMask.kick;
+
+        case DE::SNARE:
+        case DE::SIDE_STICK:
+        case DE::BRUSH_SWIRL:
+        case DE::BRUSH_SWEEP:
+        case DE::BRUSH_TAP:
+        case DE::BRUSH_SLAP:
+            return kitMask.snare;
+
+        case DE::HI_HAT_CLOSED:
+        case DE::HI_HAT_OPEN:
+        case DE::HI_HAT_PEDAL:
+            return kitMask.hihat;
+
+        case DE::TOM_HIGH:
+        case DE::TOM_MID:
+        case DE::TOM_LOW:
+        case DE::TOM_FLOOR:
+            return kitMask.toms;
+
+        case DE::CRASH_1:
+        case DE::CRASH_2:
+        case DE::RIDE:
+        case DE::RIDE_BELL:
+            return kitMask.cymbals;
+
+        case DE::TAMBOURINE:
+        case DE::COWBELL:
+        case DE::CLAP:
+        case DE::SHAKER:
+            return kitMask.percussion;
+
+        default:
+            return true;
+    }
+}
+
+void DrummerEngine::initPatternLibraryIfNeeded()
+{
+    // Already initialized or failed - nothing to do
+    if (patternLibraryInitialized || patternLibraryFailed)
+        return;
+
+    // Check if parameter says to use pattern library
+    // If parameter not found (null), default to enabling pattern library
+    bool shouldUse = true;
+    if (usePatternLibraryParam != nullptr)
+        shouldUse = usePatternLibraryParam->load() > 0.5f;
+
+    if (!shouldUse)
+    {
+        usePatternLibrary = false;
+        return;
+    }
+
+    // Lazy initialization - create and load pattern library
+    try
+    {
+        patternLibrary = std::make_unique<PatternLibrary>();
+        patternVariator = std::make_unique<PatternVariator>();
+
+        patternLibrary->loadBuiltInPatterns();
+
+        int numPatterns = patternLibrary->getNumPatterns();
+        if (numPatterns > 0)
+        {
+            DBG("DrummerEngine: Loaded " << numPatterns << " built-in patterns");
+            usePatternLibrary = true;
+            patternLibraryInitialized = true;
+        }
+        else
+        {
+            DBG("DrummerEngine: Pattern library loaded but empty, falling back to algorithmic generation");
+            patternLibrary.reset();
+            patternVariator.reset();
+            usePatternLibrary = false;
+            patternLibraryFailed = true;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        DBG("DrummerEngine: Failed to initialize pattern library: " << e.what());
+        patternLibrary.reset();
+        patternVariator.reset();
+        usePatternLibrary = false;
+        patternLibraryFailed = true;
+    }
+    catch (...)
+    {
+        DBG("DrummerEngine: Failed to initialize pattern library (unknown error)");
+        patternLibrary.reset();
+        patternVariator.reset();
+        usePatternLibrary = false;
+        patternLibraryFailed = true;
+    }
 }
 
 void DrummerEngine::setDrummer(int index)
@@ -48,9 +161,57 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
                                                FillSettings fill)
 {
     juce::MidiBuffer buffer;
+    juce::ignoreUnused(styleIndex);  // Style now comes from drummer's profile
 
     if (bars <= 0 || bpm <= 0.0)
         return buffer;
+
+    // Get style from drummer profile
+    juce::String style = currentProfile.style;
+
+    // Lazy-initialize pattern library if needed
+    initPatternLibraryIfNeeded();
+
+    // Try pattern library first (Phase 2 improvement)
+    if (usePatternLibrary && patternLibrary && patternLibrary->getNumPatterns() > 0)
+    {
+        buffer = generateFromPatternLibrary(bars, bpm, style, groove,
+                                            complexity, loudness, section, humanize);
+
+        // Handle fills with pattern library
+        barsSinceLastFill++;
+        bool triggerFill = fill.manualTrigger;
+
+        if (!triggerFill)
+        {
+            float baseFillProb = fill.frequency / 100.0f;
+            float fillProb = variationEngine.getFillProbability(barsSinceLastFill, currentProfile.fillHunger);
+            float variationProb = variationEngine.getVariationProbability(barsSinceLastFill);
+            float combinedProb = baseFillProb * fillProb * variationProb;
+
+            if (section == DrumSection::PreChorus || section == DrumSection::Bridge)
+                combinedProb *= 1.5f;
+
+            if (variationEngine.nextRandom() < combinedProb)
+                triggerFill = true;
+        }
+
+        if (triggerFill)
+        {
+            int numBeats = beatsPerBar();
+            int actualFillBeats = juce::jmin(fill.lengthBeats, numBeats);
+            int startTick = (bars - 1) * ticksPerBar(bpm) + (numBeats - actualFillBeats) * ticksPerBeat();
+
+            juce::MidiBuffer fillBuffer = generateFillFromLibrary(
+                actualFillBeats, bpm, fill.intensity / 100.0f, style, startTick);
+            buffer.addEvents(fillBuffer, 0, -1, 0);
+            barsSinceLastFill = 0;
+        }
+
+        return buffer;
+    }
+
+    // Fall back to algorithmic generation if no patterns available
 
     // Cache humanization settings for use in generation methods
     currentHumanize = humanize;
@@ -63,8 +224,9 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
     float effectiveComplexity = complexity * sectionDensity;
     float effectiveLoudnessBase = loudness * sectionLoudness;
 
-    // Get style hints
-    juce::String styleName = styleNames[juce::jlimit(0, styleNames.size() - 1, styleIndex)];
+    // Get style hints from DRUMMER'S style (each drummer has their own style)
+    // This makes each drummer play in their genre's style
+    juce::String styleName = currentProfile.style;
     DrumMapping::StyleHints hints = DrumMapping::getStyleHints(styleName);
 
     // Apply drummer personality to style hints
@@ -110,8 +272,8 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
     // Add crash at start of sections that need emphasis
     if (shouldAddCrashForSection(section))
     {
-        int crashNote = DrumMapping::getNoteForElement(DrumMapping::CRASH_1);
-        int kickNote = DrumMapping::getNoteForElement(DrumMapping::KICK);
+        int crashNote = getNoteForElement(DrumMapping::CRASH_1);
+        int kickNote = getNoteForElement(DrumMapping::KICK);
         int vel = applyVelocityHumanization(static_cast<int>(110.0f * (effectiveLoudness / 100.0f)), humanize);
         addNote(buffer, crashNote, vel, 0, PPQ);
         int kickVel = std::clamp(vel - 10, 1, 127);
@@ -132,6 +294,14 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
     if (effectiveComplexity > ghostThreshold && hints.ghostNoteProb > 0.0f)
     {
         generateGhostNotes(buffer, bars, bpm, hints, effectiveGroove, effectiveComplexity);
+    }
+
+    // Add percussion layer (shaker, tambourine, clap) based on complexity
+    // Percussion kicks in at moderate complexity for groove enhancement
+    float percThreshold = 4.0f;  // Start adding percussion at complexity 4+
+    if (effectiveComplexity > percThreshold)
+    {
+        generatePercussionPattern(buffer, bars, bpm, hints, effectiveGroove, effectiveComplexity, effectiveLoudness);
     }
 
     // Handle fill generation
@@ -170,9 +340,13 @@ juce::MidiBuffer DrummerEngine::generateRegion(int bars,
         // Apply drummer personality to fill intensity
         float effectiveFillIntensity = fillIntensity * (0.5f + currentProfile.aggression * 0.5f);
 
-        // Use toms based on drummer's tom preference
-        int startTick = (bars - 1) * ticksPerBar(bpm) + (4 - fillBeats) * PPQ;
-        juce::MidiBuffer fillBuffer = generateFill(fillBeats, bpm, effectiveFillIntensity * currentProfile.tomLove, startTick);
+        // Clamp fill beats to available beats in bar
+        int numBeats = beatsPerBar();
+        int actualFillBeats = juce::jmin(fillBeats, numBeats);
+
+        // Calculate start tick - fill starts at (numBeats - fillBeats) beats from bar start
+        int startTick = (bars - 1) * ticksPerBar(bpm) + (numBeats - actualFillBeats) * ticksPerBeat();
+        juce::MidiBuffer fillBuffer = generateFill(actualFillBeats, bpm, effectiveFillIntensity * currentProfile.tomLove, startTick);
         buffer.addEvents(fillBuffer, 0, -1, 0);
 
         barsSinceLastFill = 0;
@@ -186,56 +360,112 @@ void DrummerEngine::generateKickPattern(juce::MidiBuffer& buffer, int bars, doub
                                         const GrooveTemplate& groove,
                                         float complexity, float loudness)
 {
-    int kickNote = DrumMapping::getNoteForElement(DrumMapping::KICK);
+    int kickNote = getNoteForElement(DrumMapping::KICK);
     int barTicks = ticksPerBar(bpm);
+    int numBeats = beatsPerBar();
+    int numSixteenths = sixteenthsPerBar();
+
+    // Loudness scaling for kick (kicks should be prominent)
+    float loudnessScale = 0.7f + (loudness / 100.0f) * 0.5f;
+
+    // Apply style-specific push/pull to groove
+    float stylePushPull = hints.pushPull;
 
     for (int bar = 0; bar < bars; ++bar)
     {
         int barOffset = bar * barTicks;
 
-        // Basic pattern: kick on beats 1 and 3
-        for (int beat = 0; beat < 4; ++beat)
+        // FOUR ON FLOOR (Electronic/House)
+        if (hints.fourOnFloor)
         {
-            int tick = barOffset + (beat * PPQ);
-
-            // Always hit beats 1 and 3
-            if (beat == 0 || beat == 2)
+            // Kick on every beat - the foundation of house music
+            for (int beat = 0; beat < numBeats; ++beat)
             {
-                int vel = calculateVelocity(110, loudness, groove, tick);
+                int tick = barOffset + (beat * ticksPerBeat());
+                // Beat 1 slightly accented
+                int baseVel = (beat == 0) ? 118 : 110;
+                int vel = static_cast<int>(baseVel * loudnessScale);
                 vel = applyVelocityHumanization(vel, currentHumanize);
-                tick = applyMicroTiming(tick, groove, bpm);
-                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
-                addNote(buffer, kickNote, vel, tick, PPQ / 4);
-            }
-            // Add variations on beats 2 and 4 based on complexity
-            else if (complexity > 5.0f && shouldTrigger(hints.syncopation * 0.3f))
-            {
-                int vel = calculateVelocity(90, loudness, groove, tick);
-                vel = applyVelocityHumanization(vel, currentHumanize);
+                vel = juce::jlimit(80, 127, vel);
                 tick = applyMicroTiming(tick, groove, bpm);
                 tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                 addNote(buffer, kickNote, vel, tick, PPQ / 4);
             }
         }
-
-        // Add syncopated kicks based on complexity
-        if (complexity > 3.0f)
+        else
         {
-            // 16th note positions for syncopation
-            std::vector<int> syncopationPositions = {3, 7, 11, 15};  // Upbeats
-
-            for (int pos : syncopationPositions)
+            // Standard kick pattern: beat 1 and beat 3
+            for (int beat = 0; beat < numBeats; ++beat)
             {
-                if (shouldTrigger(getComplexityProbability(complexity, hints.syncopation * 0.2f)))
+                int tick = barOffset + (beat * ticksPerBeat());
+                bool isMainKickBeat = (beat == 0) || (beat == 2 && numBeats >= 4);
+
+                if (isMainKickBeat)
                 {
-                    int tick = barOffset + (pos * ticksPerSixteenth());
-                    int vel = calculateVelocity(85, loudness, groove, tick);
+                    int baseVel = (beat == 0) ? 115 : 105;
+                    int vel = static_cast<int>(baseVel * loudnessScale);
                     vel = applyVelocityHumanization(vel, currentHumanize);
-                    tick = applySwing(tick, groove.swing16, 16);
+                    vel = juce::jlimit(60, 127, vel);
                     tick = applyMicroTiming(tick, groove, bpm);
                     tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
                     addNote(buffer, kickNote, vel, tick, PPQ / 4);
                 }
+            }
+        }
+
+        // SYNCOPATED KICKS based on style
+        if (hints.kickOnAnd || hints.kickSyncopation > 0.0f)
+        {
+            // "And of 4" - common in rock, creates drive going into next bar
+            if (hints.kickOnAnd && numBeats >= 4 && shouldTrigger(0.5f + complexity * 0.05f))
+            {
+                int tick = barOffset + (15 * ticksPerSixteenth());  // Position 15 = "and of 4"
+                int vel = static_cast<int>(95.0f * loudnessScale);
+                vel = applyVelocityHumanization(vel, currentHumanize);
+                vel = juce::jlimit(55, 110, vel);
+                tick = applySwing(tick, groove.swing16 + hints.swingAmount, 16);
+                tick = applyMicroTiming(tick, groove, bpm);
+                addNote(buffer, kickNote, vel, tick, PPQ / 4);
+            }
+
+            // Additional syncopation based on style
+            if (hints.kickSyncopation > 0.1f && complexity > 3.0f)
+            {
+                // Hip-hop/R&B style syncopated kicks
+                // Common positions: "and of 2" (pos 6), "a of 1" (pos 3), "e of 3" (pos 9)
+                std::vector<std::pair<int, float>> syncopatedPositions = {
+                    {6, 0.4f},   // "and of 2" - very common
+                    {3, 0.25f},  // "a of 1" - before beat 2
+                    {10, 0.3f},  // "and of 3" - leading to beat 4
+                };
+
+                for (const auto& [pos, baseProb] : syncopatedPositions)
+                {
+                    if (pos < numSixteenths && shouldTrigger(baseProb * hints.kickSyncopation * (complexity / 10.0f)))
+                    {
+                        int tick = barOffset + (pos * ticksPerSixteenth());
+                        int vel = static_cast<int>(85.0f * loudnessScale);
+                        vel = applyVelocityHumanization(vel, currentHumanize);
+                        vel = juce::jlimit(50, 100, vel);
+                        tick = applySwing(tick, groove.swing16 + hints.swingAmount, 16);
+                        tick = applyMicroTiming(tick, groove, bpm);
+                        addNote(buffer, kickNote, vel, tick, PPQ / 4);
+                    }
+                }
+            }
+        }
+
+        // TRAP-STYLE 808 kicks - sparse but heavy
+        if (hints.halfTimeSnare && complexity > 2.0f)
+        {
+            // Trap kicks are often on beat 1 and random syncopated positions
+            // Add occasional kick on "and of 1" for that trap bounce
+            if (shouldTrigger(0.3f))
+            {
+                int tick = barOffset + (2 * ticksPerSixteenth());  // "and of 1"
+                int vel = static_cast<int>(100.0f * loudnessScale);
+                vel = juce::jlimit(70, 115, vel);
+                addNote(buffer, kickNote, vel, tick, PPQ / 2);  // Longer 808 kick
             }
         }
     }
@@ -246,46 +476,132 @@ void DrummerEngine::generateSnarePattern(juce::MidiBuffer& buffer, int bars, dou
                                          const GrooveTemplate& groove,
                                          float complexity, float loudness)
 {
-    int snareNote = DrumMapping::getNoteForElement(DrumMapping::SNARE);
+    int snareNote = getNoteForElement(DrumMapping::SNARE);
+    int rimNote = getNoteForElement(DrumMapping::SIDE_STICK);
     int barTicks = ticksPerBar(bpm);
+    int numBeats = beatsPerBar();
+    int numSixteenths = sixteenthsPerBar();
+
+    // Loudness scaling for snare
+    float loudnessScale = 0.7f + (loudness / 100.0f) * 0.5f;
+
+    // Use rim click for certain styles (ballad, bossa)
+    int mainSnareNote = hints.rimClickInstead ? rimNote : snareNote;
 
     for (int bar = 0; bar < bars; ++bar)
     {
         int barOffset = bar * barTicks;
 
-        // Basic backbeat: snare on beats 2 and 4
-        for (int beat = 0; beat < 4; ++beat)
+        // HALF-TIME SNARE (Trap style) - snare only on beat 3
+        if (hints.halfTimeSnare)
         {
-            int tick = barOffset + (beat * PPQ);
-
-            if (beat == 1 || beat == 3)
+            if (numBeats >= 4)
             {
-                int vel = calculateVelocity(100, loudness, groove, tick);
+                int tick = barOffset + (2 * ticksPerBeat());  // Beat 3
+                int vel = static_cast<int>(115.0f * loudnessScale);
                 vel = applyVelocityHumanization(vel, currentHumanize);
+                vel = juce::jlimit(85, 127, vel);
                 tick = applyMicroTiming(tick, groove, bpm);
                 tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
-                addNote(buffer, snareNote, vel, tick, PPQ / 4);
+                addNote(buffer, mainSnareNote, vel, tick, PPQ / 4);
+            }
+        }
+        else
+        {
+            // STANDARD BACKBEAT - snare on beats 2 and 4
+            for (int beat = 0; beat < numBeats; ++beat)
+            {
+                int tick = barOffset + (beat * ticksPerBeat());
+                bool isBackbeat = (beat == 1) || (beat == 3 && numBeats >= 4);
+
+                if (isBackbeat)
+                {
+                    // Beat 4 slightly louder for emphasis going into next bar
+                    int baseVel = (beat == 3) ? 112 : 108;
+                    int vel = static_cast<int>(baseVel * loudnessScale);
+                    vel = applyVelocityHumanization(vel, currentHumanize);
+                    vel = juce::jlimit(70, 127, vel);
+                    tick = applyMicroTiming(tick, groove, bpm);
+                    tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
+                    addNote(buffer, mainSnareNote, vel, tick, PPQ / 4);
+                }
             }
         }
 
-        // Add snare variations at higher complexity
-        if (complexity > 6.0f)
+        // GHOST NOTES - the secret sauce for groove!
+        // Different genres use ghost notes differently
+        if (hints.ghostNoteProb > 0.0f && complexity > 3.0f)
         {
-            // Possible positions for additional snare hits
-            std::vector<int> variationPositions = {4, 12};  // Beat 1.5 and 3.5
+            // Ghost note positions and probabilities by style
+            // Hip-hop/R&B: heavy use of ghosts on the "e" and "a" (positions 1,3,5,7,9,11,13,15)
+            // Rock: lighter use, mainly before backbeats
+            // Trap: no ghost notes
 
-            for (int pos : variationPositions)
+            std::vector<std::pair<int, float>> ghostPositions;
+
+            if (hints.ghostNoteProb >= 0.3f)
             {
-                if (shouldTrigger(getComplexityProbability(complexity, 0.15f)))
+                // Heavy ghost notes (Hip-hop, R&B, Neo-soul)
+                // Classic "chick-a" pattern before backbeats
+                ghostPositions = {
+                    {3, 0.8f},   // "a" of 1 - right before beat 2 (most important!)
+                    {7, 0.6f},   // "a" of 2 - after beat 2
+                    {11, 0.8f},  // "a" of 3 - right before beat 4 (most important!)
+                    {15, 0.5f},  // "a" of 4 - turnaround
+                    {1, 0.4f},   // "e" of 1
+                    {5, 0.3f},   // "e" of 2
+                    {9, 0.4f},   // "e" of 3
+                    {13, 0.3f},  // "e" of 4
+                };
+            }
+            else if (hints.ghostNoteProb >= 0.15f)
+            {
+                // Medium ghost notes (Rock, Alternative)
+                ghostPositions = {
+                    {3, 0.6f},   // "a" of 1 - before beat 2
+                    {11, 0.6f},  // "a" of 3 - before beat 4
+                    {7, 0.3f},   // "a" of 2 - occasional
+                };
+            }
+            else
+            {
+                // Light ghost notes (Songwriter, Ballad)
+                ghostPositions = {
+                    {3, 0.4f},   // Just before beat 2
+                    {11, 0.4f},  // Just before beat 4
+                };
+            }
+
+            for (const auto& [pos, baseProb] : ghostPositions)
+            {
+                if (pos < numSixteenths && shouldTrigger(baseProb * hints.ghostNoteProb * (complexity / 7.0f)))
                 {
                     int tick = barOffset + (pos * ticksPerSixteenth());
-                    int vel = calculateVelocity(70, loudness, groove, tick);
-                    vel = applyVelocityHumanization(vel, currentHumanize);
-                    tick = applySwing(tick, groove.swing16, 16);
+                    // Ghost notes: 25-50 velocity (very quiet!)
+                    int vel = 25 + random.nextInt(25);
+                    vel = static_cast<int>(vel * loudnessScale);
+                    vel = juce::jlimit(20, 55, vel);
+                    tick = applySwing(tick, groove.swing16 + hints.swingAmount, 16);
                     tick = applyMicroTiming(tick, groove, bpm);
                     tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
-                    addNote(buffer, snareNote, vel, tick, PPQ / 4);
+                    addNote(buffer, snareNote, vel, tick, PPQ / 8);  // Short duration
                 }
+            }
+        }
+
+        // SNARE VARIATIONS at high complexity
+        if (complexity > 7.0f && !hints.halfTimeSnare)
+        {
+            // Occasional snare accent on upbeats for drive
+            if (numBeats >= 4 && shouldTrigger(0.15f))
+            {
+                int tick = barOffset + (14 * ticksPerSixteenth());  // "and" of 4
+                int vel = static_cast<int>(80.0f * loudnessScale);
+                vel = applyVelocityHumanization(vel, currentHumanize);
+                vel = juce::jlimit(60, 95, vel);
+                tick = applySwing(tick, groove.swing16 + hints.swingAmount, 16);
+                tick = applyMicroTiming(tick, groove, bpm);
+                addNote(buffer, snareNote, vel, tick, PPQ / 4);
             }
         }
     }
@@ -296,14 +612,48 @@ void DrummerEngine::generateHiHatPattern(juce::MidiBuffer& buffer, int bars, dou
                                          const GrooveTemplate& groove,
                                          float complexity, float loudness)
 {
-    int closedHat = DrumMapping::getNoteForElement(DrumMapping::HI_HAT_CLOSED);
-    int openHat = DrumMapping::getNoteForElement(DrumMapping::HI_HAT_OPEN);
+    int closedHat = getNoteForElement(DrumMapping::HI_HAT_CLOSED);
+    int openHat = getNoteForElement(DrumMapping::HI_HAT_OPEN);
     int barTicks = ticksPerBar(bpm);
+    int numSixteenths = sixteenthsPerBar();
 
-    // Determine subdivision based on style and groove
-    int division = (hints.primaryDivision == 8 || groove.primaryDivision == 8) ? 8 : 16;
-    int ticksPerDiv = (division == 8) ? ticksPerEighth() : ticksPerSixteenth();
-    int hitsPerBar = (division == 8) ? 8 : 16;
+    // Loudness scaling
+    float loudnessScale = 0.6f + (loudness / 100.0f) * 0.5f;
+
+    // TRAP ROLLING HI-HATS
+    if (hints.rollingHats)
+    {
+        generateTrapHiHats(buffer, bars, bpm, loudnessScale, complexity);
+        return;
+    }
+
+    // Determine division from style hints
+    int division = hints.hatDivision;
+    if (division != 8 && division != 16 && division != 32)
+        division = 8;  // Default to 8ths
+
+    // At low complexity, simplify to 8ths
+    if (complexity < 3.0f && division > 8)
+        division = 8;
+
+    int ticksPerDiv;
+    int hitsPerBar;
+
+    if (division == 32)
+    {
+        ticksPerDiv = PPQ / 8;  // 32nd notes
+        hitsPerBar = numSixteenths * 2;
+    }
+    else if (division == 16)
+    {
+        ticksPerDiv = ticksPerSixteenth();
+        hitsPerBar = numSixteenths;
+    }
+    else
+    {
+        ticksPerDiv = ticksPerEighth();
+        hitsPerBar = numSixteenths / 2;
+    }
 
     for (int bar = 0; bar < bars; ++bar)
     {
@@ -313,35 +663,162 @@ void DrummerEngine::generateHiHatPattern(juce::MidiBuffer& buffer, int bars, dou
         {
             int tick = barOffset + (hit * ticksPerDiv);
 
-            // Determine if this should be open hat
-            bool isOpen = hints.openHats && shouldTrigger(0.1f) && (hit % 4 == 3);  // Open on upbeats
+            // Determine open hat probability based on style
+            bool isUpbeat;
+            if (division == 8)
+                isUpbeat = (hit % 2 == 1);  // Upbeats in 8th pattern
+            else if (division == 16)
+                isUpbeat = (hit % 2 == 1);  // Every other 16th
+            else
+                isUpbeat = (hit % 4 == 2);  // Every other 16th in 32nd pattern
 
-            // Calculate velocity with accent pattern
-            int accentPos = hit % 16;
-            float accent = groove.accentPattern[accentPos];
-            int baseVel = isOpen ? 90 : 80;
-            baseVel = static_cast<int>(baseVel * accent);
+            // Open hats - Electronic/House style has open on every upbeat 8th
+            bool isOpen = false;
+            if (hints.hatOpenProb > 0.0f)
+            {
+                if (hints.hatAccentUpbeats && division == 16 && (hit % 4 == 2))
+                {
+                    // House style: open hat on the "and" of each beat
+                    isOpen = shouldTrigger(hints.hatOpenProb);
+                }
+                else if (isUpbeat)
+                {
+                    isOpen = shouldTrigger(hints.hatOpenProb * 0.5f);
+                }
+            }
 
-            int vel = calculateVelocity(baseVel, loudness, groove, tick, 8);
+            // Velocity pattern based on division and style
+            int baseVel;
+            if (hints.hatAccentUpbeats)
+            {
+                // Disco/Funk/House: accent the upbeats!
+                if (division == 8)
+                    baseVel = (hit % 2 == 1) ? 100 : 70;  // Upbeats louder
+                else if (division == 16)
+                    baseVel = ((hit % 4) == 2) ? 95 : ((hit % 4) == 0) ? 75 : 60;
+                else
+                    baseVel = 65;
+            }
+            else
+            {
+                // Standard: downbeats accented
+                if (division == 8)
+                {
+                    baseVel = (hit % 2 == 0) ? 95 : 75;
+                }
+                else if (division == 16)
+                {
+                    if (hit % 4 == 0)
+                        baseVel = 95;   // Downbeat
+                    else if (hit % 4 == 2)
+                        baseVel = 80;   // Offbeat 8th
+                    else
+                        baseVel = 65;   // 16th ghost
+                }
+                else
+                {
+                    // 32nd notes - very consistent, slightly lower
+                    baseVel = (hit % 2 == 0) ? 75 : 65;
+                }
+            }
+
+            // Open hats louder
+            if (isOpen)
+                baseVel = std::min(baseVel + 20, 110);
+
+            int vel = static_cast<int>(baseVel * loudnessScale);
             vel = applyVelocityHumanization(vel, currentHumanize);
+            vel = juce::jlimit(35, 115, vel);
 
-            // Apply swing for upbeats
+            // Apply swing
+            float swingAmt = (division == 8) ? groove.swing8 : groove.swing16;
+            swingAmt += hints.swingAmount;
             if (hit % 2 == 1)
             {
-                tick = applySwing(tick, (division == 16) ? groove.swing16 : groove.swing8, division);
+                tick = applySwing(tick, swingAmt, division);
             }
 
             tick = applyMicroTiming(tick, groove, bpm);
             tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
 
-            // Skip some hits at lower complexity
-            if (complexity < 4.0f && division == 16 && hit % 2 == 1)
+            // Sparseness at lower complexity (don't skip main beats though)
+            if (complexity < 5.0f && division == 16)
             {
-                if (!shouldTrigger(complexity / 5.0f))
+                bool isMain8th = (hit % 2 == 0);
+                if (!isMain8th && !shouldTrigger(0.4f + complexity * 0.12f))
                     continue;
             }
 
             addNote(buffer, isOpen ? openHat : closedHat, vel, tick, ticksPerDiv / 2);
+        }
+    }
+}
+
+// Trap-style rolling hi-hats with triplet patterns
+void DrummerEngine::generateTrapHiHats(juce::MidiBuffer& buffer, int bars, double bpm,
+                                        float loudnessScale, float complexity)
+{
+    int closedHat = getNoteForElement(DrumMapping::HI_HAT_CLOSED);
+    int barTicks = ticksPerBar(bpm);
+
+    for (int bar = 0; bar < bars; ++bar)
+    {
+        int barOffset = bar * barTicks;
+
+        // Trap hi-hats: mix of 8ths, 16ths, and 32nd rolls
+        // Basic pattern: 8th notes with occasional 16th/32nd bursts
+
+        for (int beat = 0; beat < 4; ++beat)
+        {
+            int beatOffset = barOffset + (beat * PPQ);
+
+            // Decide what pattern for this beat
+            float rollChance = 0.2f + complexity * 0.08f;  // More rolls at higher complexity
+            bool doRoll = shouldTrigger(rollChance);
+            bool doTriplet = !doRoll && shouldTrigger(0.15f);
+
+            if (doRoll)
+            {
+                // 32nd note roll for this beat (8 hits)
+                for (int i = 0; i < 8; ++i)
+                {
+                    int tick = beatOffset + (i * PPQ / 8);
+                    // Velocity ramp - often crescendo or decrescendo
+                    int vel = 60 + (shouldTrigger(0.5f) ? i * 5 : (7 - i) * 5);
+                    vel = static_cast<int>(vel * loudnessScale);
+                    vel = juce::jlimit(40, 100, vel);
+                    addNote(buffer, closedHat, vel, tick, PPQ / 16);
+                }
+            }
+            else if (doTriplet)
+            {
+                // Triplet pattern (3 notes in space of 2)
+                for (int i = 0; i < 3; ++i)
+                {
+                    int tick = beatOffset + (i * PPQ / 3);
+                    int vel = static_cast<int>((75 - i * 10) * loudnessScale);
+                    vel = juce::jlimit(45, 90, vel);
+                    addNote(buffer, closedHat, vel, tick, PPQ / 6);
+                }
+            }
+            else
+            {
+                // Standard 16th pattern for this beat (4 hits)
+                for (int i = 0; i < 4; ++i)
+                {
+                    int tick = beatOffset + (i * PPQ / 4);
+                    int vel;
+                    if (i == 0)
+                        vel = 85;  // Downbeat
+                    else if (i == 2)
+                        vel = 75;  // Offbeat
+                    else
+                        vel = 60;  // Ghost 16ths
+                    vel = static_cast<int>(vel * loudnessScale);
+                    vel = juce::jlimit(40, 95, vel);
+                    addNote(buffer, closedHat, vel, tick, PPQ / 8);
+                }
+            }
         }
     }
 }
@@ -351,9 +828,10 @@ void DrummerEngine::generateCymbals(juce::MidiBuffer& buffer, int bars, double b
                                     const GrooveTemplate& groove,
                                     float complexity, float loudness)
 {
-    int crashNote = DrumMapping::getNoteForElement(DrumMapping::CRASH_1);
-    int rideNote = DrumMapping::getNoteForElement(DrumMapping::RIDE);
+    int crashNote = getNoteForElement(DrumMapping::CRASH_1);
+    int rideNote = getNoteForElement(DrumMapping::RIDE);
     int barTicks = ticksPerBar(bpm);
+    int numBeats = beatsPerBar();
 
     // Crash at beginning of pattern (with probability)
     if (shouldTrigger(0.3f))
@@ -371,9 +849,9 @@ void DrummerEngine::generateCymbals(juce::MidiBuffer& buffer, int bars, double b
             int barOffset = bar * barTicks;
 
             // Ride pattern on quarter notes or 8ths
-            for (int beat = 0; beat < 4; ++beat)
+            for (int beat = 0; beat < numBeats; ++beat)
             {
-                int tick = barOffset + (beat * PPQ);
+                int tick = barOffset + (beat * ticksPerBeat());
                 int vel = calculateVelocity(85, loudness, groove, tick);
                 vel = applyVelocityHumanization(vel, currentHumanize);
                 tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
@@ -382,7 +860,7 @@ void DrummerEngine::generateCymbals(juce::MidiBuffer& buffer, int bars, double b
                 // Add 8th note ride hits
                 if (complexity > 6.0f)
                 {
-                    tick = barOffset + (beat * PPQ) + ticksPerEighth();
+                    tick = barOffset + (beat * ticksPerBeat()) + ticksPerEighth();
                     vel = calculateVelocity(70, loudness, groove, tick);
                     vel = applyVelocityHumanization(vel, currentHumanize);
                     tick = applySwing(tick, groove.swing8, 8);
@@ -399,7 +877,7 @@ void DrummerEngine::generateGhostNotes(juce::MidiBuffer& buffer, int bars, doubl
                                        const GrooveTemplate& groove,
                                        float complexity)
 {
-    int snareNote = DrumMapping::getNoteForElement(DrumMapping::SNARE);
+    int snareNote = getNoteForElement(DrumMapping::SNARE);
     int barTicks = ticksPerBar(bpm);
     float ghostProb = hints.ghostNoteProb * (complexity / 10.0f);
 
@@ -407,13 +885,19 @@ void DrummerEngine::generateGhostNotes(juce::MidiBuffer& buffer, int bars, doubl
     {
         int barOffset = bar * barTicks;
 
-        // Ghost notes on 16th note positions (avoiding main snare hits on 2 and 4)
-        std::vector<int> ghostPositions = {1, 3, 5, 7, 9, 11, 13, 15};
+        // Ghost notes on 16th note positions (avoiding main snare hits)
+        // Dynamic based on time signature
+        int numSixteenths = sixteenthsPerBar();
 
-        for (int pos : ghostPositions)
+        for (int pos = 0; pos < numSixteenths; ++pos)
         {
-            // Skip positions too close to main snare hits (4, 8, 12, 16 -> beats 1,2,3,4)
-            if (pos == 3 || pos == 7 || pos == 11 || pos == 15)
+            // Skip positions on the beat (main snare/kick hits)
+            // Every 4th sixteenth is a beat in x/4 time
+            if (pos % 4 == 0)
+                continue;
+
+            // Also skip the position just before beats (too close to main hits)
+            if ((pos + 1) % 4 == 0)
                 continue;
 
             if (shouldTrigger(ghostProb))
@@ -434,18 +918,148 @@ void DrummerEngine::generateGhostNotes(juce::MidiBuffer& buffer, int bars, doubl
     }
 }
 
+void DrummerEngine::generatePercussionPattern(juce::MidiBuffer& buffer, int bars, double bpm,
+                                               const DrumMapping::StyleHints& hints,
+                                               const GrooveTemplate& groove,
+                                               float complexity, float loudness)
+{
+    // Percussion is style-dependent:
+    // - Rock/Alternative: Tambourine on 8ths or quarters
+    // - HipHop/R&B: Shaker on 16ths, occasional tambourine
+    // - Electronic/Trap: Shaker patterns, clap layering
+    // - Songwriter: Light tambourine or nothing
+
+    if (!kitMask.percussion)
+        return;  // Percussion disabled
+
+    // Note: Using addNoteFiltered with DrumElement directly instead of pre-fetched notes
+    // This ensures proper kit mask filtering is applied
+
+    int barTicks = ticksPerBar(bpm);
+    float loudnessScale = loudness / 100.0f;
+    int numSixteenths = sixteenthsPerBar();
+
+    // Determine percussion type based on drummer's style
+    juce::String style = currentProfile.style;
+    bool useShaker = (style == "HipHop" || style == "R&B" || style == "Electronic" || style == "Trap");
+    bool useTambourine = (style == "Rock" || style == "Alternative" || style == "Songwriter");
+    bool useCowbell = (style == "Rock" && complexity > 6.0f);  // Cowbell for complex rock
+    bool useClap = (style == "Electronic" || style == "Trap" || style == "HipHop");
+
+    // Probability scales with complexity
+    float percProb = 0.3f + (complexity / 10.0f) * 0.4f;  // 30-70% base probability
+
+    for (int bar = 0; bar < bars; ++bar)
+    {
+        int barOffset = bar * barTicks;
+
+        // Shaker pattern: 16th notes with accents
+        if (useShaker && shouldTrigger(percProb))
+        {
+            for (int pos = 0; pos < numSixteenths; ++pos)
+            {
+                // Skip some positions for groove
+                float skipProb = (pos % 4 == 0) ? 0.1f : 0.3f;  // Less skipping on beats
+                if (shouldTrigger(skipProb))
+                    continue;
+
+                int tick = barOffset + (pos * ticksPerSixteenth());
+
+                // Accent pattern: louder on beats, softer on off-beats
+                bool isAccent = (pos % 4 == 0) || (pos % 4 == 2);  // Quarter and eighth positions
+                int baseVel = isAccent ? 55 : 35;
+                baseVel = static_cast<int>(baseVel * loudnessScale);
+                int vel = applyVelocityHumanization(baseVel, currentHumanize);
+
+                tick = applySwing(tick, groove.swing16, 16);
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
+
+                addNoteFiltered(buffer, DrumMapping::SHAKER, vel, tick, ticksPerSixteenth() / 2);
+            }
+        }
+
+        // Tambourine pattern: 8th notes
+        if (useTambourine && shouldTrigger(percProb * 0.7f))
+        {
+            int numEighths = numSixteenths / 2;
+            for (int pos = 0; pos < numEighths; ++pos)
+            {
+                // Skip some positions for variety
+                if (shouldTrigger(0.2f))
+                    continue;
+
+                int tick = barOffset + (pos * ticksPerEighth());
+
+                // Accent on upbeats for drive
+                bool isUpbeat = (pos % 2 == 1);
+                int baseVel = isUpbeat ? 65 : 50;
+                baseVel = static_cast<int>(baseVel * loudnessScale);
+                int vel = applyVelocityHumanization(baseVel, currentHumanize);
+
+                tick = applySwing(tick, groove.swing8, 8);
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
+
+                addNoteFiltered(buffer, DrumMapping::TAMBOURINE, vel, tick, ticksPerEighth() / 2);
+            }
+        }
+
+        // Cowbell: quarters or halves (rock/disco)
+        if (useCowbell && shouldTrigger(percProb * 0.5f))
+        {
+            int numBeats = beatsPerBar();
+            for (int beat = 0; beat < numBeats; ++beat)
+            {
+                // Only on certain beats
+                if (beat % 2 != 0)
+                    continue;
+
+                int tick = barOffset + (beat * ticksPerBeat());
+                int baseVel = static_cast<int>(60 * loudnessScale);
+                int vel = applyVelocityHumanization(baseVel, currentHumanize);
+
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
+
+                addNoteFiltered(buffer, DrumMapping::COWBELL, vel, tick, ticksPerBeat() / 2);
+            }
+        }
+
+        // Clap layering: with snare hits (electronic/trap)
+        if (useClap && shouldTrigger(percProb * 0.6f))
+        {
+            // Claps typically on 2 and 4 (or just 3 for trap half-time)
+            int numBeats = beatsPerBar();
+            for (int beat = 0; beat < numBeats; ++beat)
+            {
+                bool shouldClap = hints.halfTimeSnare ? (beat == 2) : (beat == 1 || beat == 3);
+                if (!shouldClap)
+                    continue;
+
+                int tick = barOffset + (beat * ticksPerBeat());
+                int baseVel = static_cast<int>(70 * loudnessScale);
+                int vel = applyVelocityHumanization(baseVel, currentHumanize);
+
+                // Slight offset from snare for layering effect
+                tick += random.nextInt(10) - 5;
+                tick = applyAdvancedHumanization(tick, currentHumanize, bpm);
+
+                addNoteFiltered(buffer, DrumMapping::CLAP, vel, tick, ticksPerBeat() / 4);
+            }
+        }
+    }
+}
+
 juce::MidiBuffer DrummerEngine::generateFill(int beats, double bpm, float intensity, int startTick)
 {
     juce::MidiBuffer buffer;
     juce::ignoreUnused(bpm);
 
-    int snareNote = DrumMapping::getNoteForElement(DrumMapping::SNARE);
-    int tomLow = DrumMapping::getNoteForElement(DrumMapping::TOM_LOW);
-    int tomMid = DrumMapping::getNoteForElement(DrumMapping::TOM_MID);
-    int tomHigh = DrumMapping::getNoteForElement(DrumMapping::TOM_HIGH);
-    int tomFloor = DrumMapping::getNoteForElement(DrumMapping::TOM_FLOOR);
-    int crashNote = DrumMapping::getNoteForElement(DrumMapping::CRASH_1);
-    int kickNote = DrumMapping::getNoteForElement(DrumMapping::KICK);
+    int snareNote = getNoteForElement(DrumMapping::SNARE);
+    int tomLow = getNoteForElement(DrumMapping::TOM_LOW);
+    int tomMid = getNoteForElement(DrumMapping::TOM_MID);
+    int tomHigh = getNoteForElement(DrumMapping::TOM_HIGH);
+    int tomFloor = getNoteForElement(DrumMapping::TOM_FLOOR);
+    int crashNote = getNoteForElement(DrumMapping::CRASH_1);
+    int kickNote = getNoteForElement(DrumMapping::KICK);
 
     int fillTicks = beats * PPQ;
     int division = (intensity > 0.7f) ? 16 : 8;
@@ -596,23 +1210,42 @@ int DrummerEngine::applyHumanization(int tick, int maxJitterTicks)
 int DrummerEngine::calculateVelocity(int baseVelocity, float loudness, const GrooveTemplate& groove,
                                      int tickPosition, int jitterRange)
 {
-    // Apply loudness scaling (0-100 -> 0.5-1.5 multiplier)
-    float loudnessMultiplier = 0.5f + (loudness / 100.0f);
+    // Use drummer's velocity range from their profile
+    int velFloor = currentProfile.velocityFloor;
+    int velCeiling = currentProfile.velocityCeiling;
+    int velRange = velCeiling - velFloor;
 
-    // Apply groove energy
-    float energyMultiplier = 0.7f + (groove.energy * 0.6f);
+    // Apply loudness scaling (0-100 maps to floor-ceiling range)
+    // Low loudness = closer to floor, high loudness = closer to ceiling
+    float loudnessNorm = loudness / 100.0f;
 
-    // Apply accent pattern
+    // Apply drummer's aggression to velocity curve
+    // High aggression = steeper curve, more dynamic
+    // Low aggression = flatter curve, more compressed dynamics
+    float aggression = currentProfile.aggression;
+    float curvedLoudness = std::pow(loudnessNorm, 1.0f + (1.0f - aggression));
+
+    // Calculate base velocity within drummer's range
+    float velInRange = velFloor + (curvedLoudness * velRange * (baseVelocity / 127.0f));
+
+    // Apply groove energy (scaled by aggression)
+    float energyMultiplier = 1.0f + (groove.energy - 0.5f) * aggression * 0.4f;
+    velInRange *= energyMultiplier;
+
+    // Apply accent pattern with drummer personality
+    // Aggressive drummers have stronger accents
     int sixteenthPos = (tickPosition / ticksPerSixteenth()) % 16;
     float accent = groove.accentPattern[sixteenthPos];
+    float accentStrength = 0.7f + aggression * 0.6f;  // 0.7-1.3 range
+    float accentMod = 1.0f + (accent - 1.0f) * accentStrength;
+    velInRange *= accentMod;
 
-    // Calculate final velocity
-    float vel = baseVelocity * loudnessMultiplier * energyMultiplier * accent;
+    // Add random variation (less for laid-back drummers)
+    float variationScale = 1.0f - std::abs(currentProfile.laidBack) * 0.5f;
+    int jitter = static_cast<int>(random.nextInt(jitterRange * 2 + 1) - jitterRange) * variationScale;
+    velInRange += jitter;
 
-    // Add random variation
-    vel += random.nextInt(jitterRange * 2 + 1) - jitterRange;
-
-    return juce::jlimit(1, 127, static_cast<int>(vel));
+    return juce::jlimit(1, 127, static_cast<int>(velInRange));
 }
 
 bool DrummerEngine::shouldTrigger(float probability)
@@ -629,17 +1262,27 @@ float DrummerEngine::getComplexityProbability(float complexity, float baseProb)
 
 void DrummerEngine::addNote(juce::MidiBuffer& buffer, int pitch, int velocity, int startTick, int durationTicks)
 {
-    // Convert ticks to sample position (simplified - actual implementation would need proper sync)
-    // For now, we'll use ticks directly as the sample position placeholder
-    // The processor will need to convert these based on actual playback position
+    // Store tick position in the timestamp - the processor will convert to sample positions
+    // based on the current playhead position and tempo
+    // Using tick value directly as sample position for storage (processor does conversion)
 
     auto noteOn = juce::MidiMessage::noteOn(10, pitch, static_cast<juce::uint8>(velocity));
-    noteOn.setTimeStamp(startTick);
-    buffer.addEvent(noteOn, startTick % samplesPerBlock);
+    noteOn.setTimeStamp(static_cast<double>(startTick));
+    buffer.addEvent(noteOn, startTick);  // Sample position = tick for now, converted by processor
 
     auto noteOff = juce::MidiMessage::noteOff(10, pitch);
-    noteOff.setTimeStamp(startTick + durationTicks);
-    buffer.addEvent(noteOff, (startTick + durationTicks) % samplesPerBlock);
+    noteOff.setTimeStamp(static_cast<double>(startTick + durationTicks));
+    buffer.addEvent(noteOff, startTick + durationTicks);
+}
+
+void DrummerEngine::addNoteFiltered(juce::MidiBuffer& buffer, DrumMapping::DrumElement element, int velocity, int startTick, int durationTicks)
+{
+    // Skip if this element is disabled by kit mask
+    if (!isElementEnabled(element))
+        return;
+
+    int pitch = getNoteForElement(element);
+    addNote(buffer, pitch, velocity, startTick, durationTicks);
 }
 
 //==============================================================================
@@ -748,16 +1391,17 @@ juce::MidiBuffer DrummerEngine::generateFromStepSequencer(
     currentHumanize = humanize;
 
     // Map step sequencer lanes to MIDI notes (order must match StepSeqLane enum)
+    // Use configurable note map instead of static defaults
     static_assert(STEP_SEQUENCER_LANES == 8, "STEP_SEQUENCER_LANES must be 8 for laneToNote array");
     const std::array<int, STEP_SEQUENCER_LANES> laneToNote = {{
-        DrumMapping::getNoteForElement(DrumMapping::KICK),           // StepSeqLane::SEQ_KICK
-        DrumMapping::getNoteForElement(DrumMapping::SNARE),          // StepSeqLane::SEQ_SNARE
-        DrumMapping::getNoteForElement(DrumMapping::HI_HAT_CLOSED),  // StepSeqLane::SEQ_CLOSED_HIHAT
-        DrumMapping::getNoteForElement(DrumMapping::HI_HAT_OPEN),    // StepSeqLane::SEQ_OPEN_HIHAT
-        DrumMapping::getNoteForElement(DrumMapping::CLAP),           // StepSeqLane::SEQ_CLAP
-        DrumMapping::getNoteForElement(DrumMapping::TOM_HIGH),       // StepSeqLane::SEQ_TOM1
-        DrumMapping::getNoteForElement(DrumMapping::TOM_MID),        // StepSeqLane::SEQ_TOM2
-        DrumMapping::getNoteForElement(DrumMapping::CRASH_1)         // StepSeqLane::SEQ_CRASH
+        getNoteForElement(DrumMapping::KICK),           // StepSeqLane::SEQ_KICK
+        getNoteForElement(DrumMapping::SNARE),          // StepSeqLane::SEQ_SNARE
+        getNoteForElement(DrumMapping::HI_HAT_CLOSED),  // StepSeqLane::SEQ_CLOSED_HIHAT
+        getNoteForElement(DrumMapping::HI_HAT_OPEN),    // StepSeqLane::SEQ_OPEN_HIHAT
+        getNoteForElement(DrumMapping::CLAP),           // StepSeqLane::SEQ_CLAP
+        getNoteForElement(DrumMapping::TOM_HIGH),       // StepSeqLane::SEQ_TOM1
+        getNoteForElement(DrumMapping::TOM_MID),        // StepSeqLane::SEQ_TOM2
+        getNoteForElement(DrumMapping::CRASH_1)         // StepSeqLane::SEQ_CRASH
     }};
 
     // STEP_SEQUENCER_STEPS steps = 1 bar of 16th notes
@@ -788,6 +1432,286 @@ juce::MidiBuffer DrummerEngine::generateFromStepSequencer(
                 addNote(buffer, note, vel, tick, ticksPerStep / 2);
             }
         }
+    }
+
+    return buffer;
+}
+
+//==============================================================================
+// Pattern Library-based generation (Phase 2)
+
+juce::MidiBuffer DrummerEngine::generateFromPatternLibrary(int bars, double bpm,
+                                                            const juce::String& style,
+                                                            const GrooveTemplate& groove,
+                                                            float complexity, float loudness,
+                                                            DrumSection section,
+                                                            HumanizeSettings humanize)
+{
+    juce::MidiBuffer buffer;
+
+    // Calculate target characteristics from parameters
+    float targetEnergy = loudness / 100.0f;
+    float targetDensity = complexity / 10.0f;
+
+    // Apply section modifiers
+    float sectionDensity = getSectionDensityMultiplier(section);
+    float sectionLoudness = getSectionLoudnessMultiplier(section);
+    targetEnergy *= sectionLoudness;
+    targetDensity *= sectionDensity;
+
+    // Clamp to valid range
+    targetEnergy = juce::jlimit(0.0f, 1.0f, targetEnergy);
+    targetDensity = juce::jlimit(0.0f, 1.0f, targetDensity);
+
+    // Select best matching pattern
+    int patternIdx = patternLibrary->selectBestPattern(style, targetEnergy, targetDensity, true);
+
+    if (patternIdx < 0)
+    {
+        // No pattern found - fall back to any pattern
+        patternIdx = patternLibrary->selectBestPattern("", targetEnergy, targetDensity, false);
+    }
+
+    if (patternIdx < 0)
+    {
+        // Still nothing - return empty buffer (will fall back to algorithmic)
+        return buffer;
+    }
+
+    // Get the pattern and make a working copy
+    PatternPhrase pattern = patternLibrary->getPattern(patternIdx);
+
+    // Apply drummer personality modifications
+    float energyScale = 0.7f + (currentProfile.aggression * 0.6f);
+    patternVariator->scaleEnergy(pattern, energyScale * (loudness / 75.0f));
+
+    // Adjust ghost notes based on drummer and complexity
+    float targetGhostDensity = currentProfile.ghostNotes * (complexity / 10.0f);
+    patternVariator->adjustGhostNotes(pattern, targetGhostDensity);
+
+    // Apply swing if drummer prefers it or groove has swing
+    float swingAmount = std::max(groove.swing16, currentProfile.swingDefault);
+    if (swingAmount > 0.0f)
+    {
+        patternVariator->applySwing(pattern, swingAmount, 16);
+    }
+
+    // Apply humanization with per-instrument characteristics
+    patternVariator->humanize(pattern, humanize.timingVariation, humanize.velocityVariation, bpm);
+
+    // Generate MIDI for each bar
+    // Generate MIDI for each bar
+    int barTicks = ticksPerBar(bpm);
+
+    for (int bar = 0; bar < bars; ++bar)
+    {
+        int tickOffset = bar * barTicks;
+
+        // Apply slight variation to each repetition
+        PatternPhrase barPattern = pattern;
+        if (bar > 0)
+        {
+            // Small variations for repeated bars
+            patternVariator->applyVelocityVariation(barPattern, 0.05f, true);
+            patternVariator->applyTimingVariation(barPattern, 2.0f, bpm, true);
+            patternVariator->applySubstitutions(barPattern, 0.03f);
+        }
+
+        // Convert pattern to MIDI
+        juce::MidiBuffer barBuffer = patternToMidi(barPattern, bpm, groove, humanize, tickOffset);
+        buffer.addEvents(barBuffer, 0, -1, 0);
+    }
+
+    // Add crash at start of certain sections
+    if (shouldAddCrashForSection(section))
+    {
+        int crashNote = getNoteForElement(DrumMapping::CRASH_1);
+        int kickNote = getNoteForElement(DrumMapping::KICK);
+        int vel = static_cast<int>(110.0f * targetEnergy);
+        vel = applyVelocityHumanization(vel, humanize);
+        addNote(buffer, crashNote, vel, 0, PPQ);
+        addNote(buffer, kickNote, std::clamp(vel - 10, 1, 127), 0, PPQ / 2);
+    }
+
+    return buffer;
+}
+
+juce::MidiBuffer DrummerEngine::generateFillFromLibrary(int beats, double bpm,
+                                                         float intensity,
+                                                         const juce::String& style,
+                                                         int startTick)
+{
+    juce::MidiBuffer buffer;
+
+    // Phase 4: Use context-aware fill selection
+    // Determine fill context based on current state
+    FillContext context = FillContext::Standard;
+    float nextSectionEnergy = intensity;  // Default to current intensity
+
+    // Determine context based on bars since last fill and section
+    if (barsSinceLastFill >= 7)
+    {
+        // Long time since fill - likely transitioning to new section
+        context = FillContext::SectionEnd;
+        nextSectionEnergy = intensity * 1.1f;  // Slight energy increase expected
+    }
+    else if (barsSinceLastFill >= 3 && intensity > 0.7f)
+    {
+        // High intensity after several bars - likely a build up
+        context = FillContext::BuildUp;
+        nextSectionEnergy = intensity * 1.2f;
+    }
+    else if (intensity < 0.3f)
+    {
+        // Low intensity - breakdown or sparse section
+        context = FillContext::Breakdown;
+    }
+
+    // Select a fill from the library using context-aware selection
+    int fillIdx = patternLibrary->selectContextualFill(style, beats, intensity, context, nextSectionEnergy);
+
+    if (fillIdx < 0)
+    {
+        // Fall back to algorithmic fill
+        return generateFill(beats, bpm, intensity * currentProfile.tomLove, startTick);
+    }
+
+    PatternPhrase fill = patternLibrary->getPattern(fillIdx);
+
+    // Phase 4: Generate and add leading tones for smooth transition
+    if (context == FillContext::BuildUp || context == FillContext::SectionEnd)
+    {
+        std::vector<DrumHit> leadingTones = patternLibrary->generateLeadingTones(fill, 1, bpm);
+
+        // Add leading tones at their negative tick positions relative to fill start
+        for (const auto& hit : leadingTones)
+        {
+            int absoluteTick = startTick + hit.tick;  // hit.tick is negative
+            if (absoluteTick >= 0)
+            {
+                int pitch = getNoteForElement(hit.element);
+                int vel = applyVelocityHumanization(hit.velocity, currentHumanize);
+                addNote(buffer, pitch, vel, absoluteTick, hit.duration);
+            }
+        }
+    }
+
+    // Scale fill energy based on intensity and drummer aggression
+    float energyScale = intensity * (0.7f + currentProfile.aggression * 0.6f);
+    patternVariator->scaleEnergy(fill, energyScale);
+
+    // Light humanization on fills (keep them tight)
+    patternVariator->humanize(fill, 10.0f, 15.0f, bpm);
+
+    // Convert to MIDI at the correct position
+    HumanizeSettings fillHumanize;
+    fillHumanize.timingVariation = 10.0f;
+    fillHumanize.velocityVariation = 15.0f;
+
+    GrooveTemplate emptyGroove;
+
+    // Scale fill to requested length
+    int requestedTicks = beats * PPQ;
+    int fillTicks = fill.bars * PPQ * fill.timeSigNum * 4 / fill.timeSigDenom;
+
+    // If fill is longer than requested, trim from beginning
+    int tickOffset = startTick;
+    if (fillTicks > requestedTicks)
+    {
+        // Start from later in the fill
+        int trimTicks = fillTicks - requestedTicks;
+        for (auto& hit : fill.hits)
+        {
+            hit.tick -= trimTicks;
+        }
+        // Remove hits before tick 0
+        fill.hits.erase(
+            std::remove_if(fill.hits.begin(), fill.hits.end(),
+                           [](const DrumHit& h) { return h.tick < 0; }),
+            fill.hits.end());
+    }
+
+    buffer.addEvents(patternToMidi(fill, bpm, emptyGroove, fillHumanize, tickOffset), 0, -1, 0);
+
+    // Phase 4: Context-aware crash handling
+    // Add crash at end of fill based on context and drummer personality
+    float crashProbability = 0.3f + currentProfile.crashHappiness * 0.5f;
+
+    // Increase crash probability for certain contexts
+    if (context == FillContext::BuildUp || context == FillContext::TensionRelease)
+        crashProbability = 0.9f;
+    else if (context == FillContext::SectionEnd)
+        crashProbability = 0.75f;
+    else if (context == FillContext::Breakdown)
+        crashProbability = 0.1f;  // Rare crash in breakdown
+
+    if (variationEngine.nextRandom() < crashProbability)
+    {
+        int crashTick = startTick + requestedTicks;
+        int crashNote = getNoteForElement(DrumMapping::CRASH_1);
+        int kickNote = getNoteForElement(DrumMapping::KICK);
+        int crashVel = static_cast<int>(110.0f * intensity);
+
+        // Phase 4: Bigger crash for tension release
+        if (context == FillContext::TensionRelease)
+            crashVel = std::min(127, crashVel + 15);
+
+        addNote(buffer, crashNote, crashVel, crashTick, PPQ);
+
+        if (currentProfile.aggression > 0.5f || context == FillContext::BuildUp)
+        {
+            addNote(buffer, kickNote, std::max(1, crashVel - 10), crashTick, PPQ / 2);
+        }
+    }
+
+    return buffer;
+}
+
+juce::MidiBuffer DrummerEngine::patternToMidi(const PatternPhrase& pattern,
+                                               double bpm,
+                                               const GrooveTemplate& groove,
+                                               const HumanizeSettings& humanize,
+                                               int tickOffset)
+{
+    juce::MidiBuffer buffer;
+
+    for (const auto& hit : pattern.hits)
+    {
+        // Skip if this element is disabled by kit mask
+        if (!isElementEnabled(hit.element))
+            continue;
+
+        int pitch = getNoteForElement(hit.element);
+        int velocity = hit.velocity;
+        int tick = hit.tick + tickOffset;
+        int duration = hit.duration;
+
+        // Apply groove micro-timing
+        if (groove.isValid())
+        {
+            tick = applyMicroTiming(tick, groove, bpm);
+        }
+
+        // Apply push/drag from humanization
+        if (std::abs(humanize.pushDrag) > 0.1f)
+        {
+            double ticksPerMs = (PPQ * bpm) / 60000.0;
+            int pushDragTicks = static_cast<int>(humanize.pushDrag * 0.4 * ticksPerMs);
+            tick += pushDragTicks;
+        }
+
+        // Apply drummer's laid-back feel
+        if (std::abs(currentProfile.laidBack) > 0.01f)
+        {
+            double ticksPerMs = (PPQ * bpm) / 60000.0;
+            int laidBackTicks = static_cast<int>(currentProfile.laidBack * 20.0 * ticksPerMs);
+            tick += laidBackTicks;
+        }
+
+        // Ensure tick is non-negative
+        tick = std::max(0, tick);
+
+        addNote(buffer, pitch, velocity, tick, duration);
     }
 
     return buffer;

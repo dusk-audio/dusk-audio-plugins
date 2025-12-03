@@ -9,6 +9,7 @@
 #include "MidiGrooveExtractor.h"
 #include "GrooveTemplateGenerator.h"
 #include "GrooveFollower.h"
+#include "GrooveLearner.h"
 #include "DrummerEngine.h"
 
 // Step sequencer data structure (matches StepSequencer.h)
@@ -84,10 +85,58 @@ public:
     // Get current parameters
     juce::AudioProcessorValueTreeState& getValueTreeState() { return parameters; }
 
-    // Follow Mode data access
-    const GrooveTemplate& getCurrentGroove() const { return currentGroove; }
-    float getGrooveLockPercentage() const { return grooveLockPercentage; }
+    // Follow Mode data access (thread-safe via grooveLearnerLock)
+    // Returns by value for thread-safety. GrooveTemplate is ~220 bytes of POD data
+    // with no heap allocations, making copies cheap. This is only called from the
+    // UI thread (not audio-rate), so the copy cost is negligible.
+    GrooveTemplate getCurrentGroove() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return currentGroove;
+    }
+    float getGrooveLockPercentage() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLockPercentage;
+    }
     bool isFollowModeActive() const { return followModeActive; }
+
+    // Groove learning controls (thread-safe via grooveLearnerLock)
+    void startGrooveLearning();
+    void lockGroove();
+    void resetGrooveLearning();
+    GrooveLearner::State getGrooveLearnerState() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.getState();
+    }
+    float getGrooveLearningProgress() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.getLearningProgress();
+    }
+    int getBarsLearned() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.getBarsLearned();
+    }
+    bool isGrooveReady() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.isGrooveReady();
+    }
+
+    // Phase 3: Genre detection and tempo drift (thread-safe via grooveLearnerLock)
+    DetectedGenre getDetectedGenre() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.getDetectedGenre();
+    }
+    juce::String getDetectedGenreString() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.getDetectedGenreString();
+    }
+    TempoDriftInfo getTempoDrift() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.getTempoDrift();
+    }
+    float getGrooveConfidence() const {
+        const juce::SpinLock::ScopedLockType lock(grooveLearnerLock);
+        return grooveLearner.getConfidence();
+    }
 
     // MIDI CC control
     bool isSectionControlledByMidi() const { return midiSectionActive; }
@@ -109,6 +158,7 @@ private:
     MidiGrooveExtractor midiGrooveExtractor;
     GrooveTemplateGenerator grooveTemplateGenerator;
     GrooveFollower grooveFollower;
+    GrooveLearner grooveLearner;
 
     // Buffers
     juce::AudioBuffer<float> audioInputBuffer;
@@ -125,6 +175,8 @@ private:
     double currentBPM = 120.0;
     double ppqPosition = 0.0;
     bool isPlaying = false;
+    int timeSignatureNumerator = 4;    // Beats per bar (from DAW)
+    int timeSignatureDenominator = 4;  // Beat unit (from DAW)
 
     // Follow Mode state
     bool followModeActive = false;
@@ -145,6 +197,9 @@ private:
     // Step sequencer pattern (protected by spinlock for thread safety)
     mutable juce::SpinLock stepSeqPatternLock;
     StepSequencerPattern stepSeqPattern;
+
+    // Groove learner lock (protects grooveLearner, currentGroove, grooveLockPercentage)
+    mutable juce::SpinLock grooveLearnerLock;
 
     // Parameter IDs
     static constexpr const char* PARAM_COMPLEXITY = "complexity";
