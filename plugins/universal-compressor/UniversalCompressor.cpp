@@ -2190,9 +2190,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "vca_threshold", "Threshold", 
         juce::NormalisableRange<float>(-38.0f, 12.0f, 0.1f), 0.0f)); // DBX 160 range: 10mV(-38dB) to 3V(+12dB)
+    // DBX 160 ratio: 1:1 to infinity (120:1), with 4:1 at 12 o'clock
+    // Skew factor calculated so midpoint (0.5 normalized) = 4:1
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "vca_ratio", "Ratio", 
-        juce::NormalisableRange<float>(1.0f, 120.0f, 0.1f), 2.0f)); // DBX 160 range: 1:1 to 120:1 (infinity), default 2:1
+        "vca_ratio", "Ratio",
+        juce::NormalisableRange<float>(1.0f, 120.0f, 0.1f, 0.3f), 4.0f)); // Skew 0.3 puts 4:1 near center
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "vca_attack", "Attack", 
         juce::NormalisableRange<float>(0.1f, 50.0f, 0.1f), 1.0f));

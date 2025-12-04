@@ -238,10 +238,13 @@ void EnhancedCompressorEditor::setupVCAPanel()
     vcaPanel.container = std::make_unique<juce::Component>();
     addChildComponent(vcaPanel.container.get());  // Use addChildComponent so it's initially hidden
     
-    // Create controls
-    vcaPanel.thresholdKnob = createKnob("Threshold", -40, 0, -12, " dB");
-    vcaPanel.ratioKnob = createKnob("Ratio", 1, 20, 4, ":1");
-    vcaPanel.attackKnob = createKnob("Attack", 0.1, 100, 1, " ms");
+    // Create controls - DBX 160 style
+    vcaPanel.thresholdKnob = createKnob("Threshold", -38, 12, 0, " dB");  // 10mV to 3V range
+    // DBX 160 ratio: 1:1 to infinity (120:1), with 4:1 at 12 o'clock (center)
+    // The parameter has skew=0.3 which places 4:1 near the center of rotation
+    vcaPanel.ratioKnob = createKnob("Ratio", 1, 120, 4, ":1");
+    vcaPanel.ratioKnob->setSkewFactorFromMidPoint(4.0);  // 4:1 at 12 o'clock
+    vcaPanel.attackKnob = createKnob("Attack", 0.1, 50, 1, " ms");  // DBX 160 attack range
     // DBX 160 has fixed release rate - no release knob needed
     vcaPanel.outputKnob = createKnob("Output", -20, 20, 0, " dB");
     vcaPanel.overEasyButton = std::make_unique<juce::ToggleButton>("Over Easy");
