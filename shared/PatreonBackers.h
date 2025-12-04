@@ -1,0 +1,237 @@
+/*
+  ==============================================================================
+
+    PatreonBackers.h
+
+    Special thanks to our Patreon supporters who make these plugins possible!
+
+    This file is shared across all Luna Co. Audio plugins.
+    Edit this single file to update credits in all plugins.
+
+    To add new backers:
+    1. Add names to the appropriate tier array below
+    2. Rebuild all plugins
+    3. Also update the project README.md file with the same names
+
+    Tier Benefits:
+    - Supporter ($5/month):  Development updates, name in credits
+    - Silver ($10/month):    Early beta access, feature voting, development blog
+    - Gold ($25/month):      Preset packs, genre expansion voting, demo projects
+    - Platinum ($50/month):  Feature request priority, Development Supporter credit
+
+  ==============================================================================
+*/
+
+#pragma once
+
+#include <JuceHeader.h>
+#include <vector>
+
+namespace PatreonCredits
+{
+    //==========================================================================
+    // Backer Tier Enumeration
+    //==========================================================================
+    enum class BackerTier
+    {
+        Supporter,  // $5/month  - Entry level supporters
+        Silver,     // $10/month - Beta access tier
+        Gold,       // $25/month - Preset packs and voting tier
+        Platinum    // $50/month - Feature request priority tier
+    };
+
+    //==========================================================================
+    // Tier Benefit Descriptions
+    //==========================================================================
+    struct TierInfo
+    {
+        BackerTier tier;
+        juce::String name;
+        juce::String monthlyAmount;
+        juce::String benefits;
+    };
+
+    inline const std::vector<TierInfo> tierDescriptions = {
+        { BackerTier::Platinum, "Platinum", "$50/month",
+          "Feature request priority, Development Supporter credit" },
+        { BackerTier::Gold, "Gold", "$25/month",
+          "Preset packs, genre expansion voting, demo projects" },
+        { BackerTier::Silver, "Silver", "$10/month",
+          "Early beta access, feature voting, development blog" },
+        { BackerTier::Supporter, "Supporter", "$5/month",
+          "Development updates, name in credits" }
+    };
+
+    //==========================================================================
+    // Backer Lists (Add names here)
+    //==========================================================================
+
+    // Platinum Tier Supporters ($50/month)
+    // Feature request priority, Development Supporter credit
+    inline const std::vector<juce::String> platinumBackers = {
+        // Add platinum backer names here, one per line:
+        // "John Doe",
+        // "Jane Smith",
+    };
+
+    // Gold Tier Supporters ($25/month)
+    // Preset packs, genre expansion voting, demo projects
+    inline const std::vector<juce::String> goldBackers = {
+        // Add gold backer names here, one per line:
+        // "John Doe",
+        // "Jane Smith",
+    };
+
+    // Silver Tier Supporters ($10/month)
+    // Early beta access, feature voting, development blog
+    inline const std::vector<juce::String> silverBackers = {
+        // Add silver backer names here, one per line:
+        // "John Doe",
+        // "Jane Smith",
+    };
+
+    // Supporter Tier ($5/month)
+    // Development updates, name in credits
+    inline const std::vector<juce::String> supporters = {
+        // Add supporter names here, one per line:
+        // "John Doe",
+        // "Jane Smith",
+    };
+
+    //==========================================================================
+    // Helper Functions
+    //==========================================================================
+
+    /** Returns the vector of backers for a specific tier */
+    inline const std::vector<juce::String>& getBackersForTier(BackerTier tier)
+    {
+        switch (tier)
+        {
+            case BackerTier::Platinum:  return platinumBackers;
+            case BackerTier::Gold:      return goldBackers;
+            case BackerTier::Silver:    return silverBackers;
+            case BackerTier::Supporter: return supporters;
+            default:                    return supporters;
+        }
+    }
+
+    /** Returns the tier a backer belongs to, or nullopt if not found */
+    inline std::optional<BackerTier> getBackerTier(const juce::String& name)
+    {
+        for (const auto& backer : platinumBackers)
+            if (backer.equalsIgnoreCase(name))
+                return BackerTier::Platinum;
+
+        for (const auto& backer : goldBackers)
+            if (backer.equalsIgnoreCase(name))
+                return BackerTier::Gold;
+
+        for (const auto& backer : silverBackers)
+            if (backer.equalsIgnoreCase(name))
+                return BackerTier::Silver;
+
+        for (const auto& backer : supporters)
+            if (backer.equalsIgnoreCase(name))
+                return BackerTier::Supporter;
+
+        return std::nullopt;
+    }
+
+    /** Returns the TierInfo for a specific tier */
+    inline const TierInfo& getTierInfo(BackerTier tier)
+    {
+        for (const auto& info : tierDescriptions)
+            if (info.tier == tier)
+                return info;
+
+        // Return Supporter as default (last in list)
+        return tierDescriptions.back();
+    }
+
+    /** Returns the benefits description for a specific tier */
+    inline juce::String getTierBenefits(BackerTier tier)
+    {
+        return getTierInfo(tier).benefits;
+    }
+
+    /** Returns the display name for a tier */
+    inline juce::String getTierName(BackerTier tier)
+    {
+        return getTierInfo(tier).name;
+    }
+
+    /** Get all backers formatted for display in credits/about dialogs */
+    inline juce::String getAllBackersFormatted()
+    {
+        juce::String result;
+
+        if (!platinumBackers.empty())
+        {
+            result += "PLATINUM SUPPORTERS\n";
+            for (const auto& name : platinumBackers)
+                result += "  " + name + "\n";
+            result += "\n";
+        }
+
+        if (!goldBackers.empty())
+        {
+            result += "GOLD SUPPORTERS\n";
+            for (const auto& name : goldBackers)
+                result += "  " + name + "\n";
+            result += "\n";
+        }
+
+        if (!silverBackers.empty())
+        {
+            result += "SILVER SUPPORTERS\n";
+            for (const auto& name : silverBackers)
+                result += "  " + name + "\n";
+            result += "\n";
+        }
+
+        if (!supporters.empty())
+        {
+            result += "SUPPORTERS\n";
+            for (const auto& name : supporters)
+                result += "  " + name + "\n";
+        }
+
+        if (result.isEmpty())
+            result = "Be the first to support development on Patreon!\n\nYour name could be here!";
+
+        return result;
+    }
+
+    /** Get all tiers formatted with benefits for an About dialog */
+    inline juce::String getTiersFormatted()
+    {
+        juce::String result;
+
+        for (const auto& tier : tierDescriptions)
+        {
+            result += tier.name.toUpperCase() + " (" + tier.monthlyAmount + ")\n";
+            result += "  " + tier.benefits + "\n\n";
+        }
+
+        return result.trimEnd();
+    }
+
+    /** Get total number of backers across all tiers */
+    inline int getTotalBackerCount()
+    {
+        return static_cast<int>(platinumBackers.size() + goldBackers.size() +
+                                silverBackers.size() + supporters.size());
+    }
+
+    /** Get number of backers for a specific tier */
+    inline int getBackerCountForTier(BackerTier tier)
+    {
+        return static_cast<int>(getBackersForTier(tier).size());
+    }
+
+    /** Check if a name is a backer at any tier */
+    inline bool isBacker(const juce::String& name)
+    {
+        return getBackerTier(name).has_value();
+    }
+}

@@ -38,8 +38,10 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     
     // Create global controls
     bypassButton = std::make_unique<juce::ToggleButton>("Bypass");
+    autoGainButton = std::make_unique<juce::ToggleButton>("Auto Gain");
     // Oversample button removed - saturation always runs at 2x internally
     addAndMakeVisible(bypassButton.get());
+    addAndMakeVisible(autoGainButton.get());
     
     // Setup mode panels
     setupOptoPanel();
@@ -58,15 +60,24 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     if (params.getRawParameterValue("bypass"))
         bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             params, "bypass", *bypassButton);
-    
+
+    if (params.getRawParameterValue("auto_makeup"))
+        autoGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            params, "auto_makeup", *autoGainButton);
+
     // Oversample attachment removed - no longer user-controllable
     
-    // Listen to mode changes
+    // Listen to mode and auto_makeup changes
     params.addParameterListener("mode", this);
-    
+    params.addParameterListener("auto_makeup", this);
+
     // Set initial mode
     const auto* modeParam = params.getRawParameterValue("mode");
     currentMode = modeParam ? static_cast<int>(*modeParam) : 0;
+
+    // Set initial auto-gain state
+    const auto* autoMakeupParam = params.getRawParameterValue("auto_makeup");
+    updateAutoGainState(autoMakeupParam ? autoMakeupParam->load() > 0.5f : false);
 
     // Sync combo box to initial mode (add 1 since combo box uses 1-based IDs)
     modeSelector->setSelectedId(currentMode + 1, juce::dontSendNotification);
@@ -93,6 +104,48 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
 EnhancedCompressorEditor::~EnhancedCompressorEditor()
 {
     processor.getParameters().removeParameterListener("mode", this);
+    processor.getParameters().removeParameterListener("auto_makeup", this);
+
+    // Clear look and feel from all components before destruction
+    if (bypassButton)
+        bypassButton->setLookAndFeel(nullptr);
+    if (autoGainButton)
+        autoGainButton->setLookAndFeel(nullptr);
+    if (optoPanel.limitSwitch)
+        optoPanel.limitSwitch->setLookAndFeel(nullptr);
+    if (optoPanel.peakReductionKnob)
+        optoPanel.peakReductionKnob->setLookAndFeel(nullptr);
+    if (optoPanel.gainKnob)
+        optoPanel.gainKnob->setLookAndFeel(nullptr);
+    if (fetPanel.inputKnob)
+        fetPanel.inputKnob->setLookAndFeel(nullptr);
+    if (fetPanel.outputKnob)
+        fetPanel.outputKnob->setLookAndFeel(nullptr);
+    if (fetPanel.attackKnob)
+        fetPanel.attackKnob->setLookAndFeel(nullptr);
+    if (fetPanel.releaseKnob)
+        fetPanel.releaseKnob->setLookAndFeel(nullptr);
+    if (vcaPanel.thresholdKnob)
+        vcaPanel.thresholdKnob->setLookAndFeel(nullptr);
+    if (vcaPanel.ratioKnob)
+        vcaPanel.ratioKnob->setLookAndFeel(nullptr);
+    if (vcaPanel.attackKnob)
+        vcaPanel.attackKnob->setLookAndFeel(nullptr);
+    if (vcaPanel.outputKnob)
+        vcaPanel.outputKnob->setLookAndFeel(nullptr);
+    if (vcaPanel.overEasyButton)
+        vcaPanel.overEasyButton->setLookAndFeel(nullptr);
+    if (busPanel.thresholdKnob)
+        busPanel.thresholdKnob->setLookAndFeel(nullptr);
+    if (busPanel.ratioKnob)
+        busPanel.ratioKnob->setLookAndFeel(nullptr);
+    if (busPanel.attackSelector)
+        busPanel.attackSelector->setLookAndFeel(nullptr);
+    if (busPanel.releaseSelector)
+        busPanel.releaseSelector->setLookAndFeel(nullptr);
+    if (busPanel.makeupKnob)
+        busPanel.makeupKnob->setLookAndFeel(nullptr);
+
     setLookAndFeel(nullptr);
 }
 
@@ -462,13 +515,13 @@ void EnhancedCompressorEditor::updateMode(int newMode)
                 break;
         }
         
+        // Apply look and feel to global toggle buttons so they match current mode
         if (bypassButton)
-        {
-            bypassButton->setColour(juce::ToggleButton::textColourId, buttonTextColor);
-            bypassButton->setColour(juce::ToggleButton::tickColourId, buttonTextColor);
-        }
-        // Oversample button removed
-        
+            bypassButton->setLookAndFeel(currentLookAndFeel);
+
+        if (autoGainButton)
+            autoGainButton->setLookAndFeel(currentLookAndFeel);
+
         // Apply to mode-specific components
         if (optoPanel.container->isVisible())
         {
@@ -587,10 +640,10 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         g.drawText("INPUT", inputBounds.getX() - 10, inputBounds.getY() - 20, 
                    inputBounds.getWidth() + 20, 20, juce::Justification::centred);
         
-        // Draw smoothed input level value below the meter for better readability
-        juce::String inputText = juce::String(smoothedInputLevel, 1) + " dB";
-        g.setFont(juce::Font(juce::FontOptions(10.0f * scaleFactor)));
-        g.drawText(inputText, inputBounds.getX() - 10, inputBounds.getBottom(), 
+        // Draw throttled level value below the meter (updates ~3x per second for readability)
+        juce::String inputText = juce::String(displayedInputLevel, 1) + " dB";
+        g.setFont(juce::Font(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold")));
+        g.drawText(inputText, inputBounds.getX() - 10, inputBounds.getBottom(),
                    inputBounds.getWidth() + 20, 25 * scaleFactor, juce::Justification::centred);
     }
     
@@ -602,11 +655,11 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         g.drawText("OUTPUT", outputBounds.getX() - 10, outputBounds.getY() - 20, 
                    outputBounds.getWidth() + 20, 20, juce::Justification::centred);
         
-        // Draw smoothed output level value below the meter for better readability
-        juce::String outputText = juce::String(smoothedOutputLevel, 1) + " dB";
-        g.setFont(juce::Font(juce::FontOptions(10.0f * scaleFactor)));
-        g.drawText(outputText, outputBounds.getX() - 10, outputBounds.getBottom(), 
-                   outputBounds.getWidth() + 20, 25, juce::Justification::centred);
+        // Draw throttled level value below the meter (updates ~3x per second for readability)
+        juce::String outputText = juce::String(displayedOutputLevel, 1) + " dB";
+        g.setFont(juce::Font(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold")));
+        g.drawText(outputText, outputBounds.getX() - 10, outputBounds.getBottom(),
+                   outputBounds.getWidth() + 20, 25 * scaleFactor, juce::Justification::centred);
     }
     
     // Draw VU meter label below the VU meter
@@ -654,15 +707,18 @@ void EnhancedCompressorEditor::resized()
     topRow.removeFromLeft(20 * scaleFactor);
     
     if (bypassButton)
-        bypassButton->setBounds(topRow.removeFromLeft(120 * scaleFactor));
+        bypassButton->setBounds(topRow.removeFromLeft(80 * scaleFactor));
     else
-        topRow.removeFromLeft(120 * scaleFactor);
-        
+        topRow.removeFromLeft(80 * scaleFactor);
+
     topRow.removeFromLeft(10 * scaleFactor);
-    
-    // Oversample button removed - space now available
-    
-    topRow.removeFromLeft(10);
+
+    if (autoGainButton)
+        autoGainButton->setBounds(topRow.removeFromLeft(100 * scaleFactor));
+    else
+        topRow.removeFromLeft(100 * scaleFactor);
+
+    topRow.removeFromLeft(10 * scaleFactor);
     
     // Mode-specific buttons in top row
     if (optoPanel.limitSwitch)
@@ -898,9 +954,8 @@ void EnhancedCompressorEditor::updateMeters()
         // LEDMeter expects dB values, not linear
         float inputDb = processor.getInputLevel();
         inputMeter->setLevel(inputDb);
-        
-        // Apply slow averaging for stable, readable display (not peak-hold)
-        // This gives a consistent average level that's easy to read
+
+        // Apply smoothing for internal tracking
         smoothedInputLevel = smoothedInputLevel * levelSmoothingFactor +
                            inputDb * (1.0f - levelSmoothingFactor);
     }
@@ -914,18 +969,26 @@ void EnhancedCompressorEditor::updateMeters()
         float outputDb = processor.getOutputLevel();
         outputMeter->setLevel(outputDb);
 
-        // Apply slow averaging for stable, readable display (not peak-hold)
-        // This gives a consistent average level that's easy to read
+        // Apply smoothing for internal tracking
         smoothedOutputLevel = smoothedOutputLevel * levelSmoothingFactor +
                             outputDb * (1.0f - levelSmoothingFactor);
     }
-    
-    // Repaint the area where meter values are displayed
-    repaint(inputMeter ? inputMeter->getBounds().expanded(20, 25) : juce::Rectangle<int>());
-    repaint(outputMeter ? outputMeter->getBounds().expanded(20, 25) : juce::Rectangle<int>());
+
+    // Throttle the text display updates to make them more readable
+    levelDisplayCounter++;
+    if (levelDisplayCounter >= levelDisplayInterval)
+    {
+        levelDisplayCounter = 0;
+        displayedInputLevel = smoothedInputLevel;
+        displayedOutputLevel = smoothedOutputLevel;
+
+        // Only repaint when the displayed values actually update
+        repaint(inputMeter ? inputMeter->getBounds().expanded(20, 30) : juce::Rectangle<int>());
+        repaint(outputMeter ? outputMeter->getBounds().expanded(20, 30) : juce::Rectangle<int>());
+    }
 }
 
-void EnhancedCompressorEditor::parameterChanged(const juce::String& parameterID, float)
+void EnhancedCompressorEditor::parameterChanged(const juce::String& parameterID, float newValue)
 {
     if (parameterID == "mode")
     {
@@ -937,6 +1000,13 @@ void EnhancedCompressorEditor::parameterChanged(const juce::String& parameterID,
             modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
             updateMode(newMode);
         }
+    }
+    else if (parameterID == "auto_makeup")
+    {
+        // Update output knob enabled state based on auto-gain
+        juce::MessageManager::callAsync([this, newValue]() {
+            updateAutoGainState(newValue > 0.5f);
+        });
     }
 }
 
@@ -959,6 +1029,45 @@ void EnhancedCompressorEditor::ratioChanged(int ratioIndex)
         float normalizedValue = ratioIndex / 4.0f;
         ratioParam->setValueNotifyingHost(normalizedValue);
     }
+}
+
+void EnhancedCompressorEditor::updateAutoGainState(bool autoGainEnabled)
+{
+    // When auto-gain is enabled, disable output/makeup/gain knobs since auto-gain controls them
+    const float disabledAlpha = 0.4f;
+    const float enabledAlpha = 1.0f;
+
+    // Opto mode - Gain knob
+    if (optoPanel.gainKnob)
+    {
+        optoPanel.gainKnob->setEnabled(!autoGainEnabled);
+        optoPanel.gainKnob->setAlpha(autoGainEnabled ? disabledAlpha : enabledAlpha);
+    }
+
+    // FET mode - Output knob
+    if (fetPanel.outputKnob)
+    {
+        fetPanel.outputKnob->setEnabled(!autoGainEnabled);
+        fetPanel.outputKnob->setAlpha(autoGainEnabled ? disabledAlpha : enabledAlpha);
+    }
+
+    // VCA mode - Output knob
+    if (vcaPanel.outputKnob)
+    {
+        vcaPanel.outputKnob->setEnabled(!autoGainEnabled);
+        vcaPanel.outputKnob->setAlpha(autoGainEnabled ? disabledAlpha : enabledAlpha);
+    }
+
+    // Bus mode - Makeup knob
+    if (busPanel.makeupKnob)
+    {
+        busPanel.makeupKnob->setEnabled(!autoGainEnabled);
+        busPanel.makeupKnob->setAlpha(autoGainEnabled ? disabledAlpha : enabledAlpha);
+    }
+
+    // Studio VCA panel - handled internally by the panel
+    if (studioVcaPanel)
+        studioVcaPanel->setAutoGainEnabled(autoGainEnabled);
 }
 
 //==============================================================================

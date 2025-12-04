@@ -144,46 +144,46 @@ void OptoLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int widt
 }
 
 void OptoLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
-                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+                                       bool /*shouldDrawButtonAsHighlighted*/, bool /*shouldDrawButtonAsDown*/)
 {
-    // Vintage toggle switch style with improved visibility
+    // LED-style indicator matching other compressor modes but with warm amber color
     auto bounds = button.getLocalBounds().toFloat();
-    auto switchWidth = 50.0f;
-    auto switchHeight = 24.0f;
-    
-    // Switch background plate with darker color for better contrast
-    auto plateColor = button.getToggleState() ? colors.accent.darker(0.3f) : juce::Colour(0xFF3A342D);
-    g.setColour(plateColor);
-    g.fillRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 4.0f);
-    
-    // Switch border for better definition
-    g.setColour(juce::Colour(0xFFE8D5B7).withAlpha(0.5f));
-    g.drawRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 4.0f, 1.5f);
-    
-    // Switch position
-    auto toggleX = button.getToggleState() ? 28.0f : 8.0f;
-    
-    // Switch handle with shadow and better contrast
-    g.setColour(colors.shadow.withAlpha(0.5f));
-    g.fillEllipse(toggleX + 1, (bounds.getHeight() - 16) / 2 + 1, 16, 16);
-    
-    // Use light color for handle for better visibility
-    auto handleColor = button.getToggleState() ? juce::Colour(0xFFFFE0B0) : juce::Colour(0xFFE8D5B7);
-    g.setColour(handleColor);
-    g.fillEllipse(toggleX, (bounds.getHeight() - 16) / 2, 16, 16);
-    
-    // Add highlight on handle
-    g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.3f));
-    g.fillEllipse(toggleX + 2, (bounds.getHeight() - 16) / 2 + 2, 6, 6);
-    
-    // Label with better contrast color
+    auto ledSize = 20.0f;
+
+    // LED housing with metallic appearance
+    g.setColour(juce::Colour(0xFF2A2420));
+    g.fillEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize);
+
+    // LED bezel
+    g.setColour(juce::Colour(0xFF5A5040));
+    g.drawEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize, 2.0f);
+
+    // LED light - warm amber when on, dark when off
+    auto ledColor = button.getToggleState() ? juce::Colour(0xFFFFAA00) : juce::Colour(0xFF3A3020);
+    if (button.getToggleState())
+    {
+        // Warm glow effect for ON state
+        g.setColour(ledColor.withAlpha(0.4f));
+        g.fillEllipse(2, (bounds.getHeight() - ledSize - 4) / 2, ledSize + 4, ledSize + 4);
+    }
+
+    g.setColour(ledColor);
+    g.fillEllipse(7, (bounds.getHeight() - ledSize + 6) / 2, ledSize - 6, ledSize - 6);
+
+    // Add highlight for 3D effect
+    if (button.getToggleState())
+    {
+        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
+        g.fillEllipse(9, (bounds.getHeight() - ledSize + 8) / 2, 4, 4);
+    }
+
+    // Label with warm cream color for visibility on dark brown background
     g.setColour(juce::Colour(0xFFE8D5B7));
     g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
-    g.drawText(button.getButtonText(), switchWidth + 12, 0, 
-               bounds.getWidth() - switchWidth - 12, bounds.getHeight(),
+    g.drawText(button.getButtonText(), ledSize + 10, 0,
+               bounds.getWidth() - ledSize - 10, bounds.getHeight(),
                juce::Justification::centredLeft);
 }
-
 //==============================================================================
 // FET (1176) Style
 FETLookAndFeel::FETLookAndFeel()
@@ -232,6 +232,43 @@ void FETLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& butto
     g.drawRoundedRectangle(bounds, 2.0f, 1.0f);
 }
 
+void FETLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                      bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+{
+    // 1176-style illuminated rectangular button
+    auto bounds = button.getLocalBounds().toFloat();
+    auto switchWidth = 50.0f;
+    auto switchHeight = 22.0f;
+
+    // Button shadow
+    g.setColour(colors.shadow.withAlpha(0.5f));
+    g.fillRoundedRectangle(5, (bounds.getHeight() - switchHeight) / 2 + 1, switchWidth, switchHeight, 3.0f);
+
+    // Button body - illuminated when on
+    auto buttonColor = button.getToggleState() ? colors.accent : colors.panel;
+    if (shouldDrawButtonAsDown)
+        buttonColor = buttonColor.darker(0.2f);
+    else if (shouldDrawButtonAsHighlighted)
+        buttonColor = buttonColor.brighter(0.1f);
+    
+    g.setColour(buttonColor);
+    g.fillRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f);
+
+    // Subtle highlight on top edge
+    g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(button.getToggleState() ? 0.3f : 0.1f));
+    g.fillRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, 6.0f, 3.0f);
+
+    // Button border
+    g.setColour(colors.text.withAlpha(0.4f));
+    g.drawRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f, 1.0f);
+
+    // Label
+    g.setColour(colors.text);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
+    g.drawText(button.getButtonText(), switchWidth + 12, 0,
+               bounds.getWidth() - switchWidth - 12, bounds.getHeight(),
+               juce::Justification::centredLeft);
+}
 //==============================================================================
 // VCA (DBX 160) Style
 VCALookAndFeel::VCALookAndFeel()
@@ -349,6 +386,57 @@ void BusLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool
                      width - 26, height * 0.6f);
     g.setColour(colors.text);
     g.fillPath(arrow);
+}
+void BusLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                      bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+{
+    // SSL-style illuminated toggle with indicator light
+    auto bounds = button.getLocalBounds().toFloat();
+    auto switchWidth = 50.0f;
+    auto switchHeight = 22.0f;
+
+    // Button background
+    auto bgColor = colors.panel;
+    if (shouldDrawButtonAsDown)
+        bgColor = bgColor.darker(0.15f);
+    else if (shouldDrawButtonAsHighlighted)
+        bgColor = bgColor.brighter(0.1f);
+    
+    g.setColour(bgColor);
+    g.fillRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f);
+
+    // Indicator light (small LED-style)
+    auto ledX = 8.0f;
+    auto ledY = (bounds.getHeight() - 8.0f) / 2;
+    auto ledColor = button.getToggleState() ? colors.accent : juce::Colour(0xFF3A4550);
+
+    if (button.getToggleState())
+    {
+        // Glow effect when on
+        g.setColour(ledColor.withAlpha(0.4f));
+        g.fillEllipse(ledX - 2, ledY - 2, 12.0f, 12.0f);
+    }
+
+    g.setColour(ledColor);
+    g.fillEllipse(ledX, ledY, 8.0f, 8.0f);
+
+    // Highlight on LED
+    if (button.getToggleState())
+    {
+        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.4f));
+        g.fillEllipse(ledX + 1, ledY + 1, 3.0f, 3.0f);
+    }
+
+    // Button border
+    g.setColour(colors.text.withAlpha(0.3f));
+    g.drawRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f, 1.0f);
+
+    // Label
+    g.setColour(colors.text);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
+    g.drawText(button.getButtonText(), switchWidth + 12, 0,
+               bounds.getWidth() - switchWidth - 12, bounds.getHeight(),
+               juce::Justification::centredLeft);
 }
 
 //==============================================================================

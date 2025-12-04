@@ -565,25 +565,37 @@ public:
         setLookAndFeel(nullptr);
     }
 
+    void setAutoGainEnabled(bool enabled)
+    {
+        const float disabledAlpha = 0.4f;
+        const float enabledAlpha = 1.0f;
+        outputSlider.setEnabled(!enabled);
+        outputSlider.setAlpha(enabled ? disabledAlpha : enabledAlpha);
+    }
+
     void resized() override
     {
-        auto area = getLocalBounds().reduced(10);
+        auto area = getLocalBounds().reduced(5);
 
         // Leave space for title at top (compact)
-        area.removeFromTop(20);
+        area.removeFromTop(25);
 
         // Leave space for bottom description
-        area.removeFromBottom(25);
+        area.removeFromBottom(20);
 
         // Main controls row - labels are attached above each knob
+        // Make knobs larger to match other compressor modes
         auto controlRow = area;
         auto knobWidth = controlRow.getWidth() / 5;
 
-        thresholdSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
-        ratioSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
-        attackSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
-        releaseSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
-        outputSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
+        // Use minimal reduction for larger knobs
+        const int knobPadding = 2;
+
+        thresholdSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
+        ratioSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
+        attackSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
+        releaseSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
+        outputSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
     }
 
     void paint(juce::Graphics& g) override

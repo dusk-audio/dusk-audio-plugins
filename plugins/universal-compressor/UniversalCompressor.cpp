@@ -2412,6 +2412,10 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     dryBuffer.setSize(numChannels, samplesPerBlock);
     filteredSidechain.setSize(numChannels, samplesPerBlock);
     linkedSidechain.setSize(numChannels, samplesPerBlock);
+
+    // Initialize smoothed auto-makeup gain with ~50ms smoothing time
+    smoothedAutoMakeupGain.reset(sampleRate, 0.05);
+    smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
 }
 
 void UniversalCompressor::releaseResources()
@@ -2880,15 +2884,40 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
     // Apply auto-makeup gain if enabled
     // Auto-makeup compensates for the average gain reduction to maintain perceived loudness
-    if (autoMakeup && gainReduction < -0.5f)
+    // Uses smoothed gain to avoid audible distortion from abrupt level changes
     {
-        // Apply ~50% of the gain reduction as makeup to avoid over-compensation
-        float makeupGain = juce::Decibels::decibelsToGain(-gainReduction * 0.5f);
-        makeupGain = juce::jlimit(1.0f, 4.0f, makeupGain);  // Limit to +12dB max makeup
-        for (int ch = 0; ch < numChannels; ++ch)
+        float targetMakeupGain = 1.0f;
+        if (autoMakeup && gainReduction < -0.5f)
         {
-            float* data = buffer.getWritePointer(ch);
-            SIMDHelpers::applyGain(data, numSamples, makeupGain);
+            // Apply ~50% of the gain reduction as makeup to avoid over-compensation
+            targetMakeupGain = juce::Decibels::decibelsToGain(-gainReduction * 0.5f);
+            targetMakeupGain = juce::jlimit(1.0f, 4.0f, targetMakeupGain);  // Limit to +12dB max makeup
+        }
+
+        // Update target and apply smoothed gain sample-by-sample
+        smoothedAutoMakeupGain.setTargetValue(targetMakeupGain);
+
+        if (smoothedAutoMakeupGain.isSmoothing())
+        {
+            // Apply per-sample smoothed gain
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float gain = smoothedAutoMakeupGain.getNextValue();
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    buffer.getWritePointer(ch)[i] *= gain;
+                }
+            }
+        }
+        else if (targetMakeupGain > 1.001f)
+        {
+            // No smoothing needed, apply constant gain efficiently
+            float currentGain = smoothedAutoMakeupGain.getCurrentValue();
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* data = buffer.getWritePointer(ch);
+                SIMDHelpers::applyGain(data, numSamples, currentGain);
+            }
         }
     }
 

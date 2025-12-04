@@ -230,7 +230,8 @@ private:
             float b0 = a1;
             float b1 = 1.0f;
 
-            auto coeffs = new juce::dsp::IIR::Coefficients<float>(b0, b1, 0.0f, 1.0f, a1, 0.0f);
+            auto coeffs = juce::dsp::IIR::Coefficients<float>::Ptr(
+                new juce::dsp::IIR::Coefficients<float>(b0, b1, 0.0f, 1.0f, a1, 0.0f));
             allPassL.coefficients = coeffs;
             allPassR.coefficients = coeffs;
         }

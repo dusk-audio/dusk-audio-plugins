@@ -45,7 +45,7 @@ target_sources(FourKEQ
         EQCurveDisplay.cpp
         EQCurveDisplay.h
         SSLSaturation.h
-        PatreonBackers.h
+        ../../shared/PatreonBackers.h
         ../shared/LEDMeter.cpp
         ../shared/LEDMeter.h
 )
@@ -55,6 +55,7 @@ target_include_directories(FourKEQ
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
 )
 
 # Compile definitions

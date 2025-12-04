@@ -3,7 +3,7 @@
 #include "UniversalCompressor.h"
 #include "AnalogLookAndFeel.h"
 #include "ModernCompressorPanels.h"
-#include "../shared/PatreonBackers.h"
+#include "../../shared/PatreonBackers.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
@@ -53,8 +53,10 @@ private:
     
     // Global controls
     std::unique_ptr<juce::ToggleButton> bypassButton;
+    std::unique_ptr<juce::ToggleButton> autoGainButton;
     // Oversample button removed - saturation always runs at 2x internally
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment;
     
     // Mode-specific panels
     struct OptoPanel
@@ -163,7 +165,11 @@ private:
     // Smoothed level readouts for better readability
     float smoothedInputLevel = -60.0f;
     float smoothedOutputLevel = -60.0f;
-    const float levelSmoothingFactor = 0.96f;  // ~0.8 second averaging at 30Hz for stable display
+    float displayedInputLevel = -60.0f;   // Level shown in text (updated less frequently)
+    float displayedOutputLevel = -60.0f;  // Level shown in text (updated less frequently)
+    int levelDisplayCounter = 0;          // Counter to throttle text updates
+    const int levelDisplayInterval = 10;  // Update text every N frames (~3x per second at 30Hz)
+    const float levelSmoothingFactor = 0.9f;  // Smoothing for internal tracking
     
     // Helper methods
     void setupOptoPanel();
@@ -175,6 +181,7 @@ private:
     
     void updateMode(int newMode);
     void updateMeters();
+    void updateAutoGainState(bool autoGainEnabled);
     void createBackgroundTexture();
     
     std::unique_ptr<juce::Slider> createKnob(const juce::String& name, float min, float max,

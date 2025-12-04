@@ -96,12 +96,16 @@ private:
     std::atomic<float> grMeter{0.0f};
 
     // Stereo linking (thread-safe for UI/audio thread access)
+    // Initialized in constructor via .store() since atomic arrays can't use copy initialization
     std::atomic<float> linkedGainReduction[2];
     // stereoLinkAmount now controlled by parameter
     
     // Processing state
     double currentSampleRate{0.0};  // Set by prepareToPlay from DAW
     int currentBlockSize{0};  // Set by prepareToPlay from DAW
+
+    // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> dryBuffer;           // For parallel compression mix

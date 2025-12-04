@@ -56,6 +56,15 @@ target_sources(UniversalCompressor
         UniversalCompressor.cpp
         AnalogLookAndFeel.cpp
         EnhancedCompressorEditor.cpp
+        ../../shared/PatreonBackers.h
+)
+
+# Set include directories
+target_include_directories(UniversalCompressor
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
 )
 
 # Compiler definitions
