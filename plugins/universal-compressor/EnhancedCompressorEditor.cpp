@@ -892,43 +892,25 @@ void EnhancedCompressorEditor::updateMeters()
         float inputDb = processor.getInputLevel();
         inputMeter->setLevel(inputDb);
         
-        // Apply smoothing to the readout value for better readability
-        // Use peak hold with slow decay for easier reading
-        if (inputDb > smoothedInputLevel)
-        {
-            // Fast attack for peak capture
-            smoothedInputLevel = inputDb;
-        }
-        else
-        {
-            // Slow release for easy reading (exponential smoothing)
-            smoothedInputLevel = smoothedInputLevel * levelSmoothingFactor + 
-                               inputDb * (1.0f - levelSmoothingFactor);
-        }
+        // Apply slow averaging for stable, readable display (not peak-hold)
+        // This gives a consistent average level that's easy to read
+        smoothedInputLevel = smoothedInputLevel * levelSmoothingFactor +
+                           inputDb * (1.0f - levelSmoothingFactor);
     }
-    
+
     if (vuMeter)
         vuMeter->setLevel(processor.getGainReduction());
-    
+
     if (outputMeter)
     {
         // LEDMeter expects dB values, not linear
         float outputDb = processor.getOutputLevel();
         outputMeter->setLevel(outputDb);
-        
-        // Apply smoothing to the readout value for better readability
-        // Use peak hold with slow decay for easier reading
-        if (outputDb > smoothedOutputLevel)
-        {
-            // Fast attack for peak capture
-            smoothedOutputLevel = outputDb;
-        }
-        else
-        {
-            // Slow release for easy reading (exponential smoothing)
-            smoothedOutputLevel = smoothedOutputLevel * levelSmoothingFactor + 
-                                outputDb * (1.0f - levelSmoothingFactor);
-        }
+
+        // Apply slow averaging for stable, readable display (not peak-hold)
+        // This gives a consistent average level that's easy to read
+        smoothedOutputLevel = smoothedOutputLevel * levelSmoothingFactor +
+                            outputDb * (1.0f - levelSmoothingFactor);
     }
     
     // Repaint the area where meter values are displayed
