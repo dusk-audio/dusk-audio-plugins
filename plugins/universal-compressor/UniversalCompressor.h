@@ -7,10 +7,21 @@
 
 enum class CompressorMode : int
 {
-    Opto = 0,    // LA-2A style optical compressor
-    FET = 1,     // 1176 style FET compressor  
-    VCA = 2,     // DBX 160 style VCA compressor
-    Bus = 3      // SSL Bus style compressor
+    Opto = 0,       // LA-2A style optical compressor (Vintage Opto)
+    FET = 1,        // 1176 Bluestripe style FET compressor (Vintage FET - aggressive)
+    VCA = 2,        // DBX 160 style VCA compressor (Classic VCA)
+    Bus = 3,        // SSL G-Series Bus compressor (Vintage VCA)
+    StudioFET = 4,  // 1176 Rev E Blackface style (Studio FET - cleaner)
+    StudioVCA = 5   // Focusrite Red 3 style (Studio VCA - modern)
+};
+
+// Distortion type for output saturation
+enum class DistortionType : int
+{
+    Off = 0,
+    Soft = 1,    // Gentle tape-like saturation
+    Hard = 2,    // Aggressive transistor clipping
+    Clip = 3     // Hard digital clip
 };
 
 class UniversalCompressor : public juce::AudioProcessor
@@ -61,16 +72,22 @@ private:
     class FETCompressor;
     class VCACompressor;
     class BusCompressor;
+    class StudioFETCompressor;
+    class StudioVCACompressor;
+    class SidechainFilter;
     class AntiAliasing;
-    
+
     // Parameter state
     juce::AudioProcessorValueTreeState parameters;
-    
+
     // DSP components
     std::unique_ptr<OptoCompressor> optoCompressor;
     std::unique_ptr<FETCompressor> fetCompressor;
     std::unique_ptr<VCACompressor> vcaCompressor;
     std::unique_ptr<BusCompressor> busCompressor;
+    std::unique_ptr<StudioFETCompressor> studioFetCompressor;
+    std::unique_ptr<StudioVCACompressor> studioVcaCompressor;
+    std::unique_ptr<SidechainFilter> sidechainFilter;
     std::unique_ptr<AntiAliasing> antiAliasing;
     
     // Metering
@@ -85,6 +102,11 @@ private:
     // Processing state
     double currentSampleRate{0.0};  // Set by prepareToPlay from DAW
     int currentBlockSize{0};  // Set by prepareToPlay from DAW
+
+    // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
+    juce::AudioBuffer<float> dryBuffer;           // For parallel compression mix
+    juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal
+    juce::AudioBuffer<float> linkedSidechain;     // Stereo-linked sidechain signal
     
     // Lookup tables for performance optimization
     class LookupTables

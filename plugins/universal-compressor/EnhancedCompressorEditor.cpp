@@ -24,13 +24,14 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     addAndMakeVisible(vuMeter.get());
     addAndMakeVisible(outputMeter.get());
     
-    // Create mode selector
+    // Create mode selector - 6 modes matching Logic Pro style
     modeSelector = std::make_unique<juce::ComboBox>("Mode");
-    modeSelector->addItem("Opto (LA-2A)", 1);
-    modeSelector->addItem("FET (1176)", 2);
-    modeSelector->addItem("VCA (DBX 160)", 3);
-    modeSelector->addItem("Bus (SSL G)", 4);
-    // Digital mode not yet implemented in backend
+    modeSelector->addItem("Vintage Opto (LA-2A)", 1);
+    modeSelector->addItem("Vintage FET (1176)", 2);
+    modeSelector->addItem("Classic VCA (DBX 160)", 3);
+    modeSelector->addItem("Vintage VCA (SSL G)", 4);
+    modeSelector->addItem("Studio FET (1176 Rev E)", 5);
+    modeSelector->addItem("Studio VCA (Red 3)", 6);
     // Don't set a default - let the attachment handle it
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
@@ -364,15 +365,20 @@ void EnhancedCompressorEditor::setupBusPanel()
 
 void EnhancedCompressorEditor::setupDigitalPanel()
 {
-    digitalPanel = std::make_unique<DigitalCompressorPanel>(processor.getParameters());
-    addChildComponent(digitalPanel.get());
+    // Note: DigitalCompressorPanel is not used in current 6-mode configuration
+    // (its parameters are not defined in createParameterLayout)
+    // Keeping structure for potential future Digital mode addition
+
+    // Studio VCA Panel (Focusrite Red 3 style)
+    studioVcaPanel = std::make_unique<StudioVCAPanel>(processor.getParameters());
+    addChildComponent(studioVcaPanel.get());
 }
 
 // Multiband panel removed
 
 void EnhancedCompressorEditor::updateMode(int newMode)
 {
-    currentMode = juce::jlimit(0, 4, newMode);  // 0-4 for 5 modes (including Digital)
+    currentMode = juce::jlimit(0, 5, newMode);  // 0-5 for 6 modes
 
     // Hide all panels
     optoPanel.container->setVisible(false);
@@ -380,6 +386,7 @@ void EnhancedCompressorEditor::updateMode(int newMode)
     vcaPanel.container->setVisible(false);
     busPanel.container->setVisible(false);
     if (digitalPanel) digitalPanel->setVisible(false);
+    if (studioVcaPanel) studioVcaPanel->setVisible(false);
 
     // Hide mode-specific top row buttons by default
     if (optoPanel.limitSwitch)
@@ -390,35 +397,39 @@ void EnhancedCompressorEditor::updateMode(int newMode)
     // Show and set look for current mode
     switch (currentMode)
     {
-        case 0: // Opto
+        case 0: // Vintage Opto (LA-2A)
             optoPanel.container->setVisible(true);
             if (optoPanel.limitSwitch)
                 optoPanel.limitSwitch->setVisible(true);
             currentLookAndFeel = optoLookAndFeel.get();
             break;
 
-        case 1: // FET
+        case 1: // Vintage FET (1176 Bluestripe)
             fetPanel.container->setVisible(true);
             currentLookAndFeel = fetLookAndFeel.get();
             break;
 
-        case 2: // VCA
+        case 2: // Classic VCA (DBX 160)
             vcaPanel.container->setVisible(true);
             if (vcaPanel.overEasyButton)
                 vcaPanel.overEasyButton->setVisible(true);
             currentLookAndFeel = vcaLookAndFeel.get();
             break;
 
-        case 3: // Bus
+        case 3: // Vintage VCA / Bus (SSL G)
             busPanel.container->setVisible(true);
             currentLookAndFeel = busLookAndFeel.get();
             break;
 
-        case 4: // Digital (not yet implemented)
-            if (digitalPanel)
-                digitalPanel->setVisible(true);
-            // currentLookAndFeel = modernLookAndFeel.get(); // TODO: Enable when Digital mode is implemented
-            currentLookAndFeel = busLookAndFeel.get(); // Fallback to Bus look for now
+        case 4: // Studio FET (1176 Rev E Blackface) - shares FET panel
+            fetPanel.container->setVisible(true);
+            currentLookAndFeel = fetLookAndFeel.get();  // Use FET look (could customize later)
+            break;
+
+        case 5: // Studio VCA (Focusrite Red 3)
+            if (studioVcaPanel)
+                studioVcaPanel->setVisible(true);
+            currentLookAndFeel = busLookAndFeel.get();  // Use Bus look for meters/background
             break;
     }
 
@@ -854,6 +865,12 @@ void EnhancedCompressorEditor::resized()
     if (digitalPanel && digitalPanel->isVisible())
     {
         digitalPanel->setBounds(controlArea);
+    }
+
+    // Layout Studio VCA panel
+    if (studioVcaPanel && studioVcaPanel->isVisible())
+    {
+        studioVcaPanel->setBounds(controlArea);
     }
 
     // Multiband panel removed
