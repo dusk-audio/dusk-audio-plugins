@@ -161,7 +161,7 @@ private:
     // Smoothed level readouts for better readability
     float smoothedInputLevel = -60.0f;
     float smoothedOutputLevel = -60.0f;
-    const float levelSmoothingFactor = 0.985f;  // Very high smoothing (0.985 = ~1 second at 30Hz)
+    const float levelSmoothingFactor = 0.96f;  // ~0.8 second averaging at 30Hz for stable display
     
     // Helper methods
     void setupOptoPanel();
