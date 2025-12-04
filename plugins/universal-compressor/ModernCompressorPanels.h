@@ -494,3 +494,214 @@ private:
         return area.getX() + normalized * area.getWidth();
     }
 };
+
+//==============================================================================
+// Studio VCA Panel (Focusrite Red 3 style)
+//==============================================================================
+class StudioVCAPanel : public juce::Component
+{
+public:
+    StudioVCAPanel(juce::AudioProcessorValueTreeState& apvts)
+        : parameters(apvts)
+    {
+        // Studio Red 3 color scheme
+        setLookAndFeel(&studioLookAndFeel);
+
+        // Threshold control (-40 to +20 dB)
+        addAndMakeVisible(thresholdSlider);
+        thresholdSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        thresholdSlider.setRange(-40.0, 20.0, 0.1);
+        thresholdSlider.setTextValueSuffix(" dB");
+        thresholdSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+
+        // Ratio control (1:1 to 10:1)
+        addAndMakeVisible(ratioSlider);
+        ratioSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        ratioSlider.setRange(1.0, 10.0, 0.1);
+        ratioSlider.setTextValueSuffix(":1");
+        ratioSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+
+        // Attack control (0.3 to 75 ms)
+        addAndMakeVisible(attackSlider);
+        attackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        attackSlider.setRange(0.3, 75.0, 0.1);
+        attackSlider.setSkewFactorFromMidPoint(10.0);
+        attackSlider.setTextValueSuffix(" ms");
+        attackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+
+        // Release control (50 to 3000 ms)
+        addAndMakeVisible(releaseSlider);
+        releaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        releaseSlider.setRange(50.0, 3000.0, 1.0);
+        releaseSlider.setSkewFactorFromMidPoint(300.0);
+        releaseSlider.setTextValueSuffix(" ms");
+        releaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+
+        // Output/Makeup gain (-20 to +20 dB)
+        addAndMakeVisible(outputSlider);
+        outputSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        outputSlider.setRange(-20.0, 20.0, 0.1);
+        outputSlider.setTextValueSuffix(" dB");
+        outputSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+
+        // Labels
+        createLabels();
+
+        // Parameter attachments
+        thresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "studio_vca_threshold", thresholdSlider);
+        ratioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "studio_vca_ratio", ratioSlider);
+        attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "studio_vca_attack", attackSlider);
+        releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "studio_vca_release", releaseSlider);
+        outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "studio_vca_output", outputSlider);
+    }
+
+    ~StudioVCAPanel() override
+    {
+        setLookAndFeel(nullptr);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(10);
+
+        // Leave space for title
+        area.removeFromTop(30);
+
+        // Main controls row
+        auto controlRow = area.removeFromTop(120);
+        auto knobWidth = controlRow.getWidth() / 5;
+
+        thresholdSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
+        ratioSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
+        attackSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
+        releaseSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
+        outputSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        // Focusrite Red inspired background
+        g.setGradientFill(juce::ColourGradient(
+            juce::Colour(0xff2a1518), 0, 0,
+            juce::Colour(0xff1a0d0f), 0, getHeight(), false));
+        g.fillAll();
+
+        // Subtle red accent line at top
+        g.setColour(juce::Colour(0xffcc3333));
+        g.fillRect(0, 0, getWidth(), 3);
+
+        // Title with Focusrite Red style
+        g.setColour(juce::Colour(0xffcc3333));
+        g.setFont(juce::FontOptions(18.0f).withStyle("Bold"));
+        g.drawText("STUDIO VCA", 0, 8, getWidth(), 20, juce::Justification::centred);
+
+        // Subtitle
+        g.setColour(juce::Colour(0xff888888));
+        g.setFont(juce::FontOptions(11.0f));
+        g.drawText("Focusrite Red 3 Style", 0, 25, getWidth(), 15, juce::Justification::centred);
+
+        // VCA characteristics description
+        g.setColour(juce::Colour(0xff666666));
+        g.setFont(juce::FontOptions(10.0f));
+        g.drawText("RMS Detection | Soft Knee | Clean VCA Dynamics",
+                   0, getHeight() - 25, getWidth(), 20, juce::Justification::centred);
+    }
+
+private:
+    juce::AudioProcessorValueTreeState& parameters;
+
+    // Custom look and feel for Red 3 style
+    class StudioVCALookAndFeel : public juce::LookAndFeel_V4
+    {
+    public:
+        StudioVCALookAndFeel()
+        {
+            // Focusrite Red inspired colors
+            setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a0d0f));
+            setColour(juce::Slider::thumbColourId, juce::Colour(0xffcc3333));
+            setColour(juce::Slider::trackColourId, juce::Colour(0xff993333));
+            setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffcc3333));
+            setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff2a1518));
+            setColour(juce::Label::textColourId, juce::Colour(0xffd0d0d0));
+        }
+
+        void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                              float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                              juce::Slider&) override
+        {
+            auto radius = juce::jmin(width / 2, height / 2) - 8.0f;
+            auto centreX = x + width * 0.5f;
+            auto centreY = y + height * 0.5f;
+            auto rx = centreX - radius;
+            auto ry = centreY - radius;
+            auto rw = radius * 2.0f;
+            auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+
+            // Dark background with subtle gradient
+            juce::ColourGradient knobGradient(
+                juce::Colour(0xff2a1518), centreX, centreY - radius,
+                juce::Colour(0xff1a0d0f), centreX, centreY + radius, false);
+            g.setGradientFill(knobGradient);
+            g.fillEllipse(rx, ry, rw, rw);
+
+            // Red arc showing value
+            juce::Path arc;
+            arc.addArc(rx + 3, ry + 3, rw - 6, rw - 6, rotaryStartAngle, angle, true);
+            g.setColour(juce::Colour(0xffcc3333));
+            g.strokePath(arc, juce::PathStrokeType(3.5f));
+
+            // Outer ring
+            g.setColour(juce::Colour(0xff3a2528));
+            g.drawEllipse(rx, ry, rw, rw, 1.5f);
+
+            // Center cap
+            g.setColour(juce::Colour(0xff2a1518));
+            g.fillEllipse(centreX - 8, centreY - 8, 16, 16);
+
+            // Pointer
+            juce::Path pointer;
+            pointer.startNewSubPath(centreX, centreY);
+            pointer.lineTo(centreX + (radius - 12) * std::cos(angle - juce::MathConstants<float>::halfPi),
+                          centreY + (radius - 12) * std::sin(angle - juce::MathConstants<float>::halfPi));
+            g.setColour(juce::Colour(0xffd0d0d0));
+            g.strokePath(pointer, juce::PathStrokeType(2.5f));
+        }
+    };
+
+    StudioVCALookAndFeel studioLookAndFeel;
+
+    juce::Slider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider;
+
+    std::vector<std::unique_ptr<juce::Label>> labels;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thresholdAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+
+    void createLabels()
+    {
+        addLabel("THRESHOLD", thresholdSlider);
+        addLabel("RATIO", ratioSlider);
+        addLabel("ATTACK", attackSlider);
+        addLabel("RELEASE", releaseSlider);
+        addLabel("OUTPUT", outputSlider);
+    }
+
+    void addLabel(const juce::String& text, juce::Component& component)
+    {
+        auto label = std::make_unique<juce::Label>(text, text);
+        label->attachToComponent(&component, false);
+        label->setJustificationType(juce::Justification::centred);
+        label->setColour(juce::Label::textColourId, juce::Colour(0xffa0a0a0));
+        label->setFont(juce::FontOptions(11.0f));
+        addAndMakeVisible(*label);
+        labels.push_back(std::move(label));
+    }
+};

@@ -172,6 +172,19 @@ namespace Constants {
     constexpr float BUS_SIDECHAIN_HP_FREQ = 60.0f; // Hz
     constexpr float BUS_MAX_REDUCTION_DB = 20.0f;
     constexpr float BUS_OVEREASY_KNEE_WIDTH = 10.0f; // dB
+
+    // Studio FET (1176 Rev E Blackface) constants - cleaner than Bluestripe
+    constexpr float STUDIO_FET_THRESHOLD_DB = -10.0f;
+    constexpr float STUDIO_FET_HARMONIC_SCALE = 0.3f;  // 30% of Vintage FET harmonics
+
+    // Studio VCA (Focusrite Red 3) constants
+    constexpr float RED3_MAX_REDUCTION_DB = 40.0f;
+    constexpr float RED3_SOFT_KNEE_DB = 6.0f;  // Softer knee than SSL
+
+    // Global sidechain highpass filter frequency (user-adjustable)
+    constexpr float SIDECHAIN_HP_MIN = 20.0f;   // Hz
+    constexpr float SIDECHAIN_HP_MAX = 500.0f;  // Hz
+    constexpr float SIDECHAIN_HP_DEFAULT = 80.0f; // Hz - prevents pumping
     
     // Anti-aliasing
     constexpr float NYQUIST_SAFETY_FACTOR = 0.4f; // 40% of sample rate for tighter anti-aliasing
@@ -255,8 +268,9 @@ public:
 
         // Gentle high-frequency reduction before any saturation
         // This prevents high frequencies from creating aliases
-        // Tightened to 0.4 of sample rate for better anti-aliasing
-        const float cutoffFreq = std::min(20000.0f, static_cast<float>(sampleRate * 0.4f));
+        // Limit to min(20kHz, 45% of Nyquist) to prevent aliasing at all sample rates
+        const float nyquist = static_cast<float>(sampleRate) * 0.5f;
+        const float cutoffFreq = std::min(20000.0f, nyquist * 0.9f);  // 90% of Nyquist, max 20kHz
         const float filterCoeff = std::exp(-2.0f * 3.14159f * cutoffFreq / static_cast<float>(sampleRate));
 
         channelStates[channel].preFilterState = input * (1.0f - filterCoeff * 0.1f) +
@@ -273,7 +287,9 @@ public:
         // Remove any harmonics above Nyquist/2
         // Only process if we have a valid sample rate from DAW
         if (sampleRate <= 0.0) return input;
-        const float cutoffFreq = std::min(20000.0f, static_cast<float>(sampleRate * 0.4f));  // 40% of sample rate for tighter anti-aliasing
+        // Limit to min(20kHz, 90% of Nyquist) to prevent aliasing at all sample rates
+        const float nyquist = static_cast<float>(sampleRate) * 0.5f;
+        const float cutoffFreq = std::min(20000.0f, nyquist * 0.9f);  // 90% of Nyquist, max 20kHz
         const float filterCoeff = std::exp(-2.0f * 3.14159f * cutoffFreq / static_cast<float>(sampleRate));
 
         channelStates[channel].postFilterState = input * (1.0f - filterCoeff * 0.05f) +
@@ -364,6 +380,115 @@ private:
     double sampleRate = 0.0;  // Set by prepare() from DAW
     int numChannels = 0;  // Set by prepare() from DAW
 };
+
+// Sidechain highpass filter - prevents pumping from low frequencies
+class UniversalCompressor::SidechainFilter
+{
+public:
+    void prepare(double sampleRate, int numChannels)
+    {
+        this->sampleRate = sampleRate;
+        filterStates.resize(static_cast<size_t>(numChannels));
+        for (auto& state : filterStates)
+        {
+            state.z1 = 0.0f;
+            state.z2 = 0.0f;
+        }
+        updateCoefficients(Constants::SIDECHAIN_HP_DEFAULT);
+    }
+
+    void setFrequency(float freq)
+    {
+        freq = juce::jlimit(Constants::SIDECHAIN_HP_MIN, Constants::SIDECHAIN_HP_MAX, freq);
+        if (std::abs(freq - currentFreq) > 0.1f)
+            updateCoefficients(freq);
+    }
+
+    float process(float input, int channel)
+    {
+        if (channel < 0 || channel >= static_cast<int>(filterStates.size()))
+            return input;
+
+        auto& state = filterStates[static_cast<size_t>(channel)];
+
+        // Transposed Direct Form II biquad
+        float output = b0 * input + state.z1;
+        state.z1 = b1 * input - a1 * output + state.z2;
+        state.z2 = b2 * input - a2 * output;
+
+        return output;
+    }
+    float getFrequency() const { return currentFreq; }
+
+private:
+    void updateCoefficients(float freq)
+    {
+        currentFreq = freq;
+        if (sampleRate <= 0.0) return;
+
+        // Butterworth highpass coefficients
+        const float omega = 2.0f * juce::MathConstants<float>::pi * freq / static_cast<float>(sampleRate);
+        const float cosOmega = std::cos(omega);
+        const float sinOmega = std::sin(omega);
+        const float alpha = sinOmega / (2.0f * 0.707f);  // Q = 0.707 for Butterworth
+
+        const float a0_inv = 1.0f / (1.0f + alpha);
+
+        b0 = ((1.0f + cosOmega) / 2.0f) * a0_inv;
+        b1 = -(1.0f + cosOmega) * a0_inv;
+        b2 = b0;
+        a1 = (-2.0f * cosOmega) * a0_inv;
+        a2 = (1.0f - alpha) * a0_inv;
+    }
+
+    struct FilterState
+    {
+        float z1 = 0.0f;
+        float z2 = 0.0f;
+    };
+
+    std::vector<FilterState> filterStates;
+    double sampleRate = 44100.0;
+    float currentFreq = Constants::SIDECHAIN_HP_DEFAULT;
+    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+};
+
+// Helper function to apply distortion based on type
+inline float applyDistortion(float input, DistortionType type, float amount = 1.0f)
+{
+    if (type == DistortionType::Off || amount <= 0.0f)
+        return input;
+
+    float wet = input;
+    switch (type)
+    {
+        case DistortionType::Soft:
+            // Tape-like soft saturation (tanh)
+            wet = std::tanh(input * (1.0f + amount));
+            break;
+
+        case DistortionType::Hard:
+            // Transistor-style hard clipping with asymmetry
+            {
+                float threshold = 0.7f / (0.5f + amount * 0.5f);
+                if (wet > threshold)
+                    wet = threshold + (wet - threshold) / (1.0f + std::pow((wet - threshold) / (1.0f - threshold), 2.0f));
+                else if (wet < -threshold * 0.9f)  // Slight asymmetry
+                    wet = -threshold * 0.9f - (std::abs(wet) - threshold * 0.9f) / (1.0f + std::pow((std::abs(wet) - threshold * 0.9f) / (1.0f - threshold * 0.9f), 2.0f));
+            }
+            break;
+
+        case DistortionType::Clip:
+            // Hard digital clip
+            wet = juce::jlimit(-1.0f / (0.5f + amount * 0.5f), 1.0f / (0.5f + amount * 0.5f), input);
+            break;
+
+        default:
+            break;
+    }
+
+    return wet;
+}
 
 // Helper function to get harmonic scaling based on saturation mode
 inline void getHarmonicScaling(int saturationMode, float& h2Scale, float& h3Scale, float& h4Scale)
@@ -1246,44 +1371,59 @@ public:
         // DBX 160 program-dependent attack and release times that "track" signal envelope
         // Attack times automatically vary with rate of level change in program material
         // Manual specifications: 15ms for 10dB, 5ms for 20dB, 3ms for 30dB change above threshold
-        // Release rate: 120dB/second
-        
+        // User attackParam (0.1-50ms) scales the program-dependent attack times
+
         float attackTime, releaseTime;
-        
+
         // DBX 160 attack times track the signal envelope rate
+        // attackParam range: 0.1ms to 50ms - used as a scaling factor
+        float userAttackScale = attackParam / 15.0f;  // Normalize to 1.0 at default 15ms
+
+        float programAttackTime;
         if (reduction > 0.1f)
         {
             // DBX 160 manual: Attack time for 63% of level change
             // 15ms for 10dB, 5ms for 20dB, 3ms for 30dB
-            // Attack rates track the signal envelope
             if (reduction <= 10.0f)
-                attackTime = 0.015f; // 15ms for 10dB level change
+                programAttackTime = 0.015f; // 15ms for 10dB level change
             else if (reduction <= 20.0f)
-                attackTime = 0.005f; // 5ms for 20dB level change  
+                programAttackTime = 0.005f; // 5ms for 20dB level change
             else
-                attackTime = 0.003f; // 3ms for 30dB level change
-            
-            // Ensure minimum attack time for stability
-            attackTime = juce::jmax(0.001f, attackTime);
+                programAttackTime = 0.003f; // 3ms for 30dB level change
         }
         else
         {
-            attackTime = 0.015f; // Default 15ms when not compressing
+            programAttackTime = 0.015f; // Default 15ms when not compressing
         }
+
+        // Scale program-dependent attack by user control
+        // Lower user values = faster attack, higher = slower (up to 3.3x at 50ms setting)
+        attackTime = programAttackTime * userAttackScale;
+        attackTime = juce::jlimit(0.0001f, 0.050f, attackTime); // 0.1ms to 50ms range
         
-        // DBX 160 release rate: constant 120dB/second regardless of program material
-        // This is a key characteristic - release doesn't vary like attack does
+        // DBX 160 release: blend user control with program-dependent 120dB/sec characteristic
+        // releaseParam range: 10ms to 5000ms
+        // At minimum (10ms): pure program-dependent behavior (120dB/sec)
+        // At maximum (5000ms): long fixed release
+        float userReleaseTime = releaseParam / 1000.0f;  // Convert ms to seconds
+
+        // Calculate program-dependent release (120dB/sec characteristic)
         const float releaseRate = 120.0f; // dB per second
+        float programReleaseTime;
         if (reduction > 0.1f)
         {
-            // Calculate release time based on how much reduction needs to be released
-            releaseTime = reduction / releaseRate; // Time to release current reduction
-            releaseTime = juce::jmax(0.008f, releaseTime); // Minimum 8ms
+            programReleaseTime = reduction / releaseRate;
+            programReleaseTime = juce::jmax(0.008f, programReleaseTime);
         }
         else
         {
-            releaseTime = 0.008f; // 8ms minimum
+            programReleaseTime = 0.008f;
         }
+
+        // Blend: shorter user times favor program-dependent, longer times use fixed release
+        // This preserves DBX character at fast settings while allowing longer releases
+        float blendFactor = juce::jlimit(0.0f, 1.0f, (userReleaseTime - 0.01f) / 0.5f); // 10ms-510ms transition
+        releaseTime = programReleaseTime * (1.0f - blendFactor) + userReleaseTime * blendFactor;
         
         // DBX VCA control voltage generation (-6mV/dB logarithmic curve)
         // This is key to the DBX sound - logarithmic VCA response
@@ -1719,6 +1859,234 @@ private:
     double sampleRate = 0.0;  // Set by prepare() from DAW
 };
 
+// Studio FET Compressor (1176 Rev E "Blackface" style - cleaner than Bluestripe)
+class UniversalCompressor::StudioFETCompressor
+{
+public:
+    void prepare(double sampleRate, int numChannels)
+    {
+        this->sampleRate = sampleRate;
+        detectors.resize(static_cast<size_t>(numChannels));
+        for (auto& detector : detectors)
+        {
+            detector.envelope = 1.0f;
+            detector.previousLevel = 0.0f;
+            detector.previousGR = 0.0f;
+        }
+    }
+
+    float process(float input, int channel, float inputGain, float outputGain,
+                  float attackMs, float releaseMs, int ratioIndex, float sidechainInput)
+    {
+        if (channel >= static_cast<int>(detectors.size()) || sampleRate <= 0.0)
+            return input;
+
+        auto& detector = detectors[static_cast<size_t>(channel)];
+
+        // Apply input gain (drives signal into fixed threshold)
+        float gained = input * juce::Decibels::decibelsToGain(inputGain);
+
+        // Fixed threshold at -10dBFS (1176 spec)
+        constexpr float thresholdDb = Constants::STUDIO_FET_THRESHOLD_DB;
+        const float threshold = juce::Decibels::decibelsToGain(thresholdDb);
+
+        // Use sidechain input for detection
+        float detectionLevel = std::abs(sidechainInput) * juce::Decibels::decibelsToGain(inputGain);
+
+        // Ratio selection (same as Vintage FET)
+        float ratio;
+        switch (ratioIndex)
+        {
+            case 0: ratio = 4.0f; break;
+            case 1: ratio = 8.0f; break;
+            case 2: ratio = 12.0f; break;
+            case 3: ratio = 20.0f; break;
+            case 4: ratio = 100.0f; break;  // All-buttons
+            default: ratio = 4.0f; break;
+        }
+
+        // Calculate gain reduction
+        float reduction = 0.0f;
+        if (detectionLevel > threshold)
+        {
+            float overDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
+            reduction = overDb * (1.0f - 1.0f / ratio);
+            reduction = juce::jmin(reduction, 30.0f);
+        }
+
+        // Studio FET timing - same fast response, but cleaner
+        const float minAttack = 0.00002f;  // 20µs
+        const float maxAttack = 0.0008f;   // 800µs
+        const float minRelease = 0.05f;    // 50ms
+        const float maxRelease = 1.1f;     // 1.1s
+
+        float attackNorm = juce::jlimit(0.0f, 1.0f, attackMs / 0.8f);
+        float releaseNorm = juce::jlimit(0.0f, 1.0f, releaseMs / 1100.0f);
+
+        float attackTime = minAttack * std::pow(maxAttack / minAttack, attackNorm);
+        float releaseTime = minRelease * std::pow(maxRelease / minRelease, releaseNorm);
+
+        // Envelope following
+        float targetGain = juce::Decibels::decibelsToGain(-reduction);
+        float attackCoeff = std::exp(-1.0f / (juce::jmax(0.0001f, attackTime * static_cast<float>(sampleRate))));
+        float releaseCoeff = std::exp(-1.0f / (juce::jmax(0.0001f, releaseTime * static_cast<float>(sampleRate))));
+
+        if (targetGain < detector.envelope)
+            detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+        else
+            detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
+
+        detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
+
+        // Apply compression
+        float compressed = gained * detector.envelope;
+
+        // Studio FET - MUCH cleaner harmonics (30% of Vintage FET)
+        // Rev E Blackface was the "Low Noise" revision
+        float absLevel = std::abs(compressed);
+        if (absLevel > 0.01f && reduction > 0.5f)
+        {
+            float sign = compressed > 0.0f ? 1.0f : -1.0f;
+            float harmonicAmount = reduction / 30.0f * Constants::STUDIO_FET_HARMONIC_SCALE;
+
+            // Subtle 2nd harmonic only
+            float h2 = absLevel * absLevel * harmonicAmount * 0.002f;
+            compressed += sign * h2;
+        }
+
+        // Apply output gain
+        float output = compressed * juce::Decibels::decibelsToGain(outputGain);
+        return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
+    }
+
+    float getGainReduction(int channel) const
+    {
+        if (channel >= static_cast<int>(detectors.size()))
+            return 0.0f;
+        return juce::Decibels::gainToDecibels(detectors[static_cast<size_t>(channel)].envelope);
+    }
+
+private:
+    struct Detector
+    {
+        float envelope = 1.0f;
+        float previousLevel = 0.0f;
+        float previousGR = 0.0f;
+    };
+
+    std::vector<Detector> detectors;
+    double sampleRate = 0.0;
+};
+
+// Studio VCA Compressor (Focusrite Red 3 style - modern, versatile)
+class UniversalCompressor::StudioVCACompressor
+{
+public:
+    void prepare(double sampleRate, int numChannels)
+    {
+        this->sampleRate = sampleRate;
+        detectors.resize(static_cast<size_t>(numChannels));
+        for (auto& detector : detectors)
+        {
+            detector.envelope = 1.0f;
+            detector.rms = 0.0f;
+            detector.previousGR = 0.0f;
+        }
+    }
+
+    float process(float input, int channel, float thresholdDb, float ratio,
+                  float attackMs, float releaseMs, float outputGain, float sidechainInput)
+    {
+        if (channel >= static_cast<int>(detectors.size()) || sampleRate <= 0.0)
+            return input;
+
+        auto& detector = detectors[static_cast<size_t>(channel)];
+
+        // Red 3 uses RMS detection
+        float squared = sidechainInput * sidechainInput;
+        float rmsCoeff = std::exp(-1.0f / (0.01f * static_cast<float>(sampleRate)));  // 10ms RMS
+        detector.rms = rmsCoeff * detector.rms + (1.0f - rmsCoeff) * squared;
+        float detectionLevel = std::sqrt(detector.rms);
+
+        float threshold = juce::Decibels::decibelsToGain(thresholdDb);
+
+        // Soft knee (6dB) - characteristic of Red 3
+        float kneeWidth = Constants::RED3_SOFT_KNEE_DB;
+        float kneeStart = threshold * juce::Decibels::decibelsToGain(-kneeWidth / 2.0f);
+        float kneeEnd = threshold * juce::Decibels::decibelsToGain(kneeWidth / 2.0f);
+
+        float reduction = 0.0f;
+        if (detectionLevel > kneeStart)
+        {
+            if (detectionLevel < kneeEnd)
+            {
+                // In knee region - smooth transition
+                float kneePosition = (detectionLevel - kneeStart) / (kneeEnd - kneeStart);
+                float effectiveRatio = 1.0f + (ratio - 1.0f) * kneePosition * kneePosition;
+                float overDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
+                reduction = overDb * (1.0f - 1.0f / effectiveRatio);
+            }
+            else
+            {
+                // Above knee - full compression
+                float overDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
+                reduction = overDb * (1.0f - 1.0f / ratio);
+            }
+            reduction = juce::jmin(reduction, Constants::RED3_MAX_REDUCTION_DB);
+        }
+
+        // Red 3 attack/release: 0.3ms to 75ms attack, 0.1s to 4s release
+        float attackTime = juce::jlimit(0.0003f, 0.075f, attackMs / 1000.0f);
+        float releaseTime = juce::jlimit(0.1f, 4.0f, releaseMs / 1000.0f);
+
+        float targetGain = juce::Decibels::decibelsToGain(-reduction);
+        float attackCoeff = std::exp(-1.0f / (attackTime * static_cast<float>(sampleRate)));
+        float releaseCoeff = std::exp(-1.0f / (releaseTime * static_cast<float>(sampleRate)));
+
+        if (targetGain < detector.envelope)
+            detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+        else
+            detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
+
+        detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
+
+        // Apply compression
+        float compressed = input * detector.envelope;
+
+        // Red 3 is very clean - minimal harmonics
+        float absLevel = std::abs(compressed);
+        if (absLevel > 0.8f)
+        {
+            // Gentle soft clipping at high levels
+            float excess = absLevel - 0.8f;
+            float softClip = 0.8f + 0.2f * std::tanh(excess * 5.0f);
+            compressed = (compressed > 0.0f ? 1.0f : -1.0f) * softClip;
+        }
+
+        // Apply output gain
+        float output = compressed * juce::Decibels::decibelsToGain(outputGain);
+        return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
+    }
+
+    float getGainReduction(int channel) const
+    {
+        if (channel >= static_cast<int>(detectors.size()))
+            return 0.0f;
+        return juce::Decibels::gainToDecibels(detectors[static_cast<size_t>(channel)].envelope);
+    }
+
+private:
+    struct Detector
+    {
+        float envelope = 1.0f;
+        float rms = 0.0f;
+        float previousGR = 0.0f;
+    };
+
+    std::vector<Detector> detectors;
+    double sampleRate = 0.0;
+};
+
 // Parameter layout creation
 juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createParameterLayout()
 {
@@ -1726,49 +2094,69 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     
     try {
     
-    // Mode selection
+    // Mode selection - 6 modes: 4 Vintage + 2 Studio
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "mode", "Mode",
-        juce::StringArray{"Opto", "FET", "VCA", "Bus"}, 0)); // Default to Opto
-    
+        juce::StringArray{"Vintage Opto", "Vintage FET", "Classic VCA", "Vintage VCA (Bus)",
+                          "Studio FET", "Studio VCA"}, 0));
+
     // Global parameters
-    // Oversample removed - saturation always runs at 2x internally now
-    // layout.add(std::make_unique<juce::AudioParameterBool>("oversample", "Oversample", true));
     layout.add(std::make_unique<juce::AudioParameterBool>("bypass", "Bypass", false));
-    
+
     // Stereo linking control (0% = independent, 100% = fully linked)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "stereo_link", "Stereo Link", 
+        "stereo_link", "Stereo Link",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
-    
+
     // Mix control for parallel compression (0% = dry, 100% = wet)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "mix", "Mix", 
+        "mix", "Mix",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
-    
+
+    // Sidechain highpass filter - prevents low frequency pumping
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "sidechain_hp", "SC HP Filter",
+        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.5f), 80.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    // Auto makeup gain
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "auto_makeup", "Auto Makeup", false));
+
+    // Distortion type (Off, Soft, Hard, Clip)
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "distortion_type", "Distortion",
+        juce::StringArray{"Off", "Soft", "Hard", "Clip"}, 0));
+
+    // Distortion amount
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "distortion_amount", "Distortion Amt",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 50.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
     // Attack/Release curve options (0 = logarithmic/analog, 1 = linear/digital)
     layout.add(std::make_unique<juce::AudioParameterChoice>(
-        "envelope_curve", "Envelope Curve", 
+        "envelope_curve", "Envelope Curve",
         juce::StringArray{"Logarithmic (Analog)", "Linear (Digital)"}, 0));
-    
+
     // Vintage/Modern modes for harmonic profiles
     layout.add(std::make_unique<juce::AudioParameterChoice>(
-        "saturation_mode", "Saturation Mode", 
+        "saturation_mode", "Saturation Mode",
         juce::StringArray{"Vintage (Warm)", "Modern (Clean)", "Pristine (Minimal)"}, 0));
-    
-    // External sidechain enable (keep for parameter compatibility, not implemented)
+
+    // External sidechain enable
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "sidechain_enable", "External Sidechain", false));
 
     // Analog noise floor enable (optional for CPU savings)
     layout.add(std::make_unique<juce::AudioParameterBool>(
-        "noise_enable", "Analog Noise", true)); // Default ON for analog character
+        "noise_enable", "Analog Noise", true));
 
     // Add read-only gain reduction meter parameter for DAW display (LV2/VST3)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "gr_meter", "GR", 
+        "gr_meter", "GR",
         juce::NormalisableRange<float>(-30.0f, 0.0f, 0.1f), 0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     
@@ -1837,36 +2225,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
         juce::AudioParameterFloatAttributes().withLabel("%"))); // SSL parallel compression
 
-    // Digital (Modern) Compressor parameters
+    // Studio FET parameters (shares most params with Vintage FET)
+    // Uses: fet_input, fet_output, fet_attack, fet_release, fet_ratio
+
+    // Studio VCA parameters (Focusrite Red 3 style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_threshold", "Threshold",
-        juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -20.0f));
+        "studio_vca_threshold", "Threshold",
+        juce::NormalisableRange<float>(-40.0f, 20.0f, 0.1f), -10.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_ratio", "Ratio",
-        juce::NormalisableRange<float>(1.0f, 100.0f, 0.1f), 4.0f));
+        "studio_vca_ratio", "Ratio",
+        juce::NormalisableRange<float>(1.0f, 10.0f, 0.1f), 3.0f));  // Red 3: 1.5:1 to 10:1
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_knee", "Knee",
-        juce::NormalisableRange<float>(0.0f, 20.0f, 0.1f), 2.0f));
+        "studio_vca_attack", "Attack",
+        juce::NormalisableRange<float>(0.3f, 75.0f, 0.1f), 10.0f));  // Red 3: Fast to Slow
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_attack", "Attack",
-        juce::NormalisableRange<float>(0.01f, 500.0f, 0.01f), 1.0f));
+        "studio_vca_release", "Release",
+        juce::NormalisableRange<float>(100.0f, 4000.0f, 1.0f), 300.0f));  // Red 3: 0.1s to 4s
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_release", "Release",
-        juce::NormalisableRange<float>(1.0f, 5000.0f, 1.0f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_lookahead", "Lookahead",
-        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f), 2.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_mix", "Mix",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "digital_output", "Output",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        "digital_adaptive", "Adaptive Release", false));
-    // Sidechain removed
-    // layout.add(std::make_unique<juce::AudioParameterBool>(
-    //     "digital_sidechain_listen", "SC Listen", false));
+        "studio_vca_output", "Output",
+        juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
     }
     catch (const std::exception& e) {
         DBG("Failed to create parameter layout: " << e.what());
@@ -1942,6 +2319,9 @@ UniversalCompressor::UniversalCompressor()
         fetCompressor = std::make_unique<FETCompressor>();
         vcaCompressor = std::make_unique<VCACompressor>();
         busCompressor = std::make_unique<BusCompressor>();
+        studioFetCompressor = std::make_unique<StudioFETCompressor>();
+        studioVcaCompressor = std::make_unique<StudioVCACompressor>();
+        sidechainFilter = std::make_unique<SidechainFilter>();
         antiAliasing = std::make_unique<AntiAliasing>();
     }
     catch (const std::exception& e) {
@@ -1950,6 +2330,9 @@ UniversalCompressor::UniversalCompressor()
         fetCompressor.reset();
         vcaCompressor.reset();
         busCompressor.reset();
+        studioFetCompressor.reset();
+        studioVcaCompressor.reset();
+        sidechainFilter.reset();
         antiAliasing.reset();
         DBG("Failed to initialize compressors: " << e.what());
     }
@@ -1959,15 +2342,21 @@ UniversalCompressor::UniversalCompressor()
         fetCompressor.reset();
         vcaCompressor.reset();
         busCompressor.reset();
+        studioFetCompressor.reset();
+        studioVcaCompressor.reset();
+        sidechainFilter.reset();
         antiAliasing.reset();
         DBG("Failed to initialize compressors: unknown error");
     }
 }
 
-UniversalCompressor::~UniversalCompressor() 
+UniversalCompressor::~UniversalCompressor()
 {
     // Explicitly reset all compressors in reverse order
     antiAliasing.reset();
+    sidechainFilter.reset();
+    studioVcaCompressor.reset();
+    studioFetCompressor.reset();
     busCompressor.reset();
     vcaCompressor.reset();
     fetCompressor.reset();
@@ -1996,7 +2385,15 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
         vcaCompressor->prepare(sampleRate, numChannels);
     if (busCompressor)
         busCompressor->prepare(sampleRate, numChannels, samplesPerBlock);
-    
+    if (studioFetCompressor)
+        studioFetCompressor->prepare(sampleRate, numChannels);
+    if (studioVcaCompressor)
+        studioVcaCompressor->prepare(sampleRate, numChannels);
+
+    // Prepare sidechain filter for all modes
+    if (sidechainFilter)
+        sidechainFilter->prepare(sampleRate, numChannels);
+
     // Prepare anti-aliasing for internal oversampling
     if (antiAliasing)
     {
@@ -2008,6 +2405,11 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     {
         setLatencySamples(0);
     }
+
+    // Pre-allocate buffers for processBlock to avoid allocation in audio thread
+    dryBuffer.setSize(numChannels, samplesPerBlock);
+    filteredSidechain.setSize(numChannels, samplesPerBlock);
+    linkedSidechain.setSize(numChannels, samplesPerBlock);
 }
 
 void UniversalCompressor::releaseResources()
@@ -2030,7 +2432,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         return;
     
     // Check for valid compressor instances
-    if (!optoCompressor || !fetCompressor || !vcaCompressor || !busCompressor)
+    if (!optoCompressor || !fetCompressor || !vcaCompressor || !busCompressor ||
+        !studioFetCompressor || !studioVcaCompressor)
         return;
     
     // Check for valid parameter pointers and bypass
@@ -2055,11 +2458,18 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         mixAmount = *mixParam * 0.01f; // Convert to 0-1
     }
 
-    // Store dry signal for parallel compression
-    juce::AudioBuffer<float> dryBuffer;
-    if (mixAmount < 1.0f)
+    // Store dry signal for parallel compression (uses pre-allocated buffer)
+    // Note: Uses buffer dimensions directly since numChannels/numSamples defined later
+    bool needsDryBuffer = (mixAmount < 1.0f);
+    if (needsDryBuffer)
     {
-        dryBuffer.makeCopyOf(buffer);
+        const int bufChannels = buffer.getNumChannels();
+        const int bufSamples = buffer.getNumSamples();
+        // Ensure buffer is sized correctly (may change between calls)
+        if (dryBuffer.getNumChannels() < bufChannels || dryBuffer.getNumSamples() < bufSamples)
+            dryBuffer.setSize(bufChannels, bufSamples, false, false, true);
+        for (int ch = 0; ch < bufChannels; ++ch)
+            dryBuffer.copyFrom(ch, 0, buffer, ch, 0, bufSamples);
     }
 
     // Internal oversampling is always enabled for better quality
@@ -2078,12 +2488,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p2 = parameters.getRawParameterValue("opto_gain");
             auto* p3 = parameters.getRawParameterValue("opto_limit");
             if (p1 && p2 && p3) {
-                cachedParams[0] = *p1;
+                cachedParams[0] = juce::jlimit(0.0f, 100.0f, p1->load());  // Peak reduction 0-100
                 // LA-2A gain is 0-40dB range, parameter is 0-100
                 // Map 50 = unity gain (0dB), 0 = -40dB, 100 = +40dB
-                float gainParam = *p2;
-                cachedParams[1] = (gainParam - 50.0f) * 0.8f; // -40 to +40 dB
-                cachedParams[2] = *p3;
+                float gainParam = juce::jlimit(0.0f, 100.0f, p2->load());
+                cachedParams[1] = juce::jlimit(-40.0f, 40.0f, (gainParam - 50.0f) * 0.8f);  // Bounded gain
+                cachedParams[2] = p3->load();
             } else validParams = false;
             break;
         }
@@ -2146,6 +2556,39 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             } else validParams = false;
             break;
         }
+        case CompressorMode::StudioFET:
+        {
+            // Studio FET shares parameters with Vintage FET
+            auto* p1 = parameters.getRawParameterValue("fet_input");
+            auto* p2 = parameters.getRawParameterValue("fet_output");
+            auto* p3 = parameters.getRawParameterValue("fet_attack");
+            auto* p4 = parameters.getRawParameterValue("fet_release");
+            auto* p5 = parameters.getRawParameterValue("fet_ratio");
+            if (p1 && p2 && p3 && p4 && p5) {
+                cachedParams[0] = *p1;
+                cachedParams[1] = *p2;
+                cachedParams[2] = *p3;
+                cachedParams[3] = *p4;
+                cachedParams[4] = *p5;
+            } else validParams = false;
+            break;
+        }
+        case CompressorMode::StudioVCA:
+        {
+            auto* p1 = parameters.getRawParameterValue("studio_vca_threshold");
+            auto* p2 = parameters.getRawParameterValue("studio_vca_ratio");
+            auto* p3 = parameters.getRawParameterValue("studio_vca_attack");
+            auto* p4 = parameters.getRawParameterValue("studio_vca_release");
+            auto* p5 = parameters.getRawParameterValue("studio_vca_output");
+            if (p1 && p2 && p3 && p4 && p5) {
+                cachedParams[0] = *p1;
+                cachedParams[1] = *p2;
+                cachedParams[2] = *p3;
+                cachedParams[3] = *p4;
+                cachedParams[4] = *p5;
+            } else validParams = false;
+            break;
+        }
     }
     
     if (!validParams)
@@ -2168,7 +2611,85 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     float inputDb = inputLevel > 1e-5f ? juce::Decibels::gainToDecibels(inputLevel) : -60.0f;
     // Use relaxed memory ordering for performance in audio thread
     inputMeter.store(inputDb, std::memory_order_relaxed);
-    
+
+    // Get sidechain HP filter frequency and update filter if changed
+    auto* sidechainHpParam = parameters.getRawParameterValue("sidechain_hp");
+    float sidechainHpFreq = (sidechainHpParam != nullptr) ? sidechainHpParam->load() : 80.0f;
+    if (sidechainFilter)
+        sidechainFilter->setFrequency(sidechainHpFreq);
+
+    // Get auto-makeup and distortion parameters
+    auto* autoMakeupParam = parameters.getRawParameterValue("auto_makeup");
+    auto* distortionTypeParam = parameters.getRawParameterValue("distortion_type");
+    auto* distortionAmountParam = parameters.getRawParameterValue("distortion_amount");
+    bool autoMakeup = (autoMakeupParam != nullptr) ? (autoMakeupParam->load() > 0.5f) : false;
+    DistortionType distType = (distortionTypeParam != nullptr) ? static_cast<DistortionType>(static_cast<int>(distortionTypeParam->load())) : DistortionType::Off;
+    float distAmount = (distortionAmountParam != nullptr) ? (distortionAmountParam->load() / 100.0f) : 0.0f;
+
+    // Pre-filter the sidechain at original sample rate BEFORE any processing.
+    // This ensures the filter runs once at the correct sample rate, avoiding:
+    // 1. Double-application of the filter (once here, once in processing loops)
+    // 2. Running the filter on oversampled data at the wrong sample rate
+    //
+    // filteredSidechain stores the HP-filtered sidechain signal for each channel.
+    // For stereo linking, we then blend channels. For non-linked, we use per-channel values.
+
+    // Ensure pre-allocated buffer is sized correctly
+    if (filteredSidechain.getNumChannels() < numChannels || filteredSidechain.getNumSamples() < numSamples)
+        filteredSidechain.setSize(numChannels, numSamples, false, false, true);
+
+    // Apply sidechain HP filter at original sample rate (filter is prepared for this rate)
+    for (int channel = 0; channel < numChannels; ++channel)
+    {
+        const float* inputData = buffer.getReadPointer(channel);
+        float* scData = filteredSidechain.getWritePointer(channel);
+
+        if (sidechainFilter)
+        {
+            for (int i = 0; i < numSamples; ++i)
+                scData[i] = sidechainFilter->process(inputData[i], channel);
+        }
+        else
+        {
+            // No filter - just copy the input
+            for (int i = 0; i < numSamples; ++i)
+                scData[i] = inputData[i];
+        }
+    }
+
+    // Stereo linking implementation:
+    // 0% = independent (each channel compresses based on its own level)
+    // 100% = fully linked (both channels compress based on max of both)
+    // This creates a stereo-linked sidechain buffer for stereo sources
+
+    bool useStereoLink = (stereoLinkAmount > 0.01f) && (numChannels >= 2);
+
+    if (useStereoLink)
+    {
+        // Ensure pre-allocated buffer is sized correctly
+        if (linkedSidechain.getNumChannels() < numChannels || linkedSidechain.getNumSamples() < numSamples)
+            linkedSidechain.setSize(numChannels, numSamples, false, false, true);
+
+        const float* leftSCFiltered = filteredSidechain.getReadPointer(0);
+        const float* rightSCFiltered = filteredSidechain.getReadPointer(1);
+        float* leftSC = linkedSidechain.getWritePointer(0);
+        float* rightSC = linkedSidechain.getWritePointer(1);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            // Use pre-filtered sidechain values (filter already applied above)
+            float leftLevel = std::abs(leftSCFiltered[i]);
+            float rightLevel = std::abs(rightSCFiltered[i]);
+
+            // Max of both channels for linked portion
+            float maxLevel = juce::jmax(leftLevel, rightLevel);
+
+            // Blend independent and linked based on stereoLinkAmount
+            leftSC[i] = leftLevel * (1.0f - stereoLinkAmount) + maxLevel * stereoLinkAmount;
+            rightSC[i] = rightLevel * (1.0f - stereoLinkAmount) + maxLevel * stereoLinkAmount;
+        }
+    }
+
     // Process audio with reduced function call overhead
     if (oversample && antiAliasing)
     {
@@ -2201,9 +2722,63 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     for (int i = 0; i < osNumSamples; ++i)
                         data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true);
                     break;
+                case CompressorMode::StudioFET:
+                    for (int i = 0; i < osNumSamples; ++i)
+                    {
+                        // Interpolate sidechain from original sample rate to oversampled rate.
+                        // Use linkedSidechain if stereo linking is active, otherwise use filteredSidechain.
+                        // The sidechain filter was already applied at the original sample rate.
+                        // Note: Use int64_t to prevent integer overflow with large block sizes
+                        float srcIdx = static_cast<float>(static_cast<int64_t>(i) * numSamples) / static_cast<float>(osNumSamples);
+                        int idx0 = juce::jmin(static_cast<int>(srcIdx), numSamples - 1);
+                        int idx1 = juce::jmin(idx0 + 1, numSamples - 1);
+                        float frac = srcIdx - static_cast<float>(idx0);
+
+                        float scSignal;
+                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                        {
+                            scSignal = linkedSidechain.getSample(channel, idx0) * (1.0f - frac) +
+                                       linkedSidechain.getSample(channel, idx1) * frac;
+                        }
+                        else
+                        {
+                            // Use pre-filtered sidechain (filter already applied at correct sample rate)
+                            scSignal = filteredSidechain.getSample(channel, idx0) * (1.0f - frac) +
+                                       filteredSidechain.getSample(channel, idx1) * frac;
+                        }
+                        data[i] = studioFetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), scSignal);
+                    }
+                    break;
+                case CompressorMode::StudioVCA:
+                    for (int i = 0; i < osNumSamples; ++i)
+                    {
+                        // Interpolate sidechain from original sample rate to oversampled rate.
+                        // Use linkedSidechain if stereo linking is active, otherwise use filteredSidechain.
+                        // The sidechain filter was already applied at the original sample rate.
+                        // Note: Use int64_t to prevent integer overflow with large block sizes
+                        float srcIdx = static_cast<float>(static_cast<int64_t>(i) * numSamples) / static_cast<float>(osNumSamples);
+                        int idx0 = juce::jmin(static_cast<int>(srcIdx), numSamples - 1);
+                        int idx1 = juce::jmin(idx0 + 1, numSamples - 1);
+                        float frac = srcIdx - static_cast<float>(idx0);
+
+                        float scSignal;
+                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                        {
+                            scSignal = linkedSidechain.getSample(channel, idx0) * (1.0f - frac) +
+                                       linkedSidechain.getSample(channel, idx1) * frac;
+                        }
+                        else
+                        {
+                            // Use pre-filtered sidechain (filter already applied at correct sample rate)
+                            scSignal = filteredSidechain.getSample(channel, idx0) * (1.0f - frac) +
+                                       filteredSidechain.getSample(channel, idx1) * frac;
+                        }
+                        data[i] = studioVcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], scSignal);
+                    }
+                    break;
             }
         }
-        
+
         antiAliasing->processDown(block);
     }
     else
@@ -2234,10 +2809,100 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     for (int i = 0; i < numSamples; ++i)
                         data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false) * compensationGain;
                     break;
+                case CompressorMode::StudioFET:
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        // Use linked sidechain if stereo linking is enabled, otherwise use pre-filtered signal
+                        // Note: filter was already applied when building filteredSidechain
+                        float scSignal;
+                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                            scSignal = linkedSidechain.getSample(channel, i);
+                        else
+                            scSignal = filteredSidechain.getSample(channel, i);
+                        data[i] = studioFetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), scSignal) * compensationGain;
+                    }
+                    break;
+                case CompressorMode::StudioVCA:
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        // Use linked sidechain if stereo linking is enabled, otherwise use pre-filtered signal
+                        // Note: filter was already applied when building filteredSidechain
+                        float scSignal;
+                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                            scSignal = linkedSidechain.getSample(channel, i);
+                        else
+                            scSignal = filteredSidechain.getSample(channel, i);
+                        data[i] = studioVcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], scSignal) * compensationGain;
+                    }
+                    break;
             }
         }
     }
-    
+
+    // Get gain reduction from active compressor (needed for auto-makeup and metering)
+    float grLeft = 0.0f, grRight = 0.0f;
+    switch (mode)
+    {
+        case CompressorMode::Opto:
+            grLeft = optoCompressor->getGainReduction(0);
+            grRight = (numChannels > 1) ? optoCompressor->getGainReduction(1) : grLeft;
+            break;
+        case CompressorMode::FET:
+            grLeft = fetCompressor->getGainReduction(0);
+            grRight = (numChannels > 1) ? fetCompressor->getGainReduction(1) : grLeft;
+            break;
+        case CompressorMode::VCA:
+            grLeft = vcaCompressor->getGainReduction(0);
+            grRight = (numChannels > 1) ? vcaCompressor->getGainReduction(1) : grLeft;
+            break;
+        case CompressorMode::Bus:
+            grLeft = busCompressor->getGainReduction(0);
+            grRight = (numChannels > 1) ? busCompressor->getGainReduction(1) : grLeft;
+            break;
+        case CompressorMode::StudioFET:
+            grLeft = studioFetCompressor->getGainReduction(0);
+            grRight = (numChannels > 1) ? studioFetCompressor->getGainReduction(1) : grLeft;
+            break;
+        case CompressorMode::StudioVCA:
+            grLeft = studioVcaCompressor->getGainReduction(0);
+            grRight = (numChannels > 1) ? studioVcaCompressor->getGainReduction(1) : grLeft;
+            break;
+    }
+
+    // Store per-channel gain reduction for UI metering (stereo-linked display)
+    linkedGainReduction[0].store(grLeft, std::memory_order_relaxed);
+    linkedGainReduction[1].store(grRight, std::memory_order_relaxed);
+
+    // Combined gain reduction (min of both channels for display)
+    float gainReduction = juce::jmin(grLeft, grRight);
+
+    // Apply auto-makeup gain if enabled
+    // Auto-makeup compensates for the average gain reduction to maintain perceived loudness
+    if (autoMakeup && gainReduction < -0.5f)
+    {
+        // Apply ~50% of the gain reduction as makeup to avoid over-compensation
+        float makeupGain = juce::Decibels::decibelsToGain(-gainReduction * 0.5f);
+        makeupGain = juce::jlimit(1.0f, 4.0f, makeupGain);  // Limit to +12dB max makeup
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* data = buffer.getWritePointer(ch);
+            SIMDHelpers::applyGain(data, numSamples, makeupGain);
+        }
+    }
+
+    // Apply output distortion if enabled
+    if (distType != DistortionType::Off && distAmount > 0.0f)
+    {
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* data = buffer.getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                data[i] = applyDistortion(data[i], distType, distAmount);
+            }
+        }
+    }
+
     // Output metering - SIMD optimized
     float outputLevel = 0.0f;
     for (int ch = 0; ch < numChannels; ++ch)
@@ -2250,33 +2915,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     float outputDb = outputLevel > 1e-5f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
     // Use relaxed memory ordering for performance in audio thread
     outputMeter.store(outputDb, std::memory_order_relaxed);
-    
-    // Get gain reduction from active compressor
-    float gainReduction = 0.0f;
-    switch (mode)
-    {
-        case CompressorMode::Opto: 
-            gainReduction = optoCompressor->getGainReduction(0);
-            if (numChannels > 1)
-                gainReduction = juce::jmin(gainReduction, optoCompressor->getGainReduction(1));
-            break;
-        case CompressorMode::FET: 
-            gainReduction = fetCompressor->getGainReduction(0);
-            if (numChannels > 1)
-                gainReduction = juce::jmin(gainReduction, fetCompressor->getGainReduction(1));
-            break;
-        case CompressorMode::VCA: 
-            gainReduction = vcaCompressor->getGainReduction(0);
-            if (numChannels > 1)
-                gainReduction = juce::jmin(gainReduction, vcaCompressor->getGainReduction(1));
-            break;
-        case CompressorMode::Bus: 
-            gainReduction = busCompressor->getGainReduction(0);
-            if (numChannels > 1)
-                gainReduction = juce::jmin(gainReduction, busCompressor->getGainReduction(1));
-            break;
-    }
-    // Use relaxed memory ordering for performance in audio thread
+
+    // Store gain reduction for DAW display (gainReduction already calculated above)
     grMeter.store(gainReduction, std::memory_order_relaxed);
     
     // Update the gain reduction parameter for DAW display
@@ -2284,7 +2924,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         *grParam = gainReduction;
     
     // Apply mix control for parallel compression (SIMD-optimized)
-    if (mixAmount < 1.0f && dryBuffer.getNumChannels() > 0)
+    if (needsDryBuffer && dryBuffer.getNumChannels() > 0)
     {
         // Blend dry and wet signals
         for (int ch = 0; ch < numChannels; ++ch)
@@ -2350,7 +2990,7 @@ CompressorMode UniversalCompressor::getCurrentMode() const
     if (modeParam)
     {
         int mode = static_cast<int>(*modeParam);
-        return static_cast<CompressorMode>(juce::jlimit(0, 3, mode));
+        return static_cast<CompressorMode>(juce::jlimit(0, 5, mode));  // 6 modes: 0-5
     }
     return CompressorMode::Opto; // Default fallback
 }

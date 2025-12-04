@@ -50,15 +50,22 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 ### 3. **Universal Compressor**
 - **Location**: `plugins/universal-compressor/`
-- **Description**: Multi-mode compressor with four classic emulations
+- **Description**: Multi-mode compressor with six classic hardware emulations
 - **Features**:
-  - 4 compression modes: Opto (LA-2A style), FET (1176 style), VCA (DBX 160 style), Bus (SSL Bus style)
-  - Mode-specific characteristics and behaviors
-  - Advanced sidechain filtering
-  - Analog-modeled saturation
+  - 6 compression modes:
+    - Vintage Opto (LA-2A style) - Smooth, program-dependent optical compression
+    - Vintage FET (1176 Bluestripe) - Aggressive, punchy FET compression
+    - Classic VCA (DBX 160) - Fast, precise VCA with OverEasy soft knee
+    - Vintage VCA/Bus (SSL G-Series) - Glue and punch for bus compression
+    - Studio FET (1176 Rev E Blackface) - Clean FET with 30% harmonics of Vintage
+    - Studio VCA (Focusrite Red 3) - Modern VCA with RMS detection and soft knee  - Global sidechain HP filter (20-500Hz) - Prevents pumping from bass
+  - Auto-makeup gain - Automatic loudness compensation
+  - Output distortion (Soft/Hard/Clip) - Adds character and saturation
   - Mix control for parallel compression
+  - Mode-specific attack/release characteristics and saturation
   - Linked gain reduction metering per channel
   - Input/Output/GR metering with atomic thread safety
+  - 2x internal oversampling for anti-aliased processing
 - **Build Target**: `UniversalCompressor_All`
 
 ### 4. **Plate Reverb**

@@ -144,6 +144,7 @@ private:
 
     // Modern mode panels
     std::unique_ptr<DigitalCompressorPanel> digitalPanel;
+    std::unique_ptr<StudioVCAPanel> studioVcaPanel;
     // Multiband panel removed
     
     // Current mode
