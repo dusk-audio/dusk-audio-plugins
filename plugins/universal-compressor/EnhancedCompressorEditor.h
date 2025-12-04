@@ -3,10 +3,12 @@
 #include "UniversalCompressor.h"
 #include "AnalogLookAndFeel.h"
 #include "ModernCompressorPanels.h"
+#include "../shared/PatreonBackers.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
 #include <memory>
+#include <functional>
 
 //==============================================================================
 class EnhancedCompressorEditor : public juce::AudioProcessorEditor,
@@ -178,6 +180,23 @@ private:
     std::unique_ptr<juce::Slider> createKnob(const juce::String& name, float min, float max,
                                              float defaultValue, const juce::String& suffix = "");
     std::unique_ptr<juce::Label> createLabel(const juce::String& text, juce::Justification justification = juce::Justification::centred);
-    
+
+    // Supporters overlay component - renders on top of everything when title clicked
+    class SupportersOverlay : public juce::Component
+    {
+    public:
+        SupportersOverlay() { setInterceptsMouseClicks(true, false); }
+        void paint(juce::Graphics& g) override;
+        void mouseDown(const juce::MouseEvent&) override;
+        std::function<void()> onDismiss;
+    };
+
+    std::unique_ptr<SupportersOverlay> supportersOverlay;
+    juce::Rectangle<int> titleClickArea;  // Clickable area for plugin title
+
+    void showSupportersPanel();
+    void hideSupportersPanel();
+    void mouseDown(const juce::MouseEvent& e) override;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EnhancedCompressorEditor)
 };
