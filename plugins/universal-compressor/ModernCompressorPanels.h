@@ -569,11 +569,14 @@ public:
     {
         auto area = getLocalBounds().reduced(10);
 
-        // Leave space for title
-        area.removeFromTop(30);
+        // Leave space for title at top (compact)
+        area.removeFromTop(20);
 
-        // Main controls row
-        auto controlRow = area.removeFromTop(120);
+        // Leave space for bottom description
+        area.removeFromBottom(25);
+
+        // Main controls row - labels are attached above each knob
+        auto controlRow = area;
         auto knobWidth = controlRow.getWidth() / 5;
 
         thresholdSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(5));
@@ -585,7 +588,7 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        // Focusrite Red inspired background
+        // Dark red inspired background
         g.setGradientFill(juce::ColourGradient(
             juce::Colour(0xff2a1518), 0, 0,
             juce::Colour(0xff1a0d0f), 0, getHeight(), false));
@@ -595,21 +598,16 @@ public:
         g.setColour(juce::Colour(0xffcc3333));
         g.fillRect(0, 0, getWidth(), 3);
 
-        // Title with Focusrite Red style
+        // Title - positioned at very top to avoid overlap with knob labels
         g.setColour(juce::Colour(0xffcc3333));
-        g.setFont(juce::FontOptions(18.0f).withStyle("Bold"));
-        g.drawText("STUDIO VCA", 0, 8, getWidth(), 20, juce::Justification::centred);
+        g.setFont(juce::FontOptions(16.0f).withStyle("Bold"));
+        g.drawText("STUDIO VCA", 0, 5, getWidth(), 18, juce::Justification::centred);
 
-        // Subtitle
-        g.setColour(juce::Colour(0xff888888));
-        g.setFont(juce::FontOptions(11.0f));
-        g.drawText("Focusrite Red 3 Style", 0, 25, getWidth(), 15, juce::Justification::centred);
-
-        // VCA characteristics description
+        // VCA characteristics description at bottom
         g.setColour(juce::Colour(0xff666666));
         g.setFont(juce::FontOptions(10.0f));
         g.drawText("RMS Detection | Soft Knee | Clean VCA Dynamics",
-                   0, getHeight() - 25, getWidth(), 20, juce::Justification::centred);
+                   0, getHeight() - 20, getWidth(), 18, juce::Justification::centred);
     }
 
 private:
