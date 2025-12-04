@@ -594,20 +594,20 @@ public:
             juce::Colour(0xff1a0d0f), 0, getHeight(), false));
         g.fillAll();
 
-        // Subtle red accent line at top
+        // Red accent line at very top
         g.setColour(juce::Colour(0xffcc3333));
-        g.fillRect(0, 0, getWidth(), 3);
+        g.fillRect(0, 0, getWidth(), 2);
 
-        // Title - positioned at very top to avoid overlap with knob labels
+        // Title - right below the red line
         g.setColour(juce::Colour(0xffcc3333));
-        g.setFont(juce::FontOptions(16.0f).withStyle("Bold"));
-        g.drawText("STUDIO VCA", 0, 5, getWidth(), 18, juce::Justification::centred);
+        g.setFont(juce::Font(16.0f, juce::Font::bold));
+        g.drawText("STUDIO VCA", 0, 3, getWidth(), 16, juce::Justification::centred);
 
         // VCA characteristics description at bottom
         g.setColour(juce::Colour(0xff666666));
-        g.setFont(juce::FontOptions(10.0f));
+        g.setFont(juce::Font(10.0f));
         g.drawText("RMS Detection | Soft Knee | Clean VCA Dynamics",
-                   0, getHeight() - 20, getWidth(), 18, juce::Justification::centred);
+                   0, getHeight() - 18, getWidth(), 16, juce::Justification::centred);
     }
 
 private:
