@@ -6,6 +6,7 @@
 #include "EQCurveDisplay.h"
 #include "../../shared/PatreonBackers.h"
 #include "../shared/LEDMeter.h"
+#include "../shared/LunaLookAndFeel.h"
 
 //==============================================================================
 /**
@@ -78,6 +79,11 @@ private:
     float lastEqType = -1.0f;
     float lastBypass = -1.0f;
     double lastSampleRate = 0.0;
+
+    // Displayed meter levels (throttled for readability)
+    float displayedInputLevel = -60.0f;
+    float displayedOutputLevel = -60.0f;
+    int levelDisplayCounter = 0;
 
     // A/B Comparison
     juce::TextButton abButton;
