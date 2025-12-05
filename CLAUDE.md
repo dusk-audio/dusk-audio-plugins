@@ -363,12 +363,156 @@ plugins/
 3. Look for NaN/inf values in debug builds
 4. Use JUCE's AudioBuffer assertions in debug mode
 
+## Plugin Testing Framework
+
+A comprehensive testing framework is available in `tests/` for automated validation and audio analysis.
+
+### Quick Validation
+```bash
+# Fast sanity check - verifies all plugins are built and installed
+./tests/quick_validate.sh
+
+# Full test suite with all validations
+./tests/run_plugin_tests.sh
+
+# Test a specific plugin
+./tests/run_plugin_tests.sh --plugin "Universal Compressor"
+```
+
+### Test Components
+
+#### 1. Plugin Validation (`run_plugin_tests.sh`)
+- **File existence checks**: Verifies VST3/LV2 files are installed correctly
+- **Binary analysis**: Checks for required symbols (GetPluginFactory)
+- **Pluginval integration**: Runs Tracktion's pluginval at multiple strictness levels
+- **Dependency verification**: Ensures all shared libraries are available
+
+#### 2. Audio Analysis (`audio_analyzer.py`)
+Python-based audio analysis providing PluginDoctor-like functionality:
+
+```bash
+# Generate test signals and analyze
+python3 tests/audio_analyzer.py --plugin "4K EQ" --output-dir tests/output
+
+# Analyze previously processed files
+python3 tests/audio_analyzer.py --plugin "4K EQ" --analyze
+```
+
+**Analysis capabilities:**
+- **THD (Total Harmonic Distortion)**: Measures harmonic content at 1kHz
+- **THD+N**: Total harmonic distortion plus noise
+- **Frequency Response**: Using logarithmic sweeps
+- **Phase Response**: Phase shift across frequencies
+- **Aliasing Detection**: High-frequency artifacts at 18kHz
+- **Noise Floor**: Self-noise with silent input
+- **Null Testing**: Bypass verification (should be < -120dB residual)
+- **Latency Measurement**: Plugin processing delay in samples/ms
+
+**Test signal files generated:**
+- `*_test_sine_1khz.wav` - For THD measurement
+- `*_test_sine_18khz.wav` - For aliasing detection
+- `*_test_sweep.wav` - For frequency/phase response
+- `*_test_impulse.wav` - For latency measurement
+- `*_test_silence.wav` - For noise floor
+- `*_test_multitone.wav` - For IMD testing (60Hz + 7kHz)
+- `*_test_pink_noise.wav` - For general testing and null tests
+
+#### 3. DSP Unit Tests (`dsp_test_harness.cpp`)
+Standalone C++ test harness for testing DSP algorithms without plugin wrappers:
+
+```bash
+# Compile the test harness
+cd tests
+g++ -std=c++17 -O2 dsp_test_harness.cpp -o dsp_test_harness -lm
+
+# Run tests
+./dsp_test_harness
+```
+
+**Test categories:**
+- Sample validity (no NaN/Inf)
+- DC offset verification
+- Clipping detection
+- Noise floor measurement
+- Bypass null testing
+- Gain accuracy
+- Compression behavior
+
+### Manual Audio Testing Workflow
+
+For comprehensive plugin testing similar to PluginDoctor:
+
+1. **Generate test signals:**
+   ```bash
+   python3 tests/audio_analyzer.py --plugin "Plugin Name"
+   ```
+
+2. **Process through plugin:**
+   - Load test WAV files into DAW
+   - Insert plugin on track
+   - Record output with `_processed` suffix
+   - For bypass test, record with `_bypass` suffix
+
+3. **Analyze results:**
+   ```bash
+   python3 tests/audio_analyzer.py --plugin "Plugin Name" --analyze
+   ```
+
+4. **Review report:**
+   - JSON report saved to `tests/output/plugin_name_report.json`
+   - Console output shows pass/fail for each test
+
+### Test Thresholds
+
+| Test | Pass Threshold | Description |
+|------|----------------|-------------|
+| THD @ 1kHz | < 1.0% | Total harmonic distortion |
+| Noise Floor | < -80 dB | Self-noise with silent input |
+| Bypass Null | < -100 dB | Residual when bypassed |
+| Aliasing | None detected | No unexpected spectral content |
+| Clipping | 0% samples | No samples exceeding ±1.0 |
+| DC Offset | < 0.001 | Mean sample value |
+
+### Installing Test Dependencies
+
+```bash
+# Pluginval (download AppImage from releases)
+wget https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
+unzip pluginval_Linux.zip
+chmod +x pluginval
+sudo mv pluginval /usr/local/bin/
+
+# Python dependencies
+pip3 install numpy scipy
+
+# Build DSP test harness
+cd tests && g++ -std=c++17 -O2 dsp_test_harness.cpp -o dsp_test_harness -lm
+```
+
+### Continuous Integration Testing
+
+For automated testing in CI/CD:
+
+```bash
+# Full validation (returns non-zero on failure)
+./tests/run_plugin_tests.sh --skip-audio
+
+# Quick check only
+./tests/quick_validate.sh
+```
+
+### Adding Tests for New Plugins
+
+1. Add plugin name to `PLUGINS` array in `run_plugin_tests.sh`
+2. Create plugin-specific DSP tests in `dsp_test_harness.cpp`
+3. Run `quick_validate.sh` to verify basic installation
+4. Run full audio analysis to establish baseline measurements
+
 ## Contact & Support
 For issues or questions about these plugins:
 - Check the build logs in `/home/marc/projects/Luna/plugins/build/`
 - Review individual plugin source code
 - Check JUCE forum for framework-related questions
-
 ---
 *Last updated: December 2025*
 *Company: Luna Co. Audio*

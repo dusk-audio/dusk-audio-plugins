@@ -290,9 +290,11 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         oversamplingFactor = requestedFactor;
     }
 
-    // Only recreate oversamplers if sample rate or factor changed (optimization)
+    // Only recreate oversamplers if sample rate, factor, or buffer size changed (optimization)
+    // CRITICAL: Must reinitialize when buffer size changes to prevent heap corruption
     bool needsRecreate = (std::abs(sampleRate - lastPreparedSampleRate) > 0.01) ||
                          (oversamplingFactor != lastOversamplingFactor) ||
+                         (samplesPerBlock != lastPreparedBlockSize) ||
                          !oversampler2x || !oversampler4x;
 
     if (needsRecreate)
@@ -312,6 +314,7 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
         lastPreparedSampleRate = sampleRate;
         lastOversamplingFactor = oversamplingFactor;
+        lastPreparedBlockSize = samplesPerBlock;
     }
     else
     {
@@ -1202,6 +1205,29 @@ void FourKEQ::setStateInformation(const void* data, int sizeInBytes)
 
             // Load the state
             parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+
+            // Sanitize boolean parameters to ensure they are properly 0 or 1
+            // This is needed because pluginval fuzz testing can set intermediate values
+            // that get saved and may not round-trip correctly
+            auto sanitizeBool = [this](const juce::String& paramID) {
+                if (auto* param = parameters.getParameter(paramID))
+                {
+                    float value = param->getValue();
+                    // Round to 0 or 1 based on threshold of 0.5
+                    float sanitized = (value >= 0.5f) ? 1.0f : 0.0f;
+                    if (std::abs(value - sanitized) > 0.01f)
+                    {
+                        param->setValueNotifyingHost(sanitized);
+                    }
+                }
+            };
+
+            sanitizeBool("lf_bell");
+            sanitizeBool("hf_bell");
+            sanitizeBool("bypass");
+            sanitizeBool("ms_mode");
+            sanitizeBool("spectrum_prepost");
+            sanitizeBool("auto_gain");
 
             // Force filter update after loading state
             parametersChanged.store(true);

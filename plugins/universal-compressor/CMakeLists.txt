@@ -56,6 +56,7 @@ target_sources(UniversalCompressor
         UniversalCompressor.cpp
         AnalogLookAndFeel.cpp
         EnhancedCompressorEditor.cpp
+        ../shared/LEDMeter.cpp
         ../../shared/PatreonBackers.h
 )
 
@@ -125,6 +126,7 @@ if(BUILD_UNIVERSAL_COMPRESSOR_TESTS)
         UniversalCompressor.cpp
         AnalogLookAndFeel.cpp
         EnhancedCompressorEditor.cpp
+        ../shared/LEDMeter.cpp
     )
 
     # Link test executable with JUCE

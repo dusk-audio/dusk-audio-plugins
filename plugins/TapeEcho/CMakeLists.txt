@@ -9,10 +9,10 @@ juce_add_plugin(TapeEcho
     COMPANY_NAME "Luna Co. Audio"
     PLUGIN_MANUFACTURER_CODE Luna
     PLUGIN_CODE TpEc
-    FORMATS VST3 Standalone
+    FORMATS VST3 LV2 Standalone
     PRODUCT_NAME "Vintage Tape Echo"
     BUNDLE_ID "com.lunaco.tapeecho"
-    LV2_URI "https://lunaco.audio/plugins/tapeecho"
+    LV2URI "https://lunaco.audio/plugins/tapeecho"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE

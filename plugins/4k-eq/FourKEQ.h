@@ -284,6 +284,7 @@ private:
     double currentSampleRate = 44100.0;
     double lastPreparedSampleRate = 0.0;
     int lastOversamplingFactor = 0;
+    int lastPreparedBlockSize = 0;
 
     // Validation flags
     bool paramsValid = false;  // Set true only if all critical params initialized

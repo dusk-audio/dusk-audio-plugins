@@ -240,12 +240,12 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     addAndMakeVisible(inputMeterL.get());
     addAndMakeVisible(outputMeterL.get());
 
-    // Set initial bounds so meters are visible on first paint
+    // Set initial bounds so meters are visible on first paint - use standard width
     int initialMeterY = 185;  // Start lower to make room for EQ curve and labels
-    int initialMeterHeight = 640 - initialMeterY - 20;  // Adjusted for new height
-    inputMeterL->setBounds(10, initialMeterY, 16, initialMeterHeight);
-    // Output meter slightly left of right edge to center under "OUTPUT" label
-    outputMeterL->setBounds(950 - 16 - 18, initialMeterY, 16, initialMeterHeight);
+    int initialMeterHeight = 640 - initialMeterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
+    inputMeterL->setBounds(6, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);
+    // Output meter - center under "OUTPUT" label
+    outputMeterL->setBounds(950 - LEDMeterStyle::standardWidth - 10, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);
 
     // Note: Value readout labels removed - the tick marks around knobs already
     // show the parameter range, and current values can be seen from knob position
@@ -407,27 +407,15 @@ void FourKEQEditor::paint(juce::Graphics& g)
     // Draw knob scale markings around each knob
     drawKnobMarkings(g);
 
-    // Draw meter labels centered over meters, below header bar
-    g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
-    g.setColour(juce::Colour(0xffe0e0e0));
-
+    // Draw meter labels and values using standard LEDMeterStyle
     if (inputMeterL)
     {
-        auto inputBounds = inputMeterL->getBounds();
-        // Center label over meter, but keep within left edge (start at x=0)
-        int labelX = std::max(0, inputBounds.getCentreX() - 20);  // 40px width / 2 = 20
-        g.drawText("INPUT", labelX, inputBounds.getY() - 16,
-                   40, 15, juce::Justification::centred);
+        LEDMeterStyle::drawMeterLabels(g, inputMeterL->getBounds(), "INPUT", displayedInputLevel);
     }
 
     if (outputMeterL)
     {
-        auto outputBounds = outputMeterL->getBounds();
-        // Center label over meter, ensuring it doesn't extend past right edge
-        int labelWidth = 45;
-        int labelX = std::min(getWidth() - labelWidth, outputBounds.getCentreX() - labelWidth / 2);
-        g.drawText("OUTPUT", labelX, outputBounds.getY() - 16,
-                   labelWidth, 15, juce::Justification::centred);
+        LEDMeterStyle::drawMeterLabels(g, outputMeterL->getBounds(), "OUTPUT", displayedOutputLevel);
     }
 
 }
@@ -573,17 +561,17 @@ void FourKEQEditor::resized()
         eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
     }
 
-    // LED Meters - start below the curve display
-    int meterWidth = 16;
+    // LED Meters - use standard width from LEDMeterStyle
+    int meterWidth = LEDMeterStyle::standardWidth;
     int meterY = 185;  // Start lower to make room for curve and labels
-    int meterHeight = getHeight() - meterY - 20;
+    int meterHeight = getHeight() - meterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
 
     if (inputMeterL)
-        inputMeterL->setBounds(10, meterY, meterWidth, meterHeight);
+        inputMeterL->setBounds(6, meterY, meterWidth, meterHeight);
 
-    // Output meter slightly left of right edge to center under "OUTPUT" label
+    // Output meter - center under "OUTPUT" label
     if (outputMeterL)
-        outputMeterL->setBounds(getWidth() - meterWidth - 18, meterY, meterWidth, meterHeight);
+        outputMeterL->setBounds(getWidth() - meterWidth - 10, meterY, meterWidth, meterHeight);
 
     // Use absolute positioning based on section divider positions from paint()
     // This ensures knobs are perfectly centered between dividers
@@ -813,6 +801,16 @@ void FourKEQEditor::timerCallback()
 
     if (outputMeterL)
         outputMeterL->setLevel(outputLevel);
+
+    // Update displayed level values (throttled for readability - ~3x per second)
+    levelDisplayCounter++;
+    if (levelDisplayCounter >= 10)  // 30Hz / 10 = 3Hz
+    {
+        levelDisplayCounter = 0;
+        displayedInputLevel = inputLevel;
+        displayedOutputLevel = outputLevel;
+        repaint();  // Repaint to update value labels
+    }
 }
 
 //==============================================================================
