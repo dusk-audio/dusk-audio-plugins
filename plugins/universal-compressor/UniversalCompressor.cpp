@@ -2087,6 +2087,184 @@ private:
     double sampleRate = 0.0;
 };
 
+//==============================================================================
+// Digital Compressor - Clean, transparent, precise
+class UniversalCompressor::DigitalCompressor
+{
+public:
+    static constexpr float MAX_LOOKAHEAD_MS = 10.0f;  // Maximum lookahead time in ms
+
+    void prepare(double sr, int numCh, int maxBlockSize)
+    {
+        sampleRate = sr;
+        this->numChannels = numCh;
+        detectors.resize(static_cast<size_t>(numCh));
+        for (auto& detector : detectors)
+        {
+            detector.envelope = 1.0f;
+            detector.adaptiveRelease = 0.0f;
+        }
+
+        // Calculate max lookahead samples for buffer allocation
+        maxLookaheadSamples = static_cast<int>(std::ceil((MAX_LOOKAHEAD_MS / 1000.0) * sampleRate));
+
+        // Allocate lookahead buffer: needs to hold maxLookaheadSamples for delay
+        // We use a circular buffer sized to maxLookaheadSamples
+        lookaheadBuffer.setSize(numCh, maxLookaheadSamples);
+        lookaheadBuffer.clear();
+
+        // Initialize write positions per channel
+        lookaheadWritePos.resize(static_cast<size_t>(numCh), 0);
+
+        // Reset current lookahead samples
+        currentLookaheadSamples = 0;
+    }
+
+    float process(float input, int channel, float thresholdDb, float ratio, float kneeDb,
+                  float attackMs, float releaseMs, float lookaheadMs, float mixPercent,
+                  float outputGain, bool adaptiveRelease, float sidechainInput)
+    {
+        if (channel >= static_cast<int>(detectors.size()) || sampleRate <= 0.0)
+            return input;
+
+        auto& detector = detectors[static_cast<size_t>(channel)];
+
+        // Calculate lookahead delay in samples (clamped to valid range)
+        int lookaheadSamples = static_cast<int>(std::round((lookaheadMs / 1000.0f) * static_cast<float>(sampleRate)));
+        lookaheadSamples = juce::jlimit(0, maxLookaheadSamples - 1, lookaheadSamples);
+
+        // Update current lookahead for latency reporting (use max across channels)
+        if (channel == 0)
+            currentLookaheadSamples = lookaheadSamples;
+
+        // Get delayed sample from circular buffer for output (the "past" audio)
+        float delayedInput = input;  // Default to no delay
+        if (lookaheadSamples > 0 && maxLookaheadSamples > 0)
+        {
+            int& writePos = lookaheadWritePos[static_cast<size_t>(channel)];
+            int bufferSize = maxLookaheadSamples;
+
+            // Read position is lookaheadSamples behind write position
+            int readPos = (writePos - lookaheadSamples + bufferSize) % bufferSize;
+            delayedInput = lookaheadBuffer.getSample(channel, readPos);
+
+            // Write current input to buffer
+            lookaheadBuffer.setSample(channel, writePos, input);
+
+            // Advance write position
+            writePos = (writePos + 1) % bufferSize;
+        }
+
+        // Peak detection uses current (future) sidechain input for gain computation
+        // This allows the compressor to "see ahead" and react before the audio arrives
+        float detectionLevel = std::abs(sidechainInput);
+        float detectionDb = juce::Decibels::gainToDecibels(juce::jmax(detectionLevel, 0.00001f));
+
+        // Soft knee calculation
+        float reduction = 0.0f;
+        if (kneeDb > 0.0f)
+        {
+            // Soft knee
+            float kneeStart = thresholdDb - kneeDb / 2.0f;
+            float kneeEnd = thresholdDb + kneeDb / 2.0f;
+
+            if (detectionDb > kneeStart)
+            {
+                if (detectionDb < kneeEnd)
+                {
+                    // In knee region - quadratic interpolation
+                    float kneePosition = (detectionDb - kneeStart) / kneeDb;
+                    float effectiveRatio = 1.0f + (ratio - 1.0f) * kneePosition * kneePosition;
+                    float overDb = detectionDb - thresholdDb;
+                    reduction = overDb * (1.0f - 1.0f / effectiveRatio) * kneePosition;
+                }
+                else
+                {
+                    // Above knee - full compression
+                    float overDb = detectionDb - thresholdDb;
+                    reduction = overDb * (1.0f - 1.0f / ratio);
+                }
+            }
+        }
+        else
+        {
+            // Hard knee
+            if (detectionDb > thresholdDb)
+            {
+                float overDb = detectionDb - thresholdDb;
+                reduction = overDb * (1.0f - 1.0f / ratio);
+            }
+        }
+
+        reduction = juce::jmax(0.0f, reduction);
+
+        // Attack and release with adaptive option
+        float attackTime = juce::jmax(0.00001f, attackMs / 1000.0f);
+        float releaseTime = juce::jmax(0.001f, releaseMs / 1000.0f);
+
+        if (adaptiveRelease && reduction > 0.0f)
+        {
+            // Program-dependent release: faster release for transients
+            float transientAmount = reduction - detector.adaptiveRelease;
+            detector.adaptiveRelease = reduction;
+            if (transientAmount > 3.0f)  // 3dB transient
+            {
+                releaseTime *= 0.3f;  // 3x faster release for transients
+            }
+        }
+
+        float targetGain = juce::Decibels::decibelsToGain(-reduction);
+        float attackCoeff = std::exp(-1.0f / (attackTime * static_cast<float>(sampleRate)));
+        float releaseCoeff = std::exp(-1.0f / (releaseTime * static_cast<float>(sampleRate)));
+
+        if (targetGain < detector.envelope)
+            detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+        else
+            detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
+
+        detector.envelope = juce::jlimit(0.0001f, 1.0f, detector.envelope);
+
+        // Apply compression to DELAYED input (the gain was computed from future/current samples)
+        float compressed = delayedInput * detector.envelope;
+
+        // Mix (parallel compression) - use delayed input for dry signal too
+        float mixAmount = mixPercent / 100.0f;
+        float output = delayedInput * (1.0f - mixAmount) + compressed * mixAmount;
+
+        // Apply output gain
+        output *= juce::Decibels::decibelsToGain(outputGain);
+
+        return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
+    }
+
+    float getGainReduction(int channel) const
+    {
+        if (channel >= static_cast<int>(detectors.size()))
+            return 0.0f;
+        return juce::Decibels::gainToDecibels(detectors[static_cast<size_t>(channel)].envelope);
+    }
+
+    int getLookaheadSamples() const
+    {
+        return currentLookaheadSamples;
+    }
+
+private:
+    struct Detector
+    {
+        float envelope = 1.0f;
+        float adaptiveRelease = 0.0f;
+    };
+
+    std::vector<Detector> detectors;
+    juce::AudioBuffer<float> lookaheadBuffer;
+    std::vector<int> lookaheadWritePos;
+    int maxLookaheadSamples = 0;
+    int currentLookaheadSamples = 0;
+    int numChannels = 2;
+    double sampleRate = 0.0;
+};
+
 // Parameter layout creation
 juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createParameterLayout()
 {
@@ -2094,11 +2272,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     
     try {
     
-    // Mode selection - 6 modes: 4 Vintage + 2 Studio
+    // Mode selection - 7 modes: 4 Vintage + 2 Studio + 1 Digital
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "mode", "Mode",
         juce::StringArray{"Vintage Opto", "Vintage FET", "Classic VCA", "Vintage VCA (Bus)",
-                          "Studio FET", "Studio VCA"}, 0));
+                          "Studio FET", "Studio VCA", "Digital"}, 0));
 
     // Global parameters
     layout.add(std::make_unique<juce::AudioParameterBool>("bypass", "Bypass", false));
@@ -2246,6 +2424,36 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_output", "Output",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
+
+    // Digital Compressor parameters (transparent, precise)
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_threshold", "Threshold",
+        juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -20.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_ratio", "Ratio",
+        juce::NormalisableRange<float>(1.0f, 100.0f, 0.1f, 0.4f), 4.0f));  // Skew for better low-ratio control
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_knee", "Knee",
+        juce::NormalisableRange<float>(0.0f, 20.0f, 0.1f), 6.0f));  // Soft knee width in dB
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_attack", "Attack",
+        juce::NormalisableRange<float>(0.01f, 500.0f, 0.01f, 0.3f), 10.0f));  // 0.01ms to 500ms
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_release", "Release",
+        juce::NormalisableRange<float>(1.0f, 5000.0f, 1.0f, 0.4f), 100.0f));  // 1ms to 5s
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_lookahead", "Lookahead",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f), 0.0f));  // Up to 10ms lookahead
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_mix", "Mix",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f));  // Parallel compression
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "digital_output", "Output",
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "digital_adaptive", "Adaptive Release", false));  // Program-dependent release
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        "digital_sidechain_listen", "Sidechain Listen", false));  // Monitor sidechain signal
     }
     catch (const std::exception& e) {
         DBG("Failed to create parameter layout: " << e.what());
@@ -2323,6 +2531,7 @@ UniversalCompressor::UniversalCompressor()
         busCompressor = std::make_unique<BusCompressor>();
         studioFetCompressor = std::make_unique<StudioFETCompressor>();
         studioVcaCompressor = std::make_unique<StudioVCACompressor>();
+        digitalCompressor = std::make_unique<DigitalCompressor>();
         sidechainFilter = std::make_unique<SidechainFilter>();
         antiAliasing = std::make_unique<AntiAliasing>();
     }
@@ -2391,22 +2600,28 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
         studioFetCompressor->prepare(sampleRate, numChannels);
     if (studioVcaCompressor)
         studioVcaCompressor->prepare(sampleRate, numChannels);
+    if (digitalCompressor)
+        digitalCompressor->prepare(sampleRate, numChannels, samplesPerBlock);
 
     // Prepare sidechain filter for all modes
     if (sidechainFilter)
         sidechainFilter->prepare(sampleRate, numChannels);
 
     // Prepare anti-aliasing for internal oversampling
+    int oversamplingLatency = 0;
     if (antiAliasing)
     {
         antiAliasing->prepare(sampleRate, samplesPerBlock, numChannels);
-        // Set latency based on oversampling
-        setLatencySamples(antiAliasing->getLatency());
+        oversamplingLatency = antiAliasing->getLatency();
     }
-    else
-    {
-        setLatencySamples(0);
-    }
+
+    // Calculate maximum lookahead latency for Digital mode
+    // Always report max to maintain consistent PDC regardless of parameter settings
+    const float maxLookaheadMs = 10.0f;  // Matches digital_lookahead parameter max
+    int maxLookaheadSamples = static_cast<int>(std::ceil((maxLookaheadMs / 1000.0) * sampleRate));
+
+    // Total latency = oversampling + max lookahead
+    setLatencySamples(oversamplingLatency + maxLookaheadSamples);
 
     // Pre-allocate buffers for processBlock to avoid allocation in audio thread
     dryBuffer.setSize(numChannels, samplesPerBlock);
@@ -2595,8 +2810,34 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             } else validParams = false;
             break;
         }
+        case CompressorMode::Digital:
+        {
+            auto* p1 = parameters.getRawParameterValue("digital_threshold");
+            auto* p2 = parameters.getRawParameterValue("digital_ratio");
+            auto* p3 = parameters.getRawParameterValue("digital_knee");
+            auto* p4 = parameters.getRawParameterValue("digital_attack");
+            auto* p5 = parameters.getRawParameterValue("digital_release");
+            auto* p6 = parameters.getRawParameterValue("digital_lookahead");
+            auto* p7 = parameters.getRawParameterValue("digital_mix");
+            auto* p8 = parameters.getRawParameterValue("digital_output");
+            auto* p9 = parameters.getRawParameterValue("digital_adaptive");
+            auto* p10 = parameters.getRawParameterValue("digital_sidechain_listen");
+            if (p1 && p2 && p3 && p4 && p5 && p6 && p7 && p8 && p9 && p10) {
+                cachedParams[0] = *p1;  // threshold
+                cachedParams[1] = *p2;  // ratio
+                cachedParams[2] = *p3;  // knee
+                cachedParams[3] = *p4;  // attack
+                cachedParams[4] = *p5;  // release
+                cachedParams[5] = *p6;  // lookahead
+                cachedParams[6] = *p7;  // mix
+                cachedParams[7] = *p8;  // output
+                cachedParams[8] = *p9;  // adaptive release (bool as float)
+                cachedParams[9] = *p10; // sidechain listen (bool as float)
+            } else validParams = false;
+            break;
+        }
     }
-    
+
     if (!validParams)
         return;
     
@@ -2782,6 +3023,44 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         data[i] = studioVcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], scSignal);
                     }
                     break;
+                case CompressorMode::Digital:
+                {
+                    bool sidechainListen = cachedParams[9] > 0.5f;
+                    for (int i = 0; i < osNumSamples; ++i)
+                    {
+                        // Interpolate sidechain from original sample rate to oversampled rate
+                        float srcIdx = static_cast<float>(static_cast<int64_t>(i) * numSamples) / static_cast<float>(osNumSamples);
+                        int idx0 = juce::jmin(static_cast<int>(srcIdx), numSamples - 1);
+                        int idx1 = juce::jmin(idx0 + 1, numSamples - 1);
+                        float frac = srcIdx - static_cast<float>(idx0);
+
+                        float scSignal;
+                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                        {
+                            scSignal = linkedSidechain.getSample(channel, idx0) * (1.0f - frac) +
+                                       linkedSidechain.getSample(channel, idx1) * frac;
+                        }
+                        else
+                        {
+                            scSignal = filteredSidechain.getSample(channel, idx0) * (1.0f - frac) +
+                                       filteredSidechain.getSample(channel, idx1) * frac;
+                        }
+
+                        // Sidechain listen mode - output sidechain signal instead of processed audio
+                        if (sidechainListen)
+                        {
+                            data[i] = scSignal;
+                        }
+                        else
+                        {
+                            // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
+                            data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
+                                                                 cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                                 cachedParams[7], cachedParams[8] > 0.5f, scSignal);
+                        }
+                    }
+                    break;
+                }
             }
         }
 
@@ -2841,6 +3120,32 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         data[i] = studioVcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], scSignal) * compensationGain;
                     }
                     break;
+                case CompressorMode::Digital:
+                {
+                    bool sidechainListen = cachedParams[9] > 0.5f;
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        float scSignal;
+                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                            scSignal = linkedSidechain.getSample(channel, i);
+                        else
+                            scSignal = filteredSidechain.getSample(channel, i);
+
+                        // Sidechain listen mode - output sidechain signal instead of processed audio
+                        if (sidechainListen)
+                        {
+                            data[i] = scSignal;
+                        }
+                        else
+                        {
+                            // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
+                            data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
+                                                                 cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                                 cachedParams[7], cachedParams[8] > 0.5f, scSignal) * compensationGain;
+                        }
+                    }
+                    break;
+                }
             }
         }
     }
@@ -2872,6 +3177,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         case CompressorMode::StudioVCA:
             grLeft = studioVcaCompressor->getGainReduction(0);
             grRight = (numChannels > 1) ? studioVcaCompressor->getGainReduction(1) : grLeft;
+            break;
+        case CompressorMode::Digital:
+            grLeft = digitalCompressor->getGainReduction(0);
+            grRight = (numChannels > 1) ? digitalCompressor->getGainReduction(1) : grLeft;
             break;
     }
 
@@ -3028,12 +3337,23 @@ CompressorMode UniversalCompressor::getCurrentMode() const
 
 double UniversalCompressor::getLatencyInSamples() const
 {
+    double latency = 0.0;
+
     // Report latency from oversampler if active
     if (antiAliasing)
     {
-        return static_cast<double>(antiAliasing->getLatency());
+        latency += static_cast<double>(antiAliasing->getLatency());
     }
-    return 0.0;
+
+    // Always include max lookahead latency for consistent PDC
+    // This matches what we report in prepareToPlay()
+    const float maxLookaheadMs = 10.0f;  // Matches digital_lookahead parameter max
+    if (currentSampleRate > 0)
+    {
+        latency += std::ceil((maxLookaheadMs / 1000.0) * currentSampleRate);
+    }
+
+    return latency;
 }
 
 double UniversalCompressor::getTailLengthSeconds() const
