@@ -4,6 +4,8 @@
 #include "AnalogLookAndFeel.h"
 #include "ModernCompressorPanels.h"
 #include "../../shared/PatreonBackers.h"
+#include "../shared/LEDMeter.h"
+#include "../shared/LunaLookAndFeel.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
@@ -37,7 +39,8 @@ private:
     std::unique_ptr<FETLookAndFeel> fetLookAndFeel;
     std::unique_ptr<VCALookAndFeel> vcaLookAndFeel;
     std::unique_ptr<BusLookAndFeel> busLookAndFeel;
-    std::unique_ptr<ModernLookAndFeel> modernLookAndFeel;
+    std::unique_ptr<StudioVCALookAndFeel> studioVcaLookAndFeel;
+    std::unique_ptr<DigitalLookAndFeel> digitalLookAndFeel;
     
     // Current active look
     juce::LookAndFeel* currentLookAndFeel = nullptr;
