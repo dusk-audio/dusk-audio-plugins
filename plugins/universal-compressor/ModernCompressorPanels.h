@@ -204,28 +204,49 @@ public:
             parameters, "digital_sidechain_listen", sidechainListenButton);
     }
 
+    void setScaleFactor(float scale)
+    {
+        if (scale <= 0.0f)
+        {
+            jassertfalse; // Invalid scale factor
+            return;
+        }
+        currentScaleFactor = scale;
+        resized();
+    }
     void resized() override
     {
-        auto area = getLocalBounds().reduced(10);
+        auto area = getLocalBounds().reduced(static_cast<int>(10 * currentScaleFactor));
 
-        // Top row - main controls
-        auto topRow = area.removeFromTop(100);
+        // Standardized knob size matching other compressor modes - SCALED
+        const int stdKnobSize = static_cast<int>(75 * currentScaleFactor);
+
+        // Helper to center a knob in its column
+        auto layoutKnob = [&](juce::Slider& slider, juce::Rectangle<int> colArea) {
+            int knobX = colArea.getX() + (colArea.getWidth() - stdKnobSize) / 2;
+            int knobY = colArea.getY() + (colArea.getHeight() - stdKnobSize) / 2;
+            slider.setBounds(knobX, knobY, stdKnobSize, stdKnobSize);
+        };
+
+        // Top row - main controls (5 knobs)
+        auto topRow = area.removeFromTop(95);
         auto knobWidth = topRow.getWidth() / 5;
 
-        thresholdSlider.setBounds(topRow.removeFromLeft(knobWidth).reduced(5));
-        ratioSlider.setBounds(topRow.removeFromLeft(knobWidth).reduced(5));
-        kneeSlider.setBounds(topRow.removeFromLeft(knobWidth).reduced(5));
-        attackSlider.setBounds(topRow.removeFromLeft(knobWidth).reduced(5));
-        releaseSlider.setBounds(topRow.removeFromLeft(knobWidth).reduced(5));
+        layoutKnob(thresholdSlider, topRow.removeFromLeft(knobWidth));
+        layoutKnob(ratioSlider, topRow.removeFromLeft(knobWidth));
+        layoutKnob(kneeSlider, topRow.removeFromLeft(knobWidth));
+        layoutKnob(attackSlider, topRow.removeFromLeft(knobWidth));
+        layoutKnob(releaseSlider, topRow);
 
-        // Middle row
-        area.removeFromTop(20);
-        auto midRow = area.removeFromTop(100);
-        knobWidth = midRow.getWidth() / 3;
+        // Middle row (3 knobs centered)
+        area.removeFromTop(15);
+        auto midRow = area.removeFromTop(95);
+        knobWidth = midRow.getWidth() / 5;
+        midRow.removeFromLeft(knobWidth);  // Skip first column for centering
 
-        lookaheadSlider.setBounds(midRow.removeFromLeft(knobWidth).reduced(5));
-        mixSlider.setBounds(midRow.removeFromLeft(knobWidth).reduced(5));
-        outputSlider.setBounds(midRow.removeFromLeft(knobWidth).reduced(5));
+        layoutKnob(lookaheadSlider, midRow.removeFromLeft(knobWidth));
+        layoutKnob(mixSlider, midRow.removeFromLeft(knobWidth));
+        layoutKnob(outputSlider, midRow.removeFromLeft(knobWidth));
 
         // Bottom row - buttons
         area.removeFromTop(20);
@@ -258,6 +279,7 @@ public:
 
 private:
     juce::AudioProcessorValueTreeState& parameters;
+    float currentScaleFactor = 1.0f;
 
     juce::Slider thresholdSlider, ratioSlider, kneeSlider;
     juce::Slider attackSlider, releaseSlider, lookaheadSlider;
@@ -504,8 +526,7 @@ public:
     StudioVCAPanel(juce::AudioProcessorValueTreeState& apvts)
         : parameters(apvts)
     {
-        // Studio Red 3 color scheme
-        setLookAndFeel(&studioLookAndFeel);
+        // Note: Look and feel is now set externally by the editor for consistency
 
         // Threshold control (-40 to +20 dB)
         addAndMakeVisible(thresholdSlider);
@@ -562,7 +583,7 @@ public:
 
     ~StudioVCAPanel() override
     {
-        setLookAndFeel(nullptr);
+        // Look and feel is managed externally
     }
 
     void setAutoGainEnabled(bool enabled)
@@ -573,29 +594,46 @@ public:
         outputSlider.setAlpha(enabled ? disabledAlpha : enabledAlpha);
     }
 
+    void setScaleFactor(float scale)
+    {
+        currentScaleFactor = scale;
+        resized();
+    }
+
     void resized() override
     {
-        auto area = getLocalBounds().reduced(5);
+        auto area = getLocalBounds().reduced(static_cast<int>(5 * currentScaleFactor));
 
         // Leave space for title at top (compact)
-        area.removeFromTop(25);
+        area.removeFromTop(static_cast<int>(25 * currentScaleFactor));
 
         // Leave space for bottom description
-        area.removeFromBottom(20);
+        area.removeFromBottom(static_cast<int>(20 * currentScaleFactor));
 
-        // Main controls row - labels are attached above each knob
-        // Make knobs larger to match other compressor modes
-        auto controlRow = area;
+        // Standardized knob size matching other compressor modes - SCALED
+        const int stdKnobSize = static_cast<int>(75 * currentScaleFactor);
+        const int stdLabelHeight = static_cast<int>(22 * currentScaleFactor);
+        const int stdKnobRowHeight = stdLabelHeight + stdKnobSize + static_cast<int>(10 * currentScaleFactor);
+
+        // Center the row vertically in available space
+        auto controlRow = area.withHeight(stdKnobRowHeight);
+        controlRow.setY(area.getY() + (area.getHeight() - stdKnobRowHeight) / 2);
+
         auto knobWidth = controlRow.getWidth() / 5;
 
-        // Use minimal reduction for larger knobs
-        const int knobPadding = 2;
+        // Helper to layout a knob with label above (matching main editor's layoutKnob lambda)
+        auto layoutKnob = [&](juce::Slider& slider, juce::Rectangle<int> colArea) {
+            // Labels are attached to sliders, so skip the label height
+            colArea.removeFromTop(stdLabelHeight);
+            int knobX = colArea.getX() + (colArea.getWidth() - stdKnobSize) / 2;
+            slider.setBounds(knobX, colArea.getY(), stdKnobSize, stdKnobSize);
+        };
 
-        thresholdSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
-        ratioSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
-        attackSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
-        releaseSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
-        outputSlider.setBounds(controlRow.removeFromLeft(knobWidth).reduced(knobPadding));
+        layoutKnob(thresholdSlider, controlRow.removeFromLeft(knobWidth));
+        layoutKnob(ratioSlider, controlRow.removeFromLeft(knobWidth));
+        layoutKnob(attackSlider, controlRow.removeFromLeft(knobWidth));
+        layoutKnob(releaseSlider, controlRow.removeFromLeft(knobWidth));
+        layoutKnob(outputSlider, controlRow);
     }
 
     void paint(juce::Graphics& g) override
@@ -624,66 +662,7 @@ public:
 
 private:
     juce::AudioProcessorValueTreeState& parameters;
-
-    // Custom look and feel for Red 3 style
-    class StudioVCALookAndFeel : public juce::LookAndFeel_V4
-    {
-    public:
-        StudioVCALookAndFeel()
-        {
-            // Focusrite Red inspired colors
-            setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a0d0f));
-            setColour(juce::Slider::thumbColourId, juce::Colour(0xffcc3333));
-            setColour(juce::Slider::trackColourId, juce::Colour(0xff993333));
-            setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffcc3333));
-            setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff2a1518));
-            setColour(juce::Label::textColourId, juce::Colour(0xffd0d0d0));
-        }
-
-        void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                              float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-                              juce::Slider&) override
-        {
-            auto radius = juce::jmin(width / 2, height / 2) - 8.0f;
-            auto centreX = x + width * 0.5f;
-            auto centreY = y + height * 0.5f;
-            auto rx = centreX - radius;
-            auto ry = centreY - radius;
-            auto rw = radius * 2.0f;
-            auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-
-            // Dark background with subtle gradient
-            juce::ColourGradient knobGradient(
-                juce::Colour(0xff2a1518), centreX, centreY - radius,
-                juce::Colour(0xff1a0d0f), centreX, centreY + radius, false);
-            g.setGradientFill(knobGradient);
-            g.fillEllipse(rx, ry, rw, rw);
-
-            // Red arc showing value
-            juce::Path arc;
-            arc.addArc(rx + 3, ry + 3, rw - 6, rw - 6, rotaryStartAngle, angle, true);
-            g.setColour(juce::Colour(0xffcc3333));
-            g.strokePath(arc, juce::PathStrokeType(3.5f));
-
-            // Outer ring
-            g.setColour(juce::Colour(0xff3a2528));
-            g.drawEllipse(rx, ry, rw, rw, 1.5f);
-
-            // Center cap
-            g.setColour(juce::Colour(0xff2a1518));
-            g.fillEllipse(centreX - 8, centreY - 8, 16, 16);
-
-            // Pointer
-            juce::Path pointer;
-            pointer.startNewSubPath(centreX, centreY);
-            pointer.lineTo(centreX + (radius - 12) * std::cos(angle - juce::MathConstants<float>::halfPi),
-                          centreY + (radius - 12) * std::sin(angle - juce::MathConstants<float>::halfPi));
-            g.setColour(juce::Colour(0xffd0d0d0));
-            g.strokePath(pointer, juce::PathStrokeType(2.5f));
-        }
-    };
-
-    StudioVCALookAndFeel studioLookAndFeel;
+    float currentScaleFactor = 1.0f;
 
     juce::Slider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider;
 

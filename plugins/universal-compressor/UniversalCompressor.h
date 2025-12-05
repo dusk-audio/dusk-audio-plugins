@@ -12,7 +12,8 @@ enum class CompressorMode : int
     VCA = 2,        // DBX 160 style VCA compressor (Classic VCA)
     Bus = 3,        // SSL G-Series Bus compressor (Vintage VCA)
     StudioFET = 4,  // 1176 Rev E Blackface style (Studio FET - cleaner)
-    StudioVCA = 5   // Focusrite Red 3 style (Studio VCA - modern)
+    StudioVCA = 5,  // Focusrite Red 3 style (Studio VCA - modern)
+    Digital = 6     // Transparent digital compressor
 };
 
 // Distortion type for output saturation
@@ -74,6 +75,7 @@ private:
     class BusCompressor;
     class StudioFETCompressor;
     class StudioVCACompressor;
+    class DigitalCompressor;
     class SidechainFilter;
     class AntiAliasing;
 
@@ -87,6 +89,7 @@ private:
     std::unique_ptr<BusCompressor> busCompressor;
     std::unique_ptr<StudioFETCompressor> studioFetCompressor;
     std::unique_ptr<StudioVCACompressor> studioVcaCompressor;
+    std::unique_ptr<DigitalCompressor> digitalCompressor;
     std::unique_ptr<SidechainFilter> sidechainFilter;
     std::unique_ptr<AntiAliasing> antiAliasing;
     
