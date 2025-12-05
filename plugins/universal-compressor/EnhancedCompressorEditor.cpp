@@ -10,7 +10,8 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     fetLookAndFeel = std::make_unique<FETLookAndFeel>();
     vcaLookAndFeel = std::make_unique<VCALookAndFeel>();
     busLookAndFeel = std::make_unique<BusLookAndFeel>();
-    // modernLookAndFeel = std::make_unique<ModernLookAndFeel>(); // TODO: Enable when Digital mode is implemented
+    studioVcaLookAndFeel = std::make_unique<StudioVCALookAndFeel>();
+    digitalLookAndFeel = std::make_unique<DigitalLookAndFeel>();
     
     // Create background texture
     createBackgroundTexture();
@@ -24,7 +25,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     addAndMakeVisible(vuMeter.get());
     addAndMakeVisible(outputMeter.get());
     
-    // Create mode selector - 6 modes matching Logic Pro style
+    // Create mode selector - 7 modes matching Logic Pro style
     modeSelector = std::make_unique<juce::ComboBox>("Mode");
     modeSelector->addItem("Vintage Opto (LA-2A)", 1);
     modeSelector->addItem("Vintage FET (1176)", 2);
@@ -32,6 +33,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     modeSelector->addItem("Vintage VCA (SSL G)", 4);
     modeSelector->addItem("Studio FET (1176 Rev E)", 5);
     modeSelector->addItem("Studio VCA (Red 3)", 6);
+    modeSelector->addItem("Digital (Transparent)", 7);
     // Don't set a default - let the attachment handle it
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
@@ -145,6 +147,10 @@ EnhancedCompressorEditor::~EnhancedCompressorEditor()
         busPanel.releaseSelector->setLookAndFeel(nullptr);
     if (busPanel.makeupKnob)
         busPanel.makeupKnob->setLookAndFeel(nullptr);
+    if (studioVcaPanel)
+        studioVcaPanel->setLookAndFeel(nullptr);
+    if (digitalPanel)
+        digitalPanel->setLookAndFeel(nullptr);
 
     setLookAndFeel(nullptr);
 }
@@ -434,7 +440,7 @@ void EnhancedCompressorEditor::setupDigitalPanel()
 
 void EnhancedCompressorEditor::updateMode(int newMode)
 {
-    currentMode = juce::jlimit(0, 5, newMode);  // 0-5 for 6 modes
+    currentMode = juce::jlimit(0, 6, newMode);  // 0-6 for 7 modes
 
     // Hide all panels
     optoPanel.container->setVisible(false);
@@ -484,8 +490,20 @@ void EnhancedCompressorEditor::updateMode(int newMode)
 
         case 5: // Studio VCA (Focusrite Red 3)
             if (studioVcaPanel)
+            {
                 studioVcaPanel->setVisible(true);
-            currentLookAndFeel = busLookAndFeel.get();  // Use Bus look for meters/background
+                studioVcaPanel->setLookAndFeel(studioVcaLookAndFeel.get());
+            }
+            currentLookAndFeel = studioVcaLookAndFeel.get();
+            break;
+
+        case 6: // Digital (Transparent)
+            if (digitalPanel)
+            {
+                digitalPanel->setVisible(true);
+                digitalPanel->setLookAndFeel(digitalLookAndFeel.get());
+            }
+            currentLookAndFeel = digitalLookAndFeel.get();
             break;
     }
 
@@ -509,6 +527,12 @@ void EnhancedCompressorEditor::updateMode(int newMode)
                 break;
             case 3: // Bus - dark blue background
                 buttonTextColor = juce::Colour(0xFFECF0F1);  // Light gray
+                break;
+            case 5: // Studio VCA - dark red background
+                buttonTextColor = juce::Colour(0xFFD0D0D0);  // Light gray
+                break;
+            case 6: // Digital - dark blue background
+                buttonTextColor = juce::Colour(0xFFE0E0E0);  // Light gray
                 break;
             default:
                 buttonTextColor = juce::Colour(0xFFE0E0E0);
@@ -629,48 +653,28 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
     g.setFont(juce::Font(juce::FontOptions(20.0f * scaleFactor).withStyle("Bold")));
     g.drawText(title, titleBounds, juce::Justification::centred);
     
-    // Draw meter labels with full opacity for better readability
-    g.setFont(juce::Font(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold")));
-    g.setColour(textColor);
-    
-    // Center INPUT text over the input meter
+    // Draw meter labels and values using standard LEDMeterStyle
     if (inputMeter)
     {
-        auto inputBounds = inputMeter->getBounds();
-        g.drawText("INPUT", inputBounds.getX() - 10, inputBounds.getY() - 20, 
-                   inputBounds.getWidth() + 20, 20, juce::Justification::centred);
-        
-        // Draw throttled level value below the meter (updates ~3x per second for readability)
-        juce::String inputText = juce::String(displayedInputLevel, 1) + " dB";
-        g.setFont(juce::Font(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold")));
-        g.drawText(inputText, inputBounds.getX() - 10, inputBounds.getBottom(),
-                   inputBounds.getWidth() + 20, 25 * scaleFactor, juce::Justification::centred);
+        LEDMeterStyle::drawMeterLabels(g, inputMeter->getBounds(), "INPUT", displayedInputLevel, scaleFactor);
     }
-    
-    // Center OUTPUT text over the output meter
+
     if (outputMeter)
     {
-        auto outputBounds = outputMeter->getBounds();
-        g.setFont(juce::Font(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold")));
-        g.drawText("OUTPUT", outputBounds.getX() - 10, outputBounds.getY() - 20, 
-                   outputBounds.getWidth() + 20, 20, juce::Justification::centred);
-        
-        // Draw throttled level value below the meter (updates ~3x per second for readability)
-        juce::String outputText = juce::String(displayedOutputLevel, 1) + " dB";
-        g.setFont(juce::Font(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold")));
-        g.drawText(outputText, outputBounds.getX() - 10, outputBounds.getBottom(),
-                   outputBounds.getWidth() + 20, 25 * scaleFactor, juce::Justification::centred);
+        LEDMeterStyle::drawMeterLabels(g, outputMeter->getBounds(), "OUTPUT", displayedOutputLevel, scaleFactor);
     }
-    
+
     // Draw VU meter label below the VU meter
     // Calculate the same position as in resized() method
     auto vuBounds = getLocalBounds();
     auto vuTopRow = vuBounds.removeFromTop(70 * scaleFactor).withTrimmedTop(35 * scaleFactor);
     auto vuMainArea = vuBounds;
-    auto vuLeftMeter = vuMainArea.removeFromLeft(60 * scaleFactor);
-    auto vuRightMeter = vuMainArea.removeFromRight(60 * scaleFactor);
+    int meterAreaWidth = static_cast<int>(LEDMeterStyle::meterAreaWidth * scaleFactor);
+    auto vuLeftMeter = vuMainArea.removeFromLeft(meterAreaWidth);
+    auto vuRightMeter = vuMainArea.removeFromRight(meterAreaWidth);
     vuMainArea.reduce(20 * scaleFactor, 0);
     auto vuLabelArea = vuMainArea.removeFromTop(190 * scaleFactor + 35 * scaleFactor);
+    g.setColour(textColor);
     g.drawText("GAIN REDUCTION", vuLabelArea.removeFromBottom(30 * scaleFactor), juce::Justification::centred);
 }
 
@@ -698,70 +702,86 @@ void EnhancedCompressorEditor::resized()
     // Leave space for title
     auto topRow = bounds.removeFromTop(70 * scaleFactor).withTrimmedTop(35 * scaleFactor);
     topRow.reduce(20 * scaleFactor, 5 * scaleFactor);
-    
+
+    // Fixed widths for consistent layout across all modes
+    const int modeSelectorWidth = static_cast<int>(190 * scaleFactor);  // Wider for longer names
+    const int bypassWidth = static_cast<int>(90 * scaleFactor);
+    const int autoGainWidth = static_cast<int>(110 * scaleFactor);
+    const int modeButtonWidth = static_cast<int>(120 * scaleFactor);  // For limit/overeasy buttons
+    const int spacing = static_cast<int>(15 * scaleFactor);
+
+    // Mode selector (wider to accommodate longer names)
     if (modeSelector)
-        modeSelector->setBounds(topRow.removeFromLeft(150 * scaleFactor));
+        modeSelector->setBounds(topRow.removeFromLeft(modeSelectorWidth));
     else
-        topRow.removeFromLeft(150 * scaleFactor);
-    
-    topRow.removeFromLeft(20 * scaleFactor);
-    
+        topRow.removeFromLeft(modeSelectorWidth);
+
+    topRow.removeFromLeft(spacing);
+
+    // Fixed position for Bypass button (same position regardless of mode)
     if (bypassButton)
-        bypassButton->setBounds(topRow.removeFromLeft(80 * scaleFactor));
+        bypassButton->setBounds(topRow.removeFromLeft(bypassWidth));
     else
-        topRow.removeFromLeft(80 * scaleFactor);
+        topRow.removeFromLeft(bypassWidth);
 
-    topRow.removeFromLeft(10 * scaleFactor);
+    topRow.removeFromLeft(spacing);
 
+    // Fixed position for Auto Gain button (same position regardless of mode)
     if (autoGainButton)
-        autoGainButton->setBounds(topRow.removeFromLeft(100 * scaleFactor));
+        autoGainButton->setBounds(topRow.removeFromLeft(autoGainWidth));
     else
-        topRow.removeFromLeft(100 * scaleFactor);
+        topRow.removeFromLeft(autoGainWidth);
 
-    topRow.removeFromLeft(10 * scaleFactor);
-    
-    // Mode-specific buttons in top row
+    topRow.removeFromLeft(spacing);
+
+    // Mode-specific buttons always in the SAME position after auto gain
+    // Only one is visible at a time, but they occupy the same space
+    auto modeButtonArea = topRow.removeFromLeft(modeButtonWidth);
+
     if (optoPanel.limitSwitch)
     {
-        if (currentMode == 0)  // Opto mode
-        {
-            optoPanel.limitSwitch->setVisible(true);
-            optoPanel.limitSwitch->setBounds(topRow.removeFromLeft(150 * scaleFactor));
-        }
-        else
-        {
-            optoPanel.limitSwitch->setVisible(false);
-        }
+        optoPanel.limitSwitch->setVisible(currentMode == 0);
+        if (currentMode == 0)
+            optoPanel.limitSwitch->setBounds(modeButtonArea);
     }
-    
-    // VCA mode Over Easy button in top row
+
     if (vcaPanel.overEasyButton)
     {
-        if (currentMode == 2)  // VCA mode
-        {
-            vcaPanel.overEasyButton->setVisible(true);
-            vcaPanel.overEasyButton->setBounds(topRow.removeFromLeft(120 * scaleFactor));
-        }
-        else
-        {
-            vcaPanel.overEasyButton->setVisible(false);
-        }
+        vcaPanel.overEasyButton->setVisible(currentMode == 2);
+        if (currentMode == 2)
+            vcaPanel.overEasyButton->setBounds(modeButtonArea);
     }
     
     // Main area
     auto mainArea = bounds.reduced(20 * scaleFactor, 10 * scaleFactor);
-    
+
+    // Use standard meter area width from LEDMeterStyle
+    int meterAreaWidth = static_cast<int>(LEDMeterStyle::meterAreaWidth * scaleFactor);
+    int meterWidth = static_cast<int>(LEDMeterStyle::standardWidth * scaleFactor);
+    int labelSpace = static_cast<int>((LEDMeterStyle::labelHeight + LEDMeterStyle::labelSpacing) * scaleFactor);
+    int valueSpace = static_cast<int>((LEDMeterStyle::valueHeight + LEDMeterStyle::labelSpacing) * scaleFactor);
+
     // Left meter - leave space for labels above and below
-    auto leftMeter = mainArea.removeFromLeft(60 * scaleFactor);
-    leftMeter.removeFromTop(25 * scaleFactor);  // Space for "INPUT" label
+    auto leftMeter = mainArea.removeFromLeft(meterAreaWidth);
+    leftMeter.removeFromTop(labelSpace);  // Space for "INPUT" label
     if (inputMeter)
-        inputMeter->setBounds(leftMeter.removeFromTop(leftMeter.getHeight() - 30 * scaleFactor));
-    
+    {
+        auto meterArea = leftMeter.removeFromTop(leftMeter.getHeight() - valueSpace);
+        // Center the meter within the area
+        int meterX = meterArea.getX() + (meterArea.getWidth() - meterWidth) / 2;
+        inputMeter->setBounds(meterX, meterArea.getY(), meterWidth, meterArea.getHeight());
+    }
+
     // Right meter - leave space for labels above and below
-    auto rightMeter = mainArea.removeFromRight(60 * scaleFactor);
-    rightMeter.removeFromTop(25 * scaleFactor);  // Space for "OUTPUT" label
+    auto rightMeter = mainArea.removeFromRight(meterAreaWidth);
+    rightMeter.removeFromTop(labelSpace);  // Space for "OUTPUT" label
     if (outputMeter)
-        outputMeter->setBounds(rightMeter.removeFromTop(rightMeter.getHeight() - 30 * scaleFactor));
+    {
+        auto meterArea = rightMeter.removeFromTop(rightMeter.getHeight() - valueSpace);
+        // Center the meter within the area
+        int meterX = meterArea.getX() + (meterArea.getWidth() - meterWidth) / 2;
+        outputMeter->setBounds(meterX, meterArea.getY(), meterWidth, meterArea.getHeight());
+    }
     
     // Center area
     mainArea.reduce(20 * scaleFactor, 0);
@@ -776,166 +796,150 @@ void EnhancedCompressorEditor::resized()
     
     // Control panel area
     auto controlArea = mainArea.reduced(10 * scaleFactor, 20 * scaleFactor);
-    
-    // Layout Opto panel
+
+    // ========================================================================
+    // STANDARDIZED KNOB LAYOUT CONSTANTS
+    // All panels use these same values for consistent appearance
+    // ========================================================================
+    const int stdLabelHeight = static_cast<int>(22 * scaleFactor);
+    const int stdKnobSize = static_cast<int>(75 * scaleFactor);  // Fixed knob size for all modes
+    const int stdKnobSpacing = static_cast<int>(8 * scaleFactor);
+    const int stdKnobRowHeight = stdLabelHeight + stdKnobSize + static_cast<int>(10 * scaleFactor);
+
+    // Helper lambda to layout a single knob with label above
+    auto layoutKnob = [&](juce::Slider* knob, juce::Label* label, juce::Rectangle<int> area) {
+        if (label)
+            label->setBounds(area.removeFromTop(stdLabelHeight));
+        if (knob) {
+            // Center the knob horizontally in the area
+            int knobX = area.getX() + (area.getWidth() - stdKnobSize) / 2;
+            knob->setBounds(knobX, area.getY(), stdKnobSize, stdKnobSize);
+        }
+    };
+
+    // Layout Opto panel - 2 knobs centered
     if (optoPanel.container && optoPanel.container->isVisible())
     {
         optoPanel.container->setBounds(controlArea);
-        
-        // Layout within the container's local bounds
+
         auto optoBounds = optoPanel.container->getLocalBounds();
-        auto knobRow = optoBounds.removeFromTop(120 * scaleFactor);
-        
-        // Center the two knobs horizontally
-        auto totalKnobWidth = knobRow.getWidth() * 0.7f;  // Use 70% of width for knobs
-        auto knobStartX = (knobRow.getWidth() - totalKnobWidth) / 2;
-        knobRow = knobRow.withX(knobStartX).withWidth(totalKnobWidth);
-        
-        auto peakArea = knobRow.removeFromLeft(knobRow.getWidth() / 2);
-        if (optoPanel.peakReductionLabel)
-            optoPanel.peakReductionLabel->setBounds(peakArea.removeFromTop(25 * scaleFactor));
-        if (optoPanel.peakReductionKnob)
-            optoPanel.peakReductionKnob->setBounds(peakArea.reduced(15 * scaleFactor, 0));
-        
-        auto gainArea = knobRow;
-        if (optoPanel.gainLabel)
-            optoPanel.gainLabel->setBounds(gainArea.removeFromTop(25 * scaleFactor));
-        if (optoPanel.gainKnob)
-            optoPanel.gainKnob->setBounds(gainArea.reduced(15 * scaleFactor, 0));
-        
-        // Compress/Limit switch is now in the top row, not in the panel
+
+        // Center the knob row vertically
+        auto knobRow = optoBounds.withHeight(stdKnobRowHeight);
+        knobRow.setY((optoBounds.getHeight() - stdKnobRowHeight) / 2);
+
+        // Use 4-column grid but only populate center 2 for centering
+        int colWidth = knobRow.getWidth() / 4;
+        knobRow.removeFromLeft(colWidth);  // Skip first column
+
+        auto peakArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(optoPanel.peakReductionKnob.get(), optoPanel.peakReductionLabel.get(), peakArea);
+
+        auto gainArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(optoPanel.gainKnob.get(), optoPanel.gainLabel.get(), gainArea);
     }
-    
-    // Layout FET panel
+
+    // Layout FET panel - 4 knobs + ratio buttons below
     if (fetPanel.container && fetPanel.container->isVisible())
     {
         fetPanel.container->setBounds(controlArea);
-        
-        // Layout within the container's local bounds
+
         auto fetBounds = fetPanel.container->getLocalBounds();
-        auto topKnobs = fetBounds.removeFromTop(120 * scaleFactor);
-        
-        auto knobWidth = topKnobs.getWidth() / 4;
-        
-        auto inputArea = topKnobs.removeFromLeft(knobWidth);
-        if (fetPanel.inputLabel)
-            fetPanel.inputLabel->setBounds(inputArea.removeFromTop(25 * scaleFactor));
-        if (fetPanel.inputKnob)
-            fetPanel.inputKnob->setBounds(inputArea.reduced(15 * scaleFactor, 0));
-        
-        auto outputArea = topKnobs.removeFromLeft(knobWidth);
-        if (fetPanel.outputLabel)
-            fetPanel.outputLabel->setBounds(outputArea.removeFromTop(25 * scaleFactor));
-        if (fetPanel.outputKnob)
-            fetPanel.outputKnob->setBounds(outputArea.reduced(15 * scaleFactor, 0));
+        auto knobRow = fetBounds.removeFromTop(stdKnobRowHeight);
 
-        auto attackArea = topKnobs.removeFromLeft(knobWidth);
-        if (fetPanel.attackLabel)
-            fetPanel.attackLabel->setBounds(attackArea.removeFromTop(25 * scaleFactor));
-        if (fetPanel.attackKnob)
-            fetPanel.attackKnob->setBounds(attackArea.reduced(15 * scaleFactor, 0));
+        int colWidth = knobRow.getWidth() / 4;
 
-        auto releaseArea = topKnobs;
-        if (fetPanel.releaseLabel)
-            fetPanel.releaseLabel->setBounds(releaseArea.removeFromTop(25 * scaleFactor));
-        if (fetPanel.releaseKnob)
-            fetPanel.releaseKnob->setBounds(releaseArea.reduced(15 * scaleFactor, 0));
+        auto inputArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(fetPanel.inputKnob.get(), fetPanel.inputLabel.get(), inputArea);
 
+        auto outputArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(fetPanel.outputKnob.get(), fetPanel.outputLabel.get(), outputArea);
+
+        auto attackArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(fetPanel.attackKnob.get(), fetPanel.attackLabel.get(), attackArea);
+
+        auto releaseArea = knobRow;
+        layoutKnob(fetPanel.releaseKnob.get(), fetPanel.releaseLabel.get(), releaseArea);
+
+        // Ratio buttons below knobs
         if (fetPanel.ratioButtons)
-            fetPanel.ratioButtons->setBounds(fetBounds.removeFromTop(90 * scaleFactor).reduced(15 * scaleFactor, 2 * scaleFactor));  // Much larger buttons, minimal reduction
+            fetPanel.ratioButtons->setBounds(fetBounds.removeFromTop(static_cast<int>(70 * scaleFactor)).reduced(static_cast<int>(15 * scaleFactor), static_cast<int>(2 * scaleFactor)));
     }
-    
-    // Layout VCA panel
+
+    // Layout VCA panel - 4 knobs in one row (no release for DBX 160)
     if (vcaPanel.container && vcaPanel.container->isVisible())
     {
         vcaPanel.container->setBounds(controlArea);
-        
-        // Layout within the container's local bounds - 4 knobs in ONE row (no release for DBX 160)
+
         auto vcaBounds = vcaPanel.container->getLocalBounds();
 
-        // Define consistent knob dimensions for ALL knobs in single row
-        const int knobRowHeight = 120 * scaleFactor;
-        const int labelHeight = 25 * scaleFactor;
-        const int knobReduction = 10 * scaleFactor;  // Less reduction for more space
+        // Center the knob row vertically
+        auto knobRow = vcaBounds.withHeight(stdKnobRowHeight);
+        knobRow.setY((vcaBounds.getHeight() - stdKnobRowHeight) / 2);
 
-        // Center the row vertically
-        auto knobRow = vcaBounds.withHeight(knobRowHeight);
-        knobRow.setY((vcaBounds.getHeight() - knobRowHeight) / 2);
+        int colWidth = knobRow.getWidth() / 4;
 
-        // Calculate knob width based on 4 knobs in one row (no release)
-        auto knobWidth = knobRow.getWidth() / 4;
+        auto thresholdBounds = knobRow.removeFromLeft(colWidth);
+        layoutKnob(vcaPanel.thresholdKnob.get(), vcaPanel.thresholdLabel.get(), thresholdBounds);
 
-        // Layout all 4 knobs in order: Threshold, Ratio, Attack, Output
+        auto ratioBounds = knobRow.removeFromLeft(colWidth);
+        layoutKnob(vcaPanel.ratioKnob.get(), vcaPanel.ratioLabel.get(), ratioBounds);
 
-        // Threshold knob
-        auto thresholdBounds = knobRow.removeFromLeft(knobWidth);
-        vcaPanel.thresholdLabel->setBounds(thresholdBounds.removeFromTop(labelHeight));
-        vcaPanel.thresholdKnob->setBounds(thresholdBounds.reduced(knobReduction, 0));
+        auto attackBounds = knobRow.removeFromLeft(colWidth);
+        layoutKnob(vcaPanel.attackKnob.get(), vcaPanel.attackLabel.get(), attackBounds);
 
-        // Ratio knob
-        auto ratioBounds = knobRow.removeFromLeft(knobWidth);
-        vcaPanel.ratioLabel->setBounds(ratioBounds.removeFromTop(labelHeight));
-        vcaPanel.ratioKnob->setBounds(ratioBounds.reduced(knobReduction, 0));
-
-        // Attack knob
-        auto attackBounds = knobRow.removeFromLeft(knobWidth);
-        vcaPanel.attackLabel->setBounds(attackBounds.removeFromTop(labelHeight));
-        vcaPanel.attackKnob->setBounds(attackBounds.reduced(knobReduction, 0));
-
-        // Output knob
-        auto outputBounds = knobRow;  // Use remaining space
-        vcaPanel.outputLabel->setBounds(outputBounds.removeFromTop(labelHeight));
-        vcaPanel.outputKnob->setBounds(outputBounds.reduced(knobReduction, 0));
-        
-        // Over Easy button is in the top row, not in the panel
+        auto outputBounds = knobRow;
+        layoutKnob(vcaPanel.outputKnob.get(), vcaPanel.outputLabel.get(), outputBounds);
     }
-    
-    // Layout Bus panel
+
+    // Layout Bus panel - 3 knobs on top row, 2 dropdown selectors below
     if (busPanel.container && busPanel.container->isVisible())
     {
         busPanel.container->setBounds(controlArea);
 
-        // Layout within the container's local bounds
         auto busBounds = busPanel.container->getLocalBounds();
 
-        // Compact layout to fit everything in 700x500 with proper scaling
-        auto busTopRow = busBounds.removeFromTop(100 * scaleFactor);
-        auto bottomRow = busBounds.removeFromTop(80 * scaleFactor);
+        // Top row: 3 knobs
+        auto knobRow = busBounds.removeFromTop(stdKnobRowHeight);
 
-        auto controlWidth = busTopRow.getWidth() / 3;
+        // Center 3 knobs: use 5-column grid, skip first and last
+        int colWidth = knobRow.getWidth() / 5;
+        knobRow.removeFromLeft(colWidth);  // Skip first column
 
-        auto thresholdArea = busTopRow.removeFromLeft(controlWidth);
-        busPanel.thresholdLabel->setBounds(thresholdArea.removeFromTop(20 * scaleFactor));
-        busPanel.thresholdKnob->setBounds(thresholdArea.reduced(15 * scaleFactor, 0));
+        auto thresholdArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(busPanel.thresholdKnob.get(), busPanel.thresholdLabel.get(), thresholdArea);
 
-        auto ratioArea = busTopRow.removeFromLeft(controlWidth);
-        busPanel.ratioLabel->setBounds(ratioArea.removeFromTop(20 * scaleFactor));
-        busPanel.ratioKnob->setBounds(ratioArea.reduced(15 * scaleFactor, 0));
+        auto ratioArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(busPanel.ratioKnob.get(), busPanel.ratioLabel.get(), ratioArea);
 
-        auto makeupArea = busTopRow;
-        busPanel.makeupLabel->setBounds(makeupArea.removeFromTop(20 * scaleFactor));
-        busPanel.makeupKnob->setBounds(makeupArea.reduced(15 * scaleFactor, 0));
+        auto makeupArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(busPanel.makeupKnob.get(), busPanel.makeupLabel.get(), makeupArea);
 
-        controlWidth = bottomRow.getWidth() / 2;
+        // Bottom row: Attack/Release dropdowns
+        busBounds.removeFromTop(static_cast<int>(15 * scaleFactor));  // Spacing
+        auto bottomRow = busBounds.removeFromTop(static_cast<int>(55 * scaleFactor));
+        int selectorWidth = bottomRow.getWidth() / 2;
 
-        auto attackArea = bottomRow.removeFromLeft(controlWidth);
-        busPanel.attackLabel->setBounds(attackArea.removeFromTop(20 * scaleFactor));
-        busPanel.attackSelector->setBounds(attackArea.reduced(40 * scaleFactor, 0).removeFromTop(25 * scaleFactor));
+        auto attackArea = bottomRow.removeFromLeft(selectorWidth);
+        busPanel.attackLabel->setBounds(attackArea.removeFromTop(stdLabelHeight));
+        busPanel.attackSelector->setBounds(attackArea.reduced(static_cast<int>(30 * scaleFactor), 0).removeFromTop(static_cast<int>(28 * scaleFactor)));
 
         auto releaseArea = bottomRow;
-        busPanel.releaseLabel->setBounds(releaseArea.removeFromTop(20 * scaleFactor));
-        busPanel.releaseSelector->setBounds(releaseArea.reduced(40 * scaleFactor, 0).removeFromTop(25 * scaleFactor));
+        busPanel.releaseLabel->setBounds(releaseArea.removeFromTop(stdLabelHeight));
+        busPanel.releaseSelector->setBounds(releaseArea.reduced(static_cast<int>(30 * scaleFactor), 0).removeFromTop(static_cast<int>(28 * scaleFactor)));
     }
 
     // Layout Digital panel
     if (digitalPanel && digitalPanel->isVisible())
     {
+        digitalPanel->setScaleFactor(scaleFactor);
         digitalPanel->setBounds(controlArea);
     }
 
     // Layout Studio VCA panel
     if (studioVcaPanel && studioVcaPanel->isVisible())
     {
+        studioVcaPanel->setScaleFactor(scaleFactor);
         studioVcaPanel->setBounds(controlArea);
     }
 

@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "../shared/LunaLookAndFeel.h"
 
 //==============================================================================
 // Base class for analog-style looks
@@ -104,6 +105,36 @@ public:
 };
 
 //==============================================================================
+// Focusrite Red 3 Studio VCA Style
+class StudioVCALookAndFeel : public AnalogLookAndFeelBase
+{
+public:
+    StudioVCALookAndFeel();
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                         float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                         juce::Slider& slider) override;
+
+    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+};
+
+//==============================================================================
+// Modern Digital Style (transparent, clean)
+class DigitalLookAndFeel : public AnalogLookAndFeelBase
+{
+public:
+    DigitalLookAndFeel();
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                         float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                         juce::Slider& slider) override;
+
+    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+};
+
+//==============================================================================
 // Custom VU Meter Component with analog needle
 class AnalogVUMeter : public juce::Component, private juce::Timer
 {
@@ -149,27 +180,8 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VUMeterWithLabel)
 };
 
-//==============================================================================
-// LED-style meter for input/output
-class LEDMeter : public juce::Component
-{
-public:
-    enum Orientation { Vertical, Horizontal };
-    
-    LEDMeter(Orientation orient = Vertical);
-    
-    void setLevel(float newLevel);
-    void paint(juce::Graphics& g) override;
-    
-private:
-    Orientation orientation;
-    float currentLevel = -60.0f;
-    int numLEDs = 12;
-    
-    juce::Colour getLEDColor(int ledIndex, int totalLEDs);
-    
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LEDMeter)
-};
+// NOTE: LEDMeter class moved to shared/LEDMeter.h for consistency across all plugins.
+// Include "../shared/LEDMeter.h" to use it.
 
 //==============================================================================
 // Ratio button group for FET mode (like 1176)

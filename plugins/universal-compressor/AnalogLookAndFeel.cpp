@@ -440,6 +440,134 @@ void BusLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& but
 }
 
 //==============================================================================
+// Studio VCA (Focusrite Red 3) Style
+StudioVCALookAndFeel::StudioVCALookAndFeel()
+{
+    colors.background = juce::Colour(0xFF2a1518);  // Dark red
+    colors.panel = juce::Colour(0xFF1a0d0f);       // Darker red
+    colors.knobBody = juce::Colour(0xFF4A4A4A);    // Medium gray metal (matching other modes)
+    colors.knobPointer = juce::Colour(0xFFFFFFFF); // White pointer
+    colors.text = juce::Colour(0xFFd0d0d0);        // Light gray
+    colors.textDim = juce::Colour(0xFFa0a0a0);     // Medium gray
+    colors.accent = juce::Colour(0xFFcc3333);      // Focusrite red
+    colors.shadow = juce::Colour(0xFF0a0505);
+}
+
+void StudioVCALookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                                            float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                                            juce::Slider& slider)
+{
+    // Use the shared metallic knob - same as all other modes
+    drawMetallicKnob(g, x, y, width, height, sliderPos, rotaryStartAngle, rotaryEndAngle, slider);
+}
+
+void StudioVCALookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                            bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+{
+    // Red 3 style LED indicator
+    auto bounds = button.getLocalBounds().toFloat();
+    auto ledSize = 20.0f;
+
+    // LED housing
+    g.setColour(juce::Colour(0xFF1A1A1A));
+    g.fillEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize);
+
+    // LED bezel
+    g.setColour(juce::Colour(0xFF4A4A4A));
+    g.drawEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize, 2.0f);
+
+    // LED light - red when on
+    auto ledColor = button.getToggleState() ? colors.accent : juce::Colour(0xFF2A2A2A);
+    if (button.getToggleState())
+    {
+        // Red glow effect
+        g.setColour(ledColor.withAlpha(0.4f));
+        g.fillEllipse(2, (bounds.getHeight() - ledSize - 4) / 2, ledSize + 4, ledSize + 4);
+    }
+
+    g.setColour(ledColor);
+    g.fillEllipse(7, (bounds.getHeight() - ledSize + 6) / 2, ledSize - 6, ledSize - 6);
+
+    // Highlight
+    if (button.getToggleState())
+    {
+        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
+        g.fillEllipse(9, (bounds.getHeight() - ledSize + 8) / 2, 4, 4);
+    }
+
+    // Label
+    g.setColour(colors.text);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
+    g.drawText(button.getButtonText(), ledSize + 10, 0,
+               bounds.getWidth() - ledSize - 10, bounds.getHeight(),
+               juce::Justification::centredLeft);
+}
+
+//==============================================================================
+// Digital Style
+DigitalLookAndFeel::DigitalLookAndFeel()
+{
+    colors.background = juce::Colour(0xFF1A1A2E);  // Modern dark blue
+    colors.panel = juce::Colour(0xFF16213E);       // Slightly lighter blue
+    colors.knobBody = juce::Colour(0xFF4A4A4A);    // Medium gray metal (matching other modes)
+    colors.knobPointer = juce::Colour(0xFFFFFFFF); // White pointer
+    colors.text = juce::Colour(0xFFE0E0E0);        // Light gray
+    colors.textDim = juce::Colour(0xFF808080);     // Medium gray
+    colors.accent = juce::Colour(0xFF00D4FF);      // Cyan accent
+    colors.shadow = juce::Colour(0xFF0A0A14);
+}
+
+void DigitalLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                                          juce::Slider& slider)
+{
+    // Use the shared metallic knob for consistency
+    drawMetallicKnob(g, x, y, width, height, sliderPos, rotaryStartAngle, rotaryEndAngle, slider);
+}
+
+void DigitalLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                          bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+{
+    // Modern LED-style toggle
+    auto bounds = button.getLocalBounds().toFloat();
+    auto ledSize = 20.0f;
+
+    // LED housing
+    g.setColour(juce::Colour(0xFF1A1A1A));
+    g.fillEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize);
+
+    // LED bezel
+    g.setColour(juce::Colour(0xFF4A4A4A));
+    g.drawEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize, 2.0f);
+
+    // LED light - cyan when on
+    auto ledColor = button.getToggleState() ? colors.accent : juce::Colour(0xFF2A2A2A);
+    if (button.getToggleState())
+    {
+        // Cyan glow effect
+        g.setColour(ledColor.withAlpha(0.4f));
+        g.fillEllipse(2, (bounds.getHeight() - ledSize - 4) / 2, ledSize + 4, ledSize + 4);
+    }
+
+    g.setColour(ledColor);
+    g.fillEllipse(7, (bounds.getHeight() - ledSize + 6) / 2, ledSize - 6, ledSize - 6);
+
+    // Highlight
+    if (button.getToggleState())
+    {
+        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
+        g.fillEllipse(9, (bounds.getHeight() - ledSize + 8) / 2, 4, 4);
+    }
+
+    // Label
+    g.setColour(colors.text);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
+    g.drawText(button.getButtonText(), ledSize + 10, 0,
+               bounds.getWidth() - ledSize - 10, bounds.getHeight(),
+               juce::Justification::centredLeft);
+}
+
+//==============================================================================
 // Analog VU Meter
 AnalogVUMeter::AnalogVUMeter()
 {
@@ -739,118 +867,7 @@ void VUMeterWithLabel::paint(juce::Graphics& g)
     g.drawText("LEVEL", labelArea, juce::Justification::centred);
 }
 
-//==============================================================================
-// LED Meter
-LEDMeter::LEDMeter(Orientation orient) : orientation(orient)
-{
-}
-
-void LEDMeter::setLevel(float newLevel)
-{
-    // Clamp to reasonable dB range
-    newLevel = juce::jlimit(-60.0f, 6.0f, newLevel);
-    
-    // Always update and repaint if the level has changed at all
-    if (std::abs(newLevel - currentLevel) > 0.01f)
-    {
-        currentLevel = newLevel;
-        repaint();
-    }
-}
-
-juce::Colour LEDMeter::getLEDColor(int ledIndex, int totalLEDs)
-{
-    float position = ledIndex / (float)totalLEDs;
-    
-    if (position < 0.5f)
-        return juce::Colour(0xFF00FF00);  // Green
-    else if (position < 0.75f)
-        return juce::Colour(0xFFFFFF00);  // Yellow
-    else if (position < 0.9f)
-        return juce::Colour(0xFFFF6600);  // Orange
-    else
-        return juce::Colour(0xFFFF0000);  // Red
-}
-
-void LEDMeter::paint(juce::Graphics& g)
-{
-    auto bounds = getLocalBounds().toFloat();
-    
-    // Background
-    g.setColour(juce::Colour(0xFF1A1A1A));
-    g.fillRoundedRectangle(bounds, 3.0f);
-    
-    // Calculate lit LEDs based on level
-    // Map -60dB to 0dB range to 0.0 to 1.0
-    // -18dB should map to (42/60) = 0.7
-    float normalizedLevel = juce::jlimit(0.0f, 1.0f, (currentLevel + 60.0f) / 66.0f); // Extended range to +6dB
-    int litLEDs = juce::roundToInt(normalizedLevel * numLEDs);
-    
-    if (orientation == Vertical)
-    {
-        float ledHeight = (bounds.getHeight() - (numLEDs + 1) * 2) / numLEDs;
-        float ledWidth = bounds.getWidth() - 6;
-        
-        for (int i = 0; i < numLEDs; ++i)
-        {
-            float y = bounds.getBottom() - 3 - (i + 1) * (ledHeight + 2);
-            
-            // LED background
-            g.setColour(juce::Colour(0xFF0A0A0A));
-            g.fillRoundedRectangle(3, y, ledWidth, ledHeight, 1.0f);
-            
-            // LED lit state
-            if (i < litLEDs)
-            {
-                auto ledColor = getLEDColor(i, numLEDs);
-                
-                // Glow effect
-                g.setColour(ledColor.withAlpha(0.3f));
-                g.fillRoundedRectangle(2, y - 1, ledWidth + 2, ledHeight + 2, 1.0f);
-                
-                // Main LED
-                g.setColour(ledColor);
-                g.fillRoundedRectangle(3, y, ledWidth, ledHeight, 1.0f);
-                
-                // Highlight
-                g.setColour(ledColor.brighter(0.5f).withAlpha(0.5f));
-                g.fillRoundedRectangle(4, y + 1, ledWidth - 2, ledHeight / 3, 1.0f);
-            }
-        }
-    }
-    else // Horizontal
-    {
-        float ledWidth = (bounds.getWidth() - (numLEDs + 1) * 2) / numLEDs;
-        float ledHeight = bounds.getHeight() - 6;
-        
-        for (int i = 0; i < numLEDs; ++i)
-        {
-            float x = 3 + i * (ledWidth + 2);
-            
-            // LED background
-            g.setColour(juce::Colour(0xFF0A0A0A));
-            g.fillRoundedRectangle(x, 3, ledWidth, ledHeight, 1.0f);
-            
-            // LED lit state
-            if (i < litLEDs)
-            {
-                auto ledColor = getLEDColor(i, numLEDs);
-                
-                // Glow effect
-                g.setColour(ledColor.withAlpha(0.3f));
-                g.fillRoundedRectangle(x - 1, 2, ledWidth + 2, ledHeight + 2, 1.0f);
-                
-                // Main LED
-                g.setColour(ledColor);
-                g.fillRoundedRectangle(x, 3, ledWidth, ledHeight, 1.0f);
-            }
-        }
-    }
-    
-    // Frame
-    g.setColour(juce::Colour(0xFF4A4A4A));
-    g.drawRoundedRectangle(bounds, 3.0f, 1.0f);
-}
+// NOTE: LEDMeter implementation moved to shared/LEDMeter.cpp for consistency across all plugins.
 
 //==============================================================================
 // Ratio Button Group
