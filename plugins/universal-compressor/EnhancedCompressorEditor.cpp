@@ -427,9 +427,9 @@ void EnhancedCompressorEditor::setupBusPanel()
 
 void EnhancedCompressorEditor::setupDigitalPanel()
 {
-    // Note: DigitalCompressorPanel is not used in current 6-mode configuration
-    // (its parameters are not defined in createParameterLayout)
-    // Keeping structure for potential future Digital mode addition
+    // Digital Compressor Panel (transparent, modern)
+    digitalPanel = std::make_unique<DigitalCompressorPanel>(processor.getParameters());
+    addChildComponent(digitalPanel.get());
 
     // Studio VCA Panel (Focusrite Red 3 style)
     studioVcaPanel = std::make_unique<StudioVCAPanel>(processor.getParameters());
@@ -596,7 +596,9 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         case 1: bgColor = juce::Colour(0xFF1A1A1A); break; // FET - black (keep as is)
         case 2: bgColor = juce::Colour(0xFF2D3436); break; // VCA - dark gray
         case 3: bgColor = juce::Colour(0xFF2C3E50); break; // Bus - dark blue (keep as is)
-        case 4: bgColor = juce::Colour(0xFF1A1A2E); break; // Digital - modern dark blue
+        case 4: bgColor = juce::Colour(0xFF1A1A1A); break; // Studio FET - black (same as FET)
+        case 5: bgColor = juce::Colour(0xFF2A1518); break; // Studio VCA - dark red (handled by panel)
+        case 6: bgColor = juce::Colour(0xFF1A1A2E); break; // Digital - modern dark blue
         default: bgColor = juce::Colour(0xFF2A2A2A); break;
     }
     
@@ -616,20 +618,21 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
     g.drawRect(bounds.reduced(2), 1);
     
     // Draw title based on mode - all light text for dark backgrounds
+    // Note: Digital (mode 6) and Studio VCA (mode 5) panels draw their own titles
     juce::String title;
     juce::Colour textColor;
     switch (currentMode)
     {
-        case 0: 
-            title = "OPTO COMPRESSOR"; 
+        case 0:
+            title = "OPTO COMPRESSOR";
             textColor = juce::Colour(0xFFE8D5B7);  // Warm light color
             break;
-        case 1: 
-            title = "FET COMPRESSOR"; 
+        case 1:
+            title = "FET COMPRESSOR";
             textColor = juce::Colour(0xFFE0E0E0);  // Light gray (keep)
             break;
-        case 2: 
-            title = "VCA COMPRESSOR"; 
+        case 2:
+            title = "VCA COMPRESSOR";
             textColor = juce::Colour(0xFFDFE6E9);  // Light gray-blue
             break;
         case 3:
@@ -637,6 +640,15 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
             textColor = juce::Colour(0xFFECF0F1);  // Light gray (keep)
             break;
         case 4:
+            title = "STUDIO FET COMPRESSOR";
+            textColor = juce::Colour(0xFFE0E0E0);  // Light gray
+            break;
+        case 5:
+            // Studio VCA panel draws its own title
+            title = "";
+            textColor = juce::Colours::transparentBlack;
+            break;
+        case 6:
             title = "DIGITAL COMPRESSOR";
             textColor = juce::Colour(0xFF00D4FF);  // Cyan
             break;
@@ -645,13 +657,17 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
             textColor = juce::Colour(0xFFE0E0E0);
             break;
     }
-    
+
     // Draw title in a smaller area that doesn't overlap with controls
+    // Skip drawing for modes that handle their own titles
     auto titleBounds = bounds.removeFromTop(35 * scaleFactor).withTrimmedLeft(200 * scaleFactor).withTrimmedRight(200 * scaleFactor);
-    g.setColour(textColor);
-    // Use the member scaleFactor already calculated in resized()
-    g.setFont(juce::Font(juce::FontOptions(20.0f * scaleFactor).withStyle("Bold")));
-    g.drawText(title, titleBounds, juce::Justification::centred);
+    if (title.isNotEmpty())
+    {
+        g.setColour(textColor);
+        // Use the member scaleFactor already calculated in resized()
+        g.setFont(juce::Font(juce::FontOptions(20.0f * scaleFactor).withStyle("Bold")));
+        g.drawText(title, titleBounds, juce::Justification::centred);
+    }
     
     // Draw meter labels and values using standard LEDMeterStyle
     if (inputMeter)
@@ -895,7 +911,9 @@ void EnhancedCompressorEditor::resized()
     // Layout Bus panel - 3 knobs on top row, 2 dropdown selectors below
     if (busPanel.container && busPanel.container->isVisible())
     {
-        busPanel.container->setBounds(controlArea);
+        // Give Bus panel extra vertical space for the dropdown selectors
+        auto busArea = controlArea.withTrimmedBottom(-40 * scaleFactor);
+        busPanel.container->setBounds(busArea);
 
         auto busBounds = busPanel.container->getLocalBounds();
 
@@ -929,11 +947,13 @@ void EnhancedCompressorEditor::resized()
         busPanel.releaseSelector->setBounds(releaseArea.reduced(static_cast<int>(30 * scaleFactor), 0).removeFromTop(static_cast<int>(28 * scaleFactor)));
     }
 
-    // Layout Digital panel
+    // Layout Digital panel - needs more vertical space for 2 rows of knobs
     if (digitalPanel && digitalPanel->isVisible())
     {
         digitalPanel->setScaleFactor(scaleFactor);
-        digitalPanel->setBounds(controlArea);
+        // Give Digital panel significantly more vertical space
+        auto digitalArea = controlArea.withTrimmedTop(-25 * scaleFactor).withTrimmedBottom(-35 * scaleFactor);
+        digitalPanel->setBounds(digitalArea);
     }
 
     // Layout Studio VCA panel

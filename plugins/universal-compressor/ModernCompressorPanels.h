@@ -214,23 +214,30 @@ public:
         currentScaleFactor = scale;
         resized();
     }
+
     void resized() override
     {
-        auto area = getLocalBounds().reduced(static_cast<int>(10 * currentScaleFactor));
+        auto area = getLocalBounds();
 
-        // Standardized knob size matching other compressor modes - SCALED
-        const int stdKnobSize = static_cast<int>(75 * currentScaleFactor);
+        // ========================================================================
+        // Use SAME standardized knob layout constants as main editor
+        // ========================================================================
+        const int stdLabelHeight = static_cast<int>(22 * currentScaleFactor);
+        const int stdKnobSize = static_cast<int>(75 * currentScaleFactor);  // Same as all other modes
+        // Use tighter row spacing for 2-row layout
+        const int stdKnobRowHeight = stdLabelHeight + stdKnobSize + static_cast<int>(5 * currentScaleFactor);
 
-        // Helper to center a knob in its column
+        // Helper to layout a knob centered in column (matches main editor's layoutKnob)
         auto layoutKnob = [&](juce::Slider& slider, juce::Rectangle<int> colArea) {
+            // Labels are attached to sliders via attachToComponent, so leave room at top
+            colArea.removeFromTop(stdLabelHeight);
             int knobX = colArea.getX() + (colArea.getWidth() - stdKnobSize) / 2;
-            int knobY = colArea.getY() + (colArea.getHeight() - stdKnobSize) / 2;
-            slider.setBounds(knobX, knobY, stdKnobSize, stdKnobSize);
+            slider.setBounds(knobX, colArea.getY(), stdKnobSize, stdKnobSize);
         };
 
-        // Top row - main controls (5 knobs)
-        auto topRow = area.removeFromTop(95);
-        auto knobWidth = topRow.getWidth() / 5;
+        // Top row - 5 knobs: Threshold, Ratio, Knee, Attack, Release
+        auto topRow = area.removeFromTop(stdKnobRowHeight);
+        int knobWidth = topRow.getWidth() / 5;
 
         layoutKnob(thresholdSlider, topRow.removeFromLeft(knobWidth));
         layoutKnob(ratioSlider, topRow.removeFromLeft(knobWidth));
@@ -238,43 +245,34 @@ public:
         layoutKnob(attackSlider, topRow.removeFromLeft(knobWidth));
         layoutKnob(releaseSlider, topRow);
 
-        // Middle row (3 knobs centered)
-        area.removeFromTop(15);
-        auto midRow = area.removeFromTop(95);
-        knobWidth = midRow.getWidth() / 5;
-        midRow.removeFromLeft(knobWidth);  // Skip first column for centering
+        // Bottom row - 5 columns: Lookahead, Mix, Output + 2 buttons
+        auto bottomRow = area.removeFromTop(stdKnobRowHeight);
+        knobWidth = bottomRow.getWidth() / 5;
 
-        layoutKnob(lookaheadSlider, midRow.removeFromLeft(knobWidth));
-        layoutKnob(mixSlider, midRow.removeFromLeft(knobWidth));
-        layoutKnob(outputSlider, midRow.removeFromLeft(knobWidth));
+        layoutKnob(lookaheadSlider, bottomRow.removeFromLeft(knobWidth));
+        layoutKnob(mixSlider, bottomRow.removeFromLeft(knobWidth));
+        layoutKnob(outputSlider, bottomRow.removeFromLeft(knobWidth));
 
-        // Bottom row - buttons
-        area.removeFromTop(20);
-        auto buttonRow = area.removeFromTop(30);
-        auto buttonWidth = buttonRow.getWidth() / 3;
+        // Place buttons in remaining 2 columns, vertically centered
+        int buttonHeight = static_cast<int>(24 * currentScaleFactor);
+        int buttonY = bottomRow.getY() + stdLabelHeight + (stdKnobSize - buttonHeight) / 2;
 
-        adaptiveReleaseButton.setBounds(buttonRow.removeFromLeft(buttonWidth).reduced(5, 0));
-        sidechainListenButton.setBounds(buttonRow.removeFromLeft(buttonWidth).reduced(5, 0));
-        sidechainEQButton.setBounds(buttonRow.removeFromLeft(buttonWidth).reduced(5, 0));
+        auto buttonCol1 = bottomRow.removeFromLeft(knobWidth);
+        adaptiveReleaseButton.setBounds(buttonCol1.getX() + 5, buttonY,
+                                        buttonCol1.getWidth() - 10, buttonHeight);
+
+        auto buttonCol2 = bottomRow;
+        sidechainListenButton.setBounds(buttonCol2.getX() + 5, buttonY,
+                                        buttonCol2.getWidth() - 10, buttonHeight);
+
+        // Hide sidechain EQ button for now (not implemented)
+        sidechainEQButton.setVisible(false);
     }
 
     void paint(juce::Graphics& g) override
     {
-        // Modern gradient background
-        g.setGradientFill(juce::ColourGradient(
-            juce::Colour(0xff1a1a1a), 0, 0,
-            juce::Colour(0xff0d0d0d), 0, getHeight(), false));
-        g.fillAll();
-
-        // Section dividers
-        g.setColour(juce::Colour(0xff2a2a2a));
-        g.drawLine(0, 120, getWidth(), 120, 1.0f);
-        g.drawLine(0, 240, getWidth(), 240, 1.0f);
-
-        // Title
-        g.setColour(juce::Colour(0xff00d4ff));
-        g.setFont(juce::Font(18.0f, juce::Font::bold));
-        g.drawText("DIGITAL COMPRESSOR", 0, 5, getWidth(), 20, juce::Justification::centred);
+        // Background and title are handled by parent editor - nothing to draw here
+        juce::ignoreUnused(g);
     }
 
 private:
