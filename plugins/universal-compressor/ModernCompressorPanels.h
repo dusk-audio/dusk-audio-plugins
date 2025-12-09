@@ -516,7 +516,7 @@ private:
 };
 
 //==============================================================================
-// Studio VCA Panel (Focusrite Red 3 style)
+// Studio VCA Panel (precision red style)
 //==============================================================================
 class StudioVCAPanel : public juce::Component
 {

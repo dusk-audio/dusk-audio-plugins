@@ -157,29 +157,29 @@ namespace Constants {
     constexpr float OPTO_RELEASE_SLOW_MIN = 0.5f; // 500ms
     constexpr float OPTO_RELEASE_SLOW_MAX = 5.0f; // 5 seconds
     
-    // 1176 FET constants
+    // Vintage FET constants
     constexpr float FET_THRESHOLD_DB = -10.0f; // Fixed threshold
     constexpr float FET_MAX_REDUCTION_DB = 30.0f;
     constexpr float FET_ALLBUTTONS_ATTACK = 0.0001f; // 100 microseconds
-    
-    // DBX 160 VCA constants
+
+    // Classic VCA constants
     constexpr float VCA_RMS_TIME_CONSTANT = 0.003f; // 3ms RMS averaging
     constexpr float VCA_RELEASE_RATE = 120.0f; // dB per second
     constexpr float VCA_CONTROL_VOLTAGE_SCALE = -0.006f; // -6mV/dB
     constexpr float VCA_MAX_REDUCTION_DB = 60.0f;
-    
-    // SSL Bus constants
+
+    // Bus Compressor constants
     constexpr float BUS_SIDECHAIN_HP_FREQ = 60.0f; // Hz
     constexpr float BUS_MAX_REDUCTION_DB = 20.0f;
     constexpr float BUS_OVEREASY_KNEE_WIDTH = 10.0f; // dB
 
-    // Studio FET (1176 Rev E Blackface) constants - cleaner than Bluestripe
+    // Studio FET constants - cleaner than Vintage FET
     constexpr float STUDIO_FET_THRESHOLD_DB = -10.0f;
     constexpr float STUDIO_FET_HARMONIC_SCALE = 0.3f;  // 30% of Vintage FET harmonics
 
-    // Studio VCA (Focusrite Red 3) constants
-    constexpr float RED3_MAX_REDUCTION_DB = 40.0f;
-    constexpr float RED3_SOFT_KNEE_DB = 6.0f;  // Softer knee than SSL
+    // Studio VCA constants
+    constexpr float STUDIO_VCA_MAX_REDUCTION_DB = 40.0f;
+    constexpr float STUDIO_VCA_SOFT_KNEE_DB = 6.0f;  // Soft knee for smooth response
 
     // Global sidechain highpass filter frequency (user-adjustable)
     constexpr float SIDECHAIN_HP_MIN = 20.0f;   // Hz
@@ -518,7 +518,7 @@ inline void getHarmonicScaling(int saturationMode, float& h2Scale, float& h3Scal
     }
 }
 
-// Opto Compressor (LA-2A style)
+// Vintage Opto Compressor
 class UniversalCompressor::OptoCompressor
 {
 public:
@@ -583,7 +583,7 @@ public:
         // Apply gain reduction (feedback topology)
         float compressed = input * detector.envelope;
         
-        // LA-2A feedback topology: detection from output
+        // Opto feedback topology: detection from output
         // In Compress mode: sidechain = output
         // In Limit mode: sidechain = 1/25 input + 24/25 output
         float sidechainSignal;
@@ -616,7 +616,7 @@ public:
 
         float lightInput = detectionLevel;
 
-        // Program-dependent release: faster on transients (LA-2A characteristic)
+        // Program-dependent release: faster on transients (Opto characteristic)
         float absInput = std::abs(input);
         float inputDelta = absInput - detector.prevInput;
         detector.prevInput = absInput;
@@ -644,14 +644,14 @@ public:
         // The light level now exhibits proper T4B characteristics:
         // - Fast initial response (10ms)
         // - Memory effect prevents immediate return (200ms persistence)
-        // - Creates the LA-2A's characteristic "sticky" compression
+        // - Creates the Opto's characteristic "sticky" compression
         
         // Variable ratio based on feedback topology
-        // LA-2A ratio varies from ~3:1 (low levels) to ~10:1 (high levels)
+        // Opto ratio varies from ~3:1 (low levels) to ~10:1 (high levels)
         // This is a key characteristic of the T4 optical cell
         float reduction = 0.0f;
 
-        // Input-dependent threshold: lower threshold for louder inputs (LA-2A characteristic)
+        // Input-dependent threshold: lower threshold for louder inputs (Opto characteristic)
         // This creates program-dependent behavior where the compressor becomes more sensitive
         // to loud signals, mimicking the T4 cell's nonlinear light response
         float baseThreshold = 0.5f; // Base internal reference level
@@ -666,7 +666,7 @@ public:
         {
             float excess = lightLevel - internalThreshold;
 
-            // Program-dependent ratio calculation (authentic LA-2A behavior)
+            // Program-dependent ratio calculation (authentic opto behavior)
             // Low levels: ~3:1, Medium: ~4-6:1, High: ~8-10:1
             float baseRatio = 3.0f;
             float maxRatio = limitMode ? 20.0f : 10.0f;
@@ -686,11 +686,11 @@ public:
             // At high levels: aggressive 8-10:1 limiting
             reduction = 20.0f * std::log10(1.0f + excess * variableRatio);
 
-            // LA-2A typically maxes out around 40dB GR
+            // Opto typically maxes out around 40dB GR
             reduction = juce::jmin(reduction, 40.0f);
         }
         
-        // LA-2A T4 optical cell time constants
+        // Opto T4 optical cell time constants
         // Attack: 10ms average
         // Release: Two-stage - 40-80ms for first 50%, then 0.5-5 seconds for full recovery
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
@@ -802,12 +802,12 @@ public:
             detector.holdCounter *= 0.999f;
         }
         
-        // LA-2A Tube output stage - 12AX7 tube followed by 12AQ5 power tube
-        // The LA-2A has a characteristic warm tube sound with prominent 2nd harmonic
+        // Opto Tube output stage - 12AX7 tube followed by 12AQ5 power tube
+        // The Opto has a characteristic warm tube sound with prominent 2nd harmonic
         float makeupGain = juce::Decibels::decibelsToGain(gain);
         float driven = compressed * makeupGain;
         
-        // LA-2A tube harmonics - generate based on whether oversampling is active
+        // Opto tube harmonics - generate based on whether oversampling is active
         // When oversampling is ON, we're at 2x rate so harmonics won't alias
         // When oversampling is OFF, we limit harmonics to prevent aliasing
 
@@ -824,19 +824,19 @@ public:
             float h3_level = 0.0f;
             float h4_level = 0.0f;
             
-            // LA-2A has more harmonic content than 1176
+            // Opto has more harmonic content than FET
             if (levelDb > -40.0f)  // Add harmonics above -40dB
             {
-                // 2nd harmonic - LA-2A manual spec: < 0.5% THD (0.25% typical) at ±10dBm
+                // 2nd harmonic - Opto manual spec: < 0.5% THD (0.25% typical) at ±10dBm
                 float thd_target = levelDb > 6.0f ? 0.005f : 0.0025f;  // 0.5% max / 0.25% typical
                 float h2_scale = thd_target * 0.85f;
                 h2_level = absDriven * absDriven * h2_scale;
 
-                // 3rd harmonic - LA-2A tubes produce some odd harmonics
+                // 3rd harmonic - Opto tubes produce some odd harmonics
                 float h3_scale = thd_target * 0.12f;
                 h3_level = absDriven * absDriven * absDriven * h3_scale;
 
-                // 4th harmonic - minimal in LA-2A
+                // 4th harmonic - minimal in opto
                 // Only add if we're oversampling (to prevent aliasing)
                 if (oversample)
                 {
@@ -878,7 +878,7 @@ public:
             }
         }
         
-        // LA-2A output transformer - gentle high-frequency rolloff
+        // Opto output transformer - gentle high-frequency rolloff
         // Characteristic warmth from transformer
         // Use fixed filtering regardless of oversampling to maintain consistent harmonics
         float transformerFreq = 20000.0f;  // Fixed frequency for consistent harmonics
@@ -938,7 +938,7 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> saturationOversampler;
 };
 
-// FET Compressor (1176 style)
+// Vintage FET Compressor
 class UniversalCompressor::FETCompressor
 {
 public:
@@ -966,19 +966,19 @@ public:
             
         auto& detector = detectors[channel];
         
-        // 1176 Input transformer emulation
-        // The 1176 uses the full input signal, not highpass filtered
+        // FET Input transformer emulation
+        // The FET uses the full input signal, not highpass filtered
         // The transformer provides some low-frequency coupling but doesn't remove DC entirely
         float filteredInput = input;
         
-        // 1176 Input control - AUTHENTIC BEHAVIOR
-        // The 1176 has a FIXED threshold that the input knob drives signal into
+        // FET Input control - AUTHENTIC BEHAVIOR
+        // The FET has a FIXED threshold that the input knob drives signal into
         // More input = more compression (not threshold change)
         
-        // Fixed threshold (1176 characteristic)
-        // The 1176 threshold is around -10 dBFS according to specifications
+        // Fixed threshold (FET characteristic)
+        // The FET threshold is around -10 dBFS according to specifications
         // This is the level where compression begins to engage
-        const float thresholdDb = Constants::FET_THRESHOLD_DB; // Authentic 1176 threshold
+        const float thresholdDb = Constants::FET_THRESHOLD_DB; // Authentic FET threshold
         float threshold = juce::Decibels::decibelsToGain(thresholdDb);
         
         // Apply FULL input gain - this is how you drive into compression
@@ -991,14 +991,14 @@ public:
         std::array<float, 5> ratios = {4.0f, 8.0f, 12.0f, 20.0f, 120.0f}; // All-buttons >100:1
         float ratio = ratios[juce::jlimit(0, 4, ratioIndex)];
         
-        // FEEDBACK TOPOLOGY for authentic 1176 behavior
-        // The 1176 uses feedback compression which creates its characteristic sound
+        // FEEDBACK TOPOLOGY for authentic FET behavior
+        // The FET uses feedback compression which creates its characteristic sound
         
         // First, we need to apply the PREVIOUS envelope to get the compressed signal
         float compressed = amplifiedInput * detector.envelope;
         
         // Then detect from the COMPRESSED OUTPUT (feedback)
-        // This is what gives the 1176 its "grabby" characteristic
+        // This is what gives the FET its "grabby" characteristic
         float detectionLevel = std::abs(compressed);
         
         // Calculate gain reduction based on how much we exceed threshold
@@ -1008,11 +1008,11 @@ public:
             // Calculate how much we're over threshold in dB
             float overThreshDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
             
-            // Classic 1176 compression curve
+            // Classic FET compression curve
             if (ratioIndex == 4) // All-buttons mode (FET mode)
             {
                 // All-buttons mode creates a unique compression characteristic
-                // The actual 1176 in all-buttons mode creates a gentler slope at low levels
+                // The actual FET in all-buttons mode creates a gentler slope at low levels
                 // and more aggressive compression at higher levels (non-linear curve)
                 
                 if (overThreshDb < 3.0f)
@@ -1044,7 +1044,7 @@ public:
             }
         }
         
-        // 1176 attack and release times with LOGARITHMIC curves (hardware-accurate)
+        // FET attack and release times with LOGARITHMIC curves (hardware-accurate)
         // Attack: 20µs (0.00002s) to 800µs (0.0008s) - logarithmic taper
         // Release: 50ms to 1.1s - logarithmic taper
 
@@ -1055,7 +1055,7 @@ public:
         const float minRelease = 0.05f;    // 50 milliseconds
         const float maxRelease = 1.1f;     // 1.1 seconds
 
-        // Logarithmic interpolation for authentic 1176 feel
+        // Logarithmic interpolation for authentic FET feel
         float attackNorm = juce::jlimit(0.0f, 1.0f, attackMs / 0.8f); // Normalize to 0-1 if in ms
         float releaseNorm = juce::jlimit(0.0f, 1.0f, releaseMs / 1100.0f); // Normalize to 0-1 if in ms
 
@@ -1123,7 +1123,7 @@ public:
         }
         else
         {
-            // Normal 1176 envelope behavior for standard ratios
+            // Normal FET envelope behavior for standard ratios
             if (targetGain < detector.envelope)
             {
                 // Attack phase - FET response
@@ -1151,13 +1151,13 @@ public:
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
         
-        // 1176 Class A FET amplifier stage
-        // The 1176 is VERY clean at -18dB input level
+        // FET Class A FET amplifier stage
+        // The FET is VERY clean at -18dB input level
         // UAD reference shows THD at -65dB with 2nd harmonic at -100dB
         // Apply the envelope to get the output signal
         float output = compressed;
         
-        // The 1176 is an extremely clean compressor with minimal harmonics
+        // The FET is an extremely clean compressor with minimal harmonics
         // At -18dB input: 2nd harmonic at -100dB, 3rd at -110dB
         float absOutput = std::abs(output);
         
@@ -1170,7 +1170,7 @@ public:
             // All-buttons mode increases harmonic content significantly
             float allButtonsMultiplier = (ratioIndex == 4) ? 3.0f : 1.0f;
 
-            // Dynamic harmonics: scale with gain reduction for authentic 1176 behavior
+            // Dynamic harmonics: scale with gain reduction for authentic FET behavior
             // More compression = more harmonic distortion (FET characteristic)
             float grAmount = juce::jlimit(0.0f, 1.0f, reduction / 20.0f); // 0-1 scaling
 
@@ -1189,7 +1189,7 @@ public:
             // Heavy compression: full harmonics (1.0x)
             float harmonicScale = 0.2f + (grAmount * 0.8f); // 0.2 to 1.0 range
 
-            // 1176 manual spec: < 0.5% THD from 50 Hz to 15 kHz with limiting
+            // FET manual spec: < 0.5% THD from 50 Hz to 15 kHz with limiting
             // Target ~0.45% total at maximum compression for authentic character
 
             // 2nd harmonic: dominant harmonic in FET compressors
@@ -1220,7 +1220,7 @@ public:
         // Harmonic compensation removed - was causing artifacts
         
         // Output transformer simulation - very subtle
-        // 1176 has minimal transformer coloration
+        // FET has minimal transformer coloration
         // Just a gentle rolloff above 20kHz for anti-aliasing
         // Use fixed filtering regardless of oversampling to maintain consistent harmonics
         float transformerFreq = 20000.0f;
@@ -1229,7 +1229,7 @@ public:
         float filtered = output * (1.0f - transformerCoeff * 0.05f) + detector.prevOutput * transformerCoeff * 0.05f;
         detector.prevOutput = filtered;
         
-        // 1176 Output knob - makeup gain control
+        // FET Output knob - makeup gain control
         // Output parameter is in dB (-20 to +20dB) - more reasonable range
         // This is pure makeup gain after compression
         float outputGainLin = juce::Decibels::decibelsToGain(outputGainDb);
@@ -1261,7 +1261,7 @@ private:
     double sampleRate = 0.0;  // Set by prepare() from DAW
 };
 
-// VCA Compressor (DBX 160 style)
+// Classic VCA Compressor
 class UniversalCompressor::VCACompressor
 {
 public:
@@ -1278,7 +1278,7 @@ public:
             detector.signalEnvelope = 0.0f;
             detector.envelopeRate = 0.0f;
             detector.previousInput = 0.0f;
-            detector.overshootAmount = 0.0f; // For DBX 160 attack overshoot
+            detector.overshootAmount = 0.0f; // For VCA attack overshoot
         }
     }
     
@@ -1294,7 +1294,7 @@ public:
             
         auto& detector = detectors[channel];
         
-        // DBX 160 feedforward topology: control voltage from input signal
+        // VCA feedforward topology: control voltage from input signal
         float detectionLevel = std::abs(input);
 
         // Track signal envelope rate of change for program-dependent behavior
@@ -1302,7 +1302,7 @@ public:
         detector.envelopeRate = detector.envelopeRate * 0.95f + signalDelta * 0.05f;
         detector.previousInput = detectionLevel;
 
-        // DBX 160 True RMS detection with ADAPTIVE window (5-15ms)
+        // VCA True RMS detection with ADAPTIVE window (5-15ms)
         // Transient material (drums): shorter window (5ms) for punch
         // Sustained material (vocals, bass): longer window (15ms) for smoothness
 
@@ -1316,11 +1316,11 @@ public:
         detector.rmsBuffer = detector.rmsBuffer * rmsAlpha + detectionLevel * detectionLevel * (1.0f - rmsAlpha);
         float rmsLevel = std::sqrt(detector.rmsBuffer);
         
-        // DBX 160 signal envelope tracking for program-dependent timing
+        // VCA signal envelope tracking for program-dependent timing
         const float envelopeAlpha = 0.99f;
         detector.signalEnvelope = detector.signalEnvelope * envelopeAlpha + rmsLevel * (1.0f - envelopeAlpha);
         
-        // DBX 160 threshold control (-40dB to +20dB range typical)
+        // VCA threshold control (-40dB to +20dB range typical)
         float thresholdLin = juce::Decibels::decibelsToGain(threshold);
         
         float reduction = 0.0f;
@@ -1328,10 +1328,10 @@ public:
         {
             float overThreshDb = juce::Decibels::gainToDecibels(rmsLevel / thresholdLin);
             
-            // DBX 160 OverEasy mode - proprietary soft knee with PARABOLIC curve
+            // VCA OverEasy mode - proprietary soft knee with PARABOLIC curve
             if (overEasy)
             {
-                // DBX OverEasy uses a parabolic curve for smooth, musical compression
+                // VCA OverEasy uses a parabolic curve for smooth, musical compression
                 // Knee width is approximately 10dB centered around threshold
                 float kneeWidth = 10.0f;
                 float kneeStart = -kneeWidth * 0.5f;
@@ -1345,7 +1345,7 @@ public:
                 else if (overThreshDb <= kneeEnd)
                 {
                     // Inside knee - parabolic transition (quadratic curve)
-                    // DBX uses parabolic curve: f(x) = x² for smooth onset
+                    // VCA uses parabolic curve: f(x) = x² for smooth onset
                     float kneePosition = (overThreshDb - kneeStart) / kneeWidth; // 0-1
                     float parabolaGain = kneePosition * kneePosition; // Quadratic (parabolic)
                     reduction = overThreshDb * parabolaGain * (1.0f - 1.0f / ratio);
@@ -1359,30 +1359,30 @@ public:
             }
             else
             {
-                // Hard knee compression (original DBX 160 without OverEasy)
+                // Hard knee compression (original VCA without OverEasy)
                 reduction = overThreshDb * (1.0f - 1.0f / ratio);
             }
             
-            // DBX 160 can achieve infinite compression (approximately 120:1) with complete stability
+            // VCA can achieve infinite compression (approximately 120:1) with complete stability
             // Feed-forward design prevents instability issues of feedback compressors
             reduction = juce::jmin(reduction, Constants::VCA_MAX_REDUCTION_DB); // Practical limit for musical content
         }
         
-        // DBX 160 program-dependent attack and release times that "track" signal envelope
+        // VCA program-dependent attack and release times that "track" signal envelope
         // Attack times automatically vary with rate of level change in program material
         // Manual specifications: 15ms for 10dB, 5ms for 20dB, 3ms for 30dB change above threshold
         // User attackParam (0.1-50ms) scales the program-dependent attack times
 
         float attackTime, releaseTime;
 
-        // DBX 160 attack times track the signal envelope rate
+        // VCA attack times track the signal envelope rate
         // attackParam range: 0.1ms to 50ms - used as a scaling factor
         float userAttackScale = attackParam / 15.0f;  // Normalize to 1.0 at default 15ms
 
         float programAttackTime;
         if (reduction > 0.1f)
         {
-            // DBX 160 manual: Attack time for 63% of level change
+            // VCA manual: Attack time for 63% of level change
             // 15ms for 10dB, 5ms for 20dB, 3ms for 30dB
             if (reduction <= 10.0f)
                 programAttackTime = 0.015f; // 15ms for 10dB level change
@@ -1401,7 +1401,7 @@ public:
         attackTime = programAttackTime * userAttackScale;
         attackTime = juce::jlimit(0.0001f, 0.050f, attackTime); // 0.1ms to 50ms range
         
-        // DBX 160 release: blend user control with program-dependent 120dB/sec characteristic
+        // VCA release: blend user control with program-dependent 120dB/sec characteristic
         // releaseParam range: 10ms to 5000ms
         // At minimum (10ms): pure program-dependent behavior (120dB/sec)
         // At maximum (5000ms): long fixed release
@@ -1421,28 +1421,28 @@ public:
         }
 
         // Blend: shorter user times favor program-dependent, longer times use fixed release
-        // This preserves DBX character at fast settings while allowing longer releases
+        // This preserves VCA character at fast settings while allowing longer releases
         float blendFactor = juce::jlimit(0.0f, 1.0f, (userReleaseTime - 0.01f) / 0.5f); // 10ms-510ms transition
         releaseTime = programReleaseTime * (1.0f - blendFactor) + userReleaseTime * blendFactor;
         
-        // DBX VCA control voltage generation (-6mV/dB logarithmic curve)
-        // This is key to the DBX sound - logarithmic VCA response
+        // Classic VCA control voltage generation (-6mV/dB logarithmic curve)
+        // This is key to the VCA sound - logarithmic VCA response
         detector.controlVoltage = reduction * Constants::VCA_CONTROL_VOLTAGE_SCALE; // -6mV/dB characteristic
         
-        // DBX 160 feed-forward envelope following with complete stability
+        // VCA feed-forward envelope following with complete stability
         // Feed-forward design is inherently stable even at infinite compression ratios
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
         
-        // Calculate proper exponential coefficients for DBX-style response with safety
+        // Calculate proper exponential coefficients for VCA-style response with safety
         float attackCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, attackTime * static_cast<float>(sampleRate))));
         float releaseCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, releaseTime * static_cast<float>(sampleRate))));
         
         if (targetGain < detector.envelope)
         {
-            // Attack phase - DBX feed-forward design for fast, stable response
+            // Attack phase - VCA feed-forward design for fast, stable response
             detector.envelope = targetGain + (detector.envelope - targetGain) * attackCoeff;
 
-            // DBX 160 attack overshoot on fast attacks (1-2dB characteristic)
+            // VCA attack overshoot on fast attacks (1-2dB characteristic)
             // Fast attacks (< 5ms) produce slight overshoot for transient emphasis
             if (attackTime < 0.005f && reduction > 5.0f)
             {
@@ -1480,16 +1480,16 @@ public:
         // Store previous reduction for program dependency tracking
         detector.previousReduction = reduction;
 
-        // Apply overshoot to envelope for DBX 160 attack characteristic
+        // Apply overshoot to envelope for VCA attack characteristic
         float envelopeWithOvershoot = detector.envelope * (1.0f + detector.overshootAmount);
         envelopeWithOvershoot = juce::jlimit(0.0001f, 1.0f, envelopeWithOvershoot);
 
-        // DBX 160 feed-forward topology: apply compression to input signal
+        // VCA feed-forward topology: apply compression to input signal
         // This is different from feedback compressors - much more stable
         float compressed = input * envelopeWithOvershoot;
         
-        // DBX VCA characteristics (DBX 202 series VCA chip used in 160)
-        // The DBX 160 is renowned for being EXTREMELY clean - much cleaner than most compressors
+        // Classic VCA characteristics (vintage VCA chip design)
+        // The Classic VCA is renowned for being EXTREMELY clean - much cleaner than most compressors
         // Manual specification: 0.075% 2nd harmonic at infinite compression at +4dBm output
         // 0.5% 3rd harmonic typical at infinite compression ratio
         float processed = compressed;
@@ -1498,12 +1498,12 @@ public:
         // Calculate actual signal level in dB for harmonic generation
         float levelDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, absLevel));
         
-        // DBX 160 harmonic distortion - much cleaner than other compressor types
+        // VCA harmonic distortion - much cleaner than other compressor types
         if (absLevel > 0.01f)  // Process non-silence
         {
             float sign = (processed < 0.0f) ? -1.0f : 1.0f;
             
-            // DBX 160 VCA harmonics - extremely clean, even at high compression ratios
+            // Classic VCA harmonics - extremely clean, even at high compression ratios
             float h2_level = 0.0f;
             float h3_level = 0.0f;
             
@@ -1513,7 +1513,7 @@ public:
             float h2Boost = harmonicCompensation;
             float h3Boost = harmonicCompensation;
             
-            // DBX 160 harmonic generation - per actual manual specification
+            // VCA harmonic generation - per actual manual specification
             // Manual spec: 0.75% 2nd harmonic, 0.5% 3rd harmonic at infinite compression
             // Logic Pro shows similar levels (~-60dB to -81dB for 3rd harmonic)
             if (levelDb > -30.0f && reduction > 2.0f)
@@ -1521,12 +1521,12 @@ public:
                 // Compression factor scales harmonics based on how hard we're compressing
                 float compressionFactor = juce::jmin(1.0f, reduction / 30.0f);
 
-                // 2nd harmonic - DBX 160 manual: 0.75% at infinite compression at +4dBm output
+                // 2nd harmonic - VCA manual: 0.75% at infinite compression at +4dBm output
                 // 0.75% = 0.0075 linear = -42.5dB
                 float h2_scale = 0.0075f / (absLevel * absLevel + 0.0001f);
                 h2_level = absLevel * absLevel * h2_scale * compressionFactor * h2Boost;
 
-                // 3rd harmonic - DBX 160 manual: 0.5% typical at infinite compression
+                // 3rd harmonic - VCA manual: 0.5% typical at infinite compression
                 // 0.5% = 0.005 linear = -46dB
                 // Account for frequency dependence (decreases linearly with frequency)
                 if (reduction > 10.0f)
@@ -1537,7 +1537,7 @@ public:
                 }
             }
             
-            // Apply minimal harmonics - DBX 160 is known for its cleanliness
+            // Apply minimal harmonics - Classic VCA is known for its cleanliness
             processed = compressed;
             
             // Add very subtle 2nd harmonic
@@ -1556,7 +1556,7 @@ public:
                 processed += cubed * h3_level;
             }
             
-            // DBX VCA has very high headroom - minimal saturation
+            // Classic VCA has very high headroom - minimal saturation
             if (absLevel > 1.5f)
             {
                 // Very gentle VCA saturation characteristic
@@ -1590,14 +1590,14 @@ private:
         float signalEnvelope = 0.0f;    // Signal envelope for program-dependent timing
         float envelopeRate = 0.0f;      // Rate of envelope change
         float previousInput = 0.0f;     // Previous input for envelope tracking
-        float overshootAmount = 0.0f;   // Attack overshoot for DBX 160 characteristic
+        float overshootAmount = 0.0f;   // Attack overshoot for Classic VCA characteristic
     };
     
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
 };
 
-// Bus Compressor (SSL style)
+// Bus Compressor
 class UniversalCompressor::BusCompressor
 {
 public:
@@ -1624,11 +1624,11 @@ public:
             // Create the filter chain
             detector.sidechainFilter = std::make_unique<juce::dsp::ProcessorChain<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Filter<float>>>();
             
-            // SSL G-Series sidechain filter
+            // Bus Compressor sidechain filter
             // Highpass at 60Hz to prevent pumping from low frequencies
             detector.sidechainFilter->get<0>().coefficients = 
                 juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 60.0f, 0.707f);
-            // No lowpass in original SSL G - full bandwidth
+            // No lowpass in original Bus - full bandwidth
             detector.sidechainFilter->get<1>().coefficients = 
                 juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 20000.0f, 0.707f);
             
@@ -1651,7 +1651,7 @@ public:
             
         auto& detector = detectors[channel];
         
-        // SSL G-Series quad VCA topology
+        // Bus Compressor quad VCA topology
         // Uses parallel detection path with feed-forward design
         
         // Step 2: Apply gain reduction to main signal
@@ -1667,10 +1667,10 @@ public:
             sidechainInput = detector.hpState;
         }
         
-        // Step 3: SSL uses the sidechain signal directly for detection
+        // Step 3: Bus compressor uses the sidechain signal directly for detection
         float detectionLevel = std::abs(sidechainInput);
         
-        // SSL G-Series specific ratios: 2:1, 4:1, 10:1
+        // Bus Compressor specific ratios: 2:1, 4:1, 10:1
         // ratio parameter already contains the actual ratio value (2.0, 4.0, or 10.0)
         float actualRatio = ratio;
         
@@ -1681,23 +1681,23 @@ public:
         {
             float overThreshDb = juce::Decibels::gainToDecibels(detectionLevel / thresholdLin);
             
-            // SSL G-Series compression curve - relatively linear/hard knee
+            // Bus Compressor compression curve - relatively linear/hard knee
             reduction = overThreshDb * (1.0f - 1.0f / actualRatio);
-            // SSL bus typically used for gentle compression (max ~20dB GR)
+            // Bus compressor typically used for gentle compression (max ~20dB GR)
             reduction = juce::jmin(reduction, Constants::BUS_MAX_REDUCTION_DB);
         }
         
-        // SSL G-Series attack and release times
+        // Bus Compressor attack and release times
         std::array<float, 6> attackTimes = {0.1f, 0.3f, 1.0f, 3.0f, 10.0f, 30.0f}; // ms
         std::array<float, 5> releaseTimes = {100.0f, 300.0f, 600.0f, 1200.0f, -1.0f}; // ms, -1 = auto
         
         float attackTime = attackTimes[juce::jlimit(0, 5, attackIndex)] * 0.001f;
         float releaseTime = releaseTimes[juce::jlimit(0, 4, releaseIndex)] * 0.001f;
         
-        // SSL Auto-release mode - program-dependent (150-450ms range)
+        // Bus Auto-release mode - program-dependent (150-450ms range)
         if (releaseTime < 0.0f)
         {
-            // Hardware-accurate SSL auto-release: 150ms to 450ms based on program
+            // Hardware-accurate Bus auto-release: 150ms to 450ms based on program
             // Faster for transient-dense material, slower for sustained compression
 
             // Track signal dynamics
@@ -1710,7 +1710,7 @@ public:
             // Compression amount factor: more compression = slower release
             float compressionFactor = juce::jlimit(0.0f, 1.0f, reduction / 12.0f); // 0dB to 12dB
 
-            // SSL auto-release formula (150ms to 450ms)
+            // Bus auto-release formula (150ms to 450ms)
             // Transient material: faster release (150-250ms)
             // Sustained material with heavy compression: slower release (300-450ms)
             float minRelease = 0.15f;  // 150ms
@@ -1721,28 +1721,28 @@ public:
             releaseTime = minRelease + (sustainedFactor * (maxRelease - minRelease));
         }
         
-        // SSL G-Series envelope following with smooth response
+        // Bus Compressor envelope following with smooth response
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
         
         if (targetGain < detector.envelope)
         {
-            // Attack phase - SSL is known for smooth attack response - approximate exp
+            // Attack phase - Bus compressor is known for smooth attack response - approximate exp
             float divisor = juce::jmax(Constants::EPSILON, attackTime * static_cast<float>(sampleRate));
             float attackCoeff = juce::jmax(0.0f, juce::jmin(0.9999f, 1.0f - 1.0f / divisor));
             detector.envelope = targetGain + (detector.envelope - targetGain) * attackCoeff;
         }
         else
         {
-            // Release phase with SSL's characteristic smoothness - approximate exp
+            // Release phase with Bus characteristic smoothness - approximate exp
             float divisor = juce::jmax(Constants::EPSILON, releaseTime * static_cast<float>(sampleRate));
             float releaseCoeff = juce::jmax(0.0f, juce::jmin(0.9999f, 1.0f - 1.0f / divisor));
             detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
         }
         
-        // Envelope hysteresis: blend with previous gain reduction for SSL memory effect
-        // SSL circuitry has capacitance that creates slight "memory" in the envelope
+        // Envelope hysteresis: blend with previous gain reduction for Bus memory effect
+        // Bus circuitry has capacitance that creates slight "memory" in the envelope
         float currentGR = 1.0f - detector.envelope;
-        currentGR = 0.9f * currentGR + 0.1f * detector.previousGR; // 10% memory for SSL smoothness
+        currentGR = 0.9f * currentGR + 0.1f * detector.previousGR; // 10% memory for Bus smoothness
         detector.previousGR = currentGR;
         detector.envelope = 1.0f - currentGR;
 
@@ -1753,7 +1753,7 @@ public:
         // Apply the gain reduction envelope to the input signal
         float compressed = input * detector.envelope;
         
-        // SSL G-Series Quad DBX 202C VCA characteristics
+        // Bus Compressor Quad VCA characteristics
         // Hardware-accurate THD: 0.01% @ 0dB GR, 0.05-0.1% @ 12dB GR
         float processed = compressed;
         float absLevel = std::abs(processed);
@@ -1761,12 +1761,12 @@ public:
         // Calculate level for harmonic generation
         float levelDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, absLevel));
 
-        // SSL Bus harmonics - quad VCA coloration increases with compression
+        // Bus compressor harmonics - quad VCA coloration increases with compression
         if (absLevel > 0.01f)
         {
             float sign = (processed < 0.0f) ? -1.0f : 1.0f;
 
-            // SSL VCA THD specification:
+            // Bus VCA THD specification:
             // No compression (0dB GR): 0.01% THD (-80dB)
             // Moderate compression (6dB GR): 0.05% THD (-66dB)
             // Heavy compression (12dB GR): 0.1% THD (-60dB)
@@ -1787,7 +1787,7 @@ public:
             // Convert THD percentage to linear scale
             float thdLinear = thdPercent / 100.0f;
 
-            // SSL quad VCA: primarily 2nd harmonic (even), minimal odd harmonics
+            // Bus quad VCA: primarily 2nd harmonic (even), minimal odd harmonics
             // 2nd harmonic: ~85% of total THD
             // 3rd harmonic: ~15% of total THD
             float h2_scale = thdLinear * 0.85f;
@@ -1799,7 +1799,7 @@ public:
             // Apply harmonics using waveshaping for consistency
             processed = compressed;
             
-            // Add 2nd harmonic for SSL warmth
+            // Add 2nd harmonic for Bus warmth
             if (h2_level > 0.0f)
             {
                 // Use waveshaping: x² preserves phase relationship
@@ -1815,10 +1815,10 @@ public:
                 processed += cubed * h3_level;
             }
             
-            // SSL console saturation - very gentle
+            // Bus console saturation - very gentle
             if (absLevel > 0.95f)
             {
-                // SSL console output stage saturation
+                // Bus console output stage saturation
                 float excess = (absLevel - 0.95f) / 0.05f;
                 float sslSat = 0.95f + 0.05f * std::tanh(excess * 0.7f);
                 processed = sign * sslSat * (processed / absLevel);
@@ -1828,7 +1828,7 @@ public:
         // Apply makeup gain
         float compressed_output = processed * juce::Decibels::decibelsToGain(makeupGain);
 
-        // SSL-style parallel compression (New York compression)
+        // Bus-style parallel compression (New York compression)
         // Blend dry and wet signals for "glue" effect
         float output = input * (1.0f - mixAmount) + compressed_output * mixAmount;
 
@@ -1859,7 +1859,7 @@ private:
     double sampleRate = 0.0;  // Set by prepare() from DAW
 };
 
-// Studio FET Compressor (1176 Rev E "Blackface" style - cleaner than Bluestripe)
+// Studio FET Compressor (cleaner than Vintage FET)
 class UniversalCompressor::StudioFETCompressor
 {
 public:
@@ -1886,7 +1886,7 @@ public:
         // Apply input gain (drives signal into fixed threshold)
         float gained = input * juce::Decibels::decibelsToGain(inputGain);
 
-        // Fixed threshold at -10dBFS (1176 spec)
+        // Fixed threshold at -10dBFS (FET spec)
         constexpr float thresholdDb = Constants::STUDIO_FET_THRESHOLD_DB;
         const float threshold = juce::Decibels::decibelsToGain(thresholdDb);
 
@@ -1978,7 +1978,7 @@ private:
     double sampleRate = 0.0;
 };
 
-// Studio VCA Compressor (Focusrite Red 3 style - modern, versatile)
+// Studio VCA Compressor (modern, versatile)
 class UniversalCompressor::StudioVCACompressor
 {
 public:
@@ -2002,7 +2002,7 @@ public:
 
         auto& detector = detectors[static_cast<size_t>(channel)];
 
-        // Red 3 uses RMS detection
+        // Studio VCA uses RMS detection
         float squared = sidechainInput * sidechainInput;
         float rmsCoeff = std::exp(-1.0f / (0.01f * static_cast<float>(sampleRate)));  // 10ms RMS
         detector.rms = rmsCoeff * detector.rms + (1.0f - rmsCoeff) * squared;
@@ -2010,8 +2010,8 @@ public:
 
         float threshold = juce::Decibels::decibelsToGain(thresholdDb);
 
-        // Soft knee (6dB) - characteristic of Red 3
-        float kneeWidth = Constants::RED3_SOFT_KNEE_DB;
+        // Soft knee (6dB) - characteristic of Studio VCA
+        float kneeWidth = Constants::STUDIO_VCA_SOFT_KNEE_DB;
         float kneeStart = threshold * juce::Decibels::decibelsToGain(-kneeWidth / 2.0f);
         float kneeEnd = threshold * juce::Decibels::decibelsToGain(kneeWidth / 2.0f);
 
@@ -2032,10 +2032,10 @@ public:
                 float overDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
                 reduction = overDb * (1.0f - 1.0f / ratio);
             }
-            reduction = juce::jmin(reduction, Constants::RED3_MAX_REDUCTION_DB);
+            reduction = juce::jmin(reduction, Constants::STUDIO_VCA_MAX_REDUCTION_DB);
         }
 
-        // Red 3 attack/release: 0.3ms to 75ms attack, 0.1s to 4s release
+        // Studio VCA attack/release: 0.3ms to 75ms attack, 0.1s to 4s release
         float attackTime = juce::jlimit(0.0003f, 0.075f, attackMs / 1000.0f);
         float releaseTime = juce::jlimit(0.1f, 4.0f, releaseMs / 1000.0f);
 
@@ -2053,7 +2053,7 @@ public:
         // Apply compression
         float compressed = input * detector.envelope;
 
-        // Red 3 is very clean - minimal harmonics
+        // Studio VCA is very clean - minimal harmonics
         float absLevel = std::abs(compressed);
         if (absLevel > 0.8f)
         {
@@ -2338,7 +2338,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(-30.0f, 0.0f, 0.1f), 0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
     
-    // Opto parameters (LA-2A style)
+    // Opto parameters (Vintage Opto style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "opto_peak_reduction", "Peak Reduction", 
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f)); // Default to 0 (no compression)
@@ -2347,7 +2347,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f)); // Unity gain at 50%
     layout.add(std::make_unique<juce::AudioParameterBool>("opto_limit", "Limit Mode", false));
     
-    // FET parameters (1176 style)
+    // FET parameters (Vintage FET style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "fet_input", "Input", 
         juce::NormalisableRange<float>(-20.0f, 40.0f, 0.1f), 0.0f)); // Default to 0dB
@@ -2364,11 +2364,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         "fet_ratio", "Ratio", 
         juce::StringArray{"4:1", "8:1", "12:1", "20:1", "All"}, 0));
     
-    // VCA parameters (DBX 160 style)
+    // VCA parameters (Classic VCA style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "vca_threshold", "Threshold", 
-        juce::NormalisableRange<float>(-38.0f, 12.0f, 0.1f), 0.0f)); // DBX 160 range: 10mV(-38dB) to 3V(+12dB)
-    // DBX 160 ratio: 1:1 to infinity (120:1), with 4:1 at 12 o'clock
+        juce::NormalisableRange<float>(-38.0f, 12.0f, 0.1f), 0.0f)); // VCA range: 10mV(-38dB) to 3V(+12dB)
+    // VCA ratio: 1:1 to infinity (120:1), with 4:1 at 12 o'clock
     // Skew factor calculated so midpoint (0.5 normalized) = 4:1
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "vca_ratio", "Ratio",
@@ -2384,13 +2384,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
     layout.add(std::make_unique<juce::AudioParameterBool>("vca_overeasy", "Over Easy", false));
     
-    // Bus parameters (SSL style)
+    // Bus parameters (Bus Compressor style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "bus_threshold", "Threshold", 
         juce::NormalisableRange<float>(-30.0f, 15.0f, 0.1f), 0.0f)); // Extended range for more flexibility, default to 0dB
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "bus_ratio", "Ratio", 
-        juce::StringArray{"2:1", "4:1", "10:1"}, 0)); // SSL spec: discrete ratios
+        juce::StringArray{"2:1", "4:1", "10:1"}, 0)); // Bus spec: discrete ratios
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "bus_attack", "Attack", 
         juce::StringArray{"0.1ms", "0.3ms", "1ms", "3ms", "10ms", "30ms"}, 2));
@@ -2403,24 +2403,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "bus_mix", "Bus Mix",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
-        juce::AudioParameterFloatAttributes().withLabel("%"))); // SSL parallel compression
+        juce::AudioParameterFloatAttributes().withLabel("%"))); // Bus parallel compression
 
     // Studio FET parameters (shares most params with Vintage FET)
     // Uses: fet_input, fet_output, fet_attack, fet_release, fet_ratio
 
-    // Studio VCA parameters (Focusrite Red 3 style)
+    // Studio VCA parameters (Studio VCA style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_threshold", "Threshold",
         juce::NormalisableRange<float>(-40.0f, 20.0f, 0.1f), -10.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_ratio", "Ratio",
-        juce::NormalisableRange<float>(1.0f, 10.0f, 0.1f), 3.0f));  // Red 3: 1.5:1 to 10:1
+        juce::NormalisableRange<float>(1.0f, 10.0f, 0.1f), 3.0f));  // Studio VCA: 1.5:1 to 10:1
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_attack", "Attack",
-        juce::NormalisableRange<float>(0.3f, 75.0f, 0.1f), 10.0f));  // Red 3: Fast to Slow
+        juce::NormalisableRange<float>(0.3f, 75.0f, 0.1f), 10.0f));  // Studio VCA: Fast to Slow
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_release", "Release",
-        juce::NormalisableRange<float>(100.0f, 4000.0f, 1.0f), 300.0f));  // Red 3: 0.1s to 4s
+        juce::NormalisableRange<float>(100.0f, 4000.0f, 1.0f), 300.0f));  // Studio VCA: 0.1s to 4s
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_output", "Output",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
@@ -2710,7 +2710,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p3 = parameters.getRawParameterValue("opto_limit");
             if (p1 && p2 && p3) {
                 cachedParams[0] = juce::jlimit(0.0f, 100.0f, p1->load());  // Peak reduction 0-100
-                // LA-2A gain is 0-40dB range, parameter is 0-100
+                // Opto gain is 0-40dB range, parameter is 0-100
                 // Map 50 = unity gain (0dB), 0 = -40dB, 100 = +40dB
                 float gainParam = juce::jlimit(0.0f, 100.0f, p2->load());
                 cachedParams[1] = juce::jlimit(-40.0f, 40.0f, (gainParam - 50.0f) * 0.8f);  // Bounded gain

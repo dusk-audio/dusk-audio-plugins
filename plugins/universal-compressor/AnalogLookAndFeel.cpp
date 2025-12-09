@@ -122,7 +122,7 @@ void AnalogLookAndFeelBase::drawVintageKnob(juce::Graphics& g, float x, float y,
 }
 
 //==============================================================================
-// Opto (LA-2A) Style
+// Vintage Opto Style
 OptoLookAndFeel::OptoLookAndFeel()
 {
     colors.background = juce::Colour(0xFFF5E6D3);  // Warm cream
@@ -185,7 +185,7 @@ void OptoLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& bu
                juce::Justification::centredLeft);
 }
 //==============================================================================
-// FET (1176) Style
+// Vintage FET Style
 FETLookAndFeel::FETLookAndFeel()
 {
     colors.background = juce::Colour(0xFF1A1A1A);  // Black face
@@ -210,7 +210,7 @@ void FETLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& butto
                                          bool shouldDrawButtonAsHighlighted, 
                                          bool shouldDrawButtonAsDown)
 {
-    // 1176-style rectangular button
+    // FET-style rectangular button
     auto bounds = button.getLocalBounds().toFloat().reduced(2);
     
     // Button shadow
@@ -235,7 +235,7 @@ void FETLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& butto
 void FETLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // 1176-style illuminated rectangular button
+    // FET-style illuminated rectangular button
     auto bounds = button.getLocalBounds().toFloat();
     auto switchWidth = 50.0f;
     auto switchHeight = 22.0f;
@@ -270,7 +270,7 @@ void FETLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& but
                juce::Justification::centredLeft);
 }
 //==============================================================================
-// VCA (DBX 160) Style
+// Classic VCA Style
 VCALookAndFeel::VCALookAndFeel()
 {
     colors.background = juce::Colour(0xFFD4C4B0);  // Beige
@@ -293,7 +293,7 @@ void VCALookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width
 void VCALookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // DBX-style LED button with improved visibility
+    // VCA-style LED button with improved visibility
     auto bounds = button.getLocalBounds().toFloat();
     auto ledSize = 20.0f;
     
@@ -333,7 +333,7 @@ void VCALookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& but
 }
 
 //==============================================================================
-// Bus (SSL G) Style
+// Bus Compressor Style
 BusLookAndFeel::BusLookAndFeel()
 {
     colors.background = juce::Colour(0xFF2C3E50);  // Dark blue-gray
@@ -357,7 +357,7 @@ void BusLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool
                                   int, int, int, int,
                                   juce::ComboBox& box)
 {
-    // SSL-style selector
+    // Bus-style selector
     auto bounds = juce::Rectangle<float>(0, 0, width, height);
     
     // Background
@@ -390,7 +390,7 @@ void BusLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool
 void BusLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // SSL-style illuminated toggle with indicator light
+    // Bus-style illuminated toggle with indicator light
     auto bounds = button.getLocalBounds().toFloat();
     auto switchWidth = 50.0f;
     auto switchHeight = 22.0f;
@@ -440,7 +440,7 @@ void BusLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& but
 }
 
 //==============================================================================
-// Studio VCA (Focusrite Red 3) Style
+// Studio VCA Style (precision red)
 StudioVCALookAndFeel::StudioVCALookAndFeel()
 {
     colors.background = juce::Colour(0xFF2a1518);  // Dark red
@@ -449,7 +449,7 @@ StudioVCALookAndFeel::StudioVCALookAndFeel()
     colors.knobPointer = juce::Colour(0xFFFFFFFF); // White pointer
     colors.text = juce::Colour(0xFFd0d0d0);        // Light gray
     colors.textDim = juce::Colour(0xFFa0a0a0);     // Medium gray
-    colors.accent = juce::Colour(0xFFcc3333);      // Focusrite red
+    colors.accent = juce::Colour(0xFFcc3333);      // Studio red
     colors.shadow = juce::Colour(0xFF0a0505);
 }
 
@@ -464,7 +464,7 @@ void StudioVCALookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
 void StudioVCALookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                             bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // Red 3 style LED indicator
+    // Studio VCA style LED indicator
     auto bounds = button.getLocalBounds().toFloat();
     auto ledSize = 20.0f;
 

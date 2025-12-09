@@ -255,7 +255,7 @@ private:
         // Check for gain reduction
         float gr = compressor.getGainReduction();
         expect(gr <= 0.0f, "Bus mode gain reduction is non-positive: " + juce::String(gr) + " dB");
-        expect(gr > -25.0f, "Bus gain reduction within SSL specs: " + juce::String(gr) + " dB");
+        expect(gr > -25.0f, "Bus gain reduction within Bus specs: " + juce::String(gr) + " dB");
     }
 
     void testDSPStability()

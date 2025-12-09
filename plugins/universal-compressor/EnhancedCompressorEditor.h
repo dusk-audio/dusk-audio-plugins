@@ -103,20 +103,20 @@ private:
         std::unique_ptr<juce::Slider> thresholdKnob;
         std::unique_ptr<juce::Slider> ratioKnob;
         std::unique_ptr<juce::Slider> attackKnob;
-        // DBX 160 has fixed release rate - no release knob
+        // Classic VCA has fixed release rate - no release knob
         std::unique_ptr<juce::Slider> outputKnob;
         std::unique_ptr<juce::ToggleButton> overEasyButton;
         std::unique_ptr<juce::Label> thresholdLabel;
         std::unique_ptr<juce::Label> ratioLabel;
         std::unique_ptr<juce::Label> attackLabel;
-        // No release label for DBX 160
+        // No release label for Classic VCA
         std::unique_ptr<juce::Label> outputLabel;
         
         // Attachments
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thresholdAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
-        // No release attachment for DBX 160
+        // No release attachment for Classic VCA
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> overEasyAttachment;
     };
