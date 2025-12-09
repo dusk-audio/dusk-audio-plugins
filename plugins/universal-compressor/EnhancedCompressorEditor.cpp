@@ -27,13 +27,13 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     
     // Create mode selector - 7 modes matching Logic Pro style
     modeSelector = std::make_unique<juce::ComboBox>("Mode");
-    modeSelector->addItem("Vintage Opto (LA-2A)", 1);
-    modeSelector->addItem("Vintage FET (1176)", 2);
-    modeSelector->addItem("Classic VCA (DBX 160)", 3);
-    modeSelector->addItem("Vintage VCA (SSL G)", 4);
-    modeSelector->addItem("Studio FET (1176 Rev E)", 5);
-    modeSelector->addItem("Studio VCA (Red 3)", 6);
-    modeSelector->addItem("Digital (Transparent)", 7);
+    modeSelector->addItem("Vintage Opto", 1);
+    modeSelector->addItem("Vintage FET", 2);
+    modeSelector->addItem("Classic VCA", 3);
+    modeSelector->addItem("Bus Compressor", 4);
+    modeSelector->addItem("Studio FET", 5);
+    modeSelector->addItem("Studio VCA", 6);
+    modeSelector->addItem("Digital", 7);
     // Don't set a default - let the attachment handle it
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
@@ -297,14 +297,14 @@ void EnhancedCompressorEditor::setupVCAPanel()
     vcaPanel.container = std::make_unique<juce::Component>();
     addChildComponent(vcaPanel.container.get());  // Use addChildComponent so it's initially hidden
     
-    // Create controls - DBX 160 style
+    // Create controls - Classic VCA style
     vcaPanel.thresholdKnob = createKnob("Threshold", -38, 12, 0, " dB");  // 10mV to 3V range
-    // DBX 160 ratio: 1:1 to infinity (120:1), with 4:1 at 12 o'clock (center)
+    // Classic VCA ratio: 1:1 to infinity (120:1), with 4:1 at 12 o'clock (center)
     // The parameter has skew=0.3 which places 4:1 near the center of rotation
     vcaPanel.ratioKnob = createKnob("Ratio", 1, 120, 4, ":1");
     vcaPanel.ratioKnob->setSkewFactorFromMidPoint(4.0);  // 4:1 at 12 o'clock
-    vcaPanel.attackKnob = createKnob("Attack", 0.1, 50, 1, " ms");  // DBX 160 attack range
-    // DBX 160 has fixed release rate - no release knob needed
+    vcaPanel.attackKnob = createKnob("Attack", 0.1, 50, 1, " ms");  // Classic VCA attack range
+    // Classic VCA has fixed release rate - no release knob needed
     vcaPanel.outputKnob = createKnob("Output", -20, 20, 0, " dB");
     vcaPanel.overEasyButton = std::make_unique<juce::ToggleButton>("Over Easy");
 
@@ -312,21 +312,21 @@ void EnhancedCompressorEditor::setupVCAPanel()
     vcaPanel.thresholdLabel = createLabel("THRESHOLD");
     vcaPanel.ratioLabel = createLabel("RATIO");
     vcaPanel.attackLabel = createLabel("ATTACK");
-    // No release label for DBX 160
+    // No release label for Classic VCA
     vcaPanel.outputLabel = createLabel("OUTPUT");
     
     // Add to container
     vcaPanel.container->addAndMakeVisible(vcaPanel.thresholdKnob.get());
     vcaPanel.container->addAndMakeVisible(vcaPanel.ratioKnob.get());
     vcaPanel.container->addAndMakeVisible(vcaPanel.attackKnob.get());
-    // No release knob for DBX 160
+    // No release knob for Classic VCA
     vcaPanel.container->addAndMakeVisible(vcaPanel.outputKnob.get());
     // Note: overEasyButton is added to main editor, not container, so it can be in top row
     addChildComponent(vcaPanel.overEasyButton.get());  // Add to main editor as child component
     vcaPanel.container->addAndMakeVisible(vcaPanel.thresholdLabel.get());
     vcaPanel.container->addAndMakeVisible(vcaPanel.ratioLabel.get());
     vcaPanel.container->addAndMakeVisible(vcaPanel.attackLabel.get());
-    // No release label for DBX 160
+    // No release label for Classic VCA
     vcaPanel.container->addAndMakeVisible(vcaPanel.outputLabel.get());
     
     // Create attachments
@@ -343,7 +343,7 @@ void EnhancedCompressorEditor::setupVCAPanel()
         vcaPanel.attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "vca_attack", *vcaPanel.attackKnob);
     
-    // DBX 160 has fixed release rate - no attachment needed
+    // Classic VCA has fixed release rate - no attachment needed
     
     if (params.getRawParameterValue("vca_output"))
         vcaPanel.outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -431,7 +431,7 @@ void EnhancedCompressorEditor::setupDigitalPanel()
     digitalPanel = std::make_unique<DigitalCompressorPanel>(processor.getParameters());
     addChildComponent(digitalPanel.get());
 
-    // Studio VCA Panel (Focusrite Red 3 style)
+    // Studio VCA Panel (precision red style)
     studioVcaPanel = std::make_unique<StudioVCAPanel>(processor.getParameters());
     addChildComponent(studioVcaPanel.get());
 }
@@ -459,36 +459,36 @@ void EnhancedCompressorEditor::updateMode(int newMode)
     // Show and set look for current mode
     switch (currentMode)
     {
-        case 0: // Vintage Opto (LA-2A)
+        case 0: // Vintage Opto
             optoPanel.container->setVisible(true);
             if (optoPanel.limitSwitch)
                 optoPanel.limitSwitch->setVisible(true);
             currentLookAndFeel = optoLookAndFeel.get();
             break;
 
-        case 1: // Vintage FET (1176 Bluestripe)
+        case 1: // Vintage FET
             fetPanel.container->setVisible(true);
             currentLookAndFeel = fetLookAndFeel.get();
             break;
 
-        case 2: // Classic VCA (DBX 160)
+        case 2: // Classic VCA
             vcaPanel.container->setVisible(true);
             if (vcaPanel.overEasyButton)
                 vcaPanel.overEasyButton->setVisible(true);
             currentLookAndFeel = vcaLookAndFeel.get();
             break;
 
-        case 3: // Vintage VCA / Bus (SSL G)
+        case 3: // Bus Compressor
             busPanel.container->setVisible(true);
             currentLookAndFeel = busLookAndFeel.get();
             break;
 
-        case 4: // Studio FET (1176 Rev E Blackface) - shares FET panel
+        case 4: // Studio FET - shares FET panel
             fetPanel.container->setVisible(true);
             currentLookAndFeel = fetLookAndFeel.get();  // Use FET look (could customize later)
             break;
 
-        case 5: // Studio VCA (Focusrite Red 3)
+        case 5: // Studio VCA
             if (studioVcaPanel)
             {
                 studioVcaPanel->setVisible(true);
@@ -565,7 +565,7 @@ void EnhancedCompressorEditor::updateMode(int newMode)
             vcaPanel.thresholdKnob->setLookAndFeel(currentLookAndFeel);
             vcaPanel.ratioKnob->setLookAndFeel(currentLookAndFeel);
             vcaPanel.attackKnob->setLookAndFeel(currentLookAndFeel);
-            // No release knob for DBX 160
+            // No release knob for Classic VCA
             vcaPanel.outputKnob->setLookAndFeel(currentLookAndFeel);
             vcaPanel.overEasyButton->setLookAndFeel(currentLookAndFeel);
         }
@@ -882,7 +882,7 @@ void EnhancedCompressorEditor::resized()
             fetPanel.ratioButtons->setBounds(fetBounds.removeFromTop(static_cast<int>(70 * scaleFactor)).reduced(static_cast<int>(15 * scaleFactor), static_cast<int>(2 * scaleFactor)));
     }
 
-    // Layout VCA panel - 4 knobs in one row (no release for DBX 160)
+    // Layout VCA panel - 4 knobs in one row (no release for Classic VCA)
     if (vcaPanel.container && vcaPanel.container->isVisible())
     {
         vcaPanel.container->setBounds(controlArea);
