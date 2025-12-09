@@ -36,7 +36,7 @@ protected:
 };
 
 //==============================================================================
-// LA-2A Opto Style (warm vintage cream)
+// Vintage Opto Style (warm vintage cream)
 class OptoLookAndFeel : public AnalogLookAndFeelBase
 {
 public:
@@ -51,7 +51,7 @@ public:
 };
 
 //==============================================================================
-// 1176 FET Style (blackface)
+// Vintage FET Style (blackface)
 class FETLookAndFeel : public AnalogLookAndFeelBase
 {
 public:
@@ -71,7 +71,7 @@ public:
 };
 
 //==============================================================================
-// DBX 160 VCA Style (retro beige)
+// Classic VCA Style (retro beige)
 class VCALookAndFeel : public AnalogLookAndFeelBase
 {
 public:
@@ -86,7 +86,7 @@ public:
 };
 
 //==============================================================================
-// SSL G Bus Style (modern analog)
+// Bus Compressor Style (modern analog)
 class BusLookAndFeel : public AnalogLookAndFeelBase
 {
 public:
@@ -105,7 +105,7 @@ public:
 };
 
 //==============================================================================
-// Focusrite Red 3 Studio VCA Style
+// Studio VCA Style (precision red)
 class StudioVCALookAndFeel : public AnalogLookAndFeelBase
 {
 public:
@@ -184,7 +184,7 @@ private:
 // Include "../shared/LEDMeter.h" to use it.
 
 //==============================================================================
-// Ratio button group for FET mode (like 1176)
+// Ratio button group for FET mode
 class RatioButtonGroup : public juce::Component, public juce::Button::Listener
 {
 public:
