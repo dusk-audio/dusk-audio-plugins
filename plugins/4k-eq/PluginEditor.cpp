@@ -9,7 +9,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     // Set editor size - increased height for EQ curve display
     setSize(950, 640);
     setResizable(true, true);
-    setResizeLimits(800, 580, 1400, 800);
+    setResizeLimits(800, 470, 1400, 800);  // Min height 470 allows collapsed graph mode
 
     // Get parameter references
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
@@ -227,6 +227,23 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     eqCurveDisplay = std::make_unique<EQCurveDisplay>(audioProcessor);
     addAndMakeVisible(eqCurveDisplay.get());
 
+    // Collapse/expand button for EQ curve (in header, left of Brown/Black indicator)
+    curveCollapseButton.setButtonText("Hide Graph");
+    curveCollapseButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
+    curveCollapseButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffa0a0a0));
+    curveCollapseButton.setTooltip("Show/Hide frequency response graph");
+    curveCollapseButton.onClick = [this]() {
+        isCurveCollapsed = !isCurveCollapsed;
+        curveCollapseButton.setButtonText(isCurveCollapsed ? "Show Graph" : "Hide Graph");
+        if (eqCurveDisplay)
+            eqCurveDisplay->setVisible(!isCurveCollapsed);
+
+        // Resize the window based on graph visibility
+        int newHeight = isCurveCollapsed ? 530 : 640;
+        setSize(getWidth(), newHeight);
+    };
+    addAndMakeVisible(curveCollapseButton);
+
     // Set initial bounds for EQ curve display so it's visible on first paint
     int curveX = 35;
     int curveY = 58;
@@ -314,11 +331,16 @@ void FourKEQEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xffe0e0e0));
     g.drawText(isBlack ? "BLACK" : "BROWN", eqTypeRect, juce::Justification::centred);
 
-    // EQ Curve display area background
-    auto curveArea = juce::Rectangle<int>(40, 60, bounds.getWidth() - 80, 100);
+    // EQ Curve display area background (only when visible)
+    if (!isCurveCollapsed)
+    {
+        auto curveArea = juce::Rectangle<int>(40, 60, bounds.getWidth() - 130, 100);
+        // Background is drawn by the EQCurveDisplay component itself
+    }
 
-    // Main content area - starts below EQ curve with gap
-    bounds = getLocalBounds().withTrimmedTop(170);  // Account for header + curve display + gap
+    // Main content area - adjust based on curve visibility
+    int contentTopOffset = isCurveCollapsed ? 65 : 170;
+    bounds = getLocalBounds().withTrimmedTop(contentTopOffset);  // Account for header + optional curve
 
     // Section dividers - vertical lines
     g.setColour(juce::Colour(0xff3a3a3a));
@@ -551,19 +573,24 @@ void FourKEQEditor::resized()
     // EQ Type selector in header (upper right)
     eqTypeSelector.setBounds(getWidth() - 110, 15, 95, 28);
 
+    // Position collapse button in header (left of Brown/Black indicator)
+    // Brown/Black badge is at getWidth() - 190, so place button to its left
+    curveCollapseButton.setBounds(getWidth() - 290, 17, 90, 24);
+
     // EQ Curve Display - spans across the top area below header
-    if (eqCurveDisplay)
+    int curveHeight = isCurveCollapsed ? 0 : 105;
+    if (eqCurveDisplay && !isCurveCollapsed)
     {
         int curveX = 35;
         int curveY = 58;
         int curveWidth = getWidth() - 70;
-        int curveHeight = 105;  // Taller to better fill the space
         eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
     }
 
     // LED Meters - use standard width from LEDMeterStyle
     int meterWidth = LEDMeterStyle::standardWidth;
-    int meterY = 185;  // Start lower to make room for curve and labels
+    // Adjust meter Y position based on curve visibility
+    int meterY = isCurveCollapsed ? 80 : 185;  // Move up when curve is hidden
     int meterHeight = getHeight() - meterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
 
     if (inputMeterL)
@@ -576,7 +603,8 @@ void FourKEQEditor::resized()
     // Use absolute positioning based on section divider positions from paint()
     // This ensures knobs are perfectly centered between dividers
 
-    int contentY = 170;  // Top of content area (below header + curve) - increased for spacing
+    // Adjust content Y based on curve visibility - move up when curve is hidden
+    int contentY = isCurveCollapsed ? 65 : 170;  // Top of content area
     int sectionLabelHeight = 30;  // Space for section headers like "FILTERS", "LF", etc.
     int knobSize = 75;  // Slightly smaller knobs to prevent label overlap
     int knobRowHeight = 125;  // Vertical space for each knob row (knob + labels)

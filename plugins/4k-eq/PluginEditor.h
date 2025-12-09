@@ -99,6 +99,8 @@ private:
 
     // EQ Curve Display
     std::unique_ptr<EQCurveDisplay> eqCurveDisplay;
+    juce::TextButton curveCollapseButton;  // Button to collapse/expand EQ curve
+    bool isCurveCollapsed = false;  // Track collapse state
 
     // Value readout labels (show current parameter value below each knob)
     juce::Label hpfValueLabel, lpfValueLabel, inputValueLabel;
