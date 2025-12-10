@@ -161,10 +161,27 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 ## Build System
 
-### Comprehensive Build Script
-A single script handles everything - clean, build, and install:
+### Release Builds (Recommended)
+Use the Docker/Podman containerized build for release builds. This ensures glibc compatibility with older Linux distributions (Debian 12+, Ubuntu 22.04+):
+
 ```bash
-# From the plugins directory: /home/marc/projects/Luna/plugins/
+# Build all plugins for release distribution
+./docker/build_release.sh
+```
+
+**Output**: Plugins are placed in `release/` directory with both VST3 and LV2 formats.
+
+**Compatibility**: Binaries work on:
+- Debian 12 (Bookworm) and newer
+- Ubuntu 22.04 LTS and newer
+- Most Linux distributions from 2022 onwards
+
+**Requirements**: Either Podman (preferred on Fedora) or Docker must be installed.
+
+### Development Builds
+For local development and testing, use the rebuild script:
+```bash
+# From the plugins directory: /home/marc/projects/plugins/
 ./rebuild_all.sh           # Standard rebuild (Release mode)
 ./rebuild_all.sh --fast     # Use ccache and ninja if available
 ./rebuild_all.sh --clean    # Clean only, don't build
@@ -173,7 +190,7 @@ A single script handles everything - clean, build, and install:
 ./rebuild_all.sh --parallel 8  # Specify job count (default: auto-detect)
 ```
 
-**Current plugins built by rebuild_all.sh:**
+**Current plugins built:**
 - FourKEQ_All
 - TapeMachine_All
 - UniversalCompressor_All
@@ -181,11 +198,21 @@ A single script handles everything - clean, build, and install:
 - TapeEcho_All
 - DrummerClone_All
 
-**Note**: The Harmonic Generator is not currently included in the rebuild_all.sh script but can be built via CMake options.
+**Note**: The Harmonic Generator is not currently included in rebuild_all.sh but can be built via CMake options.
+
+### Post-Build Validation
+After building, validate all plugins work correctly:
+```bash
+# Quick validation - verifies plugins are built and loadable
+./tests/quick_validate.sh
+
+# Full validation with pluginval (if installed)
+./tests/run_plugin_tests.sh
+```
 
 ### Manual Build Commands
 ```bash
-cd /home/marc/projects/Luna/plugins/build
+cd /home/marc/projects/plugins/build
 
 # Clean rebuild all plugins
 rm -rf * && cmake .. -DCMAKE_BUILD_TYPE=Release
@@ -291,8 +318,11 @@ plugins/
 ├── cmake/                    # CMake configuration files
 │   ├── GlobalSettings.cmake
 │   └── JuceDefaults.cmake
+├── docker/                   # Containerized build environment
+│   ├── Dockerfile.build     # Ubuntu 22.04 build image
+│   └── build_release.sh     # Release build script
 ├── plugins/                  # Individual plugin directories
-│   ├── 4k-eq/               # SSL 4000 Series EQ
+│   ├── 4k-eq/               # 4K EQ (console-style EQ)
 │   ├── TapeMachine/         # Tape machine emulation
 │   ├── universal-compressor/ # Multi-mode compressor
 │   ├── PlateReverb/         # Dattorro plate reverb
@@ -301,9 +331,13 @@ plugins/
 │   ├── DrummerClone/        # Intelligent MIDI drum generator
 │   ├── StudioVerb/          # (Deprecated - disabled in build)
 │   └── shared/              # Shared utilities
-├── build/                    # Build output (gitignored)
+├── tests/                    # Plugin validation framework
+│   ├── quick_validate.sh    # Fast plugin check
+│   └── run_plugin_tests.sh  # Full test suite
+├── release/                  # Release build output (gitignored)
+├── build/                    # Development build output (gitignored)
 ├── CMakeLists.txt           # Root build configuration
-└── rebuild_all.sh           # Comprehensive build script
+└── rebuild_all.sh           # Development build script
 ```
 
 ### Adding New Plugins
