@@ -61,15 +61,15 @@ void EQCurveDisplay::paint(juce::Graphics& g)
     drawCombinedCurve(g, graphArea);
 
     // Draw individual band curves (subtle, behind combined) - only if active
-    // HPF curve (subtle grey)
-    if (cachedParams.hpfFreq > 25.0f)
+    // HPF curve (subtle grey) - only show if enabled
+    if (cachedParams.hpfEnabled)
     {
         drawBandCurve(g, graphArea, juce::Colour(0xff888888).withAlpha(0.5f),
                       [this](float f) { return calculateHPFResponse(f); });
     }
 
-    // LPF curve (subtle grey)
-    if (cachedParams.lpfFreq < 19000.0f)
+    // LPF curve (subtle grey) - only show if enabled
+    if (cachedParams.lpfEnabled)
     {
         drawBandCurve(g, graphArea, juce::Colour(0xff888888).withAlpha(0.5f),
                       [this](float f) { return calculateLPFResponse(f); });
@@ -122,8 +122,12 @@ void EQCurveDisplay::timerCallback()
 
     if (auto* p = params.getRawParameterValue("hpf_freq"))
         newParams.hpfFreq = p->load();
+    if (auto* p = params.getRawParameterValue("hpf_enabled"))
+        newParams.hpfEnabled = p->load() > 0.5f;
     if (auto* p = params.getRawParameterValue("lpf_freq"))
         newParams.lpfFreq = p->load();
+    if (auto* p = params.getRawParameterValue("lpf_enabled"))
+        newParams.lpfEnabled = p->load() > 0.5f;
     if (auto* p = params.getRawParameterValue("lf_gain"))
         newParams.lfGain = p->load();
     if (auto* p = params.getRawParameterValue("lf_freq"))
@@ -157,7 +161,9 @@ void EQCurveDisplay::timerCallback()
     };
 
     bool changed = floatsDiffer(newParams.hpfFreq, cachedParams.hpfFreq) ||
+                   (newParams.hpfEnabled != cachedParams.hpfEnabled) ||
                    floatsDiffer(newParams.lpfFreq, cachedParams.lpfFreq) ||
+                   (newParams.lpfEnabled != cachedParams.lpfEnabled) ||
                    floatsDiffer(newParams.lfGain, cachedParams.lfGain) ||
                    floatsDiffer(newParams.lfFreq, cachedParams.lfFreq) ||
                    (newParams.lfBell != cachedParams.lfBell) ||
@@ -351,8 +357,8 @@ void EQCurveDisplay::drawCombinedCurve(juce::Graphics& g, const juce::Rectangle<
 
 float EQCurveDisplay::calculateHPFResponse(float freq) const
 {
-    if (cachedParams.hpfFreq <= 20.0f)
-        return 0.0f;  // HPF off
+    if (!cachedParams.hpfEnabled)
+        return 0.0f;  // HPF disabled - no effect on response
 
     // 3rd order HPF (18dB/oct) with smooth transition at cutoff
     float ratio = freq / cachedParams.hpfFreq;
@@ -377,8 +383,8 @@ float EQCurveDisplay::calculateHPFResponse(float freq) const
 
 float EQCurveDisplay::calculateLPFResponse(float freq) const
 {
-    if (cachedParams.lpfFreq >= 20000.0f)
-        return 0.0f;  // LPF off
+    if (!cachedParams.lpfEnabled)
+        return 0.0f;  // LPF disabled - no effect on response
 
     // 2nd order LPF (12dB/oct)
     float ratio = freq / cachedParams.lpfFreq;

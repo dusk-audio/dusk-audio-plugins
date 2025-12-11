@@ -131,13 +131,30 @@ run_pluginval_tests() {
     fi
 
     # Run pluginval with increasing strictness levels
-    for level in 1 5 10; do
+    # Level 1: Basic sanity checks
+    # Level 5: Recommended minimum for compatibility
+    # Level 7: More thorough testing including edge cases
+    # Level 10: Maximum strictness with fuzzing (can take longer)
+    for level in 1 5 7 10; do
         print_info "Running pluginval at strictness level $level..."
 
         local output_file="$TEST_OUTPUT_DIR/pluginval_${plugin_name// /_}_level${level}.log"
 
-        if timeout 120 pluginval --validate "$vst3_path" --strictness-level "$level" \
-            --timeout-ms 60000 --verbose > "$output_file" 2>&1; then
+        # Higher levels need more time, especially level 10 with fuzzing
+        # Shell timeout is outer limit; pluginval timeout is per-test limit (set slightly lower)
+        local timeout_secs=120
+        local pluginval_timeout_ms=90000
+        if [ "$level" -ge 7 ]; then
+            timeout_secs=180
+            pluginval_timeout_ms=150000
+        fi
+        if [ "$level" -eq 10 ]; then
+            timeout_secs=300
+            pluginval_timeout_ms=270000
+        fi
+
+        if timeout "$timeout_secs" pluginval --validate "$vst3_path" --strictness-level "$level" \
+            --timeout-ms "$pluginval_timeout_ms" --verbose > "$output_file" 2>&1; then
             print_pass "Pluginval level $level passed"
         else
             print_fail "Pluginval level $level failed (see $output_file)"

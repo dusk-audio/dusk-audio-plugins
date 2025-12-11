@@ -44,7 +44,9 @@ private:
     // Cached parameter values for change detection
     struct CachedParams {
         float hpfFreq = 20.0f;
+        bool hpfEnabled = false;
         float lpfFreq = 20000.0f;
+        bool lpfEnabled = false;
         float lfGain = 0.0f, lfFreq = 100.0f;
         float lmGain = 0.0f, lmFreq = 600.0f, lmQ = 0.7f;
         float hmGain = 0.0f, hmFreq = 2000.0f, hmQ = 0.7f;

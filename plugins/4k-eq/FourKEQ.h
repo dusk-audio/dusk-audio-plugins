@@ -246,7 +246,9 @@ private:
 
     // Parameter pointers with safe accessors
     std::atomic<float>* hpfFreqParam = nullptr;
+    std::atomic<float>* hpfEnabledParam = nullptr;
     std::atomic<float>* lpfFreqParam = nullptr;
+    std::atomic<float>* lpfEnabledParam = nullptr;
 
     std::atomic<float>* lfGainParam = nullptr;
     std::atomic<float>* lfFreqParam = nullptr;
@@ -319,6 +321,10 @@ private:
     std::atomic<bool> lmDirty{true};
     std::atomic<bool> hmDirty{true};
     std::atomic<bool> hfDirty{true};
+
+    // Filter enable state tracking (for reset on re-enable to avoid artifacts)
+    bool lastHpfEnabled = false;
+    bool lastLpfEnabled = false;
 
     // Preset management
     int currentPreset = 0;

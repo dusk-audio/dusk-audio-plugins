@@ -37,9 +37,11 @@ private:
 
     // HPF Section
     juce::Slider hpfFreqSlider;
+    juce::ToggleButton hpfEnableButton;
 
     // LPF Section
     juce::Slider lpfFreqSlider;
+    juce::ToggleButton lpfEnableButton;
 
     // LF Band
     juce::Slider lfGainSlider;
@@ -128,7 +130,9 @@ private:
 
     // Attachments
     std::unique_ptr<SliderAttachment> hpfFreqAttachment;
+    std::unique_ptr<ButtonAttachment> hpfEnableAttachment;
     std::unique_ptr<SliderAttachment> lpfFreqAttachment;
+    std::unique_ptr<ButtonAttachment> lpfEnableAttachment;
 
     std::unique_ptr<SliderAttachment> lfGainAttachment;
     std::unique_ptr<SliderAttachment> lfFreqAttachment;
