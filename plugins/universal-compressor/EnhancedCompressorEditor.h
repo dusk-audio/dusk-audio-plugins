@@ -57,9 +57,29 @@ private:
     // Global controls
     std::unique_ptr<juce::ToggleButton> bypassButton;
     std::unique_ptr<juce::ToggleButton> autoGainButton;
-    // Oversample button removed - saturation always runs at 2x internally
+    std::unique_ptr<juce::ToggleButton> sidechainEnableButton;  // External sidechain
+    std::unique_ptr<juce::ToggleButton> sidechainListenButton;  // SC Listen
+    std::unique_ptr<juce::Slider> lookaheadSlider;              // Global lookahead
+    std::unique_ptr<juce::ComboBox> oversamplingSelector;       // 2x/4x oversampling
+
+    // Sidechain EQ controls (collapsible)
+    std::unique_ptr<juce::TextButton> scEqToggleButton;  // Toggle to show/hide SC EQ
+    std::unique_ptr<juce::Slider> scLowFreqSlider;
+    std::unique_ptr<juce::Slider> scLowGainSlider;
+    std::unique_ptr<juce::Slider> scHighFreqSlider;
+    std::unique_ptr<juce::Slider> scHighGainSlider;
+    bool scEqVisible = false;  // SC EQ collapsed by default
+
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sidechainEnableAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sidechainListenAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lookaheadAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oversamplingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> scLowFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> scLowGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> scHighFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> scHighGainAttachment;
     
     // Mode-specific panels
     struct OptoPanel
@@ -203,6 +223,7 @@ private:
 
     std::unique_ptr<SupportersOverlay> supportersOverlay;
     juce::Rectangle<int> titleClickArea;  // Clickable area for plugin title
+    juce::Rectangle<int> osLabelBounds;   // Bounds for "OS:" label in header
 
     void showSupportersPanel();
     void hideSupportersPanel();

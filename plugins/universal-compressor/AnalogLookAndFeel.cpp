@@ -870,21 +870,20 @@ void VUMeterWithLabel::paint(juce::Graphics& g)
 // NOTE: LEDMeter implementation moved to shared/LEDMeter.cpp for consistency across all plugins.
 
 //==============================================================================
-// Ratio Button Group
+// Ratio Button Group - uses radio-style toggle buttons
 RatioButtonGroup::RatioButtonGroup()
 {
     const juce::StringArray ratios = {"4:1", "8:1", "12:1", "20:1", "All"};
-    
+
     for (const auto& ratio : ratios)
     {
-        auto button = std::make_unique<juce::TextButton>(ratio);
-        button->setClickingTogglesState(true);
+        auto button = std::make_unique<juce::ToggleButton>(ratio);
         button->setRadioGroupId(1001);
         button->addListener(this);
         addAndMakeVisible(button.get());
         ratioButtons.push_back(std::move(button));
     }
-    
+
     ratioButtons[0]->setToggleState(true, juce::dontSendNotification);
 }
 
@@ -906,11 +905,13 @@ void RatioButtonGroup::setSelectedRatio(int index)
 void RatioButtonGroup::resized()
 {
     auto bounds = getLocalBounds();
-    int buttonWidth = bounds.getWidth() / ratioButtons.size();
-    
+    int buttonWidth = bounds.getWidth() / static_cast<int>(ratioButtons.size());
+    int buttonHeight = juce::jmin(bounds.getHeight(), 24);  // Compact height for radio buttons
+    int yOffset = (bounds.getHeight() - buttonHeight) / 2;
+
     for (size_t i = 0; i < ratioButtons.size(); ++i)
     {
-        ratioButtons[i]->setBounds(i * buttonWidth, 0, buttonWidth - 2, bounds.getHeight());
+        ratioButtons[i]->setBounds(static_cast<int>(i) * buttonWidth, yOffset, buttonWidth, buttonHeight);
     }
 }
 
