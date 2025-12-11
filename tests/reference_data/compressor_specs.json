@@ -1,0 +1,105 @@
+{
+    "name": "Universal Compressor Reference Specifications",
+    "version": "1.0.0",
+    "description": "Hardware reference values and validation thresholds for the Universal Compressor plugin",
+
+    "modes": {
+        "FET": {
+            "description": "Vintage FET-style compression (1176 Bluestripe inspired)",
+            "thd_spec": "< 0.5%",
+            "thd_measurements": [
+                {"input_db": -18, "expected_thd_percent": 0.30, "tolerance": 0.15},
+                {"input_db": -6, "expected_thd_percent": 0.45, "tolerance": 0.20}
+            ],
+            "attack_times_ms": {
+                "fastest": 0.02,
+                "slowest": 0.8,
+                "tolerance_percent": 20
+            },
+            "release_times_ms": {
+                "fastest": 50,
+                "slowest": 1100,
+                "tolerance_percent": 20
+            },
+            "all_buttons_transfer_curve": {
+                "description": "Measured compression curve for All-Buttons mode",
+                "data_points": [
+                    {"over_thresh_db": 0, "reduction_db": 0},
+                    {"over_thresh_db": 2, "reduction_db": 0.4},
+                    {"over_thresh_db": 4, "reduction_db": 1.2},
+                    {"over_thresh_db": 6, "reduction_db": 2.8},
+                    {"over_thresh_db": 8, "reduction_db": 5.0},
+                    {"over_thresh_db": 10, "reduction_db": 7.5},
+                    {"over_thresh_db": 12, "reduction_db": 10.2},
+                    {"over_thresh_db": 15, "reduction_db": 13.8},
+                    {"over_thresh_db": 20, "reduction_db": 18.5},
+                    {"over_thresh_db": 30, "reduction_db": 28.0}
+                ],
+                "tolerance_db": 1.5
+            }
+        },
+        "Opto": {
+            "description": "Vintage optical compression (LA-2A inspired)",
+            "thd_spec": "< 1.0%",
+            "attack_times_ms": {
+                "typical": 10,
+                "notes": "Program-dependent attack"
+            },
+            "release_times_ms": {
+                "typical": 60,
+                "notes": "Two-stage release (fast initial, slow tail)"
+            }
+        },
+        "VCA": {
+            "description": "Classic VCA compression (DBX 160 inspired)",
+            "thd_spec": "< 0.2%",
+            "attack_times_ms": {
+                "fastest": 0.1,
+                "slowest": 50
+            },
+            "release_times_ms": {
+                "fastest": 10,
+                "slowest": 5000
+            }
+        },
+        "Bus": {
+            "description": "Vintage VCA Bus compression (SSL G-Series inspired)",
+            "thd_spec": "< 0.3%",
+            "attack_options_ms": [0.1, 0.3, 1, 3, 10, 30],
+            "release_options_sec": [0.1, 0.3, 0.6, 1.2, "auto"]
+        },
+        "StudioFET": {
+            "description": "Studio FET compression (1176 Rev E Blackface inspired)",
+            "thd_spec": "< 0.2%",
+            "notes": "30% less harmonics than Vintage FET"
+        },
+        "StudioVCA": {
+            "description": "Modern VCA compression (Focusrite Red 3 inspired)",
+            "thd_spec": "< 0.1%",
+            "notes": "RMS detection with soft knee"
+        },
+        "Digital": {
+            "description": "Transparent digital compression",
+            "thd_spec": "< 0.01%",
+            "notes": "Peak detection with optional lookahead"
+        }
+    },
+
+    "global_specs": {
+        "noise_floor_db": -80,
+        "bypass_null_db": -100,
+        "max_clipping_samples": 0,
+        "dc_offset_max": 0.001
+    },
+
+    "true_peak_detection": {
+        "4x_oversampling": {
+            "latency_samples": 6,
+            "accuracy_db": 0.1
+        },
+        "8x_oversampling": {
+            "latency_samples": 6,
+            "accuracy_db": 0.05
+        }
+    }
+}

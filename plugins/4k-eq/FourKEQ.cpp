@@ -57,7 +57,9 @@ FourKEQ::FourKEQ()
 {
     // Link parameters to atomic values with null checks
     hpfFreqParam = parameters.getRawParameterValue("hpf_freq");
+    hpfEnabledParam = parameters.getRawParameterValue("hpf_enabled");
     lpfFreqParam = parameters.getRawParameterValue("lpf_freq");
+    lpfEnabledParam = parameters.getRawParameterValue("lpf_enabled");
 
     lfGainParam = parameters.getRawParameterValue("lf_gain");
     lfFreqParam = parameters.getRawParameterValue("lf_freq");
@@ -86,18 +88,20 @@ FourKEQ::FourKEQ()
     autoGainParam = parameters.getRawParameterValue("auto_gain");
 
     // Assert all parameters are valid (keeps for debug builds)
-    jassert(hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
-            lfBellParam && lmGainParam && lmFreqParam && lmQParam &&
-            hmGainParam && hmFreqParam && hmQParam && hfGainParam &&
-            hfFreqParam && hfBellParam && eqTypeParam && bypassParam &&
-            outputGainParam && saturationParam && oversamplingParam);
+    jassert(hpfFreqParam && hpfEnabledParam && lpfFreqParam && lpfEnabledParam &&
+            lfGainParam && lfFreqParam && lfBellParam &&
+            lmGainParam && lmFreqParam && lmQParam &&
+            hmGainParam && hmFreqParam && hmQParam &&
+            hfGainParam && hfFreqParam && hfBellParam &&
+            eqTypeParam && bypassParam && outputGainParam && saturationParam && oversamplingParam);
 
     // Verify all critical parameters are initialized
-    paramsValid = hpfFreqParam && lpfFreqParam && lfGainParam && lfFreqParam &&
-        lfBellParam && lmGainParam && lmFreqParam && lmQParam &&
-        hmGainParam && hmFreqParam && hmQParam && hfGainParam &&
-        hfFreqParam && hfBellParam && eqTypeParam && bypassParam &&
-        outputGainParam && saturationParam && oversamplingParam && msModeParam;
+    paramsValid = hpfFreqParam && hpfEnabledParam && lpfFreqParam && lpfEnabledParam &&
+        lfGainParam && lfFreqParam && lfBellParam &&
+        lmGainParam && lmFreqParam && lmQParam &&
+        hmGainParam && hmFreqParam && hmQParam &&
+        hfGainParam && hfFreqParam && hfBellParam &&
+        eqTypeParam && bypassParam && outputGainParam && saturationParam && oversamplingParam && msModeParam;
 
     if (!paramsValid)
     {
@@ -107,7 +111,9 @@ FourKEQ::FourKEQ()
 
     // Add parameter change listener for performance optimization
     parameters.addParameterListener("hpf_freq", this);
+    parameters.addParameterListener("hpf_enabled", this);
     parameters.addParameterListener("lpf_freq", this);
+    parameters.addParameterListener("lpf_enabled", this);
     parameters.addParameterListener("lf_gain", this);
     parameters.addParameterListener("lf_freq", this);
     parameters.addParameterListener("lf_bell", this);
@@ -136,12 +142,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         "hpf_freq", "HPF Frequency",
         juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.58f),
         20.0f, "Hz"));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "hpf_enabled", "HPF Enabled", false));  // Off by default - truly bypassed
 
     // Low-pass filter - SSL 4000 E style
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lpf_freq", "LPF Frequency",
         juce::NormalisableRange<float>(3000.0f, 20000.0f, 1.0f, 0.57f),
         20000.0f, "Hz"));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "lpf_enabled", "LPF Enabled", false));  // Off by default - truly bypassed
 
     // Low frequency band
     // SSL specs: ±15dB (Brown E-series), ±18dB (Black G-series)
@@ -250,8 +260,9 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         return;  // Skip preparation - retain last valid state
     }
 
-    // Clamp sample rate to reasonable range (8kHz to 192kHz)
-    sampleRate = juce::jlimit(8000.0, 192000.0, sampleRate);
+    // Clamp sample rate to reasonable range (8kHz to 384kHz)
+    // Supports all common pro audio sample rates including DXD (352.8kHz) and 384kHz
+    sampleRate = juce::jlimit(8000.0, 384000.0, sampleRate);
 
     currentSampleRate = sampleRate;
 
@@ -490,6 +501,27 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         updateFilters();
     }
 
+    // Check for filter enable state changes and reset filters when re-enabled
+    // This prevents click/pop artifacts from stale filter state
+    {
+        bool currentHpfEnabled = hpfEnabledParam ? hpfEnabledParam->load() > 0.5f : false;
+        bool currentLpfEnabled = lpfEnabledParam ? lpfEnabledParam->load() > 0.5f : false;
+
+        // Reset HPF when transitioning from disabled to enabled
+        if (currentHpfEnabled && !lastHpfEnabled)
+        {
+            hpfFilter.reset();
+        }
+        lastHpfEnabled = currentHpfEnabled;
+
+        // Reset LPF when transitioning from disabled to enabled
+        if (currentLpfEnabled && !lastLpfEnabled)
+        {
+            lpfFilter.reset();
+        }
+        lastLpfEnabled = currentLpfEnabled;
+    }
+
     // Capture input levels for metering (before gain)
     if (buffer.getNumChannels() >= 1)
     {
@@ -575,7 +607,11 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
             float processSample = channelData[sample];
 
             // Apply HPF (3rd-order: 1st-order + 2nd-order stages = 18dB/oct)
-            processSample = hpfFilter.processSample(processSample, useLeftFilter);
+            // Only process if HPF is enabled - when disabled, completely bypassed
+            if (hpfEnabledParam && hpfEnabledParam->load() > 0.5f)
+            {
+                processSample = hpfFilter.processSample(processSample, useLeftFilter);
+            }
 
             // Apply 4-band EQ (no per-band saturation - removed for SSL accuracy)
             // Real SSL console saturation is from the channel strip, not individual EQ bands
@@ -585,7 +621,11 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
             processSample = hfFilter.processSample(processSample, useLeftFilter);
 
             // Apply LPF
-            processSample = lpfFilter.processSample(processSample, useLeftFilter);
+            // Only process if LPF is enabled - when disabled, completely bypassed
+            if (lpfEnabledParam && lpfEnabledParam->load() > 0.5f)
+            {
+                processSample = lpfFilter.processSample(processSample, useLeftFilter);
+            }
 
             // Apply transformer phase shift (E-series only)
             // G-series is transformerless, so skip phase shift in Black mode
@@ -1222,6 +1262,8 @@ void FourKEQ::setStateInformation(const void* data, int sizeInBytes)
                 }
             };
 
+            sanitizeBool("hpf_enabled");
+            sanitizeBool("lpf_enabled");
             sanitizeBool("lf_bell");
             sanitizeBool("hf_bell");
             sanitizeBool("bypass");

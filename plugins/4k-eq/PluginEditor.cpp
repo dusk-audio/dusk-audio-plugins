@@ -19,11 +19,17 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     setupKnob(hpfFreqSlider, "hpf_freq", "HPF");
     hpfFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hpf_freq", hpfFreqSlider);
+    setupButton(hpfEnableButton, "IN");
+    hpfEnableAttachment = std::make_unique<ButtonAttachment>(
+        audioProcessor.parameters, "hpf_enabled", hpfEnableButton);
 
     // LPF Section
     setupKnob(lpfFreqSlider, "lpf_freq", "LPF");
     lpfFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lpf_freq", lpfFreqSlider);
+    setupButton(lpfEnableButton, "IN");
+    lpfEnableAttachment = std::make_unique<ButtonAttachment>(
+        audioProcessor.parameters, "lpf_enabled", lpfEnableButton);
 
     // Input Gain (below filters)
     setupKnob(inputGainSlider, "input_gain", "INPUT", true);
@@ -196,7 +202,9 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
     // Add tooltips to all controls for better UX
     hpfFreqSlider.setTooltip("High-Pass Filter Frequency (20Hz - 500Hz)");
+    hpfEnableButton.setTooltip("Enable/Disable High-Pass Filter (IN = active)");
     lpfFreqSlider.setTooltip("Low-Pass Filter Frequency (5kHz - 20kHz)");
+    lpfEnableButton.setTooltip("Enable/Disable Low-Pass Filter (IN = active)");
 
     lfGainSlider.setTooltip("Low Frequency Gain (\u00B115dB)");
     lfFreqSlider.setTooltip("Low Frequency (30Hz - 450Hz)");
@@ -640,10 +648,22 @@ void FourKEQEditor::resized()
 
     // HPF
     centerKnobInSection(hpfFreqSlider, filtersStart, filtersEnd, y);
+    // Position HPF enable button to the right of the knob
+    {
+        int btnX = hpfFreqSlider.getRight() + 2;
+        int btnY = hpfFreqSlider.getY() + (knobSize - 24) / 2;  // Center vertically with knob
+        hpfEnableButton.setBounds(btnX, btnY, 32, 24);
+    }
     y += knobRowHeight;
 
     // LPF
     centerKnobInSection(lpfFreqSlider, filtersStart, filtersEnd, y);
+    // Position LPF enable button to the right of the knob
+    {
+        int btnX = lpfFreqSlider.getRight() + 2;
+        int btnY = lpfFreqSlider.getY() + (knobSize - 24) / 2;  // Center vertically with knob
+        lpfEnableButton.setBounds(btnX, btnY, 32, 24);
+    }
     y += knobRowHeight;
 
     // Input Gain

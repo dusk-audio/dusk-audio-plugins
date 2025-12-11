@@ -161,13 +161,27 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 ## Build System
 
-### Release Builds (Recommended)
-Use the Docker/Podman containerized build for release builds. This ensures glibc compatibility with older Linux distributions (Debian 12+, Ubuntu 22.04+):
+### Building Plugins (Default)
+**Always use the Docker/Podman containerized build.** This ensures glibc compatibility and consistent builds across all Linux distributions:
 
 ```bash
-# Build all plugins for release distribution
+# Build all plugins
 ./docker/build_release.sh
+
+# Build a single plugin (faster for development)
+./docker/build_release.sh 4keq         # 4K EQ
+./docker/build_release.sh compressor   # Universal Compressor
+./docker/build_release.sh tape         # TapeMachine
+./docker/build_release.sh echo         # Vintage Tape Echo
+./docker/build_release.sh reverb       # Plate Reverb
+./docker/build_release.sh drummer      # DrummerClone
+./docker/build_release.sh harmonic     # Harmonic Generator
+
+# Show all available shortcuts
+./docker/build_release.sh --help
 ```
+
+**IMPORTANT FOR AI ASSISTANTS**: Always use `./docker/build_release.sh` to compile plugins. Do NOT use local cmake commands or `./rebuild_all.sh` for verification - the Docker build is the only approved build method to ensure consistent, distributable binaries. Use single-plugin builds (e.g., `./docker/build_release.sh 4keq`) for faster iteration when working on one plugin.
 
 **Output**: Plugins are placed in `release/` directory with both VST3 and LV2 formats.
 
@@ -178,27 +192,28 @@ Use the Docker/Podman containerized build for release builds. This ensures glibc
 
 **Requirements**: Either Podman (preferred on Fedora) or Docker must be installed.
 
-### Development Builds
-For local development and testing, use the rebuild script:
+**Plugins built:**
+- FourKEQ_All (4K EQ)
+- TapeMachine_All
+- UniversalCompressor_All
+- PlateReverb_All
+- TapeEcho_All (Vintage Tape Echo)
+- DrummerClone_All
+
+**Note**: The Harmonic Generator is not currently included but can be added to the Docker build script.
+
+### Local Development Builds (Alternative)
+Only use the local rebuild script if Docker/Podman is unavailable or for quick debugging iterations:
 ```bash
-# From the plugins directory: /home/marc/projects/plugins/
+# From the plugins directory
 ./rebuild_all.sh           # Standard rebuild (Release mode)
 ./rebuild_all.sh --fast     # Use ccache and ninja if available
 ./rebuild_all.sh --clean    # Clean only, don't build
 ./rebuild_all.sh --debug    # Debug build
-./rebuild_all.sh --release  # Release build (default)
 ./rebuild_all.sh --parallel 8  # Specify job count (default: auto-detect)
 ```
 
-**Current plugins built:**
-- FourKEQ_All
-- TapeMachine_All
-- UniversalCompressor_All
-- PlateReverb_All
-- TapeEcho_All
-- DrummerClone_All
-
-**Note**: The Harmonic Generator is not currently included in rebuild_all.sh but can be built via CMake options.
+**Warning**: Local builds may not be compatible with other Linux distributions due to glibc version differences.
 
 ### Post-Build Validation
 After building, validate all plugins work correctly:
@@ -212,7 +227,7 @@ After building, validate all plugins work correctly:
 
 ### Manual Build Commands
 ```bash
-cd /home/marc/projects/plugins/build
+cd build
 
 # Clean rebuild all plugins
 rm -rf * && cmake .. -DCMAKE_BUILD_TYPE=Release
@@ -285,7 +300,7 @@ The build script will automatically detect and use these tools when available.
 2. **Build optimization support**: ccache and ninja integration
 3. **Per-plugin build logs**: Saved to `/tmp/` for debugging
 4. **Automatic installation verification**: Lists installed VST3/LV2 plugins after build
-5. **Proper JUCE path**: Updated from `/home/marc/Projects/JUCE` to `/home/marc/projects/JUCE`
+5. **Proper JUCE path**: JUCE should be located at `../JUCE` relative to project root (sibling directory)
 
 ### Code Quality
 1. **Thread safety**: All metering uses std::atomic with proper memory ordering
@@ -318,9 +333,9 @@ plugins/
 ├── cmake/                    # CMake configuration files
 │   ├── GlobalSettings.cmake
 │   └── JuceDefaults.cmake
-├── docker/                   # Containerized build environment
+├── docker/                   # Primary build environment (always use this)
 │   ├── Dockerfile.build     # Ubuntu 22.04 build image
-│   └── build_release.sh     # Release build script
+│   └── build_release.sh     # Main build script
 ├── plugins/                  # Individual plugin directories
 │   ├── 4k-eq/               # 4K EQ (console-style EQ)
 │   ├── TapeMachine/         # Tape machine emulation
@@ -334,17 +349,17 @@ plugins/
 ├── tests/                    # Plugin validation framework
 │   ├── quick_validate.sh    # Fast plugin check
 │   └── run_plugin_tests.sh  # Full test suite
-├── release/                  # Release build output (gitignored)
-├── build/                    # Development build output (gitignored)
+├── release/                  # Build output from Docker (gitignored)
+├── build/                    # Local dev build output (gitignored)
 ├── CMakeLists.txt           # Root build configuration
-└── rebuild_all.sh           # Development build script
+└── rebuild_all.sh           # Local build script (use docker/build_release.sh instead)
 ```
 
 ### Adding New Plugins
 1. Create plugin directory under `plugins/`
 2. Add CMakeLists.txt with juce_add_plugin()
 3. Add to root CMakeLists.txt with option flag
-4. Add build target to rebuild_all.sh PLUGINS array
+4. Add build target to `docker/build_release.sh` PLUGINS array
 5. Follow naming convention: `PluginName_All` for build targets
 
 ### Common DSP Patterns
@@ -375,17 +390,17 @@ plugins/
 - Consistent parameter naming (e.g., `PARAM_*` constants)
 
 ## JUCE Framework
-- **Location**: `/home/marc/projects/JUCE/`
+- **Location**: `../JUCE/` (sibling directory to project root)
 - **Version**: Latest from develop branch
 - **Modules used**: audio_basics, audio_devices, audio_formats, audio_plugin_client, audio_processors, audio_utils, core, data_structures, dsp, events, graphics, gui_basics, gui_extra
 
 ## Troubleshooting
 
 ### Build Failures
-1. Check build logs in `/tmp/PluginName_build.log`
-2. Verify JUCE path is correct in root CMakeLists.txt
-3. Ensure all dependencies are installed
-4. Try clean rebuild: `./rebuild_all.sh --clean && ./rebuild_all.sh`
+1. Ensure Docker or Podman is installed and running
+2. Try rebuilding the container: `./docker/build_release.sh` (it will rebuild if needed)
+3. Check container logs for errors
+4. For local builds only: Check build logs in `/tmp/PluginName_build.log`
 
 ### Plugin Not Showing in DAW
 1. Verify installation: `ls ~/.vst3/` or `ls ~/.lv2/`
@@ -546,7 +561,7 @@ For automated testing in CI/CD:
 
 ## Contact & Support
 For issues or questions about these plugins:
-- Check the build logs in `/home/marc/projects/Luna/plugins/build/`
+- Check the build logs in `build/` directory or `/tmp/PluginName_build.log`
 - Review individual plugin source code
 - Check JUCE forum for framework-related questions
 ---
