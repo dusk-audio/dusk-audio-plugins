@@ -38,12 +38,68 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
     
-    // Create global controls
+    // Create global controls with full readable labels
     bypassButton = std::make_unique<juce::ToggleButton>("Bypass");
     autoGainButton = std::make_unique<juce::ToggleButton>("Auto Gain");
-    // Oversample button removed - saturation always runs at 2x internally
+    sidechainEnableButton = std::make_unique<juce::ToggleButton>("Ext SC");
+    sidechainListenButton = std::make_unique<juce::ToggleButton>("Listen");
+
+    // Lookahead slider (not shown in header, but kept for parameter)
+    lookaheadSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    lookaheadSlider->setRange(0.0, 10.0, 0.1);
+    lookaheadSlider->setTextValueSuffix(" ms");
+    lookaheadSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 18);
+
+    // Oversampling selector with clear items
+    oversamplingSelector = std::make_unique<juce::ComboBox>("Oversampling");
+    oversamplingSelector->addItem("2x", 1);
+    oversamplingSelector->addItem("4x", 2);
+    oversamplingSelector->setSelectedId(1);
+
+    // SC EQ toggle button - use ToggleButton for radio style
+    scEqToggleButton = std::make_unique<juce::TextButton>("SC EQ");
+    scEqToggleButton->setClickingTogglesState(true);
+    scEqToggleButton->setToggleState(false, juce::dontSendNotification);
+    scEqToggleButton->onClick = [this]() {
+        scEqVisible = scEqToggleButton->getToggleState();
+        resized();
+    };
+
+    // Sidechain EQ controls (not in header - too complex, keep hidden for now)
+    scLowFreqSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scLowFreqSlider->setRange(60.0, 500.0, 1.0);
+    scLowFreqSlider->setTextValueSuffix(" Hz");
+    scLowFreqSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
+    scLowFreqSlider->setSkewFactorFromMidPoint(150.0);
+
+    scLowGainSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scLowGainSlider->setRange(-12.0, 12.0, 0.1);
+    scLowGainSlider->setTextValueSuffix(" dB");
+    scLowGainSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
+
+    scHighFreqSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scHighFreqSlider->setRange(2000.0, 16000.0, 10.0);
+    scHighFreqSlider->setTextValueSuffix(" Hz");
+    scHighFreqSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 16);
+    scHighFreqSlider->setSkewFactorFromMidPoint(6000.0);
+
+    scHighGainSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scHighGainSlider->setRange(-12.0, 12.0, 0.1);
+    scHighGainSlider->setTextValueSuffix(" dB");
+    scHighGainSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
+
     addAndMakeVisible(bypassButton.get());
     addAndMakeVisible(autoGainButton.get());
+    addAndMakeVisible(oversamplingSelector.get());
+    // Hide SC EQ and sidechain controls - simplify the header
+    addChildComponent(sidechainEnableButton.get());
+    addChildComponent(sidechainListenButton.get());
+    addChildComponent(lookaheadSlider.get());
+    addChildComponent(scEqToggleButton.get());
+    addChildComponent(scLowFreqSlider.get());
+    addChildComponent(scLowGainSlider.get());
+    addChildComponent(scHighFreqSlider.get());
+    addChildComponent(scHighGainSlider.get());
     
     // Setup mode panels
     setupOptoPanel();
@@ -67,8 +123,38 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
         autoGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             params, "auto_makeup", *autoGainButton);
 
-    // Oversample attachment removed - no longer user-controllable
-    
+    if (params.getRawParameterValue("sidechain_enable"))
+        sidechainEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            params, "sidechain_enable", *sidechainEnableButton);
+
+    if (params.getRawParameterValue("global_sidechain_listen"))
+        sidechainListenAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            params, "global_sidechain_listen", *sidechainListenButton);
+
+    if (params.getRawParameterValue("global_lookahead"))
+        lookaheadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "global_lookahead", *lookaheadSlider);
+
+    if (params.getRawParameterValue("oversampling"))
+        oversamplingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            params, "oversampling", *oversamplingSelector);
+
+    if (params.getRawParameterValue("sc_low_freq"))
+        scLowFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "sc_low_freq", *scLowFreqSlider);
+
+    if (params.getRawParameterValue("sc_low_gain"))
+        scLowGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "sc_low_gain", *scLowGainSlider);
+
+    if (params.getRawParameterValue("sc_high_freq"))
+        scHighFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "sc_high_freq", *scHighFreqSlider);
+
+    if (params.getRawParameterValue("sc_high_gain"))
+        scHighGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "sc_high_gain", *scHighGainSlider);
+
     // Listen to mode and auto_makeup changes
     params.addParameterListener("mode", this);
     params.addParameterListener("auto_makeup", this);
@@ -99,7 +185,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     resizer->setAlwaysOnTop(true);
     
     // Set initial size - do this last so resized() is called after all components are created
-    setSize(700, 500);  // Comfortable size to fit all controls
+    setSize(750, 500);  // Wider to fit all controls with clear labels
     setResizable(true, false);  // Allow resizing, no native title bar
 }
 
@@ -113,6 +199,22 @@ EnhancedCompressorEditor::~EnhancedCompressorEditor()
         bypassButton->setLookAndFeel(nullptr);
     if (autoGainButton)
         autoGainButton->setLookAndFeel(nullptr);
+    if (sidechainEnableButton)
+        sidechainEnableButton->setLookAndFeel(nullptr);
+    if (sidechainListenButton)
+        sidechainListenButton->setLookAndFeel(nullptr);
+    if (lookaheadSlider)
+        lookaheadSlider->setLookAndFeel(nullptr);
+    if (oversamplingSelector)
+        oversamplingSelector->setLookAndFeel(nullptr);
+    if (scLowFreqSlider)
+        scLowFreqSlider->setLookAndFeel(nullptr);
+    if (scLowGainSlider)
+        scLowGainSlider->setLookAndFeel(nullptr);
+    if (scHighFreqSlider)
+        scHighFreqSlider->setLookAndFeel(nullptr);
+    if (scHighGainSlider)
+        scHighGainSlider->setLookAndFeel(nullptr);
     if (optoPanel.limitSwitch)
         optoPanel.limitSwitch->setLookAndFeel(nullptr);
     if (optoPanel.peakReductionKnob)
@@ -207,7 +309,7 @@ void EnhancedCompressorEditor::setupOptoPanel()
     // Create controls
     optoPanel.peakReductionKnob = createKnob("Peak Reduction", 0, 100, 50, "");
     optoPanel.gainKnob = createKnob("Gain", -20, 20, 0, " dB");
-    optoPanel.limitSwitch = std::make_unique<juce::ToggleButton>("Compress / Limit");
+    optoPanel.limitSwitch = std::make_unique<juce::ToggleButton>("Limit");
 
     // Create labels
     optoPanel.peakReductionLabel = createLabel("PEAK REDUCTION");
@@ -546,6 +648,28 @@ void EnhancedCompressorEditor::updateMode(int newMode)
         if (autoGainButton)
             autoGainButton->setLookAndFeel(currentLookAndFeel);
 
+        if (sidechainEnableButton)
+            sidechainEnableButton->setLookAndFeel(currentLookAndFeel);
+
+        if (sidechainListenButton)
+            sidechainListenButton->setLookAndFeel(currentLookAndFeel);
+
+        if (lookaheadSlider)
+            lookaheadSlider->setLookAndFeel(currentLookAndFeel);
+
+        if (oversamplingSelector)
+            oversamplingSelector->setLookAndFeel(currentLookAndFeel);
+
+        // Sidechain EQ sliders
+        if (scLowFreqSlider)
+            scLowFreqSlider->setLookAndFeel(currentLookAndFeel);
+        if (scLowGainSlider)
+            scLowGainSlider->setLookAndFeel(currentLookAndFeel);
+        if (scHighFreqSlider)
+            scHighFreqSlider->setLookAndFeel(currentLookAndFeel);
+        if (scHighGainSlider)
+            scHighGainSlider->setLookAndFeel(currentLookAndFeel);
+
         // Apply to mode-specific components
         if (optoPanel.container->isVisible())
         {
@@ -668,7 +792,15 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         g.setFont(juce::Font(juce::FontOptions(20.0f * scaleFactor).withStyle("Bold")));
         g.drawText(title, titleBounds, juce::Justification::centred);
     }
-    
+
+    // Draw "Oversampling" label before oversampling dropdown
+    if (!osLabelBounds.isEmpty())
+    {
+        g.setColour(textColor);
+        g.setFont(juce::Font(juce::FontOptions(12.0f * scaleFactor).withStyle("Bold")));
+        g.drawText("Oversampling", osLabelBounds, juce::Justification::centredRight);
+    }
+
     // Draw meter labels and values using standard LEDMeterStyle
     if (inputMeter)
     {
@@ -683,15 +815,16 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
     // Draw VU meter label below the VU meter
     // Calculate the same position as in resized() method
     auto vuBounds = getLocalBounds();
-    auto vuTopRow = vuBounds.removeFromTop(70 * scaleFactor).withTrimmedTop(35 * scaleFactor);
-    auto vuMainArea = vuBounds;
+    vuBounds.removeFromTop(60 * scaleFactor);  // Header row
+    auto vuMainArea = vuBounds.reduced(20 * scaleFactor, 10 * scaleFactor);
     int meterAreaWidth = static_cast<int>(LEDMeterStyle::meterAreaWidth * scaleFactor);
-    auto vuLeftMeter = vuMainArea.removeFromLeft(meterAreaWidth);
-    auto vuRightMeter = vuMainArea.removeFromRight(meterAreaWidth);
+    vuMainArea.removeFromLeft(meterAreaWidth);
+    vuMainArea.removeFromRight(meterAreaWidth);
     vuMainArea.reduce(20 * scaleFactor, 0);
-    auto vuLabelArea = vuMainArea.removeFromTop(190 * scaleFactor + 35 * scaleFactor);
+    auto vuArea = vuMainArea.removeFromTop(190 * scaleFactor);  // Match resized() VU size
+    auto vuLabelArea = vuMainArea.removeFromTop(25 * scaleFactor);
     g.setColour(textColor);
-    g.drawText("GAIN REDUCTION", vuLabelArea.removeFromBottom(30 * scaleFactor), juce::Justification::centred);
+    g.drawText("GAIN REDUCTION", vuLabelArea, juce::Justification::centred);
 }
 
 void EnhancedCompressorEditor::resized()
@@ -699,7 +832,7 @@ void EnhancedCompressorEditor::resized()
     auto bounds = getLocalBounds();
     
     // Calculate scale factor based on window size
-    float widthScale = getWidth() / 700.0f;  // Base size is now 700x500
+    float widthScale = getWidth() / 750.0f;  // Base size is now 750x500
     float heightScale = getHeight() / 500.0f;
     scaleFactor = juce::jmin(widthScale, heightScale);  // Use the smaller scale to maintain proportions
     
@@ -714,60 +847,103 @@ void EnhancedCompressorEditor::resized()
         static_cast<int>(getWidth() - 400 * scaleFactor),
         static_cast<int>(35 * scaleFactor));
 
-    // Top row - mode selector and global controls (scale all values)
-    // Leave space for title
-    auto topRow = bounds.removeFromTop(70 * scaleFactor).withTrimmedTop(35 * scaleFactor);
-    topRow.reduce(20 * scaleFactor, 5 * scaleFactor);
+    // ========================================================================
+    // TOP HEADER - Clean, uniform layout for ALL modes
+    // Row: [Mode Selector] [Bypass] [Auto Gain] [Mode Toggle] [OS: dropdown]
+    // Centered over the VU meter area
+    // ========================================================================
 
-    // Fixed widths for consistent layout across all modes
-    const int modeSelectorWidth = static_cast<int>(190 * scaleFactor);  // Wider for longer names
-    const int bypassWidth = static_cast<int>(90 * scaleFactor);
-    const int autoGainWidth = static_cast<int>(110 * scaleFactor);
-    const int modeButtonWidth = static_cast<int>(120 * scaleFactor);  // For limit/overeasy buttons
-    const int spacing = static_cast<int>(15 * scaleFactor);
+    // Header row - below title, single clean row
+    auto headerRow = bounds.removeFromTop(60 * scaleFactor).withTrimmedTop(35 * scaleFactor);
+    headerRow.reduce(12 * scaleFactor, 2 * scaleFactor);
 
-    // Mode selector (wider to accommodate longer names)
+    const int gap = static_cast<int>(12 * scaleFactor);
+    const int controlHeight = static_cast<int>(20 * scaleFactor);
+
+    // Calculate total width of all controls to center them
+    const int modeSelectorWidth = static_cast<int>(115 * scaleFactor);
+    const int toggleWidth = static_cast<int>(70 * scaleFactor);
+    const int autoGainWidth = static_cast<int>(90 * scaleFactor);
+    const int modeToggleWidth = static_cast<int>(85 * scaleFactor);
+    const int osLabelWidth = static_cast<int>(80 * scaleFactor);  // "Oversampling" label
+    const int osWidth = static_cast<int>(55 * scaleFactor);       // Dropdown for "2x"/"4x"
+
+    const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap
+                          + modeToggleWidth + gap + osLabelWidth + osWidth;
+
+    // Center the controls in the header row
+    int startX = (headerRow.getWidth() - totalWidth) / 2;
+    if (startX < 0) startX = 0;
+    headerRow.removeFromLeft(startX);
+
+    // Mode selector dropdown - clear width
     if (modeSelector)
-        modeSelector->setBounds(topRow.removeFromLeft(modeSelectorWidth));
-    else
-        topRow.removeFromLeft(modeSelectorWidth);
+    {
+        auto area = headerRow.removeFromLeft(modeSelectorWidth);
+        modeSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromLeft(gap);
 
-    topRow.removeFromLeft(spacing);
-
-    // Fixed position for Bypass button (same position regardless of mode)
+    // Bypass toggle - radio button style with full label
     if (bypassButton)
-        bypassButton->setBounds(topRow.removeFromLeft(bypassWidth));
-    else
-        topRow.removeFromLeft(bypassWidth);
+    {
+        auto area = headerRow.removeFromLeft(toggleWidth);
+        bypassButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromLeft(gap);
 
-    topRow.removeFromLeft(spacing);
-
-    // Fixed position for Auto Gain button (same position regardless of mode)
+    // Auto Gain toggle - radio button style with full label
     if (autoGainButton)
-        autoGainButton->setBounds(topRow.removeFromLeft(autoGainWidth));
-    else
-        topRow.removeFromLeft(autoGainWidth);
+    {
+        auto area = headerRow.removeFromLeft(autoGainWidth);
+        autoGainButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromLeft(gap);
 
-    topRow.removeFromLeft(spacing);
-
-    // Mode-specific buttons always in the SAME position after auto gain
-    // Only one is visible at a time, but they occupy the same space
-    auto modeButtonArea = topRow.removeFromLeft(modeButtonWidth);
-
+    // Mode-specific toggle (Limit for Opto, OverEasy for VCA) - same position for all
+    auto modeToggleArea = headerRow.removeFromLeft(modeToggleWidth);
     if (optoPanel.limitSwitch)
     {
         optoPanel.limitSwitch->setVisible(currentMode == 0);
         if (currentMode == 0)
-            optoPanel.limitSwitch->setBounds(modeButtonArea);
+            optoPanel.limitSwitch->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
     }
-
     if (vcaPanel.overEasyButton)
     {
         vcaPanel.overEasyButton->setVisible(currentMode == 2);
         if (currentMode == 2)
-            vcaPanel.overEasyButton->setBounds(modeButtonArea);
+            vcaPanel.overEasyButton->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
     }
-    
+    headerRow.removeFromLeft(gap);
+
+    // "Oversampling" label area (drawn in paint()) followed by dropdown - no gap between label and dropdown
+    osLabelBounds = headerRow.removeFromLeft(osLabelWidth).withHeight(controlHeight);
+    osLabelBounds = osLabelBounds.withY(headerRow.getY() + (headerRow.getHeight() - controlHeight) / 2);
+
+    if (oversamplingSelector)
+    {
+        auto area = headerRow.removeFromLeft(osWidth);
+        oversamplingSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+
+    // Hide unused controls
+    if (sidechainEnableButton)
+        sidechainEnableButton->setVisible(false);
+    if (sidechainListenButton)
+        sidechainListenButton->setVisible(false);
+    if (lookaheadSlider)
+        lookaheadSlider->setVisible(false);
+    if (scEqToggleButton)
+        scEqToggleButton->setVisible(false);
+    if (scLowFreqSlider)
+        scLowFreqSlider->setVisible(false);
+    if (scLowGainSlider)
+        scLowGainSlider->setVisible(false);
+    if (scHighFreqSlider)
+        scHighFreqSlider->setVisible(false);
+    if (scHighGainSlider)
+        scHighGainSlider->setVisible(false);
+
     // Main area
     auto mainArea = bounds.reduced(20 * scaleFactor, 10 * scaleFactor);
 
@@ -801,14 +977,14 @@ void EnhancedCompressorEditor::resized()
     
     // Center area
     mainArea.reduce(20 * scaleFactor, 0);
-    
+
     // VU Meter at top center - good readable size
     auto vuArea = mainArea.removeFromTop(190 * scaleFactor);  // Increased from 160 to 190
     if (vuMeter)
         vuMeter->setBounds(vuArea.reduced(55 * scaleFactor, 5 * scaleFactor));  // Less horizontal reduction for larger meter
-    
+
     // Add space for "GAIN REDUCTION" text below VU meter
-    mainArea.removeFromTop(35 * scaleFactor);  // Space for the label
+    mainArea.removeFromTop(25 * scaleFactor);
     
     // Control panel area
     auto controlArea = mainArea.reduced(10 * scaleFactor, 20 * scaleFactor);
@@ -833,18 +1009,19 @@ void EnhancedCompressorEditor::resized()
         }
     };
 
-    // Layout Opto panel - 2 knobs centered
+    // Layout Opto panel - 2 knobs centered using standard sizes
+    // Uses same knob size as other modes for consistency when switching
     if (optoPanel.container && optoPanel.container->isVisible())
     {
         optoPanel.container->setBounds(controlArea);
 
         auto optoBounds = optoPanel.container->getLocalBounds();
 
-        // Center the knob row vertically
+        // Use standard knob row height for consistent vertical alignment across modes
         auto knobRow = optoBounds.withHeight(stdKnobRowHeight);
         knobRow.setY((optoBounds.getHeight() - stdKnobRowHeight) / 2);
 
-        // Use 4-column grid but only populate center 2 for centering
+        // Use 4-column grid but only populate center 2 for centering (matches VCA layout)
         int colWidth = knobRow.getWidth() / 4;
         knobRow.removeFromLeft(colWidth);  // Skip first column
 

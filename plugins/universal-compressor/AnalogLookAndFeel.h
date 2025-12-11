@@ -204,11 +204,11 @@ public:
     void setSelectedRatio(int index);
     void resized() override;
     void buttonClicked(juce::Button* button) override;
-    
+
 private:
-    std::vector<std::unique_ptr<juce::TextButton>> ratioButtons;
+    std::vector<std::unique_ptr<juce::ToggleButton>> ratioButtons;
     juce::ListenerList<Listener> listeners;
     int currentRatio = 0;
-    
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RatioButtonGroup)
 };
