@@ -1157,6 +1157,7 @@ inline float applyDistortion(float input, DistortionType type, float amount = 1.
             // Optimized: replaced std::pow(x, 2.0f) with x*x for 95%+ speedup
             {
                 float threshold = 0.7f / (0.5f + amount * 0.5f);
+                threshold = juce::jmin(threshold, 0.95f);  // Clamp to ensure valid soft-clip curve
                 float negThreshold = threshold * 0.9f;  // Slight asymmetry
                 float invRange = 1.0f / (1.0f - threshold);
                 float invNegRange = 1.0f / (1.0f - negThreshold);
@@ -3194,6 +3195,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "studio_vca_output", "Output",
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "studio_vca_mix", "Mix",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f));  // Parallel compression
 
     // Digital Compressor parameters (transparent, precise)
     layout.add(std::make_unique<juce::AudioParameterFloat>(

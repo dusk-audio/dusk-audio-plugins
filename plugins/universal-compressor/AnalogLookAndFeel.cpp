@@ -121,6 +121,96 @@ void AnalogLookAndFeelBase::drawVintageKnob(juce::Graphics& g, float x, float y,
     g.drawLine(centreX, centreY - 2, centreX, centreY + 2, 1.0f);
 }
 
+juce::Label* AnalogLookAndFeelBase::createSliderTextBox(juce::Slider& slider)
+{
+    auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
+
+    // Style the text box with better contrast
+    label->setColour(juce::Label::textColourId, juce::Colours::white);
+    label->setColour(juce::Label::backgroundColourId, juce::Colour(0x40000000));  // Semi-transparent dark background
+    label->setColour(juce::Label::outlineColourId, juce::Colour(0x30FFFFFF));     // Subtle light outline
+    label->setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
+
+    return label;
+}
+
+void AnalogLookAndFeelBase::fillTextEditorBackground(juce::Graphics& g, int width, int height, juce::TextEditor&)
+{
+    // Draw subtle rounded background for text entry
+    g.setColour(juce::Colour(0x50000000));
+    g.fillRoundedRectangle(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 3.0f);
+}
+
+void AnalogLookAndFeelBase::drawIlluminatedToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                                        bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown,
+                                                        const juce::Colour& onGlowTop, const juce::Colour& onGlowBottom,
+                                                        const juce::Colour& onTextColor,
+                                                        const juce::Colour& offGradientTop, const juce::Colour& offGradientBottom,
+                                                        const juce::Colour& offTextColor,
+                                                        const juce::Colour& bezelColor)
+{
+    auto bounds = button.getLocalBounds().toFloat().reduced(2.0f);
+    bool isOn = button.getToggleState();
+
+    // Outer bezel
+    g.setColour(bezelColor);
+    g.fillRoundedRectangle(bounds, 4.0f);
+
+    // Button face
+    auto innerBounds = bounds.reduced(2.0f);
+    if (isOn)
+    {
+        // Illuminated gradient when ON
+        juce::ColourGradient glow(onGlowTop, innerBounds.getCentreX(), innerBounds.getY(),
+                                  onGlowBottom, innerBounds.getCentreX(), innerBounds.getBottom(), false);
+        g.setGradientFill(glow);
+        g.fillRoundedRectangle(innerBounds, 3.0f);
+
+        // Glow effect using lighter shade of onGlowTop
+        g.setColour(onGlowTop.withAlpha(0.2f));
+        g.fillRoundedRectangle(bounds.expanded(1), 5.0f);
+
+        // Text color for lit button
+        g.setColour(onTextColor);
+    }
+    else
+    {
+        // Dark recessed button when OFF
+        juce::ColourGradient dark(offGradientTop, innerBounds.getCentreX(), innerBounds.getY(),
+                                  offGradientBottom, innerBounds.getCentreX(), innerBounds.getBottom(), false);
+        g.setGradientFill(dark);
+        g.fillRoundedRectangle(innerBounds, 3.0f);
+
+        // Inner shadow
+        g.setColour(offGradientBottom.darker(0.3f));
+        g.drawRoundedRectangle(innerBounds.reduced(1), 2.0f, 1.0f);
+
+        // Top highlight for 3D effect
+        g.setColour(juce::Colour(0x20FFFFFF));
+        g.drawLine(innerBounds.getX() + 4, innerBounds.getY() + 2,
+                   innerBounds.getRight() - 4, innerBounds.getY() + 2, 1.0f);
+
+        // Text color for dark button
+        g.setColour(offTextColor);
+    }
+
+    // Highlight/press state
+    if (shouldDrawButtonAsDown)
+    {
+        g.setColour(juce::Colour(0x20000000));
+        g.fillRoundedRectangle(innerBounds, 3.0f);
+    }
+    else if (shouldDrawButtonAsHighlighted && !isOn)
+    {
+        g.setColour(juce::Colour(0x10FFFFFF));
+        g.fillRoundedRectangle(innerBounds, 3.0f);
+    }
+
+    // Draw label centered in button
+    g.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
+    g.drawText(button.getButtonText(), innerBounds, juce::Justification::centred);
+}
+
 //==============================================================================
 // Vintage Opto Style
 OptoLookAndFeel::OptoLookAndFeel()
@@ -144,45 +234,13 @@ void OptoLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int widt
 }
 
 void OptoLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
-                                       bool /*shouldDrawButtonAsHighlighted*/, bool /*shouldDrawButtonAsDown*/)
+                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // LED-style indicator matching other compressor modes but with warm amber color
-    auto bounds = button.getLocalBounds().toFloat();
-    auto ledSize = 20.0f;
-
-    // LED housing with metallic appearance
-    g.setColour(juce::Colour(0xFF2A2420));
-    g.fillEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize);
-
-    // LED bezel
-    g.setColour(juce::Colour(0xFF5A5040));
-    g.drawEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize, 2.0f);
-
-    // LED light - warm amber when on, dark when off
-    auto ledColor = button.getToggleState() ? juce::Colour(0xFFFFAA00) : juce::Colour(0xFF3A3020);
-    if (button.getToggleState())
-    {
-        // Warm glow effect for ON state
-        g.setColour(ledColor.withAlpha(0.4f));
-        g.fillEllipse(2, (bounds.getHeight() - ledSize - 4) / 2, ledSize + 4, ledSize + 4);
-    }
-
-    g.setColour(ledColor);
-    g.fillEllipse(7, (bounds.getHeight() - ledSize + 6) / 2, ledSize - 6, ledSize - 6);
-
-    // Add highlight for 3D effect
-    if (button.getToggleState())
-    {
-        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
-        g.fillEllipse(9, (bounds.getHeight() - ledSize + 8) / 2, 4, 4);
-    }
-
-    // Label with warm cream color for visibility on dark brown background
-    g.setColour(juce::Colour(0xFFE8D5B7));
-    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
-    g.drawText(button.getButtonText(), ledSize + 10, 0,
-               bounds.getWidth() - ledSize - 10, bounds.getHeight(),
-               juce::Justification::centredLeft);
+    // Opto-style illuminated push button - warm amber theme
+    drawIlluminatedToggleButton(g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown,
+        juce::Colour(0xFFFFAA00), juce::Colour(0xFFCC7700), juce::Colour(0xFF2A1500),  // ON colors
+        juce::Colour(0xFF5A5040), juce::Colour(0xFF3A3020), juce::Colour(0xFFE8D5B7),  // OFF colors
+        juce::Colour(0xFF2A2420));  // bezel
 }
 //==============================================================================
 // Vintage FET Style
@@ -235,39 +293,11 @@ void FETLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& butto
 void FETLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // FET-style illuminated rectangular button
-    auto bounds = button.getLocalBounds().toFloat();
-    auto switchWidth = 50.0f;
-    auto switchHeight = 22.0f;
-
-    // Button shadow
-    g.setColour(colors.shadow.withAlpha(0.5f));
-    g.fillRoundedRectangle(5, (bounds.getHeight() - switchHeight) / 2 + 1, switchWidth, switchHeight, 3.0f);
-
-    // Button body - illuminated when on
-    auto buttonColor = button.getToggleState() ? colors.accent : colors.panel;
-    if (shouldDrawButtonAsDown)
-        buttonColor = buttonColor.darker(0.2f);
-    else if (shouldDrawButtonAsHighlighted)
-        buttonColor = buttonColor.brighter(0.1f);
-    
-    g.setColour(buttonColor);
-    g.fillRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f);
-
-    // Subtle highlight on top edge
-    g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(button.getToggleState() ? 0.3f : 0.1f));
-    g.fillRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, 6.0f, 3.0f);
-
-    // Button border
-    g.setColour(colors.text.withAlpha(0.4f));
-    g.drawRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f, 1.0f);
-
-    // Label
-    g.setColour(colors.text);
-    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
-    g.drawText(button.getButtonText(), switchWidth + 12, 0,
-               bounds.getWidth() - switchWidth - 12, bounds.getHeight(),
-               juce::Justification::centredLeft);
+    // FET-style illuminated push button - amber/orange theme
+    drawIlluminatedToggleButton(g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown,
+        juce::Colour(0xFFFFAA00), juce::Colour(0xFFCC6600), juce::Colour(0xFF1A0A00),  // ON colors
+        juce::Colour(0xFF3A3A3A), juce::Colour(0xFF252525), juce::Colour(0xFFCCCCCC),  // OFF colors
+        juce::Colour(0xFF0A0A0A));  // bezel
 }
 //==============================================================================
 // Classic VCA Style
@@ -293,43 +323,11 @@ void VCALookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width
 void VCALookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // VCA-style LED button with improved visibility
-    auto bounds = button.getLocalBounds().toFloat();
-    auto ledSize = 20.0f;
-    
-    // LED housing with metallic appearance
-    g.setColour(juce::Colour(0xFF1A1A1A));
-    g.fillEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize);
-    
-    // LED bezel
-    g.setColour(juce::Colour(0xFF4A4A4A));
-    g.drawEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize, 2.0f);
-    
-    // LED light with better contrast
-    auto ledColor = button.getToggleState() ? juce::Colour(0xFF00FF44) : juce::Colour(0xFF2A2A2A);
-    if (button.getToggleState())
-    {
-        // Bright glow effect for ON state
-        g.setColour(ledColor.withAlpha(0.4f));
-        g.fillEllipse(2, (bounds.getHeight() - ledSize - 4) / 2, ledSize + 4, ledSize + 4);
-    }
-    
-    g.setColour(ledColor);
-    g.fillEllipse(7, (bounds.getHeight() - ledSize + 6) / 2, ledSize - 6, ledSize - 6);
-    
-    // Add highlight for 3D effect
-    if (button.getToggleState())
-    {
-        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
-        g.fillEllipse(9, (bounds.getHeight() - ledSize + 8) / 2, 4, 4);
-    }
-    
-    // Label with better contrast (light text on dark background)
-    g.setColour(juce::Colour(0xFFDFE6E9));
-    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
-    g.drawText(button.getButtonText(), ledSize + 10, 0,
-               bounds.getWidth() - ledSize - 10, bounds.getHeight(),
-               juce::Justification::centredLeft);
+    // VCA-style illuminated push button - warm orange theme
+    drawIlluminatedToggleButton(g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown,
+        juce::Colour(0xFFFF8800), juce::Colour(0xFFCC5500), juce::Colour(0xFF1A0A00),  // ON colors
+        juce::Colour(0xFF4A4A4A), juce::Colour(0xFF2A2A2A), juce::Colour(0xFFDDDDDD),  // OFF colors
+        juce::Colour(0xFF1A1A1A));  // bezel
 }
 
 //==============================================================================
@@ -390,53 +388,11 @@ void BusLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool
 void BusLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // Bus-style illuminated toggle with indicator light
-    auto bounds = button.getLocalBounds().toFloat();
-    auto switchWidth = 50.0f;
-    auto switchHeight = 22.0f;
-
-    // Button background
-    auto bgColor = colors.panel;
-    if (shouldDrawButtonAsDown)
-        bgColor = bgColor.darker(0.15f);
-    else if (shouldDrawButtonAsHighlighted)
-        bgColor = bgColor.brighter(0.1f);
-    
-    g.setColour(bgColor);
-    g.fillRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f);
-
-    // Indicator light (small LED-style)
-    auto ledX = 8.0f;
-    auto ledY = (bounds.getHeight() - 8.0f) / 2;
-    auto ledColor = button.getToggleState() ? colors.accent : juce::Colour(0xFF3A4550);
-
-    if (button.getToggleState())
-    {
-        // Glow effect when on
-        g.setColour(ledColor.withAlpha(0.4f));
-        g.fillEllipse(ledX - 2, ledY - 2, 12.0f, 12.0f);
-    }
-
-    g.setColour(ledColor);
-    g.fillEllipse(ledX, ledY, 8.0f, 8.0f);
-
-    // Highlight on LED
-    if (button.getToggleState())
-    {
-        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.4f));
-        g.fillEllipse(ledX + 1, ledY + 1, 3.0f, 3.0f);
-    }
-
-    // Button border
-    g.setColour(colors.text.withAlpha(0.3f));
-    g.drawRoundedRectangle(4, (bounds.getHeight() - switchHeight) / 2, switchWidth, switchHeight, 3.0f, 1.0f);
-
-    // Label
-    g.setColour(colors.text);
-    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
-    g.drawText(button.getButtonText(), switchWidth + 12, 0,
-               bounds.getWidth() - switchWidth - 12, bounds.getHeight(),
-               juce::Justification::centredLeft);
+    // Bus-style illuminated push button - professional console look
+    drawIlluminatedToggleButton(g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown,
+        juce::Colour(0xFF4488CC), juce::Colour(0xFF2266AA), juce::Colour(0xFFFFFFFF),  // ON colors
+        juce::Colour(0xFF3A4550), juce::Colour(0xFF2A3540), juce::Colour(0xFFB0C0D0),  // OFF colors
+        juce::Colour(0xFF1A2530));  // bezel
 }
 
 //==============================================================================
@@ -464,43 +420,11 @@ void StudioVCALookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
 void StudioVCALookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                             bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // Studio VCA style LED indicator
-    auto bounds = button.getLocalBounds().toFloat();
-    auto ledSize = 20.0f;
-
-    // LED housing
-    g.setColour(juce::Colour(0xFF1A1A1A));
-    g.fillEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize);
-
-    // LED bezel
-    g.setColour(juce::Colour(0xFF4A4A4A));
-    g.drawEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize, 2.0f);
-
-    // LED light - red when on
-    auto ledColor = button.getToggleState() ? colors.accent : juce::Colour(0xFF2A2A2A);
-    if (button.getToggleState())
-    {
-        // Red glow effect
-        g.setColour(ledColor.withAlpha(0.4f));
-        g.fillEllipse(2, (bounds.getHeight() - ledSize - 4) / 2, ledSize + 4, ledSize + 4);
-    }
-
-    g.setColour(ledColor);
-    g.fillEllipse(7, (bounds.getHeight() - ledSize + 6) / 2, ledSize - 6, ledSize - 6);
-
-    // Highlight
-    if (button.getToggleState())
-    {
-        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
-        g.fillEllipse(9, (bounds.getHeight() - ledSize + 8) / 2, 4, 4);
-    }
-
-    // Label
-    g.setColour(colors.text);
-    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
-    g.drawText(button.getButtonText(), ledSize + 10, 0,
-               bounds.getWidth() - ledSize - 10, bounds.getHeight(),
-               juce::Justification::centredLeft);
+    // Studio VCA style illuminated push button - red accent theme
+    drawIlluminatedToggleButton(g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown,
+        juce::Colour(0xFFDD4444), juce::Colour(0xFFAA2222), juce::Colour(0xFFFFFFFF),  // ON colors
+        juce::Colour(0xFF3A2828), juce::Colour(0xFF2A1818), juce::Colour(0xFFCCBBBB),  // OFF colors
+        juce::Colour(0xFF1A0808));  // bezel
 }
 
 //==============================================================================
@@ -528,43 +452,11 @@ void DigitalLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int w
 void DigitalLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                           bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    // Modern LED-style toggle
-    auto bounds = button.getLocalBounds().toFloat();
-    auto ledSize = 20.0f;
-
-    // LED housing
-    g.setColour(juce::Colour(0xFF1A1A1A));
-    g.fillEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize);
-
-    // LED bezel
-    g.setColour(juce::Colour(0xFF4A4A4A));
-    g.drawEllipse(4, (bounds.getHeight() - ledSize) / 2, ledSize, ledSize, 2.0f);
-
-    // LED light - cyan when on
-    auto ledColor = button.getToggleState() ? colors.accent : juce::Colour(0xFF2A2A2A);
-    if (button.getToggleState())
-    {
-        // Cyan glow effect
-        g.setColour(ledColor.withAlpha(0.4f));
-        g.fillEllipse(2, (bounds.getHeight() - ledSize - 4) / 2, ledSize + 4, ledSize + 4);
-    }
-
-    g.setColour(ledColor);
-    g.fillEllipse(7, (bounds.getHeight() - ledSize + 6) / 2, ledSize - 6, ledSize - 6);
-
-    // Highlight
-    if (button.getToggleState())
-    {
-        g.setColour(juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
-        g.fillEllipse(9, (bounds.getHeight() - ledSize + 8) / 2, 4, 4);
-    }
-
-    // Label
-    g.setColour(colors.text);
-    g.setFont(juce::Font(juce::FontOptions(12.0f)).withTypefaceStyle("Bold"));
-    g.drawText(button.getButtonText(), ledSize + 10, 0,
-               bounds.getWidth() - ledSize - 10, bounds.getHeight(),
-               juce::Justification::centredLeft);
+    // Digital style illuminated push button - cyan accent theme
+    drawIlluminatedToggleButton(g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown,
+        juce::Colour(0xFF00DDFF), juce::Colour(0xFF00AACC), juce::Colour(0xFF001520),  // ON colors
+        juce::Colour(0xFF2A2A3E), juce::Colour(0xFF1A1A2E), juce::Colour(0xFFBBCCDD),  // OFF colors
+        juce::Colour(0xFF0A0A1E));  // bezel
 }
 
 //==============================================================================
@@ -870,59 +762,116 @@ void VUMeterWithLabel::paint(juce::Graphics& g)
 // NOTE: LEDMeter implementation moved to shared/LEDMeter.cpp for consistency across all plugins.
 
 //==============================================================================
-// Ratio Button Group - uses radio-style toggle buttons
+// Ratio Button Group - FET-style illuminated push buttons
 RatioButtonGroup::RatioButtonGroup()
 {
-    const juce::StringArray ratios = {"4:1", "8:1", "12:1", "20:1", "All"};
-
-    for (const auto& ratio : ratios)
-    {
-        auto button = std::make_unique<juce::ToggleButton>(ratio);
-        button->setRadioGroupId(1001);
-        button->addListener(this);
-        addAndMakeVisible(button.get());
-        ratioButtons.push_back(std::move(button));
-    }
-
-    ratioButtons[0]->setToggleState(true, juce::dontSendNotification);
+    setRepaintsOnMouseActivity(true);
 }
 
 RatioButtonGroup::~RatioButtonGroup()
 {
-    for (auto& button : ratioButtons)
-        button->removeListener(this);
 }
 
 void RatioButtonGroup::setSelectedRatio(int index)
 {
-    if (index >= 0 && index < ratioButtons.size())
+    if (index >= 0 && index < ratioLabels.size())
     {
-        ratioButtons[index]->setToggleState(true, juce::dontSendNotification);
         currentRatio = index;
+        repaint();
     }
 }
 
 void RatioButtonGroup::resized()
 {
     auto bounds = getLocalBounds();
-    int buttonWidth = bounds.getWidth() / static_cast<int>(ratioButtons.size());
-    int buttonHeight = juce::jmin(bounds.getHeight(), 24);  // Compact height for radio buttons
+    int numButtons = ratioLabels.size();
+    int buttonWidth = bounds.getWidth() / numButtons;
+    int buttonHeight = juce::jmin(bounds.getHeight(), 32);
     int yOffset = (bounds.getHeight() - buttonHeight) / 2;
 
-    for (size_t i = 0; i < ratioButtons.size(); ++i)
+    buttonBounds.clear();
+    for (int i = 0; i < numButtons; ++i)
     {
-        ratioButtons[i]->setBounds(static_cast<int>(i) * buttonWidth, yOffset, buttonWidth, buttonHeight);
+        buttonBounds.push_back(juce::Rectangle<int>(i * buttonWidth + 2, yOffset, buttonWidth - 4, buttonHeight));
     }
 }
 
-void RatioButtonGroup::buttonClicked(juce::Button* button)
+void RatioButtonGroup::paint(juce::Graphics& g)
 {
-    for (size_t i = 0; i < ratioButtons.size(); ++i)
+    for (int i = 0; i < ratioLabels.size(); ++i)
     {
-        if (ratioButtons[i].get() == button)
+        auto& bounds = buttonBounds[static_cast<size_t>(i)];
+        bool isSelected = (i == currentRatio);
+
+        // FET-style illuminated push button
+        // Outer bezel
+        g.setColour(juce::Colour(0xFF1A1A1A));
+        g.fillRoundedRectangle(bounds.toFloat(), 4.0f);
+
+        // Button face - recessed look
+        auto innerBounds = bounds.reduced(2);
+        if (isSelected)
         {
-            currentRatio = i;
-            listeners.call(&Listener::ratioChanged, currentRatio);
+            // Illuminated amber/orange when selected
+            juce::ColourGradient glow(juce::Colour(0xFFFFAA00), innerBounds.getCentreX(), innerBounds.getY(),
+                                      juce::Colour(0xFFCC6600), innerBounds.getCentreX(), innerBounds.getBottom(), false);
+            g.setGradientFill(glow);
+            g.fillRoundedRectangle(innerBounds.toFloat(), 3.0f);
+
+            // Glow effect
+            g.setColour(juce::Colour(0x40FFAA00));
+            g.fillRoundedRectangle(bounds.toFloat().expanded(2), 5.0f);
+
+            // Text shadow for depth
+            g.setColour(juce::Colour(0xFF4A2500));
+            g.setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
+            g.drawText(ratioLabels[i], innerBounds.translated(1, 1), juce::Justification::centred);
+
+            // Main text - dark on lit button
+            g.setColour(juce::Colour(0xFF1A0A00));
+        }
+        else
+        {
+            // Dark recessed button when not selected
+            juce::ColourGradient dark(juce::Colour(0xFF3A3A3A), innerBounds.getCentreX(), innerBounds.getY(),
+                                      juce::Colour(0xFF252525), innerBounds.getCentreX(), innerBounds.getBottom(), false);
+            g.setGradientFill(dark);
+            g.fillRoundedRectangle(innerBounds.toFloat(), 3.0f);
+
+            // Subtle inner shadow
+            g.setColour(juce::Colour(0xFF151515));
+            g.drawRoundedRectangle(innerBounds.toFloat().reduced(1), 2.0f, 1.0f);
+
+            // Light text on dark button
+            g.setColour(juce::Colour(0xFFAAAAAA));
+        }
+
+        // Draw ratio label
+        g.setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
+        g.drawText(ratioLabels[i], innerBounds, juce::Justification::centred);
+
+        // Highlight edge on top for 3D effect
+        if (!isSelected)
+        {
+            g.setColour(juce::Colour(0x20FFFFFF));
+            g.drawLine(static_cast<float>(innerBounds.getX() + 4), static_cast<float>(innerBounds.getY() + 2),
+                      static_cast<float>(innerBounds.getRight() - 4), static_cast<float>(innerBounds.getY() + 2), 1.0f);
+        }
+    }
+}
+
+void RatioButtonGroup::mouseDown(const juce::MouseEvent& e)
+{
+    for (int i = 0; i < static_cast<int>(buttonBounds.size()); ++i)
+    {
+        if (buttonBounds[static_cast<size_t>(i)].contains(e.getPosition()))
+        {
+            if (i != currentRatio)
+            {
+                currentRatio = i;
+                repaint();
+                listeners.call(&Listener::ratioChanged, currentRatio);
+            }
             break;
         }
     }
