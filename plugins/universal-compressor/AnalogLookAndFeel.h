@@ -23,16 +23,31 @@ public:
         juce::Colour shadow;
     };
 
+    // Style slider text boxes with subtle background for better contrast
+    juce::Label* createSliderTextBox(juce::Slider& slider) override;
+
+    // Draw slider text box background
+    void fillTextEditorBackground(juce::Graphics& g, int width, int height, juce::TextEditor& textEditor) override;
+
 protected:
     ColorScheme colors;
-    
+
     void drawMetallicKnob(juce::Graphics& g, float x, float y, float width, float height,
                           float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                           juce::Slider& slider);
-                          
+
     void drawVintageKnob(juce::Graphics& g, float x, float y, float width, float height,
                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                          juce::Slider& slider);
+
+    // Common illuminated toggle button rendering for all themes
+    void drawIlluminatedToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                     bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown,
+                                     const juce::Colour& onGlowTop, const juce::Colour& onGlowBottom,
+                                     const juce::Colour& onTextColor,
+                                     const juce::Colour& offGradientTop, const juce::Colour& offGradientBottom,
+                                     const juce::Colour& offTextColor,
+                                     const juce::Colour& bezelColor = juce::Colour(0xFF0A0A0A));
 };
 
 //==============================================================================
@@ -184,8 +199,8 @@ private:
 // Include "../shared/LEDMeter.h" to use it.
 
 //==============================================================================
-// Ratio button group for FET mode
-class RatioButtonGroup : public juce::Component, public juce::Button::Listener
+// Ratio button group for FET mode - custom painted illuminated push buttons
+class RatioButtonGroup : public juce::Component
 {
 public:
     class Listener
@@ -194,21 +209,23 @@ public:
         virtual ~Listener() = default;
         virtual void ratioChanged(int ratioIndex) = 0;
     };
-    
+
     RatioButtonGroup();
     ~RatioButtonGroup() override;
-    
+
     void addListener(Listener* l) { listeners.add(l); }
     void removeListener(Listener* l) { listeners.remove(l); }
-    
+
     void setSelectedRatio(int index);
     void resized() override;
-    void buttonClicked(juce::Button* button) override;
+    void paint(juce::Graphics& g) override;
+    void mouseDown(const juce::MouseEvent& e) override;
 
 private:
-    std::vector<std::unique_ptr<juce::ToggleButton>> ratioButtons;
+    juce::StringArray ratioLabels {"4:1", "8:1", "12:1", "20:1", "All"};
     juce::ListenerList<Listener> listeners;
     int currentRatio = 0;
+    std::vector<juce::Rectangle<int>> buttonBounds;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RatioButtonGroup)
 };

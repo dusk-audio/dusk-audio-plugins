@@ -87,13 +87,16 @@ private:
         std::unique_ptr<juce::Component> container;
         std::unique_ptr<juce::Slider> peakReductionKnob;
         std::unique_ptr<juce::Slider> gainKnob;
+        std::unique_ptr<juce::Slider> mixKnob;  // Mix for parallel compression
         std::unique_ptr<juce::ToggleButton> limitSwitch;
         std::unique_ptr<juce::Label> peakReductionLabel;
         std::unique_ptr<juce::Label> gainLabel;
-        
+        std::unique_ptr<juce::Label> mixLabel;
+
         // Attachments
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> peakReductionAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> limitAttachment;
     };
     
@@ -104,17 +107,20 @@ private:
         std::unique_ptr<juce::Slider> outputKnob;
         std::unique_ptr<juce::Slider> attackKnob;
         std::unique_ptr<juce::Slider> releaseKnob;
+        std::unique_ptr<juce::Slider> mixKnob;
         std::unique_ptr<RatioButtonGroup> ratioButtons;
         std::unique_ptr<juce::Label> inputLabel;
         std::unique_ptr<juce::Label> outputLabel;
         std::unique_ptr<juce::Label> attackLabel;
         std::unique_ptr<juce::Label> releaseLabel;
-        
+        std::unique_ptr<juce::Label> mixLabel;
+
         // Attachments
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
     };
     
     struct VCAPanel
@@ -125,19 +131,22 @@ private:
         std::unique_ptr<juce::Slider> attackKnob;
         // Classic VCA has fixed release rate - no release knob
         std::unique_ptr<juce::Slider> outputKnob;
+        std::unique_ptr<juce::Slider> mixKnob;
         std::unique_ptr<juce::ToggleButton> overEasyButton;
         std::unique_ptr<juce::Label> thresholdLabel;
         std::unique_ptr<juce::Label> ratioLabel;
         std::unique_ptr<juce::Label> attackLabel;
         // No release label for Classic VCA
         std::unique_ptr<juce::Label> outputLabel;
-        
+        std::unique_ptr<juce::Label> mixLabel;
+
         // Attachments
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thresholdAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
         // No release attachment for Classic VCA
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> overEasyAttachment;
     };
     
@@ -149,18 +158,21 @@ private:
         std::unique_ptr<juce::ComboBox> attackSelector;
         std::unique_ptr<juce::ComboBox> releaseSelector;
         std::unique_ptr<juce::Slider> makeupKnob;
+        std::unique_ptr<juce::Slider> mixKnob;
         std::unique_ptr<juce::Label> thresholdLabel;
         std::unique_ptr<juce::Label> ratioLabel;
         std::unique_ptr<juce::Label> attackLabel;
         std::unique_ptr<juce::Label> releaseLabel;
         std::unique_ptr<juce::Label> makeupLabel;
-        
+        std::unique_ptr<juce::Label> mixLabel;
+
         // Attachments
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thresholdAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> attackAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> releaseAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> makeupAttachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
     };
     
     // Mode panels

@@ -19,8 +19,8 @@
 struct LEDMeterStyle
 {
     // Standard meter dimensions
-    static constexpr int standardWidth = 24;           // Standard meter width in pixels
-    static constexpr int meterAreaWidth = 50;          // Total area including labels
+    static constexpr int standardWidth = 32;           // Standard meter width in pixels (wider for visibility)
+    static constexpr int meterAreaWidth = 60;          // Total area including labels
     static constexpr int labelHeight = 16;             // Height for "INPUT"/"OUTPUT" labels
     static constexpr int valueHeight = 20;             // Height for dB value display below meter
     static constexpr int labelSpacing = 4;             // Space between label and meter
