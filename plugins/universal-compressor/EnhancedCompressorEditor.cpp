@@ -221,6 +221,8 @@ EnhancedCompressorEditor::~EnhancedCompressorEditor()
         optoPanel.peakReductionKnob->setLookAndFeel(nullptr);
     if (optoPanel.gainKnob)
         optoPanel.gainKnob->setLookAndFeel(nullptr);
+    if (optoPanel.mixKnob)
+        optoPanel.mixKnob->setLookAndFeel(nullptr);
     if (fetPanel.inputKnob)
         fetPanel.inputKnob->setLookAndFeel(nullptr);
     if (fetPanel.outputKnob)
@@ -305,34 +307,42 @@ void EnhancedCompressorEditor::setupOptoPanel()
 {
     optoPanel.container = std::make_unique<juce::Component>();
     addChildComponent(optoPanel.container.get());  // Use addChildComponent so it's initially hidden
-    
+
     // Create controls
     optoPanel.peakReductionKnob = createKnob("Peak Reduction", 0, 100, 50, "");
     optoPanel.gainKnob = createKnob("Gain", -20, 20, 0, " dB");
+    optoPanel.mixKnob = createKnob("Mix", 0, 100, 100, "%");
     optoPanel.limitSwitch = std::make_unique<juce::ToggleButton>("Limit");
 
     // Create labels
     optoPanel.peakReductionLabel = createLabel("PEAK REDUCTION");
     optoPanel.gainLabel = createLabel("GAIN");
-    
+    optoPanel.mixLabel = createLabel("MIX");
+
     // Add to container
     optoPanel.container->addAndMakeVisible(optoPanel.peakReductionKnob.get());
     optoPanel.container->addAndMakeVisible(optoPanel.gainKnob.get());
+    optoPanel.container->addAndMakeVisible(optoPanel.mixKnob.get());
     // Note: limitSwitch is added to main editor, not container, so it can be in top row
     addChildComponent(optoPanel.limitSwitch.get());  // Add to main editor as child component
     optoPanel.container->addAndMakeVisible(optoPanel.peakReductionLabel.get());
     optoPanel.container->addAndMakeVisible(optoPanel.gainLabel.get());
-    
+    optoPanel.container->addAndMakeVisible(optoPanel.mixLabel.get());
+
     // Create attachments
     auto& params = processor.getParameters();
     if (params.getRawParameterValue("opto_peak_reduction"))
         optoPanel.peakReductionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "opto_peak_reduction", *optoPanel.peakReductionKnob);
-    
+
     if (params.getRawParameterValue("opto_gain"))
         optoPanel.gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "opto_gain", *optoPanel.gainKnob);
-    
+
+    if (params.getRawParameterValue("mix"))
+        optoPanel.mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "mix", *optoPanel.mixKnob);
+
     if (params.getRawParameterValue("opto_limit"))
         optoPanel.limitAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             params, "opto_limit", *optoPanel.limitSwitch);
@@ -355,6 +365,7 @@ void EnhancedCompressorEditor::setupFETPanel()
         return text.getDoubleValue() / 1000.0;
     };
     fetPanel.releaseKnob = createKnob("Release", 50, 1100, 400, " ms");
+    fetPanel.mixKnob = createKnob("Mix", 0, 100, 100, "%");
     fetPanel.ratioButtons = std::make_unique<RatioButtonGroup>();
     fetPanel.ratioButtons->addListener(this);
 
@@ -363,42 +374,49 @@ void EnhancedCompressorEditor::setupFETPanel()
     fetPanel.outputLabel = createLabel("OUTPUT");
     fetPanel.attackLabel = createLabel("ATTACK");
     fetPanel.releaseLabel = createLabel("RELEASE");
-    
+    fetPanel.mixLabel = createLabel("MIX");
+
     // Add to container
     fetPanel.container->addAndMakeVisible(fetPanel.inputKnob.get());
     fetPanel.container->addAndMakeVisible(fetPanel.outputKnob.get());
     fetPanel.container->addAndMakeVisible(fetPanel.attackKnob.get());
     fetPanel.container->addAndMakeVisible(fetPanel.releaseKnob.get());
+    fetPanel.container->addAndMakeVisible(fetPanel.mixKnob.get());
     fetPanel.container->addAndMakeVisible(fetPanel.ratioButtons.get());
     fetPanel.container->addAndMakeVisible(fetPanel.inputLabel.get());
     fetPanel.container->addAndMakeVisible(fetPanel.outputLabel.get());
     fetPanel.container->addAndMakeVisible(fetPanel.attackLabel.get());
     fetPanel.container->addAndMakeVisible(fetPanel.releaseLabel.get());
-    
+    fetPanel.container->addAndMakeVisible(fetPanel.mixLabel.get());
+
     // Create attachments
     auto& params = processor.getParameters();
     if (params.getRawParameterValue("fet_input"))
         fetPanel.inputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "fet_input", *fetPanel.inputKnob);
-    
+
     if (params.getRawParameterValue("fet_output"))
         fetPanel.outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "fet_output", *fetPanel.outputKnob);
-    
+
     if (params.getRawParameterValue("fet_attack"))
         fetPanel.attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "fet_attack", *fetPanel.attackKnob);
-    
+
     if (params.getRawParameterValue("fet_release"))
         fetPanel.releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "fet_release", *fetPanel.releaseKnob);
+
+    if (params.getRawParameterValue("mix"))
+        fetPanel.mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "mix", *fetPanel.mixKnob);
 }
 
 void EnhancedCompressorEditor::setupVCAPanel()
 {
     vcaPanel.container = std::make_unique<juce::Component>();
     addChildComponent(vcaPanel.container.get());  // Use addChildComponent so it's initially hidden
-    
+
     // Create controls - Classic VCA style
     vcaPanel.thresholdKnob = createKnob("Threshold", -38, 12, 0, " dB");  // 10mV to 3V range
     // Classic VCA ratio: 1:1 to infinity (120:1), with 4:1 at 12 o'clock (center)
@@ -408,6 +426,7 @@ void EnhancedCompressorEditor::setupVCAPanel()
     vcaPanel.attackKnob = createKnob("Attack", 0.1, 50, 1, " ms");  // Classic VCA attack range
     // Classic VCA has fixed release rate - no release knob needed
     vcaPanel.outputKnob = createKnob("Output", -20, 20, 0, " dB");
+    vcaPanel.mixKnob = createKnob("Mix", 0, 100, 100, "%");
     vcaPanel.overEasyButton = std::make_unique<juce::ToggleButton>("Over Easy");
 
     // Create labels
@@ -416,13 +435,15 @@ void EnhancedCompressorEditor::setupVCAPanel()
     vcaPanel.attackLabel = createLabel("ATTACK");
     // No release label for Classic VCA
     vcaPanel.outputLabel = createLabel("OUTPUT");
-    
+    vcaPanel.mixLabel = createLabel("MIX");
+
     // Add to container
     vcaPanel.container->addAndMakeVisible(vcaPanel.thresholdKnob.get());
     vcaPanel.container->addAndMakeVisible(vcaPanel.ratioKnob.get());
     vcaPanel.container->addAndMakeVisible(vcaPanel.attackKnob.get());
     // No release knob for Classic VCA
     vcaPanel.container->addAndMakeVisible(vcaPanel.outputKnob.get());
+    vcaPanel.container->addAndMakeVisible(vcaPanel.mixKnob.get());
     // Note: overEasyButton is added to main editor, not container, so it can be in top row
     addChildComponent(vcaPanel.overEasyButton.get());  // Add to main editor as child component
     vcaPanel.container->addAndMakeVisible(vcaPanel.thresholdLabel.get());
@@ -430,27 +451,32 @@ void EnhancedCompressorEditor::setupVCAPanel()
     vcaPanel.container->addAndMakeVisible(vcaPanel.attackLabel.get());
     // No release label for Classic VCA
     vcaPanel.container->addAndMakeVisible(vcaPanel.outputLabel.get());
-    
+    vcaPanel.container->addAndMakeVisible(vcaPanel.mixLabel.get());
+
     // Create attachments
     auto& params = processor.getParameters();
     if (params.getRawParameterValue("vca_threshold"))
         vcaPanel.thresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "vca_threshold", *vcaPanel.thresholdKnob);
-    
+
     if (params.getRawParameterValue("vca_ratio"))
         vcaPanel.ratioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "vca_ratio", *vcaPanel.ratioKnob);
-    
+
     if (params.getRawParameterValue("vca_attack"))
         vcaPanel.attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "vca_attack", *vcaPanel.attackKnob);
-    
+
     // Classic VCA has fixed release rate - no attachment needed
-    
+
     if (params.getRawParameterValue("vca_output"))
         vcaPanel.outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "vca_output", *vcaPanel.outputKnob);
-    
+
+    if (params.getRawParameterValue("mix"))
+        vcaPanel.mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "mix", *vcaPanel.mixKnob);
+
     if (params.getRawParameterValue("vca_overeasy"))
         vcaPanel.overEasyAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             params, "vca_overeasy", *vcaPanel.overEasyButton);
@@ -465,6 +491,7 @@ void EnhancedCompressorEditor::setupBusPanel()
     busPanel.thresholdKnob = createKnob("Threshold", -20, 0, -6, " dB");
     busPanel.ratioKnob = createKnob("Ratio", 2, 10, 4, ":1");
     busPanel.makeupKnob = createKnob("Makeup", -10, 20, 0, " dB");
+    busPanel.mixKnob = createKnob("Mix", 0, 100, 100, "%");
     
     busPanel.attackSelector = std::make_unique<juce::ComboBox>("Attack");
     busPanel.attackSelector->addItem("0.1 ms", 1);
@@ -490,6 +517,7 @@ void EnhancedCompressorEditor::setupBusPanel()
     busPanel.attackLabel = createLabel("ATTACK");
     busPanel.releaseLabel = createLabel("RELEASE");
     busPanel.makeupLabel = createLabel("MAKEUP");
+    busPanel.mixLabel = createLabel("MIX");
     
     // Add to container
     busPanel.container->addAndMakeVisible(busPanel.thresholdKnob.get());
@@ -497,11 +525,13 @@ void EnhancedCompressorEditor::setupBusPanel()
     busPanel.container->addAndMakeVisible(busPanel.attackSelector.get());
     busPanel.container->addAndMakeVisible(busPanel.releaseSelector.get());
     busPanel.container->addAndMakeVisible(busPanel.makeupKnob.get());
+    busPanel.container->addAndMakeVisible(busPanel.mixKnob.get());
     busPanel.container->addAndMakeVisible(busPanel.thresholdLabel.get());
     busPanel.container->addAndMakeVisible(busPanel.ratioLabel.get());
     busPanel.container->addAndMakeVisible(busPanel.attackLabel.get());
     busPanel.container->addAndMakeVisible(busPanel.releaseLabel.get());
     busPanel.container->addAndMakeVisible(busPanel.makeupLabel.get());
+    busPanel.container->addAndMakeVisible(busPanel.mixLabel.get());
     
     // Create attachments
     auto& params = processor.getParameters();
@@ -524,7 +554,10 @@ void EnhancedCompressorEditor::setupBusPanel()
     if (params.getRawParameterValue("bus_makeup"))
         busPanel.makeupAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "bus_makeup", *busPanel.makeupKnob);
-    
+
+    if (params.getRawParameterValue("bus_mix"))
+        busPanel.mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "bus_mix", *busPanel.mixKnob);
 }
 
 void EnhancedCompressorEditor::setupDigitalPanel()
@@ -768,9 +801,9 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
             textColor = juce::Colour(0xFFE0E0E0);  // Light gray
             break;
         case 5:
-            // Studio VCA panel draws its own title
+            // Studio VCA panel draws its own title, but we still need visible text color for labels
             title = "";
-            textColor = juce::Colours::transparentBlack;
+            textColor = juce::Colour(0xFFCC9999);  // Light red tint matching Studio VCA theme
             break;
         case 6:
             title = "DIGITAL COMPRESSOR";
@@ -787,9 +820,16 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
     auto titleBounds = bounds.removeFromTop(35 * scaleFactor).withTrimmedLeft(200 * scaleFactor).withTrimmedRight(200 * scaleFactor);
     if (title.isNotEmpty())
     {
-        g.setColour(textColor);
-        // Use the member scaleFactor already calculated in resized()
+        // Draw subtle glow behind title for emphasis
+        g.setColour(textColor.withAlpha(0.15f));
         g.setFont(juce::Font(juce::FontOptions(20.0f * scaleFactor).withStyle("Bold")));
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                if (dx != 0 || dy != 0)
+                    g.drawText(title, titleBounds.translated(dx, dy), juce::Justification::centred);
+
+        // Draw main title text
+        g.setColour(textColor);
         g.drawText(title, titleBounds, juce::Justification::centred);
     }
 
@@ -857,16 +897,16 @@ void EnhancedCompressorEditor::resized()
     auto headerRow = bounds.removeFromTop(60 * scaleFactor).withTrimmedTop(35 * scaleFactor);
     headerRow.reduce(12 * scaleFactor, 2 * scaleFactor);
 
-    const int gap = static_cast<int>(12 * scaleFactor);
-    const int controlHeight = static_cast<int>(20 * scaleFactor);
+    const int gap = static_cast<int>(8 * scaleFactor);  // Tighter gaps
+    const int controlHeight = static_cast<int>(22 * scaleFactor);  // Slightly taller for readability
 
     // Calculate total width of all controls to center them
-    const int modeSelectorWidth = static_cast<int>(115 * scaleFactor);
-    const int toggleWidth = static_cast<int>(70 * scaleFactor);
-    const int autoGainWidth = static_cast<int>(90 * scaleFactor);
-    const int modeToggleWidth = static_cast<int>(85 * scaleFactor);
-    const int osLabelWidth = static_cast<int>(80 * scaleFactor);  // "Oversampling" label
-    const int osWidth = static_cast<int>(55 * scaleFactor);       // Dropdown for "2x"/"4x"
+    const int modeSelectorWidth = static_cast<int>(120 * scaleFactor);  // Wider for "Bus Compressor"
+    const int toggleWidth = static_cast<int>(70 * scaleFactor);         // "Bypass" button
+    const int autoGainWidth = static_cast<int>(85 * scaleFactor);       // "Auto Gain" button
+    const int modeToggleWidth = static_cast<int>(70 * scaleFactor);     // Mode-specific toggle
+    const int osLabelWidth = static_cast<int>(78 * scaleFactor);        // "Oversampling" label
+    const int osWidth = static_cast<int>(58 * scaleFactor);             // Dropdown for "2x"/"4x" - wider to show full text
 
     const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap
                           + modeToggleWidth + gap + osLabelWidth + osWidth;
@@ -916,9 +956,10 @@ void EnhancedCompressorEditor::resized()
     }
     headerRow.removeFromLeft(gap);
 
-    // "Oversampling" label area (drawn in paint()) followed by dropdown - no gap between label and dropdown
+    // "Oversampling" label area (drawn in paint()) followed by dropdown with small gap
     osLabelBounds = headerRow.removeFromLeft(osLabelWidth).withHeight(controlHeight);
     osLabelBounds = osLabelBounds.withY(headerRow.getY() + (headerRow.getHeight() - controlHeight) / 2);
+    headerRow.removeFromLeft(static_cast<int>(4 * scaleFactor));  // Small gap between label and dropdown
 
     if (oversamplingSelector)
     {
@@ -1009,7 +1050,7 @@ void EnhancedCompressorEditor::resized()
         }
     };
 
-    // Layout Opto panel - 2 knobs centered using standard sizes
+    // Layout Opto panel - 3 knobs (Peak Reduction, Gain, Mix) centered
     // Uses same knob size as other modes for consistency when switching
     if (optoPanel.container && optoPanel.container->isVisible())
     {
@@ -1021,18 +1062,20 @@ void EnhancedCompressorEditor::resized()
         auto knobRow = optoBounds.withHeight(stdKnobRowHeight);
         knobRow.setY((optoBounds.getHeight() - stdKnobRowHeight) / 2);
 
-        // Use 4-column grid but only populate center 2 for centering (matches VCA layout)
-        int colWidth = knobRow.getWidth() / 4;
-        knobRow.removeFromLeft(colWidth);  // Skip first column
+        // Use 3-column grid for 3 knobs centered
+        int colWidth = knobRow.getWidth() / 3;
 
         auto peakArea = knobRow.removeFromLeft(colWidth);
         layoutKnob(optoPanel.peakReductionKnob.get(), optoPanel.peakReductionLabel.get(), peakArea);
 
         auto gainArea = knobRow.removeFromLeft(colWidth);
         layoutKnob(optoPanel.gainKnob.get(), optoPanel.gainLabel.get(), gainArea);
+
+        auto mixArea = knobRow;
+        layoutKnob(optoPanel.mixKnob.get(), optoPanel.mixLabel.get(), mixArea);
     }
 
-    // Layout FET panel - 4 knobs + ratio buttons below
+    // Layout FET panel - 5 knobs + ratio buttons below
     if (fetPanel.container && fetPanel.container->isVisible())
     {
         fetPanel.container->setBounds(controlArea);
@@ -1040,7 +1083,7 @@ void EnhancedCompressorEditor::resized()
         auto fetBounds = fetPanel.container->getLocalBounds();
         auto knobRow = fetBounds.removeFromTop(stdKnobRowHeight);
 
-        int colWidth = knobRow.getWidth() / 4;
+        int colWidth = knobRow.getWidth() / 5;
 
         auto inputArea = knobRow.removeFromLeft(colWidth);
         layoutKnob(fetPanel.inputKnob.get(), fetPanel.inputLabel.get(), inputArea);
@@ -1051,15 +1094,18 @@ void EnhancedCompressorEditor::resized()
         auto attackArea = knobRow.removeFromLeft(colWidth);
         layoutKnob(fetPanel.attackKnob.get(), fetPanel.attackLabel.get(), attackArea);
 
-        auto releaseArea = knobRow;
+        auto releaseArea = knobRow.removeFromLeft(colWidth);
         layoutKnob(fetPanel.releaseKnob.get(), fetPanel.releaseLabel.get(), releaseArea);
+
+        auto mixArea = knobRow;
+        layoutKnob(fetPanel.mixKnob.get(), fetPanel.mixLabel.get(), mixArea);
 
         // Ratio buttons below knobs
         if (fetPanel.ratioButtons)
             fetPanel.ratioButtons->setBounds(fetBounds.removeFromTop(static_cast<int>(70 * scaleFactor)).reduced(static_cast<int>(15 * scaleFactor), static_cast<int>(2 * scaleFactor)));
     }
 
-    // Layout VCA panel - 4 knobs in one row (no release for Classic VCA)
+    // Layout VCA panel - 5 knobs in one row (no release for Classic VCA)
     if (vcaPanel.container && vcaPanel.container->isVisible())
     {
         vcaPanel.container->setBounds(controlArea);
@@ -1070,7 +1116,7 @@ void EnhancedCompressorEditor::resized()
         auto knobRow = vcaBounds.withHeight(stdKnobRowHeight);
         knobRow.setY((vcaBounds.getHeight() - stdKnobRowHeight) / 2);
 
-        int colWidth = knobRow.getWidth() / 4;
+        int colWidth = knobRow.getWidth() / 5;
 
         auto thresholdBounds = knobRow.removeFromLeft(colWidth);
         layoutKnob(vcaPanel.thresholdKnob.get(), vcaPanel.thresholdLabel.get(), thresholdBounds);
@@ -1081,11 +1127,14 @@ void EnhancedCompressorEditor::resized()
         auto attackBounds = knobRow.removeFromLeft(colWidth);
         layoutKnob(vcaPanel.attackKnob.get(), vcaPanel.attackLabel.get(), attackBounds);
 
-        auto outputBounds = knobRow;
+        auto outputBounds = knobRow.removeFromLeft(colWidth);
         layoutKnob(vcaPanel.outputKnob.get(), vcaPanel.outputLabel.get(), outputBounds);
+
+        auto mixBounds = knobRow;
+        layoutKnob(vcaPanel.mixKnob.get(), vcaPanel.mixLabel.get(), mixBounds);
     }
 
-    // Layout Bus panel - 3 knobs on top row, 2 dropdown selectors below
+    // Layout Bus panel - 4 knobs on top row, 2 dropdown selectors below (aligned with knob pairs)
     if (busPanel.container && busPanel.container->isVisible())
     {
         // Give Bus panel extra vertical space for the dropdown selectors
@@ -1094,11 +1143,12 @@ void EnhancedCompressorEditor::resized()
 
         auto busBounds = busPanel.container->getLocalBounds();
 
-        // Top row: 3 knobs
+        // Top row: 4 knobs (Threshold, Ratio, Makeup, Mix)
         auto knobRow = busBounds.removeFromTop(stdKnobRowHeight);
 
-        // Center 3 knobs: use 5-column grid, skip first and last
-        int colWidth = knobRow.getWidth() / 5;
+        // Use 6-column grid for 4 knobs, skip first and last for centering
+        int colWidth = knobRow.getWidth() / 6;
+        int skipWidth = colWidth;  // Save for dropdown alignment
         knobRow.removeFromLeft(colWidth);  // Skip first column
 
         auto thresholdArea = knobRow.removeFromLeft(colWidth);
@@ -1110,18 +1160,25 @@ void EnhancedCompressorEditor::resized()
         auto makeupArea = knobRow.removeFromLeft(colWidth);
         layoutKnob(busPanel.makeupKnob.get(), busPanel.makeupLabel.get(), makeupArea);
 
-        // Bottom row: Attack/Release dropdowns
+        auto mixArea = knobRow.removeFromLeft(colWidth);
+        layoutKnob(busPanel.mixKnob.get(), busPanel.mixLabel.get(), mixArea);
+
+        // Bottom row: Attack/Release dropdowns - centered under knob pairs
         busBounds.removeFromTop(static_cast<int>(15 * scaleFactor));  // Spacing
         auto bottomRow = busBounds.removeFromTop(static_cast<int>(55 * scaleFactor));
-        int selectorWidth = bottomRow.getWidth() / 2;
 
-        auto attackArea = bottomRow.removeFromLeft(selectorWidth);
+        // Attack dropdown: centered between Threshold and Ratio (columns 2-3)
+        int dropdownWidth = static_cast<int>(80 * scaleFactor);
+        int attackCenterX = skipWidth + colWidth;  // Center of Threshold-Ratio gap
+        auto attackArea = bottomRow.withX(attackCenterX - dropdownWidth / 2).withWidth(dropdownWidth);
         busPanel.attackLabel->setBounds(attackArea.removeFromTop(stdLabelHeight));
-        busPanel.attackSelector->setBounds(attackArea.reduced(static_cast<int>(30 * scaleFactor), 0).removeFromTop(static_cast<int>(28 * scaleFactor)));
+        busPanel.attackSelector->setBounds(attackArea.removeFromTop(static_cast<int>(28 * scaleFactor)));
 
-        auto releaseArea = bottomRow;
+        // Release dropdown: centered between Makeup and Mix (columns 4-5)
+        int releaseCenterX = skipWidth + colWidth * 3;  // Center of Makeup-Mix gap
+        auto releaseArea = bottomRow.withX(releaseCenterX - dropdownWidth / 2).withWidth(dropdownWidth);
         busPanel.releaseLabel->setBounds(releaseArea.removeFromTop(stdLabelHeight));
-        busPanel.releaseSelector->setBounds(releaseArea.reduced(static_cast<int>(30 * scaleFactor), 0).removeFromTop(static_cast<int>(28 * scaleFactor)));
+        busPanel.releaseSelector->setBounds(releaseArea.removeFromTop(static_cast<int>(28 * scaleFactor)));
     }
 
     // Layout Digital panel - needs more vertical space for 2 rows of knobs

@@ -563,6 +563,12 @@ public:
         outputSlider.setTextValueSuffix(" dB");
         outputSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
 
+        // Mix control (0 to 100%)
+        addAndMakeVisible(mixSlider);
+        mixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        mixSlider.setRange(0.0, 100.0, 1.0);
+        mixSlider.setTextValueSuffix(" %");
+        mixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
         // Labels
         createLabels();
 
@@ -577,8 +583,9 @@ public:
             parameters, "studio_vca_release", releaseSlider);
         outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, "studio_vca_output", outputSlider);
+        mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "studio_vca_mix", mixSlider);
     }
-
     ~StudioVCAPanel() override
     {
         // Look and feel is managed externally
@@ -617,7 +624,7 @@ public:
         auto controlRow = area.withHeight(stdKnobRowHeight);
         controlRow.setY(area.getY() + (area.getHeight() - stdKnobRowHeight) / 2);
 
-        auto knobWidth = controlRow.getWidth() / 5;
+        auto knobWidth = controlRow.getWidth() / 6;
 
         // Helper to layout a knob with label above (matching main editor's layoutKnob lambda)
         auto layoutKnob = [&](juce::Slider& slider, juce::Rectangle<int> colArea) {
@@ -631,7 +638,8 @@ public:
         layoutKnob(ratioSlider, controlRow.removeFromLeft(knobWidth));
         layoutKnob(attackSlider, controlRow.removeFromLeft(knobWidth));
         layoutKnob(releaseSlider, controlRow.removeFromLeft(knobWidth));
-        layoutKnob(outputSlider, controlRow);
+        layoutKnob(outputSlider, controlRow.removeFromLeft(knobWidth));
+        layoutKnob(mixSlider, controlRow);
     }
 
     void paint(juce::Graphics& g) override
@@ -662,7 +670,7 @@ private:
     juce::AudioProcessorValueTreeState& parameters;
     float currentScaleFactor = 1.0f;
 
-    juce::Slider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider;
+    juce::Slider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider, mixSlider;
 
     std::vector<std::unique_ptr<juce::Label>> labels;
 
@@ -671,6 +679,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
 
     void createLabels()
     {
@@ -679,6 +688,7 @@ private:
         addLabel("ATTACK", attackSlider);
         addLabel("RELEASE", releaseSlider);
         addLabel("OUTPUT", outputSlider);
+        addLabel("MIX", mixSlider);
     }
 
     void addLabel(const juce::String& text, juce::Component& component)
