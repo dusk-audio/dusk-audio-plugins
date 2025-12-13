@@ -91,8 +91,73 @@ private:
     std::unique_ptr<juce::Label> eqHighMidLabel;
     std::unique_ptr<juce::Label> eqHighLabel;
 
+    // Value display labels (show current parameter values below knobs)
+    std::unique_ptr<juce::Label> preDelayValueLabel;
+    std::unique_ptr<juce::Label> widthValueLabel;
+    std::unique_ptr<juce::Label> mixValueLabel;
+    std::unique_ptr<juce::Label> attackValueLabel;
+    std::unique_ptr<juce::Label> decayValueLabel;
+    std::unique_ptr<juce::Label> lengthValueLabel;
+    std::unique_ptr<juce::Label> hpfValueLabel;
+    std::unique_ptr<juce::Label> lpfValueLabel;
+    std::unique_ptr<juce::Label> eqLowValueLabel;
+    std::unique_ptr<juce::Label> eqLowMidValueLabel;
+    std::unique_ptr<juce::Label> eqHighMidValueLabel;
+    std::unique_ptr<juce::Label> eqHighValueLabel;
+
+    // Helper methods for value formatting
+    void updateValueLabels();
+    void updateQualityInfo();
+    juce::String formatFrequency(float hz);
+    juce::String formatGain(float db);
+    juce::String formatTime(float ms);
+    juce::String formatPercent(float value);
+    void createValueLabel(std::unique_ptr<juce::Label>& label);
+
     // Latency toggle
     std::unique_ptr<juce::ToggleButton> zeroLatencyButton;
+
+    // New controls - IR Offset
+    std::unique_ptr<juce::Slider> irOffsetSlider;
+    std::unique_ptr<juce::Label> irOffsetLabel;
+    std::unique_ptr<juce::Label> irOffsetValueLabel;
+
+    // Quality dropdown
+    std::unique_ptr<juce::ComboBox> qualityComboBox;
+    std::unique_ptr<juce::Label> qualityLabel;
+    std::unique_ptr<juce::Label> qualityInfoLabel;  // Shows effective sample rate
+
+    // Stereo mode dropdown
+    std::unique_ptr<juce::ComboBox> stereoModeComboBox;
+    std::unique_ptr<juce::Label> stereoModeLabel;
+
+    // Preset controls
+    std::unique_ptr<juce::ComboBox> presetComboBox;
+    std::unique_ptr<juce::TextButton> savePresetButton;
+    std::unique_ptr<juce::TextButton> deletePresetButton;
+
+    // A/B comparison
+    std::unique_ptr<juce::ToggleButton> abToggleButton;
+    std::unique_ptr<juce::TextButton> abCopyButton;
+
+    // Mix knob labels
+    std::unique_ptr<juce::Label> mixDryLabel;
+    std::unique_ptr<juce::Label> mixWetLabel;
+
+    // Volume Compensation toggle
+    std::unique_ptr<juce::ToggleButton> volumeCompButton;
+
+    // Filter Envelope controls
+    std::unique_ptr<juce::ToggleButton> filterEnvButton;
+    std::unique_ptr<juce::Slider> filterEnvInitSlider;
+    std::unique_ptr<juce::Slider> filterEnvEndSlider;
+    std::unique_ptr<juce::Slider> filterEnvAttackSlider;
+    std::unique_ptr<juce::Label> filterEnvInitLabel;
+    std::unique_ptr<juce::Label> filterEnvEndLabel;
+    std::unique_ptr<juce::Label> filterEnvAttackLabel;
+    std::unique_ptr<juce::Label> filterEnvInitValueLabel;
+    std::unique_ptr<juce::Label> filterEnvEndValueLabel;
+    std::unique_ptr<juce::Label> filterEnvAttackValueLabel;
 
     // Meters
     std::unique_ptr<LEDMeter> inputMeter;
@@ -119,6 +184,28 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> eqHighFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> eqHighGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> zeroLatencyAttachment;
+
+    // New parameter attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> irOffsetAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> qualityAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> volumeCompAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> filterEnvAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvInitAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvEndAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvAttackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> stereoModeAttachment;
+
+    // A/B comparison state
+    struct ParameterState
+    {
+        std::map<juce::String, float> values;
+    };
+    ParameterState stateA;
+    ParameterState stateB;
+    bool isStateB = false;
+    void saveCurrentStateToSlot(ParameterState& slot);
+    void loadStateFromSlot(const ParameterState& slot);
+    void copyCurrentToOther();
 
     // Smoothed meter values
     float smoothedInputLevel = -60.0f;

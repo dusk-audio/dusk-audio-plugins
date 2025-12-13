@@ -140,6 +140,13 @@ private:
     std::atomic<int> grHistoryWritePos{0};
     int grHistoryUpdateCounter{0};  // Update every N blocks for ~30Hz
 
+    // GR meter delay buffer - delays GR display to match audio output latency
+    // This ensures the meter shows GR synchronized with what you hear (after PDC)
+    // Stores one GR value per block, delay is measured in blocks
+    static constexpr int MAX_GR_DELAY_SAMPLES = 256;  // Enough for ~256 blocks of delay
+    std::array<float, MAX_GR_DELAY_SAMPLES> grDelayBuffer{};
+    std::atomic<int> grDelayWritePos{0};
+    std::atomic<int> grDelaySamples{0};  // Current delay in blocks (set in prepareToPlay)
     // Actual release time for UI visualization (program-dependent release)
     std::atomic<float> actualReleaseTimeMs{100.0f};
 

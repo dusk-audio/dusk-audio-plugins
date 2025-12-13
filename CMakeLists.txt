@@ -31,10 +31,8 @@ add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_UNIVERSAL_COMPRESSOR "Build Universal Compressor plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" ON)
-option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)  # Fixed compilation errors
-#option(BUILD_STUDIO_REVERB "Build Studio Reverb plugin" OFF)  # Removed - replaced with PlateReverb
+option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
-option(BUILD_PLATE_REVERB "Build Plate Reverb plugin" ON)
 option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 
@@ -55,16 +53,8 @@ if(BUILD_TAPE_MACHINE)
     add_subdirectory(plugins/TapeMachine)
 endif()
 
-if(BUILD_STUDIO_REVERB)
-    add_subdirectory(plugins/StudioVerb)
-endif()
-
 if(BUILD_TAPE_ECHO)
     add_subdirectory(plugins/TapeEcho)
-endif()
-
-if(BUILD_PLATE_REVERB)
-    add_subdirectory(plugins/PlateReverb)
 endif()
 
 if(BUILD_DRUMMER_CLONE)

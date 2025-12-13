@@ -3415,13 +3415,20 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     if (transientShaper)
         transientShaper->prepare(sampleRate, numChannels);
 
-    // Calculate maximum lookahead latency (global_lookahead now works for all modes)
-    // Always report max to maintain consistent PDC regardless of parameter settings
-    const float maxLookaheadMs = LookaheadBuffer::MAX_LOOKAHEAD_MS;
-    int maxLookaheadSamples = static_cast<int>(std::ceil((maxLookaheadMs / 1000.0) * sampleRate));
+    // Report only oversampling latency - lookahead is 0 by default and rarely used
+    // This gives much lower latency (4 samples vs 484) for typical use
+    // If user enables lookahead, they accept the additional latency
+    // Note: lookahead latency is handled dynamically based on parameter value
+    setLatencySamples(oversamplingLatency);
 
-    // Total latency = oversampling (max for 4x) + max lookahead
-    setLatencySamples(oversamplingLatency + maxLookaheadSamples);
+    // GR meter delay only needs to match oversampling latency
+    // Lookahead doesn't affect GR timing - the compressor "looks ahead" in the audio
+    // but the GR is calculated at the same time as the output
+    int delayInBlocks = (oversamplingLatency + samplesPerBlock - 1) / samplesPerBlock;
+    grDelayBuffer.fill(0.0f);
+    grDelayWritePos.store(0, std::memory_order_relaxed);
+    // Use release ordering to ensure buffer fill and writePos are visible before delaySamples
+    grDelaySamples.store(juce::jmin(delayInBlocks, MAX_GR_DELAY_SAMPLES - 1), std::memory_order_release);
 
     // Pre-allocate buffers for processBlock to avoid allocation in audio thread
     dryBuffer.setSize(numChannels, samplesPerBlock);
@@ -4186,21 +4193,43 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Use relaxed memory ordering for performance in audio thread
     outputMeter.store(outputDb, std::memory_order_relaxed);
 
-    // Store gain reduction for DAW display (gainReduction already calculated above)
-    grMeter.store(gainReduction, std::memory_order_relaxed);
+    // Store gain reduction through delay buffer to sync meter with audio output
+    // This ensures the GR display matches what you hear after PDC latency compensation
+    // We delay by numSamples each block (processing one block's worth of GR at a time)
+    float delayedGR = gainReduction;  // Default if no delay
+    // Use acquire ordering to synchronize with prepareToPlay's release store
+    int currentDelaySamples = grDelaySamples.load(std::memory_order_acquire);
+    if (currentDelaySamples > 0)
+    {
+        int writePos = grDelayWritePos.load(std::memory_order_relaxed);
 
-    // Update the gain reduction parameter for DAW display
+        // Write current GR to delay buffer
+        grDelayBuffer[static_cast<size_t>(writePos)] = gainReduction;
+
+        // Calculate read position (delayed)
+        int readPos = (writePos - currentDelaySamples + MAX_GR_DELAY_SAMPLES) % MAX_GR_DELAY_SAMPLES;
+        delayedGR = grDelayBuffer[static_cast<size_t>(readPos)];
+
+        // Advance write position by number of samples in this block
+        // (simplified: advance by 1 per block since we store 1 GR value per block)
+        grDelayWritePos.store((writePos + 1) % MAX_GR_DELAY_SAMPLES, std::memory_order_relaxed);
+    }
+
+    grMeter.store(delayedGR, std::memory_order_relaxed);
+
+    // Update the gain reduction parameter for DAW display (uses delayed value)
     if (auto* grParam = parameters.getRawParameterValue("gr_meter"))
-        *grParam = gainReduction;
+        *grParam = delayedGR;
 
     // Update GR history buffer for visualization (approximately 30Hz update rate)
     // At 48kHz with 512 samples/block, we get ~94 blocks/sec, so update every 3 blocks
+    // Uses delayed GR so history graph also syncs with audio
     grHistoryUpdateCounter++;
     if (grHistoryUpdateCounter >= 3)
     {
         grHistoryUpdateCounter = 0;
         int writePos = grHistoryWritePos.load(std::memory_order_relaxed);
-        grHistory[static_cast<size_t>(writePos)] = gainReduction;
+        grHistory[static_cast<size_t>(writePos)] = delayedGR;
         writePos = (writePos + 1) % GR_HISTORY_SIZE;
         grHistoryWritePos.store(writePos, std::memory_order_relaxed);
     }
@@ -4281,18 +4310,12 @@ double UniversalCompressor::getLatencyInSamples() const
 {
     double latency = 0.0;
 
-    // Report latency from oversampler if active
+    // Report latency from oversampler only
+    // Lookahead is 0 by default and rarely changed, so we don't include it
+    // This gives much lower latency for typical use
     if (antiAliasing)
     {
         latency += static_cast<double>(antiAliasing->getLatency());
-    }
-
-    // Always include max lookahead latency for consistent PDC
-    // This matches what we report in prepareToPlay()
-    const float maxLookaheadMs = LookaheadBuffer::MAX_LOOKAHEAD_MS;
-    if (currentSampleRate > 0)
-    {
-        latency += std::ceil((maxLookaheadMs / 1000.0) * currentSampleRate);
     }
 
     return latency;
