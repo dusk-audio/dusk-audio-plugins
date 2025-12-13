@@ -179,13 +179,24 @@ inline std::unique_ptr<juce::AudioFormatReader> createReaderForAudioFile(
     juce::AudioFormatManager& formatManager,
     const juce::File& file)
 {
-    auto inputStream = file.createInputStream();
-    if (inputStream == nullptr)
-        return nullptr;
+    // Check file extension to determine if we need AIFC patching
+    auto ext = file.getFileExtension().toLowerCase();
 
-    // Wrap the stream to patch AIFC compression types if needed
-    auto patchedStream = std::make_unique<AifcPatchedInputStream>(std::move(inputStream));
+    // Only use the AIFC patcher for AIFF/AIFC/SDIR files that might have 'in24' compression
+    if (ext == ".sdir" || ext == ".aiff" || ext == ".aif" || ext == ".aifc")
+    {
+        auto inputStream = file.createInputStream();
+        if (inputStream == nullptr)
+            return nullptr;
 
+        // Wrap the stream to patch AIFC compression types if needed
+        auto patchedStream = std::make_unique<AifcPatchedInputStream>(std::move(inputStream));
+
+        return std::unique_ptr<juce::AudioFormatReader>(
+            formatManager.createReaderFor(std::move(patchedStream)));
+    }
+
+    // For WAV, FLAC, OGG, MP3, etc. - use standard file-based reader
     return std::unique_ptr<juce::AudioFormatReader>(
-        formatManager.createReaderFor(std::move(patchedStream)));
+        formatManager.createReaderFor(file));
 }

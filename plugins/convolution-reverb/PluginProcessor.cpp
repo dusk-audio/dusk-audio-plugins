@@ -38,6 +38,16 @@ ConvolutionReverbProcessor::ConvolutionReverbProcessor()
     eqHighGainParam = parameters.getRawParameterValue("eq_high_gain");
     zeroLatencyParam = parameters.getRawParameterValue("zero_latency");
 
+    // New parameters
+    irOffsetParam = parameters.getRawParameterValue("ir_offset");
+    qualityParam = parameters.getRawParameterValue("quality");
+    volumeCompParam = parameters.getRawParameterValue("volume_comp");
+    filterEnvEnabledParam = parameters.getRawParameterValue("filter_env_enabled");
+    filterEnvInitFreqParam = parameters.getRawParameterValue("filter_env_init_freq");
+    filterEnvEndFreqParam = parameters.getRawParameterValue("filter_env_end_freq");
+    filterEnvAttackParam = parameters.getRawParameterValue("filter_env_attack");
+    stereoModeParam = parameters.getRawParameterValue("stereo_mode");
+
     // Set default IR directory
     customIRDirectory = getDefaultIRDirectory();
 }
@@ -162,6 +172,50 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "zero_latency", "Zero Latency", true));
 
+    // IR Offset (0-100% of IR start position)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "ir_offset", "IR Offset",
+        juce::NormalisableRange<float>(0.0f, 0.5f, 0.01f),  // Max 50% offset
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    // Quality (sample rate divisor)
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "quality", "Quality",
+        juce::StringArray{"Lo-Fi", "Low", "Medium", "High"},
+        2));  // Default: Medium
+
+    // Volume Compensation
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "volume_comp", "Volume Compensation", true));
+
+    // Filter Envelope
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "filter_env_enabled", "Filter Envelope", false));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "filter_env_init_freq", "Filter Init Freq",
+        juce::NormalisableRange<float>(200.0f, 20000.0f, 1.0f, 0.3f),
+        20000.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "filter_env_end_freq", "Filter End Freq",
+        juce::NormalisableRange<float>(200.0f, 20000.0f, 1.0f, 0.3f),
+        2000.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "filter_env_attack", "Filter Attack",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.3f));  // 30% of IR length for filter attack
+
+    // Stereo Mode
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "stereo_mode", "Stereo Mode",
+        juce::StringArray{"True Stereo", "Mono-to-Stereo"},
+        0));  // Default: True Stereo
+
     return {params.begin(), params.end()};
 }
 
@@ -274,6 +328,23 @@ void ConvolutionReverbProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     convolutionEngine.setReverse(reverseParam->load() > 0.5f);
     convolutionEngine.setZeroLatency(zeroLatencyParam->load() > 0.5f);
 
+    // Update new parameters
+    convolutionEngine.setIROffset(irOffsetParam->load());
+    convolutionEngine.setQuality(static_cast<ConvolutionEngine::Quality>(static_cast<int>(qualityParam->load())));
+    convolutionEngine.setVolumeCompensation(volumeCompParam->load() > 0.5f);
+
+    // Update filter envelope
+    convolutionEngine.setFilterEnvelopeEnabled(filterEnvEnabledParam->load() > 0.5f);
+    convolutionEngine.setFilterEnvelopeParams(
+        filterEnvInitFreqParam->load(),
+        filterEnvEndFreqParam->load(),
+        filterEnvAttackParam->load()
+    );
+
+    // Update stereo mode
+    convolutionEngine.setStereoMode(static_cast<ConvolutionEngine::StereoMode>(
+        static_cast<int>(stereoModeParam->load())));
+
     // Update filters
     wetHighpass.setCutoffFrequency(hpfFreq);
     wetLowpass.setCutoffFrequency(lpfFreq);
@@ -319,7 +390,8 @@ void ConvolutionReverbProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     // Process convolution (if IR is loaded)
     if (irLoaded.load())
     {
-        convolutionEngine.processBlock(wetBuffer, envelopeProcessor);
+        // Pass dry buffer for transient detection (filter envelope reset)
+        convolutionEngine.processBlock(wetBuffer, envelopeProcessor, &dryBuffer);
     }
     else
     {

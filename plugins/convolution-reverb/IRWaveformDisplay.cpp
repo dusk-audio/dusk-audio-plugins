@@ -52,6 +52,33 @@ void IRWaveformDisplay::setEnvelopeParameters(float attack, float decay, float l
     }
 }
 
+void IRWaveformDisplay::setIROffset(float offset)
+{
+    if (std::abs(irOffsetParam - offset) > 0.001f)
+    {
+        irOffsetParam = offset;
+        needsRepaint = true;
+    }
+}
+
+void IRWaveformDisplay::setFilterEnvelope(bool enabled, float initFreq, float endFreq, float attack)
+{
+    // Validate frequency parameters for log calculations
+    initFreq = std::max(initFreq, 1.0f);
+    endFreq = std::max(endFreq, 1.0f);
+    
+    if (filterEnvEnabled != enabled ||
+        std::abs(filterEnvInitFreq - initFreq) > 1.0f ||
+        std::abs(filterEnvEndFreq - endFreq) > 1.0f ||
+        std::abs(filterEnvAttack - attack) > 0.001f)
+    {
+        filterEnvEnabled = enabled;
+        filterEnvInitFreq = initFreq;
+        filterEnvEndFreq = endFreq;
+        filterEnvAttack = attack;
+        needsRepaint = true;
+    }
+}
 void IRWaveformDisplay::setReversed(bool isReversed)
 {
     if (reversed != isReversed)
@@ -132,6 +159,25 @@ void IRWaveformDisplay::paint(juce::Graphics& g)
     g.setColour(envelopeColour);
     g.strokePath(envelopePath, juce::PathStrokeType(2.0f));
 
+    // Draw IR offset line (green)
+    if (irOffsetParam > 0.001f)
+    {
+        float offsetX = waveformBounds.getX() + waveformBounds.getWidth() * irOffsetParam;
+        g.setColour(irOffsetColour.withAlpha(0.8f));
+        g.drawVerticalLine(static_cast<int>(offsetX), waveformBounds.getY(), waveformBounds.getBottom());
+
+        // Shade the skipped area
+        g.setColour(irOffsetColour.withAlpha(0.15f));
+        g.fillRect(waveformBounds.getX(), waveformBounds.getY(),
+                   offsetX - waveformBounds.getX(), waveformBounds.getHeight());
+
+        // Label
+        g.setColour(irOffsetColour);
+        g.setFont(juce::Font(9.0f, juce::Font::bold));
+        g.drawText("OFFSET", static_cast<int>(offsetX - 35), static_cast<int>(waveformBounds.getY() + 2),
+                   30, 12, juce::Justification::centredRight);
+    }
+
     // Draw length cutoff line
     if (lengthParam < 1.0f)
     {
@@ -144,6 +190,69 @@ void IRWaveformDisplay::paint(juce::Graphics& g)
         g.fillRect(cutoffX, waveformBounds.getY(),
                    waveformBounds.getRight() - cutoffX, waveformBounds.getHeight());
     }
+
+    // Draw filter envelope visualization (purple line showing filter sweep)
+    if (filterEnvEnabled && hasWaveform)
+    {
+        // Draw filter envelope as a line from top to bottom of waveform
+        // Y position represents cutoff frequency (high = top, low = bottom)
+        auto filterBounds = waveformBounds.reduced(0, 10);
+        int numPoints = static_cast<int>(filterBounds.getWidth());
+
+        juce::Path filterPath;
+        bool firstPoint = true;
+
+        // Map frequency to Y position (log scale)
+        auto freqToY = [&](float freq) -> float
+        {
+            float logMin = std::log(200.0f);
+            float logMax = std::log(20000.0f);
+            float logFreq = std::log(juce::jlimit(200.0f, 20000.0f, freq));
+            float normalized = (logFreq - logMin) / (logMax - logMin);
+            return filterBounds.getBottom() - normalized * filterBounds.getHeight();
+        };
+
+        for (int i = 0; i < numPoints; ++i)
+        {
+            float position = static_cast<float>(i) / static_cast<float>(numPoints);
+            float x = filterBounds.getX() + i;
+
+            // Calculate filter cutoff at this position
+            float cutoff;
+            if (position < filterEnvAttack)
+            {
+                cutoff = filterEnvInitFreq;
+            }
+            else
+            {
+                float sweepPos = (filterEnvAttack < 1.0f)
+                    ? (position - filterEnvAttack) / (1.0f - filterEnvAttack)
+                    : 1.0f;
+                sweepPos = juce::jlimit(0.0f, 1.0f, sweepPos);
+                float logInit = std::log(filterEnvInitFreq);
+                float logEnd = std::log(filterEnvEndFreq);
+                cutoff = std::exp(logInit + sweepPos * (logEnd - logInit));
+            }
+
+            float y = freqToY(cutoff);
+
+            if (firstPoint)
+            {
+                filterPath.startNewSubPath(x, y);
+                firstPoint = false;
+            }
+            else
+            {
+                filterPath.lineTo(x, y);
+            }
+        }
+
+        g.setColour(filterEnvColour.withAlpha(0.8f));
+        g.strokePath(filterPath, juce::PathStrokeType(2.0f));
+        g.setFont(juce::Font(9.0f, juce::Font::bold));
+        auto filterLabelBounds = juce::Rectangle<float>(waveformBounds.getX(), waveformBounds.getY(), 50, 15);
+        g.drawText("FILTER", filterLabelBounds,
+                   juce::Justification::topLeft);    }
 
     // Draw playback position indicator
     if (playbackPosition > 0.0f)

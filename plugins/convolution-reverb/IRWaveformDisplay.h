@@ -27,6 +27,12 @@ public:
     // Update envelope visualization parameters
     void setEnvelopeParameters(float attack, float decay, float length);
 
+    // Set IR offset (0-1)
+    void setIROffset(float offset);
+
+    // Set filter envelope parameters for visualization
+    void setFilterEnvelope(bool enabled, float initFreq, float endFreq, float attack);
+
     // Set whether the IR is reversed
     void setReversed(bool isReversed);
 
@@ -59,7 +65,15 @@ private:
     float attackParam = 0.0f;
     float decayParam = 1.0f;
     float lengthParam = 1.0f;
+    float irOffsetParam = 0.0f;
     bool reversed = false;
+
+    // Filter envelope visualization
+    bool filterEnvEnabled = false;
+    float filterEnvInitFreq = 20000.0f;
+    float filterEnvEndFreq = 2000.0f;
+    float filterEnvAttack = 0.3f;
+    juce::Path filterEnvPath;
 
     // Playback position
     float playbackPosition = 0.0f;
@@ -75,6 +89,8 @@ private:
     juce::Colour backgroundColour{0xff1a1a1a};
     juce::Colour positionColour{0xffff8888};
     juce::Colour textColour{0xff909090};
+    juce::Colour irOffsetColour{0xff88ff88};     // Green for IR offset
+    juce::Colour filterEnvColour{0xffaa66ff};    // Purple for filter envelope
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IRWaveformDisplay)
 };

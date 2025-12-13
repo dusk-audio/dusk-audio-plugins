@@ -70,22 +70,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - 2x internal oversampling for anti-aliased processing
 - **Build Target**: `UniversalCompressor_All`
 
-### 4. **Plate Reverb**
-- **Location**: `plugins/PlateReverb/`
-- **Description**: High-quality plate reverb based on the Dattorro algorithm
-- **Features**:
-  - Dattorro plate reverb algorithm (industry-standard digital plate)
-  - Size control for space modeling
-  - Decay time adjustment
-  - Damping for frequency-dependent decay
-  - Stereo width control
-  - Mix control (dry/wet balance)
-  - Mono-in, stereo-out architecture
-  - Professional dark-themed UI
-- **Build Target**: `PlateReverb_All`
-- **Status**: Replaced the previous Studio 480/StudioVerb plugin
-
-### 5. **Vintage Tape Echo**
+### 4. **Vintage Tape Echo**
 - **Location**: `plugins/TapeEcho/`
 - **Description**: Classic tape echo/delay emulation inspired by vintage hardware
 - **Features**:
@@ -106,7 +91,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 - **Build Target**: `TapeEcho_All`
 - **Product Name**: "Vintage Tape Echo"
 
-### 6. **Harmonic Generator**
+### 5. **Harmonic Generator**
 - **Location**: `plugins/harmonic-generator/`
 - **Description**: Analog-style harmonic saturation processor with hardware emulation
 - **Features**:
@@ -121,7 +106,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - Professional analog-styled UI
 - **Build Target**: `HarmonicGeneratorPlugin_All` (Note: not currently in rebuild_all.sh)
 
-### 7. **DrummerClone**
+### 6. **DrummerClone**
 - **Location**: `plugins/DrummerClone/`
 - **Description**: Logic Pro Drummer-inspired intelligent MIDI drum pattern generator
 - **Features**:
@@ -173,9 +158,9 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 ./docker/build_release.sh compressor   # Universal Compressor
 ./docker/build_release.sh tape         # TapeMachine
 ./docker/build_release.sh echo         # Vintage Tape Echo
-./docker/build_release.sh reverb       # Plate Reverb
 ./docker/build_release.sh drummer      # DrummerClone
 ./docker/build_release.sh harmonic     # Harmonic Generator
+./docker/build_release.sh convolution  # Convolution Reverb
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -196,11 +181,10 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 - FourKEQ_All (4K EQ)
 - TapeMachine_All
 - UniversalCompressor_All
-- PlateReverb_All
 - TapeEcho_All (Vintage Tape Echo)
 - DrummerClone_All
-
-**Note**: The Harmonic Generator is not currently included but can be added to the Docker build script.
+- HarmonicGeneratorPlugin_All
+- ConvolutionReverb_All
 
 ### Local Development Builds (Alternative)
 Only use the local rebuild script if Docker/Podman is unavailable or for quick debugging iterations:
@@ -237,10 +221,10 @@ cmake --build . -j8
 cmake --build . --target FourKEQ_All
 cmake --build . --target TapeMachine_All
 cmake --build . --target UniversalCompressor_All
-cmake --build . --target PlateReverb_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target DrummerClone_All
 cmake --build . --target HarmonicGeneratorPlugin_All
+cmake --build . --target ConvolutionReverb_All
 ```
 
 ### CMake Build Options
@@ -250,8 +234,8 @@ Available in the root CMakeLists.txt:
 - `BUILD_HARMONIC_GENERATOR` (default: ON)
 - `BUILD_TAPE_MACHINE` (default: ON)
 - `BUILD_TAPE_ECHO` (default: ON)
-- `BUILD_PLATE_REVERB` (default: ON)
 - `BUILD_DRUMMER_CLONE` (default: ON)
+- `BUILD_CONVOLUTION_REVERB` (default: ON)
 
 ### Installation Paths
 - **VST3**: `~/.vst3/`
@@ -281,7 +265,7 @@ The build script will automatically detect and use these tools when available.
 ## Recent Changes
 
 ### Plugin Updates
-1. **Removed StudioVerb/Studio 480**: Replaced with Plate Reverb (Dattorro algorithm implementation). StudioVerb directory still exists but is disabled in build configuration.
+1. **Added Convolution Reverb**: IR-based reverb with SDIR support, waveform display, and zero-latency convolution
 2. **Added Vintage Tape Echo**: Full-featured tape echo with 12 modes, spring reverb, and extensive modulation
 3. **Enhanced TapeMachine**:
    - Added shared wow/flutter processing with coherent stereo modulation
@@ -294,6 +278,7 @@ The build script will automatically detect and use these tools when available.
    - Real-time spectral analysis for dynamic response
 5. **Enhanced Universal Compressor**: Added linked gain reduction metering for stereo tracking with thread-safe atomic operations
 6. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
+7. **Removed Plate Reverb and StudioVerb**: Replaced with Convolution Reverb for more flexibility with impulse responses
 
 ### Build System Improvements
 1. **Comprehensive rebuild script**: Color-coded output, progress tracking, error logging
@@ -340,11 +325,10 @@ plugins/
 │   ├── 4k-eq/               # 4K EQ (console-style EQ)
 │   ├── TapeMachine/         # Tape machine emulation
 │   ├── universal-compressor/ # Multi-mode compressor
-│   ├── PlateReverb/         # Dattorro plate reverb
+│   ├── convolution-reverb/  # IR-based convolution reverb
 │   ├── TapeEcho/            # Vintage tape echo
 │   ├── harmonic-generator/  # Harmonic saturation processor
 │   ├── DrummerClone/        # Intelligent MIDI drum generator
-│   ├── StudioVerb/          # (Deprecated - disabled in build)
 │   └── shared/              # Shared utilities
 ├── tests/                    # Plugin validation framework
 │   ├── quick_validate.sh    # Fast plugin check
@@ -367,7 +351,7 @@ plugins/
 - **Filters**: Use `juce::dsp::IIR::Filter` or custom implementations
 - **Level metering**: Use `std::atomic<float>` with relaxed memory ordering for UI updates
 - **Parameter smoothing**: Use `juce::SmoothedValue` or APVTS built-in smoothing
-- **Custom delays**: See PlateReverb's CustomDelays class for efficient implementations
+- **Convolution**: See convolution-reverb's ConvolutionEngine for zero-latency IR processing
 - **Saturation modeling**: See 4K-EQ's SSLSaturation.h for multi-stage analog emulation
 - **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
 - **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations

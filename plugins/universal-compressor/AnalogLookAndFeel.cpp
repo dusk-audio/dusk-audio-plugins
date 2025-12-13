@@ -510,8 +510,9 @@ void AnalogVUMeter::timerCallback()
     float normalizedPos = (displayValue + 20.0f) / 23.0f;  // Normalize to 0-1 range
     float targetNeedle = juce::jlimit(0.0f, 1.0f, normalizedPos);
     
-    // Very light smoothing just for visual appeal, but fast enough to follow the compressor
-    const float needleSmoothing = 0.35f;  // Faster response to match compressor envelope
+    // Minimal smoothing just to prevent jitter - the compressor's envelope already shapes the GR
+    // Pro plugins (UAD, Waves) show near-instantaneous GR so engineers can see true behavior
+    const float needleSmoothing = 0.7f;  // Fast response - ~24ms time constant at 60Hz
     needlePosition += (targetNeedle - needlePosition) * needleSmoothing;
     
     // Peak hold decay
