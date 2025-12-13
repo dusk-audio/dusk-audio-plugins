@@ -179,20 +179,64 @@ private:
 };
 
 //==============================================================================
-// VU Meter wrapper with LEVEL label
+// GR History Graph Component - shows gain reduction over time
+class GRHistoryGraph : public juce::Component
+{
+public:
+    GRHistoryGraph();
+
+    // Update with circular buffer data from processor
+    void updateHistory(const std::array<float, 128>& history, int writePos);
+    void paint(juce::Graphics& g) override;
+
+private:
+    std::array<float, 128> grHistory{};
+    int historyWritePos = 0;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GRHistoryGraph)
+};
+
+//==============================================================================
+// VU Meter wrapper with LEVEL label - now with clickable toggle to GR history
 class VUMeterWithLabel : public juce::Component
 {
 public:
     VUMeterWithLabel();
-    
+
     void setLevel(float newLevel);
+    void setGRHistory(const std::array<float, 128>& history, int writePos);
     void resized() override;
     void paint(juce::Graphics& g) override;
-    
+    void mouseDown(const juce::MouseEvent& e) override;
+
+    // Toggle between VU meter and GR history graph
+    bool isShowingHistory() const { return showHistory; }
+    void setShowHistory(bool show);
+
 private:
     std::unique_ptr<AnalogVUMeter> vuMeter;
-    
+    std::unique_ptr<GRHistoryGraph> grHistoryGraph;
+    bool showHistory = false;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VUMeterWithLabel)
+};
+
+//==============================================================================
+// Release Time Indicator - shows actual program-dependent release time
+class ReleaseTimeIndicator : public juce::Component
+{
+public:
+    ReleaseTimeIndicator();
+
+    void setReleaseTime(float timeMs);  // Set the current actual release time
+    void setTargetRelease(float timeMs); // Set user-set target release time
+    void paint(juce::Graphics& g) override;
+
+private:
+    float currentReleaseMs = 100.0f;
+    float targetReleaseMs = 100.0f;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ReleaseTimeIndicator)
 };
 
 // NOTE: LEDMeter class moved to shared/LEDMeter.h for consistency across all plugins.

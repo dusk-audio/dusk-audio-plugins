@@ -170,8 +170,7 @@ public:
         addAndMakeVisible(adaptiveReleaseButton);
         adaptiveReleaseButton.setButtonText("Adaptive Release");
 
-        addAndMakeVisible(sidechainListenButton);
-        sidechainListenButton.setButtonText("SC Listen");
+        // SC Listen is now a global control in the header for all modes
 
         // Sidechain EQ button (opens popup)
         addAndMakeVisible(sidechainEQButton);
@@ -200,8 +199,6 @@ public:
             parameters, "digital_output", outputSlider);
         adaptiveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             parameters, "digital_adaptive", adaptiveReleaseButton);
-        listenAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-            parameters, "digital_sidechain_listen", sidechainListenButton);
     }
 
     void setScaleFactor(float scale)
@@ -261,10 +258,6 @@ public:
         adaptiveReleaseButton.setBounds(buttonCol1.getX() + 5, buttonY,
                                         buttonCol1.getWidth() - 10, buttonHeight);
 
-        auto buttonCol2 = bottomRow;
-        sidechainListenButton.setBounds(buttonCol2.getX() + 5, buttonY,
-                                        buttonCol2.getWidth() - 10, buttonHeight);
-
         // Hide sidechain EQ button for now (not implemented)
         sidechainEQButton.setVisible(false);
     }
@@ -283,7 +276,7 @@ private:
     juce::Slider attackSlider, releaseSlider, lookaheadSlider;
     juce::Slider mixSlider, outputSlider;
 
-    juce::ToggleButton adaptiveReleaseButton, sidechainListenButton;
+    juce::ToggleButton adaptiveReleaseButton;
     juce::TextButton sidechainEQButton;
 
     std::vector<std::unique_ptr<juce::Label>> labels;
@@ -298,7 +291,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> adaptiveAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> listenAttachment;
 
     void createLabels()
     {
