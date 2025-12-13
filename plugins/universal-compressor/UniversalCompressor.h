@@ -16,6 +16,10 @@ enum class CompressorMode : int
     Digital = 6     // Transparent digital compressor
 };
 
+// Number of compressor modes for parameter normalization
+constexpr int kNumCompressorModes = 7;
+constexpr int kMaxCompressorModeIndex = static_cast<int>(CompressorMode::Digital);  // 6
+
 // Distortion type for output saturation
 enum class DistortionType : int
 {
@@ -46,11 +50,23 @@ public:
     double getTailLengthSeconds() const override;
     double getLatencyInSamples() const;
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return "Default"; }
+    // Bus layout support for sidechain
+    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
+
+    // Factory presets
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram(int index) override;
+    const juce::String getProgramName(int index) override;
     void changeProgramName(int, const juce::String&) override {}
+
+    // Preset categories for UI
+    struct PresetInfo {
+        juce::String name;
+        juce::String category;
+        CompressorMode mode;
+    };
+    static const std::vector<PresetInfo>& getPresetList();
 
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
@@ -71,7 +87,10 @@ public:
     static constexpr int GR_HISTORY_SIZE = 128;
     const std::array<float, GR_HISTORY_SIZE>& getGRHistory() const { return grHistory; }
     int getGRHistoryWritePos() const { return grHistoryWritePos.load(std::memory_order_relaxed); }
-    
+
+    // Actual release time for program-dependent release visualization (in ms)
+    float getActualReleaseTime() const { return actualReleaseTimeMs.load(std::memory_order_relaxed); }
+
     // Parameter access
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
     CompressorMode getCurrentMode() const;
@@ -121,6 +140,9 @@ private:
     std::atomic<int> grHistoryWritePos{0};
     int grHistoryUpdateCounter{0};  // Update every N blocks for ~30Hz
 
+    // Actual release time for UI visualization (program-dependent release)
+    std::atomic<float> actualReleaseTimeMs{100.0f};
+
     // Stereo linking (thread-safe for UI/audio thread access)
     // Initialized in constructor via .store() since atomic arrays can't use copy initialization
     std::atomic<float> linkedGainReduction[2];
@@ -129,6 +151,9 @@ private:
     // Processing state
     double currentSampleRate{0.0};  // Set by prepareToPlay from DAW
     int currentBlockSize{0};  // Set by prepareToPlay from DAW
+
+    // Current preset index
+    int currentPresetIndex = 0;
 
     // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};

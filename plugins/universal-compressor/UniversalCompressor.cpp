@@ -1,5 +1,10 @@
 #include "UniversalCompressor.h"
 #include "EnhancedCompressorEditor.h"
+#include "HardwareEmulation/HardwareMeasurements.h"
+#include "HardwareEmulation/WaveshaperCurves.h"
+#include "HardwareEmulation/TransformerEmulation.h"
+#include "HardwareEmulation/TubeEmulation.h"
+#include "HardwareEmulation/ConvolutionEngine.h"
 #include <cmath>
 
 // SIMD helper utilities for vectorizable operations
@@ -1247,7 +1252,7 @@ public:
             // Program-dependent release tracking
             detector.prevInput = 0.0f;
         }
-        
+
         // PROFESSIONAL FIX: Always create 2x oversampler for saturation
         // This ensures harmonics are consistent regardless of user setting
         saturationOversampler = std::make_unique<juce::dsp::Oversampling<float>>(
@@ -1257,30 +1262,54 @@ public:
             juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR
         );
         saturationOversampler->initProcessing(1); // Single sample processing
+
+        // Hardware emulation components
+        // Input transformer (UTC A-10 style)
+        inputTransformer.prepare(sampleRate, numChannels);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().inputTransformer);
+        inputTransformer.setEnabled(true);
+
+        // Output transformer
+        outputTransformer.prepare(sampleRate, numChannels);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().outputTransformer);
+        outputTransformer.setEnabled(true);
+
+        // 12AX7 tube stage (output amplifier)
+        tubeStage.prepare(sampleRate, numChannels);
+        tubeStage.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
+        tubeStage.setDrive(0.3f);  // Moderate drive for LA-2A warmth
+
+        // Short convolution for transformer coloration
+        convolution.prepare(sampleRate);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::LA2A);
     }
     
     float process(float input, int channel, float peakReduction, float gain, bool limitMode, bool oversample = false)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
-        
+
         // Safety check for sample rate
         if (sampleRate <= 0.0)
             return input;
-        
+
         // Validate parameters
         peakReduction = juce::jlimit(0.0f, 100.0f, peakReduction);
         gain = juce::jlimit(-40.0f, 40.0f, gain);
-        
+
         #ifdef DEBUG
         jassert(!std::isnan(input) && !std::isinf(input));
         jassert(sampleRate > 0.0);
         #endif
-            
+
         auto& detector = detectors[channel];
-        
+
+        // Hardware emulation: Input transformer (UTC A-10 style)
+        // Adds subtle saturation and frequency-dependent coloration
+        float transformedInput = inputTransformer.processSample(input, channel);
+
         // Apply gain reduction (feedback topology)
-        float compressed = input * detector.envelope;
+        float compressed = transformedInput * detector.envelope;
         
         // Opto feedback topology: detection from output
         // In Compress mode: sidechain = output
@@ -1501,95 +1530,39 @@ public:
             detector.holdCounter *= 0.999f;
         }
         
-        // Opto Tube output stage - 12AX7 tube followed by 12AQ5 power tube
-        // The Opto has a characteristic warm tube sound with prominent 2nd harmonic
+        // Hardware emulation: Output stage processing chain
+        // LA-2A: Input -> T4B Cell -> 12AX7 Tube -> 12BH7 Output -> Transformer -> Convolution
+
         float makeupGain = juce::Decibels::decibelsToGain(gain);
         float driven = compressed * makeupGain;
-        
-        // Opto tube harmonics - generate based on whether oversampling is active
-        // When oversampling is ON, we're at 2x rate so harmonics won't alias
-        // When oversampling is OFF, we limit harmonics to prevent aliasing
 
-        float saturated = driven;
-        float absDriven = std::abs(driven);
+        // 1. Apply LA-2A tube waveshaper curve (lookup table based)
+        // This models the LA-2A's characteristic asymmetric tube saturation
+        float saturated = HardwareEmulation::getWaveshaperCurves().processWithDrive(
+            driven, HardwareEmulation::WaveshaperCurves::CurveType::LA2A_Tube, 0.4f);
 
-        if (absDriven > 0.001f)  // Lower threshold for harmonic generation
-        {
-            float sign = (driven < 0.0f) ? -1.0f : 1.0f;
-            float levelDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, absDriven));
-            
-            // Calculate harmonic levels
-            float h2_level = 0.0f;
-            float h3_level = 0.0f;
-            float h4_level = 0.0f;
-            
-            // Opto has more harmonic content than FET
-            if (levelDb > -40.0f)  // Add harmonics above -40dB
-            {
-                // 2nd harmonic - Opto manual spec: < 0.5% THD (0.25% typical) at ±10dBm
-                float thd_target = levelDb > 6.0f ? 0.005f : 0.0025f;  // 0.5% max / 0.25% typical
-                float h2_scale = thd_target * 0.85f;
-                h2_level = absDriven * absDriven * h2_scale;
+        // 2. 12BH7 tube stage processing (output amplifier)
+        // The LA-2A uses a 12BH7 as the output driver - warm with moderate gain
+        saturated = tubeStage.processSample(saturated, channel);
 
-                // 3rd harmonic - Opto tubes produce some odd harmonics
-                float h3_scale = thd_target * 0.12f;
-                h3_level = absDriven * absDriven * absDriven * h3_scale;
+        // 3. Output transformer processing
+        // UTC output transformer adds characteristic LF saturation and HF rolloff
+        saturated = outputTransformer.processSample(saturated, channel);
 
-                // 4th harmonic - minimal in opto
-                // Only add if we're oversampling (to prevent aliasing)
-                if (oversample)
-                {
-                    float h4_scale = thd_target * 0.03f;
-                    h4_level = absDriven * absDriven * absDriven * absDriven * h4_scale;
-                }
-            }
-            
-            // Apply harmonics
-            saturated = driven;
-            
-            // Add 2nd harmonic (even) - main tube warmth
-            if (h2_level > 0.0f)
-            {
-                float squared = driven * driven * sign;
-                saturated += squared * h2_level;
-            }
-            
-            // Add 3rd harmonic (odd) - subtle tube character
-            if (h3_level > 0.0f)
-            {
-                float cubed = driven * driven * driven;
-                saturated += cubed * h3_level;
-            }
-            
-            // Add 4th harmonic (even) - extra warmth (only if oversampled)
-            if (h4_level > 0.0f)
-            {
-                float pow4 = driven * driven * driven * driven * sign;
-                saturated += pow4 * h4_level;
-            }
-            
-            // Soft saturation for tube compression at high levels
-            if (absInput > 0.8f)
-            {
-                float excess = (absInput - 0.8f) / 0.2f;
-                float tubeSat = 0.8f + 0.2f * std::tanh(excess * 0.7f);
-                saturated = sign * tubeSat * (saturated / absInput);
-            }
-        }
-        
-        // Opto output transformer - gentle high-frequency rolloff
-        // Characteristic warmth from transformer
-        // Use fixed filtering regardless of oversampling to maintain consistent harmonics
-        float transformerFreq = 20000.0f;  // Fixed frequency for consistent harmonics
-        // Always use base sample rate for consistent filtering
+        // 4. Short convolution for transformer cabinet coloration
+        // Adds the subtle IR-based coloration measured from real LA-2A units
+        saturated = convolution.processSample(saturated);
+
+        // Anti-aliasing lowpass to clean up any residual harmonics
+        float transformerFreq = 20000.0f;
         float filterCoeff = std::exp(-2.0f * 3.14159f * transformerFreq / static_cast<float>(sampleRate));
-        
+
         // Check for NaN/Inf and reset if needed
         if (std::isnan(detector.saturationLowpass) || std::isinf(detector.saturationLowpass))
             detector.saturationLowpass = 0.0f;
-            
+
         detector.saturationLowpass = saturated * (1.0f - filterCoeff * 0.05f) + detector.saturationLowpass * filterCoeff * 0.05f;
-        
+
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, detector.saturationLowpass);
     }
     
@@ -1631,10 +1604,16 @@ private:
     
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
-    
+
     // PROFESSIONAL FIX: Dedicated oversampler for saturation stage
     // This ALWAYS runs at 2x to ensure consistent harmonics
     std::unique_ptr<juce::dsp::Oversampling<float>> saturationOversampler;
+
+    // Hardware emulation components (LA-2A style)
+    HardwareEmulation::TransformerEmulation inputTransformer;
+    HardwareEmulation::TransformerEmulation outputTransformer;
+    HardwareEmulation::TubeEmulation tubeStage;
+    HardwareEmulation::ShortConvolution convolution;
 };
 
 // Vintage FET Compressor
@@ -1651,6 +1630,21 @@ public:
             detector.prevOutput = 0.0f;
             detector.previousLevel = 0.0f;
         }
+
+        // Hardware emulation components (1176 style)
+        // Input transformer (Cinemag/Jensen style)
+        inputTransformer.prepare(sampleRate, numChannels);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFET1176().inputTransformer);
+        inputTransformer.setEnabled(true);
+
+        // Output transformer
+        outputTransformer.prepare(sampleRate, numChannels);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFET1176().outputTransformer);
+        outputTransformer.setEnabled(true);
+
+        // Short convolution for 1176 transformer coloration
+        convolution.prepare(sampleRate);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET_1176);
     }
     
     float process(float input, int channel, float inputGainDb, float outputGainDb,
@@ -1666,12 +1660,11 @@ public:
             return input;
             
         auto& detector = detectors[channel];
-        
-        // FET Input transformer emulation
-        // The FET uses the full input signal, not highpass filtered
-        // The transformer provides some low-frequency coupling but doesn't remove DC entirely
-        float filteredInput = input;
-        
+
+        // Hardware emulation: Input transformer (Cinemag/Jensen style)
+        // Adds subtle saturation and frequency-dependent coloration
+        float transformedInput = inputTransformer.processSample(input, channel);
+
         // FET Input control - AUTHENTIC BEHAVIOR
         // The FET has a FIXED threshold that the input knob drives signal into
         // More input = more compression (not threshold change)
@@ -1685,7 +1678,7 @@ public:
         // Apply FULL input gain - this is how you drive into compression
         // Input knob range: -20 to +40dB
         float inputGainLin = juce::Decibels::decibelsToGain(inputGainDb);
-        float amplifiedInput = filteredInput * inputGainLin;
+        float amplifiedInput = transformedInput * inputGainLin;
         
         // Ratio mapping: 4:1, 8:1, 12:1, 20:1, all-buttons mode
         // All-buttons mode: Hardware measurements show >100:1 effective ratio
@@ -1862,80 +1855,28 @@ public:
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
         
-        // FET Class A FET amplifier stage
-        // The FET is VERY clean at -18dB input level
-        // UAD reference shows THD at -65dB with 2nd harmonic at -100dB
-        // Apply the envelope to get the output signal
+        // Hardware emulation: FET Class A amplifier stage with waveshaper
+        // The 1176 uses Class A FET gain stages with characteristic odd-harmonic distortion
         float output = compressed;
-        
-        // The FET is an extremely clean compressor with minimal harmonics
-        // At -18dB input: 2nd harmonic at -100dB, 3rd at -110dB
-        float absOutput = std::abs(output);
-        
-        // FET non-linearity and harmonics
-        // All-buttons mode: 3x more harmonic distortion
-        if (reduction > 3.0f && absOutput > 0.001f)
-        {
-            float sign = (output < 0.0f) ? -1.0f : 1.0f;
 
-            // All-buttons mode increases harmonic content significantly
-            float allButtonsMultiplier = (ratioIndex == 4) ? 3.0f : 1.0f;
+        // 1. Apply FET waveshaper curve (lookup table based)
+        // All-buttons mode gets more drive for the aggressive distortion character
+        float allButtonsMultiplier = (ratioIndex == 4) ? 3.0f : 1.0f;
+        float grAmount = juce::jlimit(0.0f, 1.0f, reduction / 20.0f);
+        float driveAmount = 0.3f + (grAmount * 0.4f * allButtonsMultiplier);
 
-            // Dynamic harmonics: scale with gain reduction for authentic FET behavior
-            // More compression = more harmonic distortion (FET characteristic)
-            float grAmount = juce::jlimit(0.0f, 1.0f, reduction / 20.0f); // 0-1 scaling
+        output = HardwareEmulation::getWaveshaperCurves().processWithDrive(
+            output, HardwareEmulation::WaveshaperCurves::CurveType::FET_1176, driveAmount);
 
-            // Tanh-based FET saturation for authentic character
-            // Saturation increases dynamically with gain reduction
-            float saturationAmount = grAmount * allButtonsMultiplier;
-            float tanhDrive = 1.0f + saturationAmount * 0.5f; // Gentle overdrive
-            float distorted = std::tanh(output * tanhDrive) / tanhDrive;
+        // 2. Output transformer processing
+        // 1176 has Cinemag/Jensen transformers with subtle coloration
+        output = outputTransformer.processSample(output, channel);
 
-            // Blend original with distorted - blend amount scales with GR
-            float blendAmount = 0.2f + (grAmount * 0.3f); // 20-50% blend based on GR
-            output = output * (1.0f - blendAmount) + distorted * blendAmount;
+        // 3. Short convolution for transformer cabinet coloration
+        output = convolution.processSample(output);
 
-            // Dynamic harmonic generation - scales with gain reduction amount
-            // Light compression: minimal harmonics (~0.2x)
-            // Heavy compression: full harmonics (1.0x)
-            float harmonicScale = 0.2f + (grAmount * 0.8f); // 0.2 to 1.0 range
-
-            // FET manual spec: < 0.5% THD from 50 Hz to 15 kHz with limiting
-            // Target ~0.45% total at maximum compression for authentic character
-
-            // 2nd harmonic: dominant harmonic in FET compressors
-            // Scales more aggressively with GR for dynamic character
-            float h2_scale = 0.0010f * allButtonsMultiplier * harmonicScale;  // Increased from 0.00063f
-            float h2 = output * output * h2_scale;
-
-            // 3rd harmonic (odd-order for FET character)
-            // Odd harmonics scale even more with GR (squared relationship)
-            float h3_scale = 0.00075f * allButtonsMultiplier * (harmonicScale * harmonicScale);  // Increased from 0.0005f
-            float h3 = output * output * output * h3_scale;
-
-            // 5th harmonic (additional odd-order for FET)
-            // Most aggressive scaling for aggressive compression
-            float h5_scale = 0.00015f * allButtonsMultiplier * (grAmount * grAmount);  // Increased from 0.0001f
-            float h5 = std::pow(output, 5) * h5_scale;
-
-            output += h2 * sign + h3 + h5;
-        }
-        
-        // Hard limiting if we're clipping
-        if (absOutput > 1.5f)
-        {
-            float sign = (output < 0.0f) ? -1.0f : 1.0f;
-            output = sign * (1.5f + std::tanh((absOutput - 1.5f) * 0.2f) * 0.5f);
-        }
-        
-        // Harmonic compensation removed - was causing artifacts
-        
-        // Output transformer simulation - very subtle
-        // FET has minimal transformer coloration
-        // Just a gentle rolloff above 20kHz for anti-aliasing
-        // Use fixed filtering regardless of oversampling to maintain consistent harmonics
+        // Anti-aliasing lowpass filter
         float transformerFreq = 20000.0f;
-        // Always use base sample rate for consistent filtering
         float transformerCoeff = std::exp(-2.0f * 3.14159f * transformerFreq / static_cast<float>(sampleRate));
         float filtered = output * (1.0f - transformerCoeff * 0.05f) + detector.prevOutput * transformerCoeff * 0.05f;
         detector.prevOutput = filtered;
@@ -1967,9 +1908,14 @@ private:
         float previousLevel = 0.0f; // For program-dependent behavior
         float previousGR = 0.0f;    // For envelope hysteresis
     };
-    
+
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
+
+    // Hardware emulation components (1176 style)
+    HardwareEmulation::TransformerEmulation inputTransformer;
+    HardwareEmulation::TransformerEmulation outputTransformer;
+    HardwareEmulation::ShortConvolution convolution;
 };
 
 // Classic VCA Compressor
@@ -2316,11 +2262,11 @@ public:
     {
         if (sampleRate <= 0.0 || numChannels <= 0 || blockSize <= 0)
             return;
-            
+
         this->sampleRate = sampleRate;
         detectors.clear();
         detectors.resize(numChannels);
-        
+
         // Initialize sidechain filters with actual block size
         juce::dsp::ProcessSpec spec{sampleRate, static_cast<juce::uint32>(blockSize), static_cast<juce::uint32>(1)};
         for (int ch = 0; ch < numChannels; ++ch)
@@ -2331,23 +2277,38 @@ public:
             detector.previousLevel = 0.0f;
             detector.hpState = 0.0f;
             detector.prevInput = 0.0f;
-            
+
             // Create the filter chain
             detector.sidechainFilter = std::make_unique<juce::dsp::ProcessorChain<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Filter<float>>>();
-            
+
             // Bus Compressor sidechain filter
             // Highpass at 60Hz to prevent pumping from low frequencies
-            detector.sidechainFilter->get<0>().coefficients = 
+            detector.sidechainFilter->get<0>().coefficients =
                 juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 60.0f, 0.707f);
             // No lowpass in original Bus - full bandwidth
-            detector.sidechainFilter->get<1>().coefficients = 
+            detector.sidechainFilter->get<1>().coefficients =
                 juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 20000.0f, 0.707f);
-            
+
             // Then prepare and set bypass states
             detector.sidechainFilter->prepare(spec);
             detector.sidechainFilter->setBypassed<0>(false);
             detector.sidechainFilter->setBypassed<1>(false);
         }
+
+        // Hardware emulation components (SSL Bus Compressor style)
+        // Input transformer (Marinair-style)
+        inputTransformer.prepare(sampleRate, numChannels);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getSSLBus().inputTransformer);
+        inputTransformer.setEnabled(true);
+
+        // Output transformer
+        outputTransformer.prepare(sampleRate, numChannels);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getSSLBus().outputTransformer);
+        outputTransformer.setEnabled(true);
+
+        // Short convolution for SSL console coloration
+        convolution.prepare(sampleRate);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::SSL_Console);
     }
     
     float process(float input, int channel, float threshold, float ratio,
@@ -2361,13 +2322,17 @@ public:
             return input;
             
         auto& detector = detectors[channel];
-        
+
+        // Hardware emulation: Input transformer (Marinair-style)
+        // Adds subtle saturation and frequency-dependent coloration
+        float transformedInput = inputTransformer.processSample(input, channel);
+
         // Bus Compressor quad VCA topology
         // Uses parallel detection path with feed-forward design
-        
+
         // Step 2: Apply gain reduction to main signal
         // Use simple inline filter instead of complex ProcessorChain for per-sample processing
-        float sidechainInput = input;
+        float sidechainInput = transformedInput;
         if (detector.sidechainFilter)
         {
             // Simple 60Hz highpass filter (much faster than full ProcessorChain)
@@ -2462,80 +2427,26 @@ public:
             detector.envelope = 1.0f;
 
         // Apply the gain reduction envelope to the input signal
-        float compressed = input * detector.envelope;
-        
-        // Bus Compressor Quad VCA characteristics
-        // Hardware-accurate THD: 0.01% @ 0dB GR, 0.05-0.1% @ 12dB GR
+        float compressed = transformedInput * detector.envelope;
+
+        // Hardware emulation: SSL Bus Compressor quad VCA processing
         float processed = compressed;
-        float absLevel = std::abs(processed);
 
-        // Calculate level for harmonic generation
-        float levelDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, absLevel));
+        // 1. Apply SSL Bus waveshaper curve (lookup table based)
+        // Drive amount scales with gain reduction for authentic character
+        float grAmount = juce::jlimit(0.0f, 1.0f, reduction / 12.0f);
+        float driveAmount = 0.2f + (grAmount * 0.3f);
 
-        // Bus compressor harmonics - quad VCA coloration increases with compression
-        if (absLevel > 0.01f)
-        {
-            float sign = (processed < 0.0f) ? -1.0f : 1.0f;
+        processed = HardwareEmulation::getWaveshaperCurves().processWithDrive(
+            processed, HardwareEmulation::WaveshaperCurves::CurveType::SSL_Bus, driveAmount);
 
-            // Bus VCA THD specification:
-            // No compression (0dB GR): 0.01% THD (-80dB)
-            // Moderate compression (6dB GR): 0.05% THD (-66dB)
-            // Heavy compression (12dB GR): 0.1% THD (-60dB)
+        // 2. Output transformer processing
+        // SSL console transformers add characteristic punch and glue
+        processed = outputTransformer.processSample(processed, channel);
 
-            // Calculate THD percentage based on gain reduction
-            float thdPercent;
-            if (reduction < 0.1f)
-                thdPercent = 0.01f;  // 0.01% at unity gain
-            else if (reduction <= 6.0f)
-                // Linear interpolation from 0.01% to 0.05%
-                thdPercent = 0.01f + (reduction / 6.0f) * 0.04f;
-            else if (reduction <= 12.0f)
-                // Linear interpolation from 0.05% to 0.1%
-                thdPercent = 0.05f + ((reduction - 6.0f) / 6.0f) * 0.05f;
-            else
-                thdPercent = 0.1f;  // Cap at 0.1% for heavy compression
+        // 3. Short convolution for SSL console coloration
+        processed = convolution.processSample(processed);
 
-            // Convert THD percentage to linear scale
-            float thdLinear = thdPercent / 100.0f;
-
-            // Bus quad VCA: primarily 2nd harmonic (even), minimal odd harmonics
-            // 2nd harmonic: ~85% of total THD
-            // 3rd harmonic: ~15% of total THD
-            float h2_scale = thdLinear * 0.85f;
-            float h3_scale = thdLinear * 0.15f;
-
-            float h2_level = absLevel * absLevel * h2_scale;
-            float h3_level = absLevel * absLevel * absLevel * h3_scale;
-            
-            // Apply harmonics using waveshaping for consistency
-            processed = compressed;
-            
-            // Add 2nd harmonic for Bus warmth
-            if (h2_level > 0.0f)
-            {
-                // Use waveshaping: x² preserves phase relationship
-                float squared = compressed * compressed * sign;
-                processed += squared * h2_level;
-            }
-            
-            // Add 3rd harmonic for "bite"
-            if (h3_level > 0.0f)
-            {
-                // Use waveshaping: x³ for odd harmonic
-                float cubed = compressed * compressed * compressed;
-                processed += cubed * h3_level;
-            }
-            
-            // Bus console saturation - very gentle
-            if (absLevel > 0.95f)
-            {
-                // Bus console output stage saturation
-                float excess = (absLevel - 0.95f) / 0.05f;
-                float sslSat = 0.95f + 0.05f * std::tanh(excess * 0.7f);
-                processed = sign * sslSat * (processed / absLevel);
-            }
-        }
-        
         // Apply makeup gain
         float compressed_output = processed * juce::Decibels::decibelsToGain(makeupGain);
 
@@ -2565,9 +2476,14 @@ private:
         float previousGR = 0.0f;    // For envelope hysteresis
         std::unique_ptr<juce::dsp::ProcessorChain<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Filter<float>>> sidechainFilter;
     };
-    
+
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
+
+    // Hardware emulation components (SSL Bus Compressor style)
+    HardwareEmulation::TransformerEmulation inputTransformer;
+    HardwareEmulation::TransformerEmulation outputTransformer;
+    HardwareEmulation::ShortConvolution convolution;
 };
 
 // Studio FET Compressor (cleaner than Vintage FET)
@@ -3226,8 +3142,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "digital_adaptive", "Adaptive Release", false));  // Program-dependent release
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        "digital_sidechain_listen", "Sidechain Listen", false));  // Monitor sidechain signal
+    // SC Listen is now a global control (global_sidechain_listen) in header for all modes
     }
     catch (const std::exception& e) {
         DBG("Failed to create parameter layout: " << e.what());
@@ -3713,8 +3628,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p7 = parameters.getRawParameterValue("digital_mix");
             auto* p8 = parameters.getRawParameterValue("digital_output");
             auto* p9 = parameters.getRawParameterValue("digital_adaptive");
-            auto* p10 = parameters.getRawParameterValue("digital_sidechain_listen");
-            if (p1 && p2 && p3 && p4 && p5 && p6 && p7 && p8 && p9 && p10) {
+            if (p1 && p2 && p3 && p4 && p5 && p6 && p7 && p8 && p9) {
                 cachedParams[0] = *p1;  // threshold
                 cachedParams[1] = *p2;  // ratio
                 cachedParams[2] = *p3;  // knee
@@ -3724,7 +3638,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 cachedParams[6] = *p7;  // mix
                 cachedParams[7] = *p8;  // output
                 cachedParams[8] = *p9;  // adaptive release (bool as float)
-                cachedParams[9] = *p10; // sidechain listen (bool as float)
+                // SC Listen handled globally via global_sidechain_listen parameter
             } else validParams = false;
             break;
         }
@@ -3783,6 +3697,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     int oversamplingFactor = (oversamplingParam != nullptr) ? static_cast<int>(oversamplingParam->load()) : 0;
 
     // Update oversampling factor (0 = 2x, 1 = 4x)
+    // User controls this via dropdown - 4x recommended for vintage modes with heavy saturation
     if (antiAliasing)
         antiAliasing->setOversamplingFactor(oversamplingFactor);
 
@@ -4050,26 +3965,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     }
                     break;
                 case CompressorMode::Digital:
-                {
-                    bool sidechainListen = cachedParams[9] > 0.5f;
-                    // Optimized: use pre-interpolated sidechain with direct pointer access
+                    // SC Listen handled globally before compression - just process normally
+                    // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
                     for (int i = 0; i < osNumSamples; ++i)
                     {
-                        // Sidechain listen mode - output sidechain signal instead of processed audio
-                        if (sidechainListen)
-                        {
-                            data[i] = scData[i];
-                        }
-                        else
-                        {
-                            // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
-                            data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
-                                                                 cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
-                                                                 cachedParams[7], cachedParams[8] > 0.5f, scData[i]);
-                        }
+                        data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
+                                                             cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                             cachedParams[7], cachedParams[8] > 0.5f, scData[i]);
                     }
                     break;
-                }
             }
         }
 
@@ -4133,8 +4037,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     }
                     break;
                 case CompressorMode::Digital:
-                {
-                    bool sidechainListen = cachedParams[9] > 0.5f;
+                    // SC Listen handled globally before compression - just process normally
                     for (int i = 0; i < numSamples; ++i)
                     {
                         float scSignal;
@@ -4143,21 +4046,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
 
-                        // Sidechain listen mode - output sidechain signal instead of processed audio
-                        if (sidechainListen)
-                        {
-                            data[i] = scSignal;
-                        }
-                        else
-                        {
-                            // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
-                            data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
-                                                                 cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
-                                                                 cachedParams[7], cachedParams[8] > 0.5f, scSignal) * compensationGain;
-                        }
+                        // Digital: threshold, ratio, knee, attack, release, lookahead, mix, output, adaptive
+                        data[i] = digitalCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2],
+                                                             cachedParams[3], cachedParams[4], cachedParams[5], cachedParams[6],
+                                                             cachedParams[7], cachedParams[8] > 0.5f, scSignal) * compensationGain;
                     }
                     break;
-                }
             }
         }
     }
@@ -4218,15 +4112,17 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     float gainReduction = juce::jmin(grLeft, grRight);
 
     // Apply auto-makeup gain if enabled
-    // Auto-makeup compensates for the average gain reduction to maintain perceived loudness
+    // Auto-makeup compensates for the gain reduction to maintain perceived loudness
     // Uses smoothed gain to avoid audible distortion from abrupt level changes
     {
         float targetMakeupGain = 1.0f;
         if (autoMakeup && gainReduction < -0.5f)
         {
-            // Apply ~50% of the gain reduction as makeup to avoid over-compensation
-            targetMakeupGain = juce::Decibels::decibelsToGain(-gainReduction * 0.5f);
-            targetMakeupGain = juce::jlimit(1.0f, 4.0f, targetMakeupGain);  // Limit to +12dB max makeup
+            // Apply 100% of the gain reduction as makeup for accurate level compensation
+            // The GR value represents actual gain reduction applied by the compressor
+            // Full compensation maintains consistent output levels
+            targetMakeupGain = juce::Decibels::decibelsToGain(-gainReduction);
+            targetMakeupGain = juce::jlimit(1.0f, 16.0f, targetMakeupGain);  // Limit to +24dB max makeup
         }
 
         // Update target and apply smoothed gain sample-by-sample
@@ -4408,6 +4304,29 @@ double UniversalCompressor::getTailLengthSeconds() const
     return currentSampleRate > 0 ? getLatencyInSamples() / currentSampleRate : 0.0;
 }
 
+bool UniversalCompressor::isBusesLayoutSupported(const BusesLayout& layouts) const
+{
+    // Main input must be mono or stereo
+    const auto& mainInput = layouts.getMainInputChannelSet();
+    if (mainInput.isDisabled() || mainInput.size() > 2)
+        return false;
+
+    // Output must match main input
+    const auto& mainOutput = layouts.getMainOutputChannelSet();
+    if (mainOutput != mainInput)
+        return false;
+
+    // Sidechain input is optional, but if enabled must be mono or stereo
+    if (layouts.inputBuses.size() > 1)
+    {
+        const auto& sidechain = layouts.getChannelSet(true, 1);
+        if (!sidechain.isDisabled() && sidechain.size() > 2)
+            return false;
+    }
+
+    return true;
+}
+
 void UniversalCompressor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
@@ -4418,10 +4337,229 @@ void UniversalCompressor::getStateInformation(juce::MemoryBlock& destData)
 void UniversalCompressor::setStateInformation(const void* data, int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
-    
+
     if (xmlState.get() != nullptr)
         if (xmlState->hasTagName(parameters.state.getType()))
             parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+}
+
+//==============================================================================
+// Factory Presets
+//==============================================================================
+namespace {
+    // Preset parameter indices and their expected ranges per mode:
+    // Index 0: Threshold/Peak Reduction
+    //   - Opto: peak_reduction (0-100%)
+    //   - FET/StudioFET: input (-20 to +40 dB)
+    //   - VCA: threshold (-38 to +12 dB)
+    //   - Bus: threshold (-30 to +15 dB)
+    //   - StudioVCA: threshold (-40 to +20 dB)
+    //   - Digital: threshold (-60 to 0 dB)
+    // Index 1: Ratio (mode-dependent, 0-4 for FET ratio index, 0-120 for VCA, etc.)
+    // Index 2: Attack (mode-dependent time in ms or index)
+    // Index 3: Release (mode-dependent time in ms or index)
+    // Index 4: Makeup/Output Gain (-20 to +20 dB typical)
+    // Index 5: Mix (0-100%)
+    constexpr int kPresetParamsCount = 6;
+    constexpr int kPresetIdxThreshold = 0;
+    constexpr int kPresetIdxRatio = 1;
+    constexpr int kPresetIdxAttack = 2;
+    constexpr int kPresetIdxRelease = 3;
+    constexpr int kPresetIdxOutput = 4;
+    constexpr int kPresetIdxMix = 5;
+
+    struct FactoryPreset {
+        const char* name;
+        const char* category;
+        CompressorMode mode;
+        float params[kPresetParamsCount];  // See indices above
+    };
+
+    const FactoryPreset factoryPresets[] = {
+        // Vocals
+        {"Vocal Leveler", "Vocals", CompressorMode::Opto, {50.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
+        {"Vocal Warmth", "Vocals", CompressorMode::Opto, {40.0f, 0.0f, 0.0f, 0.0f, 3.0f, 100.0f}},
+        {"Vocal Presence", "Vocals", CompressorMode::FET, {-18.0f, 0.0f, 3.0f, 5.0f, 0.0f, 100.0f}},
+        {"Vocal Punch", "Vocals", CompressorMode::FET, {-12.0f, 1.0f, 2.0f, 4.0f, 3.0f, 100.0f}},
+
+        // Drums
+        {"Drum Bus Glue", "Drums", CompressorMode::Bus, {-20.0f, 1.0f, 2.0f, 2.0f, 0.0f, 100.0f}},
+        {"Punchy Drums", "Drums", CompressorMode::FET, {-15.0f, 2.0f, 1.0f, 3.0f, 2.0f, 100.0f}},
+        {"Drum Smash", "Drums", CompressorMode::FET, {-10.0f, 4.0f, 0.0f, 2.0f, 6.0f, 100.0f}},
+        {"Parallel Crush", "Drums", CompressorMode::VCA, {-30.0f, 10.0f, 0.1f, 100.0f, 0.0f, 50.0f}},
+
+        // Bass
+        {"Bass Control", "Bass", CompressorMode::Opto, {60.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
+        {"Bass Punch", "Bass", CompressorMode::FET, {-16.0f, 1.0f, 4.0f, 6.0f, 2.0f, 100.0f}},
+        {"Tight Bass", "Bass", CompressorMode::VCA, {-20.0f, 4.0f, 5.0f, 150.0f, 3.0f, 100.0f}},
+
+        // Mix Bus
+        {"Mix Glue", "Mix Bus", CompressorMode::Bus, {-18.0f, 0.0f, 2.0f, 3.0f, 0.0f, 100.0f}},
+        {"Gentle Bus", "Mix Bus", CompressorMode::Bus, {-24.0f, 0.0f, 4.0f, 4.0f, 0.0f, 100.0f}},
+        {"Bus Punch", "Mix Bus", CompressorMode::Bus, {-15.0f, 1.0f, 1.0f, 2.0f, 2.0f, 100.0f}},
+        {"Transparent Bus", "Mix Bus", CompressorMode::StudioVCA, {-20.0f, 2.0f, 10.0f, 200.0f, 0.0f, 100.0f}},
+
+        // Mastering
+        {"Master Glue", "Mastering", CompressorMode::Bus, {-20.0f, 0.0f, 5.0f, 4.0f, 0.0f, 100.0f}},
+        {"Transparent Master", "Mastering", CompressorMode::Digital, {-24.0f, 2.0f, 20.0f, 300.0f, 0.0f, 100.0f}},
+        {"Warm Master", "Mastering", CompressorMode::Opto, {30.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
+
+        // Creative
+        {"All Buttons", "Creative", CompressorMode::FET, {-8.0f, 4.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
+        {"Aggressive Pump", "Creative", CompressorMode::VCA, {-25.0f, 8.0f, 0.1f, 80.0f, 6.0f, 100.0f}},
+        {"Subtle Saturation", "Creative", CompressorMode::Opto, {20.0f, 0.0f, 0.0f, 0.0f, 6.0f, 100.0f}},
+
+        // Default
+        {"Default", "Init", CompressorMode::Opto, {50.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
+    };
+
+    const int numFactoryPresets = sizeof(factoryPresets) / sizeof(factoryPresets[0]);
+}
+
+const std::vector<UniversalCompressor::PresetInfo>& UniversalCompressor::getPresetList()
+{
+    static std::vector<PresetInfo> presetList;
+    if (presetList.empty())
+    {
+        for (int i = 0; i < numFactoryPresets; ++i)
+        {
+            presetList.push_back({
+                factoryPresets[i].name,
+                factoryPresets[i].category,
+                factoryPresets[i].mode
+            });
+        }
+    }
+    return presetList;
+}
+
+int UniversalCompressor::getNumPrograms()
+{
+    return numFactoryPresets;
+}
+
+int UniversalCompressor::getCurrentProgram()
+{
+    return currentPresetIndex;
+}
+
+const juce::String UniversalCompressor::getProgramName(int index)
+{
+    if (index >= 0 && index < numFactoryPresets)
+        return factoryPresets[index].name;
+    return "Default";
+}
+
+// Helper to safely set a normalized parameter value (clamped to 0-1)
+namespace {
+    inline void setParamNormalized(juce::RangedAudioParameter* param, float normalizedValue)
+    {
+        if (param != nullptr)
+            param->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, normalizedValue));
+    }
+}
+
+void UniversalCompressor::setCurrentProgram(int index)
+{
+    if (index < 0 || index >= numFactoryPresets)
+        return;
+
+    currentPresetIndex = index;
+    const auto& preset = factoryPresets[index];
+
+    // Set mode first (use named constant for normalization)
+    if (auto* modeParam = parameters.getParameter("mode"))
+        setParamNormalized(modeParam,
+            static_cast<float>(static_cast<int>(preset.mode)) / static_cast<float>(kMaxCompressorModeIndex));
+
+    // Apply preset parameters based on mode
+    // See kPresetIdx* constants for parameter index documentation
+    switch (preset.mode)
+    {
+        case CompressorMode::Opto:
+            setParamNormalized(parameters.getParameter("opto_peak_reduction"),
+                preset.params[kPresetIdxThreshold] / 100.0f);
+            setParamNormalized(parameters.getParameter("opto_gain"),
+                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
+            setParamNormalized(parameters.getParameter("opto_mix"),
+                preset.params[kPresetIdxMix] / 100.0f);
+            break;
+
+        case CompressorMode::FET:
+        case CompressorMode::StudioFET:
+            setParamNormalized(parameters.getParameter("fet_input"),
+                (preset.params[kPresetIdxThreshold] + 20.0f) / 60.0f);
+            setParamNormalized(parameters.getParameter("fet_ratio"),
+                preset.params[kPresetIdxRatio] / 4.0f);
+            setParamNormalized(parameters.getParameter("fet_attack"),
+                preset.params[kPresetIdxAttack] / 6.0f);
+            setParamNormalized(parameters.getParameter("fet_release"),
+                preset.params[kPresetIdxRelease] / 6.0f);
+            setParamNormalized(parameters.getParameter("fet_output"),
+                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
+            setParamNormalized(parameters.getParameter("fet_mix"),
+                preset.params[kPresetIdxMix] / 100.0f);
+            break;
+
+        case CompressorMode::VCA:
+            setParamNormalized(parameters.getParameter("vca_threshold"),
+                (preset.params[kPresetIdxThreshold] + 38.0f) / 50.0f);
+            setParamNormalized(parameters.getParameter("vca_ratio"),
+                preset.params[kPresetIdxRatio] / 120.0f);
+            setParamNormalized(parameters.getParameter("vca_attack"),
+                preset.params[kPresetIdxAttack] / 100.0f);
+            setParamNormalized(parameters.getParameter("vca_release"),
+                preset.params[kPresetIdxRelease] / 5000.0f);
+            setParamNormalized(parameters.getParameter("vca_output"),
+                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
+            setParamNormalized(parameters.getParameter("mix"),
+                preset.params[kPresetIdxMix] / 100.0f);
+            break;
+        case CompressorMode::Bus:
+            setParamNormalized(parameters.getParameter("bus_threshold"),
+                (preset.params[kPresetIdxThreshold] + 30.0f) / 45.0f);
+            setParamNormalized(parameters.getParameter("bus_ratio"),
+                preset.params[kPresetIdxRatio] / 2.0f);
+            setParamNormalized(parameters.getParameter("bus_attack"),
+                preset.params[kPresetIdxAttack] / 5.0f);
+            setParamNormalized(parameters.getParameter("bus_release"),
+                preset.params[kPresetIdxRelease] / 4.0f);
+            setParamNormalized(parameters.getParameter("bus_makeup"),
+                (preset.params[kPresetIdxOutput] + 10.0f) / 30.0f);
+            setParamNormalized(parameters.getParameter("bus_mix"),
+                preset.params[kPresetIdxMix] / 100.0f);
+            break;
+
+        case CompressorMode::StudioVCA:
+            setParamNormalized(parameters.getParameter("studio_vca_threshold"),
+                (preset.params[kPresetIdxThreshold] + 40.0f) / 60.0f);
+            setParamNormalized(parameters.getParameter("studio_vca_ratio"),
+                (preset.params[kPresetIdxRatio] - 1.0f) / 9.0f);
+            setParamNormalized(parameters.getParameter("studio_vca_attack"),
+                preset.params[kPresetIdxAttack] / 75.0f);
+            setParamNormalized(parameters.getParameter("studio_vca_release"),
+                preset.params[kPresetIdxRelease] / 3000.0f);
+            setParamNormalized(parameters.getParameter("studio_vca_output"),
+                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
+            setParamNormalized(parameters.getParameter("studio_vca_mix"),
+                preset.params[kPresetIdxMix] / 100.0f);
+            break;
+
+        case CompressorMode::Digital:
+            setParamNormalized(parameters.getParameter("digital_threshold"),
+                (preset.params[kPresetIdxThreshold] + 60.0f) / 60.0f);
+            setParamNormalized(parameters.getParameter("digital_ratio"),
+                preset.params[kPresetIdxRatio] / 100.0f);
+            setParamNormalized(parameters.getParameter("digital_attack"),
+                preset.params[kPresetIdxAttack] / 500.0f);
+            setParamNormalized(parameters.getParameter("digital_release"),
+                preset.params[kPresetIdxRelease] / 5000.0f);
+            setParamNormalized(parameters.getParameter("digital_output"),
+                (preset.params[kPresetIdxOutput] + 24.0f) / 48.0f);
+            setParamNormalized(parameters.getParameter("digital_mix"),
+                preset.params[kPresetIdxMix] / 100.0f);
+            break;
+    }
 }
 
 // LV2 inline display removed - JUCE doesn't natively support this extension
