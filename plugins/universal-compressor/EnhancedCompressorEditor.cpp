@@ -889,8 +889,7 @@ void EnhancedCompressorEditor::resized()
 
     // ========================================================================
     // TOP HEADER - Clean, uniform layout for ALL modes
-    // Row: [Mode Selector] [Bypass] [Auto Gain] [Mode Toggle] [Ext SC] [SC Listen] [OS: dropdown]
-    // Centered over the VU meter area
+    // Row: [Mode Selector] [Bypass] [Auto Gain] [Ext SC] [SC Listen] [Mode Toggle] [OS: dropdown]    // Centered over the VU meter area
     // ========================================================================
 
     // Header row - below title, single clean row
@@ -911,9 +910,8 @@ void EnhancedCompressorEditor::resized()
     const int osWidth = static_cast<int>(58 * scaleFactor);             // Dropdown for "2x"/"4x" - wider to show full text
 
     const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap
-                          + modeToggleWidth + gap + scEnableWidth + gap + scListenWidth + gap + osLabelWidth + osWidth;
-
-    // Center the controls in the header row
+                            scEnableWidth + gap + scListenWidth + gap + modeToggleWidth + gap 
+                            osLabelWidth + static_cast<int>(4 * scaleFactor) + osWidth;    // Center the controls in the header row
     int startX = (headerRow.getWidth() - totalWidth) / 2;
     if (startX < 0) startX = 0;
     headerRow.removeFromLeft(startX);
@@ -942,22 +940,6 @@ void EnhancedCompressorEditor::resized()
     }
     headerRow.removeFromLeft(gap);
 
-    // Mode-specific toggle (Limit for Opto, OverEasy for VCA) - same position for all
-    auto modeToggleArea = headerRow.removeFromLeft(modeToggleWidth);
-    if (optoPanel.limitSwitch)
-    {
-        optoPanel.limitSwitch->setVisible(currentMode == 0);
-        if (currentMode == 0)
-            optoPanel.limitSwitch->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
-    }
-    if (vcaPanel.overEasyButton)
-    {
-        vcaPanel.overEasyButton->setVisible(currentMode == 2);
-        if (currentMode == 2)
-            vcaPanel.overEasyButton->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
-    }
-    headerRow.removeFromLeft(gap);
-
     // External Sidechain enable toggle - available for all modes
     if (sidechainEnableButton)
     {
@@ -973,6 +955,23 @@ void EnhancedCompressorEditor::resized()
         sidechainListenButton->setVisible(true);
         auto area = headerRow.removeFromLeft(scListenWidth);
         sidechainListenButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromLeft(gap);
+
+    // Mode-specific toggle (Limit for Opto, OverEasy for VCA) - placed after SC controls
+    // so buttons don't shift when switching between modes
+    auto modeToggleArea = headerRow.removeFromLeft(modeToggleWidth);
+    if (optoPanel.limitSwitch)
+    {
+        optoPanel.limitSwitch->setVisible(currentMode == 0);
+        if (currentMode == 0)
+            optoPanel.limitSwitch->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
+    }
+    if (vcaPanel.overEasyButton)
+    {
+        vcaPanel.overEasyButton->setVisible(currentMode == 2);
+        if (currentMode == 2)
+            vcaPanel.overEasyButton->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
     }
     headerRow.removeFromLeft(gap);
 
@@ -1270,14 +1269,15 @@ void EnhancedCompressorEditor::parameterChanged(const juce::String& parameterID,
 {
     if (parameterID == "mode")
     {
-        const auto* modeParam = processor.getParameters().getRawParameterValue("mode");
-        if (modeParam)
-        {
-            int newMode = static_cast<int>(*modeParam);
+        // Must dispatch to message thread - parameterChanged can be called from audio thread
+        // during automation, which would crash if we access UI components directly
+        juce::MessageManager::callAsync([this, newValue]() {
+            int newMode = static_cast<int>(newValue);
             // Update combo box to match (add 1 for 1-based ID)
-            modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
+            if (modeSelector)
+                modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
             updateMode(newMode);
-        }
+        });
     }
     else if (parameterID == "auto_makeup")
     {
