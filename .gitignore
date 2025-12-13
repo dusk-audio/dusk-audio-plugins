@@ -1,10 +1,12 @@
 # Build directories and artifacts
 build/
+build-*/
 build_*/
 */build/
 */build_*/
 *_artefacts/
 */artefacts/
+release/
 
 # CMake generated files
 CMakeCache.txt

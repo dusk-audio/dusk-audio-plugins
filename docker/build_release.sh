@@ -30,6 +30,9 @@ declare -A PLUGIN_TARGETS=(
     ["drummer"]="DrummerClone_All"
     ["drums"]="DrummerClone_All"
     ["harmonic"]="HarmonicGeneratorPlugin_All"
+    ["convolution"]="ConvolutionReverb_All"
+    ["impulse"]="ConvolutionReverb_All"
+    ["ir"]="ConvolutionReverb_All"
 )
 
 # Show help
@@ -50,6 +53,7 @@ show_help() {
     echo "  reverb, plate      Plate Reverb"
     echo "  drummer, drums     DrummerClone"
     echo "  harmonic           Harmonic Generator"
+    echo "  convolution, impulse, ir  Convolution Reverb"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"
