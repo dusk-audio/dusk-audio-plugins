@@ -42,7 +42,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     bypassButton = std::make_unique<juce::ToggleButton>("Bypass");
     autoGainButton = std::make_unique<juce::ToggleButton>("Auto Gain");
     sidechainEnableButton = std::make_unique<juce::ToggleButton>("Ext SC");
-    sidechainListenButton = std::make_unique<juce::ToggleButton>("Listen");
+    sidechainListenButton = std::make_unique<juce::ToggleButton>("SC Listen");
 
     // Lookahead slider (not shown in header, but kept for parameter)
     lookaheadSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
@@ -889,7 +889,7 @@ void EnhancedCompressorEditor::resized()
 
     // ========================================================================
     // TOP HEADER - Clean, uniform layout for ALL modes
-    // Row: [Mode Selector] [Bypass] [Auto Gain] [Mode Toggle] [OS: dropdown]
+    // Row: [Mode Selector] [Bypass] [Auto Gain] [Mode Toggle] [Ext SC] [SC Listen] [OS: dropdown]
     // Centered over the VU meter area
     // ========================================================================
 
@@ -905,18 +905,20 @@ void EnhancedCompressorEditor::resized()
     const int toggleWidth = static_cast<int>(70 * scaleFactor);         // "Bypass" button
     const int autoGainWidth = static_cast<int>(85 * scaleFactor);       // "Auto Gain" button
     const int modeToggleWidth = static_cast<int>(70 * scaleFactor);     // Mode-specific toggle
+    const int scEnableWidth = static_cast<int>(60 * scaleFactor);       // "Ext SC" button
+    const int scListenWidth = static_cast<int>(75 * scaleFactor);       // "SC Listen" button
     const int osLabelWidth = static_cast<int>(78 * scaleFactor);        // "Oversampling" label
     const int osWidth = static_cast<int>(58 * scaleFactor);             // Dropdown for "2x"/"4x" - wider to show full text
 
     const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap
-                          + modeToggleWidth + gap + osLabelWidth + osWidth;
+                          + modeToggleWidth + gap + scEnableWidth + gap + scListenWidth + gap + osLabelWidth + osWidth;
 
     // Center the controls in the header row
     int startX = (headerRow.getWidth() - totalWidth) / 2;
     if (startX < 0) startX = 0;
     headerRow.removeFromLeft(startX);
 
-    // Mode selector dropdown - clear width
+    // Mode selector dropdown - first in the row
     if (modeSelector)
     {
         auto area = headerRow.removeFromLeft(modeSelectorWidth);
@@ -956,6 +958,24 @@ void EnhancedCompressorEditor::resized()
     }
     headerRow.removeFromLeft(gap);
 
+    // External Sidechain enable toggle - available for all modes
+    if (sidechainEnableButton)
+    {
+        sidechainEnableButton->setVisible(true);
+        auto area = headerRow.removeFromLeft(scEnableWidth);
+        sidechainEnableButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromLeft(gap);
+
+    // Sidechain Listen toggle - available for all modes
+    if (sidechainListenButton)
+    {
+        sidechainListenButton->setVisible(true);
+        auto area = headerRow.removeFromLeft(scListenWidth);
+        sidechainListenButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromLeft(gap);
+
     // "Oversampling" label area (drawn in paint()) followed by dropdown with small gap
     osLabelBounds = headerRow.removeFromLeft(osLabelWidth).withHeight(controlHeight);
     osLabelBounds = osLabelBounds.withY(headerRow.getY() + (headerRow.getHeight() - controlHeight) / 2);
@@ -967,11 +987,7 @@ void EnhancedCompressorEditor::resized()
         oversamplingSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
     }
 
-    // Hide unused controls
-    if (sidechainEnableButton)
-        sidechainEnableButton->setVisible(false);
-    if (sidechainListenButton)
-        sidechainListenButton->setVisible(false);
+    // Hide unused controls (sidechain enable/listen are now shown in header)
     if (lookaheadSlider)
         lookaheadSlider->setVisible(false);
     if (scEqToggleButton)
@@ -1219,7 +1235,11 @@ void EnhancedCompressorEditor::updateMeters()
     }
 
     if (vuMeter)
+    {
         vuMeter->setLevel(processor.getGainReduction());
+        // Pass GR history for the history graph view
+        vuMeter->setGRHistory(processor.getGRHistory(), processor.getGRHistoryWritePos());
+    }
 
     if (outputMeter)
     {

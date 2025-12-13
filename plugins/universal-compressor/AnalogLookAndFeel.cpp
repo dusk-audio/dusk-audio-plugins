@@ -716,11 +716,158 @@ void AnalogVUMeter::paint(juce::Graphics& g)
 }
 
 //==============================================================================
-// VU Meter with Label
+// GR History Graph
+GRHistoryGraph::GRHistoryGraph()
+{
+    grHistory.fill(0.0f);
+}
+
+void GRHistoryGraph::updateHistory(const std::array<float, 128>& history, int writePos)
+{
+    // Note: Both updateHistory and paint run on the message thread (timer callback
+    // and paint are both message-thread operations in JUCE), so no synchronization
+    // is needed within this component. The potential data race is between the audio
+    // thread writing to processor's grHistory and the UI thread reading it - this is
+    // documented as acceptable for visualization in UniversalCompressor.h.
+
+    grHistory = history;
+    // Validate writePos bounds to prevent out-of-range access in paint()
+    historyWritePos = juce::jlimit(0, static_cast<int>(grHistory.size()) - 1, writePos);
+    repaint();
+}
+
+void GRHistoryGraph::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+
+    // Calculate scale factor for HiDPI
+    float scaleFactor = juce::jmin(bounds.getWidth() / 400.0f, bounds.getHeight() / 250.0f);
+    scaleFactor = juce::jmax(0.5f, scaleFactor);
+
+    // Draw outer frame
+    g.setColour(juce::Colour(0xFFB4B4B4));
+    g.fillRoundedRectangle(bounds, 3.0f * scaleFactor);
+
+    // Draw inner frame
+    auto innerFrame = bounds.reduced(2.0f * scaleFactor);
+    g.setColour(juce::Colour(0xFF1A1A1A));
+    g.fillRoundedRectangle(innerFrame, 2.0f * scaleFactor);
+
+    // Graph area
+    auto graphBounds = innerFrame.reduced(8.0f * scaleFactor);
+
+    // Draw grid lines
+    g.setColour(juce::Colour(0xFF3A3A3A));
+    int numHorizontalLines = 4;
+    for (int i = 1; i < numHorizontalLines; ++i)
+    {
+        float y = graphBounds.getY() + (graphBounds.getHeight() * i / numHorizontalLines);
+        g.drawHorizontalLine(static_cast<int>(y), graphBounds.getX(), graphBounds.getRight());
+    }
+
+    // Draw dB scale on left
+    g.setColour(juce::Colour(0xFF808080));
+    float fontSize = juce::jmax(8.0f, 10.0f * scaleFactor);
+    g.setFont(juce::Font(juce::FontOptions(fontSize)));
+
+    const float dbValues[] = {0.0f, -10.0f, -20.0f, -30.0f};
+    for (int i = 0; i < 4; ++i)
+    {
+        float y = graphBounds.getY() + (graphBounds.getHeight() * i / 3.0f);
+        g.drawText(juce::String(static_cast<int>(dbValues[i])) + "dB",
+                   graphBounds.getX() - 30 * scaleFactor, y - 6 * scaleFactor,
+                   28 * scaleFactor, 12 * scaleFactor,
+                   juce::Justification::right);
+    }
+
+    // Draw GR history as filled path
+    juce::Path grPath;
+    const int historySize = 128;
+    float xStep = graphBounds.getWidth() / static_cast<float>(historySize - 1);
+
+    // Start path at bottom left
+    grPath.startNewSubPath(graphBounds.getX(), graphBounds.getBottom());
+
+    for (int i = 0; i < historySize; ++i)
+    {
+        // Read from circular buffer, oldest first
+        int idx = (historyWritePos + i) % historySize;
+        float gr = grHistory[idx];  // GR in dB (negative values)
+
+        // Map GR to y position: 0dB at top, -30dB at bottom
+        float normalizedGR = juce::jlimit(0.0f, 1.0f, -gr / 30.0f);
+        float y = graphBounds.getY() + normalizedGR * graphBounds.getHeight();
+        float x = graphBounds.getX() + i * xStep;
+
+        if (i == 0)
+            grPath.lineTo(x, y);
+        else
+            grPath.lineTo(x, y);
+    }
+
+    // Close path at bottom right
+    grPath.lineTo(graphBounds.getRight(), graphBounds.getBottom());
+    grPath.closeSubPath();
+
+    // Fill with gradient
+    juce::ColourGradient grGradient(
+        juce::Colour(0xFF00AA66), graphBounds.getX(), graphBounds.getY(),
+        juce::Colour(0xFF004422), graphBounds.getX(), graphBounds.getBottom(),
+        false);
+    g.setGradientFill(grGradient);
+    g.fillPath(grPath);
+
+    // Draw outline
+    g.setColour(juce::Colour(0xFF00FF88));
+    juce::Path outlinePath;
+    for (int i = 0; i < historySize; ++i)
+    {
+        int idx = (historyWritePos + i) % historySize;
+        float gr = grHistory[idx];
+        float normalizedGR = juce::jlimit(0.0f, 1.0f, -gr / 30.0f);
+        float y = graphBounds.getY() + normalizedGR * graphBounds.getHeight();
+        float x = graphBounds.getX() + i * xStep;
+
+        if (i == 0)
+            outlinePath.startNewSubPath(x, y);
+        else
+            outlinePath.lineTo(x, y);
+    }
+    g.strokePath(outlinePath, juce::PathStrokeType(1.5f * scaleFactor));
+
+    // Title - draw inside graph area at top for visibility
+    float titleFontSize = juce::jmax(11.0f, 14.0f * scaleFactor);
+    auto titleBounds = juce::Rectangle<float>(
+        graphBounds.getX() + graphBounds.getWidth() * 0.2f,
+        graphBounds.getY() + 4 * scaleFactor,
+        graphBounds.getWidth() * 0.6f,
+        18 * scaleFactor);
+
+    // Dark background behind title for contrast
+    g.setColour(juce::Colour(0xDD1A1A1A));
+    g.fillRoundedRectangle(titleBounds, 3.0f);
+
+    // Title text in bright color
+    g.setColour(juce::Colour(0xFFFFFFFF));
+    g.setFont(juce::Font(juce::FontOptions(titleFontSize).withStyle("Bold")));
+    g.drawText("GR HISTORY", titleBounds, juce::Justification::centred);
+
+    // Time label
+    g.setColour(juce::Colour(0xFF808080));
+    g.setFont(juce::Font(juce::FontOptions(fontSize)));
+    g.drawText("~4 sec", graphBounds.getRight() - 40 * scaleFactor, graphBounds.getBottom() + 2 * scaleFactor,
+               40 * scaleFactor, 12 * scaleFactor, juce::Justification::right);
+}
+
+//==============================================================================
+// VU Meter with Label (with click-to-toggle GR history)
 VUMeterWithLabel::VUMeterWithLabel()
 {
     vuMeter = std::make_unique<AnalogVUMeter>();
+    grHistoryGraph = std::make_unique<GRHistoryGraph>();
+
     addAndMakeVisible(vuMeter.get());
+    addChildComponent(grHistoryGraph.get());  // Hidden by default
 }
 
 void VUMeterWithLabel::setLevel(float newLevel)
@@ -729,34 +876,141 @@ void VUMeterWithLabel::setLevel(float newLevel)
         vuMeter->setLevel(newLevel);
 }
 
+void VUMeterWithLabel::setGRHistory(const std::array<float, 128>& history, int writePos)
+{
+    if (grHistoryGraph)
+        grHistoryGraph->updateHistory(history, writePos);
+}
+
+void VUMeterWithLabel::setShowHistory(bool show)
+{
+    showHistory = show;
+    vuMeter->setVisible(!show);
+    grHistoryGraph->setVisible(show);
+    repaint();
+}
+
+void VUMeterWithLabel::mouseDown(const juce::MouseEvent& e)
+{
+    juce::ignoreUnused(e);
+    setShowHistory(!showHistory);
+}
+
 void VUMeterWithLabel::resized()
 {
     auto bounds = getLocalBounds();
-    
-    // Reserve space for LEVEL label at bottom
+
+    // Reserve space for label at bottom
     auto labelHeight = juce::jmin(30, bounds.getHeight() / 8);
     auto meterBounds = bounds.removeFromTop(bounds.getHeight() - labelHeight);
-    
+
     if (vuMeter)
         vuMeter->setBounds(meterBounds);
+    if (grHistoryGraph)
+        grHistoryGraph->setBounds(meterBounds);
 }
 
 void VUMeterWithLabel::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds();
-    
+
     // Calculate scale factor based on component size
     float scaleFactor = juce::jmin(bounds.getWidth() / 400.0f, bounds.getHeight() / 280.0f);
     scaleFactor = juce::jmax(0.5f, scaleFactor);
-    
-    // Draw LEVEL label at bottom
+
+    // Draw label at bottom
     auto labelHeight = juce::jmin(30.0f, bounds.getHeight() / 8.0f);
-    auto labelArea = bounds.removeFromBottom(labelHeight);
-    
-    g.setColour(juce::Colour(0xFF2A2A2A));
-    float fontSize = juce::jmax(12.0f, 16.0f * scaleFactor);
-    g.setFont(juce::Font(juce::FontOptions(fontSize)).withTypefaceStyle("Regular"));
-    g.drawText("LEVEL", labelArea, juce::Justification::centred);
+    auto labelArea = bounds.removeFromBottom(static_cast<int>(labelHeight));
+
+    // Draw a subtle background behind the label for better visibility
+    g.setColour(juce::Colour(0x30000000));
+    g.fillRoundedRectangle(labelArea.toFloat().reduced(2.0f), 3.0f);
+
+    // Use brighter, more visible text color with slight glow effect
+    float fontSize = juce::jmax(11.0f, 14.0f * scaleFactor);
+    g.setFont(juce::Font(juce::FontOptions(fontSize).withStyle("Bold")));
+
+    // Show different label based on mode - bright orange accent for visibility
+    juce::String labelText = showHistory ? "GR HISTORY (click)" : "LEVEL (click)";
+
+    // Draw subtle text shadow for depth
+    g.setColour(juce::Colour(0x40000000));
+    g.drawText(labelText, labelArea.translated(1, 1), juce::Justification::centred);
+
+    // Draw main text in bright orange/amber for high visibility
+    g.setColour(juce::Colour(0xFFE09040));  // Warm amber color
+    g.drawText(labelText, labelArea, juce::Justification::centred);
+}
+
+//==============================================================================
+// Release Time Indicator
+ReleaseTimeIndicator::ReleaseTimeIndicator()
+{
+}
+
+void ReleaseTimeIndicator::setReleaseTime(float timeMs)
+{
+    currentReleaseMs = timeMs;
+    repaint();
+}
+
+void ReleaseTimeIndicator::setTargetRelease(float timeMs)
+{
+    targetReleaseMs = timeMs;
+    repaint();
+}
+
+void ReleaseTimeIndicator::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+
+    // Background
+    g.setColour(juce::Colour(0xFF1A1A1A));
+    g.fillRoundedRectangle(bounds, 3.0f);
+
+    // Border
+    g.setColour(juce::Colour(0xFF3A3A3A));
+    g.drawRoundedRectangle(bounds, 3.0f, 1.0f);
+
+    // Calculate bar width based on release time ratio
+    // Map release time: 1ms to 5000ms (log scale)
+    auto mapToNormalized = [](float ms) {
+        float minLog = std::log10(1.0f);
+        float maxLog = std::log10(5000.0f);
+        float valueLog = std::log10(juce::jmax(1.0f, ms));
+        return juce::jlimit(0.0f, 1.0f, (valueLog - minLog) / (maxLog - minLog));
+    };
+
+    float currentNorm = mapToNormalized(currentReleaseMs);
+    float targetNorm = mapToNormalized(targetReleaseMs);
+
+    auto barBounds = bounds.reduced(4.0f);
+
+    // Draw target position marker (thin line)
+    float targetX = barBounds.getX() + targetNorm * barBounds.getWidth();
+    g.setColour(juce::Colour(0xFF666666));
+    g.fillRect(targetX - 1, barBounds.getY(), 2.0f, barBounds.getHeight());
+
+    // Draw current release bar
+    float barWidth = currentNorm * barBounds.getWidth();
+    juce::ColourGradient barGradient(
+        juce::Colour(0xFF00AAFF), barBounds.getX(), barBounds.getY(),
+        juce::Colour(0xFF0066AA), barBounds.getX() + barWidth, barBounds.getY(),
+        false);
+    g.setGradientFill(barGradient);
+    g.fillRoundedRectangle(barBounds.getX(), barBounds.getY(), barWidth, barBounds.getHeight(), 2.0f);
+
+    // Text overlay showing actual release time
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
+
+    juce::String timeText;
+    if (currentReleaseMs >= 1000.0f)
+        timeText = juce::String(currentReleaseMs / 1000.0f, 2) + "s";
+    else
+        timeText = juce::String(static_cast<int>(currentReleaseMs)) + "ms";
+
+    g.drawText("Rel: " + timeText, bounds, juce::Justification::centred);
 }
 
 // NOTE: LEDMeter implementation moved to shared/LEDMeter.cpp for consistency across all plugins.
