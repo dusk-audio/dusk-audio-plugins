@@ -1,5 +1,6 @@
 #include "UniversalCompressor.h"
 #include "EnhancedCompressorEditor.h"
+#include "CompressorPresets.h"
 #include "HardwareEmulation/HardwareMeasurements.h"
 #include "HardwareEmulation/WaveshaperCurves.h"
 #include "HardwareEmulation/TransformerEmulation.h"
@@ -4367,74 +4368,19 @@ void UniversalCompressor::setStateInformation(const void* data, int sizeInBytes)
 //==============================================================================
 // Factory Presets
 //==============================================================================
+// Unified preset system - uses CompressorPresets.h for both DAW programs and UI
 namespace {
-    // Preset parameter indices and their expected ranges per mode:
-    // Index 0: Threshold/Peak Reduction
-    //   - Opto: peak_reduction (0-100%)
-    //   - FET/StudioFET: input (-20 to +40 dB)
-    //   - VCA: threshold (-38 to +12 dB)
-    //   - Bus: threshold (-30 to +15 dB)
-    //   - StudioVCA: threshold (-40 to +20 dB)
-    //   - Digital: threshold (-60 to 0 dB)
-    // Index 1: Ratio (mode-dependent, 0-4 for FET ratio index, 0-120 for VCA, etc.)
-    // Index 2: Attack (mode-dependent time in ms or index)
-    // Index 3: Release (mode-dependent time in ms or index)
-    // Index 4: Makeup/Output Gain (-20 to +20 dB typical)
-    // Index 5: Mix (0-100%)
-    constexpr int kPresetParamsCount = 6;
-    constexpr int kPresetIdxThreshold = 0;
-    constexpr int kPresetIdxRatio = 1;
-    constexpr int kPresetIdxAttack = 2;
-    constexpr int kPresetIdxRelease = 3;
-    constexpr int kPresetIdxOutput = 4;
-    constexpr int kPresetIdxMix = 5;
+    // Cache the factory presets for quick access
+    const std::vector<CompressorPresets::Preset>& getCachedPresets()
+    {
+        static std::vector<CompressorPresets::Preset> presets = CompressorPresets::getFactoryPresets();
+        return presets;
+    }
 
-    struct FactoryPreset {
-        const char* name;
-        const char* category;
-        CompressorMode mode;
-        float params[kPresetParamsCount];  // See indices above
-    };
-
-    const FactoryPreset factoryPresets[] = {
-        // Vocals
-        {"Vocal Leveler", "Vocals", CompressorMode::Opto, {50.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
-        {"Vocal Warmth", "Vocals", CompressorMode::Opto, {40.0f, 0.0f, 0.0f, 0.0f, 3.0f, 100.0f}},
-        {"Vocal Presence", "Vocals", CompressorMode::FET, {-18.0f, 0.0f, 3.0f, 5.0f, 0.0f, 100.0f}},
-        {"Vocal Punch", "Vocals", CompressorMode::FET, {-12.0f, 1.0f, 2.0f, 4.0f, 3.0f, 100.0f}},
-
-        // Drums
-        {"Drum Bus Glue", "Drums", CompressorMode::Bus, {-20.0f, 1.0f, 2.0f, 2.0f, 0.0f, 100.0f}},
-        {"Punchy Drums", "Drums", CompressorMode::FET, {-15.0f, 2.0f, 1.0f, 3.0f, 2.0f, 100.0f}},
-        {"Drum Smash", "Drums", CompressorMode::FET, {-10.0f, 4.0f, 0.0f, 2.0f, 6.0f, 100.0f}},
-        {"Parallel Crush", "Drums", CompressorMode::VCA, {-30.0f, 10.0f, 0.1f, 100.0f, 0.0f, 50.0f}},
-
-        // Bass
-        {"Bass Control", "Bass", CompressorMode::Opto, {60.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
-        {"Bass Punch", "Bass", CompressorMode::FET, {-16.0f, 1.0f, 4.0f, 6.0f, 2.0f, 100.0f}},
-        {"Tight Bass", "Bass", CompressorMode::VCA, {-20.0f, 4.0f, 5.0f, 150.0f, 3.0f, 100.0f}},
-
-        // Mix Bus
-        {"Mix Glue", "Mix Bus", CompressorMode::Bus, {-18.0f, 0.0f, 2.0f, 3.0f, 0.0f, 100.0f}},
-        {"Gentle Bus", "Mix Bus", CompressorMode::Bus, {-24.0f, 0.0f, 4.0f, 4.0f, 0.0f, 100.0f}},
-        {"Bus Punch", "Mix Bus", CompressorMode::Bus, {-15.0f, 1.0f, 1.0f, 2.0f, 2.0f, 100.0f}},
-        {"Transparent Bus", "Mix Bus", CompressorMode::StudioVCA, {-20.0f, 2.0f, 10.0f, 200.0f, 0.0f, 100.0f}},
-
-        // Mastering
-        {"Master Glue", "Mastering", CompressorMode::Bus, {-20.0f, 0.0f, 5.0f, 4.0f, 0.0f, 100.0f}},
-        {"Transparent Master", "Mastering", CompressorMode::Digital, {-24.0f, 2.0f, 20.0f, 300.0f, 0.0f, 100.0f}},
-        {"Warm Master", "Mastering", CompressorMode::Opto, {30.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
-
-        // Creative
-        {"All Buttons", "Creative", CompressorMode::FET, {-8.0f, 4.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
-        {"Aggressive Pump", "Creative", CompressorMode::VCA, {-25.0f, 8.0f, 0.1f, 80.0f, 6.0f, 100.0f}},
-        {"Subtle Saturation", "Creative", CompressorMode::Opto, {20.0f, 0.0f, 0.0f, 0.0f, 6.0f, 100.0f}},
-
-        // Default
-        {"Default", "Init", CompressorMode::Opto, {50.0f, 0.0f, 0.0f, 0.0f, 0.0f, 100.0f}},
-    };
-
-    const int numFactoryPresets = sizeof(factoryPresets) / sizeof(factoryPresets[0]);
+    int getNumCachedPresets()
+    {
+        return static_cast<int>(getCachedPresets().size());
+    }
 }
 
 const std::vector<UniversalCompressor::PresetInfo>& UniversalCompressor::getPresetList()
@@ -4442,12 +4388,13 @@ const std::vector<UniversalCompressor::PresetInfo>& UniversalCompressor::getPres
     static std::vector<PresetInfo> presetList;
     if (presetList.empty())
     {
-        for (int i = 0; i < numFactoryPresets; ++i)
+        const auto& presets = getCachedPresets();
+        for (const auto& preset : presets)
         {
             presetList.push_back({
-                factoryPresets[i].name,
-                factoryPresets[i].category,
-                factoryPresets[i].mode
+                preset.name,
+                preset.category,
+                static_cast<CompressorMode>(preset.mode)
             });
         }
     }
@@ -4456,7 +4403,7 @@ const std::vector<UniversalCompressor::PresetInfo>& UniversalCompressor::getPres
 
 int UniversalCompressor::getNumPrograms()
 {
-    return numFactoryPresets;
+    return getNumCachedPresets();
 }
 
 int UniversalCompressor::getCurrentProgram()
@@ -4466,121 +4413,23 @@ int UniversalCompressor::getCurrentProgram()
 
 const juce::String UniversalCompressor::getProgramName(int index)
 {
-    if (index >= 0 && index < numFactoryPresets)
-        return factoryPresets[index].name;
+    const auto& presets = getCachedPresets();
+    if (index >= 0 && index < static_cast<int>(presets.size()))
+        return presets[static_cast<size_t>(index)].name;
     return "Default";
-}
-
-// Helper to safely set a normalized parameter value (clamped to 0-1)
-namespace {
-    inline void setParamNormalized(juce::RangedAudioParameter* param, float normalizedValue)
-    {
-        if (param != nullptr)
-            param->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, normalizedValue));
-    }
 }
 
 void UniversalCompressor::setCurrentProgram(int index)
 {
-    if (index < 0 || index >= numFactoryPresets)
+    const auto& presets = getCachedPresets();
+    if (index < 0 || index >= static_cast<int>(presets.size()))
         return;
 
     currentPresetIndex = index;
-    const auto& preset = factoryPresets[index];
 
-    // Set mode first (use named constant for normalization)
-    if (auto* modeParam = parameters.getParameter("mode"))
-        setParamNormalized(modeParam,
-            static_cast<float>(static_cast<int>(preset.mode)) / static_cast<float>(kMaxCompressorModeIndex));
-
-    // Apply preset parameters based on mode
-    // See kPresetIdx* constants for parameter index documentation
-    switch (preset.mode)
-    {
-        case CompressorMode::Opto:
-            setParamNormalized(parameters.getParameter("opto_peak_reduction"),
-                preset.params[kPresetIdxThreshold] / 100.0f);
-            setParamNormalized(parameters.getParameter("opto_gain"),
-                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
-            setParamNormalized(parameters.getParameter("opto_mix"),
-                preset.params[kPresetIdxMix] / 100.0f);
-            break;
-
-        case CompressorMode::FET:
-        case CompressorMode::StudioFET:
-            setParamNormalized(parameters.getParameter("fet_input"),
-                (preset.params[kPresetIdxThreshold] + 20.0f) / 60.0f);
-            setParamNormalized(parameters.getParameter("fet_ratio"),
-                preset.params[kPresetIdxRatio] / 4.0f);
-            setParamNormalized(parameters.getParameter("fet_attack"),
-                preset.params[kPresetIdxAttack] / 6.0f);
-            setParamNormalized(parameters.getParameter("fet_release"),
-                preset.params[kPresetIdxRelease] / 6.0f);
-            setParamNormalized(parameters.getParameter("fet_output"),
-                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
-            setParamNormalized(parameters.getParameter("fet_mix"),
-                preset.params[kPresetIdxMix] / 100.0f);
-            break;
-
-        case CompressorMode::VCA:
-            setParamNormalized(parameters.getParameter("vca_threshold"),
-                (preset.params[kPresetIdxThreshold] + 38.0f) / 50.0f);
-            setParamNormalized(parameters.getParameter("vca_ratio"),
-                preset.params[kPresetIdxRatio] / 120.0f);
-            setParamNormalized(parameters.getParameter("vca_attack"),
-                preset.params[kPresetIdxAttack] / 100.0f);
-            setParamNormalized(parameters.getParameter("vca_release"),
-                preset.params[kPresetIdxRelease] / 5000.0f);
-            setParamNormalized(parameters.getParameter("vca_output"),
-                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
-            setParamNormalized(parameters.getParameter("mix"),
-                preset.params[kPresetIdxMix] / 100.0f);
-            break;
-        case CompressorMode::Bus:
-            setParamNormalized(parameters.getParameter("bus_threshold"),
-                (preset.params[kPresetIdxThreshold] + 30.0f) / 45.0f);
-            setParamNormalized(parameters.getParameter("bus_ratio"),
-                preset.params[kPresetIdxRatio] / 2.0f);
-            setParamNormalized(parameters.getParameter("bus_attack"),
-                preset.params[kPresetIdxAttack] / 5.0f);
-            setParamNormalized(parameters.getParameter("bus_release"),
-                preset.params[kPresetIdxRelease] / 4.0f);
-            setParamNormalized(parameters.getParameter("bus_makeup"),
-                (preset.params[kPresetIdxOutput] + 10.0f) / 30.0f);
-            setParamNormalized(parameters.getParameter("bus_mix"),
-                preset.params[kPresetIdxMix] / 100.0f);
-            break;
-
-        case CompressorMode::StudioVCA:
-            setParamNormalized(parameters.getParameter("studio_vca_threshold"),
-                (preset.params[kPresetIdxThreshold] + 40.0f) / 60.0f);
-            setParamNormalized(parameters.getParameter("studio_vca_ratio"),
-                (preset.params[kPresetIdxRatio] - 1.0f) / 9.0f);
-            setParamNormalized(parameters.getParameter("studio_vca_attack"),
-                preset.params[kPresetIdxAttack] / 75.0f);
-            setParamNormalized(parameters.getParameter("studio_vca_release"),
-                preset.params[kPresetIdxRelease] / 3000.0f);
-            setParamNormalized(parameters.getParameter("studio_vca_output"),
-                (preset.params[kPresetIdxOutput] + 20.0f) / 40.0f);
-            setParamNormalized(parameters.getParameter("studio_vca_mix"),
-                preset.params[kPresetIdxMix] / 100.0f);
-            break;
-
-        case CompressorMode::Digital:
-            setParamNormalized(parameters.getParameter("digital_threshold"),
-                (preset.params[kPresetIdxThreshold] + 60.0f) / 60.0f);
-            setParamNormalized(parameters.getParameter("digital_ratio"),
-                preset.params[kPresetIdxRatio] / 100.0f);
-            setParamNormalized(parameters.getParameter("digital_attack"),
-                preset.params[kPresetIdxAttack] / 500.0f);
-            setParamNormalized(parameters.getParameter("digital_release"),
-                preset.params[kPresetIdxRelease] / 5000.0f);
-            setParamNormalized(parameters.getParameter("digital_output"),
-                (preset.params[kPresetIdxOutput] + 24.0f) / 48.0f);
-            setParamNormalized(parameters.getParameter("digital_mix"),
-                preset.params[kPresetIdxMix] / 100.0f);
-            break;
-    }
+    // Use the unified preset system from CompressorPresets.h
+    // This applies all parameters correctly for each mode
+    CompressorPresets::applyPreset(parameters, presets[static_cast<size_t>(index)]);
 }
 
 // LV2 inline display removed - JUCE doesn't natively support this extension
