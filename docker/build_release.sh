@@ -29,9 +29,12 @@ declare -A PLUGIN_TARGETS=(
     ["drums"]="DrummerClone_All"
     ["harmonic"]="HarmonicGeneratorPlugin_All"
     ["convolution"]="ConvolutionReverb_All"
-    ["reverb"]="ConvolutionReverb_All"
     ["impulse"]="ConvolutionReverb_All"
     ["ir"]="ConvolutionReverb_All"
+    ["silkverb"]="SilkVerb_All"
+    ["silk"]="SilkVerb_All"
+    ["reverb"]="SilkVerb_All"
+    ["verb"]="SilkVerb_All"
 )
 
 # Show help
@@ -51,7 +54,8 @@ show_help() {
     echo "  echo, tapeecho     Vintage Tape Echo"
     echo "  drummer, drums     DrummerClone"
     echo "  harmonic           Harmonic Generator"
-    echo "  convolution, reverb, impulse, ir  Convolution Reverb"
+    echo "  convolution, impulse, ir  Convolution Reverb"
+    echo "  silkverb, silk, reverb, verb  SilkVerb"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"

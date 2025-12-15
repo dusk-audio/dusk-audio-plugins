@@ -11,18 +11,16 @@ SSL 4000 Series Console EQ emulation featuring:
 - Brown/Black variants (E-Series/G-Series console emulation)
 - Advanced SSL saturation modeling
 - 2x/4x oversampling for anti-aliasing
-- Collapsible frequency response graph
-- A/B comparison
 
 ### Universal Compressor
 Multi-mode compressor with seven classic hardware emulations:
 - Vintage Opto (LA-2A style)
 - Vintage FET (1176 Bluestripe)
 - Classic VCA (DBX 160)
-- Vintage VCA/Bus (SSL G-Series)
+- Bus Compressor (SSL G-Series)
 - Studio FET (1176 Rev E Blackface)
 - Studio VCA (Focusrite Red 3)
-- Digital (Transparent) - Clean digital compression with lookahead
+- Digital (Transparent)
 
 Features: Sidechain HP filter, auto-makeup gain, parallel mix, 2x oversampling.
 
@@ -34,11 +32,19 @@ Analog tape machine emulation featuring:
 - Wow & flutter simulation
 - Dual stereo VU meters with animated reels
 
-### Plate Reverb
-High-quality plate reverb based on the Dattorro algorithm:
-- Size, decay, and damping controls
-- Stereo width control
-- Mono-in, stereo-out architecture
+### SilkVerb
+Lexicon/Valhalla-style algorithmic reverb:
+- Three modes: Plate, Room, Hall
+- FDN architecture with Hadamard matrix mixing
+- Two-band frequency-dependent decay
+- Complex modulation (3 LFOs + random noise)
+- Feedback saturation for analog warmth
+
+### Convolution Reverb
+Zero-latency IR-based reverb:
+- Supports WAV, AIFF, AIFC, SDIR (Logic Pro) impulse responses
+- Waveform display
+- Size, pre-delay, damping, width, mix controls
 
 ### Vintage Tape Echo
 Classic tape echo/delay emulation:
@@ -63,12 +69,27 @@ Analog-style harmonic saturation processor:
 
 ## Building
 
-### Prerequisites
-- CMake 3.15+
-- C++17 compatible compiler
-- JUCE framework
+### Recommended: Docker/Podman Build
+For consistent, distributable binaries:
+```bash
+# Build all plugins
+./docker/build_release.sh
 
-### Build All Plugins
+# Build a single plugin
+./docker/build_release.sh silkverb     # SilkVerb
+./docker/build_release.sh convolution  # Convolution Reverb
+./docker/build_release.sh 4keq         # 4K EQ
+./docker/build_release.sh compressor   # Universal Compressor
+./docker/build_release.sh tape         # TapeMachine
+./docker/build_release.sh echo         # Vintage Tape Echo
+./docker/build_release.sh drummer      # DrummerClone
+./docker/build_release.sh harmonic     # Harmonic Generator
+
+# Show all available shortcuts
+./docker/build_release.sh --help
+```
+
+### Local Development Build
 ```bash
 ./rebuild_all.sh              # Standard build
 ./rebuild_all.sh --fast       # Use ccache and ninja if available
@@ -81,14 +102,33 @@ cd build
 cmake --build . --target FourKEQ_All
 cmake --build . --target UniversalCompressor_All
 cmake --build . --target TapeMachine_All
-cmake --build . --target PlateReverb_All
+cmake --build . --target SilkVerb_All
+cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target DrummerClone_All
+cmake --build . --target HarmonicGeneratorPlugin_All
 ```
 
 ### Installation Paths
 - **VST3**: `~/.vst3/`
 - **LV2**: `~/.lv2/`
+
+## Shared Libraries
+
+### Analog Emulation Library
+Location: `plugins/shared/AnalogEmulation/`
+
+Reusable analog hardware emulation components:
+- Transformer saturation modeling
+- Vacuum tube emulation (12AX7, 12AT7, 12BH7, 6SN7)
+- Waveshaper lookup tables (LA-2A, 1176, DBX, SSL, Tape, Triode)
+- Hardware profiles (Neve, API, Studer, Ampex)
+- DC blocking filters
+- High-frequency content estimation
+
+### Shared UI Components
+- `LunaLookAndFeel.h` - Base look-and-feel for consistent styling
+- `LEDMeter.h/cpp` - Shared LED-style level meter component
 
 ## License
 

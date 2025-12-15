@@ -144,6 +144,48 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - 2-second analysis buffer for Follow Mode
 - **Build Target**: `DrummerClone_All`
 
+### 7. **SilkVerb**
+- **Location**: `plugins/SilkVerb/`
+- **Description**: Lexicon/Valhalla-style algorithmic reverb with Plate, Room, Hall modes
+- **Features**:
+  - **FDN Architecture**: 8-channel stereo Feedback Delay Network with Hadamard matrix mixing
+  - **Three Reverb Modes**:
+    - **Plate**: Short prime-number delays (7.2-51.3ms), no early reflections (like real plates), fast modulation (1.8Hz), tight HF decay
+    - **Room**: Medium delays (12-62ms), subtle early reflections, moderate modulation (1.2Hz), balanced frequency decay
+    - **Hall**: Long delays (40-120ms), prominent early reflections, slow modulation (0.6Hz), extended low-frequency decay
+  - **Lexicon-Style DSP Enhancements**:
+    - **Two-Band Decay**: Separate low/high frequency decay multipliers with configurable crossover (~600-800Hz)
+    - **Complex Modulation**: Three uncorrelated LFOs at golden-ratio-related rates plus smoothed random noise component
+    - **Feedback Saturation**: Asymmetric soft clipping for analog warmth without harshness
+    - **Pre-delay with Crossfeed**: Early reflections blend into late reverb for cohesive sound
+  - **Controls**:
+    - Size: 0.5s to 5.0s decay time
+    - Damping: High-frequency absorption (bright to dark)
+    - Width: Mono to stereo spread
+    - Mix: Dry/wet balance
+  - **DSP Components** (`FDNReverb.h`):
+    - `TwoBandDecayFilter`: Frequency-dependent decay with crossover filter
+    - `ComplexModulator`: Multi-LFO + random modulation system
+    - `FeedbackSaturator`: Asymmetric soft saturation in feedback loop
+    - `EarlyReflections`: 8-tap early reflections with pre-delay and crossfeed
+    - `AllpassDiffuser`: 4-stage allpass network for density
+    - `DampingFilter`: One-pole lowpass for HF absorption
+    - Linear-interpolated delay lines with modulation
+    - Orthogonal 8x8 Hadamard matrix for energy preservation
+  - **UI**: Dark-themed interface with mode selector buttons, 2x2 knob grid
+- **Build Target**: `SilkVerb_All`
+
+### 8. **Convolution Reverb**
+- **Location**: `plugins/convolution-reverb/`
+- **Description**: Zero-latency convolution reverb with SDIR/AIFC impulse response support
+- **Features**:
+  - **IR Loading**: Supports WAV, AIFF, AIFC (Apple Spatial Audio), SDIR (Logic Pro spatial IR)
+  - **Waveform Display**: Visual representation of loaded impulse response
+  - **Zero-Latency Processing**: Partitioned convolution for real-time use
+  - **Controls**: Size, pre-delay, damping, width, mix
+  - **Thread-Safe**: Background IR loading with atomic state management
+- **Build Target**: `ConvolutionReverb_All`
+
 ## Build System
 
 ### Building Plugins (Default)
@@ -161,6 +203,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 ./docker/build_release.sh drummer      # DrummerClone
 ./docker/build_release.sh harmonic     # Harmonic Generator
 ./docker/build_release.sh convolution  # Convolution Reverb
+./docker/build_release.sh silkverb     # SilkVerb (algorithmic reverb)
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -185,6 +228,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 - DrummerClone_All
 - HarmonicGeneratorPlugin_All
 - ConvolutionReverb_All
+- SilkVerb_All (Algorithmic Reverb)
 
 ### Local Development Builds (Alternative)
 Only use the local rebuild script if Docker/Podman is unavailable or for quick debugging iterations:
@@ -225,6 +269,7 @@ cmake --build . --target TapeEcho_All
 cmake --build . --target DrummerClone_All
 cmake --build . --target HarmonicGeneratorPlugin_All
 cmake --build . --target ConvolutionReverb_All
+cmake --build . --target SilkVerb_All
 ```
 
 ### CMake Build Options
@@ -236,6 +281,7 @@ Available in the root CMakeLists.txt:
 - `BUILD_TAPE_ECHO` (default: ON)
 - `BUILD_DRUMMER_CLONE` (default: ON)
 - `BUILD_CONVOLUTION_REVERB` (default: ON)
+- `BUILD_SILKVERB` (default: ON)
 
 ### Installation Paths
 - **VST3**: `~/.vst3/`
@@ -265,20 +311,26 @@ The build script will automatically detect and use these tools when available.
 ## Recent Changes
 
 ### Plugin Updates
-1. **Added Convolution Reverb**: IR-based reverb with SDIR support, waveform display, and zero-latency convolution
-2. **Added Vintage Tape Echo**: Full-featured tape echo with 12 modes, spring reverb, and extensive modulation
-3. **Enhanced TapeMachine**:
+1. **Added SilkVerb**: Lexicon/Valhalla-style algorithmic reverb with Plate, Room, Hall modes
+   - FDN architecture with 8-channel stereo Hadamard matrix
+   - Two-band frequency-dependent decay (separate low/high multipliers)
+   - Complex modulation (3 LFOs at golden-ratio rates + random noise)
+   - Asymmetric feedback saturation for analog warmth
+   - Pre-delay with crossfeed to late reverb
+2. **Added Convolution Reverb**: IR-based reverb with SDIR support, waveform display, and zero-latency convolution
+3. **Added Vintage Tape Echo**: Full-featured tape echo with 12 modes, spring reverb, and extensive modulation
+4. **Enhanced TapeMachine**:
    - Added shared wow/flutter processing with coherent stereo modulation
    - Improved reel animation with realistic visual components
    - Model names: Swiss800 (Studer A800) and Classic102 (Ampex ATR-102)
-4. **Updated 4K EQ**:
+5. **Updated 4K EQ**:
    - Advanced SSL saturation modeling with E-Series/G-Series console emulation
    - Multi-stage signal path with transformer and op-amp modeling
    - Frequency-dependent saturation characteristics
    - Real-time spectral analysis for dynamic response
-5. **Enhanced Universal Compressor**: Added linked gain reduction metering for stereo tracking with thread-safe atomic operations
-6. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
-7. **Removed Plate Reverb and StudioVerb**: Replaced with Convolution Reverb for more flexibility with impulse responses
+6. **Enhanced Universal Compressor**: Added linked gain reduction metering for stereo tracking with thread-safe atomic operations
+7. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
+8. **Removed Plate Reverb and StudioVerb**: Replaced with Convolution Reverb and SilkVerb for better reverb options
 
 ### Build System Improvements
 1. **Comprehensive rebuild script**: Color-coded output, progress tracking, error logging
@@ -326,10 +378,14 @@ plugins/
 │   ├── TapeMachine/         # Tape machine emulation
 │   ├── universal-compressor/ # Multi-mode compressor
 │   ├── convolution-reverb/  # IR-based convolution reverb
+│   ├── SilkVerb/            # Algorithmic reverb (Lexicon/Valhalla style)
 │   ├── TapeEcho/            # Vintage tape echo
 │   ├── harmonic-generator/  # Harmonic saturation processor
 │   ├── DrummerClone/        # Intelligent MIDI drum generator
-│   └── shared/              # Shared utilities
+│   └── shared/              # Shared utilities and libraries
+│       ├── AnalogEmulation/ # Shared analog saturation/tube/transformer library
+│       ├── LunaLookAndFeel.h # Base look-and-feel for Luna plugins
+│       └── LEDMeter.h/cpp   # Shared LED-style level meter component
 ├── tests/                    # Plugin validation framework
 │   ├── quick_validate.sh    # Fast plugin check
 │   └── run_plugin_tests.sh  # Full test suite
@@ -352,11 +408,76 @@ plugins/
 - **Level metering**: Use `std::atomic<float>` with relaxed memory ordering for UI updates
 - **Parameter smoothing**: Use `juce::SmoothedValue` or APVTS built-in smoothing
 - **Convolution**: See convolution-reverb's ConvolutionEngine for zero-latency IR processing
+- **FDN Reverb**: See SilkVerb's FDNReverb.h for Lexicon-style algorithmic reverb with two-band decay, complex modulation
 - **Saturation modeling**: See 4K-EQ's SSLSaturation.h for multi-stage analog emulation
 - **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
 - **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations
 - **MIDI Generation**: See DrummerClone's DrummerEngine for procedural pattern generation with Perlin noise variation
 - **Groove Analysis**: See DrummerClone's TransientDetector and MidiGrooveExtractor for real-time groove extraction
+
+### Shared Analog Emulation Library
+**Location**: `plugins/shared/AnalogEmulation/`
+
+A shared library for analog hardware emulation that should be used across all plugins to avoid code duplication. When implementing saturation, tube emulation, or transformer effects, **always use this library** instead of creating plugin-specific implementations.
+
+**Usage**:
+```cpp
+#include "../shared/AnalogEmulation/AnalogEmulation.h"
+
+// In prepareToPlay() - initialize singleton resources
+AnalogEmulation::initializeLibrary();
+
+// Use waveshaper curves (LA-2A, 1176, DBX, SSL, Transformer, Tape, Triode, Pentode)
+auto& curves = AnalogEmulation::getWaveshaperCurves();
+float saturated = curves.process(input, AnalogEmulation::WaveshaperCurves::CurveType::Tape);
+float withDrive = curves.processWithDrive(input, AnalogEmulation::WaveshaperCurves::CurveType::Triode, 0.5f);
+
+// Use tube emulation (12AX7, 12AT7, 12BH7, 6SN7)
+AnalogEmulation::TubeEmulation tube;
+tube.prepare(sampleRate, numChannels);
+tube.setTubeType(AnalogEmulation::TubeEmulation::TubeType::Triode_12AX7);
+tube.setDrive(0.3f);
+float output = tube.processSample(input, channel);
+
+// Use transformer emulation with hardware profiles
+AnalogEmulation::TransformerEmulation transformer;
+transformer.prepare(sampleRate, numChannels);
+transformer.setProfile(AnalogEmulation::HardwareProfileLibrary::getNeve1073().inputTransformer);
+float output = transformer.processSample(input, channel);
+
+// Use DC blocker
+AnalogEmulation::DCBlocker dcBlocker;
+dcBlocker.prepare(sampleRate, 5.0f);  // 5Hz cutoff
+float dcFree = dcBlocker.processSample(input);
+
+// Use HF estimator for adaptive saturation
+AnalogEmulation::HighFrequencyEstimator hfEstimator;
+hfEstimator.prepare(sampleRate);
+float satReduction = hfEstimator.getSaturationReduction(input, 0.5f);
+```
+
+**Available Components**:
+| File | Purpose |
+|------|---------|
+| `AnalogEmulation.h` | Main include (includes all components) |
+| `WaveshaperCurves.h` | Lookup table saturation curves (9 types) |
+| `TubeEmulation.h` | Vacuum tube modeling (4 tube types) |
+| `TransformerEmulation.h` | Audio transformer saturation |
+| `HardwareProfiles.h` | Measured hardware profiles (LA-2A, 1176, DBX, SSL, Neve, API, Studer, Ampex) |
+| `DCBlocker.h` | DC blocking filter (mono + stereo) |
+| `HighFrequencyEstimator.h` | HF content estimation for anti-aliasing |
+
+**Hardware Profiles Available**:
+- **Compressors**: LA-2A, 1176, DBX 160, SSL Bus, Studio FET, Studio VCA, Digital
+- **Preamps**: Neve 1073, API 512c
+- **Tape Machines**: Studer A800, Ampex ATR-102
+
+**When to Add New Shared Code**:
+1. If the same DSP algorithm is needed in 2+ plugins
+2. If hardware emulation data (profiles, curves) could be reused
+3. If utility functions (DC blocking, HF estimation) are duplicated
+
+**Namespace**: All shared analog emulation code uses the `AnalogEmulation` namespace
 
 ### UI Design Guidelines
 - **Color schemes**: Dark themes with analog-inspired controls

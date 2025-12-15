@@ -32,11 +32,14 @@ TESTS_SKIPPED=0
 # Plugins to test
 PLUGINS=(
     "4K EQ"
+    "Convolution Reverb"
+    "DrummerClone"
+    "Harmonic Generator"
+    "SilkVerb"
     "Universal Compressor"
     "TapeMachine"
-    "Plate Reverb"
     "Vintage Tape Echo"
-    "DrummerClone"
+    
 )
 
 #------------------------------------------------------------------------------
