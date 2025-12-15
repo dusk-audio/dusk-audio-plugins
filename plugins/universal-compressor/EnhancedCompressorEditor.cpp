@@ -8,6 +8,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Initialize look and feels
     optoLookAndFeel = std::make_unique<OptoLookAndFeel>();
     fetLookAndFeel = std::make_unique<FETLookAndFeel>();
+    studioFetLookAndFeel = std::make_unique<StudioFETLookAndFeel>();  // Teal accent for Studio FET
     vcaLookAndFeel = std::make_unique<VCALookAndFeel>();
     busLookAndFeel = std::make_unique<BusLookAndFeel>();
     studioVcaLookAndFeel = std::make_unique<StudioVCALookAndFeel>();
@@ -37,7 +38,38 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Don't set a default - let the attachment handle it
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
-    
+
+    // Create preset category selector
+    presetCategorySelector = std::make_unique<juce::ComboBox>("Preset Category");
+    presetCategorySelector->addItem("-- Category --", 1);
+    int catId = 2;
+    for (const auto& cat : CompressorPresets::Categories)
+        presetCategorySelector->addItem(cat, catId++);
+    presetCategorySelector->setSelectedId(1, juce::dontSendNotification);
+    presetCategorySelector->onChange = [this]() {
+        int idx = presetCategorySelector->getSelectedId();
+        int categoryIndex = idx - 2;
+        if (idx > 1 && categoryIndex >= 0 && categoryIndex < CompressorPresets::Categories.size())
+            updatePresetList(CompressorPresets::Categories[categoryIndex]);
+        else
+        {
+            presetSelector->clear();
+            presetSelector->addItem("-- Select Preset --", 1);
+            presetSelector->setSelectedId(1, juce::dontSendNotification);
+            currentCategoryPresets.clear();
+        }
+    };
+    addAndMakeVisible(presetCategorySelector.get());
+
+    // Create preset selector
+    presetSelector = std::make_unique<juce::ComboBox>("Preset");
+    presetSelector->addItem("-- Select Preset --", 1);
+    presetSelector->setSelectedId(1, juce::dontSendNotification);
+    presetSelector->onChange = [this]() {
+        applySelectedPreset();
+    };
+    addAndMakeVisible(presetSelector.get());
+
     // Create global controls with full readable labels
     bypassButton = std::make_unique<juce::ToggleButton>("Bypass");
     autoGainButton = std::make_unique<juce::ToggleButton>("Auto Gain");
@@ -618,9 +650,9 @@ void EnhancedCompressorEditor::updateMode(int newMode)
             currentLookAndFeel = busLookAndFeel.get();
             break;
 
-        case 4: // Studio FET - shares FET panel
+        case 4: // Studio FET - shares FET panel but uses teal accent
             fetPanel.container->setVisible(true);
-            currentLookAndFeel = fetLookAndFeel.get();  // Use FET look (could customize later)
+            currentLookAndFeel = studioFetLookAndFeel.get();  // Teal accent to differentiate from Vintage FET
             break;
 
         case 5: // Studio VCA
@@ -663,6 +695,9 @@ void EnhancedCompressorEditor::updateMode(int newMode)
             case 3: // Bus - dark blue background
                 buttonTextColor = juce::Colour(0xFFECF0F1);  // Light gray
                 break;
+            case 4: // Studio FET - black background with teal accent
+                buttonTextColor = juce::Colour(0xFFE0E0E0);  // Light gray
+                break;
             case 5: // Studio VCA - dark red background
                 buttonTextColor = juce::Colour(0xFFD0D0D0);  // Light gray
                 break;
@@ -693,6 +728,12 @@ void EnhancedCompressorEditor::updateMode(int newMode)
         if (oversamplingSelector)
             oversamplingSelector->setLookAndFeel(currentLookAndFeel);
 
+        // Preset selectors
+        if (presetCategorySelector)
+            presetCategorySelector->setLookAndFeel(currentLookAndFeel);
+        if (presetSelector)
+            presetSelector->setLookAndFeel(currentLookAndFeel);
+
         // Sidechain EQ sliders
         if (scLowFreqSlider)
             scLowFreqSlider->setLookAndFeel(currentLookAndFeel);
@@ -716,6 +757,15 @@ void EnhancedCompressorEditor::updateMode(int newMode)
             fetPanel.outputKnob->setLookAndFeel(currentLookAndFeel);
             fetPanel.attackKnob->setLookAndFeel(currentLookAndFeel);
             fetPanel.releaseKnob->setLookAndFeel(currentLookAndFeel);
+
+            // Set ratio button accent color based on mode
+            if (fetPanel.ratioButtons)
+            {
+                if (currentMode == 4) // Studio FET - teal/cyan
+                    fetPanel.ratioButtons->setAccentColor(juce::Colour(0xFF00E5E5));
+                else // Vintage FET - amber/orange
+                    fetPanel.ratioButtons->setAccentColor(juce::Colour(0xFFFFAA00));
+            }
         }
         else if (vcaPanel.container->isVisible())
         {
@@ -1034,10 +1084,33 @@ void EnhancedCompressorEditor::resized()
     // Center area
     mainArea.reduce(20 * scaleFactor, 0);
 
+    // Preset selectors above VU meter (right side)
+    auto presetArea = mainArea.removeFromTop(static_cast<int>(26 * scaleFactor));
+    {
+        const int presetGap = static_cast<int>(8 * scaleFactor);
+        const int presetHeight = static_cast<int>(22 * scaleFactor);
+        const int catWidth = static_cast<int>(100 * scaleFactor);
+        const int presetWidth = static_cast<int>(160 * scaleFactor);
+
+        // Center the preset selectors
+        int totalPresetWidth = catWidth + presetGap + presetWidth;
+        auto presetControls = presetArea.withSizeKeepingCentre(totalPresetWidth, presetHeight);
+
+        if (presetCategorySelector)
+        {
+            presetCategorySelector->setBounds(presetControls.removeFromLeft(catWidth));
+        }
+        presetControls.removeFromLeft(presetGap);
+        if (presetSelector)
+        {
+            presetSelector->setBounds(presetControls.removeFromLeft(presetWidth));
+        }
+    }
+
     // VU Meter at top center - good readable size
-    auto vuArea = mainArea.removeFromTop(190 * scaleFactor);  // Increased from 160 to 190
+    auto vuArea = mainArea.removeFromTop(static_cast<int>(175 * scaleFactor));  // Slightly reduced to make room for presets
     if (vuMeter)
-        vuMeter->setBounds(vuArea.reduced(55 * scaleFactor, 5 * scaleFactor));  // Less horizontal reduction for larger meter
+        vuMeter->setBounds(vuArea.reduced(static_cast<int>(55 * scaleFactor), static_cast<int>(5 * scaleFactor)));  // Less horizontal reduction for larger meter
 
     // Add space for "GAIN REDUCTION" text below VU meter
     mainArea.removeFromTop(25 * scaleFactor);
@@ -1447,5 +1520,34 @@ void EnhancedCompressorEditor::mouseDown(const juce::MouseEvent& e)
     if (titleClickArea.contains(e.getPosition()))
     {
         showSupportersPanel();
+    }
+}
+
+//==============================================================================
+// Preset System
+void EnhancedCompressorEditor::updatePresetList(const juce::String& category)
+{
+    presetSelector->clear();
+    presetSelector->addItem("-- Select Preset --", 1);
+
+    currentCategoryPresets = CompressorPresets::getPresetsByCategory(category);
+
+    int id = 2;
+    for (const auto& preset : currentCategoryPresets)
+        presetSelector->addItem(preset.name, id++);
+
+    presetSelector->setSelectedId(1, juce::dontSendNotification);
+}
+
+void EnhancedCompressorEditor::applySelectedPreset()
+{
+    int idx = presetSelector->getSelectedId();
+    if (idx <= 1 || currentCategoryPresets.empty())
+        return;
+
+    int presetIndex = idx - 2;  // Subtract 2 because ID 1 is placeholder
+    if (presetIndex >= 0 && presetIndex < static_cast<int>(currentCategoryPresets.size()))
+    {
+        CompressorPresets::applyPreset(processor.getParameters(), currentCategoryPresets[static_cast<size_t>(presetIndex)]);
     }
 }

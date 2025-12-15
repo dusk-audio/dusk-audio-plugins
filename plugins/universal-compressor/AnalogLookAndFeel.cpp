@@ -299,6 +299,65 @@ void FETLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& but
         juce::Colour(0xFF3A3A3A), juce::Colour(0xFF252525), juce::Colour(0xFFCCCCCC),  // OFF colors
         juce::Colour(0xFF0A0A0A));  // bezel
 }
+
+//==============================================================================
+// Studio FET Style (teal/cyan accent for cleaner, more modern look)
+StudioFETLookAndFeel::StudioFETLookAndFeel()
+{
+    colors.background = juce::Colour(0xFF1A1A1A);  // Black face (same as Vintage FET)
+    colors.panel = juce::Colour(0xFF2A2A2A);       // Dark gray
+    colors.knobBody = juce::Colour(0xFF4A4A4A);    // Medium gray metal
+    colors.knobPointer = juce::Colour(0xFFFFFFFF); // White pointer
+    colors.text = juce::Colour(0xFFE0E0E0);        // Light gray
+    colors.textDim = juce::Colour(0xFF808080);     // Medium gray
+    colors.accent = juce::Colour(0xFF00CED1);      // Dark cyan/teal accent
+    colors.shadow = juce::Colour(0xFF000000);
+}
+
+void StudioFETLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                                            float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                                            juce::Slider& slider)
+{
+    drawMetallicKnob(g, x, y, width, height, sliderPos, rotaryStartAngle, rotaryEndAngle, slider);
+}
+
+void StudioFETLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& button,
+                                               const juce::Colour& backgroundColour,
+                                               bool shouldDrawButtonAsHighlighted,
+                                               bool shouldDrawButtonAsDown)
+{
+    // Studio FET-style rectangular button (similar to Vintage FET but teal accent)
+    auto bounds = button.getLocalBounds().toFloat().reduced(2);
+
+    // Button shadow
+    g.setColour(colors.shadow.withAlpha(0.5f));
+    g.fillRoundedRectangle(bounds.translated(1, 1), 2.0f);
+
+    // Button body - use teal accent when toggled
+    auto buttonColor = button.getToggleState() ? colors.accent : colors.panel;
+    if (shouldDrawButtonAsDown)
+        buttonColor = buttonColor.darker(0.2f);
+    else if (shouldDrawButtonAsHighlighted)
+        buttonColor = buttonColor.brighter(0.1f);
+
+    g.setColour(buttonColor);
+    g.fillRoundedRectangle(bounds, 2.0f);
+
+    // Button border
+    g.setColour(colors.text.withAlpha(0.3f));
+    g.drawRoundedRectangle(bounds, 2.0f, 1.0f);
+}
+
+void StudioFETLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                                            bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+{
+    // Studio FET-style illuminated push button - teal/cyan theme
+    drawIlluminatedToggleButton(g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown,
+        juce::Colour(0xFF00E5E5), juce::Colour(0xFF00A5A5), juce::Colour(0xFF001515),  // ON colors (teal)
+        juce::Colour(0xFF3A3A3A), juce::Colour(0xFF252525), juce::Colour(0xFFCCCCCC),  // OFF colors
+        juce::Colour(0xFF0A0A0A));  // bezel
+}
+
 //==============================================================================
 // Classic VCA Style
 VCALookAndFeel::VCALookAndFeel()
@@ -522,7 +581,15 @@ void AnalogVUMeter::timerCallback()
         if (peakHoldTime <= 0)
             peakLevel = currentLevel;
     }
-    
+
+    // Calculate peak needle position for display
+    if (displayPeaks)
+    {
+        float peakDisplayValue = juce::jlimit(-20.0f, 3.0f, peakLevel);
+        float peakNormalizedPos = (peakDisplayValue + 20.0f) / 23.0f;
+        peakNeedlePosition = juce::jlimit(0.0f, 1.0f, peakNormalizedPos);
+    }
+
     repaint();
 }
 
@@ -685,7 +752,7 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     
     // Draw needle
     float needleAngle = scaleStart + needlePosition * (scaleEnd - scaleStart);
-    
+
     // Classic VU meter needle - thin black line like vintage meters
     g.setColour(juce::Colour(0xFF000000));
     juce::Path needle;
@@ -693,7 +760,30 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     needle.lineTo(centreX + needleLength * 0.96f * std::cos(needleAngle),
                  pivotY + needleLength * 0.96f * std::sin(needleAngle));
     g.strokePath(needle, juce::PathStrokeType(1.5f * scaleFactor));  // Thin needle like classic VU
-    
+
+    // Draw peak hold indicator - small red triangle at peak position
+    if (displayPeaks && peakNeedlePosition > needlePosition + 0.02f)  // Only show if peak is significantly above current
+    {
+        float peakAngle = scaleStart + peakNeedlePosition * (scaleEnd - scaleStart);
+        float peakRadius = needleLength * 0.92f;  // Position on arc
+
+        // Small red triangle/marker at peak position
+        float peakX = centreX + peakRadius * std::cos(peakAngle);
+        float peakY = pivotY + peakRadius * std::sin(peakAngle);
+
+        // Draw a small red dot/marker
+        float markerSize = 4.0f * scaleFactor;
+        g.setColour(juce::Colour(0xFFFF3333));  // Bright red
+        g.fillEllipse(peakX - markerSize/2, peakY - markerSize/2, markerSize, markerSize);
+
+        // Optional: Draw a thin line from pivot to peak marker
+        g.setColour(juce::Colour(0x60FF3333));  // Semi-transparent red
+        juce::Path peakLine;
+        peakLine.startNewSubPath(centreX, pivotY);
+        peakLine.lineTo(peakX, peakY);
+        g.strokePath(peakLine, juce::PathStrokeType(0.5f * scaleFactor));
+    }
+
     // Classic needle pivot - small simple black dot
     float pivotRadius = 3 * scaleFactor;
     g.setColour(juce::Colour(0xFF000000));
@@ -745,49 +835,85 @@ void GRHistoryGraph::paint(juce::Graphics& g)
     float scaleFactor = juce::jmin(bounds.getWidth() / 400.0f, bounds.getHeight() / 250.0f);
     scaleFactor = juce::jmax(0.5f, scaleFactor);
 
-    // Draw outer frame
-    g.setColour(juce::Colour(0xFFB4B4B4));
-    g.fillRoundedRectangle(bounds, 3.0f * scaleFactor);
+    // Draw outer frame - professional look
+    g.setColour(juce::Colour(0xFF606060));
+    g.fillRoundedRectangle(bounds, 4.0f * scaleFactor);
 
-    // Draw inner frame
+    // Draw inner frame with subtle gradient
     auto innerFrame = bounds.reduced(2.0f * scaleFactor);
-    g.setColour(juce::Colour(0xFF1A1A1A));
-    g.fillRoundedRectangle(innerFrame, 2.0f * scaleFactor);
+    juce::ColourGradient bgGradient(
+        juce::Colour(0xFF1A1A1E), innerFrame.getX(), innerFrame.getY(),
+        juce::Colour(0xFF101014), innerFrame.getX(), innerFrame.getBottom(),
+        false);
+    g.setGradientFill(bgGradient);
+    g.fillRoundedRectangle(innerFrame, 3.0f * scaleFactor);
 
-    // Graph area
-    auto graphBounds = innerFrame.reduced(8.0f * scaleFactor);
+    // Graph area with margin for labels
+    auto graphBounds = innerFrame.reduced(10.0f * scaleFactor);
+    graphBounds.removeFromLeft(28.0f * scaleFactor);  // Space for dB labels
+    graphBounds.removeFromBottom(14.0f * scaleFactor); // Space for time labels
 
-    // Draw grid lines
-    g.setColour(juce::Colour(0xFF3A3A3A));
-    int numHorizontalLines = 4;
-    for (int i = 1; i < numHorizontalLines; ++i)
+    // Draw horizontal grid lines at each dB level
+    const float dbValues[] = {0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -30.0f};
+    const int numDbLines = 6;
+    for (int i = 0; i < numDbLines; ++i)
     {
-        float y = graphBounds.getY() + (graphBounds.getHeight() * i / numHorizontalLines);
+        float normalizedY = -dbValues[i] / 30.0f;
+        float y = graphBounds.getY() + normalizedY * graphBounds.getHeight();
+
+        // Lighter line at 0dB, dimmer for others
+        if (i == 0)
+            g.setColour(juce::Colour(0xFF505050));  // 0dB line more visible
+        else
+            g.setColour(juce::Colour(0xFF2A2A2E));
+
         g.drawHorizontalLine(static_cast<int>(y), graphBounds.getX(), graphBounds.getRight());
     }
 
+    // Draw vertical grid lines for time reference (1 sec intervals)
+    g.setColour(juce::Colour(0xFF2A2A2E));
+    for (int i = 1; i < 4; ++i)  // 1, 2, 3 second marks
+    {
+        float x = graphBounds.getX() + (graphBounds.getWidth() * i / 4.0f);
+        g.drawVerticalLine(static_cast<int>(x), graphBounds.getY(), graphBounds.getBottom());
+    }
+
     // Draw dB scale on left
-    g.setColour(juce::Colour(0xFF808080));
-    float fontSize = juce::jmax(8.0f, 10.0f * scaleFactor);
+    float fontSize = juce::jmax(8.0f, 9.0f * scaleFactor);
     g.setFont(juce::Font(juce::FontOptions(fontSize)));
 
-    const float dbValues[] = {0.0f, -10.0f, -20.0f, -30.0f};
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < numDbLines; ++i)
     {
-        float y = graphBounds.getY() + (graphBounds.getHeight() * i / 3.0f);
-        g.drawText(juce::String(static_cast<int>(dbValues[i])) + "dB",
-                   graphBounds.getX() - 30 * scaleFactor, y - 6 * scaleFactor,
-                   28 * scaleFactor, 12 * scaleFactor,
+        float normalizedY = -dbValues[i] / 30.0f;
+        float y = graphBounds.getY() + normalizedY * graphBounds.getHeight();
+
+        // Color: brighter for 0dB
+        if (dbValues[i] == 0.0f)
+            g.setColour(juce::Colour(0xFFAAAAAA));
+        else
+            g.setColour(juce::Colour(0xFF707070));
+
+        g.drawText(juce::String(static_cast<int>(dbValues[i])),
+                   innerFrame.getX() + 2 * scaleFactor, y - 6 * scaleFactor,
+                   24 * scaleFactor, 12 * scaleFactor,
                    juce::Justification::right);
+    }
+
+    // Find peak GR for indicator
+    float peakGR = 0.0f;
+    const int historySize = 128;
+    for (int i = 0; i < historySize; ++i)
+    {
+        if (grHistory[i] < peakGR)
+            peakGR = grHistory[i];
     }
 
     // Draw GR history as filled path
     juce::Path grPath;
-    const int historySize = 128;
     float xStep = graphBounds.getWidth() / static_cast<float>(historySize - 1);
 
-    // Start path at bottom left
-    grPath.startNewSubPath(graphBounds.getX(), graphBounds.getBottom());
+    // Start path at top left (0 GR)
+    grPath.startNewSubPath(graphBounds.getX(), graphBounds.getY());
 
     for (int i = 0; i < historySize; ++i)
     {
@@ -800,26 +926,22 @@ void GRHistoryGraph::paint(juce::Graphics& g)
         float y = graphBounds.getY() + normalizedGR * graphBounds.getHeight();
         float x = graphBounds.getX() + i * xStep;
 
-        if (i == 0)
-            grPath.lineTo(x, y);
-        else
-            grPath.lineTo(x, y);
+        grPath.lineTo(x, y);
     }
 
-    // Close path at bottom right
-    grPath.lineTo(graphBounds.getRight(), graphBounds.getBottom());
+    // Close path back to top right
+    grPath.lineTo(graphBounds.getRight(), graphBounds.getY());
     grPath.closeSubPath();
 
-    // Fill with gradient
+    // Fill with professional gradient - green to darker green
     juce::ColourGradient grGradient(
-        juce::Colour(0xFF00AA66), graphBounds.getX(), graphBounds.getY(),
-        juce::Colour(0xFF004422), graphBounds.getX(), graphBounds.getBottom(),
+        juce::Colour(0xFF00CC77).withAlpha(0.9f), graphBounds.getX(), graphBounds.getY(),
+        juce::Colour(0xFF003322).withAlpha(0.7f), graphBounds.getX(), graphBounds.getBottom(),
         false);
     g.setGradientFill(grGradient);
     g.fillPath(grPath);
 
-    // Draw outline
-    g.setColour(juce::Colour(0xFF00FF88));
+    // Draw bright outline for current GR trace
     juce::Path outlinePath;
     for (int i = 0; i < historySize; ++i)
     {
@@ -834,9 +956,46 @@ void GRHistoryGraph::paint(juce::Graphics& g)
         else
             outlinePath.lineTo(x, y);
     }
+
+    // Glow effect on outline
+    g.setColour(juce::Colour(0x3000FF88));
+    g.strokePath(outlinePath, juce::PathStrokeType(4.0f * scaleFactor));
+    g.setColour(juce::Colour(0xFF00FF88));
     g.strokePath(outlinePath, juce::PathStrokeType(1.5f * scaleFactor));
 
-    // Title - draw inside graph area at top for visibility
+    // Draw "NOW" marker on right side
+    float nowX = graphBounds.getRight();
+    g.setColour(juce::Colour(0xFFFFAA00));
+    g.drawVerticalLine(static_cast<int>(nowX), graphBounds.getY(), graphBounds.getBottom());
+
+    // Peak GR indicator line (horizontal dotted line at peak)
+    if (peakGR < -0.5f)  // Only show if there's meaningful GR
+    {
+        float peakY = graphBounds.getY() + (-peakGR / 30.0f) * graphBounds.getHeight();
+        g.setColour(juce::Colour(0x80FF6666));
+
+        // Draw peak line
+        g.drawHorizontalLine(static_cast<int>(peakY), graphBounds.getX(), graphBounds.getRight());
+
+        // Peak value label
+        g.setColour(juce::Colour(0xFFFF6666));
+        g.setFont(juce::Font(juce::FontOptions(fontSize).withStyle("Bold")));
+        juce::String peakText = juce::String(peakGR, 1) + "dB";
+        g.drawText(peakText, graphBounds.getRight() - 40 * scaleFactor, peakY - 12 * scaleFactor,
+                   38 * scaleFactor, 12 * scaleFactor, juce::Justification::right);
+    }
+
+    // Time labels at bottom
+    g.setColour(juce::Colour(0xFF707070));
+    g.setFont(juce::Font(juce::FontOptions(fontSize)));
+    g.drawText("-4s", graphBounds.getX(), graphBounds.getBottom() + 2 * scaleFactor,
+               20 * scaleFactor, 12 * scaleFactor, juce::Justification::left);
+    g.drawText("-2s", graphBounds.getCentreX() - 10 * scaleFactor, graphBounds.getBottom() + 2 * scaleFactor,
+               20 * scaleFactor, 12 * scaleFactor, juce::Justification::centred);
+    g.drawText("now", graphBounds.getRight() - 20 * scaleFactor, graphBounds.getBottom() + 2 * scaleFactor,
+               20 * scaleFactor, 12 * scaleFactor, juce::Justification::right);
+
+    // Title with background for visibility
     float titleFontSize = juce::jmax(11.0f, 14.0f * scaleFactor);
     auto titleBounds = juce::Rectangle<float>(
         graphBounds.getX() + graphBounds.getWidth() * 0.2f,
@@ -1036,6 +1195,14 @@ void RatioButtonGroup::setSelectedRatio(int index)
     }
 }
 
+void RatioButtonGroup::setAccentColor(juce::Colour color)
+{
+    accentColorBright = color;
+    // Create a darker version for the gradient
+    accentColorDark = color.darker(0.4f);
+    repaint();
+}
+
 void RatioButtonGroup::resized()
 {
     auto bounds = getLocalBounds();
@@ -1067,23 +1234,23 @@ void RatioButtonGroup::paint(juce::Graphics& g)
         auto innerBounds = bounds.reduced(2);
         if (isSelected)
         {
-            // Illuminated amber/orange when selected
-            juce::ColourGradient glow(juce::Colour(0xFFFFAA00), innerBounds.getCentreX(), innerBounds.getY(),
-                                      juce::Colour(0xFFCC6600), innerBounds.getCentreX(), innerBounds.getBottom(), false);
+            // Illuminated with accent color when selected
+            juce::ColourGradient glow(accentColorBright, innerBounds.getCentreX(), innerBounds.getY(),
+                                      accentColorDark, innerBounds.getCentreX(), innerBounds.getBottom(), false);
             g.setGradientFill(glow);
             g.fillRoundedRectangle(innerBounds.toFloat(), 3.0f);
 
             // Glow effect
-            g.setColour(juce::Colour(0x40FFAA00));
+            g.setColour(accentColorBright.withAlpha(0.25f));
             g.fillRoundedRectangle(bounds.toFloat().expanded(2), 5.0f);
 
-            // Text shadow for depth
-            g.setColour(juce::Colour(0xFF4A2500));
+            // Text shadow for depth - darker version of accent
+            g.setColour(accentColorDark.darker(0.6f));
             g.setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
             g.drawText(ratioLabels[i], innerBounds.translated(1, 1), juce::Justification::centred);
 
-            // Main text - dark on lit button
-            g.setColour(juce::Colour(0xFF1A0A00));
+            // Main text - very dark on lit button
+            g.setColour(accentColorDark.darker(0.8f));
         }
         else
         {

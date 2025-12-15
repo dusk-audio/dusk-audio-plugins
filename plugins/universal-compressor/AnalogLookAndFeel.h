@@ -66,11 +66,31 @@ public:
 };
 
 //==============================================================================
-// Vintage FET Style (blackface)
+// Vintage FET Style (blackface with amber/orange accent)
 class FETLookAndFeel : public AnalogLookAndFeelBase
 {
 public:
     FETLookAndFeel();
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                         float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                         juce::Slider& slider) override;
+
+    void drawButtonBackground(juce::Graphics& g, juce::Button& button,
+                             const juce::Colour& backgroundColour,
+                             bool shouldDrawButtonAsHighlighted,
+                             bool shouldDrawButtonAsDown) override;
+
+    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
+                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+};
+
+//==============================================================================
+// Studio FET Style (blackface with teal/cyan accent - cleaner, more modern)
+class StudioFETLookAndFeel : public AnalogLookAndFeelBase
+{
+public:
+    StudioFETLookAndFeel();
 
     void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
@@ -163,14 +183,15 @@ public:
     
 private:
     void timerCallback() override;
-    
+
     float currentLevel = -60.0f;
     float targetLevel = -60.0f;
     float needlePosition = 0.0f;
     float peakLevel = -60.0f;
+    float peakNeedlePosition = 0.0f;  // Position of peak indicator on scale
     float peakHoldTime = 0.0f;
     bool displayPeaks = true;
-    
+
     // Ballistics
     const float attackTime = 0.3f;  // 300ms VU standard
     const float releaseTime = 0.3f;
@@ -261,6 +282,7 @@ public:
     void removeListener(Listener* l) { listeners.remove(l); }
 
     void setSelectedRatio(int index);
+    void setAccentColor(juce::Colour color);  // Set the illuminated button color
     void resized() override;
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
@@ -270,6 +292,8 @@ private:
     juce::ListenerList<Listener> listeners;
     int currentRatio = 0;
     std::vector<juce::Rectangle<int>> buttonBounds;
+    juce::Colour accentColorBright = juce::Colour(0xFFFFAA00);  // Default amber
+    juce::Colour accentColorDark = juce::Colour(0xFFCC6600);    // Default darker amber
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RatioButtonGroup)
 };
