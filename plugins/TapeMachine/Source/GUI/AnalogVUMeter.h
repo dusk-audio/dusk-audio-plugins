@@ -3,18 +3,33 @@
 #include <JuceHeader.h>
 
 //==============================================================================
-// Professional Analog VU Meter Component with dual-needle stereo display
+// Professional Analog VU Meter Component
+// Supports both mono (single meter) and stereo (dual meter) display modes
+// Inspired by Studer A800 and Ampex ATR-102 VU meters
 class AnalogVUMeter : public juce::Component, private juce::Timer
 {
 public:
     AnalogVUMeter();
     ~AnalogVUMeter() override;
 
+    // Set levels for L/R (for stereo, call with left and right; for mono, both values are used)
     void setLevels(float leftLevel, float rightLevel);
+
+    // Set stereo mode - when true, shows two VU meters; when false, shows single VU meter
+    void setStereoMode(bool isStereo);
+    bool isStereoMode() const { return stereoMode; }
+
     void paint(juce::Graphics& g) override;
 
 private:
     void timerCallback() override;
+
+    // Helper to paint a single VU meter in the given bounds
+    void paintSingleMeter(juce::Graphics& g, const juce::Rectangle<float>& bounds,
+                          float needlePos, float peakLevel, const juce::String& label);
+
+    // Stereo/mono mode
+    bool stereoMode = true;
 
     // Stereo levels
     float currentLevelL = 0.0f;

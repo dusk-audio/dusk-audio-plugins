@@ -131,11 +131,34 @@ void CustomLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& 
         g.drawEllipse(ledBounds, 1.0f);
     }
 
-    // Text - centered in remaining space
-    auto textBounds = bounds.withTrimmedLeft(ledSize + 16);
-    g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0xff888888));
-    g.setFont(juce::Font(juce::FontOptions(13.0f)).withStyle(juce::Font::bold));
-    g.drawText(button.getButtonText(), textBounds, juce::Justification::centred);
+    // Check if this is the LINK button - draw chain icon instead of text
+    if (button.getButtonText() == "LINK")
+    {
+        // Draw chain link icon centered in the button (after LED area)
+        auto iconArea = bounds.withTrimmedLeft(ledSize + 8);
+        float cx = iconArea.getCentreX();
+        float cy = bounds.getCentreY();
+
+        g.setColour(isOn ? juce::Colour(0xffF8D080) : juce::Colour(0xff888888));
+
+        // Draw two interlocking chain links
+        float linkW = 16.0f;
+        float linkH = 10.0f;
+        float overlap = 6.0f;  // How much the links overlap
+
+        // Left link
+        g.drawRoundedRectangle(cx - linkW + overlap/2, cy - linkH/2, linkW, linkH, 4.0f, 2.0f);
+        // Right link (overlapping)
+        g.drawRoundedRectangle(cx - overlap/2, cy - linkH/2, linkW, linkH, 4.0f, 2.0f);
+    }
+    else
+    {
+        // Text - centered in remaining space
+        auto textBounds = bounds.withTrimmedLeft(ledSize + 16);
+        g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0xff888888));
+        g.setFont(juce::Font(juce::FontOptions(13.0f)).withStyle(juce::Font::bold));
+        g.drawText(button.getButtonText(), textBounds, juce::Justification::centred);
+    }
 }
 
 ReelAnimation::ReelAnimation()
@@ -154,49 +177,98 @@ void ReelAnimation::paint(juce::Graphics& g)
     auto centre = bounds.getCentre();
     auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.45f;
 
+    // Calculate tape radius based on tape amount
+    // Minimum tape (hub only) = 0.25, Maximum tape (full reel) = 0.85
+    float minTapeRatio = 0.25f;
+    float maxTapeRatio = 0.85f;
+    float tapeRadius = radius * (minTapeRatio + tapeAmount * (maxTapeRatio - minTapeRatio));
+
     // Outer reel housing shadow
     g.setColour(juce::Colour(0x90000000));
     g.fillEllipse(centre.x - radius + 3, centre.y - radius + 3, radius * 2, radius * 2);
 
-    // Metal reel body with gradient
-    juce::ColourGradient reelGradient(
-        juce::Colour(0xff6a5a4a), centre.x - radius, centre.y - radius,
-        juce::Colour(0xff3a3028), centre.x + radius, centre.y + radius, true);
-    g.setGradientFill(reelGradient);
+    // Metal reel flange with gradient (the outer silver ring)
+    juce::ColourGradient flangeGradient(
+        juce::Colour(0xff8a8078), centre.x - radius, centre.y - radius,
+        juce::Colour(0xff4a4540), centre.x + radius, centre.y + radius, true);
+    g.setGradientFill(flangeGradient);
     g.fillEllipse(centre.x - radius, centre.y - radius, radius * 2, radius * 2);
 
-    // Inner ring
-    g.setColour(juce::Colour(0xff2a2018));
-    g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2, radius * 2, 3.0f);
+    // Inner flange ring
+    g.setColour(juce::Colour(0xff3a3530));
+    g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2, radius * 2, 2.0f);
 
-    // Tape on reel
-    auto tapeRadius = radius * 0.8f;
-    g.setColour(juce::Colour(0xff1a1510));
-    g.fillEllipse(centre.x - tapeRadius, centre.y - tapeRadius, tapeRadius * 2, tapeRadius * 2);
+    // Tape pack - dark brown/black with subtle gradient to show depth
+    if (tapeAmount > 0.05f)
+    {
+        // Tape shadow (depth effect)
+        g.setColour(juce::Colour(0xff0a0808));
+        g.fillEllipse(centre.x - tapeRadius - 1, centre.y - tapeRadius + 1,
+                      tapeRadius * 2 + 2, tapeRadius * 2);
 
-    // Reel spokes
-    g.setColour(juce::Colour(0xff4a3828));
+        // Main tape pack with subtle radial gradient
+        juce::ColourGradient tapeGradient(
+            juce::Colour(0xff2a2420), centre.x, centre.y,
+            juce::Colour(0xff1a1510), centre.x, centre.y - tapeRadius, true);
+        g.setGradientFill(tapeGradient);
+        g.fillEllipse(centre.x - tapeRadius, centre.y - tapeRadius,
+                      tapeRadius * 2, tapeRadius * 2);
+
+        // Tape edge highlight (shiny tape surface)
+        g.setColour(juce::Colour(0x30ffffff));
+        g.drawEllipse(centre.x - tapeRadius + 2, centre.y - tapeRadius + 2,
+                      tapeRadius * 2 - 4, tapeRadius * 2 - 4, 1.0f);
+    }
+
+    // Reel spokes (visible through the tape hub area)
+    float hubRadius = radius * 0.22f;
+    g.setColour(juce::Colour(0xff5a4a3a));
     for (int i = 0; i < 3; ++i)
     {
         float spokeAngle = rotation + (i * 2.0f * juce::MathConstants<float>::pi / 3.0f);
 
         juce::Path spoke;
-        spoke.addRectangle(-radius * 0.6f, -6, radius * 1.2f, 12);
+        // Spokes extend from hub to flange
+        float spokeLength = radius * 0.72f;
+        float spokeWidth = 8.0f;
+        spoke.addRoundedRectangle(-spokeLength, -spokeWidth / 2, spokeLength * 2, spokeWidth, 2.0f);
         spoke.applyTransform(juce::AffineTransform::rotation(spokeAngle).translated(centre.x, centre.y));
+
+        // Only draw spoke portions visible outside the tape
+        g.saveState();
+        // Clip to area outside tape pack
+        juce::Path clipPath;
+        clipPath.addEllipse(centre.x - radius, centre.y - radius, radius * 2, radius * 2);
+        if (tapeAmount > 0.05f)
+        {
+            clipPath.setUsingNonZeroWinding(false);
+            clipPath.addEllipse(centre.x - tapeRadius, centre.y - tapeRadius,
+                               tapeRadius * 2, tapeRadius * 2);
+        }
+        g.reduceClipRegion(clipPath);
         g.fillPath(spoke);
+        g.restoreState();
     }
 
     // Center hub with metallic finish
-    auto hubRadius = radius * 0.2f;
     juce::ColourGradient hubGradient(
-        juce::Colour(0xff8a7a6a), centre.x - hubRadius, centre.y - hubRadius,
-        juce::Colour(0xff3a3028), centre.x + hubRadius, centre.y + hubRadius, false);
+        juce::Colour(0xffa09080), centre.x - hubRadius, centre.y - hubRadius,
+        juce::Colour(0xff4a4038), centre.x + hubRadius, centre.y + hubRadius, false);
     g.setGradientFill(hubGradient);
     g.fillEllipse(centre.x - hubRadius, centre.y - hubRadius, hubRadius * 2, hubRadius * 2);
 
-    // Center hole
+    // Hub ring detail
+    g.setColour(juce::Colour(0xff3a3028));
+    g.drawEllipse(centre.x - hubRadius, centre.y - hubRadius, hubRadius * 2, hubRadius * 2, 1.5f);
+
+    // Center spindle hole
+    float holeRadius = 6.0f;
     g.setColour(juce::Colour(0xff0a0a08));
-    g.fillEllipse(centre.x - 8, centre.y - 8, 16, 16);
+    g.fillEllipse(centre.x - holeRadius, centre.y - holeRadius, holeRadius * 2, holeRadius * 2);
+
+    // Spindle highlight
+    g.setColour(juce::Colour(0x20ffffff));
+    g.fillEllipse(centre.x - holeRadius + 1, centre.y - holeRadius + 1, holeRadius, holeRadius);
 }
 
 void ReelAnimation::timerCallback()
@@ -210,6 +282,11 @@ void ReelAnimation::timerCallback()
 void ReelAnimation::setSpeed(float speed)
 {
     rotationSpeed = juce::jlimit(0.0f, 5.0f, speed);
+}
+
+void ReelAnimation::setTapeAmount(float amount)
+{
+    tapeAmount = juce::jlimit(0.0f, 1.0f, amount);
 }
 
 // VUMeter implementation moved to GUI/VUMeter.cpp
@@ -281,27 +358,33 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     noiseEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), "noiseEnabled", noiseEnabledButton);
 
-    autoCompButton.setButtonText("AUTO COMP");
+    // Link button with chain icon - shows input/output are linked
+    autoCompButton.setButtonText("LINK");
     autoCompButton.setClickingTogglesState(true);
     autoCompButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a2828));
-    autoCompButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff5a4838));
+    autoCompButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6a5838));
     autoCompButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff888888));
-    autoCompButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffE8D4B0));
+    autoCompButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffF8D080));  // Brighter gold when on
     addAndMakeVisible(autoCompButton);
     autoCompAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), "autoComp", autoCompButton);
 
     addAndMakeVisible(leftReel);
     addAndMakeVisible(rightReel);
+    leftReel.setIsSupplyReel(true);   // Left reel is supply
+    rightReel.setIsSupplyReel(false); // Right reel is take-up
+    // Both reels start with similar tape amount so they look the same (spokes visible)
+    leftReel.setTapeAmount(0.5f);     // Medium tape amount - shows spokes
+    rightReel.setTapeAmount(0.5f);    // Medium tape amount - shows spokes
     leftReel.setSpeed(1.5f);
     rightReel.setSpeed(1.5f);
 
     addAndMakeVisible(mainVUMeter);
     startTimerHz(30);
 
-    setSize(900, 650);
+    setSize(800, 530);
     setResizable(true, true);
-    setResizeLimits(700, 500, 1400, 1000);
+    setResizeLimits(600, 400, 1200, 850);
 }
 
 TapeMachineAudioProcessorEditor::~TapeMachineAudioProcessorEditor()
@@ -341,8 +424,8 @@ void TapeMachineAudioProcessorEditor::setupComboBox(juce::ComboBox& combo, juce:
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
     label.setColour(juce::Label::textColourId, juce::Colour(0xffE8D4B0));
-    label.setFont(juce::Font(12.0f, juce::Font::bold));
-    label.attachToComponent(&combo, false);
+    label.setFont(juce::Font(10.0f, juce::Font::bold));
+    // Don't attach to component - we'll position manually in resized()
     addAndMakeVisible(label);
 }
 
@@ -357,7 +440,7 @@ void TapeMachineAudioProcessorEditor::paint (juce::Graphics& g)
     LunaLookAndFeel::drawPluginHeader(g, bounds, "TapeMachine", "Vintage Tape Emulation");
 
     // Add subtle vintage texture overlay for tape machine character
-    for (int y = 50; y < getHeight(); y += 4)
+    for (int y = 45; y < getHeight(); y += 4)
     {
         g.setColour(juce::Colour(0x05000000));
         g.drawHorizontalLine(y, 0, getWidth());
@@ -365,89 +448,96 @@ void TapeMachineAudioProcessorEditor::paint (juce::Graphics& g)
 
     // Company name centered at bottom
     g.setFont(juce::Font("Arial", 10.0f, juce::Font::italic));
-    g.setColour(juce::Colour(0x88B8A080));  // More subtle/transparent
-    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(18),
+    g.setColour(juce::Colour(0x88B8A080));
+    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(16),
                juce::Justification::centred);
 
-    // Transport section background (moved down below header)
+    // Transport section background (scaled for compact layout)
     auto workArea = getLocalBounds();
-    workArea.removeFromTop(50); // Skip header
+    workArea.removeFromTop(45);
 
-    auto transportArea = workArea.removeFromTop(240);
-    transportArea.reduce(15, 10);
+    auto transportArea = workArea.removeFromTop(185);
+    transportArea.reduce(12, 6);
 
     g.setColour(juce::Colour(0xff2a2018));
-    g.fillRoundedRectangle(transportArea.toFloat(), 8.0f);
+    g.fillRoundedRectangle(transportArea.toFloat(), 6.0f);
     g.setColour(juce::Colour(0xff4a3828));
-    g.drawRoundedRectangle(transportArea.toFloat(), 8.0f, 2.0f);
-
-    // Transport section - no label needed, visually distinct by VU meter and selectors
+    g.drawRoundedRectangle(transportArea.toFloat(), 6.0f, 1.5f);
 
     // Main controls section
-    workArea.removeFromTop(10);
-    auto mainControlsArea = workArea.removeFromTop(150);
-    mainControlsArea.reduce(15, 5);
+    workArea.removeFromTop(6);
+    auto mainControlsArea = workArea.removeFromTop(120);
+    mainControlsArea.reduce(12, 4);
 
     g.setColour(juce::Colour(0xff2a2018));
-    g.fillRoundedRectangle(mainControlsArea.toFloat(), 8.0f);
+    g.fillRoundedRectangle(mainControlsArea.toFloat(), 6.0f);
     g.setColour(juce::Colour(0xff4a3828));
-    g.drawRoundedRectangle(mainControlsArea.toFloat(), 8.0f, 2.0f);
+    g.drawRoundedRectangle(mainControlsArea.toFloat(), 6.0f, 1.5f);
 
-    // Main controls section - no label needed, knobs are self-explanatory
+    // VTM-style: The dimmed output knob is the main visual indicator
+    // No additional graphics needed - the 50% alpha on the output slider
+    // combined with the lit AUTO COMP button clearly shows the link
 
     // Character controls section
-    workArea.removeFromTop(10);
-    auto characterArea = workArea.removeFromTop(150);
-    characterArea.reduce(15, 5);
+    workArea.removeFromTop(6);
+    auto characterArea = workArea.removeFromTop(120);
+    characterArea.reduce(12, 4);
 
     g.setColour(juce::Colour(0xff2a2018));
-    g.fillRoundedRectangle(characterArea.toFloat(), 8.0f);
+    g.fillRoundedRectangle(characterArea.toFloat(), 6.0f);
     g.setColour(juce::Colour(0xff4a3828));
-    g.drawRoundedRectangle(characterArea.toFloat(), 8.0f, 2.0f);
-
-    // Character controls section - no label needed, knobs are self-explanatory
+    g.drawRoundedRectangle(characterArea.toFloat(), 6.0f, 1.5f);
 }
 
 void TapeMachineAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
 
-    // Header area
-    area.removeFromTop(50);
+    // Header area (scaled from 50 to 45)
+    area.removeFromTop(45);
 
-    // Transport section with reels and VU meter - ENLARGED
-    auto transportArea = area.removeFromTop(240);
-    transportArea.reduce(20, 12);
+    // Transport section with reels and VU meter - compact layout
+    auto transportArea = area.removeFromTop(185);
+    transportArea.reduce(15, 8);
 
-    // Reels on sides - slightly larger
-    auto reelSize = 150;
-    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(8));
-    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(8));
+    // Reels on sides - scaled down
+    auto reelSize = 120;
+    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(5));
+    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(5));
 
     // Center area for VU meter and selectors
-    transportArea.removeFromTop(28); // Space for "TRANSPORT" label
+    transportArea.removeFromTop(8);
 
-    // VU meter in center - MUCH LARGER and more prominent
-    auto meterArea = transportArea.removeFromTop(150);
-    mainVUMeter.setBounds(meterArea.reduced(8, 3));
+    // VU meter in center - prominent but compact
+    auto meterArea = transportArea.removeFromTop(120);
+    mainVUMeter.setBounds(meterArea.reduced(5, 2));
 
-    // Selectors below VU meter
-    transportArea.removeFromTop(12); // Gap for labels
-    auto selectorArea = transportArea.removeFromTop(42); // Increased height for labels
-    auto selectorWidth = selectorArea.getWidth() / 3;
+    // Labels and selectors below VU meter
+    transportArea.removeFromTop(4);
+    auto labelArea = transportArea.removeFromTop(14);
+    auto selectorWidth = labelArea.getWidth() / 3;
 
-    tapeMachineSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(6, 2));
-    tapeSpeedSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(6, 2));
-    tapeTypeSelector.setBounds(selectorArea.reduced(6, 2));
+    // Position labels above their combo boxes
+    tapeMachineLabel.setBounds(labelArea.removeFromLeft(selectorWidth).reduced(4, 0));
+    tapeSpeedLabel.setBounds(labelArea.removeFromLeft(selectorWidth).reduced(4, 0));
+    tapeTypeLabel.setBounds(labelArea.reduced(4, 0));
 
-    area.removeFromTop(8); // Gap between sections
+    transportArea.removeFromTop(2);
+    auto selectorArea = transportArea.removeFromTop(32);
+    selectorWidth = selectorArea.getWidth() / 3;
 
-    // Main controls section
-    auto mainControlsArea = area.removeFromTop(150);
-    mainControlsArea.reduce(20, 8);
-    mainControlsArea.removeFromTop(28); // Space for "MAIN CONTROLS" label
+    tapeMachineSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(4, 2));
+    tapeSpeedSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(4, 2));
+    tapeTypeSelector.setBounds(selectorArea.reduced(4, 2));
 
-    auto knobSize = 108;
+    area.removeFromTop(6);
+
+    // Main controls section - compact
+    auto mainControlsArea = area.removeFromTop(120);
+    mainControlsArea.reduce(15, 5);
+    mainControlsArea.removeFromTop(18);
+
+    auto knobSize = 85;
     auto mainSpacing = (mainControlsArea.getWidth() - (knobSize * 4)) / 5;
 
     mainControlsArea.removeFromLeft(mainSpacing);
@@ -459,15 +549,15 @@ void TapeMachineAudioProcessorEditor::resized()
     mainControlsArea.removeFromLeft(mainSpacing);
     outputGainSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
 
-    area.removeFromTop(8); // Gap between sections
+    area.removeFromTop(6);
 
-    // Character & filtering section
-    auto characterArea = area.removeFromTop(150);
-    characterArea.reduce(20, 8);
-    characterArea.removeFromTop(28); // Space for "CHARACTER & FILTERING" label
+    // Character & filtering section - compact
+    auto characterArea = area.removeFromTop(120);
+    characterArea.reduce(15, 5);
+    characterArea.removeFromTop(18);
 
-    // Center the 5 controls (3 knobs + 2 buttons: 110px + 120px)
-    auto charSpacing = (characterArea.getWidth() - (knobSize * 3) - 230) / 6;
+    // Center the 5 controls (3 knobs + 2 button areas: 90 + 100 = 190)
+    auto charSpacing = (characterArea.getWidth() - (knobSize * 3) - 190) / 6;
 
     characterArea.removeFromLeft(charSpacing);
     highpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
@@ -477,18 +567,27 @@ void TapeMachineAudioProcessorEditor::resized()
     noiseAmountSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
     characterArea.removeFromLeft(charSpacing);
 
-    // Noise enable button - aligned with knobs, more prominent
-    auto buttonArea = characterArea.removeFromLeft(110);
-    noiseEnabledButton.setBounds(buttonArea.withSizeKeepingCentre(95, 45));
+    // Noise enable button - compact
+    auto buttonArea = characterArea.removeFromLeft(90);
+    noiseEnabledButton.setBounds(buttonArea.withSizeKeepingCentre(80, 38));
     characterArea.removeFromLeft(charSpacing);
 
-    // Auto-comp button (wider to fit "AUTO COMP" text)
-    auto autoCompButtonArea = characterArea.removeFromLeft(120);
-    autoCompButton.setBounds(autoCompButtonArea.withSizeKeepingCentre(115, 45));
+    // Link button - wider with centered icon
+    auto autoCompButtonArea = characterArea.removeFromLeft(100);
+    autoCompButton.setBounds(autoCompButtonArea.withSizeKeepingCentre(90, 38));
 }
 
 void TapeMachineAudioProcessorEditor::timerCallback()
 {
+    // Intelligently detect mono vs stereo track and update VU meter display
+    // Mono tracks show single VU meter, stereo tracks show dual L/R meters
+    int numChannels = audioProcessor.getTotalNumInputChannels();
+    bool isStereo = (numChannels > 1);
+    if (mainVUMeter.isStereoMode() != isStereo)
+    {
+        mainVUMeter.setStereoMode(isStereo);
+    }
+
     // Get input levels AFTER gain staging to show tape saturation drive
     // This gives visual feedback of how hard you're hitting the tape
     float inputL = audioProcessor.getInputLevelL();
@@ -497,8 +596,61 @@ void TapeMachineAudioProcessorEditor::timerCallback()
     // Update VU meter to show tape drive (input level after input gain)
     mainVUMeter.setLevels(inputL, inputR);
 
-    // Update reel speeds based on transport
-    float speed = audioProcessor.isProcessing() ? 1.5f : 0.0f;
+    // VTM-style: When auto-comp is enabled, output knob tracks inverse of input
+    auto* autoCompParam = audioProcessor.getAPVTS().getRawParameterValue("autoComp");
+    auto* inputGainParam = audioProcessor.getAPVTS().getRawParameterValue("inputGain");
+    bool autoCompEnabled = autoCompParam && autoCompParam->load() > 0.5f;
+
+    if (autoCompEnabled && inputGainParam)
+    {
+        // VTM-style: Output is exactly inverse of input for unity gain
+        // When input is +6dB, output shows -6dB (net = 0dB through saturation)
+        float inputGainDB = inputGainParam->load();
+        float compensatedOutputDB = -inputGainDB;
+
+        // Clamp to valid range (-12 to +12)
+        compensatedOutputDB = juce::jlimit(-12.0f, 12.0f, compensatedOutputDB);
+
+        // Update the output slider visually (read-only mode)
+        outputGainSlider.setValue(compensatedOutputDB, juce::dontSendNotification);
+        outputGainSlider.setEnabled(false);  // Can't be adjusted
+    }
+    else
+    {
+        outputGainSlider.setEnabled(true);
+    }
+
+    // Update reel speeds and tape amounts based on transport
+    bool isPlaying = audioProcessor.isProcessing();
+    float speed = isPlaying ? 1.5f : 0.0f;
     leftReel.setSpeed(speed);
     rightReel.setSpeed(speed);
+
+    // Animate tape transfer: supply reel loses tape, take-up reel gains tape
+    if (isPlaying)
+    {
+        // Transfer rate: roughly 30 minutes of "tape" over full animation cycle
+        // At 30 fps, this gives a slow, realistic tape transfer
+        const float transferRate = 0.0001f;
+
+        float supplyTape = leftReel.getTapeAmount();
+        float takeupTape = rightReel.getTapeAmount();
+
+        // Transfer tape from supply to take-up
+        if (supplyTape > 0.3f)
+        {
+            supplyTape -= transferRate;
+            takeupTape += transferRate;
+
+            leftReel.setTapeAmount(supplyTape);
+            rightReel.setTapeAmount(takeupTape);
+        }
+        else
+        {
+            // Auto-rewind when tape runs out (loop the animation)
+            // Both reels at medium amount so spokes are visible (matches initialization)
+            leftReel.setTapeAmount(0.5f);
+            rightReel.setTapeAmount(0.5f);
+        }
+    }
 }

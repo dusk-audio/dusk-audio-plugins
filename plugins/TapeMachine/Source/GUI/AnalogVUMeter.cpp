@@ -10,32 +10,23 @@ AnalogVUMeter::~AnalogVUMeter()
     stopTimer();
 }
 
+void AnalogVUMeter::setStereoMode(bool isStereo)
+{
+    if (stereoMode != isStereo)
+    {
+        stereoMode = isStereo;
+        repaint();
+    }
+}
+
 void AnalogVUMeter::setLevels(float leftLevel, float rightLevel)
 {
-    // Convert linear to dB (no calibration offset - VU shows dBFS directly)
+    // Convert linear to dB
     float dbL = 20.0f * std::log10(std::max(0.001f, leftLevel));
     float dbR = 20.0f * std::log10(std::max(0.001f, rightLevel));
 
     targetLevelL = dbL;
     targetLevelR = dbR;
-
-    // Debug: Log what the VU meter is receiving
-    static int debugCounter = 0;
-    if (++debugCounter > 60)  // Log every ~1 second
-    {
-        debugCounter = 0;
-        juce::File logFile("/tmp/tapemachine_vu_display.txt");
-        juce::String logText;
-        logText << "=== VU METER DISPLAY ===" << juce::newLine;
-        logText << "Received Linear L: " << juce::String(leftLevel, 4) << juce::newLine;
-        logText << "Received Linear R: " << juce::String(rightLevel, 4) << juce::newLine;
-        logText << "Converted to dB L: " << juce::String(dbL, 2) << " dB" << juce::newLine;
-        logText << "Converted to dB R: " << juce::String(dbR, 2) << " dB" << juce::newLine;
-        logText << "Target Level L:    " << juce::String(targetLevelL, 2) << " dB" << juce::newLine;
-        logText << "Target Level R:    " << juce::String(targetLevelR, 2) << " dB" << juce::newLine;
-        logText << juce::newLine;
-        logFile.appendText(logText);
-    }
 
     // Update peaks
     if (dbL > peakLevelL)
@@ -92,12 +83,11 @@ void AnalogVUMeter::timerCallback()
     repaint();
 }
 
-void AnalogVUMeter::paint(juce::Graphics& g)
+void AnalogVUMeter::paintSingleMeter(juce::Graphics& g, const juce::Rectangle<float>& bounds,
+                                      float needlePos, float peakLevel, const juce::String& label)
 {
-    auto bounds = getLocalBounds().toFloat();
-
     // Calculate scale factor based on component size
-    float scaleFactor = juce::jmin(bounds.getWidth() / 450.0f, bounds.getHeight() / 180.0f);
+    float scaleFactor = juce::jmin(bounds.getWidth() / 200.0f, bounds.getHeight() / 140.0f);
     scaleFactor = juce::jmax(0.5f, scaleFactor);
 
     // Draw outer gray frame
@@ -122,7 +112,7 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     auto centreX = faceBounds.getCentreX();
     auto pivotY = faceBounds.getBottom() - (3 * scaleFactor);
 
-    // Calculate needle length to fill the meter
+    // Calculate needle length
     auto maxHeightForText = faceBounds.getHeight() * 0.88f;
     auto maxWidthRadius = faceBounds.getWidth() * 0.49f;
     auto needleLength = juce::jmin(maxWidthRadius, maxHeightForText);
@@ -131,10 +121,8 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     const float scaleStart = -2.7f;
     const float scaleEnd = -0.44f;
 
-    // Scale arc removed - was creating dark line that obscured markings
-
     // Font setup for scale markings
-    float baseFontSize = juce::jmax(10.0f, 14.0f * scaleFactor);
+    float baseFontSize = juce::jmax(8.0f, 11.0f * scaleFactor);
     g.setFont(juce::Font(baseFontSize));
 
     // Draw scale markings
@@ -144,16 +132,15 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     for (int i = 0; i < numDbValues; ++i)
     {
         float db = dbValues[i];
-        float normalizedPos = (db + 20.0f) / 23.0f;
-        float angle = scaleStart + normalizedPos * (scaleEnd - scaleStart);
+        float normalizedP = (db + 20.0f) / 23.0f;
+        float angle = scaleStart + normalizedP * (scaleEnd - scaleStart);
 
         bool isMajor = (db == -20 || db == -10 || db == -7 || db == -5 || db == -3 ||
                        db == -2 || db == -1 || db == 0 || db == 1 || db == 3);
-        bool showText = (db == -20 || db == -10 || db == -5 || db == -3 ||
-                        db == 0 || db == 3);
+        bool showText = (db == -20 || db == -10 || db == -5 || db == 0 || db == 3);
 
         // Draw tick marks
-        auto tickLength = isMajor ? (10.0f * scaleFactor) : (6.0f * scaleFactor);
+        auto tickLength = isMajor ? (8.0f * scaleFactor) : (5.0f * scaleFactor);
         auto tickRadius = needleLength * 0.95f;
         auto x1 = centreX + tickRadius * std::cos(angle);
         auto y1 = pivotY + tickRadius * std::sin(angle);
@@ -166,7 +153,7 @@ void AnalogVUMeter::paint(juce::Graphics& g)
         else
             g.setColour(juce::Colour(0xFF2A2A2A));  // Dark gray
 
-        g.drawLine(x1, y1, x2, y2, isMajor ? 2.0f * scaleFactor : 1.0f * scaleFactor);
+        g.drawLine(x1, y1, x2, y2, isMajor ? 1.5f * scaleFactor : 1.0f * scaleFactor);
 
         // Draw text labels
         if (showText)
@@ -175,11 +162,11 @@ void AnalogVUMeter::paint(juce::Graphics& g)
             auto textX = centreX + textRadius * std::cos(angle);
             auto textY = pivotY + textRadius * std::sin(angle);
 
-            float textBoxWidth = 30 * scaleFactor;
-            float textBoxHeight = 15 * scaleFactor;
+            float textBoxWidth = 24 * scaleFactor;
+            float textBoxHeight = 12 * scaleFactor;
 
             // Keep text within bounds
-            float minY = faceBounds.getY() + (5 * scaleFactor);
+            float minY = faceBounds.getY() + (4 * scaleFactor);
             if (textY - textBoxHeight/2 < minY)
                 textY = minY + textBoxHeight/2;
 
@@ -191,7 +178,6 @@ void AnalogVUMeter::paint(juce::Graphics& g)
             else
                 dbText = juce::String((int)db);
 
-            // Text colors match tick colors
             if (db >= 0)
                 g.setColour(juce::Colour(0xFFD42C2C));
             else
@@ -202,68 +188,71 @@ void AnalogVUMeter::paint(juce::Graphics& g)
         }
     }
 
-    // Removed percentage markings - they were cluttering the display
-
-    // Draw VU text
+    // Draw VU text (or channel label in stereo mode)
     g.setColour(juce::Colour(0xFF2A2A2A));
-    float vuFontSize = juce::jmax(14.0f, 18.0f * scaleFactor);
-    g.setFont(juce::Font(vuFontSize).withTypefaceStyle("Regular"));
-    float vuY = pivotY - (needleLength * 0.5f);
-    g.drawText("VU", centreX - 20 * scaleFactor, vuY,
-              40 * scaleFactor, 20 * scaleFactor, juce::Justification::centred);
+    float vuFontSize = juce::jmax(10.0f, 14.0f * scaleFactor);
+    g.setFont(juce::Font(vuFontSize).withTypefaceStyle("Bold"));
+    float vuY = pivotY - (needleLength * 0.45f);
+    g.drawText(label.isEmpty() ? "VU" : label, centreX - 15 * scaleFactor, vuY,
+              30 * scaleFactor, 16 * scaleFactor, juce::Justification::centred);
 
-    // Draw single needle showing max of L/R (works for both mono and stereo)
-    float avgNeedlePos = juce::jmax(needlePositionL, needlePositionR);
-    float needleAngle = scaleStart + avgNeedlePos * (scaleEnd - scaleStart);
-
-    // Debug: Log needle position calculation
-    static int paintDebugCounter = 0;
-    if (++paintDebugCounter > 60)
-    {
-        paintDebugCounter = 0;
-        juce::File logFile("/tmp/tapemachine_vu_needle.txt");
-        juce::String logText;
-        logText << "=== NEEDLE CALCULATION ===" << juce::newLine;
-        logText << "currentLevelL:   " << juce::String(currentLevelL, 2) << " dB" << juce::newLine;
-        logText << "currentLevelR:   " << juce::String(currentLevelR, 2) << " dB" << juce::newLine;
-        logText << "targetLevelL:    " << juce::String(targetLevelL, 2) << " dB" << juce::newLine;
-        logText << "targetLevelR:    " << juce::String(targetLevelR, 2) << " dB" << juce::newLine;
-        logText << "needlePositionL: " << juce::String(needlePositionL, 4) << juce::newLine;
-        logText << "needlePositionR: " << juce::String(needlePositionR, 4) << juce::newLine;
-        logText << "avgNeedlePos:    " << juce::String(avgNeedlePos, 4) << " (should be avg of L and R)" << juce::newLine;
-        logText << "needleAngle:     " << juce::String(needleAngle, 4) << " rad" << juce::newLine;
-        logText << juce::newLine;
-        logFile.appendText(logText);
-    }
+    // Draw needle
+    float needleAngle = scaleStart + needlePos * (scaleEnd - scaleStart);
 
     g.setColour(juce::Colour(0xFFCC3333));  // Classic VU red
     juce::Path needle;
     needle.startNewSubPath(centreX, pivotY);
     needle.lineTo(centreX + needleLength * 0.96f * std::cos(needleAngle),
                   pivotY + needleLength * 0.96f * std::sin(needleAngle));
-    g.strokePath(needle, juce::PathStrokeType(2.5f * scaleFactor));
+    g.strokePath(needle, juce::PathStrokeType(2.0f * scaleFactor));
 
     // Draw needle pivot
-    float pivotRadius = 4 * scaleFactor;
+    float pivotRadius = 3 * scaleFactor;
     g.setColour(juce::Colour(0xFF000000));
     g.fillEllipse(centreX - pivotRadius, pivotY - pivotRadius,
                   pivotRadius * 2, pivotRadius * 2);
-
 
     // Restore graphics state
     g.restoreState();
 
     // Subtle glass reflection
     auto glassBounds = faceBounds;
-    auto highlightBounds = glassBounds.removeFromTop(glassBounds.getHeight() * 0.2f)
-                                      .reduced(10 * scaleFactor, 5 * scaleFactor);
+    auto highlightBounds = glassBounds.removeFromTop(glassBounds.getHeight() * 0.15f)
+                                      .reduced(8 * scaleFactor, 3 * scaleFactor);
     juce::ColourGradient highlightGradient(
-        juce::Colour(0x20FFFFFF),
+        juce::Colour(0x18FFFFFF),
         highlightBounds.getCentreX(), highlightBounds.getY(),
         juce::Colour(0x00FFFFFF),
         highlightBounds.getCentreX(), highlightBounds.getBottom(),
         false
     );
     g.setGradientFill(highlightGradient);
-    g.fillRoundedRectangle(highlightBounds, 3.0f * scaleFactor);
+    g.fillRoundedRectangle(highlightBounds, 2.0f * scaleFactor);
+}
+
+void AnalogVUMeter::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+
+    if (stereoMode)
+    {
+        // Stereo mode: Draw two VU meters side by side
+        float gap = 8.0f;
+        float meterWidth = (bounds.getWidth() - gap) / 2.0f;
+
+        // Left meter
+        auto leftBounds = bounds.withWidth(meterWidth);
+        paintSingleMeter(g, leftBounds, needlePositionL, peakLevelL, "L");
+
+        // Right meter
+        auto rightBounds = bounds.withX(bounds.getX() + meterWidth + gap).withWidth(meterWidth);
+        paintSingleMeter(g, rightBounds, needlePositionR, peakLevelR, "R");
+    }
+    else
+    {
+        // Mono mode: Draw single VU meter showing max of L/R
+        float avgNeedlePos = juce::jmax(needlePositionL, needlePositionR);
+        float avgPeakLevel = juce::jmax(peakLevelL, peakLevelR);
+        paintSingleMeter(g, bounds, avgNeedlePos, avgPeakLevel, "VU");
+    }
 }

@@ -14,8 +14,7 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
                      #endif
                        ),
 #endif
-       apvts(*this, nullptr, "Parameters", createParameterLayout()),
-       oversampling(2, 2, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple)
+       apvts(*this, nullptr, "Parameters", createParameterLayout())
 {
     tapeMachineParam = apvts.getRawParameterValue("tapeMachine");
     tapeSpeedParam = apvts.getRawParameterValue("tapeSpeed");
@@ -38,6 +37,7 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     // Initialize bias and calibration parameters
     biasParam = apvts.getRawParameterValue("bias");
     calibrationParam = apvts.getRawParameterValue("calibration");
+    oversamplingParam = apvts.getRawParameterValue("oversampling");
 }
 
 TapeMachineAudioProcessor::~TapeMachineAudioProcessor()
@@ -130,6 +130,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "autoComp", "Auto Compensation", true));
 
+    // Oversampling quality (2x or 4x) - higher reduces aliasing from saturation
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "oversampling", "Oversampling",
+        juce::StringArray{"2x", "4x"},
+        1));  // Default to 4x for best quality
+
     return { params.begin(), params.end() };
 }
 
@@ -206,11 +212,44 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
 
     currentSampleRate = static_cast<float>(sampleRate);
 
-    // Get the actual oversampling factor from the oversampling object
-    // The object was initialized with 2 stages, giving 2^2 = 4x oversampling
-    const auto oversamplingFactor = oversampling.getOversamplingFactor();
-    const double oversampledRate = sampleRate * static_cast<double>(oversamplingFactor);
-    const int oversampledBlockSize = samplesPerBlock * static_cast<int>(oversamplingFactor);
+    // Get user's oversampling choice (0 = 2x, 1 = 4x)
+    int oversamplingChoice = oversamplingParam ? static_cast<int>(oversamplingParam->load()) : 1;
+    currentOversamplingFactor = (oversamplingChoice == 0) ? 2 : 4;
+
+    // Check if we need to recreate oversamplers
+    bool needsRecreate = (std::abs(sampleRate - lastPreparedSampleRate) > 0.01) ||
+                         (samplesPerBlock != lastPreparedBlockSize) ||
+                         (oversamplingChoice != lastOversamplingChoice) ||
+                         !oversampler2x || !oversampler4x;
+
+    if (needsRecreate)
+    {
+        // Create both 2x and 4x oversamplers using high-quality FIR equiripple filters
+        // FIR provides superior alias rejection compared to IIR, essential for tape saturation
+        oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
+            static_cast<size_t>(getTotalNumInputChannels()), 1,
+            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
+
+        oversampler4x = std::make_unique<juce::dsp::Oversampling<float>>(
+            static_cast<size_t>(getTotalNumInputChannels()), 2,
+            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
+
+        oversampler2x->initProcessing(static_cast<size_t>(samplesPerBlock));
+        oversampler4x->initProcessing(static_cast<size_t>(samplesPerBlock));
+
+        lastPreparedSampleRate = sampleRate;
+        lastPreparedBlockSize = samplesPerBlock;
+        lastOversamplingChoice = oversamplingChoice;
+    }
+    else
+    {
+        if (oversampler2x) oversampler2x->reset();
+        if (oversampler4x) oversampler4x->reset();
+    }
+
+    // Calculate oversampled rate based on current factor
+    const double oversampledRate = sampleRate * currentOversamplingFactor;
+    const int oversampledBlockSize = samplesPerBlock * currentOversamplingFactor;
 
     // Store oversampled rate for filter updates
     currentOversampledRate = static_cast<float>(oversampledRate);
@@ -229,8 +268,6 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     processorChainRight.get<0>().setRampDurationSeconds(0.02);
     processorChainLeft.get<3>().setRampDurationSeconds(0.02);  // 20ms for output gain
     processorChainRight.get<3>().setRampDurationSeconds(0.02);
-
-    oversampling.initProcessing(static_cast<size_t>(samplesPerBlock));
 
     // Prepare tape emulation with oversampled rate so filter cutoffs are correct
     if (tapeEmulationLeft)
@@ -252,13 +289,19 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     smoothedSaturation.reset(sampleRate, saturationRampTimeMs * 0.001f);
     smoothedNoiseAmount.reset(sampleRate, rampTimeMs * 0.001f);
     smoothedWowFlutter.reset(sampleRate, rampTimeMs * 0.001f);
+
+    // Report latency to host for PDC
+    auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
+    if (activeOversampler)
+        setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
 }
 
 void TapeMachineAudioProcessor::releaseResources()
 {
     processorChainLeft.reset();
     processorChainRight.reset();
-    oversampling.reset();
+    if (oversampler2x) oversampler2x->reset();
+    if (oversampler4x) oversampler4x->reset();
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -413,32 +456,26 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     const auto tapeSpeed = static_cast<TapeSpeed>(static_cast<int>(tapeSpeedParam->load()));
 
     // Update target values for smoothing
-    const float targetInputGain = juce::Decibels::decibelsToGain(inputGainParam->load());
-    float targetOutputGain = juce::Decibels::decibelsToGain(outputGainParam->load());
+    const float inputGainDB = inputGainParam->load();
+    const float targetInputGain = juce::Decibels::decibelsToGain(inputGainDB);
+    float targetOutputGain;
 
-    // Auto-compensation: compensate output for input gain if enabled
-    // Account for saturation's level-dependent harmonic content
-    if (autoCompParam && autoCompParam->load() > 0.5f)
+    // VTM-style auto-compensation: when enabled, output is LOCKED to inverse of input
+    // This lets you drive the tape harder with input while maintaining consistent output level
+    const bool autoCompEnabled = autoCompParam && autoCompParam->load() > 0.5f;
+
+    if (autoCompEnabled)
     {
-        float inputGainDB = inputGainParam->load();
-
-        // Calculate saturation amount (0-100%)
-        float saturationAmount = juce::jlimit(0.0f, 100.0f, ((inputGainDB + 12.0f) / 24.0f) * 100.0f);
-
-        // Tape saturation is level-dependent - harmonics only appear above 0 VU (-12dBFS)
-        // The harmonic gain increases non-linearly with both input level and saturation amount
-        // Use empirical curve that matches tape behavior:
-        // - Below 0dB input: minimal harmonic gain (mostly 1:1 compensation)
-        // - At +12dB input with 100% saturation: ~3-4dB of harmonic gain
-        float normalizedInput = juce::jlimit(0.0f, 1.0f, (inputGainDB + 12.0f) / 24.0f);  // 0 to 1
-        float saturationNormalized = saturationAmount / 100.0f;  // 0 to 1
-
-        // Harmonic gain increases with square of both input level and saturation
-        // This matches the level-dependent behavior in the tape emulation
-        float harmonicGainDB = normalizedInput * normalizedInput * saturationNormalized * 4.0f;
-
-        float compensationDB = -inputGainDB - harmonicGainDB;
-        targetOutputGain *= juce::Decibels::decibelsToGain(compensationDB);
+        // VTM-style: Output is exactly inverse of input for unity gain through the plugin
+        // Input drives tape saturation, output compensates to maintain consistent level
+        // At 0dB input: 0dB output (unity)
+        // At +12dB input: -12dB output (unity through saturation)
+        targetOutputGain = juce::Decibels::decibelsToGain(-inputGainDB);
+    }
+    else
+    {
+        // Manual mode: use the output gain knob directly
+        targetOutputGain = juce::Decibels::decibelsToGain(outputGainParam->load());
     }
 
     // Let the gain processors handle their own smoothing with the configured ramp time
@@ -449,8 +486,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     // Keep smoothing for non-gain parameters that we process per-sample
     // Drive saturation from input gain: -12dB to +12dB maps to 0% to 100%
-    float inputGainDB = inputGainParam->load();
-    float saturationAmount = juce::jlimit(0.0f, 100.0f, ((inputGainDB + 12.0f) / 24.0f) * 100.0f);
+    // (inputGainDB already calculated above)
+    const float saturationAmount = juce::jlimit(0.0f, 100.0f, ((inputGainDB + 12.0f) / 24.0f) * 100.0f);
     smoothedSaturation.setTargetValue(saturationAmount);
     smoothedWowFlutter.setTargetValue(wowFlutterParam->load());
     // Scale noise amount: 0-100% becomes 0-1.0 range for proper noise level control
@@ -510,8 +547,12 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         DBG("VU Reading: " << (juce::Decibels::gainToDecibels(rmsInputL) + 12.0f) << " VU");
     }
 
-    // Now oversample for high-quality processing
-    juce::dsp::AudioBlock<float> oversampledBlock = oversampling.processSamplesUp(block);
+    // Now oversample for high-quality processing using selected quality
+    auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
+    if (!activeOversampler)
+        return;
+
+    juce::dsp::AudioBlock<float> oversampledBlock = activeOversampler->processSamplesUp(block);
 
     auto leftBlock = oversampledBlock.getSingleChannelBlock(0);
     auto rightBlock = oversampledBlock.getSingleChannelBlock(1);
@@ -655,7 +696,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     processorChainLeft.get<3>().process(leftContext);
     processorChainRight.get<3>().process(rightContext);
 
-    oversampling.processSamplesDown(block);
+    activeOversampler->processSamplesDown(block);
 
     // Calculate RMS output levels after processing (VU-accurate)
     const float* outputLeftChannel = buffer.getReadPointer(0);
