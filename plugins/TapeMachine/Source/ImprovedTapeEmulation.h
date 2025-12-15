@@ -117,6 +117,81 @@ public:
     }
 };
 
+// Transformer saturation model - authentic input/output stage coloration
+class TransformerSaturation
+{
+public:
+    void prepare(double sampleRate);
+    float process(float input, float driveAmount, bool isOutputStage);
+    void reset();
+
+private:
+    // DC blocking for transformer coupling
+    float dcState = 0.0f;
+    float dcBlockCoeff = 0.9995f;
+
+    // Transformer hysteresis state
+    float hystState = 0.0f;
+    float prevInput = 0.0f;
+
+    // LF resonance from core saturation
+    float lfResonanceState = 0.0f;
+};
+
+// Playback head frequency response - distinct from tape response
+class PlaybackHeadResponse
+{
+public:
+    void prepare(double sampleRate);
+    float process(float input, float gapWidth, float speed);
+    void reset();
+
+private:
+    // Head gap loss filter (comb filter approximation)
+    std::array<float, 64> gapDelayLine{};
+    int gapDelayIndex = 0;
+
+    // Head resonance (mechanical + electrical)
+    float resonanceState1 = 0.0f;
+    float resonanceState2 = 0.0f;
+
+    double currentSampleRate = 44100.0;
+};
+
+// Record head bias oscillator effects
+class BiasOscillator
+{
+public:
+    void prepare(double sampleRate);
+    float process(float input, float biasFreq, float biasAmount);
+    void reset();
+
+private:
+    double phase = 0.0;
+    double sampleRate = 44100.0;
+
+    // Intermodulation products filter
+    float imState = 0.0f;
+};
+
+// Capstan/motor flutter - separate from tape wow/flutter
+class MotorFlutter
+{
+public:
+    void prepare(double sampleRate);
+    float calculateFlutter(float motorQuality);  // Returns pitch modulation
+    void reset();
+
+private:
+    double phase1 = 0.0;  // Primary motor frequency
+    double phase2 = 0.0;  // Secondary bearing frequency
+    double phase3 = 0.0;  // Capstan eccentricity
+    double sampleRate = 44100.0;
+
+    std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<float> jitter{-1.0f, 1.0f};
+};
+
 class ImprovedTapeEmulation
 {
 public:
@@ -125,8 +200,8 @@ public:
 
     enum TapeMachine
     {
-        Swiss800 = 0,      // Swiss-style precision tape machine
-        Classic102,        // Classic American tape machine
+        Swiss800 = 0,      // Studer A800 - Swiss precision tape machine
+        Classic102,        // Ampex ATR-102 - Classic American tape machine
         Blend             // Hybrid blend of both
     };
 
@@ -290,6 +365,13 @@ private:
         float generateNoise(float noiseFloor, float modulationAmount, float signal);
     };
     NoiseGenerator noiseGen;
+
+    // NEW: Enhanced DSP components for UAD-quality emulation
+    TransformerSaturation inputTransformer;
+    TransformerSaturation outputTransformer;
+    PlaybackHeadResponse playbackHead;
+    BiasOscillator biasOsc;
+    MotorFlutter motorFlutter;
 
     // Crosstalk simulation (for stereo)
     float crosstalkBuffer = 0.0f;

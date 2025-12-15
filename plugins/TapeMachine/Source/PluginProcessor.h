@@ -87,7 +87,16 @@ private:
     std::atomic<float>* biasParam = nullptr;
     std::atomic<float>* calibrationParam = nullptr;
 
-    juce::dsp::Oversampling<float> oversampling;
+    // Oversampling with 2x/4x selection using FIR equiripple filters
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
+    std::atomic<float>* oversamplingParam = nullptr;
+    int currentOversamplingFactor = 4;  // Default to 4x
+
+    // For recreating oversamplers when settings change
+    double lastPreparedSampleRate = 0.0;
+    int lastPreparedBlockSize = 0;
+    int lastOversamplingChoice = -1;
 
     juce::dsp::ProcessorChain<
         juce::dsp::Gain<float>,

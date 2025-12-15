@@ -1,5 +1,246 @@
 #include "ImprovedTapeEmulation.h"
 
+//==============================================================================
+// TransformerSaturation - Input/Output transformer coloration
+//==============================================================================
+void TransformerSaturation::prepare(double sampleRate)
+{
+    // DC blocking coefficient - ~10Hz cutoff
+    dcBlockCoeff = 1.0f - (20.0f * juce::MathConstants<float>::pi / static_cast<float>(sampleRate));
+    reset();
+}
+
+void TransformerSaturation::reset()
+{
+    dcState = 0.0f;
+    hystState = 0.0f;
+    prevInput = 0.0f;
+    lfResonanceState = 0.0f;
+}
+
+float TransformerSaturation::process(float input, float driveAmount, bool isOutputStage)
+{
+    // Transformer characteristics differ between input and output stages
+    // Input: More linear, subtle coloration
+    // Output: More saturation, LF resonance from core
+
+    float signal = input;
+
+    // DC blocking (transformer coupling)
+    float dcBlocked = signal - dcState;
+    dcState = signal * (1.0f - dcBlockCoeff) + dcState * dcBlockCoeff;
+    signal = dcBlocked;
+
+    // Transformer core saturation - soft saturation with asymmetric harmonics
+    // Real transformers have iron core hysteresis creating even harmonics
+    float absSignal = std::abs(signal);
+    float saturationThreshold = isOutputStage ? 0.6f : 0.8f;
+
+    if (absSignal > saturationThreshold)
+    {
+        float excess = absSignal - saturationThreshold;
+        // Use cubic soft clip instead of tanh to limit harmonic generation
+        // Cubic: x - x^3/3 is bandlimited (only generates 3rd harmonic)
+        float normalized = juce::jlimit(0.0f, 1.0f, excess * driveAmount * 3.0f);
+        float satAmount = (normalized - normalized * normalized * normalized / 3.0f) / 3.0f;
+        signal = (signal >= 0.0f ? 1.0f : -1.0f) * (saturationThreshold + satAmount);
+    }
+
+    // Add subtle even harmonics (transformer characteristic)
+    // 2nd harmonic from core asymmetry
+    float harmonic2 = signal * signal * 0.05f * driveAmount;
+    // 4th harmonic (smaller)
+    float harmonic4 = signal * signal * signal * signal * 0.01f * driveAmount;
+
+    signal += harmonic2 + harmonic4;
+
+    // Output transformer: LF resonance from core inductance (~40-60Hz)
+    if (isOutputStage)
+    {
+        // Simple resonance using state variable
+        float resonanceFreq = 0.002f;  // ~50Hz at 44.1kHz
+        float resonanceQ = 0.3f;
+        lfResonanceState += (signal - lfResonanceState) * resonanceFreq;
+        signal += lfResonanceState * resonanceQ * driveAmount;
+    }
+
+    // Subtle transformer hysteresis (magnetic memory)
+    float hystAmount = isOutputStage ? 0.02f : 0.01f;
+    float hystDelta = signal - prevInput;
+    hystState = hystState * 0.99f + hystDelta * hystAmount;
+    signal += hystState;
+    prevInput = signal;
+
+    return signal;
+}
+
+//==============================================================================
+// PlaybackHeadResponse - Repro head frequency characteristics
+//==============================================================================
+void PlaybackHeadResponse::prepare(double sampleRate)
+{
+    currentSampleRate = sampleRate;
+    reset();
+}
+
+void PlaybackHeadResponse::reset()
+{
+    std::fill(gapDelayLine.begin(), gapDelayLine.end(), 0.0f);
+    gapDelayIndex = 0;
+    resonanceState1 = 0.0f;
+    resonanceState2 = 0.0f;
+}
+
+float PlaybackHeadResponse::process(float input, float gapWidth, float speed)
+{
+    // Head gap loss - creates comb filter effect at high frequencies
+    // Gap width in microns: Studer ~2.5μm, Ampex ~3.5μm
+    // First null frequency = tape speed / (2 * gap width)
+
+    // Calculate delay in samples based on gap width and speed
+    // 15 IPS = 38.1 cm/s, 2.5μm gap -> null at ~76kHz (above audio, but affects HF)
+    float speedCmPerSec = speed == 0 ? 19.05f : (speed == 1 ? 38.1f : 76.2f);
+    float gapMicrons = gapWidth;  // 2.5 to 4.0 microns typical
+
+    // This creates subtle HF phase shifts and filtering
+    float delayMs = (gapMicrons * 0.0001f) / speedCmPerSec * 1000.0f;
+    float delaySamples = delayMs * 0.001f * static_cast<float>(currentSampleRate);
+
+    // Clamp to delay line size
+    delaySamples = std::min(delaySamples, static_cast<float>(gapDelayLine.size() - 1));
+
+    // Write to delay line
+    gapDelayLine[static_cast<size_t>(gapDelayIndex)] = input;
+
+    // Read with interpolation
+    int readIndex = (gapDelayIndex - static_cast<int>(delaySamples) + static_cast<int>(gapDelayLine.size())) % static_cast<int>(gapDelayLine.size());
+    float delayedSignal = gapDelayLine[static_cast<size_t>(readIndex)];
+
+    gapDelayIndex = (gapDelayIndex + 1) % static_cast<int>(gapDelayLine.size());
+
+    // Mix direct and delayed for comb effect (subtle)
+    float gapEffect = input * 0.98f + delayedSignal * 0.02f;
+
+    // Head resonance - mechanical resonance around 15-20kHz
+    // Creates slight boost before rolloff (Studer characteristic)
+    float resonanceCoeff = 0.1f;
+    resonanceState1 += (gapEffect - resonanceState1) * resonanceCoeff;
+    resonanceState2 += (resonanceState1 - resonanceState2) * resonanceCoeff;
+
+    // Slight boost at resonance frequency
+    float resonanceBoost = (resonanceState1 - resonanceState2) * 0.15f;
+    float output = gapEffect + resonanceBoost;
+
+    return output;
+}
+
+//==============================================================================
+// BiasOscillator - Record head AC bias effects
+//==============================================================================
+void BiasOscillator::prepare(double sr)
+{
+    sampleRate = sr;
+    reset();
+}
+
+void BiasOscillator::reset()
+{
+    phase = 0.0;
+    imState = 0.0f;
+}
+
+float BiasOscillator::process(float input, float biasFreq, float biasAmount)
+{
+    // AC bias oscillator runs at ~100kHz (well above audio)
+    // Effects on audio: improved linearity, reduced distortion, slight HF boost
+    juce::ignoreUnused(biasFreq);  // Reserved for future use
+
+    // We don't model the actual 100kHz oscillator (would alias)
+    // Instead, model its effect on the audio signal:
+    // 1. Reduces low-level distortion (linearizes hysteresis)
+    // 2. Creates slight HF emphasis
+    // 3. Can cause intermodulation at very high levels
+
+    // Bias linearization effect - reduces distortion at low levels
+    float absInput = std::abs(input);
+    float linearizationFactor = 1.0f - (biasAmount * 0.3f * std::exp(-absInput * 10.0f));
+
+    float signal = input * linearizationFactor;
+
+    // HF emphasis from bias (already modeled in biasFilter, but add subtle effect)
+    // High bias = more HF, but also more noise and potential IM distortion
+
+    // At very high input levels, bias can cause intermodulation
+    if (absInput > 0.8f && biasAmount > 0.5f)
+    {
+        float imAmount = (absInput - 0.8f) * biasAmount * 0.05f;
+        // Simple IM approximation - creates sum/difference frequencies
+        imState = imState * 0.9f + signal * imAmount;
+        signal += imState * 0.1f;
+    }
+
+    return signal;
+}
+
+//==============================================================================
+// MotorFlutter - Capstan and transport mechanism flutter
+//==============================================================================
+void MotorFlutter::prepare(double sr)
+{
+    sampleRate = sr;
+    reset();
+}
+
+void MotorFlutter::reset()
+{
+    phase1 = 0.0;
+    phase2 = 0.0;
+    phase3 = 0.0;
+}
+
+float MotorFlutter::calculateFlutter(float motorQuality)
+{
+    // Motor quality: 0 = perfect (Swiss), 1 = vintage (more flutter)
+    // Real machines have multiple flutter sources:
+    // 1. Capstan motor rotation (~30-60Hz depending on motor poles)
+    // 2. Capstan bearing noise (~10-20Hz)
+    // 3. Capstan eccentricity (~2-5Hz, slower than tape wow)
+
+    // Studer: Very low flutter, tight tolerances
+    // Ampex: Slightly more character, vintage motors
+
+    float motorFreq = 50.0f;     // 50Hz motor (Europe) or 60Hz (US)
+    float bearingFreq = 15.0f;   // Bearing noise
+    float eccentricityFreq = 3.0f;  // Capstan eccentricity
+
+    // Phase increments
+    double twoPi = 2.0 * juce::MathConstants<double>::pi;
+    phase1 += twoPi * motorFreq / sampleRate;
+    phase2 += twoPi * bearingFreq / sampleRate;
+    phase3 += twoPi * eccentricityFreq / sampleRate;
+
+    if (phase1 > twoPi) phase1 -= twoPi;
+    if (phase2 > twoPi) phase2 -= twoPi;
+    if (phase3 > twoPi) phase3 -= twoPi;
+
+    // Calculate flutter components
+    // Studer: ~0.02% flutter, Ampex: ~0.04% flutter
+    float baseFlutter = motorQuality * 0.0004f;  // 0.04% max
+
+    float motorComponent = static_cast<float>(std::sin(phase1)) * baseFlutter * 0.3f;
+    float bearingComponent = static_cast<float>(std::sin(phase2)) * baseFlutter * 0.5f;
+    float eccentricityComponent = static_cast<float>(std::sin(phase3)) * baseFlutter * 0.2f;
+
+    // Add random jitter (bearing imperfections)
+    float randomComponent = jitter(rng) * baseFlutter * 0.1f;
+
+    // Total flutter as pitch modulation factor (multiply with delay time)
+    return motorComponent + bearingComponent + eccentricityComponent + randomComponent;
+}
+
+//==============================================================================
+// ImprovedTapeEmulation
+//==============================================================================
 ImprovedTapeEmulation::ImprovedTapeEmulation()
 {
     reset();
@@ -15,6 +256,13 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
 
     // Prepare per-channel wow/flutter delay line
     perChannelWowFlutter.prepare(sampleRate);
+
+    // Prepare new DSP components
+    inputTransformer.prepare(sampleRate);
+    outputTransformer.prepare(sampleRate);
+    playbackHead.prepare(sampleRate);
+    biasOsc.prepare(sampleRate);
+    motorFlutter.prepare(sampleRate);
 
     reset();
 
@@ -97,6 +345,13 @@ void ImprovedTapeEmulation::reset()
     }
     perChannelWowFlutter.writeIndex = 0;
 
+    // Reset new DSP components
+    inputTransformer.reset();
+    outputTransformer.reset();
+    playbackHead.reset();
+    biasOsc.reset();
+    motorFlutter.reset();
+
     crosstalkBuffer = 0.0f;
 }
 
@@ -108,79 +363,89 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
     switch (machine)
     {
         case Swiss800:
-            // Swiss 800: Clean, minimal coloration, excellent transient response
-            chars.headBumpFreq = 50.0f;
-            chars.headBumpGain = 2.5f;  // Subtle head bump
-            chars.headBumpQ = 0.8f;
+            // Studer A800 MkIII: Swiss precision, clean but musical
+            // Known for: Tight low end, extended HF, minimal coloration at moderate levels
+            // REAL SPECS: THD ~0.3% at 0VU, ~1% at +3VU, 3% at +6VU (max operating level)
+            // Reference: UAD documentation - 3% THD at 10dB above 355nWb/m reference
+            chars.headBumpFreq = 48.0f;      // Studer head bump is lower
+            chars.headBumpGain = 3.0f;       // Moderate but tight
+            chars.headBumpQ = 1.0f;          // Controlled Q
 
-            chars.hfRolloffFreq = 20000.0f;  // Extended HF
-            chars.hfRolloffSlope = -12.0f;
+            chars.hfRolloffFreq = 22000.0f;  // Extended HF (Studer is known for this)
+            chars.hfRolloffSlope = -12.0f;   // Gentle rolloff
 
-            chars.saturationKnee = 0.85f;  // Hard knee (clean)
-            // Swiss precision harmonics - very subtle, only when driven hard
-            chars.saturationHarmonics[0] = 0.06f; // 2nd harmonic (subtle warmth)
-            chars.saturationHarmonics[1] = 0.02f; // 3rd harmonic (minimal edge)
-            chars.saturationHarmonics[2] = 0.03f; // 4th harmonic (smoothness)
-            chars.saturationHarmonics[3] = 0.01f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.015f; // 6th harmonic
+            chars.saturationKnee = 0.85f;    // Hard knee - Studer is CLEAN until driven hard
+            // Studer harmonics - MUCH lower than before to match real specs
+            // Real Studer: THD ~0.3% at 0VU means harmonics are very subtle
+            // At +6VU (max drive): 2nd ~0.8%, 3rd ~0.1%, 4th ~0.05%
+            chars.saturationHarmonics[0] = 0.008f;  // 2nd harmonic (subtle warmth)
+            chars.saturationHarmonics[1] = 0.001f;  // 3rd harmonic (very low)
+            chars.saturationHarmonics[2] = 0.0005f; // 4th harmonic
+            chars.saturationHarmonics[3] = 0.0002f; // 5th harmonic
+            chars.saturationHarmonics[4] = 0.0001f; // 6th harmonic
 
-            chars.compressionRatio = 0.08f;  // Subtle compression
-            chars.compressionAttack = 0.1f;
-            chars.compressionRelease = 50.0f;
+            chars.compressionRatio = 0.05f;  // Very light compression until driven
+            chars.compressionAttack = 0.08f; // Fast attack (Studer is responsive)
+            chars.compressionRelease = 40.0f; // Quick release
 
-            chars.phaseShift = 0.02f;
-            chars.crosstalkAmount = -65.0f;  // Excellent channel separation
+            chars.phaseShift = 0.015f;       // Minimal phase issues
+            chars.crosstalkAmount = -70.0f;  // Excellent channel separation (Studer spec)
             break;
 
         case Classic102:
-            // Classic 102: Warmer, more colored, classic American sound
-            chars.headBumpFreq = 60.0f;
-            chars.headBumpGain = 4.0f;  // More pronounced head bump
-            chars.headBumpQ = 1.2f;
+            // Ampex ATR-102: Classic American warmth and punch
+            // Known for: Rich low end, musical saturation, "larger than life" sound
+            // REAL SPECS: THD ~0.5% at 0VU, ~1.5% at +3VU, 3% at +6VU
+            // Reference: UAD - "almost totally clean or pushed into obvious distortion"
+            chars.headBumpFreq = 62.0f;      // Higher head bump frequency
+            chars.headBumpGain = 4.5f;       // More pronounced (the "Ampex thump")
+            chars.headBumpQ = 1.4f;          // Resonant peak
 
-            chars.hfRolloffFreq = 18000.0f;
-            chars.hfRolloffSlope = -18.0f;
+            chars.hfRolloffFreq = 18000.0f;  // Slightly rolled off HF
+            chars.hfRolloffSlope = -18.0f;   // Steeper rolloff (warmer)
 
-            chars.saturationKnee = 0.7f;   // Softer knee (warmer)
-            // Classic American harmonics - more warmth when driven, but still subtle
-            chars.saturationHarmonics[0] = 0.12f; // 2nd harmonic (warmth)
-            chars.saturationHarmonics[1] = 0.05f; // 3rd harmonic (punch/presence)
-            chars.saturationHarmonics[2] = 0.03f; // 4th harmonic
-            chars.saturationHarmonics[3] = 0.018f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.012f; // 6th harmonic
+            chars.saturationKnee = 0.75f;    // Softer knee than Studer (more gradual)
+            // Ampex harmonics - slightly more color than Studer but still subtle
+            // Real Ampex: THD ~0.5% at 0VU, up to ~2% when driven
+            // At +6VU: 2nd ~1.5%, 3rd ~0.3%, 4th ~0.15%
+            chars.saturationHarmonics[0] = 0.015f;  // 2nd harmonic (warmth)
+            chars.saturationHarmonics[1] = 0.003f;  // 3rd harmonic (presence)
+            chars.saturationHarmonics[2] = 0.0015f; // 4th harmonic
+            chars.saturationHarmonics[3] = 0.0005f; // 5th harmonic
+            chars.saturationHarmonics[4] = 0.0003f; // 6th harmonic
 
-            chars.compressionRatio = 0.12f;  // More "glue"
-            chars.compressionAttack = 0.2f;
-            chars.compressionRelease = 100.0f;
+            chars.compressionRatio = 0.08f;  // Slightly more compression than Studer
+            chars.compressionAttack = 0.15f; // Slightly slower attack
+            chars.compressionRelease = 80.0f; // Longer release (musical pumping)
 
-            chars.phaseShift = 0.05f;
-            chars.crosstalkAmount = -55.0f;  // More crosstalk (vintage)
+            chars.phaseShift = 0.04f;        // More phase shift (analog character)
+            chars.crosstalkAmount = -55.0f;  // Vintage crosstalk (adds width)
             break;
 
         case Blend:
         default:
-            // Blend of both machines
+            // Hybrid: Best of both worlds
             chars.headBumpFreq = 55.0f;
-            chars.headBumpGain = 3.25f;
-            chars.headBumpQ = 1.0f;
+            chars.headBumpGain = 3.75f;
+            chars.headBumpQ = 1.2f;
 
-            chars.hfRolloffFreq = 19000.0f;
+            chars.hfRolloffFreq = 20000.0f;
             chars.hfRolloffSlope = -15.0f;
 
-            chars.saturationKnee = 0.77f;  // Balanced
-            // Balanced harmonic profile - best of both worlds
-            chars.saturationHarmonics[0] = 0.09f; // 2nd harmonic (warmth)
-            chars.saturationHarmonics[1] = 0.035f; // 3rd harmonic (presence)
-            chars.saturationHarmonics[2] = 0.03f; // 4th harmonic
-            chars.saturationHarmonics[3] = 0.015f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.013f; // 6th harmonic
+            chars.saturationKnee = 0.80f;
+            // Balanced harmonic profile between Studer and Ampex
+            chars.saturationHarmonics[0] = 0.012f;  // 2nd harmonic
+            chars.saturationHarmonics[1] = 0.002f;  // 3rd harmonic
+            chars.saturationHarmonics[2] = 0.001f;  // 4th harmonic
+            chars.saturationHarmonics[3] = 0.0003f; // 5th harmonic
+            chars.saturationHarmonics[4] = 0.0002f; // 6th harmonic
 
-            chars.compressionRatio = 0.10f;  // Moderate
-            chars.compressionAttack = 0.15f;
-            chars.compressionRelease = 75.0f;
+            chars.compressionRatio = 0.065f;
+            chars.compressionAttack = 0.12f;
+            chars.compressionRelease = 60.0f;
 
-            chars.phaseShift = 0.035f;
-            chars.crosstalkAmount = -60.0f;
+            chars.phaseShift = 0.025f;
+            chars.crosstalkAmount = -62.0f;
             break;
     }
 
@@ -195,67 +460,72 @@ ImprovedTapeEmulation::getTapeCharacteristics(TapeType type)
     switch (type)
     {
         case Type456:
-            // Standard professional tape - industry workhorse
-            chars.coercivity = 0.8f;
-            chars.retentivity = 0.85f;
-            chars.saturationPoint = 0.9f;
+            // Ampex 456 - Industry standard, warm and punchy
+            // Reference tape for +6dB operating level (355nWb/m at +6 cal)
+            // REAL SPEC: THD 3% at max operating level, ~0.5% at 0VU
+            chars.coercivity = 0.78f;
+            chars.retentivity = 0.82f;
+            chars.saturationPoint = 0.88f;
 
-            chars.hysteresisAmount = 0.18f;  // Moderate hysteresis (reduced)
-            chars.hysteresisAsymmetry = 0.05f;
+            chars.hysteresisAmount = 0.08f;   // Reduced - real tape is cleaner
+            chars.hysteresisAsymmetry = 0.02f;
 
-            chars.noiseFloor = -58.0f;  // Moderate noise floor
-            chars.modulationNoise = 0.02f;
+            chars.noiseFloor = -60.0f;  // ~60dB S/N at 15 IPS
+            chars.modulationNoise = 0.025f;
 
-            chars.lfEmphasis = 1.15f;  // Slight low-end emphasis
-            chars.hfLoss = 0.92f;      // Moderate HF loss
+            chars.lfEmphasis = 1.18f;   // The "456 thump"
+            chars.hfLoss = 0.90f;       // Rolls off above 16kHz at 15 IPS
             break;
 
         case TypeGP9:
-            // High output, low noise - modern formulation
-            chars.coercivity = 0.9f;
-            chars.retentivity = 0.92f;
-            chars.saturationPoint = 0.95f;
+            // 3M/Quantegy GP9 - High output, extended headroom
+            // +9dB operating level capable - very clean tape
+            chars.coercivity = 0.92f;
+            chars.retentivity = 0.95f;
+            chars.saturationPoint = 0.96f;
 
-            chars.hysteresisAmount = 0.12f;  // Lower hysteresis (cleaner, reduced)
-            chars.hysteresisAsymmetry = 0.03f;
+            chars.hysteresisAmount = 0.05f;   // Very clean, modern tape
+            chars.hysteresisAsymmetry = 0.01f;
 
-            chars.noiseFloor = -62.0f;  // Low noise floor (quietest tape)
+            chars.noiseFloor = -64.0f;  // Quieter than 456
             chars.modulationNoise = 0.015f;
 
-            chars.lfEmphasis = 1.05f;  // Flatter response
-            chars.hfLoss = 0.97f;      // Better HF retention
+            chars.lfEmphasis = 1.08f;   // Flatter, more modern
+            chars.hfLoss = 0.96f;       // Extended HF response
             break;
 
         case Type911:
-            // European formulation - warmer character
-            chars.coercivity = 0.85f;
-            chars.retentivity = 0.88f;
-            chars.saturationPoint = 0.88f;
+            // BASF/Emtec 911 - European warmth
+            // Preferred for classical and acoustic recordings
+            chars.coercivity = 0.82f;
+            chars.retentivity = 0.86f;
+            chars.saturationPoint = 0.85f;
 
-            chars.hysteresisAmount = 0.22f;  // Higher hysteresis (more color, reduced)
-            chars.hysteresisAsymmetry = 0.08f;
+            chars.hysteresisAmount = 0.10f;   // Slightly more character
+            chars.hysteresisAsymmetry = 0.03f;
 
-            chars.noiseFloor = -56.0f;  // Higher noise floor (vintage character)
-            chars.modulationNoise = 0.025f;
+            chars.noiseFloor = -58.0f;  // Slightly higher noise
+            chars.modulationNoise = 0.028f;
 
-            chars.lfEmphasis = 1.20f;  // More low-end warmth
-            chars.hfLoss = 0.90f;      // Softer highs
+            chars.lfEmphasis = 1.22f;   // Warm, full low end
+            chars.hfLoss = 0.88f;       // Smooth top end
             break;
 
         case Type250:
-            // Classic vintage tape - lots of character
-            chars.coercivity = 0.75f;
-            chars.retentivity = 0.8f;
-            chars.saturationPoint = 0.85f;
+            // Scotch/3M 250 - Classic 1970s sound
+            // Vintage character, saturates earlier than modern tape
+            chars.coercivity = 0.70f;
+            chars.retentivity = 0.75f;
+            chars.saturationPoint = 0.80f;
 
-            chars.hysteresisAmount = 0.28f;  // High hysteresis (vintage color, reduced)
-            chars.hysteresisAsymmetry = 0.10f;  // More asymmetry
+            chars.hysteresisAmount = 0.15f;   // More vintage character
+            chars.hysteresisAsymmetry = 0.04f;
 
-            chars.noiseFloor = -54.0f;  // Highest noise floor (vintage = noisiest)
-            chars.modulationNoise = 0.03f;
+            chars.noiseFloor = -55.0f;  // Vintage noise level
+            chars.modulationNoise = 0.035f;
 
-            chars.lfEmphasis = 1.25f;  // Strong low-end coloration
-            chars.hfLoss = 0.88f;      // Rolled-off highs
+            chars.lfEmphasis = 1.28f;   // Big, warm low end
+            chars.hfLoss = 0.85f;       // Soft, rolled HF
             break;
 
         default:
@@ -495,11 +765,24 @@ float ImprovedTapeEmulation::processSample(float input,
     // Higher calibration reduces effective input level, increasing headroom
     float signal = input * 0.95f / calibrationGain;
 
+    // ========================================================================
+    // NEW: Input transformer saturation (authentic tape machine signal path)
+    // Real machines have transformers that add subtle coloration
+    // ========================================================================
+    float transformerDrive = saturationDepth * 0.5f;  // Subtle transformer effect
+    signal = inputTransformer.process(signal, transformerDrive, false);
+
     // 1. Pre-emphasis (recording EQ)
     signal = preEmphasisFilter1.processSample(signal);
     signal = preEmphasisFilter2.processSample(signal);
 
-    // 2. Bias-induced HF boost
+    // ========================================================================
+    // NEW: AC Bias oscillator effects
+    // Models the linearization and HF enhancement from bias current
+    // ========================================================================
+    signal = biasOsc.process(signal, 100000.0f, biasAmount);
+
+    // 2. Bias-induced HF boost (filter)
     if (biasAmount > 0.0f)
     {
         signal = biasFilter.processSample(signal);
@@ -517,20 +800,24 @@ float ImprovedTapeEmulation::processSample(float input,
     float levelDependentSat = levelAboveThreshold * saturationDepth;
 
     // 3. Tape hysteresis (magnetic non-linearity) - level dependent
-    // Hysteresis is minimal at low levels, increases when tape is driven
-    float hysteresisDepth = tapeChars.hysteresisAmount * levelDependentSat * 0.8f;
+    // Hysteresis is minimal at low levels, increases when tape is driven hard
+    // Real tape: hysteresis effect is subtle, contributes <1% THD at normal levels
+    float hysteresisDepth = tapeChars.hysteresisAmount * levelDependentSat * levelDependentSat;
     signal = hysteresisProc.process(signal,
                                     hysteresisDepth,
                                     tapeChars.hysteresisAsymmetry,
                                     tapeChars.saturationPoint);
 
     // 4. Harmonic generation (tape saturation) - level dependent
-    // Only generate significant harmonics when tape is being driven hard
+    // Scaled to match REAL tape THD: ~0.3-0.5% at 0VU, ~1-2% at +6VU
+    // Real tape is MUCH cleaner than most plugins suggest
     if (levelDependentSat > 0.01f)
     {
         float harmonics = generateHarmonics(signal, machineChars.saturationHarmonics, 5);
         // Mix in harmonics proportionally to how hard we're driving the tape
-        signal = signal * (1.0f - levelDependentSat * 0.15f) + harmonics * levelDependentSat * 2.0f;
+        // Real tape: THD scales with input level squared (magnetic saturation curve)
+        float harmonicMix = levelDependentSat * levelDependentSat * 0.1f;  // Quadratic scaling, much gentler
+        signal = signal * (1.0f - harmonicMix * 0.5f) + harmonics * harmonicMix;
     }
 
     // 5. Soft saturation/compression
@@ -542,8 +829,15 @@ float ImprovedTapeEmulation::processSample(float input,
                                machineChars.compressionRatio * levelDependentSat,
                                makeupGain);
 
-    // 6. Head gap loss simulation
+    // 6. Head gap loss simulation (original filter)
     signal = gapLossFilter.processSample(signal);
+
+    // ========================================================================
+    // NEW: Playback head response
+    // Models the repro head's frequency characteristics and gap effects
+    // ========================================================================
+    float gapWidth = (machine == Swiss800) ? 2.5f : 3.5f;  // Studer vs Ampex gap
+    signal = playbackHead.process(signal, gapWidth, static_cast<float>(speed));
 
     // 7. Apply tape formulation's frequency characteristics
     // LF emphasis based on tape type
@@ -559,13 +853,22 @@ float ImprovedTapeEmulation::processSample(float input,
     // 9. Head bump resonance
     signal = headBumpFilter.processSample(signal);
 
-    // 10. Wow & Flutter - use shared modulation if provided for stereo coherence
+    // ========================================================================
+    // 10. Wow & Flutter with NEW motor flutter component
+    // Combines tape wow/flutter with capstan/motor flutter
+    // ========================================================================
     if (wowFlutterAmount > 0.0f)
     {
+        // NEW: Add motor flutter (machine-dependent)
+        float motorQuality = (machine == Swiss800) ? 0.2f : 0.6f;  // Studer = better motor
+        float motorFlutterMod = motorFlutter.calculateFlutter(motorQuality * wowFlutterAmount);
+
         if (sharedWowFlutterMod != nullptr)
         {
             // Use pre-calculated shared modulation for stereo coherence
-            signal = perChannelWowFlutter.processSample(signal, *sharedWowFlutterMod);
+            // Combine tape wow/flutter with motor flutter
+            float totalModulation = *sharedWowFlutterMod + motorFlutterMod * 5.0f;  // Scale motor flutter
+            signal = perChannelWowFlutter.processSample(signal, totalModulation);
         }
         else
         {
@@ -577,13 +880,20 @@ float ImprovedTapeEmulation::processSample(float input,
                 speedCharsForWow.wowRate,
                 speedCharsForWow.flutterRate,
                 currentSampleRate);
-            signal = perChannelWowFlutter.processSample(signal, modulation);
+            float totalModulation = modulation + motorFlutterMod * 5.0f;
+            signal = perChannelWowFlutter.processSample(signal, totalModulation);
         }
     }
 
     // 11. De-emphasis (playback EQ)
     signal = deEmphasisFilter1.processSample(signal);
     signal = deEmphasisFilter2.processSample(signal);
+
+    // ========================================================================
+    // NEW: Output transformer saturation
+    // Real machines have output transformers that add warmth and character
+    // ========================================================================
+    signal = outputTransformer.process(signal, transformerDrive * 0.7f, true);
 
     // 12. Add tape noise (only when noise button is enabled)
     // ABSOLUTELY NO NOISE when button is off
@@ -645,12 +955,17 @@ float ImprovedTapeEmulation::HysteresisProcessor::process(float input, float amo
     float H = input * (1.0f + amount * 3.0f);
 
     // Anhysteretic magnetization (ideal, no losses)
-    // Langevin function approximation: M_an = Ms * tanh(H/a)
-    float M_an = Ms * std::tanh(H / (a + 1e-6f));
+    // Use bandlimited soft saturation instead of tanh to prevent aliasing
+    // Rational approximation: x / (1 + |x|) approaches ±1 at extremes
+    // This generates fewer harmonics than tanh
+    float normalizedH = H / (a + 1e-6f);
+    float clampedH = juce::jlimit(-4.0f, 4.0f, normalizedH);  // Limit range
+    float M_an = Ms * clampedH / (1.0f + std::abs(clampedH));
 
     // Differential susceptibility (rate of magnetization change)
-    float dM_an = Ms / (a + 1e-6f) / std::cosh(H / (a + 1e-6f));
-    dM_an = dM_an * dM_an;  // Square for proper scaling
+    // Derivative of x/(1+|x|) is 1/(1+|x|)^2
+    float denom = 1.0f + std::abs(clampedH);
+    float dM_an = Ms / (a + 1e-6f) / (denom * denom);
 
     // Direction of field change
     float dH = H - previousInput;
@@ -761,26 +1076,24 @@ float ImprovedTapeEmulation::softClip(float input, float threshold)
 
     float sign = (input >= 0.0f) ? 1.0f : -1.0f;
     float excess = absInput - threshold;
-    float clipped = threshold + std::tanh(excess * 3.0f) / 3.0f;
+    // Use cubic soft clip instead of tanh to reduce harmonic generation
+    // This creates primarily 3rd harmonic with minimal higher harmonics
+    float normalized = excess / (1.0f - threshold + 0.001f);
+    float clipped = threshold + (1.0f - threshold) * (normalized - normalized * normalized * normalized / 3.0f);
+    clipped = std::min(clipped, 1.0f);  // Hard limit at 1.0
 
     return clipped * sign;
 }
 
-// Harmonic generator using waveshaping
+// Harmonic generator using Chebyshev polynomials
+// This method generates ONLY the specific harmonics requested without extra aliasing content
 float ImprovedTapeEmulation::generateHarmonics(float input, const float* harmonicProfile,
                                               int numHarmonics)
 {
-    // Chebyshev polynomials for harmonic generation
-    // T0(x) = 1
-    // T1(x) = x
-    // T2(x) = 2x^2 - 1 (generates 2nd harmonic)
-    // T3(x) = 4x^3 - 3x (generates 3rd harmonic)
-    // T4(x) = 8x^4 - 8x^2 + 1 (generates 4th harmonic)
-    // T5(x) = 16x^5 - 20x^3 + 5x (generates 5th harmonic)
-    // T6(x) = 32x^6 - 48x^4 + 18x^2 - 1 (generates 6th harmonic)
-
-    // Soft-clip input to [-1, 1] range for Chebyshev polynomials
-    float x = std::tanh(input * 0.7f);
+    // Chebyshev polynomials for bandlimited harmonic generation
+    // Using simple clipping instead of tanh to avoid generating infinite harmonics
+    // Clamp input to [-1, 1] range for Chebyshev polynomials
+    float x = juce::jlimit(-1.0f, 1.0f, input);
     float x2 = x * x;
     float x3 = x2 * x;
     float x4 = x2 * x2;
@@ -789,34 +1102,35 @@ float ImprovedTapeEmulation::generateHarmonics(float input, const float* harmoni
 
     float output = input;  // Start with fundamental
 
+    // Scale factors reduced to match real tape THD levels
     if (numHarmonics > 0 && harmonicProfile[0] > 0.0f) {
         // 2nd harmonic (even - warmth)
         float h2 = (2.0f * x2 - 1.0f) * harmonicProfile[0];
-        output += h2 * 0.5f;
+        output += h2 * 0.3f;
     }
 
     if (numHarmonics > 1 && harmonicProfile[1] > 0.0f) {
         // 3rd harmonic (odd - edge/presence)
         float h3 = (4.0f * x3 - 3.0f * x) * harmonicProfile[1];
-        output += h3 * 0.3f;
+        output += h3 * 0.2f;
     }
 
     if (numHarmonics > 2 && harmonicProfile[2] > 0.0f) {
         // 4th harmonic (even - smoothness)
         float h4 = (8.0f * x4 - 8.0f * x2 + 1.0f) * harmonicProfile[2];
-        output += h4 * 0.25f;
+        output += h4 * 0.15f;
     }
 
     if (numHarmonics > 3 && harmonicProfile[3] > 0.0f) {
         // 5th harmonic (odd - bite)
         float h5 = (16.0f * x5 - 20.0f * x3 + 5.0f * x) * harmonicProfile[3];
-        output += h5 * 0.2f;
+        output += h5 * 0.1f;
     }
 
     if (numHarmonics > 4 && harmonicProfile[4] > 0.0f) {
         // 6th harmonic (even - air)
         float h6 = (32.0f * x6 - 48.0f * x4 + 18.0f * x2 - 1.0f) * harmonicProfile[4];
-        output += h6 * 0.15f;
+        output += h6 * 0.08f;
     }
 
     return output;

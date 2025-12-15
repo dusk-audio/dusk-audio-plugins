@@ -30,9 +30,18 @@ public:
     void timerCallback() override;
     void setSpeed(float speed);
 
+    // Tape amount: 0.0 = empty reel, 1.0 = full reel
+    void setTapeAmount(float amount);
+    float getTapeAmount() const { return tapeAmount; }
+
+    // Set whether this is the supply (left) or take-up (right) reel
+    void setIsSupplyReel(bool isSupply) { isSupplyReel = isSupply; }
+
 private:
     float rotation = 0.0f;
     float rotationSpeed = 1.0f;
+    float tapeAmount = 0.5f;      // Current tape on this reel (0-1)
+    bool isSupplyReel = true;     // Supply reel starts full, take-up starts empty
 };
 
 // VUMeter class is now imported from GUI/VUMeter.h
