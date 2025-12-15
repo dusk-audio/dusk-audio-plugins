@@ -285,17 +285,16 @@ public:
         {
             this->numChannels = numChannels;
 
-            // Create both 2x and 4x oversamplers
+            // Create both 2x and 4x oversamplers using FIR equiripple filters
+            // FIR provides superior alias rejection compared to IIR, essential for saturation
             // 2x oversampling (1 stage)
             oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
-                numChannels, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-                juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+                numChannels, 1, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
             oversampler2x->initProcessing(static_cast<size_t>(blockSize));
 
             // 4x oversampling (2 stages)
             oversampler4x = std::make_unique<juce::dsp::Oversampling<float>>(
-                numChannels, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-                juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+                numChannels, 2, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
             oversampler4x->initProcessing(static_cast<size_t>(blockSize));
 
             // Initialize per-channel filter states
@@ -1254,12 +1253,11 @@ public:
         }
 
         // PROFESSIONAL FIX: Always create 2x oversampler for saturation
-        // This ensures harmonics are consistent regardless of user setting
+        // Uses FIR equiripple for superior alias rejection
         saturationOversampler = std::make_unique<juce::dsp::Oversampling<float>>(
             1, // Single channel processing
             1, // 1 stage = 2x oversampling
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR
+            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple
         );
         saturationOversampler->initProcessing(1); // Single sample processing
 

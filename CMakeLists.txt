@@ -35,6 +35,7 @@ option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
 option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
+option(BUILD_SILKVERB "Build SilkVerb plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -63,4 +64,8 @@ endif()
 
 if(BUILD_CONVOLUTION_REVERB)
     add_subdirectory(plugins/convolution-reverb)
+endif()
+
+if(BUILD_SILKVERB)
+    add_subdirectory(plugins/SilkVerb)
 endif()

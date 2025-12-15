@@ -909,8 +909,8 @@ void EnhancedCompressorEditor::resized()
     const int osLabelWidth = static_cast<int>(78 * scaleFactor);        // "Oversampling" label
     const int osWidth = static_cast<int>(58 * scaleFactor);             // Dropdown for "2x"/"4x" - wider to show full text
 
-    const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap
-                            scEnableWidth + gap + scListenWidth + gap + modeToggleWidth + gap 
+    const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap +
+                            scEnableWidth + gap + scListenWidth + gap + modeToggleWidth + gap +
                             osLabelWidth + static_cast<int>(4 * scaleFactor) + osWidth;    // Center the controls in the header row
     int startX = (headerRow.getWidth() - totalWidth) / 2;
     if (startX < 0) startX = 0;
