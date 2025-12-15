@@ -3,6 +3,7 @@
 #include "UniversalCompressor.h"
 #include "AnalogLookAndFeel.h"
 #include "ModernCompressorPanels.h"
+#include "CompressorPresets.h"
 #include "../../shared/PatreonBackers.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
@@ -37,6 +38,7 @@ private:
     // Look and feel instances for each mode
     std::unique_ptr<OptoLookAndFeel> optoLookAndFeel;
     std::unique_ptr<FETLookAndFeel> fetLookAndFeel;
+    std::unique_ptr<StudioFETLookAndFeel> studioFetLookAndFeel;  // Teal accent for Studio FET
     std::unique_ptr<VCALookAndFeel> vcaLookAndFeel;
     std::unique_ptr<BusLookAndFeel> busLookAndFeel;
     std::unique_ptr<StudioVCALookAndFeel> studioVcaLookAndFeel;
@@ -53,6 +55,11 @@ private:
     // Mode selector
     std::unique_ptr<juce::ComboBox> modeSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeSelectorAttachment;
+
+    // Preset selector
+    std::unique_ptr<juce::ComboBox> presetCategorySelector;
+    std::unique_ptr<juce::ComboBox> presetSelector;
+    std::vector<CompressorPresets::Preset> currentCategoryPresets;
     
     // Global controls
     std::unique_ptr<juce::ToggleButton> bypassButton;
@@ -222,6 +229,9 @@ private:
     std::unique_ptr<juce::Slider> createKnob(const juce::String& name, float min, float max,
                                              float defaultValue, const juce::String& suffix = "");
     std::unique_ptr<juce::Label> createLabel(const juce::String& text, juce::Justification justification = juce::Justification::centred);
+
+    void updatePresetList(const juce::String& category);
+    void applySelectedPreset();
 
     // Supporters overlay component - renders on top of everything when title clicked
     class SupportersOverlay : public juce::Component
