@@ -35,6 +35,9 @@ declare -A PLUGIN_TARGETS=(
     ["silk"]="SilkVerb_All"
     ["reverb"]="SilkVerb_All"
     ["verb"]="SilkVerb_All"
+    ["multiq"]="MultiQ_All"
+    ["multi-q"]="MultiQ_All"
+    ["meq"]="MultiQ_All"
 )
 
 # Show help
@@ -56,6 +59,7 @@ show_help() {
     echo "  harmonic           Harmonic Generator"
     echo "  convolution, impulse, ir  Convolution Reverb"
     echo "  silkverb, silk, reverb, verb  SilkVerb"
+    echo "  multiq, multi-q, meq   Multi-Q (8-band parametric EQ)"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"
