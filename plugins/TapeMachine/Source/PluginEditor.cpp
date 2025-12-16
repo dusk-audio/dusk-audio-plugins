@@ -74,86 +74,176 @@ void CustomLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
     g.strokePath(pointerOutline, juce::PathStrokeType(0.8f));
 }
 
+void CustomLookAndFeel::drawLabel(juce::Graphics& g, juce::Label& label)
+{
+    // Draw text shadow first for better readability against dark background
+    auto bounds = label.getLocalBounds().toFloat();
+    auto textColour = label.findColour(juce::Label::textColourId);
+    auto font = label.getFont();
+
+    g.setFont(font);
+
+    // Shadow layer (darker, offset down-right)
+    g.setColour(juce::Colour(0x80000000));  // Semi-transparent black
+    g.drawText(label.getText(), bounds.translated(1.0f, 1.0f),
+               label.getJustificationType(), true);
+
+    // Subtle glow layer (warm tint)
+    g.setColour(juce::Colour(0x18F8E4C0));  // Very subtle warm glow
+    g.drawText(label.getText(), bounds.translated(-0.5f, -0.5f),
+               label.getJustificationType(), true);
+
+    // Main text
+    g.setColour(textColour);
+    g.drawText(label.getText(), bounds, label.getJustificationType(), true);
+}
+
 void CustomLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                          bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
     auto bounds = button.getLocalBounds().toFloat().reduced(2);
     auto isOn = button.getToggleState();
+    bool isNoiseButton = (button.getButtonText() == "ON" || button.getButtonText() == "OFF");
+    bool isLinkButton = (button.getButtonText() == "LINK");
 
-    // LED-style indicator background
-    if (isOn)
+    if (isNoiseButton)
     {
-        // Glowing effect when ON
-        g.setColour(juce::Colour(0xff8a6a3a).withAlpha(0.3f));
-        g.fillRoundedRectangle(bounds.expanded(2), 6.0f);
+        // Vintage rotary switch style for noise enable
+        // Use the full width for the switch, leaving room for labels below
+        float switchSize = juce::jmin(bounds.getWidth(), bounds.getHeight() - 14.0f);
+        auto switchBounds = juce::Rectangle<float>(
+            bounds.getCentreX() - switchSize / 2,
+            bounds.getY(),
+            switchSize, switchSize);
+
+        // Shadow
+        g.setColour(juce::Colour(0x40000000));
+        g.fillEllipse(switchBounds.translated(2, 2));
+
+        // Switch body - metallic gradient
+        juce::ColourGradient bodyGradient(
+            juce::Colour(0xff5a5048), switchBounds.getX(), switchBounds.getY(),
+            juce::Colour(0xff2a2018), switchBounds.getRight(), switchBounds.getBottom(),
+            true);
+        g.setGradientFill(bodyGradient);
+        g.fillEllipse(switchBounds);
+
+        // Ring - brighter when on
+        g.setColour(isOn ? juce::Colour(0xffaa9868) : juce::Colour(0xff4a4038));
+        g.drawEllipse(switchBounds.reduced(1), 2.0f);
+
+        // Position indicator (rotates based on state)
+        // OFF = pointing left (-135 degrees), ON = pointing right (-45 degrees)
+        float indicatorAngle = isOn ? -0.78f : -2.36f;
+        float indicatorLength = switchSize * 0.30f;
+        float cx = switchBounds.getCentreX();
+        float cy = switchBounds.getCentreY();
+
+        // Indicator line
+        juce::Path indicator;
+        indicator.addRoundedRectangle(-2.0f, -indicatorLength, 4.0f, indicatorLength, 1.5f);
+        indicator.applyTransform(juce::AffineTransform::rotation(indicatorAngle).translated(cx, cy));
+
+        g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0xff888888));
+        g.fillPath(indicator);
+
+        // OFF/ON labels below the switch, spread apart
+        float labelY = switchBounds.getBottom() + 2.0f;
+        float labelWidth = 24.0f;
+        g.setFont(juce::Font(9.0f, juce::Font::bold));
+
+        // OFF label on left
+        g.setColour(isOn ? juce::Colour(0x60F8E4C0) : juce::Colour(0xffF8E4C0));
+        g.drawText("OFF",
+                   juce::Rectangle<float>(cx - switchSize * 0.5f - 2, labelY, labelWidth, 12),
+                   juce::Justification::centred);
+
+        // ON label on right
+        g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0x60F8E4C0));
+        g.drawText("ON",
+                   juce::Rectangle<float>(cx + switchSize * 0.5f - labelWidth + 2, labelY, labelWidth, 12),
+                   juce::Justification::centred);
     }
-
-    // Button body with gradient
-    juce::ColourGradient buttonGradient(
-        isOn ? juce::Colour(0xff6a5438) : juce::Colour(0xff3a2828),
-        bounds.getCentreX(), bounds.getY(),
-        isOn ? juce::Colour(0xff4a3828) : juce::Colour(0xff2a1818),
-        bounds.getCentreX(), bounds.getBottom(),
-        false);
-    g.setGradientFill(buttonGradient);
-    g.fillRoundedRectangle(bounds, 5.0f);
-
-    // Border
-    g.setColour(isOn ? juce::Colour(0xff8a6838) : juce::Colour(0xff5a4838));
-    g.drawRoundedRectangle(bounds, 5.0f, 2.0f);
-
-    // LED indicator dot on the left side
-    auto ledSize = bounds.getHeight() * 0.35f;
-    auto ledBounds = juce::Rectangle<float>(bounds.getX() + 8,
-                                             bounds.getCentreY() - ledSize / 2,
-                                             ledSize, ledSize);
-
-    if (isOn)
+    else if (isLinkButton)
     {
-        // Glow
-        g.setColour(juce::Colour(0xffaa8a4a).withAlpha(0.5f));
-        g.fillEllipse(ledBounds.expanded(2));
+        // Chain link button style (keep existing)
+        if (isOn)
+        {
+            g.setColour(juce::Colour(0xff8a6a3a).withAlpha(0.3f));
+            g.fillRoundedRectangle(bounds.expanded(2), 6.0f);
+        }
 
-        // LED on
-        g.setColour(juce::Colour(0xffF8E4C0));
-        g.fillEllipse(ledBounds);
+        juce::ColourGradient buttonGradient(
+            isOn ? juce::Colour(0xff6a5438) : juce::Colour(0xff3a2828),
+            bounds.getCentreX(), bounds.getY(),
+            isOn ? juce::Colour(0xff4a3828) : juce::Colour(0xff2a1818),
+            bounds.getCentreX(), bounds.getBottom(),
+            false);
+        g.setGradientFill(buttonGradient);
+        g.fillRoundedRectangle(bounds, 5.0f);
 
-        // Highlight
-        g.setColour(juce::Colour(0xffffffff));
-        g.fillEllipse(ledBounds.reduced(2).withY(ledBounds.getY() + 1));
-    }
-    else
-    {
-        // LED off (dark)
-        g.setColour(juce::Colour(0xff2a2018));
-        g.fillEllipse(ledBounds);
-        g.setColour(juce::Colour(0xff4a3828));
-        g.drawEllipse(ledBounds, 1.0f);
-    }
+        g.setColour(isOn ? juce::Colour(0xff8a6838) : juce::Colour(0xff5a4838));
+        g.drawRoundedRectangle(bounds, 5.0f, 2.0f);
 
-    // Check if this is the LINK button - draw chain icon instead of text
-    if (button.getButtonText() == "LINK")
-    {
-        // Draw chain link icon centered in the button (after LED area)
+        // LED indicator
+        auto ledSize = bounds.getHeight() * 0.35f;
+        auto ledBounds = juce::Rectangle<float>(bounds.getX() + 8,
+                                                 bounds.getCentreY() - ledSize / 2,
+                                                 ledSize, ledSize);
+
+        if (isOn)
+        {
+            g.setColour(juce::Colour(0xffaa8a4a).withAlpha(0.5f));
+            g.fillEllipse(ledBounds.expanded(2));
+            g.setColour(juce::Colour(0xffF8E4C0));
+            g.fillEllipse(ledBounds);
+            g.setColour(juce::Colour(0xffffffff));
+            g.fillEllipse(ledBounds.reduced(2).withY(ledBounds.getY() + 1));
+        }
+        else
+        {
+            g.setColour(juce::Colour(0xff2a2018));
+            g.fillEllipse(ledBounds);
+            g.setColour(juce::Colour(0xff4a3828));
+            g.drawEllipse(ledBounds, 1.0f);
+        }
+
+        // Chain icon
         auto iconArea = bounds.withTrimmedLeft(ledSize + 8);
         float cx = iconArea.getCentreX();
         float cy = bounds.getCentreY();
 
         g.setColour(isOn ? juce::Colour(0xffF8D080) : juce::Colour(0xff888888));
 
-        // Draw two interlocking chain links
         float linkW = 16.0f;
         float linkH = 10.0f;
-        float overlap = 6.0f;  // How much the links overlap
+        float overlap = 6.0f;
 
-        // Left link
         g.drawRoundedRectangle(cx - linkW + overlap/2, cy - linkH/2, linkW, linkH, 4.0f, 2.0f);
-        // Right link (overlapping)
         g.drawRoundedRectangle(cx - overlap/2, cy - linkH/2, linkW, linkH, 4.0f, 2.0f);
     }
     else
     {
-        // Text - centered in remaining space
+        // Default toggle button style
+        if (isOn)
+        {
+            g.setColour(juce::Colour(0xff8a6a3a).withAlpha(0.3f));
+            g.fillRoundedRectangle(bounds.expanded(2), 6.0f);
+        }
+
+        juce::ColourGradient buttonGradient(
+            isOn ? juce::Colour(0xff6a5438) : juce::Colour(0xff3a2828),
+            bounds.getCentreX(), bounds.getY(),
+            isOn ? juce::Colour(0xff4a3828) : juce::Colour(0xff2a1818),
+            bounds.getCentreX(), bounds.getBottom(),
+            false);
+        g.setGradientFill(buttonGradient);
+        g.fillRoundedRectangle(bounds, 5.0f);
+
+        g.setColour(isOn ? juce::Colour(0xff8a6838) : juce::Colour(0xff5a4838));
+        g.drawRoundedRectangle(bounds, 5.0f, 2.0f);
+
+        auto ledSize = bounds.getHeight() * 0.35f;
         auto textBounds = bounds.withTrimmedLeft(ledSize + 16);
         g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0xff888888));
         g.setFont(juce::Font(juce::FontOptions(13.0f)).withStyle(juce::Font::bold));
@@ -314,6 +404,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     tapeTypeSelector.addItem("Type 456", 1);
     tapeTypeSelector.addItem("Type GP9", 2);
     tapeTypeSelector.addItem("Type 911", 3);
+    tapeTypeSelector.addItem("Type 250", 4);
     tapeTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "tapeType", tapeTypeSelector);
 
@@ -337,9 +428,13 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     noiseAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "noiseAmount", noiseAmountSlider);
 
-    setupSlider(wowFlutterSlider, wowFlutterLabel, "WOW/FLUTTER");
-    wowFlutterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "wowFlutter", wowFlutterSlider);
+    setupSlider(wowSlider, wowLabel, "WOW");
+    wowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "wowAmount", wowSlider);
+
+    setupSlider(flutterSlider, flutterLabel, "FLUTTER");
+    flutterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "flutterAmount", flutterSlider);
 
     setupSlider(outputGainSlider, outputGainLabel, "OUTPUT");
     outputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -399,13 +494,14 @@ void TapeMachineAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::La
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
     slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffF8E4C0));
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff3a2828));
-    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff5a4838));
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff3a3028));
     addAndMakeVisible(slider);
 
+    // Enhanced label with better contrast for readability
     label.setText(text, juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
-    label.setColour(juce::Label::textColourId, juce::Colour(0xffE8D4B0));
+    // Brighter text color for improved readability
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffF8E8D0));
     label.setFont(juce::Font(12.0f, juce::Font::bold));
     label.attachToComponent(&slider, false);
     addAndMakeVisible(label);
@@ -438,6 +534,9 @@ void TapeMachineAudioProcessorEditor::paint (juce::Graphics& g)
 
     // Draw standard Luna header
     LunaLookAndFeel::drawPluginHeader(g, bounds, "TapeMachine", "Vintage Tape Emulation");
+
+    // Set up clickable area for title (matches header drawing position)
+    titleClickArea = juce::Rectangle<int>(10, 5, 180, 30);
 
     // Add subtle vintage texture overlay for tape machine character
     for (int y = 45; y < getHeight(); y += 4)
@@ -532,20 +631,22 @@ void TapeMachineAudioProcessorEditor::resized()
 
     area.removeFromTop(6);
 
-    // Main controls section - compact
+    // Main controls section - compact with 5 knobs
     auto mainControlsArea = area.removeFromTop(120);
     mainControlsArea.reduce(15, 5);
     mainControlsArea.removeFromTop(18);
 
-    auto knobSize = 85;
-    auto mainSpacing = (mainControlsArea.getWidth() - (knobSize * 4)) / 5;
+    auto knobSize = 80;  // Slightly smaller to fit 5 knobs
+    auto mainSpacing = (mainControlsArea.getWidth() - (knobSize * 5)) / 6;
 
     mainControlsArea.removeFromLeft(mainSpacing);
     inputGainSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
     mainControlsArea.removeFromLeft(mainSpacing);
     biasSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
     mainControlsArea.removeFromLeft(mainSpacing);
-    wowFlutterSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
+    wowSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
+    mainControlsArea.removeFromLeft(mainSpacing);
+    flutterSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
     mainControlsArea.removeFromLeft(mainSpacing);
     outputGainSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
 
@@ -556,8 +657,8 @@ void TapeMachineAudioProcessorEditor::resized()
     characterArea.reduce(15, 5);
     characterArea.removeFromTop(18);
 
-    // Center the 5 controls (3 knobs + 2 button areas: 90 + 100 = 190)
-    auto charSpacing = (characterArea.getWidth() - (knobSize * 3) - 190) / 6;
+    // Center the 5 controls (3 knobs + noise switch + link button: 70 + 100 = 170)
+    auto charSpacing = (characterArea.getWidth() - (knobSize * 3) - 170) / 6;
 
     characterArea.removeFromLeft(charSpacing);
     highpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
@@ -567,22 +668,25 @@ void TapeMachineAudioProcessorEditor::resized()
     noiseAmountSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
     characterArea.removeFromLeft(charSpacing);
 
-    // Noise enable button - compact
-    auto buttonArea = characterArea.removeFromLeft(90);
-    noiseEnabledButton.setBounds(buttonArea.withSizeKeepingCentre(80, 38));
+    // Noise enable switch - rotary switch style (square for circular appearance)
+    auto buttonArea = characterArea.removeFromLeft(70);
+    noiseEnabledButton.setBounds(buttonArea.withSizeKeepingCentre(50, 65));  // Taller to fit ON/OFF labels
     characterArea.removeFromLeft(charSpacing);
 
     // Link button - wider with centered icon
     auto autoCompButtonArea = characterArea.removeFromLeft(100);
     autoCompButton.setBounds(autoCompButtonArea.withSizeKeepingCentre(90, 38));
+
+    // Keep supporters overlay sized to full window
+    if (supportersOverlay)
+        supportersOverlay->setBounds(getLocalBounds());
 }
 
 void TapeMachineAudioProcessorEditor::timerCallback()
 {
     // Intelligently detect mono vs stereo track and update VU meter display
     // Mono tracks show single VU meter, stereo tracks show dual L/R meters
-    int numChannels = audioProcessor.getTotalNumInputChannels();
-    bool isStereo = (numChannels > 1);
+    bool isStereo = !audioProcessor.isMonoTrack();
     if (mainVUMeter.isStereoMode() != isStereo)
     {
         mainVUMeter.setStereoMode(isStereo);
@@ -621,8 +725,33 @@ void TapeMachineAudioProcessorEditor::timerCallback()
     }
 
     // Update reel speeds and tape amounts based on transport
+    // Reel speed varies with wow amount for visual feedback
     bool isPlaying = audioProcessor.isProcessing();
-    float speed = isPlaying ? 1.5f : 0.0f;
+    auto* wowParam = audioProcessor.getAPVTS().getRawParameterValue("wowAmount");
+    float wowAmount = wowParam ? wowParam->load() : 0.0f;
+
+    // Get tape speed setting (0 = 7.5 IPS, 1 = 15 IPS, 2 = 30 IPS)
+    auto* tapeSpeedParam = audioProcessor.getAPVTS().getRawParameterValue("tapeSpeed");
+    int tapeSpeedIndex = tapeSpeedParam ? static_cast<int>(tapeSpeedParam->load()) : 1;
+
+    // Scale reel animation speed based on tape speed
+    // 7.5 IPS = 1.0x, 15 IPS = 1.5x, 30 IPS = 2.0x visual speed
+    float speedMultiplier = (tapeSpeedIndex == 0) ? 1.0f : (tapeSpeedIndex == 1) ? 1.5f : 2.0f;
+
+    // Base speed when playing, modulated by wow for visual feedback
+    // Wow creates slow pitch drift, so add subtle speed wobble
+    float baseSpeed = isPlaying ? speedMultiplier : 0.0f;
+    float wowWobble = 0.0f;
+    if (isPlaying && wowAmount > 0.0f)
+    {
+        // Use a slow sine wave to create visual wow effect
+        wowPhase += 0.02f;  // Slow rate (~0.3Hz at 30fps)
+        if (wowPhase > juce::MathConstants<float>::twoPi)
+            wowPhase -= juce::MathConstants<float>::twoPi;
+        // Scale wobble by wow amount (0-100% -> 0-0.3 speed variation)
+        wowWobble = std::sin(wowPhase) * (wowAmount * 0.003f);
+    }
+    float speed = baseSpeed + wowWobble;
     leftReel.setSpeed(speed);
     rightReel.setSpeed(speed);
 
@@ -653,4 +782,31 @@ void TapeMachineAudioProcessorEditor::timerCallback()
             rightReel.setTapeAmount(0.5f);
         }
     }
+}
+
+void TapeMachineAudioProcessorEditor::mouseDown(const juce::MouseEvent& e)
+{
+    if (titleClickArea.contains(e.getPosition()))
+    {
+        showSupportersPanel();
+    }
+}
+
+void TapeMachineAudioProcessorEditor::showSupportersPanel()
+{
+    if (!supportersOverlay)
+    {
+        supportersOverlay = std::make_unique<SupportersOverlay>("TapeMachine");
+        supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+        addAndMakeVisible(supportersOverlay.get());
+    }
+    supportersOverlay->setBounds(getLocalBounds());
+    supportersOverlay->toFront(true);
+    supportersOverlay->setVisible(true);
+}
+
+void TapeMachineAudioProcessorEditor::hideSupportersPanel()
+{
+    if (supportersOverlay)
+        supportersOverlay->setVisible(false);
 }

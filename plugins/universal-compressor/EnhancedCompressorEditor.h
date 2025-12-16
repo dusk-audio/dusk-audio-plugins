@@ -4,7 +4,7 @@
 #include "AnalogLookAndFeel.h"
 #include "ModernCompressorPanels.h"
 #include "CompressorPresets.h"
-#include "../../shared/PatreonBackers.h"
+#include "../../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -233,16 +233,7 @@ private:
     void updatePresetList(const juce::String& category);
     void applySelectedPreset();
 
-    // Supporters overlay component - renders on top of everything when title clicked
-    class SupportersOverlay : public juce::Component
-    {
-    public:
-        SupportersOverlay() { setInterceptsMouseClicks(true, false); }
-        void paint(juce::Graphics& g) override;
-        void mouseDown(const juce::MouseEvent&) override;
-        std::function<void()> onDismiss;
-    };
-
+    // Patreon supporters overlay (uses shared component)
     std::unique_ptr<SupportersOverlay> supportersOverlay;
     juce::Rectangle<int> titleClickArea;  // Clickable area for plugin title
     juce::Rectangle<int> osLabelBounds;   // Bounds for "OS:" label in header

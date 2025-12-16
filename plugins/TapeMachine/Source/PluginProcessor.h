@@ -52,6 +52,9 @@ public:
     // Transport state for reel animation
     bool isProcessing() const { return isProcessingAudio.load(); }
 
+    // Mono/stereo state for VU meter display
+    bool isMonoTrack() const { return isMonoInput.load(); }
+
     enum TapeMachine
     {
         StuderA800 = 0,
@@ -70,7 +73,8 @@ public:
     {
         Ampex456 = 0,
         GP9,
-        BASF911
+        BASF911,
+        Type250
     };
 
 private:
@@ -116,7 +120,8 @@ private:
     std::atomic<float>* lowpassFreqParam = nullptr;
     std::atomic<float>* noiseAmountParam = nullptr;
     std::atomic<float>* noiseEnabledParam = nullptr;
-    std::atomic<float>* wowFlutterParam = nullptr;
+    std::atomic<float>* wowAmountParam = nullptr;
+    std::atomic<float>* flutterAmountParam = nullptr;
     std::atomic<float>* outputGainParam = nullptr;
     std::atomic<float>* autoCompParam = nullptr;
 
@@ -128,6 +133,7 @@ private:
     std::atomic<float> outputLevelL { 0.0f };
     std::atomic<float> outputLevelR { 0.0f };
     std::atomic<bool> isProcessingAudio { false };
+    std::atomic<bool> isMonoInput { false };  // True when on a mono track
 
     // RMS integration for VU-accurate metering (300ms time constant)
     float rmsInputL = 0.0f;
@@ -142,11 +148,15 @@ private:
     // Smoothed parameters to prevent zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedSaturation;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedNoiseAmount;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedWowFlutter;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedWow;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedFlutter;
 
     // Filter bypass states
     bool bypassHighpass = true;
     bool bypassLowpass = true;
+
+    // Preset management
+    int currentPresetIndex = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineAudioProcessor)
 };
