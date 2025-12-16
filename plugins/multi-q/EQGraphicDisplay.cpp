@@ -632,6 +632,10 @@ void EQGraphicDisplay::setDisplayScaleMode(DisplayScaleMode mode)
             minDisplayDB = -12.0f;
             maxDisplayDB = 12.0f;
             break;
+        case DisplayScaleMode::Linear24dB:
+            minDisplayDB = -24.0f;
+            maxDisplayDB = 24.0f;
+            break;
         case DisplayScaleMode::Linear30dB:
             minDisplayDB = -30.0f;
             maxDisplayDB = 30.0f;
