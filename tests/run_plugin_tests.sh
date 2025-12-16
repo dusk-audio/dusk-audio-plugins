@@ -35,11 +35,11 @@ PLUGINS=(
     "Convolution Reverb"
     "DrummerClone"
     "Harmonic Generator"
+    "Multi-Q"
     "SilkVerb"
     "Universal Compressor"
     "TapeMachine"
     "Vintage Tape Echo"
-    
 )
 
 #------------------------------------------------------------------------------

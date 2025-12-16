@@ -197,14 +197,24 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 ### 9. **Multi-Q**
 - **Location**: `plugins/multi-q/`
-- **Description**: Professional 8-band parametric EQ inspired by Logic Pro's Channel EQ
+- **Description**: Universal EQ with multiple EQ modes (Digital 8-band, British console)
 - **Features**:
-  - **8 Color-Coded Frequency Bands**:
+  - **EQ Mode Selector**: Dropdown to switch between EQ types
+    - **Digital**: Clean 8-band parametric (default)
+    - **British**: SSL 4000-style console EQ (integrated from 4K-EQ)
+    - Future: Tube (Pultec-style) EQ
+  - **Digital Mode - 8 Color-Coded Frequency Bands**:
     - Band 1 (Red): High-Pass Filter with variable slope (6/12/18/24/36/48 dB/oct)
     - Band 2 (Orange): Low Shelf with adjustable Q
     - Bands 3-6 (Yellow/Green/Aqua/Blue): Parametric EQ with Freq/Gain/Q
     - Band 7 (Purple): High Shelf with adjustable Q
     - Band 8 (Pink): Low-Pass Filter with variable slope
+  - **British Mode - SSL Console EQ** (`BritishEQProcessor.h`):
+    - 4-band parametric EQ (LF, LMF, HMF, HF) with SSL-style response
+    - High-pass and low-pass filters
+    - Brown/Black mode selector (E-Series/G-Series console variants)
+    - SSL saturation with transformer and op-amp modeling (`SSLSaturation.h`)
+    - Input/Output gain controls
   - **Real-Time FFT Analyzer**:
     - Peak and RMS display modes
     - Configurable resolution (Low=2048, Medium=4096, High=8192 points)
@@ -228,6 +238,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
     - No "digital" sound - response matches analog prototypes
     - Zero latency (without HQ mode)
   - **UI Features**:
+    - EQ type dropdown on toolbar
     - Band enable buttons with color indicators
     - Selected band parameter controls (Freq/Gain/Q/Slope)
     - Professional LED meters (input/output)
@@ -258,6 +269,24 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 ```
 
 **IMPORTANT FOR AI ASSISTANTS**: Always use `./docker/build_release.sh` to compile plugins. Do NOT use local cmake commands or `./rebuild_all.sh` for verification - the Docker build is the only approved build method to ensure consistent, distributable binaries. Use single-plugin builds (e.g., `./docker/build_release.sh 4keq`) for faster iteration when working on one plugin.
+
+**MANDATORY POST-BUILD VALIDATION**: After ANY successful plugin build, you MUST run pluginval to validate the plugin:
+```bash
+# After building a specific plugin, validate it immediately:
+./tests/run_plugin_tests.sh --plugin "Plugin Name" --skip-audio
+
+# Examples after single-plugin builds:
+./docker/build_release.sh multiq && ./tests/run_plugin_tests.sh --plugin "Multi-Q" --skip-audio
+./docker/build_release.sh 4keq && ./tests/run_plugin_tests.sh --plugin "4K EQ" --skip-audio
+./docker/build_release.sh compressor && ./tests/run_plugin_tests.sh --plugin "Universal Compressor" --skip-audio
+./docker/build_release.sh tape && ./tests/run_plugin_tests.sh --plugin "TapeMachine" --skip-audio
+./docker/build_release.sh echo && ./tests/run_plugin_tests.sh --plugin "Vintage Tape Echo" --skip-audio
+./docker/build_release.sh silkverb && ./tests/run_plugin_tests.sh --plugin "SilkVerb" --skip-audio
+./docker/build_release.sh convolution && ./tests/run_plugin_tests.sh --plugin "Convolution Reverb" --skip-audio
+./docker/build_release.sh drummer && ./tests/run_plugin_tests.sh --plugin "DrummerClone" --skip-audio
+./docker/build_release.sh harmonic && ./tests/run_plugin_tests.sh --plugin "Harmonic Generator" --skip-audio
+```
+The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do NOT skip this validation step - it catches crashes, parameter issues, and compatibility problems that would break the plugin in DAWs.
 
 **Output**: Plugins are placed in `release/` directory with both VST3 and LV2 formats.
 
