@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "GUI/AnalogVUMeter.h"
 #include "../../../shared/LunaVintageLookAndFeel.h"
+#include "../../../shared/SupportersOverlay.h"
 
 class CustomLookAndFeel : public LunaVintageLookAndFeel
 {
@@ -18,6 +19,9 @@ public:
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                          bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+
+    // Enhanced label drawing with text shadow for better readability
+    void drawLabel(juce::Graphics& g, juce::Label& label) override;
 };
 
 class ReelAnimation : public juce::Component, public juce::Timer
@@ -55,6 +59,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void timerCallback() override;
+    void mouseDown(const juce::MouseEvent& e) override;
 
 private:
     TapeMachineAudioProcessor& audioProcessor;
@@ -69,7 +74,8 @@ private:
     juce::Slider highpassFreqSlider;
     juce::Slider lowpassFreqSlider;
     juce::Slider noiseAmountSlider;
-    juce::Slider wowFlutterSlider;
+    juce::Slider wowSlider;
+    juce::Slider flutterSlider;
     juce::Slider outputGainSlider;
 
     juce::ToggleButton noiseEnabledButton;
@@ -83,7 +89,8 @@ private:
     juce::Label highpassFreqLabel;
     juce::Label lowpassFreqLabel;
     juce::Label noiseAmountLabel;
-    juce::Label wowFlutterLabel;
+    juce::Label wowLabel;
+    juce::Label flutterLabel;
     juce::Label outputGainLabel;
 
     ReelAnimation leftReel;
@@ -100,7 +107,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highpassFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowpassFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noiseAmountAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wowFlutterAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wowAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flutterAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> noiseEnabledAttachment;
@@ -108,6 +116,15 @@ private:
 
     void setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text);
     void setupComboBox(juce::ComboBox& combo, juce::Label& label, const juce::String& text);
+
+    float wowPhase = 0.0f;  // Phase for visual wow effect animation
+
+    // Patreon supporters overlay
+    std::unique_ptr<SupportersOverlay> supportersOverlay;
+    juce::Rectangle<int> titleClickArea;
+
+    void showSupportersPanel();
+    void hideSupportersPanel();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineAudioProcessorEditor)
 };

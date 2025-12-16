@@ -29,23 +29,32 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 - **Location**: `plugins/TapeMachine/`
 - **Description**: Analog tape machine emulation (Swiss800 & Classic102)
 - **Features**:
-  - Multiple tape machine models (Swiss800 [Studer A800], Classic102 [Ampex ATR-102], Blend)
-  - Multiple tape types
+  - Multiple tape machine models (Swiss800 [Studer A800], Classic102 [Ampex ATR-102], Hybrid Blend)
+  - Four tape formulations: Type 456 (warm), GP9 (modern), Type 911 (German precision), Type 250 (professional)
   - Tape speed selection (7.5, 15, 30 IPS)
   - Advanced saturation and hysteresis modeling (ImprovedTapeEmulation.h)
-  - Wow & flutter simulation with shared stereo processing:
+  - Separate Wow & Flutter controls with shared stereo processing:
+    - Wow: Slow pitch drift (0.3-0.8 Hz) for vinyl-like wobble
+    - Flutter: Faster modulation (3-7 Hz) for tape machine character
     - Single WowFlutterProcessor instance shared between channels for coherent modulation
-    - Dynamic delay buffer (up to 50ms) sized based on sample rate
-    - Double-precision phase tracking
-    - Linear interpolation for fractional delay samples
     - Random modulation component for natural flutter
+  - Bias and calibration controls for fine-tuning tape response
+  - Auto-compensation mode (VTM-style output gain lock)
+  - **Factory Preset System** (`TapeMachinePresets.h`):
+    - 15 factory presets across 5 categories
+    - **Subtle**: Gentle Warmth, Transparent Glue, Mastering Touch
+    - **Warm**: Classic Analog, Vintage Warmth, Tube Console
+    - **Character**: 70s Rock, Tape Saturation, Cassette Deck
+    - **Lo-Fi**: Lo-Fi Warble, Worn Tape, Dusty Reel
+    - **Mastering**: Master Bus Glue, Analog Sheen, Vintage Master
   - Dual stereo VU meters with vintage analog styling
   - Real-time level monitoring (input/output)
   - Animated reel components (ReelAnimation class):
     - Realistic reel rendering with shadow effects
     - Metal reel body with gradient fill
-    - Animated tape spokes
-    - Speed control synced to transport state
+    - Animated tape spokes with tape transfer animation
+    - Speed control synced to transport state with wow-based wobble
+  - 2x/4x oversampling for alias-free saturation
 - **Build Target**: `TapeMachine_All`
 
 ### 3. **Universal Compressor**
@@ -320,8 +329,12 @@ The build script will automatically detect and use these tools when available.
 2. **Added Convolution Reverb**: IR-based reverb with SDIR support, waveform display, and zero-latency convolution
 3. **Added Vintage Tape Echo**: Full-featured tape echo with 12 modes, spring reverb, and extensive modulation
 4. **Enhanced TapeMachine**:
+   - Added factory preset system with 15 presets across 5 categories (Subtle, Warm, Character, Lo-Fi, Mastering)
+   - Added Type 250 professional tape formulation
+   - Separate Wow and Flutter controls for independent modulation
    - Added shared wow/flutter processing with coherent stereo modulation
-   - Improved reel animation with realistic visual components
+   - Improved reel animation with realistic visual components and tape transfer
+   - Enhanced UI with vintage rotary switch for noise enable, text shadows for readability
    - Model names: Swiss800 (Studer A800) and Classic102 (Ampex ATR-102)
 5. **Updated 4K EQ**:
    - Advanced SSL saturation modeling with E-Series/G-Series console emulation
@@ -385,7 +398,9 @@ plugins/
 │   └── shared/              # Shared utilities and libraries
 │       ├── AnalogEmulation/ # Shared analog saturation/tube/transformer library
 │       ├── LunaLookAndFeel.h # Base look-and-feel for Luna plugins
-│       └── LEDMeter.h/cpp   # Shared LED-style level meter component
+│       ├── LEDMeter.h/cpp   # Shared LED-style level meter component
+│       ├── PatreonBackers.h # Shared Patreon backer credits data
+│       └── SupportersOverlay.h # Modal overlay for Patreon supporters display
 ├── tests/                    # Plugin validation framework
 │   ├── quick_validate.sh    # Fast plugin check
 │   └── run_plugin_tests.sh  # Full test suite
@@ -401,6 +416,7 @@ plugins/
 3. Add to root CMakeLists.txt with option flag
 4. Add build target to `docker/build_release.sh` PLUGINS array
 5. Follow naming convention: `PluginName_All` for build targets
+6. **REQUIRED**: Implement Patreon Supporters overlay (see "Shared UI Components" section below)
 
 ### Common DSP Patterns
 - **Oversampling**: Use `juce::dsp::Oversampling<float>` for anti-aliased processing
@@ -412,6 +428,7 @@ plugins/
 - **Saturation modeling**: See 4K-EQ's SSLSaturation.h for multi-stage analog emulation
 - **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
 - **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations
+- **Factory Presets**: See TapeMachine's TapeMachinePresets.h or Universal Compressor's CompressorPresets.h for categorized preset systems with `getNumPrograms()`, `setCurrentProgram()`, `getProgramName()` implementation
 - **MIDI Generation**: See DrummerClone's DrummerEngine for procedural pattern generation with Perlin noise variation
 - **Groove Analysis**: See DrummerClone's TransientDetector and MidiGrooveExtractor for real-time groove extraction
 
@@ -478,6 +495,90 @@ float satReduction = hfEstimator.getSaturationReduction(input, 0.5f);
 3. If utility functions (DC blocking, HF estimation) are duplicated
 
 **Namespace**: All shared analog emulation code uses the `AnalogEmulation` namespace
+
+### Shared UI Components
+**Location**: `plugins/shared/`
+
+All Luna plugins must use these shared UI components for consistency:
+
+#### SupportersOverlay (REQUIRED for all plugins)
+**File**: `shared/SupportersOverlay.h`
+
+Modal overlay component that displays Patreon supporter credits when the user clicks on the plugin title. **Every plugin must implement this feature.**
+
+**Usage**:
+```cpp
+// In PluginEditor.h:
+#include "../../shared/SupportersOverlay.h"  // Or appropriate relative path
+
+class MyPluginEditor : public juce::AudioProcessorEditor
+{
+public:
+    void mouseDown(const juce::MouseEvent& e) override;
+
+private:
+    std::unique_ptr<SupportersOverlay> supportersOverlay;
+    juce::Rectangle<int> titleClickArea;
+
+    void showSupportersPanel();
+    void hideSupportersPanel();
+};
+
+// In PluginEditor.cpp:
+
+// In paint() - set up clickable area matching where plugin title is drawn:
+titleClickArea = juce::Rectangle<int>(10, 5, 180, 30);  // Adjust to match header
+
+// In resized():
+if (supportersOverlay)
+    supportersOverlay->setBounds(getLocalBounds());
+
+// Implement mouseDown:
+void MyPluginEditor::mouseDown(const juce::MouseEvent& e)
+{
+    if (titleClickArea.contains(e.getPosition()))
+        showSupportersPanel();
+}
+
+void MyPluginEditor::showSupportersPanel()
+{
+    if (!supportersOverlay)
+    {
+        supportersOverlay = std::make_unique<SupportersOverlay>("Plugin Name");
+        supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
+        addAndMakeVisible(supportersOverlay.get());
+    }
+    supportersOverlay->setBounds(getLocalBounds());
+    supportersOverlay->toFront(true);
+    supportersOverlay->setVisible(true);
+}
+
+void MyPluginEditor::hideSupportersPanel()
+{
+    if (supportersOverlay)
+        supportersOverlay->setVisible(false);
+}
+```
+
+**Plugins with SupportersOverlay implemented**:
+- 4K EQ
+- Universal Compressor
+- TapeMachine
+
+**Plugins needing SupportersOverlay**:
+- SilkVerb
+- Convolution Reverb
+- Vintage Tape Echo
+- DrummerClone
+- Harmonic Generator
+
+#### PatreonBackers
+**File**: `shared/PatreonBackers.h`
+
+Shared Patreon backer data used by SupportersOverlay. To add new backers:
+1. Edit `shared/PatreonBackers.h` - add names to appropriate tier arrays
+2. Rebuild all plugins
+3. Also update the project README.md with the same names
 
 ### UI Design Guidelines
 - **Color schemes**: Dark themes with analog-inspired controls
