@@ -195,6 +195,45 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - **Thread-Safe**: Background IR loading with atomic state management
 - **Build Target**: `ConvolutionReverb_All`
 
+### 9. **Multi-Q**
+- **Location**: `plugins/multi-q/`
+- **Description**: Professional 8-band parametric EQ inspired by Logic Pro's Channel EQ
+- **Features**:
+  - **8 Color-Coded Frequency Bands**:
+    - Band 1 (Red): High-Pass Filter with variable slope (6/12/18/24/36/48 dB/oct)
+    - Band 2 (Orange): Low Shelf with adjustable Q
+    - Bands 3-6 (Yellow/Green/Aqua/Blue): Parametric EQ with Freq/Gain/Q
+    - Band 7 (Purple): High Shelf with adjustable Q
+    - Band 8 (Pink): Low-Pass Filter with variable slope
+  - **Real-Time FFT Analyzer**:
+    - Peak and RMS display modes
+    - Configurable resolution (Low=2048, Medium=4096, High=8192 points)
+    - Adjustable decay rate (3-60 dB/s)
+    - Pre/Post EQ display option
+  - **Q-Coupling** (Gain-Q automatic adjustment):
+    - 8 modes: Off, Proportional, Light, Medium, Strong
+    - Asymmetric variants: stronger coupling for cuts than boosts
+  - **Interactive Graphic Display**:
+    - Draggable control points for each band
+    - Color-coded band curves with shaded fill
+    - Combined EQ curve display (white)
+    - Logarithmic frequency scale (20 Hz - 20 kHz)
+    - Display scale modes: ±12 dB, ±30 dB, ±60 dB, Warped
+  - **Processing Options**:
+    - HQ Mode: 2x oversampling for analog-matched response (prevents Nyquist cramping)
+    - Stereo/Mid-Side processing modes (Stereo, Left, Right, Mid, Side)
+    - Master gain with optional visualization overlay
+  - **Analog-Matched Response**:
+    - Bilinear transform with proper frequency pre-warping
+    - No "digital" sound - response matches analog prototypes
+    - Zero latency (without HQ mode)
+  - **UI Features**:
+    - Band enable buttons with color indicators
+    - Selected band parameter controls (Freq/Gain/Q/Slope)
+    - Professional LED meters (input/output)
+    - Supporters overlay (click title)
+- **Build Target**: `MultiQ_All`
+
 ## Build System
 
 ### Building Plugins (Default)
@@ -291,6 +330,7 @@ Available in the root CMakeLists.txt:
 - `BUILD_DRUMMER_CLONE` (default: ON)
 - `BUILD_CONVOLUTION_REVERB` (default: ON)
 - `BUILD_SILKVERB` (default: ON)
+- `BUILD_MULTI_Q` (default: ON)
 
 ### Installation Paths
 - **VST3**: `~/.vst3/`

@@ -1,0 +1,92 @@
+cmake_minimum_required(VERSION 3.15)
+
+project(MultiQ VERSION 1.0.0)
+
+# Set C++ standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# JUCE is already added by parent CMakeLists.txt
+
+# Build format options
+option(BUILD_VST3 "Build VST3 format" ON)
+option(BUILD_LV2 "Build LV2 format" ON)
+option(BUILD_AU "Build AU format" OFF)
+
+# Determine which formats to build
+set(PLUGIN_FORMATS "")
+if(BUILD_VST3)
+    list(APPEND PLUGIN_FORMATS VST3)
+endif()
+if(BUILD_LV2)
+    list(APPEND PLUGIN_FORMATS LV2)
+endif()
+if(BUILD_AU)
+    list(APPEND PLUGIN_FORMATS AU)
+endif()
+
+# Create plugin target
+juce_add_plugin(MultiQ
+    COMPANY_NAME "Luna Co. Audio"
+    BUNDLE_ID "com.LunaCoAudio.MultiQ"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    COPY_PLUGIN_AFTER_BUILD TRUE
+    PLUGIN_MANUFACTURER_CODE Luna
+    PLUGIN_CODE MulQ
+    FORMATS ${PLUGIN_FORMATS}
+    LV2URI "https://lunacoaudio.com/plugins/multi-q"
+    PRODUCT_NAME "Multi-Q"
+    DESCRIPTION "Professional 8-band parametric EQ with FFT Analyzer"
+    VST3_CAN_REPLACE_VST2 TRUE
+)
+
+# Generate JuceHeader.h
+juce_generate_juce_header(MultiQ)
+
+# Add source files
+target_sources(MultiQ
+    PRIVATE
+        MultiQ.cpp
+        MultiQEditor.cpp
+        EQGraphicDisplay.cpp
+        FFTAnalyzer.cpp
+        ../shared/LEDMeter.cpp
+)
+# Set include directories
+target_include_directories(MultiQ
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
+)
+
+# Compiler definitions
+target_compile_definitions(MultiQ
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=1
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
+)
+
+# Link libraries
+target_link_libraries(MultiQ
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_dsp
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# Optimization flags
+if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
+    target_compile_options(MultiQ PRIVATE -O3 -ffast-math)
+endif()
+# Enable all warnings
+target_compile_options(MultiQ PRIVATE -Wall -Wextra -Wpedantic)
