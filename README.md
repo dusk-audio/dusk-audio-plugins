@@ -27,10 +27,13 @@ Features: Sidechain HP filter, auto-makeup gain, parallel mix, 2x oversampling.
 ### TapeMachine
 Analog tape machine emulation featuring:
 - Swiss800 (Studer A800) and Classic102 (Ampex ATR-102) models
-- Multiple tape types and speeds (7.5, 15, 30 IPS)
+- Four tape formulations: Type 456, GP9, Type 911, Type 250
+- Tape speeds: 7.5, 15, 30 IPS
 - Advanced saturation and hysteresis modeling
-- Wow & flutter simulation
+- Separate Wow & Flutter controls
+- 15 factory presets across 5 categories (Subtle, Warm, Character, Lo-Fi, Mastering)
 - Dual stereo VU meters with animated reels
+- 2x/4x oversampling for alias-free processing
 
 ### SilkVerb
 Lexicon/Valhalla-style algorithmic reverb:

@@ -1422,85 +1422,13 @@ void EnhancedCompressorEditor::updateAutoGainState(bool autoGainEnabled)
 }
 
 //==============================================================================
-// Supporters Overlay
+// Supporters Overlay (uses shared SupportersOverlay component)
 //==============================================================================
-void EnhancedCompressorEditor::SupportersOverlay::paint(juce::Graphics& g)
-{
-    auto bounds = getLocalBounds();
-
-    // Semi-transparent dark background
-    g.setColour(juce::Colour(0xE0101010));
-    g.fillAll();
-
-    // Panel background
-    auto panelBounds = bounds.reduced(60, 40);
-    g.setColour(juce::Colour(0xff1a1a1a));
-    g.fillRoundedRectangle(panelBounds.toFloat(), 12.0f);
-
-    // Panel border
-    g.setColour(juce::Colour(0xff404040));
-    g.drawRoundedRectangle(panelBounds.toFloat(), 12.0f, 2.0f);
-
-    // Title
-    g.setColour(juce::Colour(0xffd4af37));  // Gold color
-    g.setFont(juce::Font(24.0f, juce::Font::bold));
-    g.drawText("Thank You!", panelBounds.getX(), panelBounds.getY() + 20,
-               panelBounds.getWidth(), 30, juce::Justification::centred);
-
-    // Subtitle
-    g.setColour(juce::Colour(0xffa0a0a0));
-    g.setFont(juce::Font(14.0f));
-    g.drawText("To our amazing Patreon supporters",
-               panelBounds.getX(), panelBounds.getY() + 55,
-               panelBounds.getWidth(), 20, juce::Justification::centred);
-
-    // Divider line
-    g.setColour(juce::Colour(0xff404040));
-    g.fillRect(panelBounds.getX() + 40, panelBounds.getY() + 90, panelBounds.getWidth() - 80, 1);
-
-    // Supporters list
-    auto supportersText = PatreonCredits::getAllBackersFormatted();
-
-    // Text area for supporters
-    auto textArea = panelBounds.reduced(40, 0);
-    textArea.setY(panelBounds.getY() + 105);
-    textArea.setHeight(panelBounds.getHeight() - 170);
-
-    g.setFont(juce::Font(14.0f));
-    g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawFittedText(supportersText, textArea,
-                     juce::Justification::centred, 30);
-
-    // Footer divider
-    g.setColour(juce::Colour(0xff404040));
-    g.fillRect(panelBounds.getX() + 40, panelBounds.getBottom() - 55, panelBounds.getWidth() - 80, 1);
-
-    // Footer with click-to-close hint
-    g.setFont(juce::Font(12.0f));
-    g.setColour(juce::Colour(0xff808080));
-    g.drawText("Click anywhere to close",
-               panelBounds.getX(), panelBounds.getBottom() - 45,
-               panelBounds.getWidth(), 20, juce::Justification::centred);
-
-    // Luna Co. Audio credit
-    g.setFont(juce::Font(11.0f));
-    g.setColour(juce::Colour(0xff606060));
-    g.drawText("Universal Compressor by Luna Co. Audio",
-               panelBounds.getX(), panelBounds.getBottom() - 25,
-               panelBounds.getWidth(), 18, juce::Justification::centred);
-}
-
-void EnhancedCompressorEditor::SupportersOverlay::mouseDown(const juce::MouseEvent&)
-{
-    if (onDismiss)
-        onDismiss();
-}
-
 void EnhancedCompressorEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-        supportersOverlay = std::make_unique<SupportersOverlay>();
+        supportersOverlay = std::make_unique<SupportersOverlay>("Universal Compressor");
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }

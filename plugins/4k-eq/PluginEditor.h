@@ -4,7 +4,7 @@
 #include "FourKEQ.h"
 #include "FourKLookAndFeel.h"
 #include "EQCurveDisplay.h"
-#include "../../shared/PatreonBackers.h"
+#include "../../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
 
@@ -166,16 +166,8 @@ private:
     void updateValueLabels();
     void drawKnobMarkings(juce::Graphics& g);
     juce::String formatValue(float value, const juce::String& suffix);
-    // Supporters overlay component - renders on top of everything
-    class SupportersOverlay : public juce::Component
-    {
-    public:
-        SupportersOverlay() { setInterceptsMouseClicks(true, false); }
-        void paint(juce::Graphics& g) override;
-        void mouseDown(const juce::MouseEvent&) override;
-        std::function<void()> onDismiss;
-    };
 
+    // Patreon supporters overlay (uses shared component)
     std::unique_ptr<SupportersOverlay> supportersOverlay;
     juce::Rectangle<int> titleClickArea;  // Clickable area for "4K EQ" title
 

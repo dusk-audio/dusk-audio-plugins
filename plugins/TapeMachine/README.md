@@ -4,17 +4,23 @@ A high-quality tape machine emulation plugin that models the Studer A800 and Amp
 
 ## Features
 
-- **Dual Machine Emulation**: Choose between Studer A800, Ampex ATR-102, or a blend of both
+- **Dual Machine Emulation**: Choose between Swiss800 (Studer A800), Classic102 (Ampex ATR-102), or Hybrid Blend
 - **Multiple Tape Speeds**: 7.5, 15, and 30 IPS
-- **Tape Type Selection**: Ampex 456, GP9, and BASF 911 formulations
+- **Four Tape Formulations**: Type 456 (warm), GP9 (modern), Type 911 (German precision), Type 250 (professional)
 - **Comprehensive Controls**:
-  - Input/Output Gain
-  - Tape Saturation
+  - Input/Output Gain with auto-compensation mode
+  - Bias and Calibration controls
   - High-pass and Low-pass Filters
-  - Tape Noise with Enable/Disable
-  - Wow & Flutter simulation
-- **Anti-aliasing**: 2x oversampling to prevent digital artifacts
-- **Vintage GUI**: Analog-style interface with animated reels
+  - Tape Noise with vintage rotary switch enable
+  - Separate Wow & Flutter controls for independent modulation
+- **Factory Preset System**: 15 professional presets across 5 categories:
+  - **Subtle**: Gentle Warmth, Transparent Glue, Mastering Touch
+  - **Warm**: Classic Analog, Vintage Warmth, Tube Console
+  - **Character**: 70s Rock, Tape Saturation, Cassette Deck
+  - **Lo-Fi**: Lo-Fi Warble, Worn Tape, Dusty Reel
+  - **Mastering**: Master Bus Glue, Analog Sheen, Vintage Master
+- **Anti-aliasing**: 2x/4x oversampling to prevent digital artifacts
+- **Vintage GUI**: Analog-style interface with animated reels and dual VU meters
 
 ## Building
 
@@ -87,7 +93,7 @@ After building, copy the generated VST3 file to your plugin folder:
 7. Output Gain Stage
 
 ### Anti-Aliasing
-The plugin uses 2x oversampling with polyphase IIR filtering to prevent aliasing artifacts from the non-linear tape saturation processing.
+The plugin uses selectable 2x or 4x oversampling with FIR equiripple filtering to prevent aliasing artifacts from the non-linear tape saturation processing.
 
 ### Machine Characteristics
 

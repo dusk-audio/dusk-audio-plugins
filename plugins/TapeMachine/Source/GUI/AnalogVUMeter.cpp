@@ -22,8 +22,12 @@ void AnalogVUMeter::setStereoMode(bool isStereo)
 void AnalogVUMeter::setLevels(float leftLevel, float rightLevel)
 {
     // Convert linear to dB
-    float dbL = 20.0f * std::log10(std::max(0.001f, leftLevel));
-    float dbR = 20.0f * std::log10(std::max(0.001f, rightLevel));
+    // Apply +3dB calibration offset to correct for measurement artifacts
+    // Without this, the VU reads 3dB lower than the actual dBFS level
+    constexpr float calibrationOffsetDB = 3.0f;
+
+    float dbL = 20.0f * std::log10(std::max(0.001f, leftLevel)) + calibrationOffsetDB;
+    float dbR = 20.0f * std::log10(std::max(0.001f, rightLevel)) + calibrationOffsetDB;
 
     targetLevelL = dbL;
     targetLevelR = dbR;
