@@ -40,6 +40,31 @@ declare -A PLUGIN_TARGETS=(
     ["meq"]="MultiQ_All"
 )
 
+# Plugin name mapping (shortname -> display name for pluginval)
+declare -A PLUGIN_NAMES=(
+    ["4keq"]="4K EQ"
+    ["eq"]="4K EQ"
+    ["compressor"]="Universal Compressor"
+    ["comp"]="Universal Compressor"
+    ["tape"]="TapeMachine"
+    ["tapemachine"]="TapeMachine"
+    ["echo"]="Vintage Tape Echo"
+    ["tapeecho"]="Vintage Tape Echo"
+    ["drummer"]="DrummerClone"
+    ["drums"]="DrummerClone"
+    ["harmonic"]="Harmonic Generator"
+    ["convolution"]="Convolution Reverb"
+    ["impulse"]="Convolution Reverb"
+    ["ir"]="Convolution Reverb"
+    ["silkverb"]="SilkVerb"
+    ["silk"]="SilkVerb"
+    ["reverb"]="SilkVerb"
+    ["verb"]="SilkVerb"
+    ["multiq"]="Multi-Q"
+    ["multi-q"]="Multi-Q"
+    ["meq"]="Multi-Q"
+)
+
 # Show help
 show_help() {
     echo "Usage: $0 [plugin]"
@@ -69,6 +94,7 @@ show_help() {
 
 # Parse arguments
 BUILD_TARGET=""
+PLUGIN_SHORTNAME=""
 if [ $# -gt 0 ]; then
     case "$1" in
         --help|-h)
@@ -78,6 +104,7 @@ if [ $# -gt 0 ]; then
         *)
             # Look up the target
             if [ -n "${PLUGIN_TARGETS[$1]}" ]; then
+                PLUGIN_SHORTNAME="$1"
                 BUILD_TARGET="${PLUGIN_TARGETS[$1]}"
                 echo "Building single plugin: $1 -> $BUILD_TARGET"
             else
@@ -223,3 +250,18 @@ done
 for lv2 in "$HOME/.lv2/"*.lv2; do
     [ -d "$lv2" ] && echo "  LV2:  $(basename "$lv2")"
 done
+
+# Run pluginval for single-plugin builds
+if [ -n "$PLUGIN_SHORTNAME" ]; then
+    PLUGIN_DISPLAY_NAME="${PLUGIN_NAMES[$PLUGIN_SHORTNAME]}"
+    TEST_SCRIPT="$PROJECT_DIR/tests/run_plugin_tests.sh"
+
+    if [ -f "$TEST_SCRIPT" ]; then
+        echo ""
+        echo "=== Running pluginval tests for $PLUGIN_DISPLAY_NAME ==="
+        "$TEST_SCRIPT" --plugin "$PLUGIN_DISPLAY_NAME" --skip-audio
+    else
+        echo ""
+        echo "Note: Test script not found at $TEST_SCRIPT, skipping validation"
+    fi
+fi
