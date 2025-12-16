@@ -59,6 +59,7 @@ enum class AnalyzerResolution
 enum class DisplayScaleMode
 {
     Linear12dB = 0,   // ±12 dB range
+    Linear24dB,       // ±24 dB range (matches gain range)
     Linear30dB,       // ±30 dB range
     Linear60dB,       // ±60 dB range
     Warped            // Logarithmic/non-linear scale
@@ -72,6 +73,14 @@ enum class ProcessingMode
     Right,
     Mid,
     Side
+};
+
+// EQ Type - switches between different EQ algorithms/styles
+enum class EQType
+{
+    Digital = 0,   // Clean digital EQ (Multi-Q default)
+    British,       // 4K EQ style British console EQ
+    Tube           // Pultec EQP-1A style tube EQ
 };
 
 //==============================================================================
@@ -182,6 +191,7 @@ namespace ParamIDs
     const juce::String hqEnabled = "hq_enabled";
     const juce::String processingMode = "processing_mode";
     const juce::String qCoupleMode = "q_couple_mode";
+    const juce::String eqType = "eq_type";
 
     // Analyzer parameters
     const juce::String analyzerEnabled = "analyzer_enabled";
@@ -193,4 +203,39 @@ namespace ParamIDs
     // Display parameters
     const juce::String displayScaleMode = "display_scale_mode";
     const juce::String visualizeMasterGain = "visualize_master_gain";
+
+    // British mode (4K-EQ style) parameters
+    const juce::String britishHpfFreq = "british_hpf_freq";
+    const juce::String britishHpfEnabled = "british_hpf_enabled";
+    const juce::String britishLpfFreq = "british_lpf_freq";
+    const juce::String britishLpfEnabled = "british_lpf_enabled";
+    const juce::String britishLfGain = "british_lf_gain";
+    const juce::String britishLfFreq = "british_lf_freq";
+    const juce::String britishLfBell = "british_lf_bell";
+    const juce::String britishLmGain = "british_lm_gain";
+    const juce::String britishLmFreq = "british_lm_freq";
+    const juce::String britishLmQ = "british_lm_q";
+    const juce::String britishHmGain = "british_hm_gain";
+    const juce::String britishHmFreq = "british_hm_freq";
+    const juce::String britishHmQ = "british_hm_q";
+    const juce::String britishHfGain = "british_hf_gain";
+    const juce::String britishHfFreq = "british_hf_freq";
+    const juce::String britishHfBell = "british_hf_bell";
+    const juce::String britishMode = "british_mode";  // 0=Brown, 1=Black
+    const juce::String britishSaturation = "british_saturation";
+    const juce::String britishInputGain = "british_input_gain";
+    const juce::String britishOutputGain = "british_output_gain";
+
+    // Pultec (Tube) mode parameters
+    const juce::String pultecLfBoostGain = "pultec_lf_boost_gain";
+    const juce::String pultecLfBoostFreq = "pultec_lf_boost_freq";
+    const juce::String pultecLfAttenGain = "pultec_lf_atten_gain";
+    const juce::String pultecHfBoostGain = "pultec_hf_boost_gain";
+    const juce::String pultecHfBoostFreq = "pultec_hf_boost_freq";
+    const juce::String pultecHfBoostBandwidth = "pultec_hf_boost_bw";
+    const juce::String pultecHfAttenGain = "pultec_hf_atten_gain";
+    const juce::String pultecHfAttenFreq = "pultec_hf_atten_freq";
+    const juce::String pultecInputGain = "pultec_input_gain";
+    const juce::String pultecOutputGain = "pultec_output_gain";
+    const juce::String pultecTubeDrive = "pultec_tube_drive";
 }

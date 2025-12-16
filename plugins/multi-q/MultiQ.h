@@ -5,6 +5,8 @@
 #include <atomic>
 #include <memory>
 #include "EQBand.h"
+#include "BritishEQProcessor.h"
+#include "PultecProcessor.h"
 
 //==============================================================================
 /**
@@ -207,6 +209,52 @@ private:
     std::atomic<float>* displayScaleModeParam = nullptr;
     std::atomic<float>* visualizeMasterGainParam = nullptr;
 
+    // EQ Type parameter
+    std::atomic<float>* eqTypeParam = nullptr;
+
+    // British mode specific parameters
+    std::atomic<float>* britishHpfFreqParam = nullptr;
+    std::atomic<float>* britishHpfEnabledParam = nullptr;
+    std::atomic<float>* britishLpfFreqParam = nullptr;
+    std::atomic<float>* britishLpfEnabledParam = nullptr;
+    std::atomic<float>* britishLfGainParam = nullptr;
+    std::atomic<float>* britishLfFreqParam = nullptr;
+    std::atomic<float>* britishLfBellParam = nullptr;
+    std::atomic<float>* britishLmGainParam = nullptr;
+    std::atomic<float>* britishLmFreqParam = nullptr;
+    std::atomic<float>* britishLmQParam = nullptr;
+    std::atomic<float>* britishHmGainParam = nullptr;
+    std::atomic<float>* britishHmFreqParam = nullptr;
+    std::atomic<float>* britishHmQParam = nullptr;
+    std::atomic<float>* britishHfGainParam = nullptr;
+    std::atomic<float>* britishHfFreqParam = nullptr;
+    std::atomic<float>* britishHfBellParam = nullptr;
+    std::atomic<float>* britishModeParam = nullptr;  // Brown/Black
+    std::atomic<float>* britishSaturationParam = nullptr;
+    std::atomic<float>* britishInputGainParam = nullptr;
+    std::atomic<float>* britishOutputGainParam = nullptr;
+
+    // British EQ processor
+    BritishEQProcessor britishEQ;
+    std::atomic<bool> britishParamsChanged{true};
+
+    // Pultec EQ processor
+    PultecProcessor pultecEQ;
+    std::atomic<bool> pultecParamsChanged{true};
+
+    // Pultec mode specific parameters
+    std::atomic<float>* pultecLfBoostGainParam = nullptr;
+    std::atomic<float>* pultecLfBoostFreqParam = nullptr;
+    std::atomic<float>* pultecLfAttenGainParam = nullptr;
+    std::atomic<float>* pultecHfBoostGainParam = nullptr;
+    std::atomic<float>* pultecHfBoostFreqParam = nullptr;
+    std::atomic<float>* pultecHfBoostBandwidthParam = nullptr;
+    std::atomic<float>* pultecHfAttenGainParam = nullptr;
+    std::atomic<float>* pultecHfAttenFreqParam = nullptr;
+    std::atomic<float>* pultecInputGainParam = nullptr;
+    std::atomic<float>* pultecOutputGainParam = nullptr;
+    std::atomic<float>* pultecTubeDriveParam = nullptr;
+
     // Safe parameter accessor
     float safeGetParam(std::atomic<float>* param, float defaultValue) const
     {
@@ -272,20 +320,21 @@ private:
 
     //==============================================================================
     // M/S encoding/decoding
+    // Note: These handle the case where left and right may be the same pointer (mono)
     void encodeMS(float& left, float& right) const
     {
-        float mid = (left + right) * 0.5f;
-        float side = (left - right) * 0.5f;
-        left = mid;
-        right = side;
+        float l = left;
+        float r = right;
+        left = (l + r) * 0.5f;   // mid
+        right = (l - r) * 0.5f;  // side
     }
 
     void decodeMS(float& mid, float& side) const
     {
-        float left = mid + side;
-        float right = mid - side;
-        mid = left;
-        side = right;
+        float m = mid;
+        float s = side;
+        mid = m + s;   // left
+        side = m - s;  // right
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQ)

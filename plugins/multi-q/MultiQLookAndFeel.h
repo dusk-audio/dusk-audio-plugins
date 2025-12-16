@@ -83,16 +83,16 @@ public:
                                                          juce::PathStrokeType::rounded));
         }
 
-        // Knob body
+        // Knob body - lighter for better contrast
         float knobRadius = radius * 0.65f;
-        g.setColour(juce::Colour(0xFF3a3a3a));
+        g.setColour(juce::Colour(0xFF505050));
         g.fillEllipse(centre.x - knobRadius, centre.y - knobRadius,
                       knobRadius * 2.0f, knobRadius * 2.0f);
 
-        // Knob highlight
-        g.setColour(juce::Colour(0xFF4a4a4a));
+        // Knob highlight/border
+        g.setColour(juce::Colour(0xFF6a6a6a));
         g.drawEllipse(centre.x - knobRadius, centre.y - knobRadius,
-                      knobRadius * 2.0f, knobRadius * 2.0f, 1.0f);
+                      knobRadius * 2.0f, knobRadius * 2.0f, 1.5f);
 
         // Pointer
         juce::Path pointer;

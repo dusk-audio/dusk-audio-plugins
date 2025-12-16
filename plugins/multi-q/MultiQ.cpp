@@ -51,6 +51,44 @@ MultiQ::MultiQ()
     displayScaleModeParam = parameters.getRawParameterValue(ParamIDs::displayScaleMode);
     visualizeMasterGainParam = parameters.getRawParameterValue(ParamIDs::visualizeMasterGain);
 
+    // EQ Type parameter
+    eqTypeParam = parameters.getRawParameterValue(ParamIDs::eqType);
+
+    // British mode parameters
+    britishHpfFreqParam = parameters.getRawParameterValue(ParamIDs::britishHpfFreq);
+    britishHpfEnabledParam = parameters.getRawParameterValue(ParamIDs::britishHpfEnabled);
+    britishLpfFreqParam = parameters.getRawParameterValue(ParamIDs::britishLpfFreq);
+    britishLpfEnabledParam = parameters.getRawParameterValue(ParamIDs::britishLpfEnabled);
+    britishLfGainParam = parameters.getRawParameterValue(ParamIDs::britishLfGain);
+    britishLfFreqParam = parameters.getRawParameterValue(ParamIDs::britishLfFreq);
+    britishLfBellParam = parameters.getRawParameterValue(ParamIDs::britishLfBell);
+    britishLmGainParam = parameters.getRawParameterValue(ParamIDs::britishLmGain);
+    britishLmFreqParam = parameters.getRawParameterValue(ParamIDs::britishLmFreq);
+    britishLmQParam = parameters.getRawParameterValue(ParamIDs::britishLmQ);
+    britishHmGainParam = parameters.getRawParameterValue(ParamIDs::britishHmGain);
+    britishHmFreqParam = parameters.getRawParameterValue(ParamIDs::britishHmFreq);
+    britishHmQParam = parameters.getRawParameterValue(ParamIDs::britishHmQ);
+    britishHfGainParam = parameters.getRawParameterValue(ParamIDs::britishHfGain);
+    britishHfFreqParam = parameters.getRawParameterValue(ParamIDs::britishHfFreq);
+    britishHfBellParam = parameters.getRawParameterValue(ParamIDs::britishHfBell);
+    britishModeParam = parameters.getRawParameterValue(ParamIDs::britishMode);
+    britishSaturationParam = parameters.getRawParameterValue(ParamIDs::britishSaturation);
+    britishInputGainParam = parameters.getRawParameterValue(ParamIDs::britishInputGain);
+    britishOutputGainParam = parameters.getRawParameterValue(ParamIDs::britishOutputGain);
+
+    // Pultec mode parameters
+    pultecLfBoostGainParam = parameters.getRawParameterValue(ParamIDs::pultecLfBoostGain);
+    pultecLfBoostFreqParam = parameters.getRawParameterValue(ParamIDs::pultecLfBoostFreq);
+    pultecLfAttenGainParam = parameters.getRawParameterValue(ParamIDs::pultecLfAttenGain);
+    pultecHfBoostGainParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostGain);
+    pultecHfBoostFreqParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostFreq);
+    pultecHfBoostBandwidthParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostBandwidth);
+    pultecHfAttenGainParam = parameters.getRawParameterValue(ParamIDs::pultecHfAttenGain);
+    pultecHfAttenFreqParam = parameters.getRawParameterValue(ParamIDs::pultecHfAttenFreq);
+    pultecInputGainParam = parameters.getRawParameterValue(ParamIDs::pultecInputGain);
+    pultecOutputGainParam = parameters.getRawParameterValue(ParamIDs::pultecOutputGain);
+    pultecTubeDriveParam = parameters.getRawParameterValue(ParamIDs::pultecTubeDrive);
+
     // Add global parameter listeners
     parameters.addParameterListener(ParamIDs::hqEnabled, this);
     parameters.addParameterListener(ParamIDs::qCoupleMode, this);
@@ -170,6 +208,14 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     filtersNeedUpdate.store(true);
     updateAllFilters();
 
+    // Prepare British EQ processor
+    britishEQ.prepare(currentSampleRate, samplesPerBlock * (hqModeEnabled ? 2 : 1), 2);
+    britishParamsChanged.store(true);
+
+    // Prepare Pultec EQ processor
+    pultecEQ.prepare(currentSampleRate, samplesPerBlock * (hqModeEnabled ? 2 : 1), 2);
+    pultecParamsChanged.store(true);
+
     // Reset analyzer
     analyzerFifo.reset();
     std::fill(analyzerMagnitudes.begin(), analyzerMagnitudes.end(), -100.0f);
@@ -183,11 +229,16 @@ void MultiQ::releaseResources()
 
 bool MultiQ::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    // Support stereo only
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+    const auto& mainInput = layouts.getMainInputChannelSet();
+    const auto& mainOutput = layouts.getMainOutputChannelSet();
+
+    // Support mono and stereo
+    if (mainOutput != juce::AudioChannelSet::mono() &&
+        mainOutput != juce::AudioChannelSet::stereo())
         return false;
 
-    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::stereo())
+    // Input and output must match
+    if (mainInput != mainOutput)
         return false;
 
     return true;
@@ -217,9 +268,76 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         prepareToPlay(baseSampleRate, buffer.getNumSamples());
     }
 
-    // Update filters if needed
-    if (filtersNeedUpdate.exchange(false))
+    // Check EQ type (Digital, British, or Tube)
+    auto eqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
+
+    // Update filters if needed (only for Digital mode)
+    if (eqType == EQType::Digital && filtersNeedUpdate.exchange(false))
         updateAllFilters();
+
+    // Update British EQ parameters if needed
+    if (eqType == EQType::British)
+    {
+        BritishEQProcessor::Parameters britishParams;
+        britishParams.hpfFreq = safeGetParam(britishHpfFreqParam, 20.0f);
+        britishParams.hpfEnabled = safeGetParam(britishHpfEnabledParam, 0.0f) > 0.5f;
+        britishParams.lpfFreq = safeGetParam(britishLpfFreqParam, 20000.0f);
+        britishParams.lpfEnabled = safeGetParam(britishLpfEnabledParam, 0.0f) > 0.5f;
+        britishParams.lfGain = safeGetParam(britishLfGainParam, 0.0f);
+        britishParams.lfFreq = safeGetParam(britishLfFreqParam, 100.0f);
+        britishParams.lfBell = safeGetParam(britishLfBellParam, 0.0f) > 0.5f;
+        britishParams.lmGain = safeGetParam(britishLmGainParam, 0.0f);
+        britishParams.lmFreq = safeGetParam(britishLmFreqParam, 600.0f);
+        britishParams.lmQ = safeGetParam(britishLmQParam, 0.7f);
+        britishParams.hmGain = safeGetParam(britishHmGainParam, 0.0f);
+        britishParams.hmFreq = safeGetParam(britishHmFreqParam, 2000.0f);
+        britishParams.hmQ = safeGetParam(britishHmQParam, 0.7f);
+        britishParams.hfGain = safeGetParam(britishHfGainParam, 0.0f);
+        britishParams.hfFreq = safeGetParam(britishHfFreqParam, 8000.0f);
+        britishParams.hfBell = safeGetParam(britishHfBellParam, 0.0f) > 0.5f;
+        britishParams.isBlackMode = safeGetParam(britishModeParam, 0.0f) > 0.5f;
+        britishParams.saturation = safeGetParam(britishSaturationParam, 0.0f);
+        britishParams.inputGain = safeGetParam(britishInputGainParam, 0.0f);
+        britishParams.outputGain = safeGetParam(britishOutputGainParam, 0.0f);
+        britishEQ.setParameters(britishParams);
+    }
+
+    // Update Pultec EQ parameters if needed
+    if (eqType == EQType::Tube)
+    {
+        // LF boost frequency lookup table: 20, 30, 60, 100 Hz
+        static const float lfFreqValues[] = { 20.0f, 30.0f, 60.0f, 100.0f };
+        // HF boost frequency lookup table: 3k, 4k, 5k, 8k, 10k, 12k, 16k Hz
+        static const float hfBoostFreqValues[] = { 3000.0f, 4000.0f, 5000.0f, 8000.0f, 10000.0f, 12000.0f, 16000.0f };
+        // HF atten frequency lookup table: 5k, 10k, 20k Hz
+        static const float hfAttenFreqValues[] = { 5000.0f, 10000.0f, 20000.0f };
+
+        PultecProcessor::Parameters pultecParams;
+        pultecParams.lfBoostGain = safeGetParam(pultecLfBoostGainParam, 0.0f);
+
+        int lfFreqIdx = static_cast<int>(safeGetParam(pultecLfBoostFreqParam, 2.0f));
+        lfFreqIdx = juce::jlimit(0, 3, lfFreqIdx);
+        pultecParams.lfBoostFreq = lfFreqValues[lfFreqIdx];
+
+        pultecParams.lfAttenGain = safeGetParam(pultecLfAttenGainParam, 0.0f);
+        pultecParams.hfBoostGain = safeGetParam(pultecHfBoostGainParam, 0.0f);
+
+        int hfBoostFreqIdx = static_cast<int>(safeGetParam(pultecHfBoostFreqParam, 3.0f));
+        hfBoostFreqIdx = juce::jlimit(0, 6, hfBoostFreqIdx);
+        pultecParams.hfBoostFreq = hfBoostFreqValues[hfBoostFreqIdx];
+
+        pultecParams.hfBoostBandwidth = safeGetParam(pultecHfBoostBandwidthParam, 0.5f);
+        pultecParams.hfAttenGain = safeGetParam(pultecHfAttenGainParam, 0.0f);
+
+        int hfAttenFreqIdx = static_cast<int>(safeGetParam(pultecHfAttenFreqParam, 1.0f));
+        hfAttenFreqIdx = juce::jlimit(0, 2, hfAttenFreqIdx);
+        pultecParams.hfAttenFreq = hfAttenFreqValues[hfAttenFreqIdx];
+
+        pultecParams.inputGain = safeGetParam(pultecInputGainParam, 0.0f);
+        pultecParams.outputGain = safeGetParam(pultecOutputGainParam, 0.0f);
+        pultecParams.tubeDrive = safeGetParam(pultecTubeDriveParam, 0.3f);
+        pultecEQ.setParameters(pultecParams);
+    }
 
     // Input level metering (using peak values to match DAW meters)
     float inL = buffer.findMinMax(0, 0, buffer.getNumSamples()).getEnd();
@@ -275,52 +393,103 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             encodeMS(procL[i], procR[i]);
     }
 
-    // Check which bands are enabled
-    std::array<bool, NUM_BANDS> bandEnabled{};
-    for (int i = 0; i < NUM_BANDS; ++i)
-        bandEnabled[static_cast<size_t>(i)] = safeGetParam(bandEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
-
-    // Process each sample through the filter chain
-    for (int i = 0; i < numSamples; ++i)
+    // Process based on EQ type
+    if (eqType == EQType::British)
     {
-        float sampleL = procL[i];
-        float sampleR = procR[i];
-
-        // Determine which channel(s) to process based on mode
-        bool processLeft = (procMode == ProcessingMode::Stereo ||
-                           procMode == ProcessingMode::Left ||
-                           procMode == ProcessingMode::Mid);
-        bool processRight = (procMode == ProcessingMode::Stereo ||
-                            procMode == ProcessingMode::Right ||
-                            procMode == ProcessingMode::Side);
-
-        // Band 1: HPF
-        if (bandEnabled[0])
+        // British mode: Use 4K-EQ style processing
+        // Create a temporary buffer from the processBlock for British EQ
+        juce::AudioBuffer<float> tempBuffer(static_cast<int>(processBlock.getNumChannels()),
+                                            static_cast<int>(processBlock.getNumSamples()));
+        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
         {
-            if (processLeft) sampleL = hpfFilter.processSampleL(sampleL);
-            if (processRight) sampleR = hpfFilter.processSampleR(sampleR);
+            tempBuffer.copyFrom(static_cast<int>(ch), 0,
+                               processBlock.getChannelPointer(ch),
+                               static_cast<int>(processBlock.getNumSamples()));
         }
 
-        // Bands 2-7: Shelf and Parametric
-        for (int band = 1; band < 7; ++band)
+        britishEQ.process(tempBuffer);
+
+        // Copy back to processBlock
+        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
         {
-            if (bandEnabled[static_cast<size_t>(band)])
+            std::memcpy(processBlock.getChannelPointer(ch),
+                       tempBuffer.getReadPointer(static_cast<int>(ch)),
+                       sizeof(float) * processBlock.getNumSamples());
+        }
+    }
+    else if (eqType == EQType::Tube)
+    {
+        // Pultec/Tube mode: Use Pultec EQP-1A style processing
+        // Create a temporary buffer from the processBlock for Pultec EQ
+        juce::AudioBuffer<float> tempBuffer(static_cast<int>(processBlock.getNumChannels()),
+                                            static_cast<int>(processBlock.getNumSamples()));
+        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
+        {
+            tempBuffer.copyFrom(static_cast<int>(ch), 0,
+                               processBlock.getChannelPointer(ch),
+                               static_cast<int>(processBlock.getNumSamples()));
+        }
+
+        pultecEQ.process(tempBuffer);
+
+        // Copy back to processBlock
+        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
+        {
+            std::memcpy(processBlock.getChannelPointer(ch),
+                       tempBuffer.getReadPointer(static_cast<int>(ch)),
+                       sizeof(float) * processBlock.getNumSamples());
+        }
+    }
+    else
+    {
+        // Digital mode: Use Multi-Q 8-band EQ processing
+        // Check which bands are enabled
+        std::array<bool, NUM_BANDS> bandEnabled{};
+        for (int i = 0; i < NUM_BANDS; ++i)
+            bandEnabled[static_cast<size_t>(i)] = safeGetParam(bandEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
+
+        // Process each sample through the filter chain
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float sampleL = procL[i];
+            float sampleR = procR[i];
+
+            // Determine which channel(s) to process based on mode
+            bool processLeft = (procMode == ProcessingMode::Stereo ||
+                               procMode == ProcessingMode::Left ||
+                               procMode == ProcessingMode::Mid);
+            bool processRight = (procMode == ProcessingMode::Stereo ||
+                                procMode == ProcessingMode::Right ||
+                                procMode == ProcessingMode::Side);
+
+            // Band 1: HPF
+            if (bandEnabled[0])
             {
-                auto& filter = eqFilters[static_cast<size_t>(band - 1)];
-                if (processLeft) sampleL = filter.processSampleL(sampleL);
-                if (processRight) sampleR = filter.processSampleR(sampleR);
+                if (processLeft) sampleL = hpfFilter.processSampleL(sampleL);
+                if (processRight) sampleR = hpfFilter.processSampleR(sampleR);
             }
-        }
 
-        // Band 8: LPF
-        if (bandEnabled[7])
-        {
-            if (processLeft) sampleL = lpfFilter.processSampleL(sampleL);
-            if (processRight) sampleR = lpfFilter.processSampleR(sampleR);
-        }
+            // Bands 2-7: Shelf and Parametric
+            for (int band = 1; band < 7; ++band)
+            {
+                if (bandEnabled[static_cast<size_t>(band)])
+                {
+                    auto& filter = eqFilters[static_cast<size_t>(band - 1)];
+                    if (processLeft) sampleL = filter.processSampleL(sampleL);
+                    if (processRight) sampleR = filter.processSampleR(sampleR);
+                }
+            }
 
-        procL[i] = sampleL;
-        procR[i] = sampleR;
+            // Band 8: LPF
+            if (bandEnabled[7])
+            {
+                if (processLeft) sampleL = lpfFilter.processSampleL(sampleL);
+                if (processRight) sampleR = lpfFilter.processSampleR(sampleR);
+            }
+
+            procL[i] = sampleL;
+            procR[i] = sampleR;
+        }
     }
 
     // M/S decode if needed
@@ -902,6 +1071,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         0
     ));
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::eqType, 1),
+        "EQ Type",
+        juce::StringArray{"Digital", "British", "Tube"},
+        0  // Digital by default
+    ));
+
     // Analyzer parameters
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID(ParamIDs::analyzerEnabled, 1),
@@ -941,14 +1117,220 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::displayScaleMode, 1),
         "Display Scale",
-        juce::StringArray{"±12 dB", "±30 dB", "±60 dB", "Warped"},
-        0
+        juce::StringArray{"±12 dB", "±24 dB", "±30 dB", "±60 dB", "Warped"},
+        1  // Default to ±24 dB to match gain range
     ));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID(ParamIDs::visualizeMasterGain, 1),
         "Visualize Master Gain",
         false
+    ));
+
+    // British mode (4K-EQ style) parameters
+    // HPF
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishHpfFreq, 1),
+        "British HPF Frequency",
+        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.58f),
+        20.0f, "Hz"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::britishHpfEnabled, 1),
+        "British HPF Enabled",
+        false
+    ));
+
+    // LPF
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishLpfFreq, 1),
+        "British LPF Frequency",
+        juce::NormalisableRange<float>(3000.0f, 20000.0f, 1.0f, 0.57f),
+        20000.0f, "Hz"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::britishLpfEnabled, 1),
+        "British LPF Enabled",
+        false
+    ));
+
+    // LF Band
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishLfGain, 1),
+        "British LF Gain",
+        juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f),
+        0.0f, "dB"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishLfFreq, 1),
+        "British LF Frequency",
+        juce::NormalisableRange<float>(30.0f, 480.0f, 1.0f, 0.51f),
+        100.0f, "Hz"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::britishLfBell, 1),
+        "British LF Bell Mode",
+        false
+    ));
+
+    // LM Band
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishLmGain, 1),
+        "British LM Gain",
+        juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f),
+        0.0f, "dB"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishLmFreq, 1),
+        "British LM Frequency",
+        juce::NormalisableRange<float>(200.0f, 2500.0f, 1.0f, 0.68f),
+        600.0f, "Hz"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishLmQ, 1),
+        "British LM Q",
+        juce::NormalisableRange<float>(0.4f, 4.0f, 0.01f),
+        0.7f
+    ));
+
+    // HM Band
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishHmGain, 1),
+        "British HM Gain",
+        juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f),
+        0.0f, "dB"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishHmFreq, 1),
+        "British HM Frequency",
+        juce::NormalisableRange<float>(600.0f, 7000.0f, 1.0f, 0.93f),
+        2000.0f, "Hz"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishHmQ, 1),
+        "British HM Q",
+        juce::NormalisableRange<float>(0.4f, 4.0f, 0.01f),
+        0.7f
+    ));
+
+    // HF Band
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishHfGain, 1),
+        "British HF Gain",
+        juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f),
+        0.0f, "dB"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishHfFreq, 1),
+        "British HF Frequency",
+        juce::NormalisableRange<float>(1500.0f, 16000.0f, 1.0f, 1.73f),
+        8000.0f, "Hz"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::britishHfBell, 1),
+        "British HF Bell Mode",
+        false
+    ));
+
+    // Global British parameters
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::britishMode, 1),
+        "British Mode",
+        juce::StringArray{"Brown", "Black"},
+        0  // Brown (E-Series) by default
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishSaturation, 1),
+        "British Saturation",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f),
+        0.0f, "%"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishInputGain, 1),
+        "British Input Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f, "dB"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::britishOutputGain, 1),
+        "British Output Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f, "dB"
+    ));
+
+    // Pultec (Tube) mode parameters
+    // LF Section
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecLfBoostGain, 1),
+        "Pultec LF Boost",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
+        0.0f
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::pultecLfBoostFreq, 1),
+        "Pultec LF Boost Freq",
+        juce::StringArray{"20 Hz", "30 Hz", "60 Hz", "100 Hz"},
+        2  // 60 Hz default
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecLfAttenGain, 1),
+        "Pultec LF Atten",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
+        0.0f
+    ));
+
+    // HF Boost Section
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecHfBoostGain, 1),
+        "Pultec HF Boost",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
+        0.0f
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::pultecHfBoostFreq, 1),
+        "Pultec HF Boost Freq",
+        juce::StringArray{"3 kHz", "4 kHz", "5 kHz", "8 kHz", "10 kHz", "12 kHz", "16 kHz"},
+        3  // 8 kHz default
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecHfBoostBandwidth, 1),
+        "Pultec HF Bandwidth",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.5f  // Medium bandwidth
+    ));
+
+    // HF Atten Section
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecHfAttenGain, 1),
+        "Pultec HF Atten",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
+        0.0f
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::pultecHfAttenFreq, 1),
+        "Pultec HF Atten Freq",
+        juce::StringArray{"5 kHz", "10 kHz", "20 kHz"},
+        1  // 10 kHz default
+    ));
+
+    // Global Pultec controls
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecInputGain, 1),
+        "Pultec Input Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f, "dB"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecOutputGain, 1),
+        "Pultec Output Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f, "dB"
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecTubeDrive, 1),
+        "Pultec Tube Drive",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.3f  // Moderate tube warmth by default
     ));
 
     return {params.begin(), params.end()};

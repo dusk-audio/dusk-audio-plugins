@@ -70,9 +70,9 @@ private:
     std::unique_ptr<FFTAnalyzer> analyzer;
 
     // Display settings
-    DisplayScaleMode scaleMode = DisplayScaleMode::Linear12dB;
-    float minDisplayDB = -12.0f;
-    float maxDisplayDB = 12.0f;
+    DisplayScaleMode scaleMode = DisplayScaleMode::Linear24dB;
+    float minDisplayDB = -24.0f;
+    float maxDisplayDB = 24.0f;
     float minFrequency = 20.0f;
     float maxFrequency = 20000.0f;
 

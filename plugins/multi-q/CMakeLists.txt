@@ -54,7 +54,10 @@ target_sources(MultiQ
         MultiQEditor.cpp
         EQGraphicDisplay.cpp
         FFTAnalyzer.cpp
+        BritishEQCurveDisplay.cpp
+        PultecCurveDisplay.cpp
         ../shared/LEDMeter.cpp
+        ../4k-eq/FourKLookAndFeel.cpp
 )
 # Set include directories
 target_include_directories(MultiQ
@@ -62,6 +65,7 @@ target_include_directories(MultiQ
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../shared
         ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
+        ${CMAKE_CURRENT_SOURCE_DIR}/../4k-eq
 )
 
 # Compiler definitions
