@@ -162,7 +162,10 @@ public:
 
     void drawLabel(juce::Graphics& g, juce::Label& label) override
     {
-        g.fillAll(label.findColour(juce::Label::backgroundColourId));
+        // Fill background if set
+        auto bgColour = label.findColour(juce::Label::backgroundColourId);
+        if (!bgColour.isTransparent())
+            g.fillAll(bgColour);
 
         if (!label.isBeingEdited())
         {
@@ -172,20 +175,11 @@ public:
             g.setColour(label.findColour(juce::Label::textColourId).withMultipliedAlpha(alpha));
             g.setFont(font);
 
-            auto textArea = getLabelBorderSize(label).subtractedFrom(label.getLocalBounds());
-
-            g.drawFittedText(label.getText(), textArea, label.getJustificationType(),
-                            juce::jmax(1, static_cast<int>(textArea.getHeight() / font.getHeight())),
+            // Draw text directly in the label bounds
+            g.drawFittedText(label.getText(), label.getLocalBounds(),
+                            label.getJustificationType(), 1,
                             label.getMinimumHorizontalScale());
-
-            g.setColour(label.findColour(juce::Label::outlineColourId).withMultipliedAlpha(alpha));
         }
-        else if (label.isEnabled())
-        {
-            g.setColour(label.findColour(juce::Label::outlineColourId));
-        }
-
-        g.drawRect(label.getLocalBounds());
     }
 
     juce::Font getLabelFont(juce::Label& label) override

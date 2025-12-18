@@ -89,6 +89,15 @@ MultiQ::MultiQ()
     pultecOutputGainParam = parameters.getRawParameterValue(ParamIDs::pultecOutputGain);
     pultecTubeDriveParam = parameters.getRawParameterValue(ParamIDs::pultecTubeDrive);
 
+    // Pultec Mid Dip/Peak section parameters
+    pultecMidEnabledParam = parameters.getRawParameterValue(ParamIDs::pultecMidEnabled);
+    pultecMidLowFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidLowFreq);
+    pultecMidLowPeakParam = parameters.getRawParameterValue(ParamIDs::pultecMidLowPeak);
+    pultecMidDipFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidDipFreq);
+    pultecMidDipParam = parameters.getRawParameterValue(ParamIDs::pultecMidDip);
+    pultecMidHighFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighFreq);
+    pultecMidHighPeakParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighPeak);
+
     // Add global parameter listeners
     parameters.addParameterListener(ParamIDs::hqEnabled, this);
     parameters.addParameterListener(ParamIDs::qCoupleMode, this);
@@ -170,9 +179,10 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     if (hqModeEnabled)
     {
-        // 2x oversampling - use minimum phase filtering for lower latency
+        // 2x oversampling - use FIR equiripple filters for superior alias rejection
+        // Essential for saturation (SSL in British mode, Tube in Pultec mode)
         oversampler = std::make_unique<juce::dsp::Oversampling<float>>(
-            2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false);
+            2, 1, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
         oversampler->initProcessing(static_cast<size_t>(samplesPerBlock));
         currentSampleRate = sampleRate * 2.0;
     }
@@ -311,6 +321,12 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         static const float hfBoostFreqValues[] = { 3000.0f, 4000.0f, 5000.0f, 8000.0f, 10000.0f, 12000.0f, 16000.0f };
         // HF atten frequency lookup table: 5k, 10k, 20k Hz
         static const float hfAttenFreqValues[] = { 5000.0f, 10000.0f, 20000.0f };
+        // Mid Low frequency lookup table: 0.2, 0.3, 0.5, 0.7, 1.0 kHz
+        static const float midLowFreqValues[] = { 200.0f, 300.0f, 500.0f, 700.0f, 1000.0f };
+        // Mid Dip frequency lookup table: 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0 kHz
+        static const float midDipFreqValues[] = { 200.0f, 300.0f, 500.0f, 700.0f, 1000.0f, 1500.0f, 2000.0f };
+        // Mid High frequency lookup table: 1.5, 2.0, 3.0, 4.0, 5.0 kHz
+        static const float midHighFreqValues[] = { 1500.0f, 2000.0f, 3000.0f, 4000.0f, 5000.0f };
 
         PultecProcessor::Parameters pultecParams;
         pultecParams.lfBoostGain = safeGetParam(pultecLfBoostGainParam, 0.0f);
@@ -332,6 +348,24 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         int hfAttenFreqIdx = static_cast<int>(safeGetParam(pultecHfAttenFreqParam, 1.0f));
         hfAttenFreqIdx = juce::jlimit(0, 2, hfAttenFreqIdx);
         pultecParams.hfAttenFreq = hfAttenFreqValues[hfAttenFreqIdx];
+
+        // Mid section parameters
+        pultecParams.midEnabled = safeGetParam(pultecMidEnabledParam, 1.0f) > 0.5f;
+
+        int midLowFreqIdx = static_cast<int>(safeGetParam(pultecMidLowFreqParam, 2.0f));
+        midLowFreqIdx = juce::jlimit(0, 4, midLowFreqIdx);
+        pultecParams.midLowFreq = midLowFreqValues[midLowFreqIdx];
+        pultecParams.midLowPeak = safeGetParam(pultecMidLowPeakParam, 0.0f);
+
+        int midDipFreqIdx = static_cast<int>(safeGetParam(pultecMidDipFreqParam, 3.0f));
+        midDipFreqIdx = juce::jlimit(0, 6, midDipFreqIdx);
+        pultecParams.midDipFreq = midDipFreqValues[midDipFreqIdx];
+        pultecParams.midDip = safeGetParam(pultecMidDipParam, 0.0f);
+
+        int midHighFreqIdx = static_cast<int>(safeGetParam(pultecMidHighFreqParam, 2.0f));
+        midHighFreqIdx = juce::jlimit(0, 4, midHighFreqIdx);
+        pultecParams.midHighFreq = midHighFreqValues[midHighFreqIdx];
+        pultecParams.midHighPeak = safeGetParam(pultecMidHighPeakParam, 0.0f);
 
         pultecParams.inputGain = safeGetParam(pultecInputGainParam, 0.0f);
         pultecParams.outputGain = safeGetParam(pultecOutputGainParam, 0.0f);
@@ -1331,6 +1365,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         "Pultec Tube Drive",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.3f  // Moderate tube warmth by default
+    ));
+
+    // Pultec Mid Dip/Peak section parameters
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::pultecMidEnabled, 1),
+        "Pultec Mid Section Enabled",
+        true  // Enabled by default
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::pultecMidLowFreq, 1),
+        "Pultec Mid Low Freq",
+        juce::StringArray{"0.2 kHz", "0.3 kHz", "0.5 kHz", "0.7 kHz", "1.0 kHz"},
+        2  // 0.5 kHz default
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecMidLowPeak, 1),
+        "Pultec Mid Low Peak",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
+        0.0f
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::pultecMidDipFreq, 1),
+        "Pultec Mid Dip Freq",
+        juce::StringArray{"0.2 kHz", "0.3 kHz", "0.5 kHz", "0.7 kHz", "1.0 kHz", "1.5 kHz", "2.0 kHz"},
+        3  // 0.7 kHz default
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecMidDip, 1),
+        "Pultec Mid Dip",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
+        0.0f
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::pultecMidHighFreq, 1),
+        "Pultec Mid High Freq",
+        juce::StringArray{"1.5 kHz", "2.0 kHz", "3.0 kHz", "4.0 kHz", "5.0 kHz"},
+        2  // 3.0 kHz default
+    ));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::pultecMidHighPeak, 1),
+        "Pultec Mid High Peak",
+        juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
+        0.0f
     ));
 
     return {params.begin(), params.end()};

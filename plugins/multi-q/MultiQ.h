@@ -255,6 +255,15 @@ private:
     std::atomic<float>* pultecOutputGainParam = nullptr;
     std::atomic<float>* pultecTubeDriveParam = nullptr;
 
+    // Pultec Mid Dip/Peak section parameters
+    std::atomic<float>* pultecMidEnabledParam = nullptr;
+    std::atomic<float>* pultecMidLowFreqParam = nullptr;
+    std::atomic<float>* pultecMidLowPeakParam = nullptr;
+    std::atomic<float>* pultecMidDipFreqParam = nullptr;
+    std::atomic<float>* pultecMidDipParam = nullptr;
+    std::atomic<float>* pultecMidHighFreqParam = nullptr;
+    std::atomic<float>* pultecMidHighPeakParam = nullptr;
+
     // Safe parameter accessor
     float safeGetParam(std::atomic<float>* param, float defaultValue) const
     {
