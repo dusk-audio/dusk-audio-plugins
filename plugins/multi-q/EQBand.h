@@ -238,4 +238,13 @@ namespace ParamIDs
     const juce::String pultecInputGain = "pultec_input_gain";
     const juce::String pultecOutputGain = "pultec_output_gain";
     const juce::String pultecTubeDrive = "pultec_tube_drive";
+
+    // Pultec Mid Dip/Peak section parameters
+    const juce::String pultecMidEnabled = "pultec_mid_enabled";
+    const juce::String pultecMidLowFreq = "pultec_mid_low_freq";
+    const juce::String pultecMidLowPeak = "pultec_mid_low_peak";
+    const juce::String pultecMidDipFreq = "pultec_mid_dip_freq";
+    const juce::String pultecMidDip = "pultec_mid_dip";
+    const juce::String pultecMidHighFreq = "pultec_mid_high_freq";
+    const juce::String pultecMidHighPeak = "pultec_mid_high_peak";
 }

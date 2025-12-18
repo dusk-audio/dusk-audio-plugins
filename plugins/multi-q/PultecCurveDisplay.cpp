@@ -37,22 +37,16 @@ void PultecCurveDisplay::paint(juce::Graphics& g)
     graphArea.removeFromTop(topMargin);
     graphArea.removeFromRight(rightMargin);
 
-    // Vintage background with subtle gradient
+    // Dark professional background
     g.setColour(juce::Colour(backgroundColor));
     g.fillRoundedRectangle(bounds, 6.0f);
 
-    // Inner darker area for the graph with warm tint
-    g.setColour(juce::Colour(0xff181410));
+    // Inner darker area for the graph
+    g.setColour(juce::Colour(0xff1a1a1a));
     g.fillRoundedRectangle(graphArea.reduced(1), 3.0f);
 
-    // Subtle vignette effect for vintage look
-    juce::ColourGradient vignette(juce::Colour(0x00000000), graphArea.getCentreX(), graphArea.getCentreY(),
-                                   juce::Colour(0x30000000), graphArea.getX(), graphArea.getY(), true);
-    g.setGradientFill(vignette);
-    g.fillRoundedRectangle(graphArea, 3.0f);
-
-    // Border with vintage brass look
-    g.setColour(juce::Colour(0xff504030));
+    // Border with subtle highlight
+    g.setColour(juce::Colour(0xff505050));
     g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
 
     // Draw vintage-style grid within graph area
@@ -194,12 +188,12 @@ void PultecCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangl
     for (float freq : freqLines)
     {
         float x = freqToX(freq, area);
-        // Highlight Pultec switch positions
+        // Highlight key frequencies
         bool isPultecFreq = (freq == 30.0f || freq == 60.0f || freq == 100.0f ||
                             freq == 3000.0f || freq == 5000.0f || freq == 8000.0f ||
                             freq == 10000.0f || freq == 16000.0f);
 
-        g.setColour(juce::Colour(isPultecFreq ? 0xff3d3830 : 0xff2a2620));
+        g.setColour(juce::Colour(isPultecFreq ? 0xff404040 : 0xff303030));
         g.drawLine(x, area.getY(), x, area.getBottom(), isPultecFreq ? 1.0f : 0.5f);
     }
 
@@ -211,13 +205,13 @@ void PultecCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangl
         float y = dbToY(db, area);
         bool isZero = (std::abs(db) < 0.1f);
 
-        g.setColour(juce::Colour(isZero ? 0xff504840 : 0xff2d2a26));
+        g.setColour(juce::Colour(isZero ? 0xff505050 : 0xff353535));
         g.drawLine(area.getX(), y, area.getRight(), y, isZero ? 1.5f : 0.5f);
     }
 
-    // Frequency labels at bottom with vintage styling
+    // Frequency labels at bottom
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
-    g.setColour(juce::Colour(0xff807060));  // Warm brown text
+    g.setColour(juce::Colour(0xff909090));  // Light gray text
 
     auto drawFreqLabel = [&](float freq, const juce::String& text) {
         float x = freqToX(freq, area);
