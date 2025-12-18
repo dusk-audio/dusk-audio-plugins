@@ -342,42 +342,38 @@ public:
         for (int i = 0; i < 3; ++i)
         {
             crossoverSliders[i].setSliderStyle(juce::Slider::LinearVertical);
-            crossoverSliders[i].setRange(20.0, 20000.0, 1.0);
-            crossoverSliders[i].setSkewFactorFromMidPoint(1000.0);
             crossoverSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
             addAndMakeVisible(crossoverSliders[i]);
         }
-        crossoverSliders[0].setValue(200.0);
-        crossoverSliders[1].setValue(2000.0);
-        crossoverSliders[2].setValue(8000.0);
+
+        // Create crossover attachments
+        crossoverAttachments[0] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_crossover_1", crossoverSliders[0]);
+        crossoverAttachments[1] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_crossover_2", crossoverSliders[1]);
+        crossoverAttachments[2] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_crossover_3", crossoverSliders[2]);
 
         // Per-band controls
         addAndMakeVisible(bandThreshold);
         bandThreshold.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandThreshold.setRange(-60.0, 0.0, 0.1);
-        bandThreshold.setTextValueSuffix(" dB");
+        bandThreshold.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
         addAndMakeVisible(bandRatio);
         bandRatio.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandRatio.setRange(1.0, 20.0, 0.1);
-        bandRatio.setTextValueSuffix(":1");
+        bandRatio.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
         addAndMakeVisible(bandAttack);
         bandAttack.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandAttack.setRange(0.1, 100.0, 0.1);
-        bandAttack.setSkewFactorFromMidPoint(10.0);
-        bandAttack.setTextValueSuffix(" ms");
+        bandAttack.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
         addAndMakeVisible(bandRelease);
         bandRelease.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandRelease.setRange(10.0, 1000.0, 1.0);
-        bandRelease.setSkewFactorFromMidPoint(100.0);
-        bandRelease.setTextValueSuffix(" ms");
+        bandRelease.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
         addAndMakeVisible(bandMakeup);
         bandMakeup.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandMakeup.setRange(-12.0, 12.0, 0.1);
-        bandMakeup.setTextValueSuffix(" dB");
+        bandMakeup.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
         // Band bypass/solo
         addAndMakeVisible(bandBypass);
@@ -388,122 +384,205 @@ public:
 
         // Global controls
         addAndMakeVisible(globalOutput);
-        globalOutput.setSliderStyle(juce::Slider::LinearVertical);
-        globalOutput.setRange(-24.0, 24.0, 0.1);
-        globalOutput.setTextValueSuffix(" dB");
+        globalOutput.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        globalOutput.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
 
-        // Spectrum analyzer placeholder
-        addAndMakeVisible(spectrumDisplay);
+        addAndMakeVisible(globalMix);
+        globalMix.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        globalMix.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+
+        // Global output and mix attachments
+        outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_output", globalOutput);
+        mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_mix", globalMix);
+
+        // Labels
+        for (int i = 0; i < 5; ++i)
+        {
+            bandLabels[i].setJustificationType(juce::Justification::centred);
+            bandLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
+            addAndMakeVisible(bandLabels[i]);
+        }
+        bandLabels[0].setText("Threshold", juce::dontSendNotification);
+        bandLabels[1].setText("Ratio", juce::dontSendNotification);
+        bandLabels[2].setText("Attack", juce::dontSendNotification);
+        bandLabels[3].setText("Release", juce::dontSendNotification);
+        bandLabels[4].setText("Makeup", juce::dontSendNotification);
+
+        outputLabel.setText("Output", juce::dontSendNotification);
+        outputLabel.setJustificationType(juce::Justification::centred);
+        outputLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible(outputLabel);
+
+        mixLabel.setText("Mix", juce::dontSendNotification);
+        mixLabel.setJustificationType(juce::Justification::centred);
+        mixLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible(mixLabel);
+
+        // Initialize with first band
+        updateBandControls();
     }
+
+    void setScaleFactor(float scale) { scaleFactor = scale; }
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced(10);
+        auto area = getLocalBounds().reduced(static_cast<int>(10 * scaleFactor));
 
         // Top: band selector
-        auto topBar = area.removeFromTop(30);
-        bandSelector.setBounds(topBar.removeFromLeft(150));
+        auto topBar = area.removeFromTop(static_cast<int>(35 * scaleFactor));
+        bandSelector.setBounds(topBar.removeFromLeft(static_cast<int>(150 * scaleFactor)));
 
-        // Spectrum display area
-        auto spectrumArea = area.removeFromTop(150);
-        spectrumDisplay.setBounds(spectrumArea);
-
-        // Crossover sliders on the left
-        auto crossoverArea = area.removeFromLeft(150);
-        auto sliderHeight = crossoverArea.getHeight() - 40;
-        auto sliderWidth = 40;
+        // Crossover section on the left
+        auto crossoverArea = area.removeFromLeft(static_cast<int>(140 * scaleFactor));
+        auto sliderHeight = crossoverArea.getHeight() - static_cast<int>(30 * scaleFactor);
+        auto sliderWidth = static_cast<int>(40 * scaleFactor);
 
         for (int i = 0; i < 3; ++i)
         {
-            crossoverSliders[i].setBounds(10 + i * 45, 20, sliderWidth, sliderHeight);
+            crossoverSliders[i].setBounds(
+                static_cast<int>(10 * scaleFactor) + i * static_cast<int>(45 * scaleFactor),
+                static_cast<int>(20 * scaleFactor), sliderWidth, sliderHeight);
         }
 
         // Band controls in center
-        auto controlArea = area.removeFromLeft(400);
-        auto knobSize = 70;
-        auto row1 = controlArea.removeFromTop(100);
+        auto controlArea = area;
+        auto knobSize = static_cast<int>(70 * scaleFactor);
+        auto labelHeight = static_cast<int>(18 * scaleFactor);
 
-        bandThreshold.setBounds(row1.removeFromLeft(knobSize).reduced(5));
-        bandRatio.setBounds(row1.removeFromLeft(knobSize).reduced(5));
-        bandAttack.setBounds(row1.removeFromLeft(knobSize).reduced(5));
-        bandRelease.setBounds(row1.removeFromLeft(knobSize).reduced(5));
-        bandMakeup.setBounds(row1.removeFromLeft(knobSize).reduced(5));
+        // Row of knobs
+        auto row1 = controlArea.removeFromTop(knobSize + labelHeight);
+        int knobX = static_cast<int>(10 * scaleFactor);
+        int knobSpacing = knobSize + static_cast<int>(5 * scaleFactor);
 
-        auto row2 = controlArea.removeFromTop(40);
-        bandBypass.setBounds(row2.removeFromLeft(100).reduced(5));
-        bandSolo.setBounds(row2.removeFromLeft(100).reduced(5));
+        bandThreshold.setBounds(knobX, 0, knobSize, knobSize);
+        bandLabels[0].setBounds(knobX, knobSize, knobSize, labelHeight);
+        knobX += knobSpacing;
 
-        // Global output on right
-        globalOutput.setBounds(area.removeFromRight(60).reduced(10));
+        bandRatio.setBounds(knobX, 0, knobSize, knobSize);
+        bandLabels[1].setBounds(knobX, knobSize, knobSize, labelHeight);
+        knobX += knobSpacing;
+
+        bandAttack.setBounds(knobX, 0, knobSize, knobSize);
+        bandLabels[2].setBounds(knobX, knobSize, knobSize, labelHeight);
+        knobX += knobSpacing;
+
+        bandRelease.setBounds(knobX, 0, knobSize, knobSize);
+        bandLabels[3].setBounds(knobX, knobSize, knobSize, labelHeight);
+        knobX += knobSpacing;
+
+        bandMakeup.setBounds(knobX, 0, knobSize, knobSize);
+        bandLabels[4].setBounds(knobX, knobSize, knobSize, labelHeight);
+        knobX += knobSpacing;
+
+        // Global output and mix
+        globalOutput.setBounds(knobX, 0, knobSize, knobSize);
+        outputLabel.setBounds(knobX, knobSize, knobSize, labelHeight);
+        knobX += knobSpacing;
+
+        globalMix.setBounds(knobX, 0, knobSize, knobSize);
+        mixLabel.setBounds(knobX, knobSize, knobSize, labelHeight);
+
+        // Bypass/Solo buttons below knobs
+        auto row2 = controlArea.removeFromTop(static_cast<int>(35 * scaleFactor));
+        bandBypass.setBounds(static_cast<int>(10 * scaleFactor), row1.getHeight() + static_cast<int>(5 * scaleFactor),
+                            static_cast<int>(80 * scaleFactor), static_cast<int>(25 * scaleFactor));
+        bandSolo.setBounds(static_cast<int>(100 * scaleFactor), row1.getHeight() + static_cast<int>(5 * scaleFactor),
+                          static_cast<int>(80 * scaleFactor), static_cast<int>(25 * scaleFactor));
     }
 
     void paint(juce::Graphics& g) override
     {
         g.fillAll(juce::Colour(0xff0d0d0d));
 
-        // Draw frequency bands
-        auto specArea = spectrumDisplay.getBounds();
-        g.setColour(juce::Colour(0x30ffffff));
-
-        // Draw band divisions
-        for (int i = 0; i < 3; ++i)
-        {
-            float freq = crossoverSliders[i].getValue();
-            float x = mapFrequencyToX(freq, specArea);
-            g.drawVerticalLine(x, specArea.getY(), specArea.getBottom());
-        }
-
-        // Band labels
-        g.setColour(juce::Colours::white);
-        g.setFont(12.0f);
-        auto bandWidth = specArea.getWidth() / 4;
-        for (int i = 0; i < 4; ++i)
-        {
-            juce::String bandName;
-            switch (i)
-            {
-                case 0: bandName = "LOW"; break;
-                case 1: bandName = "LOW-MID"; break;
-                case 2: bandName = "HIGH-MID"; break;
-                case 3: bandName = "HIGH"; break;
-            }
-            g.drawText(bandName, specArea.getX() + i * bandWidth, specArea.getY(),
-                      bandWidth, 20, juce::Justification::centred);
-        }
-
         // Title
         g.setColour(juce::Colour(0xff00d4ff));
-        g.setFont(juce::Font(18.0f, juce::Font::bold));
-        g.drawText("MULTIBAND COMPRESSOR", 0, 5, getWidth(), 20, juce::Justification::centred);
+        g.setFont(juce::Font(18.0f * scaleFactor, juce::Font::bold));
+        g.drawText("MULTIBAND COMPRESSOR", 0, static_cast<int>(5 * scaleFactor),
+                   getWidth(), static_cast<int>(25 * scaleFactor), juce::Justification::centred);
+
+        // Currently selected band indicator
+        g.setColour(juce::Colours::white.withAlpha(0.7f));
+        g.setFont(juce::Font(12.0f * scaleFactor));
+        juce::String bandName;
+        switch (currentBand)
+        {
+            case 0: bandName = "LOW BAND (< " + juce::String(static_cast<int>(crossoverSliders[0].getValue())) + " Hz)"; break;
+            case 1: bandName = "LOW-MID BAND (" + juce::String(static_cast<int>(crossoverSliders[0].getValue())) +
+                              " - " + juce::String(static_cast<int>(crossoverSliders[1].getValue())) + " Hz)"; break;
+            case 2: bandName = "HIGH-MID BAND (" + juce::String(static_cast<int>(crossoverSliders[1].getValue())) +
+                              " - " + juce::String(static_cast<int>(crossoverSliders[2].getValue())) + " Hz)"; break;
+            case 3: bandName = "HIGH BAND (> " + juce::String(static_cast<int>(crossoverSliders[2].getValue())) + " Hz)"; break;
+        }
+        g.drawText(bandName, static_cast<int>(160 * scaleFactor), static_cast<int>(10 * scaleFactor),
+                   static_cast<int>(300 * scaleFactor), static_cast<int>(20 * scaleFactor),
+                   juce::Justification::centredLeft);
     }
 
 private:
     juce::AudioProcessorValueTreeState& parameters;
+    float scaleFactor = 1.0f;
+    int currentBand = 0;
 
     juce::ComboBox bandSelector;
     std::array<juce::Slider, 3> crossoverSliders;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 3> crossoverAttachments;
 
     juce::Slider bandThreshold, bandRatio, bandAttack, bandRelease, bandMakeup;
     juce::ToggleButton bandBypass, bandSolo;
+    std::array<juce::Label, 5> bandLabels;
 
-    juce::Slider globalOutput;
-    juce::Component spectrumDisplay;  // Placeholder for spectrum analyzer
+    // Per-band parameter attachments (recreated when band changes)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thresholdAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> makeupAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> soloAttachment;
+
+    juce::Slider globalOutput, globalMix;
+    juce::Label outputLabel, mixLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
 
     void updateBandControls()
     {
-        int band = bandSelector.getSelectedId() - 1;
-        // Update controls to show selected band's settings
-        // This would load the appropriate parameter values
-    }
+        currentBand = bandSelector.getSelectedId() - 1;
+        if (currentBand < 0 || currentBand > 3)
+            currentBand = 0;
 
-    float mapFrequencyToX(float freq, juce::Rectangle<int> area)
-    {
-        // Log scale frequency mapping
-        float minLog = std::log10(20.0f);
-        float maxLog = std::log10(20000.0f);
-        float freqLog = std::log10(freq);
-        float normalized = (freqLog - minLog) / (maxLog - minLog);
-        return area.getX() + normalized * area.getWidth();
+        // Band parameter name prefixes
+        const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
+        const juce::String& bandName = bandNames[currentBand];
+
+        // Destroy old attachments first
+        thresholdAttachment.reset();
+        ratioAttachment.reset();
+        attackAttachment.reset();
+        releaseAttachment.reset();
+        makeupAttachment.reset();
+        bypassAttachment.reset();
+        soloAttachment.reset();
+
+        // Create new attachments for selected band
+        thresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_" + bandName + "_threshold", bandThreshold);
+        ratioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_" + bandName + "_ratio", bandRatio);
+        attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_" + bandName + "_attack", bandAttack);
+        releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_" + bandName + "_release", bandRelease);
+        makeupAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            parameters, "mb_" + bandName + "_makeup", bandMakeup);
+        bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            parameters, "mb_" + bandName + "_bypass", bandBypass);
+        soloAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            parameters, "mb_" + bandName + "_solo", bandSolo);
+
+        repaint();
     }
 };
 

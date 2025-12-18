@@ -26,7 +26,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     addAndMakeVisible(vuMeter.get());
     addAndMakeVisible(outputMeter.get());
     
-    // Create mode selector - 7 modes matching Logic Pro style
+    // Create mode selector - 8 modes matching Logic Pro style
     modeSelector = std::make_unique<juce::ComboBox>("Mode");
     modeSelector->addItem("Vintage Opto", 1);
     modeSelector->addItem("Vintage FET", 2);
@@ -35,6 +35,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     modeSelector->addItem("Studio FET", 5);
     modeSelector->addItem("Studio VCA", 6);
     modeSelector->addItem("Digital", 7);
+    modeSelector->addItem("Multiband", 8);
     // Don't set a default - let the attachment handle it
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
@@ -139,7 +140,8 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     setupVCAPanel();
     setupBusPanel();
     setupDigitalPanel();
-    
+    setupMultibandPanel();
+
     // Create parameter attachments
     auto& params = processor.getParameters();
     
@@ -606,11 +608,16 @@ void EnhancedCompressorEditor::setupDigitalPanel()
     addChildComponent(studioVcaPanel.get());
 }
 
-// Multiband panel removed
+void EnhancedCompressorEditor::setupMultibandPanel()
+{
+    // Multiband Compressor Panel (4-band dynamics)
+    multibandPanel = std::make_unique<MultibandCompressorPanel>(processor.getParameters());
+    addChildComponent(multibandPanel.get());
+}
 
 void EnhancedCompressorEditor::updateMode(int newMode)
 {
-    currentMode = juce::jlimit(0, 6, newMode);  // 0-6 for 7 modes
+    currentMode = juce::jlimit(0, 7, newMode);  // 0-7 for 8 modes
 
     // Hide all panels
     optoPanel.container->setVisible(false);
@@ -619,6 +626,7 @@ void EnhancedCompressorEditor::updateMode(int newMode)
     busPanel.container->setVisible(false);
     if (digitalPanel) digitalPanel->setVisible(false);
     if (studioVcaPanel) studioVcaPanel->setVisible(false);
+    if (multibandPanel) multibandPanel->setVisible(false);
 
     // Hide mode-specific top row buttons by default
     if (optoPanel.limitSwitch)
@@ -675,6 +683,15 @@ void EnhancedCompressorEditor::updateMode(int newMode)
             }
             currentLookAndFeel = digitalLookAndFeel.get();
             break;
+
+        case 7: // Multiband
+            if (multibandPanel)
+            {
+                multibandPanel->setVisible(true);
+                multibandPanel->setLookAndFeel(digitalLookAndFeel.get());  // Use digital look for multiband
+            }
+            currentLookAndFeel = digitalLookAndFeel.get();
+            break;
     }
 
     // Apply look and feel to all components
@@ -705,6 +722,9 @@ void EnhancedCompressorEditor::updateMode(int newMode)
                 buttonTextColor = juce::Colour(0xFFD0D0D0);  // Light gray
                 break;
             case 6: // Digital - dark blue background
+                buttonTextColor = juce::Colour(0xFFE0E0E0);  // Light gray
+                break;
+            case 7: // Multiband - dark blue background
                 buttonTextColor = juce::Colour(0xFFE0E0E0);  // Light gray
                 break;
             default:
@@ -1288,7 +1308,14 @@ void EnhancedCompressorEditor::resized()
         studioVcaPanel->setBounds(controlArea);
     }
 
-    // Multiband panel removed
+    // Layout Multiband panel - needs significant space for 4 bands
+    if (multibandPanel && multibandPanel->isVisible())
+    {
+        multibandPanel->setScaleFactor(scaleFactor);
+        // Give multiband panel more vertical space for band controls
+        auto multibandArea = controlArea.withTrimmedTop(-30 * scaleFactor).withTrimmedBottom(-40 * scaleFactor);
+        multibandPanel->setBounds(multibandArea);
+    }
 }
 
 void EnhancedCompressorEditor::timerCallback()

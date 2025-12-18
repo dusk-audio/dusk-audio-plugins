@@ -2892,6 +2892,369 @@ private:
     double sampleRate = 0.0;
 };
 
+//==============================================================================
+// Multiband Compressor - 4-band compressor with Linkwitz-Riley crossovers
+//==============================================================================
+class UniversalCompressor::MultibandCompressor
+{
+public:
+    static constexpr int NUM_BANDS = 4;
+
+    void prepare(double sr, int numCh, int maxBlockSize)
+    {
+        sampleRate = sr;
+        numChannels = numCh;
+        this->maxBlockSize = maxBlockSize;
+
+        // Prepare crossover filters (3 crossovers for 4 bands)
+        // Using Linkwitz-Riley 4th order (24dB/oct) for flat summing
+        for (int i = 0; i < 3; ++i)
+        {
+            lowpassFilters[i].resize(static_cast<size_t>(numCh));
+            highpassFilters[i].resize(static_cast<size_t>(numCh));
+        }
+
+        // Initialize per-band compressor state
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            bandEnvelopes[band].resize(static_cast<size_t>(numCh), 1.0f);
+            bandGainReduction[band] = 0.0f;
+        }
+
+        // Allocate band buffers
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            bandBuffers[band].setSize(numCh, maxBlockSize);
+            bandBuffers[band].clear();
+        }
+
+        // Temp buffer for crossover processing
+        tempBuffer.setSize(numCh, maxBlockSize);
+        tempBuffer.clear();
+
+        // Initialize crossover frequencies
+        updateCrossoverFrequencies(200.0f, 2000.0f, 8000.0f);
+    }
+
+    void updateCrossoverFrequencies(float freq1, float freq2, float freq3)
+    {
+        if (sampleRate <= 0.0)
+            return;
+
+        // Clamp frequencies to valid range and ensure they're in order
+        freq1 = juce::jlimit(20.0f, 500.0f, freq1);
+        freq2 = juce::jlimit(freq1 * 1.5f, 5000.0f, freq2);
+        freq3 = juce::jlimit(freq2 * 1.5f, 16000.0f, freq3);
+
+        crossoverFreqs[0] = freq1;
+        crossoverFreqs[1] = freq2;
+        crossoverFreqs[2] = freq3;
+
+        // Update filter coefficients using Linkwitz-Riley 4th order (cascaded Butterworth)
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            // Crossover 1: Low/Low-Mid split
+            auto lp1Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq1, 0.707f);
+            auto hp1Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq1, 0.707f);
+            lowpassFilters[0][ch].coefficients = lp1Coeffs;
+            highpassFilters[0][ch].coefficients = hp1Coeffs;
+
+            // Crossover 2: Low-Mid/High-Mid split
+            auto lp2Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq2, 0.707f);
+            auto hp2Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq2, 0.707f);
+            lowpassFilters[1][ch].coefficients = lp2Coeffs;
+            highpassFilters[1][ch].coefficients = hp2Coeffs;
+
+            // Crossover 3: High-Mid/High split
+            auto lp3Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq3, 0.707f);
+            auto hp3Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq3, 0.707f);
+            lowpassFilters[2][ch].coefficients = lp3Coeffs;
+            highpassFilters[2][ch].coefficients = hp3Coeffs;
+        }
+    }
+
+    // Process a block through the multiband compressor
+    void processBlock(juce::AudioBuffer<float>& buffer,
+                      const std::array<float, NUM_BANDS>& thresholds,
+                      const std::array<float, NUM_BANDS>& ratios,
+                      const std::array<float, NUM_BANDS>& attacks,
+                      const std::array<float, NUM_BANDS>& releases,
+                      const std::array<float, NUM_BANDS>& makeups,
+                      const std::array<bool, NUM_BANDS>& bypasses,
+                      const std::array<bool, NUM_BANDS>& solos,
+                      float outputGain, float mixPercent)
+    {
+        const int numSamples = buffer.getNumSamples();
+        const int channels = juce::jmin(buffer.getNumChannels(), numChannels);
+
+        if (numSamples <= 0 || channels <= 0)
+            return;
+
+        // Check for any solo bands
+        bool anySolo = false;
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            if (solos[band])
+            {
+                anySolo = true;
+                break;
+            }
+        }
+
+        // Store dry signal for mix
+        bool needsDry = (mixPercent < 100.0f);
+        if (needsDry)
+        {
+            tempBuffer.makeCopyOf(buffer);
+        }
+
+        // Split the input signal into 4 bands using crossover filters
+        splitIntoBands(buffer, numSamples, channels);
+
+        // Process each band through its compressor
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            // If solo is active, only process soloed bands
+            bool shouldProcess = !anySolo || solos[band];
+            bool isBypassed = bypasses[band] || !shouldProcess;
+
+            if (!isBypassed)
+            {
+                processBandCompression(band, bandBuffers[band], numSamples, channels,
+                                       thresholds[band], ratios[band],
+                                       attacks[band], releases[band], makeups[band]);
+            }
+            else if (!shouldProcess)
+            {
+                // Mute non-soloed bands when solo is active
+                bandBuffers[band].clear();
+            }
+            // If bypassed but no solo, keep the band signal as-is (no compression)
+        }
+
+        // Sum all bands back together
+        buffer.clear();
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                buffer.addFrom(ch, 0, bandBuffers[band], ch, 0, numSamples);
+            }
+        }
+
+        // Apply output gain
+        if (std::abs(outputGain) > 0.01f)
+        {
+            float outGain = juce::Decibels::decibelsToGain(outputGain);
+            buffer.applyGain(outGain);
+        }
+
+        // Mix with dry signal (parallel compression)
+        if (needsDry)
+        {
+            float wetAmount = mixPercent / 100.0f;
+            float dryAmount = 1.0f - wetAmount;
+
+            for (int ch = 0; ch < channels; ++ch)
+            {
+                float* out = buffer.getWritePointer(ch);
+                const float* dry = tempBuffer.getReadPointer(ch);
+
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    out[i] = out[i] * wetAmount + dry[i] * dryAmount;
+                }
+            }
+        }
+
+        // Hard limit output
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            float* out = buffer.getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                out[i] = juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, out[i]);
+            }
+        }
+    }
+
+    // Get gain reduction for a specific band (in dB, negative)
+    float getBandGainReduction(int band) const
+    {
+        if (band < 0 || band >= NUM_BANDS)
+            return 0.0f;
+        return bandGainReduction[band];
+    }
+
+    // Get overall (max) gain reduction across all bands
+    float getMaxGainReduction() const
+    {
+        float maxGr = 0.0f;
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            maxGr = juce::jmin(maxGr, bandGainReduction[band]);
+        }
+        return maxGr;
+    }
+
+private:
+    void splitIntoBands(const juce::AudioBuffer<float>& input, int numSamples, int channels)
+    {
+        // Linkwitz-Riley crossover splitting:
+        // Band 0 (Low): Input -> LP1
+        // Band 1 (Low-Mid): Input -> HP1 -> LP2
+        // Band 2 (High-Mid): Input -> HP1 -> HP2 -> LP3
+        // Band 3 (High): Input -> HP1 -> HP2 -> HP3
+
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            const float* in = input.getReadPointer(ch);
+
+            // Band 0: Low pass at crossover 1
+            float* band0 = bandBuffers[0].getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                // Apply LP filter twice for Linkwitz-Riley 4th order
+                float sample = lowpassFilters[0][ch].processSample(in[i]);
+                band0[i] = lowpassFilters[0][ch].processSample(sample);
+            }
+            // Reset filter for next pass
+            lowpassFilters[0][ch].reset();
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float sample = lowpassFilters[0][ch].processSample(in[i]);
+                band0[i] = lowpassFilters[0][ch].processSample(sample);
+            }
+
+            // Get signal after first HP (for bands 1-3)
+            float* band1 = bandBuffers[1].getWritePointer(ch);
+            highpassFilters[0][ch].reset();
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float sample = highpassFilters[0][ch].processSample(in[i]);
+                float hp1Out = highpassFilters[0][ch].processSample(sample);
+
+                // Band 1: HP1 -> LP2
+                float lp2Out = lowpassFilters[1][ch].processSample(hp1Out);
+                band1[i] = lowpassFilters[1][ch].processSample(lp2Out);
+            }
+
+            // Recalculate HP1 output for bands 2-3
+            float* band2 = bandBuffers[2].getWritePointer(ch);
+            float* band3 = bandBuffers[3].getWritePointer(ch);
+
+            highpassFilters[0][ch].reset();
+            highpassFilters[1][ch].reset();
+            lowpassFilters[1][ch].reset();
+            lowpassFilters[2][ch].reset();
+            highpassFilters[2][ch].reset();
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                // HP1
+                float hp1Out = highpassFilters[0][ch].processSample(in[i]);
+                hp1Out = highpassFilters[0][ch].processSample(hp1Out);
+
+                // HP2 (from HP1 output)
+                float hp2Out = highpassFilters[1][ch].processSample(hp1Out);
+                hp2Out = highpassFilters[1][ch].processSample(hp2Out);
+
+                // Band 2: HP1 -> HP2 -> LP3
+                float lp3Out = lowpassFilters[2][ch].processSample(hp2Out);
+                band2[i] = lowpassFilters[2][ch].processSample(lp3Out);
+
+                // Band 3: HP1 -> HP2 -> HP3
+                float hp3Out = highpassFilters[2][ch].processSample(hp2Out);
+                band3[i] = highpassFilters[2][ch].processSample(hp3Out);
+            }
+        }
+    }
+
+    void processBandCompression(int band, juce::AudioBuffer<float>& bandBuffer,
+                                int numSamples, int channels,
+                                float thresholdDb, float ratio,
+                                float attackMs, float releaseMs, float makeupDb)
+    {
+        if (sampleRate <= 0.0 || ratio < 1.0f)
+            return;
+
+        // Calculate envelope coefficients
+        float attackTime = juce::jmax(0.0001f, attackMs / 1000.0f);
+        float releaseTime = juce::jmax(0.001f, releaseMs / 1000.0f);
+        float attackCoeff = std::exp(-1.0f / (attackTime * static_cast<float>(sampleRate)));
+        float releaseCoeff = std::exp(-1.0f / (releaseTime * static_cast<float>(sampleRate)));
+
+        float maxGr = 0.0f;  // Track max GR for metering
+
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            float* data = bandBuffer.getWritePointer(ch);
+            float& envelope = bandEnvelopes[band][ch];
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float input = data[i];
+                float absInput = std::abs(input);
+
+                // Convert to dB
+                float inputDb = juce::Decibels::gainToDecibels(juce::jmax(absInput, 0.00001f));
+
+                // Calculate gain reduction
+                float reductionDb = 0.0f;
+                if (inputDb > thresholdDb)
+                {
+                    float overDb = inputDb - thresholdDb;
+                    reductionDb = overDb * (1.0f - 1.0f / ratio);
+                }
+
+                // Convert to gain
+                float targetGain = juce::Decibels::decibelsToGain(-reductionDb);
+
+                // Apply envelope (attack/release smoothing)
+                if (targetGain < envelope)
+                    envelope = attackCoeff * envelope + (1.0f - attackCoeff) * targetGain;
+                else
+                    envelope = releaseCoeff * envelope + (1.0f - releaseCoeff) * targetGain;
+
+                envelope = juce::jlimit(0.0001f, 1.0f, envelope);
+
+                // Apply compression and makeup gain
+                float makeupGain = juce::Decibels::decibelsToGain(makeupDb);
+                data[i] = input * envelope * makeupGain;
+
+                // Track GR for metering
+                float grDb = juce::Decibels::gainToDecibels(envelope);
+                maxGr = juce::jmin(maxGr, grDb);
+            }
+        }
+
+        // Update band GR meter (atomic not needed since we're single-threaded in audio)
+        bandGainReduction[band] = maxGr;
+    }
+
+    // Crossover filters (3 crossover points for 4 bands)
+    // Using cascaded IIR filters for Linkwitz-Riley response
+    std::array<std::vector<juce::dsp::IIR::Filter<float>>, 3> lowpassFilters;
+    std::array<std::vector<juce::dsp::IIR::Filter<float>>, 3> highpassFilters;
+
+    // Band buffers
+    std::array<juce::AudioBuffer<float>, NUM_BANDS> bandBuffers;
+    juce::AudioBuffer<float> tempBuffer;
+
+    // Per-band envelope followers (per channel)
+    std::array<std::vector<float>, NUM_BANDS> bandEnvelopes;
+
+    // Per-band gain reduction (for metering)
+    std::array<float, NUM_BANDS> bandGainReduction{0.0f, 0.0f, 0.0f, 0.0f};
+
+    // Crossover frequencies
+    std::array<float, 3> crossoverFreqs{200.0f, 2000.0f, 8000.0f};
+
+    double sampleRate = 0.0;
+    int numChannels = 2;
+    int maxBlockSize = 512;
+};
+
 // Parameter layout creation
 juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createParameterLayout()
 {
@@ -2899,11 +3262,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     
     try {
     
-    // Mode selection - 7 modes: 4 Vintage + 2 Studio + 1 Digital
+    // Mode selection - 8 modes: 4 Vintage + 2 Studio + 1 Digital + 1 Multiband
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "mode", "Mode",
         juce::StringArray{"Vintage Opto", "Vintage FET", "Classic VCA", "Vintage VCA (Bus)",
-                          "Studio FET", "Studio VCA", "Digital"}, 0));
+                          "Studio FET", "Studio VCA", "Digital", "Multiband"}, 0));
 
     // Global parameters
     layout.add(std::make_unique<juce::AudioParameterBool>("bypass", "Bypass", false));
@@ -3144,6 +3507,90 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "digital_adaptive", "Adaptive Release", false));  // Program-dependent release
     // SC Listen is now a global control (global_sidechain_listen) in header for all modes
+
+    // =========================================================================
+    // Multiband Compressor Parameters
+    // =========================================================================
+
+    // Crossover frequencies (3 crossovers for 4 bands)
+    // Low/Low-Mid crossover (default 200 Hz)
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "mb_crossover_1", "Crossover 1",
+        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.4f), 200.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    // Low-Mid/High-Mid crossover (default 2000 Hz)
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "mb_crossover_2", "Crossover 2",
+        juce::NormalisableRange<float>(200.0f, 5000.0f, 1.0f, 0.4f), 2000.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    // High-Mid/High crossover (default 8000 Hz)
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "mb_crossover_3", "Crossover 3",
+        juce::NormalisableRange<float>(2000.0f, 16000.0f, 1.0f, 0.4f), 8000.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    // Per-band parameters (4 bands: Low, Low-Mid, High-Mid, High)
+    const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
+    const juce::String bandLabels[] = {"Low", "Low-Mid", "High-Mid", "High"};
+
+    for (int band = 0; band < 4; ++band)
+    {
+        const juce::String& name = bandNames[band];
+        const juce::String& label = bandLabels[band];
+
+        // Threshold (-60 to 0 dB)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "mb_" + name + "_threshold", label + " Threshold",
+            juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -20.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+        // Ratio (1:1 to 20:1)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "mb_" + name + "_ratio", label + " Ratio",
+            juce::NormalisableRange<float>(1.0f, 20.0f, 0.1f, 0.5f), 4.0f,
+            juce::AudioParameterFloatAttributes().withLabel(":1")));
+
+        // Attack (0.1 to 100 ms)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "mb_" + name + "_attack", label + " Attack",
+            juce::NormalisableRange<float>(0.1f, 100.0f, 0.1f, 0.4f), 10.0f,
+            juce::AudioParameterFloatAttributes().withLabel("ms")));
+
+        // Release (10 to 1000 ms)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "mb_" + name + "_release", label + " Release",
+            juce::NormalisableRange<float>(10.0f, 1000.0f, 1.0f, 0.4f), 100.0f,
+            juce::AudioParameterFloatAttributes().withLabel("ms")));
+
+        // Makeup gain (-12 to +12 dB)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            "mb_" + name + "_makeup", label + " Makeup",
+            juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f), 0.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+        // Band bypass
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            "mb_" + name + "_bypass", label + " Bypass", false));
+
+        // Band solo
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            "mb_" + name + "_solo", label + " Solo", false));
+    }
+
+    // Global multiband output
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "mb_output", "MB Output",
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+    // Multiband mix (parallel compression)
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        "mb_mix", "MB Mix",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
     }
     catch (const std::exception& e) {
         DBG("Failed to create parameter layout: " << e.what());
@@ -3288,6 +3735,8 @@ UniversalCompressor::UniversalCompressor()
     sidechainMeter.store(-60.0f, std::memory_order_relaxed);
     linkedGainReduction[0].store(0.0f, std::memory_order_relaxed);
     linkedGainReduction[1].store(0.0f, std::memory_order_relaxed);
+    for (int i = 0; i < kNumMultibandBands; ++i)
+        bandGainReduction[i].store(0.0f, std::memory_order_relaxed);
     grHistoryWritePos.store(0, std::memory_order_relaxed);
     grHistory.fill(0.0f);
     
@@ -3304,6 +3753,7 @@ UniversalCompressor::UniversalCompressor()
         studioFetCompressor = std::make_unique<StudioFETCompressor>();
         studioVcaCompressor = std::make_unique<StudioVCACompressor>();
         digitalCompressor = std::make_unique<DigitalCompressor>();
+        multibandCompressor = std::make_unique<MultibandCompressor>();
         sidechainFilter = std::make_unique<SidechainFilter>();
         antiAliasing = std::make_unique<AntiAliasing>();
         lookaheadBuffer = std::make_unique<LookaheadBuffer>();
@@ -3319,6 +3769,8 @@ UniversalCompressor::UniversalCompressor()
         busCompressor.reset();
         studioFetCompressor.reset();
         studioVcaCompressor.reset();
+        digitalCompressor.reset();
+        multibandCompressor.reset();
         sidechainFilter.reset();
         antiAliasing.reset();
         lookaheadBuffer.reset();
@@ -3334,6 +3786,8 @@ UniversalCompressor::UniversalCompressor()
         busCompressor.reset();
         studioFetCompressor.reset();
         studioVcaCompressor.reset();
+        digitalCompressor.reset();
+        multibandCompressor.reset();
         sidechainFilter.reset();
         antiAliasing.reset();
         lookaheadBuffer.reset();
@@ -3390,6 +3844,8 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
         studioVcaCompressor->prepare(sampleRate, numChannels);
     if (digitalCompressor)
         digitalCompressor->prepare(sampleRate, numChannels, samplesPerBlock);
+    if (multibandCompressor)
+        multibandCompressor->prepare(sampleRate, numChannels, samplesPerBlock);
 
     // Prepare sidechain filter for all modes
     if (sidechainFilter)
@@ -3654,11 +4110,18 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             } else validParams = false;
             break;
         }
+        case CompressorMode::Multiband:
+        {
+            // Multiband has many parameters - we'll read them directly during processing
+            // Just check that the compressor exists
+            validParams = (multibandCompressor != nullptr);
+            break;
+        }
     }
 
     if (!validParams)
         return;
-    
+
     // Input metering - use peak level for accurate dB display
     const int numChannels = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
@@ -3902,6 +4365,104 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             left[i] = (l + r) * 0.5f;   // Mid
             right[i] = (l - r) * 0.5f;  // Side
         }
+    }
+
+    // Special handling for Multiband mode - process block-wise without oversampling
+    // (crossover filters work best at native sample rate)
+    if (mode == CompressorMode::Multiband && multibandCompressor)
+    {
+        // Read multiband parameters
+        auto* xover1Param = parameters.getRawParameterValue("mb_crossover_1");
+        auto* xover2Param = parameters.getRawParameterValue("mb_crossover_2");
+        auto* xover3Param = parameters.getRawParameterValue("mb_crossover_3");
+        auto* mbOutputParam = parameters.getRawParameterValue("mb_output");
+        auto* mbMixParam = parameters.getRawParameterValue("mb_mix");
+
+        float xover1 = xover1Param ? xover1Param->load() : 200.0f;
+        float xover2 = xover2Param ? xover2Param->load() : 2000.0f;
+        float xover3 = xover3Param ? xover3Param->load() : 8000.0f;
+        float mbOutput = mbOutputParam ? mbOutputParam->load() : 0.0f;
+        float mbMix = mbMixParam ? mbMixParam->load() : 100.0f;
+
+        // Update crossover frequencies
+        multibandCompressor->updateCrossoverFrequencies(xover1, xover2, xover3);
+
+        // Read per-band parameters
+        const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
+        std::array<float, 4> thresholds, ratios, attacks, releases, makeups;
+        std::array<bool, 4> bypasses, solos;
+
+        for (int band = 0; band < 4; ++band)
+        {
+            const juce::String& name = bandNames[band];
+            auto* thresh = parameters.getRawParameterValue("mb_" + name + "_threshold");
+            auto* ratio = parameters.getRawParameterValue("mb_" + name + "_ratio");
+            auto* attack = parameters.getRawParameterValue("mb_" + name + "_attack");
+            auto* release = parameters.getRawParameterValue("mb_" + name + "_release");
+            auto* makeup = parameters.getRawParameterValue("mb_" + name + "_makeup");
+            auto* bypass = parameters.getRawParameterValue("mb_" + name + "_bypass");
+            auto* solo = parameters.getRawParameterValue("mb_" + name + "_solo");
+
+            thresholds[band] = thresh ? thresh->load() : -20.0f;
+            ratios[band] = ratio ? ratio->load() : 4.0f;
+            attacks[band] = attack ? attack->load() : 10.0f;
+            releases[band] = release ? release->load() : 100.0f;
+            makeups[band] = makeup ? makeup->load() : 0.0f;
+            bypasses[band] = bypass ? (bypass->load() > 0.5f) : false;
+            solos[band] = solo ? (solo->load() > 0.5f) : false;
+        }
+
+        // Process through multiband compressor
+        multibandCompressor->processBlock(buffer, thresholds, ratios, attacks, releases,
+                                          makeups, bypasses, solos, mbOutput, mbMix);
+
+        // Update per-band GR meters for UI
+        for (int band = 0; band < kNumMultibandBands; ++band)
+        {
+            bandGainReduction[band].store(multibandCompressor->getBandGainReduction(band),
+                                          std::memory_order_relaxed);
+        }
+
+        // Get overall GR for main meter
+        float grLeft = multibandCompressor->getMaxGainReduction();
+        float grRight = grLeft;  // Multiband processes stereo together
+        linkedGainReduction[0].store(grLeft, std::memory_order_relaxed);
+        linkedGainReduction[1].store(grRight, std::memory_order_relaxed);
+        float gainReduction = grLeft;
+
+        // Skip to output metering and post-processing (after the main switch block)
+        // Update output meter
+        float outputLevel = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* data = buffer.getReadPointer(ch);
+            float channelPeak = SIMDHelpers::getPeakLevel(data, numSamples);
+            outputLevel = juce::jmax(outputLevel, channelPeak);
+        }
+        float outputDb = outputLevel > 1e-5f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
+        outputMeter.store(outputDb, std::memory_order_relaxed);
+        grMeter.store(gainReduction, std::memory_order_relaxed);
+
+        // Update GR history for visualization
+        grHistoryUpdateCounter++;
+        int blocksPerUpdate = static_cast<int>(currentSampleRate / (numSamples * 30.0));
+        blocksPerUpdate = juce::jmax(1, blocksPerUpdate);
+        if (grHistoryUpdateCounter >= blocksPerUpdate)
+        {
+            grHistoryUpdateCounter = 0;
+            int pos = grHistoryWritePos.load(std::memory_order_relaxed);
+            grHistory[pos] = gainReduction;
+            grHistoryWritePos.store((pos + 1) % GR_HISTORY_SIZE, std::memory_order_relaxed);
+        }
+
+        // Update GR meter parameter for DAW display
+        if (auto* grParam = parameters.getRawParameterValue("gr_meter"))
+        {
+            // Note: This is a workaround - parameter values can't normally be set from audio thread
+            // For proper DAW metering, use a separate mechanism
+        }
+
+        return;  // Skip normal processing for multiband mode
     }
 
     // Process audio with reduced function call overhead

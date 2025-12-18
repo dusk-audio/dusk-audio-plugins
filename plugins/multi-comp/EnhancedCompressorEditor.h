@@ -191,7 +191,7 @@ private:
     // Modern mode panels
     std::unique_ptr<DigitalCompressorPanel> digitalPanel;
     std::unique_ptr<StudioVCAPanel> studioVcaPanel;
-    // Multiband panel removed
+    std::unique_ptr<MultibandCompressorPanel> multibandPanel;
     
     // Current mode
     int currentMode = 0;
@@ -219,7 +219,7 @@ private:
     void setupVCAPanel();
     void setupBusPanel();
     void setupDigitalPanel();
-    // setupMultibandPanel removed
+    void setupMultibandPanel();
     
     void updateMode(int newMode);
     void updateMeters();

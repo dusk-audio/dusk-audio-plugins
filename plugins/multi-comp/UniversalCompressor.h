@@ -13,12 +13,16 @@ enum class CompressorMode : int
     Bus = 3,        // SSL G-Series Bus compressor (Vintage VCA)
     StudioFET = 4,  // 1176 Rev E Blackface style (Studio FET - cleaner)
     StudioVCA = 5,  // Focusrite Red 3 style (Studio VCA - modern)
-    Digital = 6     // Transparent digital compressor
+    Digital = 6,    // Transparent digital compressor
+    Multiband = 7   // 4-band multiband compressor
 };
 
 // Number of compressor modes for parameter normalization
-constexpr int kNumCompressorModes = 7;
-constexpr int kMaxCompressorModeIndex = static_cast<int>(CompressorMode::Digital);  // 6
+constexpr int kNumCompressorModes = 8;
+constexpr int kMaxCompressorModeIndex = static_cast<int>(CompressorMode::Multiband);  // 7
+
+// Multiband constants
+constexpr int kNumMultibandBands = 4;
 
 // Distortion type for output saturation
 enum class DistortionType : int
@@ -80,6 +84,11 @@ public:
         return channel >= 0 && channel < 2 ? linkedGainReduction[channel].load(std::memory_order_relaxed) : 0.0f;
     }
 
+    // Per-band gain reduction for multiband mode visualization
+    float getBandGainReduction(int band) const {
+        return band >= 0 && band < kNumMultibandBands ? bandGainReduction[band].load(std::memory_order_relaxed) : 0.0f;
+    }
+
     // GR History for visualization (circular buffer, ~128 samples at 30Hz = ~4 seconds)
     // Note: grHistory is not atomic. The UI thread may see partially updated values (tearing).
     // This is acceptable for visualization - occasional stale data won't affect display quality.
@@ -104,6 +113,7 @@ private:
     class StudioFETCompressor;
     class StudioVCACompressor;
     class DigitalCompressor;
+    class MultibandCompressor;  // 4-band multiband compressor with Linkwitz-Riley crossovers
     class SidechainFilter;
     class AntiAliasing;
     class LookaheadBuffer;  // Shared lookahead for all modes
@@ -123,6 +133,7 @@ private:
     std::unique_ptr<StudioFETCompressor> studioFetCompressor;
     std::unique_ptr<StudioVCACompressor> studioVcaCompressor;
     std::unique_ptr<DigitalCompressor> digitalCompressor;
+    std::unique_ptr<MultibandCompressor> multibandCompressor;
     std::unique_ptr<SidechainFilter> sidechainFilter;
     std::unique_ptr<AntiAliasing> antiAliasing;
     std::unique_ptr<LookaheadBuffer> lookaheadBuffer;  // Global lookahead for all modes
@@ -154,6 +165,9 @@ private:
     // Initialized in constructor via .store() since atomic arrays can't use copy initialization
     std::atomic<float> linkedGainReduction[2];
     // stereoLinkAmount now controlled by parameter
+
+    // Per-band gain reduction for multiband mode (thread-safe for UI)
+    std::atomic<float> bandGainReduction[kNumMultibandBands];
     
     // Processing state
     double currentSampleRate{0.0};  // Set by prepareToPlay from DAW
