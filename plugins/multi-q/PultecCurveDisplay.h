@@ -28,14 +28,14 @@ public:
 private:
     MultiQ& audioProcessor;
 
-    // Vintage Pultec color scheme
-    static constexpr uint32_t lfBoostColor = 0xffc49a6c;    // Warm brown (low boost)
-    static constexpr uint32_t lfAttenColor = 0xff8c6444;    // Darker brown (low cut)
-    static constexpr uint32_t hfBoostColor = 0xffcaa864;    // Gold (high boost)
-    static constexpr uint32_t hfAttenColor = 0xff7a6a5a;    // Muted gold (high cut)
-    static constexpr uint32_t combinedColor = 0xfff0e8d8;   // Cream/ivory
-    static constexpr uint32_t gridColor = 0xff3a3530;       // Warm dark grid
-    static constexpr uint32_t backgroundColor = 0xff201c18; // Dark brown background
+    // Dark professional color scheme (matching Vintage Tube EQ style)
+    static constexpr uint32_t lfBoostColor = 0xff60a0c0;    // Blue (low boost)
+    static constexpr uint32_t lfAttenColor = 0xff4080a0;    // Darker blue (low cut)
+    static constexpr uint32_t hfBoostColor = 0xff80c0e0;    // Light blue (high boost)
+    static constexpr uint32_t hfAttenColor = 0xff5090b0;    // Muted blue (high cut)
+    static constexpr uint32_t combinedColor = 0xffe0e0e0;   // Light gray/white
+    static constexpr uint32_t gridColor = 0xff404040;       // Dark gray grid
+    static constexpr uint32_t backgroundColor = 0xff2a2a2a; // Dark gray background
 
     // Frequency range
     static constexpr float minFreq = 20.0f;
