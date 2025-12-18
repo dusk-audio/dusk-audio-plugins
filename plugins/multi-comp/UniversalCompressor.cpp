@@ -419,35 +419,37 @@ public:
     
     // Generate harmonics using band-limited additive synthesis
     // This ensures no aliasing from harmonic generation
-    float addHarmonics(float fundamental, float h2Level, float h3Level, float h4Level = 0.0f)
+    // fundamentalPhase: current phase of the fundamental in radians [0, 2π)
+    // fundamentalFreq: fundamental frequency in Hz (for band-limiting check)
+    float addHarmonics(float fundamental, float fundamentalPhase, float fundamentalFreq,
+                       float h2Level, float h3Level, float h4Level = 0.0f)
     {
         float output = fundamental;
-        
+
         // Only add harmonics if they'll be below Nyquist
         const float nyquist = static_cast<float>(sampleRate) * 0.5f;
-        
+
         // 2nd harmonic (even)
-        if (h2Level > 0.0f && 2000.0f < nyquist)  // Assuming 1kHz fundamental * 2
+        if (h2Level > 0.0f && (2.0f * fundamentalFreq) < nyquist)
         {
-            float phase2 = std::atan2(fundamental, 0.0f) * 2.0f;
+            float phase2 = fundamentalPhase * 2.0f;
             output += h2Level * std::sin(phase2);
         }
-        
+
         // 3rd harmonic (odd)
-        if (h3Level > 0.0f && 3000.0f < nyquist)  // Assuming 1kHz fundamental * 3
+        if (h3Level > 0.0f && (3.0f * fundamentalFreq) < nyquist)
         {
-            float phase3 = std::atan2(fundamental, 0.0f) * 3.0f;
-            float sign = fundamental > 0.0f ? 1.0f : -1.0f;
-            output += h3Level * std::sin(phase3) * sign;
+            float phase3 = fundamentalPhase * 3.0f;
+            output += h3Level * std::sin(phase3);
         }
-        
+
         // 4th harmonic (even) - only at high sample rates (88kHz+)
-        if (h4Level > 0.0f && 4000.0f < nyquist && sampleRate >= 88000.0)
+        if (h4Level > 0.0f && (4.0f * fundamentalFreq) < nyquist && sampleRate >= 88000.0)
         {
-            float phase4 = std::atan2(fundamental, 0.0f) * 4.0f;
+            float phase4 = fundamentalPhase * 4.0f;
             output += h4Level * std::sin(phase4);
         }
-        
+
         return output;
     }
     
@@ -3145,11 +3147,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     }
     catch (const std::exception& e) {
         DBG("Failed to create parameter layout: " << e.what());
+        // Clear partially-populated layout and return empty to avoid undefined behavior
+        layout = juce::AudioProcessorValueTreeState::ParameterLayout();
     }
     catch (...) {
         DBG("Failed to create parameter layout: unknown error");
+        // Clear partially-populated layout and return empty to avoid undefined behavior
+        layout = juce::AudioProcessorValueTreeState::ParameterLayout();
     }
-    
+
     return layout;
 }
 

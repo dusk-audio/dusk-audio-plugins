@@ -1220,7 +1220,13 @@ void RatioButtonGroup::resized()
 
 void RatioButtonGroup::paint(juce::Graphics& g)
 {
-    for (int i = 0; i < ratioLabels.size(); ++i)
+    // Ensure safe iteration - use minimum of both array sizes
+    int numButtons = std::min(static_cast<int>(ratioLabels.size()), static_cast<int>(buttonBounds.size()));
+
+    // Defensive check - log if sizes don't match (indicates resized() issue)
+    jassert(ratioLabels.size() == buttonBounds.size());
+
+    for (int i = 0; i < numButtons; ++i)
     {
         auto& bounds = buttonBounds[static_cast<size_t>(i)];
         bool isSelected = (i == currentRatio);

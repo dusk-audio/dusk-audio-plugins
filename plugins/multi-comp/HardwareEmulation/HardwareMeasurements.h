@@ -76,8 +76,8 @@ struct TransformerProfile
 // Complete hardware unit profile
 struct HardwareUnitProfile
 {
-    const char* name;
-    const char* modeledUnit;
+    const char* name = nullptr;
+    const char* modeledUnit = nullptr;
 
     // Stage-specific harmonic profiles
     HarmonicProfile inputStageHarmonics;
