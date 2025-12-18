@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(UniversalCompressor VERSION 1.0.0)
+project(MultiComp VERSION 1.0.0)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -26,32 +26,32 @@ if(BUILD_AU)
 endif()
 
 # Create plugin target
-juce_add_plugin(UniversalCompressor
+juce_add_plugin(MultiComp
     # VERSION ...                               # Set this if the plugin version is different to the project version
     # ICON_BIG ...                              # ICON_* arguments specify a path to an image file to use as an icon for the Standalone
     # ICON_SMALL ...
     COMPANY_NAME "Luna Co. Audio"
-    BUNDLE_ID "com.AudioEngineering.UniversalCompressor"
+    BUNDLE_ID "com.LunaCoAudio.MultiComp"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
-    PLUGIN_MANUFACTURER_CODE AuEn
-    PLUGIN_CODE UnCo
+    PLUGIN_MANUFACTURER_CODE LuCo
+    PLUGIN_CODE MuCo
     FORMATS ${PLUGIN_FORMATS}
-    LV2URI "https://audioengineering.com/plugins/universal-compressor"
-    PRODUCT_NAME "Universal Compressor"
-    DESCRIPTION "Universal compressor with Opto, FET, VCA, and Bus emulations"
+    LV2URI "https://lunacoaudio.com/plugins/multi-comp"
+    PRODUCT_NAME "Multi-Comp"
+    DESCRIPTION "Multi-mode compressor with Opto, FET, VCA, and Bus emulations"
     VST3_CAN_REPLACE_VST2 TRUE
 )
 
 # Generate JuceHeader.h
-juce_generate_juce_header(UniversalCompressor)
+juce_generate_juce_header(MultiComp)
 
 # Add source files
-target_sources(UniversalCompressor
+target_sources(MultiComp
     PRIVATE
         UniversalCompressor.cpp
         AnalogLookAndFeel.cpp
@@ -61,7 +61,7 @@ target_sources(UniversalCompressor
 )
 
 # Set include directories
-target_include_directories(UniversalCompressor
+target_include_directories(MultiComp
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../shared
@@ -69,7 +69,7 @@ target_include_directories(UniversalCompressor
 )
 
 # Compiler definitions
-target_compile_definitions(UniversalCompressor
+target_compile_definitions(MultiComp
     PUBLIC
         # JUCE_WEB_BROWSER and JUCE_USE_CURL would be on by default, but you might not need them.
         JUCE_WEB_BROWSER=0  # If you remove this, add `NEEDS_WEB_BROWSER TRUE` to the `juce_add_plugin` call
@@ -79,7 +79,7 @@ target_compile_definitions(UniversalCompressor
 )
 
 # Link libraries
-target_link_libraries(UniversalCompressor
+target_link_libraries(MultiComp
     PRIVATE
         juce::juce_audio_utils
         juce::juce_dsp
@@ -91,7 +91,9 @@ target_link_libraries(UniversalCompressor
 
 # Optimization flags
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_options(UniversalCompressor PRIVATE -O3 -ffast-math)
+    # Use -ffast-math for performance but preserve NaN/Inf handling with -fno-finite-math-only
+    # This allows fast floating point math while keeping correct NaN/Inf semantics for DSP stability tests
+    target_compile_options(MultiComp PRIVATE -O3 -ffast-math -fno-finite-math-only)
 endif()
 
 # AddressSanitizer options
@@ -99,29 +101,29 @@ option(ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
 
 # Enable AddressSanitizer in debug builds or when explicitly requested
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR ENABLE_ASAN)
-    target_compile_options(UniversalCompressor PRIVATE
+    target_compile_options(MultiComp PRIVATE
         -fsanitize=address
         -fsanitize=undefined
         -fno-omit-frame-pointer
         -fno-optimize-sibling-calls
     )
-    target_link_options(UniversalCompressor PRIVATE
+    target_link_options(MultiComp PRIVATE
         -fsanitize=address
         -fsanitize=undefined
     )
-    message(STATUS "AddressSanitizer enabled for UniversalCompressor")
+    message(STATUS "AddressSanitizer enabled for MultiComp")
     message(STATUS "Run with: ASAN_OPTIONS=detect_leaks=1:abort_on_error=1")
 endif()
 
 # Enable all warnings
-target_compile_options(UniversalCompressor PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(MultiComp PRIVATE -Wall -Wextra -Wpedantic)
 
 # Optional: Build unit tests
-option(BUILD_UNIVERSAL_COMPRESSOR_TESTS "Build Universal Compressor unit tests" OFF)
+option(BUILD_MULTI_COMP_TESTS "Build Multi-Comp unit tests" OFF)
 
-if(BUILD_UNIVERSAL_COMPRESSOR_TESTS)
+if(BUILD_MULTI_COMP_TESTS)
     # Create test executable
-    add_executable(UniversalCompressorTests
+    add_executable(MultiCompTests
         UniversalCompressorTests.cpp
         UniversalCompressor.cpp
         AnalogLookAndFeel.cpp
@@ -130,7 +132,7 @@ if(BUILD_UNIVERSAL_COMPRESSOR_TESTS)
     )
 
     # Link test executable with JUCE
-    target_link_libraries(UniversalCompressorTests
+    target_link_libraries(MultiCompTests
         PRIVATE
             juce::juce_audio_processors
             juce::juce_audio_utils
@@ -141,7 +143,7 @@ if(BUILD_UNIVERSAL_COMPRESSOR_TESTS)
     )
 
     # Add JUCE definitions
-    target_compile_definitions(UniversalCompressorTests
+    target_compile_definitions(MultiCompTests
         PRIVATE
             JUCE_UNIT_TESTS=1
             JUCE_WEB_BROWSER=0
@@ -150,23 +152,23 @@ if(BUILD_UNIVERSAL_COMPRESSOR_TESTS)
 
     # Enable AddressSanitizer for tests in debug builds or when explicitly requested
     if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR ENABLE_ASAN)
-        target_compile_options(UniversalCompressorTests PRIVATE
+        target_compile_options(MultiCompTests PRIVATE
             -fsanitize=address
             -fsanitize=undefined
             -fno-omit-frame-pointer
             -fno-optimize-sibling-calls
         )
-        target_link_options(UniversalCompressorTests PRIVATE
+        target_link_options(MultiCompTests PRIVATE
             -fsanitize=address
             -fsanitize=undefined
         )
-        message(STATUS "AddressSanitizer and UndefinedBehaviorSanitizer enabled for UniversalCompressorTests")
+        message(STATUS "AddressSanitizer and UndefinedBehaviorSanitizer enabled for MultiCompTests")
     endif()
 
     # Generate JUCE header for tests
-    juce_generate_juce_header(UniversalCompressorTests)
+    juce_generate_juce_header(MultiCompTests)
 
-    message(STATUS "Universal Compressor unit tests enabled")
-    message(STATUS "Run tests with: ./UniversalCompressorTests --all")
-    message(STATUS "Run with ASAN: ASAN_OPTIONS=detect_leaks=1 ./UniversalCompressorTests --all")
+    message(STATUS "Multi-Comp unit tests enabled")
+    message(STATUS "Run tests with: ./MultiCompTests --all")
+    message(STATUS "Run with ASAN: ASAN_OPTIONS=detect_leaks=1 ./MultiCompTests --all")
 endif()
