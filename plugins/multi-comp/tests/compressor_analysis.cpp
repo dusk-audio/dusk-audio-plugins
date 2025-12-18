@@ -155,15 +155,20 @@ THDResult measureTHD(const std::vector<float>& signal, double fundamentalFreq)
     double h4Mag = getMagnitude(h4Bin);
     double h5Mag = getMagnitude(h5Bin);
 
+    // Epsilon to prevent division by zero and infinities
+    constexpr double epsilon = 1e-10;
+
     // Calculate THD
     double harmonicSum = h2Mag * h2Mag + h3Mag * h3Mag + h4Mag * h4Mag + h5Mag * h5Mag;
-    result.thd = (fundMag > 1e-10) ? (std::sqrt(harmonicSum) / fundMag * 100.0) : 0.0;
-    // Convert to dB relative to fundamental
-    result.fundamental = 20.0 * std::log10(fundMag + 1e-10);
-    result.h2 = 20.0 * std::log10(h2Mag / fundMag + 1e-10);
-    result.h3 = 20.0 * std::log10(h3Mag / fundMag + 1e-10);
-    result.h4 = 20.0 * std::log10(h4Mag / fundMag + 1e-10);
-    result.h5 = 20.0 * std::log10(h5Mag / fundMag + 1e-10);
+    result.thd = (fundMag > epsilon) ? (std::sqrt(harmonicSum) / fundMag * 100.0) : 0.0;
+
+    // Convert to dB relative to fundamental (guard against zero denominator)
+    result.fundamental = 20.0 * std::log10(fundMag + epsilon);
+    // Use std::max to ensure denominator is never zero
+    result.h2 = 20.0 * std::log10((h2Mag / std::max(fundMag, epsilon)) + epsilon);
+    result.h3 = 20.0 * std::log10((h3Mag / std::max(fundMag, epsilon)) + epsilon);
+    result.h4 = 20.0 * std::log10((h4Mag / std::max(fundMag, epsilon)) + epsilon);
+    result.h5 = 20.0 * std::log10((h5Mag / std::max(fundMag, epsilon)) + epsilon);
 
     return result;
 }

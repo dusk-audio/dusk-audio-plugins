@@ -223,6 +223,9 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
 
 EnhancedCompressorEditor::~EnhancedCompressorEditor()
 {
+    // Stop timer first to prevent callbacks during destruction
+    stopTimer();
+
     processor.getParameters().removeParameterListener("mode", this);
     processor.getParameters().removeParameterListener("auto_makeup", this);
 
@@ -860,7 +863,7 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
             textColor = juce::Colour(0xFF00D4FF);  // Cyan
             break;
         default:
-            title = "UNIVERSAL COMPRESSOR";
+            title = "MULTI-COMP";
             textColor = juce::Colour(0xFFE0E0E0);
             break;
     }
@@ -1428,7 +1431,7 @@ void EnhancedCompressorEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-        supportersOverlay = std::make_unique<SupportersOverlay>("Universal Compressor");
+        supportersOverlay = std::make_unique<SupportersOverlay>("Multi-Comp");
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }
