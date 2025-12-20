@@ -4462,6 +4462,50 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             // For proper DAW metering, use a separate mechanism
         }
 
+        // Apply global auto-makeup gain for multiband mode
+        // Uses the maximum GR across all bands for compensation
+        if (autoMakeup && gainReduction < -0.5f)
+        {
+            float targetMakeupGain = juce::Decibels::decibelsToGain(-gainReduction);
+            targetMakeupGain = juce::jlimit(1.0f, 16.0f, targetMakeupGain);  // Limit to +24dB max
+
+            smoothedAutoMakeupGain.setTargetValue(targetMakeupGain);
+
+            if (smoothedAutoMakeupGain.isSmoothing())
+            {
+                const int maxGainSamples = static_cast<int>(smoothedGainBuffer.size());
+                const int samplesToProcess = juce::jmin(numSamples, maxGainSamples);
+
+                for (int i = 0; i < samplesToProcess; ++i)
+                    smoothedGainBuffer[static_cast<size_t>(i)] = smoothedAutoMakeupGain.getNextValue();
+
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    float* data = buffer.getWritePointer(ch);
+                    const float* gains = smoothedGainBuffer.data();
+                    for (int i = 0; i < samplesToProcess; ++i)
+                        data[i] *= gains[i];
+                }
+            }
+            else
+            {
+                float currentGain = smoothedAutoMakeupGain.getCurrentValue();
+                if (currentGain > 1.001f)
+                {
+                    for (int ch = 0; ch < numChannels; ++ch)
+                    {
+                        float* data = buffer.getWritePointer(ch);
+                        SIMDHelpers::applyGain(data, numSamples, currentGain);
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Reset smoothed gain when auto-makeup is disabled
+            smoothedAutoMakeupGain.setTargetValue(1.0f);
+        }
+
         return;  // Skip normal processing for multiband mode
     }
 
@@ -4476,8 +4520,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
         // PRE-INTERPOLATE sidechain buffer ONCE before the channel loop
         // This eliminates per-sample getSample() calls and bounds checking in the hot loop
-        // Select source buffer once based on stereo link setting
-        const auto& scSource = useStereoLink ? linkedSidechain : filteredSidechain;
+        // Select source buffer once based on stereo link or Mid-Side setting
+        const auto& scSource = (useStereoLink || useMidSide) ? linkedSidechain : filteredSidechain;
 
         // Ensure interpolated buffer is sized correctly
         if (interpolatedSidechain.getNumChannels() < osNumChannels ||
@@ -4586,10 +4630,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 case CompressorMode::StudioFET:
                     for (int i = 0; i < numSamples; ++i)
                     {
-                        // Use linked sidechain if stereo linking is enabled, otherwise use pre-filtered signal
+                        // Use linked sidechain if stereo linking or Mid-Side is enabled, otherwise use pre-filtered signal
                         // Note: filter was already applied when building filteredSidechain
                         float scSignal;
-                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
                             scSignal = linkedSidechain.getSample(channel, i);
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
@@ -4599,10 +4643,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 case CompressorMode::StudioVCA:
                     for (int i = 0; i < numSamples; ++i)
                     {
-                        // Use linked sidechain if stereo linking is enabled, otherwise use pre-filtered signal
+                        // Use linked sidechain if stereo linking or Mid-Side is enabled, otherwise use pre-filtered signal
                         // Note: filter was already applied when building filteredSidechain
                         float scSignal;
-                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
                             scSignal = linkedSidechain.getSample(channel, i);
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
@@ -4614,7 +4658,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     for (int i = 0; i < numSamples; ++i)
                     {
                         float scSignal;
-                        if (useStereoLink && channel < linkedSidechain.getNumChannels())
+                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
                             scSignal = linkedSidechain.getSample(channel, i);
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
@@ -4867,7 +4911,7 @@ CompressorMode UniversalCompressor::getCurrentMode() const
     if (modeParam)
     {
         int mode = static_cast<int>(*modeParam);
-        return static_cast<CompressorMode>(juce::jlimit(0, 6, mode));  // 7 modes: 0-6 (including Digital)
+        return static_cast<CompressorMode>(juce::jlimit(0, kMaxCompressorModeIndex, mode));  // 8 modes: 0-7 (including Multiband)
     }
     return CompressorMode::Opto; // Default fallback
 }
@@ -4928,8 +4972,59 @@ void UniversalCompressor::setStateInformation(const void* data, int sizeInBytes)
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
 
     if (xmlState.get() != nullptr)
+    {
         if (xmlState->hasTagName(parameters.state.getType()))
+        {
             parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+
+            // Reset all DSP state after state restoration to ensure clean audio output
+            // This is critical for pluginval's state restoration test which expects
+            // audio output to match after setStateInformation without calling prepareToPlay
+            resetDSPState();
+        }
+    }
+}
+
+void UniversalCompressor::resetDSPState()
+{
+    // Reset smoothed auto-makeup gain to neutral
+    smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+
+    // Re-prepare all compressors to reset their internal envelope/detector state
+    // This ensures gain reduction envelopes start fresh after state restoration
+    int numChannels = juce::jmax(1, getTotalNumOutputChannels());
+
+    if (currentSampleRate > 0.0)
+    {
+        if (optoCompressor)
+            optoCompressor->prepare(currentSampleRate, numChannels);
+        if (fetCompressor)
+            fetCompressor->prepare(currentSampleRate, numChannels);
+        if (vcaCompressor)
+            vcaCompressor->prepare(currentSampleRate, numChannels);
+        if (busCompressor)
+            busCompressor->prepare(currentSampleRate, numChannels, currentBlockSize);
+        if (studioFetCompressor)
+            studioFetCompressor->prepare(currentSampleRate, numChannels);
+        if (studioVcaCompressor)
+            studioVcaCompressor->prepare(currentSampleRate, numChannels);
+        if (digitalCompressor)
+            digitalCompressor->prepare(currentSampleRate, numChannels, currentBlockSize);
+        if (multibandCompressor)
+            multibandCompressor->prepare(currentSampleRate, numChannels, currentBlockSize);
+
+        // Reset sidechain and other processors
+        if (sidechainFilter)
+            sidechainFilter->prepare(currentSampleRate, numChannels);
+        if (transientShaper)
+            transientShaper->prepare(currentSampleRate, numChannels);
+        if (truePeakDetector)
+            truePeakDetector->prepare(currentSampleRate, numChannels, currentBlockSize);
+    }
+
+    // Reset GR metering state
+    grDelayBuffer.fill(0.0f);
+    grDelayWritePos.store(0, std::memory_order_relaxed);
 }
 
 //==============================================================================

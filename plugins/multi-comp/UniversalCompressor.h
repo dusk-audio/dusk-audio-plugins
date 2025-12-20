@@ -75,6 +75,9 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    // Reset DSP state (called after setStateInformation to ensure clean audio output)
+    void resetDSPState();
+
     // Metering - use relaxed memory ordering for UI thread reads
     float getInputLevel() const { return inputMeter.load(std::memory_order_relaxed); }
     float getOutputLevel() const { return outputMeter.load(std::memory_order_relaxed); }
