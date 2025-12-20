@@ -330,16 +330,17 @@ private:
 };
 
 //==============================================================================
-// Custom Crossover Handle Component - Subtle vertical line with small grab handle
+// Crossover Fader Component - A vertical fader positioned between bands
+// Drag up to increase frequency, drag down to decrease
 //==============================================================================
-class CrossoverHandle : public juce::Component
+class CrossoverFader : public juce::Component
 {
 public:
-    CrossoverHandle(juce::Slider& slider, int index)
-        : linkedSlider(slider), handleIndex(index)
+    CrossoverFader(juce::Slider& slider, int index, juce::Colour leftColor, juce::Colour rightColor)
+        : linkedSlider(slider), handleIndex(index), leftBandColor(leftColor), rightBandColor(rightColor)
     {
-        setMouseCursor(juce::MouseCursor::UpDownResizeCursor);  // Vertical drag cursor
-        setOpaque(false);  // Transparent background - very important!
+        setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+        setOpaque(false);
     }
 
     void paint(juce::Graphics& g) override
@@ -347,49 +348,87 @@ public:
         auto bounds = getLocalBounds().toFloat();
         float centreX = bounds.getCentreX();
 
-        // DO NOT fill background - must be transparent
+        // Fader track area - aligned with meter bounds
+        float trackWidth = 8.0f;
+        float trackX = centreX - trackWidth / 2;
+        float trackTop = bounds.getY();  // Flush with top of meters
+        float trackBottom = bounds.getBottom() - 22.0f;  // Leave room for frequency label below meters
+        float trackHeight = trackBottom - trackTop;
 
-        // Subtle vertical divider line
-        float lineAlpha = (isHovered || isDragging) ? 0.6f : 0.3f;
-        g.setColour(juce::Colours::white.withAlpha(lineAlpha));
-        g.drawVerticalLine(static_cast<int>(centreX), 28.0f, bounds.getHeight());
+        // Draw vertical track background
+        g.setColour(juce::Colour(0xff1a1a1a));
+        g.fillRoundedRectangle(trackX - 2, trackTop, trackWidth + 4, trackHeight, 4.0f);
 
-        // Draw up/down arrows at the top to indicate vertical drag
-        float arrowCenterY = 14.0f;
-        float arrowWidth = 8.0f;
-        float arrowHeight = 5.0f;
-        float arrowSpacing = 4.0f;
+        // Track gradient showing frequency direction
+        juce::ColourGradient trackGrad(
+            rightBandColor.withAlpha(0.3f), trackX, trackTop,
+            leftBandColor.withAlpha(0.3f), trackX, trackBottom, false);
+        g.setGradientFill(trackGrad);
+        g.fillRoundedRectangle(trackX, trackTop + 2, trackWidth, trackHeight - 4, 3.0f);
 
-        juce::Colour handleColor = (isHovered || isDragging) ? juce::Colour(0xff00d4ff) : juce::Colours::white.withAlpha(0.8f);
+        // Calculate thumb position based on frequency (logarithmic scale)
+        double freq = linkedSlider.getValue();
+        double minFreq = juce::jmax(0.1, linkedSlider.getMinimum());
+        double maxFreq = juce::jmax(minFreq + 0.1, linkedSlider.getMaximum());
+        double clampedFreq = juce::jlimit(minFreq, maxFreq, freq);
+        double logMin = std::log(minFreq);
+        double logMax = std::log(maxFreq);
+        double logFreq = std::log(clampedFreq);
+        float normalizedPos = static_cast<float>((logFreq - logMin) / (logMax - logMin));
 
-        // Glow effect when hovered/dragging
-        if (isHovered || isDragging)
+        // Invert: higher frequency = higher position (lower Y)
+        float thumbY = trackBottom - normalizedPos * trackHeight;        // Draw thumb/handle
+        float thumbWidth = 26.0f;
+        float thumbHeight = 18.0f;
+        float thumbX = centreX - thumbWidth / 2;
+        float thumbYCentered = thumbY - thumbHeight / 2;
+
+        // Thumb shadow
+        g.setColour(juce::Colours::black.withAlpha(0.4f));
+        g.fillRoundedRectangle(thumbX + 1, thumbYCentered + 2, thumbWidth, thumbHeight, 4.0f);
+
+        // Thumb background with gradient
+        juce::Colour thumbColor = (isHovered || isDragging) ? juce::Colour(0xff00d4ff) : juce::Colour(0xff404050);
+        juce::ColourGradient thumbGrad(
+            thumbColor.brighter(0.3f), thumbX, thumbYCentered,
+            thumbColor.darker(0.2f), thumbX, thumbYCentered + thumbHeight, false);
+        g.setGradientFill(thumbGrad);
+        g.fillRoundedRectangle(thumbX, thumbYCentered, thumbWidth, thumbHeight, 4.0f);
+
+        // Thumb grip lines
+        g.setColour(juce::Colours::white.withAlpha(0.5f));
+        for (int i = -1; i <= 1; ++i)
         {
-            g.setColour(juce::Colour(0xff00d4ff).withAlpha(0.3f));
-            g.fillRoundedRectangle(centreX - 8.0f, arrowCenterY - 10.0f, 16.0f, 20.0f, 4.0f);
+            float lineY = thumbYCentered + thumbHeight / 2 + i * 4.0f;
+            g.drawHorizontalLine(static_cast<int>(lineY), thumbX + 6, thumbX + thumbWidth - 6);
         }
 
-        // Up arrow (triangle pointing up)
-        juce::Path upArrow;
-        upArrow.addTriangle(
-            centreX, arrowCenterY - arrowSpacing - arrowHeight,  // Top point
-            centreX - arrowWidth / 2, arrowCenterY - arrowSpacing,  // Bottom left
-            centreX + arrowWidth / 2, arrowCenterY - arrowSpacing   // Bottom right
-        );
-        g.setColour(handleColor);
-        g.fillPath(upArrow);
+        // Thumb border
+        g.setColour((isHovered || isDragging) ? juce::Colour(0xff00d4ff) : juce::Colours::white.withAlpha(0.3f));
+        g.drawRoundedRectangle(thumbX, thumbYCentered, thumbWidth, thumbHeight, 4.0f, 1.5f);
 
-        // Down arrow (triangle pointing down)
-        juce::Path downArrow;
-        downArrow.addTriangle(
-            centreX, arrowCenterY + arrowSpacing + arrowHeight,  // Bottom point
-            centreX - arrowWidth / 2, arrowCenterY + arrowSpacing,  // Top left
-            centreX + arrowWidth / 2, arrowCenterY + arrowSpacing   // Top right
-        );
-        g.fillPath(downArrow);
+        // Draw arrows on either side of track to indicate drag direction
+        if (isHovered || isDragging)
+        {
+            g.setColour(juce::Colour(0xff00d4ff).withAlpha(0.8f));
 
-        // Small horizontal line between arrows
-        g.fillRect(centreX - 3.0f, arrowCenterY - 1.0f, 6.0f, 2.0f);
+            // Up arrow (higher freq)
+            juce::Path upArrow;
+            upArrow.addTriangle(centreX, trackTop - 2, centreX - 5, trackTop + 5, centreX + 5, trackTop + 5);
+            g.fillPath(upArrow);
+
+            // Down arrow (lower freq)
+            juce::Path downArrow;
+            downArrow.addTriangle(centreX, trackBottom + 2, centreX - 5, trackBottom - 5, centreX + 5, trackBottom - 5);
+            g.fillPath(downArrow);
+        }
+
+        // Frequency label at the bottom of the component (below the GR meter values)
+        g.setColour((isHovered || isDragging) ? juce::Colour(0xff00d4ff) : juce::Colours::white.withAlpha(0.9f));
+        g.setFont(juce::FontOptions(10.0f).withStyle("Bold"));
+        juce::String freqText = formatFrequency(static_cast<float>(freq));
+        g.drawText(freqText, 0, static_cast<int>(bounds.getBottom() - 18), static_cast<int>(bounds.getWidth()), 16,
+                   juce::Justification::centred);
     }
 
     void mouseEnter(const juce::MouseEvent&) override
@@ -407,43 +446,41 @@ public:
     void mouseDown(const juce::MouseEvent& e) override
     {
         isDragging = true;
-        lastMouseY = e.getScreenY();  // Track Y for vertical dragging
+        lastMouseY = e.y;
         repaint();
-
-        // Notify parent to repaint frequency labels
-        if (auto* parent = getParentComponent())
-            parent->repaint();
     }
 
     void mouseDrag(const juce::MouseEvent& e) override
     {
         if (isDragging)
         {
-            // Vertical drag only: up = higher frequency, down = lower frequency
-            int currentY = e.getScreenY();
-            int deltaY = lastMouseY - currentY;  // Negative when moving down
-            lastMouseY = currentY;
+            // Calculate track dimensions
+            auto bounds = getLocalBounds().toFloat();
+            float trackTop = bounds.getY() + 4.0f;
+            float trackBottom = bounds.getBottom() - 22.0f;
+            float trackHeight = trackBottom - trackTop;
+            // Calculate delta in pixels
+            int deltaY = lastMouseY - e.y;  // Positive when dragging up
 
             if (deltaY != 0)
             {
                 // Use logarithmic scaling for frequency changes
-                // Small movements for fine control, larger range with shift held
-                double currentValue = linkedSlider.getValue();
-                double logCurrent = std::log(currentValue);
                 double logMin = std::log(linkedSlider.getMinimum());
                 double logMax = std::log(linkedSlider.getMaximum());
                 double logRange = logMax - logMin;
 
-                // Sensitivity: ~300 pixels of drag for full range
-                double sensitivity = logRange / 300.0;
+                // Convert pixel delta to log frequency delta
+                // Dragging up increases frequency, dragging down decreases
+                double sensitivity = logRange / trackHeight;
                 double logDelta = deltaY * sensitivity;
 
-                double newLogValue = juce::jlimit(logMin, logMax, logCurrent + logDelta);
+                double currentLogValue = std::log(linkedSlider.getValue());
+                double newLogValue = juce::jlimit(logMin, logMax, currentLogValue + logDelta);
                 double newValue = std::exp(newLogValue);
 
                 linkedSlider.setValue(newValue);
+                lastMouseY = e.y;
 
-                // Notify parent to repaint and reposition handles
                 if (auto* parent = getParentComponent())
                     parent->repaint();
             }
@@ -454,9 +491,13 @@ public:
     {
         isDragging = false;
         repaint();
+    }
 
-        if (auto* parent = getParentComponent())
-            parent->repaint();
+    void mouseDoubleClick(const juce::MouseEvent&) override
+    {
+        // Reset to default value on double-click
+        linkedSlider.setValue(linkedSlider.getDoubleClickReturnValue());
+        repaint();
     }
 
     bool isDraggingHandle() const { return isDragging; }
@@ -466,9 +507,19 @@ public:
 private:
     juce::Slider& linkedSlider;
     int handleIndex;
+    juce::Colour leftBandColor;
+    juce::Colour rightBandColor;
     bool isHovered = false;
     bool isDragging = false;
     int lastMouseY = 0;
+
+    static juce::String formatFrequency(float freq)
+    {
+        if (freq >= 1000.0f)
+            return juce::String(freq / 1000.0f, 1) + " kHz";
+        else
+            return juce::String(static_cast<int>(freq)) + " Hz";
+    }
 };
 
 //==============================================================================
@@ -511,17 +562,19 @@ public:
         }
         bandButtons[0].setToggleState(true, juce::dontSendNotification);
 
-        // Hidden crossover sliders (we use custom handles for interaction)
+        // Hidden crossover sliders (we use custom faders for interaction)
         for (int i = 0; i < 3; ++i)
         {
             crossoverSliders[i].setSliderStyle(juce::Slider::LinearHorizontal);
             crossoverSliders[i].setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-            crossoverSliders[i].setVisible(false);  // Hidden - we draw custom handles
+            crossoverSliders[i].setVisible(false);  // Hidden - we draw custom faders
             addChildComponent(crossoverSliders[i]);
 
-            // Create custom crossover handle
-            crossoverHandles[i] = std::make_unique<CrossoverHandle>(crossoverSliders[i], i);
-            addAndMakeVisible(crossoverHandles[i].get());
+            // Create custom crossover fader between bands i and i+1
+            juce::Colour leftColor = juce::Colour(bandColors[i]);
+            juce::Colour rightColor = juce::Colour(bandColors[i + 1]);
+            crossoverFaders[i] = std::make_unique<CrossoverFader>(crossoverSliders[i], i, leftColor, rightColor);
+            addAndMakeVisible(crossoverFaders[i].get());
         }
 
         // Create crossover attachments
@@ -703,13 +756,15 @@ public:
         }
 
         // Store meter section info for handle positioning
+        // Use the actual meter bounds to align faders with meters
         crossoverAreaLeft = topSection.getX();
         crossoverAreaWidth = topSection.getWidth();
-        crossoverHandleTop = topSection.getY();
-        crossoverHandleHeight = topSection.getHeight() - static_cast<int>(22 * scaleFactor);
+        // Align fader top with the top of the GR meters (after buttons + gap)
+        crossoverHandleTop = bandGRBounds[0].getY();
+        crossoverHandleHeight = bandGRBounds[0].getHeight();
 
-        // Position crossover handles based on frequency values (logarithmic mapping)
-        updateCrossoverHandlePositions();
+        // Position crossover faders between bands
+        updateCrossoverFaderPositions();
 
         // === Layout knobs ===
         const int numKnobs = 7;
@@ -758,8 +813,7 @@ public:
             drawBandMeter(g, i);
         }
 
-        // Draw crossover frequency labels (below handles)
-        drawCrossoverLabels(g);
+        // Note: Crossover faders now draw their own frequency labels
 
         // Draw selected band indicator - tab style with color underline
         drawBandIndicator(g);
@@ -767,14 +821,14 @@ public:
 
     void timerCallback() override
     {
-        // Update crossover handle positions whenever values change
-        updateCrossoverHandlePositions();
+        // Update crossover fader positions whenever values change
+        updateCrossoverFaderPositions();
 
-        // Repaint if any handle is being dragged
+        // Repaint if any fader is being dragged
         bool anyDragging = false;
         for (int i = 0; i < 3; ++i)
         {
-            if (crossoverHandles[i] && crossoverHandles[i]->isDraggingHandle())
+            if (crossoverFaders[i] && crossoverFaders[i]->isDraggingHandle())
             {
                 anyDragging = true;
                 break;
@@ -811,7 +865,7 @@ private:
 
     // Crossover sliders (hidden, used for parameter attachment)
     std::array<juce::Slider, 3> crossoverSliders;
-    std::array<std::unique_ptr<CrossoverHandle>, 3> crossoverHandles;
+    std::array<std::unique_ptr<CrossoverFader>, 3> crossoverFaders;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 3> crossoverAttachments;
 
     // Per-band controls
@@ -847,26 +901,29 @@ private:
         return crossoverAreaLeft + static_cast<int>(normalized * crossoverAreaWidth);
     }
 
-    // Update crossover handle positions based on current frequency values
-    void updateCrossoverHandlePositions()
+    // Update crossover fader positions - placed between bands
+    void updateCrossoverFaderPositions()
     {
         if (crossoverAreaWidth <= 0) return;
 
-        int handleWidth = static_cast<int>(30 * scaleFactor);
+        // Faders are positioned between the band meters
+        int bandWidth = meterSectionBounds.getWidth() / 4;
+        int faderWidth = static_cast<int>(40 * scaleFactor);
+        // Extend fader height to include space for frequency label below meters
+        int faderHeight = crossoverHandleHeight + static_cast<int>(22 * scaleFactor);
 
         for (int i = 0; i < 3; ++i)
         {
-            if (crossoverHandles[i])
+            if (crossoverFaders[i])
             {
-                double freq = crossoverSliders[i].getValue();
-                float normalized = frequencyToNormalizedPosition(freq);
-                int xPos = normalizedPositionToPixelX(normalized);
+                // Position at the boundary between band i and band i+1
+                int boundaryX = meterSectionBounds.getX() + (i + 1) * bandWidth;
 
-                crossoverHandles[i]->setBounds(
-                    xPos - handleWidth / 2,
+                crossoverFaders[i]->setBounds(
+                    boundaryX - faderWidth / 2,
                     crossoverHandleTop,
-                    handleWidth,
-                    crossoverHandleHeight
+                    faderWidth,
+                    faderHeight
                 );
             }
         }
@@ -1035,39 +1092,6 @@ private:
                    valueBounds.translated(1, 1), juce::Justification::centred);
         g.setColour(juce::Colours::white);
         g.drawText(juce::String(bandGR[bandIndex], 1) + " dB", valueBounds, juce::Justification::centred);
-    }
-
-    void drawCrossoverLabels(juce::Graphics& g)
-    {
-        g.setFont(juce::FontOptions(10.0f * scaleFactor).withStyle("Bold"));
-
-        for (int i = 0; i < 3; ++i)
-        {
-            auto handleBounds = crossoverHandles[i]->getBounds();
-            float freq = static_cast<float>(crossoverSliders[i].getValue());
-            juce::String freqText = formatFrequency(freq);
-
-            bool isDragging = crossoverHandles[i]->isDraggingHandle();
-
-            // Draw frequency label below handle
-            int labelY = handleBounds.getBottom() + 2;
-            int labelWidth = static_cast<int>(60 * scaleFactor);
-            int labelX = handleBounds.getCentreX() - labelWidth / 2;
-
-            // Background pill when dragging
-            if (isDragging)
-            {
-                auto labelBounds = juce::Rectangle<int>(labelX - 4, labelY - 2, labelWidth + 8, static_cast<int>(18 * scaleFactor));
-                g.setColour(juce::Colour(0xff00d4ff).withAlpha(0.2f));
-                g.fillRoundedRectangle(labelBounds.toFloat(), 3.0f);
-                g.setColour(juce::Colour(0xff00d4ff));
-                g.drawRoundedRectangle(labelBounds.toFloat(), 3.0f, 1.0f);
-            }
-
-            g.setColour(isDragging ? juce::Colour(0xff00d4ff) : juce::Colours::white.withAlpha(0.9f));
-            g.drawText(freqText, labelX, labelY, labelWidth, static_cast<int>(16 * scaleFactor),
-                      juce::Justification::centred);
-        }
     }
 
     void drawBandIndicator(juce::Graphics& g)

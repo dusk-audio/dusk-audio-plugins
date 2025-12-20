@@ -5065,7 +5065,13 @@ const std::vector<UniversalCompressor::PresetInfo>& UniversalCompressor::getPres
 
 int UniversalCompressor::getNumPrograms()
 {
-    return getNumCachedPresets();
+    // Return 1 to disable VST3's synthetic Program parameter.
+    // This is necessary because VST3 program changes interfere with state restoration:
+    // when state is restored, the Program parameter may trigger setCurrentProgram which
+    // would override the just-restored parameter values with preset defaults.
+    // Users can still access all presets through the plugin's built-in preset menu,
+    // and mode switching is available via the "mode" parameter for automation.
+    return 1;
 }
 
 int UniversalCompressor::getCurrentProgram()
@@ -5083,15 +5089,19 @@ const juce::String UniversalCompressor::getProgramName(int index)
 
 void UniversalCompressor::setCurrentProgram(int index)
 {
+    // Since getNumPrograms() returns 1, this function won't be called by the VST3 wrapper.
+    // It's only used internally for UI preset selection.
     const auto& presets = getCachedPresets();
     if (index < 0 || index >= static_cast<int>(presets.size()))
         return;
 
-    currentPresetIndex = index;
+    if (index == currentPresetIndex)
+        return;
 
-    // Use the unified preset system from CompressorPresets.h
-    // This applies all parameters correctly for each mode
+    // Apply the preset parameters first, then update the index
+    // This ensures state consistency if applyPreset encounters any issues
     CompressorPresets::applyPreset(parameters, presets[static_cast<size_t>(index)]);
+    currentPresetIndex = index;
 }
 
 // LV2 inline display removed - JUCE doesn't natively support this extension
