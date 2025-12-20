@@ -73,9 +73,8 @@
  #define JucePlugin_EditorRequiresKeyboardFocus  0
 #endif
 
-#ifndef  JucePlugin_Version
- #define JucePlugin_Version                1.0.0
-#endif
+// Note: JucePlugin_Version removed - use JucePlugin_VersionCode (numeric) or JucePlugin_VersionString (string) instead
+// The unquoted 1.0.0 tokenizes incorrectly in the preprocessor
 
 #ifndef  JucePlugin_VersionCode
  #define JucePlugin_VersionCode            0x10000

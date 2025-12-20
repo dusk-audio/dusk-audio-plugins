@@ -9,6 +9,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <cmath>
 #include "UniversalCompressor.h"
 
 //==============================================================================
@@ -212,6 +213,14 @@ public:
         resized();
     }
 
+    void setAutoGainEnabled(bool enabled)
+    {
+        const float disabledAlpha = 0.4f;
+        const float enabledAlpha = 1.0f;
+        outputSlider.setEnabled(!enabled);
+        outputSlider.setAlpha(enabled ? disabledAlpha : enabledAlpha);
+    }
+
     void resized() override
     {
         auto area = getLocalBounds();
@@ -321,29 +330,198 @@ private:
 };
 
 //==============================================================================
-// Multiband Compressor Panel
+// Custom Crossover Handle Component - Subtle vertical line with small grab handle
 //==============================================================================
-class MultibandCompressorPanel : public juce::Component
+class CrossoverHandle : public juce::Component
 {
 public:
+    CrossoverHandle(juce::Slider& slider, int index)
+        : linkedSlider(slider), handleIndex(index)
+    {
+        setMouseCursor(juce::MouseCursor::UpDownResizeCursor);  // Vertical drag cursor
+        setOpaque(false);  // Transparent background - very important!
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().toFloat();
+        float centreX = bounds.getCentreX();
+
+        // DO NOT fill background - must be transparent
+
+        // Subtle vertical divider line
+        float lineAlpha = (isHovered || isDragging) ? 0.6f : 0.3f;
+        g.setColour(juce::Colours::white.withAlpha(lineAlpha));
+        g.drawVerticalLine(static_cast<int>(centreX), 28.0f, bounds.getHeight());
+
+        // Draw up/down arrows at the top to indicate vertical drag
+        float arrowCenterY = 14.0f;
+        float arrowWidth = 8.0f;
+        float arrowHeight = 5.0f;
+        float arrowSpacing = 4.0f;
+
+        juce::Colour handleColor = (isHovered || isDragging) ? juce::Colour(0xff00d4ff) : juce::Colours::white.withAlpha(0.8f);
+
+        // Glow effect when hovered/dragging
+        if (isHovered || isDragging)
+        {
+            g.setColour(juce::Colour(0xff00d4ff).withAlpha(0.3f));
+            g.fillRoundedRectangle(centreX - 8.0f, arrowCenterY - 10.0f, 16.0f, 20.0f, 4.0f);
+        }
+
+        // Up arrow (triangle pointing up)
+        juce::Path upArrow;
+        upArrow.addTriangle(
+            centreX, arrowCenterY - arrowSpacing - arrowHeight,  // Top point
+            centreX - arrowWidth / 2, arrowCenterY - arrowSpacing,  // Bottom left
+            centreX + arrowWidth / 2, arrowCenterY - arrowSpacing   // Bottom right
+        );
+        g.setColour(handleColor);
+        g.fillPath(upArrow);
+
+        // Down arrow (triangle pointing down)
+        juce::Path downArrow;
+        downArrow.addTriangle(
+            centreX, arrowCenterY + arrowSpacing + arrowHeight,  // Bottom point
+            centreX - arrowWidth / 2, arrowCenterY + arrowSpacing,  // Top left
+            centreX + arrowWidth / 2, arrowCenterY + arrowSpacing   // Top right
+        );
+        g.fillPath(downArrow);
+
+        // Small horizontal line between arrows
+        g.fillRect(centreX - 3.0f, arrowCenterY - 1.0f, 6.0f, 2.0f);
+    }
+
+    void mouseEnter(const juce::MouseEvent&) override
+    {
+        isHovered = true;
+        repaint();
+    }
+
+    void mouseExit(const juce::MouseEvent&) override
+    {
+        isHovered = false;
+        repaint();
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        isDragging = true;
+        lastMouseY = e.getScreenY();  // Track Y for vertical dragging
+        repaint();
+
+        // Notify parent to repaint frequency labels
+        if (auto* parent = getParentComponent())
+            parent->repaint();
+    }
+
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        if (isDragging)
+        {
+            // Vertical drag only: up = higher frequency, down = lower frequency
+            int currentY = e.getScreenY();
+            int deltaY = lastMouseY - currentY;  // Negative when moving down
+            lastMouseY = currentY;
+
+            if (deltaY != 0)
+            {
+                // Use logarithmic scaling for frequency changes
+                // Small movements for fine control, larger range with shift held
+                double currentValue = linkedSlider.getValue();
+                double logCurrent = std::log(currentValue);
+                double logMin = std::log(linkedSlider.getMinimum());
+                double logMax = std::log(linkedSlider.getMaximum());
+                double logRange = logMax - logMin;
+
+                // Sensitivity: ~300 pixels of drag for full range
+                double sensitivity = logRange / 300.0;
+                double logDelta = deltaY * sensitivity;
+
+                double newLogValue = juce::jlimit(logMin, logMax, logCurrent + logDelta);
+                double newValue = std::exp(newLogValue);
+
+                linkedSlider.setValue(newValue);
+
+                // Notify parent to repaint and reposition handles
+                if (auto* parent = getParentComponent())
+                    parent->repaint();
+            }
+        }
+    }
+
+    void mouseUp(const juce::MouseEvent&) override
+    {
+        isDragging = false;
+        repaint();
+
+        if (auto* parent = getParentComponent())
+            parent->repaint();
+    }
+
+    bool isDraggingHandle() const { return isDragging; }
+    double getCurrentValue() const { return linkedSlider.getValue(); }
+    int getHandleIndex() const { return handleIndex; }
+
+private:
+    juce::Slider& linkedSlider;
+    int handleIndex;
+    bool isHovered = false;
+    bool isDragging = false;
+    int lastMouseY = 0;
+};
+
+//==============================================================================
+// Multiband Compressor Panel - Modern digital design inspired by FabFilter Pro-MB
+//==============================================================================
+class MultibandCompressorPanel : public juce::Component, private juce::Timer
+{
+public:
+    // Band colors (matching modern multiband compressor aesthetics)
+    static constexpr juce::uint32 bandColors[4] = {
+        0xffff6b6b,  // Low - Red/coral
+        0xffffd93d,  // Low-Mid - Yellow/gold
+        0xff6bcb77,  // High-Mid - Green
+        0xff4d96ff   // High - Blue
+    };
+
     MultibandCompressorPanel(juce::AudioProcessorValueTreeState& apvts)
         : parameters(apvts)
     {
-        // Band selector
-        addAndMakeVisible(bandSelector);
-        bandSelector.addItem("Low", 1);
-        bandSelector.addItem("Low-Mid", 2);
-        bandSelector.addItem("High-Mid", 3);
-        bandSelector.addItem("High", 4);
-        bandSelector.setSelectedId(1);
-        bandSelector.onChange = [this] { updateBandControls(); };
+        // Band selector buttons with hover effect
+        for (int i = 0; i < 4; ++i)
+        {
+            bandButtons[i].setButtonText(getBandName(i));
+            bandButtons[i].setClickingTogglesState(true);
+            bandButtons[i].setRadioGroupId(1001);
+            bandButtons[i].setColour(juce::TextButton::buttonColourId, juce::Colour(bandColors[i]).withAlpha(0.3f));
+            bandButtons[i].setColour(juce::TextButton::buttonOnColourId, juce::Colour(bandColors[i]));
+            bandButtons[i].onClick = [this, i] { selectBand(i); };
+            addAndMakeVisible(bandButtons[i]);
 
-        // Crossover frequency sliders
+            // Per-band solo button (S) - improved visibility with illuminated state
+            bandSoloButtons[i].setButtonText("S");
+            bandSoloButtons[i].setClickingTogglesState(true);
+            bandSoloButtons[i].setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
+            bandSoloButtons[i].setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffffcc00));
+            bandSoloButtons[i].setColour(juce::TextButton::textColourOffId, juce::Colour(0xffaaaaaa));
+            bandSoloButtons[i].setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+            bandSoloButtons[i].setTooltip("Solo " + getBandName(i) + " band");
+            addAndMakeVisible(bandSoloButtons[i]);
+        }
+        bandButtons[0].setToggleState(true, juce::dontSendNotification);
+
+        // Hidden crossover sliders (we use custom handles for interaction)
         for (int i = 0; i < 3; ++i)
         {
-            crossoverSliders[i].setSliderStyle(juce::Slider::LinearVertical);
-            crossoverSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
-            addAndMakeVisible(crossoverSliders[i]);
+            crossoverSliders[i].setSliderStyle(juce::Slider::LinearHorizontal);
+            crossoverSliders[i].setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+            crossoverSliders[i].setVisible(false);  // Hidden - we draw custom handles
+            addChildComponent(crossoverSliders[i]);
+
+            // Create custom crossover handle
+            crossoverHandles[i] = std::make_unique<CrossoverHandle>(crossoverSliders[i], i);
+            addAndMakeVisible(crossoverHandles[i].get());
         }
 
         // Create crossover attachments
@@ -354,42 +532,34 @@ public:
         crossoverAttachments[2] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, "mb_crossover_3", crossoverSliders[2]);
 
-        // Per-band controls
-        addAndMakeVisible(bandThreshold);
-        bandThreshold.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandThreshold.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+        // Per-band controls (5 knobs) with double-click to reset
+        auto setupKnob = [this](juce::Slider& slider, const juce::String& suffix, double defaultVal) {
+            slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+            slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
+            if (suffix.isNotEmpty())
+                slider.setTextValueSuffix(suffix);
+            slider.setDoubleClickReturnValue(true, defaultVal);
+            slider.setPopupDisplayEnabled(true, true, this);
+            addAndMakeVisible(slider);
+        };
 
-        addAndMakeVisible(bandRatio);
-        bandRatio.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandRatio.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+        setupKnob(bandThreshold, " dB", -20.0);
+        setupKnob(bandRatio, ":1", 4.0);
+        setupKnob(bandAttack, " ms", 10.0);
+        setupKnob(bandRelease, " ms", 100.0);
+        setupKnob(bandMakeup, " dB", 0.0);
 
-        addAndMakeVisible(bandAttack);
-        bandAttack.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandAttack.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-
-        addAndMakeVisible(bandRelease);
-        bandRelease.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandRelease.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-
-        addAndMakeVisible(bandMakeup);
-        bandMakeup.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        bandMakeup.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-
-        // Band bypass/solo
-        addAndMakeVisible(bandBypass);
-        bandBypass.setButtonText("Bypass");
-
-        addAndMakeVisible(bandSolo);
-        bandSolo.setButtonText("Solo");
+        // Per-band solo attachments
+        const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
+        for (int i = 0; i < 4; ++i)
+        {
+            bandSoloAttachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+                parameters, "mb_" + bandNames[i] + "_solo", bandSoloButtons[i]);
+        }
 
         // Global controls
-        addAndMakeVisible(globalOutput);
-        globalOutput.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        globalOutput.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
-
-        addAndMakeVisible(globalMix);
-        globalMix.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        globalMix.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+        setupKnob(globalOutput, " dB", 0.0);
+        setupKnob(globalMix, "%", 100.0);
 
         // Global output and mix attachments
         outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -398,140 +568,257 @@ public:
             parameters, "mb_mix", globalMix);
 
         // Labels
-        for (int i = 0; i < 5; ++i)
+        const char* labelTexts[] = {"Threshold", "Ratio", "Attack", "Release", "Makeup", "Output", "Mix"};
+        for (int i = 0; i < 7; ++i)
         {
-            bandLabels[i].setJustificationType(juce::Justification::centred);
-            bandLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
-            addAndMakeVisible(bandLabels[i]);
+            knobLabels[i].setText(labelTexts[i], juce::dontSendNotification);
+            knobLabels[i].setJustificationType(juce::Justification::centred);
+            knobLabels[i].setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
+            knobLabels[i].setFont(juce::FontOptions(11.0f));
+            addAndMakeVisible(knobLabels[i]);
         }
-        bandLabels[0].setText("Threshold", juce::dontSendNotification);
-        bandLabels[1].setText("Ratio", juce::dontSendNotification);
-        bandLabels[2].setText("Attack", juce::dontSendNotification);
-        bandLabels[3].setText("Release", juce::dontSendNotification);
-        bandLabels[4].setText("Makeup", juce::dontSendNotification);
-
-        outputLabel.setText("Output", juce::dontSendNotification);
-        outputLabel.setJustificationType(juce::Justification::centred);
-        outputLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-        addAndMakeVisible(outputLabel);
-
-        mixLabel.setText("Mix", juce::dontSendNotification);
-        mixLabel.setJustificationType(juce::Justification::centred);
-        mixLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-        addAndMakeVisible(mixLabel);
 
         // Initialize with first band
-        updateBandControls();
+        selectBand(0);
+
+        // Start timer for crossover label updates
+        startTimerHz(30);
     }
 
-    void setScaleFactor(float scale) { scaleFactor = scale; }
+    ~MultibandCompressorPanel() override
+    {
+        stopTimer();
+    }
+
+    void setScaleFactor(float scale)
+    {
+        if (std::isnan(scale) || scale <= 0.0f)
+        {
+            jassertfalse;
+            return;
+        }
+        scaleFactor = scale;
+        resized();
+    }
+
+    void setAutoGainEnabled(bool enabled)
+    {
+        const float alpha = enabled ? 0.4f : 1.0f;
+        globalOutput.setEnabled(!enabled);
+        globalOutput.setAlpha(alpha);
+    }
+
+    // Called from timer to update GR meters with smooth ballistics
+    void setBandGainReduction(int band, float grDb)
+    {
+        if (band >= 0 && band < 4)
+        {
+            // Smooth ballistics - fast attack, slower release
+            float targetGR = grDb;
+            float currentGR = smoothedBandGR[band];
+
+            if (targetGR < currentGR)
+            {
+                // Attack - fast
+                smoothedBandGR[band] = currentGR + (targetGR - currentGR) * 0.5f;
+            }
+            else
+            {
+                // Release - slower
+                smoothedBandGR[band] = currentGR + (targetGR - currentGR) * 0.15f;
+            }
+
+            // Update peak hold
+            if (-smoothedBandGR[band] > -peakHoldGR[band])
+            {
+                peakHoldGR[band] = smoothedBandGR[band];
+                peakHoldTime[band] = 30;  // Hold for ~1 second at 30fps
+            }
+            else if (peakHoldTime[band] > 0)
+            {
+                peakHoldTime[band]--;
+            }
+            else
+            {
+                // Decay peak hold
+                peakHoldGR[band] = peakHoldGR[band] * 0.95f;
+            }
+
+            bandGR[band] = smoothedBandGR[band];
+            repaint();
+        }
+    }
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced(static_cast<int>(10 * scaleFactor));
+        auto area = getLocalBounds();
+        const int margin = static_cast<int>(5 * scaleFactor);
 
-        // Top: band selector
-        auto topBar = area.removeFromTop(static_cast<int>(35 * scaleFactor));
-        bandSelector.setBounds(topBar.removeFromLeft(static_cast<int>(150 * scaleFactor)));
+        // === BOTTOM SECTION: Knobs (reserve space first) ===
+        const int knobSize = static_cast<int>(55 * scaleFactor);
+        const int labelHeight = static_cast<int>(16 * scaleFactor);
+        const int knobSectionHeight = labelHeight + knobSize + static_cast<int>(25 * scaleFactor);
+        auto knobSection = area.removeFromBottom(knobSectionHeight);
 
-        // Crossover section on the left
-        auto crossoverArea = area.removeFromLeft(static_cast<int>(140 * scaleFactor));
-        auto sliderHeight = crossoverArea.getHeight() - static_cast<int>(30 * scaleFactor);
-        auto sliderWidth = static_cast<int>(40 * scaleFactor);
+        // Reserve space for the band indicator at the bottom
+        area.removeFromBottom(static_cast<int>(28 * scaleFactor));
 
-        for (int i = 0; i < 3; ++i)
+        // === TOP SECTION: Band visualization with GR meters ===
+        auto topSection = area;
+
+        // Reserve space for dB scale on left side
+        const int scaleWidth = static_cast<int>(30 * scaleFactor);
+        dbScaleBounds = topSection.removeFromLeft(scaleWidth);
+
+        topSection.reduce(margin, margin);
+
+        // Add "GAIN REDUCTION" label area at top
+        topSection.removeFromTop(static_cast<int>(18 * scaleFactor));
+        topSection.removeFromTop(static_cast<int>(4 * scaleFactor));
+
+        // Store meter section bounds for drawing
+        meterSectionBounds = topSection;
+
+        // Calculate band widths
+        int bandWidth = topSection.getWidth() / 4;
+        for (int i = 0; i < 4; ++i)
         {
-            crossoverSliders[i].setBounds(
-                static_cast<int>(10 * scaleFactor) + i * static_cast<int>(45 * scaleFactor),
-                static_cast<int>(20 * scaleFactor), sliderWidth, sliderHeight);
+            auto bandArea = topSection.withX(topSection.getX() + i * bandWidth).withWidth(bandWidth).reduced(3, 0);
+
+            // Top row: Band button and Solo button side by side
+            auto buttonRow = bandArea.removeFromTop(static_cast<int>(26 * scaleFactor));
+            int soloWidth = static_cast<int>(26 * scaleFactor);
+            bandSoloButtons[i].setBounds(buttonRow.removeFromRight(soloWidth));
+            buttonRow.removeFromRight(4);
+            bandButtons[i].setBounds(buttonRow);
+
+            // Small gap after buttons
+            bandArea.removeFromTop(static_cast<int>(6 * scaleFactor));
+
+            // Reserve space for crossover frequency label at bottom
+            bandArea.removeFromBottom(static_cast<int>(22 * scaleFactor));
+
+            // GR meter area fills the remaining space
+            bandGRBounds[i] = bandArea.reduced(static_cast<int>(4 * scaleFactor), static_cast<int>(2 * scaleFactor));
         }
 
-        // Band controls in center
-        auto controlArea = area;
-        auto knobSize = static_cast<int>(70 * scaleFactor);
-        auto labelHeight = static_cast<int>(18 * scaleFactor);
+        // Store meter section info for handle positioning
+        crossoverAreaLeft = topSection.getX();
+        crossoverAreaWidth = topSection.getWidth();
+        crossoverHandleTop = topSection.getY();
+        crossoverHandleHeight = topSection.getHeight() - static_cast<int>(22 * scaleFactor);
 
-        // Row of knobs
-        auto row1 = controlArea.removeFromTop(knobSize + labelHeight);
-        int knobX = static_cast<int>(10 * scaleFactor);
-        int knobSpacing = knobSize + static_cast<int>(5 * scaleFactor);
+        // Position crossover handles based on frequency values (logarithmic mapping)
+        updateCrossoverHandlePositions();
 
-        bandThreshold.setBounds(knobX, 0, knobSize, knobSize);
-        bandLabels[0].setBounds(knobX, knobSize, knobSize, labelHeight);
-        knobX += knobSpacing;
+        // === Layout knobs ===
+        const int numKnobs = 7;
+        const int colWidth = knobSection.getWidth() / numKnobs;
 
-        bandRatio.setBounds(knobX, 0, knobSize, knobSize);
-        bandLabels[1].setBounds(knobX, knobSize, knobSize, labelHeight);
-        knobX += knobSpacing;
+        auto layoutKnob = [&](juce::Slider& slider, juce::Label& label, int col) {
+            auto colArea = knobSection.withX(knobSection.getX() + col * colWidth).withWidth(colWidth);
+            label.setBounds(colArea.removeFromTop(labelHeight));
+            int knobX = colArea.getX() + (colArea.getWidth() - knobSize) / 2;
+            int knobY = colArea.getY() + 2;
+            slider.setBounds(knobX, knobY, knobSize, knobSize);
+        };
 
-        bandAttack.setBounds(knobX, 0, knobSize, knobSize);
-        bandLabels[2].setBounds(knobX, knobSize, knobSize, labelHeight);
-        knobX += knobSpacing;
-
-        bandRelease.setBounds(knobX, 0, knobSize, knobSize);
-        bandLabels[3].setBounds(knobX, knobSize, knobSize, labelHeight);
-        knobX += knobSpacing;
-
-        bandMakeup.setBounds(knobX, 0, knobSize, knobSize);
-        bandLabels[4].setBounds(knobX, knobSize, knobSize, labelHeight);
-        knobX += knobSpacing;
-
-        // Global output and mix
-        globalOutput.setBounds(knobX, 0, knobSize, knobSize);
-        outputLabel.setBounds(knobX, knobSize, knobSize, labelHeight);
-        knobX += knobSpacing;
-
-        globalMix.setBounds(knobX, 0, knobSize, knobSize);
-        mixLabel.setBounds(knobX, knobSize, knobSize, labelHeight);
-
-        // Bypass/Solo buttons below knobs
-        auto row2 = controlArea.removeFromTop(static_cast<int>(35 * scaleFactor));
-        bandBypass.setBounds(static_cast<int>(10 * scaleFactor), row1.getHeight() + static_cast<int>(5 * scaleFactor),
-                            static_cast<int>(80 * scaleFactor), static_cast<int>(25 * scaleFactor));
-        bandSolo.setBounds(static_cast<int>(100 * scaleFactor), row1.getHeight() + static_cast<int>(5 * scaleFactor),
-                          static_cast<int>(80 * scaleFactor), static_cast<int>(25 * scaleFactor));
+        layoutKnob(bandThreshold, knobLabels[0], 0);
+        layoutKnob(bandRatio, knobLabels[1], 1);
+        layoutKnob(bandAttack, knobLabels[2], 2);
+        layoutKnob(bandRelease, knobLabels[3], 3);
+        layoutKnob(bandMakeup, knobLabels[4], 4);
+        layoutKnob(globalOutput, knobLabels[5], 5);
+        layoutKnob(globalMix, knobLabels[6], 6);
     }
 
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(juce::Colour(0xff0d0d0d));
+        // Background with subtle gradient
+        juce::ColourGradient bgGradient(juce::Colour(0xff1a1a1e), 0, 0,
+                                         juce::Colour(0xff141418), 0, static_cast<float>(getHeight()), false);
+        g.setGradientFill(bgGradient);
+        g.fillAll();
 
-        // Title
-        g.setColour(juce::Colour(0xff00d4ff));
-        g.setFont(juce::Font(18.0f * scaleFactor, juce::Font::bold));
-        g.drawText("MULTIBAND COMPRESSOR", 0, static_cast<int>(5 * scaleFactor),
-                   getWidth(), static_cast<int>(25 * scaleFactor), juce::Justification::centred);
-
-        // Currently selected band indicator
+        // Draw "GAIN REDUCTION" label
         g.setColour(juce::Colours::white.withAlpha(0.7f));
-        g.setFont(juce::Font(12.0f * scaleFactor));
-        juce::String bandName;
-        switch (currentBand)
+        g.setFont(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold"));
+        g.drawText("GAIN REDUCTION", meterSectionBounds.getX(), meterSectionBounds.getY() - static_cast<int>(20 * scaleFactor),
+                   meterSectionBounds.getWidth(), static_cast<int>(16 * scaleFactor), juce::Justification::centred);
+
+        // Draw dB scale on left side
+        drawDbScale(g);
+
+        // Draw band backgrounds (colored tint for each band region)
+        drawBandBackgrounds(g);
+
+        // Draw band GR meters with LED-style segments
+        for (int i = 0; i < 4; ++i)
         {
-            case 0: bandName = "LOW BAND (< " + juce::String(static_cast<int>(crossoverSliders[0].getValue())) + " Hz)"; break;
-            case 1: bandName = "LOW-MID BAND (" + juce::String(static_cast<int>(crossoverSliders[0].getValue())) +
-                              " - " + juce::String(static_cast<int>(crossoverSliders[1].getValue())) + " Hz)"; break;
-            case 2: bandName = "HIGH-MID BAND (" + juce::String(static_cast<int>(crossoverSliders[1].getValue())) +
-                              " - " + juce::String(static_cast<int>(crossoverSliders[2].getValue())) + " Hz)"; break;
-            case 3: bandName = "HIGH BAND (> " + juce::String(static_cast<int>(crossoverSliders[2].getValue())) + " Hz)"; break;
+            drawBandMeter(g, i);
         }
-        g.drawText(bandName, static_cast<int>(160 * scaleFactor), static_cast<int>(10 * scaleFactor),
-                   static_cast<int>(300 * scaleFactor), static_cast<int>(20 * scaleFactor),
-                   juce::Justification::centredLeft);
+
+        // Draw crossover frequency labels (below handles)
+        drawCrossoverLabels(g);
+
+        // Draw selected band indicator - tab style with color underline
+        drawBandIndicator(g);
+    }
+
+    void timerCallback() override
+    {
+        // Update crossover handle positions whenever values change
+        updateCrossoverHandlePositions();
+
+        // Repaint if any handle is being dragged
+        bool anyDragging = false;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (crossoverHandles[i] && crossoverHandles[i]->isDraggingHandle())
+            {
+                anyDragging = true;
+                break;
+            }
+        }
+        if (anyDragging)
+            repaint();
     }
 
 private:
     juce::AudioProcessorValueTreeState& parameters;
     float scaleFactor = 1.0f;
     int currentBand = 0;
+    float bandGR[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float smoothedBandGR[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float peakHoldGR[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int peakHoldTime[4] = {0, 0, 0, 0};
+    juce::Rectangle<int> bandGRBounds[4];
+    juce::Rectangle<int> dbScaleBounds;
+    juce::Rectangle<int> meterSectionBounds;
 
-    juce::ComboBox bandSelector;
+    // Crossover handle positioning info
+    int crossoverAreaLeft = 0;
+    int crossoverAreaWidth = 0;
+    int crossoverHandleTop = 0;
+    int crossoverHandleHeight = 0;
+
+    // Frequency range for logarithmic mapping (20 Hz to 20 kHz)
+    static constexpr double minFreq = 20.0;
+    static constexpr double maxFreq = 20000.0;
+
+    // Band selection buttons
+    std::array<juce::TextButton, 4> bandButtons;
+
+    // Crossover sliders (hidden, used for parameter attachment)
     std::array<juce::Slider, 3> crossoverSliders;
+    std::array<std::unique_ptr<CrossoverHandle>, 3> crossoverHandles;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 3> crossoverAttachments;
 
+    // Per-band controls
     juce::Slider bandThreshold, bandRatio, bandAttack, bandRelease, bandMakeup;
-    juce::ToggleButton bandBypass, bandSolo;
-    std::array<juce::Label, 5> bandLabels;
+    std::array<juce::TextButton, 4> bandSoloButtons;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 4> bandSoloAttachments;
+    std::array<juce::Label, 7> knobLabels;
 
     // Per-band parameter attachments (recreated when band changes)
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> thresholdAttachment;
@@ -539,21 +826,308 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> makeupAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> soloAttachment;
 
+    // Global controls
     juce::Slider globalOutput, globalMix;
-    juce::Label outputLabel, mixLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
 
-    void updateBandControls()
+    // Convert frequency to normalized position (0-1) using logarithmic scale
+    float frequencyToNormalizedPosition(double freq) const
     {
-        currentBand = bandSelector.getSelectedId() - 1;
-        if (currentBand < 0 || currentBand > 3)
-            currentBand = 0;
+        double logMin = std::log(minFreq);
+        double logMax = std::log(maxFreq);
+        double logFreq = std::log(juce::jlimit(minFreq, maxFreq, freq));
+        return static_cast<float>((logFreq - logMin) / (logMax - logMin));
+    }
 
-        // Band parameter name prefixes
+    // Convert normalized position (0-1) to pixel X coordinate
+    int normalizedPositionToPixelX(float normalized) const
+    {
+        return crossoverAreaLeft + static_cast<int>(normalized * crossoverAreaWidth);
+    }
+
+    // Update crossover handle positions based on current frequency values
+    void updateCrossoverHandlePositions()
+    {
+        if (crossoverAreaWidth <= 0) return;
+
+        int handleWidth = static_cast<int>(30 * scaleFactor);
+
+        for (int i = 0; i < 3; ++i)
+        {
+            if (crossoverHandles[i])
+            {
+                double freq = crossoverSliders[i].getValue();
+                float normalized = frequencyToNormalizedPosition(freq);
+                int xPos = normalizedPositionToPixelX(normalized);
+
+                crossoverHandles[i]->setBounds(
+                    xPos - handleWidth / 2,
+                    crossoverHandleTop,
+                    handleWidth,
+                    crossoverHandleHeight
+                );
+            }
+        }
+    }
+
+    void drawDbScale(juce::Graphics& g)
+    {
+        if (bandGRBounds[0].isEmpty()) return;
+
+        auto& refBounds = bandGRBounds[0];
+        const float dbLevels[] = {0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f};
+        const int meterTop = refBounds.getY();
+        const int meterHeight = refBounds.getHeight();
+
+        g.setFont(juce::FontOptions(9.0f * scaleFactor));
+
+        for (float db : dbLevels)
+        {
+            float normalized = -db / 20.0f;
+            int yPos = meterTop + static_cast<int>(normalized * meterHeight);
+
+            // Tick mark
+            g.setColour(juce::Colours::white.withAlpha(0.5f));
+            g.fillRect(dbScaleBounds.getRight() - 6, yPos, 6, 1);
+
+            // Label
+            g.setColour(juce::Colours::white.withAlpha(0.7f));
+            juce::String label = (db == 0.0f) ? "0" : juce::String(static_cast<int>(db));
+            g.drawText(label, dbScaleBounds.getX(), yPos - 6,
+                      dbScaleBounds.getWidth() - 8, 12, juce::Justification::centredRight);
+        }
+    }
+
+    void drawBandBackgrounds(juce::Graphics& g)
+    {
+        // Draw subtle colored backgrounds for each band
+        if (bandGRBounds[0].isEmpty()) return;
+
+        int bandWidth = meterSectionBounds.getWidth() / 4;
+        for (int i = 0; i < 4; ++i)
+        {
+            auto bandArea = meterSectionBounds.withX(meterSectionBounds.getX() + i * bandWidth)
+                                              .withWidth(bandWidth);
+
+            juce::Colour bandCol = juce::Colour(bandColors[i]);
+            bool isSelected = (currentBand == i);
+
+            // Very subtle band tint
+            g.setColour(bandCol.withAlpha(isSelected ? 0.08f : 0.03f));
+            g.fillRect(bandArea.reduced(1, 0));
+        }
+    }
+
+    void drawBandMeter(juce::Graphics& g, int bandIndex)
+    {
+        auto& bounds = bandGRBounds[bandIndex];
+        if (bounds.isEmpty()) return;
+
+        juce::Colour bandCol = juce::Colour(bandColors[bandIndex]);
+        bool isSelected = (currentBand == bandIndex);
+
+        // Outer glow for selected band
+        if (isSelected)
+        {
+            g.setColour(bandCol.withAlpha(0.2f));
+            g.fillRoundedRectangle(bounds.toFloat().expanded(4), 6.0f);
+        }
+
+        // Meter background with gradient
+        juce::ColourGradient bgGrad(juce::Colour(0xff0c0c0c), bounds.getX(), bounds.getY(),
+                                     juce::Colour(0xff181818), bounds.getX(), bounds.getBottom(), false);
+        g.setGradientFill(bgGrad);
+        g.fillRoundedRectangle(bounds.toFloat(), 5.0f);
+
+        // Inner shadow
+        g.setColour(juce::Colour(0xff000000).withAlpha(0.5f));
+        g.drawRoundedRectangle(bounds.toFloat().reduced(1), 4.0f, 1.0f);
+
+        // Draw LED-style segments
+        auto meterBounds = bounds.reduced(4);
+        const int numSegments = 20;
+        const float segmentGap = 2.0f * scaleFactor;
+        float segmentHeight = (meterBounds.getHeight() - (numSegments - 1) * segmentGap) / numSegments;
+
+        float grNormalized = juce::jlimit(0.0f, 1.0f, -bandGR[bandIndex] / 20.0f);
+        int litSegments = static_cast<int>(grNormalized * numSegments);
+
+        // Peak hold segment
+        float peakNormalized = juce::jlimit(0.0f, 1.0f, -peakHoldGR[bandIndex] / 20.0f);
+        int peakSegment = static_cast<int>(peakNormalized * numSegments);
+
+        for (int seg = 0; seg < numSegments; ++seg)
+        {
+            float y = meterBounds.getY() + seg * (segmentHeight + segmentGap);
+            auto segRect = juce::Rectangle<float>(meterBounds.getX(), y,
+                                                   meterBounds.getWidth(), segmentHeight);
+
+            bool isLit = seg < litSegments;
+            bool isPeakHold = seg == peakSegment && peakSegment > 0;
+
+            if (isLit)
+            {
+                // Color gradient based on intensity: band color -> yellow -> orange -> red
+                float intensity = static_cast<float>(seg) / numSegments;
+                juce::Colour segColor;
+                if (intensity < 0.4f)
+                    segColor = bandCol.brighter(0.2f);
+                else if (intensity < 0.6f)
+                    segColor = bandCol.interpolatedWith(juce::Colour(0xffffdd00), (intensity - 0.4f) * 5.0f);
+                else if (intensity < 0.8f)
+                    segColor = juce::Colour(0xffffdd00).interpolatedWith(juce::Colour(0xffff8800), (intensity - 0.6f) * 5.0f);
+                else
+                    segColor = juce::Colour(0xffff8800).interpolatedWith(juce::Colour(0xffff3333), (intensity - 0.8f) * 5.0f);
+
+                // Bright gradient for 3D LED effect
+                juce::ColourGradient segGrad(segColor.brighter(0.4f), segRect.getX(), segRect.getY(),
+                                              segColor.darker(0.1f), segRect.getX(), segRect.getBottom(), false);
+                g.setGradientFill(segGrad);
+                g.fillRoundedRectangle(segRect, 2.0f);
+
+                // Glossy highlight
+                g.setColour(segColor.brighter(0.7f).withAlpha(0.4f));
+                g.fillRect(segRect.getX() + 2, segRect.getY() + 1, segRect.getWidth() - 4, 1.5f);
+            }
+            else if (isPeakHold)
+            {
+                // Peak hold indicator - bright white with glow
+                g.setColour(juce::Colours::white.withAlpha(0.3f));
+                g.fillRoundedRectangle(segRect.expanded(1), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.fillRoundedRectangle(segRect, 2.0f);
+            }
+            else
+            {
+                // Unlit segment - subtle dark with slight bevel
+                g.setColour(juce::Colour(0xff1c1c1c));
+                g.fillRoundedRectangle(segRect, 2.0f);
+                g.setColour(juce::Colour(0xff252525));
+                g.fillRect(segRect.getX() + 2, segRect.getY() + 1, segRect.getWidth() - 4, 1.0f);
+            }
+        }
+
+        // Border - brighter and thicker when selected
+        g.setColour(bandCol.withAlpha(isSelected ? 1.0f : 0.5f));
+        g.drawRoundedRectangle(bounds.toFloat(), 5.0f, isSelected ? 2.5f : 1.5f);
+
+        // GR value display at bottom of meter
+        g.setFont(juce::FontOptions(12.0f * scaleFactor).withStyle("Bold"));
+
+        // Background pill for value with gradient
+        auto valueBounds = bounds.withHeight(static_cast<int>(20 * scaleFactor))
+                                  .withY(bounds.getBottom() - static_cast<int>(24 * scaleFactor))
+                                  .reduced(6, 0);
+
+        juce::ColourGradient pillGrad(juce::Colour(0xff0a0a0a), valueBounds.getX(), valueBounds.getY(),
+                                       juce::Colour(0xff1a1a1a), valueBounds.getX(), valueBounds.getBottom(), false);
+        g.setGradientFill(pillGrad);
+        g.fillRoundedRectangle(valueBounds.toFloat(), 4.0f);
+
+        g.setColour(bandCol.withAlpha(0.5f));
+        g.drawRoundedRectangle(valueBounds.toFloat(), 4.0f, 1.0f);
+
+        // Value text with shadow
+        g.setColour(juce::Colours::black.withAlpha(0.5f));
+        g.drawText(juce::String(bandGR[bandIndex], 1) + " dB",
+                   valueBounds.translated(1, 1), juce::Justification::centred);
+        g.setColour(juce::Colours::white);
+        g.drawText(juce::String(bandGR[bandIndex], 1) + " dB", valueBounds, juce::Justification::centred);
+    }
+
+    void drawCrossoverLabels(juce::Graphics& g)
+    {
+        g.setFont(juce::FontOptions(10.0f * scaleFactor).withStyle("Bold"));
+
+        for (int i = 0; i < 3; ++i)
+        {
+            auto handleBounds = crossoverHandles[i]->getBounds();
+            float freq = static_cast<float>(crossoverSliders[i].getValue());
+            juce::String freqText = formatFrequency(freq);
+
+            bool isDragging = crossoverHandles[i]->isDraggingHandle();
+
+            // Draw frequency label below handle
+            int labelY = handleBounds.getBottom() + 2;
+            int labelWidth = static_cast<int>(60 * scaleFactor);
+            int labelX = handleBounds.getCentreX() - labelWidth / 2;
+
+            // Background pill when dragging
+            if (isDragging)
+            {
+                auto labelBounds = juce::Rectangle<int>(labelX - 4, labelY - 2, labelWidth + 8, static_cast<int>(18 * scaleFactor));
+                g.setColour(juce::Colour(0xff00d4ff).withAlpha(0.2f));
+                g.fillRoundedRectangle(labelBounds.toFloat(), 3.0f);
+                g.setColour(juce::Colour(0xff00d4ff));
+                g.drawRoundedRectangle(labelBounds.toFloat(), 3.0f, 1.0f);
+            }
+
+            g.setColour(isDragging ? juce::Colour(0xff00d4ff) : juce::Colours::white.withAlpha(0.9f));
+            g.drawText(freqText, labelX, labelY, labelWidth, static_cast<int>(16 * scaleFactor),
+                      juce::Justification::centred);
+        }
+    }
+
+    void drawBandIndicator(juce::Graphics& g)
+    {
+        juce::Colour bandCol = juce::Colour(bandColors[currentBand]);
+
+        auto labelHeight = static_cast<int>(26 * scaleFactor);
+        auto labelY = getHeight() - labelHeight - static_cast<int>(3 * scaleFactor);
+        auto labelWidth = static_cast<int>(140 * scaleFactor);
+        auto labelX = getWidth() / 2 - labelWidth / 2;
+        auto cornerRadius = 5.0f * scaleFactor;
+
+        // Drop shadow
+        g.setColour(juce::Colour(0xff000000).withAlpha(0.4f));
+        g.fillRoundedRectangle(static_cast<float>(labelX + 2), static_cast<float>(labelY + 2),
+                               static_cast<float>(labelWidth), static_cast<float>(labelHeight), cornerRadius);
+
+        // Background with gradient
+        juce::ColourGradient bgGrad(juce::Colour(0xff2e2e2e), labelX, labelY,
+                                     juce::Colour(0xff222222), labelX, labelY + labelHeight, false);
+        g.setGradientFill(bgGrad);
+        g.fillRoundedRectangle(static_cast<float>(labelX), static_cast<float>(labelY),
+                               static_cast<float>(labelWidth), static_cast<float>(labelHeight), cornerRadius);
+
+        // Colored underline/accent
+        g.setColour(bandCol);
+        g.fillRoundedRectangle(static_cast<float>(labelX), static_cast<float>(labelY + labelHeight - 5 * scaleFactor),
+                               static_cast<float>(labelWidth), 5.0f * scaleFactor, 2.0f);
+
+        // Border
+        g.setColour(bandCol.withAlpha(0.6f));
+        g.drawRoundedRectangle(static_cast<float>(labelX), static_cast<float>(labelY),
+                               static_cast<float>(labelWidth), static_cast<float>(labelHeight), cornerRadius, 1.5f);
+
+        // Text
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::FontOptions(13.0f * scaleFactor).withStyle("Bold"));
+        g.drawText(getBandName(currentBand) + " Band",
+                   labelX, labelY, labelWidth, labelHeight - static_cast<int>(5 * scaleFactor),
+                   juce::Justification::centred);
+    }
+
+    static juce::String getBandName(int band)
+    {
+        const char* names[] = {"Low", "Lo-Mid", "Hi-Mid", "High"};
+        return names[juce::jlimit(0, 3, band)];
+    }
+
+    static juce::String formatFrequency(float freq)
+    {
+        if (freq >= 1000.0f)
+            return juce::String(freq / 1000.0f, 1) + " kHz";
+        else
+            return juce::String(static_cast<int>(freq)) + " Hz";
+    }
+
+    void selectBand(int band)
+    {
+        currentBand = juce::jlimit(0, 3, band);
+
         const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
         const juce::String& bandName = bandNames[currentBand];
 
@@ -563,8 +1137,6 @@ private:
         attackAttachment.reset();
         releaseAttachment.reset();
         makeupAttachment.reset();
-        bypassAttachment.reset();
-        soloAttachment.reset();
 
         // Create new attachments for selected band
         thresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -577,10 +1149,6 @@ private:
             parameters, "mb_" + bandName + "_release", bandRelease);
         makeupAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, "mb_" + bandName + "_makeup", bandMakeup);
-        bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-            parameters, "mb_" + bandName + "_bypass", bandBypass);
-        soloAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-            parameters, "mb_" + bandName + "_solo", bandSolo);
 
         repaint();
     }
