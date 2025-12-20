@@ -628,6 +628,10 @@ void EnhancedCompressorEditor::updateMode(int newMode)
     if (studioVcaPanel) studioVcaPanel->setVisible(false);
     if (multibandPanel) multibandPanel->setVisible(false);
 
+    // Show VU meter by default (will be hidden for multiband)
+    if (vuMeter)
+        vuMeter->setVisible(true);
+
     // Hide mode-specific top row buttons by default
     if (optoPanel.limitSwitch)
         optoPanel.limitSwitch->setVisible(false);
@@ -690,6 +694,9 @@ void EnhancedCompressorEditor::updateMode(int newMode)
                 multibandPanel->setVisible(true);
                 multibandPanel->setLookAndFeel(digitalLookAndFeel.get());  // Use digital look for multiband
             }
+            // Hide VU meter for multiband - the panel has its own per-band GR visualization
+            if (vuMeter)
+                vuMeter->setVisible(false);
             currentLookAndFeel = digitalLookAndFeel.get();
             break;
     }
@@ -1308,12 +1315,17 @@ void EnhancedCompressorEditor::resized()
         studioVcaPanel->setBounds(controlArea);
     }
 
-    // Layout Multiband panel - needs significant space for 4 bands
+    // Layout Multiband panel - uses full center area since VU meter is hidden
     if (multibandPanel && multibandPanel->isVisible())
     {
         multibandPanel->setScaleFactor(scaleFactor);
-        // Give multiband panel more vertical space for band controls
-        auto multibandArea = controlArea.withTrimmedTop(-30 * scaleFactor).withTrimmedBottom(-40 * scaleFactor);
+        // Since VU meter is hidden in multiband mode, use the full vertical space
+        // Start from just below the preset selectors and extend to the bottom
+        auto multibandArea = mainArea;
+        // Reclaim the VU meter space (vuArea + label space that was removed earlier)
+        multibandArea.setY(multibandArea.getY() - static_cast<int>(200 * scaleFactor));  // Reclaim VU area
+        multibandArea.setHeight(multibandArea.getHeight() + static_cast<int>(200 * scaleFactor));
+        multibandArea.reduce(10 * scaleFactor, 5 * scaleFactor);
         multibandPanel->setBounds(multibandArea);
     }
 }
@@ -1336,11 +1348,20 @@ void EnhancedCompressorEditor::updateMeters()
                            inputDb * (1.0f - levelSmoothingFactor);
     }
 
-    if (vuMeter)
+    if (vuMeter && vuMeter->isVisible())
     {
         vuMeter->setLevel(processor.getGainReduction());
         // Pass GR history for the history graph view
         vuMeter->setGRHistory(processor.getGRHistory(), processor.getGRHistoryWritePos());
+    }
+
+    // Update multiband per-band GR meters
+    if (multibandPanel && multibandPanel->isVisible())
+    {
+        for (int band = 0; band < 4; ++band)
+        {
+            multibandPanel->setBandGainReduction(band, processor.getBandGainReduction(band));
+        }
     }
 
     if (outputMeter)
@@ -1374,19 +1395,29 @@ void EnhancedCompressorEditor::parameterChanged(const juce::String& parameterID,
     {
         // Must dispatch to message thread - parameterChanged can be called from audio thread
         // during automation, which would crash if we access UI components directly
-        juce::MessageManager::callAsync([this, newValue]() {
-            int newMode = static_cast<int>(newValue);
-            // Update combo box to match (add 1 for 1-based ID)
-            if (modeSelector)
-                modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
-            updateMode(newMode);
+        // Use SafePointer to prevent accessing destroyed editor
+        auto safeThis = juce::Component::SafePointer<EnhancedCompressorEditor>(this);
+        juce::MessageManager::callAsync([safeThis, newValue]() {
+            if (auto* editor = safeThis.getComponent())
+            {
+                int newMode = static_cast<int>(newValue);
+                // Update combo box to match (add 1 for 1-based ID)
+                if (editor->modeSelector)
+                    editor->modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
+                editor->updateMode(newMode);
+            }
         });
     }
     else if (parameterID == "auto_makeup")
     {
         // Update output knob enabled state based on auto-gain
-        juce::MessageManager::callAsync([this, newValue]() {
-            updateAutoGainState(newValue > 0.5f);
+        // Use SafePointer to prevent accessing destroyed editor
+        auto safeThis = juce::Component::SafePointer<EnhancedCompressorEditor>(this);
+        juce::MessageManager::callAsync([safeThis, newValue]() {
+            if (auto* editor = safeThis.getComponent())
+            {
+                editor->updateAutoGainState(newValue > 0.5f);
+            }
         });
     }
 }
@@ -1449,6 +1480,14 @@ void EnhancedCompressorEditor::updateAutoGainState(bool autoGainEnabled)
     // Studio VCA panel - handled internally by the panel
     if (studioVcaPanel)
         studioVcaPanel->setAutoGainEnabled(autoGainEnabled);
+
+    // Digital panel - output knob
+    if (digitalPanel)
+        digitalPanel->setAutoGainEnabled(autoGainEnabled);
+
+    // Multiband panel - global output knob
+    if (multibandPanel)
+        multibandPanel->setAutoGainEnabled(autoGainEnabled);
 }
 
 //==============================================================================

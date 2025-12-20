@@ -79,44 +79,60 @@ target_compile_definitions(MultiComp
 )
 
 # Link libraries
+# Note: juce_recommended_lto_flags removed to avoid GCC 11 internal compiler errors
+# LTO can cause ICE (internal compiler errors) in GCC 11 with complex VST3 code
 target_link_libraries(MultiComp
     PRIVATE
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
 
-# Optimization flags
+# Optimization flags (GCC/Clang only)
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    # Use -ffast-math for performance but preserve NaN/Inf handling with -fno-finite-math-only
-    # This allows fast floating point math while keeping correct NaN/Inf semantics for DSP stability tests
-    target_compile_options(MultiComp PRIVATE -O3 -ffast-math -fno-finite-math-only)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # Use -ffast-math for performance but preserve NaN/Inf handling with -fno-finite-math-only
+        # This allows fast floating point math while keeping correct NaN/Inf semantics for DSP stability tests
+        target_compile_options(MultiComp PRIVATE -O3 -ffast-math -fno-finite-math-only)
+    elseif(MSVC)
+        # MSVC equivalent: /O2 for optimization, /fp:fast for fast floating point
+        target_compile_options(MultiComp PRIVATE /O2 /fp:fast)
+    endif()
 endif()
 
 # AddressSanitizer options
 option(ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
 
-# Enable AddressSanitizer in debug builds or when explicitly requested
+# Enable AddressSanitizer in debug builds or when explicitly requested (GCC/Clang only)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR ENABLE_ASAN)
-    target_compile_options(MultiComp PRIVATE
-        -fsanitize=address
-        -fsanitize=undefined
-        -fno-omit-frame-pointer
-        -fno-optimize-sibling-calls
-    )
-    target_link_options(MultiComp PRIVATE
-        -fsanitize=address
-        -fsanitize=undefined
-    )
-    message(STATUS "AddressSanitizer enabled for MultiComp")
-    message(STATUS "Run with: ASAN_OPTIONS=detect_leaks=1:abort_on_error=1")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(MultiComp PRIVATE
+            -fsanitize=address
+            -fsanitize=undefined
+            -fno-omit-frame-pointer
+            -fno-optimize-sibling-calls
+        )
+        target_link_options(MultiComp PRIVATE
+            -fsanitize=address
+            -fsanitize=undefined
+        )
+        message(STATUS "AddressSanitizer enabled for MultiComp")
+        message(STATUS "Run with: ASAN_OPTIONS=detect_leaks=1:abort_on_error=1")
+    elseif(MSVC)
+        # MSVC AddressSanitizer support
+        target_compile_options(MultiComp PRIVATE /fsanitize=address)
+        message(STATUS "AddressSanitizer enabled for MultiComp (MSVC)")
+    endif()
 endif()
 
-# Enable all warnings
-target_compile_options(MultiComp PRIVATE -Wall -Wextra -Wpedantic)
+# Enable all warnings (compiler-specific)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(MultiComp PRIVATE -Wall -Wextra -Wpedantic)
+elseif(MSVC)
+    target_compile_options(MultiComp PRIVATE /W4)
+endif()
 
 # Optional: Build unit tests
 option(BUILD_MULTI_COMP_TESTS "Build Multi-Comp unit tests" OFF)
@@ -150,19 +166,24 @@ if(BUILD_MULTI_COMP_TESTS)
             JUCE_USE_CURL=0
     )
 
-    # Enable AddressSanitizer for tests in debug builds or when explicitly requested
+    # Enable AddressSanitizer for tests in debug builds or when explicitly requested (compiler-specific)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR ENABLE_ASAN)
-        target_compile_options(MultiCompTests PRIVATE
-            -fsanitize=address
-            -fsanitize=undefined
-            -fno-omit-frame-pointer
-            -fno-optimize-sibling-calls
-        )
-        target_link_options(MultiCompTests PRIVATE
-            -fsanitize=address
-            -fsanitize=undefined
-        )
-        message(STATUS "AddressSanitizer and UndefinedBehaviorSanitizer enabled for MultiCompTests")
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(MultiCompTests PRIVATE
+                -fsanitize=address
+                -fsanitize=undefined
+                -fno-omit-frame-pointer
+                -fno-optimize-sibling-calls
+            )
+            target_link_options(MultiCompTests PRIVATE
+                -fsanitize=address
+                -fsanitize=undefined
+            )
+            message(STATUS "AddressSanitizer and UndefinedBehaviorSanitizer enabled for MultiCompTests")
+        elseif(MSVC)
+            target_compile_options(MultiCompTests PRIVATE /fsanitize=address)
+            message(STATUS "AddressSanitizer enabled for MultiCompTests (MSVC)")
+        endif()
     endif()
 
     # Generate JUCE header for tests

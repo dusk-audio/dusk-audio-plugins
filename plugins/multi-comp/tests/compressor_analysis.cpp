@@ -57,7 +57,8 @@ public:
         // Bit-reversal permutation
         for (size_t i = 1, j = 0; i < N; ++i)
         {
-            size_t bit = N >> 1;            for (; j & bit; bit >>= 1)
+            size_t bit = N >> 1;
+            for (; j & bit; bit >>= 1)
                 j ^= bit;
             j ^= bit;
             if (i < j)
