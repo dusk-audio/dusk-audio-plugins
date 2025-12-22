@@ -738,21 +738,29 @@ public:
         {
             auto bandArea = topSection.withX(topSection.getX() + i * bandWidth).withWidth(bandWidth).reduced(3, 0);
 
-            // Top row: Band button and Solo button side by side
-            auto buttonRow = bandArea.removeFromTop(static_cast<int>(26 * scaleFactor));
-            int soloWidth = static_cast<int>(26 * scaleFactor);
-            bandSoloButtons[i].setBounds(buttonRow.removeFromRight(soloWidth));
-            buttonRow.removeFromRight(4);
-            bandButtons[i].setBounds(buttonRow);
+            // Calculate meter bounds first so we can align buttons to it
+            auto meterArea = bandArea;
+            meterArea.removeFromTop(static_cast<int>(32 * scaleFactor));  // Space for buttons + gap
+            meterArea.removeFromBottom(static_cast<int>(22 * scaleFactor));  // Space for freq label
+            auto meterBounds = meterArea.reduced(static_cast<int>(4 * scaleFactor), static_cast<int>(2 * scaleFactor));
 
-            // Small gap after buttons
-            bandArea.removeFromTop(static_cast<int>(6 * scaleFactor));
+            // Top row: Band button and Solo button side by side, centered over meter
+            int buttonRowHeight = static_cast<int>(26 * scaleFactor);
+            int soloWidth = static_cast<int>(24 * scaleFactor);
+            int buttonGap = static_cast<int>(3 * scaleFactor);
+            int totalButtonWidth = meterBounds.getWidth();  // Match meter width
+            int minBandButtonWidth = static_cast<int>(30 * scaleFactor);
+            int bandButtonWidth = juce::jmax(minBandButtonWidth, totalButtonWidth - soloWidth - buttonGap);
 
-            // Reserve space for crossover frequency label at bottom
-            bandArea.removeFromBottom(static_cast<int>(22 * scaleFactor));
+            // Center buttons over the meter
+            int buttonsX = meterBounds.getX();
+            int buttonsY = bandArea.getY();
 
-            // GR meter area fills the remaining space
-            bandGRBounds[i] = bandArea.reduced(static_cast<int>(4 * scaleFactor), static_cast<int>(2 * scaleFactor));
+            bandButtons[i].setBounds(buttonsX, buttonsY, bandButtonWidth, buttonRowHeight);
+            bandSoloButtons[i].setBounds(buttonsX + bandButtonWidth + buttonGap, buttonsY, soloWidth, buttonRowHeight);
+
+            // Store meter bounds
+            bandGRBounds[i] = meterBounds;
         }
 
         // Store meter section info for handle positioning

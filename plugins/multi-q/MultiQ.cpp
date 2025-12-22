@@ -374,14 +374,16 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     }
 
     // Input level metering (using peak values to match DAW meters)
+    // Use -60dB floor to match LEDMeter range (-60 to +6 dB)
     float inL = buffer.findMinMax(0, 0, buffer.getNumSamples()).getEnd();
     inL = std::max(std::abs(inL), std::abs(buffer.findMinMax(0, 0, buffer.getNumSamples()).getStart()));
     float inR = buffer.getNumChannels() > 1
         ? std::max(std::abs(buffer.findMinMax(1, 0, buffer.getNumSamples()).getEnd()),
                    std::abs(buffer.findMinMax(1, 0, buffer.getNumSamples()).getStart()))
         : inL;
-    inputLevelL.store(juce::Decibels::gainToDecibels(inL, -96.0f));
-    inputLevelR.store(juce::Decibels::gainToDecibels(inR, -96.0f));
+    float inLdB = inL > 1e-3f ? juce::Decibels::gainToDecibels(inL) : -60.0f;
+    float inRdB = inR > 1e-3f ? juce::Decibels::gainToDecibels(inR) : -60.0f;    inputLevelL.store(inLdB);
+    inputLevelR.store(inRdB);
 
     // Push pre-EQ samples to analyzer if enabled
     bool analyzerEnabled = safeGetParam(analyzerEnabledParam, 0.0f) > 0.5f;
@@ -556,14 +558,17 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     }
 
     // Output level metering (using peak values to match DAW meters)
+    // Use -60dB floor to match LEDMeter range (-60 to +6 dB)
     float outL = buffer.findMinMax(0, 0, buffer.getNumSamples()).getEnd();
     outL = std::max(std::abs(outL), std::abs(buffer.findMinMax(0, 0, buffer.getNumSamples()).getStart()));
     float outR = buffer.getNumChannels() > 1
         ? std::max(std::abs(buffer.findMinMax(1, 0, buffer.getNumSamples()).getEnd()),
                    std::abs(buffer.findMinMax(1, 0, buffer.getNumSamples()).getStart()))
         : outL;
-    outputLevelL.store(juce::Decibels::gainToDecibels(outL, -96.0f));
-    outputLevelR.store(juce::Decibels::gainToDecibels(outR, -96.0f));
+    float outLdB = outL > 1e-3f ? juce::Decibels::gainToDecibels(outL) : -60.0f;
+    float outRdB = outR > 1e-3f ? juce::Decibels::gainToDecibels(outR) : -60.0f;
+    outputLevelL.store(outLdB);
+    outputLevelR.store(outRdB);
 
     // Process FFT if we have enough samples
     processFFT();
