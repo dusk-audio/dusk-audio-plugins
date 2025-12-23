@@ -12,8 +12,10 @@ SSL 4000 Series Console EQ emulation featuring:
 - Advanced SSL saturation modeling
 - 2x/4x oversampling for anti-aliasing
 
-### Universal Compressor
-Multi-mode compressor with seven classic hardware emulations:
+### Multi-Comp
+Multi-mode compressor with seven classic hardware emulations plus 4-band multiband compression:
+
+**Compression Modes:**
 - Vintage Opto (LA-2A style)
 - Vintage FET (1176 Bluestripe)
 - Classic VCA (DBX 160)
@@ -21,8 +23,9 @@ Multi-mode compressor with seven classic hardware emulations:
 - Studio FET (1176 Rev E Blackface)
 - Studio VCA (Focusrite Red 3)
 - Digital (Transparent)
+- Multiband (4-band with adjustable crossovers)
 
-Features: Sidechain HP filter, auto-makeup gain, parallel mix, 2x oversampling.
+**Features:** Sidechain HP filter, auto-makeup gain, parallel mix, 2x/4x oversampling, per-band solo.
 
 ### TapeMachine
 Analog tape machine emulation featuring:
@@ -82,7 +85,7 @@ For consistent, distributable binaries:
 ./docker/build_release.sh silkverb     # SilkVerb
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh 4keq         # 4K EQ
-./docker/build_release.sh compressor   # Universal Compressor
+./docker/build_release.sh compressor   # Multi-Comp
 ./docker/build_release.sh tape         # TapeMachine
 ./docker/build_release.sh echo         # Vintage Tape Echo
 ./docker/build_release.sh drummer      # DrummerClone
@@ -103,7 +106,7 @@ For consistent, distributable binaries:
 ```bash
 cd build
 cmake --build . --target FourKEQ_All
-cmake --build . --target UniversalCompressor_All
+cmake --build . --target MultiComp_All
 cmake --build . --target TapeMachine_All
 cmake --build . --target SilkVerb_All
 cmake --build . --target ConvolutionReverb_All

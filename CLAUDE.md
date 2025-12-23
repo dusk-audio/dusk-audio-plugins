@@ -57,11 +57,11 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - 2x/4x oversampling for alias-free saturation
 - **Build Target**: `TapeMachine_All`
 
-### 3. **Universal Compressor**
-- **Location**: `plugins/universal-compressor/`
-- **Description**: Multi-mode compressor with seven compression styles
+### 3. **Multi-Comp**
+- **Location**: `plugins/multi-comp/`
+- **Description**: Multi-mode compressor with seven compression styles plus 4-band multiband compression
 - **Features**:
-  - 7 compression modes:
+  - 8 compression modes:
     - Vintage Opto - Smooth, program-dependent optical compression
     - Vintage FET - Aggressive, punchy FET compression
     - Classic VCA - Fast, precise VCA with OverEasy soft knee
@@ -69,6 +69,13 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
     - Studio FET - Clean FET with 30% harmonics of Vintage
     - Studio VCA - Modern VCA with RMS detection and soft knee
     - Digital - Transparent, precise compression
+    - Multiband - 4-band multiband compression with adjustable crossovers
+  - **Multiband Mode Features**:
+    - 4 frequency bands (Low, Lo-Mid, Hi-Mid, High)
+    - Vertical crossover faders between bands
+    - Per-band threshold, ratio, attack, release, makeup controls
+    - Per-band solo buttons
+    - LED-style gain reduction meters per band
   - Global sidechain HP filter (20-500Hz) - Prevents pumping from bass
   - Auto-makeup gain - Automatic loudness compensation
   - Output distortion (Soft/Hard/Clip) - Adds character and saturation
@@ -76,8 +83,8 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - Mode-specific attack/release characteristics and saturation
   - Linked gain reduction metering per channel
   - Input/Output/GR metering with atomic thread safety
-  - 2x internal oversampling for anti-aliased processing
-- **Build Target**: `UniversalCompressor_All`
+  - 2x/4x oversampling for anti-aliased processing
+- **Build Target**: `MultiComp_All`
 
 ### 4. **Vintage Tape Echo**
 - **Location**: `plugins/TapeEcho/`
@@ -256,7 +263,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 # Build a single plugin (faster for development)
 ./docker/build_release.sh 4keq         # 4K EQ
-./docker/build_release.sh compressor   # Universal Compressor
+./docker/build_release.sh compressor   # Multi-Comp
 ./docker/build_release.sh tape         # TapeMachine
 ./docker/build_release.sh echo         # Vintage Tape Echo
 ./docker/build_release.sh drummer      # DrummerClone
@@ -278,7 +285,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 # Examples after single-plugin builds:
 ./docker/build_release.sh multiq && ./tests/run_plugin_tests.sh --plugin "Multi-Q" --skip-audio
 ./docker/build_release.sh 4keq && ./tests/run_plugin_tests.sh --plugin "4K EQ" --skip-audio
-./docker/build_release.sh compressor && ./tests/run_plugin_tests.sh --plugin "Universal Compressor" --skip-audio
+./docker/build_release.sh compressor && ./tests/run_plugin_tests.sh --plugin "Multi-Comp" --skip-audio
 ./docker/build_release.sh tape && ./tests/run_plugin_tests.sh --plugin "TapeMachine" --skip-audio
 ./docker/build_release.sh echo && ./tests/run_plugin_tests.sh --plugin "Vintage Tape Echo" --skip-audio
 ./docker/build_release.sh silkverb && ./tests/run_plugin_tests.sh --plugin "SilkVerb" --skip-audio
@@ -300,7 +307,7 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 **Plugins built:**
 - FourKEQ_All (4K EQ)
 - TapeMachine_All
-- UniversalCompressor_All
+- MultiComp_All
 - TapeEcho_All (Vintage Tape Echo)
 - DrummerClone_All
 - HarmonicGeneratorPlugin_All
@@ -341,7 +348,7 @@ cmake --build . -j8
 # Build specific plugins
 cmake --build . --target FourKEQ_All
 cmake --build . --target TapeMachine_All
-cmake --build . --target UniversalCompressor_All
+cmake --build . --target MultiComp_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target DrummerClone_All
 cmake --build . --target HarmonicGeneratorPlugin_All
@@ -352,7 +359,7 @@ cmake --build . --target SilkVerb_All
 ### CMake Build Options
 Available in the root CMakeLists.txt:
 - `BUILD_4K_EQ` (default: ON)
-- `BUILD_UNIVERSAL_COMPRESSOR` (default: ON)
+- `BUILD_MULTI_COMP` (default: ON)
 - `BUILD_HARMONIC_GENERATOR` (default: ON)
 - `BUILD_TAPE_MACHINE` (default: ON)
 - `BUILD_TAPE_ECHO` (default: ON)
@@ -410,7 +417,7 @@ The build script will automatically detect and use these tools when available.
    - Multi-stage signal path with transformer and op-amp modeling
    - Frequency-dependent saturation characteristics
    - Real-time spectral analysis for dynamic response
-6. **Enhanced Universal Compressor**: Added linked gain reduction metering for stereo tracking with thread-safe atomic operations
+6. **Enhanced Multi-Comp**: Added 4-band multiband compression mode, linked gain reduction metering for stereo tracking with thread-safe atomic operations
 7. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
 8. **Removed Plate Reverb and StudioVerb**: Replaced with Convolution Reverb and SilkVerb for better reverb options
 
@@ -458,7 +465,7 @@ plugins/
 ├── plugins/                  # Individual plugin directories
 │   ├── 4k-eq/               # 4K EQ (console-style EQ)
 │   ├── TapeMachine/         # Tape machine emulation
-│   ├── universal-compressor/ # Multi-mode compressor
+│   ├── multi-comp/           # Multi-mode compressor with multiband
 │   ├── convolution-reverb/  # IR-based convolution reverb
 │   ├── SilkVerb/            # Algorithmic reverb (Lexicon/Valhalla style)
 │   ├── TapeEcho/            # Vintage tape echo
@@ -497,7 +504,7 @@ plugins/
 - **Saturation modeling**: See 4K-EQ's SSLSaturation.h for multi-stage analog emulation
 - **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
 - **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations
-- **Factory Presets**: See TapeMachine's TapeMachinePresets.h or Universal Compressor's CompressorPresets.h for categorized preset systems with `getNumPrograms()`, `setCurrentProgram()`, `getProgramName()` implementation
+- **Factory Presets**: See TapeMachine's TapeMachinePresets.h or Multi-Comp's CompressorPresets.h for categorized preset systems with `getNumPrograms()`, `setCurrentProgram()`, `getProgramName()` implementation
 - **MIDI Generation**: See DrummerClone's DrummerEngine for procedural pattern generation with Perlin noise variation
 - **Groove Analysis**: See DrummerClone's TransientDetector and MidiGrooveExtractor for real-time groove extraction
 
@@ -631,7 +638,7 @@ void MyPluginEditor::hideSupportersPanel()
 
 **Plugins with SupportersOverlay implemented**:
 - 4K EQ
-- Universal Compressor
+- Multi-Comp
 - TapeMachine
 
 **Plugins needing SupportersOverlay**:
@@ -702,7 +709,7 @@ A comprehensive testing framework is available in `tests/` for automated validat
 ./tests/run_plugin_tests.sh
 
 # Test a specific plugin
-./tests/run_plugin_tests.sh --plugin "Universal Compressor"
+./tests/run_plugin_tests.sh --plugin "Multi-Comp"
 ```
 
 ### Test Components
