@@ -43,7 +43,7 @@ juce_add_plugin(MultiComp
     FORMATS ${PLUGIN_FORMATS}
     LV2URI "https://lunacoaudio.com/plugins/multi-comp"
     PRODUCT_NAME "Multi-Comp"
-    DESCRIPTION "Multi-mode compressor with Opto, FET, VCA, and Bus emulations"
+    DESCRIPTION "Multi-mode compressor with Opto, FET, VCA, Bus emulations and 4-band multiband compression"
     VST3_CAN_REPLACE_VST2 TRUE
 )
 
