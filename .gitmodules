@@ -1,0 +1,3 @@
+[submodule "plugins/neural-amp/Modules/NeuralAmpModelerCore"]
+	path = plugins/neural-amp/Modules/NeuralAmpModelerCore
+	url = https://github.com/sdatkinson/NeuralAmpModelerCore.git
