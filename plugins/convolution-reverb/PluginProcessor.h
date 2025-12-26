@@ -58,9 +58,15 @@ public:
     float getCurrentIRLengthSeconds() const;
     bool isIRLoaded() const { return irLoaded.load(); }
 
-    // Metering
+    // Metering (mono)
     float getInputLevel() const { return inputMeter.load(); }
     float getOutputLevel() const { return outputMeter.load(); }
+
+    // Metering (stereo)
+    float getInputLevelL() const { return inputMeterL.load(); }
+    float getInputLevelR() const { return inputMeterR.load(); }
+    float getOutputLevelL() const { return outputMeterL.load(); }
+    float getOutputLevelR() const { return outputMeterR.load(); }
 
     // Apply pending IR changes (call from message thread, e.g., timer callback)
     void applyPendingIRChanges() { convolutionEngine.applyPendingChanges(); }
@@ -102,9 +108,15 @@ private:
     // Thread safety
     mutable juce::CriticalSection irLock;
 
-    // Metering
+    // Metering (mono - max of stereo channels)
     std::atomic<float> inputMeter{-60.0f};
     std::atomic<float> outputMeter{-60.0f};
+
+    // Metering (stereo L/R)
+    std::atomic<float> inputMeterL{-60.0f};
+    std::atomic<float> inputMeterR{-60.0f};
+    std::atomic<float> outputMeterL{-60.0f};
+    std::atomic<float> outputMeterR{-60.0f};
 
     // Settings
     juce::File customIRDirectory;
@@ -147,6 +159,7 @@ private:
     void updatePreDelay();
     void applyWidth(juce::AudioBuffer<float>& buffer, float width);
     float calculateRMS(const juce::AudioBuffer<float>& buffer);
+    float calculateChannelRMS(const juce::AudioBuffer<float>& buffer, int channel);
 
     // Create parameter layout
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

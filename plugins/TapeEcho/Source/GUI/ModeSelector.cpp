@@ -1,4 +1,17 @@
+/*
+  ==============================================================================
+
+    RE-201 Space Echo - Mode Selector Implementation
+    UAD Galaxy-style "HEAD SELECT" rotary with chrome knob
+    Copyright (c) 2025 Luna Co. Audio
+
+  ==============================================================================
+*/
+
 #include "ModeSelector.h"
+
+// Define static member
+constexpr const char* ModeSelector::modeNames[];
 
 ModeSelector::ModeSelector()
 {
@@ -9,119 +22,283 @@ void ModeSelector::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
     auto centre = bounds.getCentre();
-    auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.35f;
 
-    // Background plate - dark green
-    g.setColour(juce::Colour(40, 45, 30));
-    g.fillRoundedRectangle(bounds, 5.0f);
-    g.setColour(juce::Colour(25, 30, 18));
-    g.drawRoundedRectangle(bounds, 5.0f, 2.0f);
+    // Size calculations
+    float componentSize = juce::jmin(bounds.getWidth(), bounds.getHeight());
+    float outerRadius = componentSize * 0.42f;
+    float innerRadius = outerRadius * 0.65f;
+    float knobRadius = innerRadius * 0.7f;
 
-    // Mode label at top
-    g.setColour(juce::Colour(200, 190, 170));
-    g.setFont(juce::Font("Arial", 11.0f, juce::Font::bold));
-    g.drawText("MODE", bounds.removeFromTop(20), juce::Justification::centred);
+    // 1. Draw the green ring with position markers and text
+    drawCreamRing(g, centre, outerRadius, innerRadius);
 
-    // Chrome knob body like hardware
-    juce::ColourGradient gradient(juce::Colour(180, 175, 170), centre,
-                                   juce::Colour(120, 115, 110), bounds.getTopLeft(), true);
-    g.setGradientFill(gradient);
-    g.fillEllipse(centre.x - radius, centre.y - radius, radius * 2, radius * 2);
+    // 2. Draw position numbers around the ring
+    drawPositionNumbers(g, centre, outerRadius - (outerRadius - innerRadius) * 0.5f);
 
-    // Knob edge
-    g.setColour(juce::Colour(90, 85, 80));
-    g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2, radius * 2, 2.0f);
+    // 3. Draw curved labels outside
+    drawCurvedLabels(g, centre, outerRadius + 12.0f);
 
-    // Position markers - draw around the knob
-    g.setFont(9.0f);
+    // 4. Draw the recessed dark center
+    drawRecessedCenter(g, centre, innerRadius);
+
+    // 5. Draw the chrome knob with pointer
+    float angleRad = juce::degreesToRadians(knobAngle);
+    drawChickenHeadKnob(g, centre, knobRadius, angleRad);
+
+    // 6. Draw mode display at bottom
+    auto displayBounds = bounds.removeFromBottom(18.0f);
+    displayBounds = displayBounds.withSizeKeepingCentre(displayBounds.getWidth() * 0.7f, 16.0f);
+    drawModeDisplay(g, displayBounds);
+}
+
+void ModeSelector::drawCreamRing(juce::Graphics& g, juce::Point<float> centre,
+                                   float outerRadius, float innerRadius)
+{
+    // This is now a green ring (matches UAD Galaxy green panel)
+    // Outer shadow for depth
+    {
+        g.setColour(juce::Colours::black.withAlpha(0.3f));
+        g.fillEllipse(centre.x - outerRadius + 2.0f, centre.y - outerRadius + 3.0f,
+                      outerRadius * 2.0f, outerRadius * 2.0f);
+    }
+
+    // Main ring - darker green to stand out on panel
+    {
+        juce::ColourGradient ringGradient(
+            RE201Colours::panelGreenLight, centre.x - outerRadius * 0.3f, centre.y - outerRadius * 0.3f,
+            RE201Colours::panelGreenDark.darker(0.2f), centre.x + outerRadius * 0.5f, centre.y + outerRadius * 0.6f,
+            true);
+        g.setGradientFill(ringGradient);
+        g.fillEllipse(centre.x - outerRadius, centre.y - outerRadius,
+                      outerRadius * 2.0f, outerRadius * 2.0f);
+    }
+
+    // Cut out the inner circle (will be filled by recessed center)
+    // We don't actually cut - recessed center will draw on top
+
+    // Outer rim highlight
+    {
+        g.setColour(RE201Colours::panelGreenLight.withAlpha(0.3f));
+        juce::Path highlight;
+        highlight.addArc(centre.x - outerRadius + 1.0f, centre.y - outerRadius + 1.0f,
+                         (outerRadius - 1.0f) * 2.0f, (outerRadius - 1.0f) * 2.0f,
+                         juce::MathConstants<float>::pi * 1.2f,
+                         juce::MathConstants<float>::pi * 1.8f, true);
+        g.strokePath(highlight, juce::PathStrokeType(1.5f));
+    }
+
+    // Outer rim edge
+    g.setColour(RE201Colours::panelGreenShadow);
+    g.drawEllipse(centre.x - outerRadius, centre.y - outerRadius,
+                  outerRadius * 2.0f, outerRadius * 2.0f, 1.0f);
+}
+
+void ModeSelector::drawRecessedCenter(juce::Graphics& g, juce::Point<float> centre, float radius)
+{
+    // Dark recessed area where knob sits
+    {
+        juce::ColourGradient recess(
+            juce::Colour(0xFF1A1A1A), centre.x, centre.y - radius * 0.5f,
+            juce::Colour(0xFF0A0A0A), centre.x, centre.y + radius * 0.5f,
+            false);
+        g.setGradientFill(recess);
+        g.fillEllipse(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
+    }
+
+    // Inner shadow ring
+    {
+        juce::ColourGradient innerShadow(
+            juce::Colours::black.withAlpha(0.6f), centre.x, centre.y - radius,
+            juce::Colours::transparentBlack, centre.x, centre.y - radius * 0.4f,
+            false);
+        g.setGradientFill(innerShadow);
+
+        juce::Path shadowPath;
+        shadowPath.addEllipse(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
+        g.fillPath(shadowPath);
+    }
+
+    // Edge definition
+    g.setColour(juce::Colour(0xFF252525));
+    g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f, 1.0f);
+}
+
+void ModeSelector::drawChickenHeadKnob(juce::Graphics& g, juce::Point<float> centre,
+                                        float radius, float angle)
+{
+    // This is now a chrome knob like UAD Galaxy (not cream chicken head)
+
+    // Shadow
+    g.setColour(juce::Colours::black.withAlpha(0.5f));
+    g.fillEllipse(centre.x - radius + 2.0f, centre.y - radius + 3.0f,
+                  radius * 2.0f, radius * 2.0f);
+
+    // Main chrome body
+    {
+        juce::ColourGradient chromeGrad(
+            juce::Colour(0xFFE8E8E8), centre.x - radius * 0.4f, centre.y - radius * 0.4f,
+            juce::Colour(0xFF606060), centre.x + radius * 0.5f, centre.y + radius * 0.7f,
+            true);
+        chromeGrad.addColour(0.15, juce::Colour(0xFFF0F0F0));
+        chromeGrad.addColour(0.4, juce::Colour(0xFFD0D0D0));
+        chromeGrad.addColour(0.6, juce::Colour(0xFFB0B0B0));
+        chromeGrad.addColour(0.85, juce::Colour(0xFF808080));
+        g.setGradientFill(chromeGrad);
+        g.fillEllipse(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
+    }
+
+    // Edge ring
+    g.setColour(juce::Colour(0xFF505050));
+    g.drawEllipse(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f, 1.0f);
+
+    // Top highlight arc
+    {
+        juce::Path highlightArc;
+        highlightArc.addArc(centre.x - radius * 0.85f, centre.y - radius * 0.85f,
+                            radius * 1.7f, radius * 1.7f,
+                            juce::MathConstants<float>::pi * 1.15f,
+                            juce::MathConstants<float>::pi * 1.85f, true);
+        g.setColour(juce::Colours::white.withAlpha(0.4f));
+        g.strokePath(highlightArc, juce::PathStrokeType(2.0f));
+    }
+
+    // Specular highlight
+    {
+        const float hlW = radius * 0.4f;
+        const float hlH = radius * 0.2f;
+        const float hlX = centre.x - radius * 0.25f;
+        const float hlY = centre.y - radius * 0.4f;
+
+        juce::ColourGradient hlGrad(
+            juce::Colours::white.withAlpha(0.5f), hlX, hlY,
+            juce::Colours::transparentWhite, hlX + hlW, hlY + hlH, true);
+        g.setGradientFill(hlGrad);
+        g.fillEllipse(hlX - hlW * 0.3f, hlY - hlH * 0.2f, hlW, hlH);
+    }
+
+    // Black pointer line
+    {
+        const float lineStartRadius = radius * 0.15f;
+        const float lineEndRadius = radius * 0.85f;
+
+        // Adjust angle so 0 is at top (subtract PI/2)
+        float adjustedAngle = angle + juce::MathConstants<float>::halfPi;
+
+        float cosA = std::cos(adjustedAngle);
+        float sinA = std::sin(adjustedAngle);
+
+        float x1 = centre.x + cosA * lineStartRadius;
+        float y1 = centre.y + sinA * lineStartRadius;
+        float x2 = centre.x + cosA * lineEndRadius;
+        float y2 = centre.y + sinA * lineEndRadius;
+
+        // Black pointer line
+        g.setColour(juce::Colour(0xFF1A1A1A));
+        g.drawLine(x1, y1, x2, y2, 3.0f);
+
+        // Subtle highlight
+        g.setColour(juce::Colours::white.withAlpha(0.15f));
+        g.drawLine(x1 - 0.5f, y1 - 0.5f, x2 - 0.5f, y2 - 0.5f, 1.0f);
+    }
+}
+
+void ModeSelector::drawPositionNumbers(juce::Graphics& g, juce::Point<float> centre, float ringRadius)
+{
+    g.setFont(juce::FontOptions(9.0f).withStyle("Bold"));
+
     for (int i = 0; i < numModes; ++i)
     {
-        float angle = juce::degreesToRadians(-135.0f + (270.0f * i / (numModes - 1)));
-        float markerRadius = radius + 12.0f;
-        float labelRadius = radius + 25.0f;
+        // Angle for this position (spread across 270 degrees, starting at -135)
+        float angleDeg = -135.0f + (270.0f * i / (numModes - 1));
+        float angleRad = juce::degreesToRadians(angleDeg);
 
-        float markerX = centre.x + markerRadius * std::cos(angle);
-        float markerY = centre.y + markerRadius * std::sin(angle);
-        float labelX = centre.x + labelRadius * std::cos(angle);
-        float labelY = centre.y + labelRadius * std::sin(angle);
+        // Position on the ring
+        float labelX = centre.x + ringRadius * std::cos(angleRad);
+        float labelY = centre.y + ringRadius * std::sin(angleRad);
 
-        // Marker dot - vintage LED style when selected
-        if (currentMode == i)
-        {
-            // Red LED glow effect
-            g.setColour(juce::Colour(255, 100, 80).withAlpha(0.3f));
-            g.fillEllipse(markerX - 6, markerY - 6, 12, 12);
-            g.setColour(juce::Colour(255, 60, 40));
-            g.fillEllipse(markerX - 3, markerY - 3, 6, 6);
-            g.setColour(juce::Colour(255, 200, 180));
-            g.fillEllipse(markerX - 1, markerY - 1, 2, 2);
-        }
+        // Number text (1-11, then "R" for reverb only)
+        juce::String label;
+        if (i == numModes - 1)
+            label = "R";
         else
-        {
-            g.setColour(juce::Colour(100, 95, 85));
-            g.fillEllipse(markerX - 2, markerY - 2, 4, 4);
-        }
+            label = juce::String(i + 1);
 
-        // Mode number - cream colored
-        juce::String label = juce::String(i + 1);
-        g.setColour(currentMode == i ? juce::Colour(255, 245, 225) : juce::Colour(150, 140, 120));
-        g.setFont(9.0f);
-        g.drawText(label, juce::Rectangle<float>(labelX - 8, labelY - 6, 16, 12),
-                   juce::Justification::centred);
+        // Color based on selection
+        if (currentMode == i)
+            g.setColour(RE201Colours::textWhite);
+        else
+            g.setColour(RE201Colours::textWhite.withAlpha(0.6f));
+
+        // Draw text
+        juce::Rectangle<float> textBounds(labelX - 8.0f, labelY - 6.0f, 16.0f, 12.0f);
+        g.drawText(label, textBounds, juce::Justification::centred);
     }
+}
 
-    // Pointer line - thick white indicator
-    float pointerAngle = juce::degreesToRadians(knobAngle);
-    float pointerLength = radius * 0.8f;
-    float pointerX = centre.x + pointerLength * std::cos(pointerAngle);
-    float pointerY = centre.y + pointerLength * std::sin(pointerAngle);
+void ModeSelector::drawCurvedLabels(juce::Graphics& g, juce::Point<float> centre, float radius)
+{
+    g.setFont(juce::FontOptions(8.0f).withStyle("Bold"));
+    g.setColour(RE201Colours::textWhite);
 
-    // Draw pointer with shadow
-    juce::Path pointerPath;
-    pointerPath.startNewSubPath(centre.x, centre.y);
-    pointerPath.lineTo(pointerX, pointerY);
+    // Simple approach: just draw "ECHO" and "REVERB" as flat labels positioned at the sides
+    // This avoids the backwards text issue from character-by-character rotation
 
-    g.setColour(juce::Colours::black.withAlpha(0.4f));
-    g.strokePath(pointerPath, juce::PathStrokeType(5.0f),
-                 juce::AffineTransform::translation(1.0f, 1.0f));
-
-    g.setColour(juce::Colours::white);
-    g.strokePath(pointerPath, juce::PathStrokeType(4.0f));
-
-    // Center cap
-    g.setColour(juce::Colours::darkgrey);
-    g.fillEllipse(centre.x - 8, centre.y - 8, 16, 16);
-    g.setColour(juce::Colours::black);
-    g.drawEllipse(centre.x - 8, centre.y - 8, 16, 16, 1.0f);
-
-    // Mode description in LED display style
-    juce::String modeText;
-    switch (currentMode)
+    // "ECHO" label - positioned at upper-left of the mode selector
     {
-        case 0: modeText = "HEAD 1"; break;
-        case 1: modeText = "HEAD 2"; break;
-        case 2: modeText = "HEAD 3"; break;
-        case 3: modeText = "H1+H2"; break;
-        case 4: modeText = "H1+H3"; break;
-        case 5: modeText = "H2+H3"; break;
-        case 6: modeText = "ALL"; break;
-        case 7: modeText = "H1+H2+R"; break;
-        case 8: modeText = "H1+H3+R"; break;
-        case 9: modeText = "H2+H3+R"; break;
-        case 10: modeText = "ALL+REV"; break;
-        case 11: modeText = "REVERB"; break;
+        auto echoBounds = juce::Rectangle<float>(
+            centre.x - radius - 35.0f,  // Left of ring
+            centre.y - radius * 0.6f,   // Upper portion
+            30.0f, 40.0f);
+
+        // Draw vertically by rotating the entire text
+        g.saveState();
+        g.addTransform(juce::AffineTransform::rotation(
+            -juce::MathConstants<float>::halfPi,  // -90 degrees (text reads top to bottom)
+            echoBounds.getCentreX(), echoBounds.getCentreY()));
+        g.drawText("ECHO", echoBounds, juce::Justification::centred);
+        g.restoreState();
     }
 
-    auto textArea = bounds.removeFromBottom(22).reduced(5, 0);
-    // Black display background
-    g.setColour(juce::Colour(15, 18, 12));
-    g.fillRoundedRectangle(textArea, 3.0f);
-    g.setColour(juce::Colour(35, 40, 25));
-    g.drawRoundedRectangle(textArea, 3.0f, 1.0f);
+    // "REVERB" label - positioned at upper-right of the mode selector
+    {
+        auto reverbBounds = juce::Rectangle<float>(
+            centre.x + radius + 5.0f,   // Right of ring
+            centre.y - radius * 0.6f,   // Upper portion
+            30.0f, 50.0f);
+
+        // Draw vertically by rotating the entire text
+        g.saveState();
+        g.addTransform(juce::AffineTransform::rotation(
+            juce::MathConstants<float>::halfPi,  // +90 degrees (text reads top to bottom)
+            reverbBounds.getCentreX(), reverbBounds.getCentreY()));
+        g.drawText("REVERB", reverbBounds, juce::Justification::centred);
+        g.restoreState();
+    }
+}
+
+void ModeSelector::drawModeDisplay(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    // Black LCD-style display
+    g.setColour(juce::Colour(0xFF0A0A0A));
+    g.fillRoundedRectangle(bounds, 3.0f);
+
+    // Inner bevel
+    {
+        juce::ColourGradient innerBevel(
+            juce::Colours::black.withAlpha(0.4f), bounds.getX(), bounds.getY(),
+            juce::Colours::transparentBlack, bounds.getX(), bounds.getY() + 3.0f, false);
+        g.setGradientFill(innerBevel);
+        g.fillRoundedRectangle(bounds, 3.0f);
+    }
+
+    // Outer rim
+    g.setColour(juce::Colour(0xFF202020));
+    g.drawRoundedRectangle(bounds, 3.0f, 1.0f);
+
     // Green LED text
-    g.setColour(juce::Colour(100, 255, 100));
-    g.setFont(juce::Font("Courier New", 10.0f, juce::Font::bold));
-    g.drawText(modeText, textArea, juce::Justification::centred);
+    g.setColour(RE201Colours::ledGreenOn);
+    g.setFont(juce::FontOptions("Courier New", 9.0f, juce::Font::bold));
+    g.drawText(modeNames[currentMode], bounds, juce::Justification::centred);
 }
 
 void ModeSelector::mouseDown(const juce::MouseEvent& event)
@@ -131,7 +308,9 @@ void ModeSelector::mouseDown(const juce::MouseEvent& event)
 
 void ModeSelector::mouseDrag(const juce::MouseEvent& event)
 {
-    auto centre = getLocalBounds().getCentre().toFloat();
+    auto bounds = getLocalBounds().toFloat();
+    auto centre = bounds.getCentre();
+
     auto currentAngle = std::atan2(event.position.y - centre.y,
                                     event.position.x - centre.x);
     auto lastAngle = std::atan2(lastMousePosition.y - centre.y,
@@ -173,6 +352,9 @@ void ModeSelector::updateModeFromAngle()
 
     if (currentMode != oldMode)
     {
+        // Snap knob to exact position
+        updateAngleFromMode();
+
         if (onModeChanged)
             onModeChanged(currentMode);
         repaint();

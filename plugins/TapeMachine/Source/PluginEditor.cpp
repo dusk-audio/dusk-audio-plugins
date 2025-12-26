@@ -53,25 +53,33 @@ void CustomLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int wi
     g.setGradientFill(capGradient);
     g.fillEllipse(centreX - capRadius, centreY - capRadius, capRadius * 2, capRadius * 2);
 
-    // Pointer - highly visible line style
+    // Pointer - highly visible line style with glow effect
     juce::Path pointer;
     auto pointerLength = radius * 0.75f;
-    auto pointerThickness = 3.5f;
+    auto pointerThickness = 4.5f;  // Thicker for better visibility
 
-    // Main pointer line (bright cream color for maximum visibility)
+    // Glow effect behind pointer (subtle warm glow)
+    juce::Path glowPath;
+    glowPath.addRoundedRectangle(-pointerThickness * 0.5f - 2.0f, -radius + 4,
+                                  pointerThickness + 4.0f, pointerLength + 2.0f, 3.0f);
+    glowPath.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+    g.setColour(juce::Colour(0x30F8E4C0));  // Subtle cream glow
+    g.fillPath(glowPath);
+
+    // Main pointer line (bright off-white for maximum visibility)
     pointer.addRoundedRectangle(-pointerThickness * 0.5f, -radius + 6,
-                                pointerThickness, pointerLength, 1.5f);
+                                pointerThickness, pointerLength, 2.0f);
     pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
-    g.setColour(juce::Colour(0xffF8E4C0));
+    g.setColour(juce::Colour(0xffF5F0E6));  // Brighter off-white
     g.fillPath(pointer);
 
     // Pointer outline for contrast against knob
     juce::Path pointerOutline;
     pointerOutline.addRoundedRectangle(-pointerThickness * 0.5f - 0.5f, -radius + 6,
-                                       pointerThickness + 1.0f, pointerLength, 1.5f);
+                                       pointerThickness + 1.0f, pointerLength, 2.0f);
     pointerOutline.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
     g.setColour(juce::Colour(0xff1a1510));
-    g.strokePath(pointerOutline, juce::PathStrokeType(0.8f));
+    g.strokePath(pointerOutline, juce::PathStrokeType(1.0f));
 }
 
 void CustomLookAndFeel::drawLabel(juce::Graphics& g, juce::Label& label)
@@ -147,21 +155,21 @@ void CustomLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& 
         g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0xff888888));
         g.fillPath(indicator);
 
-        // OFF/ON labels below the switch, spread apart
-        float labelY = switchBounds.getBottom() + 2.0f;
-        float labelWidth = 24.0f;
-        g.setFont(juce::Font(9.0f, juce::Font::bold));
+        // OFF/ON labels below the switch, spread apart - larger and more visible
+        float labelY = switchBounds.getBottom() + 3.0f;
+        float labelWidth = 28.0f;
+        g.setFont(juce::Font(11.0f, juce::Font::bold));
 
-        // OFF label on left
-        g.setColour(isOn ? juce::Colour(0x60F8E4C0) : juce::Colour(0xffF8E4C0));
+        // OFF label on left - better contrast when inactive
+        g.setColour(isOn ? juce::Colour(0x80A09080) : juce::Colour(0xffF5F0E6));
         g.drawText("OFF",
-                   juce::Rectangle<float>(cx - switchSize * 0.5f - 2, labelY, labelWidth, 12),
+                   juce::Rectangle<float>(cx - switchSize * 0.5f - 4, labelY, labelWidth, 14),
                    juce::Justification::centred);
 
-        // ON label on right
-        g.setColour(isOn ? juce::Colour(0xffF8E4C0) : juce::Colour(0x60F8E4C0));
+        // ON label on right - better contrast when inactive
+        g.setColour(isOn ? juce::Colour(0xffF5F0E6) : juce::Colour(0x80A09080));
         g.drawText("ON",
-                   juce::Rectangle<float>(cx + switchSize * 0.5f - labelWidth + 2, labelY, labelWidth, 12),
+                   juce::Rectangle<float>(cx + switchSize * 0.5f - labelWidth + 4, labelY, labelWidth, 14),
                    juce::Justification::centred);
     }
     else if (isLinkButton)
@@ -408,6 +416,12 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     tapeTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "tapeType", tapeTypeSelector);
 
+    setupComboBox(oversamplingSelector, oversamplingLabel, "HQ");
+    oversamplingSelector.addItem("2x", 1);
+    oversamplingSelector.addItem("4x", 2);
+    oversamplingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getAPVTS(), "oversampling", oversamplingSelector);
+
     setupSlider(inputGainSlider, inputGainLabel, "INPUT");
     inputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "inputGain", inputGainSlider);
@@ -453,7 +467,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     noiseEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), "noiseEnabled", noiseEnabledButton);
 
-    // Link button with chain icon - shows input/output are linked
+    // Link button with chain icon - shows input/output are linked (auto-compensation)
     autoCompButton.setButtonText("LINK");
     autoCompButton.setClickingTogglesState(true);
     autoCompButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a2828));
@@ -463,6 +477,13 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     addAndMakeVisible(autoCompButton);
     autoCompAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), "autoComp", autoCompButton);
+
+    // Label for auto-comp button
+    autoCompLabel.setText("AUTO COMP", juce::dontSendNotification);
+    autoCompLabel.setJustificationType(juce::Justification::centred);
+    autoCompLabel.setColour(juce::Label::textColourId, juce::Colour(0xffE8D4B0));
+    autoCompLabel.setFont(juce::Font(10.0f, juce::Font::bold));
+    addAndMakeVisible(autoCompLabel);
 
     addAndMakeVisible(leftReel);
     addAndMakeVisible(rightReel);
@@ -611,23 +632,25 @@ void TapeMachineAudioProcessorEditor::resized()
     auto meterArea = transportArea.removeFromTop(120);
     mainVUMeter.setBounds(meterArea.reduced(5, 2));
 
-    // Labels and selectors below VU meter
+    // Labels and selectors below VU meter (4 selectors: Machine, Speed, Tape Type, HQ)
     transportArea.removeFromTop(4);
     auto labelArea = transportArea.removeFromTop(14);
-    auto selectorWidth = labelArea.getWidth() / 3;
+    auto selectorWidth = labelArea.getWidth() / 4;
 
     // Position labels above their combo boxes
     tapeMachineLabel.setBounds(labelArea.removeFromLeft(selectorWidth).reduced(4, 0));
     tapeSpeedLabel.setBounds(labelArea.removeFromLeft(selectorWidth).reduced(4, 0));
-    tapeTypeLabel.setBounds(labelArea.reduced(4, 0));
+    tapeTypeLabel.setBounds(labelArea.removeFromLeft(selectorWidth).reduced(4, 0));
+    oversamplingLabel.setBounds(labelArea.reduced(4, 0));
 
     transportArea.removeFromTop(2);
     auto selectorArea = transportArea.removeFromTop(32);
-    selectorWidth = selectorArea.getWidth() / 3;
+    selectorWidth = selectorArea.getWidth() / 4;
 
     tapeMachineSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(4, 2));
     tapeSpeedSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(4, 2));
-    tapeTypeSelector.setBounds(selectorArea.reduced(4, 2));
+    tapeTypeSelector.setBounds(selectorArea.removeFromLeft(selectorWidth).reduced(4, 2));
+    oversamplingSelector.setBounds(selectorArea.reduced(4, 2));
 
     area.removeFromTop(6);
 
@@ -673,8 +696,10 @@ void TapeMachineAudioProcessorEditor::resized()
     noiseEnabledButton.setBounds(buttonArea.withSizeKeepingCentre(50, 65));  // Taller to fit ON/OFF labels
     characterArea.removeFromLeft(charSpacing);
 
-    // Link button - wider with centered icon
+    // Link button - wider with centered icon, with label above
     auto autoCompButtonArea = characterArea.removeFromLeft(100);
+    auto autoCompLabelArea = autoCompButtonArea.removeFromTop(16);
+    autoCompLabel.setBounds(autoCompLabelArea);
     autoCompButton.setBounds(autoCompButtonArea.withSizeKeepingCentre(90, 38));
 
     // Keep supporters overlay sized to full window
@@ -700,28 +725,56 @@ void TapeMachineAudioProcessorEditor::timerCallback()
     // Update VU meter to show tape drive (input level after input gain)
     mainVUMeter.setLevels(inputL, inputR);
 
-    // VTM-style: When auto-comp is enabled, output knob tracks inverse of input
+    // VTM-style: When auto-comp is enabled, input and output are linked (bidirectional)
+    // You can adjust EITHER knob and the other follows to maintain unity gain
     auto* autoCompParam = audioProcessor.getAPVTS().getRawParameterValue("autoComp");
     auto* inputGainParam = audioProcessor.getAPVTS().getRawParameterValue("inputGain");
+    auto* outputGainParam = audioProcessor.getAPVTS().getRawParameterValue("outputGain");
     bool autoCompEnabled = autoCompParam && autoCompParam->load() > 0.5f;
 
-    if (autoCompEnabled && inputGainParam)
+    if (autoCompEnabled && inputGainParam && outputGainParam && !isUpdatingGainSliders)
     {
-        // VTM-style: Output is exactly inverse of input for unity gain
-        // When input is +6dB, output shows -6dB (net = 0dB through saturation)
-        float inputGainDB = inputGainParam->load();
-        float compensatedOutputDB = -inputGainDB;
+        isUpdatingGainSliders = true;  // Prevent recursive updates
 
-        // Clamp to valid range (-12 to +12)
-        compensatedOutputDB = juce::jlimit(-12.0f, 12.0f, compensatedOutputDB);
+        float currentInputGainDB = inputGainParam->load();
+        float currentOutputGainDB = outputGainParam->load();
 
-        // Update the output slider visually (read-only mode)
-        outputGainSlider.setValue(compensatedOutputDB, juce::dontSendNotification);
-        outputGainSlider.setEnabled(false);  // Can't be adjusted
+        // Detect which knob was changed
+        bool inputChanged = std::abs(currentInputGainDB - lastInputGainValue) > 0.01f;
+        bool outputChanged = std::abs(currentOutputGainDB - lastOutputGainValue) > 0.01f;
+
+        if (inputChanged && !outputChanged)
+        {
+            // Input was changed -> update output to be inverse
+            float compensatedOutputDB = juce::jlimit(-12.0f, 12.0f, -currentInputGainDB);
+            if (auto* param = audioProcessor.getAPVTS().getParameter("outputGain"))
+            {
+                param->setValueNotifyingHost(param->convertTo0to1(compensatedOutputDB));
+            }
+            lastOutputGainValue = compensatedOutputDB;
+        }
+        else if (outputChanged && !inputChanged)
+        {
+            // Output was changed -> update input to be inverse
+            float compensatedInputDB = juce::jlimit(-12.0f, 12.0f, -currentOutputGainDB);
+            if (auto* param = audioProcessor.getAPVTS().getParameter("inputGain"))
+            {
+                param->setValueNotifyingHost(param->convertTo0to1(compensatedInputDB));
+            }
+            lastInputGainValue = compensatedInputDB;
+        }
+
+        // Update last values for next comparison
+        lastInputGainValue = inputGainParam->load();
+        lastOutputGainValue = outputGainParam->load();
+
+        isUpdatingGainSliders = false;
     }
-    else
+    else if (!autoCompEnabled)
     {
-        outputGainSlider.setEnabled(true);
+        // When auto-comp is off, just track current values for when it's turned back on
+        if (inputGainParam) lastInputGainValue = inputGainParam->load();
+        if (outputGainParam) lastOutputGainValue = outputGainParam->load();
     }
 
     // Update reel speeds and tape amounts based on transport

@@ -114,6 +114,9 @@ private:
     juce::String formatPercent(float value);
     void createValueLabel(std::unique_ptr<juce::Label>& label);
 
+    // EQ frequency response visualization
+    void drawEQCurve(juce::Graphics& g, juce::Rectangle<float> bounds);
+
     // Latency toggle
     std::unique_ptr<juce::ToggleButton> zeroLatencyButton;
 
@@ -207,9 +210,11 @@ private:
     void loadStateFromSlot(const ParameterState& slot);
     void copyCurrentToOther();
 
-    // Smoothed meter values
-    float smoothedInputLevel = -60.0f;
-    float smoothedOutputLevel = -60.0f;
+    // Smoothed meter values (stereo L/R)
+    float smoothedInputLevelL = -60.0f;
+    float smoothedInputLevelR = -60.0f;
+    float smoothedOutputLevelL = -60.0f;
+    float smoothedOutputLevelR = -60.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ConvolutionReverbEditor)
 };

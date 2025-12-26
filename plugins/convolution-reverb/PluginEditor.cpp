@@ -111,10 +111,10 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     zeroLatencyButton = std::make_unique<juce::ToggleButton>("ZERO LAT");
     setupToggleButton(*zeroLatencyButton, "ZERO LAT");
 
-    // IR Offset control
+    // IR Offset control - shortened label to fit
     irOffsetSlider = std::make_unique<juce::Slider>();
     irOffsetLabel = std::make_unique<juce::Label>();
-    setupSlider(*irOffsetSlider, *irOffsetLabel, "IR OFFSET", "%");
+    setupSlider(*irOffsetSlider, *irOffsetLabel, "OFFSET", "%");
 
     // Quality dropdown
     qualityComboBox = std::make_unique<juce::ComboBox>();
@@ -209,9 +209,11 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupSlider(*filterEnvEndSlider, *filterEnvEndLabel, "END", "Hz");
     setupSlider(*filterEnvAttackSlider, *filterEnvAttackLabel, "F.ATK");
 
-    // Meters
+    // Meters (stereo mode)
     inputMeter = std::make_unique<LEDMeter>();
+    inputMeter->setStereoMode(true);
     outputMeter = std::make_unique<LEDMeter>();
+    outputMeter->setStereoMode(true);
     addAndMakeVisible(inputMeter.get());
     addAndMakeVisible(outputMeter.get());
 
@@ -316,12 +318,12 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     preDelaySlider->onValueChange = [this]() { updateValueLabels(); };
     widthSlider->onValueChange = [this]() { updateValueLabels(); };
     mixSlider->onValueChange = [this]() { updateValueLabels(); };
-    hpfSlider->onValueChange = [this]() { updateValueLabels(); };
-    lpfSlider->onValueChange = [this]() { updateValueLabels(); };
-    eqLowGainSlider->onValueChange = [this]() { updateValueLabels(); };
-    eqLowMidGainSlider->onValueChange = [this]() { updateValueLabels(); };
-    eqHighMidGainSlider->onValueChange = [this]() { updateValueLabels(); };
-    eqHighGainSlider->onValueChange = [this]() { updateValueLabels(); };
+    hpfSlider->onValueChange = [this]() { updateValueLabels(); repaint(); };  // Triggers EQ curve redraw
+    lpfSlider->onValueChange = [this]() { updateValueLabels(); repaint(); };  // Triggers EQ curve redraw
+    eqLowGainSlider->onValueChange = [this]() { updateValueLabels(); repaint(); };  // Triggers EQ curve redraw
+    eqLowMidGainSlider->onValueChange = [this]() { updateValueLabels(); repaint(); };  // Triggers EQ curve redraw
+    eqHighMidGainSlider->onValueChange = [this]() { updateValueLabels(); repaint(); };  // Triggers EQ curve redraw
+    eqHighGainSlider->onValueChange = [this]() { updateValueLabels(); repaint(); };  // Triggers EQ curve redraw
     irOffsetSlider->onValueChange = [this]() { updateValueLabels(); };
     filterEnvInitSlider->onValueChange = [this]() { updateValueLabels(); };
     filterEnvEndSlider->onValueChange = [this]() { updateValueLabels(); };
@@ -408,28 +410,70 @@ void ConvolutionReverbEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xff707070));
     g.drawText("A/B", 380, 18, 30, 15, juce::Justification::centred);
 
-    // Section divider
+    // Header divider with gradient effect
+    juce::ColourGradient dividerGrad(
+        juce::Colour(0xff505050), 0, 55,
+        juce::Colour(0xff2a2a2a), static_cast<float>(getWidth()), 55,
+        false
+    );
+    g.setGradientFill(dividerGrad);
+    g.fillRect(0.0f, 54.0f, static_cast<float>(getWidth()), 2.0f);
+
+    // Subtle highlight below the dark line
+    g.setColour(juce::Colour(0x18FFFFFF));
+    g.fillRect(0.0f, 56.0f, static_cast<float>(getWidth()), 1.0f);
+
+    // ========== SECTION BACKGROUND PANELS ==========
+    // Very subtle semi-transparent overlay panels for visual grouping (~5-6% white overlay)
+    auto sectionPanelColour = juce::Colour(0x0dFFFFFF);  // ~5% white overlay - very subtle
+    auto sectionBorderColour = juce::Colour(0x15FFFFFF);  // ~8% white for border
+    float cornerRadius = 5.0f;
+
+    // Envelope section panel (around Attack, Decay, Length, IR Offset, Reverse)
+    auto envelopePanelBounds = juce::Rectangle<float>(210, 285, 510, 105);
+    g.setColour(sectionPanelColour);
+    g.fillRoundedRectangle(envelopePanelBounds, cornerRadius);
+    g.setColour(sectionBorderColour);
+    g.drawRoundedRectangle(envelopePanelBounds, cornerRadius, 0.5f);
+
+    // Filter Envelope section panel (10px gap from envelope panel)
+    auto filterEnvPanelBounds = juce::Rectangle<float>(210, 400, 510, 105);
+    g.setColour(sectionPanelColour);
+    g.fillRoundedRectangle(filterEnvPanelBounds, cornerRadius);
+    g.setColour(sectionBorderColour);
+    g.drawRoundedRectangle(filterEnvPanelBounds, cornerRadius, 0.5f);
+
+    // Right controls panel (Pre-delay, Width, Mix, toggles, dropdowns)
+    auto rightControlsPanelBounds = juce::Rectangle<float>(725, 60, 170, 470);
+    g.setColour(sectionPanelColour);
+    g.fillRoundedRectangle(rightControlsPanelBounds, cornerRadius);
+    g.setColour(sectionBorderColour);
+    g.drawRoundedRectangle(rightControlsPanelBounds, cornerRadius, 0.5f);
+
+    // Wet EQ section panel (bottom row of EQ knobs) - taller now that curve is in waveform area
+    auto eqPanelBounds = juce::Rectangle<float>(5, 515, static_cast<float>(getWidth() - 10), 175);
+    g.setColour(sectionPanelColour);
+    g.fillRoundedRectangle(eqPanelBounds, cornerRadius);
+    g.setColour(sectionBorderColour);
+    g.drawRoundedRectangle(eqPanelBounds, cornerRadius, 0.5f);
+
+    // ========== SECTION LABELS ==========
+    g.setFont(juce::Font(9.0f, juce::Font::bold));
+    g.setColour(juce::Colour(0xff707070));  // Subtle label color
+
+    // Envelope section label - positioned at top-left of panel, above the knobs
+    g.drawText("ENVELOPE", envelopePanelBounds.getX() + 8, envelopePanelBounds.getY() + 4, 80, 12, juce::Justification::left);
+
+    // Filter Envelope section label - positioned at top-left of panel
+    g.drawText("FILTER ENVELOPE", filterEnvPanelBounds.getX() + 8, filterEnvPanelBounds.getY() + 4, 120, 12, juce::Justification::left);
+
+    // EQ section label - positioned at top of EQ panel
+    g.drawText("WET SIGNAL EQ", 55, 520, 120, 15, juce::Justification::left);
+
+    // Note: EQ curve now displayed in waveform area via IR/EQ toggle
+
+    // ========== SEPARATOR LINES ==========
     g.setColour(juce::Colour(0xff3a3a3a));
-    g.drawLine(0, 55, static_cast<float>(getWidth()), 55, 2.0f);
-
-    // Section labels
-    g.setFont(juce::Font(10.0f, juce::Font::bold));
-    g.setColour(juce::Colour(0xff707070));
-
-    // Envelope section label
-    g.drawText("ENVELOPE", 230, 290, 100, 15, juce::Justification::left);
-
-    // Filter Envelope section label
-    g.drawText("FILTER ENVELOPE", 230, 400, 140, 15, juce::Justification::left);
-
-    // EQ section label
-    g.drawText("WET SIGNAL EQ", 45, 545, 120, 15, juce::Justification::left);
-
-    // Control section separator lines
-    g.setColour(juce::Colour(0xff3a3a3a));
-
-    // Horizontal line above EQ section
-    g.drawLine(10, 540, static_cast<float>(getWidth() - 10), 540, 1.0f);
 
     // Vertical separator between browser and waveform
     g.drawLine(200, 65, 200, 530, 1.0f);
@@ -507,17 +551,18 @@ void ConvolutionReverbEditor::resized()
     controlsBounds.removeFromTop(5);
 
     // Quality dropdown with info label
-    auto qualityArea = controlsBounds.removeFromTop(65);
+    auto qualityArea = controlsBounds.removeFromTop(58);
     qualityLabel->setBounds(qualityArea.removeFromTop(labelHeight));
-    qualityComboBox->setBounds(qualityArea.removeFromTop(24).withSizeKeepingCentre(100, 24));
+    qualityComboBox->setBounds(qualityArea.removeFromTop(24).withSizeKeepingCentre(110, 24));
     qualityInfoLabel->setBounds(qualityArea.removeFromTop(14));
 
-    controlsBounds.removeFromTop(5);
+    controlsBounds.removeFromTop(8);  // Gap between dropdowns
 
-    // Stereo mode dropdown
-    auto stereoArea = controlsBounds.removeFromTop(50);
-    stereoModeLabel->setBounds(stereoArea.removeFromTop(labelHeight));
-    stereoModeComboBox->setBounds(stereoArea.withSizeKeepingCentre(100, 24));
+    // Stereo mode dropdown - wider to fit "True Stereo"
+    auto stereoArea = controlsBounds.removeFromTop(48);
+    stereoModeLabel->setBounds(stereoArea.removeFromTop(labelHeight - 2));  // Slightly shorter label row
+    stereoArea.removeFromTop(4);  // Gap between label and dropdown
+    stereoModeComboBox->setBounds(stereoArea.removeFromTop(24).withSizeKeepingCentre(130, 24));
 
     // Center area (waveform and envelope)
     auto centerBounds = contentBounds.reduced(10);
@@ -534,14 +579,14 @@ void ConvolutionReverbEditor::resized()
 
     centerBounds.removeFromTop(15);
 
-    // Envelope controls row
+    // Envelope controls row - offset down to avoid overlap with section label
     auto envelopeBounds = centerBounds.removeFromTop(100);
     int envKnobSize = 55;
     int envValueHeight = 14;
     int envKnobSpacing = (envelopeBounds.getWidth() - 5 * envKnobSize - 50) / 6;  // 5 knobs + reverse button
 
     int envX = envelopeBounds.getX() + envKnobSpacing;
-    int envY = envelopeBounds.getY();
+    int envY = envelopeBounds.getY() + 16;  // Offset down to leave room for "ENVELOPE" section label
 
     // Attack
     attackLabel->setBounds(envX, envY, envKnobSize, labelHeight);
@@ -570,17 +615,17 @@ void ConvolutionReverbEditor::resized()
     // Reverse button
     reverseButton->setBounds(envX, envY + labelHeight + 10, 50, 30);
 
-    // Filter Envelope Section
-    centerBounds.removeFromTop(10);
-    auto filterEnvBounds = centerBounds.removeFromTop(100);
+    // Filter Envelope Section (with 15px gap from envelope section)
+    centerBounds.removeFromTop(15);
+    auto filterEnvBounds = centerBounds.removeFromTop(95);
     int filterKnobSize = 50;
     int filterKnobSpacing = (filterEnvBounds.getWidth() - 3 * filterKnobSize - 90) / 5;
 
     int filterX = filterEnvBounds.getX() + filterKnobSpacing;
-    int filterY = filterEnvBounds.getY();
+    int filterY = filterEnvBounds.getY() + 16;  // Offset down to leave room for "FILTER ENVELOPE" section label
 
-    // Filter Envelope Enable button
-    filterEnvButton->setBounds(filterX, filterY + 25, 90, 30);
+    // Filter Envelope Enable button - adjust position since we added offset
+    filterEnvButton->setBounds(filterX, filterY + 10, 90, 30);
     filterX += 90 + filterKnobSpacing;
 
     // Filter Init Freq
@@ -600,26 +645,29 @@ void ConvolutionReverbEditor::resized()
     filterEnvAttackSlider->setBounds(filterX, filterY + labelHeight, filterKnobSize, filterKnobSize);
     filterEnvAttackValueLabel->setBounds(filterX, filterY + labelHeight + filterKnobSize, filterKnobSize, envValueHeight);
 
-    // EQ Section (bottom)
+    // EQ Section (bottom) - more vertical space now that curve is in waveform area
     auto eqBounds = bounds.reduced(10);
-    eqBounds.removeFromTop(20); // Section label space
+    eqBounds.removeFromTop(25); // Space for section label only (curve is now in waveform area)
+    eqBounds.removeFromBottom(8); // Bottom padding to prevent clipping
 
-    int eqKnobSize = 55;
+    int eqKnobSize = 50;  // Slightly smaller knobs to fit better
     int eqItemWidth = (eqBounds.getWidth() - 100) / 6; // Leave space for meters
 
-    // Meters on left and right
+    // Meters on left and right - reduced height to ensure L/R labels fit
     int meterWidth = 35;
-    int meterHeight = eqBounds.getHeight() - 20;
+    int meterHeight = eqBounds.getHeight() - 25;  // Reduced for proper bottom clearance
 
     auto leftMeterArea = eqBounds.removeFromLeft(meterWidth + 10);
+    leftMeterArea.removeFromTop(5);  // Align meters with knobs
     inputMeterLabel->setBounds(leftMeterArea.removeFromTop(15));
-    inputMeter->setBounds(leftMeterArea.withSizeKeepingCentre(meterWidth, meterHeight));
+    inputMeter->setBounds(leftMeterArea.removeFromTop(meterHeight).withSizeKeepingCentre(meterWidth, meterHeight));
 
     auto rightMeterArea = eqBounds.removeFromRight(meterWidth + 10);
+    rightMeterArea.removeFromTop(5);  // Align meters with knobs
     outputMeterLabel->setBounds(rightMeterArea.removeFromTop(15));
-    outputMeter->setBounds(rightMeterArea.withSizeKeepingCentre(meterWidth, meterHeight));
+    outputMeter->setBounds(rightMeterArea.removeFromTop(meterHeight).withSizeKeepingCentre(meterWidth, meterHeight));
 
-    // EQ knobs
+    // EQ knobs - positioned below the curve
     int eqY = eqBounds.getY();
     int eqX = eqBounds.getX();
     int eqValueHeight = 14;
@@ -665,16 +713,20 @@ void ConvolutionReverbEditor::timerCallback()
     // Apply any pending IR changes (deferred from audio thread for real-time safety)
     audioProcessor.applyPendingIRChanges();
 
-    // Update meters
-    float inputLevel = audioProcessor.getInputLevel();
-    float outputLevel = audioProcessor.getOutputLevel();
+    // Update meters (stereo L/R)
+    float inputLevelL = audioProcessor.getInputLevelL();
+    float inputLevelR = audioProcessor.getInputLevelR();
+    float outputLevelL = audioProcessor.getOutputLevelL();
+    float outputLevelR = audioProcessor.getOutputLevelR();
 
     // Smooth the meter values
-    smoothedInputLevel = smoothedInputLevel * 0.8f + inputLevel * 0.2f;
-    smoothedOutputLevel = smoothedOutputLevel * 0.8f + outputLevel * 0.2f;
+    smoothedInputLevelL = smoothedInputLevelL * 0.8f + inputLevelL * 0.2f;
+    smoothedInputLevelR = smoothedInputLevelR * 0.8f + inputLevelR * 0.2f;
+    smoothedOutputLevelL = smoothedOutputLevelL * 0.8f + outputLevelL * 0.2f;
+    smoothedOutputLevelR = smoothedOutputLevelR * 0.8f + outputLevelR * 0.2f;
 
-    inputMeter->setLevel(smoothedInputLevel);
-    outputMeter->setLevel(smoothedOutputLevel);
+    inputMeter->setStereoLevels(smoothedInputLevelL, smoothedInputLevelR);
+    outputMeter->setStereoLevels(smoothedOutputLevelL, smoothedOutputLevelR);
 
     // Check if IR changed
     static juce::String lastIRName;
@@ -695,6 +747,16 @@ void ConvolutionReverbEditor::timerCallback()
         static_cast<float>(filterEnvInitSlider->getValue()),
         static_cast<float>(filterEnvEndSlider->getValue()),
         static_cast<float>(filterEnvAttackSlider->getValue())
+    );
+
+    // Update EQ parameters for waveform display's EQ curve view
+    waveformDisplay->setEQParameters(
+        static_cast<float>(hpfSlider->getValue()),
+        static_cast<float>(lpfSlider->getValue()),
+        static_cast<float>(eqLowGainSlider->getValue()),
+        static_cast<float>(eqLowMidGainSlider->getValue()),
+        static_cast<float>(eqHighMidGainSlider->getValue()),
+        static_cast<float>(eqHighGainSlider->getValue())
     );
 }
 
@@ -743,6 +805,7 @@ void ConvolutionReverbEditor::createValueLabel(std::unique_ptr<juce::Label>& lab
 {
     label = std::make_unique<juce::Label>();
     label->setFont(juce::Font(10.0f));
+    // Full opacity for clear readability of parameter values
     label->setColour(juce::Label::textColourId, lookAndFeel.getAccentColour());
     label->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(label.get());
@@ -916,4 +979,192 @@ void ConvolutionReverbEditor::copyCurrentToOther()
         // Currently on A, copy to B
         saveCurrentStateToSlot(stateB);
     }
+}
+
+void ConvolutionReverbEditor::drawEQCurve(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    // Get current EQ settings from sliders
+    float hpfFreq = static_cast<float>(hpfSlider->getValue());
+    float lpfFreq = static_cast<float>(lpfSlider->getValue());
+    float lowGain = static_cast<float>(eqLowGainSlider->getValue());
+    float lowMidGain = static_cast<float>(eqLowMidGainSlider->getValue());
+    float highMidGain = static_cast<float>(eqHighMidGainSlider->getValue());
+    float highGain = static_cast<float>(eqHighGainSlider->getValue());
+
+    // Fixed EQ frequencies
+    const float lowFreq = 100.0f;
+    const float lowMidFreq = 600.0f;
+    const float highMidFreq = 3000.0f;
+    const float highFreq = 8000.0f;
+
+    // Draw background
+    g.setColour(juce::Colour(0xff1a1a1a));
+    g.fillRoundedRectangle(bounds, 4.0f);
+
+    // Draw border
+    g.setColour(juce::Colour(0xff2a2a2a));
+    g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
+
+    auto graphBounds = bounds.reduced(4, 6);
+    float centreY = graphBounds.getCentreY();
+    const float dbScale = 15.0f;  // ±15 dB visible range
+
+    // Helper to convert dB to Y position
+    auto dbToY = [&](float db) -> float {
+        return centreY - (db / dbScale) * (graphBounds.getHeight() * 0.5f);
+    };
+
+    // Draw horizontal grid lines at 0dB, ±6dB
+    g.setColour(juce::Colour(0xff2a2a2a));
+
+    // 0dB line (center, slightly brighter)
+    g.setColour(juce::Colour(0xff3a3a3a));
+    g.drawHorizontalLine(static_cast<int>(centreY), graphBounds.getX(), graphBounds.getRight());
+
+    // ±6dB lines
+    g.setColour(juce::Colour(0xff282828));
+    float y6dB = dbToY(6.0f);
+    float yMinus6dB = dbToY(-6.0f);
+    g.drawHorizontalLine(static_cast<int>(y6dB), graphBounds.getX(), graphBounds.getRight());
+    g.drawHorizontalLine(static_cast<int>(yMinus6dB), graphBounds.getX(), graphBounds.getRight());
+
+    // Draw frequency grid lines (vertical) with labels
+    g.setColour(juce::Colour(0xff282828));
+    const float freqMarkers[] = { 100.0f, 1000.0f, 10000.0f };
+    const char* freqLabels[] = { "100", "1k", "10k" };
+    for (int i = 0; i < 3; ++i)
+    {
+        float freq = freqMarkers[i];
+        float normalizedFreq = (std::log10(freq) - std::log10(20.0f)) / (std::log10(20000.0f) - std::log10(20.0f));
+        float x = graphBounds.getX() + normalizedFreq * graphBounds.getWidth();
+        g.drawVerticalLine(static_cast<int>(x), graphBounds.getY(), graphBounds.getBottom());
+
+        // Draw frequency label at bottom of curve area
+        g.setColour(juce::Colour(0xff606060));
+        g.setFont(juce::Font(8.0f));
+        g.drawText(freqLabels[i], static_cast<int>(x) - 12, static_cast<int>(graphBounds.getBottom()) - 10, 24, 10, juce::Justification::centred);
+        g.setColour(juce::Colour(0xff282828));  // Reset for next line
+    }
+
+    // Build frequency response path
+    juce::Path responsePath;
+    const int numPoints = 128;
+
+    // Helper to convert frequency to X position (log scale)
+    auto freqToX = [&](float freq) -> float {
+        float normalizedFreq = (std::log10(freq) - std::log10(20.0f)) / (std::log10(20000.0f) - std::log10(20.0f));
+        return graphBounds.getX() + normalizedFreq * graphBounds.getWidth();
+    };
+
+    // Calculate combined EQ response at each frequency
+    auto calculateResponse = [&](float freq) -> float {
+        float totalGain = 0.0f;
+
+        // HPF response (12dB/oct slope approximation)
+        if (hpfFreq > 20.0f && freq < hpfFreq * 4.0f)
+        {
+            float ratio = freq / hpfFreq;
+            if (ratio < 1.0f)
+                totalGain -= 12.0f * std::log2(1.0f / ratio);
+        }
+
+        // LPF response (12dB/oct slope approximation)
+        if (lpfFreq < 20000.0f && freq > lpfFreq / 4.0f)
+        {
+            float ratio = freq / lpfFreq;
+            if (ratio > 1.0f)
+                totalGain -= 12.0f * std::log2(ratio);
+        }
+
+        // Low shelf (bell approximation centered at lowFreq)
+        if (std::abs(lowGain) > 0.1f)
+        {
+            float octaves = std::log2(freq / lowFreq);
+            float bell = std::exp(-octaves * octaves * 0.5f);  // Gaussian-like rolloff
+            if (freq < lowFreq)
+                totalGain += lowGain * (1.0f - bell * 0.5f);
+            else
+                totalGain += lowGain * bell;
+        }
+
+        // Low-mid peak
+        if (std::abs(lowMidGain) > 0.1f)
+        {
+            float octaves = std::log2(freq / lowMidFreq);
+            float bell = std::exp(-octaves * octaves * 2.0f);  // Q=1 approximation
+            totalGain += lowMidGain * bell;
+        }
+
+        // High-mid peak
+        if (std::abs(highMidGain) > 0.1f)
+        {
+            float octaves = std::log2(freq / highMidFreq);
+            float bell = std::exp(-octaves * octaves * 2.0f);
+            totalGain += highMidGain * bell;
+        }
+
+        // High shelf
+        if (std::abs(highGain) > 0.1f)
+        {
+            float octaves = std::log2(freq / highFreq);
+            float bell = std::exp(-octaves * octaves * 0.5f);
+            if (freq > highFreq)
+                totalGain += highGain * (1.0f - bell * 0.5f);
+            else
+                totalGain += highGain * bell;
+        }
+
+        return juce::jlimit(-dbScale, dbScale, totalGain);
+    };
+
+    // Build the path
+    bool firstPoint = true;
+    for (int i = 0; i < numPoints; ++i)
+    {
+        float normalizedPos = static_cast<float>(i) / (numPoints - 1);
+        float freq = 20.0f * std::pow(1000.0f, normalizedPos);  // 20 Hz to 20 kHz log scale
+
+        float x = freqToX(freq);
+        float response = calculateResponse(freq);
+        float y = dbToY(response);
+
+        if (firstPoint)
+        {
+            responsePath.startNewSubPath(x, y);
+            firstPoint = false;
+        }
+        else
+        {
+            responsePath.lineTo(x, y);
+        }
+    }
+
+    // Draw filled area under curve
+    juce::Path fillPath = responsePath;
+    fillPath.lineTo(graphBounds.getRight(), centreY);
+    fillPath.lineTo(graphBounds.getX(), centreY);
+    fillPath.closeSubPath();
+
+    juce::ColourGradient fillGrad(
+        juce::Colour(0x284a9eff), graphBounds.getCentreX(), graphBounds.getY(),
+        juce::Colour(0x0c4a9eff), graphBounds.getCentreX(), graphBounds.getBottom(),
+        false
+    );
+    g.setGradientFill(fillGrad);
+    g.fillPath(fillPath);
+
+    // Draw glow/shadow behind the curve for depth
+    g.setColour(juce::Colour(0x404a9eff));  // Soft blue glow
+    g.strokePath(responsePath, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+
+    // Draw the main response curve - thicker 2px stroke
+    g.setColour(juce::Colour(0xff4a9eff));  // Accent blue
+    g.strokePath(responsePath, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+
+    // Bright highlight on top of curve
+    g.setColour(juce::Colour(0x806abeFF));  // Brighter blue, 50% opacity
+    g.strokePath(responsePath, juce::PathStrokeType(1.0f, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
 }

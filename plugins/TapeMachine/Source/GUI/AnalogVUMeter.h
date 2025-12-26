@@ -31,23 +31,32 @@ private:
     // Stereo/mono mode
     bool stereoMode = true;
 
-    // Stereo levels
-    float currentLevelL = 0.0f;
-    float currentLevelR = 0.0f;
-    float targetLevelL = 0.0f;
-    float targetLevelR = 0.0f;
-    float needlePositionL = 0.13f;  // Rest at -20dB
-    float needlePositionR = 0.13f;  // Rest at -20dB
+    // Target levels (dB) set by setLevels()
+    float targetLevelL = -60.0f;
+    float targetLevelR = -60.0f;
+
+    // Needle physics state (normalized 0-1 position)
+    float needlePositionL = 0.0f;   // Current position
+    float needlePositionR = 0.0f;
+    float needleVelocityL = 0.0f;   // For overshoot physics
+    float needleVelocityR = 0.0f;
 
     // Peak hold
-    float peakLevelL = 0.0f;
-    float peakLevelR = 0.0f;
+    float peakLevelL = -60.0f;
+    float peakLevelR = -60.0f;
     float peakHoldTimeL = 0.0f;
     float peakHoldTimeR = 0.0f;
 
-    // VU Ballistics
-    const float attackTime = 0.3f;  // 300ms VU standard
-    const float releaseTime = 0.3f;
+    // VU Ballistics - ANSI/IEC standard
+    // 300ms integration time means time constant τ ≈ 65ms (300ms / 4.6 for 99%)
+    // At 60Hz refresh: coefficient = 1 - exp(-1 / (60 * 0.065)) ≈ 0.23
+    static constexpr float kVUTimeConstantMs = 65.0f;   // For 300ms to 99%
+    static constexpr float kRefreshRateHz = 60.0f;
+
+    // Mechanical overshoot simulation (damped spring model)
+    // Real VU meters overshoot by ~1.5-2% due to needle inertia
+    static constexpr float kOvershootDamping = 0.78f;   // Damping ratio (0.78 ≈ 1.5-2% overshoot)
+    static constexpr float kOvershootStiffness = 180.0f; // Spring constant (higher = faster response)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnalogVUMeter)
 };
