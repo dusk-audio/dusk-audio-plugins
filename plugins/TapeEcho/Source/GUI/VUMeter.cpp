@@ -1,8 +1,22 @@
+/*
+  ==============================================================================
+
+    RE-201 Space Echo - VU Meter Implementation
+    UAD Galaxy-style horizontal LED bar-graph meter
+    Copyright (c) 2025 Luna Co. Audio
+
+  ==============================================================================
+*/
+
 #include "VUMeter.h"
 
 VUMeter::VUMeter()
 {
-    startTimerHz(30);
+    // 60 Hz for smooth meter movement
+    startTimerHz(60);
+
+    // Calculate smoothing coefficient for ballistics
+    smoothingCoeff = 1.0f - std::exp(-1.0f / (60.0f * attackTime));
 }
 
 VUMeter::~VUMeter()
@@ -16,23 +30,25 @@ void VUMeter::setLevel(float newLevel)
     targetAngle = -45.0f + targetLevel * 90.0f;
 }
 
-void VUMeter::setVintageMode(bool vintageMode)
-{
-    if (isVintage != vintageMode)
-    {
-        isVintage = vintageMode;
-        repaint();
-    }
-}
-
 void VUMeter::timerCallback()
 {
-    // Smooth needle movement
-    const float smoothing = 0.15f;
-    needleAngle += (targetAngle - needleAngle) * smoothing;
-    level += (targetLevel - level) * smoothing;
+    float delta = targetLevel - level;
 
-    if (std::abs(needleAngle - targetAngle) > 0.01f)
+    if (delta > 0)
+    {
+        // Attack - fast response
+        level += delta * smoothingCoeff * 2.0f;
+    }
+    else
+    {
+        // Release - slower decay
+        level += delta * smoothingCoeff * 0.5f;
+    }
+
+    // Update needle angle for legacy support
+    needleAngle += (targetAngle - needleAngle) * smoothingCoeff;
+
+    if (std::abs(level - targetLevel) > 0.001f)
     {
         repaint();
     }
@@ -40,166 +56,344 @@ void VUMeter::timerCallback()
 
 void VUMeter::paint(juce::Graphics& g)
 {
-    if (isVintage)
-        drawVintageVUMeter(g);
+    auto bounds = getLocalBounds().toFloat();
+
+    // Choose meter style based on aspect ratio
+    if (bounds.getWidth() > bounds.getHeight() * 1.5f)
+    {
+        // Horizontal bar-graph style (new UAD style)
+        drawHorizontalBarMeter(g, bounds);
+    }
     else
-        drawModernVUMeter(g);
+    {
+        // Traditional VU style (legacy)
+        drawVUMeterFace(g, bounds);
+    }
 }
 
 void VUMeter::resized()
 {
 }
 
-void VUMeter::drawVintageVUMeter(juce::Graphics& g)
+void VUMeter::drawHorizontalBarMeter(juce::Graphics& g, juce::Rectangle<float> bounds)
 {
-    auto bounds = getLocalBounds().toFloat();
-    auto size = juce::jmin(bounds.getWidth(), bounds.getHeight());
-    auto meterBounds = bounds.withSizeKeepingCentre(size, size);
+    const float padding = 2.0f;
+    auto meterBounds = bounds.reduced(padding);
 
-    // Black meter background
-    g.setColour(juce::Colour(20, 22, 18));
-    g.fillRoundedRectangle(meterBounds, 8.0f);
+    // Outer bezel (dark frame)
+    g.setColour(RE201Colours::vuBezel);
+    g.fillRoundedRectangle(meterBounds, 3.0f);
 
-    // Meter face - dark with subtle gradient
-    juce::ColourGradient gradient(juce::Colour(35, 38, 30), meterBounds.getCentre(),
-                                   juce::Colour(20, 22, 18), meterBounds.getTopLeft(), true);
-    g.setGradientFill(gradient);
-    g.fillRoundedRectangle(meterBounds.reduced(5), 6.0f);
+    // Inner meter area
+    auto innerBounds = meterBounds.reduced(2.0f);
+    g.setColour(RE201Colours::vuBackground);
+    g.fillRoundedRectangle(innerBounds, 2.0f);
 
-    auto centre = meterBounds.getCentre();
-    auto radius = size * 0.4f;  // Good size for visibility
-
-    // Don't draw the scale arc - just use tick marks
-    float startAngle = juce::degreesToRadians(-135.0f);
-    float endAngle = juce::degreesToRadians(-45.0f);
-
-    // Scale markings
-    g.setFont(juce::Font("Arial", 8.0f, juce::Font::plain));
-
-    for (int i = 0; i <= 10; ++i)
+    // Inner shadow for depth
     {
-        float angle = startAngle + (endAngle - startAngle) * (i / 10.0f);
-        float tickLength = (i % 5 == 0) ? 12.0f : 6.0f;
+        juce::ColourGradient shadow(
+            juce::Colours::black.withAlpha(0.4f), innerBounds.getX(), innerBounds.getY(),
+            juce::Colours::transparentBlack, innerBounds.getX(), innerBounds.getY() + 5.0f, false);
+        g.setGradientFill(shadow);
+        g.fillRoundedRectangle(innerBounds, 2.0f);
+    }
 
-        float x1 = centre.x + (radius - tickLength) * std::cos(angle);
-        float y1 = centre.y + (radius - tickLength) * std::sin(angle);
-        float x2 = centre.x + radius * std::cos(angle);
-        float y2 = centre.y + radius * std::sin(angle);
+    // LED segments area
+    auto ledBounds = innerBounds.reduced(3.0f, 4.0f);
 
-        g.setColour(juce::Colour(200, 190, 170));
-        g.drawLine(x1, y1, x2, y2, (i % 5 == 0) ? 2.0f : 1.0f);
+    // Number of LED segments
+    const int numSegments = 12;
+    const float segmentWidth = (ledBounds.getWidth() - (numSegments - 1) * 2.0f) / numSegments;
+    const float segmentHeight = ledBounds.getHeight();
 
-        // Numbers
-        if (i % 2 == 0)
+    // Segment thresholds and colors
+    // Segments: 0-7 green, 8-9 orange, 10-11 red
+    for (int i = 0; i < numSegments; ++i)
+    {
+        float segmentX = ledBounds.getX() + i * (segmentWidth + 2.0f);
+        auto segmentRect = juce::Rectangle<float>(segmentX, ledBounds.getY(),
+                                                    segmentWidth, segmentHeight);
+
+        // Determine segment threshold (0-1 range)
+        float segmentThreshold = (i + 0.5f) / numSegments;
+
+        // Determine color based on position
+        juce::Colour segmentOnColor;
+        juce::Colour segmentOffColor;
+
+        if (i < 8)
         {
-            float textX = centre.x + (radius - 25) * std::cos(angle);
-            float textY = centre.y + (radius - 25) * std::sin(angle);
+            segmentOnColor = RE201Colours::ledGreenOn;
+            segmentOffColor = RE201Colours::ledGreenOff;
+        }
+        else if (i < 10)
+        {
+            segmentOnColor = RE201Colours::ledOrangeOn;
+            segmentOffColor = juce::Colour(0xFF403010);
+        }
+        else
+        {
+            segmentOnColor = RE201Colours::ledRedOn;
+            segmentOffColor = RE201Colours::ledOff;
+        }
 
-            juce::String text;
-            if (i <= 6)
-                text = juce::String(i - 6);
-            else
-                text = "+" + juce::String(i - 6);
+        // Is this segment lit?
+        bool isLit = level >= segmentThreshold;
 
-            g.setColour(juce::Colour(200, 190, 170));
-            g.drawText(text, juce::Rectangle<float>(textX - 10, textY - 6, 20, 12),
+        if (isLit)
+        {
+            // Lit segment with glow effect
+            g.setColour(segmentOnColor);
+            g.fillRoundedRectangle(segmentRect, 1.0f);
+
+            // Glow effect
+            g.setColour(segmentOnColor.withAlpha(0.3f));
+            g.fillRoundedRectangle(segmentRect.expanded(1.0f), 2.0f);
+
+            // Bright center highlight
+            auto highlightRect = segmentRect.reduced(1.0f, 2.0f);
+            g.setColour(segmentOnColor.brighter(0.3f));
+            g.fillRoundedRectangle(highlightRect, 1.0f);
+        }
+        else
+        {
+            // Unlit segment (dark but visible)
+            g.setColour(segmentOffColor);
+            g.fillRoundedRectangle(segmentRect, 1.0f);
+
+            // Subtle inner shadow
+            g.setColour(juce::Colours::black.withAlpha(0.3f));
+            g.drawRoundedRectangle(segmentRect.reduced(0.5f), 1.0f, 0.5f);
+        }
+    }
+
+    // Scale markings above/below
+    if (bounds.getHeight() > 30.0f)
+    {
+        drawBarMeterScale(g, ledBounds);
+    }
+
+    // Glass reflection overlay
+    {
+        juce::ColourGradient glassReflection(
+            juce::Colours::white.withAlpha(0.08f), innerBounds.getX(), innerBounds.getY(),
+            juce::Colours::transparentWhite, innerBounds.getX(), innerBounds.getCentreY(), false);
+        g.setGradientFill(glassReflection);
+        g.fillRoundedRectangle(innerBounds.removeFromTop(innerBounds.getHeight() * 0.4f), 2.0f);
+    }
+}
+
+void VUMeter::drawBarMeterScale(juce::Graphics& g, juce::Rectangle<float> ledBounds)
+{
+    g.setFont(juce::FontOptions(7.0f));
+    g.setColour(RE201Colours::textLight);
+
+    // Scale labels: -15, -10, -7, -5, -3, 0, +3
+    struct ScaleLabel { float position; const char* text; };
+    const ScaleLabel labels[] = {
+        { 0.0f, "-15" },
+        { 0.25f, "-10" },
+        { 0.42f, "-7" },
+        { 0.5f, "-5" },
+        { 0.58f, "-3" },
+        { 0.71f, "0" },
+        { 1.0f, "+3" }
+    };
+
+    float scaleY = ledBounds.getY() - 10.0f;
+
+    for (const auto& label : labels)
+    {
+        float x = ledBounds.getX() + label.position * ledBounds.getWidth();
+
+        // Tick mark
+        g.drawLine(x, scaleY + 6.0f, x, scaleY + 9.0f, 0.5f);
+
+        // Label
+        g.drawText(label.text,
+                   juce::Rectangle<float>(x - 12.0f, scaleY - 2.0f, 24.0f, 10.0f),
+                   juce::Justification::centred);
+    }
+}
+
+void VUMeter::drawVUMeterFace(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    // Legacy analog VU meter style
+    const float padding = 4.0f;
+    auto meterBounds = bounds.reduced(padding);
+
+    // Outer frame (chrome bezel)
+    {
+        juce::ColourGradient bezelGradient(RE201Colours::chromeLight, meterBounds.getX(), meterBounds.getY(),
+                                            RE201Colours::chromeDark, meterBounds.getRight(), meterBounds.getBottom(), false);
+        bezelGradient.addColour(0.5, RE201Colours::chromeMid);
+        g.setGradientFill(bezelGradient);
+        g.fillRoundedRectangle(meterBounds, 4.0f);
+    }
+
+    // Inner meter face (cream background)
+    auto faceBounds = meterBounds.reduced(3.0f);
+    g.setColour(RE201Colours::vuFace);
+    g.fillRoundedRectangle(faceBounds, 2.0f);
+
+    // Inner shadow for depth
+    {
+        juce::ColourGradient shadowGradient(RE201Colours::vuShadow.withAlpha(0.3f),
+                                             faceBounds.getX(), faceBounds.getY(),
+                                             juce::Colours::transparentBlack,
+                                             faceBounds.getX(), faceBounds.getY() + 10.0f, false);
+        g.setGradientFill(shadowGradient);
+        g.fillRoundedRectangle(faceBounds.withHeight(10.0f), 2.0f);
+    }
+
+    // Calculate scale center and radius
+    float centreX = faceBounds.getCentreX();
+    float centreY = faceBounds.getBottom() - faceBounds.getHeight() * 0.15f;
+    float radius = juce::jmin(faceBounds.getWidth(), faceBounds.getHeight()) * 0.55f;
+
+    auto centre = juce::Point<float>(centreX, centreY);
+
+    // Draw scale arc and markings
+    drawScaleArc(g, centre, radius);
+
+    // Draw meter title at top
+    if (meterTitle.isNotEmpty())
+    {
+        g.setColour(RE201Colours::vuText);
+        g.setFont(juce::FontOptions(9.0f).withStyle("Bold"));
+        auto titleBounds = faceBounds.removeFromTop(14.0f);
+        g.drawText(meterTitle, titleBounds, juce::Justification::centred);
+    }
+
+    // Draw "VU" label at bottom
+    g.setColour(RE201Colours::vuText);
+    g.setFont(juce::FontOptions(11.0f).withStyle("Bold"));
+    auto vuBounds = faceBounds.removeFromBottom(14.0f);
+    g.drawText("VU", vuBounds, juce::Justification::centred);
+
+    // Draw needle
+    drawNeedle(g, faceBounds, needleAngle);
+
+    // Draw needle pivot (hub)
+    const float hubRadius = 5.0f;
+    g.setColour(RE201Colours::vuNeedle);
+    g.fillEllipse(centreX - hubRadius, centreY - hubRadius, hubRadius * 2.0f, hubRadius * 2.0f);
+
+    // Highlight on hub
+    g.setColour(juce::Colours::white.withAlpha(0.3f));
+    g.fillEllipse(centreX - hubRadius * 0.5f, centreY - hubRadius * 0.5f,
+                  hubRadius * 0.8f, hubRadius * 0.8f);
+}
+
+void VUMeter::drawScaleArc(juce::Graphics& g, juce::Point<float> centre, float radius)
+{
+    const float startAngle = juce::degreesToRadians(-135.0f);
+    const float endAngle = juce::degreesToRadians(-45.0f);
+
+    // Draw the arc line
+    juce::Path arcPath;
+    arcPath.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, startAngle, endAngle, true);
+
+    // Green zone (-20 to 0)
+    float zeroAngle = startAngle + (endAngle - startAngle) * 0.71f;
+    {
+        juce::Path greenArc;
+        greenArc.addCentredArc(centre.x, centre.y, radius - 2.0f, radius - 2.0f,
+                                0.0f, startAngle, zeroAngle, true);
+        g.setColour(RE201Colours::vuGreen);
+        g.strokePath(greenArc, juce::PathStrokeType(4.0f));
+    }
+
+    // Red zone (0 to +3)
+    {
+        juce::Path redArc;
+        redArc.addCentredArc(centre.x, centre.y, radius - 2.0f, radius - 2.0f,
+                              0.0f, zeroAngle, endAngle, true);
+        g.setColour(RE201Colours::vuRed);
+        g.strokePath(redArc, juce::PathStrokeType(4.0f));
+    }
+
+    // Draw scale markings and labels
+    struct ScaleMark { float value; float position; const char* label; bool major; };
+    const ScaleMark marks[] = {
+        { -20.0f, 0.00f, "-20", true },
+        { -10.0f, 0.29f, "-10", true },
+        { -7.0f,  0.40f, "-7",  false },
+        { -5.0f,  0.50f, "-5",  false },
+        { -3.0f,  0.57f, "-3",  false },
+        { -2.0f,  0.62f, "-2",  false },
+        { -1.0f,  0.67f, "-1",  false },
+        { 0.0f,   0.71f, "0",   true },
+        { 1.0f,   0.80f, "+1",  false },
+        { 2.0f,   0.90f, "+2",  false },
+        { 3.0f,   1.00f, "+3",  true },
+    };
+
+    g.setFont(juce::FontOptions(8.0f));
+
+    for (const auto& mark : marks)
+    {
+        float angle = startAngle + (endAngle - startAngle) * mark.position;
+        float tickLength = mark.major ? 8.0f : 5.0f;
+
+        float innerRadius = radius - 8.0f - tickLength;
+        float outerRadius = radius - 8.0f;
+
+        float x1 = centre.x + innerRadius * std::cos(angle);
+        float y1 = centre.y + innerRadius * std::sin(angle);
+        float x2 = centre.x + outerRadius * std::cos(angle);
+        float y2 = centre.y + outerRadius * std::sin(angle);
+
+        g.setColour(RE201Colours::vuText);
+        g.drawLine(x1, y1, x2, y2, mark.major ? 1.5f : 1.0f);
+
+        if (mark.major || mark.value >= 0)
+        {
+            float labelRadius = radius - 22.0f;
+            float labelX = centre.x + labelRadius * std::cos(angle);
+            float labelY = centre.y + labelRadius * std::sin(angle);
+
+            g.setColour(mark.value >= 0 ? RE201Colours::vuRed : RE201Colours::vuText);
+            g.drawText(mark.label,
+                       juce::Rectangle<float>(labelX - 12.0f, labelY - 6.0f, 24.0f, 12.0f),
                        juce::Justification::centred);
         }
     }
-
-    // Red zone - draw only in the red area
-    float redStart = juce::degreesToRadians(-65.0f);
-    float redEnd = juce::degreesToRadians(-45.0f);
-
-    // Draw red zone as individual tick marks instead of arc
-    for (float angle = redStart; angle <= redEnd; angle += 0.05f)
-    {
-        float x1 = centre.x + (radius - 2) * std::cos(angle);
-        float y1 = centre.y + (radius - 2) * std::sin(angle);
-        float x2 = centre.x + radius * std::cos(angle);
-        float y2 = centre.y + radius * std::sin(angle);
-
-        g.setColour(juce::Colour(200, 50, 30));
-        g.drawLine(x1, y1, x2, y2, 2.0f);
-    }
-
-    // VU label at bottom
-    g.setColour(juce::Colour(200, 190, 170));
-    g.setFont(juce::Font("Arial", 12.0f, juce::Font::bold));
-    auto vuLabelBounds = bounds.removeFromBottom(20);
-    g.drawText("VU", vuLabelBounds, juce::Justification::centred);
-
-    // "PEAK LEVEL" text at top
-    g.setFont(9.0f);
-    auto peakLabelBounds = bounds.removeFromTop(15);
-    g.drawText("PEAK LEVEL", peakLabelBounds, juce::Justification::centred);
-
-    // Draw needle (without duplicate shadow)
-    float needleRadians = juce::degreesToRadians(needleAngle);
-    float needleX = centre.x + radius * 0.85f * std::cos(needleRadians);
-    float needleY = centre.y + radius * 0.85f * std::sin(needleRadians);
-
-    // Single shadow
-    g.setColour(juce::Colours::black.withAlpha(0.4f));
-    g.drawLine(centre.x + 1, centre.y + 1, needleX + 1, needleY + 1, 3.0f);
-
-    // Needle - red/orange color
-    g.setColour(juce::Colour(220, 80, 40));
-    g.drawLine(centre.x, centre.y, needleX, needleY, 2.5f);
-
-    // Needle hub - brass colored
-    g.setColour(juce::Colour(140, 120, 80));
-    g.fillEllipse(centre.x - 6, centre.y - 6, 12, 12);
-    g.setColour(juce::Colour(80, 70, 50));
-    g.drawEllipse(centre.x - 6, centre.y - 6, 12, 12, 1.0f);
-    g.setColour(juce::Colour(180, 160, 120));
-    g.fillEllipse(centre.x - 3, centre.y - 3, 6, 6);
 }
 
-void VUMeter::drawModernVUMeter(juce::Graphics& g)
+void VUMeter::drawNeedle(juce::Graphics& g, juce::Rectangle<float> bounds, float angle)
 {
-    auto bounds = getLocalBounds().toFloat();
+    float centreX = bounds.getCentreX();
+    float centreY = bounds.getBottom() - bounds.getHeight() * 0.15f;
+    float needleLength = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
 
-    // Background
-    g.setColour(juce::Colour(30, 30, 35));
-    g.fillRoundedRectangle(bounds, 5.0f);
+    float angleRad = juce::degreesToRadians(-90.0f + angle);
 
-    // LED-style bars
-    int numBars = 20;
-    float barWidth = bounds.getWidth() * 0.8f / numBars;
-    float barHeight = bounds.getHeight() * 0.3f;
-    float startX = bounds.getWidth() * 0.1f;
-    float y = bounds.getCentreY() - barHeight * 0.5f;
+    float tipX = centreX + needleLength * std::cos(angleRad);
+    float tipY = centreY + needleLength * std::sin(angleRad);
 
-    for (int i = 0; i < numBars; ++i)
-    {
-        float barLevel = i / float(numBars - 1);
-        float x = startX + i * (barWidth * 1.1f);
+    // Draw needle shadow
+    g.setColour(juce::Colours::black.withAlpha(0.3f));
+    g.drawLine(centreX + 1.5f, centreY + 1.5f, tipX + 1.5f, tipY + 1.5f, 2.5f);
 
-        juce::Colour barColour;
-        if (barLevel < 0.6f)
-            barColour = juce::Colours::green;
-        else if (barLevel < 0.8f)
-            barColour = juce::Colours::yellow;
-        else
-            barColour = juce::Colours::red;
+    // Draw needle (tapered)
+    juce::Path needlePath;
+    const float baseWidth = 3.0f;
+    const float tipWidth = 0.5f;
 
-        if (barLevel <= level)
-        {
-            g.setColour(barColour);
-        }
-        else
-        {
-            g.setColour(barColour.withAlpha(0.2f));
-        }
+    float perpX = -std::sin(angleRad);
+    float perpY = std::cos(angleRad);
 
-        g.fillRoundedRectangle(x, y, barWidth, barHeight, 2.0f);
-    }
+    needlePath.startNewSubPath(centreX + perpX * baseWidth, centreY + perpY * baseWidth);
+    needlePath.lineTo(tipX + perpX * tipWidth, tipY + perpY * tipWidth);
+    needlePath.lineTo(tipX - perpX * tipWidth, tipY - perpY * tipWidth);
+    needlePath.lineTo(centreX - perpX * baseWidth, centreY - perpY * baseWidth);
+    needlePath.closeSubPath();
 
-    // Level text
-    g.setColour(juce::Colours::lightgrey);
-    g.setFont(10.0f);
-    float db = 20.0f * std::log10(std::max(0.001f, level));
-    g.drawText(juce::String(db, 1) + " dB", bounds.removeFromBottom(20),
-               juce::Justification::centred);
+    g.setColour(RE201Colours::vuNeedle);
+    g.fillPath(needlePath);
+
+    // White line down center for highlight
+    g.setColour(juce::Colours::white.withAlpha(0.2f));
+    g.drawLine(centreX, centreY, tipX, tipY, 0.5f);
 }

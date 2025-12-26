@@ -31,6 +31,8 @@ target_sources(TapeEcho PRIVATE
     Source/DSP/PreampSaturation.cpp
     Source/GUI/VUMeter.cpp
     Source/GUI/ModeSelector.cpp
+    Source/ui/RE201LookAndFeel.cpp
+    Source/ui/ToggleSwitch.cpp
 )
 
 # Generate JuceHeader.h
@@ -41,6 +43,7 @@ target_include_directories(TapeEcho PRIVATE
     Source
     Source/DSP
     Source/GUI
+    Source/ui
 )
 
 # Compile definitions

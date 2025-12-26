@@ -56,10 +56,7 @@ private:
     std::unique_ptr<juce::ComboBox> modeSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeSelectorAttachment;
 
-    // Preset selector
-    std::unique_ptr<juce::ComboBox> presetCategorySelector;
-    std::unique_ptr<juce::ComboBox> presetSelector;
-    std::vector<CompressorPresets::Preset> currentCategoryPresets;
+    // Presets are exposed via DAW's native preset menu (getNumPrograms/setCurrentProgram/getProgramName)
     
     // Global controls
     std::unique_ptr<juce::ToggleButton> bypassButton;
@@ -68,6 +65,7 @@ private:
     std::unique_ptr<juce::ToggleButton> sidechainListenButton;  // SC Listen
     std::unique_ptr<juce::Slider> lookaheadSlider;              // Global lookahead
     std::unique_ptr<juce::ComboBox> oversamplingSelector;       // 2x/4x oversampling
+    std::unique_ptr<juce::Slider> sidechainHpSlider;            // Sidechain HP filter frequency
 
     // Sidechain EQ controls (collapsible)
     std::unique_ptr<juce::TextButton> scEqToggleButton;  // Toggle to show/hide SC EQ
@@ -83,6 +81,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sidechainListenAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lookaheadAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oversamplingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sidechainHpAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> scLowFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> scLowGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> scHighFreqAttachment;
@@ -230,13 +229,12 @@ private:
                                              float defaultValue, const juce::String& suffix = "");
     std::unique_ptr<juce::Label> createLabel(const juce::String& text, juce::Justification justification = juce::Justification::centred);
 
-    void updatePresetList(const juce::String& category);
-    void applySelectedPreset();
 
     // Patreon supporters overlay (uses shared component)
     std::unique_ptr<SupportersOverlay> supportersOverlay;
     juce::Rectangle<int> titleClickArea;  // Clickable area for plugin title
-    juce::Rectangle<int> osLabelBounds;   // Bounds for "OS:" label in header
+    juce::Rectangle<int> osLabelBounds;   // Bounds for "Oversampling" label in header
+    juce::Rectangle<int> scHpLabelBounds; // Bounds for "SC HP" label in header
 
     void showSupportersPanel();
     void hideSupportersPanel();

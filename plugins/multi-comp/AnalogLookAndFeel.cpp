@@ -545,41 +545,52 @@ void AnalogVUMeter::setLevel(float newLevel)
 
 void AnalogVUMeter::timerCallback()
 {
-    // The compressor already has its own envelope follower with attack/release
-    // We should directly display the gain reduction without additional smoothing
-    // This way the meter follows the actual compressor behavior including release time
-    currentLevel = targetLevel;
-    
-    const float frameRate = 60.0f;  // For peak hold decay
-    
-    // For gain reduction meter: 0 dB = rest position (no compression)
-    // Negative values show gain reduction (compression)
-    // currentLevel is gain reduction in dB (negative when compressing, 0 when not)
-    float displayValue = currentLevel;
-    
-    // Ensure 0 is treated as 0 (no reduction)
+    const float dt = 1.0f / kRefreshRateHz;
+
+    // Map target dB to needle position (-20dB to +3dB range)
+    // 0 dB = rest position (no compression), negative = gain reduction
+    float displayValue = juce::jlimit(-20.0f, 3.0f, targetLevel);
     if (std::abs(displayValue) < 0.001f)
         displayValue = 0.0f;
-    
-    displayValue = juce::jlimit(-20.0f, 3.0f, displayValue);
-    
-    // Map to needle position: -20dB to +3dB range
-    // -20dB = 0.0 (full left), 0dB = 0.87 (rest position), +3dB = 1.0 (full right)
-    // This gives 0dB its proper position on the scale
-    float normalizedPos = (displayValue + 20.0f) / 23.0f;  // Normalize to 0-1 range
-    float targetNeedle = juce::jlimit(0.0f, 1.0f, normalizedPos);
-    
-    // Minimal smoothing just to prevent jitter - the compressor's envelope already shapes the GR
-    // Pro plugins (UAD, Waves) show near-instantaneous GR so engineers can see true behavior
-    const float needleSmoothing = 0.7f;  // Fast response - ~24ms time constant at 60Hz
-    needlePosition += (targetNeedle - needlePosition) * needleSmoothing;
-    
+
+    // Normalize to 0-1 range: -20dB = 0.0, 0dB = 0.87, +3dB = 1.0
+    float targetNeedle = (displayValue + 20.0f) / 23.0f;
+    targetNeedle = juce::jlimit(0.0f, 1.0f, targetNeedle);
+
+    // Calculate asymmetric ballistics coefficients
+    // Attack = fast (50ms), Release = slower (150ms) for professional GR meter feel
+    float displacement = targetNeedle - needlePosition;
+    bool isAttack = displacement < 0.0f;  // Needle moving left = more compression = attack
+
+    float timeConstantMs = isAttack ? kAttackTimeMs : kReleaseTimeMs;
+    float ballisticsCoeff = 1.0f - std::exp(-1000.0f * dt / timeConstantMs);
+
+    // Damped spring physics for mechanical needle overshoot
+    // This creates the authentic ~1% overshoot of real analog meters
+    float springForce = displacement * kOvershootStiffness;
+    float dampingForce = -needleVelocity * kOvershootDamping * 2.0f * std::sqrt(kOvershootStiffness);
+
+    // Update velocity and position with spring physics
+    float acceleration = springForce + dampingForce;
+    needleVelocity += acceleration * dt;
+    needlePosition += needleVelocity * dt;
+
+    // Blend spring physics with ballistics for proper timing
+    needlePosition += ballisticsCoeff * (targetNeedle - needlePosition) * 0.4f;
+
+    // Clamp position
+    needlePosition = juce::jlimit(0.0f, 1.0f, needlePosition);
+
+    // Dampen tiny oscillations
+    if (std::abs(needleVelocity) < 0.0005f && std::abs(displacement) < 0.001f)
+        needleVelocity = 0.0f;
+
     // Peak hold decay
     if (peakHoldTime > 0)
     {
-        peakHoldTime -= 1.0f / frameRate;
+        peakHoldTime -= dt;
         if (peakHoldTime <= 0)
-            peakLevel = currentLevel;
+            peakLevel = targetLevel;
     }
 
     // Calculate peak needle position for display

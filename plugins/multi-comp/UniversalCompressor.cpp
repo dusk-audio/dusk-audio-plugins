@@ -3283,10 +3283,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
-    // Sidechain highpass filter - prevents low frequency pumping
+    // Sidechain highpass filter - prevents low frequency pumping (0 = Off)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "sidechain_hp", "SC HP Filter",
-        juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.5f), 80.0f,
+        juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f, 0.5f), 80.0f,
         juce::AudioParameterFloatAttributes().withLabel("Hz")));
 
     // Auto makeup gain
@@ -3731,6 +3731,10 @@ UniversalCompressor::UniversalCompressor()
     // Initialize atomic values explicitly with relaxed ordering
     inputMeter.store(-60.0f, std::memory_order_relaxed);
     outputMeter.store(-60.0f, std::memory_order_relaxed);
+    inputMeterL.store(-60.0f, std::memory_order_relaxed);
+    inputMeterR.store(-60.0f, std::memory_order_relaxed);
+    outputMeterL.store(-60.0f, std::memory_order_relaxed);
+    outputMeterR.store(-60.0f, std::memory_order_relaxed);
     grMeter.store(0.0f, std::memory_order_relaxed);
     sidechainMeter.store(-60.0f, std::memory_order_relaxed);
     linkedGainReduction[0].store(0.0f, std::memory_order_relaxed);
@@ -3902,6 +3906,17 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Initialize smoothed auto-makeup gain with ~50ms smoothing time
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+
+    // Initialize RMS coefficient for ~200ms averaging window (industry standard)
+    // This gives stable, perceptually-accurate loudness matching like Logic Pro's compressor
+    // Coefficient = 1 - exp(-1 / (sampleRate * timeConstant))
+    // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
+    float rmsTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
+    rmsCoefficient = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * rmsTimeConstantSec));
+
+    // Reset RMS accumulators
+    inputRmsAccumulator = 0.0f;
+    outputRmsAccumulator = 0.0f;
 }
 
 void UniversalCompressor::releaseResources()
@@ -3967,11 +3982,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Internal oversampling is always enabled for better quality
     bool oversample = true; // Always use oversampling internally
     CompressorMode mode = getCurrentMode();
-    
+
+    // Read auto-makeup state early - needed for parameter caching
+    auto* autoMakeupParamEarly = parameters.getRawParameterValue("auto_makeup");
+    bool autoMakeup = (autoMakeupParamEarly != nullptr) ? (autoMakeupParamEarly->load() > 0.5f) : false;
+
     // Cache parameters based on mode to avoid repeated lookups
     float cachedParams[10] = {0.0f}; // Max 10 params (Digital mode has the most)
     bool validParams = true;
-    
+
     switch (mode)
     {
         case CompressorMode::Opto:
@@ -3983,8 +4002,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 cachedParams[0] = juce::jlimit(0.0f, 100.0f, p1->load());  // Peak reduction 0-100
                 // Opto gain is 0-40dB range, parameter is 0-100
                 // Map 50 = unity gain (0dB), 0 = -40dB, 100 = +40dB
-                float gainParam = juce::jlimit(0.0f, 100.0f, p2->load());
-                cachedParams[1] = juce::jlimit(-40.0f, 40.0f, (gainParam - 50.0f) * 0.8f);  // Bounded gain
+                // When auto-makeup is enabled, force gain to 0dB (unity)
+                if (autoMakeup)
+                    cachedParams[1] = 0.0f;
+                else {
+                    float gainParam = juce::jlimit(0.0f, 100.0f, p2->load());
+                    cachedParams[1] = juce::jlimit(-40.0f, 40.0f, (gainParam - 50.0f) * 0.8f);  // Bounded gain
+                }
                 cachedParams[2] = p3->load();
             } else validParams = false;
             break;
@@ -3999,11 +4023,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p6 = parameters.getRawParameterValue("fet_curve_mode");
             auto* p7 = parameters.getRawParameterValue("fet_transient");
             if (p1 && p2 && p3 && p4 && p5) {
-                cachedParams[0] = *p1;
-                cachedParams[1] = *p2;
-                cachedParams[2] = *p3;
-                cachedParams[3] = *p4;
-                cachedParams[4] = *p5;
+                cachedParams[0] = p1->load();
+                // When auto-makeup is enabled, force output to 0dB (unity)
+                cachedParams[1] = autoMakeup ? 0.0f : p2->load();
+                cachedParams[2] = p3->load();
+                cachedParams[3] = p4->load();
+                cachedParams[4] = p5->load();
                 cachedParams[5] = (p6 != nullptr) ? p6->load() : 0.0f;  // Curve mode (0=Modern, 1=Measured)
                 cachedParams[6] = (p7 != nullptr) ? p7->load() : 0.0f;  // Transient sensitivity (0-100%)
             } else validParams = false;
@@ -4018,12 +4043,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p5 = parameters.getRawParameterValue("vca_output");
             auto* p6 = parameters.getRawParameterValue("vca_overeasy");
             if (p1 && p2 && p3 && p4 && p5 && p6) {
-                cachedParams[0] = *p1;
-                cachedParams[1] = *p2;
-                cachedParams[2] = *p3;
-                cachedParams[3] = *p4;
-                cachedParams[4] = *p5;
-                cachedParams[5] = *p6; // Store OverEasy state
+                cachedParams[0] = p1->load();
+                cachedParams[1] = p2->load();
+                cachedParams[2] = p3->load();
+                cachedParams[3] = p4->load();
+                // When auto-makeup is enabled, force output to 0dB (unity)
+                cachedParams[4] = autoMakeup ? 0.0f : p5->load();
+                cachedParams[5] = p6->load(); // Store OverEasy state
             } else validParams = false;
             break;
         }
@@ -4036,19 +4062,20 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p5 = parameters.getRawParameterValue("bus_makeup");
             auto* p6 = parameters.getRawParameterValue("bus_mix");
             if (p1 && p2 && p3 && p4 && p5) {
-                cachedParams[0] = *p1;
+                cachedParams[0] = p1->load();
                 // Convert discrete ratio choice to actual ratio value
-                int ratioChoice = static_cast<int>(*p2);
+                int ratioChoice = static_cast<int>(p2->load());
                 switch (ratioChoice) {
                     case 0: cachedParams[1] = 2.0f; break;  // 2:1
                     case 1: cachedParams[1] = 4.0f; break;  // 4:1
                     case 2: cachedParams[1] = 10.0f; break; // 10:1
                     default: cachedParams[1] = 2.0f; break;
                 }
-                cachedParams[2] = *p3;
-                cachedParams[3] = *p4;
-                cachedParams[4] = *p5;
-                cachedParams[5] = p6 ? (*p6 * 0.01f) : 1.0f; // Convert 0-100 to 0-1, default 100%
+                cachedParams[2] = p3->load();
+                cachedParams[3] = p4->load();
+                // When auto-makeup is enabled, force makeup to 0dB (unity)
+                cachedParams[4] = autoMakeup ? 0.0f : p5->load();
+                cachedParams[5] = p6 ? (p6->load() * 0.01f) : 1.0f; // Convert 0-100 to 0-1, default 100%
             } else validParams = false;
             break;
         }
@@ -4061,11 +4088,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p4 = parameters.getRawParameterValue("fet_release");
             auto* p5 = parameters.getRawParameterValue("fet_ratio");
             if (p1 && p2 && p3 && p4 && p5) {
-                cachedParams[0] = *p1;
-                cachedParams[1] = *p2;
-                cachedParams[2] = *p3;
-                cachedParams[3] = *p4;
-                cachedParams[4] = *p5;
+                cachedParams[0] = p1->load();
+                // When auto-makeup is enabled, force output to 0dB (unity)
+                cachedParams[1] = autoMakeup ? 0.0f : p2->load();
+                cachedParams[2] = p3->load();
+                cachedParams[3] = p4->load();
+                cachedParams[4] = p5->load();
             } else validParams = false;
             break;
         }
@@ -4077,11 +4105,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p4 = parameters.getRawParameterValue("studio_vca_release");
             auto* p5 = parameters.getRawParameterValue("studio_vca_output");
             if (p1 && p2 && p3 && p4 && p5) {
-                cachedParams[0] = *p1;
-                cachedParams[1] = *p2;
-                cachedParams[2] = *p3;
-                cachedParams[3] = *p4;
-                cachedParams[4] = *p5;
+                cachedParams[0] = p1->load();
+                cachedParams[1] = p2->load();
+                cachedParams[2] = p3->load();
+                cachedParams[3] = p4->load();
+                // When auto-makeup is enabled, force output to 0dB (unity)
+                cachedParams[4] = autoMakeup ? 0.0f : p5->load();
             } else validParams = false;
             break;
         }
@@ -4097,15 +4126,16 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* p8 = parameters.getRawParameterValue("digital_output");
             auto* p9 = parameters.getRawParameterValue("digital_adaptive");
             if (p1 && p2 && p3 && p4 && p5 && p6 && p7 && p8 && p9) {
-                cachedParams[0] = *p1;  // threshold
-                cachedParams[1] = *p2;  // ratio
-                cachedParams[2] = *p3;  // knee
-                cachedParams[3] = *p4;  // attack
-                cachedParams[4] = *p5;  // release
-                cachedParams[5] = *p6;  // lookahead
-                cachedParams[6] = *p7;  // mix
-                cachedParams[7] = *p8;  // output
-                cachedParams[8] = *p9;  // adaptive release (bool as float)
+                cachedParams[0] = p1->load();  // threshold
+                cachedParams[1] = p2->load();  // ratio
+                cachedParams[2] = p3->load();  // knee
+                cachedParams[3] = p4->load();  // attack
+                cachedParams[4] = p5->load();  // release
+                cachedParams[5] = p6->load();  // lookahead
+                cachedParams[6] = p7->load();  // mix
+                // When auto-makeup is enabled, force output to 0dB (unity)
+                cachedParams[7] = autoMakeup ? 0.0f : p8->load();  // output
+                cachedParams[8] = p9->load();  // adaptive release (bool as float)
                 // SC Listen handled globally via global_sidechain_listen parameter
             } else validParams = false;
             break;
@@ -4126,28 +4156,65 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     const int numChannels = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
 
-    // Get peak level - SIMD optimized metering
+    // Get peak level - SIMD optimized metering with per-channel tracking
     float inputLevel = 0.0f;
+    float inputLevelL = 0.0f;
+    float inputLevelR = 0.0f;
     for (int ch = 0; ch < numChannels; ++ch)
     {
         const float* data = buffer.getReadPointer(ch);
         float channelPeak = SIMDHelpers::getPeakLevel(data, numSamples);
         inputLevel = juce::jmax(inputLevel, channelPeak);
+
+        // Store per-channel levels for stereo metering
+        if (ch == 0)
+            inputLevelL = channelPeak;
+        else if (ch == 1)
+            inputLevelR = channelPeak;
     }
 
     // Convert to dB - peak level gives accurate dB reading
     float inputDb = inputLevel > 1e-5f ? juce::Decibels::gainToDecibels(inputLevel) : -60.0f;
+    float inputDbL = inputLevelL > 1e-5f ? juce::Decibels::gainToDecibels(inputLevelL) : -60.0f;
+    float inputDbR = inputLevelR > 1e-5f ? juce::Decibels::gainToDecibels(inputLevelR) : -60.0f;
+
     // Use relaxed memory ordering for performance in audio thread
     inputMeter.store(inputDb, std::memory_order_relaxed);
+    inputMeterL.store(inputDbL, std::memory_order_relaxed);
+    inputMeterR.store(numChannels > 1 ? inputDbR : inputDbL, std::memory_order_relaxed);  // Mono: use same value for both
 
-    // Get sidechain HP filter frequency and update filter if changed
+    // Calculate input RMS for auto-gain (running average across blocks)
+    // This gives stable, perceptually-accurate loudness matching
+    if (autoMakeup)
+    {
+        float blockRmsSquared = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* data = buffer.getReadPointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+                blockRmsSquared += data[i] * data[i];
+        }
+        blockRmsSquared /= static_cast<float>(numSamples * numChannels);
+
+        // Clamp block RMS to prevent numerical issues from pathological inputs
+        // Max corresponds to ~+6dBFS RMS (4.0 linear squared), min to -80dBFS
+        blockRmsSquared = juce::jlimit(1e-8f, 4.0f, blockRmsSquared);
+
+        // One-pole smoothing filter for RMS averaging (~200ms window)
+        inputRmsAccumulator += rmsCoefficient * (blockRmsSquared - inputRmsAccumulator);
+
+        // Bounds check accumulator to prevent drift in long sessions
+        inputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, inputRmsAccumulator);
+    }
+
+    // Get sidechain HP filter frequency and update filter if changed (0 = Off/bypassed)
     auto* sidechainHpParam = parameters.getRawParameterValue("sidechain_hp");
     float sidechainHpFreq = (sidechainHpParam != nullptr) ? sidechainHpParam->load() : 80.0f;
-    if (sidechainFilter)
+    bool sidechainHpEnabled = sidechainHpFreq >= 1.0f;  // 0 = Off
+    if (sidechainFilter && sidechainHpEnabled)
         sidechainFilter->setFrequency(sidechainHpFreq);
 
-    // Get global parameters
-    auto* autoMakeupParam = parameters.getRawParameterValue("auto_makeup");
+    // Get global parameters (autoMakeup already read early for parameter caching)
     auto* distortionTypeParam = parameters.getRawParameterValue("distortion_type");
     auto* distortionAmountParam = parameters.getRawParameterValue("distortion_amount");
     auto* globalLookaheadParam = parameters.getRawParameterValue("global_lookahead");
@@ -4161,8 +4228,6 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     auto* scHighGainParam = parameters.getRawParameterValue("sc_high_gain");
     auto* truePeakEnableParam = parameters.getRawParameterValue("true_peak_enable");
     auto* truePeakQualityParam = parameters.getRawParameterValue("true_peak_quality");
-
-    bool autoMakeup = (autoMakeupParam != nullptr) ? (autoMakeupParam->load() > 0.5f) : false;
     DistortionType distType = (distortionTypeParam != nullptr) ? static_cast<DistortionType>(static_cast<int>(distortionTypeParam->load())) : DistortionType::Off;
     float distAmount = (distortionAmountParam != nullptr) ? (distortionAmountParam->load() / 100.0f) : 0.0f;
     float globalLookaheadMs = (globalLookaheadParam != nullptr) ? globalLookaheadParam->load() : 0.0f;
@@ -4218,19 +4283,20 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
     // Apply sidechain HP filter at original sample rate (filter is prepared for this rate)
     // filteredSidechain stores the HP-filtered sidechain signal for each channel.
+    // When sidechainHpEnabled is false (slider at 0/Off), bypass the filter entirely.
     for (int channel = 0; channel < numChannels; ++channel)
     {
         const float* inputData = sidechainSource->getReadPointer(juce::jmin(channel, sidechainSource->getNumChannels() - 1));
         float* scData = filteredSidechain.getWritePointer(channel);
 
-        if (sidechainFilter)
+        if (sidechainFilter && sidechainHpEnabled)
         {
             // Use block processing for better CPU efficiency (eliminates per-sample function call overhead)
             sidechainFilter->processBlock(inputData, scData, numSamples, channel);
         }
         else
         {
-            // No filter - use memcpy for efficiency
+            // No filter or filter disabled - use memcpy for efficiency
             std::memcpy(scData, inputData, static_cast<size_t>(numSamples) * sizeof(float));
         }
     }
@@ -4430,17 +4496,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         linkedGainReduction[1].store(grRight, std::memory_order_relaxed);
         float gainReduction = grLeft;
 
-        // Skip to output metering and post-processing (after the main switch block)
-        // Update output meter
-        float outputLevel = 0.0f;
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            const float* data = buffer.getReadPointer(ch);
-            float channelPeak = SIMDHelpers::getPeakLevel(data, numSamples);
-            outputLevel = juce::jmax(outputLevel, channelPeak);
-        }
-        float outputDb = outputLevel > 1e-5f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
-        outputMeter.store(outputDb, std::memory_order_relaxed);
+        // Update GR meter
         grMeter.store(gainReduction, std::memory_order_relaxed);
 
         // Update GR history for visualization
@@ -4455,21 +4511,46 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             grHistoryWritePos.store((pos + 1) % GR_HISTORY_SIZE, std::memory_order_relaxed);
         }
 
-        // Update GR meter parameter for DAW display
-        if (auto* grParam = parameters.getRawParameterValue("gr_meter"))
+        // Apply RMS-based auto-gain for multiband mode (professional-grade level matching)
+        // Uses running RMS average (~200ms window) for stable, perceptually-accurate gain compensation
+        // This matches the approach used in Logic Pro's compressor and other professional plugins
         {
-            // Note: This is a workaround - parameter values can't normally be set from audio thread
-            // For proper DAW metering, use a separate mechanism
-        }
+            float targetAutoGain = 1.0f;
 
-        // Apply global auto-makeup gain for multiband mode
-        // Uses the maximum GR across all bands for compensation
-        if (autoMakeup && gainReduction < -0.5f)
-        {
-            float targetMakeupGain = juce::Decibels::decibelsToGain(-gainReduction);
-            targetMakeupGain = juce::jlimit(1.0f, 16.0f, targetMakeupGain);  // Limit to +24dB max
+            if (autoMakeup)
+            {
+                // Calculate output RMS for this block (before auto-gain compensation)
+                float blockOutputRmsSquared = 0.0f;
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    const float* data = buffer.getReadPointer(ch);
+                    for (int i = 0; i < numSamples; ++i)
+                        blockOutputRmsSquared += data[i] * data[i];
+                }
+                blockOutputRmsSquared /= static_cast<float>(numSamples * numChannels);
 
-            smoothedAutoMakeupGain.setTargetValue(targetMakeupGain);
+                // Clamp block RMS to prevent numerical issues
+                blockOutputRmsSquared = juce::jlimit(1e-8f, 4.0f, blockOutputRmsSquared);
+
+                // Update running RMS accumulator with one-pole smoothing
+                outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+
+                // Bounds check accumulator to prevent drift
+                outputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, outputRmsAccumulator);
+
+                // Calculate gain compensation from RMS levels
+                // Both accumulators are in squared (power) domain
+                if (outputRmsAccumulator > 1e-8f && inputRmsAccumulator > 1e-8f)
+                {
+                    // Gain = sqrt(inputRMS² / outputRMS²) = inputRMS / outputRMS
+                    targetAutoGain = std::sqrt(inputRmsAccumulator / outputRmsAccumulator);
+
+                    // Limit compensation range to ±40dB to handle extreme settings
+                    targetAutoGain = juce::jlimit(0.01f, 100.0f, targetAutoGain);  // -40dB to +40dB
+                }
+            }
+
+            smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
 
             if (smoothedAutoMakeupGain.isSmoothing())
             {
@@ -4490,7 +4571,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             else
             {
                 float currentGain = smoothedAutoMakeupGain.getCurrentValue();
-                if (currentGain > 1.001f)
+                if (std::abs(currentGain - 1.0f) > 0.001f)
                 {
                     for (int ch = 0; ch < numChannels; ++ch)
                     {
@@ -4500,11 +4581,29 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 }
             }
         }
-        else
+
+        // Update output meter AFTER auto-makeup gain is applied
+        float outputLevel = 0.0f;
+        float outputLevelL = 0.0f;
+        float outputLevelR = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            // Reset smoothed gain when auto-makeup is disabled
-            smoothedAutoMakeupGain.setTargetValue(1.0f);
+            const float* data = buffer.getReadPointer(ch);
+            float channelPeak = SIMDHelpers::getPeakLevel(data, numSamples);
+            outputLevel = juce::jmax(outputLevel, channelPeak);
+
+            // Store per-channel levels for stereo metering
+            if (ch == 0)
+                outputLevelL = channelPeak;
+            else if (ch == 1)
+                outputLevelR = channelPeak;
         }
+        float outputDb = outputLevel > 1e-5f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
+        float outputDbL = outputLevelL > 1e-5f ? juce::Decibels::gainToDecibels(outputLevelL) : -60.0f;
+        float outputDbR = outputLevelR > 1e-5f ? juce::Decibels::gainToDecibels(outputLevelR) : -60.0f;
+        outputMeter.store(outputDb, std::memory_order_relaxed);
+        outputMeterL.store(outputDbL, std::memory_order_relaxed);
+        outputMeterR.store(numChannels > 1 ? outputDbR : outputDbL, std::memory_order_relaxed);
 
         return;  // Skip normal processing for multiband mode
     }
@@ -4728,22 +4827,53 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Combined gain reduction (min of both channels for display)
     float gainReduction = juce::jmin(grLeft, grRight);
 
-    // Apply auto-makeup gain if enabled
-    // Auto-makeup compensates for the gain reduction to maintain perceived loudness
-    // Uses smoothed gain to avoid audible distortion from abrupt level changes
+    // Apply RMS-based auto-gain if enabled (professional-grade level matching)
+    // Uses running RMS average (~200ms window) for stable, perceptually-accurate gain compensation
+    // This compensates for ALL gain changes: compression, input gain, saturation, etc.
+    // This matches the approach used in Logic Pro's compressor and other professional plugins
     {
-        float targetMakeupGain = 1.0f;
-        if (autoMakeup && gainReduction < -0.5f)
+        float targetAutoGain = 1.0f;
+
+        if (autoMakeup)
         {
-            // Apply 100% of the gain reduction as makeup for accurate level compensation
-            // The GR value represents actual gain reduction applied by the compressor
-            // Full compensation maintains consistent output levels
-            targetMakeupGain = juce::Decibels::decibelsToGain(-gainReduction);
-            targetMakeupGain = juce::jlimit(1.0f, 16.0f, targetMakeupGain);  // Limit to +24dB max makeup
+            // Calculate output RMS for this block (before auto-gain compensation)
+            float blockOutputRmsSquared = 0.0f;
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                const float* data = buffer.getReadPointer(ch);
+                for (int i = 0; i < numSamples; ++i)
+                    blockOutputRmsSquared += data[i] * data[i];
+            }
+            blockOutputRmsSquared /= static_cast<float>(numSamples * numChannels);
+
+            // Clamp block RMS to prevent numerical issues
+            blockOutputRmsSquared = juce::jlimit(1e-8f, 4.0f, blockOutputRmsSquared);
+
+            // Update running RMS accumulator with one-pole smoothing
+            outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+
+            // Bounds check accumulator to prevent drift
+            outputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, outputRmsAccumulator);
+
+            // Calculate gain compensation from RMS levels
+            // Both accumulators are in squared (power) domain
+            if (outputRmsAccumulator > 1e-8f && inputRmsAccumulator > 1e-8f)
+            {
+                // Gain = sqrt(inputRMS² / outputRMS²) = inputRMS / outputRMS
+                targetAutoGain = std::sqrt(inputRmsAccumulator / outputRmsAccumulator);
+
+                // Limit compensation range to ±40dB to handle extreme input gain settings
+                // (e.g., FET input at -20dB can create 30+ dB level differences)
+                // This range is needed because:
+                // - FET/VCA input gain ranges from -20dB to +20dB
+                // - Heavy compression can add another 20dB of gain reduction
+                // - Combined effect can require 30-40dB of compensation
+                targetAutoGain = juce::jlimit(0.01f, 100.0f, targetAutoGain);  // -40dB to +40dB
+            }
         }
 
         // Update target and apply smoothed gain sample-by-sample
-        smoothedAutoMakeupGain.setTargetValue(targetMakeupGain);
+        smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
 
         if (smoothedAutoMakeupGain.isSmoothing())
         {
@@ -4765,14 +4895,17 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     data[i] *= gains[i];
             }
         }
-        else if (targetMakeupGain > 1.001f)
+        else
         {
             // No smoothing needed, apply constant gain efficiently
             float currentGain = smoothedAutoMakeupGain.getCurrentValue();
-            for (int ch = 0; ch < numChannels; ++ch)
+            if (std::abs(currentGain - 1.0f) > 0.001f)
             {
-                float* data = buffer.getWritePointer(ch);
-                SIMDHelpers::applyGain(data, numSamples, currentGain);
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    float* data = buffer.getWritePointer(ch);
+                    SIMDHelpers::applyGain(data, numSamples, currentGain);
+                }
             }
         }
     }
@@ -4790,18 +4923,31 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
     }
 
-    // Output metering - SIMD optimized
+    // Output metering - SIMD optimized with per-channel tracking
     float outputLevel = 0.0f;
+    float outputLevelL = 0.0f;
+    float outputLevelR = 0.0f;
     for (int ch = 0; ch < numChannels; ++ch)
     {
         const float* data = buffer.getReadPointer(ch);
         float channelPeak = SIMDHelpers::getPeakLevel(data, numSamples);
         outputLevel = juce::jmax(outputLevel, channelPeak);
+
+        // Store per-channel levels for stereo metering
+        if (ch == 0)
+            outputLevelL = channelPeak;
+        else if (ch == 1)
+            outputLevelR = channelPeak;
     }
 
     float outputDb = outputLevel > 1e-5f ? juce::Decibels::gainToDecibels(outputLevel) : -60.0f;
+    float outputDbL = outputLevelL > 1e-5f ? juce::Decibels::gainToDecibels(outputLevelL) : -60.0f;
+    float outputDbR = outputLevelR > 1e-5f ? juce::Decibels::gainToDecibels(outputLevelR) : -60.0f;
+
     // Use relaxed memory ordering for performance in audio thread
     outputMeter.store(outputDb, std::memory_order_relaxed);
+    outputMeterL.store(outputDbL, std::memory_order_relaxed);
+    outputMeterR.store(numChannels > 1 ? outputDbR : outputDbL, std::memory_order_relaxed);  // Mono: use same value for both
 
     // Store gain reduction through delay buffer to sync meter with audio output
     // This ensures the GR display matches what you hear after PDC latency compensation
@@ -4987,8 +5133,10 @@ void UniversalCompressor::setStateInformation(const void* data, int sizeInBytes)
 
 void UniversalCompressor::resetDSPState()
 {
-    // Reset smoothed auto-makeup gain to neutral
+    // Reset smoothed auto-makeup gain and RMS accumulators to neutral
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+    inputRmsAccumulator = 0.0f;
+    outputRmsAccumulator = 0.0f;
 
     // Re-prepare all compressors to reset their internal envelope/detector state
     // This ensures gain reduction envelopes start fresh after state restoration
@@ -5065,13 +5213,7 @@ const std::vector<UniversalCompressor::PresetInfo>& UniversalCompressor::getPres
 
 int UniversalCompressor::getNumPrograms()
 {
-    // Return 1 to disable VST3's synthetic Program parameter.
-    // This is necessary because VST3 program changes interfere with state restoration:
-    // when state is restored, the Program parameter may trigger setCurrentProgram which
-    // would override the just-restored parameter values with preset defaults.
-    // Users can still access all presets through the plugin's built-in preset menu,
-    // and mode switching is available via the "mode" parameter for automation.
-    return 1;
+    return static_cast<int>(getCachedPresets().size()) + 1;  // +1 for "Default"
 }
 
 int UniversalCompressor::getCurrentProgram()
@@ -5081,27 +5223,36 @@ int UniversalCompressor::getCurrentProgram()
 
 const juce::String UniversalCompressor::getProgramName(int index)
 {
+    if (index == 0)
+        return "Default";
+
     const auto& presets = getCachedPresets();
-    if (index >= 0 && index < static_cast<int>(presets.size()))
-        return presets[static_cast<size_t>(index)].name;
-    return "Default";
+    if (index - 1 >= 0 && index - 1 < static_cast<int>(presets.size()))
+        return presets[static_cast<size_t>(index - 1)].name;
+
+    return {};
 }
 
 void UniversalCompressor::setCurrentProgram(int index)
 {
-    // Since getNumPrograms() returns 1, this function won't be called by the VST3 wrapper.
-    // It's only used internally for UI preset selection.
-    const auto& presets = getCachedPresets();
-    if (index < 0 || index >= static_cast<int>(presets.size()))
+    if (index < 0 || index >= getNumPrograms())
         return;
 
-    if (index == currentPresetIndex)
-        return;
-
-    // Apply the preset parameters first, then update the index
-    // This ensures state consistency if applyPreset encounters any issues
-    CompressorPresets::applyPreset(parameters, presets[static_cast<size_t>(index)]);
     currentPresetIndex = index;
+
+    if (index == 0)
+    {
+        // Default preset - keeps current values
+        // User can manually adjust parameters from here
+        return;
+    }
+
+    // Apply factory preset (index - 1 because 0 is "Default")
+    const auto& presets = getCachedPresets();
+    if (index - 1 < static_cast<int>(presets.size()))
+    {
+        CompressorPresets::applyPreset(parameters, presets[static_cast<size_t>(index - 1)]);
+    }
 }
 
 // LV2 inline display removed - JUCE doesn't natively support this extension

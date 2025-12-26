@@ -68,6 +68,7 @@ private:
     juce::ComboBox tapeMachineSelector;
     juce::ComboBox tapeSpeedSelector;
     juce::ComboBox tapeTypeSelector;
+    juce::ComboBox oversamplingSelector;
 
     juce::Slider inputGainSlider;
     juce::Slider biasSlider;
@@ -80,10 +81,12 @@ private:
 
     juce::ToggleButton noiseEnabledButton;
     juce::ToggleButton autoCompButton;
+    juce::Label autoCompLabel;
 
     juce::Label tapeMachineLabel;
     juce::Label tapeSpeedLabel;
     juce::Label tapeTypeLabel;
+    juce::Label oversamplingLabel;
     juce::Label inputGainLabel;
     juce::Label biasLabel;
     juce::Label highpassFreqLabel;
@@ -101,6 +104,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeMachineAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeSpeedAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeTypeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oversamplingAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> biasAttachment;
@@ -118,6 +122,11 @@ private:
     void setupComboBox(juce::ComboBox& combo, juce::Label& label, const juce::String& text);
 
     float wowPhase = 0.0f;  // Phase for visual wow effect animation
+
+    // Auto-comp bidirectional linking
+    float lastInputGainValue = 0.0f;
+    float lastOutputGainValue = 0.0f;
+    bool isUpdatingGainSliders = false;  // Prevent recursive updates
 
     // Patreon supporters overlay
     std::unique_ptr<SupportersOverlay> supportersOverlay;

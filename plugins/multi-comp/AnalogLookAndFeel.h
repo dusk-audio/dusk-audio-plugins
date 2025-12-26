@@ -184,18 +184,26 @@ public:
 private:
     void timerCallback() override;
 
-    float currentLevel = -60.0f;
-    float targetLevel = -60.0f;
-    float needlePosition = 0.0f;
+    float targetLevel = -60.0f;      // Target level from processor
+    float needlePosition = 0.0f;     // Current needle position (0-1)
+    float needleVelocity = 0.0f;     // For mechanical overshoot simulation
     float peakLevel = -60.0f;
     float peakNeedlePosition = 0.0f;  // Position of peak indicator on scale
     float peakHoldTime = 0.0f;
     bool displayPeaks = true;
 
-    // Ballistics
-    const float attackTime = 0.3f;  // 300ms VU standard
-    const float releaseTime = 0.3f;
-    
+    // GR Meter Ballistics - professional hardware-inspired timing
+    // GR meters should be faster than VU meters to show actual compressor behavior
+    // Reference: LA-2A meter ~100ms attack, 1176 meter ~50ms attack
+    static constexpr float kRefreshRateHz = 60.0f;
+    static constexpr float kAttackTimeMs = 50.0f;   // Fast attack to show compression
+    static constexpr float kReleaseTimeMs = 150.0f; // Slower release for readability
+
+    // Mechanical needle physics for authentic "bounce"
+    // Real VU meters overshoot by ~1-1.5% due to needle inertia
+    static constexpr float kOvershootDamping = 0.65f;    // Slightly underdamped for overshoot
+    static constexpr float kOvershootStiffness = 200.0f; // Spring constant
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnalogVUMeter)
 };
 

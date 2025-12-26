@@ -17,11 +17,13 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Create background texture
     createBackgroundTexture();
     
-    // Create meters
+    // Create meters with stereo mode enabled
     inputMeter = std::make_unique<LEDMeter>(LEDMeter::Vertical);
+    inputMeter->setStereoMode(true);  // Show L/R channels
     vuMeter = std::make_unique<VUMeterWithLabel>();
     outputMeter = std::make_unique<LEDMeter>(LEDMeter::Vertical);
-    
+    outputMeter->setStereoMode(true);  // Show L/R channels
+
     addAndMakeVisible(inputMeter.get());
     addAndMakeVisible(vuMeter.get());
     addAndMakeVisible(outputMeter.get());
@@ -40,36 +42,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
 
-    // Create preset category selector
-    presetCategorySelector = std::make_unique<juce::ComboBox>("Preset Category");
-    presetCategorySelector->addItem("-- Category --", 1);
-    int catId = 2;
-    for (const auto& cat : CompressorPresets::Categories)
-        presetCategorySelector->addItem(cat, catId++);
-    presetCategorySelector->setSelectedId(1, juce::dontSendNotification);
-    presetCategorySelector->onChange = [this]() {
-        int idx = presetCategorySelector->getSelectedId();
-        int categoryIndex = idx - 2;
-        if (idx > 1 && categoryIndex >= 0 && categoryIndex < CompressorPresets::Categories.size())
-            updatePresetList(CompressorPresets::Categories[categoryIndex]);
-        else
-        {
-            presetSelector->clear();
-            presetSelector->addItem("-- Select Preset --", 1);
-            presetSelector->setSelectedId(1, juce::dontSendNotification);
-            currentCategoryPresets.clear();
-        }
-    };
-    addAndMakeVisible(presetCategorySelector.get());
-
-    // Create preset selector
-    presetSelector = std::make_unique<juce::ComboBox>("Preset");
-    presetSelector->addItem("-- Select Preset --", 1);
-    presetSelector->setSelectedId(1, juce::dontSendNotification);
-    presetSelector->onChange = [this]() {
-        applySelectedPreset();
-    };
-    addAndMakeVisible(presetSelector.get());
+    // Presets are exposed via DAW's native preset menu (getNumPrograms/setCurrentProgram/getProgramName)
 
     // Create global controls with full readable labels
     bypassButton = std::make_unique<juce::ToggleButton>("Bypass");
@@ -88,6 +61,23 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     oversamplingSelector->addItem("2x", 1);
     oversamplingSelector->addItem("4x", 2);
     oversamplingSelector->setSelectedId(1);
+
+    // Sidechain HP filter vertical slider (Off to 500Hz)
+    sidechainHpSlider = std::make_unique<juce::Slider>(juce::Slider::LinearVertical, juce::Slider::TextBoxBelow);
+    sidechainHpSlider->setRange(0.0, 500.0, 1.0);  // 0 = Off, up to 500Hz
+    sidechainHpSlider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
+    sidechainHpSlider->setSkewFactorFromMidPoint(80.0);  // Skew so useful range (20-200Hz) is more accessible
+    sidechainHpSlider->setTooltip("Sidechain High-Pass Filter - removes low frequencies from detector to prevent pumping");
+    sidechainHpSlider->textFromValueFunction = [](double value) {
+        if (value < 1.0)
+            return juce::String("Off");
+        return juce::String(static_cast<int>(value)) + " Hz";
+    };
+    sidechainHpSlider->valueFromTextFunction = [](const juce::String& text) {
+        if (text.containsIgnoreCase("off"))
+            return 0.0;
+        return text.getDoubleValue();
+    };
 
     // SC EQ toggle button - use ToggleButton for radio style
     scEqToggleButton = std::make_unique<juce::TextButton>("SC EQ");
@@ -124,6 +114,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     addAndMakeVisible(bypassButton.get());
     addAndMakeVisible(autoGainButton.get());
     addAndMakeVisible(oversamplingSelector.get());
+    addAndMakeVisible(sidechainHpSlider.get());
     // Hide SC EQ and sidechain controls - simplify the header
     addChildComponent(sidechainEnableButton.get());
     addChildComponent(sidechainListenButton.get());
@@ -172,6 +163,10 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     if (params.getRawParameterValue("oversampling"))
         oversamplingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             params, "oversampling", *oversamplingSelector);
+
+    if (params.getRawParameterValue("sidechain_hp"))
+        sidechainHpAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            params, "sidechain_hp", *sidechainHpSlider);
 
     if (params.getRawParameterValue("sc_low_freq"))
         scLowFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -244,6 +239,8 @@ EnhancedCompressorEditor::~EnhancedCompressorEditor()
         lookaheadSlider->setLookAndFeel(nullptr);
     if (oversamplingSelector)
         oversamplingSelector->setLookAndFeel(nullptr);
+    if (sidechainHpSlider)
+        sidechainHpSlider->setLookAndFeel(nullptr);
     if (scLowFreqSlider)
         scLowFreqSlider->setLookAndFeel(nullptr);
     if (scLowGainSlider)
@@ -758,11 +755,8 @@ void EnhancedCompressorEditor::updateMode(int newMode)
         if (oversamplingSelector)
             oversamplingSelector->setLookAndFeel(currentLookAndFeel);
 
-        // Preset selectors
-        if (presetCategorySelector)
-            presetCategorySelector->setLookAndFeel(currentLookAndFeel);
-        if (presetSelector)
-            presetSelector->setLookAndFeel(currentLookAndFeel);
+        if (sidechainHpSlider)
+            sidechainHpSlider->setLookAndFeel(currentLookAndFeel);
 
         // Sidechain EQ sliders
         if (scLowFreqSlider)
@@ -919,6 +913,14 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         g.setColour(textColor);
         g.setFont(juce::Font(juce::FontOptions(12.0f * scaleFactor).withStyle("Bold")));
         g.drawText("Oversampling", osLabelBounds, juce::Justification::centredRight);
+    }
+
+    // Draw "SC HP" label above sidechain HP knob (centered)
+    if (!scHpLabelBounds.isEmpty())
+    {
+        g.setColour(textColor);
+        g.setFont(juce::Font(juce::FontOptions(11.0f * scaleFactor).withStyle("Bold")));
+        g.drawText("SC HP", scHpLabelBounds, juce::Justification::centred);
     }
 
     // Draw meter labels and values using standard LEDMeterStyle
@@ -1114,33 +1116,42 @@ void EnhancedCompressorEditor::resized()
     // Center area
     mainArea.reduce(20 * scaleFactor, 0);
 
-    // Preset selectors above VU meter (right side)
-    auto presetArea = mainArea.removeFromTop(static_cast<int>(26 * scaleFactor));
+    // Presets are exposed via DAW's native preset menu (no UI dropdowns needed)
+
+    // VU Meter at top center with SC HP vertical slider to the right
+    auto vuArea = mainArea.removeFromTop(static_cast<int>(190 * scaleFactor));  // More space without preset selectors
+
+    // SC HP slider area on the right side of VU meter
+    const int scHpSliderWidth = static_cast<int>(28 * scaleFactor);   // Narrow vertical slider
+    const int scHpAreaWidth = static_cast<int>(55 * scaleFactor);     // Area including label
+    auto scHpArea = vuArea.removeFromRight(scHpAreaWidth);
+
+    // Position SC HP vertical slider with label above
+    if (sidechainHpSlider)
     {
-        const int presetGap = static_cast<int>(8 * scaleFactor);
-        const int presetHeight = static_cast<int>(22 * scaleFactor);
-        const int catWidth = static_cast<int>(100 * scaleFactor);
-        const int presetWidth = static_cast<int>(160 * scaleFactor);
+        int labelHeight = static_cast<int>(16 * scaleFactor);
+        int textBoxHeight = static_cast<int>(18 * scaleFactor);
+        int sliderHeight = scHpArea.getHeight() - labelHeight - textBoxHeight - static_cast<int>(8 * scaleFactor);
 
-        // Center the preset selectors
-        int totalPresetWidth = catWidth + presetGap + presetWidth;
-        auto presetControls = presetArea.withSizeKeepingCentre(totalPresetWidth, presetHeight);
+        // Store label bounds for drawing in paint()
+        scHpLabelBounds = juce::Rectangle<int>(
+            scHpArea.getX(), scHpArea.getY(),
+            scHpArea.getWidth(), labelHeight
+        );
 
-        if (presetCategorySelector)
-        {
-            presetCategorySelector->setBounds(presetControls.removeFromLeft(catWidth));
-        }
-        presetControls.removeFromLeft(presetGap);
-        if (presetSelector)
-        {
-            presetSelector->setBounds(presetControls.removeFromLeft(presetWidth));
-        }
+        // Position slider below label, centered horizontally
+        int sliderX = scHpArea.getX() + (scHpArea.getWidth() - scHpSliderWidth) / 2;
+        sidechainHpSlider->setBounds(sliderX, scHpArea.getY() + labelHeight,
+                                      scHpSliderWidth, sliderHeight + textBoxHeight);
     }
 
-    // VU Meter at top center - good readable size
-    auto vuArea = mainArea.removeFromTop(static_cast<int>(175 * scaleFactor));  // Slightly reduced to make room for presets
+    // VU meter centered in remaining area
     if (vuMeter)
-        vuMeter->setBounds(vuArea.reduced(static_cast<int>(55 * scaleFactor), static_cast<int>(5 * scaleFactor)));  // Less horizontal reduction for larger meter
+    {
+        // Remove equal space from left to balance the SC HP slider on right
+        vuArea.removeFromLeft(scHpAreaWidth);
+        vuMeter->setBounds(vuArea.reduced(static_cast<int>(30 * scaleFactor), static_cast<int>(5 * scaleFactor)));
+    }
 
     // Add space for "GAIN REDUCTION" text below VU meter
     mainArea.removeFromTop(25 * scaleFactor);
@@ -1340,10 +1351,13 @@ void EnhancedCompressorEditor::updateMeters()
     if (inputMeter)
     {
         // LEDMeter expects dB values, not linear
-        float inputDb = processor.getInputLevel();
-        inputMeter->setLevel(inputDb);
+        // Use stereo levels for L/R display
+        float inputDbL = processor.getInputLevelL();
+        float inputDbR = processor.getInputLevelR();
+        inputMeter->setStereoLevels(inputDbL, inputDbR);
 
-        // Apply smoothing for internal tracking
+        // Apply smoothing for internal tracking (use max for display text)
+        float inputDb = std::max(inputDbL, inputDbR);
         smoothedInputLevel = smoothedInputLevel * levelSmoothingFactor +
                            inputDb * (1.0f - levelSmoothingFactor);
     }
@@ -1367,10 +1381,13 @@ void EnhancedCompressorEditor::updateMeters()
     if (outputMeter)
     {
         // LEDMeter expects dB values, not linear
-        float outputDb = processor.getOutputLevel();
-        outputMeter->setLevel(outputDb);
+        // Use stereo levels for L/R display
+        float outputDbL = processor.getOutputLevelL();
+        float outputDbR = processor.getOutputLevelR();
+        outputMeter->setStereoLevels(outputDbL, outputDbR);
 
-        // Apply smoothing for internal tracking
+        // Apply smoothing for internal tracking (use max for display text)
+        float outputDb = std::max(outputDbL, outputDbR);
         smoothedOutputLevel = smoothedOutputLevel * levelSmoothingFactor +
                             outputDb * (1.0f - levelSmoothingFactor);
     }
@@ -1520,31 +1537,4 @@ void EnhancedCompressorEditor::mouseDown(const juce::MouseEvent& e)
     }
 }
 
-//==============================================================================
-// Preset System
-void EnhancedCompressorEditor::updatePresetList(const juce::String& category)
-{
-    presetSelector->clear();
-    presetSelector->addItem("-- Select Preset --", 1);
-
-    currentCategoryPresets = CompressorPresets::getPresetsByCategory(category);
-
-    int id = 2;
-    for (const auto& preset : currentCategoryPresets)
-        presetSelector->addItem(preset.name, id++);
-
-    presetSelector->setSelectedId(1, juce::dontSendNotification);
-}
-
-void EnhancedCompressorEditor::applySelectedPreset()
-{
-    int idx = presetSelector->getSelectedId();
-    if (idx <= 1 || currentCategoryPresets.empty())
-        return;
-
-    int presetIndex = idx - 2;  // Subtract 2 because ID 1 is placeholder
-    if (presetIndex >= 0 && presetIndex < static_cast<int>(currentCategoryPresets.size()))
-    {
-        CompressorPresets::applyPreset(processor.getParameters(), currentCategoryPresets[static_cast<size_t>(presetIndex)]);
-    }
-}
+// Presets are now exposed via DAW's native preset menu (getNumPrograms/setCurrentProgram/getProgramName)

@@ -79,9 +79,16 @@ public:
     void resetDSPState();
 
     // Metering - use relaxed memory ordering for UI thread reads
+    // Combined (max of L/R) for backwards compatibility
     float getInputLevel() const { return inputMeter.load(std::memory_order_relaxed); }
     float getOutputLevel() const { return outputMeter.load(std::memory_order_relaxed); }
     float getGainReduction() const { return grMeter.load(std::memory_order_relaxed); }
+
+    // Per-channel metering for stereo display
+    float getInputLevelL() const { return inputMeterL.load(std::memory_order_relaxed); }
+    float getInputLevelR() const { return inputMeterR.load(std::memory_order_relaxed); }
+    float getOutputLevelL() const { return outputMeterL.load(std::memory_order_relaxed); }
+    float getOutputLevelR() const { return outputMeterR.load(std::memory_order_relaxed); }
     float getSidechainLevel() const { return sidechainMeter.load(std::memory_order_relaxed); }
     float getLinkedGainReduction(int channel) const {
         return channel >= 0 && channel < 2 ? linkedGainReduction[channel].load(std::memory_order_relaxed) : 0.0f;
@@ -143,11 +150,17 @@ private:
     std::unique_ptr<class SidechainEQ> sidechainEQ;    // Low/high shelf EQ for sidechain
     std::unique_ptr<TruePeakDetector> truePeakDetector; // True-peak detection for sidechain
 
-    // Metering
+    // Metering (combined L/R max for backwards compatibility)
     std::atomic<float> inputMeter{-60.0f};
     std::atomic<float> outputMeter{-60.0f};
     std::atomic<float> grMeter{0.0f};
     std::atomic<float> sidechainMeter{-60.0f};  // Sidechain activity level
+
+    // Per-channel metering for stereo display
+    std::atomic<float> inputMeterL{-60.0f};
+    std::atomic<float> inputMeterR{-60.0f};
+    std::atomic<float> outputMeterL{-60.0f};
+    std::atomic<float> outputMeterR{-60.0f};
 
     // GR History buffer for visualization
     std::array<float, GR_HISTORY_SIZE> grHistory{};
@@ -181,6 +194,12 @@ private:
 
     // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};
+
+    // RMS-based auto-gain accumulators for professional-grade level matching
+    // Using ~200ms averaging window (industry standard for perceived loudness)
+    float inputRmsAccumulator = 0.0f;   // Running RMS of input signal
+    float outputRmsAccumulator = 0.0f;  // Running RMS of output signal (before auto-gain)
+    float rmsCoefficient = 0.0f;        // One-pole filter coefficient for RMS averaging
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> dryBuffer;           // For parallel compression mix

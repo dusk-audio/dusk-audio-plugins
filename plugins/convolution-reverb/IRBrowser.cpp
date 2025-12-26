@@ -27,10 +27,14 @@ void IRBrowser::CategoryTreeItem::paintItem(juce::Graphics& g, int width, int he
 {
     auto bounds = juce::Rectangle<int>(0, 0, width, height);
 
+    // Clip to bounds to prevent any artifacts extending beyond item width
+    g.reduceClipRegion(bounds);
+
     if (isSelected())
     {
-        g.setColour(ownerBrowser.highlightColour.withAlpha(0.3f));
-        g.fillRect(bounds);
+        // Use rounded rectangle for selection to look cleaner
+        g.setColour(ownerBrowser.highlightColour.withAlpha(0.35f));
+        g.fillRoundedRectangle(bounds.reduced(2, 1).toFloat(), 3.0f);
     }
 
     // Folder icon
@@ -131,8 +135,26 @@ void IRBrowser::setupComponents()
     headerLabel = std::make_unique<juce::Label>("header", "IR BROWSER");
     headerLabel->setFont(juce::Font(11.0f, juce::Font::bold));
     headerLabel->setColour(juce::Label::textColourId, dimTextColour);
-    headerLabel->setJustificationType(juce::Justification::centred);
+    headerLabel->setJustificationType(juce::Justification::centredLeft);  // Left-align since it has flexible width
     addAndMakeVisible(headerLabel.get());
+
+    // Search box for filtering IRs with search icon in placeholder
+    searchBox = std::make_unique<juce::TextEditor>("search");
+    searchBox->setMultiLine(false);
+    searchBox->setReturnKeyStartsNewLine(false);
+    searchBox->setPopupMenuEnabled(false);
+    // Unicode magnifying glass icon before "Search..."
+    searchBox->setTextToShowWhenEmpty(juce::CharPointer_UTF8("\xf0\x9f\x94\x8d Search..."), dimTextColour);
+    searchBox->setColour(juce::TextEditor::backgroundColourId, panelColour.darker(0.1f));
+    searchBox->setColour(juce::TextEditor::textColourId, textColour);
+    searchBox->setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff353535));
+    searchBox->setColour(juce::TextEditor::focusedOutlineColourId, highlightColour);
+    searchBox->setFont(juce::Font(11.0f));
+    searchBox->onTextChange = [this]()
+    {
+        applySearchFilter(searchBox->getText());
+    };
+    addAndMakeVisible(searchBox.get());
 
     // Browse button
     browseButton = std::make_unique<juce::TextButton>("...");
@@ -183,13 +205,15 @@ void IRBrowser::setupComponents()
     categoryTree = std::make_unique<juce::TreeView>("Categories");
     categoryTree->setColour(juce::TreeView::backgroundColourId, backgroundColour);
     categoryTree->setColour(juce::TreeView::linesColourId, panelColour);
+    categoryTree->setColour(juce::TreeView::selectedItemBackgroundColourId, juce::Colours::transparentBlack);  // We draw our own selection
+    categoryTree->setColour(juce::TreeView::dragAndDropIndicatorColourId, highlightColour);
     categoryTree->setIndentSize(16);
     categoryTree->setDefaultOpenness(false);
     addAndMakeVisible(categoryTree.get());
 
     // File list
     fileList = std::make_unique<juce::FileListComponent>(*directoryContents);
-    fileList->setColour(juce::DirectoryContentsDisplayComponent::highlightColourId, highlightColour.withAlpha(0.3f));
+    fileList->setColour(juce::DirectoryContentsDisplayComponent::highlightColourId, highlightColour.withAlpha(0.45f));
     fileList->setColour(juce::DirectoryContentsDisplayComponent::textColourId, textColour);
     fileList->addListener(this);
     addAndMakeVisible(fileList.get());
@@ -248,13 +272,18 @@ void IRBrowser::resized()
 {
     auto bounds = getLocalBounds();
 
-    // Header area
-    auto headerArea = bounds.removeFromTop(25);
-    headerLabel->setBounds(headerArea.removeFromLeft(headerArea.getWidth() - 60));
-    browseButton->setBounds(headerArea.removeFromLeft(25).reduced(2));
-    refreshButton->setBounds(headerArea.reduced(2));
+    // Header area with title and buttons
+    auto headerArea = bounds.removeFromTop(22);
+    // Buttons on right first, then label gets remaining space
+    refreshButton->setBounds(headerArea.removeFromRight(50).reduced(2));
+    browseButton->setBounds(headerArea.removeFromRight(25).reduced(2));
+    headerLabel->setBounds(headerArea.reduced(2, 0));  // Label gets remaining width
 
-    bounds.removeFromTop(5); // Spacing
+    // Search box below header
+    auto searchArea = bounds.removeFromTop(24);
+    searchBox->setBounds(searchArea.reduced(2));
+
+    bounds.removeFromTop(3); // Spacing
 
     // Split remaining space between tree and file list
     int treeHeight = bounds.getHeight() / 2;
@@ -328,4 +357,75 @@ void IRBrowser::selectDirectory(const juce::File& dir)
 
     if (directoryContents != nullptr)
         directoryContents->setDirectory(dir, true, true);
+
+    // Reapply search filter after directory change
+    if (currentSearchFilter.isNotEmpty())
+        applySearchFilter(currentSearchFilter);
+}
+
+void IRBrowser::applySearchFilter(const juce::String& filter)
+{
+    currentSearchFilter = filter.toLowerCase().trim();
+
+    if (fileFilter == nullptr || directoryThread == nullptr)
+        return;
+
+    // Update the wildcard filter to include the search term
+    // The filter will match files whose names contain the search string
+    juce::String basePattern = "*.wav;*.aiff;*.aif;*.flac;*.ogg;*.mp3;*.sdir;*.WAV;*.AIFF;*.AIF;*.FLAC;*.OGG;*.MP3;*.SDIR";
+
+    if (currentSearchFilter.isEmpty())
+    {
+        // Reset to default filter
+        fileFilter = std::make_unique<juce::WildcardFileFilter>(
+            basePattern,
+            "*",
+            "Audio Files");
+    }
+    else
+    {
+        // Create a filter that matches the search term in the filename
+        // WildcardFileFilter doesn't support substring matching directly,
+        // so we use a custom approach - add wildcards around the search term
+        juce::String searchPattern = "*" + currentSearchFilter + "*";
+
+        // Build pattern with search term for each extension
+        juce::StringArray extensions;
+        extensions.addTokens(basePattern, ";", "");
+
+        juce::String filteredPattern;
+        for (auto& ext : extensions)
+        {
+            // e.g., "*.wav" becomes "*search*.wav"
+            juce::String extOnly = ext.fromFirstOccurrenceOf(".", false, false);
+            if (filteredPattern.isNotEmpty())
+                filteredPattern += ";";
+            filteredPattern += searchPattern + "." + extOnly;
+        }
+
+        fileFilter = std::make_unique<juce::WildcardFileFilter>(
+            filteredPattern,
+            "*",
+            "Audio Files matching: " + currentSearchFilter);
+    }
+
+    // Recreate directory contents with new filter
+    directoryContents = std::make_unique<juce::DirectoryContentsList>(fileFilter.get(), *directoryThread);
+
+    if (currentDirectory.exists())
+        directoryContents->setDirectory(currentDirectory, true, true);
+
+    // Update file list with new contents
+    if (fileList != nullptr)
+    {
+        fileList->removeListener(this);
+    }
+
+    fileList = std::make_unique<juce::FileListComponent>(*directoryContents);
+    fileList->setColour(juce::DirectoryContentsDisplayComponent::highlightColourId, highlightColour.withAlpha(0.45f));
+    fileList->setColour(juce::DirectoryContentsDisplayComponent::textColourId, textColour);
+    fileList->addListener(this);
+    addAndMakeVisible(fileList.get());
+
+    resized();
 }

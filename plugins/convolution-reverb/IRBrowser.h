@@ -101,6 +101,10 @@ private:
     // Header label
     std::unique_ptr<juce::Label> headerLabel;
 
+    // Search filter
+    std::unique_ptr<juce::TextEditor> searchBox;
+    juce::String currentSearchFilter;
+
     // Buttons
     std::unique_ptr<juce::TextButton> browseButton;
     std::unique_ptr<juce::TextButton> refreshButton;
@@ -108,6 +112,7 @@ private:
     void setupComponents();
     void buildCategoryTree();
     void selectDirectory(const juce::File& dir);
+    void applySearchFilter(const juce::String& filter);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IRBrowser)
 };

@@ -561,7 +561,11 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     inputLevelL.store(rmsInputL);
     inputLevelR.store(rmsInputR);
 
-    // Now oversample for high-quality processing using selected quality
+    // Use cached oversampling factor from prepareToPlay() - this ensures filters are
+    // always configured with the correct oversampled rate. When user changes oversampling,
+    // the DAW calls prepareToPlay() which updates currentOversamplingFactor and re-prepares
+    // all DSP including ImprovedTapeEmulation filters with the correct rate.
+    // This matches the pattern used by 4K-EQ which has no aliasing issues.
     auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
     if (!activeOversampler)
         return;
@@ -585,7 +589,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     float* rightData = rightBlock.getChannelPointer(0);
     const size_t numSamples = leftBlock.getNumSamples();
 
-    // Use the stored oversampled rate (calculated in prepareToPlay)
+    // Use cached oversampled rate from prepareToPlay() for consistent DSP calculations
+    // This ensures wow/flutter timing matches the filter configurations
     const double oversampledRate = static_cast<double>(currentOversampledRate);
 
     for (size_t i = 0; i < numSamples; ++i)

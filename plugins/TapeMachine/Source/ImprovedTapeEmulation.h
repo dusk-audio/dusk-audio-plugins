@@ -329,6 +329,16 @@ private:
     // DC blocking filter to prevent subsonic rumble
     juce::dsp::IIR::Filter<float> dcBlocker;
 
+    // Input anti-aliasing lowpass filter - prevents HF content from creating
+    // harmonics in the saturation stages (must be BEFORE saturation)
+    juce::dsp::IIR::Filter<float> inputAntiAliasingFilter;
+
+    // Output anti-aliasing lowpass filters (cascaded for steeper rolloff)
+    // Two stages = 24dB/octave slope for better alias rejection
+    // Applied AFTER all saturation to catch any remaining harmonics
+    juce::dsp::IIR::Filter<float> antiAliasingFilter1;
+    juce::dsp::IIR::Filter<float> antiAliasingFilter2;
+
     // Hysteresis modeling
     struct HysteresisProcessor
     {
@@ -375,6 +385,12 @@ private:
 
     // Crosstalk simulation (for stereo)
     float crosstalkBuffer = 0.0f;
+
+    // High-frequency content estimation for frequency-dependent saturation reduction
+    // This prevents aliasing by reducing saturation on HF content (like 4K-EQ approach)
+    float lastSampleForHF = 0.0f;
+    float highFreqEstimate = 0.0f;
+    float estimateHighFrequencyContent(float input);
 
     // Metering
     std::atomic<float> inputLevel{0.0f};

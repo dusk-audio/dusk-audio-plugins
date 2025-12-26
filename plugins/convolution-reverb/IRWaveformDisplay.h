@@ -2,7 +2,7 @@
   ==============================================================================
 
     Convolution Reverb - IR Waveform Display
-    Waveform visualization with envelope overlay
+    Waveform visualization with envelope overlay and EQ curve view
     Copyright (c) 2025 Luna Co. Audio
 
   ==============================================================================
@@ -13,12 +13,22 @@
 #include <JuceHeader.h>
 #include "EnvelopeProcessor.h"
 
+// Display mode enum
+enum class DisplayMode { IRWaveform, EQCurve };
+
 class IRWaveformDisplay : public juce::Component,
                           private juce::Timer
 {
 public:
     IRWaveformDisplay();
     ~IRWaveformDisplay() override;
+
+    // Display mode toggle
+    void setDisplayMode(DisplayMode mode);
+    DisplayMode getDisplayMode() const { return displayMode; }
+
+    // Callback for mode changes
+    std::function<void(DisplayMode)> onDisplayModeChanged;
 
     // Set the IR waveform data
     void setIRWaveform(const juce::AudioBuffer<float>& ir, double sampleRate);
@@ -44,14 +54,28 @@ public:
     void setEnvelopeColour(juce::Colour colour) { envelopeColour = colour; repaint(); }
     void setBackgroundColour(juce::Colour colour) { backgroundColour = colour; repaint(); }
     void setGridColour(juce::Colour colour) { gridColour = colour; repaint(); }
+
+    // EQ curve parameters (for EQ view mode)
+    void setEQParameters(float hpfFreq, float lpfFreq,
+                         float lowGain, float loMidGain, float hiMidGain, float highGain);
+
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void mouseDown(const juce::MouseEvent& e) override;
 
 private:
     void timerCallback() override;
     void rebuildWaveformPath();
     void rebuildEnvelopePath();
     void drawTimeGrid(juce::Graphics& g);
+    void drawEQCurve(juce::Graphics& g, juce::Rectangle<float> bounds);
+    void drawModeToggle(juce::Graphics& g);
+    float calculateEQResponse(float frequencyHz);
+
+    // Display mode
+    DisplayMode displayMode = DisplayMode::IRWaveform;
+    juce::Rectangle<int> irToggleBounds;
+    juce::Rectangle<int> eqToggleBounds;
 
     // IR data
     juce::AudioBuffer<float> irBuffer;
@@ -91,6 +115,21 @@ private:
     juce::Colour textColour{0xff909090};
     juce::Colour irOffsetColour{0xff88ff88};     // Green for IR offset
     juce::Colour filterEnvColour{0xffaa66ff};    // Purple for filter envelope
+    juce::Colour accentColour{0xff4a9eff};       // Accent blue for EQ curve
+
+    // EQ parameters for EQ curve view (fixed frequencies for this reverb)
+    float eqHpfFreq = 20.0f;
+    float eqLpfFreq = 20000.0f;
+    float eqLowGain = 0.0f;      // 100 Hz
+    float eqLoMidGain = 0.0f;    // 600 Hz
+    float eqHiMidGain = 0.0f;    // 3000 Hz
+    float eqHighGain = 0.0f;     // 8000 Hz
+
+    // Fixed EQ band frequencies
+    static constexpr float lowFreq = 100.0f;
+    static constexpr float loMidFreq = 600.0f;
+    static constexpr float hiMidFreq = 3000.0f;
+    static constexpr float highFreq = 8000.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IRWaveformDisplay)
 };

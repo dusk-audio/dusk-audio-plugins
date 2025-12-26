@@ -1,24 +1,28 @@
+/*
+  ==============================================================================
+
+    RE-201 Space Echo - Plugin Editor Implementation
+    UAD Galaxy-style 3-layer hardware emulation UI
+    Copyright (c) 2025 Luna Co. Audio
+
+  ==============================================================================
+*/
+
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "../../../shared/LunaVintageLookAndFeel.h"
 
-// VintageKnobLookAndFeel implementation - inherits from LunaVintage
-VintageKnobLookAndFeel::VintageKnobLookAndFeel()
-{
-    // Inherits vintage styling from LunaVintageLookAndFeel
-    // Can add TapeEcho-specific customizations here if needed
-}
-
-// drawRotarySlider is inherited from LunaVintageLookAndFeel
-
-// TapeEchoEditor implementation
 TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
-    : AudioProcessorEditor(&p), audioProcessor(p)
+    : AudioProcessorEditor(&p),
+      audioProcessor(p),
+      stereoSwitch("STEREO")
 {
-    // Unified Luna sizing
-    setSize(800, 600);
+    // UAD Galaxy-style hardware proportions (wide format)
+    setSize(950, 380);
     setResizable(true, true);
-    setResizeLimits(600, 450, 1200, 900);
+    setResizeLimits(760, 304, 1330, 532);
+
+    // Apply look and feel globally
+    setLookAndFeel(&lookAndFeel);
 
     setupControls();
     setupLabels();
@@ -26,32 +30,29 @@ TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
     addAndMakeVisible(vuMeter);
     addAndMakeVisible(modeSelector);
     addAndMakeVisible(presetSelector);
-    addAndMakeVisible(vintageToggle);
+    addAndMakeVisible(stereoSwitch);
 
     // Setup preset selector
     presetSelector.addItem("User", 1);
     for (size_t i = 0; i < audioProcessor.getFactoryPresets().size(); ++i)
     {
-        presetSelector.addItem(audioProcessor.getFactoryPresets()[i].name, i + 2);
+        presetSelector.addItem(audioProcessor.getFactoryPresets()[i].name, static_cast<int>(i + 2));
     }
     presetSelector.setSelectedId(1);
     presetSelector.addListener(this);
 
-    // Setup vintage toggle
-    vintageToggle.setButtonText("Vintage");
-    vintageToggle.setToggleState(true, juce::dontSendNotification);
-    vintageToggle.onClick = [this]() {
-        isVintageMode = vintageToggle.getToggleState();
-        updateAppearance();
+    // Stereo switch callback
+    stereoSwitch.onStateChange = [this](bool isOn) {
+        auto* param = audioProcessor.apvts.getParameter(TapeEchoProcessor::PARAM_STEREO_MODE);
+        if (param)
+            param->setValueNotifyingHost(isOn ? 1.0f : 0.0f);
     };
 
     // Mode selector callback
     modeSelector.onModeChanged = [this](int mode) {
         auto* param = audioProcessor.apvts.getParameter(TapeEchoProcessor::PARAM_MODE);
         if (param)
-        {
             param->setValueNotifyingHost(mode / 11.0f);
-        }
     };
 
     // Create parameter attachments
@@ -77,291 +78,424 @@ TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
         audioProcessor.apvts, TapeEchoProcessor::PARAM_INPUT_VOLUME, inputVolumeKnob);
 
     wowFlutterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, TapeEchoProcessor::PARAM_WOW_FLUTTER, wowFlutterSlider);
+        audioProcessor.apvts, TapeEchoProcessor::PARAM_WOW_FLUTTER, wowFlutterKnob);
 
     tapeAgeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, TapeEchoProcessor::PARAM_TAPE_AGE, tapeAgeSlider);
+        audioProcessor.apvts, TapeEchoProcessor::PARAM_TAPE_AGE, tapeAgeKnob);
 
     motorTorqueAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.apvts, TapeEchoProcessor::PARAM_MOTOR_TORQUE, motorTorqueSlider);
-
-    stereoModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.apvts, TapeEchoProcessor::PARAM_STEREO_MODE, stereoModeButton);
+        audioProcessor.apvts, TapeEchoProcessor::PARAM_MOTOR_TORQUE, motorTorqueKnob);
 
     startTimerHz(30);
-    updateAppearance();
 }
 
 TapeEchoEditor::~TapeEchoEditor()
 {
     stopTimer();
+    setLookAndFeel(nullptr);
 }
 
 void TapeEchoEditor::setupControls()
 {
+    auto setupKnob = [this](juce::Slider& knob, const juce::String& suffix = "") {
+        knob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        knob.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        knob.setLookAndFeel(&lookAndFeel);
+        if (suffix.isNotEmpty())
+            knob.setTextValueSuffix(suffix);
+        addAndMakeVisible(knob);
+    };
+
     // Main knobs
-    repeatRateKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    repeatRateKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 20);
-    repeatRateKnob.setLookAndFeel(&knobLookAndFeel);
-    repeatRateKnob.setRange(50.0, 1000.0);
-    repeatRateKnob.setTextValueSuffix(" ms");
-    addAndMakeVisible(repeatRateKnob);
+    setupKnob(repeatRateKnob, " ms");
+    setupKnob(intensityKnob, " %");
+    setupKnob(echoVolumeKnob, " %");
+    setupKnob(reverbVolumeKnob, " %");
+    setupKnob(bassKnob, " dB");
+    setupKnob(trebleKnob, " dB");
+    setupKnob(inputVolumeKnob, " %");
 
-    intensityKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    intensityKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 20);
-    intensityKnob.setLookAndFeel(&knobLookAndFeel);
-    intensityKnob.setRange(0.0, 100.0);
-    intensityKnob.setTextValueSuffix(" %");
-    addAndMakeVisible(intensityKnob);
-
-    echoVolumeKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    echoVolumeKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 20);
-    echoVolumeKnob.setLookAndFeel(&knobLookAndFeel);
-    echoVolumeKnob.setRange(0.0, 100.0);
-    echoVolumeKnob.setTextValueSuffix(" %");
-    addAndMakeVisible(echoVolumeKnob);
-
-    reverbVolumeKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    reverbVolumeKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 20);
-    reverbVolumeKnob.setLookAndFeel(&knobLookAndFeel);
-    reverbVolumeKnob.setRange(0.0, 100.0);
-    reverbVolumeKnob.setTextValueSuffix(" %");
-    addAndMakeVisible(reverbVolumeKnob);
-
-    bassKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    bassKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 20);
-    bassKnob.setLookAndFeel(&knobLookAndFeel);
-    bassKnob.setRange(-12.0, 12.0);
-    bassKnob.setTextValueSuffix(" dB");
-    addAndMakeVisible(bassKnob);
-
-    trebleKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    trebleKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 20);
-    trebleKnob.setLookAndFeel(&knobLookAndFeel);
-    trebleKnob.setRange(-12.0, 12.0);
-    trebleKnob.setTextValueSuffix(" dB");
-    addAndMakeVisible(trebleKnob);
-
-    inputVolumeKnob.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    inputVolumeKnob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 20);
-    inputVolumeKnob.setLookAndFeel(&knobLookAndFeel);
-    inputVolumeKnob.setRange(0.0, 100.0);
-    inputVolumeKnob.setTextValueSuffix(" %");
-    addAndMakeVisible(inputVolumeKnob);
-
-    // Extended controls
-    wowFlutterSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    wowFlutterSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 20);
-    addAndMakeVisible(wowFlutterSlider);
-
-    tapeAgeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    tapeAgeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 20);
-    addAndMakeVisible(tapeAgeSlider);
-
-    motorTorqueSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    motorTorqueSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 40, 20);
-    addAndMakeVisible(motorTorqueSlider);
-
-    stereoModeButton.setButtonText("Stereo");
-    addAndMakeVisible(stereoModeButton);
+    // Extended controls (smaller)
+    setupKnob(wowFlutterKnob);
+    setupKnob(tapeAgeKnob);
+    setupKnob(motorTorqueKnob);
 }
 
 void TapeEchoEditor::setupLabels()
 {
-    // Set label font and color
     auto setupLabel = [this](juce::Label& label, const juce::String& text) {
         label.setText(text, juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
-        label.setFont(juce::Font("Arial", 11.0f, juce::Font::bold));
-        label.setColour(juce::Label::textColourId, juce::Colour(200, 190, 170));
+        label.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
+        label.setColour(juce::Label::textColourId, RE201Colours::textWhite);
+        label.setMinimumHorizontalScale(0.7f);
         addAndMakeVisible(label);
     };
 
-    setupLabel(repeatRateLabel, "RATE");
-    setupLabel(intensityLabel, "INTENSITY");
-    setupLabel(echoVolumeLabel, "ECHO");
-    setupLabel(reverbVolumeLabel, "REVERB");
+    setupLabel(repeatRateLabel, "ECHO RATE");
+    setupLabel(intensityLabel, "FEEDBACK");
+    setupLabel(echoVolumeLabel, "ECHO VOL");
+    setupLabel(reverbVolumeLabel, "REVERB VOL");
     setupLabel(bassLabel, "BASS");
     setupLabel(trebleLabel, "TREBLE");
-    setupLabel(inputVolumeLabel, "INPUT");
-
-    wowFlutterLabel.setText("WOW/FLUTTER", juce::dontSendNotification);
-    wowFlutterLabel.setFont(juce::Font("Arial", 10.0f, juce::Font::bold));
-    wowFlutterLabel.setColour(juce::Label::textColourId, juce::Colour(200, 190, 170));
-    addAndMakeVisible(wowFlutterLabel);
-
-    tapeAgeLabel.setText("TAPE AGE", juce::dontSendNotification);
-    tapeAgeLabel.setFont(juce::Font("Arial", 10.0f, juce::Font::bold));
-    tapeAgeLabel.setColour(juce::Label::textColourId, juce::Colour(200, 190, 170));
-    addAndMakeVisible(tapeAgeLabel);
-
-    motorTorqueLabel.setText("MOTOR", juce::dontSendNotification);
-    motorTorqueLabel.setFont(juce::Font("Arial", 10.0f, juce::Font::bold));
-    motorTorqueLabel.setColour(juce::Label::textColourId, juce::Colour(200, 190, 170));
-    addAndMakeVisible(motorTorqueLabel);
-
-    presetLabel.setText("PRESET:", juce::dontSendNotification);
-    presetLabel.setFont(juce::Font("Arial", 10.0f, juce::Font::bold));
-    presetLabel.setColour(juce::Label::textColourId, juce::Colour(200, 190, 170));
-    addAndMakeVisible(presetLabel);
+    setupLabel(inputVolumeLabel, "INPUT VOL");
+    setupLabel(wowFlutterLabel, "WOW/FLUTTER");
+    setupLabel(tapeAgeLabel, "TAPE AGE");
+    setupLabel(motorTorqueLabel, "MOTOR");
 }
 
 void TapeEchoEditor::paint(juce::Graphics& g)
 {
-    if (isVintageMode)
-    {
-        // Military green/olive background like classic hardware
-        juce::ColourGradient bgGradient(juce::Colour(65, 70, 55),
-                                         getLocalBounds().getCentre().toFloat(),
-                                         juce::Colour(45, 50, 35),
-                                         getLocalBounds().getBottomRight().toFloat(), true);
-        g.setGradientFill(bgGradient);
-        g.fillAll();
+    auto bounds = getLocalBounds().toFloat();
 
-        // Add subtle texture pattern
-        g.setColour(juce::Colour(40, 45, 30).withAlpha(0.3f));
-        for (int y = 0; y < getHeight(); y += 3)
+    // Layer 1: Dark background
+    g.fillAll(RE201Colours::background);
+
+    // Layer 2: Brushed aluminum faceplate (full area minus small border)
+    auto faceplateArea = bounds.reduced(2.0f);
+    drawBrushedAluminum(g, faceplateArea);
+
+    // Calculate the center panel area (where black frame + green panel go)
+    const float headerHeight = 45.0f;
+    const float footerHeight = 60.0f;
+    const float leftMargin = 80.0f;
+    const float rightMargin = 100.0f;
+
+    auto centerArea = faceplateArea;
+    centerArea.removeFromTop(headerHeight);
+    centerArea.removeFromBottom(footerHeight);
+    centerArea.removeFromLeft(leftMargin);
+    centerArea.removeFromRight(rightMargin);
+
+    // Layer 3: Black recessed frame
+    drawBlackFrame(g, centerArea);
+
+    // Layer 4: Green control panel (inset into black frame)
+    auto greenPanelArea = centerArea.reduced(8.0f);
+    drawGreenPanel(g, greenPanelArea);
+
+    // Draw corner screws on green panel
+    drawCornerScrews(g, greenPanelArea);
+
+    // Draw header text
+    drawLogoAndTitle(g, faceplateArea.removeFromTop(headerHeight));
+}
+
+void TapeEchoEditor::drawBrushedAluminum(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    // Base aluminum gradient (top lighter, bottom slightly darker)
+    {
+        juce::ColourGradient aluminumGradient(
+            RE201Colours::aluminumLight, bounds.getX(), bounds.getY(),
+            RE201Colours::aluminumDark, bounds.getX(), bounds.getBottom(), false);
+        aluminumGradient.addColour(0.3, RE201Colours::aluminumMid);
+        aluminumGradient.addColour(0.7, RE201Colours::aluminumMid.darker(0.05f));
+        g.setGradientFill(aluminumGradient);
+        g.fillRect(bounds);
+    }
+
+    // Horizontal brush stroke texture
+    juce::Random random(54321);  // Consistent seed for stable texture
+
+    for (float y = bounds.getY(); y < bounds.getBottom(); y += 1.0f)
+    {
+        // Variation in each stroke
+        float lineAlpha = 0.02f + random.nextFloat() * 0.08f;
+        bool isHighlight = random.nextFloat() > 0.94f;
+        bool isScratch = random.nextFloat() > 0.98f;
+
+        if (isHighlight)
         {
-            g.drawHorizontalLine(y, 0, getWidth());
+            g.setColour(RE201Colours::aluminumHighlight.withAlpha(0.25f));
+        }
+        else if (isScratch)
+        {
+            g.setColour(RE201Colours::aluminumShadow.withAlpha(0.15f));
+        }
+        else
+        {
+            g.setColour(RE201Colours::aluminumLight.withAlpha(lineAlpha));
         }
 
-        // Draw section panels
-        auto bounds = getLocalBounds();
-        bounds.removeFromTop(50);  // Title space
-        bounds.removeFromBottom(25); // Bottom space
-        bounds = bounds.reduced(10);
-
-        // Draw recessed panel areas
-        g.setColour(juce::Colour(35, 40, 25));
-        g.fillRoundedRectangle(bounds.toFloat(), 5.0f);
-        g.setColour(juce::Colour(25, 30, 18));
-        g.drawRoundedRectangle(bounds.toFloat(), 5.0f, 2.0f);
+        g.drawHorizontalLine(static_cast<int>(y), bounds.getX(), bounds.getRight());
     }
-    else
+
+    // Top edge bright highlight
+    g.setColour(juce::Colours::white.withAlpha(0.2f));
+    g.drawLine(bounds.getX(), bounds.getY() + 1.0f, bounds.getRight(), bounds.getY() + 1.0f, 1.0f);
+
+    // Bottom edge shadow
+    g.setColour(RE201Colours::aluminumShadow);
+    g.drawLine(bounds.getX(), bounds.getBottom() - 1.0f, bounds.getRight(), bounds.getBottom() - 1.0f, 1.5f);
+
+    // Outer border
+    g.setColour(RE201Colours::aluminumShadow.darker(0.3f));
+    g.drawRect(bounds, 1.0f);
+}
+
+void TapeEchoEditor::drawBlackFrame(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    // Dark recessed frame that surrounds the green panel
+    g.setColour(RE201Colours::frameBlack);
+    g.fillRoundedRectangle(bounds, 3.0f);
+
+    // Inner shadow on top and left (creates recessed look)
     {
-        // Modern clean background
-        g.fillAll(juce::Colour(45, 45, 50));
+        juce::ColourGradient topShadow(
+            RE201Colours::frameShadow, bounds.getX(), bounds.getY(),
+            juce::Colours::transparentBlack, bounds.getX(), bounds.getY() + 12.0f, false);
+        g.setGradientFill(topShadow);
+        g.fillRoundedRectangle(bounds, 3.0f);
+    }
+    {
+        juce::ColourGradient leftShadow(
+            RE201Colours::frameShadow.withAlpha(0.4f), bounds.getX(), bounds.getY(),
+            juce::Colours::transparentBlack, bounds.getX() + 12.0f, bounds.getY(), false);
+        g.setGradientFill(leftShadow);
+        g.fillRoundedRectangle(bounds, 3.0f);
     }
 
-    // Title bar
-    auto titleBar = getLocalBounds().removeFromTop(50);
-    g.setColour(juce::Colour(30, 35, 20));
-    g.fillRect(titleBar);
+    // Light catch on bottom-right edges
+    g.setColour(RE201Colours::frameHighlight.withAlpha(0.12f));
+    g.drawLine(bounds.getX() + 8.0f, bounds.getBottom() - 2.0f,
+               bounds.getRight() - 3.0f, bounds.getBottom() - 2.0f, 1.0f);
+    g.drawLine(bounds.getRight() - 2.0f, bounds.getY() + 8.0f,
+               bounds.getRight() - 2.0f, bounds.getBottom() - 3.0f, 1.0f);
+}
 
-    // Title text with retro styling
-    g.setColour(juce::Colour(200, 190, 170));
-    g.setFont(juce::Font("Arial", 22.0f, juce::Font::bold));
-    g.drawText("VINTAGE TAPE ECHO", titleBar.reduced(10, 0),
-               juce::Justification::centredLeft);
+void TapeEchoEditor::drawGreenPanel(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    // Main green fill
+    g.setColour(RE201Colours::panelGreen);
+    g.fillRoundedRectangle(bounds, 3.0f);
 
-    // Company name on right
-    g.setFont(14.0f);
-    g.drawText("LUNA CO. AUDIO", titleBar.reduced(10, 0),
-               juce::Justification::centredRight);
+    // Subtle horizontal line texture (PCB look)
+    for (float y = bounds.getY(); y < bounds.getBottom(); y += 2.5f)
+    {
+        g.setColour(RE201Colours::panelGreenDark.withAlpha(0.08f));
+        g.drawHorizontalLine(static_cast<int>(y), bounds.getX() + 3.0f, bounds.getRight() - 3.0f);
+    }
+
+    // Inner shadow on top and left (recessed into black frame)
+    {
+        juce::ColourGradient topShadow(
+            RE201Colours::panelGreenShadow.withAlpha(0.4f), bounds.getX(), bounds.getY(),
+            juce::Colours::transparentBlack, bounds.getX(), bounds.getY() + 15.0f, false);
+        g.setGradientFill(topShadow);
+        g.fillRoundedRectangle(bounds, 3.0f);
+    }
+    {
+        juce::ColourGradient leftShadow(
+            RE201Colours::panelGreenShadow.withAlpha(0.25f), bounds.getX(), bounds.getY(),
+            juce::Colours::transparentBlack, bounds.getX() + 15.0f, bounds.getY(), false);
+        g.setGradientFill(leftShadow);
+        g.fillRoundedRectangle(bounds, 3.0f);
+    }
+
+    // Light highlight on bottom edge
+    g.setColour(RE201Colours::panelGreenLight.withAlpha(0.15f));
+    g.drawLine(bounds.getX() + 8.0f, bounds.getBottom() - 2.0f,
+               bounds.getRight() - 8.0f, bounds.getBottom() - 2.0f, 1.0f);
+
+    // Border
+    g.setColour(RE201Colours::panelGreenDark);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 3.0f, 1.0f);
+}
+
+void TapeEchoEditor::drawCornerScrews(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    const float screwRadius = 4.0f;
+    const float inset = 10.0f;
+
+    // Screw positions
+    juce::Point<float> screwPositions[] = {
+        { bounds.getX() + inset, bounds.getY() + inset },
+        { bounds.getRight() - inset, bounds.getY() + inset },
+        { bounds.getX() + inset, bounds.getBottom() - inset },
+        { bounds.getRight() - inset, bounds.getBottom() - inset }
+    };
+
+    for (const auto& pos : screwPositions)
+    {
+        // Screw shadow
+        g.setColour(RE201Colours::shadow);
+        g.fillEllipse(pos.x - screwRadius + 1.0f, pos.y - screwRadius + 1.5f,
+                      screwRadius * 2, screwRadius * 2);
+
+        // Screw head gradient
+        juce::ColourGradient screwGrad(
+            RE201Colours::screwHighlight, pos.x - screwRadius * 0.3f, pos.y - screwRadius * 0.3f,
+            RE201Colours::screwShadow, pos.x + screwRadius * 0.5f, pos.y + screwRadius * 0.5f, true);
+        screwGrad.addColour(0.5, RE201Colours::screwHead);
+        g.setGradientFill(screwGrad);
+        g.fillEllipse(pos.x - screwRadius, pos.y - screwRadius, screwRadius * 2, screwRadius * 2);
+
+        // Phillips slot (cross)
+        g.setColour(RE201Colours::screwSlot);
+        const float slotWidth = 1.2f;
+        const float slotLength = screwRadius * 1.1f;
+
+        g.fillRect(pos.x - slotLength * 0.5f, pos.y - slotWidth * 0.5f, slotLength, slotWidth);
+        g.fillRect(pos.x - slotWidth * 0.5f, pos.y - slotLength * 0.5f, slotWidth, slotLength);
+
+        // Screw edge
+        g.setColour(RE201Colours::screwShadow);
+        g.drawEllipse(pos.x - screwRadius, pos.y - screwRadius, screwRadius * 2, screwRadius * 2, 0.5f);
+    }
+}
+
+void TapeEchoEditor::drawLogoAndTitle(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    auto textBounds = bounds.reduced(15.0f, 8.0f);
+
+    // Embossed "SPACE ECHO" title (left side)
+    g.setFont(juce::Font(juce::FontOptions(20.0f).withStyle("Bold")));
+
+    // Shadow (offset down-right)
+    g.setColour(RE201Colours::aluminumShadow);
+    g.drawText("SPACE ECHO", textBounds.translated(1.0f, 1.0f), juce::Justification::centredLeft);
+
+    // Highlight (offset up-left)
+    g.setColour(RE201Colours::aluminumHighlight.withAlpha(0.5f));
+    g.drawText("SPACE ECHO", textBounds.translated(-0.5f, -0.5f), juce::Justification::centredLeft);
+
+    // Main text
+    g.setColour(RE201Colours::textOnAluminum);
+    g.drawText("SPACE ECHO", textBounds, juce::Justification::centredLeft);
+
+    // "LUNA CO. AUDIO" on right
+    g.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
+    g.setColour(RE201Colours::textOnAluminum);
+    g.drawText("LUNA CO. AUDIO", textBounds, juce::Justification::centredRight);
 }
 
 void TapeEchoEditor::resized()
 {
     auto bounds = getLocalBounds();
-    bounds.removeFromTop(50);  // Title bar space
-    bounds.removeFromBottom(25); // Bottom space
-    bounds = bounds.reduced(15); // Main panel inset
 
-    // Create three main sections like hardware
-    auto topSection = bounds.removeFromTop(200);
-    auto middleSection = bounds.removeFromTop(140);
-    auto bottomSection = bounds;
+    // Calculate areas matching paint()
+    const int headerHeight = 45;
+    const int footerHeight = 60;
+    const int leftMargin = 80;
+    const int rightMargin = 100;
 
-    // TOP SECTION: Mode selector, Echo controls, VU meter
-    // Left: Mode selector
-    auto modePanel = topSection.removeFromLeft(160).reduced(5);
-    modeSelector.setBounds(modePanel);
+    auto headerBounds = bounds.removeFromTop(headerHeight);
+    auto footerBounds = bounds.removeFromBottom(footerHeight);
 
-    // Right: VU meter - make it larger
-    auto vuPanel = topSection.removeFromRight(180).reduced(5);
-    vuMeter.setBounds(vuPanel);
+    // Preset selector in header center
+    auto presetBounds = headerBounds.withSizeKeepingCentre(140, 22);
+    presetSelector.setBounds(presetBounds);
 
-    // Center: Echo controls (3 knobs)
-    auto echoPanel = topSection.reduced(5);
-    auto knobWidth = 85;
-    auto knobSpacing = 10;
-    auto labelHeight = 20;
+    // Left aluminum area: Input Volume knob
+    auto leftAluminum = bounds.removeFromLeft(leftMargin);
+    {
+        auto inputArea = leftAluminum.reduced(8, 15);
+        inputVolumeLabel.setBounds(inputArea.removeFromTop(12));
+        inputVolumeKnob.setBounds(inputArea.withSizeKeepingCentre(52, 52));
+    }
 
-    // Center the knobs in the echo panel
-    auto totalWidth = knobWidth * 3 + knobSpacing * 2;
-    auto knobsArea = echoPanel.withWidth(totalWidth)
-                               .withX(echoPanel.getX() + (echoPanel.getWidth() - totalWidth) / 2);
+    // Right aluminum area: VU Meter
+    auto rightAluminum = bounds.removeFromRight(rightMargin);
+    {
+        auto vuArea = rightAluminum.reduced(6, 20);
+        vuMeter.setBounds(vuArea);
+    }
 
-    // Repeat Rate
-    repeatRateLabel.setBounds(knobsArea.getX(), knobsArea.getY(), knobWidth, labelHeight);
-    repeatRateKnob.setBounds(knobsArea.removeFromLeft(knobWidth).withTrimmedTop(labelHeight));
+    // Green panel content area (matches black frame inset)
+    auto greenPanelContent = bounds.reduced(12, 10);
 
-    knobsArea.removeFromLeft(knobSpacing);
+    // Left side of green panel: Mode Selector (HEAD SELECT)
+    auto modeSelectorArea = greenPanelContent.removeFromLeft(140);
+    modeSelector.setBounds(modeSelectorArea.reduced(5, 5));
 
-    // Intensity
-    intensityLabel.setBounds(knobsArea.getX(), echoPanel.getY(), knobWidth, labelHeight);
-    intensityKnob.setBounds(knobsArea.removeFromLeft(knobWidth).withTrimmedTop(labelHeight));
+    // Remaining area for knobs - organize as 2 rows x 4 columns (like UAD Galaxy)
+    auto knobsArea = greenPanelContent.reduced(8, 4);
+    const int knobSize = 54;
+    const int labelHeight = 12;
 
-    knobsArea.removeFromLeft(knobSpacing);
+    // Top row: Echo Rate, Treble, Echo Pan (using Wow/Flutter), Reverb Pan (using Tape Age)
+    // Bottom row: Feedback, Bass, Echo Vol, Reverb Vol
+    // Using our available parameters, arrange as:
+    // Top: Echo Rate, Feedback, Treble, Reverb Vol
+    // Bottom: Echo Vol, Bass, Wow/Flutter, Tape Age
 
-    // Input Volume
-    inputVolumeLabel.setBounds(knobsArea.getX(), echoPanel.getY(), knobWidth, labelHeight);
-    inputVolumeKnob.setBounds(knobsArea.removeFromLeft(knobWidth).withTrimmedTop(labelHeight));
+    int rowHeight = knobsArea.getHeight() / 2;
+    int numKnobsPerRow = 4;
+    int knobAreaWidth = knobsArea.getWidth() / numKnobsPerRow;
 
-    // MIDDLE SECTION: Output and Tone controls
-    knobWidth = 75;
-    totalWidth = knobWidth * 4 + knobSpacing * 3;
-    knobsArea = middleSection.withWidth(totalWidth)
-                             .withX(middleSection.getX() + (middleSection.getWidth() - totalWidth) / 2);
+    // Top row
+    auto topRow = knobsArea.removeFromTop(rowHeight);
+    {
+        // Echo Rate
+        auto area1 = topRow.removeFromLeft(knobAreaWidth);
+        repeatRateLabel.setBounds(area1.removeFromTop(labelHeight).reduced(2, 0));
+        repeatRateKnob.setBounds(area1.withSizeKeepingCentre(knobSize, knobSize));
 
-    // Echo Volume
-    echoVolumeLabel.setBounds(knobsArea.getX(), middleSection.getY(), knobWidth, labelHeight);
-    echoVolumeKnob.setBounds(knobsArea.removeFromLeft(knobWidth).withTrimmedTop(labelHeight).reduced(3));
+        // Feedback (Intensity)
+        auto area2 = topRow.removeFromLeft(knobAreaWidth);
+        intensityLabel.setBounds(area2.removeFromTop(labelHeight).reduced(2, 0));
+        intensityKnob.setBounds(area2.withSizeKeepingCentre(knobSize, knobSize));
 
-    knobsArea.removeFromLeft(knobSpacing);
+        // Treble
+        auto area3 = topRow.removeFromLeft(knobAreaWidth);
+        trebleLabel.setBounds(area3.removeFromTop(labelHeight).reduced(2, 0));
+        trebleKnob.setBounds(area3.withSizeKeepingCentre(knobSize, knobSize));
 
-    // Reverb Volume
-    reverbVolumeLabel.setBounds(knobsArea.getX(), middleSection.getY(), knobWidth, labelHeight);
-    reverbVolumeKnob.setBounds(knobsArea.removeFromLeft(knobWidth).withTrimmedTop(labelHeight).reduced(3));
+        // Reverb Vol
+        auto area4 = topRow;
+        reverbVolumeLabel.setBounds(area4.removeFromTop(labelHeight).reduced(2, 0));
+        reverbVolumeKnob.setBounds(area4.withSizeKeepingCentre(knobSize, knobSize));
+    }
 
-    knobsArea.removeFromLeft(knobSpacing);
+    // Bottom row
+    auto bottomRow = knobsArea;
+    {
+        // Echo Vol
+        auto area1 = bottomRow.removeFromLeft(knobAreaWidth);
+        echoVolumeLabel.setBounds(area1.removeFromTop(labelHeight).reduced(2, 0));
+        echoVolumeKnob.setBounds(area1.withSizeKeepingCentre(knobSize, knobSize));
 
-    // Bass
-    bassLabel.setBounds(knobsArea.getX(), middleSection.getY(), knobWidth, labelHeight);
-    bassKnob.setBounds(knobsArea.removeFromLeft(knobWidth).withTrimmedTop(labelHeight).reduced(3));
+        // Bass
+        auto area2 = bottomRow.removeFromLeft(knobAreaWidth);
+        bassLabel.setBounds(area2.removeFromTop(labelHeight).reduced(2, 0));
+        bassKnob.setBounds(area2.withSizeKeepingCentre(knobSize, knobSize));
 
-    knobsArea.removeFromLeft(knobSpacing);
+        // Wow/Flutter
+        auto area3 = bottomRow.removeFromLeft(knobAreaWidth);
+        wowFlutterLabel.setBounds(area3.removeFromTop(labelHeight).reduced(2, 0));
+        wowFlutterKnob.setBounds(area3.withSizeKeepingCentre(knobSize, knobSize));
 
-    // Treble
-    trebleLabel.setBounds(knobsArea.getX(), middleSection.getY(), knobWidth, labelHeight);
-    trebleKnob.setBounds(knobsArea.removeFromLeft(knobWidth).withTrimmedTop(labelHeight).reduced(3));
+        // Tape Age
+        auto area4 = bottomRow;
+        tapeAgeLabel.setBounds(area4.removeFromTop(labelHeight).reduced(2, 0));
+        tapeAgeKnob.setBounds(area4.withSizeKeepingCentre(knobSize, knobSize));
+    }
 
-    // BOTTOM SECTION: Extended controls and presets
-    auto extendedArea = bottomSection.removeFromTop(40).reduced(10, 5);
-    auto sliderHeight = 20;
+    // Footer: Motor and Stereo switch
+    auto footerContent = footerBounds.reduced(15, 8);
+    {
+        // Motor knob on left
+        auto motorArea = footerContent.removeFromLeft(100);
+        motorTorqueLabel.setBounds(motorArea.removeFromTop(labelHeight).reduced(2, 0));
+        motorTorqueKnob.setBounds(motorArea.withSizeKeepingCentre(42, 42));
 
-    // Wow & Flutter
-    wowFlutterLabel.setBounds(extendedArea.removeFromLeft(90));
-    wowFlutterSlider.setBounds(extendedArea.removeFromLeft(140).withHeight(sliderHeight));
-    extendedArea.removeFromLeft(15);
+        // Stereo toggle on right
+        auto stereoArea = footerContent.removeFromRight(80);
+        stereoSwitch.setBounds(stereoArea.withSizeKeepingCentre(45, 50));
+    }
+}
 
-    // Tape Age
-    tapeAgeLabel.setBounds(extendedArea.removeFromLeft(70));
-    tapeAgeSlider.setBounds(extendedArea.removeFromLeft(140).withHeight(sliderHeight));
-    extendedArea.removeFromLeft(15);
+void TapeEchoEditor::layoutKnobWithLabel(juce::Slider& knob, juce::Label& label,
+                                          juce::Rectangle<int> area, int labelHeight, int knobSize)
+{
+    // Label at top
+    auto labelArea = area.removeFromTop(labelHeight);
+    labelArea = labelArea.expanded(10, 0);
+    label.setBounds(labelArea);
 
-    // Motor Torque
-    motorTorqueLabel.setBounds(extendedArea.removeFromLeft(90));
-    motorTorqueSlider.setBounds(extendedArea.removeFromLeft(140).withHeight(sliderHeight));
-
-    // Preset controls at very bottom
-    auto presetArea = bottomSection.removeFromTop(35).reduced(10, 5);
-    presetLabel.setBounds(presetArea.removeFromLeft(50));
-    presetSelector.setBounds(presetArea.removeFromLeft(180));
-    presetArea.removeFromLeft(15);
-    stereoModeButton.setBounds(presetArea.removeFromLeft(70));
-    presetArea.removeFromLeft(15);
-    vintageToggle.setBounds(presetArea.removeFromLeft(70));
+    // Center knob in remaining space
+    auto knobArea = area.withSizeKeepingCentre(knobSize, knobSize);
+    knob.setBounds(knobArea);
 }
 
 void TapeEchoEditor::timerCallback()
@@ -373,6 +507,11 @@ void TapeEchoEditor::timerCallback()
     int mode = static_cast<int>(audioProcessor.apvts.getRawParameterValue(
         TapeEchoProcessor::PARAM_MODE)->load());
     modeSelector.setMode(mode);
+
+    // Update stereo switch state
+    bool stereoState = audioProcessor.apvts.getRawParameterValue(
+        TapeEchoProcessor::PARAM_STEREO_MODE)->load() > 0.5f;
+    stereoSwitch.setToggleState(stereoState);
 }
 
 void TapeEchoEditor::comboBoxChanged(juce::ComboBox* comboBox)
@@ -382,48 +521,11 @@ void TapeEchoEditor::comboBoxChanged(juce::ComboBox* comboBox)
         int selection = presetSelector.getSelectedId();
         if (selection > 1)
         {
-            int presetIndex = selection - 2;
+            size_t presetIndex = static_cast<size_t>(selection - 2);
             if (presetIndex < audioProcessor.getFactoryPresets().size())
             {
                 audioProcessor.loadPreset(audioProcessor.getFactoryPresets()[presetIndex]);
             }
         }
     }
-}
-
-void TapeEchoEditor::updateAppearance()
-{
-    if (isVintageMode)
-    {
-        // Vintage green military style
-        setColour(juce::Label::textColourId, juce::Colour(200, 190, 170));
-        presetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(35, 40, 25));
-        presetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(200, 190, 170));
-        presetSelector.setColour(juce::ComboBox::outlineColourId, juce::Colour(55, 60, 40));
-
-        stereoModeButton.setColour(juce::ToggleButton::textColourId, juce::Colour(200, 190, 170));
-        stereoModeButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(100, 255, 100));
-
-        vintageToggle.setColour(juce::ToggleButton::textColourId, juce::Colour(200, 190, 170));
-        vintageToggle.setColour(juce::ToggleButton::tickColourId, juce::Colour(100, 255, 100));
-    }
-    else
-    {
-        // Modern style
-        setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-        presetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(60, 60, 65));
-        presetSelector.setColour(juce::ComboBox::textColourId, juce::Colours::white);
-        presetSelector.setColour(juce::ComboBox::outlineColourId, juce::Colours::grey);
-
-        stereoModeButton.setColour(juce::ToggleButton::textColourId, juce::Colours::lightgrey);
-        stereoModeButton.setColour(juce::ToggleButton::tickColourId, juce::Colours::cyan);
-
-        vintageToggle.setColour(juce::ToggleButton::textColourId, juce::Colours::lightgrey);
-        vintageToggle.setColour(juce::ToggleButton::tickColourId, juce::Colours::cyan);
-    }
-
-    // Update VU meter appearance
-    vuMeter.setVintageMode(isVintageMode);
-
-    repaint();
 }

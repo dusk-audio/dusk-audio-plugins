@@ -158,11 +158,13 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     if (analyzerParam)
         graphicDisplay->setAnalyzerVisible(analyzerParam->load() > 0.5f);
 
-    // Meters
+    // Meters with stereo mode enabled
     inputMeter = std::make_unique<LEDMeter>(LEDMeter::Vertical);
+    inputMeter->setStereoMode(true);  // Show L/R channels
     addAndMakeVisible(inputMeter.get());
 
     outputMeter = std::make_unique<LEDMeter>(LEDMeter::Vertical);
+    outputMeter->setStereoMode(true);  // Show L/R channels
     addAndMakeVisible(outputMeter.get());
 
     // Supporters overlay
@@ -238,6 +240,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     britishPresetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     britishPresetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     britishPresetSelector.setVisible(false);
+    britishPresetSelector.onChange = [this]() { applyBritishPreset(britishPresetSelector.getSelectedId()); };
     addAndMakeVisible(britishPresetSelector);
 
     // Global oversampling selector (visible in all modes)
@@ -1027,14 +1030,14 @@ void MultiQEditor::resized()
 
 void MultiQEditor::timerCallback()
 {
-    // Update meters
+    // Update meters with stereo levels
     float inL = processor.inputLevelL.load();
     float inR = processor.inputLevelR.load();
     float outL = processor.outputLevelL.load();
     float outR = processor.outputLevelR.load();
 
-    inputMeter->setLevel((inL + inR) * 0.5f);
-    outputMeter->setLevel((outL + outR) * 0.5f);
+    inputMeter->setStereoLevels(inL, inR);
+    outputMeter->setStereoLevels(outL, outR);
 
     // Update master gain for display overlay
     auto* masterParam = processor.parameters.getRawParameterValue(ParamIDs::masterGain);
@@ -1617,6 +1620,220 @@ void MultiQEditor::layoutBritishControls()
 }
 
 //==============================================================================
+void MultiQEditor::applyBritishPreset(int presetId)
+{
+    // Validate presetId is within expected range (1-8)
+    if (presetId < 1 || presetId > 8)
+    {
+        DBG("MultiQEditor::applyBritishPreset: Invalid presetId " + juce::String(presetId) + " (expected 1-8)");
+        return;
+    }
+
+    // Helper to set parameter value with defensive checks
+    auto setParam = [this, presetId](const juce::String& paramId, float value) {
+        auto* param = processor.parameters.getParameter(paramId);
+        if (param == nullptr)
+        {
+            DBG("MultiQEditor::applyBritishPreset: Parameter '" + paramId + "' not found for presetId " + juce::String(presetId));
+            return;
+        }
+        // Clamp value to parameter's valid range before converting
+        auto range = param->getNormalisableRange();
+        float clampedValue = juce::jlimit(range.start, range.end, value);
+        param->setValueNotifyingHost(param->convertTo0to1(clampedValue));
+    };
+
+    // Preset definitions: HPF freq, HPF on, LPF freq, LPF on,
+    //                     LF gain, LF freq, LF bell,
+    //                     LMF gain, LMF freq, LMF Q,
+    //                     HMF gain, HMF freq, HMF Q,
+    //                     HF gain, HF freq, HF bell,
+    //                     Saturation, Input, Output
+
+    switch (presetId)
+    {
+        case 1:  // Default - flat response
+            setParam(ParamIDs::britishHpfFreq, 20.0f);
+            setParam(ParamIDs::britishHpfEnabled, 0.0f);
+            setParam(ParamIDs::britishLpfFreq, 20000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 0.0f);
+            setParam(ParamIDs::britishLfGain, 0.0f);
+            setParam(ParamIDs::britishLfFreq, 100.0f);
+            setParam(ParamIDs::britishLfBell, 0.0f);
+            setParam(ParamIDs::britishLmGain, 0.0f);
+            setParam(ParamIDs::britishLmFreq, 400.0f);
+            setParam(ParamIDs::britishLmQ, 1.0f);
+            setParam(ParamIDs::britishHmGain, 0.0f);
+            setParam(ParamIDs::britishHmFreq, 2000.0f);
+            setParam(ParamIDs::britishHmQ, 1.0f);
+            setParam(ParamIDs::britishHfGain, 0.0f);
+            setParam(ParamIDs::britishHfFreq, 8000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 0.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, 0.0f);
+            break;
+
+        case 2:  // Warm Vocal - presence boost, slight low cut
+            setParam(ParamIDs::britishHpfFreq, 80.0f);
+            setParam(ParamIDs::britishHpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLpfFreq, 16000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLfGain, -2.0f);
+            setParam(ParamIDs::britishLfFreq, 200.0f);
+            setParam(ParamIDs::britishLfBell, 1.0f);
+            setParam(ParamIDs::britishLmGain, 2.0f);
+            setParam(ParamIDs::britishLmFreq, 800.0f);
+            setParam(ParamIDs::britishLmQ, 1.5f);
+            setParam(ParamIDs::britishHmGain, 3.0f);
+            setParam(ParamIDs::britishHmFreq, 3500.0f);
+            setParam(ParamIDs::britishHmQ, 1.2f);
+            setParam(ParamIDs::britishHfGain, 2.0f);
+            setParam(ParamIDs::britishHfFreq, 12000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 15.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, 0.0f);
+            break;
+
+        case 3:  // Bright Guitar - aggressive highs, tight low end
+            setParam(ParamIDs::britishHpfFreq, 100.0f);
+            setParam(ParamIDs::britishHpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLpfFreq, 20000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 0.0f);
+            setParam(ParamIDs::britishLfGain, -3.0f);
+            setParam(ParamIDs::britishLfFreq, 150.0f);
+            setParam(ParamIDs::britishLfBell, 1.0f);
+            setParam(ParamIDs::britishLmGain, -2.0f);
+            setParam(ParamIDs::britishLmFreq, 500.0f);
+            setParam(ParamIDs::britishLmQ, 2.0f);
+            setParam(ParamIDs::britishHmGain, 4.0f);
+            setParam(ParamIDs::britishHmFreq, 3000.0f);
+            setParam(ParamIDs::britishHmQ, 1.5f);
+            setParam(ParamIDs::britishHfGain, 5.0f);
+            setParam(ParamIDs::britishHfFreq, 10000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 20.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, 0.0f);
+            break;
+
+        case 4:  // Punchy Drums - enhanced attack, controlled lows
+            setParam(ParamIDs::britishHpfFreq, 60.0f);
+            setParam(ParamIDs::britishHpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLpfFreq, 18000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLfGain, 3.0f);
+            setParam(ParamIDs::britishLfFreq, 80.0f);
+            setParam(ParamIDs::britishLfBell, 0.0f);
+            setParam(ParamIDs::britishLmGain, -4.0f);
+            setParam(ParamIDs::britishLmFreq, 350.0f);
+            setParam(ParamIDs::britishLmQ, 1.8f);
+            setParam(ParamIDs::britishHmGain, 4.0f);
+            setParam(ParamIDs::britishHmFreq, 4000.0f);
+            setParam(ParamIDs::britishHmQ, 1.2f);
+            setParam(ParamIDs::britishHfGain, 2.0f);
+            setParam(ParamIDs::britishHfFreq, 8000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 25.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, 0.0f);
+            break;
+
+        case 5:  // Full Bass - big low end, clarity on top
+            setParam(ParamIDs::britishHpfFreq, 30.0f);
+            setParam(ParamIDs::britishHpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLpfFreq, 12000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLfGain, 6.0f);
+            setParam(ParamIDs::britishLfFreq, 80.0f);
+            setParam(ParamIDs::britishLfBell, 0.0f);
+            setParam(ParamIDs::britishLmGain, -3.0f);
+            setParam(ParamIDs::britishLmFreq, 250.0f);
+            setParam(ParamIDs::britishLmQ, 1.5f);
+            setParam(ParamIDs::britishHmGain, 2.0f);
+            setParam(ParamIDs::britishHmFreq, 1500.0f);
+            setParam(ParamIDs::britishHmQ, 1.0f);
+            setParam(ParamIDs::britishHfGain, -2.0f);
+            setParam(ParamIDs::britishHfFreq, 6000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 30.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, -3.0f);
+            break;
+
+        case 6:  // Air & Presence - sparkle and definition
+            setParam(ParamIDs::britishHpfFreq, 40.0f);
+            setParam(ParamIDs::britishHpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLpfFreq, 20000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 0.0f);
+            setParam(ParamIDs::britishLfGain, 0.0f);
+            setParam(ParamIDs::britishLfFreq, 100.0f);
+            setParam(ParamIDs::britishLfBell, 0.0f);
+            setParam(ParamIDs::britishLmGain, -2.0f);
+            setParam(ParamIDs::britishLmFreq, 600.0f);
+            setParam(ParamIDs::britishLmQ, 1.2f);
+            setParam(ParamIDs::britishHmGain, 3.0f);
+            setParam(ParamIDs::britishHmFreq, 5000.0f);
+            setParam(ParamIDs::britishHmQ, 1.0f);
+            setParam(ParamIDs::britishHfGain, 5.0f);
+            setParam(ParamIDs::britishHfFreq, 12000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 10.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, 0.0f);
+            break;
+
+        case 7:  // Gentle Cut - subtle mud/harsh removal
+            setParam(ParamIDs::britishHpfFreq, 50.0f);
+            setParam(ParamIDs::britishHpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLpfFreq, 18000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLfGain, -1.5f);
+            setParam(ParamIDs::britishLfFreq, 200.0f);
+            setParam(ParamIDs::britishLfBell, 1.0f);
+            setParam(ParamIDs::britishLmGain, -2.5f);
+            setParam(ParamIDs::britishLmFreq, 400.0f);
+            setParam(ParamIDs::britishLmQ, 1.5f);
+            setParam(ParamIDs::britishHmGain, -2.0f);
+            setParam(ParamIDs::britishHmFreq, 2500.0f);
+            setParam(ParamIDs::britishHmQ, 1.2f);
+            setParam(ParamIDs::britishHfGain, -1.0f);
+            setParam(ParamIDs::britishHfFreq, 8000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 5.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, 1.0f);
+            break;
+
+        case 8:  // Master Bus - gentle glue and sheen
+            setParam(ParamIDs::britishHpfFreq, 25.0f);
+            setParam(ParamIDs::britishHpfEnabled, 1.0f);
+            setParam(ParamIDs::britishLpfFreq, 20000.0f);
+            setParam(ParamIDs::britishLpfEnabled, 0.0f);
+            setParam(ParamIDs::britishLfGain, 1.0f);
+            setParam(ParamIDs::britishLfFreq, 60.0f);
+            setParam(ParamIDs::britishLfBell, 0.0f);
+            setParam(ParamIDs::britishLmGain, -1.0f);
+            setParam(ParamIDs::britishLmFreq, 300.0f);
+            setParam(ParamIDs::britishLmQ, 0.8f);
+            setParam(ParamIDs::britishHmGain, 0.5f);
+            setParam(ParamIDs::britishHmFreq, 3000.0f);
+            setParam(ParamIDs::britishHmQ, 0.7f);
+            setParam(ParamIDs::britishHfGain, 1.5f);
+            setParam(ParamIDs::britishHfFreq, 12000.0f);
+            setParam(ParamIDs::britishHfBell, 0.0f);
+            setParam(ParamIDs::britishSaturation, 8.0f);
+            setParam(ParamIDs::britishInputGain, 0.0f);
+            setParam(ParamIDs::britishOutputGain, 0.0f);
+            break;
+
+        default:
+            break;
+    }
+}
+
+//==============================================================================
 void MultiQEditor::setupPultecControls()
 {
     // Create Pultec curve display
@@ -1740,7 +1957,7 @@ void MultiQEditor::setupPultecControls()
     setupKnobLabel(pultecLfAttenKnobLabel, "ATTEN");
     setupKnobLabel(pultecHfBoostKnobLabel, "BOOST");
     setupKnobLabel(pultecHfBoostFreqKnobLabel, "KCS");
-    setupKnobLabel(pultecHfBwKnobLabel, "BANDWIDTH");
+    setupKnobLabel(pultecHfBwKnobLabel, "HF BANDWIDTH");
     setupKnobLabel(pultecHfAttenKnobLabel, "ATTEN");
     setupKnobLabel(pultecHfAttenFreqKnobLabel, "KCS");
     setupKnobLabel(pultecInputKnobLabel, "INPUT");
@@ -1803,7 +2020,7 @@ void MultiQEditor::layoutPultecControls()
     // ===== TUBE MODE LAYOUT =====
     // Reorganized layout per user request:
     // - Row 1: [LF BOOST] [LF ATTEN] [HF BOOST] [HF ATTEN]
-    // - Row 2: Frequency row with separator lines: [LF FREQ] [BANDWIDTH] [HF FREQ] [ATTEN FREQ]
+    // - Row 2: Frequency row with separator lines: [LF FREQ] [HF BANDWIDTH] [HF FREQ] [ATTEN FREQ]
     // - Row 3: MID DIP/PEAK section
     // - Right panel: INPUT → OUTPUT → TUBE DRIVE (vertical signal flow)
 
@@ -1823,7 +2040,7 @@ void MultiQEditor::layoutPultecControls()
     // Calculate row heights
     // Row 1: 4 gain knobs with labels below
     int row1Height = knobSize + labelHeight;
-    // Row 2: Frequency selectors + BANDWIDTH knob (with separator lines above and below)
+    // Row 2: Frequency selectors + HF BANDWIDTH knob (with separator lines above and below)
     int row2Height = labelHeight + knobSize + 10;  // Extra padding for separators
     // Row 3: Mid section (smaller knobs)
     int row3Height = smallKnobSize + labelHeight;
@@ -1864,8 +2081,8 @@ void MultiQEditor::layoutPultecControls()
     pultecHfAttenKnobLabel.setBounds(knob4X - 15, row1Y + knobSize + 2, knobSize + 30, labelHeight);
     pultecHfAttenKnobLabel.setText("HF ATTEN", juce::dontSendNotification);
 
-    // ============== ROW 2: FREQUENCY SELECTORS & BANDWIDTH (with separator lines) ==============
-    // Layout: [LF FREQ] [BANDWIDTH] [HF FREQ] [ATTEN FREQ] evenly distributed
+    // ============== ROW 2: FREQUENCY SELECTORS & HF BANDWIDTH (with separator lines) ==============
+    // Layout: [LF FREQ] [HF BANDWIDTH] [HF FREQ] [ATTEN FREQ] evenly distributed
     int row2Y = row1Y + row1Height + rowGap;
 
     // 4 controls evenly spaced across the row
@@ -1879,10 +2096,10 @@ void MultiQEditor::layoutPultecControls()
     pultecLfFreqKnobLabel.setText("LF FREQ", juce::dontSendNotification);
     pultecLfFreqSelector->setBounds(lfFreqX, row2Y + labelHeight + 2, comboWidth, comboHeight);
 
-    // 2. BANDWIDTH knob (position 2)
+    // 2. HF BANDWIDTH knob (position 2)
     int bwX = mainX + 2 * row2Spacing + row2ControlWidth;
     pultecHfBwKnobLabel.setBounds(bwX, row2Y, row2ControlWidth, labelHeight);
-    pultecHfBwKnobLabel.setText("BANDWIDTH", juce::dontSendNotification);
+    pultecHfBwKnobLabel.setText("HF BANDWIDTH", juce::dontSendNotification);
     pultecHfBandwidthSlider->setBounds(bwX, row2Y + labelHeight + 2, row2ControlWidth, row2ControlWidth);
 
     // 3. HF FREQ selector (position 3)
