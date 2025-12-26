@@ -40,6 +40,9 @@ declare -A PLUGIN_TARGETS=(
     ["multiq"]="MultiQ_All"
     ["multi-q"]="MultiQ_All"
     ["meq"]="MultiQ_All"
+    ["neuralamp"]="NeuralAmp_All"
+    ["neural-amp"]="NeuralAmp_All"
+    ["nam"]="NeuralAmp_All"
 )
 
 # Plugin name mapping (shortname -> display name for pluginval)
@@ -67,6 +70,9 @@ declare -A PLUGIN_NAMES=(
     ["multiq"]="Multi-Q"
     ["multi-q"]="Multi-Q"
     ["meq"]="Multi-Q"
+    ["neuralamp"]="Neural Amp"
+    ["neural-amp"]="Neural Amp"
+    ["nam"]="Neural Amp"
 )
 
 # Show help
@@ -89,6 +95,7 @@ show_help() {
     echo "  convolution, impulse, ir  Convolution Reverb"
     echo "  silkverb, silk, reverb, verb  SilkVerb"
     echo "  multiq, multi-q, meq   Multi-Q (Universal EQ)"
+    echo "  neuralamp, neural-amp, nam  Neural Amp"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"
