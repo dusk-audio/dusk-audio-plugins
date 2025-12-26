@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(LunaPlugins VERSION 1.0.0)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
+# Set C++ standard (C++20 required for Neural Amp / NAM Core)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Include global settings
@@ -37,6 +37,7 @@ option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_SILKVERB "Build SilkVerb plugin" ON)
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
+option(BUILD_NEURAL_AMP "Build Neural Amp plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -73,4 +74,8 @@ endif()
 
 if(BUILD_MULTI_Q)
     add_subdirectory(plugins/multi-q)
+endif()
+
+if(BUILD_NEURAL_AMP)
+    add_subdirectory(plugins/neural-amp)
 endif()
