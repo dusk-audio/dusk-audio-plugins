@@ -403,6 +403,13 @@ private:
     TapeType m_lastType = static_cast<TapeType>(-1);
     float m_lastBias = -1.0f;
 
+    // Cached characteristics (updated when parameters change, not per-sample)
+    MachineCharacteristics m_cachedMachineChars;
+    TapeCharacteristics m_cachedTapeChars;
+    SpeedCharacteristics m_cachedSpeedChars;
+    bool m_hasTransformers = false;
+    float m_gapWidth = 3.0f;
+
     // Helper functions
     MachineCharacteristics getMachineCharacteristics(TapeMachine machine);
     TapeCharacteristics getTapeCharacteristics(TapeType type);
