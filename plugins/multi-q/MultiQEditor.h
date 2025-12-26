@@ -301,6 +301,7 @@ private:
     void updateEQModeVisibility();
     void layoutBritishControls();
     void drawBritishKnobMarkings(juce::Graphics& g);  // Draw tick marks and value labels around knobs
+    void applyBritishPreset(int presetId);  // Apply British mode factory preset
 
     // Pultec mode helpers
     void setupPultecControls();

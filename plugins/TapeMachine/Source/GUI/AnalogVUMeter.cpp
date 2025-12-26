@@ -47,41 +47,78 @@ void AnalogVUMeter::setLevels(float leftLevel, float rightLevel)
 
 void AnalogVUMeter::timerCallback()
 {
-    const float frameRate = 60.0f;
+    // Calculate VU ballistics coefficient for 300ms integration time
+    // Time constant τ = 65ms gives 99% in ~300ms (4.6 time constants)
+    const float dt = 1.0f / kRefreshRateHz;
+    const float vuCoeff = 1.0f - std::exp(-1000.0f * dt / kVUTimeConstantMs);
 
-    // VU meter ballistics - smooth movement
-    const float smoothing = 0.15f;
-    currentLevelL += (targetLevelL - currentLevelL) * smoothing;
-    currentLevelR += (targetLevelR - currentLevelR) * smoothing;
+    // Process left channel
+    {
+        // Map target dB to normalized needle position (-20dB to +3dB range)
+        float displayL = juce::jlimit(-20.0f, 3.0f, targetLevelL);
+        float targetNeedleL = (displayL + 20.0f) / 23.0f;
 
-    // Map dB to needle position (-20dB to +3dB range)
-    float displayL = juce::jlimit(-20.0f, 3.0f, currentLevelL);
-    float displayR = juce::jlimit(-20.0f, 3.0f, currentLevelR);
+        // Damped spring physics for realistic mechanical needle behavior
+        // This creates the characteristic ~1% overshoot of real VU meters
+        float displacement = targetNeedleL - needlePositionL;
 
-    // Map to needle position: -20dB = 0.13, 0dB = 0.87, +3dB = 1.0
-    float normalizedL = (displayL + 20.0f) / 23.0f;
-    float normalizedR = (displayR + 20.0f) / 23.0f;
+        // Spring force with VU-standard response time
+        float springForce = displacement * kOvershootStiffness;
 
-    float targetNeedleL = juce::jlimit(0.0f, 1.0f, normalizedL);
-    float targetNeedleR = juce::jlimit(0.0f, 1.0f, normalizedR);
+        // Damping force (proportional to velocity)
+        float dampingForce = -needleVelocityL * kOvershootDamping * 2.0f * std::sqrt(kOvershootStiffness);
 
-    // Smooth needle movement
-    const float needleSmoothing = 0.25f;
-    needlePositionL += (targetNeedleL - needlePositionL) * needleSmoothing;
-    needlePositionR += (targetNeedleR - needlePositionR) * needleSmoothing;
+        // Update velocity and position
+        float acceleration = springForce + dampingForce;
+        needleVelocityL += acceleration * dt;
+        needlePositionL += needleVelocityL * dt;
+
+        // Blend with VU integration for proper 300ms response
+        // The spring provides overshoot, VU coefficient provides timing
+        needlePositionL += vuCoeff * (targetNeedleL - needlePositionL) * 0.3f;
+
+        // Clamp to valid range
+        needlePositionL = juce::jlimit(0.0f, 1.0f, needlePositionL);
+
+        // Dampen very small velocities to prevent perpetual oscillation
+        displacement = targetNeedleL - needlePositionL;
+        if (std::abs(needleVelocityL) < 0.001f && std::abs(displacement) < 0.001f)
+            needleVelocityL = 0.0f;
+    }
+    // Process right channel (same logic)
+    {
+        float displayR = juce::jlimit(-20.0f, 3.0f, targetLevelR);
+        float targetNeedleR = (displayR + 20.0f) / 23.0f;
+
+        float displacement = targetNeedleR - needlePositionR;
+        float springForce = displacement * kOvershootStiffness;
+        float dampingForce = -needleVelocityR * kOvershootDamping * 2.0f * std::sqrt(kOvershootStiffness);
+
+        float acceleration = springForce + dampingForce;
+        needleVelocityR += acceleration * dt;
+        needlePositionR += needleVelocityR * dt;
+
+        needlePositionR += vuCoeff * (targetNeedleR - needlePositionR) * 0.3f;
+        needlePositionR = juce::jlimit(0.0f, 1.0f, needlePositionR);
+
+        // Recompute displacement after all position updates for accurate threshold check
+        displacement = targetNeedleR - needlePositionR;
+        if (std::abs(needleVelocityR) < 0.001f && std::abs(displacement) < 0.001f)
+            needleVelocityR = 0.0f;
+    }
 
     // Peak hold decay
     if (peakHoldTimeL > 0)
     {
-        peakHoldTimeL -= 1.0f / frameRate;
+        peakHoldTimeL -= dt;
         if (peakHoldTimeL <= 0)
-            peakLevelL = currentLevelL;
+            peakLevelL = targetLevelL;
     }
     if (peakHoldTimeR > 0)
     {
-        peakHoldTimeR -= 1.0f / frameRate;
+        peakHoldTimeR -= dt;
         if (peakHoldTimeR <= 0)
-            peakLevelR = currentLevelR;
+            peakLevelR = targetLevelR;
     }
 
     repaint();

@@ -61,8 +61,8 @@ void ConvolutionReverbLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, in
     auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(8);
     auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) / 2.0f;
     auto toAngle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-    auto lineW = juce::jmin(6.0f, radius * 0.4f);
-    auto arcRadius = radius - lineW * 0.5f;
+    auto lineW = juce::jmin(2.5f, radius * 0.15f);  // Reduced arc stroke width (was 6.0f)
+    auto arcRadius = radius - lineW * 0.5f - 2.0f;  // Slightly inset arc
 
     auto centreX = bounds.getCentreX();
     auto centreY = bounds.getCentreY();
@@ -105,15 +105,15 @@ void ConvolutionReverbLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, in
         g.drawLine(x1, y1, x2, y2, 0.5f);
     }
 
-    // Track arc (background)
+    // Track arc (background) - thinner stroke
     juce::Path backgroundArc;
     backgroundArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
                                  rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour(juce::Colour(0xff404040));
+    g.setColour(juce::Colour(0xff353535));
     g.strokePath(backgroundArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved,
                                                       juce::PathStrokeType::rounded));
 
-    // Value arc
+    // Value arc - thinner stroke
     if (slider.isEnabled())
     {
         juce::Path valueArc;
@@ -122,6 +122,27 @@ void ConvolutionReverbLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, in
         g.setColour(accentColour);
         g.strokePath(valueArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved,
                                                      juce::PathStrokeType::rounded));
+
+        // ========== HOT POINT INDICATOR ==========
+        // Bright dot at the current value position on the arc
+        float hotPointX = centreX + arcRadius * std::sin(toAngle);
+        float hotPointY = centreY - arcRadius * std::cos(toAngle);
+        float hotPointRadius = lineW * 1.8f;  // Slightly larger than arc width
+
+        // Glow behind hot point
+        g.setColour(accentColour.withAlpha(0.4f));
+        g.fillEllipse(hotPointX - hotPointRadius * 1.5f, hotPointY - hotPointRadius * 1.5f,
+                      hotPointRadius * 3.0f, hotPointRadius * 3.0f);
+
+        // Main hot point
+        g.setColour(accentColour.brighter(0.3f));
+        g.fillEllipse(hotPointX - hotPointRadius, hotPointY - hotPointRadius,
+                      hotPointRadius * 2.0f, hotPointRadius * 2.0f);
+
+        // Bright center highlight
+        g.setColour(juce::Colours::white.withAlpha(0.7f));
+        g.fillEllipse(hotPointX - hotPointRadius * 0.4f, hotPointY - hotPointRadius * 0.4f,
+                      hotPointRadius * 0.8f, hotPointRadius * 0.8f);
     }
 
     // Center cap
@@ -248,43 +269,60 @@ void ConvolutionReverbLookAndFeel::drawToggleButton(juce::Graphics& g, juce::Tog
 {
     juce::ignoreUnused(shouldDrawButtonAsDown);
 
-    auto bounds = button.getLocalBounds().toFloat().reduced(2);
+    // Unified button dimensions: consistent 26px height feel, 4px corner radius
+    auto bounds = button.getLocalBounds().toFloat().reduced(1);
     bool isOn = button.getToggleState();
+    float cornerRadius = 4.0f;  // Consistent corner radius across all buttons
 
-    // Background
-    g.setColour(isOn ? accentColour.withAlpha(0.3f) : panelColour);
-    g.fillRoundedRectangle(bounds, 4.0f);
-
-    // Border
-    g.setColour(isOn ? accentColour : gridColour);
-    g.drawRoundedRectangle(bounds, 4.0f, 1.5f);
-
-    // Hover highlight
-    if (shouldDrawButtonAsHighlighted)
-    {
-        g.setColour(juce::Colours::white.withAlpha(0.05f));
-        g.fillRoundedRectangle(bounds, 4.0f);
-    }
-
-    // LED indicator
-    auto ledBounds = bounds.removeFromTop(4.0f).reduced(bounds.getWidth() * 0.2f, 0);
+    // OFF state: subtle border, very dark transparent fill
+    // ON state: accent blue fill with white/bright text
     if (isOn)
     {
-        g.setColour(accentColour);
-        g.fillRoundedRectangle(ledBounds, 2.0f);
+        // ON STATE - filled with accent blue, subtle gradient for depth
+        juce::ColourGradient bgGrad(
+            accentColour.withAlpha(0.85f), bounds.getX(), bounds.getY(),
+            accentColour.withAlpha(0.65f), bounds.getX(), bounds.getBottom(),
+            false
+        );
+        g.setGradientFill(bgGrad);
+        g.fillRoundedRectangle(bounds, cornerRadius);
 
-        // Glow
-        g.setColour(accentColour.withAlpha(0.3f));
-        g.fillRoundedRectangle(ledBounds.expanded(2, 1), 3.0f);
+        // Subtle inner highlight at top
+        g.setColour(juce::Colours::white.withAlpha(0.15f));
+        auto highlightLine = bounds.reduced(cornerRadius, 0).removeFromTop(1.0f);
+        highlightLine.translate(0, 1);
+        g.fillRoundedRectangle(highlightLine, 0.5f);
+
+        // Border in matching accent colour
+        g.setColour(accentColour.brighter(0.2f));
+        g.drawRoundedRectangle(bounds, cornerRadius, 1.0f);
+    }
+    else
+    {
+        // OFF STATE - transparent/very dark fill with subtle border
+        g.setColour(juce::Colour(0x18FFFFFF));  // Very subtle white overlay
+        g.fillRoundedRectangle(bounds, cornerRadius);
+
+        // Subtle dim border
+        g.setColour(juce::Colour(0xff404040));
+        g.drawRoundedRectangle(bounds, cornerRadius, 1.0f);
     }
 
-    // Text
-    g.setColour(isOn ? textColour : dimTextColour);
-    g.setFont(juce::Font(10.0f, juce::Font::bold));
+    // Hover highlight - slightly brighter on hover
+    if (shouldDrawButtonAsHighlighted)
+    {
+        g.setColour(juce::Colours::white.withAlpha(isOn ? 0.1f : 0.06f));
+        g.fillRoundedRectangle(bounds, cornerRadius);
 
-    auto textBounds = button.getLocalBounds().reduced(4);
-    textBounds.removeFromTop(6);
-    g.drawText(button.getButtonText(), textBounds, juce::Justification::centred);
+        // Brighter border on hover
+        g.setColour(isOn ? accentColour.brighter(0.4f) : juce::Colour(0xff505050));
+        g.drawRoundedRectangle(bounds, cornerRadius, 1.0f);
+    }
+
+    // Text - bright/white when ON, dim when OFF
+    g.setColour(isOn ? juce::Colours::white : dimTextColour);
+    g.setFont(juce::Font(9.5f, juce::Font::bold));
+    g.drawText(button.getButtonText(), button.getLocalBounds().reduced(4), juce::Justification::centred);
 }
 
 void ConvolutionReverbLookAndFeel::drawTreeviewPlusMinusBox(juce::Graphics& g, const juce::Rectangle<float>& area,
@@ -325,11 +363,16 @@ void ConvolutionReverbLookAndFeel::drawFileBrowserRow(juce::Graphics& g, int wid
 
     auto bounds = juce::Rectangle<int>(0, 0, width, height);
 
-    // Selection background
+    // Selection background with accent bar on left
     if (isItemSelected)
     {
-        g.setColour(accentColour.withAlpha(0.3f));
-        g.fillRect(bounds);
+        // Accent bar on left edge
+        g.setColour(accentColour);
+        g.fillRect(0, 0, 3, height);
+
+        // Selection highlight background
+        g.setColour(accentColour.withAlpha(0.2f));
+        g.fillRect(bounds.withTrimmedLeft(3));
     }
 
     // Icon area
@@ -337,21 +380,30 @@ void ConvolutionReverbLookAndFeel::drawFileBrowserRow(juce::Graphics& g, int wid
 
     if (isDirectory)
     {
-        // Folder icon
-        g.setColour(accentColour);
+        // Folder icon with improved styling
+        g.setColour(isItemSelected ? accentColour.brighter(0.2f) : accentColour);
         auto folderBounds = iconBounds.toFloat().reduced(2);
 
         juce::Path folderPath;
-        folderPath.addRoundedRectangle(folderBounds.getX(), folderBounds.getY() + folderBounds.getHeight() * 0.2f,
-                                        folderBounds.getWidth(), folderBounds.getHeight() * 0.8f, 2.0f);
+        // Main folder body
+        folderPath.addRoundedRectangle(folderBounds.getX(), folderBounds.getY() + folderBounds.getHeight() * 0.25f,
+                                        folderBounds.getWidth(), folderBounds.getHeight() * 0.75f, 2.0f);
+        // Tab
         folderPath.addRoundedRectangle(folderBounds.getX(), folderBounds.getY(),
-                                        folderBounds.getWidth() * 0.4f, folderBounds.getHeight() * 0.3f, 1.0f);
+                                        folderBounds.getWidth() * 0.45f, folderBounds.getHeight() * 0.3f, 1.0f);
         g.fillPath(folderPath);
+
+        // Subtle highlight on folder
+        g.setColour(juce::Colours::white.withAlpha(0.15f));
+        auto highlightRect = folderBounds.reduced(2, 0);
+        highlightRect.removeFromBottom(highlightRect.getHeight() * 0.6f);
+        highlightRect.translate(0, folderBounds.getHeight() * 0.25f);
+        g.fillRect(highlightRect);
     }
     else
     {
         // Audio file icon
-        g.setColour(waveformColour);
+        g.setColour(isItemSelected ? waveformColour.brighter(0.2f) : waveformColour);
         auto iconCenter = iconBounds.getCentre().toFloat();
         auto iconRadius = juce::jmin(iconBounds.getWidth(), iconBounds.getHeight()) * 0.35f;
 
@@ -362,11 +414,12 @@ void ConvolutionReverbLookAndFeel::drawFileBrowserRow(juce::Graphics& g, int wid
             float h = iconRadius * (0.3f + 0.7f * std::sin(i * 1.2f));
             wavePath.addRectangle(x, iconCenter.y - h, iconRadius * 0.25f, h * 2.0f);
         }
-        g.fillPath(wavePath);    }
+        g.fillPath(wavePath);
+    }
 
-    // Filename
-    g.setColour(isItemSelected ? textColour : (isDirectory ? accentColour : textColour));
-    g.setFont(juce::Font(12.0f, isDirectory ? juce::Font::bold : juce::Font::plain));
+    // Filename with brighter text when selected
+    g.setColour(isItemSelected ? textColour : (isDirectory ? accentColour.withAlpha(0.9f) : dimTextColour.brighter(0.3f)));
+    g.setFont(juce::Font(11.5f, isDirectory ? juce::Font::bold : juce::Font::plain));
     g.drawText(filename, bounds.reduced(4, 0), juce::Justification::centredLeft);
 }
 

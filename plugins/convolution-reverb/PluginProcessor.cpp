@@ -355,8 +355,10 @@ void ConvolutionReverbProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     wetEQ.setHighMid(eqHighMidFreqParam->load(), eqHighMidGainParam->load());
     wetEQ.setHighShelf(eqHighFreqParam->load(), eqHighGainParam->load());
 
-    // Calculate input level
+    // Calculate input level (mono max and stereo L/R)
     inputMeter.store(calculateRMS(buffer), std::memory_order_relaxed);
+    inputMeterL.store(calculateChannelRMS(buffer, 0), std::memory_order_relaxed);
+    inputMeterR.store(calculateChannelRMS(buffer, buffer.getNumChannels() > 1 ? 1 : 0), std::memory_order_relaxed);
 
     // Store dry signal
     dryBuffer.makeCopyOf(buffer, true);
@@ -423,8 +425,10 @@ void ConvolutionReverbProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
         }
     }
 
-    // Calculate output level
+    // Calculate output level (mono max and stereo L/R)
     outputMeter.store(calculateRMS(buffer), std::memory_order_relaxed);
+    outputMeterL.store(calculateChannelRMS(buffer, 0), std::memory_order_relaxed);
+    outputMeterR.store(calculateChannelRMS(buffer, buffer.getNumChannels() > 1 ? 1 : 0), std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -468,6 +472,28 @@ float ConvolutionReverbProcessor::calculateRMS(const juce::AudioBuffer<float>& b
         return -60.0f;
 
     float rms = std::sqrt(sum / static_cast<float>(totalSamples));
+    float dB = 20.0f * std::log10(std::max(rms, 1e-6f));
+    return juce::jlimit(-60.0f, 6.0f, dB);
+}
+
+float ConvolutionReverbProcessor::calculateChannelRMS(const juce::AudioBuffer<float>& buffer, int channel)
+{
+    if (channel >= buffer.getNumChannels())
+        return -60.0f;
+
+    const auto* data = buffer.getReadPointer(channel);
+    int numSamples = buffer.getNumSamples();
+
+    if (numSamples == 0)
+        return -60.0f;
+
+    float sum = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        sum += data[i] * data[i];
+    }
+
+    float rms = std::sqrt(sum / static_cast<float>(numSamples));
     float dB = 20.0f * std::log10(std::max(rms, 1e-6f));
     return juce::jlimit(-60.0f, 6.0f, dB);
 }
