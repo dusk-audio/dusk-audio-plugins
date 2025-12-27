@@ -150,35 +150,26 @@ void BiasOscillator::reset()
 
 float BiasOscillator::process(float input, float biasFreq, float biasAmount)
 {
-    // AC bias oscillator runs at ~100kHz (well above audio)
-    // Effects on audio: improved linearity, reduced distortion, slight HF boost
-    juce::ignoreUnused(biasFreq);  // Reserved for future use
-
-    // We don't model the actual 100kHz oscillator (would alias)
-    // Instead, model its effect on the audio signal:
-    // 1. Reduces low-level distortion (linearizes hysteresis)
-    // 2. Creates slight HF emphasis
-    // 3. Can cause intermodulation at very high levels
-
-    // Bias linearization effect - reduces distortion at low levels
-    float absInput = std::abs(input);
-    float linearizationFactor = 1.0f - (biasAmount * 0.3f * std::exp(-absInput * 10.0f));
-
-    float signal = input * linearizationFactor;
-
-    // HF emphasis from bias (already modeled in biasFilter, but add subtle effect)
-    // High bias = more HF, but also more noise and potential IM distortion
-
-    // At very high input levels, bias can cause intermodulation
-    if (absInput > 0.8f && biasAmount > 0.5f)
-    {
-        float imAmount = (absInput - 0.8f) * biasAmount * 0.05f;
-        // Simple IM approximation - creates sum/difference frequencies
-        imState = imState * 0.9f + signal * imAmount;
-        signal += imState * 0.1f;
-    }
-
-    return signal;
+    // AC bias in real tape runs at ~100kHz (well above audio)
+    // Its effects on the audio signal are:
+    // 1. Linearizes the magnetic hysteresis curve (reduces distortion)
+    // 2. Slight HF emphasis (handled by biasFilter, a high shelf)
+    //
+    // IMPORTANT: We do NOT model the actual 100kHz oscillator or any
+    // nonlinear interaction with the audio signal here. Real tape bias
+    // does not create audible intermodulation because:
+    // - The bias frequency is ultrasonic (100kHz)
+    // - Any IM products with audio frequencies would be at 100kHz ± audio
+    // - These are filtered out by the playback head's frequency response
+    //
+    // The "linearization" effect of bias is modeled by REDUCING the
+    // saturation/hysteresis depth when bias is high (done in processSample).
+    // The HF boost effect is modeled by biasFilter (linear high shelf).
+    //
+    // This function now passes the signal through unchanged.
+    // All bias effects are modeled elsewhere in the signal chain.
+    juce::ignoreUnused(biasFreq, biasAmount);
+    return input;
 }
 
 //==============================================================================
@@ -263,6 +254,48 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
 
+    // Detect if we're running at oversampled rate
+    // JUCE's oversampler calls prepare() with the OVERSAMPLED rate
+    // We need to determine the BASE rate to set proper anti-aliasing cutoff
+    //
+    // Heuristic: If sample rate is 176400, 192000, 352800, or 384000,
+    // we're probably oversampled. Base rate is likely 44100 or 48000.
+    if (sampleRate >= 176000.0)
+    {
+        // 4x oversampled
+        baseSampleRate = sampleRate / 4.0;
+    }
+    else if (sampleRate >= 88000.0)
+    {
+        // 2x oversampled
+        baseSampleRate = sampleRate / 2.0;
+    }
+    else
+    {
+        // Not oversampled (or only 1x)
+        baseSampleRate = sampleRate;
+    }
+
+    // Configure anti-aliasing filter with cutoff at 0.45 * base Nyquist
+    // This ensures harmonics above original Nyquist are attenuated before downsampling
+    // At 4x oversampling (176.4kHz), cutoff = 0.45 * 22050 = ~9.9kHz relative to base
+    // But we're running at oversampled rate, so actual cutoff = 0.45 * 44100 = 19.8kHz
+    double antiAliasingCutoff = baseSampleRate * 0.45;
+    antiAliasingFilter.prepare(sampleRate, antiAliasingCutoff);
+
+    // Prepare split filters for frequency-selective saturation
+    // Cutoff at 5kHz - this means:
+    // - Frequencies below 5kHz get full saturation (preserves tape warmth)
+    // - Frequencies above 5kHz pass through mostly clean (no harmonics generated)
+    // This prevents HF content from generating harmonics that alias
+    //
+    // 5kHz chosen because:
+    // - Passes aliasing test at -80dB threshold with 14.5kHz @ +8.3dB input
+    // - H3 (tape warmth harmonic) preserved at typical audio frequencies
+    // - HF content passes linearly, keeping brightness (unlike HF detector)
+    saturationSplitFilter.prepare(sampleRate, 5000.0);
+    softClipSplitFilter.prepare(sampleRate, 5000.0);
+
     // Prepare per-channel wow/flutter delay line
     perChannelWowFlutter.prepare(sampleRate);
 
@@ -323,20 +356,38 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
     dcBlocker.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(
         sampleRate, 25.0f, 0.707f);  // Professional mastering standard
 
-    // Input anti-aliasing filter - prevents HF content from entering saturation stages
-    // Set slightly higher (18kHz) to allow more HF through, but still catch content
-    // that would create problematic harmonics. This filter is gentle - single stage.
-    inputAntiAliasingFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, 18000.0f, 0.707f);
+    // Record head gap filter - 16th-order Butterworth at 20kHz
+    // Models the natural HF loss at the record head due to head gap geometry
+    // Set at 20kHz to preserve all audible content while providing some HF reduction
+    // before saturation. At 192kHz oversampled rate, 20kHz is well below Nyquist.
+    //
+    // This filter combined with the post-saturation 18kHz filter provides aggressive
+    // rolloff above 20kHz, eliminating harmonics that would alias on downsampling.
+    //
+    // 16th-order Butterworth Q values (8 biquad sections):
+    recordHeadCutoff = 20000.0f;
+    // Ensure cutoff is well below Nyquist
+    recordHeadCutoff = std::min(recordHeadCutoff, static_cast<float>(sampleRate * 0.48));
 
-    // Output anti-aliasing filters - cascaded for 24dB/octave rolloff
-    // Set at 16kHz to catch harmonics generated by saturation stages
-    // Two stages provide much better rejection than a single filter
-    // Real tape naturally rolls off above 15-16kHz at 15 IPS anyway
-    antiAliasingFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, 16000.0f, 0.707f);
-    antiAliasingFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, 16000.0f, 0.707f);
+    recordHeadFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 5.1011f);
+    recordHeadFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 1.7224f);
+    recordHeadFilter3.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 1.0607f);
+    recordHeadFilter4.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 0.7882f);
+    recordHeadFilter5.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 0.6468f);
+    recordHeadFilter6.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 0.5669f);
+    recordHeadFilter7.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 0.5225f);
+    recordHeadFilter8.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, recordHeadCutoff, 0.5024f);
+
+    // NOTE: Anti-aliasing filter (Chebyshev) is already initialized at the start of prepare()
+    // with cutoff at 0.45 * base sample rate for proper harmonic rejection
 
     // Saturation envelope followers
     saturator.updateCoefficients(0.1f, 10.0f, sampleRate);
@@ -362,9 +413,17 @@ void ImprovedTapeEmulation::reset()
     saturator.envelope = 0.0f;
 
     dcBlocker.reset();
-    inputAntiAliasingFilter.reset();
-    antiAliasingFilter1.reset();
-    antiAliasingFilter2.reset();
+    recordHeadFilter1.reset();
+    recordHeadFilter2.reset();
+    recordHeadFilter3.reset();
+    recordHeadFilter4.reset();
+    recordHeadFilter5.reset();
+    recordHeadFilter6.reset();
+    recordHeadFilter7.reset();
+    recordHeadFilter8.reset();
+    antiAliasingFilter.reset();
+    saturationSplitFilter.reset();
+    softClipSplitFilter.reset();
 
     if (!perChannelWowFlutter.delayBuffer.empty())
     {
@@ -380,32 +439,6 @@ void ImprovedTapeEmulation::reset()
     motorFlutter.reset();
 
     crosstalkBuffer = 0.0f;
-
-    // Reset HF estimation state
-    lastSampleForHF = 0.0f;
-    highFreqEstimate = 0.0f;
-}
-
-// Estimate high-frequency content using simple differentiator (same approach as 4K-EQ)
-// This provides a fast, computationally cheap estimate of spectral content
-// OPTIMIZED: Uses branchless conditional for better CPU performance
-float ImprovedTapeEmulation::estimateHighFrequencyContent(float input)
-{
-    // First-order difference approximates high-frequency content
-    float difference = std::abs(input - lastSampleForHF);
-    lastSampleForHF = input;
-
-    // Branchless asymmetric smoothing: fast attack (0.3), slow release (0.95)
-    // faster attack coefficient catches HF content more reliably
-    float isRising = (difference > highFreqEstimate) ? 1.0f : 0.0f;
-    float smoothing = 0.95f - isRising * 0.65f;  // 0.95 for release, 0.30 for attack
-    highFreqEstimate = highFreqEstimate * smoothing + difference * (1.0f - smoothing);
-
-    // Fast approximation of normalization - avoid jlimit overhead
-    float normalized = highFreqEstimate * 3.0f;
-    normalized = normalized > 1.0f ? 1.0f : (normalized < 0.0f ? 0.0f : normalized);
-
-    return normalized;
 }
 
 ImprovedTapeEmulation::MachineCharacteristics
@@ -829,41 +862,24 @@ float ImprovedTapeEmulation::processSample(float input,
     float signal = input * 0.95f / calibrationGain;
 
     // ========================================================================
-    // EARLY HF Detection for Anti-Aliasing
-    // Detect HF content BEFORE any saturation to reduce ALL non-linear processing
-    // This is critical - HF content must be detected on the clean input signal
-    // ========================================================================
-    float highFreqContent = estimateHighFrequencyContent(signal);
-
-    // Calculate global HF saturation reduction factor
-    // This will be applied to ALL non-linear stages to prevent aliasing
-    // At full HF content, reduce saturation by 70-95%
-    float hfSatReduction = highFreqContent * (0.7f + saturationDepth * 0.25f);
-    float effectiveSatDepth = saturationDepth * (1.0f - hfSatReduction);
-
-    // ========================================================================
     // Input transformer coloration (Ampex only - Studer MkIII is transformerless)
     // Very subtle - just DC blocking and gentle limiting, no harmonic generation
-    // Apply HF reduction to transformer drive
     // ========================================================================
-    float transformerDrive = m_hasTransformers ? effectiveSatDepth * 0.3f : 0.0f;
+    float transformerDrive = m_hasTransformers ? saturationDepth * 0.3f : 0.0f;
     if (m_hasTransformers)
     {
         signal = inputTransformer.process(signal, transformerDrive, false);
     }
 
-    // 1. Pre-emphasis (recording EQ)
+    // 1. Pre-emphasis (recording EQ) - boosts high frequencies before saturation
+    // Harmonics generated by saturation are filtered by post-saturation harmonic filters
     signal = preEmphasisFilter1.processSample(signal);
     signal = preEmphasisFilter2.processSample(signal);
-
     // ========================================================================
     // AC Bias oscillator effects
     // Models the linearization and HF enhancement from bias current
-    // Apply full HF reduction to bias amount - bias IM distortion at high levels
-    // can generate aliasing-prone intermodulation products
     // ========================================================================
-    float effectiveBiasAmount = biasAmount * (1.0f - hfSatReduction);
-    signal = biasOsc.process(signal, 100000.0f, effectiveBiasAmount);
+    signal = biasOsc.process(signal, 100000.0f, biasAmount);
 
     // 2. Bias-induced HF boost (filter)
     if (biasAmount > 0.0f)
@@ -872,67 +888,88 @@ float ImprovedTapeEmulation::processSample(float input,
     }
 
     // ========================================================================
-    // REALISTIC Level-Dependent Processing
-    // Real tape specs: ~0.3% THD at 0VU (Studer), ~0.5% at 0VU (Ampex)
-    // THD reaches 3% at +6VU (max operating level)
-    // Below 0VU, tape is essentially transparent
+    // Pre-Saturation Soft Limiter - catches extreme peaks after pre-emphasis
+    // Pre-emphasis adds +6-7dB HF boost, so +12dB input becomes +18-19dB at HF.
+    // This limiter prevents those extreme peaks from generating harmonics
+    // that would alias back into the audible spectrum on downsampling.
     //
-    // NOTE: HF saturation reduction (hfSatReduction, effectiveSatDepth) was
-    // calculated EARLY in the signal chain before any non-linear processing
-    // to prevent aliasing. See "EARLY HF Detection" section above.
+    // Threshold at 0.7 (~-3dBFS) means signals at +6 VU or below pass
+    // untouched. Only extreme inputs (+9 VU and above) get limited.
     // ========================================================================
-    float absInput = std::abs(signal);
+    signal = preSaturationLimiter.process(signal);
 
-    // Reference levels (NAB standard)
-    // 0 VU = 355 nWb/m reference ≈ -12dBFS in digital
-    // +6 VU = max operating level ≈ -6dBFS in digital (where THD hits 3%)
-    const float zeroVU = 0.25f;     // -12dBFS = 0VU reference
-    const float plusSixVU = 0.5f;   // -6dBFS = +6VU (3% THD point)
+    // ========================================================================
+    // Record Head Gap Filter - prevents HF content from generating harmonics
+    // Real tape: record head gap geometry creates natural lowpass ~15-20kHz
+    // This 16th-order Butterworth at 20kHz mimics this physical behavior
+    // Applied BEFORE saturation to prevent HF harmonics from being generated
+    // ========================================================================
+    signal = recordHeadFilter1.processSample(signal);
+    signal = recordHeadFilter2.processSample(signal);
+    signal = recordHeadFilter3.processSample(signal);
+    signal = recordHeadFilter4.processSample(signal);
+    signal = recordHeadFilter5.processSample(signal);
+    signal = recordHeadFilter6.processSample(signal);
+    signal = recordHeadFilter7.processSample(signal);
+    signal = recordHeadFilter8.processSample(signal);
 
-    // Calculate how far above 0VU we are (0 = at or below 0VU, 1 = at +6VU)
-    float levelAboveZeroVU = std::max(0.0f, (absInput - zeroVU) / (plusSixVU - zeroVU));
-    levelAboveZeroVU = std::min(levelAboveZeroVU, 2.0f);  // Allow some overshoot
+    // ========================================================================
+    // REALISTIC Level-Dependent Processing
+    // ========================================================================
+    // CLEAN H2/H3 HARMONIC SATURATION
+    // Simple polynomial saturation: y = x + h2*x² + h3*x³
+    //   x² produces 2nd harmonic (even - warmth, asymmetry)
+    //   x³ produces 3rd harmonic (odd - presence, edge)
+    //
+    // TARGET THD LEVELS:
+    //   At 0VU (-12dBFS), 50% bias: H2 ~ -37dB, H3 ~ -30dB relative to fundamental
+    //   At +6VU (-6dBFS), 50% bias: H2 ~ -33dB, H3 ~ -20dB relative to fundamental
+    //
+    // BIAS controls H2/H3 ratio (like real tape):
+    //   Low bias (0%): More H3 (gritty/edgy) - under-biased tape
+    //   High bias (100%): More H2 (warm/smooth) - over-biased tape
+    //   50% bias: H3 slightly dominant (authentic tape character)
+    //
+    // ANTI-ALIASING: Split saturation only applies to frequencies below 5kHz
+    // to prevent HF harmonics from aliasing back into the audible band.
+    // ========================================================================
 
-    // Saturation amount scales with level AND user's saturation depth control
-    // At 0VU: minimal saturation (THD ~0.3-0.5%)
-    // At +6VU: full saturation (THD ~3%)
-    // effectiveSatDepth already includes HF reduction from early detection
-    float levelDependentSat = levelAboveZeroVU * effectiveSatDepth;
+    // Base harmonic coefficients (calibrated for proper THD levels)
+    const float h2BaseScale = 0.12f;  // H2 coefficient
+    const float h3BaseScale = 2.2f;   // H3 coefficient
 
-    // 3. Tape hysteresis (magnetic non-linearity) - ONLY when driven hard
-    // Real tape: hysteresis is subtle, contributes <0.5% THD at normal levels
-    // Use cubic scaling so it's nearly zero at normal levels
-    float hysteresisDepth = tapeChars.hysteresisAmount * levelDependentSat * levelDependentSat * levelDependentSat;
-    hysteresisDepth = std::min(hysteresisDepth, 0.15f);  // Cap at reasonable level
-    signal = hysteresisProc.process(signal,
-                                    hysteresisDepth,
-                                    tapeChars.hysteresisAsymmetry,
-                                    tapeChars.saturationPoint);
+    // Bias controls H2/H3 balance
+    // biasAmount 0-1: 0 = under-biased (gritty), 1 = over-biased (warm)
+    float h2Mix = 0.5f + biasAmount;        // 0.5 to 1.5
+    float h3Mix = 1.5f - biasAmount;        // 1.5 to 0.5
 
-    // 4. Harmonic generation (THE MAIN tape saturation effect)
-    // This is the SINGLE source of harmonics - not cascaded with other saturators
-    // Scaled to match REAL tape THD: ~0.3-0.5% at 0VU, ~3% at +6VU
-    if (levelDependentSat > 0.005f)
-    {
-        float harmonics = generateHarmonics(signal, machineChars.saturationHarmonics, 5);
-        // Cubic scaling makes saturation nearly transparent at low levels
-        // At levelDependentSat=0.1 (0VU): harmonicMix = 0.001 (0.1%)
-        // At levelDependentSat=1.0 (+6VU): harmonicMix = 0.1 (10% of harmonic content)
-        float harmonicMix = levelDependentSat * levelDependentSat * 0.1f;
-        harmonicMix = std::min(harmonicMix, 0.15f);  // Cap to prevent excessive distortion
-        signal = signal * (1.0f - harmonicMix * 0.3f) + harmonics * harmonicMix;
-    }
+    // Scale by saturation depth control (user parameter)
+    float h2Scale = h2BaseScale * h2Mix * saturationDepth;
+    float h3Scale = h3BaseScale * h3Mix * saturationDepth;
+
+    // ANTI-ALIASING: Split signal into low/high frequency bands
+    // Only the low-frequency content gets saturated
+    float lowFreqContent = saturationSplitFilter.process(signal);
+    float highFreqContent = signal - lowFreqContent;
+
+    // Apply polynomial saturation to low frequencies only
+    float x = lowFreqContent;
+    float x2 = x * x;
+    float x3 = x2 * x;
+    lowFreqContent = x + h2Scale * x2 + h3Scale * x3;
+
+    // Recombine: saturated LF + clean HF
+    signal = lowFreqContent + highFreqContent;
 
     // 5. Soft saturation/compression - gentle tape limiting behavior
     // Real tape compresses gently, doesn't hard clip
-    float adjustedKnee = machineChars.saturationKnee * calibrationGain;
-    float makeupGain = calibrationGain;
-    // Compression ratio scales with level - transparent at normal levels
-    float compressionAmount = machineChars.compressionRatio * levelDependentSat;
-    signal = saturator.process(signal,
-                               adjustedKnee,
-                               compressionAmount,
-                               makeupGain);
+    // Apply to split LF content only to avoid aliasing from soft clip
+    {
+        float lowFreq = softClipSplitFilter.process(signal);
+        float highFreq = signal - lowFreq;
+        lowFreq = softClip(lowFreq, 0.95f);
+        signal = lowFreq + highFreq;
+    }
 
     // 6. Head gap loss simulation (original filter)
     signal = gapLossFilter.processSample(signal);
@@ -1029,14 +1066,38 @@ float ImprovedTapeEmulation::processSample(float input,
     // 13. DC blocking - removes subsonic rumble below 20Hz
     signal = dcBlocker.processSample(signal);
 
-    // 14. Final soft clipping - gentle limiting for peaks
-    signal = softClip(signal, 0.95f);
+    // 14. Soft clipping BEFORE anti-aliasing filter
+    // ANTI-ALIASING: Split signal so only LF content is soft clipped
+    // This prevents HF from generating harmonics that alias on downsampling
+    {
+        float lowFreqContent = softClipSplitFilter.process(signal);
+        float highFreqContent = signal - lowFreqContent;
 
-    // NOTE: We rely on the JUCE oversampler's built-in anti-aliasing during
-    // decimation, combined with the HF-dependent saturation reduction applied
-    // early in the chain. This matches 4K-EQ's approach which has no aliasing.
-    // Explicit output anti-aliasing filters were removed because they cut the
-    // clean audio above 16kHz which is undesirable.
+        // Soft clip only the low frequency content
+        lowFreqContent = softClip(lowFreqContent, 0.95f);
+
+        // Recombine: clipped LF + clean HF
+        signal = lowFreqContent + highFreqContent;
+    }
+
+    // 15. Post-saturation anti-aliasing filter - 8th-order Chebyshev Type I
+    // CRITICAL: This must be AFTER any harmonic-generating processing!
+    // This removes harmonics above original Nyquist before the JUCE oversampler
+    // downsamples the signal.
+    //
+    // 8th-order Chebyshev Type I with 0.1dB passband ripple provides:
+    // - ~96dB attenuation at 2x cutoff frequency
+    // - Cutoff at 0.45 * base sample rate (e.g., 19.8kHz for 44.1kHz)
+    // - At 39.6kHz (2x cutoff), attenuation is ~96dB
+    // - This ensures H2 of 18kHz (36kHz) is attenuated by ~85dB+
+    //
+    // The Chebyshev provides steeper rolloff than equivalent-order Butterworth,
+    // with only 4 biquad sections instead of 8 for Butterworth to achieve
+    // similar attenuation.
+    signal = antiAliasingFilter.process(signal);
+
+    // NOTE: No further harmonic-generating processing after this point!
+    // The filter MUST be the last processing stage before output.
 
     // Denormal protection at output
     if (std::abs(signal) < denormalPrevention)
@@ -1187,7 +1248,9 @@ float ImprovedTapeEmulation::NoiseGenerator::generateNoise(float noiseFloor,
     return pinkNoise * modulation;
 }
 
-// Soft clipping function
+// Soft clipping function using rational approximation
+// This provides smooth saturation with minimal harmonic generation
+// The x/(1+|x|) function generates primarily odd harmonics that decay rapidly
 float ImprovedTapeEmulation::softClip(float input, float threshold)
 {
     float absInput = std::abs(input);
@@ -1196,11 +1259,14 @@ float ImprovedTapeEmulation::softClip(float input, float threshold)
 
     float sign = (input >= 0.0f) ? 1.0f : -1.0f;
     float excess = absInput - threshold;
-    // Use cubic soft clip instead of tanh to reduce harmonic generation
-    // This creates primarily 3rd harmonic with minimal higher harmonics
-    float normalized = excess / (1.0f - threshold + 0.001f);
-    float clipped = threshold + (1.0f - threshold) * (normalized - normalized * normalized * normalized / 3.0f);
-    clipped = std::min(clipped, 1.0f);  // Hard limit at 1.0
+    float headroom = 1.0f - threshold;
+
+    // Use rational function x/(1+|x|) for smooth limiting
+    // This approaches 1.0 asymptotically and never overshoots
+    // Generates primarily 3rd harmonic with rapid decay of higher harmonics
+    float normalized = excess / (headroom + 0.001f);
+    float smoothed = normalized / (1.0f + normalized);  // Always in [0, 1)
+    float clipped = threshold + headroom * smoothed;
 
     return clipped * sign;
 }
@@ -1222,37 +1288,40 @@ float ImprovedTapeEmulation::generateHarmonics(float input, const float* harmoni
 
     float output = input;  // Start with fundamental
 
-    // Scale factors reduced to match real tape THD levels
+    // Scale factors matched to real tape THD levels
+    // Real Studer A800: ~0.3% THD at 0VU, ~3% at +6VU
+    // Real Ampex ATR-102: ~0.5% THD at 0VU, ~3% at +6VU
+    // The harmonicProfile values already encode machine differences,
+    // these scale factors should be minimal to avoid exaggerated harmonics
+
     if (numHarmonics > 0 && harmonicProfile[0] > 0.0f) {
-        // 2nd harmonic (even - warmth)
+        // 2nd harmonic (even - warmth) - primary harmonic in real tape
         float h2 = (2.0f * x2 - 1.0f) * harmonicProfile[0];
-        output += h2 * 0.3f;
+        output += h2 * 0.15f;  // Reduced from 0.3f
     }
 
     if (numHarmonics > 1 && harmonicProfile[1] > 0.0f) {
-        // 3rd harmonic (odd - edge/presence)
+        // 3rd harmonic (odd - edge) - typically 6-10dB below 2nd
         float h3 = (4.0f * x3 - 3.0f * x) * harmonicProfile[1];
-        output += h3 * 0.2f;
+        output += h3 * 0.08f;  // Reduced from 0.2f
     }
 
     if (numHarmonics > 2 && harmonicProfile[2] > 0.0f) {
-        // 4th harmonic (even - smoothness)
+        // 4th harmonic - typically 12-15dB below 2nd
         float h4 = (8.0f * x4 - 8.0f * x2 + 1.0f) * harmonicProfile[2];
-        output += h4 * 0.15f;
+        output += h4 * 0.04f;  // Reduced from 0.15f
     }
 
     if (numHarmonics > 3 && harmonicProfile[3] > 0.0f) {
-        // 5th harmonic (odd - bite) - reduced to minimize aliasing
-        // Real tape has very little 5th harmonic content
+        // 5th harmonic - very low in real tape (~-40dB relative to fundamental)
         float h5 = (16.0f * x5 - 20.0f * x3 + 5.0f * x) * harmonicProfile[3];
-        output += h5 * 0.03f;  // Reduced from 0.1f
+        output += h5 * 0.01f;  // Reduced from 0.03f
     }
 
     if (numHarmonics > 4 && harmonicProfile[4] > 0.0f) {
-        // 6th harmonic (even - air) - heavily reduced to minimize aliasing
-        // Real tape has negligible 6th harmonic, this is mainly for character
+        // 6th harmonic - negligible in real tape (~-50dB relative to fundamental)
         float h6 = (32.0f * x6 - 48.0f * x4 + 18.0f * x2 - 1.0f) * harmonicProfile[4];
-        output += h6 * 0.02f;  // Reduced from 0.08f
+        output += h6 * 0.005f;  // Reduced from 0.02f
     }
 
     return output;
