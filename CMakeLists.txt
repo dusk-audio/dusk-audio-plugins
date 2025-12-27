@@ -32,7 +32,7 @@ option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_MULTI_COMP "Build Multi-Comp plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" ON)
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
-option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
+option(BUILD_TAPE_ECHO "Build Tape Echo plugin" OFF)  # TapeEcho directory missing
 option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_SILKVERB "Build SilkVerb plugin" ON)
