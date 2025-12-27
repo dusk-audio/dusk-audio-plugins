@@ -561,12 +561,40 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     inputLevelL.store(rmsInputL);
     inputLevelR.store(rmsInputR);
 
-    // Use cached oversampling factor from prepareToPlay() - this ensures filters are
-    // always configured with the correct oversampled rate. When user changes oversampling,
-    // the DAW calls prepareToPlay() which updates currentOversamplingFactor and re-prepares
-    // all DSP including ImprovedTapeEmulation filters with the correct rate.
-    // This matches the pattern used by 4K-EQ which has no aliasing issues.
-    auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
+    // Read oversampling parameter directly to handle real-time changes
+    // Both oversamplers are pre-initialized in prepareToPlay, so we can switch instantly
+    int oversamplingChoice = oversamplingParam ? static_cast<int>(oversamplingParam->load()) : 1;
+    int requestedFactor = (oversamplingChoice == 0) ? 2 : 4;
+
+    // Select the correct oversampler based on current setting
+    auto* activeOversampler = (requestedFactor == 4) ? oversampler4x.get() : oversampler2x.get();
+
+    // If oversampling factor changed, update filter coefficients for the new rate
+    // This is necessary because filter cutoffs depend on the sample rate
+    if (requestedFactor != currentOversamplingFactor)
+    {
+        currentOversamplingFactor = requestedFactor;
+        const double newOversampledRate = currentSampleRate * static_cast<double>(currentOversamplingFactor);
+        currentOversampledRate = static_cast<float>(newOversampledRate);
+        const int oversampledBlockSize = buffer.getNumSamples() * currentOversamplingFactor;
+
+        // Re-prepare tape emulation with new oversampled rate
+        // This updates filter coefficients (e.g., 18kHz cutoff at new sample rate)
+        // Note: prepare() resets filter states which may cause a brief transient
+        if (tapeEmulationLeft)
+            tapeEmulationLeft->prepare(newOversampledRate, oversampledBlockSize);
+        if (tapeEmulationRight)
+            tapeEmulationRight->prepare(newOversampledRate, oversampledBlockSize);
+        if (sharedWowFlutter)
+            sharedWowFlutter->prepare(newOversampledRate);
+
+        // Update latency for host PDC
+        if (activeOversampler)
+            setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
+
+        // Update processor chain filters with new oversampled rate
+        updateFilters();
+    }
     if (!activeOversampler)
         return;
 
