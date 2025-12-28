@@ -30,7 +30,7 @@ add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 # Option to build all plugins or specific ones
 option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_MULTI_COMP "Build Multi-Comp plugin" ON)
-option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" ON)
+option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" OFF)  # Directory missing
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" OFF)  # TapeEcho directory missing
 option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
