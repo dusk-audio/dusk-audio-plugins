@@ -4,7 +4,7 @@
 #include "AnalogLookAndFeel.h"
 #include "ModernCompressorPanels.h"
 #include "CompressorPresets.h"
-#include "../../shared/SupportersOverlay.h"
+#include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
 #include <juce_gui_basics/juce_gui_basics.h>

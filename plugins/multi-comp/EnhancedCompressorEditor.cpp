@@ -629,6 +629,10 @@ void EnhancedCompressorEditor::updateMode(int newMode)
     if (vuMeter)
         vuMeter->setVisible(true);
 
+    // Show SC HP slider by default (will be hidden for multiband)
+    if (sidechainHpSlider)
+        sidechainHpSlider->setVisible(true);
+
     // Hide mode-specific top row buttons by default
     if (optoPanel.limitSwitch)
         optoPanel.limitSwitch->setVisible(false);
@@ -694,6 +698,9 @@ void EnhancedCompressorEditor::updateMode(int newMode)
             // Hide VU meter for multiband - the panel has its own per-band GR visualization
             if (vuMeter)
                 vuMeter->setVisible(false);
+            // Hide SC HP slider for multiband - each band has its own sidechain handling
+            if (sidechainHpSlider)
+                sidechainHpSlider->setVisible(false);
             currentLookAndFeel = digitalLookAndFeel.get();
             break;
     }
@@ -1126,8 +1133,8 @@ void EnhancedCompressorEditor::resized()
     const int scHpAreaWidth = static_cast<int>(55 * scaleFactor);     // Area including label
     auto scHpArea = vuArea.removeFromRight(scHpAreaWidth);
 
-    // Position SC HP vertical slider with label above
-    if (sidechainHpSlider)
+    // Position SC HP vertical slider with label above (hidden in multiband mode)
+    if (sidechainHpSlider && sidechainHpSlider->isVisible())
     {
         int labelHeight = static_cast<int>(16 * scaleFactor);
         int textBoxHeight = static_cast<int>(18 * scaleFactor);
@@ -1143,6 +1150,11 @@ void EnhancedCompressorEditor::resized()
         int sliderX = scHpArea.getX() + (scHpArea.getWidth() - scHpSliderWidth) / 2;
         sidechainHpSlider->setBounds(sliderX, scHpArea.getY() + labelHeight,
                                       scHpSliderWidth, sliderHeight + textBoxHeight);
+    }
+    else
+    {
+        // Clear label bounds when slider is hidden (multiband mode)
+        scHpLabelBounds = juce::Rectangle<int>();
     }
 
     // VU meter centered in remaining area

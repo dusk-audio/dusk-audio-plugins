@@ -3,6 +3,18 @@
 ## Project Overview
 This is a collection of professional audio VST3/LV2/AU plugins built with the JUCE framework. All plugins are published under the company name "Luna Co. Audio".
 
+### ⚠️ SHARED CODE REQUIREMENT
+**Before writing ANY new code, ALWAYS check `plugins/shared/` first!**
+
+| Component | File(s) | Use For |
+|-----------|---------|---------|
+| **LEDMeter** | `LEDMeter.h/cpp` | All input/output level meters (auto mono/stereo) |
+| **SupportersOverlay** | `SupportersOverlay.h` | Patreon credits overlay (click plugin title) |
+| **PatreonBackers** | `PatreonBackers.h` | Supporter name data |
+| **AnalogEmulation** | `AnalogEmulation/*.h` | Saturation, tubes, transformers, DC blocking |
+
+**Upcoming releases requiring consistent shared components**: Multi-Q, TapeMachine, Multi-Comp
+
 ## Plugins in this Repository
 
 ### 1. **4K EQ**
@@ -434,6 +446,35 @@ Each plugin can also be run as a standalone application for testing without a DA
 
 ## Development Notes
 
+### ⚠️ CRITICAL: Shared Code First Philosophy
+
+**MANDATORY FOR ALL DEVELOPMENT**: Before writing ANY new code, you MUST check the `plugins/shared/` directory for existing implementations. This project follows a strict "shared code first" philosophy to:
+
+1. **Maintain consistent look and feel** across all Luna Co. Audio plugins
+2. **Prevent code duplication** and reduce maintenance burden
+3. **Enable easier bug fixes** - fix once, apply everywhere
+4. **Ensure visual consistency** for release-ready plugins
+
+#### Before Writing New Code:
+1. **ALWAYS check `plugins/shared/`** for existing components
+2. **Search for similar implementations** in other plugins
+3. **If code could be used by 2+ plugins**, create it in the shared folder
+4. **Refactor existing plugin-specific code** to shared when appropriate
+
+#### When to Create Shared Code:
+- UI components (meters, knobs, buttons, overlays)
+- DSP utilities (filters, saturation, ballistics)
+- Look and feel classes
+- Common data structures (presets, parameter definitions)
+- Utility functions (dB conversion, smoothing, etc.)
+
+#### Upcoming Release Plugins (Priority for Consistency):
+- **Multi-Q** - Universal EQ
+- **TapeMachine** - Tape emulation
+- **Multi-Comp** - Multi-mode compressor
+
+These plugins MUST use shared components for all common UI elements to ensure a cohesive product line.
+
 ### Project Structure
 ```
 plugins/
@@ -452,12 +493,19 @@ plugins/
 │   ├── DrummerClone/        # Intelligent MIDI drum generator
 │   ├── multi-q/             # Multi-Q universal EQ
 │   ├── neural-amp/          # Neural amp modeler (NAM)
-│   └── shared/              # Shared utilities and libraries
-│       ├── AnalogEmulation/ # Shared analog saturation/tube/transformer library
+│   └── shared/              # ⚠️ SHARED UTILITIES - CHECK HERE FIRST!
+│       ├── AnalogEmulation/ # Analog saturation/tube/transformer library
+│       │   ├── AnalogEmulation.h    # Main include
+│       │   ├── WaveshaperCurves.h   # Saturation curves (LA-2A, 1176, etc.)
+│       │   ├── TubeEmulation.h      # Vacuum tube modeling
+│       │   ├── TransformerEmulation.h # Transformer saturation
+│       │   ├── HardwareProfiles.h   # Hardware presets
+│       │   ├── DCBlocker.h          # DC blocking filter
+│       │   └── HighFrequencyEstimator.h # HF estimation
+│       ├── LEDMeter.h/cpp   # LED-style level meter (mono/stereo auto-detect)
 │       ├── LunaLookAndFeel.h # Base look-and-feel for Luna plugins
-│       ├── LEDMeter.h/cpp   # Shared LED-style level meter component
-│       ├── PatreonBackers.h # Shared Patreon backer credits data
-│       └── SupportersOverlay.h # Modal overlay for Patreon supporters display
+│       ├── PatreonBackers.h # Patreon backer credits data
+│       └── SupportersOverlay.h # Modal overlay for supporters display
 ├── tests/                    # Plugin validation framework
 │   ├── quick_validate.sh    # Fast plugin check
 │   └── run_plugin_tests.sh  # Full test suite
@@ -469,11 +517,17 @@ plugins/
 
 ### Adding New Plugins
 1. Create plugin directory under `plugins/`
-2. Add CMakeLists.txt with juce_add_plugin()
-3. Add to root CMakeLists.txt with option flag
-4. Add build target to `docker/build_release.sh` PLUGINS array
-5. Follow naming convention: `PluginName_All` for build targets
-6. **REQUIRED**: Implement Patreon Supporters overlay (see "Shared UI Components" section below)
+2. **⚠️ FIRST: Check `plugins/shared/` for reusable components**
+3. Add CMakeLists.txt with juce_add_plugin()
+4. Add to root CMakeLists.txt with option flag
+5. Add build target to `docker/build_release.sh` PLUGINS array
+6. Follow naming convention: `PluginName_All` for build targets
+7. **REQUIRED**: Use shared components:
+   - `LEDMeter` for all input/output metering
+   - `SupportersOverlay` for Patreon credits (click title to show)
+   - `AnalogEmulation` for any saturation/tube/transformer effects
+   - `PatreonBackers` for supporter data
+8. **If creating new reusable code**: Add it to `plugins/shared/` instead of the plugin directory
 
 ### Common DSP Patterns
 - **Oversampling**: Use `juce::dsp::Oversampling<float>` for anti-aliased processing
@@ -553,10 +607,64 @@ float satReduction = hfEstimator.getSaturationReduction(input, 0.5f);
 
 **Namespace**: All shared analog emulation code uses the `AnalogEmulation` namespace
 
-### Shared UI Components
+### Shared UI Components (MANDATORY)
 **Location**: `plugins/shared/`
 
-All Luna plugins must use these shared UI components for consistency:
+**⚠️ CRITICAL**: All Luna plugins MUST use these shared UI components for consistency. Do NOT create plugin-specific implementations of these components.
+
+#### LEDMeter (REQUIRED for all metering)
+**Files**: `shared/LEDMeter.h`, `shared/LEDMeter.cpp`
+
+Professional LED-style level meter with realistic hardware appearance. **All plugins must use this for input/output metering.**
+
+**Features**:
+- Color-coded LEDs: Green (60%), Yellow (25%), Red (15%)
+- Realistic glow effects and visible unlit LEDs
+- VU-style ballistics (300ms attack/release)
+- Peak hold indicator with configurable hold time
+- **Intelligent mono/stereo auto-detection**:
+  - Single bar on mono channels
+  - Split L/R bars on stereo channels (auto-detects when L/R differ by >1dB)
+  - Can be forced to stereo mode via `setStereoMode(true)`
+- Vertical or horizontal orientation
+
+**Usage**:
+```cpp
+// In PluginEditor.h:
+#include "../../shared/LEDMeter.h"
+
+class MyPluginEditor : public juce::AudioProcessorEditor
+{
+private:
+    LEDMeter inputMeter{LEDMeter::Vertical};
+    LEDMeter outputMeter{LEDMeter::Vertical};
+};
+
+// In PluginEditor.cpp - timerCallback():
+// Pass dB values (-60 to +6 dB range)
+float inputDb = juce::Decibels::gainToDecibels(inputLevel, -60.0f);
+inputMeter.setLevel(inputDb);
+
+// For stereo metering (auto-detects stereo when L/R differ):
+inputMeter.setStereoLevels(leftDb, rightDb);
+
+// Force stereo display even with identical levels:
+inputMeter.setStereoMode(true);
+```
+
+**CMakeLists.txt** - Add to target_sources:
+```cmake
+target_sources(${PLUGIN_NAME} PRIVATE
+    ../shared/LEDMeter.cpp
+)
+```
+
+**Plugins using LEDMeter**:
+- Neural Amp ✅
+- Tape Echo ✅
+- Multi-Q (needs update)
+- Multi-Comp (needs update)
+- TapeMachine (uses VU meters - different style intentionally)
 
 #### SupportersOverlay (REQUIRED for all plugins)
 **File**: `shared/SupportersOverlay.h`
@@ -831,3 +939,4 @@ For issues or questions about these plugins:
 *Last updated: December 2025*
 *Company: Luna Co. Audio*
 *Build System: CMake + JUCE 7.x*
+*Shared Code Philosophy: All reusable components must be in `plugins/shared/`*

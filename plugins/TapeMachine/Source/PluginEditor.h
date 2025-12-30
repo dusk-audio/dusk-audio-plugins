@@ -3,8 +3,8 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "GUI/AnalogVUMeter.h"
-#include "../../../shared/LunaVintageLookAndFeel.h"
-#include "../../../shared/SupportersOverlay.h"
+#include "../../shared/LunaVintageLookAndFeel.h"
+#include "../../shared/SupportersOverlay.h"
 
 class CustomLookAndFeel : public LunaVintageLookAndFeel
 {

@@ -4,7 +4,7 @@
 #include "FourKEQ.h"
 #include "FourKLookAndFeel.h"
 #include "EQCurveDisplay.h"
-#include "../../shared/SupportersOverlay.h"
+#include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
 

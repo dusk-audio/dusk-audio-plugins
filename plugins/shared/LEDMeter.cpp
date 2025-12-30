@@ -3,6 +3,7 @@
 
 LEDMeter::LEDMeter(Orientation orient) : orientation(orient)
 {
+    setOpaque(false);
     updateBallisticsCoefficients();
 }
 
@@ -123,133 +124,183 @@ void LEDMeter::setStereoLevels(float leftLevel, float rightLevel)
     displayLevel = std::max(displayLevelL, displayLevelR);
     peakLevel = std::max(peakLevelL, peakLevelR);
 
+    // Auto-detect stereo mode based on level difference (unless forced)
+    if (!stereoModeForced)
+    {
+        // Enable stereo display if L/R differ by more than 1dB
+        float levelDiff = std::abs(displayLevelL - displayLevelR);
+        stereoMode = (levelDiff > 1.0f);
+    }
+
     // Always repaint for smooth animation
     repaint();
 }
 
-juce::Colour LEDMeter::getLEDColor(int ledIndex, int totalLEDs)
+LEDMeter::LEDColors LEDMeter::getColorsForSegment(int segmentIndex) const
 {
-    float position = ledIndex / (float)totalLEDs;
+    LEDColors colors;
 
-    if (position < 0.5f)
-        return juce::Colour(0xFF00FF00);  // Green
-    else if (position < 0.75f)
-        return juce::Colour(0xFFFFFF00);  // Yellow
-    else if (position < 0.9f)
-        return juce::Colour(0xFFFF6600);  // Orange
+    // Bottom 60% green (7 LEDs), next 25% yellow (3 LEDs), top 15% red (2 LEDs)
+    // With 12 LEDs: 0-6 green, 7-9 yellow, 10-11 red
+    if (segmentIndex >= 10)  // Top 2 (red zone)
+    {
+        colors.litColor = juce::Colour(0xFFf87171);    // Bright red
+        colors.unlitColor = juce::Colour(0xFF2a0d0d); // Dark red - visible but dim
+        colors.glowColor = juce::Colour(0xFFef4444);
+    }
+    else if (segmentIndex >= 7)  // Next 3 (yellow zone)
+    {
+        colors.litColor = juce::Colour(0xFFfde047);    // Bright yellow
+        colors.unlitColor = juce::Colour(0xFF2a2208); // Dark amber - visible but dim
+        colors.glowColor = juce::Colour(0xFFeab308);
+    }
+    else  // Bottom 7 (green zone)
+    {
+        colors.litColor = juce::Colour(0xFF4ade80);    // Bright green
+        colors.unlitColor = juce::Colour(0xFF0d2a12); // Dark green - visible but dim
+        colors.glowColor = juce::Colour(0xFF22c55e);
+    }
+
+    return colors;
+}
+
+void LEDMeter::drawLEDSegment(juce::Graphics& g, juce::Rectangle<float> bounds,
+                               bool isLit, bool isPeak, const LEDColors& colors) const
+{
+    const float cornerRadius = 2.0f;
+
+    // Always draw the LED segment - lit or unlit
+    if (isLit)
+    {
+        // === LIT LED ===
+        // Outer glow (bloom effect) - multiple layers for intensity
+        auto glowBounds = bounds.expanded(4.0f);
+
+        // First glow layer (wider, more diffuse)
+        g.setColour(colors.glowColor.withAlpha(0.25f));
+        g.fillRoundedRectangle(glowBounds.expanded(2.0f), cornerRadius + 2.0f);
+
+        // Second glow layer (tighter)
+        g.setColour(colors.glowColor.withAlpha(0.4f));
+        g.fillRoundedRectangle(glowBounds, cornerRadius + 1.0f);
+
+        // Main body gradient (bright top to slightly darker bottom)
+        juce::ColourGradient bodyGradient(colors.litColor.brighter(0.2f), bounds.getX(), bounds.getY(),
+                                           colors.litColor.darker(0.3f), bounds.getX(), bounds.getBottom(), false);
+        g.setGradientFill(bodyGradient);
+        g.fillRoundedRectangle(bounds, cornerRadius);
+
+        // Top highlight (plastic lens reflection)
+        auto highlightBounds = bounds.reduced(1.0f).removeFromTop(bounds.getHeight() * 0.4f);
+        juce::ColourGradient highlight(juce::Colours::white.withAlpha(0.35f),
+                                        highlightBounds.getX(), highlightBounds.getY(),
+                                        juce::Colours::white.withAlpha(0.0f),
+                                        highlightBounds.getX(), highlightBounds.getBottom(), false);
+        g.setGradientFill(highlight);
+        g.fillRoundedRectangle(highlightBounds, cornerRadius - 0.5f);
+    }
+    else if (isPeak)
+    {
+        // === PEAK HOLD LED (slightly dimmer than lit) ===
+        // Subtle glow
+        g.setColour(colors.glowColor.withAlpha(0.2f));
+        g.fillRoundedRectangle(bounds.expanded(2.0f), cornerRadius + 1.0f);
+
+        // Body at ~70% brightness
+        auto peakColor = colors.litColor.interpolatedWith(colors.unlitColor, 0.3f);
+        juce::ColourGradient bodyGradient(peakColor.brighter(0.1f), bounds.getX(), bounds.getY(),
+                                           peakColor.darker(0.2f), bounds.getX(), bounds.getBottom(), false);
+        g.setGradientFill(bodyGradient);
+        g.fillRoundedRectangle(bounds, cornerRadius);
+
+        // Subtle highlight
+        auto highlightBounds = bounds.reduced(1.0f).removeFromTop(bounds.getHeight() * 0.4f);
+        g.setColour(juce::Colours::white.withAlpha(0.2f));
+        g.fillRoundedRectangle(highlightBounds, cornerRadius - 0.5f);
+    }
     else
-        return juce::Colour(0xFFFF0000);  // Red
+    {
+        // === UNLIT LED (dim but visible) ===
+        // No glow, just the dim segment
+
+        // Main body gradient (dark, but showing the LED exists)
+        juce::ColourGradient bodyGradient(colors.unlitColor.brighter(0.15f), bounds.getX(), bounds.getY(),
+                                           colors.unlitColor.darker(0.1f), bounds.getX(), bounds.getBottom(), false);
+        g.setGradientFill(bodyGradient);
+        g.fillRoundedRectangle(bounds, cornerRadius);
+
+        // Inner shadow for recessed look
+        g.setColour(juce::Colours::black.withAlpha(0.4f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), cornerRadius, 0.5f);
+
+        // Very subtle top highlight (plastic still reflects a tiny bit)
+        auto highlightBounds = bounds.reduced(1.0f).removeFromTop(bounds.getHeight() * 0.3f);
+        g.setColour(juce::Colours::white.withAlpha(0.05f));
+        g.fillRoundedRectangle(highlightBounds, cornerRadius - 0.5f);
+    }
 }
 
 void LEDMeter::paintVerticalColumn(juce::Graphics& g, juce::Rectangle<float> bounds,
-                                   float level, float peak)
+                                    float level, float peak)
 {
-    // Calculate lit LEDs based on display level
+    // Calculate lit LEDs based on display level (-60dB to +6dB range)
     float normalizedLevel = juce::jlimit(0.0f, 1.0f, (level + 60.0f) / 66.0f);
-    int litLEDs = juce::roundToInt(normalizedLevel * numLEDs);
+    int litLEDs = static_cast<int>(normalizedLevel * numLEDs);
 
     // Calculate peak hold LED position
     float normalizedPeak = juce::jlimit(0.0f, 1.0f, (peak + 60.0f) / 66.0f);
-    int peakLED = juce::roundToInt(normalizedPeak * numLEDs) - 1;
+    int peakLED = static_cast<int>(normalizedPeak * numLEDs) - 1;
 
-    float ledHeight = (bounds.getHeight() - (numLEDs + 1) * 2) / numLEDs;
-    float ledWidth = bounds.getWidth() - 4;  // 2px padding on each side
+    // Calculate LED dimensions with gaps
+    const float gap = 2.0f;
+    const float padding = 3.0f;
+    auto meterArea = bounds.reduced(padding);
+    float ledHeight = (meterArea.getHeight() - (numLEDs - 1) * gap) / numLEDs;
+    float ledWidth = meterArea.getWidth();
 
+    // Draw each LED segment from bottom to top
     for (int i = 0; i < numLEDs; ++i)
     {
-        float y = bounds.getBottom() - 2 - (i + 1) * (ledHeight + 2);
-        float x = bounds.getX() + 2;
+        float y = meterArea.getBottom() - (i + 1) * (ledHeight + gap) + gap;
+        auto ledBounds = juce::Rectangle<float>(meterArea.getX(), y, ledWidth, ledHeight);
 
-        // LED background
-        g.setColour(juce::Colour(0xFF0A0A0A));
-        g.fillRoundedRectangle(x, y, ledWidth, ledHeight, 1.0f);
+        bool isLit = i < litLEDs;
+        bool isPeak = (i == peakLED) && (peakHoldCounter > 0 || peakHoldCounterL > 0 || peakHoldCounterR > 0) && !isLit;
 
-        // LED lit state
-        if (i < litLEDs)
-        {
-            auto ledColor = getLEDColor(i, numLEDs);
-
-            // Glow effect
-            g.setColour(ledColor.withAlpha(0.3f));
-            g.fillRoundedRectangle(x - 1, y - 1, ledWidth + 2, ledHeight + 2, 1.0f);
-
-            // Main LED
-            g.setColour(ledColor);
-            g.fillRoundedRectangle(x, y, ledWidth, ledHeight, 1.0f);
-
-            // Highlight
-            g.setColour(ledColor.brighter(0.5f).withAlpha(0.5f));
-            g.fillRoundedRectangle(x + 1, y + 1, ledWidth - 2, ledHeight / 3, 1.0f);
-        }
-        // Peak hold indicator - single LED that stays lit
-        else if (peakHoldEnabled && i == peakLED && peakLED >= litLEDs)
-        {
-            auto ledColor = getLEDColor(i, numLEDs);
-
-            // Dimmer glow for peak hold
-            g.setColour(ledColor.withAlpha(0.2f));
-            g.fillRoundedRectangle(x - 1, y - 1, ledWidth + 2, ledHeight + 2, 1.0f);
-
-            // Peak hold LED (slightly dimmer than lit LEDs)
-            g.setColour(ledColor.withAlpha(0.8f));
-            g.fillRoundedRectangle(x, y, ledWidth, ledHeight, 1.0f);
-        }
+        auto colors = getColorsForSegment(i);
+        drawLEDSegment(g, ledBounds, isLit, isPeak, colors);
     }
 }
 
 void LEDMeter::paintHorizontalRow(juce::Graphics& g, juce::Rectangle<float> bounds,
-                                  float level, float peak)
+                                   float level, float peak)
 {
-    // Calculate lit LEDs based on display level
+    // Calculate lit LEDs based on display level (-60dB to +6dB range)
     float normalizedLevel = juce::jlimit(0.0f, 1.0f, (level + 60.0f) / 66.0f);
-    int litLEDs = juce::roundToInt(normalizedLevel * numLEDs);
+    int litLEDs = static_cast<int>(normalizedLevel * numLEDs);
 
     // Calculate peak hold LED position
     float normalizedPeak = juce::jlimit(0.0f, 1.0f, (peak + 60.0f) / 66.0f);
-    int peakLED = juce::roundToInt(normalizedPeak * numLEDs) - 1;
+    int peakLED = static_cast<int>(normalizedPeak * numLEDs) - 1;
 
-    float ledWidth = (bounds.getWidth() - (numLEDs + 1) * 2) / numLEDs;
-    float ledHeight = bounds.getHeight() - 4;  // 2px padding on each side
+    // Calculate LED dimensions with gaps
+    const float gap = 2.0f;
+    const float padding = 3.0f;
+    auto meterArea = bounds.reduced(padding);
+    float ledWidth = (meterArea.getWidth() - (numLEDs - 1) * gap) / numLEDs;
+    float ledHeight = meterArea.getHeight();
 
+    // Draw each LED segment from left to right
     for (int i = 0; i < numLEDs; ++i)
     {
-        float x = bounds.getX() + 2 + i * (ledWidth + 2);
-        float y = bounds.getY() + 2;
+        float x = meterArea.getX() + i * (ledWidth + gap);
+        auto ledBounds = juce::Rectangle<float>(x, meterArea.getY(), ledWidth, ledHeight);
 
-        // LED background
-        g.setColour(juce::Colour(0xFF0A0A0A));
-        g.fillRoundedRectangle(x, y, ledWidth, ledHeight, 1.0f);
+        bool isLit = i < litLEDs;
+        bool isPeak = (i == peakLED) && (peakHoldCounter > 0 || peakHoldCounterL > 0 || peakHoldCounterR > 0) && !isLit;
 
-        // LED lit state
-        if (i < litLEDs)
-        {
-            auto ledColor = getLEDColor(i, numLEDs);
-
-            // Glow effect
-            g.setColour(ledColor.withAlpha(0.3f));
-            g.fillRoundedRectangle(x - 1, y - 1, ledWidth + 2, ledHeight + 2, 1.0f);
-
-            // Main LED
-            g.setColour(ledColor);
-            g.fillRoundedRectangle(x, y, ledWidth, ledHeight, 1.0f);
-
-            // Highlight
-            g.setColour(ledColor.brighter(0.5f).withAlpha(0.5f));
-            g.fillRoundedRectangle(x + 1, y + 1, ledWidth / 3, ledHeight - 2, 1.0f);
-        }
-        // Peak hold indicator - single LED that stays lit
-        else if (peakHoldEnabled && i == peakLED && peakLED >= litLEDs)
-        {
-            auto ledColor = getLEDColor(i, numLEDs);
-
-            // Dimmer glow for peak hold
-            g.setColour(ledColor.withAlpha(0.2f));
-            g.fillRoundedRectangle(x - 1, y - 1, ledWidth + 2, ledHeight + 2, 1.0f);
-
-            // Peak hold LED (slightly dimmer than lit LEDs)
-            g.setColour(ledColor.withAlpha(0.8f));
-            g.fillRoundedRectangle(x, y, ledWidth, ledHeight, 1.0f);
-        }
+        auto colors = getColorsForSegment(i);
+        drawLEDSegment(g, ledBounds, isLit, isPeak, colors);
     }
 }
 
@@ -257,9 +308,19 @@ void LEDMeter::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    // Background
-    g.setColour(juce::Colour(0xFF1A1A1A));
-    g.fillRoundedRectangle(bounds, 3.0f);
+    // Dark bezel/track behind the meter
+    g.setColour(juce::Colour(0xFF0a0a0a));
+    g.fillRoundedRectangle(bounds, 4.0f);
+
+    // Inner shadow for recessed look
+    juce::ColourGradient innerShadow(juce::Colours::black.withAlpha(0.6f), bounds.getX(), bounds.getY(),
+                                      juce::Colours::black.withAlpha(0.0f), bounds.getX(), bounds.getY() + 10, false);
+    g.setGradientFill(innerShadow);
+    g.fillRoundedRectangle(bounds.withHeight(15), 4.0f);
+
+    // Bezel border
+    g.setColour(juce::Colour(0xFF2a2a2a));
+    g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
 
     if (orientation == Vertical)
     {
@@ -329,8 +390,4 @@ void LEDMeter::paint(juce::Graphics& g)
             paintHorizontalRow(g, bounds, displayLevel, peakLevel);
         }
     }
-
-    // Frame
-    g.setColour(juce::Colour(0xFF4A4A4A));
-    g.drawRoundedRectangle(bounds, 3.0f, 1.0f);
 }

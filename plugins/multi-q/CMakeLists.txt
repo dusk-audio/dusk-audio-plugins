@@ -64,7 +64,6 @@ target_include_directories(MultiQ
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../shared
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
         ${CMAKE_CURRENT_SOURCE_DIR}/../4k-eq
 )
 
