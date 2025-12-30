@@ -3289,9 +3289,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f, 0.5f), 80.0f,
         juce::AudioParameterFloatAttributes().withLabel("Hz")));
 
-    // Auto makeup gain
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        "auto_makeup", "Auto Makeup", false));
+    // Auto makeup gain - using Choice instead of Bool for more reliable state restoration
+    // (AudioParameterBool can have issues with normalized value handling in some hosts)
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "auto_makeup", "Auto Makeup",
+        juce::StringArray{"Off", "On"}, 0));
 
     // Distortion type (Off, Soft, Hard, Clip)
     layout.add(std::make_unique<juce::AudioParameterChoice>(
