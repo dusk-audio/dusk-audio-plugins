@@ -1532,26 +1532,53 @@ public:
         }
         
         // Hardware emulation: Output stage processing chain
-        // LA-2A: Input -> T4B Cell -> 12AX7 Tube -> 12BH7 Output -> Transformer -> Convolution
+        // LA-2A: Input -> T4B Cell -> 12AX7 Tube -> 12BH7 Output -> Transformer
+        //
+        // Real LA-2A specs: <0.5% THD (0.25% typical) at +10 dBm
+        // The T4 photocell provides gain reduction with "no increase in harmonic distortion"
+        // Tube amplifier adds "a touch of warmth while retaining a clean output signal"
+        //
+        // This means THD should be VERY low - the LA-2A is known for being clean/transparent
 
         float makeupGain = juce::Decibels::decibelsToGain(gain);
         float driven = compressed * makeupGain;
 
+        // Level-dependent saturation: real LA-2A only saturates noticeably at hot levels
+        // At -18dB: essentially clean (< 0.1% THD)
+        // At 0dB: subtle warmth (~0.25% THD)
+        // At +10dB: full character (~0.5% THD)
+        float levelDb = juce::Decibels::gainToDecibels(std::abs(driven) + 0.0001f, -60.0f);
+        float levelFactor = juce::jmap(juce::jlimit(-18.0f, 6.0f, levelDb), -18.0f, 6.0f, 0.0f, 1.0f);
+        levelFactor = levelFactor * levelFactor; // Quadratic curve for more natural onset
+
         // 1. Apply LA-2A tube waveshaper curve (lookup table based)
-        // This models the LA-2A's characteristic asymmetric tube saturation
+        // Very subtle - real LA-2A THD is only 0.25-0.5%
+        // Drive: 0 at -18dB, 0.08 at +6dB (very subtle, matching real specs)
+        float waveshaperDrive = levelFactor * 0.08f;
         float saturated = HardwareEmulation::getWaveshaperCurves().processWithDrive(
-            driven, HardwareEmulation::WaveshaperCurves::CurveType::LA2A_Tube, 0.4f);
+            driven, HardwareEmulation::WaveshaperCurves::CurveType::LA2A_Tube, waveshaperDrive);
 
         // 2. 12BH7 tube stage processing (output amplifier)
-        // The LA-2A uses a 12BH7 as the output driver - warm with moderate gain
-        saturated = tubeStage.processSample(saturated, channel);
+        // Only blend in tube character at hot levels
+        // Real LA-2A is known for being clean - tube adds subtle warmth, not distortion
+        if (levelFactor > 0.1f)
+        {
+            float tubeProcessed = tubeStage.processSample(saturated, channel);
+            float tubeBlend = (levelFactor - 0.1f) * 0.15f; // Max 15% tube blend at +6dB
+            saturated = saturated * (1.0f - tubeBlend) + tubeProcessed * tubeBlend;
+        }
 
         // 3. Output transformer processing
-        // UTC output transformer adds characteristic LF saturation and HF rolloff
-        saturated = outputTransformer.processSample(saturated, channel);
+        // UTC output transformer - very clean, primarily adds slight HF rolloff
+        // Only blend in transformer coloration at higher levels
+        if (levelFactor > 0.2f)
+        {
+            float transformerProcessed = outputTransformer.processSample(saturated, channel);
+            float xfmrBlend = (levelFactor - 0.2f) * 0.2f; // Max 20% transformer at +6dB
+            saturated = saturated * (1.0f - xfmrBlend) + transformerProcessed * xfmrBlend;
+        }
 
-        // 4. Short convolution for transformer cabinet coloration
-        // Adds the subtle IR-based coloration measured from real LA-2A units
+        // 4. Short convolution for transformer cabinet coloration (always applied, very subtle)
         saturated = convolution.processSample(saturated);
 
         // Anti-aliasing lowpass to clean up any residual harmonics
@@ -1860,18 +1887,25 @@ public:
         // The 1176 uses Class A FET gain stages with characteristic odd-harmonic distortion
         float output = compressed;
 
+        // Level-dependent saturation: real hardware saturates proportionally to signal level
+        float levelDb = juce::Decibels::gainToDecibels(std::abs(output) + 0.0001f, -60.0f);
+        float levelFactor = juce::jmap(juce::jlimit(-30.0f, 0.0f, levelDb), -30.0f, 0.0f, 0.0f, 1.0f);
+
         // 1. Apply FET waveshaper curve (lookup table based)
         // All-buttons mode gets more drive for the aggressive distortion character
-        float allButtonsMultiplier = (ratioIndex == 4) ? 3.0f : 1.0f;
+        float allButtonsMultiplier = (ratioIndex == 4) ? 2.0f : 1.0f;
         float grAmount = juce::jlimit(0.0f, 1.0f, reduction / 20.0f);
-        float driveAmount = 0.3f + (grAmount * 0.4f * allButtonsMultiplier);
+        // Base drive scales with level: 0.05 at -30dB, increases with level and GR
+        float driveAmount = (0.05f + levelFactor * 0.15f) + (grAmount * 0.2f * allButtonsMultiplier);
 
         output = HardwareEmulation::getWaveshaperCurves().processWithDrive(
             output, HardwareEmulation::WaveshaperCurves::CurveType::FET_1176, driveAmount);
 
         // 2. Output transformer processing
         // 1176 has Cinemag/Jensen transformers with subtle coloration
-        output = outputTransformer.processSample(output, channel);
+        // Level-dependent blending
+        float transformerProcessed = outputTransformer.processSample(output, channel);
+        output = output * (1.0f - levelFactor * 0.5f) + transformerProcessed * levelFactor * 0.5f;
 
         // 3. Short convolution for transformer cabinet coloration
         output = convolution.processSample(output);
@@ -2433,17 +2467,23 @@ public:
         // Hardware emulation: SSL Bus Compressor quad VCA processing
         float processed = compressed;
 
+        // Level-dependent saturation for realistic analog behavior
+        float levelDb = juce::Decibels::gainToDecibels(std::abs(processed) + 0.0001f, -60.0f);
+        float levelFactor = juce::jmap(juce::jlimit(-30.0f, 0.0f, levelDb), -30.0f, 0.0f, 0.0f, 1.0f);
+
         // 1. Apply SSL Bus waveshaper curve (lookup table based)
-        // Drive amount scales with gain reduction for authentic character
+        // Drive amount scales with level and gain reduction for authentic character
         float grAmount = juce::jlimit(0.0f, 1.0f, reduction / 12.0f);
-        float driveAmount = 0.2f + (grAmount * 0.3f);
+        float driveAmount = (0.03f + levelFactor * 0.12f) + (grAmount * 0.15f);
 
         processed = HardwareEmulation::getWaveshaperCurves().processWithDrive(
             processed, HardwareEmulation::WaveshaperCurves::CurveType::SSL_Bus, driveAmount);
 
         // 2. Output transformer processing
         // SSL console transformers add characteristic punch and glue
-        processed = outputTransformer.processSample(processed, channel);
+        // Level-dependent blending
+        float transformerProcessed = outputTransformer.processSample(processed, channel);
+        processed = processed * (1.0f - levelFactor * 0.5f) + transformerProcessed * levelFactor * 0.5f;
 
         // 3. Short convolution for SSL console coloration
         processed = convolution.processSample(processed);
