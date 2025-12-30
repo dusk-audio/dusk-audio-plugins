@@ -153,10 +153,14 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     graphicDisplay->setDisplayScaleMode(
         static_cast<DisplayScaleMode>(displayScaleSelector->getSelectedItemIndex()));
 
-    // Sync initial analyzer visibility
+    // Sync initial analyzer visibility for both Digital and British mode displays
     auto* analyzerParam = processor.parameters.getRawParameterValue(ParamIDs::analyzerEnabled);
     if (analyzerParam)
-        graphicDisplay->setAnalyzerVisible(analyzerParam->load() > 0.5f);
+    {
+        bool analyzerVisible = analyzerParam->load() > 0.5f;
+        graphicDisplay->setAnalyzerVisible(analyzerVisible);
+        britishCurveDisplay->setAnalyzerVisible(analyzerVisible);
+    }
 
     // Meters with stereo mode enabled
     inputMeter = std::make_unique<LEDMeter>(LEDMeter::Vertical);
@@ -1051,8 +1055,14 @@ void MultiQEditor::parameterChanged(const juce::String& parameterID, float newVa
     {
         const bool visible = newValue > 0.5f;
         juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MultiQEditor>(this), visible]() {
-            if (safeThis != nullptr && safeThis->graphicDisplay != nullptr)
-                safeThis->graphicDisplay->setAnalyzerVisible(visible);
+            if (safeThis != nullptr)
+            {
+                if (safeThis->graphicDisplay != nullptr)
+                    safeThis->graphicDisplay->setAnalyzerVisible(visible);
+                // Also sync British mode curve display analyzer
+                if (safeThis->britishCurveDisplay != nullptr)
+                    safeThis->britishCurveDisplay->setAnalyzerVisible(visible);
+            }
         });
     }
     else if (parameterID == ParamIDs::eqType)

@@ -72,14 +72,16 @@ private:
     // Noise gate
     juce::dsp::NoiseGate<float> noiseGate;
 
-    // Tone stack (3-band EQ)
-    juce::dsp::IIR::Filter<float> bassFilter;
-    juce::dsp::IIR::Filter<float> midFilter;
-    juce::dsp::IIR::Filter<float> trebleFilter;
+    // Tone stack (3-band EQ) - use ProcessorDuplicator for stereo processing
+    using IIRFilter = juce::dsp::IIR::Filter<float>;
+    using IIRCoefs = juce::dsp::IIR::Coefficients<float>;
+    juce::dsp::ProcessorDuplicator<IIRFilter, IIRCoefs> bassFilter;
+    juce::dsp::ProcessorDuplicator<IIRFilter, IIRCoefs> midFilter;
+    juce::dsp::ProcessorDuplicator<IIRFilter, IIRCoefs> trebleFilter;
 
-    // Output filters
-    juce::dsp::IIR::Filter<float> lowCutFilter;
-    juce::dsp::IIR::Filter<float> highCutFilter;
+    // Output filters - use ProcessorDuplicator for stereo processing
+    juce::dsp::ProcessorDuplicator<IIRFilter, IIRCoefs> lowCutFilter;
+    juce::dsp::ProcessorDuplicator<IIRFilter, IIRCoefs> highCutFilter;
 
     // Parameter pointers
     std::atomic<float>* inputGainParam = nullptr;

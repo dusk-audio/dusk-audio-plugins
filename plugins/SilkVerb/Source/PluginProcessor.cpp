@@ -42,6 +42,9 @@ SilkVerbProcessor::SilkVerbProcessor()
     // Output EQ
     highCutParam = apvts.getRawParameterValue("highcut");
     lowCutParam = apvts.getRawParameterValue("lowcut");
+
+    // Freeze
+    freezeParam = apvts.getRawParameterValue("freeze");
 }
 
 SilkVerbProcessor::~SilkVerbProcessor() = default;
@@ -64,7 +67,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SilkVerbProcessor::createPar
         juce::StringArray{ "Modern", "Vintage" },
         0));
 
-    // Size (decay time): 0.5s to 5.0s
+    // Size (decay time): 0.3s to 10s with exponential curve
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID("size", 1),
         "Size",
@@ -73,7 +76,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SilkVerbProcessor::createPar
         juce::AudioParameterFloatAttributes()
             .withLabel("")
             .withStringFromValueFunction([](float value, int) {
-                float seconds = 0.5f + value * 4.5f;
+                // Match DSP: 0.3s + value^1.5 * 9.7s (before mode multiplier)
+                float seconds = 0.3f + std::pow(value, 1.5f) * 9.7f;
                 return juce::String(seconds, 1) + "s";
             })));
 
@@ -223,6 +227,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SilkVerbProcessor::createPar
                 return juce::String(static_cast<int>(value)) + " Hz";
             })));
 
+    // Freeze mode toggle
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("freeze", 1),
+        "Freeze",
+        false));
+
     return { params.begin(), params.end() };
 }
 
@@ -346,6 +356,9 @@ void SilkVerbProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         reverbEngine.setColor(static_cast<SilkVerb::ColorMode>(currentColor));
         lastColor = currentColor;
     }
+
+    // Update freeze state
+    reverbEngine.setFreeze(freezeParam->load() > 0.5f);
 
     // Update smoothed parameters
     smoothedSize.setTargetValue(sizeParam->load());

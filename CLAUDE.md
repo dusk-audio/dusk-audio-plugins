@@ -86,28 +86,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - 2x/4x oversampling for anti-aliased processing
 - **Build Target**: `MultiComp_All`
 
-### 4. **Vintage Tape Echo**
-- **Location**: `plugins/TapeEcho/`
-- **Description**: Classic tape echo/delay emulation inspired by vintage hardware
-- **Features**:
-  - 12 operation modes (various delay/echo patterns)
-  - Repeat rate control (delay time)
-  - Intensity control (feedback amount)
-  - Separate echo and reverb volume controls
-  - Bass and treble tone shaping
-  - Wow & flutter simulation for authentic tape character
-  - Tape age modeling for vintage degradation
-  - Motor torque control affecting playback stability
-  - Stereo mode options
-  - LFO with shape and rate controls
-  - Spring reverb simulation
-  - Preamp saturation
-  - Dual VU meters for level monitoring
-  - Mode selector with visual feedback
-- **Build Target**: `TapeEcho_All`
-- **Product Name**: "Vintage Tape Echo"
-
-### 5. **Harmonic Generator**
+### 4. **Harmonic Generator**
 - **Location**: `plugins/harmonic-generator/`
 - **Description**: Analog-style harmonic saturation processor with hardware emulation
 - **Features**:
@@ -122,7 +101,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - Professional analog-styled UI
 - **Build Target**: `HarmonicGeneratorPlugin_All` (Note: not currently in rebuild_all.sh)
 
-### 6. **DrummerClone**
+### 5. **DrummerClone**
 - **Location**: `plugins/DrummerClone/`
 - **Description**: Logic Pro Drummer-inspired intelligent MIDI drum pattern generator
 - **Features**:
@@ -160,7 +139,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - 2-second analysis buffer for Follow Mode
 - **Build Target**: `DrummerClone_All`
 
-### 7. **SilkVerb**
+### 6. **SilkVerb**
 - **Location**: `plugins/SilkVerb/`
 - **Description**: Lexicon/Valhalla-style algorithmic reverb with Plate, Room, Hall modes
 - **Features**:
@@ -191,7 +170,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - **UI**: Dark-themed interface with mode selector buttons, 2x2 knob grid
 - **Build Target**: `SilkVerb_All`
 
-### 8. **Convolution Reverb**
+### 7. **Convolution Reverb**
 - **Location**: `plugins/convolution-reverb/`
 - **Description**: Zero-latency convolution reverb with SDIR/AIFC impulse response support
 - **Features**:
@@ -202,7 +181,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - **Thread-Safe**: Background IR loading with atomic state management
 - **Build Target**: `ConvolutionReverb_All`
 
-### 9. **Multi-Q**
+### 8. **Multi-Q**
 - **Location**: `plugins/multi-q/`
 - **Description**: Universal EQ with multiple EQ modes (Digital 8-band, British console)
 - **Features**:
@@ -265,11 +244,12 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
 ./docker/build_release.sh tape         # TapeMachine
-./docker/build_release.sh echo         # Vintage Tape Echo
 ./docker/build_release.sh drummer      # DrummerClone
 ./docker/build_release.sh harmonic     # Harmonic Generator
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh silkverb     # SilkVerb (algorithmic reverb)
+./docker/build_release.sh multiq       # Multi-Q
+./docker/build_release.sh nam          # Neural Amp
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -287,7 +267,6 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 ./docker/build_release.sh 4keq && ./tests/run_plugin_tests.sh --plugin "4K EQ" --skip-audio
 ./docker/build_release.sh compressor && ./tests/run_plugin_tests.sh --plugin "Multi-Comp" --skip-audio
 ./docker/build_release.sh tape && ./tests/run_plugin_tests.sh --plugin "TapeMachine" --skip-audio
-./docker/build_release.sh echo && ./tests/run_plugin_tests.sh --plugin "Vintage Tape Echo" --skip-audio
 ./docker/build_release.sh silkverb && ./tests/run_plugin_tests.sh --plugin "SilkVerb" --skip-audio
 ./docker/build_release.sh convolution && ./tests/run_plugin_tests.sh --plugin "Convolution Reverb" --skip-audio
 ./docker/build_release.sh drummer && ./tests/run_plugin_tests.sh --plugin "DrummerClone" --skip-audio
@@ -308,11 +287,12 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 - FourKEQ_All (4K EQ)
 - TapeMachine_All
 - MultiComp_All
-- TapeEcho_All (Vintage Tape Echo)
 - DrummerClone_All
 - HarmonicGeneratorPlugin_All
 - ConvolutionReverb_All
 - SilkVerb_All (Algorithmic Reverb)
+- MultiQ_All (Multi-Q)
+- NeuralAmp_All (Neural Amp)
 
 ### Local Development Builds (Alternative)
 Only use the local rebuild script if Docker/Podman is unavailable or for quick debugging iterations:
@@ -349,24 +329,25 @@ cmake --build . -j8
 cmake --build . --target FourKEQ_All
 cmake --build . --target TapeMachine_All
 cmake --build . --target MultiComp_All
-cmake --build . --target TapeEcho_All
 cmake --build . --target DrummerClone_All
 cmake --build . --target HarmonicGeneratorPlugin_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target SilkVerb_All
+cmake --build . --target MultiQ_All
+cmake --build . --target NeuralAmp_All
 ```
 
 ### CMake Build Options
 Available in the root CMakeLists.txt:
 - `BUILD_4K_EQ` (default: ON)
 - `BUILD_MULTI_COMP` (default: ON)
-- `BUILD_HARMONIC_GENERATOR` (default: ON)
+- `BUILD_HARMONIC_GENERATOR` (default: OFF) - directory missing
 - `BUILD_TAPE_MACHINE` (default: ON)
-- `BUILD_TAPE_ECHO` (default: ON)
 - `BUILD_DRUMMER_CLONE` (default: ON)
 - `BUILD_CONVOLUTION_REVERB` (default: ON)
 - `BUILD_SILKVERB` (default: ON)
 - `BUILD_MULTI_Q` (default: ON)
+- `BUILD_NEURAL_AMP` (default: ON)
 
 ### Installation Paths
 - **VST3**: `~/.vst3/`
@@ -403,8 +384,7 @@ The build script will automatically detect and use these tools when available.
    - Asymmetric feedback saturation for analog warmth
    - Pre-delay with crossfeed to late reverb
 2. **Added Convolution Reverb**: IR-based reverb with SDIR support, waveform display, and zero-latency convolution
-3. **Added Vintage Tape Echo**: Full-featured tape echo with 12 modes, spring reverb, and extensive modulation
-4. **Enhanced TapeMachine**:
+3. **Enhanced TapeMachine**:
    - Added factory preset system with 15 presets across 5 categories (Subtle, Warm, Character, Lo-Fi, Mastering)
    - Added Type 250 professional tape formulation
    - Separate Wow and Flutter controls for independent modulation
@@ -412,14 +392,15 @@ The build script will automatically detect and use these tools when available.
    - Improved reel animation with realistic visual components and tape transfer
    - Enhanced UI with vintage rotary switch for noise enable, text shadows for readability
    - Model names: Swiss800 (Studer A800) and Classic102 (Ampex ATR-102)
-5. **Updated 4K EQ**:
+   - Research-based harmonic profiles: Studer (odd-harmonic dominant, transformerless) vs Ampex (even+odd mix, transformer coloration)
+4. **Updated 4K EQ**:
    - Advanced SSL saturation modeling with E-Series/G-Series console emulation
    - Multi-stage signal path with transformer and op-amp modeling
    - Frequency-dependent saturation characteristics
    - Real-time spectral analysis for dynamic response
-6. **Enhanced Multi-Comp**: Added 4-band multiband compression mode, linked gain reduction metering for stereo tracking with thread-safe atomic operations
-7. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
-8. **Removed Plate Reverb and StudioVerb**: Replaced with Convolution Reverb and SilkVerb for better reverb options
+5. **Enhanced Multi-Comp**: Added 4-band multiband compression mode, linked gain reduction metering for stereo tracking with thread-safe atomic operations
+6. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
+7. **Removed Plate Reverb, StudioVerb, and Vintage Tape Echo**: Replaced with Convolution Reverb and SilkVerb for better reverb options
 
 ### Build System Improvements
 1. **Comprehensive rebuild script**: Color-coded output, progress tracking, error logging
@@ -468,9 +449,9 @@ plugins/
 │   ├── multi-comp/           # Multi-mode compressor with multiband
 │   ├── convolution-reverb/  # IR-based convolution reverb
 │   ├── SilkVerb/            # Algorithmic reverb (Lexicon/Valhalla style)
-│   ├── TapeEcho/            # Vintage tape echo
-│   ├── harmonic-generator/  # Harmonic saturation processor
 │   ├── DrummerClone/        # Intelligent MIDI drum generator
+│   ├── multi-q/             # Multi-Q universal EQ
+│   ├── neural-amp/          # Neural amp modeler (NAM)
 │   └── shared/              # Shared utilities and libraries
 │       ├── AnalogEmulation/ # Shared analog saturation/tube/transformer library
 │       ├── LunaLookAndFeel.h # Base look-and-feel for Luna plugins
@@ -644,9 +625,9 @@ void MyPluginEditor::hideSupportersPanel()
 **Plugins needing SupportersOverlay**:
 - SilkVerb
 - Convolution Reverb
-- Vintage Tape Echo
 - DrummerClone
-- Harmonic Generator
+- Multi-Q
+- Neural Amp
 
 #### PatreonBackers
 **File**: `shared/PatreonBackers.h`

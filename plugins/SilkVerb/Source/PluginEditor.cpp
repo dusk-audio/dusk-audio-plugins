@@ -87,19 +87,35 @@ void SilkVerbLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton
 {
     auto bounds = button.getLocalBounds().toFloat().reduced(2);
     auto isOn = button.getToggleState();
+    bool isFreezeButton = (&button == freezeButtonPtr);
 
     // Button background
     if (isOn)
     {
-        // Selected state - silky blue glow
-        g.setColour(juce::Colour(0xff6a9ad9).withAlpha(0.2f));
-        g.fillRoundedRectangle(bounds.expanded(2), 6.0f);
+        if (isFreezeButton)
+        {
+            // Freeze active: ice blue glow
+            g.setColour(juce::Colour(0xff4fc3f7).withAlpha(0.3f));
+            g.fillRoundedRectangle(bounds.expanded(2), 6.0f);
 
-        juce::ColourGradient gradient(
-            juce::Colour(0xff4a7ab9), bounds.getCentreX(), bounds.getY(),
-            juce::Colour(0xff3a5a89), bounds.getCentreX(), bounds.getBottom(),
-            false);
-        g.setGradientFill(gradient);
+            juce::ColourGradient gradient(
+                juce::Colour(0xff29b6f6), bounds.getCentreX(), bounds.getY(),
+                juce::Colour(0xff0288d1), bounds.getCentreX(), bounds.getBottom(),
+                false);
+            g.setGradientFill(gradient);
+        }
+        else
+        {
+            // Selected state - silky blue glow
+            g.setColour(juce::Colour(0xff6a9ad9).withAlpha(0.2f));
+            g.fillRoundedRectangle(bounds.expanded(2), 6.0f);
+
+            juce::ColourGradient gradient(
+                juce::Colour(0xff4a7ab9), bounds.getCentreX(), bounds.getY(),
+                juce::Colour(0xff3a5a89), bounds.getCentreX(), bounds.getBottom(),
+                false);
+            g.setGradientFill(gradient);
+        }
     }
     else
     {
@@ -112,7 +128,9 @@ void SilkVerbLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton
     g.fillRoundedRectangle(bounds, 5.0f);
 
     // Border
-    g.setColour(isOn ? juce::Colour(0xff6a9ad9) : juce::Colour(0xff4a4a4a));
+    juce::Colour borderColour = isOn ? (isFreezeButton ? juce::Colour(0xff4fc3f7) : juce::Colour(0xff6a9ad9))
+                                     : juce::Colour(0xff4a4a4a);
+    g.setColour(borderColour);
     g.drawRoundedRectangle(bounds, 5.0f, 1.5f);
 
     // Highlight on hover
@@ -126,6 +144,8 @@ void SilkVerbLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton
     g.setColour(isOn ? juce::Colour(0xffffffff) : juce::Colour(0xffa0a0a0));
     g.setFont(juce::Font(juce::FontOptions(13.0f)).withStyle(juce::Font::bold));
     g.drawText(button.getButtonText(), bounds, juce::Justification::centred);
+
+    juce::ignoreUnused(shouldDrawButtonAsDown);
 }
 
 //==============================================================================
@@ -167,6 +187,14 @@ SilkVerbEditor::SilkVerbEditor(SilkVerbProcessor& p)
     vintageButton.setClickingTogglesState(true);
     vintageButton.onClick = [this]() { colorButtonClicked(1); };
     addAndMakeVisible(vintageButton);
+
+    // Freeze button
+    freezeButton.setButtonText("FREEZE");
+    freezeButton.setClickingTogglesState(true);
+    addAndMakeVisible(freezeButton);
+    freezeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getAPVTS(), "freeze", freezeButton);
+    lookAndFeel.setFreezeButton(&freezeButton);
 
     // Main controls (Row 1)
     setupSlider(sizeSlider, sizeLabel, "SIZE");
@@ -416,15 +444,17 @@ void SilkVerbEditor::resized()
     modeRow.removeFromLeft(10);
     hallButton.setBounds(modeRow);
 
-    // Color buttons row
+    // Color buttons row (Modern/Vintage + Freeze)
     bounds.removeFromTop(5);
     auto colorRow = bounds.removeFromTop(35);
     colorRow.reduce(20, 4);
 
-    int colorButtonWidth = (colorRow.getWidth() - 10) / 2;
+    int colorButtonWidth = (colorRow.getWidth() - 20) / 3;  // 3 buttons now
     modernButton.setBounds(colorRow.removeFromLeft(colorButtonWidth));
     colorRow.removeFromLeft(10);
-    vintageButton.setBounds(colorRow);
+    vintageButton.setBounds(colorRow.removeFromLeft(colorButtonWidth));
+    colorRow.removeFromLeft(10);
+    freezeButton.setBounds(colorRow);
 
     // Main controls section (Size, Damping, PreDelay, Mix)
     bounds.removeFromTop(sectionGap);

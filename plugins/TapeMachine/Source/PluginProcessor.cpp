@@ -17,6 +17,7 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
 #endif
        apvts(*this, nullptr, "Parameters", createParameterLayout())
 {
+    // Initialize all parameter pointers - CRITICAL: validate these exist
     tapeMachineParam = apvts.getRawParameterValue("tapeMachine");
     tapeSpeedParam = apvts.getRawParameterValue("tapeSpeed");
     tapeTypeParam = apvts.getRawParameterValue("tapeType");
@@ -29,17 +30,41 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     flutterAmountParam = apvts.getRawParameterValue("flutterAmount");
     outputGainParam = apvts.getRawParameterValue("outputGain");
     autoCompParam = apvts.getRawParameterValue("autoComp");
+    biasParam = apvts.getRawParameterValue("bias");
+    calibrationParam = apvts.getRawParameterValue("calibration");
+    oversamplingParam = apvts.getRawParameterValue("oversampling");
+
+    // Validate all critical parameters exist - fail early if not
+    // This catches configuration errors during development rather than during audio processing
+    jassert(tapeMachineParam != nullptr);
+    jassert(tapeSpeedParam != nullptr);
+    jassert(tapeTypeParam != nullptr);
+    jassert(inputGainParam != nullptr);
+    jassert(highpassFreqParam != nullptr);
+    jassert(lowpassFreqParam != nullptr);
+    jassert(noiseAmountParam != nullptr);
+    jassert(noiseEnabledParam != nullptr);
+    jassert(wowAmountParam != nullptr);
+    jassert(flutterAmountParam != nullptr);
+    jassert(outputGainParam != nullptr);
+    jassert(biasParam != nullptr);
+    jassert(calibrationParam != nullptr);
+    jassert(oversamplingParam != nullptr);
+
+    // Log error if any critical parameter is missing (helps debug in release builds)
+    if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !inputGainParam ||
+        !highpassFreqParam || !lowpassFreqParam || !noiseAmountParam || !noiseEnabledParam ||
+        !wowAmountParam || !flutterAmountParam || !outputGainParam || !biasParam ||
+        !calibrationParam || !oversamplingParam)
+    {
+        DBG("TapeMachine: CRITICAL ERROR - One or more parameters failed to initialize!");
+    }
 
     tapeEmulationLeft = std::make_unique<ImprovedTapeEmulation>();
     tapeEmulationRight = std::make_unique<ImprovedTapeEmulation>();
 
     // Initialize shared wow/flutter for stereo coherence
     sharedWowFlutter = std::make_unique<WowFlutterProcessor>();
-
-    // Initialize bias and calibration parameters
-    biasParam = apvts.getRawParameterValue("bias");
-    calibrationParam = apvts.getRawParameterValue("calibration");
-    oversamplingParam = apvts.getRawParameterValue("oversampling");
 }
 
 TapeMachineAudioProcessor::~TapeMachineAudioProcessor()
@@ -52,7 +77,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "tapeMachine", "Tape Machine",
-        juce::StringArray{"Swiss 800", "Classic 102", "Hybrid Blend"},
+        juce::StringArray{"Swiss 800", "Classic 102"},
         0));
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
@@ -81,7 +106,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "bias", "Bias",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 40.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f,  // 50% = optimal bias calibration
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
@@ -112,8 +137,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
         [](float value, int) { return juce::String(value, 1) + "%"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
 
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        "noiseEnabled", "Noise Enabled", false));
+    // Using AudioParameterChoice instead of AudioParameterBool for better state persistence
+    // AudioParameterBool can have issues with state restoration in some hosts
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "noiseEnabled", "Noise Enabled",
+        juce::StringArray{"Off", "On"}, 0));
 
     // Separate Wow and Flutter controls for more creative flexibility
     // Wow: Slow pitch drift (0.3-0.8 Hz) - creates vinyl-like wobble
@@ -139,8 +167,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
         [](float value, int) { return juce::String(value, 1) + " dB"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
 
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        "autoComp", "Auto Compensation", true));
+    // Using AudioParameterChoice instead of AudioParameterBool for better state persistence
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "autoComp", "Auto Compensation",
+        juce::StringArray{"Off", "On"}, 1));  // Default to On
 
     // Oversampling quality (2x or 4x) - higher reduces aliasing from saturation
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
@@ -328,6 +358,21 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     smoothedWow.reset(sampleRate, rampTimeMs * 0.001f);
     smoothedFlutter.reset(sampleRate, rampTimeMs * 0.001f);
 
+    // IMPORTANT: Set initial values to prevent jumps on first buffer
+    // Calculate initial saturation from input gain parameter
+    if (inputGainParam)
+    {
+        float inputGainDB = inputGainParam->load();
+        float initialSaturation = juce::jlimit(0.0f, 100.0f, ((inputGainDB + 12.0f) / 24.0f) * 100.0f);
+        smoothedSaturation.setCurrentAndTargetValue(initialSaturation);
+    }
+    if (noiseAmountParam)
+        smoothedNoiseAmount.setCurrentAndTargetValue(noiseAmountParam->load() * 0.01f);
+    if (wowAmountParam)
+        smoothedWow.setCurrentAndTargetValue(wowAmountParam->load());
+    if (flutterAmountParam)
+        smoothedFlutter.setCurrentAndTargetValue(flutterAmountParam->load());
+
     // Report latency to host for PDC
     auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
     if (activeOversampler)
@@ -414,14 +459,15 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     juce::ignoreUnused(midiMessages);
     juce::ScopedNoDenormals noDenormals;
 
-    // Critical safety check - if parameters failed to initialize, don't process
+    // Critical safety check - if parameters failed to initialize, output silence
+    // This should never happen if constructor validation passed, but provides safety
     if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !inputGainParam ||
         !highpassFreqParam || !lowpassFreqParam ||
-        !noiseAmountParam || !noiseEnabledParam || !wowAmountParam || !flutterAmountParam || !outputGainParam)
+        !noiseAmountParam || !noiseEnabledParam || !wowAmountParam || !flutterAmountParam ||
+        !outputGainParam || !biasParam || !calibrationParam || !oversamplingParam)
     {
-        // This should never happen in production, but if it does, pass audio through
-        // rather than producing silence
-        jassertfalse; // Alert during debug builds
+        jassertfalse; // Alert during debug builds - this indicates a configuration error
+        buffer.clear();  // Output silence rather than unprocessed audio
         return;
     }
 
@@ -438,7 +484,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     // DAWs often send stereo buffers even for mono tracks (duplicated across channels)
     const auto inputBus = getBusesLayout().getMainInputChannelSet();
     const bool isMono = (inputBus == juce::AudioChannelSet::mono());
-    isMonoInput.store(isMono);  // Track mono state for VU meter display
+    isMonoInput.store(isMono, std::memory_order_relaxed);  // Track mono state for VU meter display
 
     // If buffer has only 1 channel, duplicate it for stereo processing
     if (buffer.getNumChannels() == 1)
@@ -458,7 +504,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         if (playHead->getCurrentPosition(posInfo))
         {
             // Reels spin when transport is playing OR recording
-            isProcessingAudio.store(posInfo.isPlaying || posInfo.isRecording);
+            isProcessingAudio.store(posInfo.isPlaying || posInfo.isRecording, std::memory_order_relaxed);
         }
     }
 
@@ -558,8 +604,9 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     rmsInputL = alpha * rmsInputL + (1.0f - alpha) * rmsBlockL;
     rmsInputR = alpha * rmsInputR + (1.0f - alpha) * rmsBlockR;
 
-    inputLevelL.store(rmsInputL);
-    inputLevelR.store(rmsInputR);
+    // Use relaxed ordering - UI thread reads these for metering, no sync needed
+    inputLevelL.store(rmsInputL, std::memory_order_relaxed);
+    inputLevelR.store(rmsInputR, std::memory_order_relaxed);
 
     // Read oversampling parameter directly to handle real-time changes
     // Both oversamplers are pre-initialized in prepareToPlay, so we can switch instantly
@@ -569,10 +616,21 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     // Select the correct oversampler based on current setting
     auto* activeOversampler = (requestedFactor == 4) ? oversampler4x.get() : oversampler2x.get();
 
-    // If oversampling factor changed, update filter coefficients for the new rate
-    // This is necessary because filter cutoffs depend on the sample rate
+    // Safety check - if no oversampler available, clear output and return
+    if (!activeOversampler)
+    {
+        buffer.clear();
+        return;
+    }
+
+    // If oversampling factor changed, start a crossfade transition
+    // This prevents clicks/pops when switching HQ modes during playback
     if (requestedFactor != currentOversamplingFactor)
     {
+        // Start crossfade transition
+        oversamplingTransitionActive = true;
+        oversamplingTransitionSamples = OVERSAMPLING_CROSSFADE_SAMPLES;
+
         currentOversamplingFactor = requestedFactor;
         const double newOversampledRate = currentSampleRate * static_cast<double>(currentOversamplingFactor);
         currentOversampledRate = static_cast<float>(newOversampledRate);
@@ -580,7 +638,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
         // Re-prepare tape emulation with new oversampled rate
         // This updates filter coefficients (e.g., 18kHz cutoff at new sample rate)
-        // Note: prepare() resets filter states which may cause a brief transient
+        // Note: prepare() resets filter states - the crossfade handles the transition smoothly
         if (tapeEmulationLeft)
             tapeEmulationLeft->prepare(newOversampledRate, oversampledBlockSize);
         if (tapeEmulationRight)
@@ -589,14 +647,30 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             sharedWowFlutter->prepare(newOversampledRate);
 
         // Update latency for host PDC
-        if (activeOversampler)
-            setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
+        setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
 
         // Update processor chain filters with new oversampled rate
         updateFilters();
     }
-    if (!activeOversampler)
-        return;
+
+    // Handle crossfade transition - apply fade-in envelope to prevent clicks
+    // from filter state reset
+    float crossfadeGain = 1.0f;
+    if (oversamplingTransitionActive)
+    {
+        // Calculate crossfade progress (0 to 1)
+        float progress = 1.0f - (static_cast<float>(oversamplingTransitionSamples) / OVERSAMPLING_CROSSFADE_SAMPLES);
+        // Use smooth S-curve for fade: 3t² - 2t³
+        crossfadeGain = progress * progress * (3.0f - 2.0f * progress);
+
+        // Decrement remaining samples
+        oversamplingTransitionSamples -= buffer.getNumSamples();
+        if (oversamplingTransitionSamples <= 0)
+        {
+            oversamplingTransitionActive = false;
+            oversamplingTransitionSamples = 0;
+        }
+    }
 
     juce::dsp::AudioBlock<float> oversampledBlock = activeOversampler->processSamplesUp(block);
 
@@ -709,7 +783,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     // Apply crosstalk simulation (L/R channel bleed from tape head)
     // Real tape machines have subtle channel crosstalk, more pronounced in vintage machines
-    if (leftData && rightData && machine != Blend)  // Skip for blend mode
+    if (leftData && rightData)
     {
         // Get machine-specific crosstalk amount
         float crosstalkAmount = 0.01f;  // Default -40dB
@@ -720,9 +794,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 break;
             case AmpexATR102:
                 crosstalkAmount = 0.015f;  // -36dB (vintage character)
-                break;
-            case Blend:
-                crosstalkAmount = 0.01f;   // -40dB (balanced)
                 break;
         }
 
@@ -750,6 +821,13 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     activeOversampler->processSamplesDown(block);
 
+    // Apply crossfade gain if transitioning between oversampling modes
+    // This smooths out the transient from filter state reset
+    if (crossfadeGain < 1.0f)
+    {
+        buffer.applyGain(crossfadeGain);
+    }
+
     // Calculate RMS output levels after processing (VU-accurate)
     const float* outputLeftChannel = buffer.getReadPointer(0);
     const float* outputRightChannel = buffer.getReadPointer(1);
@@ -775,8 +853,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     rmsOutputL = alphaOut * rmsOutputL + (1.0f - alphaOut) * rmsBlockOutL;
     rmsOutputR = alphaOut * rmsOutputR + (1.0f - alphaOut) * rmsBlockOutR;
 
-    outputLevelL.store(rmsOutputL);
-    outputLevelR.store(rmsOutputR);
+    outputLevelL.store(rmsOutputL, std::memory_order_relaxed);
+    outputLevelR.store(rmsOutputR, std::memory_order_relaxed);
 
 }
 
@@ -803,7 +881,14 @@ void TapeMachineAudioProcessor::setStateInformation (const void* data, int sizeI
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
 
     if (xmlState && xmlState->hasTagName(apvts.state.getType()))
-        apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+    {
+        juce::ValueTree restoredState = juce::ValueTree::fromXml(*xmlState);
+
+        if (restoredState.isValid())
+        {
+            apvts.replaceState(restoredState);
+        }
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

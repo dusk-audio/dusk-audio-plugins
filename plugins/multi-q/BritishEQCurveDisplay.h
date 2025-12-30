@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "MultiQ.h"
+#include "FFTAnalyzer.h"
 
 //==============================================================================
 /**
@@ -11,6 +12,7 @@
  * - Individual band curves in their respective colors
  * - Combined frequency response as white/cream line
  * - Grid lines at standard frequencies
+ * - FFT analyzer overlay (when enabled)
  */
 class BritishEQCurveDisplay : public juce::Component,
                                private juce::Timer
@@ -23,8 +25,14 @@ public:
     void resized() override;
     void timerCallback() override;
 
+    // Show/hide FFT analyzer
+    void setAnalyzerVisible(bool visible);
+
 private:
     MultiQ& audioProcessor;
+
+    // FFT Analyzer component (child component, drawn behind EQ curves)
+    std::unique_ptr<FFTAnalyzer> analyzer;
 
     // Color scheme for bands (matching 4K-EQ)
     static constexpr uint32_t bandLFColor = 0xffc44444;    // Red
@@ -41,6 +49,12 @@ private:
     static constexpr float maxFreq = 20000.0f;
     static constexpr float minDB = -25.0f;
     static constexpr float maxDB = 25.0f;
+
+    // Graph area margins
+    static constexpr float graphLeftMargin = 30.0f;    // Space for dB labels
+    static constexpr float graphBottomMargin = 18.0f;  // Space for frequency labels
+    static constexpr float graphTopMargin = 6.0f;
+    static constexpr float graphRightMargin = 6.0f;
 
     // Cached parameter values for change detection
     struct CachedParams {

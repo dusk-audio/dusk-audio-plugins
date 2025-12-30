@@ -43,23 +43,23 @@ public:
 
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
-    // Level metering
-    float getInputLevelL() const { return inputLevelL.load(); }
-    float getInputLevelR() const { return inputLevelR.load(); }
-    float getOutputLevelL() const { return outputLevelL.load(); }
-    float getOutputLevelR() const { return outputLevelR.load(); }
+    // Level metering - use relaxed ordering for UI reads (no synchronization needed)
+    // Audio thread writes, UI thread reads - eventual consistency is fine for metering
+    float getInputLevelL() const { return inputLevelL.load(std::memory_order_relaxed); }
+    float getInputLevelR() const { return inputLevelR.load(std::memory_order_relaxed); }
+    float getOutputLevelL() const { return outputLevelL.load(std::memory_order_relaxed); }
+    float getOutputLevelR() const { return outputLevelR.load(std::memory_order_relaxed); }
 
     // Transport state for reel animation
-    bool isProcessing() const { return isProcessingAudio.load(); }
+    bool isProcessing() const { return isProcessingAudio.load(std::memory_order_relaxed); }
 
     // Mono/stereo state for VU meter display
-    bool isMonoTrack() const { return isMonoInput.load(); }
+    bool isMonoTrack() const { return isMonoInput.load(std::memory_order_relaxed); }
 
     enum TapeMachine
     {
         StuderA800 = 0,
-        AmpexATR102,
-        Blend
+        AmpexATR102
     };
 
     enum TapeSpeed
@@ -101,6 +101,11 @@ private:
     double lastPreparedSampleRate = 0.0;
     int lastPreparedBlockSize = 0;
     int lastOversamplingChoice = -1;
+
+    // Crossfade state for smooth oversampling transitions
+    bool oversamplingTransitionActive = false;
+    int oversamplingTransitionSamples = 0;
+    static constexpr int OVERSAMPLING_CROSSFADE_SAMPLES = 512;  // ~10ms at 48kHz
 
     juce::dsp::ProcessorChain<
         juce::dsp::Gain<float>,

@@ -84,6 +84,9 @@ private:
     std::atomic<float>* highCutParam = nullptr;
     std::atomic<float>* lowCutParam = nullptr;
 
+    // Parameter pointers - Freeze
+    std::atomic<float>* freezeParam = nullptr;
+
     // Smoothed parameters
     juce::SmoothedValue<float> smoothedSize;
     juce::SmoothedValue<float> smoothedDamping;

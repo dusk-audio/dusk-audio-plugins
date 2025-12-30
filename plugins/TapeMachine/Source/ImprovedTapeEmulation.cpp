@@ -309,52 +309,81 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
     reset();
 
     // Initialize all filters with default coefficients for 15 IPS NAB
+    // All frequencies are validated to be below Nyquist/2 for stable coefficients
     auto nyquist = sampleRate * 0.5;
+    auto safeMaxFreq = nyquist * 0.9;  // Keep frequencies well below Nyquist
+
+    // Helper lambda to safely create filter coefficients with frequency validation
+    auto safeFreq = [safeMaxFreq](float freq) {
+        return std::min(freq, static_cast<float>(safeMaxFreq));
+    };
 
     // Default NAB Pre-emphasis for 15 IPS (recording EQ - boosts highs)
     // 50μs time constant = 3183 Hz corner frequency
-    preEmphasisFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        sampleRate, 3183.0f, 0.707f, juce::Decibels::decibelsToGain(6.0f)); // +6dB HF boost at 10kHz
+    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+        sampleRate, safeFreq(3183.0f), 0.707f, juce::Decibels::decibelsToGain(6.0f));
+    if (validateCoefficients(coeffs))
+        preEmphasisFilter1.coefficients = coeffs;
 
-    preEmphasisFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-        sampleRate, 10000.0f, 2.0f, juce::Decibels::decibelsToGain(1.5f)); // Gentle HF lift
+    coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+        sampleRate, safeFreq(10000.0f), 2.0f, juce::Decibels::decibelsToGain(1.5f));
+    if (validateCoefficients(coeffs))
+        preEmphasisFilter2.coefficients = coeffs;
 
     // Default NAB De-emphasis for 15 IPS (playback EQ - restores flat response)
     // 3180μs time constant = 50 Hz corner frequency for LF boost
     // 50μs time constant = 3183 Hz corner frequency for HF cut
-    deEmphasisFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
-        sampleRate, 50.0f, 0.707f, juce::Decibels::decibelsToGain(3.0f)); // +3dB LF restoration
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
+        sampleRate, 50.0f, 0.707f, juce::Decibels::decibelsToGain(3.0f));
+    if (validateCoefficients(coeffs))
+        deEmphasisFilter1.coefficients = coeffs;
 
-    deEmphasisFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        sampleRate, 3183.0f, 0.707f, juce::Decibels::decibelsToGain(-6.0f)); // -6dB HF restoration
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+        sampleRate, safeFreq(3183.0f), 0.707f, juce::Decibels::decibelsToGain(-6.0f));
+    if (validateCoefficients(coeffs))
+        deEmphasisFilter2.coefficients = coeffs;
 
     // Head bump (characteristic low-frequency resonance)
-    headBumpFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-        sampleRate, 60.0f, 1.5f, juce::Decibels::decibelsToGain(3.0f)); // +3dB bump at 60Hz
+    coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+        sampleRate, 60.0f, 1.5f, juce::Decibels::decibelsToGain(3.0f));
+    if (validateCoefficients(coeffs))
+        headBumpFilter.coefficients = coeffs;
 
     // HF loss filters (tape self-erasure and spacing loss)
-    hfLossFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, 16000.0f, 0.707f);
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, safeFreq(16000.0f), 0.707f);
+    if (validateCoefficients(coeffs))
+        hfLossFilter1.coefficients = coeffs;
 
-    hfLossFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        sampleRate, 10000.0f, 0.5f, juce::Decibels::decibelsToGain(-2.0f));
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+        sampleRate, safeFreq(10000.0f), 0.5f, juce::Decibels::decibelsToGain(-2.0f));
+    if (validateCoefficients(coeffs))
+        hfLossFilter2.coefficients = coeffs;
 
     // Gap loss (playback head gap effect)
-    gapLossFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        sampleRate, 12000.0f, 0.707f, juce::Decibels::decibelsToGain(-1.5f));
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+        sampleRate, safeFreq(12000.0f), 0.707f, juce::Decibels::decibelsToGain(-1.5f));
+    if (validateCoefficients(coeffs))
+        gapLossFilter.coefficients = coeffs;
 
     // Bias filter (HF boost from bias current)
-    biasFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-        sampleRate, 8000.0f, 0.707f, juce::Decibels::decibelsToGain(2.0f));
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+        sampleRate, safeFreq(8000.0f), 0.707f, juce::Decibels::decibelsToGain(2.0f));
+    if (validateCoefficients(coeffs))
+        biasFilter.coefficients = coeffs;
 
     // Noise generator pinking filter
-    noiseGen.pinkingFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, 3000.0f, 0.7f);
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
+        sampleRate, safeFreq(3000.0f), 0.7f);
+    if (validateCoefficients(coeffs))
+        noiseGen.pinkingFilter.coefficients = coeffs;
 
     // Subsonic filter - authentic to real tape machines (Studer/Ampex have 20-30Hz filters)
     // Removes mechanical rumble and subsonic artifacts while preserving head bump (35Hz+)
-    dcBlocker.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(
-        sampleRate, 25.0f, 0.707f);  // Professional mastering standard
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(
+        sampleRate, 25.0f, 0.707f);
+    if (validateCoefficients(coeffs))
+        dcBlocker.coefficients = coeffs;
 
     // Record head gap filter - 16th-order Butterworth at 20kHz
     // Models the natural HF loss at the record head due to head gap geometry
@@ -367,24 +396,31 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock)
     // 16th-order Butterworth Q values (8 biquad sections):
     recordHeadCutoff = 20000.0f;
     // Ensure cutoff is well below Nyquist
-    recordHeadCutoff = std::min(recordHeadCutoff, static_cast<float>(sampleRate * 0.48));
+    recordHeadCutoff = std::min(recordHeadCutoff, static_cast<float>(safeMaxFreq));
 
-    recordHeadFilter1.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 5.1011f);
-    recordHeadFilter2.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 1.7224f);
-    recordHeadFilter3.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 1.0607f);
-    recordHeadFilter4.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 0.7882f);
-    recordHeadFilter5.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 0.6468f);
-    recordHeadFilter6.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 0.5669f);
-    recordHeadFilter7.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 0.5225f);
-    recordHeadFilter8.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-        sampleRate, recordHeadCutoff, 0.5024f);
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 5.1011f);
+    if (validateCoefficients(coeffs)) recordHeadFilter1.coefficients = coeffs;
+
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 1.7224f);
+    if (validateCoefficients(coeffs)) recordHeadFilter2.coefficients = coeffs;
+
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 1.0607f);
+    if (validateCoefficients(coeffs)) recordHeadFilter3.coefficients = coeffs;
+
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 0.7882f);
+    if (validateCoefficients(coeffs)) recordHeadFilter4.coefficients = coeffs;
+
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 0.6468f);
+    if (validateCoefficients(coeffs)) recordHeadFilter5.coefficients = coeffs;
+
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 0.5669f);
+    if (validateCoefficients(coeffs)) recordHeadFilter6.coefficients = coeffs;
+
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 0.5225f);
+    if (validateCoefficients(coeffs)) recordHeadFilter7.coefficients = coeffs;
+
+    coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, recordHeadCutoff, 0.5024f);
+    if (validateCoefficients(coeffs)) recordHeadFilter8.coefficients = coeffs;
 
     // NOTE: Anti-aliasing filter (Chebyshev) is already initialized at the start of prepare()
     // with cutoff at 0.45 * base sample rate for proper harmonic rejection
@@ -462,15 +498,21 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.hfRolloffSlope = -12.0f;   // Gentle rolloff
 
             chars.saturationKnee = 0.92f;    // Very hard knee - Studer is CLEAN until driven hard
-            // Studer harmonics - matched to real specs
-            // Real Studer: THD ~0.3% at 0VU means harmonics are barely audible
-            // These values represent the MAXIMUM at +6VU (3% THD point)
-            // At normal levels, level-dependent scaling reduces these dramatically
-            chars.saturationHarmonics[0] = 0.020f;  // 2nd harmonic at max drive
-            chars.saturationHarmonics[1] = 0.003f;  // 3rd harmonic
-            chars.saturationHarmonics[2] = 0.001f;  // 4th harmonic
-            chars.saturationHarmonics[3] = 0.0003f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.0001f; // 6th harmonic
+            // Studer A800 MkIII harmonics - TRANSFORMERLESS design
+            // Research: Tape saturation is primarily 3rd harmonic (odd)
+            // Transformers add 2nd harmonic - but MkIII has NO transformers
+            // Real Studer: THD ~0.3% at 0VU, 3% at +6VU (max operating level)
+            //
+            // COEFFICIENT RATIOS for polynomial saturation y = x + h2*x² + h3*x³:
+            // H2 amplitude ∝ h2 * A²/2, H3 amplitude ∝ h3 * A³/4
+            // To ensure H3 > H2 at all input levels (A=0.3 to 0.7):
+            //   h3/h2 > 2/A, so h3/h2 > 6.7 at A=0.3
+            // Using ratio of 10:1 to ensure H3 dominance even at low levels
+            chars.saturationHarmonics[0] = 0.003f;  // 2nd harmonic - minimal (no transformers)
+            chars.saturationHarmonics[1] = 0.030f;  // 3rd harmonic - DOMINANT (tape saturation)
+            chars.saturationHarmonics[2] = 0.001f;  // 4th harmonic - minimal
+            chars.saturationHarmonics[3] = 0.005f;  // 5th harmonic - odd harmonic present
+            chars.saturationHarmonics[4] = 0.0005f; // 6th harmonic - minimal
 
             chars.compressionRatio = 0.03f;  // Very light compression until driven
             chars.compressionAttack = 0.08f; // Fast attack (Studer is responsive)
@@ -494,14 +536,20 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             chars.hfRolloffSlope = -18.0f;   // Steeper rolloff (warmer)
 
             chars.saturationKnee = 0.85f;    // Softer knee than Studer (more gradual)
-            // Ampex harmonics - matched to real specs
-            // Real Ampex: THD ~0.5% at 0VU, up to ~3% when driven hard
-            // These values represent the MAXIMUM at +6VU
-            chars.saturationHarmonics[0] = 0.025f;  // 2nd harmonic at max drive
-            chars.saturationHarmonics[1] = 0.005f;  // 3rd harmonic
-            chars.saturationHarmonics[2] = 0.002f;  // 4th harmonic
-            chars.saturationHarmonics[3] = 0.0005f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.0002f; // 6th harmonic
+            // Ampex ATR-102 harmonics - HAS INPUT/OUTPUT TRANSFORMERS
+            // Research: Tape = 3rd harmonic dominant, Transformers = 2nd harmonic
+            // Ampex has both tape AND transformer coloration = mix of even+odd
+            // Real Ampex: THD ~0.5% at 0VU, ~3% at +6VU (max operating level)
+            //
+            // COEFFICIENT RATIOS for polynomial saturation y = x + h2*x² + h3*x³:
+            // Ampex has more H2 due to transformers, but H3 should still be slightly dominant
+            // Using ratio of ~5:1 (H3:H2) - less than Studer's 10:1, showing transformer contribution
+            // At typical levels (A=0.5), H3 will be ~0-3dB above H2 (warmer than Studer)
+            chars.saturationHarmonics[0] = 0.008f;  // 2nd harmonic - significant (transformers!)
+            chars.saturationHarmonics[1] = 0.032f;  // 3rd harmonic - dominant (tape saturation)
+            chars.saturationHarmonics[2] = 0.003f;  // 4th harmonic - even, from transformers
+            chars.saturationHarmonics[3] = 0.004f;  // 5th harmonic - odd, from tape
+            chars.saturationHarmonics[4] = 0.002f;  // 6th harmonic - even, from transformers
 
             chars.compressionRatio = 0.05f;  // Slightly more compression than Studer
             chars.compressionAttack = 0.15f; // Slightly slower attack
@@ -509,32 +557,6 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
 
             chars.phaseShift = 0.04f;        // More phase shift (analog character)
             chars.crosstalkAmount = -55.0f;  // Vintage crosstalk (adds width)
-            break;
-
-        case Blend:
-        default:
-            // Hybrid: Best of both worlds
-            chars.headBumpFreq = 55.0f;
-            chars.headBumpGain = 3.75f;
-            chars.headBumpQ = 1.2f;
-
-            chars.hfRolloffFreq = 20000.0f;
-            chars.hfRolloffSlope = -15.0f;
-
-            chars.saturationKnee = 0.88f;
-            // Balanced harmonic profile between Studer and Ampex
-            chars.saturationHarmonics[0] = 0.022f;  // 2nd harmonic at max drive
-            chars.saturationHarmonics[1] = 0.004f;  // 3rd harmonic
-            chars.saturationHarmonics[2] = 0.0015f; // 4th harmonic
-            chars.saturationHarmonics[3] = 0.0004f; // 5th harmonic
-            chars.saturationHarmonics[4] = 0.00015f; // 6th harmonic
-
-            chars.compressionRatio = 0.04f;
-            chars.compressionAttack = 0.12f;
-            chars.compressionRelease = 60.0f;
-
-            chars.phaseShift = 0.025f;
-            chars.crosstalkAmount = -62.0f;
             break;
     }
 
@@ -934,18 +956,34 @@ float ImprovedTapeEmulation::processSample(float input,
     // to prevent HF harmonics from aliasing back into the audible band.
     // ========================================================================
 
-    // Base harmonic coefficients (calibrated for proper THD levels)
-    const float h2BaseScale = 0.12f;  // H2 coefficient
-    const float h3BaseScale = 2.2f;   // H3 coefficient
+    // Machine-specific harmonic coefficients from getMachineCharacteristics()
+    // Studer A800 MkIII: TRANSFORMERLESS - primarily 3rd harmonic from tape saturation
+    // Ampex ATR-102: HAS TRANSFORMERS - mix of 2nd (transformers) and 3rd (tape)
+    //
+    // These coefficients represent the harmonic signature at full saturation (+6VU)
+    // The ratio between H2 and H3 is critical for authentic machine character:
+    // - Studer: H3 >> H2 (tape saturation dominant, no transformer coloration)
+    // - Ampex: H3 > H2 but closer ratio (tape + transformer harmonics)
+    float h2MachineCoeff = machineChars.saturationHarmonics[0];  // 2nd harmonic (even)
+    float h3MachineCoeff = machineChars.saturationHarmonics[1];  // 3rd harmonic (odd)
 
-    // Bias controls H2/H3 balance
-    // biasAmount 0-1: 0 = under-biased (gritty), 1 = over-biased (warm)
-    float h2Mix = 0.5f + biasAmount;        // 0.5 to 1.5
-    float h3Mix = 1.5f - biasAmount;        // 1.5 to 0.5
+    // Base scale factor to achieve proper THD levels (~3% at +6VU)
+    // Polynomial: y = x + h2*x² + h3*x³
+    // For sin input: H2 comes from x² (amplitude = h2 * A²/2)
+    //                H3 comes from x³ (amplitude = h3 * A³/4)
+    // At A=0.7 (hot signal), we want ~3% THD total
+    const float baseScale = 15.0f;  // Amplifies machine coefficients to audible THD
 
-    // Scale by saturation depth control (user parameter)
-    float h2Scale = h2BaseScale * h2Mix * saturationDepth;
-    float h3Scale = h3BaseScale * h3Mix * saturationDepth;
+    // Bias controls H2/H3 balance (like real tape bias adjustment)
+    // biasAmount 0-1: 0 = under-biased (more odd harmonics/gritty)
+    //                 1 = over-biased (more even harmonics/warm)
+    //                 0.5 = optimal bias (authentic machine character)
+    float h2Mix = 0.7f + biasAmount * 0.6f;   // 0.7 to 1.3 (bias adds warmth/H2)
+    float h3Mix = 1.3f - biasAmount * 0.6f;   // 1.3 to 0.7 (bias reduces edge/H3)
+
+    // Final harmonic coefficients
+    float h2Scale = h2MachineCoeff * baseScale * h2Mix * saturationDepth;
+    float h3Scale = h3MachineCoeff * baseScale * h3Mix * saturationDepth;
 
     // ANTI-ALIASING: Split signal into low/high frequency bands
     // Only the low-frequency content gets saturated

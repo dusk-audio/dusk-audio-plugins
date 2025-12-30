@@ -397,7 +397,6 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     setupComboBox(tapeMachineSelector, tapeMachineLabel, "MACHINE");
     tapeMachineSelector.addItem("Swiss 800", 1);
     tapeMachineSelector.addItem("Classic 102", 2);
-    tapeMachineSelector.addItem("Hybrid Blend", 3);
     tapeMachineAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "tapeMachine", tapeMachineSelector);
 

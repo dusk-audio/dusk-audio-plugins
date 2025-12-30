@@ -332,23 +332,23 @@ void NeuralAmpAudioProcessor::updateFilters()
     float highCut = highCutParam->load();
 
     // Bass shelf at 100Hz
-    *bassFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowShelf(
+    *bassFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowShelf(
         currentSampleRate, 100.0f, 0.707f, juce::Decibels::decibelsToGain(bassDb));
 
     // Mid peak at 800Hz
-    *midFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+    *midFilter.state = *juce::dsp::IIR::Coefficients<float>::makePeakFilter(
         currentSampleRate, 800.0f, 1.0f, juce::Decibels::decibelsToGain(midDb));
 
     // Treble shelf at 3000Hz
-    *trebleFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+    *trebleFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(
         currentSampleRate, 3000.0f, 0.707f, juce::Decibels::decibelsToGain(trebleDb));
 
     // Low cut (high pass)
-    *lowCutFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(
+    *lowCutFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass(
         currentSampleRate, lowCut, 0.707f);
 
     // High cut (low pass)
-    *highCutFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowPass(
+    *highCutFilter.state = *juce::dsp::IIR::Coefficients<float>::makeLowPass(
         currentSampleRate, highCut, 0.707f);
 }
 

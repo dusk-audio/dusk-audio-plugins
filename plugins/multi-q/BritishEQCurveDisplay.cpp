@@ -5,6 +5,13 @@ BritishEQCurveDisplay::BritishEQCurveDisplay(MultiQ& processor)
     : audioProcessor(processor)
 {
     setOpaque(true);
+
+    // Create FFT analyzer component (displayed behind EQ curves)
+    analyzer = std::make_unique<FFTAnalyzer>();
+    addAndMakeVisible(analyzer.get());
+    analyzer->setFillColor(juce::Colour(0x30888888));
+    analyzer->setLineColor(juce::Colour(0x80AAAAAA));
+
     startTimerHz(30);  // Update at 30fps
 
     // Force initial parameter read
@@ -25,16 +32,11 @@ void BritishEQCurveDisplay::paint(juce::Graphics& g)
         return;
 
     // Define drawing area with margins for labels
-    const float leftMargin = 30.0f;   // Space for dB labels
-    const float bottomMargin = 18.0f; // Space for frequency labels
-    const float topMargin = 6.0f;
-    const float rightMargin = 6.0f;
-
     auto graphArea = bounds;
-    graphArea.removeFromLeft(leftMargin);
-    graphArea.removeFromBottom(bottomMargin);
-    graphArea.removeFromTop(topMargin);
-    graphArea.removeFromRight(rightMargin);
+    graphArea.removeFromLeft(graphLeftMargin);
+    graphArea.removeFromBottom(graphBottomMargin);
+    graphArea.removeFromTop(graphTopMargin);
+    graphArea.removeFromRight(graphRightMargin);
 
     // Background - slightly different from main background for visibility
     g.setColour(juce::Colour(0xff151518));
@@ -109,12 +111,34 @@ void BritishEQCurveDisplay::paint(juce::Graphics& g)
 
 void BritishEQCurveDisplay::resized()
 {
+    // Position analyzer within graph area (using class-level margin constants)
+    auto graphArea = getLocalBounds().toFloat();
+    graphArea.removeFromLeft(graphLeftMargin);
+    graphArea.removeFromBottom(graphBottomMargin);
+    graphArea.removeFromTop(graphTopMargin);
+    graphArea.removeFromRight(graphRightMargin);
+
+    if (analyzer)
+    {
+        analyzer->setBounds(graphArea.toNearestInt());
+        analyzer->setFrequencyRange(minFreq, maxFreq);
+        // Use a fixed spectrum analyzer range (-80 to 0 dB) independent of EQ display scale
+        analyzer->setDisplayRange(-80.0f, 0.0f);
+    }
+
     needsRepaint = true;
     repaint();  // Force immediate repaint when bounds change
 }
 
 void BritishEQCurveDisplay::timerCallback()
 {
+    // Update analyzer data from processor
+    if (analyzer && audioProcessor.isAnalyzerDataReady())
+    {
+        analyzer->updateMagnitudes(audioProcessor.getAnalyzerMagnitudes());
+        audioProcessor.clearAnalyzerDataReady();
+    }
+
     // Check if parameters have changed - use British mode parameter IDs
     auto& params = audioProcessor.parameters;
 
@@ -510,4 +534,13 @@ float BritishEQCurveDisplay::calculateCombinedResponse(float freq) const
     response += calculateHFResponse(freq);
 
     return response;
+}
+
+void BritishEQCurveDisplay::setAnalyzerVisible(bool visible)
+{
+    if (analyzer)
+    {
+        analyzer->setVisible(visible);
+        analyzer->setEnabled(visible);
+    }
 }

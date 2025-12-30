@@ -99,5 +99,9 @@ private:
     void loadIR();
     void drawMeter(juce::Graphics& g, juce::Rectangle<int> bounds, float level);
 
+    // File choosers must be member variables to stay alive during async callbacks
+    std::unique_ptr<juce::FileChooser> modelChooser;
+    std::unique_ptr<juce::FileChooser> irChooser;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NeuralAmpAudioProcessorEditor)
 };
