@@ -19,11 +19,11 @@ set(NAM_CORE_SOURCES
     ${NAM_CORE_DIR}/NAM/activations.cpp
     ${NAM_CORE_DIR}/NAM/convnet.cpp
     ${NAM_CORE_DIR}/NAM/dsp.cpp
-    ${NAM_CORE_DIR}/NAM/factory_init.cpp
     ${NAM_CORE_DIR}/NAM/get_dsp.cpp
     ${NAM_CORE_DIR}/NAM/lstm.cpp
     ${NAM_CORE_DIR}/NAM/util.cpp
     ${NAM_CORE_DIR}/NAM/wavenet.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/factory_init.cpp
 )
 
 # Create NAM static library
@@ -85,6 +85,7 @@ target_sources(${PLUGIN_NAME}
         Source/CabinetProcessor.h
         Source/NoiseGate.h
         Source/ToneStack.h
+        ../shared/LEDMeter.cpp
 )
 
 target_include_directories(${PLUGIN_NAME}

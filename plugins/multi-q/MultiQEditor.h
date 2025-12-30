@@ -8,7 +8,7 @@
 #include "PultecCurveDisplay.h"
 #include "PultecLookAndFeel.h"
 #include "VintageTubeEQLookAndFeel.h"
-#include "../../shared/SupportersOverlay.h"
+#include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
 #include "FourKLookAndFeel.h"

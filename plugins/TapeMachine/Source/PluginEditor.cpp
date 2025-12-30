@@ -495,6 +495,14 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     rightReel.setSpeed(1.5f);
 
     addAndMakeVisible(mainVUMeter);
+
+    // Initialize gain tracking values from current parameter state
+    // This ensures bidirectional linking works correctly from startup
+    if (auto* inputParam = audioProcessor.getAPVTS().getRawParameterValue("inputGain"))
+        lastInputGainValue = inputParam->load();
+    if (auto* outputParam = audioProcessor.getAPVTS().getRawParameterValue("outputGain"))
+        lastOutputGainValue = outputParam->load();
+
     startTimerHz(30);
 
     setSize(800, 530);

@@ -57,7 +57,8 @@ target_sources(MultiComp
         AnalogLookAndFeel.cpp
         EnhancedCompressorEditor.cpp
         ../shared/LEDMeter.cpp
-        ../../shared/PatreonBackers.h
+        ../shared/PatreonBackers.h
+        ../shared/SupportersOverlay.h
 )
 
 # Set include directories
@@ -65,7 +66,6 @@ target_include_directories(MultiComp
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../shared
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared
 )
 
 # Compiler definitions
