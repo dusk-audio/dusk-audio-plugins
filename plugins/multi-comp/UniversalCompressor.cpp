@@ -1531,16 +1531,30 @@ public:
             detector.holdCounter *= 0.999f;
         }
         
-        // LA-2A Output Stage
-        // Real LA-2A specs: <0.5% THD (0.25% typical) at +10 dBm
-        // The T4 photocell provides gain reduction with "no increase in harmonic distortion"
-        // The LA-2A is known for being EXTREMELY clean and transparent
+        // LA-2A Output Stage - Realistic tube saturation
+        // Spec from compressor_specs.json: < 1.0% THD (Opto mode)
+        // Real LA-2A adds subtle 2nd harmonic warmth from tube stages
         //
-        // NO saturation processing - the LA-2A character comes from its compression behavior,
-        // not from harmonic distortion. The tube stages are operated cleanly.
+        // Harmonic math: For input x = A*sin(wt)
+        // - k2*x^2 produces 2nd harmonic at (k2*A^2/2) amplitude
+        // - k3*x^3 produces 3rd harmonic at (3*k3*A^3/4) amplitude
+        // THD = sqrt(h2^2 + h3^2 + ...) / fundamental * 100%
+        //
+        // Target: ~0.5% THD at 0dBFS, ~0.3% at -6dB, scaling with level
 
         float makeupGain = juce::Decibels::decibelsToGain(gain);
         float output = compressed * makeupGain;
+
+        // Tube saturation - 2nd harmonic dominant (LA-2A character)
+        // k2 = 0.01 gives ~0.5% 2nd harmonic at unity gain
+        // k3 = 0.002 gives ~0.15% 3rd harmonic at unity gain
+        constexpr float k2 = 0.01f;   // 2nd harmonic coefficient
+        constexpr float k3 = 0.002f;  // 3rd harmonic coefficient
+
+        // Apply waveshaping: y = x + k2*x^2 + k3*x^3
+        float x2 = output * output;
+        float x3 = x2 * output;
+        output = output + k2 * x2 + k3 * x3;
 
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
     }
@@ -1834,18 +1848,39 @@ public:
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
         
-        // 1176 FET Output Stage
-        // Real 1176 specs: <0.5% THD from 50Hz to 15kHz at +18dBm
-        // Rev F and G are the cleanest revisions
-        // The 1176 character comes from its fast attack/release and FET compression,
-        // not from heavy harmonic distortion.
+        // 1176 FET Output Stage - Realistic FET saturation
+        // Spec from compressor_specs.json: 0.30% THD at -18dB, 0.45% at -6dB
+        // FET transistors produce odd harmonics (3rd dominant, some 5th)
+        // All-buttons mode has more aggressive saturation character
         //
-        // NO saturation processing - clean output stage matching real specs.
+        // Harmonic math: For input x = A*sin(wt)
+        // - k3*x^3 produces 3rd harmonic at amplitude (3*k3*A^3)/4
+        // - THD from 3rd ≈ (3*k3*A^2)/4
+        // At A=0.126 (-18dB): 0.30% = 0.003 = (3*k3*0.0159)/4 → k3 ≈ 0.25
+        // But that's at -18dB input. Post-compression output varies.
+        // Use k3=0.04 for ~0.3% THD at typical output levels
+
         float output = compressed;
 
+        // All-buttons mode gets 2x the saturation
+        float satMultiplier = (ratioIndex == 4) ? 2.0f : 1.0f;
+
+        // FET saturation - odd harmonics dominant (symmetric)
+        // k3 = 0.04 gives ~0.3% THD at moderate levels
+        // k5 = 0.008 adds subtle 5th harmonic character
+        constexpr float k3_base = 0.04f;   // 3rd harmonic coefficient
+        constexpr float k5_base = 0.008f;  // 5th harmonic coefficient
+
+        float k3 = k3_base * satMultiplier;
+        float k5 = k5_base * satMultiplier;
+
+        // Apply waveshaping: y = x + k3*x^3 + k5*x^5
+        float x2 = output * output;
+        float x3 = x2 * output;
+        float x5 = x3 * x2;
+        output = output + k3 * x3 + k5 * x5;
+
         // FET Output knob - makeup gain control
-        // Output parameter is in dB (-20 to +20dB) - more reasonable range
-        // This is pure makeup gain after compression
         float outputGainLin = juce::Decibels::decibelsToGain(outputGainDb);
 
         // Apply makeup gain
@@ -2391,13 +2426,28 @@ public:
         // Apply the gain reduction envelope to the input signal
         float compressed = transformedInput * detector.envelope;
 
-        // SSL Bus Compressor Output Stage
-        // The SSL G-Series Bus Compressor is a clean VCA design.
-        // The "glue" character comes from the compression behavior (attack, release, ratio),
-        // not from heavy harmonic distortion.
+        // SSL Bus Compressor Output Stage - Subtle console saturation
+        // Spec from compressor_specs.json: < 0.3% THD
+        // The SSL G-Series is a clean VCA design, but the console path adds character.
+        // Marinair transformers add subtle 2nd harmonic warmth.
         //
-        // NO saturation processing - clean output matching real SSL specs.
+        // Harmonic math: For input x = A*sin(wt)
+        // - k2*x^2 produces 2nd harmonic at (k2*A^2/2) amplitude
+        // - k3*x^3 produces 3rd harmonic at (3*k3*A^3)/4 amplitude
+        // Target: ~0.15-0.2% THD at typical levels
+
         float processed = compressed;
+
+        // SSL console saturation - 2nd harmonic dominant from transformers
+        // k2 = 0.004 gives ~0.2% 2nd harmonic at moderate levels
+        // k3 = 0.003 gives subtle 3rd harmonic for "glue"
+        constexpr float k2 = 0.004f;   // 2nd harmonic coefficient (asymmetric warmth)
+        constexpr float k3 = 0.003f;   // 3rd harmonic coefficient (symmetric glue)
+
+        // Apply waveshaping: y = x + k2*x^2 + k3*x^3
+        float x2 = processed * processed;
+        float x3 = x2 * processed;
+        processed = processed + k2 * x2 + k3 * x3;
 
         // Apply makeup gain
         float compressed_output = processed * juce::Decibels::decibelsToGain(makeupGain);
@@ -2857,18 +2907,32 @@ public:
         numChannels = numCh;
         this->maxBlockSize = maxBlockSize;
 
-        // Prepare crossover filters (3 crossovers for 4 bands)
-        // Using Linkwitz-Riley 4th order (24dB/oct) for flat summing
-        for (int i = 0; i < 3; ++i)
-        {
-            lowpassFilters[i].resize(static_cast<size_t>(numCh));
-            highpassFilters[i].resize(static_cast<size_t>(numCh));
-        }
+        // Prepare crossover filters - LR4 requires separate filter instances per signal path
+        // Each crossover has two cascaded stages (a and b) for 4th order response
+        auto sz = static_cast<size_t>(numCh);
+
+        // Crossover 1 filters
+        lp1_a.resize(sz);
+        lp1_b.resize(sz);
+        hp1_a.resize(sz);
+        hp1_b.resize(sz);
+
+        // Crossover 2 filters
+        lp2_a.resize(sz);
+        lp2_b.resize(sz);
+        hp2_a.resize(sz);
+        hp2_b.resize(sz);
+
+        // Crossover 3 filters
+        lp3_a.resize(sz);
+        lp3_b.resize(sz);
+        hp3_a.resize(sz);
+        hp3_b.resize(sz);
 
         // Initialize per-band compressor state
         for (int band = 0; band < NUM_BANDS; ++band)
         {
-            bandEnvelopes[band].resize(static_cast<size_t>(numCh), 1.0f);
+            bandEnvelopes[band].resize(sz, 1.0f);
             bandGainReduction[band] = 0.0f;
         }
 
@@ -2901,26 +2965,34 @@ public:
         crossoverFreqs[1] = freq2;
         crossoverFreqs[2] = freq3;
 
-        // Update filter coefficients using Linkwitz-Riley 4th order (cascaded Butterworth)
+        // Create filter coefficients - Butterworth Q=0.707 for LR4 when cascaded
+        auto lp1Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq1, 0.707f);
+        auto hp1Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq1, 0.707f);
+        auto lp2Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq2, 0.707f);
+        auto hp2Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq2, 0.707f);
+        auto lp3Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq3, 0.707f);
+        auto hp3Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq3, 0.707f);
+
+        // Apply coefficients to all channels - each stage gets its own filter instance
         for (int ch = 0; ch < numChannels; ++ch)
         {
-            // Crossover 1: Low/Low-Mid split
-            auto lp1Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq1, 0.707f);
-            auto hp1Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq1, 0.707f);
-            lowpassFilters[0][ch].coefficients = lp1Coeffs;
-            highpassFilters[0][ch].coefficients = hp1Coeffs;
+            // Crossover 1
+            lp1_a[ch].coefficients = lp1Coeffs;
+            lp1_b[ch].coefficients = lp1Coeffs;
+            hp1_a[ch].coefficients = hp1Coeffs;
+            hp1_b[ch].coefficients = hp1Coeffs;
 
-            // Crossover 2: Low-Mid/High-Mid split
-            auto lp2Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq2, 0.707f);
-            auto hp2Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq2, 0.707f);
-            lowpassFilters[1][ch].coefficients = lp2Coeffs;
-            highpassFilters[1][ch].coefficients = hp2Coeffs;
+            // Crossover 2
+            lp2_a[ch].coefficients = lp2Coeffs;
+            lp2_b[ch].coefficients = lp2Coeffs;
+            hp2_a[ch].coefficients = hp2Coeffs;
+            hp2_b[ch].coefficients = hp2Coeffs;
 
-            // Crossover 3: High-Mid/High split
-            auto lp3Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq3, 0.707f);
-            auto hp3Coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, freq3, 0.707f);
-            lowpassFilters[2][ch].coefficients = lp3Coeffs;
-            highpassFilters[2][ch].coefficients = hp3Coeffs;
+            // Crossover 3
+            lp3_a[ch].coefficients = lp3Coeffs;
+            lp3_b[ch].coefficients = lp3Coeffs;
+            hp3_a[ch].coefficients = hp3Coeffs;
+            hp3_b[ch].coefficients = hp3Coeffs;
         }
     }
 
@@ -3051,72 +3123,61 @@ public:
 private:
     void splitIntoBands(const juce::AudioBuffer<float>& input, int numSamples, int channels)
     {
-        // Linkwitz-Riley crossover splitting:
-        // Band 0 (Low): Input -> LP1
-        // Band 1 (Low-Mid): Input -> HP1 -> LP2
-        // Band 2 (High-Mid): Input -> HP1 -> HP2 -> LP3
-        // Band 3 (High): Input -> HP1 -> HP2 -> HP3
+        // Proper Linkwitz-Riley 4th order (LR4) crossover implementation
+        // LR4 = cascaded 2nd order Butterworth filters (applied twice)
+        //
+        // Signal flow for 4 bands with 3 crossover points:
+        // Band 0 (Low):      Input -> LP1a -> LP1b
+        // Band 1 (Low-Mid):  Input -> HP1a -> HP1b -> LP2a -> LP2b
+        // Band 2 (High-Mid): Input -> HP1a -> HP1b -> HP2a -> HP2b -> LP3a -> LP3b
+        // Band 3 (High):     Input -> HP1a -> HP1b -> HP2a -> HP2b -> HP3a -> HP3b
+        //
+        // Each filter path needs its own filter instances to maintain correct state!
+        // The "a" and "b" filters are the two cascaded stages for LR4 response.
 
         for (int ch = 0; ch < channels; ++ch)
         {
             const float* in = input.getReadPointer(ch);
-
-            // Band 0: Low pass at crossover 1
             float* band0 = bandBuffers[0].getWritePointer(ch);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                // Apply LP filter twice for Linkwitz-Riley 4th order
-                float sample = lowpassFilters[0][ch].processSample(in[i]);
-                band0[i] = lowpassFilters[0][ch].processSample(sample);
-            }
-            // Reset filter for next pass
-            lowpassFilters[0][ch].reset();
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float sample = lowpassFilters[0][ch].processSample(in[i]);
-                band0[i] = lowpassFilters[0][ch].processSample(sample);
-            }
-
-            // Get signal after first HP (for bands 1-3)
             float* band1 = bandBuffers[1].getWritePointer(ch);
-            highpassFilters[0][ch].reset();
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float sample = highpassFilters[0][ch].processSample(in[i]);
-                float hp1Out = highpassFilters[0][ch].processSample(sample);
-
-                // Band 1: HP1 -> LP2
-                float lp2Out = lowpassFilters[1][ch].processSample(hp1Out);
-                band1[i] = lowpassFilters[1][ch].processSample(lp2Out);
-            }
-
-            // Recalculate HP1 output for bands 2-3
             float* band2 = bandBuffers[2].getWritePointer(ch);
             float* band3 = bandBuffers[3].getWritePointer(ch);
 
-            highpassFilters[0][ch].reset();
-            highpassFilters[1][ch].reset();
-            lowpassFilters[1][ch].reset();
-            lowpassFilters[2][ch].reset();
-            highpassFilters[2][ch].reset();
-
             for (int i = 0; i < numSamples; ++i)
             {
-                // HP1
-                float hp1Out = highpassFilters[0][ch].processSample(in[i]);
-                hp1Out = highpassFilters[0][ch].processSample(hp1Out);
+                float sample = in[i];
 
-                // HP2 (from HP1 output)
-                float hp2Out = highpassFilters[1][ch].processSample(hp1Out);
-                hp2Out = highpassFilters[1][ch].processSample(hp2Out);
+                // === Band 0: Low (below crossover 1) ===
+                // LP1 applied twice for LR4
+                float lp1 = lp1_a[ch].processSample(sample);
+                lp1 = lp1_b[ch].processSample(lp1);
+                band0[i] = lp1;
 
-                // Band 2: HP1 -> HP2 -> LP3
-                float lp3Out = lowpassFilters[2][ch].processSample(hp2Out);
-                band2[i] = lowpassFilters[2][ch].processSample(lp3Out);
+                // === HP1 for bands 1-3 (above crossover 1) ===
+                float hp1 = hp1_a[ch].processSample(sample);
+                hp1 = hp1_b[ch].processSample(hp1);
 
-                // Band 3: HP1 -> HP2 -> HP3
-                float hp3Out = highpassFilters[2][ch].processSample(hp2Out);
-                band3[i] = highpassFilters[2][ch].processSample(hp3Out);
+                // === Band 1: Low-Mid (between crossover 1 and 2) ===
+                // HP1 output -> LP2 applied twice
+                float lp2 = lp2_a[ch].processSample(hp1);
+                lp2 = lp2_b[ch].processSample(lp2);
+                band1[i] = lp2;
+
+                // === HP2 for bands 2-3 (above crossover 2) ===
+                float hp2 = hp2_a[ch].processSample(hp1);
+                hp2 = hp2_b[ch].processSample(hp2);
+
+                // === Band 2: High-Mid (between crossover 2 and 3) ===
+                // HP2 output -> LP3 applied twice
+                float lp3 = lp3_a[ch].processSample(hp2);
+                lp3 = lp3_b[ch].processSample(lp3);
+                band2[i] = lp3;
+
+                // === Band 3: High (above crossover 3) ===
+                // HP2 output -> HP3 applied twice
+                float hp3 = hp3_a[ch].processSample(hp2);
+                hp3 = hp3_b[ch].processSample(hp3);
+                band3[i] = hp3;
             }
         }
     }
@@ -3183,10 +3244,21 @@ private:
         bandGainReduction[band] = maxGr;
     }
 
-    // Crossover filters (3 crossover points for 4 bands)
-    // Using cascaded IIR filters for Linkwitz-Riley response
-    std::array<std::vector<juce::dsp::IIR::Filter<float>>, 3> lowpassFilters;
-    std::array<std::vector<juce::dsp::IIR::Filter<float>>, 3> highpassFilters;
+    // Crossover filters - Linkwitz-Riley 4th order (LR4)
+    // Each crossover needs separate filter instances for each signal path
+    // "a" and "b" are the two cascaded 2nd-order Butterworth stages
+
+    // Crossover 1 filters (separate LP and HP paths)
+    std::vector<juce::dsp::IIR::Filter<float>> lp1_a, lp1_b;  // For band 0
+    std::vector<juce::dsp::IIR::Filter<float>> hp1_a, hp1_b;  // For bands 1-3
+
+    // Crossover 2 filters (applied to HP1 output)
+    std::vector<juce::dsp::IIR::Filter<float>> lp2_a, lp2_b;  // For band 1
+    std::vector<juce::dsp::IIR::Filter<float>> hp2_a, hp2_b;  // For bands 2-3
+
+    // Crossover 3 filters (applied to HP2 output)
+    std::vector<juce::dsp::IIR::Filter<float>> lp3_a, lp3_b;  // For band 2
+    std::vector<juce::dsp::IIR::Filter<float>> hp3_a, hp3_b;  // For band 3
 
     // Band buffers
     std::array<juce::AudioBuffer<float>, NUM_BANDS> bandBuffers;
