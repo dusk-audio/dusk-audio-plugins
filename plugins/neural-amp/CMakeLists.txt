@@ -19,6 +19,7 @@ set(NAM_CORE_SOURCES
     ${NAM_CORE_DIR}/NAM/activations.cpp
     ${NAM_CORE_DIR}/NAM/convnet.cpp
     ${NAM_CORE_DIR}/NAM/dsp.cpp
+    ${NAM_CORE_DIR}/NAM/factory_init.cpp
     ${NAM_CORE_DIR}/NAM/get_dsp.cpp
     ${NAM_CORE_DIR}/NAM/lstm.cpp
     ${NAM_CORE_DIR}/NAM/util.cpp

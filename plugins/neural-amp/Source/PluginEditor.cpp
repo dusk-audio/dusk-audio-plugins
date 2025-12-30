@@ -292,7 +292,8 @@ void NeuralAmpAudioProcessorEditor::timerCallback()
 
 void NeuralAmpAudioProcessorEditor::loadModel()
 {
-    auto chooser = std::make_unique<juce::FileChooser>(
+    // FileChooser must be stored as member variable to stay alive during async callback
+    modelChooser = std::make_unique<juce::FileChooser>(
         "Select NAM Model",
         juce::File::getSpecialLocation(juce::File::userHomeDirectory),
         "*.nam");
@@ -300,7 +301,7 @@ void NeuralAmpAudioProcessorEditor::loadModel()
     auto chooserFlags = juce::FileBrowserComponent::openMode
                       | juce::FileBrowserComponent::canSelectFiles;
 
-    chooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc)
+    modelChooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc)
     {
         auto file = fc.getResult();
         if (file.existsAsFile())
@@ -322,7 +323,8 @@ void NeuralAmpAudioProcessorEditor::loadModel()
 
 void NeuralAmpAudioProcessorEditor::loadIR()
 {
-    auto chooser = std::make_unique<juce::FileChooser>(
+    // FileChooser must be stored as member variable to stay alive during async callback
+    irChooser = std::make_unique<juce::FileChooser>(
         "Select Cabinet IR",
         juce::File::getSpecialLocation(juce::File::userHomeDirectory),
         "*.wav;*.aiff;*.aif");
@@ -330,7 +332,7 @@ void NeuralAmpAudioProcessorEditor::loadIR()
     auto chooserFlags = juce::FileBrowserComponent::openMode
                       | juce::FileBrowserComponent::canSelectFiles;
 
-    chooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc)
+    irChooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc)
     {
         auto file = fc.getResult();
         if (file.existsAsFile())

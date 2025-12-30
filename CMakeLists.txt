@@ -11,10 +11,9 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GlobalSettings.cmake)
 # Include common JUCE defaults
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JuceDefaults.cmake)
 
-# Build system updated to:
-# - Fix JUCE path from /home/marc/Projects/JUCE to /home/marc/projects/JUCE
-# - Add TapeMachine plugin (currently disabled due to source code compilation errors)
-# - Ensure proper plugin installation to ~/.vst3/ and ~/.lv2/
+# Build system notes:
+# - JUCE path: /home/marc/projects/JUCE (sibling directory)
+# - Plugins install to ~/.vst3/ and ~/.lv2/
 
 # Add JUCE as a subdirectory
 # Option 1: Use system JUCE installation
@@ -32,12 +31,12 @@ option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_MULTI_COMP "Build Multi-Comp plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" OFF)  # Directory missing
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
-option(BUILD_TAPE_ECHO "Build Tape Echo plugin" OFF)  # TapeEcho directory missing
 option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_SILKVERB "Build SilkVerb plugin" ON)
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
 option(BUILD_NEURAL_AMP "Build Neural Amp plugin" ON)
+option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -54,10 +53,6 @@ endif()
 
 if(BUILD_TAPE_MACHINE)
     add_subdirectory(plugins/TapeMachine)
-endif()
-
-if(BUILD_TAPE_ECHO)
-    add_subdirectory(plugins/TapeEcho)
 endif()
 
 if(BUILD_DRUMMER_CLONE)
@@ -78,4 +73,8 @@ endif()
 
 if(BUILD_NEURAL_AMP)
     add_subdirectory(plugins/neural-amp)
+endif()
+
+if(BUILD_TAPE_ECHO)
+    add_subdirectory(plugins/tape-echo)
 endif()

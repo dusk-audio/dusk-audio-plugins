@@ -4,7 +4,7 @@ A high-quality tape machine emulation plugin that models the Studer A800 and Amp
 
 ## Features
 
-- **Dual Machine Emulation**: Choose between Swiss800 (Studer A800), Classic102 (Ampex ATR-102), or Hybrid Blend
+- **Dual Machine Emulation**: Choose between Swiss800 (Studer A800) or Classic102 (Ampex ATR-102)
 - **Multiple Tape Speeds**: 7.5, 15, and 30 IPS
 - **Four Tape Formulations**: Type 456 (warm), GP9 (modern), Type 911 (German precision), Type 250 (professional)
 - **Comprehensive Controls**:

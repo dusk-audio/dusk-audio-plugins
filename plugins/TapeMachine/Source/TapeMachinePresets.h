@@ -18,7 +18,7 @@ struct Preset
     juce::String category;
 
     // Machine settings
-    int tapeMachine = 0;     // 0=Swiss800 (Studer), 1=Classic102 (Ampex), 2=Blend
+    int tapeMachine = 0;     // 0=Swiss800 (Studer), 1=Classic102 (Ampex)
     int tapeSpeed = 1;       // 0=7.5 IPS, 1=15 IPS, 2=30 IPS
     int tapeType = 0;        // 0=Type456, 1=GP9, 2=Type911, 3=Type250
 
@@ -79,7 +79,7 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Transparent Glue",
         "Subtle",
-        2,                        // tapeMachine: Blend (best of both)
+        0,                        // tapeMachine: Swiss800 (clean precision)
         2,                        // tapeSpeed: 30 IPS
         1,                        // tapeType: GP9 (modern formulation)
         3.0f,                     // inputGain: Light saturation
@@ -154,7 +154,7 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Tube Console",
         "Warm",
-        2,                        // Blend
+        1,                        // Classic102 (Ampex warmth)
         1,                        // 15 IPS
         2,                        // Type911 (German precision with warmth)
         7.0f,                     // inputGain: Solid drive
@@ -307,7 +307,7 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Analog Sheen",
         "Mastering",
-        2,                        // Blend
+        0,                        // Swiss800 (precision for mastering)
         2,                        // 30 IPS
         1,                        // GP9
         3.0f,

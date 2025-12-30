@@ -212,27 +212,39 @@ public:
 
     void prepare(double sampleRate)
     {
-        // Validate sampleRate to prevent overflow
-        if (sampleRate <= 0.0 || sampleRate > 1000000.0)
+        // Validate sampleRate with consistent bounds
+        // MIN: 8000 Hz (lowest professional rate)
+        // MAX: 768000 Hz (4x oversampled 192kHz - highest expected)
+        static constexpr double MIN_SAMPLE_RATE = 8000.0;
+        static constexpr double MAX_SAMPLE_RATE = 768000.0;
+        static constexpr double MAX_DELAY_SECONDS = 0.05;  // 50ms buffer
+
+        if (sampleRate <= 0.0 || !std::isfinite(sampleRate))
             sampleRate = 44100.0;  // Use safe default
 
-        // Size for up to 50ms of delay at current sample rate
-        // Check for potential overflow before casting
-        constexpr double maxSafeRate = static_cast<double>(SIZE_MAX) / 0.05;
-        if (sampleRate > maxSafeRate)
-            sampleRate = 192000.0;  // Clamp to reasonable maximum
+        sampleRate = std::clamp(sampleRate, MIN_SAMPLE_RATE, MAX_SAMPLE_RATE);
 
-        // Perform calculation with overflow protection
-        double bufferSizeDouble = sampleRate * 0.05;
-        size_t bufferSize = (bufferSizeDouble > static_cast<double>(SIZE_MAX))
-                            ? SIZE_MAX
-                            : static_cast<size_t>(bufferSizeDouble);
+        // Calculate buffer size with explicit bounds checking
+        // At MAX_SAMPLE_RATE (768kHz), 50ms = 38400 samples - well within size_t range
+        double bufferSizeDouble = sampleRate * MAX_DELAY_SECONDS;
 
-        // Ensure minimum size
-        if (bufferSize < 64)
-            bufferSize = 64;
+        // Clamp to reasonable bounds: min 64 samples, max 65536 samples (more than enough for 50ms at any rate)
+        static constexpr size_t MIN_BUFFER_SIZE = 64;
+        static constexpr size_t MAX_BUFFER_SIZE = 65536;
 
-        delayBuffer.resize(bufferSize, 0.0f);
+        size_t bufferSize = static_cast<size_t>(bufferSizeDouble);
+        bufferSize = std::clamp(bufferSize, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE);
+
+        // Only resize if needed (avoid unnecessary allocations)
+        if (delayBuffer.size() != bufferSize)
+        {
+            delayBuffer.resize(bufferSize, 0.0f);
+        }
+        else
+        {
+            // Clear existing buffer
+            std::fill(delayBuffer.begin(), delayBuffer.end(), 0.0f);
+        }
         writeIndex = 0;
     }
 
@@ -394,8 +406,7 @@ public:
     enum TapeMachine
     {
         Swiss800 = 0,      // Studer A800 - Swiss precision tape machine
-        Classic102,        // Ampex ATR-102 - Classic American tape machine
-        Blend             // Hybrid blend of both
+        Classic102         // Ampex ATR-102 - Classic American tape machine
     };
 
     enum TapeSpeed
@@ -647,4 +658,22 @@ private:
     float generateHarmonics(float input, const float* harmonicProfile, int numHarmonics);
 
     static constexpr float denormalPrevention = 1e-8f;
+
+    // Helper to validate filter coefficients are finite (not NaN or Inf)
+    static bool validateCoefficients(const juce::dsp::IIR::Coefficients<float>::Ptr& coeffs)
+    {
+        if (coeffs == nullptr)
+            return false;
+
+        auto* rawCoeffs = coeffs->getRawCoefficients();
+        size_t numCoeffs = coeffs->getFilterOrder() + 1;  // b coeffs
+        numCoeffs += coeffs->getFilterOrder();             // a coeffs (a0 normalized to 1)
+
+        for (size_t i = 0; i < numCoeffs * 2; ++i)  // Check all coefficients
+        {
+            if (!std::isfinite(rawCoeffs[i]))
+                return false;
+        }
+        return true;
+    }
 };

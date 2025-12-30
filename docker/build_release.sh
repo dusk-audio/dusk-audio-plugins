@@ -25,8 +25,6 @@ declare -A PLUGIN_TARGETS=(
     ["comp"]="MultiComp_All"
     ["tape"]="TapeMachine_All"
     ["tapemachine"]="TapeMachine_All"
-    ["echo"]="TapeEcho_All"
-    ["tapeecho"]="TapeEcho_All"
     ["drummer"]="DrummerClone_All"
     ["drums"]="DrummerClone_All"
     ["harmonic"]="HarmonicGeneratorPlugin_All"
@@ -43,6 +41,9 @@ declare -A PLUGIN_TARGETS=(
     ["neuralamp"]="NeuralAmp_All"
     ["neural-amp"]="NeuralAmp_All"
     ["nam"]="NeuralAmp_All"
+    ["tapeecho"]="TapeEcho_All"
+    ["tape-echo"]="TapeEcho_All"
+    ["echo"]="TapeEcho_All"
 )
 
 # Plugin name mapping (shortname -> display name for pluginval)
@@ -55,8 +56,6 @@ declare -A PLUGIN_NAMES=(
     ["comp"]="Multi-Comp"
     ["tape"]="TapeMachine"
     ["tapemachine"]="TapeMachine"
-    ["echo"]="Vintage Tape Echo"
-    ["tapeecho"]="Vintage Tape Echo"
     ["drummer"]="DrummerClone"
     ["drums"]="DrummerClone"
     ["harmonic"]="Harmonic Generator"
@@ -73,6 +72,9 @@ declare -A PLUGIN_NAMES=(
     ["neuralamp"]="Neural Amp"
     ["neural-amp"]="Neural Amp"
     ["nam"]="Neural Amp"
+    ["tapeecho"]="Tape Echo"
+    ["tape-echo"]="Tape Echo"
+    ["echo"]="Tape Echo"
 )
 
 # Show help
@@ -89,13 +91,13 @@ show_help() {
     echo "  4keq, eq           4K EQ"
     echo "  multicomp, multi-comp, compressor, comp   Multi-Comp"
     echo "  tape, tapemachine  TapeMachine"
-    echo "  echo, tapeecho     Vintage Tape Echo"
     echo "  drummer, drums     DrummerClone"
     echo "  harmonic           Harmonic Generator"
     echo "  convolution, impulse, ir  Convolution Reverb"
     echo "  silkverb, silk, reverb, verb  SilkVerb"
     echo "  multiq, multi-q, meq   Multi-Q (Universal EQ)"
     echo "  neuralamp, neural-amp, nam  Neural Amp"
+    echo "  tapeecho, tape-echo, echo   Tape Echo"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"

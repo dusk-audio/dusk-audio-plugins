@@ -30,6 +30,11 @@ public:
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                          bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+
+    void setFreezeButton(juce::ToggleButton* button) { freezeButtonPtr = button; }
+
+private:
+    juce::ToggleButton* freezeButtonPtr = nullptr;
 };
 
 //==============================================================================
@@ -55,6 +60,9 @@ private:
     // Color toggle buttons (Modern/Vintage)
     juce::ToggleButton modernButton;
     juce::ToggleButton vintageButton;
+
+    // Freeze toggle button
+    juce::ToggleButton freezeButton;
 
     // Main parameter sliders (Row 1)
     juce::Slider sizeSlider;
@@ -120,6 +128,9 @@ private:
     // Attachments - EQ
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowCutAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highCutAttachment;
+
+    // Attachment - Freeze
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment;
 
     // Mode button group handling
     void updateModeButtons();

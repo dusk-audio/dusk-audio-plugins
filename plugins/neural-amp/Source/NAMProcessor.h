@@ -48,6 +48,9 @@ private:
     bool needsResampling = false;
     double resampleRatio = 1.0;
 
+    // Output normalization based on model loudness
+    float outputNormalization = 1.0f;
+
     // Processing buffer (NAM is mono)
     std::vector<float> inputBuffer;
     std::vector<float> outputBuffer;

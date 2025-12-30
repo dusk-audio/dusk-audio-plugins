@@ -1,9 +1,12 @@
 #include "NAMProcessor.h"
 #include "dsp.h"
 #include "get_dsp.h"
+#include "factory_init.h"
 
 NAMProcessor::NAMProcessor()
 {
+    // Initialize NAM factories - required for static library linking
+    nam::initializeFactories();
 }
 
 NAMProcessor::~NAMProcessor()
@@ -52,6 +55,24 @@ bool NAMProcessor::loadModel(const juce::File& modelFile)
         // Extract metadata
         modelName = modelFile.getFileNameWithoutExtension();
         extractModelMetadata();
+
+        // Calculate output normalization based on model loudness
+        // NAM models report their loudness relative to a standardized input
+        // We compensate to bring output to unity gain
+        if (namModel->HasLoudness())
+        {
+            double loudness = namModel->GetLoudness();
+            // Loudness is in dB - negative means quieter than reference
+            // Apply inverse gain to normalize output
+            outputNormalization = static_cast<float>(std::pow(10.0, -loudness / 20.0));
+            // Clamp to reasonable range (max +30dB boost)
+            outputNormalization = std::min(outputNormalization, 31.62f);
+            DBG("NAM model loudness: " << loudness << " dB, normalization gain: " << outputNormalization);
+        }
+        else
+        {
+            outputNormalization = 1.0f;
+        }
 
         // Prepare with current sample rate
         if (currentSampleRate > 0)
@@ -149,6 +170,15 @@ void NAMProcessor::process(juce::AudioBuffer<float>& buffer)
     {
         // Process directly at native rate
         namModel->process(inputBuffer.data(), outputBuffer.data(), numSamples);
+    }
+
+    // Apply output normalization based on model loudness
+    if (outputNormalization != 1.0f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            outputBuffer[i] *= outputNormalization;
+        }
     }
 
     // Copy output to all channels
