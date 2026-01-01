@@ -98,60 +98,25 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - 2x/4x oversampling for anti-aliased processing
 - **Build Target**: `MultiComp_All`
 
-### 4. **Harmonic Generator**
-- **Location**: `plugins/harmonic-generator/`
-- **Description**: Analog-style harmonic saturation processor with hardware emulation
-- **Features**:
-  - Individual harmonic controls (2nd through 5th harmonics)
-  - Global even/odd harmonic balance
-  - Warmth and brightness character controls
-  - Hardware saturation modes (emulation of classic analog gear)
-  - Hardware preset system
-  - 2x oversampling for alias-free processing
-  - Real-time harmonic spectrum display
-  - Stereo level metering (input/output)
-  - Professional analog-styled UI
-- **Build Target**: `HarmonicGeneratorPlugin_All` (Note: not currently in rebuild_all.sh)
+### 4. **GrooveMind** (Future - In Development)
+- **Location**: `plugins/groovemind/` (not yet created)
+- **Description**: ML-powered intelligent MIDI drum pattern generator for Linux
+- **Status**: Design phase - see `docs/GrooveMind_Design.md`
+- **Vision**: Logic Pro Drummer alternative using machine learning trained on real drummer recordings
+- **Planned Features**:
+  - **ML-Based Pattern Generation**: Real patterns from Groove MIDI Dataset (not probability-based)
+  - **Groove Humanizer**: GrooVAE-style model for micro-timing and velocity (RTNeural)
+  - **Context-Aware Fills**: LSTM-based fill generator
+  - **Style Classifier**: Smart pattern selection based on parameters
+  - **Follow Mode**: Groove extraction from audio/MIDI input
+  - **Pattern Library**: 500+ curated MIDI patterns with metadata
+- **Technical Stack**:
+  - Training: Python + PyTorch
+  - Inference: RTNeural (real-time safe C++)
+  - Data: Groove MIDI Dataset (CC BY 4.0)
+- **Build Target**: `GrooveMind_All` (disabled until development begins)
 
-### 5. **DrummerClone**
-- **Location**: `plugins/DrummerClone/`
-- **Description**: Logic Pro Drummer-inspired intelligent MIDI drum pattern generator
-- **Features**:
-  - **Follow Mode**: Real-time groove analysis from audio transients or MIDI input
-    - TransientDetector for audio onset detection
-    - MidiGrooveExtractor for MIDI timing/velocity analysis
-    - GrooveFollower with groove lock percentage indicator
-  - **Pattern Generation**:
-    - 12+ virtual drummer personalities with unique DNA (aggression, ghost notes, fill hunger, etc.)
-    - 7 musical styles: Rock, HipHop, Alternative, R&B, Electronic, Trap, Songwriter
-    - Section-aware patterns: Intro, Verse, Pre-Chorus, Chorus, Bridge, Breakdown, Outro
-    - Intelligent fills with configurable frequency, intensity, and length
-    - Ghost notes, cymbal patterns, and kick/snare variations
-    - VariationEngine using Perlin noise for anti-repetition
-  - **Humanization**:
-    - Timing variation (jitter)
-    - Velocity variation
-    - Push/Drag (ahead/behind beat)
-    - Groove depth control
-  - **MIDI CC Control** (for DAW automation):
-    - Section control via CC (default: 102)
-    - Fill trigger via CC (default: 103)
-    - Visual "MIDI" indicator when externally controlled
-  - **User Interface**:
-    - XY Pad for Swing/Intensity (Logic Pro style)
-    - Follow Mode panel with groove lock indicator
-    - Fills panel with manual trigger button
-    - Humanization panel (collapsible)
-    - MIDI CC control panel (collapsible)
-    - Step Sequencer component (UI ready, not wired)
-    - MIDI export to file (4/8/16/32 bars)
-- **Technical Details**:
-  - MIDI-only output (route to any drum sampler)
-  - 960 PPQ timing resolution
-  - 2-second analysis buffer for Follow Mode
-- **Build Target**: `DrummerClone_All`
-
-### 6. **SilkVerb**
+### 5. **SilkVerb**
 - **Location**: `plugins/SilkVerb/`
 - **Description**: Lexicon/Valhalla-style algorithmic reverb with Plate, Room, Hall modes
 - **Features**:
@@ -182,7 +147,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - **UI**: Dark-themed interface with mode selector buttons, 2x2 knob grid
 - **Build Target**: `SilkVerb_All`
 
-### 7. **Convolution Reverb**
+### 6. **Convolution Reverb**
 - **Location**: `plugins/convolution-reverb/`
 - **Description**: Zero-latency convolution reverb with SDIR/AIFC impulse response support
 - **Features**:
@@ -193,7 +158,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - **Thread-Safe**: Background IR loading with atomic state management
 - **Build Target**: `ConvolutionReverb_All`
 
-### 8. **Multi-Q**
+### 7. **Multi-Q**
 - **Location**: `plugins/multi-q/`
 - **Description**: Universal EQ with multiple EQ modes (Digital 8-band, British console)
 - **Features**:
@@ -256,7 +221,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
 ./docker/build_release.sh tape         # TapeMachine
-./docker/build_release.sh drummer      # DrummerClone
+./docker/build_release.sh groovemind   # GrooveMind (future)
 ./docker/build_release.sh harmonic     # Harmonic Generator
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh silkverb     # SilkVerb (algorithmic reverb)
@@ -281,7 +246,7 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 ./docker/build_release.sh tape && ./tests/run_plugin_tests.sh --plugin "TapeMachine" --skip-audio
 ./docker/build_release.sh silkverb && ./tests/run_plugin_tests.sh --plugin "SilkVerb" --skip-audio
 ./docker/build_release.sh convolution && ./tests/run_plugin_tests.sh --plugin "Convolution Reverb" --skip-audio
-./docker/build_release.sh drummer && ./tests/run_plugin_tests.sh --plugin "DrummerClone" --skip-audio
+./docker/build_release.sh groovemind && ./tests/run_plugin_tests.sh --plugin "GrooveMind" --skip-audio
 ./docker/build_release.sh harmonic && ./tests/run_plugin_tests.sh --plugin "Harmonic Generator" --skip-audio
 ```
 The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do NOT skip this validation step - it catches crashes, parameter issues, and compatibility problems that would break the plugin in DAWs.
@@ -299,7 +264,7 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 - FourKEQ_All (4K EQ)
 - TapeMachine_All
 - MultiComp_All
-- DrummerClone_All
+- GrooveMind_All (future)
 - HarmonicGeneratorPlugin_All
 - ConvolutionReverb_All
 - SilkVerb_All (Algorithmic Reverb)
@@ -341,7 +306,7 @@ cmake --build . -j8
 cmake --build . --target FourKEQ_All
 cmake --build . --target TapeMachine_All
 cmake --build . --target MultiComp_All
-cmake --build . --target DrummerClone_All
+cmake --build . --target GrooveMind_All
 cmake --build . --target HarmonicGeneratorPlugin_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target SilkVerb_All
@@ -355,7 +320,7 @@ Available in the root CMakeLists.txt:
 - `BUILD_MULTI_COMP` (default: ON)
 - `BUILD_HARMONIC_GENERATOR` (default: OFF) - directory missing
 - `BUILD_TAPE_MACHINE` (default: ON)
-- `BUILD_DRUMMER_CLONE` (default: ON)
+- `BUILD_GROOVEMIND` (default: OFF) - Future ML-based drummer
 - `BUILD_CONVOLUTION_REVERB` (default: ON)
 - `BUILD_SILKVERB` (default: ON)
 - `BUILD_MULTI_Q` (default: ON)
@@ -411,7 +376,7 @@ The build script will automatically detect and use these tools when available.
    - Frequency-dependent saturation characteristics
    - Real-time spectral analysis for dynamic response
 5. **Enhanced Multi-Comp**: Added 4-band multiband compression mode, linked gain reduction metering for stereo tracking with thread-safe atomic operations
-6. **Added DrummerClone**: Logic Pro Drummer-inspired MIDI drum generator with Follow Mode, section-aware patterns, MIDI CC control, humanization, and MIDI export
+6. **GrooveMind** (planned): ML-powered intelligent drummer using RTNeural and Groove MIDI Dataset (replacing DrummerClone)
 7. **Removed Plate Reverb, StudioVerb, and Vintage Tape Echo**: Replaced with Convolution Reverb and SilkVerb for better reverb options
 
 ### Build System Improvements
@@ -490,7 +455,7 @@ plugins/
 │   ├── multi-comp/           # Multi-mode compressor with multiband
 │   ├── convolution-reverb/  # IR-based convolution reverb
 │   ├── SilkVerb/            # Algorithmic reverb (Lexicon/Valhalla style)
-│   ├── DrummerClone/        # Intelligent MIDI drum generator
+│   ├── groovemind/          # ML-powered intelligent drummer (future)
 │   ├── multi-q/             # Multi-Q universal EQ
 │   ├── neural-amp/          # Neural amp modeler (NAM)
 │   └── shared/              # ⚠️ SHARED UTILITIES - CHECK HERE FIRST!
@@ -540,8 +505,8 @@ plugins/
 - **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
 - **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations
 - **Factory Presets**: See TapeMachine's TapeMachinePresets.h or Multi-Comp's CompressorPresets.h for categorized preset systems with `getNumPrograms()`, `setCurrentProgram()`, `getProgramName()` implementation
-- **MIDI Generation**: See DrummerClone's DrummerEngine for procedural pattern generation with Perlin noise variation
-- **Groove Analysis**: See DrummerClone's TransientDetector and MidiGrooveExtractor for real-time groove extraction
+- **MIDI Generation**: Future GrooveMind will use ML-based pattern generation with RTNeural
+- **Groove Analysis**: Future GrooveMind will include groove extraction from audio/MIDI input
 
 ### Shared Analog Emulation Library
 **Location**: `plugins/shared/AnalogEmulation/`
@@ -733,7 +698,7 @@ void MyPluginEditor::hideSupportersPanel()
 **Plugins needing SupportersOverlay**:
 - SilkVerb
 - Convolution Reverb
-- DrummerClone
+- GrooveMind (future)
 - Multi-Q
 - Neural Amp
 
