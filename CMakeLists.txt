@@ -31,12 +31,14 @@ option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_MULTI_COMP "Build Multi-Comp plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" OFF)  # Directory missing
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
-option(BUILD_DRUMMER_CLONE "Build DrummerClone plugin" ON)
+option(BUILD_GROOVEMIND "Build GrooveMind plugin" OFF)  # Future: ML-based intelligent drummer
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_SILKVERB "Build SilkVerb plugin" ON)
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
 option(BUILD_NEURAL_AMP "Build Neural Amp plugin" ON)
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
+option(BUILD_CHORD_ANALYZER "Build Chord Analyzer plugin" ON)
+option(BUILD_SPECTRUM_ANALYZER "Build Spectrum Analyzer plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -55,8 +57,8 @@ if(BUILD_TAPE_MACHINE)
     add_subdirectory(plugins/TapeMachine)
 endif()
 
-if(BUILD_DRUMMER_CLONE)
-    add_subdirectory(plugins/DrummerClone)
+if(BUILD_GROOVEMIND)
+    add_subdirectory(plugins/groovemind)
 endif()
 
 if(BUILD_CONVOLUTION_REVERB)
@@ -77,4 +79,12 @@ endif()
 
 if(BUILD_TAPE_ECHO)
     add_subdirectory(plugins/tape-echo)
+endif()
+
+if(BUILD_CHORD_ANALYZER)
+    add_subdirectory(plugins/chord-analyzer)
+endif()
+
+if(BUILD_SPECTRUM_ANALYZER)
+    add_subdirectory(plugins/spectrum-analyzer)
 endif()
