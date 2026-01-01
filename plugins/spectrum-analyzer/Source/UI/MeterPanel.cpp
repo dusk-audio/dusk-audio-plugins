@@ -274,19 +274,19 @@ void MeterPanel::setLoudnessRange(float lra)
 void MeterPanel::setOutputLevelL(float db)
 {
     outputLevelL = db;
-    outputMeterL.setLevel(db);
+    // LED meters are now in the main editor
 }
 
 void MeterPanel::setOutputLevelR(float db)
 {
     outputLevelR = db;
-    outputMeterR.setLevel(db);
+    // LED meters are now in the main editor
 }
 
 void MeterPanel::setRmsLevel(float db)
 {
     rmsLevel = db;
-    repaint(outputArea);
+    // RMS display is now in the main editor
 }
 
 //==============================================================================

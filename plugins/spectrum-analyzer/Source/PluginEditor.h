@@ -54,6 +54,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> slopeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> decayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> peakHoldAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> rangeAttachment;
 
     //==========================================================================
     void setupHeader();
