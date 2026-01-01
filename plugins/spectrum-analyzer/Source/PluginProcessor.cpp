@@ -58,11 +58,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumAnalyzerProcessor::c
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.5f));
 
-    // Slope
+    // Slope (default 0.0 for flat response)
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(PARAM_SLOPE, 1),
         "Slope",
-        juce::NormalisableRange<float>(-4.5f, 4.5f, 0.1f),
+        juce::NormalisableRange<float>(-4.5f, 4.5f, 0.5f),
         0.0f));
 
     // Decay rate
@@ -89,7 +89,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumAnalyzerProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(PARAM_DISPLAY_MIN, 1),
         "Display Min",
-        juce::NormalisableRange<float>(-90.0f, -30.0f, 1.0f),
+        juce::NormalisableRange<float>(-100.0f, -30.0f, 1.0f),
         -60.0f));
 
     // Display range max

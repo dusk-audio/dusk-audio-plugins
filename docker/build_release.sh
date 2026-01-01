@@ -216,8 +216,12 @@ $CONTAINER_CMD run --rm $SECURITY_OPTS \
         # Create fresh build directory
         mkdir -p build && cd build
 
-        # Configure
-        cmake .. -DCMAKE_BUILD_TYPE=Release
+        # Configure (enable GrooveMind if building it specifically)
+        CMAKE_OPTS=\"-DCMAKE_BUILD_TYPE=Release\"
+        if [ \"$BUILD_TARGET\" = \"GrooveMind_All\" ]; then
+            CMAKE_OPTS=\"\$CMAKE_OPTS -DBUILD_GROOVEMIND=ON\"
+        fi
+        cmake .. \$CMAKE_OPTS
 
         # Build (all or specific target)
         $BUILD_CMD

@@ -1,0 +1,220 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://lunaco.audio/groovemind/pattern-metadata.schema.json",
+  "title": "GrooveMind Pattern Metadata",
+  "description": "Schema for drum pattern metadata in the GrooveMind pattern library",
+  "type": "object",
+  "required": ["id", "name", "style", "tempo", "time_signature", "type", "source"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique pattern identifier",
+      "pattern": "^[a-z0-9_-]+$",
+      "examples": ["rock_verse_medium_01", "jazz_brush_swing_a"]
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable pattern name",
+      "examples": ["Rock Verse Medium 1", "Jazz Brush Swing A"]
+    },
+    "style": {
+      "type": "string",
+      "description": "Primary musical style",
+      "enum": [
+        "rock", "pop", "funk", "soul", "jazz", "blues",
+        "hiphop", "rnb", "electronic", "dance",
+        "latin", "afrocuban", "afrobeat", "reggae",
+        "country", "folk", "punk", "metal",
+        "gospel", "neworleans", "fusion", "world"
+      ]
+    },
+    "substyle": {
+      "type": "string",
+      "description": "More specific style variant",
+      "examples": ["hard-rock", "jazz-funk", "bossa-nova", "shuffle", "secondline"]
+    },
+    "tempo": {
+      "type": "object",
+      "description": "Tempo information",
+      "required": ["bpm"],
+      "properties": {
+        "bpm": {
+          "type": "integer",
+          "description": "Original recorded tempo",
+          "minimum": 40,
+          "maximum": 300
+        },
+        "range_min": {
+          "type": "integer",
+          "description": "Minimum recommended playback tempo",
+          "minimum": 40
+        },
+        "range_max": {
+          "type": "integer",
+          "description": "Maximum recommended playback tempo",
+          "maximum": 300
+        },
+        "feel": {
+          "type": "string",
+          "description": "Tempo feel category",
+          "enum": ["ballad", "slow", "medium", "uptempo", "fast"]
+        }
+      }
+    },
+    "time_signature": {
+      "type": "string",
+      "description": "Time signature",
+      "enum": ["4/4", "3/4", "6/8", "5/4", "7/8", "12/8"],
+      "default": "4/4"
+    },
+    "type": {
+      "type": "string",
+      "description": "Pattern type",
+      "enum": ["beat", "fill", "intro", "outro", "breakdown", "buildup"]
+    },
+    "section": {
+      "type": "string",
+      "description": "Song section this pattern is suited for",
+      "enum": ["intro", "verse", "pre-chorus", "chorus", "bridge", "breakdown", "outro", "any"]
+    },
+    "bars": {
+      "type": "integer",
+      "description": "Number of bars in the pattern",
+      "minimum": 1,
+      "maximum": 16,
+      "default": 4
+    },
+    "energy": {
+      "type": "number",
+      "description": "Energy level (0.0 = minimal, 1.0 = maximum)",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "complexity": {
+      "type": "number",
+      "description": "Rhythmic complexity (0.0 = simple, 1.0 = complex)",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "groove": {
+      "type": "object",
+      "description": "Groove characteristics",
+      "properties": {
+        "swing": {
+          "type": "number",
+          "description": "Swing amount (0.0 = straight, 1.0 = heavy swing)",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "push_pull": {
+          "type": "number",
+          "description": "Timing feel (-1.0 = laid back, 0 = on beat, 1.0 = pushing)",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "tightness": {
+          "type": "number",
+          "description": "Timing tightness (0.0 = loose/human, 1.0 = tight/precise)",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "kit": {
+      "type": "string",
+      "description": "Drum kit type",
+      "enum": ["acoustic", "brush", "electronic", "hybrid", "percussion"]
+    },
+    "instruments": {
+      "type": "object",
+      "description": "Instrument presence flags",
+      "properties": {
+        "kick": { "type": "boolean", "default": true },
+        "snare": { "type": "boolean", "default": true },
+        "hihat": { "type": "boolean", "default": true },
+        "ride": { "type": "boolean", "default": false },
+        "crash": { "type": "boolean", "default": false },
+        "toms": { "type": "boolean", "default": false },
+        "percussion": { "type": "boolean", "default": false }
+      }
+    },
+    "articulations": {
+      "type": "object",
+      "description": "Special articulations used",
+      "properties": {
+        "ghost_notes": { "type": "boolean", "default": false },
+        "rimshots": { "type": "boolean", "default": false },
+        "brush_sweeps": { "type": "boolean", "default": false },
+        "cross_stick": { "type": "boolean", "default": false },
+        "open_hihat": { "type": "boolean", "default": false }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Pattern source information",
+      "required": ["dataset"],
+      "properties": {
+        "dataset": {
+          "type": "string",
+          "description": "Source dataset",
+          "enum": ["gmd", "pettinhouse", "custom", "generated"]
+        },
+        "file": {
+          "type": "string",
+          "description": "Original MIDI filename"
+        },
+        "drummer_id": {
+          "type": "string",
+          "description": "Anonymized drummer identifier"
+        },
+        "license": {
+          "type": "string",
+          "description": "License type",
+          "enum": ["cc-by-4.0", "royalty-free", "proprietary"]
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Descriptive tags for searching",
+      "items": { "type": "string" },
+      "examples": [["driving", "steady", "eighth-note-hats"], ["swinging", "brushes", "jazz-ride"]]
+    },
+    "related_patterns": {
+      "type": "array",
+      "description": "IDs of related patterns (variations, fills that match)",
+      "items": { "type": "string" }
+    },
+    "ml_features": {
+      "type": "object",
+      "description": "ML-extracted features for similarity search",
+      "properties": {
+        "timing_std_ms": {
+          "type": "number",
+          "description": "Standard deviation of timing offsets in milliseconds"
+        },
+        "velocity_mean": {
+          "type": "number",
+          "description": "Mean velocity (0-127)"
+        },
+        "velocity_std": {
+          "type": "number",
+          "description": "Velocity standard deviation"
+        },
+        "note_density": {
+          "type": "number",
+          "description": "Notes per beat"
+        },
+        "syncopation": {
+          "type": "number",
+          "description": "Syncopation score (0-1)"
+        },
+        "embedding": {
+          "type": "array",
+          "description": "Learned pattern embedding vector",
+          "items": { "type": "number" }
+        }
+      }
+    }
+  }
+}

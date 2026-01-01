@@ -1,0 +1,633 @@
+{
+  "total_files": 1150,
+  "drummers": [
+    "drummer1",
+    "drummer10",
+    "drummer2",
+    "drummer3",
+    "drummer4",
+    "drummer5",
+    "drummer6",
+    "drummer7",
+    "drummer8",
+    "drummer9"
+  ],
+  "num_drummers": 10,
+  "files_per_drummer": {
+    "drummer1": 494,
+    "drummer10": 10,
+    "drummer2": 18,
+    "drummer3": 98,
+    "drummer4": 9,
+    "drummer5": 54,
+    "drummer6": 15,
+    "drummer7": 342,
+    "drummer8": 80,
+    "drummer9": 30
+  },
+  "styles": [
+    "afrobeat",
+    "afrocuban",
+    "afrocuban/bembe",
+    "afrocuban/calypso",
+    "afrocuban/rhumba",
+    "blues/shuffle",
+    "country",
+    "dance/breakbeat",
+    "dance/disco",
+    "funk",
+    "funk/fast",
+    "funk/groove1",
+    "funk/groove2",
+    "funk/groove5",
+    "funk/latin",
+    "funk/purdieshuffle",
+    "funk/rock",
+    "gospel",
+    "highlife",
+    "hiphop",
+    "hiphop/groove6",
+    "jazz",
+    "jazz/fast",
+    "jazz/funk",
+    "jazz/fusion",
+    "jazz/klezmer",
+    "jazz/linear",
+    "jazz/march",
+    "jazz/mediumfast",
+    "jazz/swing",
+    "latin",
+    "latin/ando",
+    "latin/bomba",
+    "latin/bounce",
+    "latin/brazilian",
+    "latin/brazilian-baiao",
+    "latin/brazilian-bossa",
+    "latin/brazilian-frevo",
+    "latin/brazilian-ijexa",
+    "latin/brazilian-maracatu",
+    "latin/brazilian-samba",
+    "latin/brazilian-sambareggae",
+    "latin/brazilian-songo",
+    "latin/chacarera",
+    "latin/dominican-merengue",
+    "latin/merengue",
+    "latin/reggaeton",
+    "latin/samba",
+    "latin/venezuelan-joropo",
+    "latin/venezuelan-merengue",
+    "latin/venezuelan-sangueo",
+    "middleeastern",
+    "neworleans/chacha",
+    "neworleans/funk",
+    "neworleans/secondline",
+    "neworleans/shuffle",
+    "pop",
+    "pop/groove7",
+    "pop/soft",
+    "punk",
+    "reggae",
+    "reggae/slow",
+    "rock",
+    "rock/folk",
+    "rock/groove8",
+    "rock/halftime",
+    "rock/indie",
+    "rock/prog",
+    "rock/rockabilly",
+    "rock/shuffle",
+    "soul",
+    "soul/groove10",
+    "soul/groove3",
+    "soul/groove4",
+    "soul/groove9",
+    "soul/motown"
+  ],
+  "num_styles": 76,
+  "style_categories": [
+    "afrobeat",
+    "afrocuban",
+    "blues",
+    "country",
+    "dance",
+    "funk",
+    "gospel",
+    "highlife",
+    "hiphop",
+    "jazz",
+    "latin",
+    "middleeastern",
+    "neworleans",
+    "pop",
+    "punk",
+    "reggae",
+    "rock",
+    "soul"
+  ],
+  "files_per_style": {
+    "rock": 281,
+    "hiphop": 91,
+    "funk": 77,
+    "punk": 58,
+    "neworleans/funk": 48,
+    "jazz": 46,
+    "rock/halftime": 37,
+    "latin/brazilian-baiao": 32,
+    "soul": 31,
+    "funk/purdieshuffle": 30,
+    "afrocuban/bembe": 30,
+    "country": 29,
+    "jazz/funk": 24,
+    "funk/rock": 20,
+    "funk/fast": 19,
+    "reggae": 19,
+    "latin/samba": 19,
+    "gospel": 19,
+    "afrocuban/rhumba": 19,
+    "soul/motown": 16,
+    "afrobeat": 13,
+    "pop/soft": 13,
+    "jazz/swing": 11,
+    "jazz/fusion": 11,
+    "pop": 10,
+    "rock/indie": 10,
+    "afrocuban": 9,
+    "latin": 8,
+    "dance/disco": 5,
+    "latin/brazilian-songo": 5,
+    "latin/brazilian-samba": 5,
+    "funk/groove1": 4,
+    "soul/groove10": 4,
+    "funk/groove2": 4,
+    "soul/groove3": 4,
+    "soul/groove4": 4,
+    "funk/groove5": 4,
+    "hiphop/groove6": 4,
+    "pop/groove7": 4,
+    "rock/groove8": 4,
+    "soul/groove9": 4,
+    "rock/shuffle": 4,
+    "latin/brazilian": 4,
+    "blues/shuffle": 4,
+    "neworleans/secondline": 3,
+    "latin/chacarera": 3,
+    "rock/prog": 3,
+    "jazz/march": 3,
+    "latin/brazilian-sambareggae": 3,
+    "latin/brazilian-ijexa": 3,
+    "jazz/mediumfast": 2,
+    "dance/breakbeat": 2,
+    "afrocuban/calypso": 2,
+    "jazz/linear": 2,
+    "latin/brazilian-bossa": 2,
+    "latin/brazilian-maracatu": 2,
+    "funk/latin": 2,
+    "latin/bounce": 2,
+    "highlife": 2,
+    "reggae/slow": 1,
+    "jazz/fast": 1,
+    "latin/reggaeton": 1,
+    "rock/folk": 1,
+    "latin/bomba": 1,
+    "rock/rockabilly": 1,
+    "jazz/klezmer": 1,
+    "latin/merengue": 1,
+    "middleeastern": 1,
+    "latin/venezuelan-merengue": 1,
+    "latin/dominican-merengue": 1,
+    "latin/venezuelan-sangueo": 1,
+    "latin/venezuelan-joropo": 1,
+    "latin/ando": 1,
+    "latin/brazilian-frevo": 1,
+    "neworleans/chacha": 1,
+    "neworleans/shuffle": 1
+  },
+  "files_per_style_category": {
+    "rock": 341,
+    "funk": 160,
+    "jazz": 101,
+    "latin": 97,
+    "hiphop": 95,
+    "soul": 63,
+    "afrocuban": 60,
+    "punk": 58,
+    "neworleans": 53,
+    "country": 29,
+    "pop": 27,
+    "reggae": 20,
+    "gospel": 19,
+    "afrobeat": 13,
+    "dance": 7,
+    "blues": 4,
+    "highlife": 2,
+    "middleeastern": 1
+  },
+  "beat_types": [
+    "beat",
+    "fill"
+  ],
+  "files_per_beat_type": {
+    "beat": 503,
+    "fill": 647
+  },
+  "time_signatures": [
+    "3-4",
+    "4-4",
+    "5-4",
+    "5-8",
+    "6-8"
+  ],
+  "files_per_time_signature": {
+    "4-4": 1138,
+    "3-4": 5,
+    "5-4": 1,
+    "5-8": 1,
+    "6-8": 5
+  },
+  "split_distribution": {
+    "test": 129,
+    "train": 897,
+    "validation": 124
+  },
+  "tempo": {
+    "min": 50,
+    "max": 290,
+    "mean": 109.6,
+    "median": 110.0,
+    "stdev": 24.0,
+    "distribution": {
+      "100-109": 151,
+      "110-119": 178,
+      "120-129": 208,
+      "130-139": 75,
+      "140-149": 104,
+      "150-159": 4,
+      "160-169": 1,
+      "170-179": 3,
+      "180-189": 6,
+      "190-199": 1,
+      "200-209": 2,
+      "210-219": 7,
+      "290-299": 1,
+      "50-59": 1,
+      "60-69": 39,
+      "70-79": 63,
+      "80-89": 80,
+      "90-99": 226
+    }
+  },
+  "tempo_by_style": {
+    "funk": {
+      "min": 80,
+      "max": 138,
+      "mean": 108.2
+    },
+    "soul": {
+      "min": 80,
+      "max": 148,
+      "mean": 107.6
+    },
+    "hiphop": {
+      "min": 67,
+      "max": 140,
+      "mean": 90.2
+    },
+    "pop": {
+      "min": 83,
+      "max": 142,
+      "mean": 111.5
+    },
+    "rock": {
+      "min": 50,
+      "max": 200,
+      "mean": 109.1
+    },
+    "jazz": {
+      "min": 88,
+      "max": 290,
+      "mean": 128.9
+    },
+    "neworleans": {
+      "min": 82,
+      "max": 124,
+      "mean": 91.1
+    },
+    "dance": {
+      "min": 120,
+      "max": 170,
+      "mean": 139.1
+    },
+    "latin": {
+      "min": 80,
+      "max": 184,
+      "mean": 106.9
+    },
+    "afrocuban": {
+      "min": 105,
+      "max": 128,
+      "mean": 115.8
+    },
+    "reggae": {
+      "min": 64,
+      "max": 141,
+      "mean": 82.8
+    },
+    "country": {
+      "min": 78,
+      "max": 114,
+      "mean": 105.3
+    },
+    "gospel": {
+      "min": 120,
+      "max": 120,
+      "mean": 120
+    },
+    "punk": {
+      "min": 128,
+      "max": 144,
+      "mean": 135.9
+    },
+    "afrobeat": {
+      "min": 85,
+      "max": 114,
+      "mean": 98.3
+    },
+    "blues": {
+      "min": 72,
+      "max": 134,
+      "mean": 113
+    },
+    "middleeastern": {
+      "min": 126,
+      "max": 126,
+      "mean": 126
+    },
+    "highlife": {
+      "min": 126,
+      "max": 126,
+      "mean": 126
+    }
+  },
+  "duration": {
+    "min_seconds": 0.68,
+    "max_seconds": 1394.17,
+    "mean_seconds": 42.52,
+    "total_hours": 13.58
+  },
+  "duration_by_beat_type": {
+    "beat": {
+      "mean_seconds": 93.7,
+      "total_minutes": 785.5
+    },
+    "fill": {
+      "mean_seconds": 2.73,
+      "total_minutes": 29.4
+    }
+  },
+  "drummer_characteristics": {
+    "drummer1": {
+      "total_files": 494,
+      "beats": 86,
+      "fills": 408,
+      "styles": [
+        "afrobeat",
+        "afrocuban",
+        "country",
+        "dance",
+        "funk",
+        "gospel",
+        "hiphop",
+        "jazz",
+        "latin",
+        "neworleans",
+        "pop",
+        "punk",
+        "reggae",
+        "rock",
+        "soul"
+      ],
+      "tempo_range": "50-290 BPM",
+      "tempo_mean": 116.7,
+      "total_duration_minutes": 209.2
+    },
+    "drummer10": {
+      "total_files": 10,
+      "beats": 10,
+      "fills": 0,
+      "styles": [
+        "jazz"
+      ],
+      "tempo_range": "110-215 BPM",
+      "tempo_mean": 184.9,
+      "total_duration_minutes": 13.5
+    },
+    "drummer2": {
+      "total_files": 18,
+      "beats": 17,
+      "fills": 1,
+      "styles": [
+        "rock"
+      ],
+      "tempo_range": "85-130 BPM",
+      "tempo_mean": 124.8,
+      "total_duration_minutes": 50.5
+    },
+    "drummer3": {
+      "total_files": 98,
+      "beats": 94,
+      "fills": 4,
+      "styles": [
+        "hiphop",
+        "jazz",
+        "rock"
+      ],
+      "tempo_range": "92-120 BPM",
+      "tempo_mean": 108.0,
+      "total_duration_minutes": 27.8
+    },
+    "drummer4": {
+      "total_files": 9,
+      "beats": 9,
+      "fills": 0,
+      "styles": [
+        "blues",
+        "jazz",
+        "latin",
+        "rock"
+      ],
+      "tempo_range": "87-184 BPM",
+      "tempo_mean": 134.6,
+      "total_duration_minutes": 4.1
+    },
+    "drummer5": {
+      "total_files": 54,
+      "beats": 54,
+      "fills": 0,
+      "styles": [
+        "afrocuban",
+        "blues",
+        "funk",
+        "hiphop",
+        "latin",
+        "middleeastern",
+        "neworleans",
+        "pop",
+        "reggae",
+        "rock",
+        "soul"
+      ],
+      "tempo_range": "65-162 BPM",
+      "tempo_mean": 109.3,
+      "total_duration_minutes": 147.5
+    },
+    "drummer6": {
+      "total_files": 15,
+      "beats": 15,
+      "fills": 0,
+      "styles": [
+        "rock"
+      ],
+      "tempo_range": "60-180 BPM",
+      "tempo_mean": 94.1,
+      "total_duration_minutes": 28.9
+    },
+    "drummer7": {
+      "total_files": 342,
+      "beats": 108,
+      "fills": 234,
+      "styles": [
+        "country",
+        "funk",
+        "hiphop",
+        "jazz",
+        "neworleans",
+        "pop",
+        "rock",
+        "soul"
+      ],
+      "tempo_range": "60-148 BPM",
+      "tempo_mean": 99.3,
+      "total_duration_minutes": 115.6
+    },
+    "drummer8": {
+      "total_files": 80,
+      "beats": 80,
+      "fills": 0,
+      "styles": [
+        "afrobeat",
+        "dance",
+        "funk",
+        "highlife",
+        "hiphop",
+        "latin",
+        "neworleans",
+        "pop",
+        "rock",
+        "soul"
+      ],
+      "tempo_range": "65-138 BPM",
+      "tempo_mean": 100.1,
+      "total_duration_minutes": 201.1
+    },
+    "drummer9": {
+      "total_files": 30,
+      "beats": 30,
+      "fills": 0,
+      "styles": [
+        "rock"
+      ],
+      "tempo_range": "90-120 BPM",
+      "tempo_mean": 105,
+      "total_duration_minutes": 16.8
+    }
+  },
+  "midi_analysis": {
+    "samples_analyzed": 100,
+    "drum_hits_by_pitch": {
+      "38": 19474,
+      "36": 16300,
+      "44": 10133,
+      "51": 9878,
+      "42": 8334,
+      "22": 6859,
+      "40": 4777,
+      "48": 2355,
+      "37": 2161,
+      "26": 2117,
+      "57": 1527,
+      "43": 1207,
+      "46": 856,
+      "53": 706,
+      "45": 485,
+      "59": 455,
+      "55": 415,
+      "52": 218,
+      "49": 213,
+      "50": 154,
+      "58": 123,
+      "47": 89
+    },
+    "drum_hits_by_name": {
+      "Acoustic Snare": 19474,
+      "Bass Drum 1": 16300,
+      "Pedal Hi-Hat": 10133,
+      "Ride Cymbal 1": 9878,
+      "Closed Hi-Hat": 8334,
+      "Unknown (22)": 6859,
+      "Electric Snare": 4777,
+      "Hi-Mid Tom": 2355,
+      "Side Stick": 2161,
+      "Unknown (26)": 2117,
+      "Crash Cymbal 2": 1527,
+      "High Floor Tom": 1207,
+      "Open Hi-Hat": 856,
+      "Ride Bell": 706,
+      "Low Tom": 485
+    },
+    "velocity": {
+      "overall_mean": 66.8,
+      "overall_stdev": 34.3
+    },
+    "timing_offsets_ms": {
+      "mean": -7.13,
+      "stdev": 28.75,
+      "min": -117.19,
+      "max": 111.33
+    },
+    "notes_per_bar": {
+      "mean": 19.0,
+      "min": 3.1,
+      "max": 31.3
+    },
+    "hits_by_category": {
+      "snare": {
+        "count": 26412,
+        "percentage": 29.7
+      },
+      "hihat": {
+        "count": 19323,
+        "percentage": 21.8
+      },
+      "kick": {
+        "count": 16300,
+        "percentage": 18.3
+      },
+      "ride": {
+        "count": 11039,
+        "percentage": 12.4
+      },
+      "other": {
+        "count": 9099,
+        "percentage": 10.2
+      },
+      "tom": {
+        "count": 4290,
+        "percentage": 4.8
+      },
+      "crash": {
+        "count": 2373,
+        "percentage": 2.7
+      }
+    }
+  }
+}

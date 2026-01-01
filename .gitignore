@@ -109,3 +109,21 @@ html/
 latex/
 doc/
 docs/_build/
+
+# Audio and MIDI files (training data, samples, etc.)
+*.wav
+*.WAV
+*.mid
+*.MID
+*.midi
+*.MIDI
+*.aif
+*.aiff
+*.mp3
+*.ogg
+*.flac
+
+# GrooveMind training data directories
+groovemind-training/groove/
+groovemind-training/brush-patterns/
+groovemind-training/library/

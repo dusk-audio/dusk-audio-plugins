@@ -77,6 +77,16 @@ void SpectrumAnalyzerEditor::setupAttachments()
 
     peakHoldAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         apvts, SpectrumAnalyzerProcessor::PARAM_PEAK_HOLD, toolbar.getPeakHoldButton());
+
+    rangeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        apvts, SpectrumAnalyzerProcessor::PARAM_DISPLAY_MIN, toolbar.getRangeSlider());
+
+    // Add listener to update spectrum display when range changes
+    toolbar.getRangeSlider().onValueChange = [this]() {
+        float minDB = static_cast<float>(toolbar.getRangeSlider().getValue());
+        float maxDB = *audioProcessor.getAPVTS().getRawParameterValue(SpectrumAnalyzerProcessor::PARAM_DISPLAY_MAX);
+        spectrumDisplay.setDisplayRange(minDB, maxDB);
+    };
 }
 
 //==============================================================================
@@ -111,24 +121,25 @@ void SpectrumAnalyzerEditor::paint(juce::Graphics& g)
     // Store title click area for supporters overlay
     titleClickArea = headerArea.reduced(15, 0).withWidth(200);
 
-    // Draw L/R labels and RMS below the right-side meters
+    // Draw labels for the right-side meters
     auto contentBounds = getLocalBounds();
     contentBounds.removeFromTop(40);  // Header
     contentBounds.removeFromBottom(35);  // Toolbar
     contentBounds.removeFromBottom(120);  // Meter panel
     auto meterLabelArea = contentBounds.reduced(10).removeFromRight(70);
 
-    // L/R labels at bottom of meter area
-    auto labelArea = meterLabelArea.removeFromBottom(20);
+    // L/R labels at the very bottom
+    auto lrLabelArea = meterLabelArea.removeFromBottom(16);
     g.setColour(juce::Colour(0xff888888));
     g.setFont(11.0f);
-    g.drawText("L    R", labelArea, juce::Justification::centred);
+    g.drawText("L      R", lrLabelArea, juce::Justification::centred);
 
-    // RMS value below meters
+    // RMS value above L/R labels
+    auto rmsArea = meterLabelArea.removeFromBottom(16);
     float rms = audioProcessor.getRmsLevel();
     juce::String rmsStr = rms > -99.0f ? juce::String(rms, 1) + " dB" : "-inf dB";
     g.setFont(10.0f);
-    g.drawText("RMS: " + rmsStr, labelArea.translated(0, -3), juce::Justification::centredTop);
+    g.drawText("RMS: " + rmsStr, rmsArea, juce::Justification::centred);
 }
 
 void SpectrumAnalyzerEditor::resized()
@@ -152,21 +163,22 @@ void SpectrumAnalyzerEditor::resized()
     // Main content area with spectrum and meters
     auto contentArea = bounds.reduced(10);
 
-    // LED meters on the right side (60px wide total)
+    // LED meters on the right side (70px wide total)
     auto meterArea = contentArea.removeFromRight(70);
     meterArea.removeFromTop(5);  // Small top margin
-    meterArea.removeFromBottom(20);  // Space for RMS label
+    meterArea.removeFromBottom(35);  // Space for RMS + L/R labels (16 + 16 + 3 padding)
 
-    // Position L and R meters
-    int meterWidth = 22;
-    int meterSpacing = 8;
+    // Position L and R meters with proper spacing
+    int meterWidth = 24;
+    int meterSpacing = 10;
     int totalMeterWidth = meterWidth * 2 + meterSpacing;
     int meterStartX = meterArea.getCentreX() - totalMeterWidth / 2;
 
     outputMeterL.setBounds(meterStartX, meterArea.getY(), meterWidth, meterArea.getHeight());
     outputMeterR.setBounds(meterStartX + meterWidth + meterSpacing, meterArea.getY(), meterWidth, meterArea.getHeight());
 
-    // Spectrum display takes remaining space
+    // Spectrum display takes remaining space (with small gap from meters)
+    contentArea.removeFromRight(5);
     spectrumDisplay.setBounds(contentArea);
 
     // Supporters overlay

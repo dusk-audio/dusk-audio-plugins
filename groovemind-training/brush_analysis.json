@@ -1,0 +1,93 @@
+{
+  "total_patterns": 99,
+  "patterns_by_style": {
+    "shuffle": 10,
+    "pop": 33,
+    "latin": 23,
+    "jazz": 17,
+    "country": 16
+  },
+  "patterns_by_type": {
+    "fill": 66,
+    "beat": 33
+  },
+  "tempo": {
+    "values": [
+      68,
+      105,
+      110,
+      118,
+      120
+    ],
+    "distribution": {
+      "68": 33,
+      "105": 23,
+      "110": 10,
+      "118": 17,
+      "120": 16
+    }
+  },
+  "duration": {
+    "min_seconds": 0.86,
+    "max_seconds": 28.19,
+    "mean_seconds": 7.79
+  },
+  "note_usage": {
+    "Snare Brush Stroke/Swirl": 2032,
+    "Snare Tap (Brush)": 1146,
+    "Kick (Brush)": 975,
+    "Pedal Hi-Hat": 699,
+    "Ride (Brush)": 354,
+    "Snare Tap Variant": 293,
+    "Ride Cup (Brush)": 192,
+    "Rim Shot": 119,
+    "Open Hi-Hat": 113,
+    "Closed Hi-Hat": 73,
+    "Mid Tom (Brush)": 63,
+    "Crash (Brush)": 60,
+    "Floor Tom (Brush)": 38,
+    "High Tom (Brush)": 34,
+    "Note 43": 2,
+    "Note 47": 1,
+    "Note 50": 1
+  },
+  "brush_technique": {
+    "patterns_with_brush": 89,
+    "avg_brush_hits_per_pattern": 20.5,
+    "avg_brush_velocity": 75.5,
+    "avg_brush_duration_ms": 162.1,
+    "brush_interval_stats": {
+      "mean_seconds": 0.339,
+      "stdev_seconds": 0.134,
+      "min_seconds": 0.0,
+      "max_seconds": 1.186
+    },
+    "by_style": {
+      "shuffle": {
+        "patterns": 10,
+        "total_hits": 335,
+        "avg_velocity": 88.5
+      },
+      "pop": {
+        "patterns": 32,
+        "total_hits": 988,
+        "avg_velocity": 64.7
+      },
+      "latin": {
+        "patterns": 17,
+        "total_hits": 226,
+        "avg_velocity": 81.7
+      },
+      "jazz": {
+        "patterns": 15,
+        "total_hits": 276,
+        "avg_velocity": 84.1
+      },
+      "country": {
+        "patterns": 15,
+        "total_hits": 207,
+        "avg_velocity": 88.2
+      }
+    }
+  }
+}

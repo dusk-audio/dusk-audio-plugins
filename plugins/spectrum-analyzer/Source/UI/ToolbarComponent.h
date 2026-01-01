@@ -42,7 +42,7 @@ public:
         addAndMakeVisible(slopeLabel);
 
         slopeSlider.setRange(-4.5, 4.5, 0.5);
-        slopeSlider.setValue(0.0);
+        slopeSlider.setValue(0.0);  // Default flat response
         slopeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
         slopeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
         slopeSlider.setTextValueSuffix(" dB");
@@ -70,35 +70,54 @@ public:
         peakHoldButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xff888888));
         peakHoldButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xff00aaff));
         addAndMakeVisible(peakHoldButton);
+
+        // Range (min dB)
+        rangeLabel.setText("Range:", juce::dontSendNotification);
+        rangeLabel.setColour(juce::Label::textColourId, juce::Colour(0xff888888));
+        addAndMakeVisible(rangeLabel);
+
+        rangeSlider.setRange(-100.0, -30.0, 10.0);
+        rangeSlider.setValue(-60.0);
+        rangeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 18);
+        rangeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+        rangeSlider.setTextValueSuffix(" dB");
+        rangeSlider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffaaaaaa));
+        rangeSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        addAndMakeVisible(rangeSlider);
     }
 
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(10, 2);
-        int spacing = 15;
+        int spacing = 12;
 
-        // FFT Resolution - wider to show "8192" fully
-        fftResolutionLabel.setBounds(bounds.removeFromLeft(30));
-        fftResolutionCombo.setBounds(bounds.removeFromLeft(70).reduced(0, 4));
+        // FFT Resolution
+        fftResolutionLabel.setBounds(bounds.removeFromLeft(28));
+        fftResolutionCombo.setBounds(bounds.removeFromLeft(65).reduced(0, 4));
         bounds.removeFromLeft(spacing);
 
-        // Smoothing - slider + text box (40px for value)
-        smoothingLabel.setBounds(bounds.removeFromLeft(55));
-        smoothingSlider.setBounds(bounds.removeFromLeft(90));  // 50 slider + 40 text
+        // Smoothing
+        smoothingLabel.setBounds(bounds.removeFromLeft(52));
+        smoothingSlider.setBounds(bounds.removeFromLeft(85));
         bounds.removeFromLeft(spacing);
 
-        // Slope - slider + text box (45px for value with "dB")
-        slopeLabel.setBounds(bounds.removeFromLeft(42));
-        slopeSlider.setBounds(bounds.removeFromLeft(100));  // 55 slider + 45 text
+        // Slope
+        slopeLabel.setBounds(bounds.removeFromLeft(40));
+        slopeSlider.setBounds(bounds.removeFromLeft(90));
         bounds.removeFromLeft(spacing);
 
-        // Decay - slider + text box (50px for value with "dB/s")
-        decayLabel.setBounds(bounds.removeFromLeft(48));
-        decaySlider.setBounds(bounds.removeFromLeft(105));  // 55 slider + 50 text
+        // Decay
+        decayLabel.setBounds(bounds.removeFromLeft(45));
+        decaySlider.setBounds(bounds.removeFromLeft(95));
+        bounds.removeFromLeft(spacing);
+
+        // Range (min dB)
+        rangeLabel.setBounds(bounds.removeFromLeft(45));
+        rangeSlider.setBounds(bounds.removeFromLeft(95));
         bounds.removeFromLeft(spacing);
 
         // Peak Hold - checkbox on right side
-        peakHoldButton.setBounds(bounds.removeFromLeft(100));
+        peakHoldButton.setBounds(bounds.removeFromLeft(90));
     }
 
     void paint(juce::Graphics& g) override
@@ -117,6 +136,7 @@ public:
     juce::Slider& getSlopeSlider() { return slopeSlider; }
     juce::Slider& getDecaySlider() { return decaySlider; }
     juce::ToggleButton& getPeakHoldButton() { return peakHoldButton; }
+    juce::Slider& getRangeSlider() { return rangeSlider; }
 
 private:
     juce::Label fftResolutionLabel;
@@ -132,6 +152,9 @@ private:
     juce::Slider decaySlider;
 
     juce::ToggleButton peakHoldButton;
+
+    juce::Label rangeLabel;
+    juce::Slider rangeSlider;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ToolbarComponent)
 };
