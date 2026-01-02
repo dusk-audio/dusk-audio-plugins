@@ -13,14 +13,19 @@
 //==============================================================================
 GrooveMindProcessor::GrooveMindProcessor()
     : AudioProcessor(BusesProperties()
-                     .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+                     .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+                     .withInput("Sidechain", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "Parameters", createParameterLayout()),
       patternLibrary(),
       drummerEngine(patternLibrary),
-      grooveHumanizer()
+      grooveHumanizer(),
+      followModeController()
 {
     // Load pattern library
     loadPatternLibrary();
+
+    // Load ML models
+    loadMLModels();
 }
 
 void GrooveMindProcessor::loadPatternLibrary()
@@ -71,6 +76,125 @@ void GrooveMindProcessor::loadPatternLibrary()
     DBG("GrooveMind: WARNING - No pattern library found! Searched:");
     for (const auto& path : searchPaths)
         DBG("  - " + path);
+}
+
+//==============================================================================
+juce::File GrooveMindProcessor::getResourcesDirectory() const
+{
+    // Try multiple locations for ML models and resources
+    juce::StringArray searchPaths;
+
+    // 1. Relative to plugin binary (installed plugins)
+    auto pluginFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    searchPaths.add(pluginFile.getParentDirectory().getChildFile("GrooveMind_Resources").getFullPathName());
+
+    // 2. User's home directory (standard location)
+    searchPaths.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                    .getChildFile(".local/share/GrooveMind/models").getFullPathName());
+
+    // 3. Development location (groovemind-training/rtneural)
+    auto devPath = pluginFile.getParentDirectory();
+    for (int i = 0; i < 6; ++i)
+    {
+        auto trainPath = devPath.getChildFile("groovemind-training/rtneural");
+        if (trainPath.isDirectory())
+        {
+            searchPaths.add(trainPath.getFullPathName());
+            break;
+        }
+        devPath = devPath.getParentDirectory();
+    }
+
+    // 4. Plugin Source Resources directory (development)
+    devPath = pluginFile.getParentDirectory();
+    for (int i = 0; i < 6; ++i)
+    {
+        auto resPath = devPath.getChildFile("plugins/groovemind/Resources");
+        if (resPath.isDirectory())
+        {
+            searchPaths.add(resPath.getFullPathName());
+            break;
+        }
+        devPath = devPath.getParentDirectory();
+    }
+
+    // 5. Hardcoded development paths (fallback)
+    searchPaths.add("/home/marc/projects/plugins/groovemind-training/rtneural");
+    searchPaths.add("/home/marc/projects/plugins/plugins/groovemind/Resources");
+
+    // Find first valid directory
+    for (const auto& path : searchPaths)
+    {
+        juce::File dir(path);
+        if (dir.isDirectory())
+        {
+            // Check if it contains at least one expected model file
+            if (dir.getChildFile("humanizer.json").existsAsFile() ||
+                dir.getChildFile("style_classifier.json").existsAsFile() ||
+                dir.getChildFile("timing_stats.json").existsAsFile())
+            {
+                return dir;
+            }
+        }
+    }
+
+    // Return empty file if not found
+    DBG("GrooveMind: WARNING - No ML models directory found!");
+    return juce::File();
+}
+
+void GrooveMindProcessor::loadMLModels()
+{
+    auto resourcesDir = getResourcesDirectory();
+
+    if (!resourcesDir.isDirectory())
+    {
+        DBG("GrooveMind: ML models directory not found - using statistical humanization only");
+        return;
+    }
+
+    DBG("GrooveMind: Loading ML models from " + resourcesDir.getFullPathName());
+
+    // Load humanizer model
+    auto humanizerFile = resourcesDir.getChildFile("humanizer.json");
+    if (humanizerFile.existsAsFile())
+    {
+        if (grooveHumanizer.loadModel(humanizerFile))
+            DBG("GrooveMind: Humanizer model loaded");
+        else
+            DBG("GrooveMind: Failed to load humanizer model");
+    }
+
+    // Load timing statistics
+    auto timingStatsFile = resourcesDir.getChildFile("timing_stats.json");
+    if (timingStatsFile.existsAsFile())
+    {
+        if (grooveHumanizer.loadTimingStats(timingStatsFile))
+            DBG("GrooveMind: Timing statistics loaded");
+        else
+            DBG("GrooveMind: Failed to load timing statistics");
+    }
+
+    // Load style classifier
+    auto styleClassifierFile = resourcesDir.getChildFile("style_classifier.json");
+    if (styleClassifierFile.existsAsFile())
+    {
+        if (drummerEngine.loadStyleClassifier(styleClassifierFile))
+            DBG("GrooveMind: Style classifier loaded");
+        else
+            DBG("GrooveMind: Failed to load style classifier");
+    }
+
+    // Report ML status
+    if (grooveHumanizer.isModelLoaded())
+        DBG("GrooveMind: ML humanization enabled");
+    else
+        DBG("GrooveMind: Using statistical humanization (ML model not available)");
+
+    if (drummerEngine.isMLEnabled())
+        DBG("GrooveMind: ML pattern selection enabled");
+    else
+        DBG("GrooveMind: Using query-based pattern selection (ML model not available)");
 }
 
 GrooveMindProcessor::~GrooveMindProcessor()
@@ -189,6 +313,7 @@ void GrooveMindProcessor::prepareToPlay(double newSampleRate, int samplesPerBloc
     sampleRate = newSampleRate;
     drummerEngine.prepare(sampleRate, samplesPerBlock);
     grooveHumanizer.prepare(sampleRate);
+    followModeController.prepare(sampleRate, samplesPerBlock);
 }
 
 void GrooveMindProcessor::releaseResources()
@@ -197,9 +322,15 @@ void GrooveMindProcessor::releaseResources()
 
 bool GrooveMindProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    // This plugin produces MIDI, audio buses are mainly for pass-through
+    // Output must be stereo
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
+
+    // Input (sidechain) can be stereo or disabled
+    auto sidechainSet = layouts.getMainInputChannelSet();
+    if (!sidechainSet.isDisabled() && sidechainSet != juce::AudioChannelSet::stereo())
+        return false;
+
     return true;
 }
 
@@ -207,9 +338,6 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                         juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-
-    // Clear audio (we only produce MIDI)
-    buffer.clear();
 
     // Get transport info from host
     if (auto* playHead = getPlayHead())
@@ -225,6 +353,28 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                 currentPositionBeats = *ppq;
         }
     }
+
+    // Get follow mode parameter
+    bool followEnabled = apvts.getRawParameterValue("follow_enabled")->load() > 0.5f;
+
+    // Process sidechain input for Follow Mode
+    if (followEnabled && buffer.getNumChannels() >= 2)
+    {
+        followModeController.setEnabled(true);
+        followModeController.processAudio(
+            buffer.getReadPointer(0),
+            buffer.getReadPointer(1),
+            buffer.getNumSamples(),
+            currentBPM,
+            currentPositionBeats);
+    }
+    else
+    {
+        followModeController.setEnabled(false);
+    }
+
+    // Clear audio output (we only produce MIDI)
+    buffer.clear();
 
     // Only generate patterns if transport is playing
     if (!transportPlaying)
@@ -257,13 +407,67 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Process and generate MIDI
     drummerEngine.process(buffer.getNumSamples(), currentBPM, currentPositionBeats, midiMessages);
 
-    // Apply humanization
+    // Apply humanization (with optional Follow Mode groove application)
     if (groove > 0.01f)
     {
         grooveHumanizer.setGrooveAmount(groove);
         grooveHumanizer.setSwing(swing);
         grooveHumanizer.process(midiMessages, currentBPM);
     }
+
+    // Apply extracted groove from Follow Mode if active
+    if (followEnabled && followModeController.getExtractedGroove().isValid)
+    {
+        // The follow mode controller can modify timing/velocity based on extracted groove
+        // This is applied on top of the standard humanization
+        juce::MidiBuffer adjustedBuffer;
+
+        for (const auto metadata : midiMessages)
+        {
+            auto msg = metadata.getMessage();
+            int samplePos = metadata.samplePosition;
+
+            if (msg.isNoteOn())
+            {
+                // Calculate beat position
+                double beatPosition = currentPositionBeats +
+                    (samplePos / sampleRate) * (currentBPM / 60.0);
+
+                // Apply groove timing offset
+                float timingOffsetMs = followModeController.applyGroove(beatPosition, 0.0f);
+                int offsetSamples = static_cast<int>(timingOffsetMs * sampleRate / 1000.0);
+                int newSamplePos = juce::jmax(0, samplePos + offsetSamples);
+
+                // Apply groove velocity
+                int originalVelocity = msg.getVelocity();
+                float adjustedVelocity = followModeController.applyGrooveVelocity(
+                    beatPosition, static_cast<float>(originalVelocity));
+                int newVelocity = juce::jlimit(1, 127, static_cast<int>(adjustedVelocity));
+
+                adjustedBuffer.addEvent(
+                    juce::MidiMessage::noteOn(msg.getChannel(), msg.getNoteNumber(),
+                                               static_cast<juce::uint8>(newVelocity)),
+                    newSamplePos);
+            }
+            else
+            {
+                adjustedBuffer.addEvent(msg, samplePos);
+            }
+        }
+
+        midiMessages.swapWith(adjustedBuffer);
+    }
+}
+
+//==============================================================================
+bool GrooveMindProcessor::isFollowModeEnabled() const
+{
+    return apvts.getRawParameterValue("follow_enabled")->load() > 0.5f;
+}
+
+bool GrooveMindProcessor::isFollowModeActive() const
+{
+    return isFollowModeEnabled() && followModeController.getExtractedGroove().isValid;
 }
 
 //==============================================================================

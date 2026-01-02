@@ -131,8 +131,104 @@ PatternQuery DrummerEngine::buildQuery() const
 }
 
 //==============================================================================
+bool DrummerEngine::loadStyleClassifier(const juce::File& modelFile)
+{
+    if (!modelFile.existsAsFile())
+    {
+        DBG("DrummerEngine: Style classifier not found: " + modelFile.getFullPathName());
+        return false;
+    }
+
+    if (styleClassifier.loadFromJSON(modelFile))
+    {
+        DBG("DrummerEngine: Style classifier loaded with " +
+            juce::String(styleClassifier.getNumPatterns()) + " patterns");
+        return true;
+    }
+
+    DBG("DrummerEngine: Failed to load style classifier");
+    return false;
+}
+
+//==============================================================================
+void DrummerEngine::selectPatternWithML()
+{
+    // This method now delegates to selectNewPattern which handles both ML and non-ML paths
+    // Keeping as a separate entry point for explicit ML selection if needed
+    if (!styleClassifier.loaded())
+    {
+        // Use query-based fallback directly to avoid recursion
+        auto query = buildQuery();
+        currentPattern = patternLibrary.selectPattern(query);
+        return;
+    }
+
+    // Get ML recommendations
+    auto recommendations = styleClassifier.predict(
+        static_cast<int>(currentStyle),
+        static_cast<int>(currentSection),
+        energy,
+        complexity,
+        5  // Get top 5 recommendations
+    );
+
+    // Try to find a pattern from the recommendations
+    for (const auto& [patternIndex, score] : recommendations)
+    {
+        auto patternId = styleClassifier.getPatternId(patternIndex);
+        if (patternId.isNotEmpty())
+        {
+            const DrumPattern* pattern = patternLibrary.getPatternById(patternId);
+            if (pattern != nullptr)
+            {
+                currentPattern = pattern;
+                DBG("DrummerEngine: ML selected pattern " + patternId +
+                    " (score=" + juce::String(score, 2) + ")");
+                return;
+            }
+        }
+    }
+
+    // Fall back to query-based if no ML recommendations found
+    auto query = buildQuery();
+    currentPattern = patternLibrary.selectPattern(query);
+}
+
+//==============================================================================
 void DrummerEngine::selectNewPattern()
 {
+    // If ML is available, use it
+    if (styleClassifier.loaded())
+    {
+        // Get ML recommendations
+        auto recommendations = styleClassifier.predict(
+            static_cast<int>(currentStyle),
+            static_cast<int>(currentSection),
+            energy,
+            complexity,
+            5  // Get top 5 recommendations
+        );
+
+        // Try to find a pattern from the recommendations
+        for (const auto& [patternIndex, score] : recommendations)
+        {
+            auto patternId = styleClassifier.getPatternId(patternIndex);
+            if (patternId.isNotEmpty())
+            {
+                const DrumPattern* pattern = patternLibrary.getPatternById(patternId);
+                if (pattern != nullptr)
+                {
+                    currentPattern = pattern;
+                    DBG("DrummerEngine: ML selected pattern " + patternId +
+                        " (score=" + juce::String(score, 2) + ")");
+                    return;
+                }
+            }
+        }
+        // Fall through to query-based selection if ML found nothing
+    }
+
+    // Query-based selection (fallback)
     auto query = buildQuery();
     currentPattern = patternLibrary.selectPattern(query);
 
@@ -158,25 +254,11 @@ void DrummerEngine::selectFillPattern()
 }
 
 //==============================================================================
-bool DrummerEngine::shouldAutoFill(double positionInBeats) const
+bool DrummerEngine::shouldAutoFill(double /*positionInBeats*/) const
 {
-    if (fillMode != 0)  // Not auto mode
-        return false;
-
-    // Cooldown: don't trigger another fill within 8 beats of the last one ending
-    if (positionInBeats < lastFillEndBeat + 8.0)
-        return false;
-
-    // Trigger fills at phrase boundaries (every 8 bars for verse, 4 for chorus)
-    int barsPerPhrase = (currentSection == SongSection::Chorus ||
-                         currentSection == SongSection::Breakdown) ? 4 : 8;
-    int beatsPerPhrase = barsPerPhrase * 4;
-
-    double positionInPhrase = std::fmod(positionInBeats, beatsPerPhrase);
-
-    // Fill at last bar of phrase (only trigger once at the start of the fill window)
-    return positionInPhrase >= (beatsPerPhrase - 4) &&
-           positionInPhrase < (beatsPerPhrase - 4 + 0.1);
+    // Auto-fill disabled until Phase 3 ML implementation
+    // The timing system needs proper tempo-independent pattern handling
+    return false;
 }
 
 //==============================================================================
@@ -209,10 +291,17 @@ void DrummerEngine::generateMidiFromPattern(const DrumPattern* pattern,
     if (pattern == nullptr || !pattern->isValid())
         return;
 
-    double beatsPerSecond = bpm / 60.0;
-    double samplesPerBeat = sampleRate / beatsPerSecond;
+    // Current playback tempo
+    double currentBeatsPerSecond = bpm / 60.0;
+    double samplesPerBeat = sampleRate / currentBeatsPerSecond;
 
-    // The pattern's MIDI data is in seconds, convert to beats
+    // Original pattern tempo - use this to convert MIDI seconds to beats
+    double originalBpm = pattern->metadata.tempoBpm;
+    if (originalBpm <= 0) originalBpm = 120.0;
+    double originalBeatsPerSecond = originalBpm / 60.0;
+
+    // The pattern's MIDI data is in seconds at the ORIGINAL tempo
+    // Convert to beats, then those beats play at the CURRENT tempo
     for (int i = 0; i < pattern->midiData.getNumEvents(); ++i)
     {
         auto* event = pattern->midiData.getEventPointer(i);
@@ -221,12 +310,13 @@ void DrummerEngine::generateMidiFromPattern(const DrumPattern* pattern,
         if (!msg.isNoteOnOrOff())
             continue;
 
-        // Convert event time from seconds to beats
+        // Convert event time from seconds to beats using ORIGINAL tempo
+        // This gives us the beat position within the pattern
         double eventTimeSeconds = event->message.getTimeStamp();
-        double eventBeat = eventTimeSeconds * beatsPerSecond;
+        double eventBeatInPattern = eventTimeSeconds * originalBeatsPerSecond;
 
-        // Adjust for pattern position
-        double absoluteBeat = patternOffset + eventBeat;
+        // Adjust for pattern position in the song
+        double absoluteBeat = patternOffset + eventBeatInPattern;
 
         // Check if event falls within this block
         if (absoluteBeat >= blockStartBeat && absoluteBeat < blockEndBeat)
@@ -240,7 +330,7 @@ void DrummerEngine::generateMidiFromPattern(const DrumPattern* pattern,
             velocity = static_cast<int>(velocity * (0.5f + loudness * 0.5f));
             velocity = juce::jlimit(1, 127, velocity);
 
-            // Calculate sample position within block
+            // Calculate sample position within block (using CURRENT tempo)
             double beatOffset = absoluteBeat - blockStartBeat;
             int samplePos = static_cast<int>(beatOffset * samplesPerBeat);
             samplePos = juce::jlimit(0, blockSamples - 1, samplePos);

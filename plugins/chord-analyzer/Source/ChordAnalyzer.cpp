@@ -563,7 +563,53 @@ juce::String ChordAnalyzer::getRootNameInKey(int degree) const
     int interval = minorKey ? minorIntervals[degree - 1] : majorIntervals[degree - 1];
     int pitchClass = (keyRoot + interval) % 12;
 
-    return pitchClassToName(pitchClass);
+    // Use the key-aware spelling method
+    return getSpellingForKey(pitchClass);
+}
+
+juce::String ChordAnalyzer::getSpellingForKey(int pitchClass) const
+{
+    // Determine correct enharmonic spelling based on key signature
+    // This ensures scale degrees use the musically correct note names
+    //
+    // Flat keys (use flats for accidentals): F, Bb, Eb, Ab, Db, Gb/Cb
+    // Sharp keys (use sharps for accidentals): G, D, A, E, B, F#/C#
+    // C major/A minor: convention uses sharps for accidentals
+
+    // Define the correct note names for each key (major keys)
+    // Format: array of 12 note names indexed by pitch class
+    static const char* keySpellings[12][12] = {
+        // C major: C D E F G A B (no accidentals, sharps for chromatic)
+        {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"},
+        // Db major: Db Eb F Gb Ab Bb C (5 flats)
+        {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "Cb"},
+        // D major: D E F# G A B C# (2 sharps)
+        {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"},
+        // Eb major: Eb F G Ab Bb C D (3 flats)
+        {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"},
+        // E major: E F# G# A B C# D# (4 sharps)
+        {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"},
+        // F major: F G A Bb C D E (1 flat)
+        {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"},
+        // Gb major: Gb Ab Bb Cb Db Eb F (6 flats)
+        {"C", "Db", "D", "Eb", "Fb", "F", "Gb", "G", "Ab", "A", "Bb", "Cb"},
+        // G major: G A B C D E F# (1 sharp)
+        {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"},
+        // Ab major: Ab Bb C Db Eb F G (4 flats)
+        {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"},
+        // A major: A B C# D E F# G# (3 sharps)
+        {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"},
+        // Bb major: Bb C D Eb F G A (2 flats)
+        {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"},
+        // B major: B C# D# E F# G# A# (5 sharps)
+        {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
+    };
+
+    pitchClass = pitchClass % 12;
+    if (pitchClass < 0) pitchClass += 12;
+
+    int keyIndex = keyRoot % 12;
+    return keySpellings[keyIndex][pitchClass];
 }
 
 std::vector<ChordSuggestion> ChordAnalyzer::getSuggestions(const ChordInfo& currentChord,
@@ -716,9 +762,9 @@ void ChordAnalyzer::addIntermediateSuggestions(std::vector<ChordSuggestion>& sug
     // Borrowed chords (modal interchange)
     if (!minorKey)
     {
-        // bVII from mixolydian
+        // bVII from mixolydian - use flats for flat numeral
         int bVII = (keyRoot + 10) % 12;
-        addSuggestion("bVII", pitchClassToName(bVII),
+        addSuggestion("bVII", pitchClassToName(bVII, true),
                       "Borrowed from parallel minor", 0.65f);
 
         // iv from parallel minor
@@ -737,9 +783,9 @@ void ChordAnalyzer::addIntermediateSuggestions(std::vector<ChordSuggestion>& sug
     // Applied chords based on quality
     if (quality == ChordQuality::Dominant7)
     {
-        // Tritone substitution target
+        // Tritone substitution target - use flats for flat numeral
         int tritone = (keyRoot + 6) % 12;
-        addSuggestion("bII7", pitchClassToName(tritone) + "7",
+        addSuggestion("bII7", pitchClassToName(tritone, true) + "7",
                       "Tritone substitution", 0.5f);
     }
 }
@@ -762,38 +808,42 @@ void ChordAnalyzer::addAdvancedSuggestions(std::vector<ChordSuggestion>& suggest
     // Chromatic mediants
     if (currentDegree == 1)
     {
-        // bVI (chromatic mediant)
+        // bVI (chromatic mediant) - use flats for flat numeral
         int bVI = (keyRoot + 8) % 12;
-        addSuggestion("bVI", pitchClassToName(bVI),
+        addSuggestion("bVI", pitchClassToName(bVI, true),
                       "Chromatic mediant - dramatic shift", 0.4f);
 
-        // bIII (chromatic mediant)
+        // bIII (chromatic mediant) - use flats for flat numeral
         int bIII = (keyRoot + 3) % 12;
-        addSuggestion("bIII", pitchClassToName(bIII),
+        addSuggestion("bIII", pitchClassToName(bIII, true),
                       "Chromatic mediant - upward", 0.35f);
     }
 
     // Neapolitan
     if (currentDegree == 4 || currentDegree == 2)
     {
+        // Neapolitan chord - use flats for flat numeral
         int neapolitan = (keyRoot + 1) % 12;
-        addSuggestion("bII", pitchClassToName(neapolitan),
+        addSuggestion("bII", pitchClassToName(neapolitan, true),
                       "Neapolitan chord - pre-dominant", 0.4f);
     }
 
     // Augmented 6th approach
     if (currentDegree == 5)
     {
-        // Italian augmented 6th setup
-        addSuggestion("It+6", "It+6",
+        // Italian augmented 6th - built on b6 scale degree
+        // In C major: Ab-C-F# (resolves to G)
+        int flatSix = (keyRoot + 8) % 12;
+        addSuggestion("It+6", pitchClassToName(flatSix, true) + " It+6",
                       "Italian augmented 6th - chromatic approach", 0.3f);
     }
 
     // Coltrane changes suggestion
     if (currentDegree == 1)
     {
+        // bVI maj7 - use flats for flat numeral
         int majThirdDown = (keyRoot + 8) % 12;  // Ab in C
-        addSuggestion("bVI maj7", pitchClassToName(majThirdDown) + "maj7",
+        addSuggestion("bVI maj7", pitchClassToName(majThirdDown, true) + "maj7",
                       "Coltrane changes - major third cycle", 0.25f);
     }
 }

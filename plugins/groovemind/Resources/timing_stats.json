@@ -1,0 +1,50 @@
+{
+  "kick": {
+    "timing_mean_ms": -5.782492879594198,
+    "timing_std_ms": 26.798372921381336,
+    "timing_median_ms": -7.291666666674246,
+    "velocity_mean": 58.092400739841366,
+    "velocity_std": 32.28438315887033,
+    "sample_count": 88127
+  },
+  "snare": {
+    "timing_mean_ms": -5.643592582188075,
+    "timing_std_ms": 28.143040865313072,
+    "timing_median_ms": -8.333333333325754,
+    "velocity_mean": 67.14259734307196,
+    "velocity_std": 40.13793909270044,
+    "sample_count": 135269
+  },
+  "hihat": {
+    "timing_mean_ms": -10.78629108648291,
+    "timing_std_ms": 26.44317339717109,
+    "timing_median_ms": -12.500000000002842,
+    "velocity_mean": 58.47481670929241,
+    "velocity_std": 28.191485044276078,
+    "sample_count": 87975
+  },
+  "tom": {
+    "timing_mean_ms": -6.763891552401998,
+    "timing_std_ms": 27.677165117093725,
+    "timing_median_ms": -9.375000000005684,
+    "velocity_mean": 87.92648703934542,
+    "velocity_std": 28.929594440083086,
+    "sample_count": 31287
+  },
+  "cymbal": {
+    "timing_mean_ms": -4.542946757489385,
+    "timing_std_ms": 25.716723716110096,
+    "timing_median_ms": -6.249999999999978,
+    "velocity_mean": 74.14829359838744,
+    "velocity_std": 30.9395455966487,
+    "sample_count": 57548
+  },
+  "other": {
+    "timing_mean_ms": -6.77230186960479,
+    "timing_std_ms": 20.787536062481866,
+    "timing_median_ms": -6.250000000001421,
+    "velocity_mean": 89.9638224959875,
+    "velocity_std": 31.846611910015234,
+    "sample_count": 46106
+  }
+}

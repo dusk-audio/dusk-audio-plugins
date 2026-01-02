@@ -24,41 +24,60 @@ void GrooveHumanizer::prepare(double newSampleRate)
 //==============================================================================
 void GrooveHumanizer::initializeDefaultTimings()
 {
-    // These values are inspired by analysis of the Groove MIDI Dataset
-    // Mean timing offset: -7.13ms (slightly behind beat)
-    // Std deviation: 28.75ms
+    // These values are learned from the Groove MIDI Dataset (Phase 3 ML training)
+    // Statistics extracted from 446,312 note events across professional drummers
+    //
+    // Key insight: Real drummers play BEHIND the beat (negative mean = early relative
+    // to quantized position, but the median is more "behind" the grid)
+    //
+    // From timing_stats.json:
+    //   kick:   mean=-5.78ms, std=26.80ms, median=-7.29ms, vel_mean=58
+    //   snare:  mean=-5.64ms, std=28.14ms, median=-8.33ms, vel_mean=67
+    //   hihat:  mean=-10.79ms, std=26.44ms, median=-12.50ms, vel_mean=58
+    //   tom:    mean=-6.76ms, std=27.68ms, median=-9.38ms, vel_mean=88
+    //   cymbal: mean=-4.54ms, std=25.72ms, median=-6.25ms, vel_mean=74
+    //   other:  mean=-6.77ms, std=20.79ms, median=-6.25ms, vel_mean=90
 
-    // Kick drum - slightly ahead for drive
-    instrumentTimings[35] = { -2.0f, 8.0f, 1.0f };
-    instrumentTimings[36] = { -2.0f, 8.0f, 1.0f };
+    // Kick drum - slightly behind for groove
+    // Notes 35, 36 = Bass Drum
+    instrumentTimings[35] = { -5.8f, 26.8f, 0.92f };  // vel 58/63 normalized
+    instrumentTimings[36] = { -5.8f, 26.8f, 0.92f };
 
-    // Snare - on the beat or slightly behind
-    instrumentTimings[38] = { 2.0f, 12.0f, 1.0f };
-    instrumentTimings[40] = { 2.0f, 12.0f, 1.0f };
+    // Snare - behind the beat, moderate variation
+    // Notes 38, 40 = Snare
+    instrumentTimings[38] = { -5.6f, 28.1f, 1.0f };
+    instrumentTimings[40] = { -5.6f, 28.1f, 1.0f };
 
-    // Side stick / rim - often slightly ahead
-    instrumentTimings[37] = { -3.0f, 8.0f, 0.9f };
+    // Side stick / rim - similar to snare
+    instrumentTimings[37] = { -5.6f, 28.1f, 0.85f };
 
-    // Hi-hats - tight timing
-    instrumentTimings[42] = { 0.0f, 6.0f, 0.95f };
-    instrumentTimings[44] = { 0.0f, 5.0f, 0.9f };
-    instrumentTimings[46] = { 1.0f, 8.0f, 1.0f };
+    // Hi-hats - most behind the beat (creates laid-back feel)
+    // Notes 42, 44, 46 = Closed, Pedal, Open Hi-hat
+    instrumentTimings[42] = { -10.8f, 26.4f, 0.92f };
+    instrumentTimings[44] = { -10.8f, 26.4f, 0.85f };
+    instrumentTimings[46] = { -10.8f, 26.4f, 0.92f };
 
-    // Ride - slightly behind for jazz feel
-    instrumentTimings[51] = { 5.0f, 15.0f, 0.9f };
-    instrumentTimings[53] = { 3.0f, 12.0f, 0.95f };
+    // Ride - slightly behind like cymbals
+    // Notes 51, 53, 59 = Ride, Ride Bell, Ride 2
+    instrumentTimings[51] = { -4.5f, 25.7f, 0.95f };
+    instrumentTimings[53] = { -4.5f, 25.7f, 0.95f };
+    instrumentTimings[59] = { -4.5f, 25.7f, 0.95f };
 
-    // Toms - follow the beat
-    instrumentTimings[41] = { 0.0f, 10.0f, 1.0f };
-    instrumentTimings[43] = { 0.0f, 10.0f, 1.0f };
-    instrumentTimings[45] = { 0.0f, 10.0f, 1.0f };
-    instrumentTimings[47] = { 0.0f, 10.0f, 1.0f };
-    instrumentTimings[48] = { 0.0f, 10.0f, 1.0f };
-    instrumentTimings[50] = { 0.0f, 10.0f, 1.0f };
+    // Toms - behind the beat, higher velocity (fills)
+    // Notes 41, 43, 45, 47, 48, 50 = Low to High Toms
+    instrumentTimings[41] = { -6.8f, 27.7f, 1.1f };  // vel 88/80 = 1.1x
+    instrumentTimings[43] = { -6.8f, 27.7f, 1.1f };
+    instrumentTimings[45] = { -6.8f, 27.7f, 1.1f };
+    instrumentTimings[47] = { -6.8f, 27.7f, 1.1f };
+    instrumentTimings[48] = { -6.8f, 27.7f, 1.1f };
+    instrumentTimings[50] = { -6.8f, 27.7f, 1.1f };
 
-    // Crashes - slightly ahead for impact
-    instrumentTimings[49] = { -5.0f, 8.0f, 1.05f };
-    instrumentTimings[57] = { -5.0f, 8.0f, 1.05f };
+    // Crashes - slightly behind, higher velocity for accents
+    // Notes 49, 57, 55, 52 = Crash 1, Crash 2, Splash, China
+    instrumentTimings[49] = { -4.5f, 25.7f, 1.05f };
+    instrumentTimings[57] = { -4.5f, 25.7f, 1.05f };
+    instrumentTimings[55] = { -4.5f, 25.7f, 1.0f };
+    instrumentTimings[52] = { -4.5f, 25.7f, 1.0f };
 }
 
 //==============================================================================
@@ -114,12 +133,92 @@ void GrooveHumanizer::setGroovePreset(int preset)
 }
 
 //==============================================================================
-bool GrooveHumanizer::loadModel(const juce::File& /*modelFile*/)
+bool GrooveHumanizer::loadModel(const juce::File& modelFile)
 {
-    // TODO: Load RTNeural model for ML-based humanization
-    // This will be implemented in Phase 4
+    if (!modelFile.existsAsFile())
+    {
+        DBG("GrooveHumanizer: Model file not found: " + modelFile.getFullPathName());
+        mlModelLoaded = false;
+        return false;
+    }
+
+    if (humanizerModel.loadFromJSON(modelFile))
+    {
+        mlModelLoaded = true;
+        DBG("GrooveHumanizer: ML model loaded successfully");
+        return true;
+    }
+
+    DBG("GrooveHumanizer: Failed to load ML model");
     mlModelLoaded = false;
     return false;
+}
+
+//==============================================================================
+bool GrooveHumanizer::loadTimingStats(const juce::File& statsFile)
+{
+    if (!statsFile.existsAsFile())
+    {
+        DBG("GrooveHumanizer: Timing stats file not found");
+        return false;
+    }
+
+    if (timingStats.loadFromJSON(statsFile))
+    {
+        DBG("GrooveHumanizer: Timing statistics loaded");
+        return true;
+    }
+
+    return false;
+}
+
+//==============================================================================
+int GrooveHumanizer::noteToCategory(int midiNote) const
+{
+    // Map General MIDI drum notes to categories
+    // Category 0: kick, 1: snare, 2: hihat, 3: tom, 4: cymbal, 5: other
+
+    switch (midiNote)
+    {
+        case 35: case 36:  // Bass drum
+            return 0;
+
+        case 37: case 38: case 39: case 40:  // Snare, sidestick, clap
+            return 1;
+
+        case 42: case 44: case 46:  // Hi-hat
+            return 2;
+
+        case 41: case 43: case 45: case 47: case 48: case 50:  // Toms
+            return 3;
+
+        case 49: case 51: case 52: case 53: case 55: case 57: case 59:  // Cymbals
+            return 4;
+
+        default:
+            return 5;  // Other
+    }
+}
+
+//==============================================================================
+float GrooveHumanizer::calculateMLTimingOffset(int noteNumber, double beatPosition,
+                                                 int velocity, int prevNote, int nextNote) const
+{
+    if (!mlModelLoaded || !useML)
+        return 0.0f;
+
+    int category = noteToCategory(noteNumber);
+    int prevCategory = prevNote >= 0 ? noteToCategory(prevNote) : -1;
+    int nextCategory = nextNote >= 0 ? noteToCategory(nextNote) : -1;
+
+    float beatPos = static_cast<float>(std::fmod(beatPosition, 4.0) / 4.0);  // Normalize to 0-1
+    float vel = velocity / 127.0f;
+
+    // Use the ML model for prediction (const_cast needed for mutable model state)
+    float offsetMs = const_cast<MLInference::HumanizerModel&>(humanizerModel).predict(
+        category, beatPos, vel, prevCategory, nextCategory);
+
+    return offsetMs * grooveAmount;
 }
 
 //==============================================================================
@@ -224,7 +323,17 @@ void GrooveHumanizer::process(juce::MidiBuffer& midiBuffer, double bpm)
 
     juce::MidiBuffer processedBuffer;
     double msPerSample = 1000.0 / sampleRate;
-    double beatsPerMs = bpm / 60000.0;
+
+    // Collect note events for context-aware ML inference
+    std::vector<std::tuple<int, int, int>> noteEvents;  // samplePos, noteNumber, velocity
+    for (const auto metadata : midiBuffer)
+    {
+        auto msg = metadata.getMessage();
+        if (msg.isNoteOn())
+            noteEvents.emplace_back(metadata.samplePosition, msg.getNoteNumber(), msg.getVelocity());
+    }
+
+    int eventIndex = 0;
 
     for (const auto metadata : midiBuffer)
     {
@@ -237,8 +346,24 @@ void GrooveHumanizer::process(juce::MidiBuffer& midiBuffer, double bpm)
             double beatPosition = (samplePos / sampleRate) * (bpm / 60.0);
             beatPosition = applySwing(beatPosition);
 
-            // Calculate timing offset
-            float offsetMs = calculateTimingOffset(msg.getNoteNumber(), beatPosition);
+            float offsetMs;
+
+            // Use ML model if available, otherwise fall back to statistical method
+            if (mlModelLoaded && useML)
+            {
+                // Get context (previous and next notes)
+                int prevNote = eventIndex > 0 ? std::get<1>(noteEvents[eventIndex - 1]) : -1;
+                int nextNote = eventIndex < static_cast<int>(noteEvents.size()) - 1
+                               ? std::get<1>(noteEvents[eventIndex + 1]) : -1;
+
+                offsetMs = calculateMLTimingOffset(msg.getNoteNumber(), beatPosition,
+                                                    msg.getVelocity(), prevNote, nextNote);
+            }
+            else
+            {
+                offsetMs = calculateTimingOffset(msg.getNoteNumber(), beatPosition);
+            }
+
             int offsetSamples = static_cast<int>(offsetMs / msPerSample);
 
             // Adjust velocity
@@ -250,6 +375,8 @@ void GrooveHumanizer::process(juce::MidiBuffer& midiBuffer, double bpm)
                                                           msg.getNoteNumber(),
                                                           (juce::uint8)newVelocity);
             processedBuffer.addEvent(adjustedMsg, newSamplePos);
+
+            eventIndex++;
         }
         else if (msg.isNoteOff())
         {

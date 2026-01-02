@@ -4,6 +4,8 @@
     DrummerEngine.h
     Core engine that generates MIDI drum patterns based on parameters
 
+    Phase 4: Now includes ML-based pattern selection via StyleClassifier
+
   ==============================================================================
 */
 
@@ -11,6 +13,7 @@
 
 #include <JuceHeader.h>
 #include "PatternLibrary.h"
+#include "MLInference.h"
 
 //==============================================================================
 // Style presets
@@ -105,6 +108,10 @@ public:
     int getCurrentBar() const { return currentBar; }
     const DrumPattern* getCurrentPattern() const { return currentPattern; }
 
+    // ML model loading
+    bool loadStyleClassifier(const juce::File& modelFile);
+    bool isMLEnabled() const { return styleClassifier.loaded(); }
+
 private:
     PatternLibrary& patternLibrary;
 
@@ -144,8 +151,14 @@ private:
     // Sample rate
     double sampleRate = 44100.0;
 
+    // ML-based pattern selection
+    MLInference::StyleClassifierModel styleClassifier;
+
     // Build pattern query from current parameters
     PatternQuery buildQuery() const;
+
+    // ML-based pattern selection
+    void selectPatternWithML();
 
     // Check if we should trigger an auto-fill
     bool shouldAutoFill(double positionInBeats) const;

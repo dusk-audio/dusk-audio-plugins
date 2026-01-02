@@ -17,6 +17,7 @@
 #include "PatternLibrary.h"
 #include "DrummerEngine.h"
 #include "GrooveHumanizer.h"
+#include "GrooveExtractor.h"
 
 //==============================================================================
 class GrooveMindProcessor : public juce::AudioProcessor
@@ -64,11 +65,16 @@ public:
     // Engine access for editor
     DrummerEngine& getDrummerEngine() { return drummerEngine; }
     PatternLibrary& getPatternLibrary() { return patternLibrary; }
+    FollowModeController& getFollowModeController() { return followModeController; }
 
     // Transport info
     bool isPlaying() const { return transportPlaying; }
     double getCurrentBPM() const { return currentBPM; }
     double getCurrentPositionInBeats() const { return currentPositionBeats; }
+
+    // Follow mode status
+    bool isFollowModeEnabled() const;
+    bool isFollowModeActive() const;  // Has valid extracted groove
 
 private:
     //==============================================================================
@@ -79,6 +85,7 @@ private:
     PatternLibrary patternLibrary;
     DrummerEngine drummerEngine;
     GrooveHumanizer grooveHumanizer;
+    FollowModeController followModeController;
 
     // Transport state
     bool transportPlaying = false;
@@ -94,6 +101,10 @@ private:
 
     // Pattern library loading
     void loadPatternLibrary();
+
+    // ML model loading
+    void loadMLModels();
+    juce::File getResourcesDirectory() const;
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GrooveMindProcessor)

@@ -179,7 +179,15 @@ private:
     {
         // Model 12AX7 triode plate characteristics
         // Based on Ia/Vg curves from tube datasheets
+        // Target: < 0.5% THD at normal operating levels
         // Asymmetric: positive grid clips softer (grid current), negative clips harder (cutoff)
+        //
+        // For real tubes at moderate levels, THD is typically:
+        // - 12AX7: 0.3-0.5% THD at rated output
+        // - 12BH7: 0.2-0.4% THD (cleaner output driver)
+        //
+        // The key is to keep the transfer function nearly linear in the normal
+        // operating range (-1 to +1) and only apply soft nonlinearity at extremes.
 
         for (int i = 0; i < TRANSFER_TABLE_SIZE; ++i)
         {
@@ -187,11 +195,22 @@ private:
 
             if (vg >= 0.0f)
             {
-                // Positive grid region - grid current causes soft compression
-                // More 2nd harmonic due to asymmetry
-                float normalized = vg / (1.0f + vg * 0.4f);
-                // Soft clip with 2nd harmonic character
-                plateTransferTable[i] = normalized * (1.0f - normalized * 0.12f);
+                // Positive grid region - grid current causes subtle compression
+                // Only significant nonlinearity above 0.8
+                if (vg < 0.8f)
+                {
+                    // Nearly linear with very subtle 2nd harmonic (asymmetry)
+                    // k2 coefficient of ~0.02 gives ~0.3% THD at 0dB
+                    plateTransferTable[i] = vg + vg * vg * 0.02f;
+                }
+                else
+                {
+                    // Soft compression above 0.8 (grid current loading)
+                    float excess = vg - 0.8f;
+                    float base = 0.8f + 0.8f * 0.8f * 0.02f;  // Value at threshold
+                    float compressed = base + excess / (1.0f + excess * 0.5f);
+                    plateTransferTable[i] = compressed;
+                }
             }
             else
             {
@@ -200,22 +219,23 @@ private:
 
                 if (absVg < 0.8f)
                 {
-                    // Linear region
-                    plateTransferTable[i] = vg;
+                    // Nearly linear region with subtle 2nd harmonic
+                    plateTransferTable[i] = vg - vg * absVg * 0.02f;
                 }
                 else if (absVg < 1.5f)
                 {
                     // Approaching cutoff - gradual compression
                     float excess = absVg - 0.8f;
-                    float compressed = 0.8f + excess * (1.0f - excess * 0.5f);
+                    float base = 0.8f + 0.8f * 0.8f * 0.02f;
+                    float compressed = base + excess * (1.0f - excess * 0.3f);
                     plateTransferTable[i] = -compressed;
                 }
                 else
                 {
-                    // Cutoff region - hard clipping
+                    // Cutoff region - soft limiting
                     float excess = absVg - 1.5f;
-                    float clipped = 1.15f + std::tanh(excess * 2.0f) * 0.2f;
-                    plateTransferTable[i] = -clipped;
+                    float limit = 1.01f + std::tanh(excess * 1.5f) * 0.15f;
+                    plateTransferTable[i] = -limit;
                 }
             }
         }
@@ -240,58 +260,58 @@ private:
         switch (currentType)
         {
             case TubeType::Triode_12AX7:
-                // High gain, lots of harmonic content
-                gridCurrentThreshold = 0.4f;
-                gridCurrentCoeff = 0.25f;
+                // High gain triode - target ~0.4% THD at moderate levels
+                gridCurrentThreshold = 0.7f;   // Only kicks in at high levels
+                gridCurrentCoeff = 0.08f;      // Reduced from 0.25
                 cathodeBypassCoeffBase = 0.98f;
-                cathodeBypassAmount = 0.35f;
+                cathodeBypassAmount = 0.15f;   // Reduced effect
                 millerCapCoeffBase = 0.35f;
-                millerCapEffect = 0.12f;
-                outputScaling = 0.8f;
+                millerCapEffect = 0.05f;       // Reduced from 0.12
+                outputScaling = 0.95f;         // Less scaling needed
                 break;
 
             case TubeType::Triode_12AT7:
-                // Medium gain, balanced character
-                gridCurrentThreshold = 0.5f;
-                gridCurrentCoeff = 0.2f;
+                // Medium gain - target ~0.35% THD
+                gridCurrentThreshold = 0.75f;
+                gridCurrentCoeff = 0.06f;      // Reduced from 0.2
                 cathodeBypassCoeffBase = 0.97f;
-                cathodeBypassAmount = 0.3f;
+                cathodeBypassAmount = 0.12f;   // Reduced
                 millerCapCoeffBase = 0.25f;
-                millerCapEffect = 0.08f;
-                outputScaling = 0.85f;
+                millerCapEffect = 0.04f;       // Reduced from 0.08
+                outputScaling = 0.95f;
                 break;
 
             case TubeType::Triode_12BH7:
-                // Output driver (LA-2A), clean with headroom
-                gridCurrentThreshold = 0.6f;
-                gridCurrentCoeff = 0.15f;
+                // Output driver (LA-2A) - target ~0.25% THD (cleanest)
+                gridCurrentThreshold = 0.8f;   // Very high threshold
+                gridCurrentCoeff = 0.04f;      // Reduced from 0.15
                 cathodeBypassCoeffBase = 0.96f;
-                cathodeBypassAmount = 0.25f;
+                cathodeBypassAmount = 0.1f;    // Reduced from 0.25
                 millerCapCoeffBase = 0.2f;
-                millerCapEffect = 0.05f;
-                outputScaling = 0.9f;
+                millerCapEffect = 0.02f;       // Minimal from 0.05
+                outputScaling = 0.98f;         // Nearly unity
                 break;
 
             case TubeType::Triode_6SN7:
-                // Warm, musical character
-                gridCurrentThreshold = 0.45f;
-                gridCurrentCoeff = 0.22f;
+                // Warm character - target ~0.35% THD
+                gridCurrentThreshold = 0.7f;
+                gridCurrentCoeff = 0.07f;      // Reduced from 0.22
                 cathodeBypassCoeffBase = 0.975f;
-                cathodeBypassAmount = 0.32f;
+                cathodeBypassAmount = 0.12f;   // Reduced from 0.32
                 millerCapCoeffBase = 0.28f;
-                millerCapEffect = 0.1f;
-                outputScaling = 0.85f;
+                millerCapEffect = 0.04f;       // Reduced from 0.1
+                outputScaling = 0.95f;
                 break;
 
             default:
                 // Default to 12AX7 characteristics
-                gridCurrentThreshold = 0.4f;
-                gridCurrentCoeff = 0.25f;
+                gridCurrentThreshold = 0.7f;
+                gridCurrentCoeff = 0.08f;
                 cathodeBypassCoeffBase = 0.98f;
-                cathodeBypassAmount = 0.35f;
+                cathodeBypassAmount = 0.15f;
                 millerCapCoeffBase = 0.35f;
-                millerCapEffect = 0.12f;
-                outputScaling = 0.8f;
+                millerCapEffect = 0.05f;
+                outputScaling = 0.95f;
                 break;
         }
 
