@@ -188,6 +188,7 @@ private:
     // Processing state
     double currentSampleRate{0.0};  // Set by prepareToPlay from DAW
     int currentBlockSize{0};  // Set by prepareToPlay from DAW
+    int currentOversamplingFactor{-1};  // Track current oversampling to detect changes
 
     // Current preset index (for UI preset menu, not exposed as VST3 Program parameter)
     int currentPresetIndex = 0;

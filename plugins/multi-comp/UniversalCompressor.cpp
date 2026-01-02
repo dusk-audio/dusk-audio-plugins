@@ -1255,15 +1255,6 @@ public:
             detector.prevInput = 0.0f;
         }
 
-        // PROFESSIONAL FIX: Always create 2x oversampler for saturation
-        // Uses FIR equiripple for superior alias rejection
-        saturationOversampler = std::make_unique<juce::dsp::Oversampling<float>>(
-            1, // Single channel processing
-            1, // 1 stage = 2x oversampling
-            juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple
-        );
-        saturationOversampler->initProcessing(1); // Single sample processing
-
         // Hardware emulation components
         // Input transformer (UTC A-10 style)
         inputTransformer.prepare(sampleRate, numChannels);
@@ -1285,7 +1276,7 @@ public:
         convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::LA2A);
     }
     
-    float process(float input, int channel, float peakReduction, float gain, bool limitMode, bool oversample = false)
+    float process(float input, int channel, float peakReduction, float gain, bool limitMode, bool oversample = false, float externalSidechain = 0.0f)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
@@ -1311,12 +1302,20 @@ public:
 
         // Apply gain reduction (feedback topology)
         float compressed = transformedInput * detector.envelope;
-        
-        // Opto feedback topology: detection from output
-        // In Compress mode: sidechain = output
-        // In Limit mode: sidechain = 1/25 input + 24/25 output
+
+        // Opto feedback topology: detection from output (or external sidechain if provided)
+        // The external sidechain has already been HP-filtered to prevent pumping from bass
+        // In Compress mode: sidechain = output (or external)
+        // In Limit mode: sidechain = 1/25 input + 24/25 output (or external)
         float sidechainSignal;
-        if (limitMode)
+        bool useExternalSidechain = (externalSidechain != 0.0f);
+
+        if (useExternalSidechain)
+        {
+            // Use external HP-filtered sidechain for detection
+            sidechainSignal = externalSidechain;
+        }
+        else if (limitMode)
         {
             // Limit mode mixes a small amount of input with output
             sidechainSignal = input * 0.04f + compressed * 0.96f;
@@ -1598,10 +1597,6 @@ private:
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
 
-    // PROFESSIONAL FIX: Dedicated oversampler for saturation stage
-    // This ALWAYS runs at 2x to ensure consistent harmonics
-    std::unique_ptr<juce::dsp::Oversampling<float>> saturationOversampler;
-
     // Hardware emulation components (LA-2A style)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
@@ -1643,15 +1638,15 @@ public:
     float process(float input, int channel, float inputGainDb, float outputGainDb,
                   float attackMs, float releaseMs, int ratioIndex, bool oversample = false,
                   const LookupTables* lookupTables = nullptr, TransientShaper* transientShaper = nullptr,
-                  bool useMeasuredCurve = false, float transientSensitivity = 0.0f)
+                  bool useMeasuredCurve = false, float transientSensitivity = 0.0f, float externalSidechain = 0.0f)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
-        
+
         // Safety check for sample rate
         if (sampleRate <= 0.0)
             return input;
-            
+
         auto& detector = detectors[channel];
 
         // Hardware emulation: Input transformer (Cinemag/Jensen style)
@@ -1661,32 +1656,43 @@ public:
         // FET Input control - AUTHENTIC BEHAVIOR
         // The FET has a FIXED threshold that the input knob drives signal into
         // More input = more compression (not threshold change)
-        
+
         // Fixed threshold (FET characteristic)
         // The FET threshold is around -10 dBFS according to specifications
         // This is the level where compression begins to engage
         const float thresholdDb = Constants::FET_THRESHOLD_DB; // Authentic FET threshold
         float threshold = juce::Decibels::decibelsToGain(thresholdDb);
-        
+
         // Apply FULL input gain - this is how you drive into compression
         // Input knob range: -20 to +40dB
         float inputGainLin = juce::Decibels::decibelsToGain(inputGainDb);
         float amplifiedInput = transformedInput * inputGainLin;
-        
+
         // Ratio mapping: 4:1, 8:1, 12:1, 20:1, all-buttons mode
         // All-buttons mode: Hardware measurements show >100:1 effective ratio
         std::array<float, 5> ratios = {4.0f, 8.0f, 12.0f, 20.0f, 120.0f}; // All-buttons >100:1
         float ratio = ratios[juce::jlimit(0, 4, ratioIndex)];
-        
+
         // FEEDBACK TOPOLOGY for authentic FET behavior
         // The FET uses feedback compression which creates its characteristic sound
-        
+
         // First, we need to apply the PREVIOUS envelope to get the compressed signal
         float compressed = amplifiedInput * detector.envelope;
-        
-        // Then detect from the COMPRESSED OUTPUT (feedback)
-        // This is what gives the FET its "grabby" characteristic
-        float detectionLevel = std::abs(compressed);
+
+        // Detection signal: use external HP-filtered sidechain if provided, otherwise feedback from output
+        // External sidechain allows the SC HP filter to prevent pumping from bass
+        float detectionLevel;
+        if (externalSidechain != 0.0f)
+        {
+            // Use external HP-filtered sidechain (apply input gain to match compression behavior)
+            detectionLevel = std::abs(externalSidechain * inputGainLin);
+        }
+        else
+        {
+            // Then detect from the COMPRESSED OUTPUT (feedback)
+            // This is what gives the FET its "grabby" characteristic
+            detectionLevel = std::abs(compressed);
+        }
         
         // Calculate gain reduction based on how much we exceed threshold
         float reduction = 0.0f;
@@ -1855,21 +1861,22 @@ public:
         //
         // Harmonic math: For input x = A*sin(wt)
         // - k3*x^3 produces 3rd harmonic at amplitude (3*k3*A^3)/4
-        // - THD from 3rd ≈ (3*k3*A^2)/4
-        // At A=0.126 (-18dB): 0.30% = 0.003 = (3*k3*0.0159)/4 → k3 ≈ 0.25
-        // But that's at -18dB input. Post-compression output varies.
-        // Use k3=0.04 for ~0.3% THD at typical output levels
+        // - THD from 3rd ≈ (3*k3*A^2)/4 / A = 0.75*k3*A
+        // At A=0.5 (-6dB): For 0.3% THD: k3 = 0.003 / (0.75*0.5) = 0.008
+        // At A=1.0 (0dB): For 0.4% THD: k3 = 0.004 / 0.75 = 0.0053
+        // Note: Transformer emulation also adds harmonics, so reduce k3 further
 
         float output = compressed;
 
-        // All-buttons mode gets 2x the saturation
-        float satMultiplier = (ratioIndex == 4) ? 2.0f : 1.0f;
+        // All-buttons mode gets 1.5x the saturation (reduced from 2x)
+        float satMultiplier = (ratioIndex == 4) ? 1.5f : 1.0f;
 
         // FET saturation - odd harmonics dominant (symmetric)
-        // k3 = 0.04 gives ~0.3% THD at moderate levels
-        // k5 = 0.008 adds subtle 5th harmonic character
-        constexpr float k3_base = 0.04f;   // 3rd harmonic coefficient
-        constexpr float k5_base = 0.008f;  // 5th harmonic coefficient
+        // Reduced coefficients to achieve target <0.5% THD
+        // k3 = 0.006 gives ~0.15-0.2% THD at moderate levels
+        // k5 = 0.001 adds subtle 5th harmonic character
+        constexpr float k3_base = 0.006f;   // 3rd harmonic coefficient (reduced from 0.04)
+        constexpr float k5_base = 0.001f;   // 5th harmonic coefficient (reduced from 0.008)
 
         float k3 = k3_base * satMultiplier;
         float k5 = k5_base * satMultiplier;
@@ -1936,20 +1943,29 @@ public:
         }
     }
     
-    float process(float input, int channel, float threshold, float ratio, 
-                  float attackParam, float releaseParam, float outputGain, bool overEasy = false, bool oversample = false)
+    float process(float input, int channel, float threshold, float ratio,
+                  float attackParam, float releaseParam, float outputGain, bool overEasy = false, bool oversample = false, float externalSidechain = 0.0f)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
-        
+
         // Safety check for sample rate
         if (sampleRate <= 0.0)
             return input;
-            
+
         auto& detector = detectors[channel];
-        
-        // VCA feedforward topology: control voltage from input signal
-        float detectionLevel = std::abs(input);
+
+        // VCA feedforward topology: control voltage from input signal or external sidechain
+        float detectionLevel;
+        if (externalSidechain != 0.0f)
+        {
+            // Use external HP-filtered sidechain for detection
+            detectionLevel = std::abs(externalSidechain);
+        }
+        else
+        {
+            detectionLevel = std::abs(input);
+        }
 
         // Track signal envelope rate of change for program-dependent behavior
         float signalDelta = std::abs(detectionLevel - detector.previousInput);
@@ -2309,15 +2325,15 @@ public:
     }
     
     float process(float input, int channel, float threshold, float ratio,
-                  int attackIndex, int releaseIndex, float makeupGain, float mixAmount = 1.0f, bool oversample = false)
+                  int attackIndex, int releaseIndex, float makeupGain, float mixAmount = 1.0f, bool oversample = false, float externalSidechain = 0.0f)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
-        
+
         // Safety check for sample rate
         if (sampleRate <= 0.0)
             return input;
-            
+
         auto& detector = detectors[channel];
 
         // Hardware emulation: Input transformer (Marinair-style)
@@ -2327,21 +2343,28 @@ public:
         // Bus Compressor quad VCA topology
         // Uses parallel detection path with feed-forward design
 
-        // Step 2: Apply gain reduction to main signal
-        // Use simple inline filter instead of complex ProcessorChain for per-sample processing
-        float sidechainInput = transformedInput;
-        if (detector.sidechainFilter)
+        // Determine detection signal: use external sidechain if provided, otherwise internal filter
+        float detectionLevel;
+        if (externalSidechain != 0.0f)
         {
-            // Simple 60Hz highpass filter (much faster than full ProcessorChain)
-            const float hpCutoff = 60.0f / static_cast<float>(sampleRate);
-            const float hpAlpha = juce::jmin(1.0f, hpCutoff);
-            detector.hpState = input - detector.prevInput + detector.hpState * (1.0f - hpAlpha);
-            detector.prevInput = input;
-            sidechainInput = detector.hpState;
+            // Use external HP-filtered sidechain for detection
+            detectionLevel = std::abs(externalSidechain);
         }
-        
-        // Step 3: Bus compressor uses the sidechain signal directly for detection
-        float detectionLevel = std::abs(sidechainInput);
+        else
+        {
+            // Use simple inline filter instead of complex ProcessorChain for per-sample processing
+            float sidechainInput = transformedInput;
+            if (detector.sidechainFilter)
+            {
+                // Simple 60Hz highpass filter (much faster than full ProcessorChain)
+                const float hpCutoff = 60.0f / static_cast<float>(sampleRate);
+                const float hpAlpha = juce::jmin(1.0f, hpCutoff);
+                detector.hpState = input - detector.prevInput + detector.hpState * (1.0f - hpAlpha);
+                detector.prevInput = input;
+                sidechainInput = detector.hpState;
+            }
+            detectionLevel = std::abs(sidechainInput);
+        }
         
         // Bus Compressor specific ratios: 2:1, 4:1, 10:1
         // ratio parameter already contains the actual ratio value (2.0, 4.0, or 10.0)
@@ -3855,24 +3878,36 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlock;
-    
+
     int numChannels = juce::jmax(1, getTotalNumOutputChannels());
-    
-    // Prepare all compressor types safely
+
+    // Get user's oversampling choice (0 = 2x, 1 = 4x)
+    // Compressors process audio AFTER it's been upsampled, so their internal
+    // filters (transformers, etc.) need to be tuned for the actual oversampled rate.
+    auto* oversamplingParam = parameters.getRawParameterValue("oversampling");
+    int oversamplingChoice = (oversamplingParam != nullptr) ? static_cast<int>(oversamplingParam->load()) : 0;
+    int oversamplingMultiplier = (oversamplingChoice == 1) ? 4 : 2;
+    double oversampledRate = sampleRate * oversamplingMultiplier;
+    int oversampledBlockSize = samplesPerBlock * oversamplingMultiplier;
+
+    // Prepare all compressor types at oversampled rate
+    // This ensures transformer emulation, DC blockers, and HF filters
+    // are correctly tuned for the rate at which they actually process audio
     if (optoCompressor)
-        optoCompressor->prepare(sampleRate, numChannels);
+        optoCompressor->prepare(oversampledRate, numChannels);
     if (fetCompressor)
-        fetCompressor->prepare(sampleRate, numChannels);
+        fetCompressor->prepare(oversampledRate, numChannels);
     if (vcaCompressor)
-        vcaCompressor->prepare(sampleRate, numChannels);
+        vcaCompressor->prepare(oversampledRate, numChannels);
     if (busCompressor)
-        busCompressor->prepare(sampleRate, numChannels, samplesPerBlock);
+        busCompressor->prepare(oversampledRate, numChannels, oversampledBlockSize);
     if (studioFetCompressor)
-        studioFetCompressor->prepare(sampleRate, numChannels);
+        studioFetCompressor->prepare(oversampledRate, numChannels);
     if (studioVcaCompressor)
-        studioVcaCompressor->prepare(sampleRate, numChannels);
+        studioVcaCompressor->prepare(oversampledRate, numChannels);
     if (digitalCompressor)
-        digitalCompressor->prepare(sampleRate, numChannels, samplesPerBlock);
+        digitalCompressor->prepare(oversampledRate, numChannels, oversampledBlockSize);
+    // Multiband processes at native rate (not oversampled)
     if (multibandCompressor)
         multibandCompressor->prepare(sampleRate, numChannels, samplesPerBlock);
 
@@ -4265,6 +4300,31 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // User controls this via dropdown - 4x recommended for vintage modes with heavy saturation
     if (antiAliasing)
         antiAliasing->setOversamplingFactor(oversamplingFactor);
+
+    // Re-prepare compressors if oversampling factor changed
+    // This is critical because compressor filters must be tuned to the actual processing rate
+    if (oversamplingFactor != currentOversamplingFactor && currentSampleRate > 0.0)
+    {
+        currentOversamplingFactor = oversamplingFactor;
+        int oversamplingMultiplier = (oversamplingFactor == 1) ? 4 : 2;
+        double oversampledRate = currentSampleRate * oversamplingMultiplier;
+        int oversampledBlockSize = currentBlockSize * oversamplingMultiplier;
+
+        if (optoCompressor)
+            optoCompressor->prepare(oversampledRate, numChannels);
+        if (fetCompressor)
+            fetCompressor->prepare(oversampledRate, numChannels);
+        if (vcaCompressor)
+            vcaCompressor->prepare(oversampledRate, numChannels);
+        if (busCompressor)
+            busCompressor->prepare(oversampledRate, numChannels, oversampledBlockSize);
+        if (studioFetCompressor)
+            studioFetCompressor->prepare(oversampledRate, numChannels);
+        if (studioVcaCompressor)
+            studioVcaCompressor->prepare(oversampledRate, numChannels);
+        if (digitalCompressor)
+            digitalCompressor->prepare(oversampledRate, numChannels, oversampledBlockSize);
+    }
 
     // Update sidechain EQ parameters
     if (sidechainEQ)
@@ -4674,22 +4734,22 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             {
                 case CompressorMode::Opto:
                     for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, true);
+                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, true, scData[i]);
                     break;
                 case CompressorMode::FET:
                     for (int i = 0; i < osNumSamples; ++i)
                         data[i] = fetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1],
                                                          cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), true,
                                                          lookupTables.get(), transientShaper.get(),
-                                                         cachedParams[5] > 0.5f, cachedParams[6]);
+                                                         cachedParams[5] > 0.5f, cachedParams[6], scData[i]);
                     break;
                 case CompressorMode::VCA:
                     for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, true);
+                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, true, scData[i]);
                     break;
                 case CompressorMode::Bus:
                     for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true);
+                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true, scData[i]);
                     break;
                 case CompressorMode::StudioFET:
                     // Optimized: use pre-interpolated sidechain with direct pointer access
@@ -4734,22 +4794,50 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             {
                 case CompressorMode::Opto:
                     for (int i = 0; i < numSamples; ++i)
-                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, false) * compensationGain;
+                    {
+                        float scSignal;
+                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
+                            scSignal = linkedSidechain.getSample(channel, i);
+                        else
+                            scSignal = filteredSidechain.getSample(channel, i);
+                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, false, scSignal) * compensationGain;
+                    }
                     break;
                 case CompressorMode::FET:
                     for (int i = 0; i < numSamples; ++i)
+                    {
+                        float scSignal;
+                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
+                            scSignal = linkedSidechain.getSample(channel, i);
+                        else
+                            scSignal = filteredSidechain.getSample(channel, i);
                         data[i] = fetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1],
                                                          cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), false,
                                                          lookupTables.get(), transientShaper.get(),
-                                                         cachedParams[5] > 0.5f, cachedParams[6]) * compensationGain;
+                                                         cachedParams[5] > 0.5f, cachedParams[6], scSignal) * compensationGain;
+                    }
                     break;
                 case CompressorMode::VCA:
                     for (int i = 0; i < numSamples; ++i)
-                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, false) * compensationGain;
+                    {
+                        float scSignal;
+                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
+                            scSignal = linkedSidechain.getSample(channel, i);
+                        else
+                            scSignal = filteredSidechain.getSample(channel, i);
+                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, false, scSignal) * compensationGain;
+                    }
                     break;
                 case CompressorMode::Bus:
                     for (int i = 0; i < numSamples; ++i)
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false) * compensationGain;
+                    {
+                        float scSignal;
+                        if ((useStereoLink || useMidSide) && channel < linkedSidechain.getNumChannels())
+                            scSignal = linkedSidechain.getSample(channel, i);
+                        else
+                            scSignal = filteredSidechain.getSample(channel, i);
+                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false, scSignal) * compensationGain;
+                    }
                     break;
                 case CompressorMode::StudioFET:
                     for (int i = 0; i < numSamples; ++i)
@@ -5169,20 +5257,28 @@ void UniversalCompressor::resetDSPState()
 
     if (currentSampleRate > 0.0)
     {
+        // Get user's oversampling choice (0 = 2x, 1 = 4x)
+        auto* oversamplingParam = parameters.getRawParameterValue("oversampling");
+        int oversamplingChoice = (oversamplingParam != nullptr) ? static_cast<int>(oversamplingParam->load()) : 0;
+        int oversamplingMultiplier = (oversamplingChoice == 1) ? 4 : 2;
+        double oversampledRate = currentSampleRate * oversamplingMultiplier;
+        int oversampledBlockSize = currentBlockSize * oversamplingMultiplier;
+
         if (optoCompressor)
-            optoCompressor->prepare(currentSampleRate, numChannels);
+            optoCompressor->prepare(oversampledRate, numChannels);
         if (fetCompressor)
-            fetCompressor->prepare(currentSampleRate, numChannels);
+            fetCompressor->prepare(oversampledRate, numChannels);
         if (vcaCompressor)
-            vcaCompressor->prepare(currentSampleRate, numChannels);
+            vcaCompressor->prepare(oversampledRate, numChannels);
         if (busCompressor)
-            busCompressor->prepare(currentSampleRate, numChannels, currentBlockSize);
+            busCompressor->prepare(oversampledRate, numChannels, oversampledBlockSize);
         if (studioFetCompressor)
-            studioFetCompressor->prepare(currentSampleRate, numChannels);
+            studioFetCompressor->prepare(oversampledRate, numChannels);
         if (studioVcaCompressor)
-            studioVcaCompressor->prepare(currentSampleRate, numChannels);
+            studioVcaCompressor->prepare(oversampledRate, numChannels);
         if (digitalCompressor)
-            digitalCompressor->prepare(currentSampleRate, numChannels, currentBlockSize);
+            digitalCompressor->prepare(oversampledRate, numChannels, oversampledBlockSize);
+        // Multiband processes at native rate (not oversampled)
         if (multibandCompressor)
             multibandCompressor->prepare(currentSampleRate, numChannels, currentBlockSize);
 
