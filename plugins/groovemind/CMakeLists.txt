@@ -52,8 +52,15 @@ target_sources(${PLUGIN_NAME}
         Source/DrummerEngine.h
         Source/GrooveHumanizer.cpp
         Source/GrooveHumanizer.h
+        Source/MLInference.h
         Source/XYPad.cpp
         Source/XYPad.h
+        Source/TransientDetector.cpp
+        Source/TransientDetector.h
+        Source/TempoTracker.cpp
+        Source/TempoTracker.h
+        Source/GrooveExtractor.cpp
+        Source/GrooveExtractor.h
 )
 
 # Compile definitions

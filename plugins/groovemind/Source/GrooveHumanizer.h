@@ -4,9 +4,9 @@
     GrooveHumanizer.h
     Applies human-like timing and velocity variations to MIDI patterns
 
-    In the future, this will use ML models trained on the Groove MIDI Dataset
-    to apply learned micro-timing and velocity patterns. For now, it uses
-    algorithmic humanization.
+    Uses ML models trained on the Groove MIDI Dataset (Phase 3) to apply
+    learned micro-timing and velocity patterns. Falls back to statistical
+    humanization when ML model is not available.
 
   ==============================================================================
 */
@@ -14,6 +14,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "MLInference.h"
 
 //==============================================================================
 class GrooveHumanizer
@@ -37,9 +38,14 @@ public:
     // Style-specific presets
     void setGroovePreset(int preset);    // 0=tight, 1=relaxed, 2=jazzy, 3=behind
 
-    // Future: ML model loading
+    // ML model loading
     bool loadModel(const juce::File& modelFile);
+    bool loadTimingStats(const juce::File& statsFile);
     bool isModelLoaded() const { return mlModelLoaded; }
+    bool useMLInference() const { return mlModelLoaded && useML; }
+
+    // Enable/disable ML inference (for A/B testing)
+    void setUseML(bool shouldUseML) { useML = shouldUseML; }
 
 private:
     double sampleRate = 44100.0;
@@ -53,14 +59,16 @@ private:
     // Push/pull feel
     float pushPull = 0.0f;  // -1 = laid back, +1 = pushing
 
-    // ML model state (future)
+    // ML model
+    MLInference::HumanizerModel humanizerModel;
+    MLInference::TimingStatsLibrary timingStats;
     bool mlModelLoaded = false;
-    // RTNeural model will go here
+    bool useML = true;
 
     // Random for variation
     mutable juce::Random random;
 
-    // Per-instrument timing adjustments (future: learned from data)
+    // Per-instrument timing adjustments (learned from GMD data)
     struct InstrumentTiming
     {
         float offsetMs = 0.0f;      // Base timing offset
@@ -70,11 +78,18 @@ private:
 
     std::map<int, InstrumentTiming> instrumentTimings;
 
-    // Initialize default timings
+    // Note to instrument category mapping
+    int noteToCategory(int midiNote) const;
+
+    // Initialize default timings from GMD statistics
     void initializeDefaultTimings();
 
     // Calculate timing offset for a note
     float calculateTimingOffset(int noteNumber, double beatPosition) const;
+
+    // Calculate timing offset using ML model
+    float calculateMLTimingOffset(int noteNumber, double beatPosition, int velocity,
+                                   int prevNote, int nextNote) const;
 
     // Calculate velocity adjustment
     int adjustVelocity(int originalVelocity, int noteNumber, double beatPosition) const;
