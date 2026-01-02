@@ -179,6 +179,7 @@ private:
     //==========================================================================
     // Suggestion generation
     juce::String getRootNameInKey(int degree) const;
+    juce::String getSpellingForKey(int pitchClass) const;
     void addBasicSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
     void addIntermediateSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
     void addAdvancedSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
