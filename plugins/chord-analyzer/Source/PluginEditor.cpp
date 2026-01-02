@@ -384,7 +384,8 @@ void ChordAnalyzerEditor::updateSuggestionButtons()
         if (i < static_cast<int>(cachedSuggestions.size()))
         {
             const auto& suggestion = cachedSuggestions[i];
-            suggestionButtons[i].setButtonText(suggestion.romanNumeral);
+            // Show both roman numeral and actual chord name (e.g., "IV (F)" or "ii (Dm)")
+            suggestionButtons[i].setButtonText(suggestion.romanNumeral + "\n" + suggestion.chordName);
             suggestionButtons[i].setEnabled(true);
             suggestionButtons[i].setVisible(true);
             suggestionButtons[i].setTooltip(suggestion.chordName + ": " + suggestion.reason);
