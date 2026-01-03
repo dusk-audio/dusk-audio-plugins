@@ -153,32 +153,29 @@ jobs:
           found_lv2=0
 
           # Check VST3 plugins exist and have correct structure
-          for vst3 in build/*_artefacts/Release/VST3/*.vst3; do
-            if [ -d "$vst3" ]; then
-              echo "✓ Found: $vst3"
-              found_vst3=1
-              # Check for main binary using compgen for proper glob expansion
-              if compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
-                echo "  ✓ Binary exists"
-              else
-                echo "  ✗ Missing binary!"
-                exit 1
-              fi
+          # Plugins are built to build/plugins/<name>/*_artefacts/Release/VST3/*.vst3
+          for vst3 in $(find build -path "*/Release/VST3/*.vst3" -type d 2>/dev/null); do
+            echo "✓ Found: $vst3"
+            found_vst3=1
+            # Check for main binary using compgen for proper glob expansion
+            if compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
+              echo "  ✓ Binary exists"
+            else
+              echo "  ✗ Missing binary!"
+              exit 1
             fi
           done
 
           # Check LV2 plugins
-          for lv2 in build/*_artefacts/Release/LV2/*.lv2; do
-            if [ -d "$lv2" ]; then
-              echo "✓ Found: $lv2"
-              found_lv2=1
-              # Check for binary and manifest
-              if compgen -G "$lv2/*.so" > /dev/null && [ -f "$lv2/manifest.ttl" ]; then
-                echo "  ✓ Binary and manifest exist"
-              else
-                echo "  ✗ Missing files!"
-                exit 1
-              fi
+          for lv2 in $(find build -path "*/Release/LV2/*.lv2" -type d 2>/dev/null); do
+            echo "✓ Found: $lv2"
+            found_lv2=1
+            # Check for binary and manifest
+            if compgen -G "$lv2/*.so" > /dev/null && [ -f "$lv2/manifest.ttl" ]; then
+              echo "  ✓ Binary and manifest exist"
+            else
+              echo "  ✗ Missing files!"
+              exit 1
             fi
           done
 
@@ -331,30 +328,28 @@ jobs:
           found_au=0
 
           # Check VST3 plugins
-          for vst3 in build/*_artefacts/Release/VST3/*.vst3; do
-            if [ -d "$vst3" ]; then
-              echo "✓ Found: $vst3"
-              found_vst3=1
-              # Verify universal binary
-              binary=$(find "$vst3" -name "*.dylib" -o -name "$(basename "$vst3" .vst3)" -type f 2>/dev/null | head -1)
-              if [ -n "$binary" ] && [ -f "$binary" ]; then
-                archs=$(lipo -info "$binary" 2>/dev/null || file "$binary")
-                echo "  Architectures: $archs"
-                if echo "$archs" | grep -q "arm64" && echo "$archs" | grep -q "x86_64"; then
-                  echo "  ✓ Universal binary confirmed"
-                else
-                  echo "  ⚠ May not be universal binary"
-                fi
+          # Plugins are built to build/plugins/<name>/*_artefacts/Release/VST3/*.vst3
+          for vst3 in $(find build -path "*/Release/VST3/*.vst3" -type d 2>/dev/null); do
+            echo "✓ Found: $vst3"
+            found_vst3=1
+            # Verify universal binary - look for the binary inside Contents/MacOS
+            plugin_name=$(basename "$vst3" .vst3)
+            binary="$vst3/Contents/MacOS/$plugin_name"
+            if [ -f "$binary" ]; then
+              archs=$(lipo -info "$binary" 2>/dev/null || file "$binary")
+              echo "  Architectures: $archs"
+              if echo "$archs" | grep -q "arm64" && echo "$archs" | grep -q "x86_64"; then
+                echo "  ✓ Universal binary confirmed"
+              else
+                echo "  ⚠ May not be universal binary"
               fi
             fi
           done
 
           # Check AU plugins
-          for au in build/*_artefacts/Release/AU/*.component; do
-            if [ -d "$au" ]; then
-              echo "✓ Found AU: $au"
-              found_au=1
-            fi
+          for au in $(find build -path "*/Release/AU/*.component" -type d 2>/dev/null); do
+            echo "✓ Found AU: $au"
+            found_au=1
           done
 
           # Fail if no plugins were found
