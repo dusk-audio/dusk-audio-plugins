@@ -1,4 +1,5 @@
 #include "AnalogLookAndFeel.h"
+#include "UniversalCompressor.h"
 #include <cmath>
 
 //==============================================================================
@@ -824,17 +825,20 @@ GRHistoryGraph::GRHistoryGraph()
     grHistory.fill(0.0f);
 }
 
-void GRHistoryGraph::updateHistory(const std::array<float, 128>& history, int writePos)
+void GRHistoryGraph::updateHistory(const UniversalCompressor& processor)
 {
     // Note: Both updateHistory and paint run on the message thread (timer callback
     // and paint are both message-thread operations in JUCE), so no synchronization
-    // is needed within this component. The potential data race is between the audio
-    // thread writing to processor's grHistory and the UI thread reading it - this is
-    // documented as acceptable for visualization in UniversalCompressor.h.
+    // is needed within this component. The processor's grHistory array now uses
+    // atomic<float> elements for thread-safe reads from the audio thread.
 
-    grHistory = history;
+    // Copy from processor's atomic array to local array
+    for (size_t i = 0; i < grHistory.size(); ++i)
+        grHistory[i] = processor.getGRHistoryValue(static_cast<int>(i));
+
     // Validate writePos bounds to prevent out-of-range access in paint()
-    historyWritePos = juce::jlimit(0, static_cast<int>(grHistory.size()) - 1, writePos);
+    historyWritePos = juce::jlimit(0, static_cast<int>(grHistory.size()) - 1,
+                                    processor.getGRHistoryWritePos());
     repaint();
 }
 
@@ -1047,10 +1051,10 @@ void VUMeterWithLabel::setLevel(float newLevel)
         vuMeter->setLevel(newLevel);
 }
 
-void VUMeterWithLabel::setGRHistory(const std::array<float, 128>& history, int writePos)
+void VUMeterWithLabel::setGRHistory(const UniversalCompressor& processor)
 {
     if (grHistoryGraph)
-        grHistoryGraph->updateHistory(history, writePos);
+        grHistoryGraph->updateHistory(processor);
 }
 
 void VUMeterWithLabel::setShowHistory(bool show)

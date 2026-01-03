@@ -209,13 +209,16 @@ private:
 
 //==============================================================================
 // GR History Graph Component - shows gain reduction over time
+// Forward declare UniversalCompressor to avoid circular include
+class UniversalCompressor;
+
 class GRHistoryGraph : public juce::Component
 {
 public:
     GRHistoryGraph();
 
-    // Update with circular buffer data from processor
-    void updateHistory(const std::array<float, 128>& history, int writePos);
+    // Update with circular buffer data from processor (thread-safe)
+    void updateHistory(const UniversalCompressor& processor);
     void paint(juce::Graphics& g) override;
 
 private:
@@ -233,7 +236,7 @@ public:
     VUMeterWithLabel();
 
     void setLevel(float newLevel);
-    void setGRHistory(const std::array<float, 128>& history, int writePos);
+    void setGRHistory(const UniversalCompressor& processor);
     void resized() override;
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;

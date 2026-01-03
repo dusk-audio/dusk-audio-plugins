@@ -96,6 +96,12 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
   - Linked gain reduction metering per channel
   - Input/Output/GR metering with atomic thread safety
   - 2x/4x oversampling for anti-aliased processing
+  - **Analog Noise toggle** - Enable/disable subtle -80dB analog noise floor
+  - **Hardware-accurate transformer emulation** with mode-specific HF rolloff:
+    - Opto (LA-2A): 18kHz input, 16kHz output transformers
+    - FET (1176): 20kHz input, 22kHz output transformers
+    - Bus (SSL): 22kHz input, 24kHz output transformers
+    - VCA/Digital: No transformer (fully transparent)
 - **Build Target**: `MultiComp_All`
 
 ### 4. **GrooveMind** (Future - In Development)

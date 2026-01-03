@@ -49,6 +49,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     autoGainButton = std::make_unique<juce::ToggleButton>("Auto Gain");
     sidechainEnableButton = std::make_unique<juce::ToggleButton>("Ext SC");
     sidechainListenButton = std::make_unique<juce::ToggleButton>("SC Listen");
+    analogNoiseButton = std::make_unique<juce::ToggleButton>("Analog Noise");
 
     // Lookahead slider (not shown in header, but kept for parameter)
     lookaheadSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
@@ -113,6 +114,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
 
     addAndMakeVisible(bypassButton.get());
     addAndMakeVisible(autoGainButton.get());
+    addAndMakeVisible(analogNoiseButton.get());
     addAndMakeVisible(oversamplingSelector.get());
     addAndMakeVisible(sidechainHpSlider.get());
     // Hide SC EQ and sidechain controls - simplify the header
@@ -155,6 +157,10 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     if (params.getRawParameterValue("global_sidechain_listen"))
         sidechainListenAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             params, "global_sidechain_listen", *sidechainListenButton);
+
+    if (params.getRawParameterValue("noise_enable"))
+        analogNoiseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            params, "noise_enable", *analogNoiseButton);
 
     if (params.getRawParameterValue("global_lookahead"))
         lookaheadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -239,6 +245,8 @@ EnhancedCompressorEditor::~EnhancedCompressorEditor()
         sidechainEnableButton->setLookAndFeel(nullptr);
     if (sidechainListenButton)
         sidechainListenButton->setLookAndFeel(nullptr);
+    if (analogNoiseButton)
+        analogNoiseButton->setLookAndFeel(nullptr);
     if (lookaheadSlider)
         lookaheadSlider->setLookAndFeel(nullptr);
     if (oversamplingSelector)
@@ -347,8 +355,9 @@ void EnhancedCompressorEditor::setupOptoPanel()
     addChildComponent(optoPanel.container.get());  // Use addChildComponent so it's initially hidden
 
     // Create controls
-    optoPanel.peakReductionKnob = createKnob("Peak Reduction", 0, 100, 50, "");
-    optoPanel.gainKnob = createKnob("Gain", -20, 20, 0, " dB");
+    optoPanel.peakReductionKnob = createKnob("Peak Reduction", 0, 100, 0, "");  // Default 0 = no compression
+    // Opto Gain: 0-100 range, 50 = unity (0dB), maps to -40dB to +40dB internally
+    optoPanel.gainKnob = createKnob("Gain", 0, 100, 50, "");
     optoPanel.mixKnob = createKnob("Mix", 0, 100, 100, "%");
     optoPanel.limitSwitch = std::make_unique<juce::ToggleButton>("Limit");
 
@@ -392,7 +401,9 @@ void EnhancedCompressorEditor::setupFETPanel()
     addChildComponent(fetPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    fetPanel.inputKnob = createKnob("Input", 0, 10, 0);
+    // FET Input: drives signal into fixed -10dB threshold (authentic 1176 behavior)
+    // Range: -20dB to +40dB, with 0dB default
+    fetPanel.inputKnob = createKnob("Input", -20, 40, 0, " dB");
     fetPanel.outputKnob = createKnob("Output", -20, 20, 0, " dB");
     fetPanel.attackKnob = createKnob("Attack", 0.02, 0.8, 0.02, " ms");
     // Custom text display for microseconds
@@ -526,9 +537,11 @@ void EnhancedCompressorEditor::setupBusPanel()
     addChildComponent(busPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    busPanel.thresholdKnob = createKnob("Threshold", -20, 0, -6, " dB");
-    busPanel.ratioKnob = createKnob("Ratio", 2, 10, 4, ":1");
-    busPanel.makeupKnob = createKnob("Makeup", -10, 20, 0, " dB");
+    // Bus threshold: -30dB to +15dB range (SSL Bus compressor style)
+    busPanel.thresholdKnob = createKnob("Threshold", -30, 15, 0, " dB");
+    // Note: Bus ratio uses ComboBox attachment (2:1, 4:1, 10:1) - this knob is not used
+    busPanel.ratioKnob = createKnob("Ratio", 2, 10, 4, ":1");  // Placeholder, actual ratio via ComboBox
+    busPanel.makeupKnob = createKnob("Makeup", 0, 20, 0, " dB");
     busPanel.mixKnob = createKnob("Mix", 0, 100, 100, "%");
     
     busPanel.attackSelector = std::make_unique<juce::ComboBox>("Attack");
@@ -763,6 +776,9 @@ void EnhancedCompressorEditor::updateMode(int newMode)
         if (lookaheadSlider)
             lookaheadSlider->setLookAndFeel(currentLookAndFeel);
 
+        if (analogNoiseButton)
+            analogNoiseButton->setLookAndFeel(currentLookAndFeel);
+
         if (oversamplingSelector)
             oversamplingSelector->setLookAndFeel(currentLookAndFeel);
 
@@ -996,6 +1012,7 @@ void EnhancedCompressorEditor::resized()
     const int modeSelectorWidth = static_cast<int>(120 * scaleFactor);  // Wider for "Bus Compressor"
     const int toggleWidth = static_cast<int>(70 * scaleFactor);         // "Bypass" button
     const int autoGainWidth = static_cast<int>(85 * scaleFactor);       // "Auto Gain" button
+    const int analogNoiseWidth = static_cast<int>(95 * scaleFactor);    // "Analog Noise" button
     const int modeToggleWidth = static_cast<int>(70 * scaleFactor);     // Mode-specific toggle
     const int scEnableWidth = static_cast<int>(60 * scaleFactor);       // "Ext SC" button
     const int scListenWidth = static_cast<int>(75 * scaleFactor);       // "SC Listen" button
@@ -1003,6 +1020,7 @@ void EnhancedCompressorEditor::resized()
     const int osWidth = static_cast<int>(58 * scaleFactor);             // Dropdown for "2x"/"4x" - wider to show full text
 
     const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap +
+                            analogNoiseWidth + gap +
                             scEnableWidth + gap + scListenWidth + gap + modeToggleWidth + gap +
                             osLabelWidth + static_cast<int>(4 * scaleFactor) + osWidth;    // Center the controls in the header row
     int startX = (headerRow.getWidth() - totalWidth) / 2;
@@ -1030,6 +1048,14 @@ void EnhancedCompressorEditor::resized()
     {
         auto area = headerRow.removeFromLeft(autoGainWidth);
         autoGainButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromLeft(gap);
+
+    // Analog Noise toggle - enable/disable subtle analog noise
+    if (analogNoiseButton)
+    {
+        auto area = headerRow.removeFromLeft(analogNoiseWidth);
+        analogNoiseButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
     }
     headerRow.removeFromLeft(gap);
 
@@ -1381,8 +1407,8 @@ void EnhancedCompressorEditor::updateMeters()
     if (vuMeter && vuMeter->isVisible())
     {
         vuMeter->setLevel(processor.getGainReduction());
-        // Pass GR history for the history graph view
-        vuMeter->setGRHistory(processor.getGRHistory(), processor.getGRHistoryWritePos());
+        // Pass GR history for the history graph view (thread-safe atomic reads)
+        vuMeter->setGRHistory(processor);
     }
 
     // Update multiband per-band GR meters
