@@ -4,16 +4,97 @@ on:
   push:
     branches: [main, develop]
     tags:
-      - 'v*'
+      - 'v*'           # Full release: v1.0.0 builds all plugins
+      - '4keq-v*'      # 4K EQ only: 4keq-v1.0.0
+      - 'multicomp-v*' # Multi-Comp only
+      - 'tape-v*'      # TapeMachine only
+      - 'silkverb-v*'  # SilkVerb only
+      - 'multiq-v*'    # Multi-Q only
   pull_request:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: 'Plugin to build (leave empty for all)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - '4keq'
+          - 'multicomp'
+          - 'tapemachine'
+          - 'silkverb'
+          - 'multiq'
+          - 'convolution'
 
 env:
   BUILD_TYPE: Release
 
 jobs:
+  # Determine which plugin(s) to build based on tag
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      plugin_target: ${{ steps.parse.outputs.target }}
+      plugin_name: ${{ steps.parse.outputs.name }}
+      release_name: ${{ steps.parse.outputs.release_name }}
+      is_release: ${{ steps.parse.outputs.is_release }}
+    steps:
+      - name: Parse tag for plugin selection
+        id: parse
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          MANUAL_PLUGIN="${{ github.event.inputs.plugin }}"
+
+          # Default: build all
+          TARGET=""
+          NAME="All Plugins"
+          RELEASE_NAME="LunaCoAudio-Plugins"
+          IS_RELEASE="false"
+
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            IS_RELEASE="true"
+            if [[ "$TAG" == 4keq-v* ]]; then
+              TARGET="FourKEQ_All"
+              NAME="4K EQ"
+              RELEASE_NAME="4K-EQ"
+            elif [[ "$TAG" == multicomp-v* ]]; then
+              TARGET="MultiComp_All"
+              NAME="Multi-Comp"
+              RELEASE_NAME="Multi-Comp"
+            elif [[ "$TAG" == tape-v* ]]; then
+              TARGET="TapeMachine_All"
+              NAME="TapeMachine"
+              RELEASE_NAME="TapeMachine"
+            elif [[ "$TAG" == silkverb-v* ]]; then
+              TARGET="SilkVerb_All"
+              NAME="SilkVerb"
+              RELEASE_NAME="SilkVerb"
+            elif [[ "$TAG" == multiq-v* ]]; then
+              TARGET="MultiQ_All"
+              NAME="Multi-Q"
+              RELEASE_NAME="Multi-Q"
+            fi
+          elif [[ -n "$MANUAL_PLUGIN" ]]; then
+            case "$MANUAL_PLUGIN" in
+              4keq) TARGET="FourKEQ_All"; NAME="4K EQ"; RELEASE_NAME="4K-EQ" ;;
+              multicomp) TARGET="MultiComp_All"; NAME="Multi-Comp"; RELEASE_NAME="Multi-Comp" ;;
+              tapemachine) TARGET="TapeMachine_All"; NAME="TapeMachine"; RELEASE_NAME="TapeMachine" ;;
+              silkverb) TARGET="SilkVerb_All"; NAME="SilkVerb"; RELEASE_NAME="SilkVerb" ;;
+              multiq) TARGET="MultiQ_All"; NAME="Multi-Q"; RELEASE_NAME="Multi-Q" ;;
+              convolution) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="Convolution-Reverb" ;;
+            esac
+          fi
+
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
+          echo "Building: $NAME (target: ${TARGET:-all})"
+
   build-linux:
+    needs: setup
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
@@ -54,8 +135,16 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
-      - name: Build all plugins
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
+      - name: Build plugins
+        run: |
+          TARGET="${{ needs.setup.outputs.plugin_target }}"
+          if [ -n "$TARGET" ]; then
+            echo "Building specific target: $TARGET"
+            cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(nproc)
+          else
+            echo "Building all plugins"
+            cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
+          fi
 
       - name: Validate plugins
         run: |
@@ -126,6 +215,7 @@ jobs:
           retention-days: 30
 
   build-windows:
+    needs: setup
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -146,8 +236,16 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
-      - name: Build all plugins
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS
+      - name: Build plugins
+        run: |
+          $target = "${{ needs.setup.outputs.plugin_target }}"
+          if ($target) {
+            Write-Host "Building specific target: $target"
+            cmake --build build --config ${{ env.BUILD_TYPE }} --target $target -j $env:NUMBER_OF_PROCESSORS
+          } else {
+            Write-Host "Building all plugins"
+            cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS
+          }
 
       - name: Validate plugins
         shell: pwsh
@@ -193,6 +291,7 @@ jobs:
           retention-days: 30
 
   build-macos:
+    needs: setup
     runs-on: macos-14  # ARM64 runner (M1)
     steps:
       - name: Checkout repository
@@ -214,8 +313,16 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
-      - name: Build all plugins
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j$(sysctl -n hw.ncpu)
+      - name: Build plugins
+        run: |
+          TARGET="${{ needs.setup.outputs.plugin_target }}"
+          if [ -n "$TARGET" ]; then
+            echo "Building specific target: $TARGET"
+            cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(sysctl -n hw.ncpu)
+          else
+            echo "Building all plugins"
+            cmake --build build --config ${{ env.BUILD_TYPE }} -j$(sysctl -n hw.ncpu)
+          fi
 
       - name: Validate plugins
         run: |
@@ -375,9 +482,9 @@ jobs:
 
   # Create release when a tag is pushed
   release:
-    needs: [build-linux, build-windows, build-macos]
+    needs: [setup, build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.setup.outputs.is_release == 'true'
     permissions:
       contents: write
     steps:
@@ -387,50 +494,83 @@ jobs:
           path: artifacts
 
       - name: Create release archives
+        env:
+          RELEASE_NAME: ${{ needs.setup.outputs.release_name }}
+          PLUGIN_NAME: ${{ needs.setup.outputs.plugin_name }}
         run: |
           cd artifacts
 
-          # Create platform-specific zips
-          zip -r ../LunaCoAudio-Plugins-${{ github.ref_name }}-Linux.zip plugins-linux/
-          zip -r ../LunaCoAudio-Plugins-${{ github.ref_name }}-Windows.zip plugins-windows/
-          zip -r ../LunaCoAudio-Plugins-${{ github.ref_name }}-macOS.zip plugins-macos/
+          # Extract version from tag (remove plugin prefix if present)
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION=$(echo "$TAG" | sed 's/.*-v/v/' | sed 's/^v//')
+
+          # Create platform-specific zips with dynamic naming
+          zip -r "../${RELEASE_NAME}-${VERSION}-Linux.zip" plugins-linux/
+          zip -r "../${RELEASE_NAME}-${VERSION}-Windows.zip" plugins-windows/
+          zip -r "../${RELEASE_NAME}-${VERSION}-macOS.zip" plugins-macos/
 
           # List contents for verification
           echo "=== Release Archives ==="
           ls -la ../*.zip
 
       - name: Create GitHub Release
+        env:
+          RELEASE_NAME: ${{ needs.setup.outputs.release_name }}
+          PLUGIN_NAME: ${{ needs.setup.outputs.plugin_name }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION=$(echo "$TAG" | sed 's/.*-v/v/' | sed 's/^v//')
+
+          # Determine if this is a single plugin or all plugins
+          if [ "$PLUGIN_NAME" = "All Plugins" ]; then
+            BODY="## Luna Co. Audio Plugins v${VERSION}
+
+          ### Installation
+
+          **Linux:**
+          - VST3: Extract to \`~/.vst3/\`
+          - LV2: Extract to \`~/.lv2/\`
+
+          **Windows:**
+          - VST3: Extract to \`C:\\Program Files\\Common Files\\VST3\\\`
+
+          **macOS:**
+          - VST3: Extract to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
+          - AU: Extract to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`
+
+          ### Included Plugins
+          - 4K EQ - SSL 4000 Series Console EQ Emulation
+          - Multi-Comp - Multi-mode compressor with multiband
+          - TapeMachine - Analog tape machine emulation
+          - SilkVerb - Algorithmic reverb (Lexicon/Valhalla style)
+          - Convolution Reverb - IR-based reverb
+          - Multi-Q - Universal 8-band EQ
+          - And more..."
+          else
+            BODY="## ${PLUGIN_NAME} v${VERSION}
+
+          ### Installation
+
+          **Linux:**
+          - VST3: Extract to \`~/.vst3/\`
+          - LV2: Extract to \`~/.lv2/\`
+
+          **Windows:**
+          - VST3: Extract to \`C:\\Program Files\\Common Files\\VST3\\\`
+
+          **macOS:**
+          - VST3: Extract to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
+          - AU: Extract to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`"
+          fi
+
+          echo "$BODY" > release_body.md
+
+      - name: Publish Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            LunaCoAudio-Plugins-${{ github.ref_name }}-Linux.zip
-            LunaCoAudio-Plugins-${{ github.ref_name }}-Windows.zip
-            LunaCoAudio-Plugins-${{ github.ref_name }}-macOS.zip
+            *.zip
           generate_release_notes: true
-          body: |
-            ## Luna Co. Audio Plugins ${{ github.ref_name }}
-
-            ### Installation
-
-            **Linux:**
-            - VST3: Extract to `~/.vst3/`
-            - LV2: Extract to `~/.lv2/`
-
-            **Windows:**
-            - VST3: Extract to `C:\Program Files\Common Files\VST3\`
-
-            **macOS:**
-            - VST3: Extract to `/Library/Audio/Plug-Ins/VST3/` or `~/Library/Audio/Plug-Ins/VST3/`
-            - AU: Extract to `/Library/Audio/Plug-Ins/Components/` or `~/Library/Audio/Plug-Ins/Components/`
-
-            ### Included Plugins
-            - 4K EQ - SSL 4000 Series Console EQ Emulation
-            - Multi-Comp - Multi-mode compressor with multiband
-            - TapeMachine - Analog tape machine emulation
-            - SilkVerb - Algorithmic reverb (Lexicon/Valhalla style)
-            - Convolution Reverb - IR-based reverb
-            - Multi-Q - Universal 8-band EQ
-            - GrooveMind - ML-powered intelligent drummer
-            - And more...
+          body_path: release_body.md
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
