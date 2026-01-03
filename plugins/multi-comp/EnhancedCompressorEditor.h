@@ -18,7 +18,8 @@ class EnhancedCompressorEditor : public juce::AudioProcessorEditor,
                                  private juce::Timer,
                                  private juce::AudioProcessorValueTreeState::Listener,
                                  private juce::ComboBox::Listener,
-                                 private RatioButtonGroup::Listener
+                                 private RatioButtonGroup::Listener,
+                                 private UniversalCompressor::PresetChangeListener
 {
 public:
     EnhancedCompressorEditor(UniversalCompressor&);
@@ -30,6 +31,7 @@ public:
     void parameterChanged(const juce::String& parameterID, float newValue) override;
     void comboBoxChanged(juce::ComboBox* comboBoxThatHasChanged) override;
     void ratioChanged(int ratioIndex) override;
+    void presetChanged(int presetIndex) override;
 
 private:
     // Processor reference

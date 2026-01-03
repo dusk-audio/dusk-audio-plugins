@@ -5427,8 +5427,33 @@ void UniversalCompressor::setCurrentProgram(int index)
 
     if (index == 0)
     {
-        // Default preset - keeps current values
-        // User can manually adjust parameters from here
+        // Default preset - reset to neutral starting point
+        // Mode: Vintage Opto (0)
+        if (auto* p = parameters.getParameter("mode"))
+            p->setValueNotifyingHost(0.0f);
+
+        // Common controls
+        if (auto* p = parameters.getParameter("mix"))
+            p->setValueNotifyingHost(1.0f);  // 100%
+        if (auto* p = parameters.getParameter("sidechain_hp"))
+            p->setValueNotifyingHost(parameters.getParameterRange("sidechain_hp").convertTo0to1(80.0f));
+        if (auto* p = parameters.getParameter("auto_makeup"))
+            p->setValueNotifyingHost(0.0f);  // Off
+        if (auto* p = parameters.getParameter("saturation_mode"))
+            p->setValueNotifyingHost(0.0f);  // Vintage
+
+        // Opto defaults
+        if (auto* p = parameters.getParameter("opto_peak_reduction"))
+            p->setValueNotifyingHost(parameters.getParameterRange("opto_peak_reduction").convertTo0to1(30.0f));
+        if (auto* p = parameters.getParameter("opto_gain"))
+            p->setValueNotifyingHost(parameters.getParameterRange("opto_gain").convertTo0to1(0.0f));
+        if (auto* p = parameters.getParameter("opto_limit"))
+            p->setValueNotifyingHost(0.0f);  // Compress
+
+        // Notify listeners so UI knows preset changed
+        juce::MessageManager::callAsync([this, index]() {
+            presetChangeListeners.call(&PresetChangeListener::presetChanged, index);
+        });
         return;
     }
 
@@ -5438,6 +5463,11 @@ void UniversalCompressor::setCurrentProgram(int index)
     {
         CompressorPresets::applyPreset(parameters, presets[static_cast<size_t>(index - 1)]);
     }
+
+    // Notify listeners on message thread (UI needs to refresh)
+    juce::MessageManager::callAsync([this, index]() {
+        presetChangeListeners.call(&PresetChangeListener::presetChanged, index);
+    });
 }
 
 // LV2 inline display removed - JUCE doesn't natively support this extension

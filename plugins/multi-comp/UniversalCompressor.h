@@ -114,6 +114,16 @@ public:
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
     CompressorMode getCurrentMode() const;
 
+    // Preset change listener for UI updates (called on message thread)
+    class PresetChangeListener
+    {
+    public:
+        virtual ~PresetChangeListener() = default;
+        virtual void presetChanged(int presetIndex) = 0;
+    };
+    void addPresetChangeListener(PresetChangeListener* listener) { presetChangeListeners.add(listener); }
+    void removePresetChangeListener(PresetChangeListener* listener) { presetChangeListeners.remove(listener); }
+
 private:
     // Core DSP classes
     class OptoCompressor;
@@ -193,6 +203,9 @@ private:
 
     // Current preset index (for UI preset menu, not exposed as VST3 Program parameter)
     int currentPresetIndex = 0;
+
+    // Preset change listeners for UI updates
+    juce::ListenerList<PresetChangeListener> presetChangeListeners;
 
     // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};

@@ -188,6 +188,9 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     params.addParameterListener("mode", this);
     params.addParameterListener("auto_makeup", this);
 
+    // Listen for preset changes (for Bitwig and other hosts that need explicit UI refresh)
+    processor.addPresetChangeListener(this);
+
     // Set initial mode
     const auto* modeParam = params.getRawParameterValue("mode");
     currentMode = modeParam ? static_cast<int>(*modeParam) : 0;
@@ -223,6 +226,7 @@ EnhancedCompressorEditor::~EnhancedCompressorEditor()
     // Stop timer first to prevent callbacks during destruction
     stopTimer();
 
+    processor.removePresetChangeListener(this);
     processor.getParameters().removeParameterListener("mode", this);
     processor.getParameters().removeParameterListener("auto_makeup", this);
 
@@ -1470,6 +1474,31 @@ void EnhancedCompressorEditor::ratioChanged(int ratioIndex)
         float normalizedValue = ratioIndex / 4.0f;
         ratioParam->setValueNotifyingHost(normalizedValue);
     }
+}
+
+void EnhancedCompressorEditor::presetChanged(int /*presetIndex*/)
+{
+    // Called when a preset is loaded via DAW's preset menu
+    // Force UI refresh for hosts that don't properly trigger parameter updates (e.g., Bitwig)
+
+    // Re-read mode from parameter and update UI
+    auto& params = processor.getParameters();
+    const auto* modeParam = params.getRawParameterValue("mode");
+    if (modeParam)
+    {
+        int newMode = static_cast<int>(*modeParam);
+        if (modeSelector)
+            modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
+        updateMode(newMode);
+    }
+
+    // Re-read auto-makeup state
+    const auto* autoMakeupParam = params.getRawParameterValue("auto_makeup");
+    if (autoMakeupParam)
+        updateAutoGainState(autoMakeupParam->load() > 0.5f);
+
+    // Trigger full repaint to refresh all sliders/knobs
+    repaint();
 }
 
 void EnhancedCompressorEditor::updateAutoGainState(bool autoGainEnabled)
