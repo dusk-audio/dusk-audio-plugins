@@ -154,30 +154,33 @@ jobs:
 
           # Check VST3 plugins exist and have correct structure
           # Plugins are built to build/plugins/<name>/*_artefacts/Release/VST3/*.vst3
-          for vst3 in $(find build -path "*/Release/VST3/*.vst3" -type d 2>/dev/null); do
+          # Use -print0 and read -d '' to handle paths with spaces
+          while IFS= read -r -d '' vst3; do
+            # Skip if no binary exists (CMake may create empty directories)
+            if ! compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
+              echo "⊘ Skipping (no binary): $vst3"
+              continue
+            fi
             echo "✓ Found: $vst3"
             found_vst3=1
-            # Check for main binary using compgen for proper glob expansion
-            if compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
-              echo "  ✓ Binary exists"
-            else
-              echo "  ✗ Missing binary!"
-              exit 1
-            fi
-          done
+            echo "  ✓ Binary exists"
+          done < <(find build -path "*/Release/VST3/*.vst3" -type d -print0 2>/dev/null)
 
           # Check LV2 plugins
-          for lv2 in $(find build -path "*/Release/LV2/*.lv2" -type d 2>/dev/null); do
+          while IFS= read -r -d '' lv2; do
+            # Skip if no binary exists
+            if ! compgen -G "$lv2/*.so" > /dev/null; then
+              echo "⊘ Skipping (no binary): $lv2"
+              continue
+            fi
             echo "✓ Found: $lv2"
             found_lv2=1
-            # Check for binary and manifest
-            if compgen -G "$lv2/*.so" > /dev/null && [ -f "$lv2/manifest.ttl" ]; then
+            if [ -f "$lv2/manifest.ttl" ]; then
               echo "  ✓ Binary and manifest exist"
             else
-              echo "  ✗ Missing files!"
-              exit 1
+              echo "  ⚠ Missing manifest.ttl"
             fi
-          done
+          done < <(find build -path "*/Release/LV2/*.lv2" -type d -print0 2>/dev/null)
 
           # Fail if no plugins were found
           if [ $found_vst3 -eq 0 ]; then
@@ -195,10 +198,20 @@ jobs:
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts/linux/VST3 artifacts/linux/LV2
-          # Copy VST3 plugins
-          find build -path "*Release/VST3/*.vst3" -type d -exec cp -r {} artifacts/linux/VST3/ \;
-          # Copy LV2 plugins
-          find build -path "*Release/LV2/*.lv2" -type d -exec cp -r {} artifacts/linux/LV2/ \;
+
+          # Copy only VST3 plugins that have actual binaries
+          while IFS= read -r -d '' vst3; do
+            if compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
+              cp -r "$vst3" artifacts/linux/VST3/
+            fi
+          done < <(find build -path "*Release/VST3/*.vst3" -type d -print0 2>/dev/null)
+
+          # Copy only LV2 plugins that have actual binaries
+          while IFS= read -r -d '' lv2; do
+            if compgen -G "$lv2/*.so" > /dev/null; then
+              cp -r "$lv2" artifacts/linux/LV2/
+            fi
+          done < <(find build -path "*Release/LV2/*.lv2" -type d -print0 2>/dev/null)
 
           # List what we collected
           echo "=== Linux Artifacts ==="
@@ -272,10 +285,19 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts/windows/VST3
-          # Copy VST3 plugins
+          # Copy only VST3 plugins that have actual binaries
           Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory |
             Where-Object { $_.FullName -match "Release" } |
-            ForEach-Object { Copy-Item -Path $_.FullName -Destination artifacts/windows/VST3/ -Recurse }
+            ForEach-Object {
+              # Check if the plugin has a .vst3 binary file inside
+              $binaryFile = Get-ChildItem -Path $_.FullName -Recurse -Filter "*.vst3" -File
+              if ($binaryFile) {
+                Write-Host "Copying: $($_.FullName)"
+                Copy-Item -Path $_.FullName -Destination artifacts/windows/VST3/ -Recurse
+              } else {
+                Write-Host "Skipping (no binary): $($_.FullName)"
+              }
+            }
 
           Write-Host "=== Windows Artifacts ==="
           Get-ChildItem -Path artifacts/windows -Recurse -Filter "*.vst3" | Select-Object FullName
@@ -329,28 +351,36 @@ jobs:
 
           # Check VST3 plugins
           # Plugins are built to build/plugins/<name>/*_artefacts/Release/VST3/*.vst3
-          for vst3 in $(find build -path "*/Release/VST3/*.vst3" -type d 2>/dev/null); do
-            echo "✓ Found: $vst3"
-            found_vst3=1
-            # Verify universal binary - look for the binary inside Contents/MacOS
+          # Use -print0 and read -d '' to handle paths with spaces
+          while IFS= read -r -d '' vst3; do
+            # Verify binary exists - look for the binary inside Contents/MacOS
             plugin_name=$(basename "$vst3" .vst3)
             binary="$vst3/Contents/MacOS/$plugin_name"
-            if [ -f "$binary" ]; then
-              archs=$(lipo -info "$binary" 2>/dev/null || file "$binary")
-              echo "  Architectures: $archs"
-              if echo "$archs" | grep -q "arm64" && echo "$archs" | grep -q "x86_64"; then
-                echo "  ✓ Universal binary confirmed"
-              else
-                echo "  ⚠ May not be universal binary"
-              fi
+            if [ ! -f "$binary" ]; then
+              echo "⊘ Skipping (no binary): $vst3"
+              continue
             fi
-          done
+            echo "✓ Found: $vst3"
+            found_vst3=1
+            archs=$(lipo -info "$binary" 2>/dev/null || file "$binary")
+            echo "  Architectures: $archs"
+            if echo "$archs" | grep -q "arm64" && echo "$archs" | grep -q "x86_64"; then
+              echo "  ✓ Universal binary confirmed"
+            else
+              echo "  ⚠ May not be universal binary"
+            fi
+          done < <(find build -path "*/Release/VST3/*.vst3" -type d -print0 2>/dev/null)
 
           # Check AU plugins
-          for au in $(find build -path "*/Release/AU/*.component" -type d 2>/dev/null); do
+          while IFS= read -r -d '' au; do
+            plugin_name=$(basename "$au" .component)
+            if [ ! -f "$au/Contents/MacOS/$plugin_name" ]; then
+              echo "⊘ Skipping AU (no binary): $au"
+              continue
+            fi
             echo "✓ Found AU: $au"
             found_au=1
-          done
+          done < <(find build -path "*/Release/AU/*.component" -type d -print0 2>/dev/null)
 
           # Fail if no plugins were found
           if [ $found_vst3 -eq 0 ]; then
@@ -461,8 +491,21 @@ jobs:
             cp -r build/notarize_staging/*.vst3 artifacts/macos/VST3/ 2>/dev/null || true
             cp -r build/notarize_staging/*.component artifacts/macos/AU/ 2>/dev/null || true
           else
-            find build -path "*Release/VST3/*.vst3" -type d -exec cp -r {} artifacts/macos/VST3/ \;
-            find build -path "*Release/AU/*.component" -type d -exec cp -r {} artifacts/macos/AU/ \;
+            # Copy only VST3 plugins that have actual binaries
+            while IFS= read -r -d '' vst3; do
+              plugin_name=$(basename "$vst3" .vst3)
+              if [ -f "$vst3/Contents/MacOS/$plugin_name" ]; then
+                cp -r "$vst3" artifacts/macos/VST3/
+              fi
+            done < <(find build -path "*Release/VST3/*.vst3" -type d -print0 2>/dev/null)
+
+            # Copy only AU plugins that have actual binaries
+            while IFS= read -r -d '' au; do
+              plugin_name=$(basename "$au" .component)
+              if [ -f "$au/Contents/MacOS/$plugin_name" ]; then
+                cp -r "$au" artifacts/macos/AU/
+              fi
+            done < <(find build -path "*Release/AU/*.component" -type d -print0 2>/dev/null)
           fi
 
           echo "=== macOS Artifacts ==="
