@@ -119,7 +119,9 @@ public:
     {
     public:
         virtual ~PresetChangeListener() = default;
-        virtual void presetChanged(int presetIndex) = 0;
+        // presetIndex: the preset being loaded
+        // targetMode: the mode the preset will set (-1 if unknown/default)
+        virtual void presetChanged(int presetIndex, int targetMode) = 0;
     };
     void addPresetChangeListener(PresetChangeListener* listener) { presetChangeListeners.add(listener); }
     void removePresetChangeListener(PresetChangeListener* listener) { presetChangeListeners.remove(listener); }
