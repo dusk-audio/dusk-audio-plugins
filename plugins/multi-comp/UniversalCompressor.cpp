@@ -3969,14 +3969,20 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     // Initialize RMS coefficient for ~200ms averaging window (industry standard)
     // This gives stable, perceptually-accurate loudness matching like Logic Pro's compressor
-    // Coefficient = 1 - exp(-1 / (sampleRate * timeConstant))
     // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
     float rmsTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
-    rmsCoefficient = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * rmsTimeConstantSec));
-
-    // Reset RMS accumulators
+    int safeBlockSize = juce::jmax(1, samplesPerBlock);  // Prevent division by zero
+    // Ensure sampleRate is valid (should be guaranteed by prepareToPlay, but defense in depth)
+    double safeSampleRate = juce::jlimit(8000.0, 384000.0, sampleRate);
+    float blocksPerSecond = static_cast<float>(safeSampleRate) / static_cast<float>(safeBlockSize);
+    rmsCoefficient = 1.0f - std::exp(-1.0f / (blocksPerSecond * rmsTimeConstantSec));
+    // Ensure coefficient is in valid range (0, 1)
+    rmsCoefficient = juce::jlimit(0.001f, 0.999f, rmsCoefficient);
+    // Reset RMS accumulators and mode tracking
     inputRmsAccumulator = 0.0f;
     outputRmsAccumulator = 0.0f;
+    lastCompressorMode = -1;  // Force mode change detection on first processBlock
+    primeRmsAccumulators = true;  // Prime accumulators on first block
 }
 
 void UniversalCompressor::releaseResources()
@@ -4042,6 +4048,20 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Internal oversampling is always enabled for better quality
     bool oversample = true; // Always use oversampling internally
     CompressorMode mode = getCurrentMode();
+
+    // Detect mode change and reset auto-gain accumulators
+    // Each compressor mode has different gain characteristics, so the RMS accumulators
+    // must be reset to prevent incorrect auto-gain from stale data
+    int currentModeInt = static_cast<int>(mode);
+    if (currentModeInt != lastCompressorMode)
+    {
+        lastCompressorMode = currentModeInt;
+        // Flag to prime RMS accumulators with first block's values (instant convergence)
+        // This avoids the ~200ms delay that would occur if we reset to 0
+        primeRmsAccumulators = true;
+        // Reset smoothed gain to unity to avoid sudden volume jumps
+        smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+    }
 
     // Read auto-makeup state early - needed for parameter caching
     auto* autoMakeupParamEarly = parameters.getRawParameterValue("auto_makeup");
@@ -4260,8 +4280,16 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // Max corresponds to ~+6dBFS RMS (4.0 linear squared), min to -80dBFS
         blockRmsSquared = juce::jlimit(1e-8f, 4.0f, blockRmsSquared);
 
-        // One-pole smoothing filter for RMS averaging (~200ms window)
-        inputRmsAccumulator += rmsCoefficient * (blockRmsSquared - inputRmsAccumulator);
+        // Prime accumulator instantly on mode change for immediate auto-gain response
+        if (primeRmsAccumulators)
+        {
+            inputRmsAccumulator = blockRmsSquared;
+        }
+        else
+        {
+            // One-pole smoothing filter for RMS averaging (~200ms window)
+            inputRmsAccumulator += rmsCoefficient * (blockRmsSquared - inputRmsAccumulator);
+        }
 
         // Bounds check accumulator to prevent drift in long sessions
         inputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, inputRmsAccumulator);
@@ -4617,8 +4645,19 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 // Clamp block RMS to prevent numerical issues
                 blockOutputRmsSquared = juce::jlimit(1e-8f, 4.0f, blockOutputRmsSquared);
 
-                // Update running RMS accumulator with one-pole smoothing
-                outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+                // Prime accumulator instantly on mode change for immediate auto-gain response
+                bool justPrimed = false;
+                if (primeRmsAccumulators)
+                {
+                    outputRmsAccumulator = blockOutputRmsSquared;
+                    primeRmsAccumulators = false;  // Clear flag after priming both accumulators
+                    justPrimed = true;
+                }
+                else
+                {
+                    // Update running RMS accumulator with one-pole smoothing
+                    outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+                }
 
                 // Bounds check accumulator to prevent drift
                 outputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, outputRmsAccumulator);
@@ -4632,6 +4671,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
                     // Limit compensation range to ±40dB to handle extreme settings
                     targetAutoGain = juce::jlimit(0.01f, 100.0f, targetAutoGain);  // -40dB to +40dB
+                }
+
+                // If we just primed, set gain immediately without smoothing
+                if (justPrimed)
+                {
+                    smoothedAutoMakeupGain.setCurrentAndTargetValue(targetAutoGain);
                 }
             }
 
@@ -4962,8 +5007,19 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             // Clamp block RMS to prevent numerical issues
             blockOutputRmsSquared = juce::jlimit(1e-8f, 4.0f, blockOutputRmsSquared);
 
-            // Update running RMS accumulator with one-pole smoothing
-            outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+            // Prime accumulator instantly on mode change for immediate auto-gain response
+            bool justPrimed = false;
+            if (primeRmsAccumulators)
+            {
+                outputRmsAccumulator = blockOutputRmsSquared;
+                primeRmsAccumulators = false;  // Clear flag after priming both accumulators
+                justPrimed = true;
+            }
+            else
+            {
+                // Update running RMS accumulator with one-pole smoothing
+                outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+            }
 
             // Bounds check accumulator to prevent drift
             outputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, outputRmsAccumulator);
@@ -4982,6 +5038,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 // - Heavy compression can add another 20dB of gain reduction
                 // - Combined effect can require 30-40dB of compensation
                 targetAutoGain = juce::jlimit(0.01f, 100.0f, targetAutoGain);  // -40dB to +40dB
+            }
+
+            // If we just primed, set gain immediately without smoothing
+            if (justPrimed)
+            {
+                smoothedAutoMakeupGain.setCurrentAndTargetValue(targetAutoGain);
             }
         }
 
@@ -5250,6 +5312,8 @@ void UniversalCompressor::resetDSPState()
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
     inputRmsAccumulator = 0.0f;
     outputRmsAccumulator = 0.0f;
+    lastCompressorMode = -1;  // Force mode change detection on next processBlock
+    primeRmsAccumulators = true;  // Prime accumulators on first block after reset
 
     // Re-prepare all compressors to reset their internal envelope/detector state
     // This ensures gain reduction envelopes start fresh after state restoration
