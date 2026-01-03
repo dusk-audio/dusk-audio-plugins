@@ -100,11 +100,11 @@ public:
     }
 
     // GR History for visualization (circular buffer, ~128 samples at 30Hz = ~4 seconds)
-    // Note: grHistory is not atomic. The UI thread may see partially updated values (tearing).
-    // This is acceptable for visualization - occasional stale data won't affect display quality.
-    // Using a lock-free ring buffer or mutex would add unnecessary overhead for this use case.
+    // Thread-safe with atomic<float> array for clean UI reads
     static constexpr int GR_HISTORY_SIZE = 128;
-    const std::array<float, GR_HISTORY_SIZE>& getGRHistory() const { return grHistory; }
+    float getGRHistoryValue(int index) const {
+        return grHistory[index % GR_HISTORY_SIZE].load(std::memory_order_relaxed);
+    }
     int getGRHistoryWritePos() const { return grHistoryWritePos.load(std::memory_order_relaxed); }
 
     // Actual release time for program-dependent release visualization (in ms)
@@ -175,7 +175,8 @@ private:
     std::atomic<float> outputMeterR{-60.0f};
 
     // GR History buffer for visualization
-    std::array<float, GR_HISTORY_SIZE> grHistory{};
+    // Using atomic<float> array for thread-safe UI reads without tearing
+    std::array<std::atomic<float>, GR_HISTORY_SIZE> grHistory{};
     std::atomic<int> grHistoryWritePos{0};
     int grHistoryUpdateCounter{0};  // Update every N blocks for ~30Hz
 
@@ -228,7 +229,15 @@ private:
 
     // Pre-smoothed gain buffer for auto-makeup optimization
     alignas(64) std::array<float, 8192> smoothedGainBuffer{};
-    
+
+    // Random generator for analog noise (class member to avoid per-block construction)
+    juce::Random noiseRandom;
+
+    // Smoothed crossover frequencies to prevent zipper noise
+    juce::SmoothedValue<float> smoothedCrossover1{200.0f};
+    juce::SmoothedValue<float> smoothedCrossover2{2000.0f};
+    juce::SmoothedValue<float> smoothedCrossover3{8000.0f};
+
     // Lookup tables for performance optimization
     class LookupTables
     {

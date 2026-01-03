@@ -65,6 +65,7 @@ private:
     std::unique_ptr<juce::ToggleButton> autoGainButton;
     std::unique_ptr<juce::ToggleButton> sidechainEnableButton;  // External sidechain
     std::unique_ptr<juce::ToggleButton> sidechainListenButton;  // SC Listen
+    std::unique_ptr<juce::ToggleButton> analogNoiseButton;      // Analog noise on/off
     std::unique_ptr<juce::Slider> lookaheadSlider;              // Global lookahead
     std::unique_ptr<juce::ComboBox> oversamplingSelector;       // 2x/4x oversampling
     std::unique_ptr<juce::Slider> sidechainHpSlider;            // Sidechain HP filter frequency
@@ -81,6 +82,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sidechainEnableAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sidechainListenAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> analogNoiseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lookaheadAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oversamplingAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sidechainHpAttachment;
