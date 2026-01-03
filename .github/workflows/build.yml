@@ -1,0 +1,436 @@
+name: Build Plugins
+
+on:
+  push:
+    branches: [main, develop]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          path: JUCE
+          ref: 8.0.12  # Pin to stable release for reproducible builds
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DJUCE_PATH=${{ github.workspace }}/JUCE
+
+      - name: Build all plugins
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
+
+      - name: Validate plugins
+        run: |
+          echo "=== Validating Linux plugin builds ==="
+          found_vst3=0
+          found_lv2=0
+
+          # Check VST3 plugins exist and have correct structure
+          for vst3 in build/*_artefacts/Release/VST3/*.vst3; do
+            if [ -d "$vst3" ]; then
+              echo "✓ Found: $vst3"
+              found_vst3=1
+              # Check for main binary using compgen for proper glob expansion
+              if compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
+                echo "  ✓ Binary exists"
+              else
+                echo "  ✗ Missing binary!"
+                exit 1
+              fi
+            fi
+          done
+
+          # Check LV2 plugins
+          for lv2 in build/*_artefacts/Release/LV2/*.lv2; do
+            if [ -d "$lv2" ]; then
+              echo "✓ Found: $lv2"
+              found_lv2=1
+              # Check for binary and manifest
+              if compgen -G "$lv2/*.so" > /dev/null && [ -f "$lv2/manifest.ttl" ]; then
+                echo "  ✓ Binary and manifest exist"
+              else
+                echo "  ✗ Missing files!"
+                exit 1
+              fi
+            fi
+          done
+
+          # Fail if no plugins were found
+          if [ $found_vst3 -eq 0 ]; then
+            echo "✗ No VST3 plugins found!"
+            exit 1
+          fi
+
+          if [ $found_lv2 -eq 0 ]; then
+            echo "✗ No LV2 plugins found!"
+            exit 1
+          fi
+
+          echo "=== Validation passed ==="
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts/linux/VST3 artifacts/linux/LV2
+          # Copy VST3 plugins
+          find build -path "*Release/VST3/*.vst3" -type d -exec cp -r {} artifacts/linux/VST3/ \;
+          # Copy LV2 plugins
+          find build -path "*Release/LV2/*.lv2" -type d -exec cp -r {} artifacts/linux/LV2/ \;
+
+          # List what we collected
+          echo "=== Linux Artifacts ==="
+          find artifacts/linux -type f -name "*.so" | head -20
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-linux
+          path: artifacts/linux/
+          retention-days: 30
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          path: JUCE
+          ref: 8.0.12  # Pin to stable release for reproducible builds
+
+      - name: Configure CMake
+        run: |
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DJUCE_PATH=${{ github.workspace }}/JUCE
+
+      - name: Build all plugins
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Validate plugins
+        shell: pwsh
+        run: |
+          Write-Host "=== Validating Windows plugin builds ==="
+          $vst3s = Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory
+
+          if ($vst3s.Count -eq 0) {
+            Write-Host "✗ No VST3 plugins found!"
+            exit 1
+          }
+
+          foreach ($vst3 in $vst3s) {
+            Write-Host "✓ Found: $($vst3.FullName)"
+            $dll = Get-ChildItem -Path $vst3.FullName -Recurse -Filter "*.vst3" -File
+            if ($dll) {
+              Write-Host "  ✓ Binary exists"
+            } else {
+              Write-Host "  ✗ Missing binary!"
+              exit 1
+            }
+          }
+
+          Write-Host "=== Validation passed ==="
+
+      - name: Prepare artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/windows/VST3
+          # Copy VST3 plugins
+          Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory |
+            Where-Object { $_.FullName -match "Release" } |
+            ForEach-Object { Copy-Item -Path $_.FullName -Destination artifacts/windows/VST3/ -Recurse }
+
+          Write-Host "=== Windows Artifacts ==="
+          Get-ChildItem -Path artifacts/windows -Recurse -Filter "*.vst3" | Select-Object FullName
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-windows
+          path: artifacts/windows/
+          retention-days: 30
+
+  build-macos:
+    runs-on: macos-14  # ARM64 runner (M1)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          path: JUCE
+          ref: 8.0.12  # Pin to stable release for reproducible builds
+
+      - name: Configure CMake (Universal Binary)
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DJUCE_PATH=${{ github.workspace }}/JUCE
+
+      - name: Build all plugins
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j$(sysctl -n hw.ncpu)
+
+      - name: Validate plugins
+        run: |
+          echo "=== Validating macOS plugin builds ==="
+          found_vst3=0
+          found_au=0
+
+          # Check VST3 plugins
+          for vst3 in build/*_artefacts/Release/VST3/*.vst3; do
+            if [ -d "$vst3" ]; then
+              echo "✓ Found: $vst3"
+              found_vst3=1
+              # Verify universal binary
+              binary=$(find "$vst3" -name "*.dylib" -o -name "$(basename "$vst3" .vst3)" -type f 2>/dev/null | head -1)
+              if [ -n "$binary" ] && [ -f "$binary" ]; then
+                archs=$(lipo -info "$binary" 2>/dev/null || file "$binary")
+                echo "  Architectures: $archs"
+                if echo "$archs" | grep -q "arm64" && echo "$archs" | grep -q "x86_64"; then
+                  echo "  ✓ Universal binary confirmed"
+                else
+                  echo "  ⚠ May not be universal binary"
+                fi
+              fi
+            fi
+          done
+
+          # Check AU plugins
+          for au in build/*_artefacts/Release/AU/*.component; do
+            if [ -d "$au" ]; then
+              echo "✓ Found AU: $au"
+              found_au=1
+            fi
+          done
+
+          # Fail if no plugins were found
+          if [ $found_vst3 -eq 0 ]; then
+            echo "✗ No VST3 plugins found!"
+            exit 1
+          fi
+
+          echo "=== Validation passed ==="
+
+      - name: Import Code Signing Certificate
+        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate
+          echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
+          security import certificate.p12 -P "$MACOS_CERTIFICATE_PWD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          rm certificate.p12
+
+      - name: Code Sign Plugins
+        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' }}
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          echo "=== Code Signing macOS Plugins ==="
+
+          # Sign VST3 plugins
+          for plugin in build/*_artefacts/Release/VST3/*.vst3; do
+            if [ -d "$plugin" ]; then
+              echo "Signing: $plugin"
+              codesign --force --deep --sign "$MACOS_SIGNING_IDENTITY" \
+                --options runtime \
+                --timestamp \
+                "$plugin"
+
+              # Verify signature
+              codesign --verify --verbose "$plugin"
+            fi
+          done
+
+          # Sign AU plugins
+          for plugin in build/*_artefacts/Release/AU/*.component; do
+            if [ -d "$plugin" ]; then
+              echo "Signing: $plugin"
+              codesign --force --deep --sign "$MACOS_SIGNING_IDENTITY" \
+                --options runtime \
+                --timestamp \
+                "$plugin"
+
+              codesign --verify --verbose "$plugin"
+            fi
+          done
+
+      - name: Notarize Plugins
+        if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "=== Notarizing macOS Plugins ==="
+
+          # Create zip for notarization
+          cd build
+
+          # Collect all signed plugins
+          mkdir -p notarize_staging
+          find . -path "*Release/VST3/*.vst3" -type d -exec cp -r {} notarize_staging/ \;
+          find . -path "*Release/AU/*.component" -type d -exec cp -r {} notarize_staging/ \;
+
+          # Create submission zip
+          ditto -c -k --keepParent notarize_staging plugins-macos-notarize.zip
+
+          # Submit for notarization
+          xcrun notarytool submit plugins-macos-notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Staple the notarization ticket to each plugin
+          for plugin in notarize_staging/*.vst3 notarize_staging/*.component; do
+            if [ -d "$plugin" ]; then
+              echo "Stapling: $plugin"
+              xcrun stapler staple "$plugin"
+            fi
+          done
+
+          cd ..
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts/macos/VST3 artifacts/macos/AU
+
+          # Copy plugins (use notarized versions if available)
+          if [ -d "build/notarize_staging" ]; then
+            cp -r build/notarize_staging/*.vst3 artifacts/macos/VST3/ 2>/dev/null || true
+            cp -r build/notarize_staging/*.component artifacts/macos/AU/ 2>/dev/null || true
+          else
+            find build -path "*Release/VST3/*.vst3" -type d -exec cp -r {} artifacts/macos/VST3/ \;
+            find build -path "*Release/AU/*.component" -type d -exec cp -r {} artifacts/macos/AU/ \;
+          fi
+
+          echo "=== macOS Artifacts ==="
+          find artifacts/macos -type d \( -name "*.vst3" -o -name "*.component" \)
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-macos
+          path: artifacts/macos/
+          retention-days: 30
+
+  # Create release when a tag is pushed
+  release:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release archives
+        run: |
+          cd artifacts
+
+          # Create platform-specific zips
+          zip -r ../LunaCoAudio-Plugins-${{ github.ref_name }}-Linux.zip plugins-linux/
+          zip -r ../LunaCoAudio-Plugins-${{ github.ref_name }}-Windows.zip plugins-windows/
+          zip -r ../LunaCoAudio-Plugins-${{ github.ref_name }}-macOS.zip plugins-macos/
+
+          # List contents for verification
+          echo "=== Release Archives ==="
+          ls -la ../*.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            LunaCoAudio-Plugins-${{ github.ref_name }}-Linux.zip
+            LunaCoAudio-Plugins-${{ github.ref_name }}-Windows.zip
+            LunaCoAudio-Plugins-${{ github.ref_name }}-macOS.zip
+          generate_release_notes: true
+          body: |
+            ## Luna Co. Audio Plugins ${{ github.ref_name }}
+
+            ### Installation
+
+            **Linux:**
+            - VST3: Extract to `~/.vst3/`
+            - LV2: Extract to `~/.lv2/`
+
+            **Windows:**
+            - VST3: Extract to `C:\Program Files\Common Files\VST3\`
+
+            **macOS:**
+            - VST3: Extract to `/Library/Audio/Plug-Ins/VST3/` or `~/Library/Audio/Plug-Ins/VST3/`
+            - AU: Extract to `/Library/Audio/Plug-Ins/Components/` or `~/Library/Audio/Plug-Ins/Components/`
+
+            ### Included Plugins
+            - 4K EQ - SSL 4000 Series Console EQ Emulation
+            - Multi-Comp - Multi-mode compressor with multiband
+            - TapeMachine - Analog tape machine emulation
+            - SilkVerb - Algorithmic reverb (Lexicon/Valhalla style)
+            - Convolution Reverb - IR-based reverb
+            - Multi-Q - Universal 8-band EQ
+            - GrooveMind - ML-powered intelligent drummer
+            - And more...
+          draft: false
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}

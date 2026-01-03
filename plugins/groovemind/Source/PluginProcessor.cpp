@@ -13,8 +13,7 @@
 //==============================================================================
 GrooveMindProcessor::GrooveMindProcessor()
     : AudioProcessor(BusesProperties()
-                     .withOutput("Output", juce::AudioChannelSet::stereo(), true)
-                     .withInput("Sidechain", juce::AudioChannelSet::stereo(), true)),
+                     .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)),  // Sidechain only - no audio output (MIDI generator)
       apvts(*this, nullptr, "Parameters", createParameterLayout()),
       patternLibrary(),
       drummerEngine(patternLibrary),
@@ -287,6 +286,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout GrooveMindProcessor::createP
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "follow_enabled", "Follow Mode", false));
 
+    // Follow mode amount (how much the analysis affects drum parameters)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "follow_amount", "Follow Amount",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.7f));
+
+    // Follow mode sensitivity (how responsive to input dynamics)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "follow_sensitivity", "Follow Sensitivity",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f));
+
     return { params.begin(), params.end() };
 }
 
@@ -314,6 +323,7 @@ void GrooveMindProcessor::prepareToPlay(double newSampleRate, int samplesPerBloc
     drummerEngine.prepare(sampleRate, samplesPerBlock);
     grooveHumanizer.prepare(sampleRate);
     followModeController.prepare(sampleRate, samplesPerBlock);
+    audioAnalyzer.prepare(sampleRate, samplesPerBlock);
 }
 
 void GrooveMindProcessor::releaseResources()
@@ -322,8 +332,8 @@ void GrooveMindProcessor::releaseResources()
 
 bool GrooveMindProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    // Output must be stereo
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+    // No audio output - this is a MIDI-only generator
+    if (!layouts.getMainOutputChannelSet().isDisabled())
         return false;
 
     // Input (sidechain) can be stereo or disabled
@@ -358,19 +368,21 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     bool followEnabled = apvts.getRawParameterValue("follow_enabled")->load() > 0.5f;
 
     // Process sidechain input for Follow Mode
-    if (followEnabled && buffer.getNumChannels() >= 2)
+    // Check if sidechain bus is enabled and has audio data
+    auto* sidechainBus = getBus(true, 0);  // Input bus 0 = sidechain
+    bool hasSidechain = sidechainBus != nullptr && sidechainBus->isEnabled() && buffer.getNumChannels() >= 2;
+
+    if (followEnabled && hasSidechain)
     {
-        followModeController.setEnabled(true);
-        followModeController.processAudio(
+        // Use AudioAnalyzer to analyze the sidechain audio
+        // This extracts energy, onset density, and spectral changes
+        // which are then used to modulate drum parameters
+        audioAnalyzer.processBlock(
             buffer.getReadPointer(0),
             buffer.getReadPointer(1),
             buffer.getNumSamples(),
             currentBPM,
             currentPositionBeats);
-    }
-    else
-    {
-        followModeController.setEnabled(false);
     }
 
     // Clear audio output (we only produce MIDI)
@@ -395,6 +407,56 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     float groove = apvts.getRawParameterValue("groove")->load();
     float swing = apvts.getRawParameterValue("swing")->load();
 
+    // Follow Mode: Modulate parameters based on audio analysis
+    // When Follow Mode is enabled and we have valid analysis, the sidechain audio
+    // controls complexity, loudness, and energy - making the drums respond to the music
+    if (followEnabled && hasSidechain)
+    {
+        // Get follow mode parameters
+        float followAmount = apvts.getRawParameterValue("follow_amount")->load();
+        float followSensitivity = apvts.getRawParameterValue("follow_sensitivity")->load();
+
+        // Update analyzer sensitivity
+        audioAnalyzer.setSensitivity(followSensitivity);
+
+        const auto& analysis = audioAnalyzer.getAnalysis();
+
+        if (analysis.isActive && analysis.confidence > 0.3f && followAmount > 0.01f)
+        {
+            // Blend factor combines confidence and user's follow amount setting
+            float blendFactor = analysis.confidence * followAmount;
+
+            // Modulate complexity based on onset density
+            // More notes in the input = more complex drum patterns
+            float targetComplexity = juce::jlimit(0.0f, 1.0f,
+                complexity * 0.3f + analysis.onsetDensity * 0.7f);
+            complexity = complexity * (1.0f - blendFactor) + targetComplexity * blendFactor;
+
+            // Modulate loudness based on energy envelope
+            // Louder input = louder drums
+            float targetLoudness = juce::jlimit(0.0f, 1.0f,
+                loudness * 0.3f + analysis.smoothedEnergy * 0.7f);
+            loudness = loudness * (1.0f - blendFactor) + targetLoudness * blendFactor;
+
+            // Modulate energy based on combined factors
+            // High energy input (lots of transients, high volume) = high energy drums
+            float inputEnergy = (analysis.smoothedEnergy + analysis.onsetDensity) * 0.5f;
+            float targetEnergy = juce::jlimit(0.0f, 1.0f,
+                energy * 0.3f + inputEnergy * 0.7f);
+            energy = energy * (1.0f - blendFactor) + targetEnergy * blendFactor;
+
+            // Trigger fills on section changes (chord changes, dynamics shifts)
+            // Only if follow amount is reasonably high
+            if (analysis.suggestFill && followAmount > 0.3f)
+            {
+                // Use spectral flux to determine fill intensity
+                float fillIntensity = juce::jlimit(0.3f, 1.0f, analysis.spectralFlux * 2.0f);
+                drummerEngine.setFillIntensity(fillIntensity);
+                drummerEngine.triggerFill(4);  // 1-bar fill
+            }
+        }
+    }
+
     // Update drummer engine parameters
     drummerEngine.setStyle(styleIndex);
     drummerEngine.setDrummer(drummerIndex);
@@ -407,7 +469,7 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Process and generate MIDI
     drummerEngine.process(buffer.getNumSamples(), currentBPM, currentPositionBeats, midiMessages);
 
-    // Apply humanization (with optional Follow Mode groove application)
+    // Apply humanization
     if (groove > 0.01f)
     {
         grooveHumanizer.setGrooveAmount(groove);
@@ -415,48 +477,10 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         grooveHumanizer.process(midiMessages, currentBPM);
     }
 
-    // Apply extracted groove from Follow Mode if active
-    if (followEnabled && followModeController.getExtractedGroove().isValid)
-    {
-        // The follow mode controller can modify timing/velocity based on extracted groove
-        // This is applied on top of the standard humanization
-        juce::MidiBuffer adjustedBuffer;
-
-        for (const auto metadata : midiMessages)
-        {
-            auto msg = metadata.getMessage();
-            int samplePos = metadata.samplePosition;
-
-            if (msg.isNoteOn())
-            {
-                // Calculate beat position
-                double beatPosition = currentPositionBeats +
-                    (samplePos / sampleRate) * (currentBPM / 60.0);
-
-                // Apply groove timing offset
-                float timingOffsetMs = followModeController.applyGroove(beatPosition, 0.0f);
-                int offsetSamples = static_cast<int>(timingOffsetMs * sampleRate / 1000.0);
-                int newSamplePos = juce::jmax(0, samplePos + offsetSamples);
-
-                // Apply groove velocity
-                int originalVelocity = msg.getVelocity();
-                float adjustedVelocity = followModeController.applyGrooveVelocity(
-                    beatPosition, static_cast<float>(originalVelocity));
-                int newVelocity = juce::jlimit(1, 127, static_cast<int>(adjustedVelocity));
-
-                adjustedBuffer.addEvent(
-                    juce::MidiMessage::noteOn(msg.getChannel(), msg.getNoteNumber(),
-                                               static_cast<juce::uint8>(newVelocity)),
-                    newSamplePos);
-            }
-            else
-            {
-                adjustedBuffer.addEvent(msg, samplePos);
-            }
-        }
-
-        midiMessages.swapWith(adjustedBuffer);
-    }
+    // Note: The old FollowModeController groove extraction code has been removed.
+    // Follow Mode now works via AudioAnalyzer which modulates the drum parameters
+    // (complexity, loudness, energy) based on the sidechain audio content,
+    // rather than trying to extract timing from drums.
 }
 
 //==============================================================================
@@ -467,7 +491,8 @@ bool GrooveMindProcessor::isFollowModeEnabled() const
 
 bool GrooveMindProcessor::isFollowModeActive() const
 {
-    return isFollowModeEnabled() && followModeController.getExtractedGroove().isValid;
+    // Follow mode is active when enabled AND we have valid audio analysis
+    return isFollowModeEnabled() && audioAnalyzer.getAnalysis().isActive;
 }
 
 //==============================================================================

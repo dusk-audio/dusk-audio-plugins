@@ -12,26 +12,38 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GlobalSettings.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JuceDefaults.cmake)
 
 # Build system notes:
-# - JUCE path: /home/marc/projects/JUCE (sibling directory)
+# - JUCE path: configurable via JUCE_PATH variable
+# - Default: ../JUCE (sibling directory for local dev)
+# - CI builds pass -DJUCE_PATH=/path/to/JUCE
 # - Plugins install to ~/.vst3/ and ~/.lv2/
 
-# Add JUCE as a subdirectory
-# Option 1: Use system JUCE installation
-# add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
-
-# Option 2: Use JUCE as git submodule (recommended)
-# Run: git submodule add https://github.com/juce-framework/JUCE.git external/JUCE
-# add_subdirectory(external/JUCE)
-
-# For now, using system installation
-add_subdirectory(/home/marc/projects/JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+# JUCE path configuration
+# Priority: 1) JUCE_PATH cmake variable, 2) sibling directory, 3) external/JUCE submodule
+if(DEFINED JUCE_PATH)
+    # Use explicitly provided path (CI builds)
+    message(STATUS "Using JUCE from: ${JUCE_PATH}")
+    add_subdirectory(${JUCE_PATH} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE/CMakeLists.txt")
+    # Local development: sibling directory
+    message(STATUS "Using JUCE from sibling directory: ${CMAKE_CURRENT_SOURCE_DIR}/../JUCE")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../JUCE ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE/CMakeLists.txt")
+    # Git submodule
+    message(STATUS "Using JUCE from submodule: external/JUCE")
+    add_subdirectory(external/JUCE)
+else()
+    message(FATAL_ERROR "JUCE not found! Options:\n"
+        "  1. Set -DJUCE_PATH=/path/to/JUCE\n"
+        "  2. Clone JUCE to ../JUCE (sibling directory)\n"
+        "  3. Add as submodule: git submodule add https://github.com/juce-framework/JUCE.git external/JUCE")
+endif()
 
 # Option to build all plugins or specific ones
 option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_MULTI_COMP "Build Multi-Comp plugin" ON)
 option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" OFF)  # Directory missing
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
-option(BUILD_GROOVEMIND "Build GrooveMind plugin" OFF)  # Future: ML-based intelligent drummer
+option(BUILD_GROOVEMIND "Build GrooveMind plugin" ON)  # ML-based intelligent drummer
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_SILKVERB "Build SilkVerb plugin" ON)
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
