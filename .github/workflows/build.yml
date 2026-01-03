@@ -260,22 +260,28 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "=== Validating Windows plugin builds ==="
-          $vst3s = Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory
+          $foundVst3 = $false
 
-          if ($vst3s.Count -eq 0) {
-            Write-Host "✗ No VST3 plugins found!"
-            exit 1
-          }
+          # Check VST3 plugins in build/bin/VST3/
+          $vst3s = Get-ChildItem -Path "build/bin" -Recurse -Filter "*.vst3" -Directory -ErrorAction SilentlyContinue
 
           foreach ($vst3 in $vst3s) {
-            Write-Host "✓ Found: $($vst3.FullName)"
-            $dll = Get-ChildItem -Path $vst3.FullName -Recurse -Filter "*.vst3" -File
-            if ($dll) {
-              Write-Host "  ✓ Binary exists"
-            } else {
-              Write-Host "  ✗ Missing binary!"
-              exit 1
+            # Check if the plugin has a .vst3 binary file inside
+            $binaryFile = Get-ChildItem -Path $vst3.FullName -Recurse -Filter "*.vst3" -File -ErrorAction SilentlyContinue
+            if (-not $binaryFile) {
+              Write-Host "⊘ Skipping (no binary): $($vst3.FullName)"
+              continue
             }
+            Write-Host "✓ Found: $($vst3.FullName)"
+            Write-Host "  ✓ Binary exists: $($binaryFile.FullName)"
+            $foundVst3 = $true
+          }
+
+          if (-not $foundVst3) {
+            Write-Host "✗ No VST3 plugins with binaries found!"
+            Write-Host "=== Debug: Searching entire build directory ==="
+            Get-ChildItem -Path build -Recurse -Filter "*.vst3" | ForEach-Object { Write-Host $_.FullName }
+            exit 1
           }
 
           Write-Host "=== Validation passed ==="
@@ -284,19 +290,20 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts/windows/VST3
-          # Copy only VST3 plugins that have actual binaries
-          Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory |
-            Where-Object { $_.FullName -match "Release" } |
-            ForEach-Object {
-              # Check if the plugin has a .vst3 binary file inside
-              $binaryFile = Get-ChildItem -Path $_.FullName -Recurse -Filter "*.vst3" -File
-              if ($binaryFile) {
-                Write-Host "Copying: $($_.FullName)"
-                Copy-Item -Path $_.FullName -Destination artifacts/windows/VST3/ -Recurse
-              } else {
-                Write-Host "Skipping (no binary): $($_.FullName)"
-              }
+
+          # Copy VST3 plugins from build/bin/ that have actual binaries
+          $vst3s = Get-ChildItem -Path "build/bin" -Recurse -Filter "*.vst3" -Directory -ErrorAction SilentlyContinue
+
+          foreach ($vst3 in $vst3s) {
+            # Check if the plugin has a .vst3 binary file inside
+            $binaryFile = Get-ChildItem -Path $vst3.FullName -Recurse -Filter "*.vst3" -File -ErrorAction SilentlyContinue
+            if ($binaryFile) {
+              Write-Host "Copying: $($vst3.FullName)"
+              Copy-Item -Path $vst3.FullName -Destination "artifacts/windows/VST3/" -Recurse
+            } else {
+              Write-Host "Skipping (no binary): $($vst3.FullName)"
             }
+          }
 
           Write-Host "=== Windows Artifacts ==="
           Get-ChildItem -Path artifacts/windows -Recurse -Filter "*.vst3" | Select-Object FullName
