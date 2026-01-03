@@ -61,6 +61,8 @@ target_sources(${PLUGIN_NAME}
         Source/TempoTracker.h
         Source/GrooveExtractor.cpp
         Source/GrooveExtractor.h
+        Source/AudioAnalyzer.cpp
+        Source/AudioAnalyzer.h
 )
 
 # Compile definitions

@@ -189,6 +189,7 @@ private:
     double currentSampleRate{0.0};  // Set by prepareToPlay from DAW
     int currentBlockSize{0};  // Set by prepareToPlay from DAW
     int currentOversamplingFactor{-1};  // Track current oversampling to detect changes
+    int lastCompressorMode{-1};  // Track mode changes to reset auto-gain accumulators
 
     // Current preset index (for UI preset menu, not exposed as VST3 Program parameter)
     int currentPresetIndex = 0;
@@ -201,6 +202,7 @@ private:
     float inputRmsAccumulator = 0.0f;   // Running RMS of input signal
     float outputRmsAccumulator = 0.0f;  // Running RMS of output signal (before auto-gain)
     float rmsCoefficient = 0.0f;        // One-pole filter coefficient for RMS averaging
+    bool primeRmsAccumulators = false;  // Flag to instantly prime accumulators on mode change
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> dryBuffer;           // For parallel compression mix

@@ -210,14 +210,11 @@ $CONTAINER_CMD run --rm $SECURITY_OPTS \
         find . -maxdepth 1 ! -name build ! -name . -exec cp -r {} /tmp/plugins/ \;
         cd /tmp/plugins
 
-        # Update JUCE path in CMakeLists.txt for container
-        sed -i \"s|/home/marc/projects/JUCE|/JUCE|g\" CMakeLists.txt
-
         # Create fresh build directory
         mkdir -p build && cd build
 
-        # Configure (enable GrooveMind if building it specifically)
-        CMAKE_OPTS=\"-DCMAKE_BUILD_TYPE=Release\"
+        # Configure with JUCE path pointing to container mount
+        CMAKE_OPTS=\"-DCMAKE_BUILD_TYPE=Release -DJUCE_PATH=/JUCE\"
         if [ \"$BUILD_TARGET\" = \"GrooveMind_All\" ]; then
             CMAKE_OPTS=\"\$CMAKE_OPTS -DBUILD_GROOVEMIND=ON\"
         fi
