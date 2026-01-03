@@ -273,7 +273,7 @@ inline std::vector<Preset> getFactoryPresets()
     // [UPDATED] Funky GTR.
     // Using 1176 with fast release to accentuate the "up" strum.
     presets.push_back({
-        "Funky Plucks (FET)",
+        "Funk Rhythm Guitar",
         "Guitars",
         1,                            // Vintage FET
         -12.0f,
@@ -340,15 +340,16 @@ inline std::vector<Preset> getFactoryPresets()
 
     // ==================== CREATIVE ====================
 
-    // Same "Pumping Sidechain" but cleaner settings
+    // EDM-style pumping compression
+    // Release ~250ms works for 115-130 BPM quarter notes
     presets.push_back({
-        "Pumping Sidechain",
+        "EDM Pump (115-130 BPM)",
         "Creative",
         1,                            // Vintage FET
         -10.0f,
         20.0f,
         0.1f,                         // Super fast attack
-        250.0f,                       // Release timed to 128bpm quarter note (approx)
+        250.0f,                       // Release timed to ~120bpm quarter note
         6.0f,
         100.0f,
         150.0f,                       // Trigger off kick/snare
