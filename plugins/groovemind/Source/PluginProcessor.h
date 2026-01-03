@@ -18,9 +18,11 @@
 #include "DrummerEngine.h"
 #include "GrooveHumanizer.h"
 #include "GrooveExtractor.h"
+#include "AudioAnalyzer.h"
 
 //==============================================================================
-class GrooveMindProcessor : public juce::AudioProcessor
+class GrooveMindProcessor : public juce::AudioProcessor,
+                            public juce::VST3ClientExtensions
 {
 public:
     //==============================================================================
@@ -59,6 +61,11 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
     //==============================================================================
+    // VST3ClientExtensions - mark sidechain as auxiliary input (not main input)
+    // This is required for DAWs like Bitwig to properly expose the sidechain
+    bool getPluginHasMainInput() const override { return false; }
+
+    //==============================================================================
     // Parameter access
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
@@ -66,6 +73,8 @@ public:
     DrummerEngine& getDrummerEngine() { return drummerEngine; }
     PatternLibrary& getPatternLibrary() { return patternLibrary; }
     FollowModeController& getFollowModeController() { return followModeController; }
+    AudioAnalyzer& getAudioAnalyzer() { return audioAnalyzer; }
+    const AudioAnalysisResult& getAudioAnalysis() const { return audioAnalyzer.getAnalysis(); }
 
     // Transport info
     bool isPlaying() const { return transportPlaying; }
@@ -86,6 +95,7 @@ private:
     DrummerEngine drummerEngine;
     GrooveHumanizer grooveHumanizer;
     FollowModeController followModeController;
+    AudioAnalyzer audioAnalyzer;
 
     // Transport state
     bool transportPlaying = false;
