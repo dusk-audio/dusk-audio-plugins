@@ -1433,6 +1433,14 @@ void EnhancedCompressorEditor::parameterChanged(const juce::String& parameterID,
         juce::MessageManager::callAsync([safeThis, newValue]() {
             if (auto* editor = safeThis.getComponent())
             {
+                // Skip if presetChanged already handled this mode update
+                // (prevents race condition where stale parameterChanged overwrites correct mode)
+                if (editor->ignoreNextModeChange)
+                {
+                    editor->ignoreNextModeChange = false;
+                    return;
+                }
+
                 int newMode = static_cast<int>(newValue);
                 // Update combo box to match (add 1 for 1-based ID)
                 if (editor->modeSelector)
@@ -1476,23 +1484,30 @@ void EnhancedCompressorEditor::ratioChanged(int ratioIndex)
     }
 }
 
-void EnhancedCompressorEditor::presetChanged(int /*presetIndex*/)
+void EnhancedCompressorEditor::presetChanged(int /*presetIndex*/, int targetMode)
 {
     // Called when a preset is loaded via DAW's preset menu
     // Force UI refresh for hosts that don't properly trigger parameter updates (e.g., Bitwig)
+    //
+    // targetMode is passed directly from the preset definition, so we don't need to read
+    // from parameters (which may not have propagated yet if called from non-message thread).
 
-    // Re-read mode from parameter and update UI
-    auto& params = processor.getParameters();
-    const auto* modeParam = params.getRawParameterValue("mode");
-    if (modeParam)
+    if (targetMode >= 0)
     {
-        int newMode = static_cast<int>(*modeParam);
+        // Set flag to prevent parameterChanged from reverting our mode update
+        // (there may be a pending async parameterChanged call with the old mode value)
+        ignoreNextModeChange = true;
+
+        // Update combo box directly
         if (modeSelector)
-            modeSelector->setSelectedId(newMode + 1, juce::dontSendNotification);
-        updateMode(newMode);
+            modeSelector->setSelectedId(targetMode + 1, juce::dontSendNotification);
+
+        // Update mode UI
+        updateMode(targetMode);
     }
 
-    // Re-read auto-makeup state
+    // Re-read auto-makeup state from parameters (this is typically already propagated)
+    auto& params = processor.getParameters();
     const auto* autoMakeupParam = params.getRawParameterValue("auto_makeup");
     if (autoMakeupParam)
         updateAutoGainState(autoMakeupParam->load() > 0.5f);

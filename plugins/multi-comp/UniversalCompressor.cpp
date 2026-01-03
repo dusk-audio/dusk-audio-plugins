@@ -5450,23 +5450,27 @@ void UniversalCompressor::setCurrentProgram(int index)
         if (auto* p = parameters.getParameter("opto_limit"))
             p->setValueNotifyingHost(0.0f);  // Compress
 
-        // Notify listeners so UI knows preset changed
+        // Notify listeners so UI knows preset changed (mode 0 = Opto)
         juce::MessageManager::callAsync([this, index]() {
-            presetChangeListeners.call(&PresetChangeListener::presetChanged, index);
+            presetChangeListeners.call(&PresetChangeListener::presetChanged, index, 0);
         });
         return;
     }
 
     // Apply factory preset (index - 1 because 0 is "Default")
     const auto& presets = getCachedPresets();
+    int targetMode = -1;
     if (index - 1 < static_cast<int>(presets.size()))
     {
-        CompressorPresets::applyPreset(parameters, presets[static_cast<size_t>(index - 1)]);
+        const auto& preset = presets[static_cast<size_t>(index - 1)];
+        targetMode = preset.mode;
+        CompressorPresets::applyPreset(parameters, preset);
     }
 
     // Notify listeners on message thread (UI needs to refresh)
-    juce::MessageManager::callAsync([this, index]() {
-        presetChangeListeners.call(&PresetChangeListener::presetChanged, index);
+    // Pass the target mode so UI can update immediately without waiting for parameter propagation
+    juce::MessageManager::callAsync([this, index, targetMode]() {
+        presetChangeListeners.call(&PresetChangeListener::presetChanged, index, targetMode);
     });
 }
 

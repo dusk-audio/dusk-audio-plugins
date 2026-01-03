@@ -31,7 +31,7 @@ public:
     void parameterChanged(const juce::String& parameterID, float newValue) override;
     void comboBoxChanged(juce::ComboBox* comboBoxThatHasChanged) override;
     void ratioChanged(int ratioIndex) override;
-    void presetChanged(int presetIndex) override;
+    void presetChanged(int presetIndex, int targetMode) override;
 
 private:
     // Processor reference
@@ -196,6 +196,9 @@ private:
     
     // Current mode
     int currentMode = 0;
+
+    // Flag to prevent parameterChanged from fighting with presetChanged
+    bool ignoreNextModeChange = false;
     
     // Background texture
     juce::Image backgroundTexture;
