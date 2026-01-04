@@ -54,6 +54,22 @@ struct HarmonicProfile
     {
         return h2 + h3 + h4 + h5 + h6 + h7;
     }
+
+    // Factory method for C++17 compatibility
+    static HarmonicProfile create(float h2_, float h3_, float evenOddRatio_,
+                                   float h4_ = 0.0f, float h5_ = 0.0f,
+                                   float h6_ = 0.0f, float h7_ = 0.0f)
+    {
+        HarmonicProfile hp;
+        hp.h2 = h2_;
+        hp.h3 = h3_;
+        hp.h4 = h4_;
+        hp.h5 = h5_;
+        hp.h6 = h6_;
+        hp.h7 = h7_;
+        hp.evenOddRatio = evenOddRatio_;
+        return hp;
+    }
 };
 
 //==============================================================================
@@ -67,6 +83,20 @@ struct TimingProfile
     float attackCurve = 0.0f;     // 0=linear, 1=logarithmic
     float releaseCurve = 0.0f;    // 0=linear, 1=logarithmic
     bool programDependent = false; // Adaptive timing
+
+    static TimingProfile create(float atkMin, float atkMax, float relMin, float relMax,
+                                 float atkCurve, float relCurve, bool progDep)
+    {
+        TimingProfile tp;
+        tp.attackMinMs = atkMin;
+        tp.attackMaxMs = atkMax;
+        tp.releaseMinMs = relMin;
+        tp.releaseMaxMs = relMax;
+        tp.attackCurve = atkCurve;
+        tp.releaseCurve = relCurve;
+        tp.programDependent = progDep;
+        return tp;
+    }
 };
 
 //==============================================================================
@@ -93,6 +123,28 @@ struct TransformerProfile
     float highFreqRolloff = 20000.0f;  // -3dB point in Hz
     float dcBlockingFreq = 10.0f;      // Hz
     HarmonicProfile harmonics;
+
+    static TransformerProfile createActive(float satThresh, float satAmt, float lfSat,
+                                            float hfRolloff, float dcBlock,
+                                            float h2, float h3, float evenOdd)
+    {
+        TransformerProfile tp;
+        tp.hasTransformer = true;
+        tp.saturationThreshold = satThresh;
+        tp.saturationAmount = satAmt;
+        tp.lowFreqSaturation = lfSat;
+        tp.highFreqRolloff = hfRolloff;
+        tp.dcBlockingFreq = dcBlock;
+        tp.harmonics = HarmonicProfile::create(h2, h3, evenOdd);
+        return tp;
+    }
+
+    static TransformerProfile createInactive()
+    {
+        TransformerProfile tp;
+        tp.hasTransformer = false;
+        return tp;
+    }
 };
 
 //==============================================================================
@@ -105,6 +157,22 @@ struct TubeProfile
     float gridCurrentThreshold = 0.5f; // Where grid current begins
     float millerCapacitance = 0.0f;    // HF rolloff from Miller effect
     HarmonicProfile harmonics;
+
+    static TubeProfile create(float gridThresh, float h2, float h3, float evenOdd)
+    {
+        TubeProfile tp;
+        tp.hasTubeStage = true;
+        tp.gridCurrentThreshold = gridThresh;
+        tp.harmonics = HarmonicProfile::create(h2, h3, evenOdd);
+        return tp;
+    }
+
+    static TubeProfile createInactive()
+    {
+        TubeProfile tp;
+        tp.hasTubeStage = false;
+        return tp;
+    }
 };
 
 //==============================================================================
@@ -131,6 +199,29 @@ struct TapeProfile
     float flutterDepth = 0.0f;         // Flutter modulation depth
 
     HarmonicProfile harmonics;
+
+    static TapeProfile create(const char* machine, const char* tape,
+                               float satOnset, float satAmt, float hyst,
+                               float bass, float bump, float bumpFreq, float hfRoll,
+                               float noise, float wow, float flutter,
+                               float h2, float h3, float h4, float evenOdd)
+    {
+        TapeProfile tp;
+        tp.machineName = machine;
+        tp.tapeType = tape;
+        tp.saturationOnset = satOnset;
+        tp.saturationAmount = satAmt;
+        tp.hysteresisAmount = hyst;
+        tp.bassBoost = bass;
+        tp.headBump = bump;
+        tp.headBumpFreq = bumpFreq;
+        tp.highFreqRolloff = hfRoll;
+        tp.noiseFloor = noise;
+        tp.wowDepth = wow;
+        tp.flutterDepth = flutter;
+        tp.harmonics = HarmonicProfile::create(h2, h3, evenOdd, h4);
+        return tp;
+    }
 };
 
 //==============================================================================
@@ -179,66 +270,40 @@ inline HardwareUnitProfile createLA2A()
     profile.modeledUnit = "Teletronix LA-2A";
 
     // Input stage: Tube input (12AX7)
-    profile.inputStageHarmonics = {
-        .h2 = 0.025f, .h3 = 0.008f, .h4 = 0.003f, .h5 = 0.001f,
-        .evenOddRatio = 0.75f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.025f, 0.008f, 0.75f, 0.003f, 0.001f
+    );
 
     // Compression stage: T4B optical cell
-    profile.compressionStageHarmonics = {
-        .h2 = 0.015f, .h3 = 0.003f, .evenOddRatio = 0.85f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.015f, 0.003f, 0.85f
+    );
 
     // Output stage: 12AX7/12BH7 tubes
-    profile.outputStageHarmonics = {
-        .h2 = 0.035f, .h3 = 0.012f, .h4 = 0.004f, .evenOddRatio = 0.70f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.035f, 0.012f, 0.70f, 0.004f
+    );
 
     // Input transformer (UTC A-10)
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.75f,
-        .saturationAmount = 0.15f,
-        .lowFreqSaturation = 1.3f,
-        .highFreqRolloff = 18000.0f,
-        .dcBlockingFreq = 20.0f,
-        .harmonics = { .h2 = 0.008f, .h3 = 0.003f, .evenOddRatio = 0.7f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.75f, 0.15f, 1.3f, 18000.0f, 20.0f,
+        0.008f, 0.003f, 0.7f
+    );
 
     // Output transformer
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.8f,
-        .saturationAmount = 0.1f,
-        .lowFreqSaturation = 1.2f,
-        .highFreqRolloff = 16000.0f,
-        .dcBlockingFreq = 15.0f,
-        .harmonics = { .h2 = 0.006f, .h3 = 0.002f, .evenOddRatio = 0.75f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.8f, 0.1f, 1.2f, 16000.0f, 15.0f,
+        0.006f, 0.002f, 0.75f
+    );
 
     // Tube stages
-    profile.inputTube = {
-        .hasTubeStage = true,
-        .gridCurrentThreshold = 0.4f,
-        .harmonics = { .h2 = 0.025f, .h3 = 0.008f, .evenOddRatio = 0.75f }
-    };
-
-    profile.outputTube = {
-        .hasTubeStage = true,
-        .gridCurrentThreshold = 0.5f,
-        .harmonics = { .h2 = 0.035f, .h3 = 0.012f, .evenOddRatio = 0.70f }
-    };
+    profile.inputTube = TubeProfile::create(0.4f, 0.025f, 0.008f, 0.75f);
+    profile.outputTube = TubeProfile::create(0.5f, 0.035f, 0.012f, 0.70f);
 
     // Timing
-    profile.timing = {
-        .attackMinMs = 10.0f,
-        .attackMaxMs = 10.0f,
-        .releaseMinMs = 60.0f,
-        .releaseMaxMs = 5000.0f,
-        .attackCurve = 0.3f,
-        .releaseCurve = 0.8f,
-        .programDependent = true
-    };
+    profile.timing = TimingProfile::create(
+        10.0f, 10.0f, 60.0f, 5000.0f, 0.3f, 0.8f, true
+    );
 
     profile.noiseFloor = -70.0f;
     profile.headroom = 18.0f;
@@ -254,48 +319,31 @@ inline HardwareUnitProfile createFET1176()
     profile.name = "1176";
     profile.modeledUnit = "UREI 1176 Rev A";
 
-    profile.inputStageHarmonics = {
-        .h2 = 0.008f, .h3 = 0.015f, .h4 = 0.002f, .h5 = 0.005f,
-        .evenOddRatio = 0.35f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.008f, 0.015f, 0.35f, 0.002f, 0.005f
+    );
 
-    profile.compressionStageHarmonics = {
-        .h2 = 0.012f, .h3 = 0.025f, .h5 = 0.008f, .evenOddRatio = 0.30f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.012f, 0.025f, 0.30f, 0.0f, 0.008f
+    );
 
-    profile.outputStageHarmonics = {
-        .h2 = 0.006f, .h3 = 0.010f, .h5 = 0.003f, .evenOddRatio = 0.40f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.006f, 0.010f, 0.40f, 0.0f, 0.003f
+    );
 
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.85f,
-        .saturationAmount = 0.08f,
-        .lowFreqSaturation = 1.15f,
-        .highFreqRolloff = 20000.0f,
-        .dcBlockingFreq = 15.0f,
-        .harmonics = { .h2 = 0.004f, .h3 = 0.002f, .evenOddRatio = 0.65f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.85f, 0.08f, 1.15f, 20000.0f, 15.0f,
+        0.004f, 0.002f, 0.65f
+    );
 
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.9f,
-        .saturationAmount = 0.05f,
-        .lowFreqSaturation = 1.1f,
-        .highFreqRolloff = 22000.0f,
-        .dcBlockingFreq = 12.0f,
-        .harmonics = { .h2 = 0.003f, .h3 = 0.002f, .evenOddRatio = 0.6f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.9f, 0.05f, 1.1f, 22000.0f, 12.0f,
+        0.003f, 0.002f, 0.6f
+    );
 
-    profile.timing = {
-        .attackMinMs = 0.02f,
-        .attackMaxMs = 0.8f,
-        .releaseMinMs = 50.0f,
-        .releaseMaxMs = 1100.0f,
-        .attackCurve = 0.1f,
-        .releaseCurve = 0.6f,
-        .programDependent = true
-    };
+    profile.timing = TimingProfile::create(
+        0.02f, 0.8f, 50.0f, 1100.0f, 0.1f, 0.6f, true
+    );
 
     profile.noiseFloor = -80.0f;
     profile.headroom = 24.0f;
@@ -311,31 +359,25 @@ inline HardwareUnitProfile createDBX160()
     profile.name = "DBX 160";
     profile.modeledUnit = "DBX 160 VCA";
 
-    profile.inputStageHarmonics = {
-        .h2 = 0.003f, .h3 = 0.002f, .evenOddRatio = 0.55f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.003f, 0.002f, 0.55f
+    );
 
-    profile.compressionStageHarmonics = {
-        .h2 = 0.0075f, .h3 = 0.005f, .evenOddRatio = 0.60f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.0075f, 0.005f, 0.60f
+    );
 
-    profile.outputStageHarmonics = {
-        .h2 = 0.002f, .h3 = 0.001f, .evenOddRatio = 0.65f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.002f, 0.001f, 0.65f
+    );
 
     // No transformers
-    profile.inputTransformer = { .hasTransformer = false };
-    profile.outputTransformer = { .hasTransformer = false };
+    profile.inputTransformer = TransformerProfile::createInactive();
+    profile.outputTransformer = TransformerProfile::createInactive();
 
-    profile.timing = {
-        .attackMinMs = 3.0f,
-        .attackMaxMs = 15.0f,
-        .releaseMinMs = 0.0f,
-        .releaseMaxMs = 0.0f,
-        .attackCurve = 0.5f,
-        .releaseCurve = 0.5f,
-        .programDependent = true
-    };
+    profile.timing = TimingProfile::create(
+        3.0f, 15.0f, 0.0f, 0.0f, 0.5f, 0.5f, true
+    );
 
     profile.noiseFloor = -85.0f;
     profile.headroom = 21.0f;
@@ -351,47 +393,31 @@ inline HardwareUnitProfile createSSLBus()
     profile.name = "SSL Bus";
     profile.modeledUnit = "SSL G-Series Bus Compressor";
 
-    profile.inputStageHarmonics = {
-        .h2 = 0.004f, .h3 = 0.008f, .h5 = 0.003f, .evenOddRatio = 0.35f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.004f, 0.008f, 0.35f, 0.0f, 0.003f
+    );
 
-    profile.compressionStageHarmonics = {
-        .h2 = 0.006f, .h3 = 0.012f, .h5 = 0.004f, .evenOddRatio = 0.40f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.006f, 0.012f, 0.40f, 0.0f, 0.004f
+    );
 
-    profile.outputStageHarmonics = {
-        .h2 = 0.008f, .h3 = 0.015f, .h5 = 0.004f, .evenOddRatio = 0.35f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.008f, 0.015f, 0.35f, 0.0f, 0.004f
+    );
 
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.9f,
-        .saturationAmount = 0.03f,
-        .lowFreqSaturation = 1.05f,
-        .highFreqRolloff = 22000.0f,
-        .dcBlockingFreq = 10.0f,
-        .harmonics = { .h2 = 0.002f, .h3 = 0.004f, .evenOddRatio = 0.4f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.9f, 0.03f, 1.05f, 22000.0f, 10.0f,
+        0.002f, 0.004f, 0.4f
+    );
 
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.92f,
-        .saturationAmount = 0.02f,
-        .lowFreqSaturation = 1.03f,
-        .highFreqRolloff = 24000.0f,
-        .dcBlockingFreq = 8.0f,
-        .harmonics = { .h2 = 0.002f, .h3 = 0.003f, .evenOddRatio = 0.45f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.92f, 0.02f, 1.03f, 24000.0f, 8.0f,
+        0.002f, 0.003f, 0.45f
+    );
 
-    profile.timing = {
-        .attackMinMs = 0.1f,
-        .attackMaxMs = 30.0f,
-        .releaseMinMs = 100.0f,
-        .releaseMaxMs = 1200.0f,
-        .attackCurve = 0.2f,
-        .releaseCurve = 0.5f,
-        .programDependent = false
-    };
+    profile.timing = TimingProfile::create(
+        0.1f, 30.0f, 100.0f, 1200.0f, 0.2f, 0.5f, false
+    );
 
     profile.noiseFloor = -88.0f;
     profile.headroom = 22.0f;
@@ -403,42 +429,28 @@ inline HardwareUnitProfile createSSLBus()
 // Studer A800 tape machine
 inline TapeProfile createStuderA800()
 {
-    return TapeProfile {
-        .machineName = "Studer A800",
-        .tapeType = "Ampex 456",
-        .saturationOnset = 0.65f,
-        .saturationAmount = 0.35f,
-        .hysteresisAmount = 0.15f,
-        .bassBoost = 1.5f,
-        .headBump = 2.0f,
-        .headBumpFreq = 80.0f,
-        .highFreqRolloff = 16000.0f,
-        .noiseFloor = -65.0f,
-        .wowDepth = 0.001f,
-        .flutterDepth = 0.002f,
-        .harmonics = { .h2 = 0.04f, .h3 = 0.02f, .h4 = 0.01f, .evenOddRatio = 0.65f }
-    };
+    return TapeProfile::create(
+        "Studer A800", "Ampex 456",
+        0.65f, 0.35f, 0.15f,      // saturation onset, amount, hysteresis
+        1.5f, 2.0f, 80.0f,        // bass boost, head bump, head bump freq
+        16000.0f,                  // HF rolloff
+        -65.0f, 0.001f, 0.002f,   // noise, wow, flutter
+        0.04f, 0.02f, 0.01f, 0.65f // h2, h3, h4, evenOdd
+    );
 }
 
 //------------------------------------------------------------------------------
 // Ampex ATR-102 tape machine
 inline TapeProfile createAmpexATR102()
 {
-    return TapeProfile {
-        .machineName = "Ampex ATR-102",
-        .tapeType = "Ampex 456",
-        .saturationOnset = 0.7f,
-        .saturationAmount = 0.3f,
-        .hysteresisAmount = 0.12f,
-        .bassBoost = 1.0f,
-        .headBump = 1.5f,
-        .headBumpFreq = 100.0f,
-        .highFreqRolloff = 18000.0f,
-        .noiseFloor = -68.0f,
-        .wowDepth = 0.0008f,
-        .flutterDepth = 0.0015f,
-        .harmonics = { .h2 = 0.035f, .h3 = 0.018f, .h4 = 0.008f, .evenOddRatio = 0.68f }
-    };
+    return TapeProfile::create(
+        "Ampex ATR-102", "Ampex 456",
+        0.7f, 0.3f, 0.12f,         // saturation onset, amount, hysteresis
+        1.0f, 1.5f, 100.0f,        // bass boost, head bump, head bump freq
+        18000.0f,                   // HF rolloff
+        -68.0f, 0.0008f, 0.0015f,  // noise, wow, flutter
+        0.035f, 0.018f, 0.008f, 0.68f // h2, h3, h4, evenOdd
+    );
 }
 
 //------------------------------------------------------------------------------
@@ -449,34 +461,24 @@ inline HardwareUnitProfile createNeve1073()
     profile.name = "Neve 1073";
     profile.modeledUnit = "Neve 1073 Preamp";
 
-    profile.inputStageHarmonics = {
-        .h2 = 0.02f, .h3 = 0.008f, .h4 = 0.003f, .evenOddRatio = 0.70f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.02f, 0.008f, 0.70f, 0.003f
+    );
 
-    profile.outputStageHarmonics = {
-        .h2 = 0.025f, .h3 = 0.01f, .h4 = 0.004f, .evenOddRatio = 0.68f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.025f, 0.01f, 0.68f, 0.004f
+    );
 
     // Neve transformers are legendary for their character
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.7f,
-        .saturationAmount = 0.2f,
-        .lowFreqSaturation = 1.4f,
-        .highFreqRolloff = 18000.0f,
-        .dcBlockingFreq = 20.0f,
-        .harmonics = { .h2 = 0.015f, .h3 = 0.005f, .evenOddRatio = 0.75f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.7f, 0.2f, 1.4f, 18000.0f, 20.0f,
+        0.015f, 0.005f, 0.75f
+    );
 
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.75f,
-        .saturationAmount = 0.15f,
-        .lowFreqSaturation = 1.3f,
-        .highFreqRolloff = 16000.0f,
-        .dcBlockingFreq = 15.0f,
-        .harmonics = { .h2 = 0.012f, .h3 = 0.004f, .evenOddRatio = 0.75f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.75f, 0.15f, 1.3f, 16000.0f, 15.0f,
+        0.012f, 0.004f, 0.75f
+    );
 
     profile.noiseFloor = -75.0f;
     profile.headroom = 20.0f;
@@ -492,34 +494,24 @@ inline HardwareUnitProfile createAPI512c()
     profile.name = "API 512c";
     profile.modeledUnit = "API 512c Preamp";
 
-    profile.inputStageHarmonics = {
-        .h2 = 0.01f, .h3 = 0.015f, .h5 = 0.005f, .evenOddRatio = 0.40f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.01f, 0.015f, 0.40f, 0.0f, 0.005f
+    );
 
-    profile.outputStageHarmonics = {
-        .h2 = 0.012f, .h3 = 0.018f, .h5 = 0.006f, .evenOddRatio = 0.38f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.012f, 0.018f, 0.38f, 0.0f, 0.006f
+    );
 
     // API has more aggressive, punchy transformers
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.8f,
-        .saturationAmount = 0.12f,
-        .lowFreqSaturation = 1.2f,
-        .highFreqRolloff = 20000.0f,
-        .dcBlockingFreq = 15.0f,
-        .harmonics = { .h2 = 0.006f, .h3 = 0.01f, .evenOddRatio = 0.4f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.8f, 0.12f, 1.2f, 20000.0f, 15.0f,
+        0.006f, 0.01f, 0.4f
+    );
 
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.85f,
-        .saturationAmount = 0.08f,
-        .lowFreqSaturation = 1.15f,
-        .highFreqRolloff = 22000.0f,
-        .dcBlockingFreq = 12.0f,
-        .harmonics = { .h2 = 0.005f, .h3 = 0.008f, .evenOddRatio = 0.42f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.85f, 0.08f, 1.15f, 22000.0f, 12.0f,
+        0.005f, 0.008f, 0.42f
+    );
 
     profile.noiseFloor = -78.0f;
     profile.headroom = 24.0f;
@@ -535,23 +527,14 @@ inline HardwareUnitProfile createDigital()
     profile.name = "Digital";
     profile.modeledUnit = "Transparent Digital";
 
-    // Zero harmonics
-    profile.inputStageHarmonics = {};
-    profile.compressionStageHarmonics = {};
-    profile.outputStageHarmonics = {};
+    // Zero harmonics - use defaults
 
-    profile.inputTransformer = { .hasTransformer = false };
-    profile.outputTransformer = { .hasTransformer = false };
+    profile.inputTransformer = TransformerProfile::createInactive();
+    profile.outputTransformer = TransformerProfile::createInactive();
 
-    profile.timing = {
-        .attackMinMs = 0.01f,
-        .attackMaxMs = 500.0f,
-        .releaseMinMs = 1.0f,
-        .releaseMaxMs = 5000.0f,
-        .attackCurve = 0.5f,
-        .releaseCurve = 0.5f,
-        .programDependent = false
-    };
+    profile.timing = TimingProfile::create(
+        0.01f, 500.0f, 1.0f, 5000.0f, 0.5f, 0.5f, false
+    );
 
     profile.noiseFloor = -120.0f;
     profile.headroom = 30.0f;
