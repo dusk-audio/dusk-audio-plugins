@@ -3358,7 +3358,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     // Sidechain highpass filter - prevents low frequency pumping (0 = Off)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "sidechain_hp", "SC HP Filter",
-        juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f, 0.5f), 80.0f,
+        juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f, 0.5f), 0.0f,
         juce::AudioParameterFloatAttributes().withLabel("Hz")));
 
     // Auto makeup gain - using Choice instead of Bool for more reliable state restoration
@@ -5089,6 +5089,31 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 // Gain = sqrt(inputRMS² / outputRMS²) = inputRMS / outputRMS
                 targetAutoGain = std::sqrt(inputRmsAccumulator / outputRmsAccumulator);
 
+                // Psychoacoustic loudness compensation for modes with harmonic distortion
+                // Harmonic content increases perceived loudness without changing RMS level
+                // Apply mode-specific attenuation to compensate:
+                // - Opto: Tube warmth + transformer harmonics (-1.5dB)
+                // - FET: Aggressive FET saturation (-1.0dB)
+                // - Bus: SSL transformer coloration (-0.5dB)
+                // - VCA/Digital/Studio: Cleaner, less compensation needed
+                float loudnessCompensation = 1.0f;
+                switch (mode)
+                {
+                    case CompressorMode::Opto:
+                        loudnessCompensation = 0.84f;  // -1.5dB for tube/transformer harmonics
+                        break;
+                    case CompressorMode::FET:
+                        loudnessCompensation = 0.89f;  // -1.0dB for FET saturation
+                        break;
+                    case CompressorMode::Bus:
+                        loudnessCompensation = 0.94f;  // -0.5dB for SSL character
+                        break;
+                    default:
+                        loudnessCompensation = 1.0f;   // No compensation for cleaner modes
+                        break;
+                }
+                targetAutoGain *= loudnessCompensation;
+
                 // Limit compensation range to ±40dB to handle extreme input gain settings
                 // (e.g., FET input at -20dB can create 30+ dB level differences)
                 // This range is needed because:
@@ -5228,11 +5253,17 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     }
 
     // Add subtle analog noise for authenticity (-80dB) if enabled (SIMD-optimized)
+    // Only for analog modes - Digital and Multiband are meant to be completely transparent
     // This adds character and prevents complete digital silence
     auto* noiseEnableParam = parameters.getRawParameterValue("noise_enable");
     bool noiseEnabled = noiseEnableParam ? (*noiseEnableParam > 0.5f) : true; // Default ON
 
-    if (noiseEnabled)
+    // Skip noise for Digital (mode 6) and Multiband (mode 7) - they should be transparent
+    auto* modeParam = parameters.getRawParameterValue("mode");
+    int modeIndex = modeParam ? static_cast<int>(modeParam->load()) : 0;
+    bool isAnalogMode = (modeIndex != 6 && modeIndex != 7);
+
+    if (noiseEnabled && isAnalogMode)
     {
         const float noiseLevel = 0.0001f; // -80dB
         for (int ch = 0; ch < numChannels; ++ch)
