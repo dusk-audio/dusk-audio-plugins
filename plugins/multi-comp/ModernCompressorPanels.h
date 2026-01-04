@@ -750,7 +750,12 @@ public:
             int buttonGap = static_cast<int>(3 * scaleFactor);
             int totalButtonWidth = meterBounds.getWidth();  // Match meter width
             int minBandButtonWidth = static_cast<int>(30 * scaleFactor);
-            int bandButtonWidth = juce::jmax(minBandButtonWidth, totalButtonWidth - soloWidth - buttonGap);
+            int requiredMinWidth = minBandButtonWidth + soloWidth + buttonGap;
+
+            // Handle narrow meter edge case - allow smaller buttons if necessary
+            int bandButtonWidth = (totalButtonWidth >= requiredMinWidth)
+                ? totalButtonWidth - soloWidth - buttonGap
+                : juce::jmax(static_cast<int>(20 * scaleFactor), totalButtonWidth - soloWidth - buttonGap);
 
             // Center buttons over the meter
             int buttonsX = meterBounds.getX();
@@ -1329,12 +1334,7 @@ public:
         g.setColour(juce::Colour(0xffcc3333));
         g.setFont(juce::Font(16.0f, juce::Font::bold));
         g.drawText("STUDIO VCA", 0, 3, getWidth(), 16, juce::Justification::centred);
-
-        // VCA characteristics description at bottom
-        g.setColour(juce::Colour(0xff666666));
-        g.setFont(juce::Font(10.0f));
-        g.drawText("RMS Detection | Soft Knee | Clean VCA Dynamics",
-                   0, getHeight() - 18, getWidth(), 16, juce::Justification::centred);
+        // Description is now drawn by main editor at bottom for consistency
     }
 
 private:
