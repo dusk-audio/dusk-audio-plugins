@@ -216,8 +216,22 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 ## Build System
 
-### Building Plugins (Default)
-**Always use the Docker/Podman containerized build.** This ensures glibc compatibility and consistent builds across all Linux distributions:
+### ⚠️ RELEASE BUILDS ARE DONE VIA GITHUB ACTIONS
+**All release binaries are built through GitHub Actions, NOT locally.** When code is pushed to the repository:
+1. GitHub Actions automatically builds for all platforms (Linux, Windows, macOS)
+2. Artifacts are uploaded to GitHub Releases
+3. The release page at https://luna-co-software.github.io/lunacoaudio.github.io/ links to these builds
+
+**To release a plugin:**
+1. Commit and push your changes to the `main` branch
+2. Monitor the build at: `gh run list` or GitHub Actions web UI
+3. Once builds complete successfully, create a GitHub Release with the artifacts
+4. Update the plugin's release page on the website if needed
+
+**Local builds (below) are for development and testing only - they are NOT used for releases.**
+
+### Local Development Builds
+**Use Docker/Podman containerized builds for local testing.** This ensures glibc compatibility and consistent builds across Linux distributions:
 
 ```bash
 # Build all plugins
