@@ -31,6 +31,22 @@ struct HarmonicProfile
     float h6 = 0.0f;          // 6th harmonic (even)
     float h7 = 0.0f;          // 7th harmonic (odd)
     float evenOddRatio = 0.5f; // Balance: 0=all odd, 1=all even
+
+    // Helper constructor for common initializations
+    static HarmonicProfile create(float h2_, float h3_, float evenOddRatio_,
+                                   float h4_ = 0.0f, float h5_ = 0.0f,
+                                   float h6_ = 0.0f, float h7_ = 0.0f)
+    {
+        HarmonicProfile hp;
+        hp.h2 = h2_;
+        hp.h3 = h3_;
+        hp.h4 = h4_;
+        hp.h5 = h5_;
+        hp.h6 = h6_;
+        hp.h7 = h7_;
+        hp.evenOddRatio = evenOddRatio_;
+        return hp;
+    }
 };
 
 //==============================================================================
@@ -44,6 +60,20 @@ struct TimingProfile
     float attackCurve = 0.0f;     // 0=linear, 1=logarithmic
     float releaseCurve = 0.0f;    // 0=linear, 1=logarithmic
     bool programDependent = false; // Adaptive timing
+
+    static TimingProfile create(float atkMin, float atkMax, float relMin, float relMax,
+                                 float atkCurve, float relCurve, bool progDep)
+    {
+        TimingProfile tp;
+        tp.attackMinMs = atkMin;
+        tp.attackMaxMs = atkMax;
+        tp.releaseMinMs = relMin;
+        tp.releaseMaxMs = relMax;
+        tp.attackCurve = atkCurve;
+        tp.releaseCurve = relCurve;
+        tp.programDependent = progDep;
+        return tp;
+    }
 };
 
 //==============================================================================
@@ -70,6 +100,28 @@ struct TransformerProfile
     float highFreqRolloff = 20000.0f;  // -3dB point in Hz
     float dcBlockingFreq = 10.0f;      // Hz
     HarmonicProfile harmonics;
+
+    static TransformerProfile createActive(float satThresh, float satAmt, float lfSat,
+                                            float hfRolloff, float dcBlock,
+                                            float h2, float h3, float evenOdd)
+    {
+        TransformerProfile tp;
+        tp.hasTransformer = true;
+        tp.saturationThreshold = satThresh;
+        tp.saturationAmount = satAmt;
+        tp.lowFreqSaturation = lfSat;
+        tp.highFreqRolloff = hfRolloff;
+        tp.dcBlockingFreq = dcBlock;
+        tp.harmonics = HarmonicProfile::create(h2, h3, evenOdd);
+        return tp;
+    }
+
+    static TransformerProfile createInactive()
+    {
+        TransformerProfile tp;
+        tp.hasTransformer = false;
+        return tp;
+    }
 };
 
 //==============================================================================
@@ -115,61 +167,59 @@ inline HardwareUnitProfile createLA2A()
     profile.modeledUnit = "Teletronix LA-2A";
 
     // Input stage: Tube input (12AX7)
-    profile.inputStageHarmonics = {
-        .h2 = 0.025f,   // 2.5% 2nd harmonic (tube warmth)
-        .h3 = 0.008f,   // 0.8% 3rd harmonic
-        .h4 = 0.003f,   // 0.3% 4th harmonic
-        .h5 = 0.001f,
-        .evenOddRatio = 0.75f  // Even-dominant (tube character)
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.025f,   // 2.5% 2nd harmonic (tube warmth)
+        0.008f,   // 0.8% 3rd harmonic
+        0.75f,    // Even-dominant (tube character)
+        0.003f,   // 0.3% 4th harmonic
+        0.001f    // 5th harmonic
+    );
 
     // Compression stage: T4B optical cell
-    profile.compressionStageHarmonics = {
-        .h2 = 0.015f,   // T4B cell adds subtle harmonics
-        .h3 = 0.003f,
-        .evenOddRatio = 0.85f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.015f,   // T4B cell adds subtle harmonics
+        0.003f,
+        0.85f
+    );
 
     // Output stage: 12AX7/12BH7 tubes
-    profile.outputStageHarmonics = {
-        .h2 = 0.035f,   // Output tubes add more warmth
-        .h3 = 0.012f,
-        .h4 = 0.004f,
-        .evenOddRatio = 0.70f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.035f,   // Output tubes add more warmth
+        0.012f,
+        0.70f,
+        0.004f
+    );
 
     // Input transformer (UTC A-10)
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.75f,
-        .saturationAmount = 0.15f,
-        .lowFreqSaturation = 1.3f,   // Core saturates more at LF
-        .highFreqRolloff = 18000.0f,
-        .dcBlockingFreq = 20.0f,
-        .harmonics = { .h2 = 0.008f, .h3 = 0.003f, .evenOddRatio = 0.7f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.75f,     // saturationThreshold
+        0.15f,     // saturationAmount
+        1.3f,      // lowFreqSaturation (core saturates more at LF)
+        18000.0f,  // highFreqRolloff
+        20.0f,     // dcBlockingFreq
+        0.008f, 0.003f, 0.7f  // h2, h3, evenOddRatio
+    );
 
     // Output transformer
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.8f,
-        .saturationAmount = 0.1f,
-        .lowFreqSaturation = 1.2f,
-        .highFreqRolloff = 16000.0f,
-        .dcBlockingFreq = 15.0f,
-        .harmonics = { .h2 = 0.006f, .h3 = 0.002f, .evenOddRatio = 0.75f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.8f,      // saturationThreshold
+        0.1f,      // saturationAmount
+        1.2f,      // lowFreqSaturation
+        16000.0f,  // highFreqRolloff
+        15.0f,     // dcBlockingFreq
+        0.006f, 0.002f, 0.75f  // h2, h3, evenOddRatio
+    );
 
     // Timing: T4B optical cell characteristics
-    profile.timing = {
-        .attackMinMs = 10.0f,    // T4B fast attack
-        .attackMaxMs = 10.0f,    // Fixed (program-dependent)
-        .releaseMinMs = 60.0f,   // Fast release portion
-        .releaseMaxMs = 5000.0f, // Slow phosphor decay
-        .attackCurve = 0.3f,
-        .releaseCurve = 0.8f,    // Logarithmic release
-        .programDependent = true
-    };
+    profile.timing = TimingProfile::create(
+        10.0f,    // attackMinMs - T4B fast attack
+        10.0f,    // attackMaxMs - Fixed (program-dependent)
+        60.0f,    // releaseMinMs - Fast release portion
+        5000.0f,  // releaseMaxMs - Slow phosphor decay
+        0.3f,     // attackCurve
+        0.8f,     // releaseCurve - Logarithmic release
+        true      // programDependent
+    );
 
     profile.noiseFloor = -70.0f;  // Tube noise
     profile.headroom = 18.0f;
@@ -187,62 +237,62 @@ inline HardwareUnitProfile createFET1176()
     profile.modeledUnit = "UREI 1176 Rev A";
 
     // Input stage: FET amplifier
-    profile.inputStageHarmonics = {
-        .h2 = 0.008f,   // FET is cleaner than tubes
-        .h3 = 0.015f,   // More odd harmonics (FET character)
-        .h4 = 0.002f,
-        .h5 = 0.005f,
-        .evenOddRatio = 0.35f  // Odd-dominant
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.008f,   // FET is cleaner than tubes
+        0.015f,   // More odd harmonics (FET character)
+        0.35f,    // Odd-dominant
+        0.002f,
+        0.005f
+    );
 
     // Compression stage: FET gain reduction
-    profile.compressionStageHarmonics = {
-        .h2 = 0.012f,
-        .h3 = 0.025f,   // FET adds odd harmonics under compression
-        .h5 = 0.008f,
-        .evenOddRatio = 0.30f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.012f,
+        0.025f,   // FET adds odd harmonics under compression
+        0.30f,
+        0.0f,
+        0.008f
+    );
 
     // Output stage: Class A amplifier
-    profile.outputStageHarmonics = {
-        .h2 = 0.006f,
-        .h3 = 0.010f,
-        .h5 = 0.003f,
-        .evenOddRatio = 0.40f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.006f,
+        0.010f,
+        0.40f,
+        0.0f,
+        0.003f
+    );
 
     // Input transformer (UTC O-12)
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.85f,
-        .saturationAmount = 0.08f,
-        .lowFreqSaturation = 1.15f,
-        .highFreqRolloff = 20000.0f,
-        .dcBlockingFreq = 15.0f,
-        .harmonics = { .h2 = 0.004f, .h3 = 0.002f, .evenOddRatio = 0.65f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.85f,     // saturationThreshold
+        0.08f,     // saturationAmount
+        1.15f,     // lowFreqSaturation
+        20000.0f,  // highFreqRolloff
+        15.0f,     // dcBlockingFreq
+        0.004f, 0.002f, 0.65f
+    );
 
     // Output transformer
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.9f,
-        .saturationAmount = 0.05f,
-        .lowFreqSaturation = 1.1f,
-        .highFreqRolloff = 22000.0f,
-        .dcBlockingFreq = 12.0f,
-        .harmonics = { .h2 = 0.003f, .h3 = 0.002f, .evenOddRatio = 0.6f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.9f,      // saturationThreshold
+        0.05f,     // saturationAmount
+        1.1f,      // lowFreqSaturation
+        22000.0f,  // highFreqRolloff
+        12.0f,     // dcBlockingFreq
+        0.003f, 0.002f, 0.6f
+    );
 
     // Timing: Ultra-fast FET response
-    profile.timing = {
-        .attackMinMs = 0.02f,    // 20 microseconds!
-        .attackMaxMs = 0.8f,     // 800 microseconds
-        .releaseMinMs = 50.0f,
-        .releaseMaxMs = 1100.0f,
-        .attackCurve = 0.1f,     // Very fast, nearly linear
-        .releaseCurve = 0.6f,
-        .programDependent = true
-    };
+    profile.timing = TimingProfile::create(
+        0.02f,    // attackMinMs - 20 microseconds!
+        0.8f,     // attackMaxMs - 800 microseconds
+        50.0f,    // releaseMinMs
+        1100.0f,  // releaseMaxMs
+        0.1f,     // attackCurve - Very fast, nearly linear
+        0.6f,     // releaseCurve
+        true      // programDependent
+    );
 
     profile.noiseFloor = -80.0f;
     profile.headroom = 24.0f;
@@ -260,40 +310,40 @@ inline HardwareUnitProfile createDBX160()
     profile.modeledUnit = "DBX 160 VCA";
 
     // Input stage: Op-amp (very clean)
-    profile.inputStageHarmonics = {
-        .h2 = 0.003f,
-        .h3 = 0.002f,
-        .evenOddRatio = 0.55f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.003f,
+        0.002f,
+        0.55f
+    );
 
     // Compression stage: VCA chip
-    profile.compressionStageHarmonics = {
-        .h2 = 0.0075f,  // VCA adds slight 2nd harmonic
-        .h3 = 0.005f,
-        .evenOddRatio = 0.60f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.0075f,  // VCA adds slight 2nd harmonic
+        0.005f,
+        0.60f
+    );
 
     // Output stage: Clean op-amp
-    profile.outputStageHarmonics = {
-        .h2 = 0.002f,
-        .h3 = 0.001f,
-        .evenOddRatio = 0.65f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.002f,
+        0.001f,
+        0.65f
+    );
 
     // No transformers (DBX 160 is transformerless)
-    profile.inputTransformer = { .hasTransformer = false };
-    profile.outputTransformer = { .hasTransformer = false };
+    profile.inputTransformer = TransformerProfile::createInactive();
+    profile.outputTransformer = TransformerProfile::createInactive();
 
     // Timing: Program-dependent
-    profile.timing = {
-        .attackMinMs = 3.0f,     // Program-dependent attack
-        .attackMaxMs = 15.0f,
-        .releaseMinMs = 0.0f,    // 120dB/sec release rate
-        .releaseMaxMs = 0.0f,
-        .attackCurve = 0.5f,
-        .releaseCurve = 0.5f,
-        .programDependent = true
-    };
+    profile.timing = TimingProfile::create(
+        3.0f,     // attackMinMs - Program-dependent attack
+        15.0f,    // attackMaxMs
+        0.0f,     // releaseMinMs - 120dB/sec release rate
+        0.0f,     // releaseMaxMs
+        0.5f,     // attackCurve
+        0.5f,     // releaseCurve
+        true      // programDependent
+    );
 
     profile.noiseFloor = -85.0f;
     profile.headroom = 21.0f;
@@ -311,61 +361,62 @@ inline HardwareUnitProfile createSSLBus()
     profile.modeledUnit = "SSL G-Series Bus Compressor";
 
     // Input stage: Console electronics
-    profile.inputStageHarmonics = {
-        .h2 = 0.004f,
-        .h3 = 0.008f,   // SSL is punchy (odd harmonics)
-        .h5 = 0.003f,
-        .evenOddRatio = 0.35f
-    };
+    profile.inputStageHarmonics = HarmonicProfile::create(
+        0.004f,
+        0.008f,   // SSL is punchy (odd harmonics)
+        0.35f,
+        0.0f,
+        0.003f
+    );
 
     // Compression stage: Quad VCA
-    profile.compressionStageHarmonics = {
-        .h2 = 0.006f,
-        .h3 = 0.012f,
-        .h5 = 0.004f,
-        .evenOddRatio = 0.40f
-    };
+    profile.compressionStageHarmonics = HarmonicProfile::create(
+        0.006f,
+        0.012f,
+        0.40f,
+        0.0f,
+        0.004f
+    );
 
     // Output stage: Console mix bus
-    profile.outputStageHarmonics = {
-        .h2 = 0.008f,
-        .h3 = 0.015f,
-        .h5 = 0.004f,
-        .evenOddRatio = 0.35f
-    };
+    profile.outputStageHarmonics = HarmonicProfile::create(
+        0.008f,
+        0.015f,
+        0.35f,
+        0.0f,
+        0.004f
+    );
 
     // Input transformer (Marinair style)
-    profile.inputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.9f,
-        .saturationAmount = 0.03f,
-        .lowFreqSaturation = 1.05f,
-        .highFreqRolloff = 22000.0f,
-        .dcBlockingFreq = 10.0f,
-        .harmonics = { .h2 = 0.002f, .h3 = 0.004f, .evenOddRatio = 0.4f }
-    };
+    profile.inputTransformer = TransformerProfile::createActive(
+        0.9f,      // saturationThreshold
+        0.03f,     // saturationAmount
+        1.05f,     // lowFreqSaturation
+        22000.0f,  // highFreqRolloff
+        10.0f,     // dcBlockingFreq
+        0.002f, 0.004f, 0.4f
+    );
 
     // Output transformer
-    profile.outputTransformer = {
-        .hasTransformer = true,
-        .saturationThreshold = 0.92f,
-        .saturationAmount = 0.02f,
-        .lowFreqSaturation = 1.03f,
-        .highFreqRolloff = 24000.0f,
-        .dcBlockingFreq = 8.0f,
-        .harmonics = { .h2 = 0.002f, .h3 = 0.003f, .evenOddRatio = 0.45f }
-    };
+    profile.outputTransformer = TransformerProfile::createActive(
+        0.92f,     // saturationThreshold
+        0.02f,     // saturationAmount
+        1.03f,     // lowFreqSaturation
+        24000.0f,  // highFreqRolloff
+        8.0f,      // dcBlockingFreq
+        0.002f, 0.003f, 0.45f
+    );
 
     // Timing: Fixed attack times
-    profile.timing = {
-        .attackMinMs = 0.1f,
-        .attackMaxMs = 30.0f,
-        .releaseMinMs = 100.0f,
-        .releaseMaxMs = 1200.0f,  // Plus "Auto" mode
-        .attackCurve = 0.2f,
-        .releaseCurve = 0.5f,
-        .programDependent = false  // Fixed times (except Auto)
-    };
+    profile.timing = TimingProfile::create(
+        0.1f,     // attackMinMs
+        30.0f,    // attackMaxMs
+        100.0f,   // releaseMinMs
+        1200.0f,  // releaseMaxMs - Plus "Auto" mode
+        0.2f,     // attackCurve
+        0.5f,     // releaseCurve
+        false     // programDependent - Fixed times (except Auto)
+    );
 
     profile.noiseFloor = -88.0f;
     profile.headroom = 22.0f;
@@ -411,23 +462,23 @@ inline HardwareUnitProfile createStudioVCA()
     profile.modeledUnit = "Modern VCA Compressor";
 
     // Very clean - minimal harmonics
-    profile.inputStageHarmonics = { .h2 = 0.001f, .h3 = 0.0005f, .evenOddRatio = 0.6f };
-    profile.compressionStageHarmonics = { .h2 = 0.002f, .h3 = 0.0015f, .evenOddRatio = 0.55f };
-    profile.outputStageHarmonics = { .h2 = 0.001f, .h3 = 0.0005f, .evenOddRatio = 0.6f };
+    profile.inputStageHarmonics = HarmonicProfile::create(0.001f, 0.0005f, 0.6f);
+    profile.compressionStageHarmonics = HarmonicProfile::create(0.002f, 0.0015f, 0.55f);
+    profile.outputStageHarmonics = HarmonicProfile::create(0.001f, 0.0005f, 0.6f);
 
     // No transformers
-    profile.inputTransformer = { .hasTransformer = false };
-    profile.outputTransformer = { .hasTransformer = false };
+    profile.inputTransformer = TransformerProfile::createInactive();
+    profile.outputTransformer = TransformerProfile::createInactive();
 
-    profile.timing = {
-        .attackMinMs = 0.3f,
-        .attackMaxMs = 75.0f,
-        .releaseMinMs = 50.0f,
-        .releaseMaxMs = 3000.0f,
-        .attackCurve = 0.4f,
-        .releaseCurve = 0.5f,
-        .programDependent = false
-    };
+    profile.timing = TimingProfile::create(
+        0.3f,     // attackMinMs
+        75.0f,    // attackMaxMs
+        50.0f,    // releaseMinMs
+        3000.0f,  // releaseMaxMs
+        0.4f,     // attackCurve
+        0.5f,     // releaseCurve
+        false     // programDependent
+    );
 
     profile.noiseFloor = -95.0f;
     profile.headroom = 24.0f;
@@ -443,23 +494,21 @@ inline HardwareUnitProfile createDigital()
     profile.name = "Digital";
     profile.modeledUnit = "Transparent Digital Compressor";
 
-    // Zero harmonics - completely transparent
-    profile.inputStageHarmonics = {};
-    profile.compressionStageHarmonics = {};
-    profile.outputStageHarmonics = {};
+    // Zero harmonics - completely transparent (use defaults)
+    // inputStageHarmonics, compressionStageHarmonics, outputStageHarmonics use default values
 
-    profile.inputTransformer = { .hasTransformer = false };
-    profile.outputTransformer = { .hasTransformer = false };
+    profile.inputTransformer = TransformerProfile::createInactive();
+    profile.outputTransformer = TransformerProfile::createInactive();
 
-    profile.timing = {
-        .attackMinMs = 0.01f,
-        .attackMaxMs = 500.0f,
-        .releaseMinMs = 1.0f,
-        .releaseMaxMs = 5000.0f,
-        .attackCurve = 0.5f,
-        .releaseCurve = 0.5f,
-        .programDependent = false
-    };
+    profile.timing = TimingProfile::create(
+        0.01f,    // attackMinMs
+        500.0f,   // attackMaxMs
+        1.0f,     // releaseMinMs
+        5000.0f,  // releaseMaxMs
+        0.5f,     // attackCurve
+        0.5f,     // releaseCurve
+        false     // programDependent
+    );
 
     profile.noiseFloor = -120.0f;
     profile.headroom = 30.0f;
