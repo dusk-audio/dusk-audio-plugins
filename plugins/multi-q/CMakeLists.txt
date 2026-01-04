@@ -87,9 +87,17 @@ target_link_libraries(MultiQ
         juce::juce_recommended_warning_flags
 )
 
-# Optimization flags
-if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
-    target_compile_options(MultiQ PRIVATE -O3 -ffast-math)
+# Platform-specific compile options
+if(MSVC)
+    # MSVC optimization and warning flags
+    target_compile_options(MultiQ PRIVATE /W4)
+    if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
+        target_compile_options(MultiQ PRIVATE /O2 /fp:fast)
+    endif()
+else()
+    # GCC/Clang optimization and warning flags
+    target_compile_options(MultiQ PRIVATE -Wall -Wextra -Wpedantic)
+    if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
+        target_compile_options(MultiQ PRIVATE -O3 -ffast-math)
+    endif()
 endif()
-# Enable all warnings
-target_compile_options(MultiQ PRIVATE -Wall -Wextra -Wpedantic)
