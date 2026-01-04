@@ -878,40 +878,49 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
     // Draw title based on mode - all light text for dark backgrounds
     // Note: Digital (mode 6) and Studio VCA (mode 5) panels draw their own titles
     juce::String title;
+    juce::String description;  // Brief description of each compressor type
     juce::Colour textColor;
     switch (currentMode)
     {
         case 0:
             title = "OPTO COMPRESSOR";
+            description = "LA-2A Style | Program Dependent | Smooth Compression";
             textColor = juce::Colour(0xFFE8D5B7);  // Warm light color
             break;
         case 1:
             title = "FET COMPRESSOR";
+            description = "1176 Style | Fast Attack | Punchy Saturation";
             textColor = juce::Colour(0xFFE0E0E0);  // Light gray (keep)
             break;
         case 2:
             title = "VCA COMPRESSOR";
+            description = "DBX 160 Style | Over Easy Knee | Fast Response";
             textColor = juce::Colour(0xFFDFE6E9);  // Light gray-blue
             break;
         case 3:
             title = "BUS COMPRESSOR";
+            description = "SSL Style | Mix Bus Glue | Analog Character";
             textColor = juce::Colour(0xFFECF0F1);  // Light gray (keep)
             break;
         case 4:
             title = "STUDIO FET COMPRESSOR";
+            description = "Modern FET | Clean with 30% Harmonics | Versatile";
             textColor = juce::Colour(0xFFE0E0E0);  // Light gray
             break;
         case 5:
-            // Studio VCA panel draws its own title, but we still need visible text color for labels
+            // Studio VCA panel draws its own title, but we draw description at bottom
             title = "";
+            description = "RMS Detection | Soft Knee | Clean VCA Dynamics";
             textColor = juce::Colour(0xFFCC9999);  // Light red tint matching Studio VCA theme
             break;
         case 6:
             title = "DIGITAL COMPRESSOR";
+            description = "Transparent | Precise | Zero Coloration";
             textColor = juce::Colour(0xFF00D4FF);  // Cyan
             break;
         default:
             title = "MULTI-COMP";
+            description = "4-Band Multiband Compression";
             textColor = juce::Colour(0xFFE0E0E0);
             break;
     }
@@ -932,6 +941,17 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         // Draw main title text
         g.setColour(textColor);
         g.drawText(title, titleBounds, juce::Justification::centred);
+    }
+
+    // Draw description at bottom of window (consistent position for all modes)
+    if (description.isNotEmpty())
+    {
+        auto descBounds = getLocalBounds().removeFromBottom(static_cast<int>(22 * scaleFactor));
+        descBounds = descBounds.withTrimmedLeft(static_cast<int>(60 * scaleFactor))
+                               .withTrimmedRight(static_cast<int>(60 * scaleFactor));
+        g.setColour(textColor.withAlpha(0.5f));
+        g.setFont(juce::Font(juce::FontOptions(10.0f * scaleFactor)));
+        g.drawText(description, descBounds, juce::Justification::centred);
     }
 
     // Draw "Oversampling" label before oversampling dropdown
@@ -997,113 +1017,103 @@ void EnhancedCompressorEditor::resized()
         static_cast<int>(35 * scaleFactor));
 
     // ========================================================================
-    // TOP HEADER - Clean, uniform layout for ALL modes
-    // Row: [Mode Selector] [Bypass] [Auto Gain] [Ext SC] [SC Listen] [Mode Toggle] [OS: dropdown]    // Centered over the VU meter area
+    // TOP HEADER - Aligned with INPUT label (left) to OUTPUT label (right)
+    // Row: [Mode] [Bypass] [AutoGain] [AnalogNoise] [ModeToggle] ... [Oversampling dropdown]
     // ========================================================================
 
     // Header row - below title, single clean row
+    // Left margin matches main area (20px) so mode selector aligns with INPUT label
     auto headerRow = bounds.removeFromTop(60 * scaleFactor).withTrimmedTop(35 * scaleFactor);
-    headerRow.reduce(12 * scaleFactor, 2 * scaleFactor);
+    headerRow.reduce(20 * scaleFactor, 2 * scaleFactor);
 
-    const int gap = static_cast<int>(8 * scaleFactor);  // Tighter gaps
-    const int controlHeight = static_cast<int>(22 * scaleFactor);  // Slightly taller for readability
+    const int gap = static_cast<int>(10 * scaleFactor);
+    const int controlHeight = static_cast<int>(22 * scaleFactor);
 
-    // Calculate total width of all controls to center them
-    const int modeSelectorWidth = static_cast<int>(120 * scaleFactor);  // Wider for "Bus Compressor"
-    const int toggleWidth = static_cast<int>(70 * scaleFactor);         // "Bypass" button
-    const int autoGainWidth = static_cast<int>(85 * scaleFactor);       // "Auto Gain" button
+    // Control widths
+    const int modeSelectorWidth = static_cast<int>(115 * scaleFactor);  // "Bus Compressor"
+    const int toggleWidth = static_cast<int>(65 * scaleFactor);         // "Bypass" button
+    const int autoGainWidth = static_cast<int>(80 * scaleFactor);       // "Auto Gain" button
     const int analogNoiseWidth = static_cast<int>(95 * scaleFactor);    // "Analog Noise" button
-    const int modeToggleWidth = static_cast<int>(70 * scaleFactor);     // Mode-specific toggle
-    const int scEnableWidth = static_cast<int>(60 * scaleFactor);       // "Ext SC" button
-    const int scListenWidth = static_cast<int>(75 * scaleFactor);       // "SC Listen" button
-    const int osLabelWidth = static_cast<int>(78 * scaleFactor);        // "Oversampling" label
-    const int osWidth = static_cast<int>(58 * scaleFactor);             // Dropdown for "2x"/"4x" - wider to show full text
+    const int modeToggleWidth = static_cast<int>(70 * scaleFactor);     // "Limit" / "Over Easy"
+    const int osLabelWidth = static_cast<int>(80 * scaleFactor);        // "Oversampling" label
+    const int osWidth = static_cast<int>(55 * scaleFactor);             // Dropdown for "2x"/"4x"
 
-    const int totalWidth = modeSelectorWidth + gap + toggleWidth + gap + autoGainWidth + gap +
-                            analogNoiseWidth + gap +
-                            scEnableWidth + gap + scListenWidth + gap + modeToggleWidth + gap +
-                            osLabelWidth + static_cast<int>(4 * scaleFactor) + osWidth;    // Center the controls in the header row
-    int startX = (headerRow.getWidth() - totalWidth) / 2;
-    if (startX < 0) startX = 0;
-    headerRow.removeFromLeft(startX);
-
-    // Mode selector dropdown - first in the row
+    // LEFT: Mode selector dropdown (aligned with INPUT label)
+    // Add small offset to align with meter center
+    headerRow.removeFromLeft(static_cast<int>(8 * scaleFactor));
     if (modeSelector)
     {
         auto area = headerRow.removeFromLeft(modeSelectorWidth);
         modeSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
     }
-    headerRow.removeFromLeft(gap);
 
-    // Bypass toggle - radio button style with full label
+    // RIGHT: Oversampling label + dropdown (aligned with OUTPUT label)
+    if (oversamplingSelector)
+    {
+        auto area = headerRow.removeFromRight(osWidth);
+        oversamplingSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+    }
+    headerRow.removeFromRight(static_cast<int>(4 * scaleFactor));  // Small gap
+    osLabelBounds = headerRow.removeFromRight(osLabelWidth).withHeight(controlHeight);
+    osLabelBounds = osLabelBounds.withY(headerRow.getY() + (headerRow.getHeight() - controlHeight) / 2);
+
+    // CENTER: Calculate total width of center controls and center them in remaining space
+    bool isAnalogMode = (currentMode != 6 && currentMode != 7);
+    bool showModeToggle = (currentMode == 0 || currentMode == 2);  // Limit for Opto, OverEasy for VCA
+
+    int centerControlsWidth = toggleWidth + gap + autoGainWidth;  // Bypass + Auto Gain
+    if (isAnalogMode)
+        centerControlsWidth += gap + analogNoiseWidth;  // + Analog Noise
+    if (showModeToggle)
+        centerControlsWidth += gap + modeToggleWidth;  // + Limit/OverEasy
+
+    int centerStartX = headerRow.getX() + (headerRow.getWidth() - centerControlsWidth) / 2;
+    int centerY = headerRow.getCentreY() - controlHeight / 2;
+
+    // Bypass toggle
     if (bypassButton)
     {
-        auto area = headerRow.removeFromLeft(toggleWidth);
-        bypassButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+        bypassButton->setBounds(centerStartX, centerY, toggleWidth, controlHeight);
+        centerStartX += toggleWidth + gap;
     }
-    headerRow.removeFromLeft(gap);
 
-    // Auto Gain toggle - radio button style with full label
+    // Auto Gain toggle
     if (autoGainButton)
     {
-        auto area = headerRow.removeFromLeft(autoGainWidth);
-        autoGainButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+        autoGainButton->setBounds(centerStartX, centerY, autoGainWidth, controlHeight);
+        centerStartX += autoGainWidth + gap;
     }
-    headerRow.removeFromLeft(gap);
 
-    // Analog Noise toggle - enable/disable subtle analog noise
+    // Analog Noise toggle - only visible for analog modes (not Digital=6 or Multiband=7)
     if (analogNoiseButton)
     {
-        auto area = headerRow.removeFromLeft(analogNoiseWidth);
-        analogNoiseButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+        analogNoiseButton->setVisible(isAnalogMode);
+        if (isAnalogMode)
+        {
+            analogNoiseButton->setBounds(centerStartX, centerY, analogNoiseWidth, controlHeight);
+            centerStartX += analogNoiseWidth + gap;
+        }
     }
-    headerRow.removeFromLeft(gap);
 
-    // External Sidechain enable toggle - available for all modes
-    if (sidechainEnableButton)
-    {
-        sidechainEnableButton->setVisible(true);
-        auto area = headerRow.removeFromLeft(scEnableWidth);
-        sidechainEnableButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
-    }
-    headerRow.removeFromLeft(gap);
-
-    // Sidechain Listen toggle - available for all modes
-    if (sidechainListenButton)
-    {
-        sidechainListenButton->setVisible(true);
-        auto area = headerRow.removeFromLeft(scListenWidth);
-        sidechainListenButton->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
-    }
-    headerRow.removeFromLeft(gap);
-
-    // Mode-specific toggle (Limit for Opto, OverEasy for VCA) - placed after SC controls
-    // so buttons don't shift when switching between modes
-    auto modeToggleArea = headerRow.removeFromLeft(modeToggleWidth);
+    // Mode-specific toggle (Limit for Opto, OverEasy for VCA)
     if (optoPanel.limitSwitch)
     {
         optoPanel.limitSwitch->setVisible(currentMode == 0);
         if (currentMode == 0)
-            optoPanel.limitSwitch->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
+            optoPanel.limitSwitch->setBounds(centerStartX, centerY, modeToggleWidth, controlHeight);
     }
     if (vcaPanel.overEasyButton)
     {
         vcaPanel.overEasyButton->setVisible(currentMode == 2);
         if (currentMode == 2)
-            vcaPanel.overEasyButton->setBounds(modeToggleArea.withHeight(controlHeight).withY(modeToggleArea.getCentreY() - controlHeight / 2));
+            vcaPanel.overEasyButton->setBounds(centerStartX, centerY, modeToggleWidth, controlHeight);
     }
-    headerRow.removeFromLeft(gap);
 
-    // "Oversampling" label area (drawn in paint()) followed by dropdown with small gap
-    osLabelBounds = headerRow.removeFromLeft(osLabelWidth).withHeight(controlHeight);
-    osLabelBounds = osLabelBounds.withY(headerRow.getY() + (headerRow.getHeight() - controlHeight) / 2);
-    headerRow.removeFromLeft(static_cast<int>(4 * scaleFactor));  // Small gap between label and dropdown
-
-    if (oversamplingSelector)
-    {
-        auto area = headerRow.removeFromLeft(osWidth);
-        oversamplingSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
-    }
+    // Hide Ext SC and SC Listen - still functional via DAW automation
+    if (sidechainEnableButton)
+        sidechainEnableButton->setVisible(false);
+    if (sidechainListenButton)
+        sidechainListenButton->setVisible(false);
 
     // Hide unused controls (sidechain enable/listen are now shown in header)
     if (lookaheadSlider)
@@ -1158,9 +1168,9 @@ void EnhancedCompressorEditor::resized()
     // VU Meter at top center with SC HP vertical slider to the right
     auto vuArea = mainArea.removeFromTop(static_cast<int>(190 * scaleFactor));  // More space without preset selectors
 
-    // SC HP slider area on the right side of VU meter
+    // SC HP slider area on the right side of VU meter (tight against VU)
     const int scHpSliderWidth = static_cast<int>(28 * scaleFactor);   // Narrow vertical slider
-    const int scHpAreaWidth = static_cast<int>(55 * scaleFactor);     // Area including label
+    const int scHpAreaWidth = static_cast<int>(34 * scaleFactor);     // Minimal width to sit close to VU
     auto scHpArea = vuArea.removeFromRight(scHpAreaWidth);
 
     // Position SC HP vertical slider with label above (hidden in multiband mode)
@@ -1317,10 +1327,10 @@ void EnhancedCompressorEditor::resized()
         // Top row: 4 knobs (Threshold, Ratio, Makeup, Mix)
         auto knobRow = busBounds.removeFromTop(stdKnobRowHeight);
 
-        // Use 6-column grid for 4 knobs, skip first and last for centering
-        int colWidth = knobRow.getWidth() / 6;
-        int skipWidth = colWidth;  // Save for dropdown alignment
-        knobRow.removeFromLeft(colWidth);  // Skip first column
+        // Use 4-column grid with small margin - spreads knobs to match VU meter width
+        int margin = static_cast<int>(10 * scaleFactor);
+        knobRow.reduce(margin, 0);
+        int colWidth = knobRow.getWidth() / 4;
 
         auto thresholdArea = knobRow.removeFromLeft(colWidth);
         layoutKnob(busPanel.thresholdKnob.get(), busPanel.thresholdLabel.get(), thresholdArea);
@@ -1337,16 +1347,17 @@ void EnhancedCompressorEditor::resized()
         // Bottom row: Attack/Release dropdowns - centered under knob pairs
         busBounds.removeFromTop(static_cast<int>(15 * scaleFactor));  // Spacing
         auto bottomRow = busBounds.removeFromTop(static_cast<int>(55 * scaleFactor));
+        bottomRow.reduce(margin, 0);
 
-        // Attack dropdown: centered between Threshold and Ratio (columns 2-3)
+        // Attack dropdown: centered between Threshold and Ratio
         int dropdownWidth = static_cast<int>(80 * scaleFactor);
-        int attackCenterX = skipWidth + colWidth;  // Center of Threshold-Ratio gap
+        int attackCenterX = margin + colWidth;  // Center between first two knobs
         auto attackArea = bottomRow.withX(attackCenterX - dropdownWidth / 2).withWidth(dropdownWidth);
         busPanel.attackLabel->setBounds(attackArea.removeFromTop(stdLabelHeight));
         busPanel.attackSelector->setBounds(attackArea.removeFromTop(static_cast<int>(28 * scaleFactor)));
 
-        // Release dropdown: centered between Makeup and Mix (columns 4-5)
-        int releaseCenterX = skipWidth + colWidth * 3;  // Center of Makeup-Mix gap
+        // Release dropdown: centered between Makeup and Mix
+        int releaseCenterX = margin + colWidth * 3;  // Center between last two knobs
         auto releaseArea = bottomRow.withX(releaseCenterX - dropdownWidth / 2).withWidth(dropdownWidth);
         busPanel.releaseLabel->setBounds(releaseArea.removeFromTop(stdLabelHeight));
         busPanel.releaseSelector->setBounds(releaseArea.removeFromTop(static_cast<int>(28 * scaleFactor)));
