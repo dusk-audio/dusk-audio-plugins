@@ -134,6 +134,12 @@ elseif(MSVC)
     target_compile_options(MultiComp PRIVATE /W4)
 endif()
 
+# Set binary output directory (required for GitHub Actions artifact collection)
+set_target_properties(MultiComp PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # Optional: Build unit tests
 option(BUILD_MULTI_COMP_TESTS "Build Multi-Comp unit tests" OFF)
 
