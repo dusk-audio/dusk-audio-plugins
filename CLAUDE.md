@@ -3,6 +3,32 @@
 ## Project Overview
 This is a collection of professional audio VST3/LV2/AU plugins built with the JUCE framework. All plugins are published under the company name "Luna Co. Audio".
 
+## Related Repositories
+
+### Luna Co. Audio Website
+- **Location**: `/home/marc/projects/lunacoaudio.github.io/`
+- **URL**: https://luna-co-software.github.io/lunacoaudio.github.io/
+- **Technology**: Jekyll static site (GitHub Pages)
+- **Purpose**: Plugin landing pages, download links, documentation
+
+**Key Files:**
+- `_config.yml` - Site configuration, GitHub release URLs
+- `_data/plugins.yml` - Plugin database (status, versions, descriptions)
+- `_layouts/plugin.html` - Plugin page template with download links
+- `_plugins/*.md` - Individual plugin pages (4k-eq.md, multi-comp.md, etc.)
+
+**Adding a New Plugin to the Website:**
+1. Add plugin entry to `_data/plugins.yml` with status `in-dev`, `coming-soon`, or `released`
+2. Create `_plugins/plugin-name.md` with front matter and content
+3. Set `version` in front matter to match GitHub release tag
+4. Download links auto-generate using: `{slug}-v{version}` format (e.g., `multi-comp-v1.0.0`)
+
+**Release Process:**
+1. Ensure GitHub Actions build passes for all platforms
+2. Create GitHub Release with tag matching `{slug}-v{version}`
+3. Upload platform artifacts to the release
+4. Website download links automatically point to the correct release
+
 ### ⚠️ SHARED CODE REQUIREMENT
 **Before writing ANY new code, ALWAYS check `plugins/shared/` first!**
 
