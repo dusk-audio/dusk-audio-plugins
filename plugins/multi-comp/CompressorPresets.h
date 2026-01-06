@@ -6,10 +6,10 @@
 #include <map>
 
 /**
- * Factory presets for Universal Compressor.
+ * Factory presets for Multi-Comp.
  * TUNING NOTES:
- * - FET Release times tightened (Real 1176 release is 50ms to 1.1s).
- * - SSL Bus Attacks slowed down to preserve transients.
+ * - FET Release times tightened (classic FET release is 50ms to 1.1s).
+ * - Bus Attacks slowed down to preserve transients.
  * - Opto Peak Reduction increased for realistic gain reduction.
  */
 namespace CompressorPresets
@@ -64,7 +64,7 @@ inline std::vector<Preset> getFactoryPresets()
 
     // ==================== VOCALS ====================
 
-    // [UPDATED] Standard "Teletronix" style vocal.
+    // Classic optical compressor style vocal.
     // Increased reduction to 50% to ensure the user hears the effect immediately.
     presets.push_back({
         "Smooth Opto Vocal",
@@ -74,7 +74,7 @@ inline std::vector<Preset> getFactoryPresets()
         4.0f,                         // Unused
         10.0f,                        // Unused
         300.0f,                       // Unused
-        5.0f,                         // Makeup (LA-2A reduces gain significantly)
+        5.0f,                         // Makeup (opto reduces gain significantly)
         100.0f,                       // Mix
         60.0f,                        // SidechainHP
         false,                        // Manual makeup is more authentic for Opto
@@ -86,17 +86,17 @@ inline std::vector<Preset> getFactoryPresets()
         false                         // Compress Mode (Limit is too hard for vox)
     });
 
-    // [UPDATED] "Dr. Pepper" Setting (10-2-4).
-    // Real 1176 Attack 3 is ~0.5ms. Release 7 is FAST (~50ms).
+    // Classic FET vocal presence setting.
+    // Fast attack ~0.5ms, fast release ~60ms.
     // Ratio 4:1 is the standard vocal setting, not 8:1 (which is too grabby).
     presets.push_back({
-        "Vocal Presence (1176)",
+        "Vocal Presence",
         "Vocals",
         1,                            // Vintage FET
         -20.0f,                       // Drive input harder
         4.0f,                         // Unused (controlled by fetRatio)
-        0.5f,                         // Attack: ~500µs (Attack knob at 3)
-        60.0f,                        // Release: 60ms (Release knob at 7 - Fast!)
+        0.5f,                         // Attack: ~500µs
+        60.0f,                        // Release: 60ms (Fast!)
         4.0f,                         // Makeup
         100.0f,                       // Mix
         100.0f,                       // HPF to prevent popping on plosives
@@ -133,7 +133,7 @@ inline std::vector<Preset> getFactoryPresets()
 
     // ==================== DRUMS ====================
 
-    // [UPDATED] The "London" Bus Sound.
+    // Classic Bus Sound.
     // Attack MUST be 30ms (Index 5) to let the kick/snare crack through.
     // Release Auto (Index 4) is the magic glue setting.
     presets.push_back({
@@ -156,7 +156,7 @@ inline std::vector<Preset> getFactoryPresets()
         false
     });
 
-    // [UPDATED] "All Buttons In" Room Nuke.
+    // "All Buttons In" Room Nuke.
     // Attack needs to be slightly slower than instant to create "movement".
     presets.push_back({
         "Room Nuke (FET All)",
@@ -202,8 +202,8 @@ inline std::vector<Preset> getFactoryPresets()
 
     // ==================== BASS ====================
 
-    // [UPDATED] 1176 Bass.
-    // Bass needs a slower attack on an 1176 (Knob at 1 or 2) to not distort sub frequencies.
+    // FET Bass.
+    // Bass needs a slower attack on FET to not distort sub frequencies.
     presets.push_back({
         "Rock Bass Anchor",
         "Bass",
@@ -224,8 +224,8 @@ inline std::vector<Preset> getFactoryPresets()
         false
     });
 
-    // [UPDATED] Opto Bass.
-    // Maximize Peak Reduction for that "pinned" James Jamerson feel.
+    // Opto Bass.
+    // Maximize Peak Reduction for that classic Motown "pinned" feel.
     presets.push_back({
         "Vintage Pinned Bass",
         "Bass",
@@ -270,8 +270,8 @@ inline std::vector<Preset> getFactoryPresets()
         false
     });
 
-    // [UPDATED] Funky GTR.
-    // Using 1176 with fast release to accentuate the "up" strum.
+    // Funky GTR.
+    // Using FET with fast release to accentuate the "up" strum.
     presets.push_back({
         "Funk Rhythm Guitar",
         "Guitars",
@@ -294,10 +294,10 @@ inline std::vector<Preset> getFactoryPresets()
 
     // ==================== MIX BUS ====================
 
-    // [UPDATED] The "glue".
+    // The "glue".
     // 10ms Attack / Auto Release / 4:1 / 4dB Gain Reduction is the classic recipe.
     presets.push_back({
-        "SSL-Style Glue",
+        "Console-Style Glue",
         "Mix Bus",
         3,                            // Bus Compressor
         -20.0f,
