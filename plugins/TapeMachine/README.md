@@ -1,10 +1,10 @@
 # TapeMachine VST3 Plugin
 
-A high-quality tape machine emulation plugin that models the Studer A800 and Ampex ATR-102 tape machines.
+A high-quality tape machine emulation plugin with two distinct tape machine models: Swiss800 and Classic102.
 
 ## Features
 
-- **Dual Machine Emulation**: Choose between Swiss800 (Studer A800) or Classic102 (Ampex ATR-102)
+- **Dual Machine Emulation**: Choose between Swiss800 or Classic102 tape machine models
 - **Multiple Tape Speeds**: 7.5, 15, and 30 IPS
 - **Four Tape Formulations**: Type 456 (warm), GP9 (modern), Type 911 (German precision), Type 250 (professional)
 - **Comprehensive Controls**:
@@ -97,13 +97,13 @@ The plugin uses selectable 2x or 4x oversampling with FIR equiripple filtering t
 
 ### Machine Characteristics
 
-**Studer A800**:
+**Swiss800**:
 - Warm, slightly compressed sound
 - Gentle high-frequency roll-off
 - Enhanced low-end response
 - Smooth harmonic distortion
 
-**Ampex ATR-102**:
+**Classic102**:
 - Clear, wide frequency response
 - Detailed transient response
 - Less compression
