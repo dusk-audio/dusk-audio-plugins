@@ -1,6 +1,6 @@
-# 4K EQ - SSL 4000 Series Console EQ Emulation
+# 4K EQ - Classic British Console EQ Emulation
 
-Professional SSL-style 4-band parametric equalizer with analog modeling, built with JUCE for VST3/LV2/AU/Standalone formats.
+Professional 4-band parametric equalizer with analog modeling, built with JUCE for VST3/LV2/AU/Standalone formats.
 
 ![Plugin Type](https://img.shields.io/badge/Type-EQ%20%2F%20Filter-blue)
 ![Formats](https://img.shields.io/badge/Formats-VST3%20%7C%20LV2%20%7C%20AU%20%7C%20Standalone-green)
@@ -10,7 +10,7 @@ Professional SSL-style 4-band parametric equalizer with analog modeling, built w
 
 ### EQ Section
 - **4-band parametric EQ** (Low, Low-Mid, High-Mid, High)
-- **Brown/Black modes** - SSL E-series vs G-series characteristics
+- **Brown/Black modes** - E-series vs G-series characteristics
   - **Brown (E-series)**: Musical, broader curves, gentle shelves, fixed Q
   - **Black (G-series)**: Surgical, proportional Q (increases with gain), tighter response
 - **High-pass/Low-pass filters** (18dB/oct HPF, 12dB/oct LPF)
@@ -18,22 +18,22 @@ Professional SSL-style 4-band parametric equalizer with analog modeling, built w
 
 ### Processing Quality
 - **2x/4x oversampling** - Anti-aliased, high-quality processing (2x default for efficiency)
-- **SSL-accurate saturation modeling** - Multi-stage: Input transformer → NE5534 op-amp → Output transformer (E-Series only)
+- **Analog saturation modeling** - Multi-stage: Input transformer → NE5534 op-amp → Output transformer (E-Series only)
   - E-Series: Predominantly 2nd harmonic (warm, transformer-colored)
   - G-Series: More 3rd harmonic (clean, transformerless)
-  - Clean by default (0% saturation) - SSL is transparent unless driven
+  - Clean by default (0% saturation) - transparent unless driven
 - **Per-band saturation** - Subtle harmonic enhancement on each EQ stage when boosting
 - **Auto-gain compensation toggle** - Optional automatic output adjustment to maintain perceived loudness
 - **M/S processing mode** - Mid/Side encoding for stereo width control
 
 ### User Interface
 - **Real-time spectrum analyzer** - FFT-based frequency visualization (30 Hz)
-- **SSL-style color-coded knobs**:
+- **Color-coded knobs**:
   - 🔴 Red: Gain controls
   - 🟢 Green: Frequency controls
   - 🔵 Blue: Q controls
   - 🟠 Orange: Filters & saturation
-- **Professional tick markings** - SSL-style graduated scales with labeled frequency/Q values
+- **Professional tick markings** - Console-style graduated scales with labeled frequency/Q values
   - LF: 30, 50, 100, 200, 300, 400, 480 Hz
   - LMF: 200, 300, 800, 1k, 1.5k, 2k, 2.5k Hz
   - HMF: 600, 800, 1.5k, 3k, 4.5k, 6k, 7k Hz
@@ -88,7 +88,7 @@ Professional SSL-style 4-band parametric equalizer with analog modeling, built w
 ## Technical Specifications
 
 ### DSP Details
-- **Filter topology**: Biquad IIR with SSL-specific coefficient shaping
+- **Filter topology**: Biquad IIR with console-style coefficient shaping
 - **Frequency warping**: Pre-warped for HF accuracy (prevents digital cramping)
 - **Saturation model**: Asymmetric soft-clipping (NE5534 op-amp characteristic)
 - **Sample rates**: 44.1kHz - 192kHz (auto-limits oversampling at >96kHz)
@@ -96,13 +96,13 @@ Professional SSL-style 4-band parametric equalizer with analog modeling, built w
   - 2x oversampling: ~32 samples
   - 4x oversampling: ~96 samples (auto-disabled at high sample rates)
 
-### Parameter Ranges (SSL Hardware-Accurate)
-- **LF/HF Gain**: ±20dB (±15dB typical SSL range + headroom)
+### Parameter Ranges (Console Hardware-Accurate)
+- **LF/HF Gain**: ±20dB (±15dB typical range + headroom)
 - **LF Freq**: 30-480Hz | **HF Freq**: 1.5kHz-16kHz
 - **LM Freq**: 200-2500Hz | **HM Freq**: 600-7000Hz
-- **Q Range**: 0.4-4.0 (realistic SSL range, proportional in Black mode)
+- **Q Range**: 0.4-4.0 (realistic range, proportional in Black mode)
 - **HPF**: 16-350Hz (18dB/oct) | **LPF**: 22kHz-3kHz (12dB/oct)
-- **Saturation**: 0-100% (default 0% - SSL is clean unless driven)
+- **Saturation**: 0-100% (default 0% - clean unless driven)
 - **Output Gain**: ±12dB
 - **Auto-Gain**: ON/OFF toggle (default ON)
 
@@ -157,9 +157,9 @@ cmake --build . --target FourKEQ_All -j8
 ├── FourKEQ.h                # Processor header
 ├── PluginEditor.cpp         # GUI implementation (includes spectrum analyzer)
 ├── PluginEditor.h           # Editor header
-├── FourKLookAndFeel.cpp     # Custom SSL-style UI theme
+├── FourKLookAndFeel.cpp     # Custom console-style UI theme
 ├── FourKLookAndFeel.h       # Look and feel header
-├── SSLSaturation.h          # SSL console saturation modeling (E/G series)
+├── SSLSaturation.h          # Console saturation modeling (E/G series)
 ├── PatreonBackers.h         # Patreon supporters credits list
 ├── CMakeLists.txt           # Build configuration
 └── README.md                # This file
@@ -179,12 +179,12 @@ cmake --build . --target FourKEQ_All -j8
 
 ## Changelog
 
-### v1.0.2 (2025-10-21) - Professional SSL Accuracy Update
-- ✅ **CRITICAL**: Fixed frequency ranges to match SSL hardware specs
+### v1.0.2 (2025-10-21) - Professional Console Accuracy Update
+- ✅ **CRITICAL**: Fixed frequency ranges to match console hardware specs
   - LF: 30-480Hz (was 20-600Hz)
   - HF: 1.5kHz-16kHz (was 1.5kHz-20kHz)
-- ✅ **CRITICAL**: Limited Q ranges to realistic SSL values (0.4-4.0, was 0.4-5.0)
-- ✅ **CRITICAL**: Set default saturation to 0% (SSL is clean unless driven)
+- ✅ **CRITICAL**: Limited Q ranges to realistic values (0.4-4.0, was 0.4-5.0)
+- ✅ **CRITICAL**: Set default saturation to 0% (clean unless driven)
 - ✅ **CRITICAL**: Fixed tick mark positioning (90° coordinate correction)
 - ✅ Added auto-gain compensation toggle with UI button
 - ✅ Optimized saturation wet/dry mix for more audible effect
@@ -201,7 +201,7 @@ cmake --build . --target FourKEQ_All -j8
 - ✅ Removed LV2 inline display (JUCE compatibility)
 - ✅ Added mouse wheel support for knobs
 - ✅ Added double-click reset to defaults
-- ✅ Added professional knob tick markings (SSL-style)
+- ✅ Added professional knob tick markings (console-style)
 - ✅ Added pre/post spectrum toggle
 - ✅ Added "Master Sheen" factory preset
 - ✅ SIMD-optimized spectrum analyzer (~5% CPU reduction)
@@ -210,7 +210,7 @@ cmake --build . --target FourKEQ_All -j8
 
 ### v1.0.0 (2025-09)
 - Initial release with VST3/LV2/AU support
-- SSL Brown/Black modes
+- Brown/Black modes (E-series/G-series)
 - 2x/4x oversampling
 - Real-time spectrum analyzer
 - 10 factory presets
@@ -221,7 +221,7 @@ cmake --build . --target FourKEQ_All -j8
 **Framework**: JUCE 7+ (GPL/Commercial dual-license)
 **License**: GPL-2.0 (plugin code) + JUCE license
 
-**Disclaimer**: This is an independent emulation inspired by SSL 4000 series consoles. SSL and Solid State Logic are trademarks of Solid State Logic Ltd. This project is not affiliated with or endorsed by SSL.
+**Disclaimer**: This is an independent emulation inspired by classic British console EQs. This project is not affiliated with or endorsed by any hardware manufacturer.
 
 ---
 

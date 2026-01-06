@@ -5,31 +5,31 @@ A collection of professional audio VST3/LV2 plugins built with JUCE.
 ## Plugins
 
 ### 4K EQ
-SSL 4000 Series Console EQ emulation featuring:
-- 4-band parametric EQ (LF, LMF, HMF, HF) with SSL-style colored knobs
+Classic British console EQ emulation featuring:
+- 4-band parametric EQ (LF, LMF, HMF, HF) with color-coded knobs
 - High-pass and low-pass filters
 - Brown/Black variants (E-Series/G-Series console emulation)
-- Advanced SSL saturation modeling
+- Advanced analog saturation modeling
 - 2x/4x oversampling for anti-aliasing
 
 ### Multi-Comp
-Multi-mode compressor with seven classic hardware emulations plus 4-band multiband compression:
+Multi-mode compressor with seven classic compression styles plus 4-band multiband compression:
 
 **Compression Modes:**
-- Vintage Opto (LA-2A style)
-- Vintage FET (1176 Bluestripe)
-- Classic VCA (DBX 160)
-- Bus Compressor (SSL G-Series)
-- Studio FET (1176 Rev E Blackface)
-- Studio VCA (Focusrite Red 3)
-- Digital (Transparent)
-- Multiband (4-band with adjustable crossovers)
+- Vintage Opto – Smooth, program-dependent optical compression
+- Vintage FET – Aggressive, punchy FET compression
+- Classic VCA – Fast, precise VCA compression
+- Bus Compressor – Glue and punch for mix bus
+- Studio FET – Clean FET with modern character
+- Studio VCA – Modern VCA with soft knee
+- Digital – Transparent, precise compression
+- Multiband – 4-band with adjustable crossovers
 
 **Features:** Sidechain HP filter, auto-makeup gain, parallel mix, 2x/4x oversampling, per-band solo.
 
 ### TapeMachine
 Analog tape machine emulation featuring:
-- Swiss800 (Studer A800) and Classic102 (Ampex ATR-102) models
+- Swiss800 and Classic102 tape machine models
 - Four tape formulations: Type 456, GP9, Type 911, Type 250
 - Tape speeds: 7.5, 15, 30 IPS
 - Advanced saturation and hysteresis modeling
@@ -39,7 +39,7 @@ Analog tape machine emulation featuring:
 - 2x/4x oversampling for alias-free processing
 
 ### SilkVerb
-Lexicon/Valhalla-style algorithmic reverb:
+Professional algorithmic reverb:
 - Three modes: Plate, Room, Hall
 - FDN architecture with Hadamard matrix mixing
 - Two-band frequency-dependent decay
@@ -48,7 +48,7 @@ Lexicon/Valhalla-style algorithmic reverb:
 
 ### Convolution Reverb
 Zero-latency IR-based reverb:
-- Supports WAV, AIFF, AIFC, SDIR (Logic Pro) impulse responses
+- Supports WAV, AIFF, AIFC, SDIR impulse responses
 - Waveform display
 - Size, pre-delay, damping, width, mix controls
 
@@ -60,7 +60,7 @@ Classic tape echo/delay emulation:
 - Tape age modeling
 
 ### DrummerClone
-Logic Pro Drummer-inspired intelligent MIDI drum pattern generator:
+Intelligent MIDI drum pattern generator:
 - Follow Mode with real-time groove analysis
 - 12+ virtual drummer personalities
 - Section-aware patterns and intelligent fills
@@ -127,8 +127,8 @@ Location: `plugins/shared/AnalogEmulation/`
 Reusable analog hardware emulation components:
 - Transformer saturation modeling
 - Vacuum tube emulation (12AX7, 12AT7, 12BH7, 6SN7)
-- Waveshaper lookup tables (LA-2A, 1176, DBX, SSL, Tape, Triode)
-- Hardware profiles (Neve, API, Studer, Ampex)
+- Waveshaper lookup tables (Opto, FET, VCA, Console, Tape, Triode)
+- Hardware profiles for various compression and tape styles
 - DC blocking filters
 - High-frequency content estimation
 
