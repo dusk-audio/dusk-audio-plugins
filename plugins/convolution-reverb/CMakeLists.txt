@@ -7,7 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Plugin format options
 option(BUILD_VST3 "Build VST3 format" ON)
 option(BUILD_LV2 "Build LV2 format" OFF)  # Disabled due to LTO memory issues in container
-option(BUILD_AU "Build AU format" OFF)
+# AU is only supported on macOS
+if(APPLE)
+    option(BUILD_AU "Build AU format" ON)
+else()
+    option(BUILD_AU "Build AU format" OFF)
+endif()
 option(BUILD_STANDALONE "Build Standalone format" ON)
 
 # Build format list
