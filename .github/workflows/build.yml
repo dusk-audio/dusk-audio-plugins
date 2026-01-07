@@ -4,12 +4,12 @@ on:
   push:
     branches: [main, develop]
     tags:
-      - 'v*'           # Full release: v1.0.0 builds all plugins
-      - '4keq-v*'      # 4K EQ only: 4keq-v1.0.0
-      - 'multicomp-v*' # Multi-Comp only
-      - 'tape-v*'      # TapeMachine only
-      - 'silkverb-v*'  # SilkVerb only
-      - 'multiq-v*'    # Multi-Q only
+      - 'v*'             # Full release: v1.0.0 builds all plugins
+      - '4k-eq-v*'       # 4K EQ only: 4k-eq-v1.0.0
+      - 'multi-comp-v*'  # Multi-Comp only: multi-comp-v1.0.1
+      - 'tapemachine-v*' # TapeMachine only
+      - 'silkverb-v*'    # SilkVerb only
+      - 'multi-q-v*'     # Multi-Q only
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -21,11 +21,11 @@ on:
         type: choice
         options:
           - ''
-          - '4keq'
-          - 'multicomp'
+          - '4k-eq'
+          - 'multi-comp'
           - 'tapemachine'
           - 'silkverb'
-          - 'multiq'
+          - 'multi-q'
           - 'convolution'
 
 env:
@@ -55,35 +55,35 @@ jobs:
 
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             IS_RELEASE="true"
-            if [[ "$TAG" == 4keq-v* ]]; then
+            if [[ "$TAG" == 4k-eq-v* ]]; then
               TARGET="FourKEQ_All"
               NAME="4K EQ"
-              RELEASE_NAME="4K-EQ"
-            elif [[ "$TAG" == multicomp-v* ]]; then
+              RELEASE_NAME="4k-eq"
+            elif [[ "$TAG" == multi-comp-v* ]]; then
               TARGET="MultiComp_All"
               NAME="Multi-Comp"
-              RELEASE_NAME="Multi-Comp"
-            elif [[ "$TAG" == tape-v* ]]; then
+              RELEASE_NAME="multi-comp"
+            elif [[ "$TAG" == tapemachine-v* ]]; then
               TARGET="TapeMachine_All"
               NAME="TapeMachine"
-              RELEASE_NAME="TapeMachine"
+              RELEASE_NAME="tapemachine"
             elif [[ "$TAG" == silkverb-v* ]]; then
               TARGET="SilkVerb_All"
               NAME="SilkVerb"
-              RELEASE_NAME="SilkVerb"
-            elif [[ "$TAG" == multiq-v* ]]; then
+              RELEASE_NAME="silkverb"
+            elif [[ "$TAG" == multi-q-v* ]]; then
               TARGET="MultiQ_All"
               NAME="Multi-Q"
-              RELEASE_NAME="Multi-Q"
+              RELEASE_NAME="multi-q"
             fi
           elif [[ -n "$MANUAL_PLUGIN" ]]; then
             case "$MANUAL_PLUGIN" in
-              4keq) TARGET="FourKEQ_All"; NAME="4K EQ"; RELEASE_NAME="4K-EQ" ;;
-              multicomp) TARGET="MultiComp_All"; NAME="Multi-Comp"; RELEASE_NAME="Multi-Comp" ;;
-              tapemachine) TARGET="TapeMachine_All"; NAME="TapeMachine"; RELEASE_NAME="TapeMachine" ;;
-              silkverb) TARGET="SilkVerb_All"; NAME="SilkVerb"; RELEASE_NAME="SilkVerb" ;;
-              multiq) TARGET="MultiQ_All"; NAME="Multi-Q"; RELEASE_NAME="Multi-Q" ;;
-              convolution) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="Convolution-Reverb" ;;
+              4k-eq) TARGET="FourKEQ_All"; NAME="4K EQ"; RELEASE_NAME="4k-eq" ;;
+              multi-comp) TARGET="MultiComp_All"; NAME="Multi-Comp"; RELEASE_NAME="multi-comp" ;;
+              tapemachine) TARGET="TapeMachine_All"; NAME="TapeMachine"; RELEASE_NAME="tapemachine" ;;
+              silkverb) TARGET="SilkVerb_All"; NAME="SilkVerb"; RELEASE_NAME="silkverb" ;;
+              multi-q) TARGET="MultiQ_All"; NAME="Multi-Q"; RELEASE_NAME="multi-q" ;;
+              convolution) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
             esac
           fi
 
