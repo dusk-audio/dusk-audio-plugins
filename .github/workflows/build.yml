@@ -547,14 +547,61 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION=$(echo "$TAG" | sed 's/.*-v/v/' | sed 's/^v//')
 
-          # Create platform-specific zips with dynamic naming
-          zip -r "../${RELEASE_NAME}-${VERSION}-Linux.zip" plugins-linux/
-          zip -r "../${RELEASE_NAME}-${VERSION}-Windows.zip" plugins-windows/
-          zip -r "../${RELEASE_NAME}-${VERSION}-macOS.zip" plugins-macos/
+          # Create lowercase slug for zip naming (Multi-Comp -> multi-comp)
+          SLUG=$(echo "$RELEASE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+
+          echo "=== Creating release archives ==="
+          echo "Plugin: $PLUGIN_NAME"
+          echo "Release name: $RELEASE_NAME"
+          echo "Slug: $SLUG"
+          echo "Version: $VERSION"
+
+          # Linux: Create zip with VST3/ and LV2/ folders at root (not nested in plugins-linux/)
+          # This allows users to extract directly and copy the appropriate format
+          mkdir -p linux-release
+          if [ -d "plugins-linux/VST3" ]; then
+            cp -r plugins-linux/VST3 linux-release/
+          fi
+          if [ -d "plugins-linux/LV2" ]; then
+            cp -r plugins-linux/LV2 linux-release/
+          fi
+          cd linux-release
+          zip -r "../../${SLUG}-linux.zip" .
+          cd ..
+
+          # Windows: Create zip with VST3/ folder at root
+          mkdir -p windows-release
+          if [ -d "plugins-windows/VST3" ]; then
+            cp -r plugins-windows/VST3 windows-release/
+          fi
+          cd windows-release
+          zip -r "../../${SLUG}-windows.zip" .
+          cd ..
+
+          # macOS: Create zip with VST3/ and AU/ folders at root
+          mkdir -p macos-release
+          if [ -d "plugins-macos/VST3" ]; then
+            cp -r plugins-macos/VST3 macos-release/
+          fi
+          if [ -d "plugins-macos/AU" ]; then
+            cp -r plugins-macos/AU macos-release/
+          fi
+          cd macos-release
+          zip -r "../../${SLUG}-macos.zip" .
+          cd ..
 
           # List contents for verification
           echo "=== Release Archives ==="
           ls -la ../*.zip
+          echo ""
+          echo "=== Linux archive contents ==="
+          unzip -l "../${SLUG}-linux.zip" | head -30
+          echo ""
+          echo "=== Windows archive contents ==="
+          unzip -l "../${SLUG}-windows.zip" | head -30
+          echo ""
+          echo "=== macOS archive contents ==="
+          unzip -l "../${SLUG}-macos.zip" | head -30
 
       - name: Create GitHub Release
         env:
@@ -570,16 +617,18 @@ jobs:
 
           ### Installation
 
+          Each zip contains \`VST3/\` and \`LV2/\` (Linux) or \`AU/\` (macOS) folders.
+
           **Linux:**
-          - VST3: Extract to \`~/.vst3/\`
-          - LV2: Extract to \`~/.lv2/\`
+          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`
+          - LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`
 
           **Windows:**
-          - VST3: Extract to \`C:\\Program Files\\Common Files\\VST3\\\`
+          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`C:\\Program Files\\Common Files\\VST3\\\`
 
           **macOS:**
-          - VST3: Extract to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
-          - AU: Extract to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`
+          - VST3: Copy the \`.vst3\` bundle from \`VST3/\` to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
+          - AU: Copy the \`.component\` bundle from \`AU/\` to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`
 
           ### Included Plugins
           - 4K EQ - SSL 4000 Series Console EQ Emulation
@@ -594,16 +643,18 @@ jobs:
 
           ### Installation
 
+          Each zip contains \`VST3/\` and \`LV2/\` (Linux) or \`AU/\` (macOS) folders.
+
           **Linux:**
-          - VST3: Extract to \`~/.vst3/\`
-          - LV2: Extract to \`~/.lv2/\`
+          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`
+          - LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`
 
           **Windows:**
-          - VST3: Extract to \`C:\\Program Files\\Common Files\\VST3\\\`
+          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`C:\\Program Files\\Common Files\\VST3\\\`
 
           **macOS:**
-          - VST3: Extract to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
-          - AU: Extract to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`"
+          - VST3: Copy the \`.vst3\` bundle from \`VST3/\` to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
+          - AU: Copy the \`.component\` bundle from \`AU/\` to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`"
           fi
 
           echo "$BODY" > release_body.md
