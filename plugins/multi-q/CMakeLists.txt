@@ -11,7 +11,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Build format options
 option(BUILD_VST3 "Build VST3 format" ON)
 option(BUILD_LV2 "Build LV2 format" ON)
-option(BUILD_AU "Build AU format" OFF)
+# AU is only supported on macOS
+if(APPLE)
+    option(BUILD_AU "Build AU format" ON)
+else()
+    option(BUILD_AU "Build AU format" OFF)
+endif()
 
 # Determine which formats to build
 set(PLUGIN_FORMATS "")
