@@ -57,11 +57,12 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     lookaheadSlider->setTextValueSuffix(" ms");
     lookaheadSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 18);
 
-    // Oversampling selector with clear items
+    // Oversampling selector with clear items (Off, 2x, 4x)
     oversamplingSelector = std::make_unique<juce::ComboBox>("Oversampling");
-    oversamplingSelector->addItem("2x", 1);
-    oversamplingSelector->addItem("4x", 2);
-    oversamplingSelector->setSelectedId(1);
+    oversamplingSelector->addItem("Off", 1);
+    oversamplingSelector->addItem("2x", 2);
+    oversamplingSelector->addItem("4x", 3);
+    oversamplingSelector->setSelectedId(2);  // Default to 2x
 
     // Sidechain HP filter vertical slider (Off to 500Hz)
     sidechainHpSlider = std::make_unique<juce::Slider>(juce::Slider::LinearVertical, juce::Slider::TextBoxBelow);

@@ -312,11 +312,13 @@ public:
 
     void setOversamplingFactor(int factor)
     {
-        // 0 = 2x, 1 = 4x
-        use4x = (factor == 1);
+        // 0 = Off, 1 = 2x, 2 = 4x
+        oversamplingOff = (factor == 0);
+        use4x = (factor == 2);
     }
 
     bool isUsing4x() const { return use4x; }
+    bool isOversamplingOff() const { return oversamplingOff; }
 
     bool isReady() const
     {
@@ -328,6 +330,10 @@ public:
     {
         // Reset upsampled flag
         didUpsample = false;
+
+        // If oversampling is off, return original block
+        if (oversamplingOff)
+            return block;
 
         // Safety check: verify oversampler is valid
         auto* oversampler = use4x ? oversampler4x.get() : oversampler2x.get();
@@ -447,6 +453,7 @@ private:
     double sampleRate = 0.0;  // Set by prepare() from DAW
     int blockSize = 0;        // Set by prepare() from DAW
     int numChannels = 0;      // Set by prepare() from DAW
+    bool oversamplingOff = false;  // No oversampling (1x)
     bool use4x = false;       // Use 4x oversampling instead of 2x
     bool didUpsample = false; // Track if processUp actually performed upsampling
 };
@@ -3411,10 +3418,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     layout.add(std::make_unique<juce::AudioParameterBool>(
         "noise_enable", "Analog Noise", true));
 
-    // Oversampling factor (0 = 2x, 1 = 4x)
+    // Oversampling factor (0 = Off, 1 = 2x, 2 = 4x)
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         "oversampling", "Oversampling",
-        juce::StringArray{"2x", "4x"}, 0));
+        juce::StringArray{"Off", "2x", "4x"}, 1));  // Default to 2x
 
     // Sidechain EQ - Low shelf
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -4367,8 +4374,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     int stereoLinkMode = (stereoLinkModeParam != nullptr) ? static_cast<int>(stereoLinkModeParam->load()) : 0;
     int oversamplingFactor = (oversamplingParam != nullptr) ? static_cast<int>(oversamplingParam->load()) : 0;
 
-    // Update oversampling factor (0 = 2x, 1 = 4x)
-    // User controls this via dropdown - 4x recommended for vintage modes with heavy saturation
+    // Update oversampling factor (0 = Off, 1 = 2x, 2 = 4x)
+    // User controls this via dropdown - 2x or 4x recommended for vintage modes with heavy saturation
     if (antiAliasing)
         antiAliasing->setOversamplingFactor(oversamplingFactor);
 

@@ -377,9 +377,9 @@ inline std::vector<Preset> getPresetsByCategory(const juce::String& category)
 
 inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset& preset)
 {
-    // Set mode first
+    // Set mode first - 8 modes (0-7), so normalize by dividing by 7.0
     if (auto* modeParam = params.getRawParameterValue("mode"))
-        params.getParameter("mode")->setValueNotifyingHost(preset.mode / 6.0f);
+        params.getParameter("mode")->setValueNotifyingHost(preset.mode / 7.0f);
 
     // Common parameters
     if (auto* p = params.getParameter("mix"))
