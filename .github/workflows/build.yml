@@ -95,8 +95,19 @@ jobs:
 
   build-linux:
     needs: setup
-    runs-on: ubuntu-20.04  # Use 20.04 for glibc 2.31 compatibility (wider distro support)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04  # Use 20.04 container for glibc 2.31 compatibility
     steps:
+      - name: Install git and dependencies
+        run: |
+          apt-get update
+          apt-get install -y git sudo software-properties-common
+          # Need newer git for actions/checkout
+          add-apt-repository -y ppa:git-core/ppa
+          apt-get update
+          apt-get install -y git
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -111,8 +122,9 @@ jobs:
 
       - name: Install Linux dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get install -y \
+            build-essential \
+            cmake \
             libasound2-dev \
             libjack-jackd2-dev \
             ladspa-sdk \
