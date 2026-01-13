@@ -300,9 +300,10 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 **Output**: Plugins are placed in `release/` directory with both VST3 and LV2 formats.
 
 **Compatibility**: Binaries work on:
-- Debian 12 (Bookworm) and newer
-- Ubuntu 22.04 LTS and newer
-- Most Linux distributions from 2022 onwards
+- Debian 11 (Bullseye) and newer
+- Ubuntu 20.04 LTS and newer
+- Any Linux distribution with glibc 2.31+
+- libstdc++ is statically linked (no GLIBCXX version dependency)
 
 **Requirements**: Either Podman (preferred on Fedora) or Docker must be installed.
 
@@ -493,7 +494,7 @@ plugins/
 │   ├── GlobalSettings.cmake
 │   └── JuceDefaults.cmake
 ├── docker/                   # Primary build environment (always use this)
-│   ├── Dockerfile.build     # Ubuntu 22.04 build image
+│   ├── Dockerfile.build     # Ubuntu 20.04 build image (glibc 2.31)
 │   └── build_release.sh     # Main build script
 ├── plugins/                  # Individual plugin directories
 │   ├── 4k-eq/               # 4K EQ (console-style EQ)
