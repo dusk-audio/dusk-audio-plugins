@@ -174,28 +174,28 @@ jobs:
           fi
 
       - name: Validate plugins
+        shell: bash
         run: |
           echo "=== Validating Linux plugin builds ==="
           found_vst3=0
           found_lv2=0
 
-          # Check VST3 plugins in build/bin/VST3/
-          # Use -print0 and read -d '' to handle paths with spaces
-          while IFS= read -r -d '' vst3; do
+          # Check VST3 plugins in build/bin/
+          for vst3 in $(find build/bin -name "*.vst3" -type d 2>/dev/null); do
             # Skip if no binary exists
-            if ! compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
+            if ! ls "$vst3/Contents/x86_64-linux/"*.so >/dev/null 2>&1; then
               echo "⊘ Skipping (no binary): $vst3"
               continue
             fi
             echo "✓ Found: $vst3"
             found_vst3=1
             echo "  ✓ Binary exists"
-          done < <(find build/bin -name "*.vst3" -type d -print0 2>/dev/null)
+          done
 
-          # Check LV2 plugins in build/bin/LV2/
-          while IFS= read -r -d '' lv2; do
+          # Check LV2 plugins in build/bin/
+          for lv2 in $(find build/bin -name "*.lv2" -type d 2>/dev/null); do
             # Skip if no binary exists
-            if ! compgen -G "$lv2/*.so" > /dev/null; then
+            if ! ls "$lv2/"*.so >/dev/null 2>&1; then
               echo "⊘ Skipping (no binary): $lv2"
               continue
             fi
@@ -206,7 +206,7 @@ jobs:
             else
               echo "  ⚠ Missing manifest.ttl"
             fi
-          done < <(find build/bin -name "*.lv2" -type d -print0 2>/dev/null)
+          done
 
           # Fail if no plugins were found
           if [ $found_vst3 -eq 0 ]; then
