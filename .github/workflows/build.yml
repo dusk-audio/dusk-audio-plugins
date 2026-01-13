@@ -97,17 +97,14 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:20.04  # Use 20.04 container for glibc 2.31 compatibility
+      image: debian:11  # Use Debian 11 for maximum compatibility (glibc 2.31)
     steps:
       - name: Install git and dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
-          TZ: Etc/UTC
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates tzdata
-          ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime
-          dpkg-reconfigure -f noninteractive tzdata
+          apt-get install -y --no-install-recommends git ca-certificates
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -119,24 +116,16 @@ jobs:
         with:
           repository: juce-framework/JUCE
           path: JUCE
-          ref: 8.0.12  # Pin to stable release for reproducible builds
+          ref: 7.0.12  # Use JUCE 7.x for GCC 10 compatibility (Debian 11)
 
       - name: Install Linux dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # Install Kitware's CMake repository for CMake 3.22+ (required by JUCE 8.x)
-          apt-get install -y --no-install-recommends wget gpg software-properties-common
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          # Install GCC 11 from Ubuntu Toolchain PPA (required for JUCE 8.x C++17 features)
-          add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          apt-get update
           apt-get install -y --no-install-recommends \
             build-essential \
-            gcc-11 \
-            g++-11 \
             cmake \
+            pkg-config \
             libasound2-dev \
             libjack-jackd2-dev \
             ladspa-sdk \
@@ -152,19 +141,12 @@ jobs:
             libwebkit2gtk-4.0-dev \
             libglu1-mesa-dev \
             mesa-common-dev
-          # Set GCC 11 as default compiler
-          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110
-          update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 110
 
       - name: Configure CMake
         run: |
-          # Static link libstdc++ for compatibility with older distros (Debian 11+)
-          # This avoids GLIBCXX version mismatches between build and runtime systems
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DJUCE_PATH=$(pwd)/JUCE \
-            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++"
+            -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
         run: |
@@ -269,7 +251,7 @@ jobs:
         with:
           repository: juce-framework/JUCE
           path: JUCE
-          ref: 8.0.12  # Pin to stable release for reproducible builds
+          ref: 7.0.12  # Use JUCE 7.x for broader compatibility
 
       - name: Configure CMake
         run: |
@@ -361,7 +343,7 @@ jobs:
         with:
           repository: juce-framework/JUCE
           path: JUCE
-          ref: 8.0.12  # Pin to stable release for reproducible builds
+          ref: 7.0.12  # Use JUCE 7.x for broader compatibility
 
       - name: Configure CMake (Universal Binary)
         run: |
