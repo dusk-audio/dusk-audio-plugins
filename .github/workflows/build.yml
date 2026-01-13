@@ -148,7 +148,7 @@ jobs:
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DJUCE_PATH=${{ github.workspace }}/JUCE
+            -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
         run: |
