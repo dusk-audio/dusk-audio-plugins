@@ -95,7 +95,7 @@ jobs:
 
   build-linux:
     needs: setup
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04  # Use 20.04 for glibc 2.31 compatibility (wider distro support)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
