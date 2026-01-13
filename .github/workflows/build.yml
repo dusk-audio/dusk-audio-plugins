@@ -222,22 +222,23 @@ jobs:
           echo "=== Validation passed ==="
 
       - name: Prepare artifacts
+        shell: bash
         run: |
           mkdir -p artifacts/linux/VST3 artifacts/linux/LV2
 
-          # Copy VST3 plugins from build/bin/VST3/
-          while IFS= read -r -d '' vst3; do
-            if compgen -G "$vst3/Contents/x86_64-linux/*.so" > /dev/null; then
+          # Copy VST3 plugins from build/bin/ (handles spaces in names)
+          find build/bin -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
+            if ls "$vst3/Contents/x86_64-linux/"*.so >/dev/null 2>&1; then
               cp -r "$vst3" artifacts/linux/VST3/
             fi
-          done < <(find build/bin -name "*.vst3" -type d -print0 2>/dev/null)
+          done
 
-          # Copy LV2 plugins from build/bin/LV2/
-          while IFS= read -r -d '' lv2; do
-            if compgen -G "$lv2/*.so" > /dev/null; then
+          # Copy LV2 plugins from build/bin/ (handles spaces in names)
+          find build/bin -name "*.lv2" -type d -print0 2>/dev/null | while IFS= read -r -d '' lv2; do
+            if ls "$lv2/"*.so >/dev/null 2>&1; then
               cp -r "$lv2" artifacts/linux/LV2/
             fi
-          done < <(find build/bin -name "*.lv2" -type d -print0 2>/dev/null)
+          done
 
           # List what we collected
           echo "=== Linux Artifacts ==="
@@ -515,6 +516,7 @@ jobs:
           cd ..
 
       - name: Prepare artifacts
+        shell: bash
         run: |
           mkdir -p artifacts/macos/VST3 artifacts/macos/AU
 
@@ -523,21 +525,21 @@ jobs:
             cp -r build/notarize_staging/*.vst3 artifacts/macos/VST3/ 2>/dev/null || true
             cp -r build/notarize_staging/*.component artifacts/macos/AU/ 2>/dev/null || true
           else
-            # Copy VST3 plugins from build/bin/VST3/
-            while IFS= read -r -d '' vst3; do
+            # Copy VST3 plugins from build/bin/ (handles spaces in names)
+            find build/bin -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
               plugin_name=$(basename "$vst3" .vst3)
               if [ -f "$vst3/Contents/MacOS/$plugin_name" ]; then
                 cp -r "$vst3" artifacts/macos/VST3/
               fi
-            done < <(find build/bin -name "*.vst3" -type d -print0 2>/dev/null)
+            done
 
-            # Copy AU plugins from build/bin/AU/
-            while IFS= read -r -d '' au; do
+            # Copy AU plugins from build/bin/ (handles spaces in names)
+            find build/bin -name "*.component" -type d -print0 2>/dev/null | while IFS= read -r -d '' au; do
               plugin_name=$(basename "$au" .component)
               if [ -f "$au/Contents/MacOS/$plugin_name" ]; then
                 cp -r "$au" artifacts/macos/AU/
               fi
-            done < <(find build/bin -name "*.component" -type d -print0 2>/dev/null)
+            done
           fi
 
           echo "=== macOS Artifacts ==="
