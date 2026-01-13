@@ -100,13 +100,14 @@ jobs:
       image: ubuntu:20.04  # Use 20.04 container for glibc 2.31 compatibility
     steps:
       - name: Install git and dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          TZ: Etc/UTC
         run: |
           apt-get update
-          apt-get install -y git sudo software-properties-common
-          # Need newer git for actions/checkout
-          add-apt-repository -y ppa:git-core/ppa
-          apt-get update
-          apt-get install -y git
+          apt-get install -y --no-install-recommends git ca-certificates tzdata
+          ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime
+          dpkg-reconfigure -f noninteractive tzdata
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -121,8 +122,10 @@ jobs:
           ref: 8.0.12  # Pin to stable release for reproducible builds
 
       - name: Install Linux dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get install -y \
+          apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
             libasound2-dev \
