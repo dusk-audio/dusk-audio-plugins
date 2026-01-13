@@ -126,12 +126,16 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           # Install Kitware's CMake repository for CMake 3.22+ (required by JUCE 8.x)
-          apt-get install -y --no-install-recommends wget gpg
+          apt-get install -y --no-install-recommends wget gpg software-properties-common
           wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          # Install GCC 11 from Ubuntu Toolchain PPA (required for JUCE 8.x C++17 features)
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential \
+            gcc-11 \
+            g++-11 \
             cmake \
             libasound2-dev \
             libjack-jackd2-dev \
@@ -148,6 +152,9 @@ jobs:
             libwebkit2gtk-4.0-dev \
             libglu1-mesa-dev \
             mesa-common-dev
+          # Set GCC 11 as default compiler
+          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110
+          update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 110
 
       - name: Configure CMake
         run: |
