@@ -97,7 +97,7 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     container:
-      image: debian:11  # Use Debian 11 for maximum compatibility (glibc 2.31)
+      image: debian:12  # Use Debian 12 for glibc 2.36 + GCC 12 (GLIBCXX 3.4.30)
     steps:
       - name: Install git and dependencies
         env:
@@ -116,7 +116,7 @@ jobs:
         with:
           repository: juce-framework/JUCE
           path: JUCE
-          ref: 7.0.12  # Use JUCE 7.x for GCC 10 compatibility (Debian 11)
+          ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
       - name: Install Linux dependencies
         env:
@@ -251,7 +251,7 @@ jobs:
         with:
           repository: juce-framework/JUCE
           path: JUCE
-          ref: 7.0.12  # Use JUCE 7.x for broader compatibility
+          ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
       - name: Configure CMake
         run: |
@@ -343,7 +343,7 @@ jobs:
         with:
           repository: juce-framework/JUCE
           path: JUCE
-          ref: 7.0.12  # Use JUCE 7.x for broader compatibility
+          ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
       - name: Configure CMake (Universal Binary)
         run: |
