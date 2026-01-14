@@ -300,10 +300,9 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 **Output**: Plugins are placed in `release/` directory with both VST3 and LV2 formats.
 
 **Compatibility**: Binaries work on:
-- Debian 11 (Bullseye) and newer
-- Ubuntu 20.04 LTS and newer
-- Any Linux distribution with glibc 2.31+
-- libstdc++ is statically linked (no GLIBCXX version dependency)
+- Debian 12 (Bookworm) and newer
+- Ubuntu 22.04 LTS and newer
+- Any Linux distribution with glibc 2.36+ and GLIBCXX 3.4.30+
 
 **Requirements**: Either Podman (preferred on Fedora) or Docker must be installed.
 
