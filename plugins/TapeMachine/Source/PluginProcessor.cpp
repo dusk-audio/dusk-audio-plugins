@@ -552,9 +552,21 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     processorChainLeft.get<3>().setGainLinear(targetOutputGain);
     processorChainRight.get<3>().setGainLinear(targetOutputGain);
 
-    // Keep smoothing for non-gain parameters that we process per-sample
-    // Drive saturation from input gain: -12dB to +12dB maps to 0% to 100%
-    // (inputGainDB already calculated above)
+    // =========================================================================
+    // SATURATION DEPTH CALCULATION - Driven by Input Gain
+    // =========================================================================
+    // Input gain (-12 to +12 dB) controls how hard we "drive" the virtual tape.
+    // This maps directly to saturation depth (0-100%):
+    //   -12 dB input → 0% saturation (clean, transparent)
+    //     0 dB input → 50% saturation (moderate warmth, like +0 VU)
+    //   +12 dB input → 100% saturation (heavy, like +6 VU on hot tape)
+    //
+    // This relationship mirrors real tape machines where hotter input levels
+    // push the tape into saturation, adding harmonic content and compression.
+    // The saturation amount controls:
+    //   - Harmonic generation (H2/H3 levels in ImprovedTapeEmulation)
+    //   - Soft compression characteristics
+    //   - Overall "tape warmth"
     const float saturationAmount = juce::jlimit(0.0f, 100.0f, ((inputGainDB + 12.0f) / 24.0f) * 100.0f);
     smoothedSaturation.setTargetValue(saturationAmount);
     smoothedWow.setTargetValue(wowAmountParam->load());
