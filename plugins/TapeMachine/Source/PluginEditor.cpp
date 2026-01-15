@@ -459,6 +459,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     noiseEnabledButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff5a4838));
     noiseEnabledButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff888888));
     noiseEnabledButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffE8D4B0));
+    noiseEnabledButton.setTooltip("Tape Noise Enable\nAdds authentic tape hiss. Amount controlled by NOISE knob");
     noiseEnabledButton.onStateChange = [this]() {
         noiseEnabledButton.setButtonText(noiseEnabledButton.getToggleState() ? "ON" : "OFF");
     };
@@ -473,6 +474,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor (TapeMachineAud
     autoCompButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff6a5838));
     autoCompButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff888888));
     autoCompButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffF8D080));  // Brighter gold when on
+    autoCompButton.setTooltip("Input/Output Link (VTM-style Auto-Compensation)\nWhen ON: Output = -Input for unity gain through saturation\nDrive tape harder without changing overall level");
     addAndMakeVisible(autoCompButton);
     autoCompAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getAPVTS(), "autoComp", autoCompButton);
@@ -533,6 +535,25 @@ void TapeMachineAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::La
     label.setFont(juce::Font(12.0f, juce::Font::bold));
     label.attachToComponent(&slider, false);
     addAndMakeVisible(label);
+
+    // Add parameter tooltips for user guidance
+    // These provide helpful context about what each control does
+    if (text == "INPUT")
+        slider.setTooltip("Input Gain (-12 to +12 dB)\nDrives tape saturation - higher values add warmth and harmonics");
+    else if (text == "OUTPUT")
+        slider.setTooltip("Output Gain (-12 to +12 dB)\nFinal level control. When LINK is on, follows input inversely for unity gain");
+    else if (text == "BIAS")
+        slider.setTooltip("Tape Bias (0-100%)\nControls harmonic character: Low = gritty/edgy, High = warm/smooth");
+    else if (text == "LOW CUT")
+        slider.setTooltip("High-Pass Filter (20-500 Hz)\nRemoves low frequency rumble and tightens the low end");
+    else if (text == "HIGH CUT")
+        slider.setTooltip("Low-Pass Filter (3-20 kHz)\nControls high frequency rolloff for darker/warmer tone");
+    else if (text == "NOISE")
+        slider.setTooltip("Tape Hiss Amount (0-100%)\nAdds authentic tape noise floor when enabled");
+    else if (text == "WOW")
+        slider.setTooltip("Wow Amount (0-100%)\nSlow pitch drift (0.3-0.8 Hz) - creates vinyl-like wobble");
+    else if (text == "FLUTTER")
+        slider.setTooltip("Flutter Amount (0-100%)\nFaster pitch modulation (3-7 Hz) - adds tape machine character");
 }
 
 void TapeMachineAudioProcessorEditor::setupComboBox(juce::ComboBox& combo, juce::Label& label, const juce::String& text)
@@ -551,6 +572,16 @@ void TapeMachineAudioProcessorEditor::setupComboBox(juce::ComboBox& combo, juce:
     label.setFont(juce::Font(10.0f, juce::Font::bold));
     // Don't attach to component - we'll position manually in resized()
     addAndMakeVisible(label);
+
+    // Add tooltips for combo boxes
+    if (text == "MACHINE")
+        combo.setTooltip("Tape Machine Model\nSwiss 800: Studer A800 (clean, precise)\nClassic 102: Ampex ATR-102 (warm, punchy)");
+    else if (text == "SPEED")
+        combo.setTooltip("Tape Speed\n7.5 IPS: More warmth, head bump, vintage character\n15 IPS: Balanced (studio standard)\n30 IPS: Extended HF, tighter low end");
+    else if (text == "TAPE TYPE")
+        combo.setTooltip("Tape Formulation\nType 456: Classic warm sound\nType GP9: Modern, extended headroom\nType 911: German precision, balanced\nType 250: Vintage 70s character");
+    else if (text == "HQ")
+        combo.setTooltip("Oversampling Quality\n2x: Lower CPU, good quality\n4x: Higher CPU, best anti-aliasing");
 }
 
 void TapeMachineAudioProcessorEditor::paint (juce::Graphics& g)
@@ -564,7 +595,12 @@ void TapeMachineAudioProcessorEditor::paint (juce::Graphics& g)
     LunaLookAndFeel::drawPluginHeader(g, bounds, "TapeMachine", "Vintage Tape Emulation");
 
     // Set up clickable area for title (matches header drawing position)
-    titleClickArea = juce::Rectangle<int>(10, 5, 180, 30);
+    // LunaLookAndFeel::drawPluginHeader draws the name at:
+    //   x: 10 (from reduce(10, 5))
+    //   y: 5 (from reduce(10, 5))
+    //   height: 20 (from removeFromTop(30) then reduced by 5+5)
+    // We make it slightly larger for easier clicking
+    titleClickArea = juce::Rectangle<int>(10, 5, 180, 25);
 
     // Add subtle vintage texture overlay for tape machine character
     for (int y = 45; y < getHeight(); y += 4)
