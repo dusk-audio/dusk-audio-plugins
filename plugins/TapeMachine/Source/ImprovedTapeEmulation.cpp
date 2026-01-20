@@ -192,11 +192,22 @@ void MotorFlutter::reset()
 // Accurate to ~0.1% for values in [-pi, pi], good enough for modulation
 static inline float fastSin(float x)
 {
-    // Normalize to [-pi, pi]
+    // Early check for non-finite values (NaN, inf)
+    if (!std::isfinite(x))
+        return 0.0f;
+
     constexpr float pi = 3.14159265f;
     constexpr float twoPi = 6.28318530f;
-    while (x > pi) x -= twoPi;
-    while (x < -pi) x += twoPi;
+
+    // Safe normalization using fmod instead of while loops
+    // This prevents infinite loops for extremely large values
+    x = std::fmod(x, twoPi);
+
+    // Shift into [-pi, pi] range
+    if (x > pi)
+        x -= twoPi;
+    else if (x < -pi)
+        x += twoPi;
 
     // Parabolic approximation: 4/pi * x - 4/pi^2 * x * |x|
     constexpr float B = 4.0f / pi;
@@ -690,60 +701,115 @@ ImprovedTapeEmulation::getSpeedCharacteristics(TapeSpeed speed)
 }
 
 void ImprovedTapeEmulation::updateFilters(TapeMachine machine, TapeSpeed speed,
-                                         TapeType type, float biasAmount)
+                                         TapeType type, float biasAmount,
+                                         EQStandard eqStandard)
 {
     auto machineChars = getMachineCharacteristics(machine);
     auto tapeChars = getTapeCharacteristics(type);
     auto speedChars = getSpeedCharacteristics(speed);
 
-    // NAB/IEC EQ curves - UAD-accurate implementation
-    // NAB (American): Used by Ampex - more HF boost/cut
-    // IEC/CCIR (European): Used by Studer - gentler curves
+    // ========================================================================
+    // EQ Standard Selection - NAB/CCIR/AES pre-emphasis/de-emphasis curves
+    // Each standard has different time constants and frequency characteristics
+    // ========================================================================
+    //
+    // NAB (American - National Association of Broadcasters):
+    //   - Used primarily in US studios
+    //   - Time constants: 50μs and 3180μs
+    //   - More HF boost/cut, characteristic "American" sound
+    //   - Associated with 60Hz mains hum
+    //
+    // CCIR/IEC (European - International Electrotechnical Commission):
+    //   - Used primarily in European studios
+    //   - Time constants: 70μs and 3180μs (IEC) or 35μs (CCIR at 15 IPS)
+    //   - Gentler curves, slightly different character
+    //   - Associated with 50Hz mains hum
+    //
+    // AES (Audio Engineering Society):
+    //   - Modern standard, primarily for 30 IPS
+    //   - Minimal pre-emphasis for extended high-frequency response
+    //   - Clean, flat response
 
-    float preEmphasisFreq = 3183.0f;   // 50μs time constant
+    float preEmphasisFreq = 3183.0f;   // Default 50μs time constant
     float preEmphasisGain = 6.0f;       // dB
     float deEmphasisFreq = 3183.0f;
     float deEmphasisGain = -6.0f;       // dB
-    float lowFreqCompensation = 50.0f;  // 3180μs
+    float lowFreqCompensation = 50.0f;  // 3180μs time constant = 50Hz
 
-    // Speed-dependent EQ adjustments (UAD-accurate)
-    switch (speed)
+    // EQ Standard determines the base curves
+    switch (eqStandard)
     {
-        case Speed_7_5_IPS:
-            // 7.5 IPS: 90μs = 1768 Hz, more pre-emphasis needed
-            preEmphasisFreq = 1768.0f;
-            preEmphasisGain = 9.0f;  // More boost at low speed
-            deEmphasisFreq = 1768.0f;
-            deEmphasisGain = -9.0f;
+        case NAB:
+            // NAB curves (American standard)
+            switch (speed)
+            {
+                case Speed_7_5_IPS:
+                    // NAB 7.5 IPS: 90μs = 1768 Hz
+                    preEmphasisFreq = 1768.0f;
+                    preEmphasisGain = 9.0f;
+                    deEmphasisFreq = 1768.0f;
+                    deEmphasisGain = -9.0f;
+                    lowFreqCompensation = 50.0f;
+                    break;
+                case Speed_15_IPS:
+                    // NAB 15 IPS: 50μs = 3183 Hz (reference)
+                    preEmphasisFreq = 3183.0f;
+                    preEmphasisGain = 6.0f;
+                    deEmphasisFreq = 3183.0f;
+                    deEmphasisGain = -6.0f;
+                    lowFreqCompensation = 50.0f;
+                    break;
+                case Speed_30_IPS:
+                    // NAB 30 IPS: 35μs = 4547 Hz
+                    preEmphasisFreq = 4547.0f;
+                    preEmphasisGain = 4.5f;
+                    deEmphasisFreq = 4547.0f;
+                    deEmphasisGain = -4.5f;
+                    lowFreqCompensation = 50.0f;
+                    break;
+            }
             break;
-        case Speed_15_IPS:
-            // 15 IPS: 50μs = 3183 Hz (reference speed)
-            preEmphasisFreq = 3183.0f;
-            preEmphasisGain = 6.0f;
-            deEmphasisFreq = 3183.0f;
-            deEmphasisGain = -6.0f;
-            break;
-        case Speed_30_IPS:
-            // 30 IPS: 35μs = 4547 Hz, extended HF response
-            preEmphasisFreq = 4547.0f;
-            preEmphasisGain = 4.5f;  // Less boost at high speed
-            deEmphasisFreq = 4547.0f;
-            deEmphasisGain = -4.5f;
-            break;
-    }
 
-    // Machine-specific EQ characteristics
-    if (machine == Swiss800)
-    {
-        // IEC/CCIR curves - slightly different than NAB
-        preEmphasisGain *= 0.9f;   // Gentler
-        deEmphasisGain *= 0.9f;
-    }
-    else if (machine == Classic102)
-    {
-        // Pure NAB curves - more pronounced
-        preEmphasisGain *= 1.1f;
-        deEmphasisGain *= 1.1f;
+        case CCIR:
+            // CCIR/IEC curves (European standard) - gentler HF boost
+            switch (speed)
+            {
+                case Speed_7_5_IPS:
+                    // CCIR 7.5 IPS: 70μs = 2274 Hz
+                    preEmphasisFreq = 2274.0f;
+                    preEmphasisGain = 7.5f;
+                    deEmphasisFreq = 2274.0f;
+                    deEmphasisGain = -7.5f;
+                    lowFreqCompensation = 50.0f;
+                    break;
+                case Speed_15_IPS:
+                    // CCIR 15 IPS: 35μs = 4547 Hz (flatter response than NAB)
+                    preEmphasisFreq = 4547.0f;
+                    preEmphasisGain = 4.5f;
+                    deEmphasisFreq = 4547.0f;
+                    deEmphasisGain = -4.5f;
+                    lowFreqCompensation = 50.0f;
+                    break;
+                case Speed_30_IPS:
+                    // CCIR 30 IPS: Very flat, minimal emphasis
+                    preEmphasisFreq = 6000.0f;
+                    preEmphasisGain = 3.0f;
+                    deEmphasisFreq = 6000.0f;
+                    deEmphasisGain = -3.0f;
+                    lowFreqCompensation = 50.0f;
+                    break;
+            }
+            break;
+
+        case AES:
+            // AES standard - minimal pre-emphasis for extended HF
+            // Primarily used at 30 IPS for mastering
+            preEmphasisFreq = 8000.0f;
+            preEmphasisGain = 2.0f;
+            deEmphasisFreq = 8000.0f;
+            deEmphasisGain = -2.0f;
+            lowFreqCompensation = 35.0f;  // Slightly higher LF corner
+            break;
     }
 
     // Update pre-emphasis (recording EQ)
@@ -843,8 +909,14 @@ float ImprovedTapeEmulation::processSample(float input,
                                           bool noiseEnabled,
                                           float noiseAmount,
                                           float* sharedWowFlutterMod,
-                                          float calibrationLevel)
+                                          float calibrationLevel,
+                                          EQStandard eqStandard,
+                                          SignalPath signalPath)
 {
+    // Signal Path: Thru = complete bypass
+    if (signalPath == Thru)
+        return input;
+
     // Denormal protection at input
     if (std::abs(input) < denormalPrevention)
         return 0.0f;
@@ -853,13 +925,16 @@ float ImprovedTapeEmulation::processSample(float input,
     inputLevel.store(std::abs(input));
 
     // Update filters and cache characteristics when parameters change
-    if (machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType || std::abs(biasAmount - m_lastBias) > 0.01f)
+    // Now also tracks EQ standard changes
+    if (machine != m_lastMachine || speed != m_lastSpeed || type != m_lastType ||
+        std::abs(biasAmount - m_lastBias) > 0.01f || eqStandard != m_lastEqStandard)
     {
-        updateFilters(machine, speed, type, biasAmount);
+        updateFilters(machine, speed, type, biasAmount, eqStandard);
         m_lastMachine = machine;
         m_lastSpeed = speed;
         m_lastType = type;
         m_lastBias = biasAmount;
+        m_lastEqStandard = eqStandard;
 
         // Cache characteristics (expensive lookups done once, not per-sample)
         m_cachedMachineChars = getMachineCharacteristics(machine);
