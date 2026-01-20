@@ -3,137 +3,143 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "GUI/AnalogVUMeter.h"
-#include "../../shared/LunaVintageLookAndFeel.h"
+#include "GUI/TapeMachineLookAndFeel.h"
 #include "../../shared/SupportersOverlay.h"
 
-class CustomLookAndFeel : public LunaVintageLookAndFeel
+//==============================================================================
+// Premium Tape Reel Animation Component
+// Photorealistic 3D-style spinning reels with metallic reflections
+//==============================================================================
+class PremiumReelAnimation : public juce::Component, public juce::Timer
 {
 public:
-    CustomLookAndFeel();
-    ~CustomLookAndFeel() override;
-
-    // TapeMachine-specific knob and button styling
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                         float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-                         juce::Slider& slider) override;
-
-    void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
-                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
-
-    // Enhanced label drawing with text shadow for better readability
-    void drawLabel(juce::Graphics& g, juce::Label& label) override;
-};
-
-class ReelAnimation : public juce::Component, public juce::Timer
-{
-public:
-    ReelAnimation();
-    ~ReelAnimation() override;
+    PremiumReelAnimation();
+    ~PremiumReelAnimation() override;
 
     void paint(juce::Graphics& g) override;
     void timerCallback() override;
     void setSpeed(float speed);
 
-    // Tape amount: 0.0 = empty reel, 1.0 = full reel
     void setTapeAmount(float amount);
     float getTapeAmount() const { return tapeAmount; }
 
-    // Set whether this is the supply (left) or take-up (right) reel
     void setIsSupplyReel(bool isSupply) { isSupplyReel = isSupply; }
 
 private:
     float rotation = 0.0f;
     float rotationSpeed = 1.0f;
-    float tapeAmount = 0.5f;      // Current tape on this reel (0-1)
-    bool isSupplyReel = true;     // Supply reel starts full, take-up starts empty
+    float tapeAmount = 0.5f;
+    bool isSupplyReel = true;
 };
 
-// VUMeter class is now imported from GUI/VUMeter.h
-
+//==============================================================================
+// Main Plugin Editor
+//==============================================================================
 class TapeMachineAudioProcessorEditor : public juce::AudioProcessorEditor, public juce::Timer
 {
 public:
-    TapeMachineAudioProcessorEditor (TapeMachineAudioProcessor&);
+    TapeMachineAudioProcessorEditor(TapeMachineAudioProcessor&);
     ~TapeMachineAudioProcessorEditor() override;
 
-    void paint (juce::Graphics&) override;
+    void paint(juce::Graphics&) override;
     void resized() override;
     void timerCallback() override;
     void mouseDown(const juce::MouseEvent& e) override;
 
 private:
     TapeMachineAudioProcessor& audioProcessor;
-    CustomLookAndFeel customLookAndFeel;
+    TapeMachineLookAndFeel tapeMachineLookAndFeel;
 
+    // Combo boxes
     juce::ComboBox tapeMachineSelector;
     juce::ComboBox tapeSpeedSelector;
     juce::ComboBox tapeTypeSelector;
     juce::ComboBox oversamplingSelector;
+    juce::ComboBox signalPathSelector;
+    juce::ComboBox eqStandardSelector;
 
+    // Sliders
     juce::Slider inputGainSlider;
     juce::Slider biasSlider;
     juce::Slider highpassFreqSlider;
     juce::Slider lowpassFreqSlider;
-    juce::Slider noiseAmountSlider;
+    juce::Slider mixSlider;
     juce::Slider wowSlider;
     juce::Slider flutterSlider;
     juce::Slider outputGainSlider;
 
+    // Toggle buttons
     juce::ToggleButton noiseEnabledButton;
     juce::ToggleButton autoCompButton;
-    juce::Label autoCompLabel;
+    juce::ToggleButton autoCalButton;
 
+    // Labels
+    juce::Label noiseLabel;
+    juce::Label autoCompLabel;
+    juce::Label autoCalLabel;
     juce::Label tapeMachineLabel;
     juce::Label tapeSpeedLabel;
     juce::Label tapeTypeLabel;
     juce::Label oversamplingLabel;
+    juce::Label signalPathLabel;
+    juce::Label eqStandardLabel;
     juce::Label inputGainLabel;
     juce::Label biasLabel;
     juce::Label highpassFreqLabel;
     juce::Label lowpassFreqLabel;
-    juce::Label noiseAmountLabel;
+    juce::Label mixLabel;
     juce::Label wowLabel;
     juce::Label flutterLabel;
     juce::Label outputGainLabel;
 
-    ReelAnimation leftReel;
-    ReelAnimation rightReel;
+    // Visual components
+    PremiumReelAnimation leftReel;
+    PremiumReelAnimation rightReel;
+    AnalogVUMeter mainVUMeter;
 
-    AnalogVUMeter mainVUMeter;  // Professional analog VU meter with dual needles
-
+    // Parameter attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeMachineAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeSpeedAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tapeTypeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oversamplingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> signalPathAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> eqStandardAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inputGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> biasAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highpassFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowpassFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noiseAmountAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wowAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flutterAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> noiseEnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoCompAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoCalAttachment;
 
+    // Setup helpers
     void setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text);
     void setupComboBox(juce::ComboBox& combo, juce::Label& label, const juce::String& text);
 
-    float wowPhase = 0.0f;  // Phase for visual wow effect animation
+    // UI drawing helpers
+    void drawPanelBackground(juce::Graphics& g);
+    void drawVintageTexture(juce::Graphics& g, juce::Rectangle<int> area);
 
-    // Auto-comp bidirectional linking
+    // Animation state
+    float wowPhase = 0.0f;
+
+    // Auto-comp linking
     float lastInputGainValue = 0.0f;
     float lastOutputGainValue = 0.0f;
-    bool isUpdatingGainSliders = false;  // Prevent recursive updates
+    bool isUpdatingGainSliders = false;
 
-    // Patreon supporters overlay
+    // Supporters overlay
     std::unique_ptr<SupportersOverlay> supportersOverlay;
     juce::Rectangle<int> titleClickArea;
 
     void showSupportersPanel();
     void hideSupportersPanel();
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineAudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineAudioProcessorEditor)
 };
