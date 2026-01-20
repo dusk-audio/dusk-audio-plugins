@@ -120,6 +120,8 @@ private:
     std::atomic<float>* tapeMachineParam = nullptr;
     std::atomic<float>* tapeSpeedParam = nullptr;
     std::atomic<float>* tapeTypeParam = nullptr;
+    std::atomic<float>* signalPathParam = nullptr;
+    std::atomic<float>* eqStandardParam = nullptr;
     std::atomic<float>* inputGainParam = nullptr;
     std::atomic<float>* highpassFreqParam = nullptr;
     std::atomic<float>* lowpassFreqParam = nullptr;
@@ -129,6 +131,11 @@ private:
     std::atomic<float>* flutterAmountParam = nullptr;
     std::atomic<float>* outputGainParam = nullptr;
     std::atomic<float>* autoCompParam = nullptr;
+    std::atomic<float>* autoCalParam = nullptr;
+    std::atomic<float>* mixParam = nullptr;
+
+    // Dry buffer for wet/dry mixing
+    juce::AudioBuffer<float> dryBuffer;
 
     void updateFilters();
 

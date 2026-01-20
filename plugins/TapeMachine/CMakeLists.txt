@@ -13,7 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 juce_add_plugin(TapeMachine
     COMPANY_NAME "Luna Co. Audio"
     IS_SYNTH FALSE
-    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
@@ -37,7 +37,8 @@ target_sources(TapeMachine
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/ImprovedTapeEmulation.cpp
-        Source/GUI/AnalogVUMeter.cpp)
+        Source/GUI/AnalogVUMeter.cpp
+        Source/GUI/TapeMachineLookAndFeel.cpp)
 
 # Add compile definitions
 target_compile_definitions(TapeMachine
