@@ -424,6 +424,23 @@ public:
         Type250           // Professional studio formulation
     };
 
+    // EQ Standard - affects pre-emphasis/de-emphasis curves
+    enum EQStandard
+    {
+        NAB = 0,          // American standard (60Hz hum region)
+        CCIR,             // European/IEC standard (50Hz hum region)
+        AES               // AES standard (typically 30 IPS only)
+    };
+
+    // Signal Path - determines processing stages
+    enum SignalPath
+    {
+        Repro = 0,        // Full tape processing (record + playback)
+        Sync,             // Record head playback (slightly different EQ)
+        Input,            // Electronics only (no tape saturation)
+        Thru              // Complete bypass
+    };
+
     void prepare(double sampleRate, int samplesPerBlock);
     void reset();
 
@@ -438,7 +455,9 @@ public:
                        bool noiseEnabled = false,  // Noise on/off
                        float noiseAmount = 0.0f,   // 0-1 (noise level)
                        float* sharedWowFlutterMod = nullptr,  // Shared modulation for stereo coherence
-                       float calibrationLevel = 0.0f  // 0/3/6/9 dB - affects headroom/saturation point
+                       float calibrationLevel = 0.0f,  // 0/3/6/9 dB - affects headroom/saturation point
+                       EQStandard eqStandard = NAB,    // NAB/CCIR/AES pre-emphasis curves
+                       SignalPath signalPath = Repro   // Processing path selection
                        );
 
     // Metering
@@ -636,6 +655,7 @@ private:
     TapeMachine m_lastMachine = static_cast<TapeMachine>(-1);
     TapeSpeed m_lastSpeed = static_cast<TapeSpeed>(-1);
     TapeType m_lastType = static_cast<TapeType>(-1);
+    EQStandard m_lastEqStandard = static_cast<EQStandard>(-1);
     float m_lastBias = -1.0f;
 
     // Cached characteristics (updated when parameters change, not per-sample)
@@ -649,7 +669,8 @@ private:
     MachineCharacteristics getMachineCharacteristics(TapeMachine machine);
     TapeCharacteristics getTapeCharacteristics(TapeType type);
     SpeedCharacteristics getSpeedCharacteristics(TapeSpeed speed);
-    void updateFilters(TapeMachine machine, TapeSpeed speed, TapeType type, float biasAmount);
+    void updateFilters(TapeMachine machine, TapeSpeed speed, TapeType type, float biasAmount,
+                      EQStandard eqStandard = NAB);
 
     // Soft clipping function
     static float softClip(float input, float threshold);
@@ -666,10 +687,15 @@ private:
             return false;
 
         auto* rawCoeffs = coeffs->getRawCoefficients();
+        if (rawCoeffs == nullptr)
+            return false;
+
+        // IIR biquad has: b0, b1, b2, a1, a2 (a0 is normalized to 1 and not stored)
+        // For order N filter: (N+1) b coefficients + N a coefficients
         size_t numCoeffs = coeffs->getFilterOrder() + 1;  // b coeffs
         numCoeffs += coeffs->getFilterOrder();             // a coeffs (a0 normalized to 1)
 
-        for (size_t i = 0; i < numCoeffs * 2; ++i)  // Check all coefficients
+        for (size_t i = 0; i < numCoeffs; ++i)
         {
             if (!std::isfinite(rawCoeffs[i]))
                 return false;
