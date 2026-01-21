@@ -4,33 +4,8 @@
 #include "PluginProcessor.h"
 #include "GUI/AnalogVUMeter.h"
 #include "GUI/TapeMachineLookAndFeel.h"
+#include "GUI/TapeReelComponent.h"
 #include "../../shared/SupportersOverlay.h"
-
-//==============================================================================
-// Premium Tape Reel Animation Component
-// Photorealistic 3D-style spinning reels with metallic reflections
-//==============================================================================
-class PremiumReelAnimation : public juce::Component, public juce::Timer
-{
-public:
-    PremiumReelAnimation();
-    ~PremiumReelAnimation() override;
-
-    void paint(juce::Graphics& g) override;
-    void timerCallback() override;
-    void setSpeed(float speed);
-
-    void setTapeAmount(float amount);
-    float getTapeAmount() const { return tapeAmount; }
-
-    void setIsSupplyReel(bool isSupply) { isSupplyReel = isSupply; }
-
-private:
-    float rotation = 0.0f;
-    float rotationSpeed = 1.0f;
-    float tapeAmount = 0.5f;
-    bool isSupplyReel = true;
-};
 
 //==============================================================================
 // Main Plugin Editor
@@ -93,8 +68,8 @@ private:
     juce::Label outputGainLabel;
 
     // Visual components
-    PremiumReelAnimation leftReel;
-    PremiumReelAnimation rightReel;
+    TapeReelComponent leftReel;
+    TapeReelComponent rightReel;
     AnalogVUMeter mainVUMeter;
 
     // Parameter attachments

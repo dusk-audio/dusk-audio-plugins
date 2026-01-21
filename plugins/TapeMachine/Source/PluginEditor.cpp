@@ -5,43 +5,6 @@
 using namespace TapeMachineColors;
 
 //==============================================================================
-// Premium Reel Animation
-//==============================================================================
-PremiumReelAnimation::PremiumReelAnimation()
-{
-    startTimerHz(30);
-}
-
-PremiumReelAnimation::~PremiumReelAnimation()
-{
-    stopTimer();
-}
-
-void PremiumReelAnimation::paint(juce::Graphics& g)
-{
-    auto bounds = getLocalBounds().toFloat();
-    PremiumReelRenderer::drawReel(g, bounds, rotation, tapeAmount, isSupplyReel);
-}
-
-void PremiumReelAnimation::timerCallback()
-{
-    rotation += rotationSpeed * 0.1f;
-    if (rotation > 2.0f * juce::MathConstants<float>::pi)
-        rotation -= 2.0f * juce::MathConstants<float>::pi;
-    repaint();
-}
-
-void PremiumReelAnimation::setSpeed(float speed)
-{
-    rotationSpeed = juce::jlimit(0.0f, 5.0f, speed);
-}
-
-void PremiumReelAnimation::setTapeAmount(float amount)
-{
-    tapeAmount = juce::jlimit(0.0f, 1.0f, amount);
-}
-
-//==============================================================================
 // Editor Constructor
 //==============================================================================
 TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudioProcessor& p)

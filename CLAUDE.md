@@ -25,9 +25,16 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 **Release Process:**
 1. Ensure GitHub Actions build passes for all platforms
-2. Create GitHub Release with tag matching `{slug}-v{version}`
-3. Upload platform artifacts to the release
+2. Create GitHub Release with tag matching `{slug}-v{version}` (e.g., `multi-comp-v1.1.0`)
+3. GitHub Actions automatically uploads platform artifacts to the release
 4. Website download links automatically point to the correct release
+
+**Updating Website for New Version:**
+When you release a new plugin version, you only need to:
+1. Update `_data/plugins.yml` - change the `version` field for the plugin
+2. Optionally update the changelog in `_plugins/plugin-name.md`
+
+All download links on the home page and plugin pages are dynamically generated from `plugins.yml` - no hardcoded URLs to update.
 
 ### ⚠️ SHARED CODE REQUIREMENT
 **Before writing ANY new code, ALWAYS check `plugins/shared/` first!**
