@@ -146,6 +146,7 @@ private:
     std::atomic<float> outputLevelR { 0.0f };
     std::atomic<bool> isProcessingAudio { false };
     std::atomic<bool> isMonoInput { false };  // True when on a mono track
+    int monoDetectionCounter { 0 };  // Hysteresis counter for stable mono/stereo detection
 
     // RMS integration for VU-accurate metering (300ms time constant)
     float rmsInputL = 0.0f;

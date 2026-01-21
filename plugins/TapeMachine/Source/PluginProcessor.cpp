@@ -518,7 +518,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         return;
 
     // Detect mono vs stereo by checking both bus layout AND channel correlation
-    // Some DAWs report stereo but send duplicated mono signal
     const auto inputBus = getBusesLayout().getMainInputChannelSet();
     const bool configuredMono = (inputBus == juce::AudioChannelSet::mono());
 
@@ -529,7 +528,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         const float* leftData = buffer.getReadPointer(0);
         const float* rightData = buffer.getReadPointer(1);
         channelsIdentical = true;
-        // Check first 64 samples for differences (fast heuristic)
+        // Check first 64 samples for differences
         for (int i = 0; i < juce::jmin(64, buffer.getNumSamples()); ++i)
         {
             if (std::abs(leftData[i] - rightData[i]) > 0.0001f)
@@ -540,8 +539,24 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         }
     }
 
-    const bool isMono = configuredMono || channelsIdentical;
-    isMonoInput.store(isMono, std::memory_order_relaxed);  // Track mono state for VU meter display
+    // Use hysteresis to prevent flickering between mono/stereo display
+    // Require consistent detection for ~15 blocks (~0.5 sec at 30fps) before switching
+    const bool currentlyMono = configuredMono || channelsIdentical;
+    const bool previousMono = isMonoInput.load(std::memory_order_relaxed);
+
+    if (currentlyMono != previousMono)
+    {
+        monoDetectionCounter++;
+        if (monoDetectionCounter >= 15)  // ~0.5 seconds of consistent readings
+        {
+            isMonoInput.store(currentlyMono, std::memory_order_relaxed);
+            monoDetectionCounter = 0;
+        }
+    }
+    else
+    {
+        monoDetectionCounter = 0;  // Reset counter if state matches
+    }
 
     // If buffer has only 1 channel, duplicate it for stereo processing
     if (buffer.getNumChannels() == 1)
