@@ -38,7 +38,8 @@ target_sources(TapeMachine
         Source/PluginEditor.cpp
         Source/ImprovedTapeEmulation.cpp
         Source/GUI/AnalogVUMeter.cpp
-        Source/GUI/TapeMachineLookAndFeel.cpp)
+        Source/GUI/TapeMachineLookAndFeel.cpp
+        Source/GUI/TapeReelComponent.cpp)
 
 # Add compile definitions
 target_compile_definitions(TapeMachine
