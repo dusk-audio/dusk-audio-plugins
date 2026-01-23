@@ -373,15 +373,16 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     processorChainLeft.get<3>().setRampDurationSeconds(0.02);  // 20ms for output gain
     processorChainRight.get<3>().setRampDurationSeconds(0.02);
 
-    // Prepare tape emulation with oversampled rate so filter cutoffs are correct
+    // Prepare tape emulation with oversampled rate and explicit factor so
+    // anti-aliasing cutoff is calculated from the true base sample rate
     if (tapeEmulationLeft)
-        tapeEmulationLeft->prepare(oversampledRate, oversampledBlockSize);
+        tapeEmulationLeft->prepare(oversampledRate, oversampledBlockSize, currentOversamplingFactor);
     if (tapeEmulationRight)
-        tapeEmulationRight->prepare(oversampledRate, oversampledBlockSize);
+        tapeEmulationRight->prepare(oversampledRate, oversampledBlockSize, currentOversamplingFactor);
 
-    // Prepare shared wow/flutter with oversampled rate
+    // Prepare shared wow/flutter with oversampled rate and factor for rate compensation
     if (sharedWowFlutter)
-        sharedWowFlutter->prepare(oversampledRate);
+        sharedWowFlutter->prepare(oversampledRate, currentOversamplingFactor);
 
     updateFilters();
 
@@ -517,46 +518,10 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (buffer.getNumSamples() == 0)
         return;
 
-    // Detect mono vs stereo by checking both bus layout AND channel correlation
+    // Detect mono vs stereo from bus layout (reflects track configuration)
     const auto inputBus = getBusesLayout().getMainInputChannelSet();
     const bool configuredMono = (inputBus == juce::AudioChannelSet::mono());
-
-    // Also check if L/R channels are identical (DAW sending duplicated mono as stereo)
-    bool channelsIdentical = false;
-    if (!configuredMono && buffer.getNumChannels() >= 2)
-    {
-        const float* leftData = buffer.getReadPointer(0);
-        const float* rightData = buffer.getReadPointer(1);
-        channelsIdentical = true;
-        // Check first 64 samples for differences
-        for (int i = 0; i < juce::jmin(64, buffer.getNumSamples()); ++i)
-        {
-            if (std::abs(leftData[i] - rightData[i]) > 0.0001f)
-            {
-                channelsIdentical = false;
-                break;
-            }
-        }
-    }
-
-    // Use hysteresis to prevent flickering between mono/stereo display
-    // Require consistent detection for ~15 blocks (~0.5 sec at 30fps) before switching
-    const bool currentlyMono = configuredMono || channelsIdentical;
-    const bool previousMono = isMonoInput.load(std::memory_order_relaxed);
-
-    if (currentlyMono != previousMono)
-    {
-        monoDetectionCounter++;
-        if (monoDetectionCounter >= 15)  // ~0.5 seconds of consistent readings
-        {
-            isMonoInput.store(currentlyMono, std::memory_order_relaxed);
-            monoDetectionCounter = 0;
-        }
-    }
-    else
-    {
-        monoDetectionCounter = 0;  // Reset counter if state matches
-    }
+    isMonoInput.store(configuredMono, std::memory_order_relaxed);
 
     // If buffer has only 1 channel, duplicate it for stereo processing
     if (buffer.getNumChannels() == 1)
@@ -754,21 +719,40 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         currentOversampledRate = static_cast<float>(newOversampledRate);
         const int oversampledBlockSize = buffer.getNumSamples() * currentOversamplingFactor;
 
-        // Re-prepare tape emulation with new oversampled rate
-        // This updates filter coefficients (e.g., 18kHz cutoff at new sample rate)
+        // Re-prepare tape emulation with new oversampled rate and explicit factor
+        // This updates filter coefficients (e.g., anti-aliasing cutoff at base sample rate)
         // Note: prepare() resets filter states - the crossfade handles the transition smoothly
         if (tapeEmulationLeft)
-            tapeEmulationLeft->prepare(newOversampledRate, oversampledBlockSize);
+            tapeEmulationLeft->prepare(newOversampledRate, oversampledBlockSize, currentOversamplingFactor);
         if (tapeEmulationRight)
-            tapeEmulationRight->prepare(newOversampledRate, oversampledBlockSize);
+            tapeEmulationRight->prepare(newOversampledRate, oversampledBlockSize, currentOversamplingFactor);
         if (sharedWowFlutter)
-            sharedWowFlutter->prepare(newOversampledRate);
+            sharedWowFlutter->prepare(newOversampledRate, currentOversamplingFactor);
 
         // Update latency for host PDC (0 for 1x/no oversampling)
         if (activeOversampler)
             setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
         else
             setLatencySamples(0);
+
+        // Re-prepare processor chain with new oversampled rate so the SVF filters
+        // store the correct sample rate for coefficient calculation.
+        // Without this, setCutoffFrequency() would compute coefficients using the
+        // stale sample rate from the previous prepare() call.
+        {
+            juce::dsp::ProcessSpec newSpec;
+            newSpec.sampleRate = newOversampledRate;
+            newSpec.maximumBlockSize = static_cast<juce::uint32>(oversampledBlockSize);
+            newSpec.numChannels = 1;
+            processorChainLeft.prepare(newSpec);
+            processorChainRight.prepare(newSpec);
+
+            // Restore gain ramp durations after re-prepare
+            processorChainLeft.get<0>().setRampDurationSeconds(0.02);
+            processorChainRight.get<0>().setRampDurationSeconds(0.02);
+            processorChainLeft.get<3>().setRampDurationSeconds(0.02);
+            processorChainRight.get<3>().setRampDurationSeconds(0.02);
+        }
 
         // Update processor chain filters with new oversampled rate
         updateFilters();
