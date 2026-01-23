@@ -38,8 +38,10 @@ void AnalogVUMeter::setStereoMode(bool isStereo)
 
 void AnalogVUMeter::setLevels(float leftLevel, float rightLevel)
 {
-    // Convert linear to dB with calibration offset
-    constexpr float calibrationOffsetDB = 3.0f;
+    // Convert linear to dB with VU calibration offset
+    // Standard: 0 VU = +4 dBu = -18 dBFS (IEC 60268-17)
+    // This makes the meter read 0 VU at operating level (-18 dBFS RMS)
+    constexpr float calibrationOffsetDB = 18.0f;
 
     float dbL = 20.0f * std::log10(std::max(0.001f, leftLevel)) + calibrationOffsetDB;
     float dbR = 20.0f * std::log10(std::max(0.001f, rightLevel)) + calibrationOffsetDB;

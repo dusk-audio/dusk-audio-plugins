@@ -20,7 +20,7 @@ juce_add_plugin(TapeMachine
     COPY_PLUGIN_AFTER_BUILD TRUE
     PLUGIN_MANUFACTURER_CODE VntA
     PLUGIN_CODE Tape
-    FORMATS VST3 LV2 Standalone
+    FORMATS AU VST3 LV2 Standalone
     PRODUCT_NAME "TapeMachine"
     LV2URI "https://lunaco.audio/plugins/tapemachine"
     VST3_CAN_REPLACE_VST2 TRUE)
