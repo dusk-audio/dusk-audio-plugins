@@ -7,10 +7,9 @@
 #include <complex>
 
 //==============================================================================
-// 8th-order Butterworth Anti-Aliasing Filter (numerically stable)
-// Uses cascaded biquad sections with pre-computed Q values
-// Provides ~48dB/octave rolloff which is sufficient when combined with
-// JUCE's oversampler anti-aliasing
+// 8th-order Chebyshev Type I Anti-Aliasing Filter (0.5dB passband ripple)
+// Uses cascaded biquad sections with poles from analog prototype via bilinear transform
+// Provides ~64dB stopband rejection at 1.7× cutoff (~26dB more than Butterworth)
 //==============================================================================
 class ChebyshevAntiAliasingFilter
 {
@@ -28,17 +27,42 @@ public:
 
     void prepare(double sampleRate, double cutoffHz)
     {
-        // Clamp cutoff to safe range (well below Nyquist)
         cutoffHz = std::min(cutoffHz, sampleRate * 0.45);
         cutoffHz = std::max(cutoffHz, 20.0);
 
-        // 8th-order Butterworth Q values (4 biquad sections)
-        // Q_k = 1 / (2 * sin((2k-1) * pi / 16)) for k = 1 to 4
-        static constexpr float Qs[4] = { 0.5098f, 0.6013f, 0.9000f, 2.5629f };
+        // 8th-order Chebyshev Type I with 0.5dB passband ripple
+        // Poles computed from analog prototype, then bilinear-transformed
+        constexpr int N = 8;
+        constexpr double rippleDb = 0.5;
 
-        for (int i = 0; i < NUM_SECTIONS; ++i)
+        const double epsilon = std::sqrt(std::pow(10.0, rippleDb / 10.0) - 1.0);
+        const double a = std::asinh(1.0 / epsilon) / N;
+        const double sinhA = std::sinh(a);
+        const double coshA = std::cosh(a);
+
+        // Bilinear transform constant and pre-warped cutoff
+        const double C = 2.0 * sampleRate;
+        const double Wa = C * std::tan(juce::MathConstants<double>::pi * cutoffHz / sampleRate);
+
+        for (int k = 0; k < NUM_SECTIONS; ++k)
         {
-            designLowpass(sampleRate, cutoffHz, Qs[i], coeffs[i]);
+            // Analog prototype pole: θ_k = (2k+1)π/(2N)
+            double theta = (2.0 * k + 1.0) * juce::MathConstants<double>::pi / (2.0 * N);
+            double sigma = -sinhA * std::sin(theta);
+            double omega = coshA * std::cos(theta);
+
+            // Bilinear transform coefficients
+            double poleMagSq = sigma * sigma + omega * omega;
+            double A = Wa * Wa * poleMagSq;
+            double B = 2.0 * (-sigma) * Wa * C;
+            double a0 = C * C + B + A;
+            double a0_inv = 1.0 / a0;
+
+            coeffs[k].b0 = static_cast<float>(A * a0_inv);
+            coeffs[k].b1 = static_cast<float>(2.0 * A * a0_inv);
+            coeffs[k].b2 = coeffs[k].b0;
+            coeffs[k].a1 = static_cast<float>(2.0 * (A - C * C) * a0_inv);
+            coeffs[k].a2 = static_cast<float>((C * C - B + A) * a0_inv);
         }
 
         reset();
@@ -76,24 +100,6 @@ private:
         s.z1 = c.b1 * input - c.a1 * output + s.z2;
         s.z2 = c.b2 * input - c.a2 * output;
         return output;
-    }
-
-    void designLowpass(double sampleRate, double freq, float Q, BiquadCoeffs& c)
-    {
-        // Bilinear transform lowpass design
-        const double w0 = 2.0 * juce::MathConstants<double>::pi * freq / sampleRate;
-        const double cosw0 = std::cos(w0);
-        const double sinw0 = std::sin(w0);
-        const double alpha = sinw0 / (2.0 * Q);
-
-        const double a0 = 1.0 + alpha;
-        const double a0_inv = 1.0 / a0;
-
-        c.b0 = static_cast<float>(((1.0 - cosw0) / 2.0) * a0_inv);
-        c.b1 = static_cast<float>((1.0 - cosw0) * a0_inv);
-        c.b2 = c.b0;
-        c.a1 = static_cast<float>((-2.0 * cosw0) * a0_inv);
-        c.a2 = static_cast<float>((1.0 - alpha) * a0_inv);
     }
 };
 
@@ -198,6 +204,96 @@ private:
     float z1 = 0.0f, z2 = 0.0f;
 };
 
+//==============================================================================
+// 3-Band Splitter for frequency-dependent tape saturation
+// Uses cascaded first-order TPT filters (Linkwitz-Riley 2nd-order, 12dB/oct)
+// for proper crossover behavior with -6dB at crossover frequencies.
+// Bands: Bass (<200Hz), Mid (200Hz-5kHz), Treble (>5kHz)
+// Note: bass + mid + treble = input (algebraic perfect reconstruction).
+// Slight crossover coloration is acceptable for tape saturation purposes.
+//==============================================================================
+class ThreeBandSplitter
+{
+public:
+    void prepare(double sampleRate)
+    {
+        lr200.prepare(sampleRate, 200.0f);
+        lr5000.prepare(sampleRate, 5000.0f);
+    }
+
+    void reset()
+    {
+        lr200.reset();
+        lr5000.reset();
+    }
+
+    // Split signal into 3 bands with algebraic perfect reconstruction
+    // bass + mid + treble = input (exactly, at all frequencies)
+    void split(float input, float& bass, float& mid, float& treble)
+    {
+        float lp200Out = lr200.process(input);
+        float lp5000Out = lr5000.process(input);
+
+        bass = lp200Out;
+        mid = lp5000Out - lp200Out;
+        treble = input - lp5000Out;
+    }
+
+private:
+    // Linkwitz-Riley 2nd-order lowpass: two cascaded first-order TPT sections
+    // Provides 12dB/oct slope and -6dB at crossover frequency
+    struct LR2Filter
+    {
+        struct OnePoleLP
+        {
+            float state = 0.0f;
+            float coeff = 0.0f;
+
+            void prepare(double sampleRate, float cutoffHz)
+            {
+                float g = std::tan(juce::MathConstants<float>::pi * cutoffHz
+                                  / static_cast<float>(sampleRate));
+                coeff = g / (1.0f + g);
+                state = 0.0f;
+            }
+
+            void reset() { state = 0.0f; }
+
+            float process(float input)
+            {
+                float v = (input - state) * coeff;
+                float output = v + state;
+                state = output + v;
+                return output;
+            }
+        };
+
+        OnePoleLP stage1;
+        OnePoleLP stage2;
+
+        void prepare(double sampleRate, float cutoffHz)
+        {
+            stage1.prepare(sampleRate, cutoffHz);
+            stage2.prepare(sampleRate, cutoffHz);
+        }
+
+        void reset()
+        {
+            stage1.reset();
+            stage2.reset();
+        }
+
+        float process(float input)
+        {
+            float s1 = stage1.process(input);
+            return stage2.process(s1);
+        }
+    };
+
+    LR2Filter lr200;
+    LR2Filter lr5000;
+};
+
 // Wow & Flutter processor - can be shared between channels for stereo coherence
 class WowFlutterProcessor
 {
@@ -210,8 +306,27 @@ public:
     std::mt19937 rng{std::random_device{}()};
     std::uniform_real_distribution<float> dist{-1.0f, 1.0f};
 
-    void prepare(double sampleRate)
+    // Smoothed random modulation (avoids per-sample noise from raw RNG)
+    float randomTarget = 0.0f;
+    float randomCurrent = 0.0f;
+    int randomUpdateCounter = 0;
+    static constexpr int RANDOM_UPDATE_INTERVAL = 64; // Base update interval (at 1x rate)
+
+    // Rate compensation: ensures identical behavior regardless of oversampling factor
+    int oversamplingFactor = 1;
+    float smoothingAlpha = 0.01f;  // Calculated in prepare() for ~70Hz cutoff
+
+    void prepare(double sampleRate, int osFactor = 1)
     {
+        // Store oversampling factor for rate compensation
+        oversamplingFactor = std::max(1, osFactor);
+
+        // Calculate smoothing alpha for ~70Hz cutoff regardless of sample rate
+        // One-pole: alpha = 1 - exp(-2*pi*fc/fs)
+        // This ensures the random modulation bandwidth is always ~70Hz
+        smoothingAlpha = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * 70.0f
+                                          / static_cast<float>(sampleRate));
+
         // Validate sampleRate with consistent bounds
         // MIN: 8000 Hz (lowest professional rate)
         // MAX: 768000 Hz (4x oversampled 192kHz - highest expected)
@@ -248,7 +363,7 @@ public:
         writeIndex = 0;
     }
 
-    // Process and return modulation amount (in samples)
+    // Process and return modulation amount (in samples at current rate)
     float calculateModulation(float wowAmount, float flutterAmount,
                              float wowRate, float flutterRate, double sampleRate)
     {
@@ -256,10 +371,24 @@ public:
         if (sampleRate <= 0.0)
             sampleRate = 44100.0;
 
-        // Calculate modulation
-        float wowMod = static_cast<float>(std::sin(wowPhase)) * wowAmount * 10.0f;  // ±10 samples max
-        float flutterMod = static_cast<float>(std::sin(flutterPhase)) * flutterAmount * 2.0f;  // ±2 samples max
-        float randomMod = dist(rng) * flutterAmount * 0.5f;  // Random component
+        // Scale modulation depths by oversampling factor to maintain constant TIME deviation
+        // At 4x: ±10 samples at 176.4kHz = same time as ±10 samples at 44.1kHz only if scaled by 4x
+        float osScale = static_cast<float>(oversamplingFactor);
+
+        float wowMod = static_cast<float>(std::sin(wowPhase)) * wowAmount * 10.0f * osScale;
+        float flutterMod = static_cast<float>(std::sin(flutterPhase)) * flutterAmount * 2.0f * osScale;
+
+        // Smoothed random component: update target at time-based rate
+        // Scale interval by oversampling factor so updates occur at same temporal rate
+        int scaledInterval = RANDOM_UPDATE_INTERVAL * oversamplingFactor;
+        if (++randomUpdateCounter >= scaledInterval)
+        {
+            randomUpdateCounter = 0;
+            randomTarget = dist(rng);
+        }
+        // Rate-compensated one-pole smoothing (~70Hz cutoff regardless of sample rate)
+        randomCurrent += (randomTarget - randomCurrent) * smoothingAlpha;
+        float randomMod = randomCurrent * flutterAmount * 0.5f * osScale;
 
         // Update phases with double precision
         double safeSampleRate = std::max(1.0, sampleRate);
@@ -289,8 +418,10 @@ public:
 
         delayBuffer[writeIndex] = input;
 
-        // Calculate total delay with bounds limiting
-        float totalDelay = 20.0f + modulationSamples;  // Base delay + modulation
+        // Scale base delay by oversampling factor to maintain constant time offset
+        // At 1x: 20 samples = 454μs; at 4x: 80 samples = 454μs (same time)
+        float baseDelay = 20.0f * static_cast<float>(oversamplingFactor);
+        float totalDelay = baseDelay + modulationSamples;  // Base delay + modulation
         int bufferSize = static_cast<int>(delayBuffer.size());
         if (bufferSize <= 0)
             return input;
@@ -337,10 +468,12 @@ private:
 
     // Transformer hysteresis state
     float hystState = 0.0f;
+    float hystDecay = 0.995f;       // Rate-compensated (calculated in prepare)
     float prevInput = 0.0f;
 
     // LF resonance from core saturation
     float lfResonanceState = 0.0f;
+    float lfResonanceCoeff = 0.002f; // Rate-compensated (calculated in prepare)
 };
 
 // Playback head frequency response - distinct from tape response
@@ -359,6 +492,9 @@ private:
     // Head resonance (mechanical + electrical)
     float resonanceState1 = 0.0f;
     float resonanceState2 = 0.0f;
+
+    // Rate-compensated resonance coefficient (~740Hz cutoff regardless of sample rate)
+    float resonanceCoeff = 0.1f;
 
     double currentSampleRate = 44100.0;
 };
@@ -383,7 +519,7 @@ private:
 class MotorFlutter
 {
 public:
-    void prepare(double sampleRate);
+    void prepare(double sampleRate, int osFactor = 1);
     float calculateFlutter(float motorQuality);  // Returns pitch modulation
     void reset();
 
@@ -392,6 +528,7 @@ private:
     double phase2 = 0.0;  // Secondary bearing frequency
     double phase3 = 0.0;  // Capstan eccentricity
     double sampleRate = 44100.0;
+    int oversamplingFactor = 1;  // Rate compensation for consistent noise power
 
     std::mt19937 rng{std::random_device{}()};
     std::uniform_real_distribution<float> jitter{-1.0f, 1.0f};
@@ -441,7 +578,7 @@ public:
         Thru              // Complete bypass
     };
 
-    void prepare(double sampleRate, int samplesPerBlock);
+    void prepare(double sampleRate, int samplesPerBlock, int oversamplingFactor = 1);
     void reset();
 
     // Main processing with all parameters
@@ -468,6 +605,7 @@ public:
 private:
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
+    int currentOversamplingFactor = 1;  // Stored for AA filter bypass at 1x
 
     // Machine-specific characteristics
     struct MachineCharacteristics
@@ -533,44 +671,42 @@ private:
     // Pre/Post emphasis (NAB/CCIR curves)
     juce::dsp::IIR::Filter<float> preEmphasisFilter1;
     juce::dsp::IIR::Filter<float> preEmphasisFilter2;
-    juce::dsp::IIR::Filter<float> deEmphasisFilter1;
-    juce::dsp::IIR::Filter<float> deEmphasisFilter2;
+    // Post-saturation filters use double precision to avoid quantization noise
+    // at low normalized frequencies when oversampling (e.g., 60Hz at 176.4kHz).
+    // Float32 biquad poles near unit circle amplify roundoff error by ~700x.
+    juce::dsp::IIR::Filter<double> deEmphasisFilter1;
+    juce::dsp::IIR::Filter<double> deEmphasisFilter2;
 
-    // Head bump modeling (resonant peak)
-    juce::dsp::IIR::Filter<float> headBumpFilter;
+    // Head bump modeling (resonant peak) - double for low-freq precision
+    juce::dsp::IIR::Filter<double> headBumpFilter;
 
-    // HF loss modeling
-    juce::dsp::IIR::Filter<float> hfLossFilter1;
-    juce::dsp::IIR::Filter<float> hfLossFilter2;
+    // HF loss modeling - double for consistency with post-saturation chain
+    juce::dsp::IIR::Filter<double> hfLossFilter1;
+    juce::dsp::IIR::Filter<double> hfLossFilter2;
 
-    // Record/Playback head gap loss
-    juce::dsp::IIR::Filter<float> gapLossFilter;
+    // Record/Playback head gap loss - double for post-saturation chain
+    juce::dsp::IIR::Filter<double> gapLossFilter;
 
     // Bias-induced HF boost
     juce::dsp::IIR::Filter<float> biasFilter;
 
-    // DC blocking filter to prevent subsonic rumble
-    juce::dsp::IIR::Filter<float> dcBlocker;
+    // DC blocking filter to prevent subsonic rumble - double for 25Hz at high rates
+    juce::dsp::IIR::Filter<double> dcBlocker;
 
     // Record head gap filter - models HF loss at record head before saturation
     // Real tape: record head gap creates natural lowpass response (~15-18kHz at 15 IPS)
     // This prevents HF content from generating harmonics that would alias
-    // 8 cascaded biquads = 16th-order Butterworth for steep rolloff (96dB/oct)
+    // 2 cascaded biquads = 4th-order Butterworth for 24dB/oct rolloff
+    // (Post-saturation AA filter + JUCE decimation filter handle remaining aliasing)
     // Applied BEFORE saturation to mimic real tape head behavior
     juce::dsp::IIR::Filter<float> recordHeadFilter1;
     juce::dsp::IIR::Filter<float> recordHeadFilter2;
-    juce::dsp::IIR::Filter<float> recordHeadFilter3;
-    juce::dsp::IIR::Filter<float> recordHeadFilter4;
-    juce::dsp::IIR::Filter<float> recordHeadFilter5;
-    juce::dsp::IIR::Filter<float> recordHeadFilter6;
-    juce::dsp::IIR::Filter<float> recordHeadFilter7;
-    juce::dsp::IIR::Filter<float> recordHeadFilter8;
 
     // Post-saturation anti-aliasing filter - 8th-order Chebyshev Type I
     // CRITICAL: This prevents aliasing by removing harmonics above original Nyquist
     // before the JUCE oversampler downsamples the signal.
     //
-    // Design: 8th-order Chebyshev Type I with 0.1dB passband ripple
+    // Design: 8th-order Chebyshev Type I with 0.5dB passband ripple
     // - Provides ~96dB attenuation at 2x the cutoff frequency
     // - Much steeper transition band than equivalent-order Butterworth
     // - Cutoff set to 0.45 * base sample rate (e.g., 19.8kHz for 44.1kHz base)
@@ -587,25 +723,64 @@ private:
     // normal tape saturation behavior at typical operating levels
     SoftLimiter preSaturationLimiter;
 
-    // Split filters for frequency-selective saturation
-    // These split the signal so that only low frequencies get saturated,
-    // preventing HF content from generating harmonics that alias
-    SaturationSplitFilter saturationSplitFilter;   // For harmonic generation stage
-    SaturationSplitFilter softClipSplitFilter;     // For soft clip stage
+    // 3-band splitter for frequency-dependent tape saturation
+    // Replaces binary 5kHz split with physically-accurate per-band drive
+    ThreeBandSplitter threeBandSplitter;
+
+    // Split filters for the two soft-clip stages (separate instances to avoid shared state)
+    SaturationSplitFilter softClipSplitFilter1;   // After 3-band saturation
+    SaturationSplitFilter softClipSplitFilter2;   // Before AA filter
 
     // Store base sample rate for anti-aliasing filter cutoff calculation
     double baseSampleRate = 44100.0;
 
-    // Hysteresis modeling
-    struct HysteresisProcessor
+    // Lookup-table-based tape saturation curve
+    // Pre-computed tanh-based transfer function with machine-specific asymmetry
+    // Produces natural harmonic spectrum that rises smoothly with drive level
+    struct TapeSaturationTable
     {
-        float state = 0.0f;
-        float previousInput = 0.0f;
-        float previousOutput = 0.0f;
+        static constexpr int TABLE_SIZE = 4096;
+        static constexpr float TABLE_RANGE = 4.0f;  // Input: [-2, +2]
 
-        float process(float input, float amount, float asymmetry, float saturation);
+        std::array<float, TABLE_SIZE> table{};
+        float currentAsymmetry = 0.0f;
+        bool needsRegeneration = true;
+
+        // Generate lookup table for given machine type and asymmetry
+        void generate(bool isStuder, float asymmetry);
+
+        // Process sample through table with drive-controlled nonlinearity
+        float process(float input, float drive) const;
     };
-    HysteresisProcessor hysteresisProc;
+    TapeSaturationTable saturationTable;
+
+    // Hysteresis-modulated drive: adjusts saturation based on signal history
+    // Rising signal: less drive (cleaner transients)
+    // Falling signal: more drive (warmer sustain)
+    struct HysteresisDriveModulator
+    {
+        float previousSample = 0.0f;
+        float magneticState = 0.0f;
+        float smoothedOffset = 0.0f;
+        float smoothingCoeff = 0.995f;
+
+        // Rate-compensated coefficients (calculated in prepare)
+        float magneticDecay = 0.9999f;    // Per-sample decay for magneticState
+        float trackingCoeff = 0.1f;       // Per-sample tracking rate
+
+        void prepare(double sampleRate, int osFactor = 1);
+        void reset();
+
+        // Returns drive multiplier: 1.0 ± 0.05
+        float computeDriveMultiplier(float currentSample, float saturationDepth,
+                                     float coercivity, float asymmetry);
+    };
+    HysteresisDriveModulator hysteresisMod;
+
+    // Table regeneration tracking (initialized to valid defaults;
+    // needsRegeneration=true ensures first call always generates the table)
+    TapeMachine m_lastTableMachine = Swiss800;
+    float m_lastTableBias = 0.0f;
 
     // Saturation/Compression
     struct TapeSaturator
@@ -678,28 +853,53 @@ private:
     // Harmonic generation
     float generateHarmonics(float input, const float* harmonicProfile, int numHarmonics);
 
+    // Band drive ratios for frequency-dependent saturation
+    struct BandDriveRatios
+    {
+        float bass;     // Drive multiplier for <200Hz
+        float mid;      // Drive multiplier for 200Hz-5kHz (always 1.0)
+        float treble;   // Drive multiplier for >5kHz
+    };
+
+    BandDriveRatios getBandDriveRatios(TapeMachine machine) const
+    {
+        if (machine == Swiss800)
+            return { 0.55f, 1.0f, 0.20f };  // Studer: precise, less LF/HF saturation
+        else
+            return { 0.65f, 1.0f, 0.30f };  // Ampex: more musical LF, slightly more HF
+    }
+
+    // Compute drive from saturation depth with exponential mapping
+    // Calibrated for real tape THD: ~0.3% Studer / ~0.5% Ampex at 0VU
+    // The gentle exponential accounts for signal level also increasing with input gain
+    float computeDrive(float saturationDepth, float tapeFormulationScale) const
+    {
+        if (saturationDepth < 0.001f) return 0.0f;
+        return 0.62f * std::exp(1.8f * saturationDepth) * tapeFormulationScale;
+    }
+
     static constexpr float denormalPrevention = 1e-8f;
 
     // Helper to validate filter coefficients are finite (not NaN or Inf)
     static bool validateCoefficients(const juce::dsp::IIR::Coefficients<float>::Ptr& coeffs)
     {
-        if (coeffs == nullptr)
-            return false;
-
+        if (coeffs == nullptr) return false;
         auto* rawCoeffs = coeffs->getRawCoefficients();
-        if (rawCoeffs == nullptr)
-            return false;
-
-        // IIR biquad has: b0, b1, b2, a1, a2 (a0 is normalized to 1 and not stored)
-        // For order N filter: (N+1) b coefficients + N a coefficients
-        size_t numCoeffs = coeffs->getFilterOrder() + 1;  // b coeffs
-        numCoeffs += coeffs->getFilterOrder();             // a coeffs (a0 normalized to 1)
-
+        if (rawCoeffs == nullptr) return false;
+        size_t numCoeffs = (coeffs->getFilterOrder() + 1) + coeffs->getFilterOrder();
         for (size_t i = 0; i < numCoeffs; ++i)
-        {
-            if (!std::isfinite(rawCoeffs[i]))
-                return false;
-        }
+            if (!std::isfinite(rawCoeffs[i])) return false;
+        return true;
+    }
+
+    static bool validateCoefficients(const juce::dsp::IIR::Coefficients<double>::Ptr& coeffs)
+    {
+        if (coeffs == nullptr) return false;
+        auto* rawCoeffs = coeffs->getRawCoefficients();
+        if (rawCoeffs == nullptr) return false;
+        size_t numCoeffs = (coeffs->getFilterOrder() + 1) + coeffs->getFilterOrder();
+        for (size_t i = 0; i < numCoeffs; ++i)
+            if (!std::isfinite(rawCoeffs[i])) return false;
         return true;
     }
 };
