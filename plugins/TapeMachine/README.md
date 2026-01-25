@@ -53,7 +53,7 @@ Professionally designed starting points across five categories:
 
 - **Formats**: VST3, LV2, AU (macOS), Standalone
 - **Platforms**: Linux, macOS, Windows
-- **Linux**: glibc 2.36+ (Ubuntu 24.04+, Debian 12+, Fedora 38+)
+- **Linux**: glibc 2.31+ (Ubuntu 20.04+, Debian 11+, Fedora 34+)
 
 ## Installation
 
