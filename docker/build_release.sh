@@ -109,7 +109,7 @@ show_help() {
     echo "  4keq, eq           4K EQ"
     echo "  multicomp, multi-comp, compressor, comp   Multi-Comp"
     echo "  tape, tapemachine  TapeMachine"
-    echo "  drummer, drums     DrummerClone"
+    echo "  groovemind, groove GrooveMind"
     echo "  harmonic           Harmonic Generator"
     echo "  convolution, impulse, ir  Convolution Reverb"
     echo "  silkverb, silk, reverb, verb  SilkVerb"
