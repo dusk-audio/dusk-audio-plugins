@@ -184,10 +184,10 @@ public:
 private:
     void timerCallback() override;
 
-    float targetLevel = -60.0f;      // Target level from processor
+    float targetLevel = 0.0f;        // Target level from processor (0 dB = no compression)
     float needlePosition = 0.0f;     // Current needle position (0-1)
     float needleVelocity = 0.0f;     // For mechanical overshoot simulation
-    float peakLevel = -60.0f;
+    float peakLevel = 0.0f;          // Peak (maximum) compression level (0 dB = no peak yet)
     float peakNeedlePosition = 0.0f;  // Position of peak indicator on scale
     float peakHoldTime = 0.0f;
     bool displayPeaks = true;

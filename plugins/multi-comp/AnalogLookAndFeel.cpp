@@ -523,7 +523,9 @@ void DigitalLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton&
 // Analog VU Meter
 AnalogVUMeter::AnalogVUMeter()
 {
-    needlePosition = 0.8f;  // Initialize needle at 0 dB rest position
+    // Initialize needle at 0 dB rest position (no compression)
+    // 0 dB maps to position (0 + 20) / 23 = 0.87
+    needlePosition = 0.87f;
     startTimerHz(60);
 }
 
@@ -535,9 +537,10 @@ AnalogVUMeter::~AnalogVUMeter()
 void AnalogVUMeter::setLevel(float newLevel)
 {
     targetLevel = newLevel;
-    
-    // Update peak
-    if (newLevel > peakLevel)
+
+    // Update peak - for a GR meter, "peak" is the MAXIMUM compression (most negative dB)
+    // So we track when newLevel < peakLevel (more negative = more compression)
+    if (newLevel < peakLevel)
     {
         peakLevel = newLevel;
         peakHoldTime = 2.0f;
@@ -774,7 +777,8 @@ void AnalogVUMeter::paint(juce::Graphics& g)
     g.strokePath(needle, juce::PathStrokeType(1.5f * scaleFactor));  // Thin needle like classic VU
 
     // Draw peak hold indicator - small red triangle at peak position
-    if (displayPeaks && peakNeedlePosition > needlePosition + 0.02f)  // Only show if peak is significantly above current
+    // For a GR meter, peak (max compression) is to the LEFT (lower position number)
+    if (displayPeaks && peakNeedlePosition < needlePosition - 0.02f)  // Only show if peak compression is significantly greater than current
     {
         float peakAngle = scaleStart + peakNeedlePosition * (scaleEnd - scaleStart);
         float peakRadius = needleLength * 0.92f;  // Position on arc
