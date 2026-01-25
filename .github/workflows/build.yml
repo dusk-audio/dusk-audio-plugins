@@ -113,10 +113,25 @@ jobs:
           add-apt-repository -y ppa:ubuntu-toolchain-r/test
           apt-get update
           apt-get install -y gcc-11 g++-11
+          # Set GCC 11 as default for all compiler symlinks
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
           update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+          update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-11 100
+          update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-11 100
           gcc --version
           g++ --version
+
+      - name: Install modern CMake
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # Install CMake 3.28 from Kitware's APT repo (JUCE 8 requires 3.22+)
+          apt-get install -y wget
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          apt-get update
+          apt-get install -y cmake
+          cmake --version
 
       - name: Checkout repository
         uses: actions/checkout@v4
