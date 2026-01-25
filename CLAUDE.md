@@ -308,7 +308,8 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 
 **Compatibility**: Binaries work on:
 - Debian 12 (Bookworm) and newer
-- Ubuntu 22.04 LTS and newer
+- Ubuntu 24.04 LTS and newer
+- Fedora 38 and newer
 - Any Linux distribution with glibc 2.36+ and GLIBCXX 3.4.30+
 
 **Requirements**: Either Podman (preferred on Fedora) or Docker must be installed.
