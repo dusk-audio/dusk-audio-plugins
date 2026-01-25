@@ -606,11 +606,26 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     if (autoCompEnabled)
     {
-        // VTM-style: Output is exactly inverse of input for unity gain through the plugin
-        // Input drives tape saturation, output compensates to maintain consistent level
-        // At 0dB input: 0dB output (unity)
-        // At +12dB input: -12dB output (unity through saturation)
-        targetOutputGain = juce::Decibels::decibelsToGain(-inputGainDB);
+        // VTM-style: Output compensates for input + tape compression
+        // The tape emulation has nonlinear level-dependent behavior:
+        //   - At -12dB to 0dB: ~0.5dB loss (0.95 calibration factor)
+        //   - At +6dB: ~3.5dB loss (moderate compression)
+        //   - At +12dB: ~7dB loss (heavy compression)
+        // Use piecewise compensation: constant for negative, quadratic for positive
+        float compressionCompensation;
+        if (inputGainDB <= 0.0f)
+        {
+            // Low input: minimal compression, just compensate for 0.95 factor
+            compressionCompensation = 0.5f;
+        }
+        else
+        {
+            // High input: compression increases quadratically
+            // At +12dB we need ~7dB compensation, at 0dB we need ~0.5dB
+            float normalizedInput = inputGainDB / 12.0f;  // 0 to 1
+            compressionCompensation = 0.5f + 6.5f * normalizedInput * normalizedInput;
+        }
+        targetOutputGain = juce::Decibels::decibelsToGain(-inputGainDB + compressionCompensation);
     }
     else
     {
