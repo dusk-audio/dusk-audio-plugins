@@ -1,11 +1,13 @@
 # TapeMachine VST3 Plugin
 
-A high-quality tape machine emulation plugin with two distinct tape machine models: Swiss800 and Classic102.
+A professional tape machine emulation calibrated against real Studer A800 and Ampex ATR-102 hardware measurements. Features physically-modeled magnetic saturation, NAB/CCIR equalization, and authentic harmonic distortion profiles.
 
 ## Features
 
-- **Dual Machine Emulation**: Choose between Swiss800 or Classic102 tape machine models
-- **Multiple Tape Speeds**: 7.5, 15, and 30 IPS
+- **Dual Machine Emulation**:
+  - **Swiss800** (Studer A800 MkIII): Transformerless, odd-harmonic dominant (H3 at -51dB, THD ~0.3% at 0VU)
+  - **Classic102** (Ampex ATR-102): Transformer coloration, even+odd harmonics (H2 at -55dB, H3 at -48dB at 0VU)
+- **Multiple Tape Speeds**: 7.5, 15, and 30 IPS with speed-appropriate EQ and head bump
 - **Four Tape Formulations**: Type 456 (warm), GP9 (modern), Type 911 (German precision), Type 250 (professional)
 - **Comprehensive Controls**:
   - Input/Output Gain with auto-compensation mode
@@ -19,95 +21,137 @@ A high-quality tape machine emulation plugin with two distinct tape machine mode
   - **Character**: 70s Rock, Tape Saturation, Cassette Deck
   - **Lo-Fi**: Lo-Fi Warble, Worn Tape, Dusty Reel
   - **Mastering**: Master Bus Glue, Analog Sheen, Vintage Master
-- **Anti-aliasing**: 2x/4x oversampling to prevent digital artifacts
+- **Anti-aliasing**: Selectable 2x/4x oversampling with 8th-order Chebyshev Type I filter (~64dB stopband rejection)
 - **Vintage GUI**: Analog-style interface with animated reels and dual VU meters
 
 ## Building
 
 ### Prerequisites
 
-- C++17 compatible compiler
-- CMake 3.15 or higher
-- JUCE Framework (path configured in CMakeLists.txt)
+- Docker or Podman
+- (Local dev only) C++17 compiler, CMake 3.15+, JUCE Framework
 
-### Build Instructions
-
-#### Using CMake (Recommended)
+### Build (Release)
 
 ```bash
-cd plugins/TapeMachine
-mkdir build
-cd build
-cmake ..
-cmake --build . --config Release
+# From the project root:
+./docker/build_release.sh tape
 ```
 
-#### Using Projucer
+Output: `release/TapeMachine.vst3` and `release/TapeMachine.lv2`
 
-1. Open `TapeMachine.jucer` in Projucer
-2. Update JUCE module paths if necessary
-3. Generate project files for your platform
-4. Build using your IDE or make
+### Validation
 
-### Platform-Specific Notes
-
-#### Linux
 ```bash
-make -j$(nproc)
+./tests/run_plugin_tests.sh --plugin "TapeMachine" --skip-audio
 ```
 
-#### macOS
-```bash
-cmake --build . --config Release -- -j$(sysctl -n hw.ncpu)
-```
+### Installation
 
-#### Windows
-Use Visual Studio 2022 or newer:
-```cmd
-cmake --build . --config Release
-```
-
-## Installation
-
-After building, copy the generated VST3 file to your plugin folder:
-- **Windows**: `C:\Program Files\Common Files\VST3`
-- **macOS**: `~/Library/Audio/Plug-Ins/VST3`
-- **Linux**: `~/.vst3` or `/usr/local/lib/vst3`
+The build script automatically installs to:
+- **Linux**: `~/.vst3/` and `~/.lv2/`
+- **macOS**: `~/Library/Audio/Plug-Ins/VST3/`
 
 ## Technical Details
+### Signal Path Modes
 
-### DSP Chain
-1. Input Gain Stage
-2. High-pass Filter (20-500 Hz)
-3. Tape Emulation:
-   - Pre-emphasis
-   - Hysteresis modeling
-   - Magnetic saturation
-   - Crossover distortion
-   - Head bump resonance
-   - Tape response filtering
-   - De-emphasis
-4. Low-pass Filter (3-20 kHz)
-5. Wow & Flutter (LFO-modulated delay)
-6. Tape Noise (optional)
-7. Output Gain Stage
+| Mode | Description | Processing |
+|------|-------------|------------|
+| **Repro** | Full tape path | Record electronics → tape saturation → playback head → playback electronics |
+| **Sync** | Record head playback | Same as Repro but uses record head for playback (wider gap = more HF loss, for overdub sync) |
+| **Input** | Electronics only | Transformers + pre/de-emphasis only (no tape saturation, wow/flutter, head bump, or noise) |
+| **Thru** | Complete bypass | Clean signal passthrough |
 
-### Anti-Aliasing
-The plugin uses selectable 2x or 4x oversampling with FIR equiripple filtering to prevent aliasing artifacts from the non-linear tape saturation processing.
+### Signal Chain (20 stages)
+
+**Repro mode** (full processing):
+1. Denormal protection + input metering
+2. Parameter change detection + filter update
+3. Calibration gain staging (signal × 0.95 / calibrationGain)
+4. Input transformer (Ampex only — asymmetric core model generating H2)
+5. Pre-emphasis (TapeEQFilter — NAB/CCIR/AES record EQ via bilinear transform)
+6. Bias filter (HF boost from AC bias current) *[tape only]*
+7. Pre-saturation soft limiter *[tape only]*
+8. Record head filter (4th-order Butterworth at 20kHz, oversampling only) *[tape only]*
+9. **3-band Langevin waveshaper** (bass/mid/treble with per-band drive ratios) *[tape only]*
+10. Soft clip (frequency-selective, LF only) *[tape only]*
+11. Gap loss filter *[tape only]*
+12. Wow & Flutter (Thiran allpass fractional delay interpolation) *[tape only]*
+13. Head bump resonance (speed-dependent peak filter) *[tape only]*
+14. HF loss filters (self-erasure and spacing loss) *[tape only]*
+15. Playback head response *[tape only]*
+16. De-emphasis (TapeEQFilter — complementary playback EQ)
+17. Phase smearing (4 cascaded first-order allpass filters)
+18. Output transformer (Ampex only — LF resonance + hysteresis)
+19. Noise (Paul Kellett pink noise + modulation noise + scrape flutter) *[tape only]*
+20. DC blocker + anti-aliasing filter + output metering
+
+*[tape only]* = skipped in Input mode
+
+### Saturation Model
+
+The core saturation uses the **Langevin function** L(x) = coth(x) - 1/x as a memoryless waveshaper, derived from the anhysteretic magnetization curve of the Jiles-Atherton magnetic hysteresis model.
+
+- **Approximation**: Pade [2,2] with asymptotic blend for |x| > 1.5
+- **Normalization**: 3×L(x)/x provides unity gain for small signals
+- **Harmonic character**: Purely odd-harmonic (H3, H5, H7) from odd-symmetric function
+- **Even harmonics**: Generated by transformer asymmetry model y = x×(1 + b×x) for Ampex only
+- **3-band processing**: ThreeBandSplitter (LR2 at 200Hz/5kHz) with per-band drive ratios
+- **Calibration**: fieldScale=3200, empirically matched to Studer A800 THD measurements
+
+### Tape EQ
+
+First-order IIR from time constants via bilinear transform: H(s) = (1 + s×τ_num) / (1 + s×τ_den)
+
+| Standard | Speed | Pre-emphasis pole | Boost |
+|----------|-------|-------------------|-------|
+| NAB | 7.5 IPS | 1768 Hz | ~8dB |
+| NAB | 15 IPS | 3183 Hz | ~8dB |
+| NAB | 30 IPS | 9095 Hz | ~8dB |
+| CCIR | 7.5 IPS | 2274 Hz | ~8dB |
+| CCIR | 15 IPS | 4547 Hz | ~8dB |
+| AES | All | ~9.1 kHz | ~6dB |
 
 ### Machine Characteristics
 
-**Swiss800**:
-- Warm, slightly compressed sound
-- Gentle high-frequency roll-off
-- Enhanced low-end response
-- Smooth harmonic distortion
+**Swiss800 (Studer A800 MkIII)**:
+- Transformerless, push-pull topology
+- Odd-harmonic dominant (H3 >> H2) — purely from tape magnetization
+- Machine factor ×0.92 (tighter bias, cleaner at equivalent levels)
+- Lower head bump (48Hz, +3dB)
+- Extended HF response (22kHz rolloff)
+- THD at 0VU: ~0.3%, at +6VU: ~3%
 
-**Classic102**:
-- Clear, wide frequency response
-- Detailed transient response
-- Less compression
-- Transparent saturation
+**Classic102 (Ampex ATR-102)**:
+- Transformer-coupled input and output stages
+- Even+odd harmonics (H2 from transformers, H3 from tape)
+- Machine factor ×1.08 (dirtier, more character)
+- Pronounced head bump (62Hz, +4.5dB)
+- Earlier HF rolloff (18kHz)
+- THD at 0VU: ~0.5%, at +6VU: ~4-7%
+
+### Tape Formulations
+
+| Type | Saturation Point | Character | Use Case |
+|------|-----------------|-----------|----------|
+| Type 456 | 0.88 | Warm, punchy | Rock, pop, mix bus |
+| GP9 | 0.96 | Clean, extended headroom | Mastering, classical |
+| Type 911 | 0.85 | European, early saturation | Character, warmth |
+| Type 250 | 0.80 | Vintage, saturates early | Lo-fi, creative |
+
+### Anti-Aliasing
+8th-order Chebyshev Type I filter (0.5dB passband ripple, ~64dB stopband rejection at 1.7× cutoff). Cascaded 4 biquad sections with poles from analog prototype via bilinear transform.
+
+## Calibration Targets
+
+Harmonic distortion levels calibrated against published measurements of real hardware:
+
+| Machine | Level | H2 | H3 | THD |
+|---------|-------|-----|-----|-----|
+| Studer A800 | 0VU | negligible | -50 to -54dB | 0.3-0.5% |
+| Studer A800 | +6VU | — | — | 3-5% |
+| Ampex ATR-102 | 0VU | -52 to -58dB | -46 to -50dB | 0.5-0.8% |
+| Ampex ATR-102 | +6VU | — | — | 4-7% |
 
 ## License
 
@@ -115,4 +159,7 @@ This plugin is provided as-is for educational and production use.
 
 ## Credits
 
-Developed with JUCE Framework
+- Developed with JUCE Framework
+- DSP based on Jiles-Atherton magnetic hysteresis theory (Langevin function)
+- Pink noise algorithm: Paul Kellett
+- Company: Luna Co. Audio
