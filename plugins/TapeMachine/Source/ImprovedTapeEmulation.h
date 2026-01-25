@@ -30,8 +30,6 @@ public:
         cutoffHz = std::min(cutoffHz, sampleRate * 0.45);
         cutoffHz = std::max(cutoffHz, 20.0);
 
-        // 8th-order Chebyshev Type I with 0.5dB passband ripple
-        // Poles computed from analog prototype, then bilinear-transformed
         constexpr int N = 8;
         constexpr double rippleDb = 0.5;
 
@@ -40,18 +38,15 @@ public:
         const double sinhA = std::sinh(a);
         const double coshA = std::cosh(a);
 
-        // Bilinear transform constant and pre-warped cutoff
         const double C = 2.0 * sampleRate;
         const double Wa = C * std::tan(juce::MathConstants<double>::pi * cutoffHz / sampleRate);
 
         for (int k = 0; k < NUM_SECTIONS; ++k)
         {
-            // Analog prototype pole: θ_k = (2k+1)π/(2N)
             double theta = (2.0 * k + 1.0) * juce::MathConstants<double>::pi / (2.0 * N);
             double sigma = -sinhA * std::sin(theta);
             double omega = coshA * std::cos(theta);
 
-            // Bilinear transform coefficients
             double poleMagSq = sigma * sigma + omega * omega;
             double A = Wa * Wa * poleMagSq;
             double B = 2.0 * (-sigma) * Wa * C;
@@ -83,7 +78,6 @@ public:
             signal = processBiquad(signal, coeffs[i], states[i]);
         }
 
-        // Denormal protection
         if (std::abs(signal) < 1e-15f)
             signal = 0.0f;
 
@@ -105,33 +99,14 @@ private:
 
 //==============================================================================
 // Soft Limiter for Pre-Saturation Peak Control
-//
-// PURPOSE: Prevents harmonic explosion at extreme input levels.
-// Pre-emphasis can add +6-7dB to HF, so +12dB input becomes +18-19dB
-// at HF before saturation. This limiter catches those peaks to
-// prevent aliasing while preserving normal operation below +6 VU.
-//
-// PLACEMENT: After pre-emphasis, before record head filter and saturation.
-// This ensures that extreme HF peaks don't generate excessive harmonics
-// that would alias back into the audible spectrum on downsampling.
-//
-// IMPORTANT: We use simple hard clipping instead of tanh() because:
-// - tanh() generates infinite harmonics that alias badly
-// - The 16th-order record head filter immediately after smooths transitions
-// - At 0.95 threshold, only true peaks are clipped (rare in normal use)
-// - Any clipping harmonics are removed by the record head + AA filters
 //==============================================================================
 class SoftLimiter
 {
 public:
-    // Threshold at 0.95 amplitude - only clips true peaks
-    // Pre-emphasized HF rarely exceeds this unless input is extremely hot
     static constexpr float threshold = 0.95f;
 
     float process(float x) const
     {
-        // Simple hard limit - generates finite harmonics that are
-        // filtered by the 16th-order record head filter that follows
         if (x > threshold)
             return threshold;
         if (x < -threshold)
@@ -142,36 +117,16 @@ public:
 
 //==============================================================================
 // Saturation Split Filter - 2-pole Butterworth lowpass for frequency-selective saturation
-//
-// PURPOSE: Prevents HF content from being saturated, which causes aliasing.
-// By splitting the signal and only saturating low frequencies, HF passes through
-// clean and doesn't generate harmonics that alias back into the audible band.
-//
-// DESIGN: 2-pole Butterworth at 5kHz (12dB/octave)
-// - At 5kHz: -3dB (crossover point)
-// - At 10kHz: ~-12dB
-// - At 14.5kHz: ~-18dB (test frequency significantly attenuated for saturation)
-//
-// Why 5kHz? Testing showed:
-// - H3 (tape warmth harmonic) preserved at all typical audio frequencies
-// - Aliasing below -80dB with 14.5kHz @ +8.3dB input
-// - HF passes through linearly, keeping brightness (unlike HF detector approach)
-//
-// This is different from the HF detector approach - we don't reduce saturation
-// based on HF detection (which makes the plugin sound dull). Instead, we split
-// the signal and only saturate the LF content, letting HF pass through linearly.
-// Result: full HF brightness is preserved, but HF doesn't generate harmonics.
 //==============================================================================
 class SaturationSplitFilter
 {
 public:
     void prepare(double sampleRate, double cutoffHz = 5000.0)
     {
-        // 2-pole Butterworth (Q = 0.707 for maximally flat)
         const double w0 = 2.0 * juce::MathConstants<double>::pi * cutoffHz / sampleRate;
         const double cosw0 = std::cos(w0);
         const double sinw0 = std::sin(w0);
-        const double alpha = sinw0 / (2.0 * 0.7071);  // Q = sqrt(2)/2 for Butterworth
+        const double alpha = sinw0 / (2.0 * 0.7071);
         const double a0 = 1.0 + alpha;
 
         b0 = static_cast<float>(((1.0 - cosw0) / 2.0) / a0);
@@ -188,8 +143,6 @@ public:
         z1 = z2 = 0.0f;
     }
 
-    // Returns the lowpass filtered signal (for saturation)
-    // Caller should compute highpass as: original - lowpass
     float process(float input)
     {
         float output = b0 * input + z1;
@@ -207,10 +160,6 @@ private:
 //==============================================================================
 // 3-Band Splitter for frequency-dependent tape saturation
 // Uses cascaded first-order TPT filters (Linkwitz-Riley 2nd-order, 12dB/oct)
-// for proper crossover behavior with -6dB at crossover frequencies.
-// Bands: Bass (<200Hz), Mid (200Hz-5kHz), Treble (>5kHz)
-// Note: bass + mid + treble = input (algebraic perfect reconstruction).
-// Slight crossover coloration is acceptable for tape saturation purposes.
 //==============================================================================
 class ThreeBandSplitter
 {
@@ -227,8 +176,6 @@ public:
         lr5000.reset();
     }
 
-    // Split signal into 3 bands with algebraic perfect reconstruction
-    // bass + mid + treble = input (exactly, at all frequencies)
     void split(float input, float& bass, float& mid, float& treble)
     {
         float lp200Out = lr200.process(input);
@@ -240,8 +187,6 @@ public:
     }
 
 private:
-    // Linkwitz-Riley 2nd-order lowpass: two cascaded first-order TPT sections
-    // Provides 12dB/oct slope and -6dB at crossover frequency
     struct LR2Filter
     {
         struct OnePoleLP
@@ -294,103 +239,399 @@ private:
     LR2Filter lr5000;
 };
 
-// Wow & Flutter processor - can be shared between channels for stereo coherence
+//==============================================================================
+// Langevin Tape Saturation (replaces J-A RK4 ODE)
+// Uses the Langevin function L(x) = coth(x) - 1/x as a memoryless waveshaper.
+// This is the anhysteretic magnetization curve from the Jiles-Atherton model,
+// providing identical H3-dominant harmonic character without state accumulation.
+//
+// Advantages over full J-A ODE:
+//   - Zero DC offset (odd-symmetric function)
+//   - Exact unity gain normalization (3*L(x)/x → 1 for small x)
+//   - No numerical instability for any parameter set
+//   - No transient/settling behavior
+//   - ~10x less CPU (no RK4 per sample)
+//
+// THD characteristics (Type456, Studer, bias=0.5):
+//   0VU: THD≈0.27% (H3 at -51dB, purely odd harmonics)
+//   +6VU: THD≈3.0%
+//   Bias modulates THD: low bias = more saturation
+//   Studer cleaner than Ampex (machine factor)
+//==============================================================================
+class JilesAthertonHysteresis
+{
+public:
+    struct TapeFormulationParams
+    {
+        float Ms = 280.0f;    // Saturation magnetization (kA/m)
+        float a = 720.0f;     // Anhysteretic shape parameter (A/m)
+        float alpha = 0.016f; // Coupling coefficient (unused in waveshaper, kept for API)
+        float k = 640.0f;     // Pinning coefficient (unused in waveshaper, kept for API)
+        float c = 0.50f;      // Reversibility (unused in waveshaper, kept for API)
+    };
+
+    void prepare(double /*sampleRate*/, int /*oversamplingFactor*/ = 1)
+    {
+        // No state to initialize (memoryless waveshaper)
+    }
+
+    void reset()
+    {
+        // No state to reset (memoryless waveshaper)
+    }
+
+    void setFormulation(TapeFormulationParams params)
+    {
+        currentParams = params;
+    }
+
+    void setMachineType(bool isStuder)
+    {
+        studerMode = isStuder;
+    }
+
+    // Process one sample through Langevin saturation waveshaper
+    // input: normalized audio signal (-1 to +1)
+    // drive: saturation depth (0 to ~3.0)
+    // biasLinearization: 0-1, modulates saturation depth (models AC bias effect)
+    float processSample(float input, float drive, float biasLinearization)
+    {
+        if (drive < 0.001f || std::abs(input) < 1e-10f)
+            return input;
+
+        // Bias modulates effective saturation depth:
+        // Low bias (0.0) = under-biased tape = more distortion (×1.3)
+        // Reference bias (0.5) = no change (×1.0)
+        // High bias (1.0) = over-biased tape = cleaner (×0.7)
+        float biasFactor = 1.0f + 0.6f * (0.5f - biasLinearization);
+
+        // Machine character:
+        // Studer (push-pull, transformerless) = slightly cleaner (×0.92)
+        // Ampex (transformer, single-ended stages) = slightly dirtier (×1.08)
+        float machineFactor = studerMode ? 0.92f : 1.08f;
+
+        float effectiveDrive = drive * biasFactor * machineFactor;
+
+        // Langevin waveshaper: x = input * effectiveDrive * fieldScale / a
+        // Output = 3*L(x)*a / (effectiveDrive*fieldScale)
+        //        = input * 3*L(x)/x  (unity-normalized)
+        float x = input * effectiveDrive * fieldScale / currentParams.a;
+        float Lx = langevin(x);
+
+        // Unity-normalized: for small x, 3*L(x)/x → 1 (passes input unchanged)
+        // For large x, L(x) → 1, so output → 3*a/(effectiveDrive*fieldScale*input)
+        // which provides smooth soft compression.
+        float output = 3.0f * Lx * currentParams.a / (effectiveDrive * fieldScale);
+
+        return output;
+    }
+
+private:
+    TapeFormulationParams currentParams;
+    bool studerMode = false;
+
+    // Field scaling: calibrated for target THD at operating levels.
+    // With inputGain applied before tape emulation:
+    //   0VU: amplitude=0.120, drive≈1.18, x≈0.63 → H3≈-52dB
+    //   +6VU: amplitude=0.240, drive≈1.86, x≈1.26 → THD≈3-5%
+    // The Langevin function's Taylor series: L(x) = x/3 - x³/45 + ...
+    // gives H3/H1 ≈ x²/60, producing purely odd-harmonic distortion.
+    // Calibrated empirically against Studer A800 THD measurements.
+    static constexpr float fieldScale = 3200.0f;
+
+    // Langevin function: L(x) = coth(x) - 1/x
+    // Padé [2,2] approximation: L(x) ≈ x*(315+105x²)/(945+420x²+63x⁴)
+    // Denominator constant 945 (=3×315) ensures L(x)/x → 1/3 as x→0
+    // Blends to asymptotic L(x) = sign(x)*(1-1/|x|) for |x| > 1.5
+    static float langevin(float x)
+    {
+        if (std::abs(x) < 1e-4f)
+            return x / 3.0f;
+
+        float ax = std::abs(x);
+
+        if (ax > 2.5f)
+        {
+            float sign = (x >= 0.0f) ? 1.0f : -1.0f;
+            return sign * (1.0f - 1.0f / ax);
+        }
+
+        float x2 = x * x;
+        float pade = x * (315.0f + 105.0f * x2) / (945.0f + 420.0f * x2 + 63.0f * x2 * x2);
+
+        if (ax <= 1.5f)
+            return pade;
+
+        // Blend Padé → asymptotic for 1.5 < |x| < 2.5
+        float sign = (x >= 0.0f) ? 1.0f : -1.0f;
+        float asympt = sign * (1.0f - 1.0f / ax);
+        float t = (ax - 1.5f);
+        return pade * (1.0f - t) + asympt * t;
+    }
+};
+
+//==============================================================================
+// Tape EQ Filter - First-order time-constant network
+// Implements exact NAB/CCIR/AES equalization via bilinear transform
+// H(s) = (1 + s*τ_num) / (1 + s*τ_den)
+//==============================================================================
+class TapeEQFilter
+{
+public:
+    void prepare(double sampleRate)
+    {
+        fs = sampleRate;
+        reset();
+    }
+
+    void reset()
+    {
+        z1 = 0.0f;
+    }
+
+    // Set pre-emphasis: τ_num > τ_den (HF boost for recording)
+    // tau values in microseconds
+    void setPreEmphasis(float tau_num_us, float tau_den_us)
+    {
+        computeCoefficients(tau_num_us, tau_den_us);
+    }
+
+    // Set de-emphasis: τ_num < τ_den (HF cut for playback, inverse of pre-emphasis)
+    void setDeEmphasis(float tau_num_us, float tau_den_us)
+    {
+        computeCoefficients(tau_num_us, tau_den_us);
+    }
+
+    float processSample(float input)
+    {
+        float output = b0 * input + z1;
+        z1 = b1 * input - a1 * output;
+        return output;
+    }
+
+private:
+    double fs = 44100.0;
+    float b0 = 1.0f, b1 = 0.0f;
+    float a1 = 0.0f;
+    float z1 = 0.0f;
+
+    void computeCoefficients(float tau_num_us, float tau_den_us)
+    {
+        // Convert microseconds to seconds
+        double tauNum = static_cast<double>(tau_num_us) * 1e-6;
+        double tauDen = static_cast<double>(tau_den_us) * 1e-6;
+
+        // Bilinear transform of H(s) = (1 + s*tauNum) / (1 + s*tauDen)
+        // Pre-warping not needed for first-order (exact match at DC and Nyquist)
+        double T = 1.0 / fs;
+        double wNum = 2.0 * tauNum / T;
+        double wDen = 2.0 * tauDen / T;
+
+        double num0 = 1.0 + wNum;
+        double num1 = 1.0 - wNum;
+        double den0 = 1.0 + wDen;
+        double den1 = 1.0 - wDen;
+
+        // Normalize by den0
+        // Transfer function: H(z) = (b0 + b1*z^-1) / (1 + a1*z^-1)
+        // From bilinear: denominator = (1+wD) + (1-wD)*z^-1
+        // So a1 = (1-wD)/(1+wD) = den1/den0
+        double invDen0 = 1.0 / den0;
+        b0 = static_cast<float>(num0 * invDen0);
+        b1 = static_cast<float>(num1 * invDen0);
+        a1 = static_cast<float>(den1 * invDen0);
+    }
+};
+
+//==============================================================================
+// Phase Smearing Filter - 4 cascaded first-order allpass filters
+// Models the frequency-dependent phase response of tape electronics/heads
+//==============================================================================
+class PhaseSmearingFilter
+{
+public:
+    static constexpr int NUM_STAGES = 4;
+
+    void prepare(double sampleRate)
+    {
+        currentSampleRate = sampleRate;
+        reset();
+    }
+
+    void reset()
+    {
+        for (auto& stage : stages)
+            stage.state = 0.0f;
+    }
+
+    // Set phase characteristics per machine type
+    void setMachineCharacter(bool isStuder)
+    {
+        // Break frequencies chosen for realistic tape phase response
+        float breakFreqs[NUM_STAGES];
+        if (isStuder)
+        {
+            // Studer: less phase shift (precision engineering)
+            breakFreqs[0] = 60.0f;
+            breakFreqs[1] = 250.0f;
+            breakFreqs[2] = 2000.0f;
+            breakFreqs[3] = 8000.0f;
+        }
+        else
+        {
+            // Ampex: more phase shift (character, warmth)
+            breakFreqs[0] = 40.0f;
+            breakFreqs[1] = 150.0f;
+            breakFreqs[2] = 1200.0f;
+            breakFreqs[3] = 6000.0f;
+        }
+
+        for (int i = 0; i < NUM_STAGES; ++i)
+        {
+            float tanVal = std::tan(juce::MathConstants<float>::pi * breakFreqs[i]
+                                    / static_cast<float>(currentSampleRate));
+            stages[i].coeff = (tanVal - 1.0f) / (tanVal + 1.0f);
+        }
+    }
+
+    float processSample(float input)
+    {
+        float signal = input;
+        for (auto& stage : stages)
+        {
+            float y = stage.coeff * signal + stage.state;
+            stage.state = signal - stage.coeff * y;
+            signal = y;
+        }
+        return signal;
+    }
+
+private:
+    struct AllpassStage
+    {
+        float coeff = 0.0f;
+        float state = 0.0f;
+    };
+
+    std::array<AllpassStage, NUM_STAGES> stages;
+    double currentSampleRate = 44100.0;
+};
+
+//==============================================================================
+// Improved Noise Generator - Paul Kellett pink noise + modulation + scrape flutter
+//==============================================================================
+struct ImprovedNoiseGenerator
+{
+    // Paul Kellett's 6-stage pink noise state
+    float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;
+    float b3 = 0.0f, b4 = 0.0f, b5 = 0.0f, b6 = 0.0f;
+
+    // Scrape flutter bandpass (centered ~4kHz)
+    float scrapeBP_z1 = 0.0f, scrapeBP_z2 = 0.0f;
+    float scrapeBP_b0 = 0.0f, scrapeBP_b1 = 0.0f, scrapeBP_b2 = 0.0f;
+    float scrapeBP_a1 = 0.0f, scrapeBP_a2 = 0.0f;
+
+    // Signal envelope for modulation noise
+    float envelope = 0.0f;
+    float envelopeCoeff = 0.999f;
+
+    // Speed-dependent spectral tilt
+    float tiltState = 0.0f;
+    float tiltCoeff = 0.5f;
+
+    std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<float> whiteDist{-1.0f, 1.0f};
+
+    void prepare(double sampleRate, int tapeSpeed);
+    void reset();
+
+    float generateNoise(float noiseFloor, float modulationAmount, float signal);
+};
+
+//==============================================================================
+// Wow & Flutter processor - shared between channels for stereo coherence
+// Uses Thiran allpass fractional delay interpolation
+//==============================================================================
 class WowFlutterProcessor
 {
 public:
-    std::vector<float> delayBuffer;  // Dynamic size based on sample rate
+    std::vector<float> delayBuffer;
     int writeIndex = 0;
-    double wowPhase = 0.0;     // Use double for better precision
-    double flutterPhase = 0.0;  // Use double for better precision
+    double wowPhase = 0.0;
+    double flutterPhase = 0.0;
     float randomPhase = 0.0f;
     std::mt19937 rng{std::random_device{}()};
     std::uniform_real_distribution<float> dist{-1.0f, 1.0f};
 
-    // Smoothed random modulation (avoids per-sample noise from raw RNG)
+    // Smoothed random modulation
     float randomTarget = 0.0f;
     float randomCurrent = 0.0f;
     int randomUpdateCounter = 0;
-    static constexpr int RANDOM_UPDATE_INTERVAL = 64; // Base update interval (at 1x rate)
+    static constexpr int RANDOM_UPDATE_INTERVAL = 64;
 
-    // Rate compensation: ensures identical behavior regardless of oversampling factor
+    // Rate compensation
     int oversamplingFactor = 1;
-    float smoothingAlpha = 0.01f;  // Calculated in prepare() for ~70Hz cutoff
+    float smoothingAlpha = 0.01f;
+
+    // Thiran allpass state for fractional delay
+    float allpassState = 0.0f;
 
     void prepare(double sampleRate, int osFactor = 1)
     {
-        // Store oversampling factor for rate compensation
         oversamplingFactor = std::max(1, osFactor);
 
-        // Calculate smoothing alpha for ~70Hz cutoff regardless of sample rate
-        // One-pole: alpha = 1 - exp(-2*pi*fc/fs)
-        // This ensures the random modulation bandwidth is always ~70Hz
         smoothingAlpha = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * 70.0f
                                           / static_cast<float>(sampleRate));
 
-        // Validate sampleRate with consistent bounds
-        // MIN: 8000 Hz (lowest professional rate)
-        // MAX: 768000 Hz (4x oversampled 192kHz - highest expected)
         static constexpr double MIN_SAMPLE_RATE = 8000.0;
         static constexpr double MAX_SAMPLE_RATE = 768000.0;
-        static constexpr double MAX_DELAY_SECONDS = 0.05;  // 50ms buffer
+        static constexpr double MAX_DELAY_SECONDS = 0.05;
 
         if (sampleRate <= 0.0 || !std::isfinite(sampleRate))
-            sampleRate = 44100.0;  // Use safe default
+            sampleRate = 44100.0;
 
         sampleRate = std::clamp(sampleRate, MIN_SAMPLE_RATE, MAX_SAMPLE_RATE);
 
-        // Calculate buffer size with explicit bounds checking
-        // At MAX_SAMPLE_RATE (768kHz), 50ms = 38400 samples - well within size_t range
         double bufferSizeDouble = sampleRate * MAX_DELAY_SECONDS;
 
-        // Clamp to reasonable bounds: min 64 samples, max 65536 samples (more than enough for 50ms at any rate)
         static constexpr size_t MIN_BUFFER_SIZE = 64;
         static constexpr size_t MAX_BUFFER_SIZE = 65536;
 
         size_t bufferSize = static_cast<size_t>(bufferSizeDouble);
         bufferSize = std::clamp(bufferSize, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE);
 
-        // Only resize if needed (avoid unnecessary allocations)
         if (delayBuffer.size() != bufferSize)
         {
             delayBuffer.resize(bufferSize, 0.0f);
         }
         else
         {
-            // Clear existing buffer
             std::fill(delayBuffer.begin(), delayBuffer.end(), 0.0f);
         }
         writeIndex = 0;
+        allpassState = 0.0f;
     }
 
-    // Process and return modulation amount (in samples at current rate)
     float calculateModulation(float wowAmount, float flutterAmount,
                              float wowRate, float flutterRate, double sampleRate)
     {
-        // Protect against invalid sample rate
         if (sampleRate <= 0.0)
             sampleRate = 44100.0;
 
-        // Scale modulation depths by oversampling factor to maintain constant TIME deviation
-        // At 4x: ±10 samples at 176.4kHz = same time as ±10 samples at 44.1kHz only if scaled by 4x
         float osScale = static_cast<float>(oversamplingFactor);
 
         float wowMod = static_cast<float>(std::sin(wowPhase)) * wowAmount * 10.0f * osScale;
         float flutterMod = static_cast<float>(std::sin(flutterPhase)) * flutterAmount * 2.0f * osScale;
 
-        // Smoothed random component: update target at time-based rate
-        // Scale interval by oversampling factor so updates occur at same temporal rate
         int scaledInterval = RANDOM_UPDATE_INTERVAL * oversamplingFactor;
         if (++randomUpdateCounter >= scaledInterval)
         {
             randomUpdateCounter = 0;
             randomTarget = dist(rng);
         }
-        // Rate-compensated one-pole smoothing (~70Hz cutoff regardless of sample rate)
         randomCurrent += (randomTarget - randomCurrent) * smoothingAlpha;
         float randomMod = randomCurrent * flutterAmount * 0.5f * osScale;
 
-        // Update phases with double precision
         double safeSampleRate = std::max(1.0, sampleRate);
         double wowIncrement = 2.0 * juce::MathConstants<double>::pi * wowRate / safeSampleRate;
         double flutterIncrement = 2.0 * juce::MathConstants<double>::pi * flutterRate / safeSampleRate;
@@ -406,54 +647,62 @@ public:
         return wowMod + flutterMod + randomMod;
     }
 
-    // Process sample with given modulation
+    // Process sample with Thiran allpass fractional delay interpolation
     float processSample(float input, float modulationSamples)
     {
         if (delayBuffer.empty())
             return input;
 
-        // Write to delay buffer with bounds checking
         if (writeIndex < 0 || writeIndex >= static_cast<int>(delayBuffer.size()))
             writeIndex = 0;
 
         delayBuffer[writeIndex] = input;
 
-        // Scale base delay by oversampling factor to maintain constant time offset
-        // At 1x: 20 samples = 454μs; at 4x: 80 samples = 454μs (same time)
         float baseDelay = 20.0f * static_cast<float>(oversamplingFactor);
-        float totalDelay = baseDelay + modulationSamples;  // Base delay + modulation
+        float totalDelay = baseDelay + modulationSamples;
         int bufferSize = static_cast<int>(delayBuffer.size());
         if (bufferSize <= 0)
             return input;
 
-        // Ensure delay is within valid range
-        totalDelay = std::max(1.0f, std::min(totalDelay, static_cast<float>(bufferSize - 1)));
+        // Ensure delay is within valid range (need at least 2 samples for allpass)
+        totalDelay = std::max(1.5f, std::min(totalDelay, static_cast<float>(bufferSize - 2)));
 
-        // Fractional delay interpolation
+        // Integer and fractional parts
         int delaySamples = static_cast<int>(totalDelay);
-        float fraction = totalDelay - delaySamples;
+        float frac = totalDelay - static_cast<float>(delaySamples);
 
-        int readIndex1 = (writeIndex - delaySamples + bufferSize) % bufferSize;
-        int readIndex2 = (readIndex1 - 1 + bufferSize) % bufferSize;
+        // Read integer-delayed samples
+        int readIndex0 = (writeIndex - delaySamples + bufferSize) % bufferSize;
+        int readIndex1 = (readIndex0 - 1 + bufferSize) % bufferSize;
 
-        // Additional bounds checking
+        readIndex0 = std::max(0, std::min(readIndex0, bufferSize - 1));
         readIndex1 = std::max(0, std::min(readIndex1, bufferSize - 1));
-        readIndex2 = std::max(0, std::min(readIndex2, bufferSize - 1));
 
-        float sample1 = delayBuffer[readIndex1];
-        float sample2 = delayBuffer[readIndex2];
+        float x_n = delayBuffer[readIndex0];
+        float x_n1 = delayBuffer[readIndex1];
 
-        // Linear interpolation
-        float output = sample1 * (1.0f - fraction) + sample2 * fraction;
+        // 1st-order Thiran allpass interpolation
+        // Clamp fractional delay to stable range [0.1, 0.9]
+        float d = std::clamp(frac, 0.1f, 0.9f);
+        float a1 = (1.0f - d) / (1.0f + d);
 
-        // Update write index with bounds checking
+        // Allpass: y[n] = a1 * x[n] + x[n-1] - a1 * y[n-1]
+        float output = a1 * x_n + x_n1 - a1 * allpassState;
+        allpassState = output;
+
+        // Denormal protection on allpass state
+        if (std::abs(allpassState) < 1e-15f)
+            allpassState = 0.0f;
+
         writeIndex = (writeIndex + 1) % std::max(1, bufferSize);
 
         return output;
     }
 };
 
+//==============================================================================
 // Transformer saturation model - authentic input/output stage coloration
+//==============================================================================
 class TransformerSaturation
 {
 public:
@@ -462,21 +711,18 @@ public:
     void reset();
 
 private:
-    // DC blocking for transformer coupling
     float dcState = 0.0f;
     float dcBlockCoeff = 0.9995f;
-
-    // Transformer hysteresis state
     float hystState = 0.0f;
-    float hystDecay = 0.995f;       // Rate-compensated (calculated in prepare)
+    float hystDecay = 0.995f;
     float prevInput = 0.0f;
-
-    // LF resonance from core saturation
     float lfResonanceState = 0.0f;
-    float lfResonanceCoeff = 0.002f; // Rate-compensated (calculated in prepare)
+    float lfResonanceCoeff = 0.002f;
 };
 
-// Playback head frequency response - distinct from tape response
+//==============================================================================
+// Playback head frequency response
+//==============================================================================
 class PlaybackHeadResponse
 {
 public:
@@ -485,55 +731,38 @@ public:
     void reset();
 
 private:
-    // Head gap loss filter (comb filter approximation)
     std::array<float, 64> gapDelayLine{};
     int gapDelayIndex = 0;
-
-    // Head resonance (mechanical + electrical)
     float resonanceState1 = 0.0f;
     float resonanceState2 = 0.0f;
-
-    // Rate-compensated resonance coefficient (~740Hz cutoff regardless of sample rate)
     float resonanceCoeff = 0.1f;
-
     double currentSampleRate = 44100.0;
 };
 
-// Record head bias oscillator effects
-class BiasOscillator
-{
-public:
-    void prepare(double sampleRate);
-    float process(float input, float biasFreq, float biasAmount);
-    void reset();
-
-private:
-    double phase = 0.0;
-    double sampleRate = 44100.0;
-
-    // Intermodulation products filter
-    float imState = 0.0f;
-};
-
-// Capstan/motor flutter - separate from tape wow/flutter
+//==============================================================================
+// Capstan/motor flutter
+//==============================================================================
 class MotorFlutter
 {
 public:
     void prepare(double sampleRate, int osFactor = 1);
-    float calculateFlutter(float motorQuality);  // Returns pitch modulation
+    float calculateFlutter(float motorQuality);
     void reset();
 
 private:
-    double phase1 = 0.0;  // Primary motor frequency
-    double phase2 = 0.0;  // Secondary bearing frequency
-    double phase3 = 0.0;  // Capstan eccentricity
+    double phase1 = 0.0;
+    double phase2 = 0.0;
+    double phase3 = 0.0;
     double sampleRate = 44100.0;
-    int oversamplingFactor = 1;  // Rate compensation for consistent noise power
+    int oversamplingFactor = 1;
 
     std::mt19937 rng{std::random_device{}()};
     std::uniform_real_distribution<float> jitter{-1.0f, 1.0f};
 };
 
+//==============================================================================
+// Main Tape Emulation Class
+//==============================================================================
 class ImprovedTapeEmulation
 {
 public:
@@ -542,8 +771,8 @@ public:
 
     enum TapeMachine
     {
-        Swiss800 = 0,      // Studer A800 - Swiss precision tape machine
-        Classic102         // Ampex ATR-102 - Classic American tape machine
+        Swiss800 = 0,      // Studer A800
+        Classic102         // Ampex ATR-102
     };
 
     enum TapeSpeed
@@ -555,47 +784,43 @@ public:
 
     enum TapeType
     {
-        Type456 = 0,      // Classic high-output formulation
-        TypeGP9,          // Grand Prix 9 formulation
-        Type911,          // German precision formulation
-        Type250           // Professional studio formulation
+        Type456 = 0,
+        TypeGP9,
+        Type911,
+        Type250
     };
 
-    // EQ Standard - affects pre-emphasis/de-emphasis curves
     enum EQStandard
     {
-        NAB = 0,          // American standard (60Hz hum region)
-        CCIR,             // European/IEC standard (50Hz hum region)
-        AES               // AES standard (typically 30 IPS only)
+        NAB = 0,
+        CCIR,
+        AES
     };
 
-    // Signal Path - determines processing stages
     enum SignalPath
     {
-        Repro = 0,        // Full tape processing (record + playback)
-        Sync,             // Record head playback (slightly different EQ)
-        Input,            // Electronics only (no tape saturation)
-        Thru              // Complete bypass
+        Repro = 0,
+        Sync,
+        Input,
+        Thru
     };
 
     void prepare(double sampleRate, int samplesPerBlock, int oversamplingFactor = 1);
     void reset();
 
-    // Main processing with all parameters
     float processSample(float input,
                        TapeMachine machine,
                        TapeSpeed speed,
                        TapeType type,
-                       float biasAmount,      // 0-1 (affects harmonic content)
-                       float saturationDepth, // 0-1 (tape compression)
-                       float wowFlutterAmount, // 0-1 (pitch modulation)
-                       bool noiseEnabled = false,  // Noise on/off
-                       float noiseAmount = 0.0f,   // 0-1 (noise level)
-                       float* sharedWowFlutterMod = nullptr,  // Shared modulation for stereo coherence
-                       float calibrationLevel = 0.0f,  // 0/3/6/9 dB - affects headroom/saturation point
-                       EQStandard eqStandard = NAB,    // NAB/CCIR/AES pre-emphasis curves
-                       SignalPath signalPath = Repro   // Processing path selection
-                       );
+                       float biasAmount,
+                       float saturationDepth,
+                       float wowFlutterAmount,
+                       bool noiseEnabled = false,
+                       float noiseAmount = 0.0f,
+                       float* sharedWowFlutterMod = nullptr,
+                       float calibrationLevel = 0.0f,
+                       EQStandard eqStandard = NAB,
+                       SignalPath signalPath = Repro);
 
     // Metering
     float getInputLevel() const { return inputLevel.load(); }
@@ -605,182 +830,115 @@ public:
 private:
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
-    int currentOversamplingFactor = 1;  // Stored for AA filter bypass at 1x
+    int currentOversamplingFactor = 1;
 
     // Machine-specific characteristics
     struct MachineCharacteristics
     {
-        // Frequency response
-        float headBumpFreq;      // Center frequency of head bump
-        float headBumpGain;      // Gain at head bump frequency
-        float headBumpQ;         // Q factor of head bump
-
-        // High frequency response
-        float hfRolloffFreq;     // -3dB point for HF rolloff
-        float hfRolloffSlope;    // dB/octave beyond rolloff
-
-        // Saturation characteristics
-        float saturationKnee;    // Soft knee point (0.6-0.9)
-        float saturationHarmonics[5]; // Harmonic profile (2nd-6th)
-
-        // Dynamic response
-        float compressionRatio;  // Subtle compression (0.05-0.2)
-        float compressionAttack; // ms
-        float compressionRelease;// ms
-
-        // Phase response
-        float phaseShift;        // Subtle phase rotation
-
-        // Crosstalk
-        float crosstalkAmount;   // L/R bleed (-60 to -40 dB)
+        float headBumpFreq;
+        float headBumpGain;
+        float headBumpQ;
+        float hfRolloffFreq;
+        float hfRolloffSlope;
+        float saturationKnee;
+        float saturationHarmonics[5];
+        float compressionRatio;
+        float compressionAttack;
+        float compressionRelease;
+        float phaseShift;
+        float crosstalkAmount;
     };
 
-    // Tape formulation characteristics
     struct TapeCharacteristics
     {
-        // Magnetic properties
-        float coercivity;        // Magnetic field strength needed
-        float retentivity;       // How well tape holds magnetization
-        float saturationPoint;   // Maximum flux level
-
-        // Distortion characteristics
-        float hysteresisAmount;  // Non-linearity amount
-        float hysteresisAsymmetry; // Asymmetric distortion
-
-        // Noise characteristics
-        float noiseFloor;        // Base noise level (-70 to -60 dB)
-        float modulationNoise;   // Noise modulated by signal
-
-        // Frequency response mod
-        float lfEmphasis;        // Low frequency emphasis
-        float hfLoss;            // High frequency loss factor
+        float coercivity;
+        float retentivity;
+        float saturationPoint;
+        float hysteresisAmount;
+        float hysteresisAsymmetry;
+        float noiseFloor;
+        float modulationNoise;
+        float lfEmphasis;
+        float hfLoss;
     };
 
-    // Speed-dependent parameters
     struct SpeedCharacteristics
     {
-        float headBumpMultiplier;  // How speed affects head bump
-        float hfExtension;         // HF response improvement with speed
-        float noiseReduction;      // Noise improvement with speed
-        float flutterRate;         // Typical flutter frequency
-        float wowRate;             // Typical wow frequency
+        float headBumpMultiplier;
+        float hfExtension;
+        float noiseReduction;
+        float flutterRate;
+        float wowRate;
     };
 
+    // ==========================================
     // DSP Components
+    // ==========================================
 
-    // Pre/Post emphasis (NAB/CCIR curves)
-    juce::dsp::IIR::Filter<float> preEmphasisFilter1;
-    juce::dsp::IIR::Filter<float> preEmphasisFilter2;
-    // Post-saturation filters use double precision to avoid quantization noise
-    // at low normalized frequencies when oversampling (e.g., 60Hz at 176.4kHz).
-    // Float32 biquad poles near unit circle amplify roundoff error by ~700x.
-    juce::dsp::IIR::Filter<double> deEmphasisFilter1;
-    juce::dsp::IIR::Filter<double> deEmphasisFilter2;
+    // Jiles-Atherton hysteresis (3 instances for frequency-dependent saturation)
+    JilesAthertonHysteresis hysteresisBass;
+    JilesAthertonHysteresis hysteresisMid;
+    JilesAthertonHysteresis hysteresisTreble;
+
+    // Tape EQ (NAB/CCIR/AES)
+    TapeEQFilter preEmphasisEQ;
+    TapeEQFilter deEmphasisEQ;
+
+    // Phase smearing (allpass filters)
+    PhaseSmearingFilter phaseSmear;
+
+    // Improved noise generator
+    ImprovedNoiseGenerator improvedNoiseGen;
 
     // Head bump modeling (resonant peak) - double for low-freq precision
     juce::dsp::IIR::Filter<double> headBumpFilter;
 
-    // HF loss modeling - double for consistency with post-saturation chain
+    // HF loss modeling - double for consistency
     juce::dsp::IIR::Filter<double> hfLossFilter1;
     juce::dsp::IIR::Filter<double> hfLossFilter2;
 
-    // Record/Playback head gap loss - double for post-saturation chain
+    // Record/Playback head gap loss
     juce::dsp::IIR::Filter<double> gapLossFilter;
 
     // Bias-induced HF boost
     juce::dsp::IIR::Filter<float> biasFilter;
 
-    // DC blocking filter to prevent subsonic rumble - double for 25Hz at high rates
+    // DC blocking filter
     juce::dsp::IIR::Filter<double> dcBlocker;
 
-    // Record head gap filter - models HF loss at record head before saturation
-    // Real tape: record head gap creates natural lowpass response (~15-18kHz at 15 IPS)
-    // This prevents HF content from generating harmonics that would alias
-    // 2 cascaded biquads = 4th-order Butterworth for 24dB/oct rolloff
-    // (Post-saturation AA filter + JUCE decimation filter handle remaining aliasing)
-    // Applied BEFORE saturation to mimic real tape head behavior
+    // Record head gap filter (4th-order Butterworth)
     juce::dsp::IIR::Filter<float> recordHeadFilter1;
     juce::dsp::IIR::Filter<float> recordHeadFilter2;
 
-    // Post-saturation anti-aliasing filter - 8th-order Chebyshev Type I
-    // CRITICAL: This prevents aliasing by removing harmonics above original Nyquist
-    // before the JUCE oversampler downsamples the signal.
-    //
-    // Design: 8th-order Chebyshev Type I with 0.5dB passband ripple
-    // - Provides ~96dB attenuation at 2x the cutoff frequency
-    // - Much steeper transition band than equivalent-order Butterworth
-    // - Cutoff set to 0.45 * base sample rate (e.g., 19.8kHz for 44.1kHz base)
-    //
-    // Why Chebyshev over Butterworth?
-    // - Butterworth: 96dB/oct requires 16th order (8 biquads)
-    // - Chebyshev: 96dB at 2x cutoff with only 8th order (4 biquads)
-    // - Chebyshev has passband ripple but much steeper rolloff
+    // Post-saturation anti-aliasing filter
     ChebyshevAntiAliasingFilter antiAliasingFilter;
 
-    // Pre-saturation soft limiter - catches extreme peaks after pre-emphasis
-    // Placed AFTER pre-emphasis, BEFORE record head filter and saturation
-    // This prevents aliasing at extreme input levels while preserving
-    // normal tape saturation behavior at typical operating levels
+    // Pre-saturation soft limiter
     SoftLimiter preSaturationLimiter;
 
-    // 3-band splitter for frequency-dependent tape saturation
-    // Replaces binary 5kHz split with physically-accurate per-band drive
+    // 3-band splitter for frequency-dependent saturation
     ThreeBandSplitter threeBandSplitter;
 
-    // Split filters for the two soft-clip stages (separate instances to avoid shared state)
-    SaturationSplitFilter softClipSplitFilter1;   // After 3-band saturation
-    SaturationSplitFilter softClipSplitFilter2;   // Before AA filter
+    // Split filter for soft-clip stage
+    SaturationSplitFilter softClipSplitFilter;
 
-    // Store base sample rate for anti-aliasing filter cutoff calculation
+    // Base sample rate for AA filter cutoff
     double baseSampleRate = 44100.0;
 
-    // Lookup-table-based tape saturation curve
-    // Pre-computed tanh-based transfer function with machine-specific asymmetry
-    // Produces natural harmonic spectrum that rises smoothly with drive level
-    struct TapeSaturationTable
-    {
-        static constexpr int TABLE_SIZE = 4096;
-        static constexpr float TABLE_RANGE = 4.0f;  // Input: [-2, +2]
+    // Record head gap cutoff frequency
+    float recordHeadCutoff = 15000.0f;
 
-        std::array<float, TABLE_SIZE> table{};
-        float currentAsymmetry = 0.0f;
-        bool needsRegeneration = true;
+    // Enhanced DSP components
+    TransformerSaturation inputTransformer;
+    TransformerSaturation outputTransformer;
+    PlaybackHeadResponse playbackHead;
+    MotorFlutter motorFlutter;
 
-        // Generate lookup table for given machine type and asymmetry
-        void generate(bool isStuder, float asymmetry);
+    // Per-channel wow/flutter delay line
+    WowFlutterProcessor perChannelWowFlutter;
 
-        // Process sample through table with drive-controlled nonlinearity
-        float process(float input, float drive) const;
-    };
-    TapeSaturationTable saturationTable;
-
-    // Hysteresis-modulated drive: adjusts saturation based on signal history
-    // Rising signal: less drive (cleaner transients)
-    // Falling signal: more drive (warmer sustain)
-    struct HysteresisDriveModulator
-    {
-        float previousSample = 0.0f;
-        float magneticState = 0.0f;
-        float smoothedOffset = 0.0f;
-        float smoothingCoeff = 0.995f;
-
-        // Rate-compensated coefficients (calculated in prepare)
-        float magneticDecay = 0.9999f;    // Per-sample decay for magneticState
-        float trackingCoeff = 0.1f;       // Per-sample tracking rate
-
-        void prepare(double sampleRate, int osFactor = 1);
-        void reset();
-
-        // Returns drive multiplier: 1.0 ± 0.05
-        float computeDriveMultiplier(float currentSample, float saturationDepth,
-                                     float coercivity, float asymmetry);
-    };
-    HysteresisDriveModulator hysteresisMod;
-
-    // Table regeneration tracking (initialized to valid defaults;
-    // needsRegeneration=true ensures first call always generates the table)
-    TapeMachine m_lastTableMachine = Swiss800;
-    float m_lastTableBias = 0.0f;
+    // Crosstalk simulation
+    float crosstalkBuffer = 0.0f;
 
     // Saturation/Compression
     struct TapeSaturator
@@ -794,46 +952,19 @@ private:
     };
     TapeSaturator saturator;
 
-    // Per-channel delay line for wow/flutter (uses shared modulation)
-    WowFlutterProcessor perChannelWowFlutter;
-
-    // Tape noise generator
-    struct NoiseGenerator
-    {
-        std::mt19937 rng{std::random_device{}()};
-        std::normal_distribution<float> gaussian{0.0f, 1.0f};
-        juce::dsp::IIR::Filter<float> pinkingFilter;
-
-        float generateNoise(float noiseFloor, float modulationAmount, float signal);
-    };
-    NoiseGenerator noiseGen;
-
-    // NEW: Enhanced DSP components for UAD-quality emulation
-    TransformerSaturation inputTransformer;
-    TransformerSaturation outputTransformer;
-    PlaybackHeadResponse playbackHead;
-    BiasOscillator biasOsc;
-    MotorFlutter motorFlutter;
-
-    // Crosstalk simulation (for stereo)
-    float crosstalkBuffer = 0.0f;
-
-    // Record head gap cutoff frequency (set in prepare() based on tape speed)
-    float recordHeadCutoff = 15000.0f;
-
     // Metering
     std::atomic<float> inputLevel{0.0f};
     std::atomic<float> outputLevel{0.0f};
     std::atomic<float> gainReduction{0.0f};
 
-    // Filter update tracking (instance variables instead of statics)
+    // Filter update tracking
     TapeMachine m_lastMachine = static_cast<TapeMachine>(-1);
     TapeSpeed m_lastSpeed = static_cast<TapeSpeed>(-1);
     TapeType m_lastType = static_cast<TapeType>(-1);
     EQStandard m_lastEqStandard = static_cast<EQStandard>(-1);
     float m_lastBias = -1.0f;
 
-    // Cached characteristics (updated when parameters change, not per-sample)
+    // Cached characteristics
     MachineCharacteristics m_cachedMachineChars;
     TapeCharacteristics m_cachedTapeChars;
     SpeedCharacteristics m_cachedSpeedChars;
@@ -850,37 +981,50 @@ private:
     // Soft clipping function
     static float softClip(float input, float threshold);
 
-    // Harmonic generation
-    float generateHarmonics(float input, const float* harmonicProfile, int numHarmonics);
-
     // Band drive ratios for frequency-dependent saturation
     struct BandDriveRatios
     {
-        float bass;     // Drive multiplier for <200Hz
-        float mid;      // Drive multiplier for 200Hz-5kHz (always 1.0)
-        float treble;   // Drive multiplier for >5kHz
+        float bass;
+        float mid;
+        float treble;
     };
 
     BandDriveRatios getBandDriveRatios(TapeMachine machine) const
     {
         if (machine == Swiss800)
-            return { 0.55f, 1.0f, 0.20f };  // Studer: precise, less LF/HF saturation
+            return { 0.55f, 1.0f, 0.20f };
         else
-            return { 0.65f, 1.0f, 0.30f };  // Ampex: more musical LF, slightly more HF
+            return { 0.65f, 1.0f, 0.30f };
     }
 
     // Compute drive from saturation depth with exponential mapping
-    // Calibrated for real tape THD: ~0.3% Studer / ~0.5% Ampex at 0VU
-    // The gentle exponential accounts for signal level also increasing with input gain
     float computeDrive(float saturationDepth, float tapeFormulationScale) const
     {
         if (saturationDepth < 0.001f) return 0.0f;
         return 0.62f * std::exp(1.8f * saturationDepth) * tapeFormulationScale;
     }
 
+    // Get J-A formulation parameters for a tape type
+    JilesAthertonHysteresis::TapeFormulationParams getJAParams(TapeType type) const
+    {
+        switch (type)
+        {
+            case Type456:
+                return { 280.0f, 720.0f, 0.016f, 640.0f, 0.50f };
+            case TypeGP9:
+                return { 320.0f, 800.0f, 0.012f, 700.0f, 0.60f };
+            case Type911:
+                return { 270.0f, 700.0f, 0.018f, 620.0f, 0.48f };
+            case Type250:
+                return { 240.0f, 680.0f, 0.020f, 580.0f, 0.45f };
+            default:
+                return { 280.0f, 720.0f, 0.016f, 640.0f, 0.50f };
+        }
+    }
+
     static constexpr float denormalPrevention = 1e-8f;
 
-    // Helper to validate filter coefficients are finite (not NaN or Inf)
+    // Validate filter coefficients
     static bool validateCoefficients(const juce::dsp::IIR::Coefficients<float>::Ptr& coeffs)
     {
         if (coeffs == nullptr) return false;

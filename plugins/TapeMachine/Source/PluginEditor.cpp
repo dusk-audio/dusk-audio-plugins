@@ -46,7 +46,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
     signalPathSelector.addItem("Sync", 2);
     signalPathSelector.addItem("Input", 3);
     signalPathSelector.addItem("Thru", 4);
-    signalPathSelector.setTooltip("Signal Path\nRepro: Full tape processing\nSync: Record head playback\nInput: Electronics only\nThru: Complete bypass");
+    signalPathSelector.setTooltip("Signal Path\nRepro: Full tape processing (record→tape→playback)\nSync: Record head playback (more HF loss, for overdub sync)\nInput: Electronics only (no tape saturation/wow/flutter)\nThru: Complete bypass");
     signalPathAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "signalPath", signalPathSelector);
 
@@ -54,7 +54,7 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
     eqStandardSelector.addItem("NAB", 1);
     eqStandardSelector.addItem("CCIR", 2);
     eqStandardSelector.addItem("AES", 3);
-    eqStandardSelector.setTooltip("EQ Standard (Pre-emphasis/De-emphasis)\nNAB: American standard\nCCIR: European/IEC standard\nAES: Modern standard");
+    eqStandardSelector.setTooltip("EQ Standard (Pre/De-emphasis)\nNAB: American (most HF pre-emphasis, warmest saturation)\nCCIR: European (moderate, balanced)\nAES: Modern (minimal, most transparent)");
     eqStandardAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getAPVTS(), "eqStandard", eqStandardSelector);
 
