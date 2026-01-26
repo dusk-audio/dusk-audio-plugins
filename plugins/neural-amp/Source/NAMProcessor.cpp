@@ -2,6 +2,7 @@
 #include "dsp.h"
 #include "get_dsp.h"
 #include "factory_init.h"
+#include <filesystem>
 
 NAMProcessor::NAMProcessor()
 {
@@ -24,7 +25,8 @@ bool NAMProcessor::loadModel(const juce::File& modelFile)
     {
         // Load the model
         auto newModelData = std::make_unique<nam::dspData>();
-        auto newModel = nam::get_dsp(modelFile.getFullPathName().toStdString(), *newModelData);
+        std::filesystem::path modelPath(modelFile.getFullPathName().toStdString());
+        auto newModel = nam::get_dsp(modelPath, *newModelData);
 
         if (!newModel)
             return false;
@@ -154,7 +156,10 @@ void NAMProcessor::process(juce::AudioBuffer<float>& buffer)
         }
 
         // Process at model sample rate
-        namModel->process(resampledInput.data(), resampledOutput.data(), resampledSize);
+        // NAM API uses double-pointer for multi-channel support
+        float* inputPtr = resampledInput.data();
+        float* outputPtr = resampledOutput.data();
+        namModel->process(&inputPtr, &outputPtr, resampledSize);
 
         // Downsample output back to host rate
         for (int i = 0; i < numSamples; ++i)
@@ -169,7 +174,10 @@ void NAMProcessor::process(juce::AudioBuffer<float>& buffer)
     else
     {
         // Process directly at native rate
-        namModel->process(inputBuffer.data(), outputBuffer.data(), numSamples);
+        // NAM API uses double-pointer for multi-channel support
+        float* inputPtr = inputBuffer.data();
+        float* outputPtr = outputBuffer.data();
+        namModel->process(&inputPtr, &outputPtr, numSamples);
     }
 
     // Apply output normalization based on model loudness
