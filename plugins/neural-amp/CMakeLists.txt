@@ -17,10 +17,12 @@ set(NAM_DEPS_PATH ${NAM_CORE_DIR}/Dependencies)
 # NAM Core sources
 set(NAM_CORE_SOURCES
     ${NAM_CORE_DIR}/NAM/activations.cpp
+    ${NAM_CORE_DIR}/NAM/conv1d.cpp
     ${NAM_CORE_DIR}/NAM/convnet.cpp
     ${NAM_CORE_DIR}/NAM/dsp.cpp
     ${NAM_CORE_DIR}/NAM/get_dsp.cpp
     ${NAM_CORE_DIR}/NAM/lstm.cpp
+    ${NAM_CORE_DIR}/NAM/ring_buffer.cpp
     ${NAM_CORE_DIR}/NAM/util.cpp
     ${NAM_CORE_DIR}/NAM/wavenet.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/factory_init.cpp
