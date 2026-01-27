@@ -4003,6 +4003,17 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Allocate interpolated sidechain for max 4x oversampling
     interpolatedSidechain.setSize(numChannels, samplesPerBlock * 4);
 
+    // Prepare dry signal delay line for oversampling latency compensation
+    // This ensures dry and wet signals are time-aligned when mixing (parallel compression)
+    juce::dsp::ProcessSpec delaySpec;
+    delaySpec.sampleRate = sampleRate;
+    delaySpec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
+    delaySpec.numChannels = static_cast<juce::uint32>(numChannels);
+    dryDelayLine.prepare(delaySpec);
+    dryDelayLine.reset();
+    // Store the max oversampling latency for use in processBlock
+    currentDryDelayInSamples = oversamplingLatency;
+
     // Initialize smoothed auto-makeup gain with ~50ms smoothing time
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
@@ -5256,10 +5267,32 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // We want: 100% mix = 100% wet (compressed), so we invert the parameter
         // This makes: mix=100% -> param=0 -> output=wet, mix=0% -> param=1 -> output=dry
         float dryAmount = 1.0f - mixAmount;
+
+        // Get current oversampling latency and update delay line
+        // This compensates for the filter group delay introduced by the oversampler
+        // Without this, dry and wet signals are out of phase, causing comb filtering (flanging)
+        int oversamplerLatency = (antiAliasing && !antiAliasing->isOversamplingOff())
+                                  ? antiAliasing->getLatency() : 0;
+
+        // Set delay time to match oversampler latency (time-align dry with wet signal)
+        dryDelayLine.setDelay(static_cast<float>(oversamplerLatency));
+
         for (int ch = 0; ch < numChannels; ++ch)
         {
             float* wet = buffer.getWritePointer(ch);
-            const float* dry = dryBuffer.getReadPointer(ch);
+            float* dry = dryBuffer.getWritePointer(ch);  // Need write access for delay processing
+
+            // Process dry buffer through delay line to align with oversampled wet signal
+            if (oversamplerLatency > 0)
+            {
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    float delayedSample = dryDelayLine.popSample(ch);
+                    dryDelayLine.pushSample(ch, dry[i]);
+                    dry[i] = delayedSample;
+                }
+            }
+
             SIMDHelpers::mixBuffers(wet, dry, numSamples, dryAmount);
         }
     }
@@ -5406,6 +5439,9 @@ void UniversalCompressor::resetDSPState()
     outputRmsAccumulator = 0.0f;
     lastCompressorMode = -1;  // Force mode change detection on next processBlock
     primeRmsAccumulators = true;  // Prime accumulators on first block after reset
+
+    // Reset dry signal delay line (for oversampling latency compensation)
+    dryDelayLine.reset();
 
     // NOTE: We do NOT call prepare() here because:
     // 1. prepare() does memory allocation which is not thread-safe
