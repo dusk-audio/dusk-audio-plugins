@@ -77,11 +77,11 @@
 // The unquoted 1.0.0 tokenizes incorrectly in the preprocessor
 
 #ifndef  JucePlugin_VersionCode
- #define JucePlugin_VersionCode            0x10200
+ #define JucePlugin_VersionCode            0x10201
 #endif
 
 #ifndef  JucePlugin_VersionString
- #define JucePlugin_VersionString          "1.2.0"
+ #define JucePlugin_VersionString          "1.2.1"
 #endif
 
 #ifndef  JucePlugin_VSTUniqueID
