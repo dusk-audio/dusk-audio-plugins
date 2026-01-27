@@ -2449,11 +2449,11 @@ public:
         processed = processed + k2 * x2 + k3 * x3;
 
         // Apply makeup gain
-        float compressed_output = processed * juce::Decibels::decibelsToGain(makeupGain);
+        float output = processed * juce::Decibels::decibelsToGain(makeupGain);
 
-        // Bus-style parallel compression (New York compression)
-        // Blend dry and wet signals for "glue" effect
-        float output = input * (1.0f - mixAmount) + compressed_output * mixAmount;
+        // Note: Mix/parallel compression is now handled globally at the end of processBlock
+        // for consistency across all compressor modes (mixAmount parameter kept for API compatibility)
+        (void)mixAmount;  // Suppress unused warning
 
         // Final output limiting
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
@@ -2894,11 +2894,11 @@ public:
         detector.envelope = juce::jlimit(0.0001f, 1.0f, detector.envelope);
 
         // Apply compression to DELAYED input (the gain was computed from future/current samples)
-        float compressed = delayedInput * detector.envelope;
+        float output = delayedInput * detector.envelope;
 
-        // Mix (parallel compression) - use delayed input for dry signal too
-        float mixAmount = mixPercent / 100.0f;
-        float output = delayedInput * (1.0f - mixAmount) + compressed * mixAmount;
+        // Note: Mix/parallel compression is now handled globally at the end of processBlock
+        // for consistency across all compressor modes (mixPercent parameter kept for API compatibility)
+        (void)mixPercent;  // Suppress unused warning
 
         // Apply output gain
         output *= juce::Decibels::decibelsToGain(outputGain);
@@ -4592,13 +4592,14 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         auto* xover2Param = parameters.getRawParameterValue("mb_crossover_2");
         auto* xover3Param = parameters.getRawParameterValue("mb_crossover_3");
         auto* mbOutputParam = parameters.getRawParameterValue("mb_output");
-        auto* mbMixParam = parameters.getRawParameterValue("mb_mix");
+        // Use global mix parameter for consistency across all modes
+        auto* globalMixParam = parameters.getRawParameterValue("mix");
 
         float xover1Target = xover1Param ? xover1Param->load() : 200.0f;
         float xover2Target = xover2Param ? xover2Param->load() : 2000.0f;
         float xover3Target = xover3Param ? xover3Param->load() : 8000.0f;
         float mbOutput = mbOutputParam ? mbOutputParam->load() : 0.0f;
-        float mbMix = mbMixParam ? mbMixParam->load() : 100.0f;
+        float mbMix = globalMixParam ? globalMixParam->load() : 100.0f;
 
         // Update crossover frequencies with smoothing to prevent zipper noise
         smoothedCrossover1.setTargetValue(xover1Target);
@@ -5251,11 +5252,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (needsDryBuffer && dryBuffer.getNumChannels() > 0)
     {
         // Blend dry and wet signals
+        // Note: mixBuffers formula is dest = dest*(1-param) + src*param
+        // We want: 100% mix = 100% wet (compressed), so we invert the parameter
+        // This makes: mix=100% -> param=0 -> output=wet, mix=0% -> param=1 -> output=dry
+        float dryAmount = 1.0f - mixAmount;
         for (int ch = 0; ch < numChannels; ++ch)
         {
             float* wet = buffer.getWritePointer(ch);
             const float* dry = dryBuffer.getReadPointer(ch);
-            SIMDHelpers::mixBuffers(wet, dry, numSamples, mixAmount);
+            SIMDHelpers::mixBuffers(wet, dry, numSamples, dryAmount);
         }
     }
 

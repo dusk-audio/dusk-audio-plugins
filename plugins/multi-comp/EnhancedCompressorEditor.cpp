@@ -607,9 +607,10 @@ void EnhancedCompressorEditor::setupBusPanel()
         busPanel.makeupAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             params, "bus_makeup", *busPanel.makeupKnob);
 
-    if (params.getRawParameterValue("bus_mix"))
+    // Use global mix parameter for consistency across all modes
+    if (params.getRawParameterValue("mix"))
         busPanel.mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            params, "bus_mix", *busPanel.mixKnob);
+            params, "mix", *busPanel.mixKnob);
 }
 
 void EnhancedCompressorEditor::setupDigitalPanel()
