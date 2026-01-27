@@ -230,7 +230,9 @@ private:
     // Delay line for dry signal compensation when oversampling is enabled
     // This ensures dry and wet signals are time-aligned when mixing for parallel compression
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> dryDelayLine{512};
-    int currentDryDelayInSamples{0};  // Current oversampling latency for dry signal delay
+    int currentDryDelayInSamples{0};   // Current oversampling latency for dry signal delay
+    int preparedDelayLineChannels{0};  // Number of channels the delay line was prepared for
+    bool delayLineReady{false};        // Safety flag: true only after successful prepare()
 
     // Pre-smoothed gain buffer for auto-makeup optimization
     alignas(64) std::array<float, 8192> smoothedGainBuffer{};
