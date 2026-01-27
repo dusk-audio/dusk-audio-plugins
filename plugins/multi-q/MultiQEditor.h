@@ -8,6 +8,7 @@
 #include "PultecCurveDisplay.h"
 #include "PultecLookAndFeel.h"
 #include "VintageTubeEQLookAndFeel.h"
+#include "BandStripComponent.h"
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
@@ -48,6 +49,9 @@ private:
 
     // Graphic display
     std::unique_ptr<EQGraphicDisplay> graphicDisplay;
+
+    // Band strip component (Eventide SplitEQ-style for Digital mode)
+    std::unique_ptr<BandStripComponent> bandStrip;
 
     // British mode curve display (4K-EQ style)
     std::unique_ptr<BritishEQCurveDisplay> britishCurveDisplay;

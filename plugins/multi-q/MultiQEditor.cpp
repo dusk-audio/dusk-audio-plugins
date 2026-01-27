@@ -11,6 +11,11 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     addAndMakeVisible(graphicDisplay.get());
     graphicDisplay->onBandSelected = [this](int band) { onBandSelected(band); };
 
+    // Create band strip component (Eventide SplitEQ-style for Digital mode)
+    bandStrip = std::make_unique<BandStripComponent>(processor);
+    bandStrip->onBandSelected = [this](int band) { onBandSelected(band); };
+    addAndMakeVisible(bandStrip.get());
+
     // Create British mode curve display (4K-EQ style)
     britishCurveDisplay = std::make_unique<BritishEQCurveDisplay>(processor);
     britishCurveDisplay->setVisible(false);  // Hidden by default
@@ -35,17 +40,35 @@ MultiQEditor::MultiQEditor(MultiQ& p)
 
     freqSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::TextBoxBelow);
-    setupSlider(*freqSlider, " Hz");
+    setupSlider(*freqSlider, "");
+    // Custom frequency formatting: "10.07 kHz" or "250 Hz"
+    freqSlider->textFromValueFunction = [](double value) {
+        if (value >= 1000.0)
+            return juce::String(value / 1000.0, 2) + " kHz";
+        else if (value >= 100.0)
+            return juce::String(static_cast<int>(value)) + " Hz";
+        else
+            return juce::String(value, 1) + " Hz";
+    };
     addAndMakeVisible(freqSlider.get());
 
     gainSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::TextBoxBelow);
-    setupSlider(*gainSlider, " dB");
+    setupSlider(*gainSlider, "");
+    // Custom gain formatting: "+3.5 dB" or "-2.0 dB"
+    gainSlider->textFromValueFunction = [](double value) {
+        juce::String sign = value >= 0 ? "+" : "";
+        return sign + juce::String(value, 1) + " dB";
+    };
     addAndMakeVisible(gainSlider.get());
 
     qSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                               juce::Slider::TextBoxBelow);
     setupSlider(*qSlider, "");
+    // Custom Q formatting: "0.71" (2 decimal places)
+    qSlider->textFromValueFunction = [](double value) {
+        return juce::String(value, 2);
+    };
     addAndMakeVisible(qSlider.get());
 
     slopeSelector = std::make_unique<juce::ComboBox>();
@@ -66,7 +89,14 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     // Global controls
     masterGainSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                        juce::Slider::TextBoxBelow);
-    setupSlider(*masterGainSlider, " dB");
+    setupSlider(*masterGainSlider, "");
+    // Custom gain formatting for master (same as band gain)
+    masterGainSlider->textFromValueFunction = [](double value) {
+        juce::String sign = value >= 0 ? "+" : "";
+        return sign + juce::String(value, 1) + " dB";
+    };
+    // Set a neutral white/gray color for master (global control, not band-specific)
+    masterGainSlider->setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xFFaabbcc));
     addAndMakeVisible(masterGainSlider.get());
     masterGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.parameters, ParamIDs::masterGain, *masterGainSlider);
@@ -306,7 +336,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     setResizable(true, true);
     setResizeLimits(800, 550, 1600, 1200);
 
-    // Set initial size (taller to accommodate 4 rows in Tube mode)
+    // Set initial size (fits all EQ modes within resize limits)
     setSize(950, 700);
 
     // Start timer for meter updates
@@ -623,11 +653,78 @@ void MultiQEditor::paint(juce::Graphics& g)
     }
     else
     {
-        // ===== DIGITAL MODE PAINT =====
-        // Control panel background
-        auto controlPanelArea = juce::Rectangle<int>(10, getHeight() - 100, getWidth() - 20, 90);
-        g.setColour(juce::Colour(0xFF202020));
-        g.fillRoundedRectangle(controlPanelArea.toFloat(), 4.0f);
+        // ===== DIGITAL MODE PAINT (redesigned layout) =====
+        // Constants matching resized() layout
+        int controlBarHeight = 48;
+        int bandStripHeight = 115;
+        int toolbarHeight = 88;  // Header (50) + toolbar (38)
+        int meterWidth = 28;
+        int meterPadding = 8;
+
+        // ===== BOTTOM CONTROL BAR BACKGROUND =====
+        auto controlBarArea = juce::Rectangle<int>(
+            0, getHeight() - controlBarHeight,
+            getWidth(), controlBarHeight);
+
+        // Dark control bar background with subtle gradient
+        {
+            juce::ColourGradient barGradient(
+                juce::Colour(0xFF1e1e20), 0, static_cast<float>(controlBarArea.getY()),
+                juce::Colour(0xFF161618), 0, static_cast<float>(controlBarArea.getBottom()),
+                false);
+            g.setGradientFill(barGradient);
+            g.fillRect(controlBarArea);
+        }
+
+        // Subtle top border for control bar
+        g.setColour(juce::Colour(0xFF2a2a2e));
+        g.drawHorizontalLine(controlBarArea.getY(), 0, static_cast<float>(getWidth()));
+
+        // ===== BOTTOM BAND STRIP BACKGROUND =====
+        auto bandStripArea = juce::Rectangle<int>(
+            meterWidth + meterPadding * 2 + 8,
+            getHeight() - controlBarHeight - bandStripHeight - 5,
+            getWidth() - (meterWidth + meterPadding * 2) * 2 - 16,
+            bandStripHeight);
+        // Band strip draws its own background
+
+        // ===== METER AREAS =====
+        int meterAreaWidth = meterWidth + meterPadding * 2;
+
+        // Left meter area (input)
+        auto leftMeterArea = juce::Rectangle<int>(
+            0, toolbarHeight,
+            meterAreaWidth, getHeight() - toolbarHeight - controlBarHeight - bandStripHeight - 10);
+
+        // Right meter area (output)
+        auto rightMeterArea = juce::Rectangle<int>(
+            getWidth() - meterAreaWidth, toolbarHeight,
+            meterAreaWidth, getHeight() - toolbarHeight - controlBarHeight - bandStripHeight - 10);
+
+        // Draw meter backgrounds
+        g.setColour(juce::Colour(0xFF161618));
+        g.fillRect(leftMeterArea);
+        g.fillRect(rightMeterArea);
+
+        // ===== METER LABELS (above meters) =====
+        g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
+        g.setColour(juce::Colour(0xFF808088));
+        g.drawText("IN", leftMeterArea.getX(), toolbarHeight - 14, meterAreaWidth, 14, juce::Justification::centred);
+        g.drawText("OUT", rightMeterArea.getX(), toolbarHeight - 14, meterAreaWidth, 14, juce::Justification::centred);
+
+        // ===== CONTROL BAR LABELS =====
+        int barY = controlBarArea.getY() + 6;
+
+        // "ANALYZER" label in control bar (positioned before analyzer controls)
+        // Based on resized(): OUTPUT (55) + knob (38) + spacing (20) + Q-Couple (115) + Scale (90) + spacing (20) = ~338
+        int analyzerLabelX = 338;
+        g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
+        g.setColour(juce::Colour(0xFF707078));
+        g.drawText("ANALYZER", analyzerLabelX, barY + 6, 60, 14, juce::Justification::left);
+
+        // Subtle vertical separator before analyzer section
+        g.setColour(juce::Colour(0xFF2a2a2e));
+        g.drawVerticalLine(analyzerLabelX - 10, static_cast<float>(barY + 2), static_cast<float>(barY + 34));
     }
 
     // Separator line only for digital mode
@@ -916,7 +1013,20 @@ void MultiQEditor::resized()
     }
     else
     {
-        // ===== DIGITAL MODE LAYOUT (original) =====
+        // ===== DIGITAL MODE LAYOUT (redesigned) =====
+        // Layout:
+        // +------------------------------------------------------------------------+
+        // | Header: Multi-Q | [Digital v] | [band buttons] | Stereo | OVS | BYPASS |
+        // +------------------------------------------------------------------------+
+        // | IN |                                                              | OUT |
+        // | [] |               Large EQ Graphic Display                       | [] |
+        // | [] |                                                              | [] |
+        // +------------------------------------------------------------------------+
+        // | Band Strip (8 bands with freq/gain/Q)                                  |
+        // +------------------------------------------------------------------------+
+        // | OUTPUT [knob] | Q-Couple | Scale | ANALYZER [On] [Pre] [Mode] Decay    |
+        // +------------------------------------------------------------------------+
+
         // Header (title area only)
         bounds.removeFromTop(50);
 
@@ -931,7 +1041,7 @@ void MultiQEditor::resized()
         // Digital mode toolbar: Band enable buttons in the center
         int buttonWidth = 32;
         int buttonHeight = 30;
-        int buttonSpacing = 10;  // Extra spacing between buttons
+        int buttonSpacing = 10;
         int totalButtonsWidth = 8 * buttonWidth + 7 * buttonSpacing;
         int startX = (getWidth() - totalButtonsWidth) / 2;
 
@@ -952,73 +1062,99 @@ void MultiQEditor::resized()
         rightX -= 125;
         processingModeSelector->setBounds(rightX - 75, toolbarY, 73, controlHeight);
         processingModeSelector->setVisible(true);
-        // Hide old HQ button (replaced by oversampling selector)
         hqButton->setVisible(false);
 
-        // Bottom control panel
-        auto controlPanel = bounds.removeFromBottom(100);
+        // Hide old selected band controls (replaced by BandStripComponent)
+        selectedBandLabel.setVisible(false);
+        freqSlider->setVisible(false);
+        gainSlider->setVisible(false);
+        qSlider->setVisible(false);
+        slopeSelector->setVisible(false);
+        freqLabel.setVisible(false);
+        gainLabel.setVisible(false);
+        qLabel.setVisible(false);
+        slopeLabel.setVisible(false);
 
-        // Meters on sides
-        auto meterWidth = 30;
-        inputMeter->setBounds(controlPanel.removeFromLeft(meterWidth).reduced(5, 10));
-        outputMeter->setBounds(controlPanel.removeFromRight(meterWidth).reduced(5, 10));
+        // ===== BOTTOM CONTROL BAR =====
+        int controlBarHeight = 48;
+        auto controlBarArea = bounds.removeFromBottom(controlBarHeight);
 
-        int labelHeight = 15;
+        // Control bar layout: OUTPUT | Q-Couple | Scale | ANALYZER section
+        int barY = controlBarArea.getY() + 6;
+        int barItemHeight = 24;
+        int knobSize = 38;
+        int spacing = 12;
+        int barX = 15;
 
-        // Digital mode control panel layout (original)
-        // Selected band controls (left part of control panel)
-        auto selectedBandArea = controlPanel.removeFromLeft(350);
-        selectedBandLabel.setBounds(selectedBandArea.removeFromTop(25).reduced(10, 2));
+        // OUTPUT section: label + knob + value
+        masterGainLabel.setText("OUTPUT", juce::dontSendNotification);
+        masterGainLabel.setJustificationType(juce::Justification::centredLeft);
+        masterGainLabel.setBounds(barX, barY + 4, 55, 16);
+        masterGainLabel.setVisible(true);
+        barX += 55;
 
-        auto knobsArea = selectedBandArea;
-        int knobWidth = 70;
+        masterGainSlider->setBounds(barX, barY - 2, knobSize, knobSize);
+        masterGainSlider->setVisible(true);
+        barX += knobSize + spacing + 8;
 
-        freqLabel.setBounds(knobsArea.getX() + 10, knobsArea.getY(), knobWidth, labelHeight);
-        freqSlider->setBounds(knobsArea.getX() + 10, knobsArea.getY() + labelHeight, knobWidth, 55);
+        // Q-Couple dropdown
+        qCoupleModeSelector->setBounds(barX, barY + 2, 110, barItemHeight - 2);
+        barX += 115 + spacing;
 
-        gainLabel.setBounds(knobsArea.getX() + 90, knobsArea.getY(), knobWidth, labelHeight);
-        gainSlider->setBounds(knobsArea.getX() + 90, knobsArea.getY() + labelHeight, knobWidth, 55);
+        // Display Scale dropdown
+        displayScaleSelector->setBounds(barX, barY + 2, 85, barItemHeight - 2);
+        barX += 90 + spacing + 10;
 
-        qLabel.setBounds(knobsArea.getX() + 170, knobsArea.getY(), knobWidth, labelHeight);
-        qSlider->setBounds(knobsArea.getX() + 170, knobsArea.getY() + labelHeight, knobWidth, 55);
+        // ANALYZER section - compact horizontal layout
+        // "ANALYZER" label drawn in paint() at this position
+        barX += 65;  // Space for "ANALYZER" label
 
-        slopeLabel.setBounds(knobsArea.getX() + 250, knobsArea.getY(), knobWidth, labelHeight);
-        slopeSelector->setBounds(knobsArea.getX() + 250, knobsArea.getY() + labelHeight + 15, knobWidth + 20, 24);
+        int analyzerCtrlWidth = 50;
+        int analyzerCtrlSpacing = 5;
 
-        // Global controls (middle part)
-        auto globalArea = controlPanel.removeFromLeft(150);
-        masterGainLabel.setBounds(globalArea.getX() + 10, globalArea.getY(), 70, labelHeight);
-        masterGainSlider->setBounds(globalArea.getX() + 10, globalArea.getY() + labelHeight, 70, 55);
+        // Analyzer On/Off button
+        analyzerButton->setBounds(barX, barY + 2, analyzerCtrlWidth, barItemHeight - 2);
+        barX += analyzerCtrlWidth + analyzerCtrlSpacing;
 
-        // Analyzer and options controls (right part)
-        auto analyzerArea = controlPanel.reduced(5, 5);
-        int ctrlY = analyzerArea.getY();
-        int ctrlHeight = 24;
-        int spacing = 4;
-        int areaWidth = analyzerArea.getWidth();
+        // Pre/Post button
+        analyzerPrePostButton->setBounds(barX, barY + 2, 38, barItemHeight - 2);
+        barX += 43 + analyzerCtrlSpacing;
 
-        // Calculate column widths based on available space
-        int col1Width = juce::jmin(160, areaWidth / 3);
-        int col2Width = juce::jmin(120, areaWidth / 3);
+        // Mode selector (Peak/RMS)
+        analyzerModeSelector->setBounds(barX, barY + 2, 55, barItemHeight - 2);
+        barX += 60 + analyzerCtrlSpacing;
 
-        // Row 1: Q-Couple (wide dropdown) | Display Scale
-        qCoupleModeSelector->setBounds(analyzerArea.getX(), ctrlY, col1Width, ctrlHeight);
-        displayScaleSelector->setBounds(analyzerArea.getX() + col1Width + 5, ctrlY, col2Width, ctrlHeight);
+        // Resolution selector (hidden in compact mode, or make it smaller)
+        analyzerResolutionSelector->setBounds(barX, barY + 2, 50, barItemHeight - 2);
+        barX += 55 + analyzerCtrlSpacing;
 
-        ctrlY += ctrlHeight + spacing;
+        // Decay slider
+        analyzerDecaySlider->setBounds(barX, barY + 2, 80, barItemHeight - 2);
 
-        // Row 2: Analyzer toggle | Pre/Post | Mode selector
-        analyzerButton->setBounds(analyzerArea.getX(), ctrlY, 80, ctrlHeight);
-        analyzerPrePostButton->setBounds(analyzerArea.getX() + 85, ctrlY, 55, ctrlHeight);
-        analyzerModeSelector->setBounds(analyzerArea.getX() + 145, ctrlY, 75, ctrlHeight);
+        // ===== BAND STRIP (above control bar) =====
+        int bandStripHeight = 115;  // Increased from 95 for larger fonts
+        auto bandStripArea = bounds.removeFromBottom(bandStripHeight).reduced(8, 5);
+        bandStrip->setBounds(bandStripArea);
+        bandStrip->setVisible(true);
+        bandStrip->setSelectedBand(selectedBand);
 
-        ctrlY += ctrlHeight + spacing;
+        // ===== METERS ON SIDES =====
+        int meterWidth = 28;  // Wider meters for better visibility
+        int meterPadding = 8;
 
-        // Row 3: Resolution | Decay slider (wider)
-        analyzerResolutionSelector->setBounds(analyzerArea.getX(), ctrlY, 90, ctrlHeight);
-        int decaySliderX = analyzerArea.getX() + 95;
-        int decaySliderWidth = juce::jmax(80, areaWidth - 95);
-        analyzerDecaySlider->setBounds(decaySliderX, ctrlY, decaySliderWidth, ctrlHeight);
+        // Input meter on left side
+        auto leftMeterArea = bounds.removeFromLeft(meterWidth + meterPadding * 2);
+        inputMeter->setBounds(leftMeterArea.getX() + meterPadding,
+                              bounds.getY() + 5,
+                              meterWidth,
+                              bounds.getHeight() - 10);
+
+        // Output meter on right side
+        auto rightMeterArea = bounds.removeFromRight(meterWidth + meterPadding * 2);
+        outputMeter->setBounds(rightMeterArea.getX() + meterPadding,
+                               bounds.getY() + 5,
+                               meterWidth,
+                               bounds.getHeight() - 10);
     }
 
     // Graphic display (main area) - only in Digital mode
@@ -1126,11 +1262,13 @@ void MultiQEditor::updateSelectedBandControls()
     if (selectedBand < 0 || selectedBand >= 8)
     {
         selectedBandLabel.setText("No Band Selected", juce::dontSendNotification);
+        selectedBandLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888888));
         freqSlider->setEnabled(false);
         gainSlider->setEnabled(false);
         qSlider->setEnabled(false);
         slopeSelector->setVisible(false);
         slopeLabel.setVisible(false);
+        repaint();  // Update the control panel tinting
         return;
     }
 
@@ -1141,10 +1279,16 @@ void MultiQEditor::updateSelectedBandControls()
     selectedBandLabel.setText(bandName, juce::dontSendNotification);
     selectedBandLabel.setColour(juce::Label::textColourId, config.color);
 
-    // Set knob colors
+    // Set knob colors and update LookAndFeel
     freqSlider->setColour(juce::Slider::rotarySliderFillColourId, config.color);
     gainSlider->setColour(juce::Slider::rotarySliderFillColourId, config.color);
     qSlider->setColour(juce::Slider::rotarySliderFillColourId, config.color);
+
+    // Update LookAndFeel with selected band color for consistent styling
+    lookAndFeel.setSelectedBandColor(config.color);
+
+    // Repaint to update the tinted control section background
+    repaint();
 
     // Enable controls and create attachments
     freqSlider->setEnabled(true);
@@ -1190,6 +1334,7 @@ void MultiQEditor::onBandSelected(int bandIndex)
 {
     selectedBand = bandIndex;
     graphicDisplay->setSelectedBand(bandIndex);
+    bandStrip->setSelectedBand(bandIndex);
     updateSelectedBandControls();
 }
 
@@ -1397,13 +1542,18 @@ void MultiQEditor::updateEQModeVisibility()
     for (auto& btn : bandEnableButtons)
         btn->setVisible(isDigitalMode);
 
-    selectedBandLabel.setVisible(isDigitalMode);
-    freqSlider->setVisible(isDigitalMode);
-    gainSlider->setVisible(isDigitalMode);
-    qSlider->setVisible(isDigitalMode);
-    freqLabel.setVisible(isDigitalMode);
-    gainLabel.setVisible(isDigitalMode);
-    qLabel.setVisible(isDigitalMode);
+    // Old selected band controls are replaced by BandStripComponent - always hidden in new layout
+    selectedBandLabel.setVisible(false);
+    freqSlider->setVisible(false);
+    gainSlider->setVisible(false);
+    qSlider->setVisible(false);
+    freqLabel.setVisible(false);
+    gainLabel.setVisible(false);
+    qLabel.setVisible(false);
+
+    // BandStripComponent (Eventide SplitEQ-style) - only in Digital mode
+    bandStrip->setVisible(isDigitalMode);
+
     qCoupleModeSelector->setVisible(isDigitalMode);
     masterGainSlider->setVisible(isDigitalMode);
     masterGainLabel.setVisible(isDigitalMode);
@@ -1640,11 +1790,11 @@ void MultiQEditor::applyBritishPreset(int presetId)
     }
 
     // Helper to set parameter value with defensive checks
-    auto setParam = [this, presetId](const juce::String& paramId, float value) {
+    auto setParam = [this](const juce::String& paramId, float value) {
         auto* param = processor.parameters.getParameter(paramId);
         if (param == nullptr)
         {
-            DBG("MultiQEditor::applyBritishPreset: Parameter '" + paramId + "' not found for presetId " + juce::String(presetId));
+            DBG("MultiQEditor::applyBritishPreset: Parameter '" + paramId + "' not found");
             return;
         }
         // Clamp value to parameter's valid range before converting

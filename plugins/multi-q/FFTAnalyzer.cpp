@@ -15,21 +15,42 @@ void FFTAnalyzer::paint(juce::Graphics& g)
 
     auto bounds = getLocalBounds().toFloat();
 
-    // Create and fill the magnitude path
+    // Create the magnitude path
     auto path = createMagnitudePath();
 
     if (!path.isEmpty())
     {
-        // Fill under the curve
-        g.setColour(fillColor);
+        // Get path bounds for gradient
+        auto pathBounds = path.getBounds();
+
+        // Create gradient fill from spectrum color at top to transparent at bottom (~25% opacity max)
+        juce::ColourGradient fillGradient(
+            fillColor.withAlpha(0.28f), 0, pathBounds.getY(),
+            fillColor.withAlpha(0.01f), 0, bounds.getBottom(),
+            false);
+        fillGradient.addColour(0.3, fillColor.withAlpha(0.18f));
+        fillGradient.addColour(0.6, fillColor.withAlpha(0.08f));
+
+        g.setGradientFill(fillGradient);
         g.fillPath(path);
 
-        // Draw the line
-        g.setColour(lineColor);
-        g.strokePath(path, juce::PathStrokeType(1.0f));
+        // Soft outer glow for the spectrum line (very subtle)
+        g.setColour(lineColor.withAlpha(0.1f));
+        g.strokePath(path, juce::PathStrokeType(3.0f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        // Inner glow
+        g.setColour(lineColor.withAlpha(0.2f));
+        g.strokePath(path, juce::PathStrokeType(1.5f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        // Main spectrum line
+        g.setColour(lineColor.withAlpha(0.5f));
+        g.strokePath(path, juce::PathStrokeType(0.75f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
-    // Draw peak hold line if enabled
+    // Draw peak hold line if enabled (thin line above spectrum)
     if (showPeakHold)
     {
         juce::Path peakPath;
@@ -55,8 +76,13 @@ void FFTAnalyzer::paint(juce::Graphics& g)
             }
         }
 
-        g.setColour(juce::Colours::yellow.withAlpha(0.7f));
-        g.strokePath(peakPath, juce::PathStrokeType(1.0f));
+        // Peak hold with subtle glow
+        g.setColour(juce::Colour(0x20ffff66));
+        g.strokePath(peakPath, juce::PathStrokeType(3.0f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour(juce::Colour(0x60ffff66));
+        g.strokePath(peakPath, juce::PathStrokeType(1.0f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
 
