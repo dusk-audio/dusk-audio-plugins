@@ -194,8 +194,9 @@ public:
             parameters, "digital_release", releaseSlider);
         lookaheadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, "digital_lookahead", lookaheadSlider);
+        // Use global mix parameter for consistency across all modes
         mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            parameters, "digital_mix", mixSlider);
+            parameters, "mix", mixSlider);
         outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, "digital_output", outputSlider);
         adaptiveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -617,8 +618,9 @@ public:
         // Global output and mix attachments
         outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, "mb_output", globalOutput);
+        // Use global mix parameter for consistency across all modes
         mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            parameters, "mb_mix", globalMix);
+            parameters, "mix", globalMix);
 
         // Labels
         const char* labelTexts[] = {"Threshold", "Ratio", "Attack", "Release", "Makeup", "Output", "Mix"};
@@ -1259,8 +1261,9 @@ public:
             parameters, "studio_vca_release", releaseSlider);
         outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             parameters, "studio_vca_output", outputSlider);
+        // Use global mix parameter for consistency across all modes
         mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            parameters, "studio_vca_mix", mixSlider);
+            parameters, "mix", mixSlider);
     }
     ~StudioVCAPanel() override
     {
