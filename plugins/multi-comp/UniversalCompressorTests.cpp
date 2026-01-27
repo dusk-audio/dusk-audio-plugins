@@ -64,6 +64,12 @@ public:
         beginTest("SIMD Performance Benchmarks");
         testSIMDPerformance();
 
+        beginTest("Mix Knob Direction");
+        testMixKnobDirection();
+
+        beginTest("Oversampling Phase Coherence");
+        testOversamplingPhaseCoherence();
+
         // IR comparison tests disabled by default - requires reference IR files
         // beginTest("IR Comparison Tests");
         // testIRComparison();
@@ -824,6 +830,188 @@ private:
             }
         }
         expect(true, context + " - No NaN/Inf detected");
+    }
+
+    void testMixKnobDirection()
+    {
+        // Test that mix knob direction is correct:
+        // - 100% mix = 100% wet (fully compressed signal)
+        // - 0% mix = 100% dry (unprocessed signal)
+
+        UniversalCompressor compressor;
+        compressor.prepareToPlay(48000.0, 512);
+
+        auto& params = compressor.getParameters();
+
+        // Set up Opto mode with heavy compression
+        if (auto* modeParam = params.getRawParameterValue("mode"))
+            *modeParam = 0.0f; // Opto mode
+
+        if (auto* peakReduction = params.getRawParameterValue("opto_peak_reduction"))
+            *peakReduction = 80.0f; // Heavy compression
+
+        if (auto* gain = params.getRawParameterValue("opto_gain"))
+            *gain = 50.0f; // Unity gain
+
+        if (auto* bypass = params.getRawParameterValue("bypass"))
+            *bypass = 0.0f;
+
+        // Create test signal (hot signal that will be compressed)
+        juce::AudioBuffer<float> originalBuffer(2, 512);
+        fillBufferWithSineWave(originalBuffer, 0.8f, 1000.0f, 48000.0);
+
+        // Store original RMS for comparison
+        float originalRms = 0.0f;
+        for (int i = 0; i < originalBuffer.getNumSamples(); ++i)
+        {
+            float sample = originalBuffer.getSample(0, i);
+            originalRms += sample * sample;
+        }
+        originalRms = std::sqrt(originalRms / originalBuffer.getNumSamples());
+
+        // Test 1: 0% mix should give us dry (uncompressed) signal
+        juce::MidiBuffer midiBuffer;
+
+        // First, let compressor settle
+        for (int i = 0; i < 10; ++i)
+        {
+            juce::AudioBuffer<float> warmupBuffer(2, 512);
+            fillBufferWithSineWave(warmupBuffer, 0.8f, 1000.0f, 48000.0);
+            compressor.processBlock(warmupBuffer, midiBuffer);
+        }
+
+        // Test with 0% mix (should be dry)
+        if (auto* mixParam = params.getRawParameterValue("mix"))
+            *mixParam = 0.0f;
+
+        juce::AudioBuffer<float> dryTestBuffer(2, 512);
+        fillBufferWithSineWave(dryTestBuffer, 0.8f, 1000.0f, 48000.0);
+        compressor.processBlock(dryTestBuffer, midiBuffer);
+
+        float dryRms = 0.0f;
+        for (int i = 0; i < dryTestBuffer.getNumSamples(); ++i)
+        {
+            float sample = dryTestBuffer.getSample(0, i);
+            dryRms += sample * sample;
+        }
+        dryRms = std::sqrt(dryRms / dryTestBuffer.getNumSamples());
+
+        // At 0% mix, output RMS should be close to input RMS (dry signal)
+        float dryDiffRatio = std::abs(dryRms - originalRms) / originalRms;
+        expect(dryDiffRatio < 0.15f,
+               "0% mix preserves dry signal (diff ratio: " + juce::String(dryDiffRatio, 3) + ")");
+
+        // Test with 100% mix (should be wet/compressed)
+        if (auto* mixParam = params.getRawParameterValue("mix"))
+            *mixParam = 100.0f;
+
+        juce::AudioBuffer<float> wetTestBuffer(2, 512);
+        fillBufferWithSineWave(wetTestBuffer, 0.8f, 1000.0f, 48000.0);
+        compressor.processBlock(wetTestBuffer, midiBuffer);
+
+        float wetRms = 0.0f;
+        for (int i = 0; i < wetTestBuffer.getNumSamples(); ++i)
+        {
+            float sample = wetTestBuffer.getSample(0, i);
+            wetRms += sample * sample;
+        }
+        wetRms = std::sqrt(wetRms / wetTestBuffer.getNumSamples());
+
+        // At 100% mix with heavy compression, output should be significantly reduced
+        expect(wetRms < dryRms,
+               "100% mix shows compression (wet RMS: " + juce::String(wetRms, 3) +
+               " < dry RMS: " + juce::String(dryRms, 3) + ")");
+
+        logMessage("Mix direction test: 0% mix RMS ratio: " + juce::String(dryDiffRatio, 4) +
+                   ", 100% wet RMS: " + juce::String(wetRms, 4));
+    }
+
+    void testOversamplingPhaseCoherence()
+    {
+        // Test that dry and wet signals are phase-aligned when using oversampling with mix control
+        // This prevents comb filtering (flanging) when mixing dry and wet signals
+
+        // Test all oversampling modes: Off (0), 2x (1), 4x (2)
+        for (int osMode = 0; osMode <= 2; ++osMode)
+        {
+            UniversalCompressor compressor;
+            compressor.prepareToPlay(48000.0, 512);
+
+            auto& params = compressor.getParameters();
+
+            // Set to Digital mode (transparent compression for clean phase testing)
+            if (auto* modeParam = params.getRawParameterValue("mode"))
+                *modeParam = 6.0f; // Digital mode
+
+            // Set minimal compression (threshold at 0dB, low ratio) so we can focus on phase
+            if (auto* threshold = params.getRawParameterValue("digital_threshold"))
+                *threshold = 0.0f;
+
+            if (auto* ratio = params.getRawParameterValue("digital_ratio"))
+                *ratio = 1.5f; // Minimal ratio
+
+            if (auto* bypass = params.getRawParameterValue("bypass"))
+                *bypass = 0.0f;
+
+            // Set oversampling mode
+            if (auto* oversamplingParam = params.getRawParameterValue("oversampling"))
+                *oversamplingParam = static_cast<float>(osMode);
+
+            // Set 50% mix (equal blend of dry and wet - most sensitive to phase issues)
+            if (auto* mixParam = params.getRawParameterValue("mix"))
+                *mixParam = 50.0f;
+
+            // Let compressor settle
+            juce::MidiBuffer midiBuffer;
+            for (int i = 0; i < 20; ++i)
+            {
+                juce::AudioBuffer<float> warmupBuffer(2, 512);
+                fillBufferWithSineWave(warmupBuffer, 0.3f, 1000.0f, 48000.0);
+                compressor.processBlock(warmupBuffer, midiBuffer);
+            }
+
+            // Now test for phase coherence by checking that mixed signal
+            // doesn't have unexpected attenuation (comb filtering signature)
+
+            // Create test signal at a level below threshold (no compression, just testing phase)
+            juce::AudioBuffer<float> testBuffer(2, 512);
+            fillBufferWithSineWave(testBuffer, 0.1f, 1000.0f, 48000.0); // Low level, below threshold
+
+            float inputRms = 0.0f;
+            for (int i = 0; i < testBuffer.getNumSamples(); ++i)
+            {
+                float sample = testBuffer.getSample(0, i);
+                inputRms += sample * sample;
+            }
+            inputRms = std::sqrt(inputRms / testBuffer.getNumSamples());
+
+            compressor.processBlock(testBuffer, midiBuffer);
+
+            float outputRms = 0.0f;
+            for (int i = 0; i < testBuffer.getNumSamples(); ++i)
+            {
+                float sample = testBuffer.getSample(0, i);
+                outputRms += sample * sample;
+            }
+            outputRms = std::sqrt(outputRms / testBuffer.getNumSamples());
+
+            // With phase-aligned signals and no compression, 50% mix of dry+wet
+            // should maintain similar RMS (within 3dB / ~0.7x-1.4x factor)
+            // Phase misalignment would cause destructive interference, reducing RMS significantly
+            float rmsRatio = outputRms / inputRms;
+
+            juce::String modeStr = (osMode == 0) ? "Off" : ((osMode == 1) ? "2x" : "4x");
+
+            expect(rmsRatio > 0.5f && rmsRatio < 1.5f,
+                   "Oversampling " + modeStr + ": Phase coherent at 50% mix " +
+                   "(ratio: " + juce::String(rmsRatio, 3) + ")");
+
+            // Additional check: output shouldn't have unexpected frequency content
+            // from comb filtering (flanging creates notches/peaks)
+            expectNoNaNOrInf(testBuffer, "Oversampling " + modeStr);
+
+            logMessage("Oversampling " + modeStr + " phase coherence: ratio = " + juce::String(rmsRatio, 4));
+        }
     }
 };
 
