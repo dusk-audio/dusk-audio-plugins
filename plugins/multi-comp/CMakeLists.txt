@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MultiComp VERSION 1.2.1)
+project(MultiComp VERSION 1.2.0)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -151,6 +151,7 @@ option(BUILD_MULTI_COMP_TESTS "Build Multi-Comp unit tests" OFF)
 if(BUILD_MULTI_COMP_TESTS)
     # Create test executable
     add_executable(MultiCompTests
+        TestRunner.cpp
         UniversalCompressorTests.cpp
         UniversalCompressor.cpp
         AnalogLookAndFeel.cpp
@@ -161,10 +162,18 @@ if(BUILD_MULTI_COMP_TESTS)
     # Link test executable with JUCE
     target_link_libraries(MultiCompTests
         PRIVATE
+            juce::juce_audio_basics
+            juce::juce_audio_devices
+            juce::juce_audio_formats
             juce::juce_audio_processors
             juce::juce_audio_utils
+            juce::juce_core
+            juce::juce_data_structures
             juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
             juce::juce_gui_basics
+            juce::juce_gui_extra
         PUBLIC
             juce::juce_recommended_config_flags
     )
@@ -175,6 +184,9 @@ if(BUILD_MULTI_COMP_TESTS)
             JUCE_UNIT_TESTS=1
             JUCE_WEB_BROWSER=0
             JUCE_USE_CURL=0
+            JUCE_STANDALONE_APPLICATION=1
+            JUCE_VST3_CAN_REPLACE_VST2=1
+            JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
     )
 
     # Enable AddressSanitizer for tests in debug builds or when explicitly requested (compiler-specific)
@@ -197,8 +209,16 @@ if(BUILD_MULTI_COMP_TESTS)
         endif()
     endif()
 
-    # Generate JUCE header for tests
-    juce_generate_juce_header(MultiCompTests)
+    # Include directories for tests (use the plugin's generated header)
+    target_include_directories(MultiCompTests
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+            ${CMAKE_CURRENT_BINARY_DIR}/MultiComp_artefacts/JuceLibraryCode
+    )
+
+    # Add dependency on plugin target so JuceHeader.h is generated first
+    add_dependencies(MultiCompTests MultiComp_All)
 
     message(STATUS "Multi-Comp unit tests enabled")
     message(STATUS "Run tests with: ./MultiCompTests --all")

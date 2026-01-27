@@ -17,12 +17,11 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Create background texture
     createBackgroundTexture();
     
-    // Create meters with stereo mode enabled
+    // Create meters - auto-detect mono/stereo based on level differences
+    // When L/R levels are identical (mono), shows single bar; when different (stereo), shows L/R
     inputMeter = std::make_unique<LEDMeter>(LEDMeter::Vertical);
-    inputMeter->setStereoMode(true);  // Show L/R channels
     vuMeter = std::make_unique<VUMeterWithLabel>();
     outputMeter = std::make_unique<LEDMeter>(LEDMeter::Vertical);
-    outputMeter->setStereoMode(true);  // Show L/R channels
 
     addAndMakeVisible(inputMeter.get());
     addAndMakeVisible(vuMeter.get());
@@ -1403,6 +1402,14 @@ void EnhancedCompressorEditor::timerCallback()
 
 void EnhancedCompressorEditor::updateMeters()
 {
+    // Update meter stereo mode based on actual channel count (like TapeMachine VU meters)
+    // Mono channels show single bar, stereo channels show L/R bars
+    bool isStereo = processor.getNumChannels() > 1;
+    if (inputMeter)
+        inputMeter->setStereoMode(isStereo);
+    if (outputMeter)
+        outputMeter->setStereoMode(isStereo);
+
     if (inputMeter)
     {
         // LEDMeter expects dB values, not linear
