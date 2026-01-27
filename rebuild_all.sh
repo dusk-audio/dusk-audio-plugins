@@ -11,6 +11,12 @@
 #   --clean     Clean only, don't build
 #   --fast      Use ccache and ninja if available
 #   --parallel  Number of parallel jobs (default: auto-detect)
+#
+# PLUGIN AUTO-DISCOVERY:
+# Plugins are auto-discovered from CMakeLists.txt. When adding a new plugin:
+# 1. Add it to CMakeLists.txt with add_subdirectory(plugins/your-plugin)
+# 2. Add the directory-to-target mapping to PLUGIN_TARGETS array below
+#    e.g., ["your-plugin"]="YourPlugin_All"
 #==============================================================================
 
 set -e  # Exit on error
@@ -167,15 +173,54 @@ fi
 
 echo
 
-# List of all plugins to build
-PLUGINS=(
-    "FourKEQ_All"
-    "TapeMachine_All"
-    "UniversalCompressor_All"
-    "PlateReverb_All"
-    "TapeEcho_All"
-    "DrummerClone_All"
-)
+# Auto-discover plugins from CMakeLists.txt
+# Maps plugin directory names to CMake targets (bash 3.2 compatible - no associative arrays)
+get_plugin_target() {
+    case "$1" in
+        4k-eq) echo "FourKEQ_All" ;;
+        multi-comp) echo "MultiComp_All" ;;
+        TapeMachine) echo "TapeMachine_All" ;;
+        groovemind) echo "GrooveMind_All" ;;
+        harmonic-generator) echo "HarmonicGeneratorPlugin_All" ;;
+        convolution-reverb) echo "ConvolutionReverb_All" ;;
+        SilkVerb) echo "SilkVerb_All" ;;
+        multi-q) echo "MultiQ_All" ;;
+        neural-amp) echo "NeuralAmp_All" ;;
+        tape-echo) echo "TapeEcho_All" ;;
+        chord-analyzer) echo "ChordAnalyzer_All" ;;
+        spectrum-analyzer) echo "SpectrumAnalyzer_All" ;;
+        *) echo "" ;;
+    esac
+}
+
+# Parse CMakeLists.txt to find enabled plugins
+PLUGINS=()
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ ! -f "$SCRIPT_DIR/CMakeLists.txt" ]; then
+    print_error "CMakeLists.txt not found in $SCRIPT_DIR"
+    exit 1
+fi
+
+while IFS= read -r line; do
+    # Extract plugin directory from add_subdirectory(plugins/xxx)
+    if [[ "$line" =~ add_subdirectory\(plugins/([^)]+)\) ]]; then
+        plugin_dir="${BASH_REMATCH[1]}"
+        target=$(get_plugin_target "$plugin_dir")
+        if [[ -n "$target" ]]; then
+            PLUGINS+=("$target")
+        else
+            print_warning "Unknown plugin directory: $plugin_dir (add to get_plugin_target in rebuild_all.sh)"
+        fi
+    fi
+done < "$SCRIPT_DIR/CMakeLists.txt"
+
+if [ ${#PLUGINS[@]} -eq 0 ]; then
+    print_error "No plugins found in CMakeLists.txt"
+    exit 1
+fi
+
+print_status "Found ${#PLUGINS[@]} plugins to build"
 
 # Build all plugins
 print_status "Building all plugins with ${NUM_JOBS} parallel jobs..."

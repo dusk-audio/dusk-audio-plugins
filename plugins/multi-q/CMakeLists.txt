@@ -61,6 +61,7 @@ target_sources(MultiQ
         FFTAnalyzer.cpp
         BritishEQCurveDisplay.cpp
         PultecCurveDisplay.cpp
+        BandStripComponent.cpp
         ../shared/LEDMeter.cpp
         ../4k-eq/FourKLookAndFeel.cpp
 )

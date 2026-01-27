@@ -15,85 +15,42 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE_NAME="luna-plugins-builder"
 
-# Plugin target mapping (shortname -> cmake target)
-declare -A PLUGIN_TARGETS=(
-    ["4keq"]="FourKEQ_All"
-    ["eq"]="FourKEQ_All"
-    ["multicomp"]="MultiComp_All"
-    ["multi-comp"]="MultiComp_All"
-    ["compressor"]="MultiComp_All"
-    ["comp"]="MultiComp_All"
-    ["tape"]="TapeMachine_All"
-    ["tapemachine"]="TapeMachine_All"
-    ["groovemind"]="GrooveMind_All"
-    ["groove"]="GrooveMind_All"
-    ["harmonic"]="HarmonicGeneratorPlugin_All"
-    ["convolution"]="ConvolutionReverb_All"
-    ["impulse"]="ConvolutionReverb_All"
-    ["ir"]="ConvolutionReverb_All"
-    ["silkverb"]="SilkVerb_All"
-    ["silk"]="SilkVerb_All"
-    ["reverb"]="SilkVerb_All"
-    ["verb"]="SilkVerb_All"
-    ["multiq"]="MultiQ_All"
-    ["multi-q"]="MultiQ_All"
-    ["meq"]="MultiQ_All"
-    ["neuralamp"]="NeuralAmp_All"
-    ["neural-amp"]="NeuralAmp_All"
-    ["nam"]="NeuralAmp_All"
-    ["tapeecho"]="TapeEcho_All"
-    ["tape-echo"]="TapeEcho_All"
-    ["echo"]="TapeEcho_All"
-    ["chordanalyzer"]="ChordAnalyzer_All"
-    ["chord-analyzer"]="ChordAnalyzer_All"
-    ["chord"]="ChordAnalyzer_All"
-    ["analyze"]="ChordAnalyzer_All"
-    ["spectrumanalyzer"]="SpectrumAnalyzer_All"
-    ["spectrum-analyzer"]="SpectrumAnalyzer_All"
-    ["spectrum"]="SpectrumAnalyzer_All"
-    ["span"]="SpectrumAnalyzer_All"
-    ["fft"]="SpectrumAnalyzer_All"
-)
+# Plugin lookup functions (compatible with bash 3.2 on macOS)
+get_plugin_target() {
+    case "$1" in
+        4keq|eq) echo "FourKEQ_All" ;;
+        multicomp|multi-comp|compressor|comp) echo "MultiComp_All" ;;
+        tape|tapemachine) echo "TapeMachine_All" ;;
+        groovemind|groove) echo "GrooveMind_All" ;;
+        harmonic) echo "HarmonicGeneratorPlugin_All" ;;
+        convolution|impulse|ir) echo "ConvolutionReverb_All" ;;
+        silkverb|silk|reverb|verb) echo "SilkVerb_All" ;;
+        multiq|multi-q|meq) echo "MultiQ_All" ;;
+        neuralamp|neural-amp|nam) echo "NeuralAmp_All" ;;
+        tapeecho|tape-echo|echo) echo "TapeEcho_All" ;;
+        chordanalyzer|chord-analyzer|chord|analyze) echo "ChordAnalyzer_All" ;;
+        spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "SpectrumAnalyzer_All" ;;
+        *) echo "" ;;
+    esac
+}
 
-# Plugin name mapping (shortname -> display name for pluginval)
-declare -A PLUGIN_NAMES=(
-    ["4keq"]="4K EQ"
-    ["eq"]="4K EQ"
-    ["multicomp"]="Multi-Comp"
-    ["multi-comp"]="Multi-Comp"
-    ["compressor"]="Multi-Comp"
-    ["comp"]="Multi-Comp"
-    ["tape"]="TapeMachine"
-    ["tapemachine"]="TapeMachine"
-    ["groovemind"]="GrooveMind"
-    ["groove"]="GrooveMind"
-    ["harmonic"]="Harmonic Generator"
-    ["convolution"]="Convolution Reverb"
-    ["impulse"]="Convolution Reverb"
-    ["ir"]="Convolution Reverb"
-    ["silkverb"]="SilkVerb"
-    ["silk"]="SilkVerb"
-    ["reverb"]="SilkVerb"
-    ["verb"]="SilkVerb"
-    ["multiq"]="Multi-Q"
-    ["multi-q"]="Multi-Q"
-    ["meq"]="Multi-Q"
-    ["neuralamp"]="Neural Amp"
-    ["neural-amp"]="Neural Amp"
-    ["nam"]="Neural Amp"
-    ["tapeecho"]="Tape Echo"
-    ["tape-echo"]="Tape Echo"
-    ["echo"]="Tape Echo"
-    ["chordanalyzer"]="Chord Analyzer"
-    ["chord-analyzer"]="Chord Analyzer"
-    ["chord"]="Chord Analyzer"
-    ["analyze"]="Chord Analyzer"
-    ["spectrumanalyzer"]="Spectrum Analyzer"
-    ["spectrum-analyzer"]="Spectrum Analyzer"
-    ["spectrum"]="Spectrum Analyzer"
-    ["span"]="Spectrum Analyzer"
-    ["fft"]="Spectrum Analyzer"
-)
+get_plugin_name() {
+    case "$1" in
+        4keq|eq) echo "4K EQ" ;;
+        multicomp|multi-comp|compressor|comp) echo "Multi-Comp" ;;
+        tape|tapemachine) echo "TapeMachine" ;;
+        groovemind|groove) echo "GrooveMind" ;;
+        harmonic) echo "Harmonic Generator" ;;
+        convolution|impulse|ir) echo "Convolution Reverb" ;;
+        silkverb|silk|reverb|verb) echo "SilkVerb" ;;
+        multiq|multi-q|meq) echo "Multi-Q" ;;
+        neuralamp|neural-amp|nam) echo "Neural Amp" ;;
+        tapeecho|tape-echo|echo) echo "Tape Echo" ;;
+        chordanalyzer|chord-analyzer|chord|analyze) echo "Chord Analyzer" ;;
+        spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "Spectrum Analyzer" ;;
+        *) echo "" ;;
+    esac
+}
 
 # Show help
 show_help() {
@@ -136,9 +93,9 @@ if [ $# -gt 0 ]; then
             ;;
         *)
             # Look up the target
-            if [ -n "${PLUGIN_TARGETS[$1]}" ]; then
+            BUILD_TARGET=$(get_plugin_target "$1")
+            if [ -n "$BUILD_TARGET" ]; then
                 PLUGIN_SHORTNAME="$1"
-                BUILD_TARGET="${PLUGIN_TARGETS[$1]}"
                 echo "Building single plugin: $1 -> $BUILD_TARGET"
             else
                 echo "Error: Unknown plugin '$1'"
@@ -287,7 +244,7 @@ done
 
 # Run pluginval for single-plugin builds
 if [ -n "$PLUGIN_SHORTNAME" ]; then
-    PLUGIN_DISPLAY_NAME="${PLUGIN_NAMES[$PLUGIN_SHORTNAME]}"
+    PLUGIN_DISPLAY_NAME=$(get_plugin_name "$PLUGIN_SHORTNAME")
     TEST_SCRIPT="$PROJECT_DIR/tests/run_plugin_tests.sh"
 
     if [ -f "$TEST_SCRIPT" ]; then
@@ -297,5 +254,23 @@ if [ -n "$PLUGIN_SHORTNAME" ]; then
     else
         echo ""
         echo "Note: Test script not found at $TEST_SCRIPT, skipping validation"
+    fi
+
+    # Run Multi-Comp unit tests (includes comb filtering detection)
+    if [ "$PLUGIN_SHORTNAME" = "multicomp" ] || [ "$PLUGIN_SHORTNAME" = "multi-comp" ] || [ "$PLUGIN_SHORTNAME" = "compressor" ] || [ "$PLUGIN_SHORTNAME" = "comp" ]; then
+        MULTICOMP_TEST_SCRIPT="$PROJECT_DIR/tests/run_multicomp_tests.sh"
+        if [ -f "$MULTICOMP_TEST_SCRIPT" ]; then
+            echo ""
+            echo "=== Running Multi-Comp unit tests ==="
+            echo "  (Includes comb filtering detection with oversampling + mix knob)"
+            if ! "$MULTICOMP_TEST_SCRIPT"; then
+                echo ""
+                echo "WARNING: Multi-Comp unit tests had failures!"
+                echo "Check output above for details. Critical tests include:"
+                echo "  - testMixKnobPhaseAlignment: Detects comb filtering"
+                echo "  - testDSPStability: Ensures no NaN/Inf values"
+                echo "  - testGainReduction: Validates compression behavior"
+            fi
+        fi
     fi
 fi
