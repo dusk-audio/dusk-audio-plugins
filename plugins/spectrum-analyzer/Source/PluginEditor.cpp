@@ -247,7 +247,7 @@ void SpectrumAnalyzerEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-        supportersOverlay = std::make_unique<SupportersOverlay>("Spectrum Analyzer");
+        supportersOverlay = std::make_unique<SupportersOverlay>("Spectrum Analyzer", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }

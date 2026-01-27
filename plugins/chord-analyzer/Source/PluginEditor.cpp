@@ -553,7 +553,7 @@ void ChordAnalyzerEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-        supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer");
+        supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }

@@ -555,7 +555,7 @@ void NeuralAmpAudioProcessorEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-        supportersOverlay = std::make_unique<SupportersOverlay>("Neural Amp");
+        supportersOverlay = std::make_unique<SupportersOverlay>("Neural Amp", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }

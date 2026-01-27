@@ -551,7 +551,7 @@ void TapeMachineAudioProcessorEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-        supportersOverlay = std::make_unique<SupportersOverlay>("TapeMachine");
+        supportersOverlay = std::make_unique<SupportersOverlay>("TapeMachine", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }
