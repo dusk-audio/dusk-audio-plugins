@@ -106,15 +106,15 @@ All download links on the home page and plugin pages are dynamically generated f
 - **Location**: `plugins/multi-comp/`
 - **Description**: Multi-mode compressor with seven compression styles plus 4-band multiband compression
 - **Features**:
-  - 8 compression modes:
-    - Vintage Opto - Smooth, program-dependent optical compression
-    - Vintage FET - Aggressive, punchy FET compression
-    - Classic VCA - Fast, precise VCA with OverEasy soft knee
-    - Bus Compressor - Glue and punch for bus compression
-    - Studio FET - Clean FET with 30% harmonics of Vintage
-    - Studio VCA - Modern VCA with RMS detection and soft knee
-    - Digital - Transparent, precise compression
-    - Multiband - 4-band multiband compression with adjustable crossovers
+  - 8 compression modes emulating classic hardware:
+    - **Vintage Opto** - 1960s tube optical leveling amplifier (LA-2A style). Program-dependent attack/release, T4 optical cell emulation. "Peak Reduction" and "Gain" controls with optional Limit mode.
+    - **Vintage FET** - 1967 Rev A "Bluestripe" FET limiting amplifier (1176 style). All-discrete Class A with ultra-fast attack. Includes famous "All Buttons" mode. Ratios: 4:1, 8:1, 12:1, 20:1, All.
+    - **Classic VCA** - 1970s VCA compressor (dbx 160 style). Punchy, aggressive character with "OverEasy" soft-knee compression.
+    - **Bus Compressor** - British console bus compressor (SSL G-Series style). Mix bus glue with fixed attack/release detents and Auto release. Ratios: 2:1, 4:1, 10:1.
+    - **Studio FET** - Later revision "Blackface" FET limiter (1176 Rev E/F style). Cleaner character with ~30% harmonics of vintage. More controlled transient response.
+    - **Studio VCA** - Modern British dual VCA compressor (Focusrite Red 3 style). Clean, musical compression with RMS detection and soft knee.
+    - **Digital** - Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection.
+    - **Multiband** - 4-band multiband compressor with Linkwitz-Riley crossovers and per-band controls.
   - **Multiband Mode Features**:
     - 4 frequency bands (Low, Lo-Mid, Hi-Mid, High)
     - Vertical crossover faders between bands
@@ -122,7 +122,9 @@ All download links on the home page and plugin pages are dynamically generated f
     - Per-band solo buttons
     - LED-style gain reduction meters per band
   - Global sidechain HP filter (20-500Hz) - Prevents pumping from bass
-  - Auto-makeup gain - Automatic loudness compensation
+  - Sidechain low/high shelf EQ for frequency-conscious compression
+  - Lookahead with ITU-R BS.1770 true-peak detection
+  - Auto-makeup gain - RMS-based automatic loudness compensation
   - Output distortion (Soft/Hard/Clip) - Adds character and saturation
   - Mix control for parallel compression
   - Mode-specific attack/release characteristics and saturation
@@ -131,9 +133,9 @@ All download links on the home page and plugin pages are dynamically generated f
   - 2x/4x oversampling for anti-aliased processing
   - **Analog Noise toggle** - Enable/disable subtle -80dB analog noise floor
   - **Hardware-accurate transformer emulation** with mode-specific HF rolloff:
-    - Opto (LA-2A): 18kHz input, 16kHz output transformers
-    - FET (1176): 20kHz input, 22kHz output transformers
-    - Bus (SSL): 22kHz input, 24kHz output transformers
+    - Opto (LA-2A style): 18kHz input, 16kHz output transformers
+    - FET (1176 style): 20kHz input, 22kHz output transformers
+    - Bus (SSL style): 22kHz input, 24kHz output transformers
     - VCA/Digital: No transformer (fully transparent)
 - **Build Target**: `MultiComp_All`
 
