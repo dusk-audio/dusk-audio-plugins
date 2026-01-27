@@ -202,7 +202,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     addAndMakeVisible(outputMeter.get());
 
     // Supporters overlay
-    supportersOverlay = std::make_unique<SupportersOverlay>("Multi-Q");
+    supportersOverlay = std::make_unique<SupportersOverlay>("Multi-Q", JucePlugin_VersionString);
     supportersOverlay->setVisible(false);
     supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
     addChildComponent(supportersOverlay.get());
