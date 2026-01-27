@@ -454,7 +454,7 @@ void FourKEQEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-        supportersOverlay = std::make_unique<SupportersOverlay>("4K EQ");
+        supportersOverlay = std::make_unique<SupportersOverlay>("4K EQ", JucePlugin_VersionString);
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }

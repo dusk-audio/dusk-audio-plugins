@@ -100,9 +100,7 @@ namespace PatreonCredits
     // Supporter Tier ($5/month)
     // Development updates, name in credits
     inline const std::vector<juce::String> supporters = {
-        // Add supporter names here, one per line:
-        // "John Doe",
-        // "Jane Smith",
+        "Stefan Windus",  // First Patreon supporter!
     };
 
     //==========================================================================

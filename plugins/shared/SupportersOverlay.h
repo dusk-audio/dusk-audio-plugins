@@ -36,13 +36,14 @@
 class SupportersOverlay : public juce::Component
 {
 public:
-    SupportersOverlay(const juce::String& pluginName = "")
-        : pluginDisplayName(pluginName)
+    SupportersOverlay(const juce::String& pluginName = "", const juce::String& version = "")
+        : pluginDisplayName(pluginName), pluginVersion(version)
     {
         setInterceptsMouseClicks(true, false);
     }
 
     void setPluginName(const juce::String& name) { pluginDisplayName = name; }
+    void setVersion(const juce::String& version) { pluginVersion = version; }
 
     void paint(juce::Graphics& g) override
     {
@@ -113,12 +114,16 @@ public:
                    panelBounds.getX(), panelBounds.getBottom() - 45,
                    panelBounds.getWidth(), 20, juce::Justification::centred);
 
-        // Luna Co. Audio credit with plugin name
+        // Luna Co. Audio credit with plugin name and version
         g.setFont(juce::Font(juce::FontOptions(11.0f)));
         g.setColour(juce::Colour(0xff606060));
-        juce::String creditText = pluginDisplayName.isEmpty()
-            ? "by Luna Co. Audio"
-            : pluginDisplayName + " by Luna Co. Audio";
+        juce::String creditText;
+        if (pluginDisplayName.isEmpty())
+            creditText = "by Luna Co. Audio";
+        else if (pluginVersion.isEmpty())
+            creditText = pluginDisplayName + " by Luna Co. Audio";
+        else
+            creditText = pluginDisplayName + " v" + pluginVersion + " by Luna Co. Audio";
         g.drawText(creditText,
                    panelBounds.getX(), panelBounds.getBottom() - 25,
                    panelBounds.getWidth(), 18, juce::Justification::centred);
@@ -135,6 +140,7 @@ public:
 
 private:
     juce::String pluginDisplayName;
+    juce::String pluginVersion;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SupportersOverlay)
 };
