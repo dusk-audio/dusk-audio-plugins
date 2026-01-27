@@ -7,7 +7,6 @@
 #include "HardwareEmulation/TubeEmulation.h"
 #include "HardwareEmulation/ConvolutionEngine.h"
 #include <cmath>
-#include <iostream>  // DEBUG - remove after fixing phase issue
 
 // SIMD helper utilities for vectorizable operations
 namespace SIMDHelpers {
