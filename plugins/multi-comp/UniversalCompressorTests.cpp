@@ -70,6 +70,9 @@ public:
         beginTest("Oversampling Phase Coherence");
         testOversamplingPhaseCoherence();
 
+        // Comprehensive phase alignment test for mix knob
+        testMixKnobPhaseAlignment();
+
         // IR comparison tests disabled by default - requires reference IR files
         // beginTest("IR Comparison Tests");
         // testIRComparison();
@@ -721,6 +724,9 @@ private:
         expect(alignedTime < 5.0, "SIMD processing completes in reasonable time");
     }
 
+    // IR comparison tests disabled - requires juce_audio_formats module
+    // Uncomment and add juce_audio_formats to CMakeLists.txt to enable
+#if 0
     void testIRComparison()
     {
         // Framework for IR (Impulse Response) comparison testing
@@ -790,6 +796,7 @@ private:
             logMessage("IR test framework ready - implementation pending");
         }
     }
+#endif
 
     // Helper functions
 
@@ -1011,6 +1018,279 @@ private:
             expectNoNaNOrInf(testBuffer, "Oversampling " + modeStr);
 
             logMessage("Oversampling " + modeStr + " phase coherence: ratio = " + juce::String(rmsRatio, 4));
+        }
+    }
+
+    void testMixKnobPhaseAlignment()
+    {
+        // COMPREHENSIVE PHASE ALIGNMENT TEST FOR MIX KNOB
+        // This test detects comb filtering caused by latency mismatch between dry and wet signals
+        //
+        // When dry/wet are mixed with a latency offset, comb filtering creates:
+        // - Notches (nulls) at frequencies: f = (2k+1) * sampleRate / (2 * delaySamples)
+        // - Peaks at frequencies: f = k * sampleRate / delaySamples
+        //
+        // We test this by:
+        // 1. NULL TEST: At 0% mix, output should exactly match input (no processing)
+        // 2. MULTI-FREQUENCY TEST: At 50% mix with no compression, measure response at multiple frequencies
+        //    - Phase-aligned signals should sum to ~same level at all frequencies
+        //    - Comb filtering causes frequency-dependent level variations
+
+        beginTest("Mix Knob Phase Alignment - Null Test");
+
+        for (int osMode = 0; osMode <= 2; ++osMode)
+        {
+            UniversalCompressor compressor;
+            compressor.prepareToPlay(48000.0, 512);
+
+            auto& params = compressor.getParameters();
+
+            // Use Opto mode (common mode where issue was reported)
+            if (auto* modeParam = params.getRawParameterValue("mode"))
+                *modeParam = 0.0f;
+
+            // Minimal compression - high threshold so no gain reduction
+            if (auto* threshold = params.getRawParameterValue("opto_peak_reduction"))
+                *threshold = 0.0f; // No peak reduction
+
+            if (auto* bypass = params.getRawParameterValue("bypass"))
+                *bypass = 0.0f;
+
+            if (auto* oversamplingParam = params.getRawParameterValue("oversampling"))
+                *oversamplingParam = static_cast<float>(osMode);
+
+            // CRITICAL: Set mix to 0% (should be 100% dry = input passthrough)
+            if (auto* mixParam = params.getRawParameterValue("mix"))
+                *mixParam = 0.0f;
+
+            juce::String modeStr = (osMode == 0) ? "Off" : ((osMode == 1) ? "2x" : "4x");
+
+            // Warmup to stabilize any filters
+            juce::MidiBuffer midiBuffer;
+            for (int i = 0; i < 30; ++i)
+            {
+                juce::AudioBuffer<float> warmupBuffer(2, 512);
+                fillBufferWithSineWave(warmupBuffer, 0.5f, 1000.0f, 48000.0);
+                compressor.processBlock(warmupBuffer, midiBuffer);
+            }
+
+            // Create test signal
+            juce::AudioBuffer<float> inputBuffer(2, 512);
+            fillBufferWithSineWave(inputBuffer, 0.5f, 1000.0f, 48000.0);
+
+            // Make a copy for comparison
+            juce::AudioBuffer<float> originalBuffer;
+            originalBuffer.makeCopyOf(inputBuffer);
+
+            // Process
+            compressor.processBlock(inputBuffer, midiBuffer);
+
+            // Calculate null depth: how much the output differs from input
+            // At 0% mix, output should EXACTLY match input (after latency compensation)
+            float sumSquaredDiff = 0.0f;
+            float sumSquaredOriginal = 0.0f;
+
+            // Account for potential latency by finding best correlation offset
+            int maxOffset = 64; // Search up to 64 samples for best alignment
+            float bestNullDepth = -999.0f;
+            int bestOffset = 0;
+
+            for (int offset = 0; offset < maxOffset && offset < inputBuffer.getNumSamples() - 100; ++offset)
+            {
+                sumSquaredDiff = 0.0f;
+                sumSquaredOriginal = 0.0f;
+
+                for (int i = 0; i < inputBuffer.getNumSamples() - offset - 50; ++i)
+                {
+                    float orig = originalBuffer.getSample(0, i);
+                    float proc = inputBuffer.getSample(0, i + offset);
+                    float diff = orig - proc;
+                    sumSquaredDiff += diff * diff;
+                    sumSquaredOriginal += orig * orig;
+                }
+
+                if (sumSquaredOriginal > 0.0001f)
+                {
+                    float nullDepthDb = 10.0f * std::log10(sumSquaredDiff / sumSquaredOriginal + 1e-10f);
+                    if (nullDepthDb < bestNullDepth || bestOffset == 0)
+                    {
+                        bestNullDepth = nullDepthDb;
+                        bestOffset = offset;
+                    }
+                }
+            }
+
+            // At 0% mix, we expect a very deep null (< -60dB difference)
+            // Any significant deviation indicates the dry signal path has issues
+            expect(bestNullDepth < -40.0f,
+                   "OS " + modeStr + ": 0% mix null test (diff: " + juce::String(bestNullDepth, 1) +
+                   " dB at offset " + juce::String(bestOffset) + " samples, expected < -40 dB)");
+
+            logMessage("OS " + modeStr + ": Null depth = " + juce::String(bestNullDepth, 1) +
+                       " dB at offset " + juce::String(bestOffset));
+        }
+
+        beginTest("Mix Knob Phase Alignment - Comb Filter Detection");
+
+        for (int osMode = 0; osMode <= 2; ++osMode)
+        {
+            UniversalCompressor compressor;
+            compressor.prepareToPlay(48000.0, 512);
+
+            auto& params = compressor.getParameters();
+
+            // Use Digital mode for cleanest test
+            if (auto* modeParam = params.getRawParameterValue("mode"))
+                *modeParam = 6.0f; // Digital
+
+            // Set threshold very high so no compression occurs
+            if (auto* threshold = params.getRawParameterValue("digital_threshold"))
+                *threshold = 0.0f; // 0dB threshold
+
+            if (auto* ratio = params.getRawParameterValue("digital_ratio"))
+                *ratio = 1.0f; // 1:1 ratio = no compression
+
+            if (auto* bypass = params.getRawParameterValue("bypass"))
+                *bypass = 0.0f;
+
+            if (auto* oversamplingParam = params.getRawParameterValue("oversampling"))
+                *oversamplingParam = static_cast<float>(osMode);
+
+            // 50% mix - most sensitive to phase issues
+            if (auto* mixParam = params.getRawParameterValue("mix"))
+                *mixParam = 50.0f;
+
+            juce::String modeStr = (osMode == 0) ? "Off" : ((osMode == 1) ? "2x" : "4x");
+
+            // Warmup - also allows oversampling to initialize
+            juce::MidiBuffer midiBuffer;
+            for (int i = 0; i < 30; ++i)
+            {
+                juce::AudioBuffer<float> warmupBuffer(2, 512);
+                fillBufferWithSineWave(warmupBuffer, 0.3f, 1000.0f, 48000.0);
+                compressor.processBlock(warmupBuffer, midiBuffer);
+            }
+
+            // Debug: Print the reported latency after warmup
+            double reportedLatency = compressor.getLatencyInSamples();
+            logMessage("OS " + modeStr + ": Reported latency = " + juce::String(reportedLatency) + " samples");
+
+            // Measure actual delay by passing an impulse
+            // At 100% wet (100 mix), the impulse should appear at the reported latency position
+            if (auto* mixParam2 = params.getRawParameterValue("mix"))
+                *mixParam2 = 100.0f;  // 100% wet
+
+            juce::AudioBuffer<float> impulseBuffer(2, 512);
+            impulseBuffer.clear();
+            impulseBuffer.setSample(0, 0, 1.0f);  // Impulse at sample 0
+            impulseBuffer.setSample(1, 0, 1.0f);
+            compressor.processBlock(impulseBuffer, midiBuffer);
+
+            // Find where the impulse peak appears in the output
+            int peakPos = 0;
+            float peakVal = 0.0f;
+            for (int i = 0; i < 512; ++i)
+            {
+                float absVal = std::abs(impulseBuffer.getSample(0, i));
+                if (absVal > peakVal)
+                {
+                    peakVal = absVal;
+                    peakPos = i;
+                }
+            }
+            logMessage("OS " + modeStr + ": Actual impulse peak at sample " + juce::String(peakPos) +
+                       " (expected " + juce::String(static_cast<int>(reportedLatency)) + ")");
+
+            // Now test impulse at 50% mix - if delay compensation works, peak should be at same position
+            if (auto* mixParam3 = params.getRawParameterValue("mix"))
+                *mixParam3 = 50.0f;
+
+            juce::AudioBuffer<float> impulseBuffer50(2, 512);
+            impulseBuffer50.clear();
+            impulseBuffer50.setSample(0, 0, 1.0f);
+            impulseBuffer50.setSample(1, 0, 1.0f);
+            compressor.processBlock(impulseBuffer50, midiBuffer);
+
+            // Find peaks at 50% mix - should have ONE peak at the latency position if phase-aligned
+            int peakPos0 = 0, peakPos49 = 0;
+            float peakVal0 = std::abs(impulseBuffer50.getSample(0, 0));
+            float peakVal49 = (reportedLatency < 512) ? std::abs(impulseBuffer50.getSample(0, static_cast<int>(reportedLatency))) : 0.0f;
+
+            // Also find overall peak
+            int overallPeakPos = 0;
+            float overallPeakVal = 0.0f;
+            for (int i = 0; i < 512; ++i)
+            {
+                float absVal = std::abs(impulseBuffer50.getSample(0, i));
+                if (absVal > overallPeakVal)
+                {
+                    overallPeakVal = absVal;
+                    overallPeakPos = i;
+                }
+            }
+            logMessage("OS " + modeStr + " @ 50% mix: Peak at " + juce::String(overallPeakPos) +
+                       " (val=" + juce::String(overallPeakVal, 3) +
+                       "), sample[0]=" + juce::String(peakVal0, 3) +
+                       ", sample[" + juce::String(static_cast<int>(reportedLatency)) + "]=" + juce::String(peakVal49, 3));
+
+            // Test multiple frequencies to detect comb filtering
+            // Comb filtering causes frequency-dependent amplitude variations
+            std::array<float, 6> testFreqs = {250.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f};
+            std::array<float, 6> levelRatios;
+
+            for (size_t f = 0; f < testFreqs.size(); ++f)
+            {
+                float freq = testFreqs[f];
+
+                // Create test tone
+                juce::AudioBuffer<float> testBuffer(2, 2048);
+                fillBufferWithSineWave(testBuffer, 0.3f, freq, 48000.0);
+
+                float inputRms = 0.0f;
+                for (int i = 512; i < 1536; ++i) // Use middle portion to avoid transients
+                {
+                    float s = testBuffer.getSample(0, i);
+                    inputRms += s * s;
+                }
+                inputRms = std::sqrt(inputRms / 1024.0f);
+
+                // Process
+                compressor.processBlock(testBuffer, midiBuffer);
+
+                float outputRms = 0.0f;
+                for (int i = 512; i < 1536; ++i)
+                {
+                    float s = testBuffer.getSample(0, i);
+                    outputRms += s * s;
+                }
+                outputRms = std::sqrt(outputRms / 1024.0f);
+
+                levelRatios[f] = (inputRms > 0.0001f) ? (outputRms / inputRms) : 1.0f;
+            }
+
+            // Calculate the variation across frequencies
+            // Phase-aligned mixing should give consistent levels across all frequencies
+            // Comb filtering creates large variations (some frequencies nulled, others boosted)
+            float minRatio = *std::min_element(levelRatios.begin(), levelRatios.end());
+            float maxRatio = *std::max_element(levelRatios.begin(), levelRatios.end());
+            float variationDb = 20.0f * std::log10((maxRatio / minRatio) + 1e-10f);
+
+            // With perfect phase alignment, variation should be < 3dB
+            // Comb filtering typically causes 6-12+ dB variations
+            expect(variationDb < 6.0f,
+                   "OS " + modeStr + ": Frequency variation at 50% mix is " +
+                   juce::String(variationDb, 1) + " dB (max allowed: 6 dB - indicates comb filtering)");
+
+            logMessage("OS " + modeStr + ": Freq variation = " + juce::String(variationDb, 1) +
+                       " dB (min ratio: " + juce::String(minRatio, 3) +
+                       ", max ratio: " + juce::String(maxRatio, 3) + ")");
+
+            // Log individual frequency responses
+            for (size_t f = 0; f < testFreqs.size(); ++f)
+            {
+                logMessage("  " + juce::String(static_cast<int>(testFreqs[f])) + " Hz: " +
+                           juce::String(20.0f * std::log10(levelRatios[f] + 1e-10f), 1) + " dB");
+            }
         }
     }
 };

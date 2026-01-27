@@ -89,6 +89,9 @@ public:
     float getInputLevelR() const { return inputMeterR.load(std::memory_order_relaxed); }
     float getOutputLevelL() const { return outputMeterL.load(std::memory_order_relaxed); }
     float getOutputLevelR() const { return outputMeterR.load(std::memory_order_relaxed); }
+
+    // Channel configuration - for UI to determine mono/stereo display mode
+    int getNumChannels() const { return currentNumChannels.load(std::memory_order_relaxed); }
     float getSidechainLevel() const { return sidechainMeter.load(std::memory_order_relaxed); }
     float getLinkedGainReduction(int channel) const {
         return channel >= 0 && channel < 2 ? linkedGainReduction[channel].load(std::memory_order_relaxed) : 0.0f;
@@ -174,6 +177,9 @@ private:
     std::atomic<float> outputMeterL{-60.0f};
     std::atomic<float> outputMeterR{-60.0f};
 
+    // Channel configuration (set in prepareToPlay, read by UI for mono/stereo display)
+    std::atomic<int> currentNumChannels{2};
+
     // GR History buffer for visualization
     // Using atomic<float> array for thread-safe UI reads without tearing
     std::array<std::atomic<float>, GR_HISTORY_SIZE> grHistory{};
@@ -221,17 +227,21 @@ private:
     bool primeRmsAccumulators = false;  // Flag to instantly prime accumulators on mode change
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
-    juce::AudioBuffer<float> dryBuffer;           // For parallel compression mix
+    juce::AudioBuffer<float> dryBuffer;           // For parallel compression mix (1x rate)
+    juce::AudioBuffer<float> oversampledDryBuffer; // For parallel compression mix at oversampled rate
     juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal
     juce::AudioBuffer<float> linkedSidechain;     // Stereo-linked sidechain signal
     juce::AudioBuffer<float> externalSidechain;   // External sidechain input buffer
     juce::AudioBuffer<float> interpolatedSidechain;  // Pre-interpolated sidechain for oversampling
 
-    // Delay line for dry signal compensation when oversampling is enabled
+    // Simple ring buffer for dry signal delay compensation when oversampling is enabled
     // This ensures dry and wet signals are time-aligned when mixing for parallel compression
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> dryDelayLine{512};
+    // Using a simple implementation rather than JUCE DelayLine for explicit control
+    static constexpr int MAX_DRY_DELAY = 128;  // Max samples of delay (enough for 4x oversampling)
+    std::array<std::array<float, MAX_DRY_DELAY>, 2> dryDelayBuffer{};  // Ring buffer per channel (stereo max)
+    int dryDelayWritePos{0};           // Current write position in ring buffer
     int currentDryDelayInSamples{0};   // Current oversampling latency for dry signal delay
-    int preparedDelayLineChannels{0};  // Number of channels the delay line was prepared for
+    int preparedDelayLineChannels{0};  // Number of channels prepared for
     bool delayLineReady{false};        // Safety flag: true only after successful prepare()
 
     // Pre-smoothed gain buffer for auto-makeup optimization
