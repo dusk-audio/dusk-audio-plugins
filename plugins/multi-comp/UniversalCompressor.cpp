@@ -4820,18 +4820,22 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         bool needsOversampledDry = needsDryBuffer && (mixAmount < 0.999f);
         if (needsOversampledDry)
         {
-            // Ensure oversampled dry buffer is sized correctly
+            // Check if oversampled dry buffer is sized correctly
             if (oversampledDryBuffer.getNumChannels() < osNumChannels ||
                 oversampledDryBuffer.getNumSamples() < osNumSamples)
             {
-                oversampledDryBuffer.setSize(osNumChannels, osNumSamples, false, false, true);
+                // Avoid RT allocation; fall back to post-downsample mixing
+                needsOversampledDry = false;
             }
-            // Copy upsampled signal BEFORE compression
-            for (int ch = 0; ch < osNumChannels; ++ch)
+            else
             {
-                auto* src = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
-                auto* dst = oversampledDryBuffer.getWritePointer(ch);
-                std::memcpy(dst, src, static_cast<size_t>(osNumSamples) * sizeof(float));
+                // Copy upsampled signal BEFORE compression
+                for (int ch = 0; ch < osNumChannels; ++ch)
+                {
+                    auto* src = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
+                    auto* dst = oversampledDryBuffer.getWritePointer(ch);
+                    std::memcpy(dst, src, static_cast<size_t>(osNumSamples) * sizeof(float));
+                }
             }
         }
 
