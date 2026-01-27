@@ -541,7 +541,9 @@ plugins/
 2. **⚠️ FIRST: Check `plugins/shared/` for reusable components**
 3. Add CMakeLists.txt with juce_add_plugin()
 4. Add to root CMakeLists.txt with option flag
-5. Add build target to `docker/build_release.sh` PLUGINS array
+5. **Update build scripts** (both are required for full compatibility):
+   - `docker/build_release.sh`: Add shortcut aliases to the `PLUGIN_ALIASES` array
+   - `rebuild_all.sh`: Add directory-to-target mapping to `PLUGIN_TARGETS` array
 6. Follow naming convention: `PluginName_All` for build targets
 7. **REQUIRED**: Use shared components:
    - `LEDMeter` for all input/output metering
@@ -957,7 +959,6 @@ For issues or questions about these plugins:
 - Review individual plugin source code
 - Check JUCE forum for framework-related questions
 ---
-*Last updated: December 2025*
-*Company: Luna Co. Audio*
+*Last updated: January 2026**Company: Luna Co. Audio*
 *Build System: CMake + JUCE 7.x*
 *Shared Code Philosophy: All reusable components must be in `plugins/shared/`*

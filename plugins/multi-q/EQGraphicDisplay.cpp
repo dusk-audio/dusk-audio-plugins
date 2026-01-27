@@ -8,8 +8,9 @@ EQGraphicDisplay::EQGraphicDisplay(MultiQ& proc)
     // Create analyzer component
     analyzer = std::make_unique<FFTAnalyzer>();
     addAndMakeVisible(analyzer.get());
-    analyzer->setFillColor(juce::Colour(0x30888888));
-    analyzer->setLineColor(juce::Colour(0x80AAAAAA));
+    // Logic Pro-style analyzer colors - subtle cyan/teal tint (~25-30% opacity)
+    analyzer->setFillColor(juce::Colour(0x3055999a));   // ~19% fill (more subtle)
+    analyzer->setLineColor(juce::Colour(0x6077aaaa));   // ~38% line (reduced)
 
     // Start timer for UI updates
     startTimerHz(30);
@@ -38,32 +39,74 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    // Dark background
-    g.setColour(juce::Colour(0xFF1a1a1a));
-    g.fillRect(bounds);
+    // Logic Pro-style radial gradient background - darker at edges, subtle warmth at center
+    {
+        auto centerX = bounds.getCentreX();
+        auto centerY = getYForDB(0.0f);  // Center gradient around 0dB line
 
-    // Draw grid
+        juce::ColourGradient bgGradient(
+            juce::Colour(0xFF1e1e20), centerX, centerY,  // Subtle dark center
+            juce::Colour(0xFF0a0a0c), 0.0f, 0.0f,        // Very dark edges
+            true);  // Radial
+        bgGradient.addColour(0.25, juce::Colour(0xFF1a1a1c));
+        bgGradient.addColour(0.5, juce::Colour(0xFF141416));
+        bgGradient.addColour(0.75, juce::Colour(0xFF0f0f11));
+
+        g.setGradientFill(bgGradient);
+        g.fillRect(bounds);
+    }
+
+    // Subtle vignette overlay for depth
+    {
+        juce::ColourGradient vignette(
+            juce::Colours::transparentBlack, bounds.getCentreX(), bounds.getCentreY(),
+            juce::Colour(0x30000000), bounds.getX(), bounds.getY(),
+            true);
+        g.setGradientFill(vignette);
+        g.fillRect(bounds);
+    }
+
+    // Draw grid (before curves so curves appear on top)
     drawGrid(g);
 
-    // Draw individual band curves (with fill)
+    // Draw individual band curves (with gradient fill)
     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
     {
         if (isBandEnabled(i))
             drawBandCurve(g, i);
     }
 
-    // Draw combined EQ curve
+    // Draw combined EQ curve with glow
     drawCombinedCurve(g);
 
     // Draw master gain overlay if enabled
     if (showMasterGain && std::abs(masterGainDB) > 0.01f)
         drawMasterGainOverlay(g);
 
-    // Draw control points
+    // Draw control points (stalks first, then nodes)
     drawControlPoints(g);
 
-    // Draw border
-    g.setColour(juce::Colour(0xFF333333));
+    // Subtle inner shadow/border for depth
+    {
+        // Top shadow
+        juce::ColourGradient topShadow(
+            juce::Colour(0x20000000), 0, 0,
+            juce::Colours::transparentBlack, 0, 8,
+            false);
+        g.setGradientFill(topShadow);
+        g.fillRect(bounds.getX(), bounds.getY(), bounds.getWidth(), 8.0f);
+
+        // Bottom shadow
+        juce::ColourGradient bottomShadow(
+            juce::Colours::transparentBlack, 0, bounds.getBottom() - 8,
+            juce::Colour(0x15000000), 0, bounds.getBottom(),
+            false);
+        g.setGradientFill(bottomShadow);
+        g.fillRect(bounds.getX(), bounds.getBottom() - 8, bounds.getWidth(), 8.0f);
+    }
+
+    // Subtle outer border
+    g.setColour(juce::Colour(0xFF2a2a2e));
     g.drawRect(bounds, 1.0f);
 }
 
@@ -81,24 +124,30 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
 {
     auto displayBounds = getDisplayBounds();
 
-    // Minor frequency grid lines (lighter)
-    g.setColour(juce::Colour(0xFF222222));
+    // Ultra-thin minor frequency grid lines (~8% opacity - very subtle)
+    g.setColour(juce::Colour(0x14ffffff));  // ~8% white
     std::array<float, 7> minorFreqLines = {20.0f, 50.0f, 150.0f, 300.0f, 700.0f, 3000.0f, 7000.0f};
     for (float freq : minorFreqLines)
     {
         float x = getXForFrequency(freq);
         if (x >= displayBounds.getX() && x <= displayBounds.getRight())
-            g.drawVerticalLine(static_cast<int>(x), displayBounds.getY(), displayBounds.getBottom());
+        {
+            juce::Line<float> line(x, displayBounds.getY(), x, displayBounds.getBottom());
+            g.drawLine(line, 0.5f);
+        }
     }
 
-    // Major frequency grid lines (brighter)
-    g.setColour(juce::Colour(0xFF333333));
+    // Thin major frequency grid lines (~12% opacity)
+    g.setColour(juce::Colour(0x1Effffff));  // ~12% white
     std::array<float, 4> majorFreqLines = {100.0f, 1000.0f, 10000.0f, 20000.0f};
     for (float freq : majorFreqLines)
     {
         float x = getXForFrequency(freq);
         if (x >= displayBounds.getX() && x <= displayBounds.getRight())
-            g.drawVerticalLine(static_cast<int>(x), displayBounds.getY(), displayBounds.getBottom());
+        {
+            juce::Line<float> line(x, displayBounds.getY(), x, displayBounds.getBottom());
+            g.drawLine(line, 0.5f);
+        }
     }
 
     // Draw dB grid lines
@@ -109,22 +158,31 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
     for (float db = minDisplayDB; db <= maxDisplayDB; db += dbStep)
     {
         float y = getYForDB(db);
-        if (std::abs(db) < 0.01f)  // 0 dB line - prominent
+        if (std::abs(db) < 0.01f)  // 0 dB line - subtle emphasis
         {
-            g.setColour(juce::Colour(0xFF555555));
-            g.drawHorizontalLine(static_cast<int>(y), displayBounds.getX(), displayBounds.getRight());
+            // Soft outer glow for 0dB line
+            g.setColour(juce::Colour(0x0Cffffff));  // ~5%
+            juce::Line<float> glowLine(displayBounds.getX(), y, displayBounds.getRight(), y);
+            g.drawLine(glowLine, 2.5f);
+
+            // Core 0dB line (~25% opacity - brighter than other lines)
+            g.setColour(juce::Colour(0x40ffffff));  // ~25%
+            g.drawLine(glowLine, 0.75f);
         }
         else
         {
-            g.setColour(juce::Colour(0xFF2a2a2a));
-            g.drawHorizontalLine(static_cast<int>(y), displayBounds.getX(), displayBounds.getRight());
+            // Regular dB lines (~10% opacity, very subtle)
+            g.setColour(juce::Colour(0x1Affffff));  // ~10%
+            juce::Line<float> line(displayBounds.getX(), y, displayBounds.getRight(), y);
+            g.drawLine(line, 0.5f);
         }
     }
 
-    // Draw frequency labels with better visibility
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    // Draw frequency labels with refined sans-serif font
+    juce::Font labelFont(juce::FontOptions(9.5f).withStyle("Regular"));
+    g.setFont(labelFont);
 
-    // Major frequency labels (brighter)
+    // Major frequency labels (brighter, refined)
     std::array<std::pair<float, const char*>, 4> majorLabels = {{
         {100.0f, "100"}, {1000.0f, "1k"}, {10000.0f, "10k"}, {20000.0f, "20k"}
     }};
@@ -132,7 +190,12 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
     for (auto& [freq, label] : majorLabels)
     {
         float x = getXForFrequency(freq);
-        g.setColour(juce::Colour(0xFF999999));
+        // Subtle text shadow for depth
+        g.setColour(juce::Colour(0x30000000));
+        g.drawText(label, static_cast<int>(x - 17), static_cast<int>(displayBounds.getBottom() + 4),
+                   36, 14, juce::Justification::centred);
+        // Main text
+        g.setColour(juce::Colour(0xFF8a8a8a));
         g.drawText(label, static_cast<int>(x - 18), static_cast<int>(displayBounds.getBottom() + 3),
                    36, 14, juce::Justification::centred);
     }
@@ -145,22 +208,29 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
     for (auto& [freq, label] : minorLabels)
     {
         float x = getXForFrequency(freq);
-        g.setColour(juce::Colour(0xFF666666));
+        g.setColour(juce::Colour(0xFF5a5a5a));
         g.drawText(label, static_cast<int>(x - 15), static_cast<int>(displayBounds.getBottom() + 3),
                    30, 14, juce::Justification::centred);
     }
 
     // Draw dB labels with better contrast
+    juce::Font dbFont(juce::FontOptions(9.0f).withStyle("Regular"));
+    g.setFont(dbFont);
+
     for (float db = minDisplayDB; db <= maxDisplayDB; db += dbStep)
     {
         float y = getYForDB(db);
         juce::String label = (db > 0 ? "+" : "") + juce::String(static_cast<int>(db));
 
-        // 0 dB label is brighter
+        // 0 dB label is brighter with subtle glow
         if (std::abs(db) < 0.01f)
-            g.setColour(juce::Colour(0xFFAAAAAA));
+        {
+            g.setColour(juce::Colour(0xFF9a9a9a));
+        }
         else
-            g.setColour(juce::Colour(0xFF777777));
+        {
+            g.setColour(juce::Colour(0xFF5a5a5a));
+        }
 
         g.drawText(label, 5, static_cast<int>(y - 7), 28, 14, juce::Justification::right);
     }
@@ -168,18 +238,30 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
 
 void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
 {
+    // Hardcoded colors to bypass any initialization issues
+    static const juce::Colour bandColors[8] = {
+        juce::Colour(0xFFff4444),  // Red - HPF
+        juce::Colour(0xFFff8844),  // Orange - Low Shelf
+        juce::Colour(0xFFffcc44),  // Yellow - Para 1
+        juce::Colour(0xFF44cc44),  // Green - Para 2
+        juce::Colour(0xFF44cccc),  // Cyan - Para 3
+        juce::Colour(0xFF4488ff),  // Blue - Para 4
+        juce::Colour(0xFFaa44ff),  // Purple - High Shelf
+        juce::Colour(0xFFff44aa)   // Pink - LPF
+    };
+
     auto displayBounds = getDisplayBounds();
-    const auto& config = DefaultBandConfigs[static_cast<size_t>(bandIndex)];
+    juce::Colour curveColor = (bandIndex >= 0 && bandIndex < 8) ? bandColors[bandIndex] : juce::Colours::white;
 
     juce::Path curvePath;
     bool pathStarted = false;
 
-    // Calculate band response at each x position
-    int numPoints = static_cast<int>(displayBounds.getWidth());
+    // Calculate band response at each x position (higher resolution for smoother curves)
+    int numPoints = static_cast<int>(displayBounds.getWidth() * 2);  // 2x resolution for smoothness
 
     for (int px = 0; px < numPoints; ++px)
     {
-        float x = displayBounds.getX() + static_cast<float>(px);
+        float x = displayBounds.getX() + static_cast<float>(px) * 0.5f;
         float freq = getFrequencyAtX(x);
 
         // Get approximate magnitude response for this band only
@@ -260,15 +342,49 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
     fillPath.lineTo(displayBounds.getX(), zeroY);
     fillPath.closeSubPath();
 
-    // Draw fill with band color (semi-transparent)
-    juce::Colour bandColor = config.color;
-    g.setColour(bandColor.withAlpha(0.15f));
-    g.fillPath(fillPath);
-
-    // Draw curve line
     bool isSelected = (bandIndex == selectedBand);
-    g.setColour(bandColor.withAlpha(isSelected ? 1.0f : 0.6f));
-    g.strokePath(curvePath, juce::PathStrokeType(isSelected ? 2.0f : 1.5f));
+    bool isHovered = (bandIndex == hoveredBand);
+
+    // Get the peak point of the curve for gradient positioning
+    auto curveBounds = curvePath.getBounds();
+    float peakY = (curveBounds.getY() < zeroY) ? curveBounds.getY() : curveBounds.getBottom();
+
+    // Draw gradient fill from curve color to transparent (~20% opacity at top)
+    {
+        juce::ColourGradient fillGradient;
+        float curveAlpha = isSelected ? 0.35f : (isHovered ? 0.25f : 0.18f);
+
+        if (peakY < zeroY)  // Boosting (curve above 0dB)
+        {
+            fillGradient = juce::ColourGradient(
+                curveColor.withAlpha(curveAlpha), 0, peakY,
+                curveColor.withAlpha(0.02f), 0, zeroY,
+                false);
+        }
+        else  // Cutting (curve below 0dB)
+        {
+            fillGradient = juce::ColourGradient(
+                curveColor.withAlpha(0.02f), 0, zeroY,
+                curveColor.withAlpha(curveAlpha), 0, curveBounds.getBottom(),
+                false);
+        }
+
+        g.setGradientFill(fillGradient);
+        g.fillPath(fillPath);
+    }
+
+    // Draw soft outer glow/shadow for the curve (depth effect)
+    float glowAlpha = isSelected ? 0.3f : (isHovered ? 0.2f : 0.12f);
+    g.setColour(curveColor.withAlpha(glowAlpha));
+    g.strokePath(curvePath, juce::PathStrokeType(isSelected ? 5.0f : 4.0f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // Draw anti-aliased curve line with proper stroke
+    float lineWidth = isSelected ? 2.5f : (isHovered ? 2.0f : 1.8f);
+    float lineAlpha = isSelected ? 1.0f : (isHovered ? 0.9f : 0.75f);
+    g.setColour(curveColor.withAlpha(lineAlpha));
+    g.strokePath(curvePath, juce::PathStrokeType(lineWidth,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 void EQGraphicDisplay::drawCombinedCurve(juce::Graphics& g)
@@ -278,11 +394,12 @@ void EQGraphicDisplay::drawCombinedCurve(juce::Graphics& g)
     juce::Path combinedPath;
     bool pathStarted = false;
 
-    int numPoints = static_cast<int>(displayBounds.getWidth());
+    // Higher resolution for smoother curve
+    int numPoints = static_cast<int>(displayBounds.getWidth() * 1.5f);
 
     for (int px = 0; px < numPoints; ++px)
     {
-        float x = displayBounds.getX() + static_cast<float>(px);
+        float x = displayBounds.getX() + static_cast<float>(px) / 1.5f;
         float freq = getFrequencyAtX(x);
 
         float response = processor.getFrequencyResponseMagnitude(freq);
@@ -299,24 +416,69 @@ void EQGraphicDisplay::drawCombinedCurve(juce::Graphics& g)
         }
     }
 
-    // Draw combined curve with glow effect
-    g.setColour(juce::Colours::white.withAlpha(0.3f));
-    g.strokePath(combinedPath, juce::PathStrokeType(4.0f));
+    // Multi-layer glow effect for combined curve (Logic Pro style)
+    // Outermost soft glow
+    g.setColour(juce::Colours::white.withAlpha(0.08f));
+    g.strokePath(combinedPath, juce::PathStrokeType(8.0f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    g.setColour(juce::Colours::white);
-    g.strokePath(combinedPath, juce::PathStrokeType(2.0f));
+    // Middle glow
+    g.setColour(juce::Colours::white.withAlpha(0.15f));
+    g.strokePath(combinedPath, juce::PathStrokeType(5.0f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // Inner glow
+    g.setColour(juce::Colours::white.withAlpha(0.35f));
+    g.strokePath(combinedPath, juce::PathStrokeType(3.0f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // Core bright line
+    g.setColour(juce::Colours::white.withAlpha(0.95f));
+    g.strokePath(combinedPath, juce::PathStrokeType(1.8f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 void EQGraphicDisplay::drawControlPoints(juce::Graphics& g)
 {
-    // First draw inactive bands as faint indicators
+    float zeroY = getYForDB(0.0f);
+
+    // First draw stalks for all enabled bands (behind nodes)
+    for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
+    {
+        if (isBandEnabled(i))
+        {
+            auto point = getControlPointPosition(i);
+            bool isSelected = (i == selectedBand);
+            bool isHovered = (i == hoveredBand);
+
+            // Draw connecting stalk from node to 0dB line
+            static const juce::Colour bandColors[8] = {
+                juce::Colour(0xFFff4444), juce::Colour(0xFFff8844), juce::Colour(0xFFffcc44), juce::Colour(0xFF44cc44),
+                juce::Colour(0xFF44cccc), juce::Colour(0xFF4488ff), juce::Colour(0xFFaa44ff), juce::Colour(0xFFff44aa)
+            };
+            juce::Colour stalkColor = (i >= 0 && i < 8) ? bandColors[i] : juce::Colours::white;
+
+            // Gradient stalk from node to 0dB line
+            float stalkAlpha = isSelected ? 0.6f : (isHovered ? 0.4f : 0.25f);
+            juce::ColourGradient stalkGradient(
+                stalkColor.withAlpha(stalkAlpha), point.x, point.y,
+                stalkColor.withAlpha(0.05f), point.x, zeroY,
+                false);
+
+            g.setGradientFill(stalkGradient);
+            float stalkWidth = isSelected ? 2.5f : (isHovered ? 2.0f : 1.5f);
+            g.drawLine(point.x, point.y, point.x, zeroY, stalkWidth);
+        }
+    }
+
+    // Then draw inactive bands as faint indicators
     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
     {
         if (!isBandEnabled(i))
             drawInactiveBandIndicator(g, i);
     }
 
-    // Then draw active bands on top
+    // Finally draw active band nodes on top
     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
     {
         if (isBandEnabled(i))
@@ -326,22 +488,36 @@ void EQGraphicDisplay::drawControlPoints(juce::Graphics& g)
 
 void EQGraphicDisplay::drawInactiveBandIndicator(juce::Graphics& g, int bandIndex)
 {
+    // Hardcoded colors to bypass any initialization issues
+    static const juce::Colour bandColors[8] = {
+        juce::Colour(0xFFff4444),  // Red - HPF
+        juce::Colour(0xFFff8844),  // Orange - Low Shelf
+        juce::Colour(0xFFffcc44),  // Yellow - Para 1
+        juce::Colour(0xFF44cc44),  // Green - Para 2
+        juce::Colour(0xFF44cccc),  // Cyan - Para 3
+        juce::Colour(0xFF4488ff),  // Blue - Para 4
+        juce::Colour(0xFFaa44ff),  // Purple - High Shelf
+        juce::Colour(0xFFff44aa)   // Pink - LPF
+    };
+
     auto point = getControlPointPosition(bandIndex);
-    const auto& config = DefaultBandConfigs[static_cast<size_t>(bandIndex)];
+    juce::Colour color = (bandIndex >= 0 && bandIndex < 8) ? bandColors[bandIndex] : juce::Colours::grey;
 
-    float radius = CONTROL_POINT_RADIUS * 0.6f;
+    float radius = CONTROL_POINT_RADIUS * 0.7f;
+    float ringThickness = 1.5f;
+    float innerRadius = radius - ringThickness;
 
-    // Faint outline only
-    g.setColour(config.color.withAlpha(0.25f));
-    g.drawEllipse(point.x - radius, point.y - radius, radius * 2.0f, radius * 2.0f, 1.5f);
+    // Faint outer ring
+    g.setColour(color.withAlpha(0.2f));
+    g.drawEllipse(point.x - radius, point.y - radius, radius * 2.0f, radius * 2.0f, ringThickness);
 
-    // Very faint fill
-    g.setColour(config.color.withAlpha(0.1f));
-    g.fillEllipse(point.x - radius, point.y - radius, radius * 2.0f, radius * 2.0f);
+    // Very faint center fill
+    g.setColour(color.withAlpha(0.08f));
+    g.fillEllipse(point.x - innerRadius, point.y - innerRadius, innerRadius * 2.0f, innerRadius * 2.0f);
 
     // Faint band number
-    g.setColour(config.color.withAlpha(0.3f));
-    g.setFont(juce::Font(juce::FontOptions(8.0f)));
+    g.setColour(color.withAlpha(0.35f));
+    g.setFont(juce::Font(juce::FontOptions(8.0f).withStyle("Bold")));
     g.drawText(juce::String(bandIndex + 1),
                static_cast<int>(point.x - radius), static_cast<int>(point.y - radius),
                static_cast<int>(radius * 2.0f), static_cast<int>(radius * 2.0f),
@@ -350,51 +526,114 @@ void EQGraphicDisplay::drawInactiveBandIndicator(juce::Graphics& g, int bandInde
 
 void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
 {
+    // Hardcoded colors to bypass any initialization issues
+    static const juce::Colour bandColors[8] = {
+        juce::Colour(0xFFff4444),  // Red - HPF
+        juce::Colour(0xFFff8844),  // Orange - Low Shelf
+        juce::Colour(0xFFffcc44),  // Yellow - Para 1
+        juce::Colour(0xFF44cc44),  // Green - Para 2
+        juce::Colour(0xFF44cccc),  // Cyan - Para 3
+        juce::Colour(0xFF4488ff),  // Blue - Para 4
+        juce::Colour(0xFFaa44ff),  // Purple - High Shelf
+        juce::Colour(0xFFff44aa)   // Pink - LPF
+    };
+
     auto point = getControlPointPosition(bandIndex);
-    const auto& config = DefaultBandConfigs[static_cast<size_t>(bandIndex)];
+    juce::Colour color = (bandIndex >= 0 && bandIndex < 8) ? bandColors[bandIndex] : juce::Colours::white;
 
     bool isSelected = (bandIndex == selectedBand);
     bool isHovered = (bandIndex == hoveredBand);
 
-    float radius = CONTROL_POINT_RADIUS;
-    if (isSelected) radius *= 1.3f;
-    else if (isHovered) radius *= 1.15f;
+    // Check if this band has flat gain (near 0dB) - makes it more subtle
+    float gain = getBandGain(bandIndex);
+    bool isFlat = (bandIndex > 0 && bandIndex < 7) && std::abs(gain) < 0.5f;  // Within 0.5dB of 0
+    bool hasGain = !isFlat;
 
-    // Outer glow for selected
+    // Scale and opacity based on state and whether the band has actual gain
+    float baseRadius = CONTROL_POINT_RADIUS;
+    float flatScale = isFlat ? 0.85f : 1.0f;  // Flat nodes are slightly smaller
+    float scale = (isSelected ? 1.25f : (isHovered ? 1.15f : 1.0f)) * flatScale;
+    float radius = baseRadius * scale;
+
+    // Opacity reduction for flat nodes (unless selected/hovered)
+    float opacityMult = (isFlat && !isSelected && !isHovered) ? 0.6f : 1.0f;
+
+    // Ring thickness varies with state
+    float ringThickness = isSelected ? 3.0f : (isHovered ? 2.5f : (isFlat ? 1.5f : 2.0f));
+    float innerRadius = radius - ringThickness;
+
+    // Outer glow effect (multiple layers for soft glow)
+    // Only show full glow for bands with gain or when selected/hovered
     if (isSelected)
     {
-        g.setColour(config.color.withAlpha(0.4f));
-        g.fillEllipse(point.x - radius * 1.8f, point.y - radius * 1.8f,
-                      radius * 3.6f, radius * 3.6f);
+        // Outermost glow
+        g.setColour(color.withAlpha(0.15f));
+        g.fillEllipse(point.x - radius * 2.2f, point.y - radius * 2.2f,
+                      radius * 4.4f, radius * 4.4f);
+        // Middle glow
+        g.setColour(color.withAlpha(0.25f));
+        g.fillEllipse(point.x - radius * 1.7f, point.y - radius * 1.7f,
+                      radius * 3.4f, radius * 3.4f);
+        // Inner glow
+        g.setColour(color.withAlpha(0.4f));
+        g.fillEllipse(point.x - radius * 1.3f, point.y - radius * 1.3f,
+                      radius * 2.6f, radius * 2.6f);
     }
-    // Subtle glow for hovered
     else if (isHovered)
     {
-        g.setColour(config.color.withAlpha(0.2f));
+        // Subtle glow for hovered state
+        g.setColour(color.withAlpha(0.12f));
+        g.fillEllipse(point.x - radius * 1.8f, point.y - radius * 1.8f,
+                      radius * 3.6f, radius * 3.6f);
+        g.setColour(color.withAlpha(0.2f));
         g.fillEllipse(point.x - radius * 1.4f, point.y - radius * 1.4f,
                       radius * 2.8f, radius * 2.8f);
     }
+    else if (hasGain)
+    {
+        // Subtle glow for active bands with gain (not flat)
+        g.setColour(color.withAlpha(0.08f));
+        g.fillEllipse(point.x - radius * 1.5f, point.y - radius * 1.5f,
+                      radius * 3.0f, radius * 3.0f);
+    }
 
-    // Drop shadow
-    g.setColour(juce::Colours::black.withAlpha(0.3f));
-    g.fillEllipse(point.x - radius + 1.5f, point.y - radius + 1.5f, radius * 2.0f, radius * 2.0f);
+    // Drop shadow (offset down-right) - reduced for flat nodes
+    g.setColour(juce::Colour(0x40000000).withMultipliedAlpha(opacityMult));
+    g.fillEllipse(point.x - radius + 2.0f, point.y - radius + 2.0f, radius * 2.0f, radius * 2.0f);
 
-    // Fill with gradient
-    juce::ColourGradient gradient(config.color.brighter(0.2f), point.x, point.y - radius,
-                                   config.color.darker(0.2f), point.x, point.y + radius, false);
-    g.setGradientFill(gradient);
+    // Ring-style handle: colored ring with semi-transparent center
+    // Outer colored ring
+    g.setColour(color.withMultipliedAlpha(opacityMult));
     g.fillEllipse(point.x - radius, point.y - radius, radius * 2.0f, radius * 2.0f);
 
-    // Border - brighter for selected
-    g.setColour(isSelected ? juce::Colours::white : juce::Colours::white.withAlpha(0.8f));
-    g.drawEllipse(point.x - radius, point.y - radius, radius * 2.0f, radius * 2.0f, isSelected ? 2.0f : 1.5f);
+    // Hollow center (dark, semi-transparent)
+    juce::Colour centerColor = isSelected ? juce::Colour(0xE0101014) : juce::Colour(0xD0141418);
+    g.setColour(centerColor);
+    g.fillEllipse(point.x - innerRadius, point.y - innerRadius, innerRadius * 2.0f, innerRadius * 2.0f);
 
-    // Band number
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(juce::FontOptions(isSelected ? 11.0f : 10.0f).withStyle("Bold")));
+    // Inner highlight ring (subtle 3D effect) - skip for flat unselected nodes
+    if (!isFlat || isSelected || isHovered)
+    {
+        g.setColour(color.brighter(0.3f).withAlpha(0.4f * opacityMult));
+        g.drawEllipse(point.x - innerRadius + 0.5f, point.y - innerRadius + 0.5f,
+                      (innerRadius - 0.5f) * 2.0f, (innerRadius - 0.5f) * 2.0f, 0.75f);
+    }
+
+    // Outer white highlight ring for selected
+    if (isSelected)
+    {
+        g.setColour(juce::Colours::white.withAlpha(0.6f));
+        g.drawEllipse(point.x - radius - 0.5f, point.y - radius - 0.5f,
+                      (radius + 0.5f) * 2.0f, (radius + 0.5f) * 2.0f, 1.5f);
+    }
+
+    // Band number in center
+    float fontSize = isSelected ? 10.0f : (isFlat ? 8.0f : 9.0f);
+    g.setFont(juce::Font(juce::FontOptions(fontSize).withStyle("Bold")));
+    g.setColour(juce::Colours::white.withAlpha((isSelected ? 1.0f : 0.9f) * opacityMult));
     g.drawText(juce::String(bandIndex + 1),
-               static_cast<int>(point.x - radius), static_cast<int>(point.y - radius),
-               static_cast<int>(radius * 2.0f), static_cast<int>(radius * 2.0f),
+               static_cast<int>(point.x - innerRadius), static_cast<int>(point.y - innerRadius),
+               static_cast<int>(innerRadius * 2.0f), static_cast<int>(innerRadius * 2.0f),
                juce::Justification::centred);
 }
 

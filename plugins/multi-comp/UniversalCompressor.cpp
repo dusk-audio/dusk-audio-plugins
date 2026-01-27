@@ -8,138 +8,32 @@
 #include "HardwareEmulation/ConvolutionEngine.h"
 #include <cmath>
 
-// SIMD helper utilities for vectorizable operations
+// Helper utilities for DSP operations (scalar implementations for cross-platform compatibility)
 namespace SIMDHelpers {
-    using FloatVec = juce::dsp::SIMDRegister<float>;
-
-    // Check if pointer is properly aligned for SIMD operations
-    inline bool isAligned(const void* ptr) {
-        constexpr size_t alignment = FloatVec::SIMDRegisterSize;
-        return (reinterpret_cast<uintptr_t>(ptr) % alignment) == 0;
-    }
-
-    // Fast absolute value for SIMD
-    inline FloatVec abs(FloatVec x) {
-        return FloatVec::max(x, FloatVec(0.0f) - x);
-    }
-
-    // Fast max for peak detection
-    inline float horizontalMax(FloatVec x) {
-        float result = x.get(0);
-        for (size_t i = 1; i < FloatVec::SIMDNumElements; ++i)
-            result = juce::jmax(result, x.get(i));
-        return result;
-    }
-
-    // Process buffer to get peak with SIMD (optimized metering)
+    // Process buffer to get peak level
     inline float getPeakLevel(const float* data, int numSamples) {
-        // Use scalar fallback if data is not aligned for SIMD
-        if (!isAligned(data)) {
-            float peak = 0.0f;
-            for (int i = 0; i < numSamples; ++i)
-                peak = juce::jmax(peak, std::abs(data[i]));
-            return peak;
-        }
-
-        constexpr size_t simdSize = FloatVec::SIMDNumElements;
-        FloatVec peak(0.0f);
-
-        int i = 0;
-        // Process SIMD-aligned chunks
-        for (; i + (int)simdSize <= numSamples; i += simdSize) {
-            FloatVec samples = FloatVec::fromRawArray(data + i);
-            peak = FloatVec::max(peak, abs(samples));
-        }
-
-        // Get horizontal max from SIMD register
-        float scalarPeak = horizontalMax(peak);
-
-        // Process remaining samples
-        for (; i < numSamples; ++i)
-            scalarPeak = juce::jmax(scalarPeak, std::abs(data[i]));
-
-        return scalarPeak;
+        float peak = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+            peak = juce::jmax(peak, std::abs(data[i]));
+        return peak;
     }
 
-    // Apply gain to buffer with SIMD
+    // Apply gain to buffer
     inline void applyGain(float* data, int numSamples, float gain) {
-        // Use scalar fallback if data is not aligned for SIMD
-        if (!isAligned(data)) {
-            for (int i = 0; i < numSamples; ++i)
-                data[i] *= gain;
-            return;
-        }
-
-        constexpr size_t simdSize = FloatVec::SIMDNumElements;
-        FloatVec gainVec(gain);
-
-        int i = 0;
-        // Process SIMD-aligned chunks
-        for (; i + (int)simdSize <= numSamples; i += simdSize) {
-            FloatVec samples = FloatVec::fromRawArray(data + i);
-            samples = samples * gainVec;
-            samples.copyToRawArray(data + i);
-        }
-
-        // Process remaining samples
-        for (; i < numSamples; ++i)
+        for (int i = 0; i < numSamples; ++i)
             data[i] *= gain;
     }
 
-    // Mix two buffers with SIMD (for parallel compression)
+    // Mix two buffers (for parallel compression)
     inline void mixBuffers(float* dest, const float* src, int numSamples, float wetAmount) {
-        // Use scalar fallback if either buffer is not aligned for SIMD
-        if (!isAligned(dest) || !isAligned(src)) {
-            for (int i = 0; i < numSamples; ++i)
-                dest[i] = dest[i] * (1.0f - wetAmount) + src[i] * wetAmount;
-            return;
-        }
-
-        constexpr size_t simdSize = FloatVec::SIMDNumElements;
-        FloatVec wetVec(wetAmount);
-        FloatVec dryVec(1.0f - wetAmount);
-
-        int i = 0;
-        // Process SIMD-aligned chunks
-        for (; i + (int)simdSize <= numSamples; i += simdSize) {
-            FloatVec destSamples = FloatVec::fromRawArray(dest + i);
-            FloatVec srcSamples = FloatVec::fromRawArray(src + i);
-            FloatVec mixed = destSamples * dryVec + srcSamples * wetVec;
-            mixed.copyToRawArray(dest + i);
-        }
-
-        // Process remaining samples
-        for (; i < numSamples; ++i)
-            dest[i] = dest[i] * (1.0f - wetAmount) + src[i] * wetAmount;
+        const float dryAmount = 1.0f - wetAmount;
+        for (int i = 0; i < numSamples; ++i)
+            dest[i] = dest[i] * dryAmount + src[i] * wetAmount;
     }
 
-    // Add analog noise with SIMD (for authenticity)
+    // Add analog noise (for authenticity)
     inline void addNoise(float* data, int numSamples, float noiseLevel, juce::Random& random) {
-        // Use scalar fallback if data is not aligned for SIMD
-        if (!isAligned(data)) {
-            for (int i = 0; i < numSamples; ++i)
-                data[i] += (random.nextFloat() * 2.0f - 1.0f) * noiseLevel;
-            return;
-        }
-
-        constexpr size_t simdSize = FloatVec::SIMDNumElements;
-
-        int i = 0;
-        // Process SIMD-aligned chunks
-        for (; i + (int)simdSize <= numSamples; i += simdSize) {
-            // Generate SIMD-width random values
-            alignas(16) float noiseValues[FloatVec::SIMDNumElements];
-            for (size_t j = 0; j < FloatVec::SIMDNumElements; ++j)
-                noiseValues[j] = (random.nextFloat() * 2.0f - 1.0f) * noiseLevel;
-
-            FloatVec samples = FloatVec::fromRawArray(data + i);
-            FloatVec noise = FloatVec::fromRawArray(noiseValues);
-            samples = samples + noise;
-            samples.copyToRawArray(data + i);
-        }
-
-        // Process remaining samples
-        for (; i < numSamples; ++i)
+        for (int i = 0; i < numSamples; ++i)
             data[i] += (random.nextFloat() * 2.0f - 1.0f) * noiseLevel;
     }
 
@@ -4001,15 +3895,20 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     grDelaySamples.store(juce::jmin(delayInBlocks, MAX_GR_DELAY_SAMPLES - 1), std::memory_order_release);
 
     // Pre-allocate buffers for processBlock to avoid allocation in audio thread
-    dryBuffer.setSize(numChannels, samplesPerBlock);
+    // Use 8x the block size for safety - DAWs like Logic Pro may pass much larger blocks
+    // than specified in prepareToPlay, especially during bounce/offline processing
+    int safeBlockSize = samplesPerBlock * 8;
+    dryBuffer.setSize(numChannels, safeBlockSize);
     // Allocate oversampled dry buffer for max 4x oversampling
     // This is used to mix dry/wet at the oversampled rate to avoid FIR pre-ring artifacts
-    oversampledDryBuffer.setSize(numChannels, samplesPerBlock * 4);
-    filteredSidechain.setSize(numChannels, samplesPerBlock);
-    linkedSidechain.setSize(numChannels, samplesPerBlock);
-    externalSidechain.setSize(numChannels, samplesPerBlock);
+    // CRITICAL: If this buffer is too small, we fall back to WET-ONLY output to avoid comb filtering
+    // With 8x base safety margin * 4x oversampling = 32x total, this should handle any DAW
+    oversampledDryBuffer.setSize(numChannels, safeBlockSize * 4);
+    filteredSidechain.setSize(numChannels, safeBlockSize);
+    linkedSidechain.setSize(numChannels, safeBlockSize);
+    externalSidechain.setSize(numChannels, safeBlockSize);
     // Allocate interpolated sidechain for max 4x oversampling
-    interpolatedSidechain.setSize(numChannels, samplesPerBlock * 4);
+    interpolatedSidechain.setSize(numChannels, safeBlockSize * 4);
 
     // Prepare dry signal delay buffer for oversampling latency compensation
     // This ensures dry and wet signals are time-aligned when mixing (parallel compression)
@@ -4031,10 +3930,10 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // This gives stable, perceptually-accurate loudness matching like Logic Pro's compressor
     // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
     float rmsTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
-    int safeBlockSize = juce::jmax(1, samplesPerBlock);  // Prevent division by zero
+    int rmsBlockSize = juce::jmax(1, samplesPerBlock);  // Prevent division by zero
     // Ensure sampleRate is valid (should be guaranteed by prepareToPlay, but defense in depth)
     double safeSampleRate = juce::jlimit(8000.0, 384000.0, sampleRate);
-    float blocksPerSecond = static_cast<float>(safeSampleRate) / static_cast<float>(safeBlockSize);
+    float blocksPerSecond = static_cast<float>(safeSampleRate) / static_cast<float>(rmsBlockSize);
     rmsCoefficient = 1.0f - std::exp(-1.0f / (blocksPerSecond * rmsTimeConstantSec));
     // Ensure coefficient is in valid range (0, 1)
     rmsCoefficient = juce::jlimit(0.001f, 0.999f, rmsCoefficient);
@@ -4824,8 +4723,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             if (oversampledDryBuffer.getNumChannels() < osNumChannels ||
                 oversampledDryBuffer.getNumSamples() < osNumSamples)
             {
-                // Avoid RT allocation; fall back to post-downsample mixing
+                // CRITICAL: Buffer too small - disable mixing entirely to avoid comb filtering
+                // Post-downsample mixing causes phase mismatch because dry signal doesn't go
+                // through the anti-aliasing filter. Better to output wet-only than comb filtering.
+                // This should never happen with 8x safety margin, but fail safe if it does.
                 needsOversampledDry = false;
+                needsDryBuffer = false;  // Disable post-downsample mixing too!
+                jassertfalse;  // Debug: Alert if this ever triggers
             }
             else
             {
