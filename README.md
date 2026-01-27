@@ -16,16 +16,16 @@ Classic British console EQ emulation featuring:
 Multi-mode compressor with seven classic compression styles plus 4-band multiband compression:
 
 **Compression Modes:**
-- Vintage Opto – Smooth, program-dependent optical compression
-- Vintage FET – Aggressive, punchy FET compression
-- Classic VCA – Fast, precise VCA compression
-- Bus Compressor – Glue and punch for mix bus
-- Studio FET – Clean FET with modern character
-- Studio VCA – Modern VCA with soft knee
-- Digital – Transparent, precise compression
-- Multiband – 4-band with adjustable crossovers
+- **Vintage Opto** – Classic 1960s tube optical leveling amplifier (inspired by the LA-2A). Program-dependent attack/release with smooth, musical compression. Features the iconic "Peak Reduction" and "Gain" controls with optional Limit mode.
+- **Vintage FET** – Classic 1967 Rev A "Bluestripe" FET limiting amplifier (inspired by the 1176). All-discrete Class A design with ultra-fast attack times. Features the famous "All Buttons" mode for extreme compression/distortion. Four ratio settings: 4:1, 8:1, 12:1, 20:1, plus All.
+- **Classic VCA** – Fast, precise 1970s VCA compressor (inspired by the dbx 160). Known for its punchy, aggressive character with "OverEasy" soft-knee compression. Great for drums and percussive sources.
+- **Bus Compressor** – Classic British console bus compressor (inspired by the SSL G-Series). The quintessential mix bus glue with fixed attack/release detents and Auto release. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
+- **Studio FET** – Later revision "Blackface" FET limiter (inspired by the 1176 Rev E/F). Cleaner character with approximately 30% of the harmonic content of the vintage version. More controlled transient response.
+- **Studio VCA** – Modern British dual VCA compressor (inspired by the Focusrite Red 3). Clean, musical compression with RMS detection and soft knee. Excellent for vocals and mix bus applications.
+- **Digital** – Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection. Ideal for surgical dynamics control where transparency is paramount.
+- **Multiband** – 4-band multiband compressor with Linkwitz-Riley crossovers. Adjustable crossover frequencies, per-band threshold/ratio/attack/release/makeup, and solo buttons for each band.
 
-**Features:** Sidechain HP filter, auto-makeup gain, parallel mix, 2x/4x oversampling, per-band solo.
+**Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, hardware-accurate transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
 
 ### TapeMachine
 Analog tape machine emulation featuring:
