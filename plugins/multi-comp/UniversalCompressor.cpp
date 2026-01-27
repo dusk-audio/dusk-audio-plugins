@@ -4005,14 +4005,18 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     // Prepare dry signal delay line for oversampling latency compensation
     // This ensures dry and wet signals are time-aligned when mixing (parallel compression)
+    delayLineReady = false;  // Mark as not ready during preparation
     juce::dsp::ProcessSpec delaySpec;
     delaySpec.sampleRate = sampleRate;
     delaySpec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
     delaySpec.numChannels = static_cast<juce::uint32>(numChannels);
+    dryDelayLine.setMaximumDelayInSamples(512);  // Ensure max delay is set
     dryDelayLine.prepare(delaySpec);
     dryDelayLine.reset();
-    // Store the max oversampling latency for use in processBlock
+    // Store the prepared state for safety checks in processBlock
+    preparedDelayLineChannels = numChannels;
     currentDryDelayInSamples = oversamplingLatency;
+    delayLineReady = true;  // Now safe to use
 
     // Initialize smoothed auto-makeup gain with ~50ms smoothing time
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
@@ -5268,14 +5272,26 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // This makes: mix=100% -> param=0 -> output=wet, mix=0% -> param=1 -> output=dry
         float dryAmount = 1.0f - mixAmount;
 
-        // Get current oversampling latency and update delay line
+        // Get current oversampling latency for delay compensation
         // This compensates for the filter group delay introduced by the oversampler
         // Without this, dry and wet signals are out of phase, causing comb filtering (flanging)
         int oversamplerLatency = (antiAliasing && !antiAliasing->isOversamplingOff())
                                   ? antiAliasing->getLatency() : 0;
 
-        // Set delay time to match oversampler latency (time-align dry with wet signal)
-        dryDelayLine.setDelay(static_cast<float>(oversamplerLatency));
+        // Safety: only use delay compensation when delay line is properly prepared
+        // and we need it (oversampling is on and we're actually mixing dry+wet)
+        bool useDelayCompensation = delayLineReady
+                                    && oversamplerLatency > 0
+                                    && preparedDelayLineChannels > 0
+                                    && mixAmount > 0.001f
+                                    && mixAmount < 0.999f;
+
+        if (useDelayCompensation)
+        {
+            // Clamp delay to safe range (max 511 samples for 512-sample delay line)
+            int safeDelay = juce::jmin(oversamplerLatency, 511);
+            dryDelayLine.setDelay(static_cast<float>(safeDelay));
+        }
 
         for (int ch = 0; ch < numChannels; ++ch)
         {
@@ -5283,7 +5299,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             float* dry = dryBuffer.getWritePointer(ch);  // Need write access for delay processing
 
             // Process dry buffer through delay line to align with oversampled wet signal
-            if (oversamplerLatency > 0)
+            // Only if delay compensation is enabled and channel is within prepared range
+            if (useDelayCompensation && ch < preparedDelayLineChannels)
             {
                 for (int i = 0; i < numSamples; ++i)
                 {
