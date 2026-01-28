@@ -913,8 +913,7 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
             textColor = juce::Colour(0xFFE0E0E0);  // Light gray
             break;
         case 5:
-            // Studio VCA panel draws its own title, but we draw description at bottom
-            title = "";
+            title = "STUDIO VCA";
             description = "RMS Detection | Soft Knee | Clean VCA Dynamics";
             textColor = juce::Colour(0xFFCC9999);  // Light red tint matching Studio VCA theme
             break;
