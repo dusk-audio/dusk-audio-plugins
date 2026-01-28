@@ -27,7 +27,6 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     highpassFreqParam = apvts.getRawParameterValue("highpassFreq");
     lowpassFreqParam = apvts.getRawParameterValue("lowpassFreq");
     noiseAmountParam = apvts.getRawParameterValue("noiseAmount");
-    noiseEnabledParam = apvts.getRawParameterValue("noiseEnabled");
     wowAmountParam = apvts.getRawParameterValue("wowAmount");
     flutterAmountParam = apvts.getRawParameterValue("flutterAmount");
     outputGainParam = apvts.getRawParameterValue("outputGain");
@@ -49,7 +48,6 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     jassert(highpassFreqParam != nullptr);
     jassert(lowpassFreqParam != nullptr);
     jassert(noiseAmountParam != nullptr);
-    jassert(noiseEnabledParam != nullptr);
     jassert(wowAmountParam != nullptr);
     jassert(flutterAmountParam != nullptr);
     jassert(outputGainParam != nullptr);
@@ -62,7 +60,7 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     // Log error if any critical parameter is missing (helps debug in release builds)
     if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !signalPathParam ||
         !eqStandardParam || !inputGainParam || !highpassFreqParam || !lowpassFreqParam ||
-        !noiseAmountParam || !noiseEnabledParam || !wowAmountParam || !flutterAmountParam ||
+        !noiseAmountParam || !wowAmountParam || !flutterAmountParam ||
         !outputGainParam || !biasParam || !calibrationParam || !autoCalParam ||
         !oversamplingParam || !mixParam)
     {
@@ -152,14 +150,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lowpassFreq", "Lowpass Frequency",
-        juce::NormalisableRange<float>(3000.0f, 20000.0f, 10.0f, 0.5f), 15000.0f,
+        juce::NormalisableRange<float>(3000.0f, 20000.0f, 10.0f, 0.5f), 20000.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String((int)value) + " Hz"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "noiseAmount", "Noise Amount",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 5.0f,
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f,
         juce::String(), juce::AudioProcessorParameter::genericParameter,
         [](float value, int) { return juce::String(value, 1) + "%"; },
         [](const juce::String& text) { return text.getFloatValue(); }));
@@ -501,7 +499,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     // This should never happen if constructor validation passed, but provides safety
     if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !inputGainParam ||
         !highpassFreqParam || !lowpassFreqParam ||
-        !noiseAmountParam || !noiseEnabledParam || !wowAmountParam || !flutterAmountParam ||
+        !noiseAmountParam || !wowAmountParam || !flutterAmountParam ||
         !outputGainParam || !biasParam || !calibrationParam || !oversamplingParam || !mixParam)
     {
         jassertfalse; // Alert during debug builds - this indicates a configuration error
@@ -662,7 +660,8 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     // The actual noise floor level is determined by tape characteristics (-62dB to -68dB)
     smoothedNoiseAmount.setTargetValue(noiseAmountParam->load() * 0.01f);
 
-    const bool noiseEnabled = noiseEnabledParam->load() > 0.5f;
+    // Noise is controlled purely by the amount knob (0% = off)
+    const bool noiseEnabled = noiseAmountParam->load() > 0.05f;
 
     // Apply input gain in non-oversampled domain for accurate VU metering
     juce::dsp::AudioBlock<float> block(buffer);

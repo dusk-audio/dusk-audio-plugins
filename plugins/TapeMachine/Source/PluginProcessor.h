@@ -126,7 +126,6 @@ private:
     std::atomic<float>* highpassFreqParam = nullptr;
     std::atomic<float>* lowpassFreqParam = nullptr;
     std::atomic<float>* noiseAmountParam = nullptr;
-    std::atomic<float>* noiseEnabledParam = nullptr;
     std::atomic<float>* wowAmountParam = nullptr;
     std::atomic<float>* flutterAmountParam = nullptr;
     std::atomic<float>* outputGainParam = nullptr;

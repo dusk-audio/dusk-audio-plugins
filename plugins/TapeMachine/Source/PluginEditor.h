@@ -43,14 +43,14 @@ private:
     juce::Slider wowSlider;
     juce::Slider flutterSlider;
     juce::Slider outputGainSlider;
+    juce::Slider noiseAmountSlider;
 
     // Toggle buttons
-    juce::ToggleButton noiseEnabledButton;
     juce::ToggleButton autoCompButton;
     juce::ToggleButton autoCalButton;
 
     // Labels
-    juce::Label noiseLabel;
+    juce::Label noiseAmountLabel;
     juce::Label autoCompLabel;
     juce::Label autoCalLabel;
     juce::Label tapeMachineLabel;
@@ -89,8 +89,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wowAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flutterAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noiseAmountAttachment;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> noiseEnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoCompAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoCalAttachment;
 
