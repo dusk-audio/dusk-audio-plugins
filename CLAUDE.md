@@ -70,6 +70,34 @@ When you release a new plugin version, you only need to:
 
 All download links on the home page and plugin pages are dynamically generated from `plugins.yml` - no hardcoded URLs to update.
 
+### ⚠️ PLUGIN VERSION MANAGEMENT - KNOWN ISSUE
+
+**Current Problem**: Plugin version numbers are NOT automatically updated when creating release tags. This causes plugins to show incorrect versions in DAWs.
+
+**Version Number Locations** (all must be updated manually before tagging):
+
+| Plugin | CMakeLists.txt | Header File |
+|--------|---------------|-------------|
+| 4K EQ | `project(FourKEQ VERSION x.x.x)` | `FourKEQ.h: PLUGIN_VERSION = "x.x.x"` |
+| Multi-Q | `project(MultiQ VERSION x.x.x)` | `MultiQ.h: PLUGIN_VERSION = "x.x.x"` |
+| SilkVerb | `set(PLUGIN_VERSION "x.x.x")` | - |
+| Neural Amp | `set(PLUGIN_VERSION "x.x.x")` | - |
+| TapeMachine | `project(TapeMachine VERSION x.x.x)` | - |
+| Multi-Comp | `project(MultiComp VERSION x.x.x)` | - |
+| Tape Echo | `project(TapeEcho VERSION x.x.x)` | - |
+| Convolution Reverb | `project(ConvolutionReverb VERSION x.x.x)` | - |
+
+**Before Creating a Release Tag**:
+1. Update the version in the plugin's `CMakeLists.txt`
+2. If the plugin has a `PLUGIN_VERSION` constant in its header file, update that too
+3. Commit these version changes
+4. Then create and push the release tag
+
+**TODO**: Implement automatic version injection from git tags during build. Options:
+- Use CMake to generate a version header from `PROJECT_VERSION`
+- Add a pre-tag hook that updates version files
+- Use `git describe --tags` in CMake to set version automatically
+
 ### ⚠️ SHARED CODE REQUIREMENT
 **Before writing ANY new code, ALWAYS check `plugins/shared/` first!**
 
@@ -283,6 +311,37 @@ All download links on the home page and plugin pages are dynamically generated f
     - Supporters overlay (click title)
 - **Build Target**: `MultiQ_All`
 
+### 8. **Tape Echo**
+- **Location**: `plugins/tape-echo/`
+- **Description**: RE-201 Roland Space Echo style tape delay with spring reverb
+- **Features**:
+  - **12 Echo Modes**: Based on the original RE-201's mode selector
+    - Various combinations of 3 playback heads
+    - Each mode produces unique rhythmic patterns
+  - **Spring Reverb**: Authentic spring reverb modeling
+  - **Tape Saturation**: Warm analog-style saturation modeling
+  - **Wow & Flutter**: Tape pitch modulation for authentic vintage character
+  - **Tone Controls**:
+    - Bass control for low-frequency shaping
+    - Treble control for high-frequency adjustment
+  - **Tempo Sync**:
+    - Lock delay time to DAW tempo
+    - Multiple note divisions (1/1, 1/2, 1/4, 1/8, etc. including triplets and dotted)
+  - **Controls**:
+    - Input Gain: Drive the tape section
+    - Repeat Rate: Delay time (or tempo-synced note division)
+    - Intensity: Feedback amount
+    - Echo Volume: Wet signal level
+    - Reverb Volume: Spring reverb level
+    - Dry/Wet Mix: Balance between dry and processed signal
+  - **Tape Visualization**: Animated tape machine visualization showing:
+    - Rotating tape reels
+    - Active playback heads
+    - Tape speed indication
+  - **Level Meters**: LED-style input/output meters using shared LEDMeter component
+  - **2x Oversampling**: For alias-free tape saturation
+- **Build Target**: `TapeEcho_All`
+
 ## Build System
 
 ### ⚠️ RELEASE BUILDS ARE DONE VIA GITHUB ACTIONS
@@ -310,12 +369,15 @@ All download links on the home page and plugin pages are dynamically generated f
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
 ./docker/build_release.sh tape         # TapeMachine
+./docker/build_release.sh tapeecho     # Tape Echo (RE-201 style)
 ./docker/build_release.sh groovemind   # GrooveMind (future)
 ./docker/build_release.sh harmonic     # Harmonic Generator
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh silkverb     # SilkVerb (algorithmic reverb)
 ./docker/build_release.sh multiq       # Multi-Q
 ./docker/build_release.sh nam          # Neural Amp
+./docker/build_release.sh chord        # Chord Analyzer
+./docker/build_release.sh spectrum     # Spectrum Analyzer
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -333,6 +395,7 @@ All download links on the home page and plugin pages are dynamically generated f
 ./docker/build_release.sh 4keq && ./tests/run_plugin_tests.sh --plugin "4K EQ" --skip-audio
 ./docker/build_release.sh compressor && ./tests/run_plugin_tests.sh --plugin "Multi-Comp" --skip-audio
 ./docker/build_release.sh tape && ./tests/run_plugin_tests.sh --plugin "TapeMachine" --skip-audio
+./docker/build_release.sh tapeecho && ./tests/run_plugin_tests.sh --plugin "Tape Echo" --skip-audio
 ./docker/build_release.sh silkverb && ./tests/run_plugin_tests.sh --plugin "SilkVerb" --skip-audio
 ./docker/build_release.sh convolution && ./tests/run_plugin_tests.sh --plugin "Convolution Reverb" --skip-audio
 ./docker/build_release.sh groovemind && ./tests/run_plugin_tests.sh --plugin "GrooveMind" --skip-audio
@@ -353,6 +416,7 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 **Plugins built:**
 - FourKEQ_All (4K EQ)
 - TapeMachine_All
+- TapeEcho_All (Tape Echo - RE-201 style)
 - MultiComp_All
 - GrooveMind_All (future)
 - HarmonicGeneratorPlugin_All
@@ -360,6 +424,8 @@ The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do
 - SilkVerb_All (Algorithmic Reverb)
 - MultiQ_All (Multi-Q)
 - NeuralAmp_All (Neural Amp)
+- ChordAnalyzer_All (Chord Analyzer)
+- SpectrumAnalyzer_All (Spectrum Analyzer)
 
 ### Local Development Builds (Alternative)
 Only use the local rebuild script if Docker/Podman is unavailable or for quick debugging iterations:
@@ -542,12 +608,15 @@ plugins/
 ├── plugins/                  # Individual plugin directories
 │   ├── 4k-eq/               # 4K EQ (console-style EQ)
 │   ├── TapeMachine/         # Tape machine emulation
-│   ├── multi-comp/           # Multi-mode compressor with multiband
+│   ├── tape-echo/           # Tape Echo (RE-201 style delay)
+│   ├── multi-comp/          # Multi-mode compressor with multiband
 │   ├── convolution-reverb/  # IR-based convolution reverb
 │   ├── SilkVerb/            # Algorithmic reverb (Lexicon/Valhalla style)
 │   ├── groovemind/          # ML-powered intelligent drummer (future)
 │   ├── multi-q/             # Multi-Q universal EQ
 │   ├── neural-amp/          # Neural amp modeler (NAM)
+│   ├── chord-analyzer/      # Chord Analyzer
+│   ├── spectrum-analyzer/   # Spectrum Analyzer
 │   └── shared/              # ⚠️ SHARED UTILITIES - CHECK HERE FIRST!
 │       ├── AnalogEmulation/ # Analog saturation/tube/transformer library
 │       │   ├── AnalogEmulation.h    # Main include

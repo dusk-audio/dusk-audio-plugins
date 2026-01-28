@@ -68,16 +68,89 @@ struct LEDMeterStyle
 
 //==============================================================================
 /**
+ * Custom slider with proper Cmd/Ctrl+drag fine control
+ *
+ * JUCE's built-in velocity mode hides the cursor and conflicts with sensitivity
+ * adjustments. This class uses absolute drag mode with adjustable sensitivity
+ * for true fine control where holding Cmd/Ctrl reduces drag sensitivity by 10x.
+ */
+class LunaSlider : public juce::Slider
+{
+public:
+    LunaSlider()
+    {
+        initLunaSlider();
+    }
+
+    explicit LunaSlider(const juce::String& componentName) : juce::Slider(componentName)
+    {
+        initLunaSlider();
+    }
+
+    // Constructor matching juce::Slider(SliderStyle, TextEntryBoxPosition)
+    LunaSlider(SliderStyle style, TextEntryBoxPosition textBoxPosition)
+        : juce::Slider(style, textBoxPosition)
+    {
+        initLunaSlider();
+    }
+
+private:
+    void initLunaSlider()
+    {
+        // MUST disable velocity mode - it hides cursor and conflicts with sensitivity
+        setVelocityBasedMode(false);
+        setMouseDragSensitivity(normalSensitivity);
+    }
+
+public:
+
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        // Check for Cmd (macOS) or Ctrl (Windows/Linux) modifier
+        bool fineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
+
+        if (fineMode != wasInFineMode)
+        {
+            wasInFineMode = fineMode;
+            // Update drag sensitivity: normal = 300 pixels for full range, fine = 3000 pixels
+            setMouseDragSensitivity(fineMode ? fineSensitivity : normalSensitivity);
+        }
+
+        juce::Slider::mouseDrag(e);
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        // Ensure velocity mode stays off (in case configureKnob was called)
+        setVelocityBasedMode(false);
+
+        // Reset fine mode state on new drag
+        wasInFineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
+        setMouseDragSensitivity(wasInFineMode ? fineSensitivity : normalSensitivity);
+        juce::Slider::mouseDown(e);
+    }
+
+    // Sensitivity values (pixels for full range drag)
+    static constexpr int normalSensitivity = 300;   // Normal: 300 pixels for full range
+    static constexpr int fineSensitivity = 3000;    // Fine: 3000 pixels (10x finer)
+
+private:
+    bool wasInFineMode = false;
+};
+
+//==============================================================================
+/**
  * Standard slider/knob configuration for Luna Co. Audio plugins
  * Use these to ensure consistent knob behavior across all plugins
+ *
+ * For true Cmd/Ctrl+drag fine control, use LunaSlider instead of juce::Slider.
+ * The configureKnob() function provides velocity-based control without fine mode.
  */
 struct LunaSliderStyle
 {
     // Velocity mode parameters for professional knob feel
     static constexpr double sensitivity = 0.5;    // Lower = slower, more controlled movement
     static constexpr int threshold = 2;           // Ignore tiny mouse movements (reduces jitter)
-    static constexpr double fineControlOffset = 0.1;  // 10x finer when Ctrl/Cmd held
-    static constexpr bool allowModifierToggle = true; // Allow Ctrl/Cmd for fine mode
 
     /**
      * Configure a rotary slider with professional Luna knob behavior
@@ -86,14 +159,15 @@ struct LunaSliderStyle
      * Features:
      * - 50% slower base movement for precise control
      * - Jitter filtering (ignores tiny mouse movements)
-     * - 10x fine control with Ctrl/Cmd modifier
+     *
+     * Note: For Cmd/Ctrl fine control, use LunaSlider instead of juce::Slider
      *
      * @param slider The slider to configure
      */
     static void configureKnob(juce::Slider& slider)
     {
         slider.setVelocityBasedMode(true);
-        slider.setVelocityModeParameters(sensitivity, threshold, fineControlOffset, allowModifierToggle);
+        slider.setVelocityModeParameters(sensitivity, threshold, 0.0, false);
     }
 
     /**
@@ -104,7 +178,7 @@ struct LunaSliderStyle
     static void configureKnob(juce::Slider& slider, double customSensitivity)
     {
         slider.setVelocityBasedMode(true);
-        slider.setVelocityModeParameters(customSensitivity, threshold, fineControlOffset, allowModifierToggle);
+        slider.setVelocityModeParameters(customSensitivity, threshold, 0.0, false);
     }
 
     /**
