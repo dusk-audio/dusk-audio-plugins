@@ -7,6 +7,7 @@
 #include "GUI/TapeReelComponent.h"
 #include "../../shared/SupportersOverlay.h"
 #include "../../shared/LunaLookAndFeel.h"
+#include "../../shared/ScalableEditorHelper.h"
 
 //==============================================================================
 // Main Plugin Editor
@@ -116,6 +117,9 @@ private:
 
     void showSupportersPanel();
     void hideSupportersPanel();
+
+    // Scalable UI support (shared component)
+    ScalableEditorHelper resizeHelper;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapeMachineAudioProcessorEditor)
 };
