@@ -75,8 +75,8 @@ private:
     juce::ComboBox oversamplingSelector;
 
     // Parameter references for UI updates
-    std::atomic<float>* eqTypeParam;
-    std::atomic<float>* bypassParam;
+    std::atomic<float>* eqTypeParam = nullptr;
+    std::atomic<float>* bypassParam = nullptr;
 
     // Cached values for timer optimization
     float lastEqType = -1.0f;

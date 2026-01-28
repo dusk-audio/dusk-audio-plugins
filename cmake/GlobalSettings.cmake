@@ -12,6 +12,12 @@ add_compile_definitions(
 # Additional global settings can be added here
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Windows: Use static runtime to avoid VC++ redistributable dependency
+# This prevents crashes on Windows when the redistributable is not installed
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+endif()
+
 # Export compile commands for better IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
