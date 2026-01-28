@@ -7,6 +7,7 @@
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
+#include "../shared/ScalableEditorHelper.h"
 
 //==============================================================================
 /**
@@ -173,6 +174,9 @@ private:
 
     void showSupportersPanel();
     void hideSupportersPanel();
+
+    // Scalable UI support (shared component)
+    ScalableEditorHelper resizeHelper;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FourKEQEditor)
 };

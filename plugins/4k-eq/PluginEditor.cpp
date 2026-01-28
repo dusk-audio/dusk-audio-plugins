@@ -8,8 +8,10 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
     // Set editor size - increased height for EQ curve display
     setSize(950, 640);
-    setResizable(true, true);
-    setResizeLimits(800, 470, 1400, 800);  // Min height 470 allows collapsed graph mode
+
+    // Initialize scalable resize helper (replaces manual setResizable/setResizeLimits)
+    // Base size: 950x640, Min: 760x512 (80%), Max: 1425x960 (150%)
+    resizeHelper.initialize(this, 950, 640, 760, 512, 1425, 960);
 
     // Get parameter references
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
@@ -347,87 +349,85 @@ void FourKEQEditor::paint(juce::Graphics& g)
     }
 
     // Main content area - adjust based on curve visibility
-    int contentTopOffset = isCurveCollapsed ? 65 : 170;
+    int contentTopOffset = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(170);
     bounds = getLocalBounds().withTrimmedTop(contentTopOffset);  // Account for header + optional curve
+
+    // Section X boundaries - scale proportionally to window width (same as resized())
+    float widthRatio = static_cast<float>(getWidth()) / 950.0f;
+
+    int filtersEnd = static_cast<int>(195 * widthRatio);
+    int bandWidth = static_cast<int>(132 * widthRatio);
+    int lfEnd = filtersEnd + 2 + bandWidth;
+    int lmfEnd = lfEnd + 2 + bandWidth;
+    int hmfEnd = lmfEnd + 2 + bandWidth;
+    int hfEnd = hmfEnd + 2 + bandWidth;
 
     // Section dividers - vertical lines
     g.setColour(juce::Colour(0xff3a3a3a));
 
     // Filters section divider
-    int filterWidth = 195;
-    g.fillRect(filterWidth, bounds.getY(), 2, bounds.getHeight());
+    g.fillRect(filtersEnd, bounds.getY(), 2, bounds.getHeight());
 
     // EQ bands dividers
-    int bandWidth = 132;
-    int xPos = filterWidth + 2;
-
-    // After LF
-    xPos += bandWidth;
-    g.fillRect(xPos, bounds.getY(), 2, bounds.getHeight());
-
-    // After LMF
-    xPos += bandWidth + 2;
-    g.fillRect(xPos, bounds.getY(), 2, bounds.getHeight());
-
-    // After HMF
-    xPos += bandWidth + 2;
-    g.fillRect(xPos, bounds.getY(), 2, bounds.getHeight());
-
-    // After HF
-    xPos += bandWidth + 2;
-    g.fillRect(xPos, bounds.getY(), 2, bounds.getHeight());
+    g.fillRect(lfEnd, bounds.getY(), 2, bounds.getHeight());
+    g.fillRect(lmfEnd, bounds.getY(), 2, bounds.getHeight());
+    g.fillRect(hmfEnd, bounds.getY(), 2, bounds.getHeight());
+    g.fillRect(hfEnd, bounds.getY(), 2, bounds.getHeight());
 
     // Section headers - larger with subtle background for visibility
-    g.setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
+    float fontSize = resizeHelper.scaled(13.0f);
+    g.setFont(juce::Font(juce::FontOptions(fontSize).withStyle("Bold")));
 
-    int labelY = bounds.getY() + 6;
-    int labelHeight = 22;
+    int labelY = bounds.getY() + resizeHelper.scaled(6);
+    int labelHeight = resizeHelper.scaled(22);
+    int labelTextHeight = resizeHelper.scaled(20);
 
     // Draw subtle background strips for section headers
-    // Start FILTERS bar at x=30 to avoid covering "INPUT" label on left
+    // Start FILTERS bar at scaled x=30 to avoid covering "INPUT" label on left
+    int filtersLabelStart = resizeHelper.scaled(30);
     g.setColour(juce::Colour(0xff222222));
-    g.fillRect(30, labelY - 2, filterWidth - 30, labelHeight);
+    g.fillRect(filtersLabelStart, labelY - 2, filtersEnd - filtersLabelStart, labelHeight);
 
     // Draw section header text
     g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawText("FILTERS", 30, labelY, 165, 20,
+    g.drawText("FILTERS", filtersLabelStart, labelY, filtersEnd - filtersLabelStart, labelTextHeight,
                juce::Justification::centred);
 
-    xPos = 197;
+    int xPos = filtersEnd + 2;
     g.setColour(juce::Colour(0xff222222));
     g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
     g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawText("LF", xPos, labelY, 132, 20,
+    g.drawText("LF", xPos, labelY, bandWidth, labelTextHeight,
                juce::Justification::centred);
 
-    xPos += 134;
+    xPos = lfEnd + 2;
     g.setColour(juce::Colour(0xff222222));
     g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
     g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawText("LMF", xPos, labelY, 132, 20,
+    g.drawText("LMF", xPos, labelY, bandWidth, labelTextHeight,
                juce::Justification::centred);
 
-    xPos += 134;
+    xPos = lmfEnd + 2;
     g.setColour(juce::Colour(0xff222222));
     g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
     g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawText("HMF", xPos, labelY, 132, 20,
+    g.drawText("HMF", xPos, labelY, bandWidth, labelTextHeight,
                juce::Justification::centred);
 
-    xPos += 134;
+    xPos = hmfEnd + 2;
     g.setColour(juce::Colour(0xff222222));
     g.fillRect(xPos, labelY - 2, bandWidth, labelHeight);
     g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawText("HF", xPos, labelY, 132, 20,
+    g.drawText("HF", xPos, labelY, bandWidth, labelTextHeight,
                juce::Justification::centred);
 
-    xPos += 134;
-    // MASTER label width: calculate from xPos to right edge, minus output meter space (16px + 10px margin + 30px padding = 56px)
-    int masterWidth = bounds.getRight() - xPos - 56;
+    xPos = hfEnd + 2;
+    // MASTER label width: calculate from xPos to right edge, minus output meter space
+    int masterWidth = bounds.getRight() - xPos - resizeHelper.scaled(56);
     g.setColour(juce::Colour(0xff222222));
     g.fillRect(xPos, labelY - 2, masterWidth, labelHeight);
     g.setColour(juce::Colour(0xffd0d0d0));
-    g.drawText("MASTER", xPos, labelY, masterWidth, 20,
+    g.drawText("MASTER", xPos, labelY, masterWidth, labelTextHeight,
                juce::Justification::centred);
 
     // Frequency range indicators
@@ -479,73 +479,81 @@ void FourKEQEditor::mouseDown(const juce::MouseEvent& e)
 
 void FourKEQEditor::resized()
 {
+    // Update the resize helper (positions corner handle and calculates scale)
+    resizeHelper.updateResizer();
+
     auto bounds = getLocalBounds();
 
     // Header controls - preset and oversampling selectors
-    auto headerBounds = bounds.removeFromTop(60);
+    auto headerBounds = bounds.removeFromTop(resizeHelper.scaled(60));
     int centerX = headerBounds.getCentreX();
 
     // A/B button (far left of header controls)
-    abButton.setBounds(centerX - 250, 15, 32, 28);
+    abButton.setBounds(centerX - resizeHelper.scaled(250), resizeHelper.scaled(15),
+                       resizeHelper.scaled(32), resizeHelper.scaled(28));
 
     // Preset selector (left of center)
-    presetSelector.setBounds(centerX - 210, 15, 200, 28);
+    presetSelector.setBounds(centerX - resizeHelper.scaled(210), resizeHelper.scaled(15),
+                            resizeHelper.scaled(200), resizeHelper.scaled(28));
 
     // Oversampling selector (right of center) - wider for "Oversample:" text
-    oversamplingSelector.setBounds(centerX + 10, 15, 130, 28);
+    oversamplingSelector.setBounds(centerX + resizeHelper.scaled(10), resizeHelper.scaled(15),
+                                   resizeHelper.scaled(130), resizeHelper.scaled(28));
 
     // EQ Type selector in header (upper right)
-    eqTypeSelector.setBounds(getWidth() - 110, 15, 95, 28);
+    eqTypeSelector.setBounds(getWidth() - resizeHelper.scaled(110), resizeHelper.scaled(15),
+                            resizeHelper.scaled(95), resizeHelper.scaled(28));
 
     // Position collapse button in header (left of Brown/Black indicator)
-    // Brown/Black badge is at getWidth() - 190, so place button to its left
-    curveCollapseButton.setBounds(getWidth() - 290, 17, 90, 24);
+    curveCollapseButton.setBounds(getWidth() - resizeHelper.scaled(290), resizeHelper.scaled(17),
+                                  resizeHelper.scaled(90), resizeHelper.scaled(24));
 
     // EQ Curve Display - spans across the top area below header
-    int curveHeight = isCurveCollapsed ? 0 : 105;
+    int curveHeight = isCurveCollapsed ? 0 : resizeHelper.scaled(105);
     if (eqCurveDisplay && !isCurveCollapsed)
     {
-        int curveX = 35;
-        int curveY = 58;
-        int curveWidth = getWidth() - 70;
+        int curveX = resizeHelper.scaled(35);
+        int curveY = resizeHelper.scaled(58);
+        int curveWidth = getWidth() - resizeHelper.scaled(70);
         eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
     }
 
-    // LED Meters - use standard width from LEDMeterStyle
-    int meterWidth = LEDMeterStyle::standardWidth;
+    // LED Meters - scale meter width and position
+    int meterWidth = resizeHelper.scaled(LEDMeterStyle::standardWidth);
     // Adjust meter Y position based on curve visibility
-    int meterY = isCurveCollapsed ? 80 : 185;  // Move up when curve is hidden
-    int meterHeight = getHeight() - meterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
+    int meterY = isCurveCollapsed ? resizeHelper.scaled(80) : resizeHelper.scaled(185);
+    int meterHeight = getHeight() - meterY - resizeHelper.scaled(LEDMeterStyle::valueHeight + LEDMeterStyle::labelSpacing + 10);
 
     if (inputMeterL)
-        inputMeterL->setBounds(6, meterY, meterWidth, meterHeight);
+        inputMeterL->setBounds(resizeHelper.scaled(6), meterY, meterWidth, meterHeight);
 
-    // Output meter - center under "OUTPUT" label
+    // Output meter - position at right edge
     if (outputMeterL)
-        outputMeterL->setBounds(getWidth() - meterWidth - 10, meterY, meterWidth, meterHeight);
+        outputMeterL->setBounds(getWidth() - meterWidth - resizeHelper.scaled(10), meterY, meterWidth, meterHeight);
 
-    // Use absolute positioning based on section divider positions from paint()
-    // This ensures knobs are perfectly centered between dividers
+    // Scaled layout constants
+    int contentY = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(170);
+    int sectionLabelHeight = resizeHelper.scaled(30);
+    int knobSize = resizeHelper.scaled(75);
+    int knobRowHeight = resizeHelper.scaled(125);
 
-    // Adjust content Y based on curve visibility - move up when curve is hidden
-    int contentY = isCurveCollapsed ? 65 : 170;  // Top of content area
-    int sectionLabelHeight = 30;  // Space for section headers like "FILTERS", "LF", etc.
-    int knobSize = 75;  // Slightly smaller knobs to prevent label overlap
-    int knobRowHeight = 125;  // Vertical space for each knob row (knob + labels)
+    // Section X boundaries - scale proportionally to window width
+    // Original proportions at 950px: filters=0-195, bands=132px each, master=rest
+    float widthRatio = static_cast<float>(getWidth()) / 950.0f;
 
-    // Section X boundaries (matching paint() divider positions exactly)
     int filtersStart = 0;
-    int filtersEnd = 195;  // First divider
+    int filtersEnd = static_cast<int>(195 * widthRatio);
+    int bandWidth = static_cast<int>(132 * widthRatio);
     int lfStart = filtersEnd + 2;
-    int lfEnd = lfStart + 132;  // Second divider
+    int lfEnd = lfStart + bandWidth;
     int lmfStart = lfEnd + 2;
-    int lmfEnd = lmfStart + 132;  // Third divider
+    int lmfEnd = lmfStart + bandWidth;
     int hmfStart = lmfEnd + 2;
-    int hmfEnd = hmfStart + 132;  // Fourth divider
+    int hmfEnd = hmfStart + bandWidth;
     int hfStart = hmfEnd + 2;
-    int hfEnd = hfStart + 132;  // Fifth divider
+    int hfEnd = hfStart + bandWidth;
     int masterStart = hfEnd + 2;
-    int masterEnd = getWidth() - 56;  // Leave space for output meter
+    int masterEnd = getWidth() - resizeHelper.scaled(56);
 
     // Helper to center a knob within a section
     auto centerKnobInSection = [&](juce::Slider& slider, int sectionStart, int sectionEnd, int yPos) {
@@ -560,25 +568,23 @@ void FourKEQEditor::resized()
     };
 
     // ===== FILTERS SECTION =====
-    int y = contentY + sectionLabelHeight + 25;  // Extra space to avoid overlap with section headers
+    int y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
 
     // HPF
     centerKnobInSection(hpfFreqSlider, filtersStart, filtersEnd, y);
-    // Position HPF enable button to the right of the knob
     {
         int btnX = hpfFreqSlider.getRight() + 2;
-        int btnY = hpfFreqSlider.getY() + (knobSize - 24) / 2;  // Center vertically with knob
-        hpfEnableButton.setBounds(btnX, btnY, 32, 24);
+        int btnY = hpfFreqSlider.getY() + (knobSize - resizeHelper.scaled(24)) / 2;
+        hpfEnableButton.setBounds(btnX, btnY, resizeHelper.scaled(32), resizeHelper.scaled(24));
     }
     y += knobRowHeight;
 
     // LPF
     centerKnobInSection(lpfFreqSlider, filtersStart, filtersEnd, y);
-    // Position LPF enable button to the right of the knob
     {
         int btnX = lpfFreqSlider.getRight() + 2;
-        int btnY = lpfFreqSlider.getY() + (knobSize - 24) / 2;  // Center vertically with knob
-        lpfEnableButton.setBounds(btnX, btnY, 32, 24);
+        int btnY = lpfFreqSlider.getY() + (knobSize - resizeHelper.scaled(24)) / 2;
+        lpfEnableButton.setBounds(btnX, btnY, resizeHelper.scaled(32), resizeHelper.scaled(24));
     }
     y += knobRowHeight;
 
@@ -586,110 +592,69 @@ void FourKEQEditor::resized()
     centerKnobInSection(inputGainSlider, filtersStart, filtersEnd, y);
 
     // ===== LF BAND =====
-    y = contentY + sectionLabelHeight + 25;
-
-    // LF Gain
+    y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
     centerKnobInSection(lfGainSlider, lfStart, lfEnd, y);
     y += knobRowHeight;
-
-    // LF Freq
     centerKnobInSection(lfFreqSlider, lfStart, lfEnd, y);
     y += knobRowHeight;
-
-    // LF Bell button
-    centerButtonInSection(lfBellButton, lfStart, lfEnd, y + 20, 60, 25);
+    centerButtonInSection(lfBellButton, lfStart, lfEnd, y + resizeHelper.scaled(20),
+                         resizeHelper.scaled(60), resizeHelper.scaled(25));
 
     // ===== LMF BAND =====
-    y = contentY + sectionLabelHeight + 25;
-
-    // LMF Gain
+    y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
     centerKnobInSection(lmGainSlider, lmfStart, lmfEnd, y);
     y += knobRowHeight;
-
-    // LMF Freq
     centerKnobInSection(lmFreqSlider, lmfStart, lmfEnd, y);
     y += knobRowHeight;
-
-    // LMF Q
     centerKnobInSection(lmQSlider, lmfStart, lmfEnd, y);
 
     // ===== HMF BAND =====
-    y = contentY + sectionLabelHeight + 25;
-
-    // HMF Gain
+    y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
     centerKnobInSection(hmGainSlider, hmfStart, hmfEnd, y);
     y += knobRowHeight;
-
-    // HMF Freq
     centerKnobInSection(hmFreqSlider, hmfStart, hmfEnd, y);
     y += knobRowHeight;
-
-    // HMF Q
     centerKnobInSection(hmQSlider, hmfStart, hmfEnd, y);
 
     // ===== HF BAND =====
-    y = contentY + sectionLabelHeight + 25;
-
-    // HF Gain
+    y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
     centerKnobInSection(hfGainSlider, hfStart, hfEnd, y);
     y += knobRowHeight;
-
-    // HF Freq
     centerKnobInSection(hfFreqSlider, hfStart, hfEnd, y);
     y += knobRowHeight;
-
-    // HF Bell button
-    centerButtonInSection(hfBellButton, hfStart, hfEnd, y + 20, 60, 25);
+    centerButtonInSection(hfBellButton, hfStart, hfEnd, y + resizeHelper.scaled(20),
+                         resizeHelper.scaled(60), resizeHelper.scaled(25));
 
     // ===== MASTER SECTION =====
-    // EQ Type selector moved to header - start with buttons
-    y = contentY + sectionLabelHeight + 25;
-
-    // Bypass button
-    centerButtonInSection(bypassButton, masterStart, masterEnd, y, 80, 30);
-    y += 40;
-
-    // Auto-gain button
-    centerButtonInSection(autoGainButton, masterStart, masterEnd, y, 80, 30);
-    y += 70;  // Increased gap to prevent overlap with drive knob labels
-
-    // Drive/Saturation knob
+    y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
+    centerButtonInSection(bypassButton, masterStart, masterEnd, y,
+                         resizeHelper.scaled(80), resizeHelper.scaled(30));
+    y += resizeHelper.scaled(40);
+    centerButtonInSection(autoGainButton, masterStart, masterEnd, y,
+                         resizeHelper.scaled(80), resizeHelper.scaled(30));
+    y += resizeHelper.scaled(70);
     centerKnobInSection(saturationSlider, masterStart, masterEnd, y);
 
-    // Output gain knob - align with Input knob (third row in filters section)
-    int inputKnobY = contentY + sectionLabelHeight + 25 + knobRowHeight * 2;  // Same Y as input knob
+    // Output gain knob - align with Input knob (third row)
+    int inputKnobY = contentY + sectionLabelHeight + resizeHelper.scaled(25) + knobRowHeight * 2;
     centerKnobInSection(outputGainSlider, masterStart, masterEnd, inputKnobY);
 
-    // Position section labels
-    // FILTERS label removed - section header at top is sufficient
-    // filtersLabel.setBounds(10, filtersMidY - 10, 60, 20);
-
-    // Band labels (LF, LMF, HMF, HF) removed - section headers are sufficient
-
     // Position parameter labels below each knob (SSL style)
-    // Helper to position a label centered below a knob
-    auto positionLabelBelow = [](juce::Label& label, const juce::Slider& slider) {
-        int labelWidth = 50;
-        int labelHeight = 18;
-        // Position closer to the knob, just below tick marks (about 45 pixels from center)
-        int yOffset = slider.getHeight() / 2 + 45;
+    auto positionLabelBelow = [&](juce::Label& label, const juce::Slider& slider) {
+        int labelWidth = resizeHelper.scaled(50);
+        int labelHeight = resizeHelper.scaled(18);
+        int yOffset = slider.getHeight() / 2 + resizeHelper.scaled(45);
         label.setBounds(slider.getX() + (slider.getWidth() - labelWidth) / 2,
-                       slider.getY() + yOffset,
-                       labelWidth, labelHeight);
+                       slider.getY() + yOffset, labelWidth, labelHeight);
     };
 
-    // Helper for master section labels (OUTPUT/DRIVE) - positioned even closer
-    auto positionLabelCloser = [](juce::Label& label, const juce::Slider& slider) {
-        int labelWidth = 60;  // Slightly wider for OUTPUT
-        int labelHeight = 18;
-        // Position very close to the knob (about 38 pixels from center)
-        int yOffset = slider.getHeight() / 2 + 38;
+    auto positionLabelCloser = [&](juce::Label& label, const juce::Slider& slider) {
+        int labelWidth = resizeHelper.scaled(60);
+        int labelHeight = resizeHelper.scaled(18);
+        int yOffset = slider.getHeight() / 2 + resizeHelper.scaled(38);
         label.setBounds(slider.getX() + (slider.getWidth() - labelWidth) / 2,
-                       slider.getY() + yOffset,
-                       labelWidth, labelHeight);
+                       slider.getY() + yOffset, labelWidth, labelHeight);
     };
-
-    // Position all functional labels below knobs
 
     // Filter section
     positionLabelBelow(hpfLabel, hpfFreqSlider);
@@ -714,9 +679,13 @@ void FourKEQEditor::resized()
     positionLabelBelow(hfGainLabel, hfGainSlider);
     positionLabelBelow(hfFreqLabel, hfFreqSlider);
 
-    // Master section - positioned closer to knobs
+    // Master section
     positionLabelCloser(outputLabel, outputGainSlider);
     positionLabelCloser(satLabel, saturationSlider);
+
+    // Supporters overlay
+    if (supportersOverlay)
+        supportersOverlay->setBounds(getLocalBounds());
 }
 
 void FourKEQEditor::timerCallback()
