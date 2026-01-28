@@ -1349,11 +1349,7 @@ public:
         g.setColour(juce::Colour(0xffcc3333));
         g.fillRect(0, 0, getWidth(), 2);
 
-        // Title - right below the red line
-        g.setColour(juce::Colour(0xffcc3333));
-        g.setFont(juce::Font(16.0f, juce::Font::bold));
-        g.drawText("STUDIO VCA", 0, 3, getWidth(), 16, juce::Justification::centred);
-        // Description is now drawn by main editor at bottom for consistency
+        // Title and description are drawn by main editor for consistency with other modes
     }
 
 private:
