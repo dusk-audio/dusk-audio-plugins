@@ -291,9 +291,9 @@ private:
     juce::AudioProcessorValueTreeState& parameters;
     float currentScaleFactor = 1.0f;
 
-    juce::Slider thresholdSlider, ratioSlider, kneeSlider;
-    juce::Slider attackSlider, releaseSlider, lookaheadSlider;
-    juce::Slider mixSlider, outputSlider;
+    LunaSlider thresholdSlider, ratioSlider, kneeSlider;
+    LunaSlider attackSlider, releaseSlider, lookaheadSlider;
+    LunaSlider mixSlider, outputSlider;
 
     juce::ToggleButton adaptiveReleaseButton;
     juce::TextButton sidechainEQButton;
@@ -894,7 +894,7 @@ private:
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 3> crossoverAttachments;
 
     // Per-band controls
-    juce::Slider bandThreshold, bandRatio, bandAttack, bandRelease, bandMakeup;
+    LunaSlider bandThreshold, bandRatio, bandAttack, bandRelease, bandMakeup;
     std::array<juce::TextButton, 4> bandSoloButtons;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 4> bandSoloAttachments;
     std::array<juce::Label, 7> knobLabels;
@@ -907,7 +907,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> makeupAttachment;
 
     // Global controls
-    juce::Slider globalOutput, globalMix;
+    LunaSlider globalOutput, globalMix;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
 
@@ -1356,7 +1356,7 @@ private:
     juce::AudioProcessorValueTreeState& parameters;
     float currentScaleFactor = 1.0f;
 
-    juce::Slider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider, mixSlider;
+    LunaSlider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider, mixSlider;
 
     std::vector<std::unique_ptr<juce::Label>> labels;
 

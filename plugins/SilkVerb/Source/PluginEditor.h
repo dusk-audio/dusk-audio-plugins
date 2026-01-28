@@ -64,28 +64,28 @@ private:
     // Freeze toggle button
     juce::ToggleButton freezeButton;
 
-    // Main parameter sliders (Row 1)
-    juce::Slider sizeSlider;
-    juce::Slider dampingSlider;
-    juce::Slider preDelaySlider;
-    juce::Slider mixSlider;
+    // Main parameter sliders (Row 1) - LunaSlider for Cmd/Ctrl+drag fine control
+    LunaSlider sizeSlider;
+    LunaSlider dampingSlider;
+    LunaSlider preDelaySlider;
+    LunaSlider mixSlider;
 
     // Modulation sliders (Row 2)
-    juce::Slider modRateSlider;
-    juce::Slider modDepthSlider;
-    juce::Slider widthSlider;
+    LunaSlider modRateSlider;
+    LunaSlider modDepthSlider;
+    LunaSlider widthSlider;
 
     // Diffusion sliders (Row 3)
-    juce::Slider earlyDiffSlider;
-    juce::Slider lateDiffSlider;
+    LunaSlider earlyDiffSlider;
+    LunaSlider lateDiffSlider;
 
     // Bass control sliders (Row 3)
-    juce::Slider bassMultSlider;
-    juce::Slider bassFreqSlider;
+    LunaSlider bassMultSlider;
+    LunaSlider bassFreqSlider;
 
     // EQ sliders (Row 4)
-    juce::Slider lowCutSlider;
-    juce::Slider highCutSlider;
+    LunaSlider lowCutSlider;
+    LunaSlider highCutSlider;
 
     // Labels
     juce::Label sizeLabel;

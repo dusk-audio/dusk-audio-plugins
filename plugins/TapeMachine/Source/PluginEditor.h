@@ -35,16 +35,16 @@ private:
     juce::ComboBox signalPathSelector;
     juce::ComboBox eqStandardSelector;
 
-    // Sliders
-    juce::Slider inputGainSlider;
-    juce::Slider biasSlider;
-    juce::Slider highpassFreqSlider;
-    juce::Slider lowpassFreqSlider;
-    juce::Slider mixSlider;
-    juce::Slider wowSlider;
-    juce::Slider flutterSlider;
-    juce::Slider outputGainSlider;
-    juce::Slider noiseAmountSlider;
+    // Sliders (LunaSlider for Cmd/Ctrl+drag fine control)
+    LunaSlider inputGainSlider;
+    LunaSlider biasSlider;
+    LunaSlider highpassFreqSlider;
+    LunaSlider lowpassFreqSlider;
+    LunaSlider mixSlider;
+    LunaSlider wowSlider;
+    LunaSlider flutterSlider;
+    LunaSlider outputGainSlider;
+    LunaSlider noiseAmountSlider;
 
     // Toggle buttons
     juce::ToggleButton autoCompButton;
