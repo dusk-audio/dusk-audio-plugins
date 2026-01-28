@@ -92,22 +92,10 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
     outputGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "outputGain", outputGainSlider);
 
-    // Noise button
-    noiseEnabledButton.setButtonText("OFF");
-    noiseEnabledButton.setClickingTogglesState(true);
-    noiseEnabledButton.setTooltip("Tape Noise Enable\nAdds authentic tape hiss");
-    noiseEnabledButton.onStateChange = [this]() {
-        noiseEnabledButton.setButtonText(noiseEnabledButton.getToggleState() ? "ON" : "OFF");
-    };
-    addAndMakeVisible(noiseEnabledButton);
-    noiseEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.getAPVTS(), "noiseEnabled", noiseEnabledButton);
-
-    noiseLabel.setText("NOISE", juce::dontSendNotification);
-    noiseLabel.setJustificationType(juce::Justification::centred);
-    noiseLabel.setColour(juce::Label::textColourId, juce::Colour(textPrimary));
-    noiseLabel.setFont(juce::Font(10.0f, juce::Font::bold));
-    addAndMakeVisible(noiseLabel);
+    setupSlider(noiseAmountSlider, noiseAmountLabel, "NOISE");
+    noiseAmountSlider.setTooltip("Noise Amount (0-100%)\nControls the intensity of tape hiss");
+    noiseAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "noiseAmount", noiseAmountSlider);
 
     // Auto-comp button (Link)
     autoCompButton.setButtonText("LINK");
@@ -402,7 +390,8 @@ void TapeMachineAudioProcessorEditor::resized()
     characterArea.reduce(15, 5);
     characterArea.removeFromTop(18);
 
-    auto charSpacing = (characterArea.getWidth() - (knobSize * 3) - 280) / 7;
+    // 4 knobs (80px each) + link button (100px) + autocal button (100px)
+    auto charSpacing = (characterArea.getWidth() - (knobSize * 4) - 200) / 7;
 
     characterArea.removeFromLeft(charSpacing);
     highpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
@@ -412,11 +401,8 @@ void TapeMachineAudioProcessorEditor::resized()
     mixSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
     characterArea.removeFromLeft(charSpacing);
 
-    // Noise switch
-    auto noiseButtonArea = characterArea.removeFromLeft(80);
-    auto noiseLabelArea = noiseButtonArea.removeFromTop(16);
-    noiseLabel.setBounds(noiseLabelArea);
-    noiseEnabledButton.setBounds(noiseButtonArea.withSizeKeepingCentre(60, 55));
+    // Noise amount knob (0% = off, no separate enable needed)
+    noiseAmountSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
     characterArea.removeFromLeft(charSpacing);
 
     // Link button
