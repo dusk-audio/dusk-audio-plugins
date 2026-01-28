@@ -159,8 +159,10 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
     startTimerHz(30);
 
     setSize(800, 580);
-    setResizable(true, true);
-    setResizeLimits(600, 450, 1200, 900);
+
+    // Initialize scalable resize helper (replaces manual setResizable/setResizeLimits)
+    // Base size: 800x580, Min: 640x464 (80%), Max: 1200x870 (150%)
+    resizeHelper.initialize(this, 800, 580, 640, 464, 1200, 870);
 }
 
 TapeMachineAudioProcessorEditor::~TapeMachineAudioProcessorEditor()
@@ -272,121 +274,127 @@ void TapeMachineAudioProcessorEditor::paint(juce::Graphics& g)
 
     auto bounds = getLocalBounds();
 
-    // Header area with nameplate
-    auto headerArea = bounds.removeFromTop(50);
+    // Header area with nameplate - scaled
+    auto headerArea = bounds.removeFromTop(resizeHelper.scaled(50));
     {
         // Header background
         g.setColour(juce::Colour(panelDark));
         g.fillRect(headerArea);
 
-        // Nameplate
-        auto nameplateArea = juce::Rectangle<float>(10, 8, 200, 32);
-        TapeMachineLookAndFeel::drawNameplate(g, nameplateArea, "TapeMachine", 20.0f);
+        // Nameplate - scaled
+        auto nameplateArea = juce::Rectangle<float>(resizeHelper.scaled(10.0f), resizeHelper.scaled(8.0f),
+                                                     resizeHelper.scaled(200.0f), resizeHelper.scaled(32.0f));
+        TapeMachineLookAndFeel::drawNameplate(g, nameplateArea, "TapeMachine", resizeHelper.scaled(20.0f));
 
-        // Subtitle
-        g.setFont(juce::Font(11.0f, juce::Font::italic));
+        // Subtitle - scaled
+        g.setFont(juce::Font(resizeHelper.scaled(11.0f), juce::Font::italic));
         g.setColour(juce::Colour(textSecondary));
-        g.drawText("Vintage Tape Emulation", 220, 14, 200, 20, juce::Justification::centredLeft);
+        g.drawText("Vintage Tape Emulation", resizeHelper.scaled(220), resizeHelper.scaled(14),
+                   resizeHelper.scaled(200), resizeHelper.scaled(20), juce::Justification::centredLeft);
 
-        // Set clickable area for supporters
-        titleClickArea = juce::Rectangle<int>(10, 8, 200, 32);
+        // Set clickable area for supporters - scaled
+        titleClickArea = juce::Rectangle<int>(resizeHelper.scaled(10), resizeHelper.scaled(8),
+                                               resizeHelper.scaled(200), resizeHelper.scaled(32));
 
         // Separator line
         g.setColour(juce::Colour(metalDark));
         g.drawHorizontalLine(headerArea.getBottom() - 1, 0, (float)getWidth());
     }
 
-    // Transport section (reels + VU + selectors)
-    auto transportArea = bounds.removeFromTop(235);
-    transportArea.reduce(12, 6);
-    TapeMachineLookAndFeel::drawBeveledPanel(g, transportArea.toFloat(), 6.0f, 2.0f);
+    // Transport section (reels + VU + selectors) - scaled
+    auto transportArea = bounds.removeFromTop(resizeHelper.scaled(235));
+    transportArea.reduce(resizeHelper.scaled(12), resizeHelper.scaled(6));
+    TapeMachineLookAndFeel::drawBeveledPanel(g, transportArea.toFloat(), resizeHelper.scaled(6.0f), resizeHelper.scaled(2.0f));
     drawVintageTexture(g, transportArea);
 
-    // Main controls section
-    bounds.removeFromTop(6);
-    auto mainControlsArea = bounds.removeFromTop(120);
-    mainControlsArea.reduce(12, 4);
-    TapeMachineLookAndFeel::drawBeveledPanel(g, mainControlsArea.toFloat(), 6.0f, 2.0f);
+    // Main controls section - scaled
+    bounds.removeFromTop(resizeHelper.scaled(6));
+    auto mainControlsArea = bounds.removeFromTop(resizeHelper.scaled(120));
+    mainControlsArea.reduce(resizeHelper.scaled(12), resizeHelper.scaled(4));
+    TapeMachineLookAndFeel::drawBeveledPanel(g, mainControlsArea.toFloat(), resizeHelper.scaled(6.0f), resizeHelper.scaled(2.0f));
     drawVintageTexture(g, mainControlsArea);
 
-    // Character controls section
-    bounds.removeFromTop(6);
-    auto characterArea = bounds.removeFromTop(120);
-    characterArea.reduce(12, 4);
-    TapeMachineLookAndFeel::drawBeveledPanel(g, characterArea.toFloat(), 6.0f, 2.0f);
+    // Character controls section - scaled
+    bounds.removeFromTop(resizeHelper.scaled(6));
+    auto characterArea = bounds.removeFromTop(resizeHelper.scaled(120));
+    characterArea.reduce(resizeHelper.scaled(12), resizeHelper.scaled(4));
+    TapeMachineLookAndFeel::drawBeveledPanel(g, characterArea.toFloat(), resizeHelper.scaled(6.0f), resizeHelper.scaled(2.0f));
     drawVintageTexture(g, characterArea);
 
-    // Footer with company name
-    g.setFont(juce::Font(10.0f, juce::Font::italic));
+    // Footer with company name - scaled
+    g.setFont(juce::Font(resizeHelper.scaled(10.0f), juce::Font::italic));
     g.setColour(juce::Colour(textSecondary).withAlpha(0.6f));
-    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(16),
+    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(resizeHelper.scaled(16)),
                juce::Justification::centred);
 }
 
 void TapeMachineAudioProcessorEditor::resized()
 {
+    // Update the resize helper (positions corner handle and calculates scale)
+    resizeHelper.updateResizer();
+
     auto area = getLocalBounds();
 
-    // Header
-    area.removeFromTop(50);
+    // Header - scaled
+    area.removeFromTop(resizeHelper.scaled(50));
 
-    // Transport section
-    auto transportArea = area.removeFromTop(235);
-    transportArea.reduce(15, 8);
+    // Transport section - scaled
+    auto transportArea = area.removeFromTop(resizeHelper.scaled(235));
+    transportArea.reduce(resizeHelper.scaled(15), resizeHelper.scaled(8));
 
-    // Reels
-    auto reelSize = 120;
-    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(5));
-    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(5));
+    // Reels - scaled
+    int reelSize = resizeHelper.scaled(120);
+    leftReel.setBounds(transportArea.removeFromLeft(reelSize).reduced(resizeHelper.scaled(5)));
+    rightReel.setBounds(transportArea.removeFromRight(reelSize).reduced(resizeHelper.scaled(5)));
 
-    // VU meter
-    transportArea.removeFromTop(8);
-    auto meterArea = transportArea.removeFromTop(120);
-    mainVUMeter.setBounds(meterArea.reduced(5, 2));
+    // VU meter - scaled
+    transportArea.removeFromTop(resizeHelper.scaled(8));
+    auto meterArea = transportArea.removeFromTop(resizeHelper.scaled(120));
+    mainVUMeter.setBounds(meterArea.reduced(resizeHelper.scaled(5), resizeHelper.scaled(2)));
 
-    // Selector row 1
-    transportArea.removeFromTop(4);
-    auto labelArea1 = transportArea.removeFromTop(14);
+    // Selector row 1 - scaled
+    transportArea.removeFromTop(resizeHelper.scaled(4));
+    auto labelArea1 = transportArea.removeFromTop(resizeHelper.scaled(14));
     auto selectorWidth = labelArea1.getWidth() / 3;
 
-    tapeMachineLabel.setBounds(labelArea1.removeFromLeft(selectorWidth).reduced(4, 0));
-    tapeSpeedLabel.setBounds(labelArea1.removeFromLeft(selectorWidth).reduced(4, 0));
-    tapeTypeLabel.setBounds(labelArea1.reduced(4, 0));
+    tapeMachineLabel.setBounds(labelArea1.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), 0));
+    tapeSpeedLabel.setBounds(labelArea1.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), 0));
+    tapeTypeLabel.setBounds(labelArea1.reduced(resizeHelper.scaled(4), 0));
 
-    transportArea.removeFromTop(2);
-    auto selectorArea1 = transportArea.removeFromTop(28);
+    transportArea.removeFromTop(resizeHelper.scaled(2));
+    auto selectorArea1 = transportArea.removeFromTop(resizeHelper.scaled(28));
     selectorWidth = selectorArea1.getWidth() / 3;
 
-    tapeMachineSelector.setBounds(selectorArea1.removeFromLeft(selectorWidth).reduced(4, 2));
-    tapeSpeedSelector.setBounds(selectorArea1.removeFromLeft(selectorWidth).reduced(4, 2));
-    tapeTypeSelector.setBounds(selectorArea1.reduced(4, 2));
+    tapeMachineSelector.setBounds(selectorArea1.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), resizeHelper.scaled(2)));
+    tapeSpeedSelector.setBounds(selectorArea1.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), resizeHelper.scaled(2)));
+    tapeTypeSelector.setBounds(selectorArea1.reduced(resizeHelper.scaled(4), resizeHelper.scaled(2)));
 
-    // Selector row 2
-    transportArea.removeFromTop(4);
-    auto labelArea2 = transportArea.removeFromTop(14);
+    // Selector row 2 - scaled
+    transportArea.removeFromTop(resizeHelper.scaled(4));
+    auto labelArea2 = transportArea.removeFromTop(resizeHelper.scaled(14));
     selectorWidth = labelArea2.getWidth() / 3;
 
-    signalPathLabel.setBounds(labelArea2.removeFromLeft(selectorWidth).reduced(4, 0));
-    eqStandardLabel.setBounds(labelArea2.removeFromLeft(selectorWidth).reduced(4, 0));
-    oversamplingLabel.setBounds(labelArea2.reduced(4, 0));
+    signalPathLabel.setBounds(labelArea2.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), 0));
+    eqStandardLabel.setBounds(labelArea2.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), 0));
+    oversamplingLabel.setBounds(labelArea2.reduced(resizeHelper.scaled(4), 0));
 
-    transportArea.removeFromTop(2);
-    auto selectorArea2 = transportArea.removeFromTop(28);
+    transportArea.removeFromTop(resizeHelper.scaled(2));
+    auto selectorArea2 = transportArea.removeFromTop(resizeHelper.scaled(28));
     selectorWidth = selectorArea2.getWidth() / 3;
 
-    signalPathSelector.setBounds(selectorArea2.removeFromLeft(selectorWidth).reduced(4, 2));
-    eqStandardSelector.setBounds(selectorArea2.removeFromLeft(selectorWidth).reduced(4, 2));
-    oversamplingSelector.setBounds(selectorArea2.reduced(4, 2));
+    signalPathSelector.setBounds(selectorArea2.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), resizeHelper.scaled(2)));
+    eqStandardSelector.setBounds(selectorArea2.removeFromLeft(selectorWidth).reduced(resizeHelper.scaled(4), resizeHelper.scaled(2)));
+    oversamplingSelector.setBounds(selectorArea2.reduced(resizeHelper.scaled(4), resizeHelper.scaled(2)));
 
-    area.removeFromTop(6);
+    area.removeFromTop(resizeHelper.scaled(6));
 
-    // Main controls
-    auto mainControlsArea = area.removeFromTop(120);
-    mainControlsArea.reduce(15, 5);
-    mainControlsArea.removeFromTop(18);
+    // Main controls - scaled
+    auto mainControlsArea = area.removeFromTop(resizeHelper.scaled(120));
+    mainControlsArea.reduce(resizeHelper.scaled(15), resizeHelper.scaled(5));
+    mainControlsArea.removeFromTop(resizeHelper.scaled(18));
 
-    auto knobSize = 80;
-    auto mainSpacing = (mainControlsArea.getWidth() - (knobSize * 5)) / 6;
+    int knobSize = resizeHelper.scaled(80);
+    int mainSpacing = (mainControlsArea.getWidth() - (knobSize * 5)) / 6;
 
     mainControlsArea.removeFromLeft(mainSpacing);
     inputGainSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
@@ -399,14 +407,15 @@ void TapeMachineAudioProcessorEditor::resized()
     mainControlsArea.removeFromLeft(mainSpacing);
     outputGainSlider.setBounds(mainControlsArea.removeFromLeft(knobSize).withHeight(knobSize));
 
-    area.removeFromTop(6);
+    area.removeFromTop(resizeHelper.scaled(6));
 
-    // Character controls
-    auto characterArea = area.removeFromTop(120);
-    characterArea.reduce(15, 5);
-    characterArea.removeFromTop(18);
+    // Character controls - scaled
+    auto characterArea = area.removeFromTop(resizeHelper.scaled(120));
+    characterArea.reduce(resizeHelper.scaled(15), resizeHelper.scaled(5));
+    characterArea.removeFromTop(resizeHelper.scaled(18));
 
-    auto charSpacing = (characterArea.getWidth() - (knobSize * 3) - 280) / 7;
+    int buttonAreaWidth = resizeHelper.scaled(280);
+    int charSpacing = (characterArea.getWidth() - (knobSize * 3) - buttonAreaWidth) / 7;
 
     characterArea.removeFromLeft(charSpacing);
     highpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
@@ -416,25 +425,25 @@ void TapeMachineAudioProcessorEditor::resized()
     mixSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
     characterArea.removeFromLeft(charSpacing);
 
-    // Noise switch
-    auto noiseButtonArea = characterArea.removeFromLeft(80);
-    auto noiseLabelArea = noiseButtonArea.removeFromTop(16);
+    // Noise switch - scaled
+    auto noiseButtonArea = characterArea.removeFromLeft(resizeHelper.scaled(80));
+    auto noiseLabelArea = noiseButtonArea.removeFromTop(resizeHelper.scaled(16));
     noiseLabel.setBounds(noiseLabelArea);
-    noiseEnabledButton.setBounds(noiseButtonArea.withSizeKeepingCentre(60, 55));
+    noiseEnabledButton.setBounds(noiseButtonArea.withSizeKeepingCentre(resizeHelper.scaled(60), resizeHelper.scaled(55)));
     characterArea.removeFromLeft(charSpacing);
 
-    // Link button
-    auto autoCompButtonArea = characterArea.removeFromLeft(100);
-    auto autoCompLabelArea = autoCompButtonArea.removeFromTop(16);
+    // Link button - scaled
+    auto autoCompButtonArea = characterArea.removeFromLeft(resizeHelper.scaled(100));
+    auto autoCompLabelArea = autoCompButtonArea.removeFromTop(resizeHelper.scaled(16));
     autoCompLabel.setBounds(autoCompLabelArea);
-    autoCompButton.setBounds(autoCompButtonArea.withSizeKeepingCentre(90, 38));
+    autoCompButton.setBounds(autoCompButtonArea.withSizeKeepingCentre(resizeHelper.scaled(90), resizeHelper.scaled(38)));
     characterArea.removeFromLeft(charSpacing);
 
-    // Auto cal button
-    auto autoCalButtonArea = characterArea.removeFromLeft(100);
-    auto autoCalLabelArea = autoCalButtonArea.removeFromTop(16);
+    // Auto cal button - scaled
+    auto autoCalButtonArea = characterArea.removeFromLeft(resizeHelper.scaled(100));
+    auto autoCalLabelArea = autoCalButtonArea.removeFromTop(resizeHelper.scaled(16));
     autoCalLabel.setBounds(autoCalLabelArea);
-    autoCalButton.setBounds(autoCalButtonArea.withSizeKeepingCentre(100, 38));
+    autoCalButton.setBounds(autoCalButtonArea.withSizeKeepingCentre(resizeHelper.scaled(100), resizeHelper.scaled(38)));
 
     // Supporters overlay
     if (supportersOverlay)
