@@ -85,6 +85,10 @@ public:
     std::atomic<float> outputLevelL{-96.0f};  // Output level left channel (dBFS)
     std::atomic<float> outputLevelR{-96.0f};  // Output level right channel (dBFS)
 
+    // Channel count for UI mono/stereo display (set in prepareToPlay)
+    std::atomic<int> currentNumChannels{2};
+    int getNumChannels() const { return currentNumChannels.load(std::memory_order_relaxed); }
+
 private:
     //==============================================================================
     // AudioProcessorValueTreeState::Listener implementation

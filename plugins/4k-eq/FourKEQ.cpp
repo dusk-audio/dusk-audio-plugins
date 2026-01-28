@@ -268,6 +268,8 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     // Initialize spectrum buffers with proper size to prevent crashes
     const int numChannels = getTotalNumInputChannels();
+    // Use output channels for UI mono/stereo display (like Multi-Comp)
+    currentNumChannels.store(juce::jmax(1, getTotalNumOutputChannels()), std::memory_order_relaxed);
     spectrumBuffer.setSize(numChannels, samplesPerBlock, false, true, true);
     spectrumBufferPre.setSize(numChannels, samplesPerBlock, false, true, true);
 
@@ -521,6 +523,9 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
         }
         lastLpfEnabled = currentLpfEnabled;
     }
+
+    // Update channel count from actual buffer (handles track type changes without prepareToPlay)
+    currentNumChannels.store(buffer.getNumChannels(), std::memory_order_relaxed);
 
     // Capture input levels for metering (before gain)
     if (buffer.getNumChannels() >= 1)
