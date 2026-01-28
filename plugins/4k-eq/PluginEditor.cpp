@@ -753,18 +753,23 @@ void FourKEQEditor::timerCallback()
     float outL = audioProcessor.outputLevelL.load(std::memory_order_relaxed);
     float outR = audioProcessor.outputLevelR.load(std::memory_order_relaxed);
 
-    // Use maximum of L/R channels for single meter display
-    // This correctly handles mono signals and shows the loudest channel for stereo
-    // Note: averaging dB values directly is mathematically incorrect and causes
-    // mono signals to appear ~40dB quieter when only one channel has signal
+    // Get channel count from DAW (set in prepareToPlay)
+    // Mono tracks = 1 channel (single bar), Stereo tracks = 2 channels (dual bars)
+    bool isStereo = audioProcessor.getNumChannels() > 1;
+    if (inputMeterL)
+    {
+        inputMeterL->setStereoMode(isStereo);
+        inputMeterL->setStereoLevels(inL, inR);
+    }
+    if (outputMeterL)
+    {
+        outputMeterL->setStereoMode(isStereo);
+        outputMeterL->setStereoLevels(outL, outR);
+    }
+
+    // Use maximum of L/R for displayed value labels
     float inputLevel = juce::jmax(inL, inR);
     float outputLevel = juce::jmax(outL, outR);
-
-    if (inputMeterL)
-        inputMeterL->setLevel(inputLevel);
-
-    if (outputMeterL)
-        outputMeterL->setLevel(outputLevel);
 
     // Update displayed level values (throttled for readability - ~3x per second)
     levelDisplayCounter++;
@@ -794,10 +799,8 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
     // Enable mouse wheel control for fine adjustments
     slider.setScrollWheelEnabled(true);
 
-    // Enable velocity-based mode for fine-tune with shift key
-    // When shift is held, movement is 10x slower for precision adjustments
-    slider.setVelocityBasedMode(true);
-    slider.setVelocityModeParameters(1.0, 1, 0.1, false);  // sensitivity, threshold, offset, snap
+    // Use default JUCE slider behavior (matches TapeMachine/Multi-Comp)
+    // Ctrl/Cmd+drag enables velocity-based fine control
 
     // Color code knobs like the reference image
     if (label.contains("GAIN")) {
