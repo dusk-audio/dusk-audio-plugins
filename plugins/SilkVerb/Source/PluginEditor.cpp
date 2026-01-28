@@ -273,6 +273,7 @@ SilkVerbEditor::~SilkVerbEditor()
 void SilkVerbEditor::setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    LunaSliderStyle::configureKnob(slider);
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
     slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffe0e0e0));
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff2a2a2a));
@@ -289,6 +290,7 @@ void SilkVerbEditor::setupSlider(juce::Slider& slider, juce::Label& label, const
 void SilkVerbEditor::setupSmallSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    LunaSliderStyle::configureKnob(slider);
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 14);
     slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffc0c0c0));
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff252525));
