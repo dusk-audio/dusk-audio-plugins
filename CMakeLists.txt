@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(LunaPlugins VERSION 1.0.0)
 
-# Set C++ standard (C++20 required for Neural Amp / NAM Core)
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is set per-plugin:
+# - Most plugins use C++17 (set in their own CMakeLists.txt)
+# - Neural Amp uses C++20 (required for NAM Core)
+# This avoids conflicts and ensures each plugin compiles with its required standard
 
 # Include global settings
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GlobalSettings.cmake)

@@ -281,6 +281,9 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
 FourKEQEditor::~FourKEQEditor()
 {
+    // CRITICAL: Stop timer first to prevent callbacks during destruction
+    // This was causing crashes when touching controls in Ableton
+    stopTimer();
     setLookAndFeel(nullptr);
 }
 
@@ -315,7 +318,7 @@ void FourKEQEditor::paint(juce::Graphics& g)
     g.drawText("Console-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
 
     // EQ Type indicator badge - styled as muted amber/gold for Brown, dark grey for Black
-    bool isBlack = eqTypeParam->load() > 0.5f;
+    bool isBlack = eqTypeParam != nullptr && eqTypeParam->load() > 0.5f;
     g.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
 
     // Position badge to the left of the dropdown (dropdown is at getWidth() - 110, height 28)
@@ -721,6 +724,10 @@ void FourKEQEditor::resized()
 
 void FourKEQEditor::timerCallback()
 {
+    // Safety check - ensure parameter pointers are valid
+    if (eqTypeParam == nullptr || bypassParam == nullptr)
+        return;
+
     // Only update when parameters change to reduce CPU usage
     float currentEqType = eqTypeParam->load();
     float currentBypass = bypassParam->load();
