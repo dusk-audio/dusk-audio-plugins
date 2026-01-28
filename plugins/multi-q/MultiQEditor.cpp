@@ -38,7 +38,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     selectedBandLabel.setFont(juce::Font(juce::FontOptions(14.0f).withStyle("Bold")));
     addAndMakeVisible(selectedBandLabel);
 
-    freqSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    freqSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::TextBoxBelow);
     setupSlider(*freqSlider, "");
     // Custom frequency formatting: "10.07 kHz" or "250 Hz"
@@ -52,7 +52,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     };
     addAndMakeVisible(freqSlider.get());
 
-    gainSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    gainSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::TextBoxBelow);
     setupSlider(*gainSlider, "");
     // Custom gain formatting: "+3.5 dB" or "-2.0 dB"
@@ -62,7 +62,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     };
     addAndMakeVisible(gainSlider.get());
 
-    qSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    qSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                               juce::Slider::TextBoxBelow);
     setupSlider(*qSlider, "");
     // Custom Q formatting: "0.71" (2 decimal places)
@@ -87,7 +87,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     slopeLabel.setVisible(false);
 
     // Global controls
-    masterGainSlider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    masterGainSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                        juce::Slider::TextBoxBelow);
     setupSlider(*masterGainSlider, "");
     // Custom gain formatting for master (same as band gain)
@@ -161,7 +161,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     analyzerResolutionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.parameters, ParamIDs::analyzerResolution, *analyzerResolutionSelector);
 
-    analyzerDecaySlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
+    analyzerDecaySlider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal,
                                                           juce::Slider::TextBoxRight);
     analyzerDecaySlider->setTextValueSuffix(" dB/s");
     analyzerDecaySlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
@@ -1359,7 +1359,7 @@ void MultiQEditor::setupBritishControls()
     // This helper sets up a knob exactly like 4K-EQ does
     auto setupBritishKnob = [this](std::unique_ptr<juce::Slider>& slider, const juce::String& name,
                                    bool centerDetented, juce::Colour color) {
-        slider = std::make_unique<juce::Slider>();
+        slider = std::make_unique<LunaSlider>();
         slider->setSliderStyle(juce::Slider::RotaryVerticalDrag);
         slider->setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
         slider->setPopupDisplayEnabled(true, true, this);
@@ -2002,7 +2002,7 @@ void MultiQEditor::setupPultecControls()
 
     // Helper to setup Vintage Tube EQ-style rotary knob
     auto setupPultecKnob = [this](std::unique_ptr<juce::Slider>& slider, const juce::String& name) {
-        slider = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
+        slider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::NoTextBox);
         slider->setName(name);
         slider->setLookAndFeel(&vintageTubeLookAndFeel);

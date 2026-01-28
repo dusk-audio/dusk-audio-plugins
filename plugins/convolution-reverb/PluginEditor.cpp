@@ -46,9 +46,9 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     addAndMakeVisible(irNameLabel.get());
 
     // Envelope controls
-    attackSlider = std::make_unique<juce::Slider>();
-    decaySlider = std::make_unique<juce::Slider>();
-    lengthSlider = std::make_unique<juce::Slider>();
+    attackSlider = std::make_unique<LunaSlider>();
+    decaySlider = std::make_unique<LunaSlider>();
+    lengthSlider = std::make_unique<LunaSlider>();
     attackLabel = std::make_unique<juce::Label>();
     decayLabel = std::make_unique<juce::Label>();
     lengthLabel = std::make_unique<juce::Label>();
@@ -61,9 +61,9 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupToggleButton(*reverseButton, "REV");
 
     // Main controls
-    preDelaySlider = std::make_unique<juce::Slider>();
-    widthSlider = std::make_unique<juce::Slider>();
-    mixSlider = std::make_unique<juce::Slider>();
+    preDelaySlider = std::make_unique<LunaSlider>();
+    widthSlider = std::make_unique<LunaSlider>();
+    mixSlider = std::make_unique<LunaSlider>();
     preDelayLabel = std::make_unique<juce::Label>();
     widthLabel = std::make_unique<juce::Label>();
     mixLabel = std::make_unique<juce::Label>();
@@ -73,8 +73,8 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupSlider(*mixSlider, *mixLabel, "MIX", "%");
 
     // Filter controls
-    hpfSlider = std::make_unique<juce::Slider>();
-    lpfSlider = std::make_unique<juce::Slider>();
+    hpfSlider = std::make_unique<LunaSlider>();
+    lpfSlider = std::make_unique<LunaSlider>();
     hpfLabel = std::make_unique<juce::Label>();
     lpfLabel = std::make_unique<juce::Label>();
 
@@ -82,14 +82,14 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupSlider(*lpfSlider, *lpfLabel, "LPF", "Hz");
 
     // EQ controls - simplified to just gain knobs (frequencies are fixed internally)
-    eqLowFreqSlider = std::make_unique<juce::Slider>();
-    eqLowGainSlider = std::make_unique<juce::Slider>();
-    eqLowMidFreqSlider = std::make_unique<juce::Slider>();
-    eqLowMidGainSlider = std::make_unique<juce::Slider>();
-    eqHighMidFreqSlider = std::make_unique<juce::Slider>();
-    eqHighMidGainSlider = std::make_unique<juce::Slider>();
-    eqHighFreqSlider = std::make_unique<juce::Slider>();
-    eqHighGainSlider = std::make_unique<juce::Slider>();
+    eqLowFreqSlider = std::make_unique<LunaSlider>();
+    eqLowGainSlider = std::make_unique<LunaSlider>();
+    eqLowMidFreqSlider = std::make_unique<LunaSlider>();
+    eqLowMidGainSlider = std::make_unique<LunaSlider>();
+    eqHighMidFreqSlider = std::make_unique<LunaSlider>();
+    eqHighMidGainSlider = std::make_unique<LunaSlider>();
+    eqHighFreqSlider = std::make_unique<LunaSlider>();
+    eqHighGainSlider = std::make_unique<LunaSlider>();
     eqLowLabel = std::make_unique<juce::Label>();
     eqLowMidLabel = std::make_unique<juce::Label>();
     eqHighMidLabel = std::make_unique<juce::Label>();
@@ -112,7 +112,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupToggleButton(*zeroLatencyButton, "ZERO LAT");
 
     // IR Offset control - shortened label to fit
-    irOffsetSlider = std::make_unique<juce::Slider>();
+    irOffsetSlider = std::make_unique<LunaSlider>();
     irOffsetLabel = std::make_unique<juce::Label>();
     setupSlider(*irOffsetSlider, *irOffsetLabel, "OFFSET", "%");
 
@@ -198,9 +198,9 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     filterEnvButton = std::make_unique<juce::ToggleButton>("FILTER ENV");
     setupToggleButton(*filterEnvButton, "FILTER ENV");
 
-    filterEnvInitSlider = std::make_unique<juce::Slider>();
-    filterEnvEndSlider = std::make_unique<juce::Slider>();
-    filterEnvAttackSlider = std::make_unique<juce::Slider>();
+    filterEnvInitSlider = std::make_unique<LunaSlider>();
+    filterEnvEndSlider = std::make_unique<LunaSlider>();
+    filterEnvAttackSlider = std::make_unique<LunaSlider>();
     filterEnvInitLabel = std::make_unique<juce::Label>();
     filterEnvEndLabel = std::make_unique<juce::Label>();
     filterEnvAttackLabel = std::make_unique<juce::Label>();

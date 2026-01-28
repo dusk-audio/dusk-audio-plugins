@@ -328,7 +328,8 @@ std::unique_ptr<juce::Slider> EnhancedCompressorEditor::createKnob(const juce::S
                                                                    float defaultValue,
                                                                    const juce::String& suffix)
 {
-    auto slider = std::make_unique<juce::Slider>(name);
+    // Use LunaSlider for Cmd/Ctrl+drag fine control
+    auto slider = std::make_unique<LunaSlider>(name);
     slider->setSliderStyle(juce::Slider::RotaryVerticalDrag);
     slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
     slider->setRange(min, max, 0.01);
@@ -336,8 +337,7 @@ std::unique_ptr<juce::Slider> EnhancedCompressorEditor::createKnob(const juce::S
     slider->setTextValueSuffix(suffix);
     slider->setDoubleClickReturnValue(true, defaultValue);
 
-    // Professional knob behavior from shared Luna settings
-    LunaSliderStyle::configureKnob(*slider);
+    // LunaSlider handles its own drag behavior - no need for configureKnob
 
     return slider;
 }

@@ -1,0 +1,203 @@
+{
+  "version": "1.0",
+  "description": "Registry of verified fixes - used by regression-check skill to prevent regressions",
+  "last_updated": "2026-01-28",
+  "fixes": [
+    {
+      "id": "cmd-drag-fine-control",
+      "ticket": "#5",
+      "description": "Cmd/Ctrl+drag fine control for knobs using LunaSlider class",
+      "date_fixed": "2026-01-28",
+      "files": [
+        "plugins/shared/LunaLookAndFeel.h",
+        "plugins/4k-eq/PluginEditor.h",
+        "plugins/TapeMachine/Source/PluginEditor.h"
+      ],
+      "verifications": [
+        {
+          "type": "grep",
+          "file": "plugins/shared/LunaLookAndFeel.h",
+          "pattern": "class LunaSlider : public juce::Slider",
+          "description": "LunaSlider class must exist in shared library"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/shared/LunaLookAndFeel.h",
+          "pattern": "setMouseDragSensitivity",
+          "description": "LunaSlider must use setMouseDragSensitivity for fine control"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/shared/LunaLookAndFeel.h",
+          "pattern": "isCommandDown.*isCtrlDown",
+          "description": "LunaSlider must check for Cmd/Ctrl modifier keys"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/4k-eq/PluginEditor.h",
+          "pattern": "LunaSlider.*Slider",
+          "description": "4K EQ must use LunaSlider for knobs"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/TapeMachine/Source/PluginEditor.h",
+          "pattern": "LunaSlider.*Slider",
+          "description": "TapeMachine must use LunaSlider for knobs"
+        }
+      ]
+    },
+    {
+      "id": "timer-lifecycle-crash-fix",
+      "ticket": "#10, #11",
+      "description": "Stop timer in destructor to prevent crashes on plugin close",
+      "date_fixed": "2026-01-28",
+      "files": [
+        "plugins/4k-eq/PluginEditor.cpp"
+      ],
+      "verifications": [
+        {
+          "type": "grep",
+          "file": "plugins/4k-eq/PluginEditor.cpp",
+          "pattern": "~FourKEQEditor.*\\{[^}]*stopTimer",
+          "multiline": true,
+          "description": "4K EQ destructor must call stopTimer()"
+        }
+      ]
+    },
+    {
+      "id": "null-pointer-checks",
+      "ticket": "#10, #11",
+      "description": "Null checks for atomic parameter pointers",
+      "date_fixed": "2026-01-28",
+      "files": [
+        "plugins/4k-eq/PluginEditor.h",
+        "plugins/4k-eq/PluginEditor.cpp"
+      ],
+      "verifications": [
+        {
+          "type": "grep",
+          "file": "plugins/4k-eq/PluginEditor.h",
+          "pattern": "eqTypeParam = nullptr",
+          "description": "eqTypeParam must be initialized to nullptr"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/4k-eq/PluginEditor.h",
+          "pattern": "bypassParam = nullptr",
+          "description": "bypassParam must be initialized to nullptr"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/4k-eq/PluginEditor.cpp",
+          "pattern": "eqTypeParam == nullptr.*bypassParam == nullptr",
+          "description": "timerCallback must check for null params"
+        }
+      ]
+    },
+    {
+      "id": "macos-deployment-target",
+      "ticket": "#11",
+      "description": "macOS Catalina compatibility via deployment target",
+      "date_fixed": "2026-01-28",
+      "files": [
+        ".github/workflows/build.yml"
+      ],
+      "verifications": [
+        {
+          "type": "grep",
+          "file": ".github/workflows/build.yml",
+          "pattern": "CMAKE_OSX_DEPLOYMENT_TARGET.*10\\.15",
+          "description": "macOS build must target 10.15 (Catalina)"
+        }
+      ]
+    },
+    {
+      "id": "windows-static-runtime",
+      "ticket": "#10",
+      "description": "Static MSVC runtime to avoid VC++ redistributable dependency",
+      "date_fixed": "2026-01-28",
+      "files": [
+        "cmake/GlobalSettings.cmake"
+      ],
+      "verifications": [
+        {
+          "type": "grep",
+          "file": "cmake/GlobalSettings.cmake",
+          "pattern": "CMAKE_MSVC_RUNTIME_LIBRARY.*MultiThreaded",
+          "description": "MSVC builds must use static runtime"
+        }
+      ]
+    },
+    {
+      "id": "tapemachine-noise-knob",
+      "ticket": "#7",
+      "description": "TapeMachine noise amount knob instead of toggle",
+      "date_fixed": "2026-01-28",
+      "files": [
+        "plugins/TapeMachine/Source/PluginEditor.h",
+        "plugins/TapeMachine/Source/PluginProcessor.cpp"
+      ],
+      "verifications": [
+        {
+          "type": "grep",
+          "file": "plugins/TapeMachine/Source/PluginEditor.h",
+          "pattern": "noiseAmountSlider",
+          "description": "TapeMachine must have noiseAmountSlider (not toggle)"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/TapeMachine/Source/PluginProcessor.cpp",
+          "pattern": "\"noiseAmount\", \"Noise Amount\"",
+          "description": "noiseAmount must be a float parameter (not bool toggle)"
+        }
+      ]
+    },
+    {
+      "id": "multicomp-studio-vca-title",
+      "ticket": "#8",
+      "description": "Multi-Comp Studio VCA mode shows proper title in header",
+      "date_fixed": "2026-01-28",
+      "files": [
+        "plugins/multi-comp/EnhancedCompressorEditor.cpp"
+      ],
+      "verifications": [
+        {
+          "type": "grep",
+          "file": "plugins/multi-comp/EnhancedCompressorEditor.cpp",
+          "pattern": "Studio VCA",
+          "description": "Multi-Comp must have Studio VCA title defined"
+        }
+      ]
+    },
+    {
+      "id": "scalable-editor-helper",
+      "ticket": "#9",
+      "description": "Shared ScalableEditorHelper for resizable plugin UIs",
+      "date_fixed": "2026-01-28",
+      "files": [
+        "plugins/shared/ScalableEditorHelper.h",
+        "plugins/4k-eq/PluginEditor.h",
+        "plugins/TapeMachine/Source/PluginEditor.h"
+      ],
+      "verifications": [
+        {
+          "type": "file_exists",
+          "file": "plugins/shared/ScalableEditorHelper.h",
+          "description": "ScalableEditorHelper must exist in shared directory"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/4k-eq/PluginEditor.h",
+          "pattern": "ScalableEditorHelper",
+          "description": "4K EQ must use ScalableEditorHelper"
+        },
+        {
+          "type": "grep",
+          "file": "plugins/TapeMachine/Source/PluginEditor.h",
+          "pattern": "ScalableEditorHelper",
+          "description": "TapeMachine must use ScalableEditorHelper"
+        }
+      ]
+    }
+  ]
+}
