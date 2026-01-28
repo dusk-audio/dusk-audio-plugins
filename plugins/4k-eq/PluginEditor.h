@@ -37,31 +37,31 @@ private:
     FourKLookAndFeel lookAndFeel;
 
     // HPF Section
-    juce::Slider hpfFreqSlider;
+    LunaSlider hpfFreqSlider;
     juce::ToggleButton hpfEnableButton;
 
     // LPF Section
-    juce::Slider lpfFreqSlider;
+    LunaSlider lpfFreqSlider;
     juce::ToggleButton lpfEnableButton;
 
     // LF Band
-    juce::Slider lfGainSlider;
-    juce::Slider lfFreqSlider;
+    LunaSlider lfGainSlider;
+    LunaSlider lfFreqSlider;
     juce::ToggleButton lfBellButton;
 
     // LM Band
-    juce::Slider lmGainSlider;
-    juce::Slider lmFreqSlider;
-    juce::Slider lmQSlider;
+    LunaSlider lmGainSlider;
+    LunaSlider lmFreqSlider;
+    LunaSlider lmQSlider;
 
     // HM Band
-    juce::Slider hmGainSlider;
-    juce::Slider hmFreqSlider;
-    juce::Slider hmQSlider;
+    LunaSlider hmGainSlider;
+    LunaSlider hmFreqSlider;
+    LunaSlider hmQSlider;
 
     // HF Band
-    juce::Slider hfGainSlider;
-    juce::Slider hfFreqSlider;
+    LunaSlider hfGainSlider;
+    LunaSlider hfFreqSlider;
     juce::ToggleButton hfBellButton;
 
     // Global Controls
@@ -69,9 +69,9 @@ private:
     juce::ComboBox presetSelector;
     juce::ToggleButton bypassButton;
     juce::ToggleButton autoGainButton;  // Auto-gain compensation toggle
-    juce::Slider inputGainSlider;   // Input gain control
-    juce::Slider outputGainSlider;
-    juce::Slider saturationSlider;
+    LunaSlider inputGainSlider;   // Input gain control
+    LunaSlider outputGainSlider;
+    LunaSlider saturationSlider;
     juce::ComboBox oversamplingSelector;
 
     // Parameter references for UI updates

@@ -37,22 +37,22 @@ private:
     // Tape visualization
     TapeVisualization tapeViz;
 
-    // Main knobs
-    juce::Slider inputKnob;
-    juce::Slider repeatRateKnob;
-    juce::Slider intensityKnob;
-    juce::Slider echoVolumeKnob;
-    juce::Slider reverbVolumeKnob;
+    // Main knobs (LunaSlider for Cmd/Ctrl+drag fine control)
+    LunaSlider inputKnob;
+    LunaSlider repeatRateKnob;
+    LunaSlider intensityKnob;
+    LunaSlider echoVolumeKnob;
+    LunaSlider reverbVolumeKnob;
 
     // Secondary knobs
-    juce::Slider bassKnob;
-    juce::Slider trebleKnob;
-    juce::Slider wowFlutterKnob;
-    juce::Slider dryWetKnob;
+    LunaSlider bassKnob;
+    LunaSlider trebleKnob;
+    LunaSlider wowFlutterKnob;
+    LunaSlider dryWetKnob;
 
     // Tempo sync controls
     juce::ToggleButton tempoSyncButton { "SYNC" };
-    juce::Slider noteDivisionKnob;
+    LunaSlider noteDivisionKnob;
     juce::Label noteDivisionLabel;
 
     // Labels
