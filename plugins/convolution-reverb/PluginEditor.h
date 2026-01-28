@@ -16,6 +16,7 @@
 #include "IRBrowser.h"
 #include "IRWaveformDisplay.h"
 #include "LEDMeter.h"
+#include "../shared/LunaLookAndFeel.h"
 
 class ConvolutionReverbEditor : public juce::AudioProcessorEditor,
                            private juce::Timer,

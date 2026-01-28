@@ -176,6 +176,10 @@ void TapeMachineAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::La
     slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(textPrimary));
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(panelDark));
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(metalDark));
+
+    // Professional knob behavior from shared Luna settings
+    LunaSliderStyle::configureKnob(slider);
+
     addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);

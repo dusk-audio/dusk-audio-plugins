@@ -11,6 +11,7 @@
 #include <JuceHeader.h>
 #include <cmath>
 #include "UniversalCompressor.h"
+#include "../shared/LunaLookAndFeel.h"
 
 //==============================================================================
 // Modern Look and Feel for Digital/Multiband modes
@@ -114,12 +115,14 @@ public:
         // Main compression controls
         addAndMakeVisible(thresholdSlider);
         thresholdSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(thresholdSlider);
         thresholdSlider.setRange(-60.0, 0.0, 0.1);
         thresholdSlider.setTextValueSuffix(" dB");
         thresholdSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
 
         addAndMakeVisible(ratioSlider);
         ratioSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(ratioSlider);
         ratioSlider.setRange(1.0, 100.0, 0.1);
         ratioSlider.setSkewFactorFromMidPoint(10.0);
         ratioSlider.setTextValueSuffix(":1");
@@ -127,6 +130,7 @@ public:
 
         addAndMakeVisible(kneeSlider);
         kneeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(kneeSlider);
         kneeSlider.setRange(0.0, 20.0, 0.1);
         kneeSlider.setTextValueSuffix(" dB");
         kneeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -134,6 +138,7 @@ public:
         // Time controls
         addAndMakeVisible(attackSlider);
         attackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(attackSlider);
         attackSlider.setRange(0.01, 500.0, 0.01);
         attackSlider.setSkewFactorFromMidPoint(5.0);
         attackSlider.setTextValueSuffix(" ms");
@@ -141,6 +146,7 @@ public:
 
         addAndMakeVisible(releaseSlider);
         releaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(releaseSlider);
         releaseSlider.setRange(1.0, 5000.0, 1.0);
         releaseSlider.setSkewFactorFromMidPoint(500.0);
         releaseSlider.setTextValueSuffix(" ms");
@@ -149,6 +155,7 @@ public:
         // Lookahead
         addAndMakeVisible(lookaheadSlider);
         lookaheadSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(lookaheadSlider);
         lookaheadSlider.setRange(0.0, 10.0, 0.1);
         lookaheadSlider.setTextValueSuffix(" ms");
         lookaheadSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -156,6 +163,7 @@ public:
         // Mix control
         addAndMakeVisible(mixSlider);
         mixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(mixSlider);
         mixSlider.setRange(0.0, 100.0, 1.0);
         mixSlider.setTextValueSuffix(" %");
         mixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -163,6 +171,7 @@ public:
         // Output
         addAndMakeVisible(outputSlider);
         outputSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(outputSlider);
         outputSlider.setRange(-24.0, 24.0, 0.1);
         outputSlider.setTextValueSuffix(" dB");
         outputSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -589,6 +598,7 @@ public:
         // Per-band controls (5 knobs) with double-click to reset
         auto setupKnob = [this](juce::Slider& slider, const juce::String& suffix, double defaultVal) {
             slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+            LunaSliderStyle::configureKnob(slider);
             slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
             if (suffix.isNotEmpty())
                 slider.setTextValueSuffix(suffix);
@@ -1207,6 +1217,7 @@ public:
         // Threshold control (-40 to +20 dB)
         addAndMakeVisible(thresholdSlider);
         thresholdSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(thresholdSlider);
         thresholdSlider.setRange(-40.0, 20.0, 0.1);
         thresholdSlider.setTextValueSuffix(" dB");
         thresholdSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -1214,6 +1225,7 @@ public:
         // Ratio control (1:1 to 10:1)
         addAndMakeVisible(ratioSlider);
         ratioSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(ratioSlider);
         ratioSlider.setRange(1.0, 10.0, 0.1);
         ratioSlider.setTextValueSuffix(":1");
         ratioSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -1221,6 +1233,7 @@ public:
         // Attack control (0.3 to 75 ms)
         addAndMakeVisible(attackSlider);
         attackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(attackSlider);
         attackSlider.setRange(0.3, 75.0, 0.1);
         attackSlider.setSkewFactorFromMidPoint(10.0);
         attackSlider.setTextValueSuffix(" ms");
@@ -1229,6 +1242,7 @@ public:
         // Release control (50 to 3000 ms)
         addAndMakeVisible(releaseSlider);
         releaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(releaseSlider);
         releaseSlider.setRange(50.0, 3000.0, 1.0);
         releaseSlider.setSkewFactorFromMidPoint(300.0);
         releaseSlider.setTextValueSuffix(" ms");
@@ -1237,6 +1251,7 @@ public:
         // Output/Makeup gain (-20 to +20 dB)
         addAndMakeVisible(outputSlider);
         outputSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(outputSlider);
         outputSlider.setRange(-20.0, 20.0, 0.1);
         outputSlider.setTextValueSuffix(" dB");
         outputSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -1244,6 +1259,7 @@ public:
         // Mix control (0 to 100%)
         addAndMakeVisible(mixSlider);
         mixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        LunaSliderStyle::configureKnob(mixSlider);
         mixSlider.setRange(0.0, 100.0, 1.0);
         mixSlider.setTextValueSuffix(" %");
         mixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);

@@ -335,6 +335,10 @@ std::unique_ptr<juce::Slider> EnhancedCompressorEditor::createKnob(const juce::S
     slider->setValue(defaultValue);
     slider->setTextValueSuffix(suffix);
     slider->setDoubleClickReturnValue(true, defaultValue);
+
+    // Professional knob behavior from shared Luna settings
+    LunaSliderStyle::configureKnob(*slider);
+
     return slider;
 }
 

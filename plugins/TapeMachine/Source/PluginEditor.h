@@ -6,6 +6,7 @@
 #include "GUI/TapeMachineLookAndFeel.h"
 #include "GUI/TapeReelComponent.h"
 #include "../../shared/SupportersOverlay.h"
+#include "../../shared/LunaLookAndFeel.h"
 
 //==============================================================================
 // Main Plugin Editor

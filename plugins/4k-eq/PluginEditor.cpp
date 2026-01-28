@@ -799,8 +799,8 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
     // Enable mouse wheel control for fine adjustments
     slider.setScrollWheelEnabled(true);
 
-    // Use default JUCE slider behavior (matches TapeMachine/Multi-Comp)
-    // Ctrl/Cmd+drag enables velocity-based fine control
+    // Professional knob behavior from shared Luna settings
+    LunaSliderStyle::configureKnob(slider);
 
     // Color code knobs like the reference image
     if (label.contains("GAIN")) {

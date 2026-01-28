@@ -356,6 +356,7 @@ void ConvolutionReverbEditor::setupSlider(juce::Slider& slider, juce::Label& lab
                                       const juce::String& labelText, const juce::String& suffix)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    LunaSliderStyle::configureKnob(slider);
     slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
                                juce::MathConstants<float>::pi * 2.75f, true);
