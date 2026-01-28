@@ -66,6 +66,60 @@ struct LEDMeterStyle
     }
 };
 
+//==============================================================================
+/**
+ * Standard slider/knob configuration for Luna Co. Audio plugins
+ * Use these to ensure consistent knob behavior across all plugins
+ */
+struct LunaSliderStyle
+{
+    // Velocity mode parameters for professional knob feel
+    static constexpr double sensitivity = 0.5;    // Lower = slower, more controlled movement
+    static constexpr int threshold = 2;           // Ignore tiny mouse movements (reduces jitter)
+    static constexpr double fineControlOffset = 0.1;  // 10x finer when Ctrl/Cmd held
+    static constexpr bool allowModifierToggle = true; // Allow Ctrl/Cmd for fine mode
+
+    /**
+     * Configure a rotary slider with professional Luna knob behavior
+     * Call this after setting slider style to RotaryVerticalDrag
+     *
+     * Features:
+     * - 50% slower base movement for precise control
+     * - Jitter filtering (ignores tiny mouse movements)
+     * - 10x fine control with Ctrl/Cmd modifier
+     *
+     * @param slider The slider to configure
+     */
+    static void configureKnob(juce::Slider& slider)
+    {
+        slider.setVelocityBasedMode(true);
+        slider.setVelocityModeParameters(sensitivity, threshold, fineControlOffset, allowModifierToggle);
+    }
+
+    /**
+     * Configure a rotary slider with custom sensitivity
+     * @param slider The slider to configure
+     * @param customSensitivity Sensitivity multiplier (0.3 = slower, 1.0 = default JUCE)
+     */
+    static void configureKnob(juce::Slider& slider, double customSensitivity)
+    {
+        slider.setVelocityBasedMode(true);
+        slider.setVelocityModeParameters(customSensitivity, threshold, fineControlOffset, allowModifierToggle);
+    }
+
+    /**
+     * Full setup for a rotary knob with Luna defaults
+     * Sets style, enables scroll wheel, and configures velocity mode
+     * @param slider The slider to setup
+     */
+    static void setupRotaryKnob(juce::Slider& slider)
+    {
+        slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+        slider.setScrollWheelEnabled(true);
+        configureKnob(slider);
+    }
+};
+
 class LunaLookAndFeel : public juce::LookAndFeel_V4
 {
 public:

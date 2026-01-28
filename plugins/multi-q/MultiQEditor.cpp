@@ -1366,8 +1366,7 @@ void MultiQEditor::setupBritishControls()
         slider->setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
                                      juce::MathConstants<float>::pi * 2.75f, true);
         slider->setScrollWheelEnabled(true);
-        slider->setVelocityBasedMode(true);
-        slider->setVelocityModeParameters(1.0, 1, 0.1, false);
+        LunaSliderStyle::configureKnob(*slider);
         slider->setColour(juce::Slider::rotarySliderFillColourId, color);
         slider->setName(name);
         slider->setLookAndFeel(&fourKLookAndFeel);
