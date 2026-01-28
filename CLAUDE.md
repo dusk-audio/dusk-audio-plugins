@@ -25,9 +25,43 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 
 **Release Process:**
 1. Ensure GitHub Actions build passes for all platforms
-2. Create GitHub Release with tag matching `{slug}-v{version}` (e.g., `multi-comp-v1.1.0`)
-3. GitHub Actions automatically uploads platform artifacts to the release
-4. Website download links automatically point to the correct release
+2. Create release tag with `git tag -a {slug}-v{version} -m "message"` (e.g., `4k-eq-v1.0.5`)
+3. Push tag with `git push origin {tag-name}` to trigger release build
+4. GitHub Actions automatically uploads platform artifacts to the release
+5. Website download links automatically point to the correct release
+
+**IMPORTANT - Release Notes:**
+When creating release tags, ALWAYS include a detailed changelog in the tag message. The tag message becomes the release description on GitHub. Use this format:
+
+```bash
+git tag -a {slug}-v{version} -m "{Plugin Name} v{version}
+
+## What's New
+- Feature or fix description 1
+- Feature or fix description 2
+
+## Bug Fixes
+- Fix description with issue reference (#XX)
+
+## Technical Changes
+- Any build/infrastructure changes users should know about
+"
+```
+
+Example:
+```bash
+git tag -a 4k-eq-v1.0.5 -m "4K EQ v1.0.5
+
+## Bug Fixes
+- Fixed crash on Windows 11 when loading plugin in Ableton (#10)
+- Fixed crash on macOS Catalina due to deployment target (#11)
+- Added null safety checks in timer callback
+
+## Technical Changes
+- Static MSVC runtime linking for better Windows compatibility
+- macOS deployment target set to 10.15 (Catalina)
+"
+```
 
 **Updating Website for New Version:**
 When you release a new plugin version, you only need to:
