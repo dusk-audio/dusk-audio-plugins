@@ -1619,7 +1619,11 @@ void EnhancedCompressorEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
+#ifdef JucePlugin_VersionString
         supportersOverlay = std::make_unique<SupportersOverlay>("Multi-Comp", JucePlugin_VersionString);
+#else
+        supportersOverlay = std::make_unique<SupportersOverlay>("Multi-Comp", "1.0.0");
+#endif
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }

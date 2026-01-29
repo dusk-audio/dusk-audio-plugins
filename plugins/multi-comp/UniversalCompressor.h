@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <memory>
+#include "../shared/DryWetMixer.h"
 
 enum class CompressorMode : int
 {
@@ -227,22 +228,14 @@ private:
     bool primeRmsAccumulators = false;  // Flag to instantly prime accumulators on mode change
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
-    juce::AudioBuffer<float> dryBuffer;           // For parallel compression mix (1x rate)
-    juce::AudioBuffer<float> oversampledDryBuffer; // For parallel compression mix at oversampled rate
     juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal
     juce::AudioBuffer<float> linkedSidechain;     // Stereo-linked sidechain signal
     juce::AudioBuffer<float> externalSidechain;   // External sidechain input buffer
     juce::AudioBuffer<float> interpolatedSidechain;  // Pre-interpolated sidechain for oversampling
 
-    // Simple ring buffer for dry signal delay compensation when oversampling is enabled
-    // This ensures dry and wet signals are time-aligned when mixing for parallel compression
-    // Using a simple implementation rather than JUCE DelayLine for explicit control
-    static constexpr int MAX_DRY_DELAY = 128;  // Max samples of delay (enough for 4x oversampling)
-    std::array<std::array<float, MAX_DRY_DELAY>, 2> dryDelayBuffer{};  // Ring buffer per channel (stereo max)
-    int dryDelayWritePos{0};           // Current write position in ring buffer
-    int currentDryDelayInSamples{0};   // Current oversampling latency for dry signal delay
-    int preparedDelayLineChannels{0};  // Number of channels prepared for
-    bool delayLineReady{false};        // Safety flag: true only after successful prepare()
+    // Phase-coherent dry/wet mixer (prevents comb filtering with oversampling)
+    // Replaces manual dryBuffer, oversampledDryBuffer, and delay line implementation
+    LunaAudio::DryWetMixer dryWetMixer;
 
     // Pre-smoothed gain buffer for auto-makeup optimization
     alignas(64) std::array<float, 8192> smoothedGainBuffer{};
