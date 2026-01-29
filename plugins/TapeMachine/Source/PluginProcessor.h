@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include <memory>
 #include <array>
+#include "../../shared/DryWetMixer.h"
 
 class ImprovedTapeEmulation;
 class WowFlutterProcessor;  // Forward declaration for shared wow/flutter
@@ -133,8 +134,8 @@ private:
     std::atomic<float>* autoCalParam = nullptr;
     std::atomic<float>* mixParam = nullptr;
 
-    // Dry buffer for wet/dry mixing
-    juce::AudioBuffer<float> dryBuffer;
+    // Phase-coherent dry/wet mixer (prevents comb filtering with oversampling)
+    LunaAudio::DryWetMixer dryWetMixer;
 
     void updateFilters();
 
