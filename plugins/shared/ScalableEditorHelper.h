@@ -93,10 +93,9 @@ public:
                                handleSize, handleSize);
         }
 
-        // Calculate scale factor based on current size vs base size
-        float widthScale = static_cast<float>(parentEditor->getWidth()) / baseWidth;
-        float heightScale = static_cast<float>(parentEditor->getHeight()) / baseHeight;
-        scaleFactor = juce::jmin(widthScale, heightScale);
+        // Calculate scale factor based on WIDTH only
+        // This allows height to change (e.g., collapsible sections) without affecting scale
+        scaleFactor = static_cast<float>(parentEditor->getWidth()) / baseWidth;
     }
 
     /**

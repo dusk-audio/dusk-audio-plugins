@@ -5,12 +5,25 @@
 
 //==============================================================================
 /**
+ * Display scale modes for EQ graph Y-axis
+ */
+enum class DisplayScaleMode {
+    Linear12dB = 0,   // ±12 dB range (fine adjustments)
+    Linear24dB,       // ±24 dB range (default)
+    Linear30dB,       // ±30 dB range
+    Linear60dB,       // ±60 dB range (full view)
+    Warped            // Logarithmic/warped scale
+};
+
+//==============================================================================
+/**
  * EQ Curve Display Component
  *
  * Displays frequency response graph showing:
  * - Individual band curves in their respective colors
  * - Combined frequency response as white/cream line
  * - Grid lines at standard frequencies
+ * - Selectable dB range for visualization
  */
 class EQCurveDisplay : public juce::Component,
                        private juce::Timer
@@ -22,6 +35,9 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void timerCallback() override;
+
+    /** Set the display scale mode for the Y-axis dB range */
+    void setDisplayScaleMode(DisplayScaleMode mode);
 
 private:
     FourKEQ& audioProcessor;
@@ -38,8 +54,11 @@ private:
     // Frequency range
     static constexpr float minFreq = 20.0f;
     static constexpr float maxFreq = 20000.0f;
-    static constexpr float minDB = -25.0f;
-    static constexpr float maxDB = 25.0f;
+
+    // Display scale configuration
+    DisplayScaleMode scaleMode = DisplayScaleMode::Linear24dB;
+    float minDisplayDB = -24.0f;
+    float maxDisplayDB = 24.0f;
 
     // Cached parameter values for change detection
     struct CachedParams {
