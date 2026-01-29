@@ -733,3 +733,64 @@ jobs:
           body_path: release_body.md
           draft: false
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
+
+      - name: Update Website Version
+        if: ${{ needs.setup.outputs.plugin_name != 'All Plugins' }}
+        env:
+          RELEASE_NAME: ${{ needs.setup.outputs.release_name }}
+          PLUGIN_VERSION: ${{ needs.setup.outputs.plugin_version }}
+          GH_TOKEN: ${{ secrets.WEBSITE_PAT }}
+        run: |
+          # Skip if no PAT configured or no version
+          if [ -z "$GH_TOKEN" ] || [ -z "$PLUGIN_VERSION" ]; then
+            echo "Skipping website update (no PAT or version)"
+            exit 0
+          fi
+
+          echo "Updating website with $RELEASE_NAME version $PLUGIN_VERSION"
+
+          # Clone website repo
+          git clone https://x-access-token:${GH_TOKEN}@github.com/luna-co-software/lunacoaudio.github.io.git website
+          cd website
+
+          # Update version in plugins.yml using sed
+          # Format: "  version: X.X.X" under the plugin entry
+          PLUGIN_SLUG="$RELEASE_NAME"
+
+          # Use Python for reliable YAML update (safer than sed)
+          python3 << EOF
+          import yaml
+
+          with open('_data/plugins.yml', 'r') as f:
+              data = yaml.safe_load(f)
+
+          # Find and update the plugin
+          updated = False
+          for plugin in data.get('plugins', data) if isinstance(data, dict) else data:
+              if isinstance(plugin, dict) and plugin.get('slug') == '$PLUGIN_SLUG':
+                  plugin['version'] = '$PLUGIN_VERSION'
+                  updated = True
+                  print(f"Updated {plugin.get('name', '$PLUGIN_SLUG')} to version $PLUGIN_VERSION")
+                  break
+
+          if updated:
+              with open('_data/plugins.yml', 'w') as f:
+                  yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+          else:
+              print(f"Warning: Plugin '$PLUGIN_SLUG' not found in plugins.yml")
+          EOF
+
+          # Check if there are changes
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add _data/plugins.yml
+          git commit -m "Update $RELEASE_NAME to v$PLUGIN_VERSION
+
+          Automated update from release workflow."
+          git push
