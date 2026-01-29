@@ -113,6 +113,36 @@ void EQCurveDisplay::resized()
     repaint();  // Force immediate repaint when bounds change
 }
 
+void EQCurveDisplay::setDisplayScaleMode(DisplayScaleMode mode)
+{
+    scaleMode = mode;
+    switch (mode) {
+        case DisplayScaleMode::Linear12dB:
+            minDisplayDB = -12.0f;
+            maxDisplayDB = 12.0f;
+            break;
+        case DisplayScaleMode::Linear24dB:
+            minDisplayDB = -24.0f;
+            maxDisplayDB = 24.0f;
+            break;
+        case DisplayScaleMode::Linear30dB:
+            minDisplayDB = -30.0f;
+            maxDisplayDB = 30.0f;
+            break;
+        case DisplayScaleMode::Linear60dB:
+            minDisplayDB = -60.0f;
+            maxDisplayDB = 60.0f;
+            break;
+        case DisplayScaleMode::Warped:
+            // Warped mode uses ±30dB but with logarithmic scaling
+            minDisplayDB = -30.0f;
+            maxDisplayDB = 30.0f;
+            break;
+    }
+    needsRepaint = true;
+    repaint();
+}
+
 void EQCurveDisplay::timerCallback()
 {
     // Check if parameters have changed
@@ -210,7 +240,19 @@ float EQCurveDisplay::xToFreq(float x, const juce::Rectangle<float>& area) const
 float EQCurveDisplay::dbToY(float db, const juce::Rectangle<float>& area) const
 {
     // dB to Y position (inverted - higher dB = lower Y)
-    float normalized = (db - minDB) / (maxDB - minDB);
+    // For warped mode, apply logarithmic scaling for better small adjustment visualization
+    if (scaleMode == DisplayScaleMode::Warped)
+    {
+        // Warped scaling: compress middle range, expand extremes
+        float sign = (db >= 0.0f) ? 1.0f : -1.0f;
+        float absDb = std::abs(db);
+        // Apply sqrt scaling for smoother transition
+        float warpedDb = sign * std::sqrt(absDb / maxDisplayDB) * maxDisplayDB;
+        float normalized = (warpedDb - minDisplayDB) / (maxDisplayDB - minDisplayDB);
+        return area.getBottom() - area.getHeight() * normalized;
+    }
+
+    float normalized = (db - minDisplayDB) / (maxDisplayDB - minDisplayDB);
     return area.getBottom() - area.getHeight() * normalized;
 }
 
@@ -228,10 +270,22 @@ void EQCurveDisplay::drawGrid(juce::Graphics& g, const juce::Rectangle<float>& a
         g.drawLine(x, area.getY(), x, area.getBottom(), isMajor ? 1.0f : 0.5f);
     }
 
-    // Horizontal grid lines at key dB levels (±25dB range with headroom beyond ±20dB knobs)
-    const float dbLines[] = { -20.0f, -10.0f, 0.0f, 10.0f, 20.0f };
+    // Horizontal grid lines - calculate step based on scale mode
+    float dbStep;
+    switch (scaleMode) {
+        case DisplayScaleMode::Linear12dB:
+            dbStep = 6.0f;
+            break;
+        case DisplayScaleMode::Linear60dB:
+            dbStep = 20.0f;
+            break;
+        default:
+            dbStep = 10.0f;
+            break;
+    }
 
-    for (float db : dbLines)
+    // Draw grid lines from min to max
+    for (float db = minDisplayDB; db <= maxDisplayDB; db += dbStep)
     {
         float y = dbToY(db, area);
         bool isZero = (std::abs(db) < 0.1f);
@@ -254,15 +308,34 @@ void EQCurveDisplay::drawGrid(juce::Graphics& g, const juce::Rectangle<float>& a
     drawFreqLabel(1000.0f, "1k");
     drawFreqLabel(10000.0f, "10k");
 
-    // dB labels on left
+    // dB labels on left - show at appropriate intervals
     auto drawDbLabel = [&](float db, const juce::String& text) {
         float y = dbToY(db, area);
         g.drawText(text, 4, static_cast<int>(y) - 7, 24, 14, juce::Justification::right);
     };
 
-    drawDbLabel(20.0f, "+20");
+    // Always show 0dB, then show max and min
     drawDbLabel(0.0f, "0");
-    drawDbLabel(-20.0f, "-20");
+
+    if (scaleMode == DisplayScaleMode::Linear12dB)
+    {
+        drawDbLabel(12.0f, "+12");
+        drawDbLabel(-12.0f, "-12");
+    }
+    else if (scaleMode == DisplayScaleMode::Linear60dB)
+    {
+        drawDbLabel(60.0f, "+60");
+        drawDbLabel(-60.0f, "-60");
+        drawDbLabel(30.0f, "+30");
+        drawDbLabel(-30.0f, "-30");
+    }
+    else
+    {
+        // ±24 or ±30
+        float labelDb = (scaleMode == DisplayScaleMode::Linear24dB) ? 20.0f : 30.0f;
+        drawDbLabel(labelDb, "+" + juce::String(static_cast<int>(labelDb)));
+        drawDbLabel(-labelDb, juce::String(static_cast<int>(-labelDb)));
+    }
 }
 
 void EQCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<float>& area,
@@ -279,7 +352,7 @@ void EQCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<floa
         float db = getMagnitude(freq);
 
         // Clamp dB to visible range (strict clamping to prevent drawing outside bounds)
-        db = juce::jlimit(minDB, maxDB, db);
+        db = juce::jlimit(minDisplayDB, maxDisplayDB, db);
 
         float y = dbToY(db, area);
 
@@ -314,7 +387,7 @@ void EQCurveDisplay::drawCombinedCurve(juce::Graphics& g, const juce::Rectangle<
         float db = calculateCombinedResponse(freq);
 
         // Clamp dB to visible range (strict clamping to prevent drawing outside bounds)
-        db = juce::jlimit(minDB, maxDB, db);
+        db = juce::jlimit(minDisplayDB, maxDisplayDB, db);
 
         float y = dbToY(db, area);
 
