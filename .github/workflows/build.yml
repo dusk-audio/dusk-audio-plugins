@@ -38,6 +38,7 @@ jobs:
       plugin_name: ${{ steps.parse.outputs.name }}
       release_name: ${{ steps.parse.outputs.release_name }}
       is_release: ${{ steps.parse.outputs.is_release }}
+      plugin_version: ${{ steps.parse.outputs.version }}
     steps:
       - name: Parse tag for plugin selection
         id: parse
@@ -50,9 +51,14 @@ jobs:
           NAME="All Plugins"
           RELEASE_NAME="LunaCoAudio-Plugins"
           IS_RELEASE="false"
+          VERSION=""
 
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             IS_RELEASE="true"
+            # Extract version from tag (e.g., "4k-eq-v1.0.5" -> "1.0.5")
+            VERSION=$(echo "$TAG" | sed 's/.*-v//')
+            echo "Extracted version from tag: $VERSION"
+
             if [[ "$TAG" == 4k-eq-v* ]]; then
               TARGET="FourKEQ_All"
               NAME="4K EQ"
@@ -89,7 +95,8 @@ jobs:
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
           echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
-          echo "Building: $NAME (target: ${TARGET:-all})"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building: $NAME (target: ${TARGET:-all}) version: ${VERSION:-default}"
 
   build-linux:
     needs: setup
@@ -168,12 +175,16 @@ jobs:
             mesa-common-dev
 
       - name: Configure CMake
+        env:
+          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
+        env:
+          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
@@ -280,12 +291,16 @@ jobs:
           ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
       - name: Configure CMake
+        env:
+          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
           cmake -B build `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
       - name: Build plugins
+        env:
+          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
           $target = "${{ needs.setup.outputs.plugin_target }}"
           if ($target) {
@@ -376,6 +391,8 @@ jobs:
           ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
       - name: Configure CMake (Universal Binary)
+        env:
+          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
@@ -384,6 +401,8 @@ jobs:
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
       - name: Build plugins
+        env:
+          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
