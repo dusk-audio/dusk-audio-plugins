@@ -70,9 +70,14 @@ struct LEDMeterStyle
 /**
  * Custom slider with proper Cmd/Ctrl+drag fine control
  *
- * JUCE's built-in velocity mode hides the cursor and conflicts with sensitivity
- * adjustments. This class uses absolute drag mode with adjustable sensitivity
- * for true fine control where holding Cmd/Ctrl reduces drag sensitivity by 10x.
+ * Features:
+ * - Cmd/Ctrl+drag reduces sensitivity by 10x for fine adjustments
+ * - Smooth transition when modifier is pressed/released mid-drag (no jumps)
+ * - Cmd/Ctrl+scroll wheel for fine wheel control
+ * - Disables JUCE velocity mode to prevent cursor hiding
+ *
+ * Uses incremental drag tracking instead of JUCE's default which calculates
+ * from mouseDown origin. This ensures seamless modifier key transitions.
  */
 class LunaSlider : public juce::Slider
 {
@@ -97,44 +102,129 @@ public:
 private:
     void initLunaSlider()
     {
-        // MUST disable velocity mode - it hides cursor and conflicts with sensitivity
+        // MUST disable velocity mode - it hides cursor and conflicts with our tracking
         setVelocityBasedMode(false);
-        setMouseDragSensitivity(normalSensitivity);
     }
 
 public:
-
-    void mouseDrag(const juce::MouseEvent& e) override
-    {
-        // Check for Cmd (macOS) or Ctrl (Windows/Linux) modifier
-        bool fineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
-
-        if (fineMode != wasInFineMode)
-        {
-            wasInFineMode = fineMode;
-            // Update drag sensitivity: normal = 300 pixels for full range, fine = 3000 pixels
-            setMouseDragSensitivity(fineMode ? fineSensitivity : normalSensitivity);
-        }
-
-        juce::Slider::mouseDrag(e);
-    }
-
     void mouseDown(const juce::MouseEvent& e) override
     {
-        // Ensure velocity mode stays off (in case configureKnob was called)
+        // Ensure velocity mode stays off
         setVelocityBasedMode(false);
 
-        // Reset fine mode state on new drag
+        // Initialize incremental drag tracking
+        lastDragValue = getValue();
+        lastDragY = e.position.y;
+        lastDragX = e.position.x;
         wasInFineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
-        setMouseDragSensitivity(wasInFineMode ? fineSensitivity : normalSensitivity);
+
         juce::Slider::mouseDown(e);
     }
 
-    // Sensitivity values (pixels for full range drag)
-    static constexpr int normalSensitivity = 300;   // Normal: 300 pixels for full range
-    static constexpr int fineSensitivity = 3000;    // Fine: 3000 pixels (10x finer)
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        if (!isEnabled())
+        {
+            juce::Slider::mouseDrag(e);
+            return;
+        }
+
+        bool fineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
+        int sensitivity = fineMode ? fineSensitivity : normalSensitivity;
+
+        // Calculate pixel movement since last event
+        double pixelDiff = 0.0;
+        auto style = getSliderStyle();
+
+        if (style == RotaryVerticalDrag || style == Rotary ||
+            style == LinearVertical || style == LinearBarVertical)
+        {
+            pixelDiff = lastDragY - e.position.y;  // Up = increase
+        }
+        else if (style == RotaryHorizontalDrag ||
+                 style == LinearHorizontal || style == LinearBar)
+        {
+            pixelDiff = e.position.x - lastDragX;  // Right = increase
+        }
+        else if (style == RotaryHorizontalVerticalDrag)
+        {
+            pixelDiff = (e.position.x - lastDragX) + (lastDragY - e.position.y);
+        }
+        else
+        {
+            // Fall back to base class for other styles
+            juce::Slider::mouseDrag(e);
+            return;
+        }
+
+        // Calculate and apply value change
+        double range = getMaximum() - getMinimum();
+        double valueDelta = (pixelDiff / sensitivity) * range;
+        double newValue = juce::jlimit(getMinimum(), getMaximum(),
+                                        lastDragValue + valueDelta);
+
+        setValue(newValue, juce::sendNotificationSync);
+
+        // Update reference for next drag event (key to seamless modifier transitions)
+        lastDragValue = getValue();
+        lastDragY = e.position.y;
+        lastDragX = e.position.x;
+        wasInFineMode = fineMode;
+    }
+
+    void mouseWheelMove(const juce::MouseEvent& e,
+                        const juce::MouseWheelDetails& wheel) override
+    {
+        if (!isEnabled() || !isScrollWheelEnabled())
+        {
+            juce::Slider::mouseWheelMove(e, wheel);
+            return;
+        }
+
+        bool fineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
+
+        // Determine wheel direction (prefer Y, fall back to X for horizontal scroll)
+        float wheelDelta = std::abs(wheel.deltaY) > std::abs(wheel.deltaX)
+                           ? wheel.deltaY
+                           : -wheel.deltaX;
+
+        if (wheel.isReversed)
+            wheelDelta = -wheelDelta;
+
+        // Normal: 15% of range per wheel unit | Fine: 1.5% (10x finer)
+        double sensitivity = fineMode ? wheelFineSensitivity : wheelNormalSensitivity;
+        double proportionDelta = wheelDelta * sensitivity;
+
+        // Apply to current position
+        double currentProportion = valueToProportionOfLength(getValue());
+        double newProportion = juce::jlimit(0.0, 1.0,
+                                            currentProportion + proportionDelta);
+        double newValue = proportionOfLengthToValue(newProportion);
+
+        // Ensure minimum interval step for discrete sliders
+        double interval = getInterval();
+        if (interval > 0)
+        {
+            double diff = newValue - getValue();
+            if (std::abs(diff) > 0.0 && std::abs(diff) < interval)
+                newValue = getValue() + interval * (diff < 0 ? -1.0 : 1.0);
+        }
+
+        setValue(snapValue(newValue, notDragging), juce::sendNotificationSync);
+    }
+
+    // Sensitivity constants
+    static constexpr int normalSensitivity = 300;    // Pixels for full range drag
+    static constexpr int fineSensitivity = 3000;     // Fine: 10x more pixels needed
+
+    static constexpr double wheelNormalSensitivity = 0.15;   // Proportion per wheel unit
+    static constexpr double wheelFineSensitivity = 0.015;    // Fine: 10x smaller steps
 
 private:
+    // Incremental drag tracking state
+    double lastDragValue = 0.0;
+    float lastDragY = 0.0f;
+    float lastDragX = 0.0f;
     bool wasInFineMode = false;
 };
 
