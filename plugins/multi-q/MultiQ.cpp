@@ -98,6 +98,17 @@ MultiQ::MultiQ()
     pultecMidHighFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighFreq);
     pultecMidHighPeakParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighPeak);
 
+    // Dynamic mode per-band parameters
+    for (int i = 0; i < NUM_BANDS; ++i)
+    {
+        bandDynEnabledParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynEnabled(i + 1));
+        bandDynThresholdParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynThreshold(i + 1));
+        bandDynAttackParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynAttack(i + 1));
+        bandDynReleaseParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynRelease(i + 1));
+        bandDynRangeParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynRange(i + 1));
+    }
+    dynDetectionModeParam = parameters.getRawParameterValue(ParamIDs::dynDetectionMode);
+
     // Add global parameter listeners
     parameters.addParameterListener(ParamIDs::hqEnabled, this);
     parameters.addParameterListener(ParamIDs::qCoupleMode, this);
@@ -226,6 +237,10 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     pultecEQ.prepare(currentSampleRate, samplesPerBlock * (hqModeEnabled ? 2 : 1), 2);
     pultecParamsChanged.store(true);
 
+    // Prepare Dynamic EQ processor
+    dynamicEQ.prepare(currentSampleRate, 2);
+    dynamicParamsChanged.store(true);
+
     // Reset analyzer
     analyzerFifo.reset();
     std::fill(analyzerMagnitudes.begin(), analyzerMagnitudes.end(), -100.0f);
@@ -281,8 +296,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     // Check EQ type (Digital, British, or Tube)
     auto eqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
 
-    // Update filters if needed (only for Digital mode)
-    if (eqType == EQType::Digital && filtersNeedUpdate.exchange(false))
+    // Update filters if needed (for Digital and Dynamic modes)
+    if ((eqType == EQType::Digital || eqType == EQType::Dynamic) && filtersNeedUpdate.exchange(false))
         updateAllFilters();
 
     // Update British EQ parameters if needed
@@ -474,6 +489,90 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             std::memcpy(processBlock.getChannelPointer(ch),
                        tempBuffer.getReadPointer(static_cast<int>(ch)),
                        sizeof(float) * processBlock.getNumSamples());
+        }
+    }
+    else if (eqType == EQType::Dynamic)
+    {
+        // Dynamic EQ mode: Digital EQ with per-band dynamics
+        // Update dynamic processor parameters
+        for (int band = 0; band < NUM_BANDS; ++band)
+        {
+            DynamicEQProcessor::BandParameters dynParams;
+            dynParams.enabled = safeGetParam(bandDynEnabledParams[static_cast<size_t>(band)], 0.0f) > 0.5f;
+            dynParams.threshold = safeGetParam(bandDynThresholdParams[static_cast<size_t>(band)], 0.0f);
+            dynParams.attack = safeGetParam(bandDynAttackParams[static_cast<size_t>(band)], 10.0f);
+            dynParams.release = safeGetParam(bandDynReleaseParams[static_cast<size_t>(band)], 100.0f);
+            dynParams.range = safeGetParam(bandDynRangeParams[static_cast<size_t>(band)], 12.0f);
+            dynamicEQ.setBandParameters(band, dynParams);
+
+            // Update detection filter to match band frequency
+            float bandFreq = safeGetParam(bandFreqParams[static_cast<size_t>(band)], 1000.0f);
+            float bandQ = safeGetParam(bandQParams[static_cast<size_t>(band)], 0.71f);
+            dynamicEQ.updateDetectionFilter(band, bandFreq, bandQ);
+        }
+
+        // Check which bands are enabled
+        std::array<bool, NUM_BANDS> bandEnabled{};
+        for (int i = 0; i < NUM_BANDS; ++i)
+            bandEnabled[static_cast<size_t>(i)] = safeGetParam(bandEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
+
+        // Process each sample through the filter chain with dynamics
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float sampleL = procL[i];
+            float sampleR = procR[i];
+
+            // Determine which channel(s) to process based on mode
+            bool processLeft = (procMode == ProcessingMode::Stereo ||
+                               procMode == ProcessingMode::Left ||
+                               procMode == ProcessingMode::Mid);
+            bool processRight = (procMode == ProcessingMode::Stereo ||
+                                procMode == ProcessingMode::Right ||
+                                procMode == ProcessingMode::Side);
+
+            // Band 1: HPF (no dynamics for filters)
+            if (bandEnabled[0])
+            {
+                if (processLeft) sampleL = hpfFilter.processSampleL(sampleL);
+                if (processRight) sampleR = hpfFilter.processSampleR(sampleR);
+            }
+
+            // Bands 2-7: Shelf and Parametric with dynamics
+            for (int band = 1; band < 7; ++band)
+            {
+                if (bandEnabled[static_cast<size_t>(band)])
+                {
+                    auto& filter = eqFilters[static_cast<size_t>(band - 1)];
+
+                    // Get detection level for dynamics
+                    float detectionL = dynamicEQ.processDetection(band, sampleL, 0);
+                    float detectionR = dynamicEQ.processDetection(band, sampleR, 1);
+
+                    // Process envelope and get dynamic gain
+                    float dynGainDbL = dynamicEQ.processBand(band, detectionL, 0);
+                    float dynGainDbR = dynamicEQ.processBand(band, detectionR, 1);
+
+                    // Apply static EQ filter
+                    if (processLeft) sampleL = filter.processSampleL(sampleL);
+                    if (processRight) sampleR = filter.processSampleR(sampleR);
+
+                    // Apply dynamic gain (convert dB to linear)
+                    float dynGainL = juce::Decibels::decibelsToGain(dynGainDbL);
+                    float dynGainR = juce::Decibels::decibelsToGain(dynGainDbR);
+                    if (processLeft) sampleL *= dynGainL;
+                    if (processRight) sampleR *= dynGainR;
+                }
+            }
+
+            // Band 8: LPF (no dynamics for filters)
+            if (bandEnabled[7])
+            {
+                if (processLeft) sampleL = lpfFilter.processSampleL(sampleL);
+                if (processRight) sampleR = lpfFilter.processSampleR(sampleR);
+            }
+
+            procL[i] = sampleL;
+            procR[i] = sampleR;
         }
     }
     else
@@ -1113,7 +1212,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::eqType, 1),
         "EQ Type",
-        juce::StringArray{"Digital", "British", "Tube"},
+        juce::StringArray{"Digital", "British", "Tube", "Dynamic"},
         0  // Digital by default
     ));
 
@@ -1413,6 +1512,81 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         "Pultec Mid High Peak",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
+    ));
+
+    // Dynamic EQ mode parameters (per-band)
+    for (int i = 0; i < NUM_BANDS; ++i)
+    {
+        int bandNum = i + 1;
+
+        // Per-band dynamics enable
+        params.push_back(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID(ParamIDs::bandDynEnabled(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Dynamics Enabled",
+            false
+        ));
+
+        // Threshold (-60 to +12 dB)
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID(ParamIDs::bandDynThreshold(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Threshold",
+            juce::NormalisableRange<float>(-60.0f, 12.0f, 0.1f),
+            0.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")
+        ));
+
+        // Attack (0.1 to 500 ms, logarithmic)
+        auto attackRange = juce::NormalisableRange<float>(
+            0.1f, 500.0f,
+            [](float start, float end, float normalised) {
+                return start * std::pow(end / start, normalised);
+            },
+            [](float start, float end, float value) {
+                return std::log(value / start) / std::log(end / start);
+            }
+        );
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID(ParamIDs::bandDynAttack(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Attack",
+            attackRange,
+            10.0f,
+            juce::AudioParameterFloatAttributes().withLabel("ms")
+        ));
+
+        // Release (10 to 5000 ms, logarithmic)
+        auto releaseRange = juce::NormalisableRange<float>(
+            10.0f, 5000.0f,
+            [](float start, float end, float normalised) {
+                return start * std::pow(end / start, normalised);
+            },
+            [](float start, float end, float value) {
+                return std::log(value / start) / std::log(end / start);
+            }
+        );
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID(ParamIDs::bandDynRelease(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Release",
+            releaseRange,
+            100.0f,
+            juce::AudioParameterFloatAttributes().withLabel("ms")
+        ));
+
+        // Range (0 to 24 dB)
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID(ParamIDs::bandDynRange(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Range",
+            juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f),
+            12.0f,
+            juce::AudioParameterFloatAttributes().withLabel("dB")
+        ));
+    }
+
+    // Global dynamic mode parameters
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::dynDetectionMode, 1),
+        "Dynamics Detection Mode",
+        juce::StringArray{"Peak", "RMS"},
+        0  // Peak by default
     ));
 
     return {params.begin(), params.end()};
