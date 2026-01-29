@@ -806,7 +806,8 @@ jobs:
           git add _data/plugins.yml
           if [ -f "_plugins/${PLUGIN_SLUG}.md" ] && ! git diff --quiet "_plugins/${PLUGIN_SLUG}.md"; then
             git add "_plugins/${PLUGIN_SLUG}.md"
-          fi          git commit -m "Update $RELEASE_NAME to v$PLUGIN_VERSION
+          fi
+          git commit -m "Update $RELEASE_NAME to v$PLUGIN_VERSION
 
           Automated update from release workflow."
           git push
