@@ -762,7 +762,11 @@ jobs:
           PLUGIN_MD="_plugins/${PLUGIN_SLUG}.md"
           if [ -f "$PLUGIN_MD" ]; then
             echo "Updating $PLUGIN_MD"
-            sed -i "s/^version: .*/version: \"$PLUGIN_VERSION\"/" "$PLUGIN_MD"
+            if grep -q "^version:" "$PLUGIN_MD"; then
+              sed -i "s/^version: .*/version: \"$PLUGIN_VERSION\"/" "$PLUGIN_MD"
+            else
+              echo "Warning: No version field found in $PLUGIN_MD"
+            fi
           else
             echo "Warning: $PLUGIN_MD not found"
           fi
@@ -799,8 +803,10 @@ jobs:
           # Commit and push
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add _data/plugins.yml "_plugins/${PLUGIN_SLUG}.md" 2>/dev/null || git add _data/plugins.yml
-          git commit -m "Update $RELEASE_NAME to v$PLUGIN_VERSION
+          git add _data/plugins.yml
+          if [ -f "_plugins/${PLUGIN_SLUG}.md" ] && ! git diff --quiet "_plugins/${PLUGIN_SLUG}.md"; then
+            git add "_plugins/${PLUGIN_SLUG}.md"
+          fi          git commit -m "Update $RELEASE_NAME to v$PLUGIN_VERSION
 
           Automated update from release workflow."
           git push
