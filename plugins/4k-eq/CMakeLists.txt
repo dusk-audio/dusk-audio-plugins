@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.15)
-project(FourKEQ VERSION 1.0.4)
+
+# Include version extraction module
+include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
+
+# Get version from git tag or CI environment (fallback to 1.0.5)
+set(FOURKEQ_DEFAULT_VERSION "1.0.5")
+get_plugin_version("4k-eq" FOURKEQ_VERSION)
+if(NOT FOURKEQ_VERSION OR FOURKEQ_VERSION STREQUAL "0.0.0")
+    set(FOURKEQ_VERSION ${FOURKEQ_DEFAULT_VERSION})
+endif()
+
+project(FourKEQ VERSION ${FOURKEQ_VERSION})
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -69,6 +80,9 @@ target_compile_definitions(FourKEQ
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
 )
+
+# Set version compile definitions (from git tag or CI)
+set_plugin_version_defines(FourKEQ ${FOURKEQ_VERSION})
 
 # Link with JUCE modules
 target_link_libraries(FourKEQ

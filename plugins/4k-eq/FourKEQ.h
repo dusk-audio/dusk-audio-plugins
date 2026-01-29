@@ -27,8 +27,12 @@ class FourKEQ : public juce::AudioProcessor,
 {
 public:
     //==============================================================================
-    // Version information
-    static constexpr const char* PLUGIN_VERSION = "1.0.2";
+    // Version information (injected from git tag via CMake)
+    #ifdef LUNA_PLUGIN_VERSION
+    static constexpr const char* PLUGIN_VERSION = LUNA_PLUGIN_VERSION;
+    #else
+    static constexpr const char* PLUGIN_VERSION = "1.0.5";  // Fallback
+    #endif
     static constexpr const char* BUILD_DATE = __DATE__;
     static constexpr const char* BUILD_TIME = __TIME__;
 

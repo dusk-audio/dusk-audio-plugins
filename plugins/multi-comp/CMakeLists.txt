@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MultiComp VERSION 1.2.0)
+# Include version extraction module
+include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
+
+# Get version from git tag or CI environment (fallback to 1.2.1)
+set(MULTICOMP_DEFAULT_VERSION "1.2.1")
+get_plugin_version("multi-comp" MULTICOMP_VERSION)
+if(NOT MULTICOMP_VERSION OR MULTICOMP_VERSION STREQUAL "0.0.0")
+    set(MULTICOMP_VERSION ${MULTICOMP_DEFAULT_VERSION})
+endif()
+
+project(MultiComp VERSION ${MULTICOMP_VERSION})
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -82,6 +92,9 @@ target_compile_definitions(MultiComp
         JUCE_VST3_CAN_REPLACE_VST2=1
         JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
 )
+
+# Set version compile definitions (from git tag or CI)
+set_plugin_version_defines(MultiComp ${MULTICOMP_VERSION})
 
 # Link libraries
 # Note: juce_recommended_lto_flags removed to avoid GCC 11 internal compiler errors

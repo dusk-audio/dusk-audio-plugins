@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(TapeMachine VERSION 1.0.0)
+# Include version extraction module
+include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
+
+# Get version from git tag or CI environment (fallback to 1.0.1)
+set(TAPEMACHINE_DEFAULT_VERSION "1.0.1")
+get_plugin_version("tapemachine" TAPEMACHINE_VERSION)
+if(NOT TAPEMACHINE_VERSION OR TAPEMACHINE_VERSION STREQUAL "0.0.0")
+    set(TAPEMACHINE_VERSION ${TAPEMACHINE_DEFAULT_VERSION})
+endif()
+
+project(TapeMachine VERSION ${TAPEMACHINE_VERSION})
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,6 +61,9 @@ target_compile_definitions(TapeMachine
         JUCE_REPORT_APP_USAGE=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_FORCE_USE_LEGACY_PARAM_IDS=1)
+
+# Set version compile definitions (from git tag or CI)
+set_plugin_version_defines(TapeMachine ${TAPEMACHINE_VERSION})
 
 # Link required JUCE modules
 target_link_libraries(TapeMachine
