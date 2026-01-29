@@ -14,6 +14,16 @@ When this skill is invoked, perform these steps:
 ### Step 1: Load the Fixes Registry
 Read the fixes registry from `.claude/fixes-registry.json` in the project root.
 
+**Error Handling:**
+- If the registry file doesn't exist, report this as an error:
+  ```
+  ERROR: Fixes registry not found at .claude/fixes-registry.json
+
+  This file tracks verified fixes to prevent regressions.
+  Run `/regression-check --add` to create the first entry and initialize the registry.
+  ```
+- If the registry file exists but is empty or malformed, report the parsing error and suggest checking the JSON syntax.
+
 ### Step 2: Run Verifications
 For each fix in the registry, run all its verification checks using the Grep tool:
 
