@@ -237,14 +237,14 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     eqCurveDisplay = std::make_unique<EQCurveDisplay>(audioProcessor);
     addAndMakeVisible(eqCurveDisplay.get());
 
-    // Collapse/expand button for EQ curve (in header, left of Brown/Black indicator)
-    curveCollapseButton.setButtonText("Hide Graph");
+    // Collapse/expand button for EQ curve (in header)
+    curveCollapseButton.setButtonText("Hide");
     curveCollapseButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
     curveCollapseButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffa0a0a0));
     curveCollapseButton.setTooltip("Show/Hide frequency response graph");
     curveCollapseButton.onClick = [this]() {
         isCurveCollapsed = !isCurveCollapsed;
-        curveCollapseButton.setButtonText(isCurveCollapsed ? "Show Graph" : "Hide Graph");
+        curveCollapseButton.setButtonText(isCurveCollapsed ? "Show" : "Hide");
         if (eqCurveDisplay)
             eqCurveDisplay->setVisible(!isCurveCollapsed);
 
@@ -253,6 +253,24 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
         setSize(getWidth(), newHeight);
     };
     addAndMakeVisible(curveCollapseButton);
+
+    // Display scale selector for EQ graph dB range
+    displayScaleSelector.addItem(juce::CharPointer_UTF8("\xc2\xb1" "12 dB"), 1);
+    displayScaleSelector.addItem(juce::CharPointer_UTF8("\xc2\xb1" "24 dB"), 2);
+    displayScaleSelector.addItem(juce::CharPointer_UTF8("\xc2\xb1" "30 dB"), 3);
+    displayScaleSelector.addItem(juce::CharPointer_UTF8("\xc2\xb1" "60 dB"), 4);
+    displayScaleSelector.addItem("Warped", 5);
+    displayScaleSelector.setSelectedId(2);  // Default to ±24dB
+    displayScaleSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff2a2a2a));
+    displayScaleSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffa0a0a0));
+    displayScaleSelector.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff404040));
+    displayScaleSelector.setTooltip("Select dB range for EQ graph visualization");
+    displayScaleSelector.onChange = [this]() {
+        if (eqCurveDisplay)
+            eqCurveDisplay->setDisplayScaleMode(
+                static_cast<DisplayScaleMode>(displayScaleSelector.getSelectedId() - 1));
+    };
+    addAndMakeVisible(displayScaleSelector);
 
     // Set initial bounds for EQ curve display so it's visible on first paint
     int curveX = 35;
@@ -321,11 +339,15 @@ void FourKEQEditor::paint(juce::Graphics& g)
 
     // EQ Type indicator badge - styled as muted amber/gold for Brown, dark grey for Black
     bool isBlack = eqTypeParam != nullptr && eqTypeParam->load() > 0.5f;
-    g.setFont(juce::Font(juce::FontOptions(11.0f).withStyle("Bold")));
+    g.setFont(juce::Font(juce::FontOptions(resizeHelper.scaled(11.0f)).withStyle("Bold")));
 
-    // Position badge to the left of the dropdown (dropdown is at getWidth() - 110, height 28)
-    // Vertically center badge (height 24) with dropdown: dropdown center = 15 + 14 = 29, badge Y = 29 - 12 = 17
-    auto eqTypeRect = juce::Rectangle<float>(static_cast<float>(getWidth()) - 190.0f, 17.0f, 70.0f, 24.0f);
+    // Position badge to the left of the dropdown (dropdown is at getWidth() - scaled(110))
+    // Badge positioned at getWidth() - scaled(190), matching scaled layout
+    float badgeX = static_cast<float>(getWidth()) - resizeHelper.scaled(190.0f);
+    float badgeY = resizeHelper.scaled(17.0f);
+    float badgeW = resizeHelper.scaled(70.0f);
+    float badgeH = resizeHelper.scaled(24.0f);
+    auto eqTypeRect = juce::Rectangle<float>(badgeX, badgeY, badgeW, badgeH);
 
     // Draw button background with subtle gradient
     juce::ColourGradient btnGradient(
@@ -351,8 +373,8 @@ void FourKEQEditor::paint(juce::Graphics& g)
         // Background is drawn by the EQCurveDisplay component itself
     }
 
-    // Main content area - adjust based on curve visibility
-    int contentTopOffset = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(170);
+    // Main content area - adjust based on curve visibility (matches contentY in resized())
+    int contentTopOffset = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(200);
     bounds = getLocalBounds().withTrimmedTop(contentTopOffset);  // Account for header + optional curve
 
     // Section X boundaries - scale proportionally to window width (same as resized())
@@ -491,28 +513,41 @@ void FourKEQEditor::resized()
     auto headerBounds = bounds.removeFromTop(resizeHelper.scaled(60));
     int centerX = headerBounds.getCentreX();
 
-    // A/B button (far left of header controls)
-    abButton.setBounds(centerX - resizeHelper.scaled(250), resizeHelper.scaled(15),
+    // A/B button (far left of header controls) - shifted left for more room
+    abButton.setBounds(centerX - resizeHelper.scaled(280), resizeHelper.scaled(15),
                        resizeHelper.scaled(32), resizeHelper.scaled(28));
 
-    // Preset selector (left of center)
-    presetSelector.setBounds(centerX - resizeHelper.scaled(210), resizeHelper.scaled(15),
+    // Preset selector (left of center) - shifted left
+    presetSelector.setBounds(centerX - resizeHelper.scaled(240), resizeHelper.scaled(15),
                             resizeHelper.scaled(200), resizeHelper.scaled(28));
 
-    // Oversampling selector (right of center) - wider for "Oversample:" text
-    oversamplingSelector.setBounds(centerX + resizeHelper.scaled(10), resizeHelper.scaled(15),
+    // Oversampling selector - shifted left
+    oversamplingSelector.setBounds(centerX - resizeHelper.scaled(20), resizeHelper.scaled(15),
                                    resizeHelper.scaled(130), resizeHelper.scaled(28));
 
     // EQ Type selector in header (upper right)
     eqTypeSelector.setBounds(getWidth() - resizeHelper.scaled(110), resizeHelper.scaled(15),
                             resizeHelper.scaled(95), resizeHelper.scaled(28));
 
-    // Position collapse button in header (left of Brown/Black indicator)
-    curveCollapseButton.setBounds(getWidth() - resizeHelper.scaled(290), resizeHelper.scaled(17),
-                                  resizeHelper.scaled(90), resizeHelper.scaled(24));
+    // Position collapse button - shifted left for more room
+    curveCollapseButton.setBounds(centerX + resizeHelper.scaled(120), resizeHelper.scaled(17),
+                                  resizeHelper.scaled(70), resizeHelper.scaled(24));
+
+    // Display scale selector - positioned after collapse button (only visible when graph is shown)
+    if (!isCurveCollapsed)
+    {
+        displayScaleSelector.setBounds(centerX + resizeHelper.scaled(200), resizeHelper.scaled(17),
+                                       resizeHelper.scaled(65), resizeHelper.scaled(24));
+        displayScaleSelector.setVisible(true);
+    }
+    else
+    {
+        displayScaleSelector.setVisible(false);
+    }
 
     // EQ Curve Display - spans across the top area below header
-    int curveHeight = isCurveCollapsed ? 0 : resizeHelper.scaled(105);
+    // Increased height from 105 to 135 to use available space
+    int curveHeight = isCurveCollapsed ? 0 : resizeHelper.scaled(135);
     if (eqCurveDisplay && !isCurveCollapsed)
     {
         int curveX = resizeHelper.scaled(35);
@@ -523,8 +558,8 @@ void FourKEQEditor::resized()
 
     // LED Meters - scale meter width and position
     int meterWidth = resizeHelper.scaled(LEDMeterStyle::standardWidth);
-    // Adjust meter Y position based on curve visibility
-    int meterY = isCurveCollapsed ? resizeHelper.scaled(80) : resizeHelper.scaled(185);
+    // Adjust meter Y position based on curve visibility (matches contentY offset)
+    int meterY = isCurveCollapsed ? resizeHelper.scaled(80) : resizeHelper.scaled(215);
     int meterHeight = getHeight() - meterY - resizeHelper.scaled(LEDMeterStyle::valueHeight + LEDMeterStyle::labelSpacing + 10);
 
     if (inputMeterL)
@@ -535,7 +570,8 @@ void FourKEQEditor::resized()
         outputMeterL->setBounds(getWidth() - meterWidth - resizeHelper.scaled(10), meterY, meterWidth, meterHeight);
 
     // Scaled layout constants
-    int contentY = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(170);
+    // Adjusted contentY to account for taller graph (135 instead of 105)
+    int contentY = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(200);
     int sectionLabelHeight = resizeHelper.scaled(30);
     int knobSize = resizeHelper.scaled(75);
     int knobRowHeight = resizeHelper.scaled(125);
@@ -544,7 +580,6 @@ void FourKEQEditor::resized()
     // Original proportions at 950px: filters=0-195, bands=132px each, master=rest
     float widthRatio = static_cast<float>(getWidth()) / 950.0f;
 
-    int filtersStart = 0;
     int filtersEnd = static_cast<int>(195 * widthRatio);
     int bandWidth = static_cast<int>(132 * widthRatio);
     int lfStart = filtersEnd + 2;
@@ -571,28 +606,19 @@ void FourKEQEditor::resized()
     };
 
     // ===== FILTERS SECTION =====
+    // Center knobs under the FILTERS label (which starts at scaled(30), not at 0)
+    int filtersLabelStart = resizeHelper.scaled(30);
     int y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
 
-    // HPF
-    centerKnobInSection(hpfFreqSlider, filtersStart, filtersEnd, y);
-    {
-        int btnX = hpfFreqSlider.getRight() + 2;
-        int btnY = hpfFreqSlider.getY() + (knobSize - resizeHelper.scaled(24)) / 2;
-        hpfEnableButton.setBounds(btnX, btnY, resizeHelper.scaled(32), resizeHelper.scaled(24));
-    }
+    // Center the knobs under FILTERS label (IN buttons positioned next to labels below)
+    centerKnobInSection(hpfFreqSlider, filtersLabelStart, filtersEnd, y);
     y += knobRowHeight;
 
-    // LPF
-    centerKnobInSection(lpfFreqSlider, filtersStart, filtersEnd, y);
-    {
-        int btnX = lpfFreqSlider.getRight() + 2;
-        int btnY = lpfFreqSlider.getY() + (knobSize - resizeHelper.scaled(24)) / 2;
-        lpfEnableButton.setBounds(btnX, btnY, resizeHelper.scaled(32), resizeHelper.scaled(24));
-    }
+    centerKnobInSection(lpfFreqSlider, filtersLabelStart, filtersEnd, y);
     y += knobRowHeight;
 
-    // Input Gain
-    centerKnobInSection(inputGainSlider, filtersStart, filtersEnd, y);
+    // Input Gain - center under full FILTERS label (no IN button)
+    centerKnobInSection(inputGainSlider, filtersLabelStart, filtersEnd, y);
 
     // ===== LF BAND =====
     y = contentY + sectionLabelHeight + resizeHelper.scaled(25);
@@ -659,10 +685,27 @@ void FourKEQEditor::resized()
                        slider.getY() + yOffset, labelWidth, labelHeight);
     };
 
-    // Filter section
+    // Filter section - position labels with IN buttons next to them
     positionLabelBelow(hpfLabel, hpfFreqSlider);
     positionLabelBelow(lpfLabel, lpfFreqSlider);
     positionLabelBelow(inputLabel, inputGainSlider);
+
+    // Position IN buttons next to HPF and LPF labels (SSL style: "HPF [IN]")
+    {
+        int btnWidth = resizeHelper.scaled(28);
+        int btnHeight = resizeHelper.scaled(18);
+        int btnGap = resizeHelper.scaled(2);
+
+        // HPF IN button - to the right of HPF label
+        hpfEnableButton.setBounds(hpfLabel.getRight() + btnGap,
+                                  hpfLabel.getY(),
+                                  btnWidth, btnHeight);
+
+        // LPF IN button - to the right of LPF label
+        lpfEnableButton.setBounds(lpfLabel.getRight() + btnGap,
+                                  lpfLabel.getY(),
+                                  btnWidth, btnHeight);
+    }
 
     // LF band
     positionLabelBelow(lfGainLabel, lfGainSlider);
