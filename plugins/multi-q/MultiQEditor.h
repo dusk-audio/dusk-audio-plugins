@@ -167,6 +167,7 @@ private:
     // Track current EQ mode for UI switching
     bool isBritishMode = false;
     bool isPultecMode = false;
+    bool isDynamicMode = false;
 
     // British mode header controls (matching 4K-EQ)
     juce::TextButton britishCurveCollapseButton;  // "Hide Graph" / "Show Graph"

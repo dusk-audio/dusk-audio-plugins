@@ -80,7 +80,8 @@ enum class EQType
 {
     Digital = 0,   // Clean digital EQ (Multi-Q default)
     British,       // 4K EQ style British console EQ
-    Tube           // Pultec EQP-1A style tube EQ
+    Tube,          // Pultec EQP-1A style tube EQ
+    Dynamic        // FabFilter Pro-Q style dynamic EQ
 };
 
 //==============================================================================
@@ -247,4 +248,14 @@ namespace ParamIDs
     const juce::String pultecMidDip = "pultec_mid_dip";
     const juce::String pultecMidHighFreq = "pultec_mid_high_freq";
     const juce::String pultecMidHighPeak = "pultec_mid_high_peak";
+
+    // Dynamic mode per-band parameters (N = 1-8)
+    inline juce::String bandDynEnabled(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_enabled"; }
+    inline juce::String bandDynThreshold(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_threshold"; }
+    inline juce::String bandDynAttack(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_attack"; }
+    inline juce::String bandDynRelease(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_release"; }
+    inline juce::String bandDynRange(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_range"; }
+
+    // Global dynamic mode parameters
+    const juce::String dynDetectionMode = "dyn_detection_mode";  // 0=Peak, 1=RMS
 }
