@@ -7,6 +7,7 @@
 #include "EQBand.h"
 #include "BritishEQProcessor.h"
 #include "PultecProcessor.h"
+#include "DynamicEQProcessor.h"
 
 //==============================================================================
 /**
@@ -263,6 +264,18 @@ private:
     std::atomic<float>* pultecMidDipParam = nullptr;
     std::atomic<float>* pultecMidHighFreqParam = nullptr;
     std::atomic<float>* pultecMidHighPeakParam = nullptr;
+
+    // Dynamic EQ processor
+    DynamicEQProcessor dynamicEQ;
+    std::atomic<bool> dynamicParamsChanged{true};
+
+    // Dynamic mode per-band parameters
+    std::array<std::atomic<float>*, NUM_BANDS> bandDynEnabledParams{};
+    std::array<std::atomic<float>*, NUM_BANDS> bandDynThresholdParams{};
+    std::array<std::atomic<float>*, NUM_BANDS> bandDynAttackParams{};
+    std::array<std::atomic<float>*, NUM_BANDS> bandDynReleaseParams{};
+    std::array<std::atomic<float>*, NUM_BANDS> bandDynRangeParams{};
+    std::atomic<float>* dynDetectionModeParam = nullptr;
 
     // Safe parameter accessor
     float safeGetParam(std::atomic<float>* param, float defaultValue) const

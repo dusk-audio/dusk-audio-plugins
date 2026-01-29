@@ -329,6 +329,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         int eqTypeIndex = static_cast<int>(eqTypeParam->load());
         isBritishMode = (eqTypeIndex == 1);
         isPultecMode = (eqTypeIndex == 2);
+        isDynamicMode = (eqTypeIndex == 3);
     }
     updateEQModeVisibility();
 
@@ -1207,9 +1208,10 @@ void MultiQEditor::parameterChanged(const juce::String& parameterID, float newVa
         juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MultiQEditor>(this), eqTypeIndex]() {
             if (safeThis != nullptr)
             {
-                // EQType: 0=Digital, 1=British, 2=Tube(Pultec)
+                // EQType: 0=Digital, 1=British, 2=Tube(Pultec), 3=Dynamic
                 safeThis->isBritishMode = (eqTypeIndex == 1);
                 safeThis->isPultecMode = (eqTypeIndex == 2);
+                safeThis->isDynamicMode = (eqTypeIndex == 3);
                 safeThis->updateEQModeVisibility();
                 safeThis->resized();
                 safeThis->repaint();
@@ -1534,8 +1536,8 @@ void MultiQEditor::setupBritishControls()
 
 void MultiQEditor::updateEQModeVisibility()
 {
-    // Determine if we're in Digital mode (neither British nor Pultec)
-    bool isDigitalMode = !isBritishMode && !isPultecMode;
+    // Determine if we're in Digital-style mode (Digital or Dynamic - same 8-band UI)
+    bool isDigitalMode = !isBritishMode && !isPultecMode;  // Includes Dynamic mode
 
     // Digital mode controls (8-band parametric)
     for (auto& btn : bandEnableButtons)
