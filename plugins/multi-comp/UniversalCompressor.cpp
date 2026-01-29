@@ -3898,29 +3898,20 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Use 8x the block size for safety - DAWs like Logic Pro may pass much larger blocks
     // than specified in prepareToPlay, especially during bounce/offline processing
     int safeBlockSize = samplesPerBlock * 8;
-    dryBuffer.setSize(numChannels, safeBlockSize);
-    // Allocate oversampled dry buffer for max 4x oversampling
-    // This is used to mix dry/wet at the oversampled rate to avoid FIR pre-ring artifacts
-    // CRITICAL: If this buffer is too small, we fall back to WET-ONLY output to avoid comb filtering
-    // With 8x base safety margin * 4x oversampling = 32x total, this should handle any DAW
-    oversampledDryBuffer.setSize(numChannels, safeBlockSize * 4);
     filteredSidechain.setSize(numChannels, safeBlockSize);
     linkedSidechain.setSize(numChannels, safeBlockSize);
     externalSidechain.setSize(numChannels, safeBlockSize);
     // Allocate interpolated sidechain for max 4x oversampling
     interpolatedSidechain.setSize(numChannels, safeBlockSize * 4);
 
-    // Prepare dry signal delay buffer for oversampling latency compensation
+    // Prepare phase-coherent dry/wet mixer for oversampling
     // This ensures dry and wet signals are time-aligned when mixing (parallel compression)
-    delayLineReady = false;  // Mark as not ready during preparation
-    // Clear the ring buffer
-    for (auto& channelBuffer : dryDelayBuffer)
-        std::fill(channelBuffer.begin(), channelBuffer.end(), 0.0f);
-    dryDelayWritePos = 0;
-    // Store the prepared state for safety checks in processBlock
-    preparedDelayLineChannels = juce::jmin(numChannels, 2);  // Max 2 channels (stereo)
-    currentDryDelayInSamples = juce::jmin(oversamplingLatency, MAX_DRY_DELAY - 1);
-    delayLineReady = true;  // Now safe to use
+    // and prevents comb filtering from FIR anti-aliasing filter latency mismatch
+    dryWetMixer.prepare(sampleRate, samplesPerBlock, numChannels, 4);  // max 4x oversampling
+
+    // Set latency for phase-coherent dry/wet mixing
+    dryWetMixer.setOversamplingLatency(oversamplingLatency);
+    dryWetMixer.setAdditionalLatency(lookaheadBuffer ? lookaheadBuffer->getLookaheadSamples() : 0);
 
     // Initialize smoothed auto-makeup gain with ~50ms smoothing time
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
@@ -3998,18 +3989,39 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         mixAmount = *mixParam * 0.01f; // Convert to 0-1
     }
 
-    // Store dry signal for parallel compression (uses pre-allocated buffer)
-    // Note: Uses buffer dimensions directly since numChannels/numSamples defined later
-    bool needsDryBuffer = (mixAmount < 1.0f);
-    if (needsDryBuffer)
+    // Track whether we need dry/wet mixing for parallel compression
+    // The actual dry capture happens at oversampled rate (in the oversampling section)
+    // for phase-coherent mixing that prevents comb filtering
+    bool needsDryBuffer = (mixAmount > 0.001f && mixAmount < 0.999f);
+
+    // At 0% mix (100% dry), skip all processing and return input unchanged
+    // This ensures perfect pass-through without any filter artifacts from oversampling
+    if (mixAmount <= 0.001f)
     {
-        const int bufChannels = buffer.getNumChannels();
-        const int bufSamples = buffer.getNumSamples();
-        // Ensure buffer is sized correctly (may change between calls)
-        if (dryBuffer.getNumChannels() < bufChannels || dryBuffer.getNumSamples() < bufSamples)
-            dryBuffer.setSize(bufChannels, bufSamples, false, false, true);
-        for (int ch = 0; ch < bufChannels; ++ch)
-            dryBuffer.copyFrom(ch, 0, buffer, ch, 0, bufSamples);
+        // Update meters to show input = output (bypass behavior)
+        const int bypassChannels = buffer.getNumChannels();
+        const int bypassSamples = buffer.getNumSamples();
+        for (int ch = 0; ch < bypassChannels; ++ch)
+        {
+            float rms = 0.0f;
+            const float* data = buffer.getReadPointer(ch);
+            for (int i = 0; i < bypassSamples; ++i)
+                rms += data[i] * data[i];
+            rms = std::sqrt(rms / static_cast<float>(bypassSamples));
+
+            if (ch == 0)
+            {
+                linkedGainReduction[0].store(0.0f, std::memory_order_relaxed);
+                inputRmsAccumulator = rms * rms;
+                outputRmsAccumulator = rms * rms;
+            }
+            else
+            {
+                linkedGainReduction[1].store(0.0f, std::memory_order_relaxed);
+            }
+        }
+        grMeter.store(0.0f, std::memory_order_relaxed);
+        return;  // Input unchanged
     }
 
     // Internal oversampling is always enabled for better quality
@@ -4713,33 +4725,18 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         const int osNumChannels = static_cast<int>(oversampledBlock.getNumChannels());
         const int osNumSamples = static_cast<int>(oversampledBlock.getNumSamples());
 
-        // Store dry signal at OVERSAMPLED rate for phase-coherent mixing
+        // Capture dry signal at OVERSAMPLED rate for phase-coherent mixing
         // This ensures both dry and wet go through the same downsampling filter,
         // eliminating FIR pre-ring artifacts that cause comb filtering
         bool needsOversampledDry = needsDryBuffer && (mixAmount < 0.999f);
         if (needsOversampledDry)
         {
-            // Check if oversampled dry buffer is sized correctly
-            if (oversampledDryBuffer.getNumChannels() < osNumChannels ||
-                oversampledDryBuffer.getNumSamples() < osNumSamples)
+            // Use shared DryWetMixer for phase-coherent capture
+            needsOversampledDry = dryWetMixer.captureDryAtOversampledRate(oversampledBlock);
+            if (!needsOversampledDry)
             {
-                // CRITICAL: Buffer too small - disable mixing entirely to avoid comb filtering
-                // Post-downsample mixing causes phase mismatch because dry signal doesn't go
-                // through the anti-aliasing filter. Better to output wet-only than comb filtering.
-                // This should never happen with 8x safety margin, but fail safe if it does.
-                needsOversampledDry = false;
-                needsDryBuffer = false;  // Disable post-downsample mixing too!
-                jassertfalse;  // Debug: Alert if this ever triggers
-            }
-            else
-            {
-                // Copy upsampled signal BEFORE compression
-                for (int ch = 0; ch < osNumChannels; ++ch)
-                {
-                    auto* src = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
-                    auto* dst = oversampledDryBuffer.getWritePointer(ch);
-                    std::memcpy(dst, src, static_cast<size_t>(osNumSamples) * sizeof(float));
-                }
+                // Buffer too small - fail safe by disabling mixing entirely
+                needsDryBuffer = false;
             }
         }
 
@@ -4830,21 +4827,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
 
         // Mix dry and wet at OVERSAMPLED rate (before downsampling)
-        // This ensures both signals go through the same anti-aliasing filter,
-        // eliminating phase mismatch from FIR filter pre-ring
-        if (needsOversampledDry && mixAmount < 0.999f)
+        // Uses shared DryWetMixer for phase-coherent mixing
+        if (needsOversampledDry)
         {
-            float wetAmount = mixAmount;
-            float dryAmount = 1.0f - mixAmount;
-            for (int ch = 0; ch < osNumChannels; ++ch)
-            {
-                float* wet = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
-                const float* dry = oversampledDryBuffer.getReadPointer(ch);
-                for (int i = 0; i < osNumSamples; ++i)
-                {
-                    wet[i] = wet[i] * wetAmount + dry[i] * dryAmount;
-                }
-            }
+            dryWetMixer.mixAtOversampledRate(oversampledBlock, mixAmount);
             // Mark that we've already done the mix at oversampled rate
             // so we don't do it again after downsampling
             needsDryBuffer = false;
@@ -5218,71 +5204,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         grHistoryWritePos.store(writePos, std::memory_order_relaxed);
     }
     
-    // Apply mix control for parallel compression (SIMD-optimized)
-    if (needsDryBuffer && dryBuffer.getNumChannels() > 0)
-    {
-        // Blend dry and wet signals
-        // Note: mixBuffers formula is dest = dest*(1-param) + src*param
-        // We want: 100% mix = 100% wet (compressed), so we invert the parameter
-        // This makes: mix=100% -> param=0 -> output=wet, mix=0% -> param=1 -> output=dry
-        float dryAmount = 1.0f - mixAmount;
-
-        // Get TOTAL latency for delay compensation:
-        // 1. Oversampling latency: filter group delay from anti-aliasing
-        // 2. Lookahead latency: delay added before compression for peak detection
-        // Without compensating for BOTH, dry and wet signals are out of phase, causing comb filtering
-        int oversamplerLatency = (antiAliasing && !antiAliasing->isOversamplingOff())
-                                  ? antiAliasing->getLatency() : 0;
-        int lookaheadLatency = (lookaheadBuffer != nullptr)
-                                  ? lookaheadBuffer->getLookaheadSamples() : 0;
-        int totalWetLatency = oversamplerLatency + lookaheadLatency;
-
-        // Safety: only use delay compensation when delay buffer is properly prepared
-        // and we need it (there's latency and we're actually mixing dry+wet)
-        int safeDelay = juce::jmin(totalWetLatency, MAX_DRY_DELAY - 1);
-        bool useDelayCompensation = delayLineReady
-                                    && safeDelay > 0
-                                    && preparedDelayLineChannels > 0
-                                    && mixAmount > 0.001f
-                                    && mixAmount < 0.999f;
-
-        if (useDelayCompensation)
-        {
-            // Process delay compensation sample-by-sample for all channels
-            // This ensures the write position advances consistently
-            const int chansToProcess = juce::jmin(numChannels, preparedDelayLineChannels);
-
-            for (int i = 0; i < numSamples; ++i)
-            {
-                // Calculate read position (writePos - delay with wrap-around)
-                int readPos = dryDelayWritePos - safeDelay;
-                if (readPos < 0)
-                    readPos += MAX_DRY_DELAY;
-
-                // Process all channels for this sample
-                for (int ch = 0; ch < chansToProcess; ++ch)
-                {
-                    float* dry = dryBuffer.getWritePointer(ch);
-
-                    // Read delayed sample, write current sample
-                    float delayedSample = dryDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(readPos)];
-                    dryDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(dryDelayWritePos)] = dry[i];
-                    dry[i] = delayedSample;
-                }
-
-                // Advance write position (once per sample, after all channels)
-                dryDelayWritePos = (dryDelayWritePos + 1) % MAX_DRY_DELAY;
-            }
-        }
-
-        // Mix dry (possibly delayed) with wet
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            float* wet = buffer.getWritePointer(ch);
-            const float* dry = dryBuffer.getReadPointer(ch);
-            SIMDHelpers::mixBuffers(wet, dry, numSamples, dryAmount);
-        }
-    }
+    // Mix control is now handled at oversampled rate using DryWetMixer
+    // (see captureDryAtOversampledRate and mixAtOversampledRate above)
+    // This provides phase-coherent mixing that prevents comb filtering
+    juce::ignoreUnused(needsDryBuffer);
 
     // Add subtle analog noise for authenticity (-80dB) if enabled (SIMD-optimized)
     // Only for analog modes - Digital and Multiband are meant to be completely transparent
@@ -5427,10 +5352,8 @@ void UniversalCompressor::resetDSPState()
     lastCompressorMode = -1;  // Force mode change detection on next processBlock
     primeRmsAccumulators = true;  // Prime accumulators on first block after reset
 
-    // Reset dry signal delay buffer (for oversampling latency compensation)
-    for (auto& channelBuffer : dryDelayBuffer)
-        std::fill(channelBuffer.begin(), channelBuffer.end(), 0.0f);
-    dryDelayWritePos = 0;
+    // Reset dry/wet mixer state (for oversampling latency compensation)
+    dryWetMixer.reset();
 
     // NOTE: We do NOT call prepare() here because:
     // 1. prepare() does memory allocation which is not thread-safe
