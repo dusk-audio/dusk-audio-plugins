@@ -757,7 +757,17 @@ jobs:
           # Format: "  version: X.X.X" under the plugin entry
           PLUGIN_SLUG="$RELEASE_NAME"
 
-          # Use Python for reliable YAML update (safer than sed)
+          # Update version in the plugin's markdown file (front matter)
+          # This is where Jekyll reads the version from
+          PLUGIN_MD="_plugins/${PLUGIN_SLUG}.md"
+          if [ -f "$PLUGIN_MD" ]; then
+            echo "Updating $PLUGIN_MD"
+            sed -i "s/^version: .*/version: \"$PLUGIN_VERSION\"/" "$PLUGIN_MD"
+          else
+            echo "Warning: $PLUGIN_MD not found"
+          fi
+
+          # Also update _data/plugins.yml for consistency
           python3 << EOF
           import yaml
 
@@ -770,7 +780,7 @@ jobs:
               if isinstance(plugin, dict) and plugin.get('slug') == '$PLUGIN_SLUG':
                   plugin['version'] = '$PLUGIN_VERSION'
                   updated = True
-                  print(f"Updated {plugin.get('name', '$PLUGIN_SLUG')} to version $PLUGIN_VERSION")
+                  print(f"Updated {plugin.get('name', '$PLUGIN_SLUG')} to version $PLUGIN_VERSION in plugins.yml")
                   break
 
           if updated:
@@ -789,7 +799,7 @@ jobs:
           # Commit and push
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add _data/plugins.yml
+          git add _data/plugins.yml "_plugins/${PLUGIN_SLUG}.md" 2>/dev/null || git add _data/plugins.yml
           git commit -m "Update $RELEASE_NAME to v$PLUGIN_VERSION
 
           Automated update from release workflow."
