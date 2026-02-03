@@ -14,10 +14,20 @@
     - Logarithmic frequency scale (20 Hz - 20 kHz)
     - Adjustable decay rate
     - Pre/Post EQ display option
+    - Pro-Q style spectrum smoothing (temporal and spatial)
 */
 class FFTAnalyzer : public juce::Component
 {
 public:
+    // Spectrum smoothing modes (FabFilter Pro-Q style)
+    enum class SmoothingMode
+    {
+        Off = 0,      // Raw FFT data, no smoothing
+        Light,        // Subtle smoothing, fast response
+        Medium,       // Balanced smoothing (default)
+        Heavy         // Maximum smoothing, very smooth appearance
+    };
+
     FFTAnalyzer();
     ~FFTAnalyzer() override = default;
 
@@ -37,6 +47,36 @@ public:
     void setEnabled(bool enabled) { analyzerEnabled = enabled; repaint(); }
     void setShowPeakHold(bool show) { showPeakHold = show; }
 
+    // Smoothing control
+    void setSmoothingMode(SmoothingMode mode) { smoothingMode = mode; }
+    SmoothingMode getSmoothingMode() const { return smoothingMode; }
+
+    // Spectrum freeze (captures current spectrum as reference)
+    void toggleFreeze()
+    {
+        if (spectrumFrozen)
+        {
+            // Unfreeze - clear frozen data
+            spectrumFrozen = false;
+        }
+        else
+        {
+            // Freeze - capture current smoothed magnitudes
+            frozenMagnitudes = smoothedMagnitudes;
+            spectrumFrozen = true;
+        }
+        repaint();
+    }
+
+    bool isFrozen() const { return spectrumFrozen; }
+
+    void clearFrozen()
+    {
+        spectrumFrozen = false;
+        std::fill(frozenMagnitudes.begin(), frozenMagnitudes.end(), -100.0f);
+        repaint();
+    }
+
     // Get frequency at x position (for interaction)
     float getFrequencyAtX(float x) const;
 
@@ -51,7 +91,9 @@ public:
 
 private:
     std::array<float, 2048> currentMagnitudes{};
+    std::array<float, 2048> smoothedMagnitudes{};  // Temporally smoothed values
     std::array<float, 2048> peakHoldMagnitudes{};
+    std::array<float, 2048> frozenMagnitudes{};    // Frozen spectrum for reference
 
     float minDisplayDB = -60.0f;
     float maxDisplayDB = 12.0f;
@@ -63,6 +105,17 @@ private:
 
     bool analyzerEnabled = true;
     bool showPeakHold = false;
+    bool spectrumFrozen = false;  // True when spectrum is frozen for reference
+
+    // Smoothing settings
+    SmoothingMode smoothingMode = SmoothingMode::Medium;
+
+    // Get smoothing coefficients based on mode
+    float getTemporalSmoothingCoeff() const;
+    int getSpatialSmoothingWidth() const;
+
+    // Apply spatial smoothing (averaging neighboring bins)
+    void applySpatialSmoothing(std::array<float, 2048>& magnitudes) const;
 
     // Smooth the magnitude path for display
     juce::Path createMagnitudePath() const;

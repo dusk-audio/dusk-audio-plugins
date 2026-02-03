@@ -61,7 +61,7 @@ target_sources(MultiQ
         FFTAnalyzer.cpp
         BritishEQCurveDisplay.cpp
         PultecCurveDisplay.cpp
-        BandStripComponent.cpp
+        BandDetailPanel.cpp
         ../shared/LEDMeter.cpp
         ../4k-eq/FourKLookAndFeel.cpp
 )
@@ -107,3 +107,7 @@ else()
         target_compile_options(MultiQ PRIVATE -O3 -ffast-math)
     endif()
 endif()
+
+# Test target for LinearPhaseEQProcessor
+# Disabled for now - use the standalone test_linear_phase.cpp instead
+# The JUCE-based test requires complex linking that's better handled by the plugin itself
