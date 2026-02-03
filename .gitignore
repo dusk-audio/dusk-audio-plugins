@@ -132,3 +132,4 @@ groovemind-training/library/
 .gitignore
 4K-EQ-1.0.0-macOS.zip
 4K-EQ-1.0.0-Windows.zip
+tests/test_linear_phase
