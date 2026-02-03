@@ -7,6 +7,7 @@
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
+#include "../shared/ScalableEditorHelper.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
@@ -36,7 +37,10 @@ public:
 private:
     // Processor reference
     UniversalCompressor& processor;
-    
+
+    // Resizable UI helper (shared across all Luna plugins)
+    ScalableEditorHelper resizeHelper;
+
     // Look and feel instances for each mode
     std::unique_ptr<OptoLookAndFeel> optoLookAndFeel;
     std::unique_ptr<FETLookAndFeel> fetLookAndFeel;
@@ -204,12 +208,7 @@ private:
     
     // Background texture
     juce::Image backgroundTexture;
-    
-    // Resizing support
-    juce::ComponentBoundsConstrainer constrainer;
-    std::unique_ptr<juce::ResizableCornerComponent> resizer;
-    float scaleFactor = 1.0f;
-    
+
     // Smoothed level readouts for better readability
     float smoothedInputLevel = -60.0f;
     float smoothedOutputLevel = -60.0f;

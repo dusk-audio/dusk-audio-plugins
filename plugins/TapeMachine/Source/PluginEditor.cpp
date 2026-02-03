@@ -146,15 +146,15 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
 
     startTimerHz(30);
 
-    setSize(800, 580);
-
-    // Initialize scalable resize helper (replaces manual setResizable/setResizeLimits)
+    // Initialize scalable resize helper with persistence
     // Base size: 800x580, Min: 640x464 (80%), Max: 1200x870 (150%)
-    resizeHelper.initialize(this, 800, 580, 640, 464, 1200, 870);
+    resizeHelper.initialize(this, &audioProcessor, 800, 580, 640, 464, 1200, 870, false);
+    setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 
 TapeMachineAudioProcessorEditor::~TapeMachineAudioProcessorEditor()
 {
+    resizeHelper.saveSize();
     stopTimer();
     setLookAndFeel(nullptr);
 }

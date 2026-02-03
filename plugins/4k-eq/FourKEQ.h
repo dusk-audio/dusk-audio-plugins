@@ -31,7 +31,7 @@ public:
     #ifdef LUNA_PLUGIN_VERSION
     static constexpr const char* PLUGIN_VERSION = LUNA_PLUGIN_VERSION;
     #else
-    static constexpr const char* PLUGIN_VERSION = "1.0.6";  // Fallback
+    static constexpr const char* PLUGIN_VERSION = "1.0.7";  // Fallback
     #endif
     static constexpr const char* BUILD_DATE = __DATE__;
     static constexpr const char* BUILD_TIME = __TIME__;

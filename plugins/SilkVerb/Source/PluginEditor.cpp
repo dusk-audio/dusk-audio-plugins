@@ -259,13 +259,14 @@ SilkVerbEditor::SilkVerbEditor(SilkVerbProcessor& p)
 
     startTimerHz(30);
 
-    setSize(500, 580);
-    setResizable(true, true);
-    setResizeLimits(450, 520, 700, 800);
+    // Initialize resizable UI (500x580 base, range 450-700 width)
+    resizeHelper.initialize(this, &audioProcessor, 500, 580, 450, 520, 700, 800, false);
+    setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 
 SilkVerbEditor::~SilkVerbEditor()
 {
+    resizeHelper.saveSize();
     stopTimer();
     setLookAndFeel(nullptr);
 }
@@ -428,6 +429,8 @@ void SilkVerbEditor::paint(juce::Graphics& g)
 
 void SilkVerbEditor::resized()
 {
+    resizeHelper.updateResizer();
+
     auto bounds = getLocalBounds();
     const int margin = 15;
     const int sectionGap = 8;

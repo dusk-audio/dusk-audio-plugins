@@ -333,8 +333,9 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     updateWaveformDisplay();
     updateIRNameLabel();
 
-    // Set size AFTER all components are created (setSize triggers resized())
-    setSize(900, 700);
+    // Initialize resizable UI (900x700 base, range 720-1350 width)
+    resizeHelper.initialize(this, &audioProcessor, 900, 700, 720, 560, 1350, 1050, false);
+    setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     // Initial value labels update
     updateValueLabels();
@@ -344,6 +345,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
 
 ConvolutionReverbEditor::~ConvolutionReverbEditor()
 {
+    resizeHelper.saveSize();
     stopTimer();
 
     if (irBrowser != nullptr)
@@ -426,33 +428,30 @@ void ConvolutionReverbEditor::paint(juce::Graphics& g)
 
     // ========== SECTION BACKGROUND PANELS ==========
     // Very subtle semi-transparent overlay panels for visual grouping (~5-6% white overlay)
+    // Bounds are calculated in resized() and stored as member variables for proper scaling
     auto sectionPanelColour = juce::Colour(0x0dFFFFFF);  // ~5% white overlay - very subtle
     auto sectionBorderColour = juce::Colour(0x15FFFFFF);  // ~8% white for border
     float cornerRadius = 5.0f;
 
     // Envelope section panel (around Attack, Decay, Length, IR Offset, Reverse)
-    auto envelopePanelBounds = juce::Rectangle<float>(210, 285, 510, 105);
     g.setColour(sectionPanelColour);
     g.fillRoundedRectangle(envelopePanelBounds, cornerRadius);
     g.setColour(sectionBorderColour);
     g.drawRoundedRectangle(envelopePanelBounds, cornerRadius, 0.5f);
 
     // Filter Envelope section panel (10px gap from envelope panel)
-    auto filterEnvPanelBounds = juce::Rectangle<float>(210, 400, 510, 105);
     g.setColour(sectionPanelColour);
     g.fillRoundedRectangle(filterEnvPanelBounds, cornerRadius);
     g.setColour(sectionBorderColour);
     g.drawRoundedRectangle(filterEnvPanelBounds, cornerRadius, 0.5f);
 
     // Right controls panel (Pre-delay, Width, Mix, toggles, dropdowns)
-    auto rightControlsPanelBounds = juce::Rectangle<float>(725, 60, 170, 470);
     g.setColour(sectionPanelColour);
     g.fillRoundedRectangle(rightControlsPanelBounds, cornerRadius);
     g.setColour(sectionBorderColour);
     g.drawRoundedRectangle(rightControlsPanelBounds, cornerRadius, 0.5f);
 
     // Wet EQ section panel (bottom row of EQ knobs) - taller now that curve is in waveform area
-    auto eqPanelBounds = juce::Rectangle<float>(5, 515, static_cast<float>(getWidth() - 10), 175);
     g.setColour(sectionPanelColour);
     g.fillRoundedRectangle(eqPanelBounds, cornerRadius);
     g.setColour(sectionBorderColour);
@@ -463,28 +462,41 @@ void ConvolutionReverbEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xff707070));  // Subtle label color
 
     // Envelope section label - positioned at top-left of panel, above the knobs
-    g.drawText("ENVELOPE", envelopePanelBounds.getX() + 8, envelopePanelBounds.getY() + 4, 80, 12, juce::Justification::left);
+    g.drawText("ENVELOPE",
+               static_cast<int>(envelopePanelBounds.getX() + 8),
+               static_cast<int>(envelopePanelBounds.getY() + 4),
+               80, 12, juce::Justification::left);
 
     // Filter Envelope section label - positioned at top-left of panel
-    g.drawText("FILTER ENVELOPE", filterEnvPanelBounds.getX() + 8, filterEnvPanelBounds.getY() + 4, 120, 12, juce::Justification::left);
+    g.drawText("FILTER ENVELOPE",
+               static_cast<int>(filterEnvPanelBounds.getX() + 8),
+               static_cast<int>(filterEnvPanelBounds.getY() + 4),
+               120, 12, juce::Justification::left);
 
     // EQ section label - positioned at top of EQ panel
-    g.drawText("WET SIGNAL EQ", 55, 520, 120, 15, juce::Justification::left);
+    g.drawText("WET SIGNAL EQ",
+               static_cast<int>(eqPanelBounds.getX() + 50),
+               static_cast<int>(eqPanelBounds.getY() + 5),
+               120, 15, juce::Justification::left);
 
     // Note: EQ curve now displayed in waveform area via IR/EQ toggle
 
     // ========== SEPARATOR LINES ==========
     g.setColour(juce::Colour(0xff3a3a3a));
 
-    // Vertical separator between browser and waveform
-    g.drawLine(200, 65, 200, 530, 1.0f);
+    // Vertical separator between browser and waveform (after browser panel)
+    float browserSeparatorX = envelopePanelBounds.getX() - 10.0f;
+    float separatorYStart = 60.0f * resizeHelper.getScaleFactor() + 5.0f;
+    g.drawLine(browserSeparatorX, separatorYStart, browserSeparatorX, eqPanelBounds.getY() + 15.0f, 1.0f);
 
-    // Vertical separator between waveform and controls
-    g.drawLine(720, 65, 720, 530, 1.0f);
+    // Vertical separator between waveform and controls (before right controls panel)
+    float controlsSeparatorX = rightControlsPanelBounds.getX() - 5.0f;
+    g.drawLine(controlsSeparatorX, separatorYStart, controlsSeparatorX, eqPanelBounds.getY() + 15.0f, 1.0f);
 }
-
 void ConvolutionReverbEditor::resized()
 {
+    resizeHelper.updateResizer();
+
     auto bounds = getLocalBounds();
 
     // A/B buttons in header area
@@ -707,6 +719,42 @@ void ConvolutionReverbEditor::resized()
     lpfLabel->setBounds(eqX, eqY, eqItemWidth, labelHeight);
     lpfSlider->setBounds(eqX + (eqItemWidth - eqKnobSize) / 2, eqY + labelHeight, eqKnobSize, eqKnobSize);
     lpfValueLabel->setBounds(eqX, eqY + labelHeight + eqKnobSize, eqItemWidth, eqValueHeight);
+
+    // Calculate panel bounds for paint() based on actual component positions
+    // This ensures panels always align with their contents at any window size
+    float padding = 8.0f;
+
+    // Envelope panel: derived from envelope controls' actual positions
+    envelopePanelBounds = juce::Rectangle<float>(
+        static_cast<float>(attackLabel->getX()) - padding,
+        static_cast<float>(attackLabel->getY()) - 16.0f,  // Room for section label
+        static_cast<float>(reverseButton->getRight() - attackLabel->getX()) + padding * 2.0f,
+        static_cast<float>(attackValueLabel->getBottom() - attackLabel->getY()) + 20.0f
+    );
+
+    // Filter envelope panel: derived from filter envelope controls' actual positions
+    filterEnvPanelBounds = juce::Rectangle<float>(
+        static_cast<float>(filterEnvButton->getX()) - padding,
+        static_cast<float>(filterEnvButton->getY()) - 20.0f,  // Room for section label
+        static_cast<float>(filterEnvAttackValueLabel->getRight() - filterEnvButton->getX()) + padding * 2.0f,
+        static_cast<float>(filterEnvAttackValueLabel->getBottom() - filterEnvButton->getY()) + 28.0f
+    );
+
+    // Right controls panel: derived from right controls' actual positions
+    rightControlsPanelBounds = juce::Rectangle<float>(
+        static_cast<float>(preDelayLabel->getX()) - padding,
+        57.0f,  // Just below header
+        static_cast<float>(preDelayLabel->getWidth()) + padding * 2.0f,
+        static_cast<float>(stereoModeComboBox->getBottom()) - 57.0f + padding
+    );
+
+    // EQ panel: derived from EQ controls' actual positions (includes meters)
+    eqPanelBounds = juce::Rectangle<float>(
+        static_cast<float>(inputMeterLabel->getX()) - padding,
+        static_cast<float>(inputMeterLabel->getY()) - 20.0f,  // Room for section label
+        static_cast<float>(outputMeter->getRight() - inputMeterLabel->getX()) + padding * 2.0f,
+        static_cast<float>(lpfValueLabel->getBottom() - inputMeterLabel->getY()) + 28.0f
+    );
 }
 
 void ConvolutionReverbEditor::timerCallback()
