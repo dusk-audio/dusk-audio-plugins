@@ -284,6 +284,50 @@ struct LunaSliderStyle
     }
 };
 
+//==============================================================================
+/**
+ * Shared tooltip strings and helpers for Luna Co. Audio plugins
+ *
+ * Use these to ensure consistent tooltip text across all plugins.
+ * Centralized here so common phrases are only maintained in one place.
+ */
+struct LunaTooltips
+{
+    // Common modifier hints
+    static inline const juce::String fineControlHint = " (Cmd/Ctrl+drag for fine control)";
+    static inline const juce::String altResetHint = " (Alt-click to reset)";
+
+    // Common control descriptions
+    static inline const juce::String bypass = "Bypass all processing (Shortcut: B)";
+    static inline const juce::String analyzer = "Show/hide real-time FFT spectrum analyzer (Shortcut: H)";
+    static inline const juce::String abComparison = "A/B Comparison: Click to switch between two settings (Shortcut: A)";
+    static inline const juce::String hqMode = "Enable 2x oversampling for analog-matched response at high frequencies";
+
+    // EQ-specific (for EQ plugins)
+    static inline const juce::String frequency = "Frequency: Center frequency of this band";
+    static inline const juce::String gain = "Gain: Boost or cut at this frequency";
+    static inline const juce::String qBandwidth = "Q: Bandwidth/resonance - higher values = narrower bandwidth";
+    static inline const juce::String filterSlope = "Filter slope: Steeper = sharper cutoff";
+
+    // Dynamics-specific
+    static inline const juce::String dynThreshold = "Threshold: Level where dynamic gain reduction starts";
+    static inline const juce::String dynAttack = "Attack: How fast gain reduction responds to level increases";
+    static inline const juce::String dynRelease = "Release: How fast gain returns after level drops";
+    static inline const juce::String dynRange = "Range: Maximum amount of dynamic gain reduction";
+
+    // Helper to add fine control hint to a tooltip
+    static juce::String withFineControl(const juce::String& tooltip)
+    {
+        return tooltip + fineControlHint;
+    }
+
+    // Helper to add alt-reset hint to a tooltip
+    static juce::String withAltReset(const juce::String& tooltip)
+    {
+        return tooltip + altResetHint;
+    }
+};
+
 class LunaLookAndFeel : public juce::LookAndFeel_V4
 {
 public:

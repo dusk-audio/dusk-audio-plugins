@@ -83,6 +83,10 @@ public:
         // Suppress denormals for performance (prevents CPU spikes on older processors)
         juce::ScopedNoDenormals noDenormals;
 
+        // NaN/Inf protection - return silence (0.0f) if input is invalid
+        if (!std::isfinite(input))
+            return 0.0f;
+
         if (drive < 0.001f)
             return input;
 
@@ -140,7 +144,13 @@ public:
         // Mix with dry signal based on drive amount
         // At 100% drive, use 100% wet for maximum saturation effect
         float wetMix = juce::jlimit(0.0f, 1.0f, drive * 1.4f);  // Linear ramp, full wet at high drive
-        return input * (1.0f - wetMix) + output * wetMix;
+        float result = input * (1.0f - wetMix) + output * wetMix;
+
+        // NaN/Inf protection - return clean input if saturation produced invalid output
+        if (!std::isfinite(result))
+            return input;
+
+        return result;
     }
 
 private:

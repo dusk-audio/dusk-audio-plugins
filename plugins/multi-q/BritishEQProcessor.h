@@ -179,6 +179,13 @@ public:
             {
                 float sample = channelData[i];
 
+                // NaN/Inf protection - skip processing if input is invalid
+                if (!std::isfinite(sample))
+                {
+                    channelData[i] = 0.0f;
+                    continue;
+                }
+
                 // HPF (18 dB/oct)
                 if (params.hpfEnabled)
                 {
@@ -210,6 +217,10 @@ public:
                     float satAmount = params.saturation * 0.01f;
                     sample = sslSaturation.processSample(sample, satAmount, isLeft);
                 }
+
+                // NaN/Inf protection - zero output if processing produced invalid result
+                if (!std::isfinite(sample))
+                    sample = 0.0f;
 
                 channelData[i] = sample;
             }
