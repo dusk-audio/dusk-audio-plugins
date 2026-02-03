@@ -23,48 +23,80 @@ This is a collection of professional audio VST3/LV2/AU plugins built with the JU
 3. Set `version` in front matter to match GitHub release tag
 4. Download links auto-generate using: `{slug}-v{version}` format (e.g., `multi-comp-v1.0.0`)
 
-**Release Process:**
-1. Ensure GitHub Actions build passes for all platforms
-2. Create release tag with `git tag -a {slug}-v{version} -m "message"` (e.g., `4k-eq-v1.0.5`)
-3. Push tag with `git push origin {tag-name}` to trigger release build
-4. GitHub Actions automatically uploads platform artifacts to the release
-5. Website download links automatically point to the correct release
+**Release Process Checklist:**
+When releasing a new version of any plugin, follow ALL these steps:
 
-**IMPORTANT - Release Notes:**
-When creating release tags, ALWAYS include a detailed changelog in the tag message. The tag message becomes the release description on GitHub. Use this format:
+1. **Update version numbers** in the plugin's source files:
+   - `CMakeLists.txt` - Update `DEFAULT_VERSION` variable
+   - Header file (if applicable) - Update `PLUGIN_VERSION` fallback constant
+
+2. **Commit the version changes** with a descriptive commit message
+
+3. **Create release tag with DETAILED changelog** (see format below)
+   - The tag message becomes the GitHub release description
+   - Users see this to understand what changed - BE SPECIFIC!
+
+4. **Push commit and tag** to trigger GitHub Actions build:
+   ```bash
+   git push origin main
+   git push origin {tag-name}
+   ```
+
+5. **Update website** (`_data/plugins.yml`) with new version number
+
+6. **Push website changes** to update download links
+
+⚠️ **CRITICAL - Release Notes Format:**
+The tag message is what users see on the GitHub release page. It MUST clearly explain what changed from the previous version. Users downloading the plugin need to know what's new or fixed.
+
+**Required changelog sections** (include all that apply):
 
 ```bash
 git tag -a {slug}-v{version} -m "{Plugin Name} v{version}
 
 ## What's New
-- Feature or fix description 1
-- Feature or fix description 2
+- New feature description (be specific about what it does)
+- Another new feature
+
+## Improvements
+- UI improvement or enhancement description
+- Performance improvement description
 
 ## Bug Fixes
-- Fix description with issue reference (#XX)
+- Fixed [specific bug description] (#XX if issue exists)
+- Fixed crash when [specific scenario]
 
 ## Technical Changes
-- Any build/infrastructure changes users should know about
+- Build system or infrastructure changes
+- Compatibility improvements
 "
 ```
 
-Example:
+**Good Example** (specific and helpful):
 ```bash
-git tag -a 4k-eq-v1.0.5 -m "4K EQ v1.0.5
+git tag -a 4k-eq-v1.0.7 -m "4K EQ v1.0.7
 
-## Bug Fixes
-- Fixed crash on Windows 11 when loading plugin in Ableton (#10)
-- Fixed crash on macOS Catalina due to deployment target (#11)
-- Added null safety checks in timer callback
+## Improvements
+- Window size now persists between sessions
+- Plugin remembers your preferred size when reopened
 
 ## Technical Changes
-- Static MSVC runtime linking for better Windows compatibility
-- macOS deployment target set to 10.15 (Catalina)
+- Uses shared ScalableEditorHelper for consistent resize behavior
+- Improved resize constraints handling
+"
+```
+
+**Bad Example** (vague and unhelpful):
+```bash
+git tag -a 4k-eq-v1.0.7 -m "4K EQ v1.0.7
+
+- Bug fixes and improvements
+- Updated code
 "
 ```
 
 **Updating Website for New Version:**
-When you release a new plugin version, you only need to:
+When you release a new plugin version:
 1. Update `_data/plugins.yml` - change the `version` field for the plugin
 2. Optionally update the changelog in `_plugins/plugin-name.md`
 
@@ -88,10 +120,13 @@ All download links on the home page and plugin pages are dynamically generated f
 | Convolution Reverb | `project(ConvolutionReverb VERSION x.x.x)` | - |
 
 **Before Creating a Release Tag**:
-1. Update the version in the plugin's `CMakeLists.txt`
+1. Update the version in the plugin's `CMakeLists.txt` (`DEFAULT_VERSION` variable)
 2. If the plugin has a `PLUGIN_VERSION` constant in its header file, update that too
 3. Commit these version changes
-4. Then create and push the release tag
+4. Write a detailed changelog describing ALL changes since the last version
+5. Create the tag with the changelog in the message (see Release Process above)
+6. Push commit and tag to trigger the release build
+7. Update website `_data/plugins.yml` with the new version
 
 **TODO**: Implement automatic version injection from git tags during build. Options:
 - Use CMake to generate a version header from `PROJECT_VERSION`
@@ -788,9 +823,69 @@ target_sources(${PLUGIN_NAME} PRIVATE
 **Plugins using LEDMeter**:
 - Neural Amp ✅
 - Tape Echo ✅
-- Multi-Q (needs update)
+- Multi-Q ✅
 - Multi-Comp (needs update)
 - TapeMachine (uses VU meters - different style intentionally)
+
+#### LunaSlider (REQUIRED for all rotary/slider controls)
+**File**: `shared/LunaLookAndFeel.h`
+
+Custom slider with proper Cmd/Ctrl+drag fine control. **All plugins must use this instead of juce::Slider for consistent modifier behavior.**
+
+**Features**:
+- Cmd/Ctrl+drag reduces sensitivity by 10x for fine adjustments
+- Smooth transition when modifier pressed/released mid-drag (no jumps)
+- Cmd/Ctrl+scroll wheel for fine wheel control
+- Disables JUCE velocity mode to prevent cursor hiding
+
+**Usage**:
+```cpp
+#include "../../shared/LunaLookAndFeel.h"
+
+// Use LunaSlider instead of juce::Slider
+freqSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+                                           juce::Slider::TextBoxBelow);
+
+// Configure with LunaSliderStyle for additional setup
+LunaSliderStyle::setupRotaryKnob(*freqSlider);
+```
+
+**Plugins using LunaSlider**:
+- Multi-Q ✅
+- 4K EQ ✅
+- TapeMachine ✅
+
+#### LunaTooltips (REQUIRED for consistent tooltip text)
+**File**: `shared/LunaLookAndFeel.h`
+
+Shared tooltip strings for common controls. **Use these to ensure consistent tooltip text across all plugins.**
+
+**Available Strings**:
+```cpp
+LunaTooltips::bypass          // "Bypass all processing (Shortcut: B)"
+LunaTooltips::analyzer        // "Show/hide real-time FFT spectrum analyzer (Shortcut: H)"
+LunaTooltips::abComparison    // "A/B Comparison: Click to switch..."
+LunaTooltips::hqMode          // "Enable 2x oversampling..."
+LunaTooltips::frequency       // "Frequency: Center frequency of this band"
+LunaTooltips::gain            // "Gain: Boost or cut at this frequency"
+LunaTooltips::qBandwidth      // "Q: Bandwidth/resonance..."
+LunaTooltips::filterSlope     // "Filter slope: Steeper = sharper cutoff"
+LunaTooltips::dynThreshold    // "Threshold: Level where gain reduction starts"
+LunaTooltips::dynAttack       // "Attack: How fast gain reduction responds..."
+LunaTooltips::dynRelease      // "Release: How fast gain returns..."
+LunaTooltips::dynRange        // "Range: Maximum amount of gain reduction"
+LunaTooltips::fineControlHint // " (Cmd/Ctrl+drag for fine control)"
+LunaTooltips::altResetHint    // " (Alt-click to reset)"
+```
+
+**Usage**:
+```cpp
+#include "../../shared/LunaLookAndFeel.h"
+
+// Use shared tooltip strings
+bypassButton->setTooltip(LunaTooltips::bypass);
+freqSlider->setTooltip(LunaTooltips::withFineControl(LunaTooltips::frequency));
+```
 
 #### SupportersOverlay (REQUIRED for all plugins)
 **File**: `shared/SupportersOverlay.h`
