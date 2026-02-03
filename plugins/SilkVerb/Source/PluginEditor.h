@@ -15,6 +15,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "../../shared/LunaLookAndFeel.h"
+#include "../../shared/ScalableEditorHelper.h"
 
 //==============================================================================
 // Custom look and feel for SilkVerb matching Luna plugin style
@@ -51,6 +52,9 @@ public:
 private:
     SilkVerbProcessor& audioProcessor;
     SilkVerbLookAndFeel lookAndFeel;
+
+    // Resizable UI helper (shared across all Luna plugins)
+    ScalableEditorHelper resizeHelper;
 
     // Mode toggle buttons (Plate/Room/Hall)
     juce::ToggleButton plateButton;

@@ -17,6 +17,7 @@
 #include "IRWaveformDisplay.h"
 #include "LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
+#include "../shared/ScalableEditorHelper.h"
 
 class ConvolutionReverbEditor : public juce::AudioProcessorEditor,
                            private juce::Timer,
@@ -45,6 +46,9 @@ private:
 
     ConvolutionReverbProcessor& audioProcessor;
     ConvolutionReverbLookAndFeel lookAndFeel;
+
+    // Resizable UI helper (shared across all Luna plugins)
+    ScalableEditorHelper resizeHelper;
 
     // IR Browser
     std::unique_ptr<IRBrowser> irBrowser;
@@ -216,6 +220,12 @@ private:
     float smoothedInputLevelR = -60.0f;
     float smoothedOutputLevelL = -60.0f;
     float smoothedOutputLevelR = -60.0f;
+
+    // Cached panel bounds for paint() - calculated in resized()
+    juce::Rectangle<float> envelopePanelBounds;
+    juce::Rectangle<float> filterEnvPanelBounds;
+    juce::Rectangle<float> rightControlsPanelBounds;
+    juce::Rectangle<float> eqPanelBounds;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ConvolutionReverbEditor)
 };
