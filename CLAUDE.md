@@ -1,1162 +1,127 @@
-# Audio Plugins Project Documentation
+# Luna Co. Audio Plugins - Reference Documentation
+
+## Quick Reference
+
+| Task | Command |
+|------|---------|
+| Release a plugin | `/release-plugin <slug> [version]` |
+| Build a plugin | `/build-plugin <slug>` |
+| Validate a plugin | `/validate-plugin <slug>` |
+| Add new plugin | `/add-plugin <name>` |
 
 ## Project Overview
-This is a collection of professional audio VST3/LV2/AU plugins built with the JUCE framework. All plugins are published under the company name "Luna Co. Audio".
 
-## Related Repositories
+Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Luna Co. Audio".
 
-### Luna Co. Audio Website
-- **Location**: `/home/marc/projects/lunacoaudio.github.io/`
-- **URL**: https://luna-co-software.github.io/lunacoaudio.github.io/
-- **Technology**: Jekyll static site (GitHub Pages)
-- **Purpose**: Plugin landing pages, download links, documentation
+**Website**: https://luna-co-software.github.io/lunacoaudio.github.io/
+**Website repo**: `~/projects/lunacoaudio.github.io/`
 
-**Key Files:**
-- `_config.yml` - Site configuration, GitHub release URLs
-- `_data/plugins.yml` - Plugin database (status, versions, descriptions)
-- `_layouts/plugin.html` - Plugin page template with download links
-- `_plugins/*.md` - Individual plugin pages (4k-eq.md, multi-comp.md, etc.)
+## Plugins
 
-**Adding a New Plugin to the Website:**
-1. Add plugin entry to `_data/plugins.yml` with status `in-dev`, `coming-soon`, or `released`
-2. Create `_plugins/plugin-name.md` with front matter and content
-3. Set `version` in front matter to match GitHub release tag
-4. Download links auto-generate using: `{slug}-v{version}` format (e.g., `multi-comp-v1.0.0`)
+| Plugin | Slug | Directory | Description |
+|--------|------|-----------|-------------|
+| 4K EQ | `4k-eq` | `plugins/4k-eq/` | SSL 4000 console EQ emulation |
+| Multi-Comp | `multi-comp` | `plugins/multi-comp/` | 8-mode compressor + multiband |
+| TapeMachine | `tapemachine` | `plugins/TapeMachine/` | Studer/Ampex tape emulation |
+| Tape Echo | `tape-echo` | `plugins/tape-echo/` | RE-201 Space Echo style delay |
+| Multi-Q | `multi-q` | `plugins/multi-q/` | Universal EQ (Digital/British/Tube) |
+| SilkVerb | `silkverb` | `plugins/SilkVerb/` | Lexicon-style algorithmic reverb |
+| Convolution Reverb | `convolution-reverb` | `plugins/convolution-reverb/` | IR-based reverb |
+| Neural Amp | `neural-amp` | `plugins/neural-amp/` | Neural amp modeler (NAM) |
+| GrooveMind | `groovemind` | `plugins/groovemind/` | ML drum generator (future) |
 
-**Release Process Checklist:**
-When releasing a new version of any plugin, follow ALL these steps:
+## Version Management
 
-1. **Update version numbers** in the plugin's source files:
-   - `CMakeLists.txt` - Update `DEFAULT_VERSION` variable
-   - Header file (if applicable) - Update `PLUGIN_VERSION` fallback constant
+**Version locations** (update ALL before releasing):
 
-2. **Commit the version changes** with a descriptive commit message
+| Plugin | CMakeLists.txt Variable | Header File |
+|--------|------------------------|-------------|
+| 4K EQ | `FOURKEQ_DEFAULT_VERSION` | `FourKEQ.h` |
+| Multi-Comp | `MULTICOMP_DEFAULT_VERSION` | - |
+| TapeMachine | `TAPEMACHINE_DEFAULT_VERSION` | - |
+| Multi-Q | `MULTIQ_DEFAULT_VERSION` | `MultiQ.h` |
+| Others | `<NAME>_DEFAULT_VERSION` | - |
 
-3. **Create release tag with DETAILED changelog** (see format below)
-   - The tag message becomes the GitHub release description
-   - Users see this to understand what changed - BE SPECIFIC!
+## Shared Code (MANDATORY)
 
-4. **Push commit and tag** to trigger GitHub Actions build:
-   ```bash
-   git push origin main
-   git push origin {tag-name}
-   ```
+**Before writing ANY new code, check `plugins/shared/` first!**
 
-5. **Update website** (`_data/plugins.yml`) with new version number
-
-6. **Push website changes** to update download links
-
-⚠️ **CRITICAL - Release Notes Format:**
-The tag message is what users see on the GitHub release page. It MUST clearly explain what changed from the previous version. Users downloading the plugin need to know what's new or fixed.
-
-**Required changelog sections** (include all that apply):
-
-```bash
-git tag -a {slug}-v{version} -m "{Plugin Name} v{version}
-
-## What's New
-- New feature description (be specific about what it does)
-- Another new feature
-
-## Improvements
-- UI improvement or enhancement description
-- Performance improvement description
-
-## Bug Fixes
-- Fixed [specific bug description] (#XX if issue exists)
-- Fixed crash when [specific scenario]
-
-## Technical Changes
-- Build system or infrastructure changes
-- Compatibility improvements
-"
-```
-
-**Good Example** (specific and helpful):
-```bash
-git tag -a 4k-eq-v1.0.7 -m "4K EQ v1.0.7
-
-## Improvements
-- Window size now persists between sessions
-- Plugin remembers your preferred size when reopened
-
-## Technical Changes
-- Uses shared ScalableEditorHelper for consistent resize behavior
-- Improved resize constraints handling
-"
-```
-
-**Bad Example** (vague and unhelpful):
-```bash
-git tag -a 4k-eq-v1.0.7 -m "4K EQ v1.0.7
-
-- Bug fixes and improvements
-- Updated code
-"
-```
-
-**Updating Website for New Version:**
-When you release a new plugin version:
-1. Update `_data/plugins.yml` - change the `version` field for the plugin
-2. Optionally update the changelog in `_plugins/plugin-name.md`
-
-All download links on the home page and plugin pages are dynamically generated from `plugins.yml` - no hardcoded URLs to update.
-
-### ⚠️ PLUGIN VERSION MANAGEMENT - KNOWN ISSUE
-
-**Current Problem**: Plugin version numbers are NOT automatically updated when creating release tags. This causes plugins to show incorrect versions in DAWs.
-
-**Version Number Locations** (all must be updated manually before tagging):
-
-| Plugin | CMakeLists.txt | Header File |
-|--------|---------------|-------------|
-| 4K EQ | `project(FourKEQ VERSION x.x.x)` | `FourKEQ.h: PLUGIN_VERSION = "x.x.x"` |
-| Multi-Q | `project(MultiQ VERSION x.x.x)` | `MultiQ.h: PLUGIN_VERSION = "x.x.x"` |
-| SilkVerb | `set(PLUGIN_VERSION "x.x.x")` | - |
-| Neural Amp | `set(PLUGIN_VERSION "x.x.x")` | - |
-| TapeMachine | `project(TapeMachine VERSION x.x.x)` | - |
-| Multi-Comp | `project(MultiComp VERSION x.x.x)` | - |
-| Tape Echo | `project(TapeEcho VERSION x.x.x)` | - |
-| Convolution Reverb | `project(ConvolutionReverb VERSION x.x.x)` | - |
-
-**Before Creating a Release Tag**:
-1. Update the version in the plugin's `CMakeLists.txt` (`DEFAULT_VERSION` variable)
-2. If the plugin has a `PLUGIN_VERSION` constant in its header file, update that too
-3. Commit these version changes
-4. Write a detailed changelog describing ALL changes since the last version
-5. Create the tag with the changelog in the message (see Release Process above)
-6. Push commit and tag to trigger the release build
-7. Update website `_data/plugins.yml` with the new version
-
-**TODO**: Implement automatic version injection from git tags during build. Options:
-- Use CMake to generate a version header from `PROJECT_VERSION`
-- Add a pre-tag hook that updates version files
-- Use `git describe --tags` in CMake to set version automatically
-
-### ⚠️ SHARED CODE REQUIREMENT
-**Before writing ANY new code, ALWAYS check `plugins/shared/` first!**
-
-| Component | File(s) | Use For |
-|-----------|---------|---------|
-| **LEDMeter** | `LEDMeter.h/cpp` | All input/output level meters (auto mono/stereo) |
-| **SupportersOverlay** | `SupportersOverlay.h` | Patreon credits overlay (click plugin title) |
-| **PatreonBackers** | `PatreonBackers.h` | Supporter name data |
-| **AnalogEmulation** | `AnalogEmulation/*.h` | Saturation, tubes, transformers, DC blocking |
-
-**Upcoming releases requiring consistent shared components**: Multi-Q, TapeMachine, Multi-Comp
-
-## Plugins in this Repository
-
-### 1. **4K EQ**
-- **Location**: `plugins/4k-eq/`
-- **Description**: SSL 4000 Series Console EQ Emulation
-- **Features**:
-  - 4-band parametric EQ (LF, LMF, HMF, HF) with SSL-style colored knobs
-  - High-pass and low-pass filters
-  - Brown/Black knob variants (E-Series/G-Series console emulation)
-  - 2x/4x oversampling for anti-aliasing
-  - Advanced SSL saturation modeling (SSLSaturation.h):
-    - E-Series (Brown knobs) vs G-Series (Black knobs) console types with different harmonic signatures
-    - Multi-stage processing: Input transformer → NE5534 op-amp → Output transformer (E-Series only)
-    - Frequency-dependent saturation (transformers saturate more at low frequencies)
-    - Asymmetric op-amp clipping with slew-rate limiting
-    - Drive range up to 13x-16x gain for authentic "pushed" console sound
-    - DC blocker to prevent offset accumulation
-    - Real-time high-frequency content estimation for dynamic response
-  - Input/Output gain controls
-  - Professional metering
-- **Build Target**: `FourKEQ_All`
-
-### 2. **TapeMachine**
-- **Location**: `plugins/TapeMachine/`
-- **Description**: Analog tape machine emulation (Swiss800 & Classic102)
-- **Features**:
-  - Multiple tape machine models (Swiss800 [Studer A800], Classic102 [Ampex ATR-102], Hybrid Blend)
-  - Four tape formulations: Type 456 (warm), GP9 (modern), Type 911 (German precision), Type 250 (professional)
-  - Tape speed selection (7.5, 15, 30 IPS)
-  - Advanced saturation and hysteresis modeling (ImprovedTapeEmulation.h)
-  - Separate Wow & Flutter controls with shared stereo processing:
-    - Wow: Slow pitch drift (0.3-0.8 Hz) for vinyl-like wobble
-    - Flutter: Faster modulation (3-7 Hz) for tape machine character
-    - Single WowFlutterProcessor instance shared between channels for coherent modulation
-    - Random modulation component for natural flutter
-  - Bias and calibration controls for fine-tuning tape response
-  - Auto-compensation mode (VTM-style output gain lock)
-  - **Factory Preset System** (`TapeMachinePresets.h`):
-    - 15 factory presets across 5 categories
-    - **Subtle**: Gentle Warmth, Transparent Glue, Mastering Touch
-    - **Warm**: Classic Analog, Vintage Warmth, Tube Console
-    - **Character**: 70s Rock, Tape Saturation, Cassette Deck
-    - **Lo-Fi**: Lo-Fi Warble, Worn Tape, Dusty Reel
-    - **Mastering**: Master Bus Glue, Analog Sheen, Vintage Master
-  - Dual stereo VU meters with vintage analog styling
-  - Real-time level monitoring (input/output)
-  - Animated reel components (ReelAnimation class):
-    - Realistic reel rendering with shadow effects
-    - Metal reel body with gradient fill
-    - Animated tape spokes with tape transfer animation
-    - Speed control synced to transport state with wow-based wobble
-  - 2x/4x oversampling for alias-free saturation
-- **Build Target**: `TapeMachine_All`
-
-### 3. **Multi-Comp**
-- **Location**: `plugins/multi-comp/`
-- **Description**: Multi-mode compressor with seven compression styles plus 4-band multiband compression
-- **Features**:
-  - 8 compression modes emulating classic hardware:
-    - **Vintage Opto** - 1960s tube optical leveling amplifier (LA-2A style). Program-dependent attack/release, T4 optical cell emulation. "Peak Reduction" and "Gain" controls with optional Limit mode.
-    - **Vintage FET** - 1967 Rev A "Bluestripe" FET limiting amplifier (1176 style). All-discrete Class A with ultra-fast attack. Includes famous "All Buttons" mode. Ratios: 4:1, 8:1, 12:1, 20:1, All.
-    - **Classic VCA** - 1970s VCA compressor (dbx 160 style). Punchy, aggressive character with "OverEasy" soft-knee compression.
-    - **Bus Compressor** - British console bus compressor (SSL G-Series style). Mix bus glue with fixed attack/release detents and Auto release. Ratios: 2:1, 4:1, 10:1.
-    - **Studio FET** - Later revision "Blackface" FET limiter (1176 Rev E/F style). Cleaner character with ~30% harmonics of vintage. More controlled transient response.
-    - **Studio VCA** - Modern British dual VCA compressor (Focusrite Red 3 style). Clean, musical compression with RMS detection and soft knee.
-    - **Digital** - Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection.
-    - **Multiband** - 4-band multiband compressor with Linkwitz-Riley crossovers and per-band controls.
-  - **Multiband Mode Features**:
-    - 4 frequency bands (Low, Lo-Mid, Hi-Mid, High)
-    - Vertical crossover faders between bands
-    - Per-band threshold, ratio, attack, release, makeup controls
-    - Per-band solo buttons
-    - LED-style gain reduction meters per band
-  - Global sidechain HP filter (20-500Hz) - Prevents pumping from bass
-  - Sidechain low/high shelf EQ for frequency-conscious compression
-  - Lookahead with ITU-R BS.1770 true-peak detection
-  - Auto-makeup gain - RMS-based automatic loudness compensation
-  - Output distortion (Soft/Hard/Clip) - Adds character and saturation
-  - Mix control for parallel compression
-  - Mode-specific attack/release characteristics and saturation
-  - Linked gain reduction metering per channel
-  - Input/Output/GR metering with atomic thread safety
-  - 2x/4x oversampling for anti-aliased processing
-  - **Analog Noise toggle** - Enable/disable subtle -80dB analog noise floor
-  - **Hardware-accurate transformer emulation** with mode-specific HF rolloff:
-    - Opto (LA-2A style): 18kHz input, 16kHz output transformers
-    - FET (1176 style): 20kHz input, 22kHz output transformers
-    - Bus (SSL style): 22kHz input, 24kHz output transformers
-    - VCA/Digital: No transformer (fully transparent)
-- **Build Target**: `MultiComp_All`
-
-### 4. **GrooveMind** (Future - In Development)
-- **Location**: `plugins/groovemind/` (not yet created)
-- **Description**: ML-powered intelligent MIDI drum pattern generator for Linux
-- **Status**: Design phase - see `docs/GrooveMind_Design.md`
-- **Vision**: Logic Pro Drummer alternative using machine learning trained on real drummer recordings
-- **Planned Features**:
-  - **ML-Based Pattern Generation**: Real patterns from Groove MIDI Dataset (not probability-based)
-  - **Groove Humanizer**: GrooVAE-style model for micro-timing and velocity (RTNeural)
-  - **Context-Aware Fills**: LSTM-based fill generator
-  - **Style Classifier**: Smart pattern selection based on parameters
-  - **Follow Mode**: Groove extraction from audio/MIDI input
-  - **Pattern Library**: 500+ curated MIDI patterns with metadata
-- **Technical Stack**:
-  - Training: Python + PyTorch
-  - Inference: RTNeural (real-time safe C++)
-  - Data: Groove MIDI Dataset (CC BY 4.0)
-- **Build Target**: `GrooveMind_All` (disabled until development begins)
-
-### 5. **SilkVerb**
-- **Location**: `plugins/SilkVerb/`
-- **Description**: Lexicon/Valhalla-style algorithmic reverb with Plate, Room, Hall modes
-- **Features**:
-  - **FDN Architecture**: 8-channel stereo Feedback Delay Network with Hadamard matrix mixing
-  - **Three Reverb Modes**:
-    - **Plate**: Short prime-number delays (7.2-51.3ms), no early reflections (like real plates), fast modulation (1.8Hz), tight HF decay
-    - **Room**: Medium delays (12-62ms), subtle early reflections, moderate modulation (1.2Hz), balanced frequency decay
-    - **Hall**: Long delays (40-120ms), prominent early reflections, slow modulation (0.6Hz), extended low-frequency decay
-  - **Lexicon-Style DSP Enhancements**:
-    - **Two-Band Decay**: Separate low/high frequency decay multipliers with configurable crossover (~600-800Hz)
-    - **Complex Modulation**: Three uncorrelated LFOs at golden-ratio-related rates plus smoothed random noise component
-    - **Feedback Saturation**: Asymmetric soft clipping for analog warmth without harshness
-    - **Pre-delay with Crossfeed**: Early reflections blend into late reverb for cohesive sound
-  - **Controls**:
-    - Size: 0.5s to 5.0s decay time
-    - Damping: High-frequency absorption (bright to dark)
-    - Width: Mono to stereo spread
-    - Mix: Dry/wet balance
-  - **DSP Components** (`FDNReverb.h`):
-    - `TwoBandDecayFilter`: Frequency-dependent decay with crossover filter
-    - `ComplexModulator`: Multi-LFO + random modulation system
-    - `FeedbackSaturator`: Asymmetric soft saturation in feedback loop
-    - `EarlyReflections`: 8-tap early reflections with pre-delay and crossfeed
-    - `AllpassDiffuser`: 4-stage allpass network for density
-    - `DampingFilter`: One-pole lowpass for HF absorption
-    - Linear-interpolated delay lines with modulation
-    - Orthogonal 8x8 Hadamard matrix for energy preservation
-  - **UI**: Dark-themed interface with mode selector buttons, 2x2 knob grid
-- **Build Target**: `SilkVerb_All`
-
-### 6. **Convolution Reverb**
-- **Location**: `plugins/convolution-reverb/`
-- **Description**: Zero-latency convolution reverb with SDIR/AIFC impulse response support
-- **Features**:
-  - **IR Loading**: Supports WAV, AIFF, AIFC (Apple Spatial Audio), SDIR (Logic Pro spatial IR)
-  - **Waveform Display**: Visual representation of loaded impulse response
-  - **Zero-Latency Processing**: Partitioned convolution for real-time use
-  - **Controls**: Size, pre-delay, damping, width, mix
-  - **Thread-Safe**: Background IR loading with atomic state management
-- **Build Target**: `ConvolutionReverb_All`
-
-### 7. **Multi-Q**
-- **Location**: `plugins/multi-q/`
-- **Description**: Universal EQ with multiple EQ modes (Digital 8-band, British console)
-- **Features**:
-  - **EQ Mode Selector**: Dropdown to switch between EQ types
-    - **Digital**: Clean 8-band parametric (default)
-    - **British**: SSL 4000-style console EQ (integrated from 4K-EQ)
-    - Future: Tube (Pultec-style) EQ
-  - **Digital Mode - 8 Color-Coded Frequency Bands**:
-    - Band 1 (Red): High-Pass Filter with variable slope (6/12/18/24/36/48 dB/oct)
-    - Band 2 (Orange): Low Shelf with adjustable Q
-    - Bands 3-6 (Yellow/Green/Aqua/Blue): Parametric EQ with Freq/Gain/Q
-    - Band 7 (Purple): High Shelf with adjustable Q
-    - Band 8 (Pink): Low-Pass Filter with variable slope
-  - **British Mode - SSL Console EQ** (`BritishEQProcessor.h`):
-    - 4-band parametric EQ (LF, LMF, HMF, HF) with SSL-style response
-    - High-pass and low-pass filters
-    - Brown/Black mode selector (E-Series/G-Series console variants)
-    - SSL saturation with transformer and op-amp modeling (`SSLSaturation.h`)
-    - Input/Output gain controls
-  - **Real-Time FFT Analyzer**:
-    - Peak and RMS display modes
-    - Configurable resolution (Low=2048, Medium=4096, High=8192 points)
-    - Adjustable decay rate (3-60 dB/s)
-    - Pre/Post EQ display option
-  - **Q-Coupling** (Gain-Q automatic adjustment):
-    - 8 modes: Off, Proportional, Light, Medium, Strong
-    - Asymmetric variants: stronger coupling for cuts than boosts
-  - **Interactive Graphic Display**:
-    - Draggable control points for each band
-    - Color-coded band curves with shaded fill
-    - Combined EQ curve display (white)
-    - Logarithmic frequency scale (20 Hz - 20 kHz)
-    - Display scale modes: ±12 dB, ±30 dB, ±60 dB, Warped
-  - **Processing Options**:
-    - HQ Mode: 2x oversampling for analog-matched response (prevents Nyquist cramping)
-    - Stereo/Mid-Side processing modes (Stereo, Left, Right, Mid, Side)
-    - Master gain with optional visualization overlay
-  - **Analog-Matched Response**:
-    - Bilinear transform with proper frequency pre-warping
-    - No "digital" sound - response matches analog prototypes
-    - Zero latency (without HQ mode)
-  - **UI Features**:
-    - EQ type dropdown on toolbar
-    - Band enable buttons with color indicators
-    - Selected band parameter controls (Freq/Gain/Q/Slope)
-    - Professional LED meters (input/output)
-    - Supporters overlay (click title)
-- **Build Target**: `MultiQ_All`
-
-### 8. **Tape Echo**
-- **Location**: `plugins/tape-echo/`
-- **Description**: RE-201 Roland Space Echo style tape delay with spring reverb
-- **Features**:
-  - **12 Echo Modes**: Based on the original RE-201's mode selector
-    - Various combinations of 3 playback heads
-    - Each mode produces unique rhythmic patterns
-  - **Spring Reverb**: Authentic spring reverb modeling
-  - **Tape Saturation**: Warm analog-style saturation modeling
-  - **Wow & Flutter**: Tape pitch modulation for authentic vintage character
-  - **Tone Controls**:
-    - Bass control for low-frequency shaping
-    - Treble control for high-frequency adjustment
-  - **Tempo Sync**:
-    - Lock delay time to DAW tempo
-    - Multiple note divisions (1/1, 1/2, 1/4, 1/8, etc. including triplets and dotted)
-  - **Controls**:
-    - Input Gain: Drive the tape section
-    - Repeat Rate: Delay time (or tempo-synced note division)
-    - Intensity: Feedback amount
-    - Echo Volume: Wet signal level
-    - Reverb Volume: Spring reverb level
-    - Dry/Wet Mix: Balance between dry and processed signal
-  - **Tape Visualization**: Animated tape machine visualization showing:
-    - Rotating tape reels
-    - Active playback heads
-    - Tape speed indication
-  - **Level Meters**: LED-style input/output meters using shared LEDMeter component
-  - **2x Oversampling**: For alias-free tape saturation
-- **Build Target**: `TapeEcho_All`
+| Component | File | Use For |
+|-----------|------|---------|
+| LEDMeter | `LEDMeter.h/cpp` | All level meters |
+| SupportersOverlay | `SupportersOverlay.h` | Patreon credits (click title) |
+| LunaSlider | `LunaLookAndFeel.h` | Rotary/slider controls with fine control |
+| LunaTooltips | `LunaLookAndFeel.h` | Consistent tooltip text |
+| ScalableEditorHelper | `ScalableEditorHelper.h` | Resizable UI with persistence |
+| AnalogEmulation | `AnalogEmulation/*.h` | Saturation, tubes, transformers |
 
 ## Build System
 
-### ⚠️ RELEASE BUILDS ARE DONE VIA GITHUB ACTIONS
-**All release binaries are built through GitHub Actions, NOT locally.** When code is pushed to the repository:
-1. GitHub Actions automatically builds for all platforms (Linux, Windows, macOS)
-2. Artifacts are uploaded to GitHub Releases
-3. The release page at https://luna-co-software.github.io/lunacoaudio.github.io/ links to these builds
+**Release builds**: GitHub Actions (automatic on tag push)
+**Local builds**: `./docker/build_release.sh <shortcut>`
 
-**To release a plugin:**
-1. Commit and push your changes to the `main` branch
-2. Monitor the build at: `gh run list` or GitHub Actions web UI
-3. Once builds complete successfully, create a GitHub Release with the artifacts
-4. Update the plugin's release page on the website if needed
+| Shortcut | Plugin |
+|----------|--------|
+| `4keq` | 4K EQ |
+| `compressor` | Multi-Comp |
+| `tape` | TapeMachine |
+| `tapeecho` | Tape Echo |
+| `multiq` | Multi-Q |
+| `silkverb` | SilkVerb |
+| `convolution` | Convolution Reverb |
+| `nam` | Neural Amp |
 
-**Local builds (below) are for development and testing only - they are NOT used for releases.**
+**Validation**: `./tests/run_plugin_tests.sh --plugin "<Name>" --skip-audio`
 
-### Local Development Builds
-**Use Docker/Podman containerized builds for local testing.** This ensures glibc compatibility and consistent builds across Linux distributions:
+## Project Structure
 
-```bash
-# Build all plugins
-./docker/build_release.sh
-
-# Build a single plugin (faster for development)
-./docker/build_release.sh 4keq         # 4K EQ
-./docker/build_release.sh compressor   # Multi-Comp
-./docker/build_release.sh tape         # TapeMachine
-./docker/build_release.sh tapeecho     # Tape Echo (RE-201 style)
-./docker/build_release.sh groovemind   # GrooveMind (future)
-./docker/build_release.sh harmonic     # Harmonic Generator
-./docker/build_release.sh convolution  # Convolution Reverb
-./docker/build_release.sh silkverb     # SilkVerb (algorithmic reverb)
-./docker/build_release.sh multiq       # Multi-Q
-./docker/build_release.sh nam          # Neural Amp
-./docker/build_release.sh chord        # Chord Analyzer
-./docker/build_release.sh spectrum     # Spectrum Analyzer
-
-# Show all available shortcuts
-./docker/build_release.sh --help
-```
-
-**IMPORTANT FOR AI ASSISTANTS**: Always use `./docker/build_release.sh` to compile plugins. Do NOT use local cmake commands or `./rebuild_all.sh` for verification - the Docker build is the only approved build method to ensure consistent, distributable binaries. Use single-plugin builds (e.g., `./docker/build_release.sh 4keq`) for faster iteration when working on one plugin.
-
-**MANDATORY POST-BUILD VALIDATION**: After ANY successful plugin build, you MUST run pluginval to validate the plugin:
-```bash
-# After building a specific plugin, validate it immediately:
-./tests/run_plugin_tests.sh --plugin "Plugin Name" --skip-audio
-
-# Examples after single-plugin builds:
-./docker/build_release.sh multiq && ./tests/run_plugin_tests.sh --plugin "Multi-Q" --skip-audio
-./docker/build_release.sh 4keq && ./tests/run_plugin_tests.sh --plugin "4K EQ" --skip-audio
-./docker/build_release.sh compressor && ./tests/run_plugin_tests.sh --plugin "Multi-Comp" --skip-audio
-./docker/build_release.sh tape && ./tests/run_plugin_tests.sh --plugin "TapeMachine" --skip-audio
-./docker/build_release.sh tapeecho && ./tests/run_plugin_tests.sh --plugin "Tape Echo" --skip-audio
-./docker/build_release.sh silkverb && ./tests/run_plugin_tests.sh --plugin "SilkVerb" --skip-audio
-./docker/build_release.sh convolution && ./tests/run_plugin_tests.sh --plugin "Convolution Reverb" --skip-audio
-./docker/build_release.sh groovemind && ./tests/run_plugin_tests.sh --plugin "GrooveMind" --skip-audio
-./docker/build_release.sh harmonic && ./tests/run_plugin_tests.sh --plugin "Harmonic Generator" --skip-audio
-```
-The `--skip-audio` flag runs pluginval tests without audio analysis (faster). Do NOT skip this validation step - it catches crashes, parameter issues, and compatibility problems that would break the plugin in DAWs.
-
-**Output**: Plugins are placed in `release/` directory with both VST3 and LV2 formats.
-
-**Compatibility**: Binaries work on:
-- Debian 11 (Bullseye) and newer
-- Ubuntu 20.04 LTS and newer
-- Fedora 34 and newer
-- Any Linux distribution with glibc 2.31+
-
-**Requirements**: Either Podman (preferred on Fedora) or Docker must be installed.
-
-**Plugins built:**
-- FourKEQ_All (4K EQ)
-- TapeMachine_All
-- TapeEcho_All (Tape Echo - RE-201 style)
-- MultiComp_All
-- GrooveMind_All (future)
-- HarmonicGeneratorPlugin_All
-- ConvolutionReverb_All
-- SilkVerb_All (Algorithmic Reverb)
-- MultiQ_All (Multi-Q)
-- NeuralAmp_All (Neural Amp)
-- ChordAnalyzer_All (Chord Analyzer)
-- SpectrumAnalyzer_All (Spectrum Analyzer)
-
-### Local Development Builds (Alternative)
-Only use the local rebuild script if Docker/Podman is unavailable or for quick debugging iterations:
-```bash
-# From the plugins directory
-./rebuild_all.sh           # Standard rebuild (Release mode)
-./rebuild_all.sh --fast     # Use ccache and ninja if available
-./rebuild_all.sh --clean    # Clean only, don't build
-./rebuild_all.sh --debug    # Debug build
-./rebuild_all.sh --parallel 8  # Specify job count (default: auto-detect)
-```
-
-**Warning**: Local builds may not be compatible with other Linux distributions due to glibc version differences.
-
-### Post-Build Validation
-After building, validate all plugins work correctly:
-```bash
-# Quick validation - verifies plugins are built and loadable
-./tests/quick_validate.sh
-
-# Full validation with pluginval (if installed)
-./tests/run_plugin_tests.sh
-```
-
-### Manual Build Commands
-```bash
-cd build
-
-# Clean rebuild all plugins
-rm -rf * && cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j8
-
-# Build specific plugins
-cmake --build . --target FourKEQ_All
-cmake --build . --target TapeMachine_All
-cmake --build . --target MultiComp_All
-cmake --build . --target GrooveMind_All
-cmake --build . --target HarmonicGeneratorPlugin_All
-cmake --build . --target ConvolutionReverb_All
-cmake --build . --target SilkVerb_All
-cmake --build . --target MultiQ_All
-cmake --build . --target NeuralAmp_All
-```
-
-### CMake Build Options
-Available in the root CMakeLists.txt:
-- `BUILD_4K_EQ` (default: ON)
-- `BUILD_MULTI_COMP` (default: ON)
-- `BUILD_HARMONIC_GENERATOR` (default: OFF) - directory missing
-- `BUILD_TAPE_MACHINE` (default: ON)
-- `BUILD_GROOVEMIND` (default: OFF) - Future ML-based drummer
-- `BUILD_CONVOLUTION_REVERB` (default: ON)
-- `BUILD_SILKVERB` (default: ON)
-- `BUILD_MULTI_Q` (default: ON)
-- `BUILD_NEURAL_AMP` (default: ON)
-
-### Installation Paths
-- **VST3**: `~/.vst3/`
-- **LV2**: `~/.lv2/`
-- **AU** (macOS): `~/Library/Audio/Plug-Ins/Components/`
-- **Standalone**: Builds standalone applications for each plugin
-
-The build script automatically copies plugins to these directories after successful compilation.
-
-## Known Issues & Fixes
-
-### Bundle ID Warnings
-Some plugins show "BUNDLE_ID contains spaces" warnings. This is cosmetic and doesn't affect functionality.
-
-### VST3 Parameter Conflicts
-Fixed by adding `JUCE_FORCE_USE_LEGACY_PARAM_IDS=1` to compile definitions in all plugin CMakeLists.txt files.
-
-### Build Optimization
-For faster builds, install ccache and ninja:
-```bash
-sudo dnf install ccache ninja-build
-# Then use: ./rebuild_all.sh --fast
-```
-
-The build script will automatically detect and use these tools when available.
-
-## Recent Changes
-
-### Plugin Updates
-1. **Added SilkVerb**: Lexicon/Valhalla-style algorithmic reverb with Plate, Room, Hall modes
-   - FDN architecture with 8-channel stereo Hadamard matrix
-   - Two-band frequency-dependent decay (separate low/high multipliers)
-   - Complex modulation (3 LFOs at golden-ratio rates + random noise)
-   - Asymmetric feedback saturation for analog warmth
-   - Pre-delay with crossfeed to late reverb
-2. **Added Convolution Reverb**: IR-based reverb with SDIR support, waveform display, and zero-latency convolution
-3. **Enhanced TapeMachine**:
-   - Added factory preset system with 15 presets across 5 categories (Subtle, Warm, Character, Lo-Fi, Mastering)
-   - Added Type 250 professional tape formulation
-   - Separate Wow and Flutter controls for independent modulation
-   - Added shared wow/flutter processing with coherent stereo modulation
-   - Improved reel animation with realistic visual components and tape transfer
-   - Enhanced UI with vintage rotary switch for noise enable, text shadows for readability
-   - Model names: Swiss800 (Studer A800) and Classic102 (Ampex ATR-102)
-   - Research-based harmonic profiles: Studer (odd-harmonic dominant, transformerless) vs Ampex (even+odd mix, transformer coloration)
-4. **Updated 4K EQ**:
-   - Advanced SSL saturation modeling with E-Series/G-Series console emulation
-   - Multi-stage signal path with transformer and op-amp modeling
-   - Frequency-dependent saturation characteristics
-   - Real-time spectral analysis for dynamic response
-5. **Enhanced Multi-Comp**: Added 4-band multiband compression mode, linked gain reduction metering for stereo tracking with thread-safe atomic operations
-6. **GrooveMind** (planned): ML-powered intelligent drummer using RTNeural and Groove MIDI Dataset (replacing DrummerClone)
-7. **Removed Plate Reverb, StudioVerb, and Vintage Tape Echo**: Replaced with Convolution Reverb and SilkVerb for better reverb options
-
-### Build System Improvements
-1. **Comprehensive rebuild script**: Color-coded output, progress tracking, error logging
-2. **Build optimization support**: ccache and ninja integration
-3. **Per-plugin build logs**: Saved to `/tmp/` for debugging
-4. **Automatic installation verification**: Lists installed VST3/LV2 plugins after build
-5. **Proper JUCE path**: JUCE should be located at `../JUCE` relative to project root (sibling directory)
-
-### Code Quality
-1. **Thread safety**: All metering uses std::atomic with proper memory ordering
-2. **Modern C++17**: Consistent use across all plugins
-3. **JUCE best practices**: Proper APVTS usage, parameter management
-4. **Oversampling**: Anti-aliased processing where appropriate
-5. **Custom DSP classes**: Separation of concerns (e.g., DattorroPlate, TapeDelay, SpringReverb)
-
-## Testing the Plugins
-
-### Linux (using Carla or similar host)
-```bash
-carla
-# Add plugin from ~/.vst3/ or ~/.lv2/
-```
-
-### Reaper
-- Scan for new plugins in Options → Preferences → VST
-- Plugins will appear under "Luna Co. Audio" manufacturer
-- All plugins support both VST3 and standalone formats
-
-### Standalone Applications
-Each plugin can also be run as a standalone application for testing without a DAW.
-
-## Development Notes
-
-### ⚠️ CRITICAL: Shared Code First Philosophy
-
-**MANDATORY FOR ALL DEVELOPMENT**: Before writing ANY new code, you MUST check the `plugins/shared/` directory for existing implementations. This project follows a strict "shared code first" philosophy to:
-
-1. **Maintain consistent look and feel** across all Luna Co. Audio plugins
-2. **Prevent code duplication** and reduce maintenance burden
-3. **Enable easier bug fixes** - fix once, apply everywhere
-4. **Ensure visual consistency** for release-ready plugins
-
-#### Before Writing New Code:
-1. **ALWAYS check `plugins/shared/`** for existing components
-2. **Search for similar implementations** in other plugins
-3. **If code could be used by 2+ plugins**, create it in the shared folder
-4. **Refactor existing plugin-specific code** to shared when appropriate
-
-#### When to Create Shared Code:
-- UI components (meters, knobs, buttons, overlays)
-- DSP utilities (filters, saturation, ballistics)
-- Look and feel classes
-- Common data structures (presets, parameter definitions)
-- Utility functions (dB conversion, smoothing, etc.)
-
-#### Upcoming Release Plugins (Priority for Consistency):
-- **Multi-Q** - Universal EQ
-- **TapeMachine** - Tape emulation
-- **Multi-Comp** - Multi-mode compressor
-
-These plugins MUST use shared components for all common UI elements to ensure a cohesive product line.
-
-### Project Structure
 ```
 plugins/
-├── cmake/                    # CMake configuration files
-│   ├── GlobalSettings.cmake
-│   └── JuceDefaults.cmake
-├── docker/                   # Primary build environment (always use this)
-│   ├── Dockerfile.build     # Ubuntu 20.04 build image (glibc 2.31)
-│   └── build_release.sh     # Main build script
-├── plugins/                  # Individual plugin directories
-│   ├── 4k-eq/               # 4K EQ (console-style EQ)
-│   ├── TapeMachine/         # Tape machine emulation
-│   ├── tape-echo/           # Tape Echo (RE-201 style delay)
-│   ├── multi-comp/          # Multi-mode compressor with multiband
-│   ├── convolution-reverb/  # IR-based convolution reverb
-│   ├── SilkVerb/            # Algorithmic reverb (Lexicon/Valhalla style)
-│   ├── groovemind/          # ML-powered intelligent drummer (future)
-│   ├── multi-q/             # Multi-Q universal EQ
-│   ├── neural-amp/          # Neural amp modeler (NAM)
-│   ├── chord-analyzer/      # Chord Analyzer
-│   ├── spectrum-analyzer/   # Spectrum Analyzer
-│   └── shared/              # ⚠️ SHARED UTILITIES - CHECK HERE FIRST!
-│       ├── AnalogEmulation/ # Analog saturation/tube/transformer library
-│       │   ├── AnalogEmulation.h    # Main include
-│       │   ├── WaveshaperCurves.h   # Saturation curves (LA-2A, 1176, etc.)
-│       │   ├── TubeEmulation.h      # Vacuum tube modeling
-│       │   ├── TransformerEmulation.h # Transformer saturation
-│       │   ├── HardwareProfiles.h   # Hardware presets
-│       │   ├── DCBlocker.h          # DC blocking filter
-│       │   └── HighFrequencyEstimator.h # HF estimation
-│       ├── LEDMeter.h/cpp   # LED-style level meter (mono/stereo auto-detect)
-│       ├── LunaLookAndFeel.h # Base look-and-feel for Luna plugins
-│       ├── PatreonBackers.h # Patreon backer credits data
-│       └── SupportersOverlay.h # Modal overlay for supporters display
-├── tests/                    # Plugin validation framework
-│   ├── quick_validate.sh    # Fast plugin check
-│   └── run_plugin_tests.sh  # Full test suite
-├── release/                  # Build output from Docker (gitignored)
-├── build/                    # Local dev build output (gitignored)
-├── CMakeLists.txt           # Root build configuration
-└── rebuild_all.sh           # Local build script (use docker/build_release.sh instead)
+├── plugins/
+│   ├── 4k-eq/
+│   ├── multi-comp/
+│   ├── TapeMachine/
+│   ├── tape-echo/
+│   ├── multi-q/
+│   ├── SilkVerb/
+│   ├── convolution-reverb/
+│   ├── neural-amp/
+│   └── shared/           # SHARED CODE - CHECK HERE FIRST
+├── docker/
+│   └── build_release.sh  # Primary build script
+├── tests/
+│   └── run_plugin_tests.sh
+└── CMakeLists.txt
 ```
 
-### Adding New Plugins
-1. Create plugin directory under `plugins/`
-2. **⚠️ FIRST: Check `plugins/shared/` for reusable components**
-3. Add CMakeLists.txt with juce_add_plugin()
-4. Add to root CMakeLists.txt with option flag
-5. **Update build scripts** (both are required for full compatibility):
-   - `docker/build_release.sh`: Add shortcut aliases to the `PLUGIN_ALIASES` array
-   - `rebuild_all.sh`: Add directory-to-target mapping to `PLUGIN_TARGETS` array
-6. Follow naming convention: `PluginName_All` for build targets
-7. **REQUIRED**: Use shared components:
-   - `LEDMeter` for all input/output metering
-   - `SupportersOverlay` for Patreon credits (click title to show)
-   - `AnalogEmulation` for any saturation/tube/transformer effects
-   - `PatreonBackers` for supporter data
-8. **If creating new reusable code**: Add it to `plugins/shared/` instead of the plugin directory
+## Common DSP Patterns
 
-### Common DSP Patterns
-- **Oversampling**: Use `juce::dsp::Oversampling<float>` for anti-aliased processing
-- **Filters**: Use `juce::dsp::IIR::Filter` or custom implementations
-- **Level metering**: Use `std::atomic<float>` with relaxed memory ordering for UI updates
-- **Parameter smoothing**: Use `juce::SmoothedValue` or APVTS built-in smoothing
-- **Convolution**: See convolution-reverb's ConvolutionEngine for zero-latency IR processing
-- **FDN Reverb**: See SilkVerb's FDNReverb.h for Lexicon-style algorithmic reverb with two-band decay, complex modulation
-- **Saturation modeling**: See 4K-EQ's SSLSaturation.h for multi-stage analog emulation
-- **Wow/Flutter**: See TapeMachine's WowFlutterProcessor for coherent stereo modulation
-- **Animation**: See TapeMachine's ReelAnimation for timer-based UI animations
-- **Factory Presets**: See TapeMachine's TapeMachinePresets.h or Multi-Comp's CompressorPresets.h for categorized preset systems with `getNumPrograms()`, `setCurrentProgram()`, `getProgramName()` implementation
-- **MIDI Generation**: Future GrooveMind will use ML-based pattern generation with RTNeural
-- **Groove Analysis**: Future GrooveMind will include groove extraction from audio/MIDI input
+- **Oversampling**: `juce::dsp::Oversampling<float>`
+- **Filters**: `juce::dsp::IIR::Filter`
+- **Metering**: `std::atomic<float>` with relaxed ordering
+- **Smoothing**: `juce::SmoothedValue` or APVTS smoothing
+- **Saturation**: Use `AnalogEmulation` library
 
-### Shared Analog Emulation Library
-**Location**: `plugins/shared/AnalogEmulation/`
+## Code Style
 
-A shared library for analog hardware emulation that should be used across all plugins to avoid code duplication. When implementing saturation, tube emulation, or transformer effects, **always use this library** instead of creating plugin-specific implementations.
+- C++17
+- JUCE naming: camelCase methods, PascalCase classes
+- `PARAM_*` constants for parameter IDs
+- Header-only for small utilities
+- Separate DSP classes from editor
 
-**Usage**:
-```cpp
-#include "../shared/AnalogEmulation/AnalogEmulation.h"
+## JUCE
 
-// In prepareToPlay() - initialize singleton resources
-AnalogEmulation::initializeLibrary();
-
-// Use waveshaper curves (LA-2A, 1176, DBX, SSL, Transformer, Tape, Triode, Pentode)
-auto& curves = AnalogEmulation::getWaveshaperCurves();
-float saturated = curves.process(input, AnalogEmulation::WaveshaperCurves::CurveType::Tape);
-float withDrive = curves.processWithDrive(input, AnalogEmulation::WaveshaperCurves::CurveType::Triode, 0.5f);
-
-// Use tube emulation (12AX7, 12AT7, 12BH7, 6SN7)
-AnalogEmulation::TubeEmulation tube;
-tube.prepare(sampleRate, numChannels);
-tube.setTubeType(AnalogEmulation::TubeEmulation::TubeType::Triode_12AX7);
-tube.setDrive(0.3f);
-float output = tube.processSample(input, channel);
-
-// Use transformer emulation with hardware profiles
-AnalogEmulation::TransformerEmulation transformer;
-transformer.prepare(sampleRate, numChannels);
-transformer.setProfile(AnalogEmulation::HardwareProfileLibrary::getNeve1073().inputTransformer);
-float output = transformer.processSample(input, channel);
-
-// Use DC blocker
-AnalogEmulation::DCBlocker dcBlocker;
-dcBlocker.prepare(sampleRate, 5.0f);  // 5Hz cutoff
-float dcFree = dcBlocker.processSample(input);
-
-// Use HF estimator for adaptive saturation
-AnalogEmulation::HighFrequencyEstimator hfEstimator;
-hfEstimator.prepare(sampleRate);
-float satReduction = hfEstimator.getSaturationReduction(input, 0.5f);
-```
-
-**Available Components**:
-| File | Purpose |
-|------|---------|
-| `AnalogEmulation.h` | Main include (includes all components) |
-| `WaveshaperCurves.h` | Lookup table saturation curves (9 types) |
-| `TubeEmulation.h` | Vacuum tube modeling (4 tube types) |
-| `TransformerEmulation.h` | Audio transformer saturation |
-| `HardwareProfiles.h` | Measured hardware profiles (LA-2A, 1176, DBX, SSL, Neve, API, Studer, Ampex) |
-| `DCBlocker.h` | DC blocking filter (mono + stereo) |
-| `HighFrequencyEstimator.h` | HF content estimation for anti-aliasing |
-
-**Hardware Profiles Available**:
-- **Compressors**: LA-2A, 1176, DBX 160, SSL Bus, Studio FET, Studio VCA, Digital
-- **Preamps**: Neve 1073, API 512c
-- **Tape Machines**: Studer A800, Ampex ATR-102
-
-**When to Add New Shared Code**:
-1. If the same DSP algorithm is needed in 2+ plugins
-2. If hardware emulation data (profiles, curves) could be reused
-3. If utility functions (DC blocking, HF estimation) are duplicated
-
-**Namespace**: All shared analog emulation code uses the `AnalogEmulation` namespace
-
-### Shared UI Components (MANDATORY)
-**Location**: `plugins/shared/`
-
-**⚠️ CRITICAL**: All Luna plugins MUST use these shared UI components for consistency. Do NOT create plugin-specific implementations of these components.
-
-#### LEDMeter (REQUIRED for all metering)
-**Files**: `shared/LEDMeter.h`, `shared/LEDMeter.cpp`
-
-Professional LED-style level meter with realistic hardware appearance. **All plugins must use this for input/output metering.**
-
-**Features**:
-- Color-coded LEDs: Green (60%), Yellow (25%), Red (15%)
-- Realistic glow effects and visible unlit LEDs
-- VU-style ballistics (300ms attack/release)
-- Peak hold indicator with configurable hold time
-- **Intelligent mono/stereo auto-detection**:
-  - Single bar on mono channels
-  - Split L/R bars on stereo channels (auto-detects when L/R differ by >1dB)
-  - Can be forced to stereo mode via `setStereoMode(true)`
-- Vertical or horizontal orientation
-
-**Usage**:
-```cpp
-// In PluginEditor.h:
-#include "../../shared/LEDMeter.h"
-
-class MyPluginEditor : public juce::AudioProcessorEditor
-{
-private:
-    LEDMeter inputMeter{LEDMeter::Vertical};
-    LEDMeter outputMeter{LEDMeter::Vertical};
-};
-
-// In PluginEditor.cpp - timerCallback():
-// Pass dB values (-60 to +6 dB range)
-float inputDb = juce::Decibels::gainToDecibels(inputLevel, -60.0f);
-inputMeter.setLevel(inputDb);
-
-// For stereo metering (auto-detects stereo when L/R differ):
-inputMeter.setStereoLevels(leftDb, rightDb);
-
-// Force stereo display even with identical levels:
-inputMeter.setStereoMode(true);
-```
-
-**CMakeLists.txt** - Add to target_sources:
-```cmake
-target_sources(${PLUGIN_NAME} PRIVATE
-    ../shared/LEDMeter.cpp
-)
-```
-
-**Plugins using LEDMeter**:
-- Neural Amp ✅
-- Tape Echo ✅
-- Multi-Q ✅
-- Multi-Comp (needs update)
-- TapeMachine (uses VU meters - different style intentionally)
-
-#### LunaSlider (REQUIRED for all rotary/slider controls)
-**File**: `shared/LunaLookAndFeel.h`
-
-Custom slider with proper Cmd/Ctrl+drag fine control. **All plugins must use this instead of juce::Slider for consistent modifier behavior.**
-
-**Features**:
-- Cmd/Ctrl+drag reduces sensitivity by 10x for fine adjustments
-- Smooth transition when modifier pressed/released mid-drag (no jumps)
-- Cmd/Ctrl+scroll wheel for fine wheel control
-- Disables JUCE velocity mode to prevent cursor hiding
-
-**Usage**:
-```cpp
-#include "../../shared/LunaLookAndFeel.h"
-
-// Use LunaSlider instead of juce::Slider
-freqSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
-                                           juce::Slider::TextBoxBelow);
-
-// Configure with LunaSliderStyle for additional setup
-LunaSliderStyle::setupRotaryKnob(*freqSlider);
-```
-
-**Plugins using LunaSlider**:
-- Multi-Q ✅
-- 4K EQ ✅
-- TapeMachine ✅
-
-#### LunaTooltips (REQUIRED for consistent tooltip text)
-**File**: `shared/LunaLookAndFeel.h`
-
-Shared tooltip strings for common controls. **Use these to ensure consistent tooltip text across all plugins.**
-
-**Available Strings**:
-```cpp
-LunaTooltips::bypass          // "Bypass all processing (Shortcut: B)"
-LunaTooltips::analyzer        // "Show/hide real-time FFT spectrum analyzer (Shortcut: H)"
-LunaTooltips::abComparison    // "A/B Comparison: Click to switch..."
-LunaTooltips::hqMode          // "Enable 2x oversampling..."
-LunaTooltips::frequency       // "Frequency: Center frequency of this band"
-LunaTooltips::gain            // "Gain: Boost or cut at this frequency"
-LunaTooltips::qBandwidth      // "Q: Bandwidth/resonance..."
-LunaTooltips::filterSlope     // "Filter slope: Steeper = sharper cutoff"
-LunaTooltips::dynThreshold    // "Threshold: Level where gain reduction starts"
-LunaTooltips::dynAttack       // "Attack: How fast gain reduction responds..."
-LunaTooltips::dynRelease      // "Release: How fast gain returns..."
-LunaTooltips::dynRange        // "Range: Maximum amount of gain reduction"
-LunaTooltips::fineControlHint // " (Cmd/Ctrl+drag for fine control)"
-LunaTooltips::altResetHint    // " (Alt-click to reset)"
-```
-
-**Usage**:
-```cpp
-#include "../../shared/LunaLookAndFeel.h"
-
-// Use shared tooltip strings
-bypassButton->setTooltip(LunaTooltips::bypass);
-freqSlider->setTooltip(LunaTooltips::withFineControl(LunaTooltips::frequency));
-```
-
-#### SupportersOverlay (REQUIRED for all plugins)
-**File**: `shared/SupportersOverlay.h`
-
-Modal overlay component that displays Patreon supporter credits when the user clicks on the plugin title. **Every plugin must implement this feature.**
-
-**Usage**:
-```cpp
-// In PluginEditor.h:
-#include "../../shared/SupportersOverlay.h"  // Or appropriate relative path
-
-class MyPluginEditor : public juce::AudioProcessorEditor
-{
-public:
-    void mouseDown(const juce::MouseEvent& e) override;
-
-private:
-    std::unique_ptr<SupportersOverlay> supportersOverlay;
-    juce::Rectangle<int> titleClickArea;
-
-    void showSupportersPanel();
-    void hideSupportersPanel();
-};
-
-// In PluginEditor.cpp:
-
-// In paint() - set up clickable area matching where plugin title is drawn:
-titleClickArea = juce::Rectangle<int>(10, 5, 180, 30);  // Adjust to match header
-
-// In resized():
-if (supportersOverlay)
-    supportersOverlay->setBounds(getLocalBounds());
-
-// Implement mouseDown:
-void MyPluginEditor::mouseDown(const juce::MouseEvent& e)
-{
-    if (titleClickArea.contains(e.getPosition()))
-        showSupportersPanel();
-}
-
-void MyPluginEditor::showSupportersPanel()
-{
-    if (!supportersOverlay)
-    {
-        supportersOverlay = std::make_unique<SupportersOverlay>("Plugin Name");
-        supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
-        addAndMakeVisible(supportersOverlay.get());
-    }
-    supportersOverlay->setBounds(getLocalBounds());
-    supportersOverlay->toFront(true);
-    supportersOverlay->setVisible(true);
-}
-
-void MyPluginEditor::hideSupportersPanel()
-{
-    if (supportersOverlay)
-        supportersOverlay->setVisible(false);
-}
-```
-
-**Plugins with SupportersOverlay implemented**:
-- 4K EQ
-- Multi-Comp
-- TapeMachine
-
-**Plugins needing SupportersOverlay**:
-- SilkVerb
-- Convolution Reverb
-- GrooveMind (future)
-- Multi-Q
-- Neural Amp
-
-#### PatreonBackers
-**File**: `shared/PatreonBackers.h`
-
-Shared Patreon backer data used by SupportersOverlay. To add new backers:
-1. Edit `shared/PatreonBackers.h` - add names to appropriate tier arrays
-2. Rebuild all plugins
-3. Also update the project README.md with the same names
-
-### UI Design Guidelines
-- **Color schemes**: Dark themes with analog-inspired controls
-- **Metering**: VU meters for vintage gear, LED-style for modern
-- **Custom LookAndFeel**: Each plugin has custom styling (e.g., FourKLookAndFeel, AnalogLookAndFeel)
-- **Resizable**: Consider making UIs resizable for different screen sizes
-- **Performance**: Use timer callbacks sparingly (30-60 Hz max for UI updates)
-
-### Code Style
-- Modern C++17 features used throughout
-- JUCE naming conventions (camelCase for methods, PascalCase for classes)
-- Separate DSP processing in dedicated classes where appropriate
-- Header-only implementations for small utility classes
-- Forward declarations to minimize compile times
-- Consistent parameter naming (e.g., `PARAM_*` constants)
-
-## JUCE Framework
-- **Location**: `../JUCE/` (sibling directory to project root)
-- **Version**: Latest from develop branch
-- **Modules used**: audio_basics, audio_devices, audio_formats, audio_plugin_client, audio_processors, audio_utils, core, data_structures, dsp, events, graphics, gui_basics, gui_extra
+- **Location**: `../JUCE/` (sibling directory)
+- **Modules**: audio_processors, audio_utils, dsp, gui_basics
 
 ## Troubleshooting
 
-### Build Failures
-1. Ensure Docker or Podman is installed and running
-2. Try rebuilding the container: `./docker/build_release.sh` (it will rebuild if needed)
-3. Check container logs for errors
-4. For local builds only: Check build logs in `/tmp/PluginName_build.log`
+| Issue | Solution |
+|-------|----------|
+| Build fails | Check Docker is running, rebuild container |
+| Plugin not in DAW | Check `~/.vst3/`, rescan in DAW |
+| Validation fails | Run pluginval locally, check parameters |
 
-### Plugin Not Showing in DAW
-1. Verify installation: `ls ~/.vst3/` or `ls ~/.lv2/`
-2. Rescan plugins in your DAW
-3. Check DAW plugin blacklist/blocklist
-4. Try standalone version first to verify plugin works
-
-### Audio Issues
-1. Check sample rate in prepareToPlay() is handled correctly
-2. Verify buffer sizes are appropriate
-3. Look for NaN/inf values in debug builds
-4. Use JUCE's AudioBuffer assertions in debug mode
-
-## Plugin Testing Framework
-
-A comprehensive testing framework is available in `tests/` for automated validation and audio analysis.
-
-### Quick Validation
-```bash
-# Fast sanity check - verifies all plugins are built and installed
-./tests/quick_validate.sh
-
-# Full test suite with all validations
-./tests/run_plugin_tests.sh
-
-# Test a specific plugin
-./tests/run_plugin_tests.sh --plugin "Multi-Comp"
-```
-
-### Test Components
-
-#### 1. Plugin Validation (`run_plugin_tests.sh`)
-- **File existence checks**: Verifies VST3/LV2 files are installed correctly
-- **Binary analysis**: Checks for required symbols (GetPluginFactory)
-- **Pluginval integration**: Runs Tracktion's pluginval at multiple strictness levels
-- **Dependency verification**: Ensures all shared libraries are available
-
-#### 2. Audio Analysis (`audio_analyzer.py`)
-Python-based audio analysis providing PluginDoctor-like functionality:
-
-```bash
-# Generate test signals and analyze
-python3 tests/audio_analyzer.py --plugin "4K EQ" --output-dir tests/output
-
-# Analyze previously processed files
-python3 tests/audio_analyzer.py --plugin "4K EQ" --analyze
-```
-
-**Analysis capabilities:**
-- **THD (Total Harmonic Distortion)**: Measures harmonic content at 1kHz
-- **THD+N**: Total harmonic distortion plus noise
-- **Frequency Response**: Using logarithmic sweeps
-- **Phase Response**: Phase shift across frequencies
-- **Aliasing Detection**: High-frequency artifacts at 18kHz
-- **Noise Floor**: Self-noise with silent input
-- **Null Testing**: Bypass verification (should be < -120dB residual)
-- **Latency Measurement**: Plugin processing delay in samples/ms
-
-**Test signal files generated:**
-- `*_test_sine_1khz.wav` - For THD measurement
-- `*_test_sine_18khz.wav` - For aliasing detection
-- `*_test_sweep.wav` - For frequency/phase response
-- `*_test_impulse.wav` - For latency measurement
-- `*_test_silence.wav` - For noise floor
-- `*_test_multitone.wav` - For IMD testing (60Hz + 7kHz)
-- `*_test_pink_noise.wav` - For general testing and null tests
-
-#### 3. DSP Unit Tests (`dsp_test_harness.cpp`)
-Standalone C++ test harness for testing DSP algorithms without plugin wrappers:
-
-```bash
-# Compile the test harness
-cd tests
-g++ -std=c++17 -O2 dsp_test_harness.cpp -o dsp_test_harness -lm
-
-# Run tests
-./dsp_test_harness
-```
-
-**Test categories:**
-- Sample validity (no NaN/Inf)
-- DC offset verification
-- Clipping detection
-- Noise floor measurement
-- Bypass null testing
-- Gain accuracy
-- Compression behavior
-
-### Manual Audio Testing Workflow
-
-For comprehensive plugin testing similar to PluginDoctor:
-
-1. **Generate test signals:**
-   ```bash
-   python3 tests/audio_analyzer.py --plugin "Plugin Name"
-   ```
-
-2. **Process through plugin:**
-   - Load test WAV files into DAW
-   - Insert plugin on track
-   - Record output with `_processed` suffix
-   - For bypass test, record with `_bypass` suffix
-
-3. **Analyze results:**
-   ```bash
-   python3 tests/audio_analyzer.py --plugin "Plugin Name" --analyze
-   ```
-
-4. **Review report:**
-   - JSON report saved to `tests/output/plugin_name_report.json`
-   - Console output shows pass/fail for each test
-
-### Test Thresholds
-
-| Test | Pass Threshold | Description |
-|------|----------------|-------------|
-| THD @ 1kHz | < 1.0% | Total harmonic distortion |
-| Noise Floor | < -80 dB | Self-noise with silent input |
-| Bypass Null | < -100 dB | Residual when bypassed |
-| Aliasing | None detected | No unexpected spectral content |
-| Clipping | 0% samples | No samples exceeding ±1.0 |
-| DC Offset | < 0.001 | Mean sample value |
-
-### Installing Test Dependencies
-
-```bash
-# Pluginval (download AppImage from releases)
-wget https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
-unzip pluginval_Linux.zip
-chmod +x pluginval
-sudo mv pluginval /usr/local/bin/
-
-# Python dependencies
-pip3 install numpy scipy
-
-# Build DSP test harness
-cd tests && g++ -std=c++17 -O2 dsp_test_harness.cpp -o dsp_test_harness -lm
-```
-
-### Continuous Integration Testing
-
-For automated testing in CI/CD:
-
-```bash
-# Full validation (returns non-zero on failure)
-./tests/run_plugin_tests.sh --skip-audio
-
-# Quick check only
-./tests/quick_validate.sh
-```
-
-### Adding Tests for New Plugins
-
-1. Add plugin name to `PLUGINS` array in `run_plugin_tests.sh`
-2. Create plugin-specific DSP tests in `dsp_test_harness.cpp`
-3. Run `quick_validate.sh` to verify basic installation
-4. Run full audio analysis to establish baseline measurements
-
-## Contact & Support
-For issues or questions about these plugins:
-- Check the build logs in `build/` directory or `/tmp/PluginName_build.log`
-- Review individual plugin source code
-- Check JUCE forum for framework-related questions
 ---
-*Last updated: January 2026**Company: Luna Co. Audio*
-*Build System: CMake + JUCE 7.x*
-*Shared Code Philosophy: All reusable components must be in `plugins/shared/`*
+*Luna Co. Audio | CMake + JUCE 7.x | Shared code in `plugins/shared/`*
