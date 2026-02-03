@@ -183,9 +183,10 @@ git tag -a <plugin>-v{version} -m "<Plugin Name> v{version}
 "
 ```
 
-**Use a HEREDOC for proper formatting:**
+**Use a file with --cleanup=verbatim to preserve markdown headers:**
 ```bash
-git tag -a <plugin>-v{version} -m "$(cat <<'EOF'
+# Write changelog to temp file (git strips # lines as comments by default)
+cat > /tmp/tag_message.txt << 'EOF'
 <Plugin Name> v{version}
 
 ## What's New
@@ -200,7 +201,9 @@ git tag -a <plugin>-v{version} -m "$(cat <<'EOF'
 ## Technical Changes
 - <entries>
 EOF
-)"
+
+# Create tag with verbatim cleanup to preserve ## headers
+git tag -a <plugin>-v{version} --cleanup=verbatim -F /tmp/tag_message.txt
 ```
 
 ### 8. Push Everything
