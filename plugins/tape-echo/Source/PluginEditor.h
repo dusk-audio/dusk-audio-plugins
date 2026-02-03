@@ -20,6 +20,7 @@
 #include "UI/TapeVisualization.h"
 #include "../../shared/LEDMeter.h"
 #include "../../shared/LunaLookAndFeel.h"
+#include "../../shared/ScalableEditorHelper.h"
 
 class TapeEchoEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -33,6 +34,9 @@ public:
 private:
     TapeEchoProcessor& processor;
     TapeEchoLookAndFeel lookAndFeel;
+
+    // Resizable UI helper (shared across all Luna plugins)
+    ScalableEditorHelper resizeHelper;
 
     // Tape visualization
     TapeVisualization tapeViz;

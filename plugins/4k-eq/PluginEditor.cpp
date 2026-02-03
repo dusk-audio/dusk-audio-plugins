@@ -6,12 +6,10 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 {
     setLookAndFeel(&lookAndFeel);
 
-    // Set editor size - increased height for EQ curve display
-    setSize(950, 640);
-
-    // Initialize scalable resize helper (replaces manual setResizable/setResizeLimits)
+    // Initialize scalable resize helper with persistence
     // Base size: 950x640, Min: 760x512 (80%), Max: 1425x960 (150%)
-    resizeHelper.initialize(this, 950, 640, 760, 512, 1425, 960);
+    resizeHelper.initialize(this, &audioProcessor, 950, 640, 760, 512, 1425, 960, false);
+    setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     // Get parameter references
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
@@ -301,6 +299,9 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 
 FourKEQEditor::~FourKEQEditor()
 {
+    // Save window size for next session
+    resizeHelper.saveSize();
+
     // CRITICAL: Stop timer first to prevent callbacks during destruction
     // This was causing crashes when touching controls in Ableton
     stopTimer();

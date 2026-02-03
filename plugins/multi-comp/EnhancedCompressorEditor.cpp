@@ -212,23 +212,17 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Start timer for meter updates
     startTimerHz(30);
     
-    // Setup resizing
-    constrainer.setMinimumSize(500, 350);  // Minimum size
-    constrainer.setMaximumSize(1400, 1000); // Maximum size
-    constrainer.setFixedAspectRatio(700.0 / 500.0); // Keep aspect ratio matching default size
-    
-    // Create resizer component
-    resizer = std::make_unique<juce::ResizableCornerComponent>(this, &constrainer);
-    addAndMakeVisible(resizer.get());
-    resizer->setAlwaysOnTop(true);
-    
-    // Set initial size - do this last so resized() is called after all components are created
-    setSize(750, 500);  // Wider to fit all controls with clear labels
-    setResizable(true, false);  // Allow resizing, no native title bar
+    // Initialize resizable UI using shared helper with persistence
+    // Base size: 750x500, Min: 500x350, Max: 1400x1000
+    resizeHelper.initialize(this, &processor, 750, 500, 500, 350, 1400, 1000, false);
+    setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 
 EnhancedCompressorEditor::~EnhancedCompressorEditor()
 {
+    // Save window size for next session
+    resizeHelper.saveSize();
+
     // Stop timer first to prevent callbacks during destruction
     stopTimer();
 
@@ -929,6 +923,9 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
             break;
     }
 
+    // Calculate scale factor for proportional rendering
+    float scaleFactor = resizeHelper.getScaleFactor();
+
     // Draw title in a smaller area that doesn't overlap with controls
     // Skip drawing for modes that handle their own titles
     auto titleBounds = bounds.removeFromTop(35 * scaleFactor).withTrimmedLeft(200 * scaleFactor).withTrimmedRight(200 * scaleFactor);
@@ -1003,15 +1000,10 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
 void EnhancedCompressorEditor::resized()
 {
     auto bounds = getLocalBounds();
-    
-    // Calculate scale factor based on window size
-    float widthScale = getWidth() / 750.0f;  // Base size is now 750x500
-    float heightScale = getHeight() / 500.0f;
-    scaleFactor = juce::jmin(widthScale, heightScale);  // Use the smaller scale to maintain proportions
-    
-    // Position resizer in corner
-    if (resizer)
-        resizer->setBounds(getWidth() - 16, getHeight() - 16, 16, 16);
+
+    // Update resize helper and get scale factor
+    resizeHelper.updateResizer();
+    float scaleFactor = resizeHelper.getScaleFactor();
     
     // Set up clickable area for title (click to show Patreon supporters)
     titleClickArea = juce::Rectangle<int>(

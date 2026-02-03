@@ -100,17 +100,24 @@ TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
     // Timer for UI updates
     startTimerHz(30);
 
-    setSize(600, 450);
+    // Initialize resizable UI (600x450 base, range 480-900 width)
+    resizeHelper.initialize(this, &processor, 600, 450, 480, 360, 900, 675, false);
+    setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 
 TapeEchoEditor::~TapeEchoEditor()
 {
+    resizeHelper.saveSize();
     stopTimer();
     setLookAndFeel(nullptr);
 }
 
 void TapeEchoEditor::paint(juce::Graphics& g)
 {
+    // Get scale factor for consistent sizing with resized()
+    float scale = resizeHelper.getScaleFactor();
+    auto scaled = [scale](int value) { return static_cast<int>(static_cast<float>(value) * scale); };
+
     // Background gradient
     juce::ColourGradient bgGradient(
         TapeEchoLookAndFeel::primaryColor, 0, 0,
@@ -118,26 +125,27 @@ void TapeEchoEditor::paint(juce::Graphics& g)
     g.setGradientFill(bgGradient);
     g.fillAll();
 
-    // Header
+    // Header - use same scaled(50) as resized() for consistency
+    int headerHeight = scaled(50);
     g.setColour(TapeEchoLookAndFeel::darkBgColor);
-    g.fillRect(0, 0, getWidth(), 45);
+    g.fillRect(0, 0, getWidth(), headerHeight);
 
-    // Title
+    // Title - scale font and positions for consistent sizing
     g.setColour(TapeEchoLookAndFeel::textColor);
-    g.setFont(juce::FontOptions(14.0f).withStyle("Bold"));
-    g.drawText("LUNA CO. AUDIO", 15, 10, 150, 25, juce::Justification::centredLeft, true);
+    g.setFont(juce::FontOptions(14.0f * scale).withStyle("Bold"));
+    g.drawText("LUNA CO. AUDIO", scaled(15), scaled(10), scaled(150), scaled(25), juce::Justification::centredLeft, true);
 
-    g.setFont(juce::FontOptions(18.0f).withStyle("Bold"));
-    g.drawText("TAPE ECHO", getWidth() - 165, 10, 150, 25, juce::Justification::centredRight, true);
+    g.setFont(juce::FontOptions(18.0f * scale).withStyle("Bold"));
+    g.drawText("TAPE ECHO", getWidth() - scaled(165), scaled(10), scaled(150), scaled(25), juce::Justification::centredRight, true);
 
     // Section labels - positioned above each control section
-    // Bottom section starts at y=290 (50 header + 120 viz + 120 knobs)
-    const int labelY = 292;
+    // Bottom section starts at scaled(50 + 120 + 120) = scaled(290)
+    const int labelY = scaled(292);
     g.setColour(TapeEchoLookAndFeel::textColor.withAlpha(0.6f));
-    g.setFont(juce::FontOptions(10.0f));
-    g.drawText("MODE SELECT", 20, labelY, 100, 15, juce::Justification::centredLeft, true);
-    g.drawText("SYNC", 215, labelY, 80, 15, juce::Justification::centred, true);
-    g.drawText("TONE / MIX", getWidth() - 265, labelY, 100, 15, juce::Justification::centredLeft, true);
+    g.setFont(juce::FontOptions(10.0f * scale));
+    g.drawText("MODE SELECT", scaled(20), labelY, scaled(100), scaled(15), juce::Justification::centredLeft, true);
+    g.drawText("SYNC", scaled(215), labelY, scaled(80), scaled(15), juce::Justification::centred, true);
+    g.drawText("TONE / MIX", getWidth() - scaled(265), labelY, scaled(100), scaled(15), juce::Justification::centredLeft, true);
 
     // Draw meter labels (INPUT / OUTPUT) like Multi-Q/Multi-Comp
     if (inputMeter)
@@ -171,45 +179,51 @@ void TapeEchoEditor::paint(juce::Graphics& g)
 
 void TapeEchoEditor::resized()
 {
+    resizeHelper.updateResizer();
+    float scale = resizeHelper.getScaleFactor();
+
+    // Scale helper lambda
+    auto scaled = [scale](int value) { return static_cast<int>(static_cast<float>(value) * scale); };
+
     auto bounds = getLocalBounds();
 
     // Header area
-    bounds.removeFromTop(50);
+    bounds.removeFromTop(scaled(50));
 
     // Tape visualization (top portion)
-    auto vizArea = bounds.removeFromTop(120);
-    tapeViz.setBounds(vizArea.reduced(15, 5));
+    auto vizArea = bounds.removeFromTop(scaled(120));
+    tapeViz.setBounds(vizArea.reduced(scaled(15), scaled(5)));
 
     // Main knobs row
-    auto mainKnobArea = bounds.removeFromTop(120);
+    auto mainKnobArea = bounds.removeFromTop(scaled(120));
     const int mainKnobWidth = mainKnobArea.getWidth() / 5;
 
     auto inputArea = mainKnobArea.removeFromLeft(mainKnobWidth);
-    inputKnob.setBounds(inputArea.reduced(10, 0).removeFromTop(80).withTrimmedTop(10));
-    inputLabel.setBounds(inputArea.removeFromBottom(20));
+    inputKnob.setBounds(inputArea.reduced(scaled(10), 0).removeFromTop(scaled(80)).withTrimmedTop(scaled(10)));
+    inputLabel.setBounds(inputArea.removeFromBottom(scaled(20)));
 
     auto repeatArea = mainKnobArea.removeFromLeft(mainKnobWidth);
-    repeatRateKnob.setBounds(repeatArea.reduced(10, 0).removeFromTop(80).withTrimmedTop(10));
-    repeatRateLabel.setBounds(repeatArea.removeFromBottom(20));
+    repeatRateKnob.setBounds(repeatArea.reduced(scaled(10), 0).removeFromTop(scaled(80)).withTrimmedTop(scaled(10)));
+    repeatRateLabel.setBounds(repeatArea.removeFromBottom(scaled(20)));
 
     auto intensityArea = mainKnobArea.removeFromLeft(mainKnobWidth);
-    intensityKnob.setBounds(intensityArea.reduced(10, 0).removeFromTop(80).withTrimmedTop(10));
-    intensityLabel.setBounds(intensityArea.removeFromBottom(20));
+    intensityKnob.setBounds(intensityArea.reduced(scaled(10), 0).removeFromTop(scaled(80)).withTrimmedTop(scaled(10)));
+    intensityLabel.setBounds(intensityArea.removeFromBottom(scaled(20)));
 
     auto echoArea = mainKnobArea.removeFromLeft(mainKnobWidth);
-    echoVolumeKnob.setBounds(echoArea.reduced(10, 0).removeFromTop(80).withTrimmedTop(10));
-    echoVolumeLabel.setBounds(echoArea.removeFromBottom(20));
+    echoVolumeKnob.setBounds(echoArea.reduced(scaled(10), 0).removeFromTop(scaled(80)).withTrimmedTop(scaled(10)));
+    echoVolumeLabel.setBounds(echoArea.removeFromBottom(scaled(20)));
 
     auto reverbArea = mainKnobArea;
-    reverbVolumeKnob.setBounds(reverbArea.reduced(10, 0).removeFromTop(80).withTrimmedTop(10));
-    reverbVolumeLabel.setBounds(reverbArea.removeFromBottom(20));
+    reverbVolumeKnob.setBounds(reverbArea.reduced(scaled(10), 0).removeFromTop(scaled(80)).withTrimmedTop(scaled(10)));
+    reverbVolumeLabel.setBounds(reverbArea.removeFromBottom(scaled(20)));
 
     // Bottom section
-    auto bottomArea = bounds.removeFromTop(140);
-    bottomArea.removeFromTop(20);  // Space for section labels
+    auto bottomArea = bounds.removeFromTop(scaled(140));
+    bottomArea.removeFromTop(scaled(20));  // Space for section labels
 
     // Mode selector (left side) - 4x3 grid
-    auto modeArea = bottomArea.removeFromLeft(200).reduced(15, 5);
+    auto modeArea = bottomArea.removeFromLeft(scaled(200)).reduced(scaled(15), scaled(5));
     const int buttonWidth = modeArea.getWidth() / 4;
     const int buttonHeight = modeArea.getHeight() / 3;
 
@@ -227,50 +241,50 @@ void TapeEchoEditor::resized()
     }
 
     // Tempo sync controls (middle) - button and dial
-    auto syncArea = bottomArea.removeFromLeft(100).reduced(5, 5);
-    tempoSyncButton.setBounds(syncArea.removeFromTop(30).reduced(5, 0));
-    auto noteKnobArea = syncArea.removeFromTop(60);
-    noteDivisionKnob.setBounds(noteKnobArea.reduced(5, 0));
-    noteDivisionLabel.setBounds(syncArea.removeFromTop(18));
+    auto syncArea = bottomArea.removeFromLeft(scaled(100)).reduced(scaled(5), scaled(5));
+    tempoSyncButton.setBounds(syncArea.removeFromTop(scaled(30)).reduced(scaled(5), 0));
+    auto noteKnobArea = syncArea.removeFromTop(scaled(60));
+    noteDivisionKnob.setBounds(noteKnobArea.reduced(scaled(5), 0));
+    noteDivisionLabel.setBounds(syncArea.removeFromTop(scaled(18)));
 
     // Secondary knobs (right side) - 2x2 grid
-    auto secondaryArea = bottomArea.removeFromRight(250).reduced(15, 5);
+    auto secondaryArea = bottomArea.removeFromRight(scaled(250)).reduced(scaled(15), scaled(5));
     const int secKnobWidth = secondaryArea.getWidth() / 2;
     const int secKnobHeight = secondaryArea.getHeight() / 2;
 
     // Top row
     auto bassArea = juce::Rectangle<int>(
         secondaryArea.getX(), secondaryArea.getY(), secKnobWidth, secKnobHeight);
-    bassKnob.setBounds(bassArea.reduced(5).removeFromTop(50));
-    bassLabel.setBounds(bassArea.removeFromBottom(18));
+    bassKnob.setBounds(bassArea.reduced(scaled(5)).removeFromTop(scaled(50)));
+    bassLabel.setBounds(bassArea.removeFromBottom(scaled(18)));
 
     auto trebleArea = juce::Rectangle<int>(
         secondaryArea.getX() + secKnobWidth, secondaryArea.getY(), secKnobWidth, secKnobHeight);
-    trebleKnob.setBounds(trebleArea.reduced(5).removeFromTop(50));
-    trebleLabel.setBounds(trebleArea.removeFromBottom(18));
+    trebleKnob.setBounds(trebleArea.reduced(scaled(5)).removeFromTop(scaled(50)));
+    trebleLabel.setBounds(trebleArea.removeFromBottom(scaled(18)));
 
     // Bottom row
     auto wfArea = juce::Rectangle<int>(
         secondaryArea.getX(), secondaryArea.getY() + secKnobHeight, secKnobWidth, secKnobHeight);
-    wowFlutterKnob.setBounds(wfArea.reduced(5).removeFromTop(50));
-    wowFlutterLabel.setBounds(wfArea.removeFromBottom(18));
+    wowFlutterKnob.setBounds(wfArea.reduced(scaled(5)).removeFromTop(scaled(50)));
+    wowFlutterLabel.setBounds(wfArea.removeFromBottom(scaled(18)));
 
     auto mixArea = juce::Rectangle<int>(
         secondaryArea.getX() + secKnobWidth, secondaryArea.getY() + secKnobHeight, secKnobWidth, secKnobHeight);
-    dryWetKnob.setBounds(mixArea.reduced(5).removeFromTop(50));
-    dryWetLabel.setBounds(mixArea.removeFromBottom(18));
+    dryWetKnob.setBounds(mixArea.reduced(scaled(5)).removeFromTop(scaled(50)));
+    dryWetLabel.setBounds(mixArea.removeFromBottom(scaled(18)));
 
     // LED meters - positioned on left and right edges of the main knob area
     // Using standard dimensions from LEDMeterStyle for consistency with Multi-Q/Multi-Comp
-    const int meterWidth = LEDMeterStyle::standardWidth;
-    const int meterHeight = 100;  // Good height for the knob row area
-    const int meterY = 60;        // Below header, aligned with top of tape viz
+    const int meterWidth = scaled(LEDMeterStyle::standardWidth);
+    const int meterHeight = scaled(100);  // Good height for the knob row area
+    const int meterY = scaled(60);        // Below header, aligned with top of tape viz
 
     // Input meter on left edge
-    inputMeter->setBounds(8, meterY, meterWidth, meterHeight);
+    inputMeter->setBounds(scaled(8), meterY, meterWidth, meterHeight);
 
     // Output meter on right edge
-    outputMeter->setBounds(getWidth() - meterWidth - 8, meterY, meterWidth, meterHeight);
+    outputMeter->setBounds(getWidth() - meterWidth - scaled(8), meterY, meterWidth, meterHeight);
 }
 
 void TapeEchoEditor::timerCallback()
