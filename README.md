@@ -2,9 +2,11 @@
 
 A collection of professional audio VST3/LV2 plugins built with JUCE.
 
+> **Production Ready:** Only **4K EQ**, **Multi-Comp**, and **TapeMachine** are currently released and recommended for production use. All other plugins are in active development.
+
 ## Plugins
 
-### 4K EQ
+### 4K EQ - RELEASED
 Classic British console EQ emulation featuring:
 - 4-band parametric EQ (LF, LMF, HMF, HF) with color-coded knobs
 - High-pass and low-pass filters
@@ -12,7 +14,7 @@ Classic British console EQ emulation featuring:
 - Advanced analog saturation modeling
 - 2x/4x oversampling for anti-aliasing
 
-### Multi-Comp
+### Multi-Comp - RELEASED
 Multi-mode compressor with seven classic compression styles plus 4-band multiband compression:
 
 **Compression Modes:**
@@ -27,7 +29,7 @@ Multi-mode compressor with seven classic compression styles plus 4-band multiban
 
 **Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, hardware-accurate transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
 
-### TapeMachine
+### TapeMachine - RELEASED
 Analog tape machine emulation featuring:
 - Swiss800 and Classic102 tape machine models
 - Four tape formulations: Type 456, GP9, Type 911, Type 250
@@ -38,7 +40,7 @@ Analog tape machine emulation featuring:
 - Dual stereo VU meters with animated reels
 - 2x/4x oversampling for alias-free processing
 
-### SilkVerb
+### SilkVerb - IN DEVELOPMENT
 Professional algorithmic reverb:
 - Three modes: Plate, Room, Hall
 - FDN architecture with Hadamard matrix mixing
@@ -46,32 +48,42 @@ Professional algorithmic reverb:
 - Complex modulation (3 LFOs + random noise)
 - Feedback saturation for analog warmth
 
-### Convolution Reverb
+### Convolution Reverb - IN DEVELOPMENT
 Zero-latency IR-based reverb:
 - Supports WAV, AIFF, AIFC, SDIR impulse responses
 - Waveform display
 - Size, pre-delay, damping, width, mix controls
 
-### Vintage Tape Echo
-Classic tape echo/delay emulation:
-- 12 operation modes
-- Wow & flutter simulation
-- Spring reverb
-- Tape age modeling
+### Multi-Q - IN DEVELOPMENT
+Universal EQ with multiple modes:
+- **Digital Mode**: Clean 8-band parametric with color-coded bands
+- **British Mode**: SSL 4000-style console EQ with Brown/Black variants
+- Real-time FFT analyzer with pre/post display
+- Q-coupling modes for natural EQ response
+- Interactive graphic display with draggable points
+- HQ mode with 2x oversampling
 
-### DrummerClone
-Intelligent MIDI drum pattern generator:
-- Follow Mode with real-time groove analysis
-- 12+ virtual drummer personalities
-- Section-aware patterns and intelligent fills
-- MIDI CC control for DAW automation
-- MIDI export functionality
+### Tape Echo - IN DEVELOPMENT
+RE-201 Roland Space Echo style tape delay:
+- 12 echo modes based on original hardware
+- Spring reverb modeling
+- Tape saturation and wow/flutter
+- Tempo sync with multiple note divisions
+- Animated tape visualization
 
-### Harmonic Generator
-Analog-style harmonic saturation processor:
-- Individual harmonic controls (2nd-5th)
-- Hardware saturation modes
-- 2x oversampling
+### Neural Amp - IN DEVELOPMENT
+Neural network amp modeling (NAM):
+- Load .nam model files
+- Guitar and bass amp tones
+- Low-latency inference
+
+### GrooveMind - IN DEVELOPMENT
+> ⚠️ Early development - not functional yet.
+ML-powered intelligent drum pattern generator:
+- Pattern generation from Groove MIDI Dataset
+- Groove humanization with micro-timing
+- Context-aware fills
+- Style classification
 
 ## Building
 
@@ -81,15 +93,18 @@ For consistent, distributable binaries:
 # Build all plugins
 ./docker/build_release.sh
 
-# Build a single plugin
-./docker/build_release.sh silkverb     # SilkVerb
-./docker/build_release.sh convolution  # Convolution Reverb
+# Build a single plugin (production-ready)
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
 ./docker/build_release.sh tape         # TapeMachine
-./docker/build_release.sh echo         # Vintage Tape Echo
-./docker/build_release.sh drummer      # DrummerClone
-./docker/build_release.sh harmonic     # Harmonic Generator
+
+# Build a single plugin (in development)
+./docker/build_release.sh multiq       # Multi-Q
+./docker/build_release.sh silkverb     # SilkVerb
+./docker/build_release.sh convolution  # Convolution Reverb
+./docker/build_release.sh tapeecho     # Tape Echo
+./docker/build_release.sh nam          # Neural Amp
+./docker/build_release.sh groovemind   # GrooveMind
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -105,14 +120,18 @@ For consistent, distributable binaries:
 ### Build Individual Plugin
 ```bash
 cd build
+# Production-ready
 cmake --build . --target FourKEQ_All
 cmake --build . --target MultiComp_All
 cmake --build . --target TapeMachine_All
+
+# In development
+cmake --build . --target MultiQ_All
 cmake --build . --target SilkVerb_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
-cmake --build . --target DrummerClone_All
-cmake --build . --target HarmonicGeneratorPlugin_All
+cmake --build . --target NeuralAmp_All
+cmake --build . --target GrooveMind_All
 ```
 
 ### Installation Paths
