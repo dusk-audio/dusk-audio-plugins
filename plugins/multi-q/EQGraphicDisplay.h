@@ -54,11 +54,40 @@ public:
     // Show/hide analyzer
     void setAnalyzerVisible(bool visible);
 
+    // Set analyzer smoothing mode
+    void setAnalyzerSmoothingMode(FFTAnalyzer::SmoothingMode mode)
+    {
+        if (analyzer)
+            analyzer->setSmoothingMode(mode);
+    }
+
     // Show/hide master gain overlay
     void setShowMasterGainOverlay(bool show) { showMasterGain = show; repaint(); }
 
     // Update master gain value for overlay
     void setMasterGain(float gainDB) { masterGainDB = gainDB; repaint(); }
+
+    // Toggle spectrum freeze (captures current spectrum as reference)
+    void toggleSpectrumFreeze()
+    {
+        if (analyzer)
+            analyzer->toggleFreeze();
+        repaint();
+    }
+
+    // Check if spectrum is frozen
+    bool isSpectrumFrozen() const
+    {
+        return analyzer ? analyzer->isFrozen() : false;
+    }
+
+    // Clear frozen spectrum
+    void clearFrozenSpectrum()
+    {
+        if (analyzer)
+            analyzer->clearFrozen();
+        repaint();
+    }
 
 private:
     void timerCallback() override;
@@ -80,7 +109,7 @@ private:
     float masterGainDB = 0.0f;
 
     // Interaction state
-    int selectedBand = -1;  // -1 = none selected
+    int selectedBand = 0;  // Start with band 1 selected
     int hoveredBand = -1;
     bool isDragging = false;
     juce::Point<float> dragStartPoint;
@@ -98,9 +127,9 @@ private:
     };
     DragMode currentDragMode = DragMode::None;
 
-    // Control point hit testing
-    static constexpr float CONTROL_POINT_RADIUS = 8.0f;
-    static constexpr float CONTROL_POINT_HIT_RADIUS = 12.0f;
+    // Control point hit testing - larger nodes for Pro-Q style visibility
+    static constexpr float CONTROL_POINT_RADIUS = 12.0f;  // 24px diameter
+    static constexpr float CONTROL_POINT_HIT_RADIUS = 16.0f;  // Generous hit area
 
     // Coordinate conversion
     float getXForFrequency(float freq) const;

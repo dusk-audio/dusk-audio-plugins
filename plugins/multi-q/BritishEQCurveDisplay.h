@@ -6,6 +6,18 @@
 
 //==============================================================================
 /**
+ * Display scale modes for EQ graph Y-axis (matching 4K-EQ)
+ */
+enum class BritishDisplayScaleMode {
+    Linear12dB = 0,   // ±12 dB range (fine adjustments)
+    Linear24dB,       // ±24 dB range (default)
+    Linear30dB,       // ±30 dB range
+    Linear60dB,       // ±60 dB range (full view)
+    Warped            // Logarithmic/warped scale
+};
+
+//==============================================================================
+/**
  * British EQ Curve Display Component
  *
  * Displays frequency response graph for British (4K-EQ style) mode showing:
@@ -13,6 +25,7 @@
  * - Combined frequency response as white/cream line
  * - Grid lines at standard frequencies
  * - FFT analyzer overlay (when enabled)
+ * - Selectable dB range for visualization (matching 4K-EQ)
  */
 class BritishEQCurveDisplay : public juce::Component,
                                private juce::Timer
@@ -27,6 +40,32 @@ public:
 
     // Show/hide FFT analyzer
     void setAnalyzerVisible(bool visible);
+
+    // Set analyzer smoothing mode
+    void setAnalyzerSmoothingMode(FFTAnalyzer::SmoothingMode mode)
+    {
+        if (analyzer)
+            analyzer->setSmoothingMode(mode);
+    }
+
+    // Toggle spectrum freeze (captures current spectrum as reference)
+    void toggleSpectrumFreeze()
+    {
+        if (analyzer)
+        {
+            analyzer->toggleFreeze();
+            repaint();
+        }
+    }
+
+    // Check if spectrum is frozen
+    bool isSpectrumFrozen() const
+    {
+        return analyzer ? analyzer->isFrozen() : false;
+    }
+
+    /** Set the display scale mode for the Y-axis dB range */
+    void setDisplayScaleMode(BritishDisplayScaleMode mode);
 
 private:
     MultiQ& audioProcessor;
@@ -47,8 +86,11 @@ private:
     // Frequency range
     static constexpr float minFreq = 20.0f;
     static constexpr float maxFreq = 20000.0f;
-    static constexpr float minDB = -25.0f;
-    static constexpr float maxDB = 25.0f;
+
+    // Display scale configuration (matching 4K-EQ)
+    BritishDisplayScaleMode scaleMode = BritishDisplayScaleMode::Linear24dB;
+    float minDisplayDB = -24.0f;
+    float maxDisplayDB = 24.0f;
 
     // Graph area margins
     static constexpr float graphLeftMargin = 30.0f;    // Space for dB labels

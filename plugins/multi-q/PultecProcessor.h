@@ -779,6 +779,13 @@ public:
             {
                 float sample = channelData[i];
 
+                // NaN/Inf protection - skip processing if input is invalid
+                if (!std::isfinite(sample))
+                {
+                    channelData[i] = 0.0f;
+                    continue;
+                }
+
                 // Input transformer coloration
                 sample = inputTransformer.processSample(sample, ch);
 
@@ -863,6 +870,10 @@ public:
 
                 // Output transformer
                 sample = outputTransformer.processSample(sample, ch);
+
+                // NaN/Inf protection - zero output if processing produced invalid result
+                if (!std::isfinite(sample))
+                    sample = 0.0f;
 
                 channelData[i] = sample;
             }

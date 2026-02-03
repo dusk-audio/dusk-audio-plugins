@@ -83,6 +83,41 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
     if (showMasterGain && std::abs(masterGainDB) > 0.01f)
         drawMasterGainOverlay(g);
 
+    // Draw dynamics threshold line for selected band (when dynamics enabled)
+    if (selectedBand >= 0 && selectedBand < MultiQ::NUM_BANDS &&
+        processor.isInDynamicMode() && processor.isDynamicsEnabled(selectedBand))
+    {
+        float threshold = processor.getDynamicsThreshold(selectedBand);
+        float thresholdY = getYForDB(threshold);
+
+        auto displayBounds = getDisplayBounds();
+
+        // Threshold line with dashed style
+        juce::Colour threshColor = juce::Colour(0xFFff8844);  // Orange to match dynamics
+
+        // Draw subtle shaded area above threshold (where compression happens)
+        juce::Rectangle<float> compressionZone(
+            displayBounds.getX(), displayBounds.getY(),
+            displayBounds.getWidth(), thresholdY - displayBounds.getY());
+        g.setColour(threshColor.withAlpha(0.05f));
+        g.fillRect(compressionZone);
+
+        // Draw threshold line with glow
+        g.setColour(threshColor.withAlpha(0.15f));
+        g.drawHorizontalLine(static_cast<int>(thresholdY - 1), displayBounds.getX(), displayBounds.getRight());
+        g.drawHorizontalLine(static_cast<int>(thresholdY + 1), displayBounds.getX(), displayBounds.getRight());
+
+        g.setColour(threshColor.withAlpha(0.5f));
+        g.drawHorizontalLine(static_cast<int>(thresholdY), displayBounds.getX(), displayBounds.getRight());
+
+        // Draw threshold label on the right side
+        g.setColour(threshColor);
+        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+        juce::String threshLabel = "T: " + juce::String(static_cast<int>(threshold)) + " dB";
+        g.drawText(threshLabel, static_cast<int>(displayBounds.getRight() - 60),
+                   static_cast<int>(thresholdY - 14), 55, 14, juce::Justification::centredRight);
+    }
+
     // Draw control points (stalks first, then nodes)
     drawControlPoints(g);
 
@@ -238,16 +273,16 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
 
 void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
 {
-    // Hardcoded colors to bypass any initialization issues
+    // Vibrant Pro-Q style colors for high visibility
     static const juce::Colour bandColors[8] = {
-        juce::Colour(0xFFff4444),  // Red - HPF
-        juce::Colour(0xFFff8844),  // Orange - Low Shelf
-        juce::Colour(0xFFffcc44),  // Yellow - Para 1
-        juce::Colour(0xFF44cc44),  // Green - Para 2
-        juce::Colour(0xFF44cccc),  // Cyan - Para 3
-        juce::Colour(0xFF4488ff),  // Blue - Para 4
-        juce::Colour(0xFFaa44ff),  // Purple - High Shelf
-        juce::Colour(0xFFff44aa)   // Pink - LPF
+        juce::Colour(0xFFff5555),  // Red - HPF
+        juce::Colour(0xFFffaa00),  // Orange - Low Shelf
+        juce::Colour(0xFFffee00),  // Yellow - Para 1
+        juce::Colour(0xFF88ee44),  // Lime - Para 2
+        juce::Colour(0xFF00ccff),  // Cyan - Para 3
+        juce::Colour(0xFF5588ff),  // Blue - Para 4
+        juce::Colour(0xFFaa66ff),  // Purple - High Shelf
+        juce::Colour(0xFFff66cc)   // Pink - LPF
     };
 
     auto displayBounds = getDisplayBounds();
@@ -488,16 +523,16 @@ void EQGraphicDisplay::drawControlPoints(juce::Graphics& g)
 
 void EQGraphicDisplay::drawInactiveBandIndicator(juce::Graphics& g, int bandIndex)
 {
-    // Hardcoded colors to bypass any initialization issues
+    // Vibrant Pro-Q style colors for high visibility
     static const juce::Colour bandColors[8] = {
-        juce::Colour(0xFFff4444),  // Red - HPF
-        juce::Colour(0xFFff8844),  // Orange - Low Shelf
-        juce::Colour(0xFFffcc44),  // Yellow - Para 1
-        juce::Colour(0xFF44cc44),  // Green - Para 2
-        juce::Colour(0xFF44cccc),  // Cyan - Para 3
-        juce::Colour(0xFF4488ff),  // Blue - Para 4
-        juce::Colour(0xFFaa44ff),  // Purple - High Shelf
-        juce::Colour(0xFFff44aa)   // Pink - LPF
+        juce::Colour(0xFFff5555),  // Red - HPF
+        juce::Colour(0xFFffaa00),  // Orange - Low Shelf
+        juce::Colour(0xFFffee00),  // Yellow - Para 1
+        juce::Colour(0xFF88ee44),  // Lime - Para 2
+        juce::Colour(0xFF00ccff),  // Cyan - Para 3
+        juce::Colour(0xFF5588ff),  // Blue - Para 4
+        juce::Colour(0xFFaa66ff),  // Purple - High Shelf
+        juce::Colour(0xFFff66cc)   // Pink - LPF
     };
 
     auto point = getControlPointPosition(bandIndex);
@@ -526,16 +561,16 @@ void EQGraphicDisplay::drawInactiveBandIndicator(juce::Graphics& g, int bandInde
 
 void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
 {
-    // Hardcoded colors to bypass any initialization issues
+    // Vibrant Pro-Q style colors for high visibility
     static const juce::Colour bandColors[8] = {
-        juce::Colour(0xFFff4444),  // Red - HPF
-        juce::Colour(0xFFff8844),  // Orange - Low Shelf
-        juce::Colour(0xFFffcc44),  // Yellow - Para 1
-        juce::Colour(0xFF44cc44),  // Green - Para 2
-        juce::Colour(0xFF44cccc),  // Cyan - Para 3
-        juce::Colour(0xFF4488ff),  // Blue - Para 4
-        juce::Colour(0xFFaa44ff),  // Purple - High Shelf
-        juce::Colour(0xFFff44aa)   // Pink - LPF
+        juce::Colour(0xFFff5555),  // Red - HPF
+        juce::Colour(0xFFffaa00),  // Orange - Low Shelf
+        juce::Colour(0xFFffee00),  // Yellow - Para 1
+        juce::Colour(0xFF88ee44),  // Lime - Para 2
+        juce::Colour(0xFF00ccff),  // Cyan - Para 3
+        juce::Colour(0xFF5588ff),  // Blue - Para 4
+        juce::Colour(0xFFaa66ff),  // Purple - High Shelf
+        juce::Colour(0xFFff66cc)   // Pink - LPF
     };
 
     auto point = getControlPointPosition(bandIndex);
@@ -627,14 +662,123 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
                       (radius + 0.5f) * 2.0f, (radius + 0.5f) * 2.0f, 1.5f);
     }
 
-    // Band number in center
-    float fontSize = isSelected ? 10.0f : (isFlat ? 8.0f : 9.0f);
-    g.setFont(juce::Font(juce::FontOptions(fontSize).withStyle("Bold")));
+    // Draw filter type icon (or band number for parametric)
+    // Get the band type from default configs
+    BandType bandType = (bandIndex >= 0 && bandIndex < 8)
+        ? DefaultBandConfigs[static_cast<size_t>(bandIndex)].type
+        : BandType::Parametric;
+
     g.setColour(juce::Colours::white.withAlpha((isSelected ? 1.0f : 0.9f) * opacityMult));
-    g.drawText(juce::String(bandIndex + 1),
-               static_cast<int>(point.x - innerRadius), static_cast<int>(point.y - innerRadius),
-               static_cast<int>(innerRadius * 2.0f), static_cast<int>(innerRadius * 2.0f),
-               juce::Justification::centred);
+
+    float iconSize = innerRadius * 1.1f;
+    float strokeWidth = isSelected ? 2.0f : 1.5f;
+
+    switch (bandType)
+    {
+        case BandType::HighPass:
+        {
+            // HPF icon: slope rising to the right (/¯)
+            juce::Path hpfPath;
+            float cx = point.x, cy = point.y;
+            hpfPath.startNewSubPath(cx - iconSize * 0.6f, cy + iconSize * 0.4f);
+            hpfPath.lineTo(cx - iconSize * 0.1f, cy + iconSize * 0.4f);
+            hpfPath.lineTo(cx + iconSize * 0.3f, cy - iconSize * 0.4f);
+            hpfPath.lineTo(cx + iconSize * 0.6f, cy - iconSize * 0.4f);
+            g.strokePath(hpfPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
+            break;
+        }
+        case BandType::LowPass:
+        {
+            // LPF icon: slope falling to the right (¯\)
+            juce::Path lpfPath;
+            float cx = point.x, cy = point.y;
+            lpfPath.startNewSubPath(cx - iconSize * 0.6f, cy - iconSize * 0.4f);
+            lpfPath.lineTo(cx - iconSize * 0.3f, cy - iconSize * 0.4f);
+            lpfPath.lineTo(cx + iconSize * 0.1f, cy + iconSize * 0.4f);
+            lpfPath.lineTo(cx + iconSize * 0.6f, cy + iconSize * 0.4f);
+            g.strokePath(lpfPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
+            break;
+        }
+        case BandType::LowShelf:
+        {
+            // Low shelf icon: step up shape
+            juce::Path shelfPath;
+            float cx = point.x, cy = point.y;
+            shelfPath.startNewSubPath(cx - iconSize * 0.6f, cy + iconSize * 0.3f);
+            shelfPath.lineTo(cx - iconSize * 0.15f, cy + iconSize * 0.3f);
+            shelfPath.lineTo(cx + iconSize * 0.15f, cy - iconSize * 0.3f);
+            shelfPath.lineTo(cx + iconSize * 0.6f, cy - iconSize * 0.3f);
+            g.strokePath(shelfPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+            break;
+        }
+        case BandType::HighShelf:
+        {
+            // High shelf icon: step down shape
+            juce::Path shelfPath;
+            float cx = point.x, cy = point.y;
+            shelfPath.startNewSubPath(cx - iconSize * 0.6f, cy - iconSize * 0.3f);
+            shelfPath.lineTo(cx - iconSize * 0.15f, cy - iconSize * 0.3f);
+            shelfPath.lineTo(cx + iconSize * 0.15f, cy + iconSize * 0.3f);
+            shelfPath.lineTo(cx + iconSize * 0.6f, cy + iconSize * 0.3f);
+            g.strokePath(shelfPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+            break;
+        }
+        case BandType::Parametric:
+        default:
+        {
+            // Parametric/other: show band number
+            float fontSize = isSelected ? 10.0f : (isFlat ? 8.0f : 9.0f);
+            g.setFont(juce::Font(juce::FontOptions(fontSize).withStyle("Bold")));
+            g.drawText(juce::String(bandIndex + 1),
+                       static_cast<int>(point.x - innerRadius), static_cast<int>(point.y - innerRadius),
+                       static_cast<int>(innerRadius * 2.0f), static_cast<int>(innerRadius * 2.0f),
+                       juce::Justification::centred);
+            break;
+        }
+    }
+
+    // Dynamic gain indicator (only in Dynamic mode when dynamics are enabled for this band)
+    if (processor.isInDynamicMode() && processor.isDynamicsEnabled(bandIndex))
+    {
+        float dynGain = processor.getDynamicGain(bandIndex);  // Negative dB for reduction
+
+        // Draw a small arc indicator showing dynamic activity
+        // The arc angle represents the amount of gain reduction (up to 24dB range)
+        if (std::abs(dynGain) > 0.5f)  // Only show if significant activity
+        {
+            // Normalize gain reduction to 0-1 range (0 = no reduction, 1 = max reduction)
+            float normalizedGain = juce::jmin(std::abs(dynGain) / 24.0f, 1.0f);
+
+            // Draw arc around the control point
+            float arcRadius = radius + 4.0f;
+            float arcThickness = 2.5f;
+
+            // Arc color: green for reduction, fade to yellow for heavy reduction
+            juce::Colour arcColor = juce::Colour(0xff00cc66).interpolatedWith(
+                juce::Colour(0xffffcc00), normalizedGain * 0.7f);
+
+            // Arc spans from top, clockwise based on gain reduction
+            float startAngle = -juce::MathConstants<float>::halfPi;  // Top
+            float endAngle = startAngle + normalizedGain * juce::MathConstants<float>::twoPi * 0.8f;
+
+            juce::Path arcPath;
+            arcPath.addCentredArc(point.x, point.y, arcRadius, arcRadius,
+                                  0.0f, startAngle, endAngle, true);
+
+            g.setColour(arcColor.withAlpha(0.9f));
+            g.strokePath(arcPath, juce::PathStrokeType(arcThickness,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            // Add subtle glow
+            g.setColour(arcColor.withAlpha(0.3f));
+            g.strokePath(arcPath, juce::PathStrokeType(arcThickness + 2.0f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+    }
 }
 
 void EQGraphicDisplay::drawMasterGainOverlay(juce::Graphics& g)
@@ -693,6 +837,22 @@ void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)
             onBandSelected(selectedBand);
         repaint();
         showBandContextMenu(hitBand, e.getScreenPosition());
+        return;
+    }
+
+    // Alt-click (without Cmd) resets band to default values
+    if (e.mods.isAltDown() && !e.mods.isCommandDown() && hitBand >= 0 && isBandEnabled(hitBand))
+    {
+        // Reset to default values from DefaultBandConfigs
+        const auto& config = DefaultBandConfigs[static_cast<size_t>(hitBand)];
+        setBandFrequency(hitBand, config.defaultFreq);
+        setBandGain(hitBand, 0.0f);  // Default gain is 0 dB
+        setBandQ(hitBand, 0.71f);    // Default Q (Butterworth)
+
+        selectedBand = hitBand;
+        if (onBandSelected)
+            onBandSelected(selectedBand);
+        repaint();
         return;
     }
 

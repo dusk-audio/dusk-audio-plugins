@@ -1,12 +1,13 @@
 #include "MultiQ.h"
 #include "MultiQEditor.h"
+#include <cstdio>  // For debug logging
 
 //==============================================================================
 MultiQ::MultiQ()
     : AudioProcessor(BusesProperties()
                      .withInput("Input", juce::AudioChannelSet::stereo(), true)
                      .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-      parameters(*this, nullptr, juce::Identifier("MultiQ"), createParameterLayout())
+      parameters(*this, &undoManager, juce::Identifier("MultiQ"), createParameterLayout())
 {
     // Initialize dirty flags
     for (auto& dirty : bandDirty)
@@ -37,6 +38,8 @@ MultiQ::MultiQ()
     masterGainParam = parameters.getRawParameterValue(ParamIDs::masterGain);
     bypassParam = parameters.getRawParameterValue(ParamIDs::bypass);
     hqEnabledParam = parameters.getRawParameterValue(ParamIDs::hqEnabled);
+    linearPhaseEnabledParam = parameters.getRawParameterValue(ParamIDs::linearPhaseEnabled);
+    linearPhaseLengthParam = parameters.getRawParameterValue(ParamIDs::linearPhaseLength);
     processingModeParam = parameters.getRawParameterValue(ParamIDs::processingMode);
     qCoupleModeParam = parameters.getRawParameterValue(ParamIDs::qCoupleMode);
 
@@ -108,9 +111,12 @@ MultiQ::MultiQ()
         bandDynRangeParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynRange(i + 1));
     }
     dynDetectionModeParam = parameters.getRawParameterValue(ParamIDs::dynDetectionMode);
+    autoGainEnabledParam = parameters.getRawParameterValue(ParamIDs::autoGainEnabled);
 
     // Add global parameter listeners
     parameters.addParameterListener(ParamIDs::hqEnabled, this);
+    parameters.addParameterListener(ParamIDs::linearPhaseEnabled, this);
+    parameters.addParameterListener(ParamIDs::linearPhaseLength, this);
     parameters.addParameterListener(ParamIDs::qCoupleMode, this);
     parameters.addParameterListener(ParamIDs::analyzerResolution, this);
 
@@ -138,6 +144,8 @@ MultiQ::~MultiQ()
     parameters.removeParameterListener(ParamIDs::bandSlope(1), this);
     parameters.removeParameterListener(ParamIDs::bandSlope(8), this);
     parameters.removeParameterListener(ParamIDs::hqEnabled, this);
+    parameters.removeParameterListener(ParamIDs::linearPhaseEnabled, this);
+    parameters.removeParameterListener(ParamIDs::linearPhaseLength, this);
     parameters.removeParameterListener(ParamIDs::qCoupleMode, this);
     parameters.removeParameterListener(ParamIDs::analyzerResolution, this);
 }
@@ -171,6 +179,49 @@ void MultiQ::parameterChanged(const juce::String& parameterID, float /*newValue*
         filtersNeedUpdate.store(true);
     }
 
+    // Linear phase mode change
+    if (parameterID == ParamIDs::linearPhaseEnabled)
+    {
+        linearPhaseParamsChanged.store(true);
+    }
+
+    // Linear phase filter length change - apply at runtime
+    if (parameterID == ParamIDs::linearPhaseLength)
+    {
+        int lengthChoice = static_cast<int>(safeGetParam(linearPhaseLengthParam, 1.0f));
+        LinearPhaseEQProcessor::FilterLength filterLength;
+        int filterLengthSamples;
+        switch (lengthChoice)
+        {
+            case 0:
+                filterLength = LinearPhaseEQProcessor::Short;
+                filterLengthSamples = 4096;
+                break;
+            case 2:
+                filterLength = LinearPhaseEQProcessor::Long;
+                filterLengthSamples = 16384;
+                break;
+            default:
+                filterLength = LinearPhaseEQProcessor::Medium;
+                filterLengthSamples = 8192;
+                break;
+        }
+        for (auto& proc : linearPhaseEQ)
+        {
+            proc.setFilterLength(filterLength);
+        }
+
+        // Update host latency when linear phase is enabled
+        bool linearPhaseEnabled = safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f;
+        if (linearPhaseEnabled)
+        {
+            int newLatency = filterLengthSamples / 2;
+            setLatencySamples(newLatency);
+        }
+
+        linearPhaseParamsChanged.store(true);
+    }
+
     // Analyzer resolution change
     if (parameterID == ParamIDs::analyzerResolution)
     {
@@ -188,20 +239,25 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Check HQ mode (2x oversampling for analog-matched response)
     hqModeEnabled = safeGetParam(hqEnabledParam, 0.0f) > 0.5f;
 
-    if (hqModeEnabled)
+    // Always pre-allocate oversampler at 2x to avoid runtime allocation when toggling HQ
+    // This is critical for real-time safety - we never want to allocate in processBlock()
+    if (!oversamplerReady)
     {
         // 2x oversampling - use FIR equiripple filters for superior alias rejection
         // Essential for saturation (SSL in British mode, Tube in Pultec mode)
         oversampler = std::make_unique<juce::dsp::Oversampling<float>>(
             2, 1, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
         oversampler->initProcessing(static_cast<size_t>(samplesPerBlock));
-        currentSampleRate = sampleRate * 2.0;
+        oversamplerReady = true;
     }
-    else
-    {
-        oversampler.reset();
-        currentSampleRate = sampleRate;
-    }
+
+    // Pre-allocate scratch buffer for British/Pultec processing
+    // Size: 2 channels, max oversampled block size (2x input block size)
+    maxOversampledBlockSize = samplesPerBlock * 2;
+    scratchBuffer.setSize(2, maxOversampledBlockSize, false, false, true);
+
+    // Set current sample rate based on HQ mode
+    currentSampleRate = hqModeEnabled ? sampleRate * 2.0 : sampleRate;
 
     // Prepare filter spec
     juce::dsp::ProcessSpec spec;
@@ -241,15 +297,44 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     dynamicEQ.prepare(currentSampleRate, 2);
     dynamicParamsChanged.store(true);
 
+    // Prepare Linear Phase EQ processors (one per channel)
+    // Note: Linear phase uses base sample rate (no oversampling - already FIR based)
+    linearPhaseModeEnabled = safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f;
+    int lengthChoice = static_cast<int>(safeGetParam(linearPhaseLengthParam, 1.0f));
+    LinearPhaseEQProcessor::FilterLength filterLength;
+    switch (lengthChoice)
+    {
+        case 0: filterLength = LinearPhaseEQProcessor::Short; break;
+        case 2: filterLength = LinearPhaseEQProcessor::Long; break;
+        default: filterLength = LinearPhaseEQProcessor::Medium; break;
+    }
+
+    for (auto& proc : linearPhaseEQ)
+    {
+        proc.setFilterLength(filterLength);
+        proc.prepare(baseSampleRate, samplesPerBlock);
+        proc.reset();
+    }
+    linearPhaseParamsChanged.store(true);
+
     // Reset analyzer
     analyzerFifo.reset();
     std::fill(analyzerMagnitudes.begin(), analyzerMagnitudes.end(), -100.0f);
     std::fill(peakHoldValues.begin(), peakHoldValues.end(), -100.0f);
+
+    // Initialize auto-gain compensation
+    // Use ~50ms smoothing for natural gain changes (no clicks)
+    autoGainCompensation.reset(sampleRate, 0.05);
+    autoGainCompensation.setCurrentAndTargetValue(1.0f);
+    inputRmsSum = 0.0f;
+    outputRmsSum = 0.0f;
+    rmsSampleCount = 0;
 }
 
 void MultiQ::releaseResources()
 {
     oversampler.reset();
+    oversamplerReady = false;
 }
 
 bool MultiQ::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -285,19 +370,30 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     if (safeGetParam(bypassParam, 0.0f) > 0.5f)
         return;
 
-    // Check if HQ mode changed
+    // Check if HQ mode changed - handle without calling prepareToPlay() for real-time safety
     bool newHqMode = safeGetParam(hqEnabledParam, 0.0f) > 0.5f;
     if (newHqMode != hqModeEnabled)
     {
         hqModeEnabled = newHqMode;
-        prepareToPlay(baseSampleRate, buffer.getNumSamples());
+        // Update sample rate for filter coefficient calculations
+        currentSampleRate = hqModeEnabled ? baseSampleRate * 2.0 : baseSampleRate;
+        // Reset oversampler state to avoid artifacts on mode switch
+        if (oversampler)
+            oversampler->reset();
+        // Reset all filters
+        hpfFilter.reset();
+        for (auto& filter : eqFilters)
+            filter.reset();
+        lpfFilter.reset();
+        // Force filter coefficient update at new sample rate
+        filtersNeedUpdate.store(true);
     }
 
     // Check EQ type (Digital, British, or Tube)
     auto eqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
 
-    // Update filters if needed (for Digital and Dynamic modes)
-    if ((eqType == EQType::Digital || eqType == EQType::Dynamic) && filtersNeedUpdate.exchange(false))
+    // Update filters if needed (for Digital mode with optional dynamics)
+    if (eqType == EQType::Digital && filtersNeedUpdate.exchange(false))
         updateAllFilters();
 
     // Update British EQ parameters if needed
@@ -396,6 +492,19 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         ? std::max(std::abs(buffer.findMinMax(1, 0, buffer.getNumSamples()).getEnd()),
                    std::abs(buffer.findMinMax(1, 0, buffer.getNumSamples()).getStart()))
         : inL;
+
+    // Calculate input RMS for auto-gain compensation
+    bool autoGainEnabled = safeGetParam(autoGainEnabledParam, 0.0f) > 0.5f;
+    if (autoGainEnabled)
+    {
+        const float* readL = buffer.getReadPointer(0);
+        const float* readR = buffer.getNumChannels() > 1 ? buffer.getReadPointer(1) : readL;
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            float mono = (readL[i] + readR[i]) * 0.5f;
+            inputRmsSum += mono * mono;
+        }
+    }
     float inLdB = inL > 1e-3f ? juce::Decibels::gainToDecibels(inL) : -60.0f;
     float inRdB = inR > 1e-3f ? juce::Decibels::gainToDecibels(inR) : -60.0f;    inputLevelL.store(inLdB);
     inputLevelR.store(inRdB);
@@ -438,6 +547,9 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
     // M/S encode if needed
     bool useMS = (procMode == ProcessingMode::Mid || procMode == ProcessingMode::Side);
+
+    // Track if linear phase mode is used (set in Digital mode block)
+    bool useLinearPhase = false;
     if (useMS)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -448,78 +560,151 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     if (eqType == EQType::British)
     {
         // British mode: Use 4K-EQ style processing
-        // Create a temporary buffer from the processBlock for British EQ
-        juce::AudioBuffer<float> tempBuffer(static_cast<int>(processBlock.getNumChannels()),
-                                            static_cast<int>(processBlock.getNumSamples()));
-        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
+        // Use pre-allocated scratch buffer (no heap allocation in audio thread)
+        int numChannels = static_cast<int>(processBlock.getNumChannels());
+        int blockSamples = static_cast<int>(processBlock.getNumSamples());
+
+        // Copy to scratch buffer
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            tempBuffer.copyFrom(static_cast<int>(ch), 0,
-                               processBlock.getChannelPointer(ch),
-                               static_cast<int>(processBlock.getNumSamples()));
+            scratchBuffer.copyFrom(ch, 0,
+                                   processBlock.getChannelPointer(static_cast<size_t>(ch)),
+                                   blockSamples);
         }
 
-        britishEQ.process(tempBuffer);
+        // Create a view into scratch buffer for the processor (avoids allocation)
+        juce::AudioBuffer<float> tempView(scratchBuffer.getArrayOfWritePointers(),
+                                          numChannels, blockSamples);
+        britishEQ.process(tempView);
 
         // Copy back to processBlock
-        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            std::memcpy(processBlock.getChannelPointer(ch),
-                       tempBuffer.getReadPointer(static_cast<int>(ch)),
-                       sizeof(float) * processBlock.getNumSamples());
+            std::memcpy(processBlock.getChannelPointer(static_cast<size_t>(ch)),
+                       scratchBuffer.getReadPointer(ch),
+                       sizeof(float) * static_cast<size_t>(blockSamples));
         }
     }
     else if (eqType == EQType::Tube)
     {
         // Pultec/Tube mode: Use Pultec EQP-1A style processing
-        // Create a temporary buffer from the processBlock for Pultec EQ
-        juce::AudioBuffer<float> tempBuffer(static_cast<int>(processBlock.getNumChannels()),
-                                            static_cast<int>(processBlock.getNumSamples()));
-        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
+        // Use pre-allocated scratch buffer (no heap allocation in audio thread)
+        int numChannels = static_cast<int>(processBlock.getNumChannels());
+        int blockSamples = static_cast<int>(processBlock.getNumSamples());
+
+        // Copy to scratch buffer
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            tempBuffer.copyFrom(static_cast<int>(ch), 0,
-                               processBlock.getChannelPointer(ch),
-                               static_cast<int>(processBlock.getNumSamples()));
+            scratchBuffer.copyFrom(ch, 0,
+                                   processBlock.getChannelPointer(static_cast<size_t>(ch)),
+                                   blockSamples);
         }
 
-        pultecEQ.process(tempBuffer);
+        // Create a view into scratch buffer for the processor (avoids allocation)
+        juce::AudioBuffer<float> tempView(scratchBuffer.getArrayOfWritePointers(),
+                                          numChannels, blockSamples);
+        pultecEQ.process(tempView);
 
         // Copy back to processBlock
-        for (size_t ch = 0; ch < processBlock.getNumChannels(); ++ch)
+        for (int ch = 0; ch < numChannels; ++ch)
         {
-            std::memcpy(processBlock.getChannelPointer(ch),
-                       tempBuffer.getReadPointer(static_cast<int>(ch)),
-                       sizeof(float) * processBlock.getNumSamples());
+            std::memcpy(processBlock.getChannelPointer(static_cast<size_t>(ch)),
+                       scratchBuffer.getReadPointer(ch),
+                       sizeof(float) * static_cast<size_t>(blockSamples));
         }
     }
-    else if (eqType == EQType::Dynamic)
+    else
     {
-        // Dynamic EQ mode: Digital EQ with per-band dynamics
-        // Update dynamic processor parameters
-        for (int band = 0; band < NUM_BANDS; ++band)
-        {
-            DynamicEQProcessor::BandParameters dynParams;
-            dynParams.enabled = safeGetParam(bandDynEnabledParams[static_cast<size_t>(band)], 0.0f) > 0.5f;
-            dynParams.threshold = safeGetParam(bandDynThresholdParams[static_cast<size_t>(band)], 0.0f);
-            dynParams.attack = safeGetParam(bandDynAttackParams[static_cast<size_t>(band)], 10.0f);
-            dynParams.release = safeGetParam(bandDynReleaseParams[static_cast<size_t>(band)], 100.0f);
-            dynParams.range = safeGetParam(bandDynRangeParams[static_cast<size_t>(band)], 12.0f);
-            dynamicEQ.setBandParameters(band, dynParams);
-
-            // Update detection filter to match band frequency
-            float bandFreq = safeGetParam(bandFreqParams[static_cast<size_t>(band)], 1000.0f);
-            float bandQ = safeGetParam(bandQParams[static_cast<size_t>(band)], 0.71f);
-            dynamicEQ.updateDetectionFilter(band, bandFreq, bandQ);
-        }
+        // Digital mode: Multi-Q 8-band EQ with optional per-band dynamics
+        // Check if linear phase mode is enabled
+        useLinearPhase = safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f;
 
         // Check which bands are enabled
         std::array<bool, NUM_BANDS> bandEnabled{};
+        std::array<bool, NUM_BANDS> bandDynEnabled{};
         for (int i = 0; i < NUM_BANDS; ++i)
-            bandEnabled[static_cast<size_t>(i)] = safeGetParam(bandEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
-
-        // Process each sample through the filter chain with dynamics
-        for (int i = 0; i < numSamples; ++i)
         {
-            float sampleL = procL[i];
+            bandEnabled[static_cast<size_t>(i)] = safeGetParam(bandEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
+            bandDynEnabled[static_cast<size_t>(i)] = safeGetParam(bandDynEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
+        }
+
+        // Apply solo mode: if any band is soloed, only that band is processed
+        int currentSolo = soloedBand.load();
+        if (currentSolo >= 0 && currentSolo < NUM_BANDS)
+        {
+            for (int i = 0; i < NUM_BANDS; ++i)
+            {
+                if (i != currentSolo)
+                    bandEnabled[static_cast<size_t>(i)] = false;
+            }
+        }
+
+        if (useLinearPhase)
+        {
+            // Linear Phase mode: Use FIR-based processing (no per-band dynamics)
+            // Note: Linear phase mode doesn't support oversampling or per-band dynamics
+
+            // Gather EQ parameters for the linear phase processor
+            std::array<float, NUM_BANDS> lpFreqs{}, lpGains{}, lpQs{};
+            std::array<int, 2> lpSlopes{};
+
+            for (int i = 0; i < NUM_BANDS; ++i)
+            {
+                lpFreqs[static_cast<size_t>(i)] = safeGetParam(bandFreqParams[static_cast<size_t>(i)],
+                    DefaultBandConfigs[static_cast<size_t>(i)].defaultFreq);
+                lpGains[static_cast<size_t>(i)] = safeGetParam(bandGainParams[static_cast<size_t>(i)], 0.0f);
+                lpQs[static_cast<size_t>(i)] = safeGetParam(bandQParams[static_cast<size_t>(i)], 0.71f);
+            }
+            lpSlopes[0] = static_cast<int>(safeGetParam(bandSlopeParams[0], 0.0f));
+            lpSlopes[1] = static_cast<int>(safeGetParam(bandSlopeParams[1], 0.0f));
+
+            float lpMasterGain = safeGetParam(masterGainParam, 0.0f);
+
+            // Update the impulse response only if parameters changed (dirty flag check)
+            // The IR rebuild happens on a background thread, so this is safe to call
+            // but we avoid unnecessary work by only updating when needed
+            if (linearPhaseParamsChanged.exchange(false) || filtersNeedUpdate.load())
+            {
+                for (auto& proc : linearPhaseEQ)
+                {
+                    proc.updateImpulseResponse(bandEnabled, lpFreqs, lpGains, lpQs, lpSlopes, lpMasterGain);
+                }
+            }
+
+            // Process through linear phase EQ (works on original buffer, not oversampled)
+            // Linear phase already handles its own zero-padding internally
+            linearPhaseEQ[0].processChannel(buffer.getWritePointer(0), buffer.getNumSamples());
+            if (buffer.getNumChannels() > 1)
+                linearPhaseEQ[1].processChannel(buffer.getWritePointer(1), buffer.getNumSamples());
+
+            // Skip the normal IIR processing and M/S decode (linear phase processes raw L/R)
+            // Master gain is included in the linear phase impulse response
+            // Skip to analyzer and metering
+        }
+        else
+        {
+            // Standard IIR mode with optional per-band dynamics
+            // Update dynamic processor parameters for all bands
+            for (int band = 0; band < NUM_BANDS; ++band)
+            {
+                DynamicEQProcessor::BandParameters dynParams;
+                dynParams.enabled = safeGetParam(bandDynEnabledParams[static_cast<size_t>(band)], 0.0f) > 0.5f;
+                dynParams.threshold = safeGetParam(bandDynThresholdParams[static_cast<size_t>(band)], 0.0f);
+                dynParams.attack = safeGetParam(bandDynAttackParams[static_cast<size_t>(band)], 10.0f);
+                dynParams.release = safeGetParam(bandDynReleaseParams[static_cast<size_t>(band)], 100.0f);
+                dynParams.range = safeGetParam(bandDynRangeParams[static_cast<size_t>(band)], 12.0f);
+                dynamicEQ.setBandParameters(band, dynParams);
+
+                // Update detection filter to match band frequency
+                float bandFreq = safeGetParam(bandFreqParams[static_cast<size_t>(band)], 1000.0f);
+                float bandQ = safeGetParam(bandQParams[static_cast<size_t>(band)], 0.71f);
+                dynamicEQ.updateDetectionFilter(band, bandFreq, bandQ);
+            }
+
+            // Process each sample through the filter chain
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float sampleL = procL[i];
             float sampleR = procR[i];
 
             // Determine which channel(s) to process based on mode
@@ -537,30 +722,59 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                 if (processRight) sampleR = hpfFilter.processSampleR(sampleR);
             }
 
-            // Bands 2-7: Shelf and Parametric with dynamics
+            // Bands 2-7: Shelf and Parametric with optional dynamics
             for (int band = 1; band < 7; ++band)
             {
                 if (bandEnabled[static_cast<size_t>(band)])
                 {
                     auto& filter = eqFilters[static_cast<size_t>(band - 1)];
 
-                    // Get detection level for dynamics
-                    float detectionL = dynamicEQ.processDetection(band, sampleL, 0);
-                    float detectionR = dynamicEQ.processDetection(band, sampleR, 1);
+                    // Apply dynamics if enabled for this band
+                    if (bandDynEnabled[static_cast<size_t>(band)])
+                    {
+                        // Get detection level for dynamics (using input signal at band frequency)
+                        float detectionL = dynamicEQ.processDetection(band, sampleL, 0);
+                        float detectionR = dynamicEQ.processDetection(band, sampleR, 1);
 
-                    // Process envelope and get dynamic gain
-                    float dynGainDbL = dynamicEQ.processBand(band, detectionL, 0);
-                    float dynGainDbR = dynamicEQ.processBand(band, detectionR, 1);
+                        // Process envelope and get dynamic gain reduction
+                        float dynGainDbL = dynamicEQ.processBand(band, detectionL, 0);
+                        float dynGainDbR = dynamicEQ.processBand(band, detectionR, 1);
 
-                    // Apply static EQ filter
-                    if (processLeft) sampleL = filter.processSampleL(sampleL);
-                    if (processRight) sampleR = filter.processSampleR(sampleR);
+                        // Dynamic EQ approach: Apply dynamics to the BAND CONTRIBUTION only
+                        // 1. Store input
+                        float inputL = sampleL;
+                        float inputR = sampleR;
 
-                    // Apply dynamic gain (convert dB to linear)
-                    float dynGainL = juce::Decibels::decibelsToGain(dynGainDbL);
-                    float dynGainR = juce::Decibels::decibelsToGain(dynGainDbR);
-                    if (processLeft) sampleL *= dynGainL;
-                    if (processRight) sampleR *= dynGainR;
+                        // 2. Apply EQ filter to get filtered output
+                        float filteredL = processLeft ? filter.processSampleL(sampleL) : sampleL;
+                        float filteredR = processRight ? filter.processSampleR(sampleR) : sampleR;
+
+                        // 3. Calculate band contribution (what the EQ added/removed)
+                        float bandContribL = filteredL - inputL;
+                        float bandContribR = filteredR - inputR;
+
+                        // 4. Apply dynamic gain to band contribution only
+                        // Pro-Q style: band activates when signal exceeds threshold
+                        // dynGainDb is negative when compressing, 0 when not
+                        // activation = 1.0 - gain (so 0dB = 0% activation, -inf = 100% activation)
+                        float activationL = 1.0f - juce::Decibels::decibelsToGain(dynGainDbL);
+                        float activationR = 1.0f - juce::Decibels::decibelsToGain(dynGainDbR);
+                        // Clamp to prevent negative activation if dynGainDb is ever positive
+                        activationL = juce::jlimit(0.0f, 1.0f, activationL);
+                        activationR = juce::jlimit(0.0f, 1.0f, activationR);
+                        bandContribL *= activationL;
+                        bandContribR *= activationR;
+
+                        // 5. Recombine: original + scaled band contribution
+                        if (processLeft) sampleL = inputL + bandContribL;
+                        if (processRight) sampleR = inputR + bandContribR;
+                    }
+                    else
+                    {
+                        // No dynamics - just apply static EQ filter
+                        if (processLeft) sampleL = filter.processSampleL(sampleL);
+                        if (processRight) sampleR = filter.processSampleR(sampleR);
+                    }
                 }
             }
 
@@ -571,78 +785,96 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                 if (processRight) sampleR = lpfFilter.processSampleR(sampleR);
             }
 
-            procL[i] = sampleL;
-            procR[i] = sampleR;
+                procL[i] = sampleL;
+                procR[i] = sampleR;
+            }
+        }  // end IIR else
+    }  // end Digital mode else
+
+    // Skip M/S decode, oversampling, and master gain for linear phase mode
+    // (Linear phase processes raw L/R buffer directly and includes master gain in the IR)
+    if (!useLinearPhase)
+    {
+        // M/S decode if needed
+        if (useMS)
+        {
+            for (int i = 0; i < numSamples; ++i)
+                decodeMS(procL[i], procR[i]);
+        }
+
+        // Oversampling downsample
+        if (hqModeEnabled && oversampler)
+        {
+            oversampler->processSamplesDown(block);
+        }
+
+        // Apply master gain
+        float masterGain = juce::Decibels::decibelsToGain(safeGetParam(masterGainParam, 0.0f));
+        buffer.applyGain(masterGain);
+    }
+
+    // Auto-gain compensation: measure output RMS and apply inverse gain
+    // (Bypass already checked above - if bypassed, we would have returned)
+    if (autoGainEnabled)
+    {
+        // Calculate output RMS
+        const float* readL = buffer.getReadPointer(0);
+        const float* readR = buffer.getNumChannels() > 1 ? buffer.getReadPointer(1) : readL;
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            float mono = (readL[i] + readR[i]) * 0.5f;
+            outputRmsSum += mono * mono;
+        }
+
+        rmsSampleCount += buffer.getNumSamples();
+
+        // Update auto-gain compensation when we have enough samples (~100ms window)
+        if (rmsSampleCount >= RMS_WINDOW_SAMPLES)
+        {
+            float inputRms = std::sqrt(inputRmsSum / static_cast<float>(rmsSampleCount));
+            float outputRms = std::sqrt(outputRmsSum / static_cast<float>(rmsSampleCount));
+
+            // Calculate compensation gain (ratio of input to output RMS)
+            // Limit to reasonable range to prevent extreme corrections
+            if (outputRms > 1e-6f && inputRms > 1e-6f)
+            {
+                float targetGain = inputRms / outputRms;
+                targetGain = juce::jlimit(0.1f, 10.0f, targetGain);  // ±20dB max
+                autoGainCompensation.setTargetValue(targetGain);
+            }
+
+            // Reset accumulators
+            inputRmsSum = 0.0f;
+            outputRmsSum = 0.0f;
+            rmsSampleCount = 0;
+        }
+
+        // Apply smoothed auto-gain compensation
+        if (autoGainCompensation.isSmoothing())
+        {
+            int bufferChannels = buffer.getNumChannels();
+            int bufferSamples = buffer.getNumSamples();
+            for (int i = 0; i < bufferSamples; ++i)
+            {
+                float gain = autoGainCompensation.getNextValue();
+                for (int ch = 0; ch < bufferChannels; ++ch)
+                    buffer.getWritePointer(ch)[i] *= gain;
+            }        }
+        else
+        {
+            float gain = autoGainCompensation.getCurrentValue();
+            if (std::abs(gain - 1.0f) > 0.001f)
+                buffer.applyGain(gain);
         }
     }
     else
     {
-        // Digital mode: Use Multi-Q 8-band EQ processing
-        // Check which bands are enabled
-        std::array<bool, NUM_BANDS> bandEnabled{};
-        for (int i = 0; i < NUM_BANDS; ++i)
-            bandEnabled[static_cast<size_t>(i)] = safeGetParam(bandEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
-
-        // Process each sample through the filter chain
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float sampleL = procL[i];
-            float sampleR = procR[i];
-
-            // Determine which channel(s) to process based on mode
-            bool processLeft = (procMode == ProcessingMode::Stereo ||
-                               procMode == ProcessingMode::Left ||
-                               procMode == ProcessingMode::Mid);
-            bool processRight = (procMode == ProcessingMode::Stereo ||
-                                procMode == ProcessingMode::Right ||
-                                procMode == ProcessingMode::Side);
-
-            // Band 1: HPF
-            if (bandEnabled[0])
-            {
-                if (processLeft) sampleL = hpfFilter.processSampleL(sampleL);
-                if (processRight) sampleR = hpfFilter.processSampleR(sampleR);
-            }
-
-            // Bands 2-7: Shelf and Parametric
-            for (int band = 1; band < 7; ++band)
-            {
-                if (bandEnabled[static_cast<size_t>(band)])
-                {
-                    auto& filter = eqFilters[static_cast<size_t>(band - 1)];
-                    if (processLeft) sampleL = filter.processSampleL(sampleL);
-                    if (processRight) sampleR = filter.processSampleR(sampleR);
-                }
-            }
-
-            // Band 8: LPF
-            if (bandEnabled[7])
-            {
-                if (processLeft) sampleL = lpfFilter.processSampleL(sampleL);
-                if (processRight) sampleR = lpfFilter.processSampleR(sampleR);
-            }
-
-            procL[i] = sampleL;
-            procR[i] = sampleR;
-        }
+        // Reset auto-gain when disabled
+        autoGainCompensation.setCurrentAndTargetValue(1.0f);
+        inputRmsSum = 0.0f;
+        outputRmsSum = 0.0f;
+        rmsSampleCount = 0;
     }
-
-    // M/S decode if needed
-    if (useMS)
-    {
-        for (int i = 0; i < numSamples; ++i)
-            decodeMS(procL[i], procR[i]);
-    }
-
-    // Oversampling downsample
-    if (hqModeEnabled && oversampler)
-    {
-        oversampler->processSamplesDown(block);
-    }
-
-    // Apply master gain
-    float masterGain = juce::Decibels::decibelsToGain(safeGetParam(masterGainParam, 0.0f));
-    buffer.applyGain(masterGain);
 
     // Push post-EQ samples to analyzer if enabled
     if (analyzerEnabled && !analyzerPreEQ)
@@ -971,6 +1203,28 @@ float MultiQ::getFrequencyResponseMagnitude(float frequencyHz) const
     return static_cast<float>(juce::Decibels::gainToDecibels(response, -100.0));
 }
 
+bool MultiQ::isDynamicsEnabled(int bandIndex) const
+{
+    if (bandIndex < 0 || bandIndex >= NUM_BANDS)
+        return false;
+    return safeGetParam(bandDynEnabledParams[static_cast<size_t>(bandIndex)], 0.0f) > 0.5f;
+}
+
+bool MultiQ::isInDynamicMode() const
+{
+    // Returns true if in Digital mode and any band has dynamics enabled
+    if (static_cast<int>(safeGetParam(eqTypeParam, 0.0f)) != static_cast<int>(EQType::Digital))
+        return false;
+
+    // Check if any band has dynamics enabled
+    for (int i = 0; i < NUM_BANDS; ++i)
+    {
+        if (safeGetParam(bandDynEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f)
+            return true;
+    }
+    return false;
+}
+
 //==============================================================================
 // FFT Analyzer
 
@@ -1194,6 +1448,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         false
     ));
 
+    // Linear Phase mode (FIR-based, introduces latency)
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::linearPhaseEnabled, 1),
+        "Linear Phase Mode",
+        false  // Default to off (zero latency IIR mode)
+    ));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::linearPhaseLength, 1),
+        "Linear Phase Quality",
+        juce::StringArray{"Low Latency (46ms)", "Balanced (93ms)", "High Quality (186ms)"},
+        1  // Balanced by default
+    ));
+
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::processingMode, 1),
         "Processing Mode",
@@ -1212,8 +1480,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::eqType, 1),
         "EQ Type",
-        juce::StringArray{"Digital", "British", "Tube", "Dynamic"},
-        0  // Digital by default
+        juce::StringArray{"Digital", "British", "Tube"},
+        0  // Digital by default (includes per-band dynamics capability)
     ));
 
     // Analyzer parameters
@@ -1243,6 +1511,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         1  // Medium default
     ));
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::analyzerSmoothing, 1),
+        "Analyzer Smoothing",
+        juce::StringArray{"Off", "Light", "Medium", "Heavy"},
+        2  // Medium default
+    ));
+
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::analyzerDecay, 1),
         "Analyzer Decay",
@@ -1255,8 +1530,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::displayScaleMode, 1),
         "Display Scale",
-        juce::StringArray{"±12 dB", "±24 dB", "±30 dB", "±60 dB", "Warped"},
-        1  // Default to ±24 dB to match gain range
+        juce::StringArray{"+/-12 dB", "+/-24 dB", "+/-30 dB", "+/-60 dB", "Warped"},
+        1  // Default to +/-24 dB to match gain range
     ));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -1526,12 +1801,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
             false
         ));
 
-        // Threshold (-60 to +12 dB)
+        // Threshold (-48 to 0 dB) - Pro-Q/F6 style range
+        // Lower = more sensitive (dynamics engage earlier)
+        // Higher = less sensitive (dynamics only on loud transients)
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID(ParamIDs::bandDynThreshold(bandNum), 1),
             "Band " + juce::String(bandNum) + " Threshold",
-            juce::NormalisableRange<float>(-60.0f, 12.0f, 0.1f),
-            0.0f,
+            juce::NormalisableRange<float>(-48.0f, 0.0f, 0.1f),
+            -20.0f,  // Default: moderate sensitivity
             juce::AudioParameterFloatAttributes().withLabel("dB")
         ));
 
@@ -1589,14 +1866,33 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         0  // Peak by default
     ));
 
+    // Auto-gain compensation (maintains consistent loudness for A/B comparison)
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::autoGainEnabled, 1),
+        "Auto Gain",
+        false  // Off by default
+    ));
+
     return {params.begin(), params.end()};
 }
 
 //==============================================================================
+// State version for future migration support
+// Increment this when parameter layout changes to enable proper migration
+static constexpr int STATE_VERSION = 1;
+
 void MultiQ::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
+
+    // Add version tag for future migration support
+    if (xml != nullptr)
+    {
+        xml->setAttribute("stateVersion", STATE_VERSION);
+        xml->setAttribute("pluginVersion", PLUGIN_VERSION);
+    }
+
     copyXmlToBinary(*xml, destData);
 }
 
@@ -1606,9 +1902,142 @@ void MultiQ::setStateInformation(const void* data, int sizeInBytes)
 
     if (xmlState != nullptr && xmlState->hasTagName(parameters.state.getType()))
     {
-        parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+        // Check state version for migration
+        int loadedVersion = xmlState->getIntAttribute("stateVersion", 0);
+
+        // Load the state
+        auto newState = juce::ValueTree::fromXml(*xmlState);
+
+        // Migration: Version 0 (pre-versioning) state
+        if (loadedVersion == 0)
+        {
+            // Backward compatibility: Map old EQ type values to new enum
+            // Old: 0=Digital, 1=Dynamic, 2=British, 3=Tube
+            // New: 0=Digital, 1=British, 2=Tube (Dynamic merged into Digital)
+            auto eqTypeChild = newState.getChildWithProperty("id", ParamIDs::eqType);
+            if (eqTypeChild.isValid())
+            {
+                float oldValue = eqTypeChild.getProperty("value", 0.0f);
+                int oldIndex = static_cast<int>(oldValue);
+                int newIndex = oldIndex;
+
+                if (oldIndex == 1)      // Old Dynamic -> New Digital
+                    newIndex = 0;
+                else if (oldIndex == 2) // Old British -> New British
+                    newIndex = 1;
+                else if (oldIndex == 3) // Old Tube -> New Tube
+                    newIndex = 2;
+                else if (oldIndex > 3)  // Invalid/future values -> clamp to Digital
+                    newIndex = 0;
+
+                if (newIndex != oldIndex)
+                    eqTypeChild.setProperty("value", static_cast<float>(newIndex), nullptr);
+            }
+        }
+
+        // Future version migrations would be added here:
+        // if (loadedVersion < 2) { ... migrate v1 to v2 ... }
+        // if (loadedVersion < 3) { ... migrate v2 to v3 ... }
+
+        parameters.replaceState(newState);
         filtersNeedUpdate.store(true);
+
+        // Notify British/Pultec processors to update their parameters
+        britishParamsChanged.store(true);
+        pultecParamsChanged.store(true);
+        dynamicParamsChanged.store(true);
+        linearPhaseParamsChanged.store(true);
     }
+}
+
+//==============================================================================
+// Factory Presets
+//==============================================================================
+
+int MultiQ::getNumPrograms()
+{
+    // Lazy initialization of factory presets
+    if (factoryPresets.empty())
+        factoryPresets = MultiQPresets::getFactoryPresets();
+
+    return static_cast<int>(factoryPresets.size()) + 1;  // +1 for "Init" preset
+}
+
+int MultiQ::getCurrentProgram()
+{
+    return currentPresetIndex;
+}
+
+void MultiQ::setCurrentProgram(int index)
+{
+    if (factoryPresets.empty())
+        factoryPresets = MultiQPresets::getFactoryPresets();
+
+    if (index == 0)
+    {
+        // "Init" preset - reset to default flat EQ
+        currentPresetIndex = 0;
+
+        // Reset all bands to default
+        for (int i = 1; i <= 8; ++i)
+        {
+            if (auto* p = parameters.getParameter(ParamIDs::bandEnabled(i)))
+                p->setValueNotifyingHost(i == 1 || i == 8 ? 0.0f : 1.0f);  // HPF/LPF off by default
+
+            if (auto* p = parameters.getParameter(ParamIDs::bandGain(i)))
+                p->setValueNotifyingHost(0.5f);  // 0 dB (centered)
+
+            if (auto* p = parameters.getParameter(ParamIDs::bandQ(i)))
+                p->setValueNotifyingHost(parameters.getParameterRange(ParamIDs::bandQ(i)).convertTo0to1(0.71f));
+        }
+
+        // Reset global settings
+        if (auto* p = parameters.getParameter(ParamIDs::masterGain))
+            p->setValueNotifyingHost(0.5f);  // 0 dB
+
+        if (auto* p = parameters.getParameter(ParamIDs::hqEnabled))
+            p->setValueNotifyingHost(0.0f);
+
+        if (auto* p = parameters.getParameter(ParamIDs::qCoupleMode))
+            p->setValueNotifyingHost(0.0f);
+
+        return;
+    }
+
+    int presetIndex = index - 1;  // Adjust for "Init" at position 0
+    if (presetIndex >= 0 && presetIndex < static_cast<int>(factoryPresets.size()))
+    {
+        currentPresetIndex = index;
+        MultiQPresets::applyPreset(parameters, factoryPresets[static_cast<size_t>(presetIndex)]);
+    }
+}
+
+const juce::String MultiQ::getProgramName(int index)
+{
+    if (factoryPresets.empty())
+        factoryPresets = MultiQPresets::getFactoryPresets();
+
+    if (index == 0)
+        return "Init";
+
+    int presetIndex = index - 1;
+    if (presetIndex >= 0 && presetIndex < static_cast<int>(factoryPresets.size()))
+        return factoryPresets[static_cast<size_t>(presetIndex)].name;
+
+    return {};
+}
+
+//==============================================================================
+int MultiQ::getLatencySamples() const
+{
+    // Report latency for linear phase mode
+    // Linear phase EQ introduces latency of filterLength / 2 samples
+    if (linearPhaseModeEnabled && linearPhaseEnabledParam &&
+        safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f)
+    {
+        return linearPhaseEQ[0].getLatencyInSamples();
+    }
+    return 0;
 }
 
 //==============================================================================

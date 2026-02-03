@@ -8,10 +8,12 @@
 #include "PultecCurveDisplay.h"
 #include "PultecLookAndFeel.h"
 #include "VintageTubeEQLookAndFeel.h"
-#include "BandStripComponent.h"
+#include "BandDetailPanel.h"
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/LunaLookAndFeel.h"
+#include "../shared/ScalableEditorHelper.h"
+#include "../shared/UserPresetManager.h"
 #include "FourKLookAndFeel.h"
 
 //==============================================================================
@@ -39,6 +41,7 @@ public:
     void timerCallback() override;
     void parameterChanged(const juce::String& parameterID, float newValue) override;
     void mouseDown(const juce::MouseEvent& e) override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
 private:
     MultiQ& processor;
@@ -47,11 +50,14 @@ private:
     PultecLookAndFeel pultecLookAndFeel;  // For Pultec/Tube mode knobs (legacy)
     VintageTubeEQLookAndFeel vintageTubeLookAndFeel;  // For Vintage Tube EQ style
 
+    // Resizable UI helper (shared across all Luna plugins)
+    ScalableEditorHelper resizeHelper;
+
     // Graphic display
     std::unique_ptr<EQGraphicDisplay> graphicDisplay;
 
-    // Band strip component (Eventide SplitEQ-style for Digital mode)
-    std::unique_ptr<BandStripComponent> bandStrip;
+    // Band detail panel (Waves F6 style - band selector + single-row controls)
+    std::unique_ptr<BandDetailPanel> bandDetailPanel;
 
     // British mode curve display (4K-EQ style)
     std::unique_ptr<BritishEQCurveDisplay> britishCurveDisplay;
@@ -82,20 +88,51 @@ private:
     std::unique_ptr<juce::Slider> masterGainSlider;
     std::unique_ptr<juce::ToggleButton> bypassButton;
     std::unique_ptr<juce::ToggleButton> hqButton;
+    std::unique_ptr<juce::ToggleButton> linearPhaseButton;
+    std::unique_ptr<juce::ToggleButton> autoGainButton;
+    std::unique_ptr<juce::ComboBox> linearPhaseQualitySelector;
     std::unique_ptr<juce::ComboBox> processingModeSelector;
     std::unique_ptr<juce::ComboBox> qCoupleModeSelector;
 
     juce::Label masterGainLabel;
+    juce::Label linearPhaseLabel;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> linearPhaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> linearPhaseQualityAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> processingModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> qCoupleModeAttachment;
 
     // EQ Type selector
     std::unique_ptr<juce::ComboBox> eqTypeSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> eqTypeAttachment;
+
+    // Factory preset selector (Digital mode)
+    std::unique_ptr<juce::ComboBox> presetSelector;
+    void updatePresetSelector();
+    void onPresetSelected();
+
+    // User preset system
+    std::unique_ptr<UserPresetManager> userPresetManager;
+    juce::TextButton savePresetButton;
+    void saveUserPreset();
+    void refreshUserPresets();
+    void loadUserPreset(const juce::String& name);
+    void deleteUserPreset(const juce::String& name);
+
+    // Undo/Redo buttons
+    juce::TextButton undoButton;
+    juce::TextButton redoButton;
+    void updateUndoRedoButtons();
+
+    // A/B comparison for Digital mode
+    juce::TextButton digitalAbButton;
+    juce::ValueTree digitalStateA, digitalStateB;
+    bool digitalIsStateA = true;
+    void toggleDigitalAB();
 
     // ============== BRITISH MODE CONTROLS ==============
     // HPF/LPF
@@ -125,7 +162,7 @@ private:
     std::unique_ptr<juce::ToggleButton> britishHfBellButton;
 
     // Global British controls
-    std::unique_ptr<juce::ComboBox> britishModeSelector;  // Brown/Black
+    std::unique_ptr<juce::TextButton> britishModeButton;  // Brown/Black toggle
     std::unique_ptr<juce::Slider> britishSaturationSlider;
     std::unique_ptr<juce::Slider> britishInputGainSlider;
     std::unique_ptr<juce::Slider> britishOutputGainSlider;
@@ -159,7 +196,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> britishHfGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> britishHfFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishHfBellAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> britishModeAttachment;
+    // britishModeButton uses manual onClick handler instead of attachment
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> britishSaturationAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> britishInputGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> britishOutputGainAttachment;
@@ -167,7 +204,29 @@ private:
     // Track current EQ mode for UI switching
     bool isBritishMode = false;
     bool isPultecMode = false;
-    bool isDynamicMode = false;
+    // Note: Digital mode (default) includes per-band dynamics capability
+
+    // ============== PER-BAND DYNAMICS CONTROLS ==============
+    // Dynamics controls (shown in Digital mode for selected band)
+    std::unique_ptr<juce::ToggleButton> dynEnableButton;    // Enable dynamics for selected band
+    std::unique_ptr<juce::Slider> dynThresholdSlider;       // Threshold in dB
+    std::unique_ptr<juce::Slider> dynAttackSlider;          // Attack time in ms
+    std::unique_ptr<juce::Slider> dynReleaseSlider;         // Release time in ms
+    std::unique_ptr<juce::Slider> dynRangeSlider;           // Max gain change in dB
+
+    // Dynamic mode labels
+    juce::Label dynSectionLabel;    // "DYNAMICS" section header
+    juce::Label dynThresholdLabel;
+    juce::Label dynAttackLabel;
+    juce::Label dynReleaseLabel;
+    juce::Label dynRangeLabel;
+
+    // Dynamic mode attachments (created/destroyed based on selected band)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> dynEnableAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynThresholdAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynAttackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynReleaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynRangeAttachment;
 
     // British mode header controls (matching 4K-EQ)
     juce::TextButton britishCurveCollapseButton;  // "Hide Graph" / "Show Graph"
@@ -255,8 +314,9 @@ private:
 
     bool pultecCurveCollapsed = false;  // Track collapse state for Pultec mode
 
-    // Tube mode header controls (A/B, HQ)
+    // Tube mode header controls (A/B, Preset, HQ)
     juce::TextButton tubeAbButton;
+    juce::ComboBox tubePresetSelector;  // Preset selector for Tube mode
     std::unique_ptr<juce::ToggleButton> tubeHqButton;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeHqAttachment;
 
@@ -272,6 +332,7 @@ private:
     std::unique_ptr<juce::ToggleButton> analyzerPrePostButton;
     std::unique_ptr<juce::ComboBox> analyzerModeSelector;
     std::unique_ptr<juce::ComboBox> analyzerResolutionSelector;
+    std::unique_ptr<juce::ComboBox> analyzerSmoothingSelector;  // Spectrum smoothing mode
     std::unique_ptr<juce::Slider> analyzerDecaySlider;
     std::unique_ptr<juce::ComboBox> displayScaleSelector;
 
@@ -279,6 +340,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> analyzerPrePostAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analyzerModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analyzerResolutionAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> analyzerSmoothingAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> analyzerDecayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> displayScaleAttachment;
 
@@ -307,10 +369,19 @@ private:
     void layoutBritishControls();
     void drawBritishKnobMarkings(juce::Graphics& g);  // Draw tick marks and value labels around knobs
     void applyBritishPreset(int presetId);  // Apply British mode factory preset
+    void applyTubePreset(int presetId);     // Apply Tube mode factory preset
 
     // Pultec mode helpers
     void setupPultecControls();
     void layoutPultecControls();
+
+    // Unified toolbar layout (called from resized() for all modes)
+    void layoutUnifiedToolbar();
+
+    // Dynamic mode helpers
+    void setupDynamicControls();
+    void layoutDynamicControls();
+    void updateDynamicAttachments();  // Rebind attachments when selected band changes
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQEditor)
 };

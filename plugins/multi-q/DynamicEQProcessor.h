@@ -16,6 +16,10 @@
  * - Release time (ms)
  * - Range (dB) - maximum gain change
  *
+ * Enhanced features:
+ * - Soft-knee compression for smoother response
+ * - Lookahead for peak detection (prevents clipping on transients)
+ *
  * When input level at the band's frequency exceeds threshold, the band's
  * gain is dynamically reduced toward 0 dB. This is like a per-band compressor.
  */
@@ -23,25 +27,36 @@ class DynamicEQProcessor
 {
 public:
     static constexpr int NUM_BANDS = 8;
+    static constexpr int MAX_LOOKAHEAD_SAMPLES = 512;  // ~11ms at 44.1kHz
 
     //==========================================================================
     /** Per-band dynamic parameters */
     struct BandParameters
     {
-        float threshold = 0.0f;      // dB (-60 to +12)
+        float threshold = -20.0f;    // dB (-48 to 0) - lower = more sensitive
         float attack = 10.0f;        // ms (0.1 to 500)
         float release = 100.0f;      // ms (10 to 5000)
         float range = 12.0f;         // dB (0 to 24) - max gain change
+        float kneeWidth = 6.0f;      // dB (0 to 12) - soft knee width, 0 = hard knee
         bool enabled = false;        // Per-band dynamics on/off
+    };
+
+    //==========================================================================
+    /** Global dynamic EQ settings */
+    struct GlobalSettings
+    {
+        float lookaheadMs = 0.0f;    // 0 to 10ms lookahead
+        bool softKneeEnabled = true;
     };
 
     //==========================================================================
     DynamicEQProcessor() = default;
 
     /** Prepare the processor for playback */
-    void prepare(double sampleRate, int numChannels)
+    void prepare(double newSampleRate, int channelCount)
     {
-        this->sampleRate = sampleRate;
+        sampleRate = newSampleRate;
+        numChannels = channelCount;
 
         // Initialize channel states
         channelStates.resize(static_cast<size_t>(numChannels));
@@ -64,10 +79,43 @@ public:
                 filter.reset();
         }
 
+        // Initialize lookahead buffers (per band, per channel)
+        lookaheadBuffers.resize(static_cast<size_t>(numChannels));
+        for (auto& ch : lookaheadBuffers)
+        {
+            ch.resize(NUM_BANDS);
+            for (auto& band : ch)
+            {
+                band.buffer.resize(MAX_LOOKAHEAD_SAMPLES, 0.0f);
+                band.writeIndex = 0;
+                band.peakValue = 0.0f;
+            }
+        }
+
         // Reset gain meters
         for (auto& meter : dynamicGainMeters)
             meter.store(0.0f, std::memory_order_relaxed);
+
+        // Recalculate lookahead samples for new sample rate
+        int samples = static_cast<int>(globalSettings.lookaheadMs * sampleRate / 1000.0);
+        samples = juce::jlimit(0, MAX_LOOKAHEAD_SAMPLES - 1, samples);
+        lookaheadSamples.store(samples, std::memory_order_release);
     }
+
+    /** Set global settings (thread-safe for audio thread access) */
+    void setGlobalSettings(const GlobalSettings& settings)
+    {
+        globalSettings = settings;
+        // Update atomics for thread-safe audio thread access
+        softKneeEnabled.store(settings.softKneeEnabled, std::memory_order_release);
+        // Calculate lookahead in samples
+        int samples = static_cast<int>(settings.lookaheadMs * sampleRate / 1000.0);
+        samples = juce::jlimit(0, MAX_LOOKAHEAD_SAMPLES - 1, samples);
+        lookaheadSamples.store(samples, std::memory_order_release);
+    }
+
+    /** Get current lookahead in samples (for latency reporting) */
+    int getLookaheadSamples() const { return lookaheadSamples.load(std::memory_order_acquire); }
 
     /** Reset all envelope followers and filters */
     void reset()
@@ -106,7 +154,8 @@ public:
         return bandParams[static_cast<size_t>(juce::jlimit(0, NUM_BANDS - 1, bandIndex))];
     }
 
-    /** Update detection filter for a band (call when band frequency changes) */
+    /** Update detection filter for a band (call when band frequency changes)
+     *  Thread-safe: Uses SpinLock to prevent race with processDetection() */
     void updateDetectionFilter(int bandIndex, float frequency, float q)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS)
@@ -116,6 +165,8 @@ public:
         auto coeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(
             sampleRate, frequency, q);
 
+        // Lock to prevent race condition with audio thread
+        const juce::SpinLock::ScopedLockType lock(filterLock);
         for (auto& ch : detectionFilters)
         {
             *ch[static_cast<size_t>(bandIndex)].coefficients = *coeffs;
@@ -125,6 +176,7 @@ public:
     //==========================================================================
     /**
      * Process a single band and return the dynamic gain in dB.
+     * Uses lookahead if enabled for better peak detection on transients.
      *
      * @param bandIndex  The band index (0-7)
      * @param inputLevel The input sample level (absolute value) for detection
@@ -146,8 +198,36 @@ public:
         auto& state = channelStates[static_cast<size_t>(channel)]
                           .bands[static_cast<size_t>(bandIndex)];
 
-        // Convert input level to dB
-        float inputDb = juce::Decibels::gainToDecibels(inputLevel, -96.0f);
+        // Use lookahead buffer if enabled (load atomic once for consistency)
+        float detectionLevel = inputLevel;
+        int currentLookahead = lookaheadSamples.load(std::memory_order_acquire);
+        if (currentLookahead > 0 &&
+            channel < static_cast<int>(lookaheadBuffers.size()) &&
+            bandIndex < static_cast<int>(lookaheadBuffers[static_cast<size_t>(channel)].size()))
+        {
+            auto& lookahead = lookaheadBuffers[static_cast<size_t>(channel)][static_cast<size_t>(bandIndex)];
+
+            // Store current sample in buffer
+            lookahead.buffer[static_cast<size_t>(lookahead.writeIndex)] = inputLevel;
+
+            // Find peak in lookahead window
+            float peak = 0.0f;
+            int bufSize = static_cast<int>(lookahead.buffer.size());
+            for (int i = 0; i < currentLookahead; ++i)
+            {
+                int idx = (lookahead.writeIndex - i + bufSize) % bufSize;
+                peak = juce::jmax(peak, lookahead.buffer[static_cast<size_t>(idx)]);
+            }
+
+            // Use peak for detection (allows gain reduction before the transient hits)
+            detectionLevel = peak;
+
+            // Advance write index
+            lookahead.writeIndex = (lookahead.writeIndex + 1) % bufSize;
+        }
+
+        // Convert detection level to dB
+        float inputDb = juce::Decibels::gainToDecibels(detectionLevel, -96.0f);
 
         // Calculate attack/release coefficients
         float attackCoeff = calcCoefficient(params.attack);
@@ -159,7 +239,7 @@ public:
         else
             state.envelope = releaseCoeff * state.envelope + (1.0f - releaseCoeff) * inputDb;
 
-        // Calculate dynamic gain
+        // Calculate dynamic gain (uses soft-knee if enabled)
         state.currentGainDb = calculateDynamicGain(state.envelope, params);
 
         // Smooth the gain to avoid zipper noise (short smoothing)
@@ -182,11 +262,18 @@ public:
     /**
      * Process detection for a band using its bandpass filter.
      * Returns the filtered level for sidechain detection.
+     * Thread-safe: Uses SpinLock to prevent race with updateDetectionFilter()
      */
     float processDetection(int bandIndex, float input, int channel)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS ||
             channel < 0 || channel >= static_cast<int>(detectionFilters.size()))
+            return std::abs(input);
+
+        // Use try-lock to avoid blocking the audio thread
+        // If lock fails (coefficient update in progress), use unfiltered input
+        const juce::SpinLock::ScopedTryLockType lock(filterLock);
+        if (!lock.isLocked())
             return std::abs(input);
 
         auto& filter = detectionFilters[static_cast<size_t>(channel)]
@@ -233,23 +320,38 @@ private:
     /**
      * Calculate dynamic gain based on envelope vs threshold.
      * When envelope exceeds threshold, reduce the band's static gain toward 0.
+     * Implements soft-knee compression for smoother response.
      */
     float calculateDynamicGain(float envelopeDb, const BandParameters& params) const
     {
-        // How much above threshold?
-        float overThreshold = envelopeDb - params.threshold;
+        float threshold = params.threshold;
+        // Use atomic load for thread-safe access from audio thread
+        float kneeWidth = softKneeEnabled.load(std::memory_order_acquire) ? params.kneeWidth : 0.0f;
+        float halfKnee = kneeWidth / 2.0f;
 
-        if (overThreshold <= 0.0f)
+        // Fixed ratio for dynamics (could be made configurable)
+        float ratio = 4.0f;
+
+        float reduction = 0.0f;
+
+        if (envelopeDb < threshold - halfKnee)
         {
-            // Below threshold - no dynamic gain change
-            return 0.0f;
+            // Below threshold (including knee) - no reduction
+            reduction = 0.0f;
         }
-
-        // Calculate gain reduction (soft knee)
-        // The more over threshold, the more we reduce (up to range limit)
-        // Using a simple ratio-like calculation
-        float ratio = 4.0f; // Fixed ratio for now (could be a parameter)
-        float reduction = overThreshold * (1.0f - 1.0f / ratio);
+        else if (envelopeDb > threshold + halfKnee || kneeWidth <= 0.0f)
+        {
+            // Above threshold + knee (hard compression) or hard knee mode
+            float overThreshold = envelopeDb - threshold;
+            reduction = overThreshold * (1.0f - 1.0f / ratio);
+        }
+        else
+        {
+            // In the soft knee region - quadratic interpolation
+            float x = envelopeDb - threshold + halfKnee;
+            float kneeGain = (x * x) / (2.0f * kneeWidth);
+            reduction = kneeGain * (1.0f - 1.0f / ratio);
+        }
 
         // Limit to range parameter
         reduction = juce::jmin(reduction, params.range);
@@ -278,8 +380,27 @@ private:
     // Detection bandpass filters (per channel, per band)
     std::vector<std::vector<juce::dsp::IIR::Filter<float>>> detectionFilters;
 
+    // SpinLock for thread-safe filter coefficient updates
+    // Used between updateDetectionFilter() (message thread) and processDetection() (audio thread)
+    mutable juce::SpinLock filterLock;
+
     // Atomic meters for UI (one per band, shows max across channels)
     std::array<std::atomic<float>, NUM_BANDS> dynamicGainMeters;
+
+    // Lookahead buffers for peak detection (per channel, per band)
+    struct LookaheadBuffer
+    {
+        std::vector<float> buffer;
+        int writeIndex = 0;
+        float peakValue = 0.0f;
+    };
+    std::vector<std::vector<LookaheadBuffer>> lookaheadBuffers;
+
+    // Global settings and state
+    GlobalSettings globalSettings;
+    std::atomic<int> lookaheadSamples{0};      // Thread-safe: written by message thread, read by audio thread
+    std::atomic<bool> softKneeEnabled{true};   // Thread-safe: written by message thread, read by audio thread
+    int numChannels = 2;
 
     double sampleRate = 44100.0;
 };

@@ -78,10 +78,9 @@ enum class ProcessingMode
 // EQ Type - switches between different EQ algorithms/styles
 enum class EQType
 {
-    Digital = 0,   // Clean digital EQ (Multi-Q default)
+    Digital = 0,   // Clean digital EQ with optional per-band dynamics (Multi-Q default)
     British,       // 4K EQ style British console EQ
-    Tube,          // Pultec EQP-1A style tube EQ
-    Dynamic        // FabFilter Pro-Q style dynamic EQ
+    Tube           // Pultec EQP-1A style tube EQ
 };
 
 //==============================================================================
@@ -98,17 +97,17 @@ struct BandConfig
     const char* name;
 };
 
-// Band colors matching Logic Pro Channel EQ
+// Band colors - vibrant palette for high visibility (Pro-Q style)
 namespace BandColors
 {
-    const juce::Colour Band1_HPF     = juce::Colour(0xFFff4444);  // Red
-    const juce::Colour Band2_LowShelf = juce::Colour(0xFFff8844);  // Orange
-    const juce::Colour Band3_Para    = juce::Colour(0xFFffcc44);  // Yellow
-    const juce::Colour Band4_Para    = juce::Colour(0xFF44cc44);  // Green
-    const juce::Colour Band5_Para    = juce::Colour(0xFF44cccc);  // Aqua/Cyan
-    const juce::Colour Band6_Para    = juce::Colour(0xFF4488ff);  // Blue
-    const juce::Colour Band7_HighShelf = juce::Colour(0xFFaa44ff);  // Purple
-    const juce::Colour Band8_LPF     = juce::Colour(0xFFff44aa);  // Pink
+    const juce::Colour Band1_HPF      = juce::Colour(0xFFff5555);  // Red
+    const juce::Colour Band2_LowShelf = juce::Colour(0xFFffaa00);  // Orange
+    const juce::Colour Band3_Para     = juce::Colour(0xFFffee00);  // Yellow
+    const juce::Colour Band4_Para     = juce::Colour(0xFF88ee44);  // Lime
+    const juce::Colour Band5_Para     = juce::Colour(0xFF00ccff);  // Cyan
+    const juce::Colour Band6_Para     = juce::Colour(0xFF5588ff);  // Blue
+    const juce::Colour Band7_HighShelf = juce::Colour(0xFFaa66ff);  // Purple
+    const juce::Colour Band8_LPF      = juce::Colour(0xFFff66cc);  // Pink
 }
 
 // Default band configurations
@@ -190,6 +189,8 @@ namespace ParamIDs
     const juce::String masterGain = "master_gain";
     const juce::String bypass = "bypass";
     const juce::String hqEnabled = "hq_enabled";
+    const juce::String linearPhaseEnabled = "linear_phase_enabled";
+    const juce::String linearPhaseLength = "linear_phase_length";  // 0=Short, 1=Medium, 2=Long
     const juce::String processingMode = "processing_mode";
     const juce::String qCoupleMode = "q_couple_mode";
     const juce::String eqType = "eq_type";
@@ -199,6 +200,7 @@ namespace ParamIDs
     const juce::String analyzerPrePost = "analyzer_pre_post";  // 0=post, 1=pre
     const juce::String analyzerMode = "analyzer_mode";         // 0=peak, 1=rms
     const juce::String analyzerResolution = "analyzer_resolution";
+    const juce::String analyzerSmoothing = "analyzer_smoothing";  // 0=off, 1=light, 2=medium, 3=heavy
     const juce::String analyzerDecay = "analyzer_decay";
 
     // Display parameters
@@ -258,4 +260,7 @@ namespace ParamIDs
 
     // Global dynamic mode parameters
     const juce::String dynDetectionMode = "dyn_detection_mode";  // 0=Peak, 1=RMS
+
+    // Auto-gain compensation
+    const juce::String autoGainEnabled = "auto_gain_enabled";
 }

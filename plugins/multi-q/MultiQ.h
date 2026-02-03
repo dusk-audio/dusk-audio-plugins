@@ -8,6 +8,8 @@
 #include "BritishEQProcessor.h"
 #include "PultecProcessor.h"
 #include "DynamicEQProcessor.h"
+#include "LinearPhaseEQProcessor.h"
+#include "MultiQPresets.h"
 
 //==============================================================================
 /**
@@ -61,17 +63,29 @@ public:
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
+    int getLatencySamples() const;
 
     //==============================================================================
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return {}; }
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram(int index) override;
+    const juce::String getProgramName(int index) override;
     void changeProgramName(int, const juce::String&) override {}
+
+private:
+    int currentPresetIndex = 0;
+    std::vector<MultiQPresets::Preset> factoryPresets;
+
+public:
 
     //==============================================================================
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
+
+    //==============================================================================
+    // Undo/Redo system
+    juce::UndoManager undoManager;
+    juce::UndoManager& getUndoManager() { return undoManager; }
 
     //==============================================================================
     // Public parameter access for GUI
@@ -101,8 +115,38 @@ public:
     // Get frequency response magnitude at a specific frequency (for curve display)
     float getFrequencyResponseMagnitude(float frequencyHz) const;
 
-private:
+    // Get current dynamic gain for a band (for UI visualization, thread-safe)
+    float getDynamicGain(int bandIndex) const { return dynamicEQ.getCurrentDynamicGain(bandIndex); }
+
+    // Get dynamics threshold for a band (for visualization)
+    float getDynamicsThreshold(int bandIndex) const
+    {
+        if (bandIndex >= 0 && bandIndex < NUM_BANDS && bandDynThresholdParams[static_cast<size_t>(bandIndex)])
+            return bandDynThresholdParams[static_cast<size_t>(bandIndex)]->load();
+        return 0.0f;
+    }
+
+    // Check if dynamics are enabled for a band
+    bool isDynamicsEnabled(int bandIndex) const;
+
+    // Check if in Dynamic EQ mode
+    bool isInDynamicMode() const;
+
     //==============================================================================
+    // Band Solo functionality
+    // When a band is soloed, only that band's effect is heard (all others bypassed)
+    void setSoloedBand(int bandIndex)
+    {
+        if (bandIndex < -1 || bandIndex >= NUM_BANDS)
+            bandIndex = -1;
+        soloedBand.store(bandIndex);
+    }  // -1 = no solo
+    int getSoloedBand() const { return soloedBand.load(); }
+    bool isBandSoloed(int bandIndex) const { return soloedBand.load() == bandIndex; }
+    bool isAnySoloed() const { return soloedBand.load() >= 0; }
+
+private:
+    std::atomic<int> soloedBand{-1};  // -1 = no solo, 0-7 = that band is soloed    //==============================================================================
     void parameterChanged(const juce::String& parameterID, float newValue) override;
 
     //==============================================================================
@@ -180,8 +224,14 @@ private:
     CascadedFilter lpfFilter;
 
     // Oversampling for analog-matched response (prevents Nyquist cramping)
+    // Always pre-allocated at 2x to avoid runtime allocation when toggling HQ mode
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     bool hqModeEnabled = false;
+    bool oversamplerReady = false;  // Flag to track if oversampler is initialized
+
+    // Pre-allocated scratch buffer for British/Pultec processing (avoids heap alloc in processBlock)
+    juce::AudioBuffer<float> scratchBuffer;
+    int maxOversampledBlockSize = 0;  // Maximum block size after oversampling
 
     // Current sample rate (may be oversampled)
     double currentSampleRate = 44100.0;
@@ -198,6 +248,8 @@ private:
     std::atomic<float>* masterGainParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
     std::atomic<float>* hqEnabledParam = nullptr;
+    std::atomic<float>* linearPhaseEnabledParam = nullptr;
+    std::atomic<float>* linearPhaseLengthParam = nullptr;
     std::atomic<float>* processingModeParam = nullptr;
     std::atomic<float>* qCoupleModeParam = nullptr;
 
@@ -269,6 +321,11 @@ private:
     DynamicEQProcessor dynamicEQ;
     std::atomic<bool> dynamicParamsChanged{true};
 
+    // Linear Phase EQ processor (one per channel for stereo)
+    std::array<LinearPhaseEQProcessor, 2> linearPhaseEQ;
+    bool linearPhaseModeEnabled = false;
+    std::atomic<bool> linearPhaseParamsChanged{true};
+
     // Dynamic mode per-band parameters
     std::array<std::atomic<float>*, NUM_BANDS> bandDynEnabledParams{};
     std::array<std::atomic<float>*, NUM_BANDS> bandDynThresholdParams{};
@@ -282,6 +339,15 @@ private:
     {
         return param ? param->load() : defaultValue;
     }
+
+    //==============================================================================
+    // Auto-gain compensation (maintains consistent loudness for A/B comparison)
+    std::atomic<float>* autoGainEnabledParam = nullptr;
+    juce::SmoothedValue<float> autoGainCompensation{1.0f};  // Linear gain multiplier
+    float inputRmsSum = 0.0f;
+    float outputRmsSum = 0.0f;
+    int rmsSampleCount = 0;
+    static constexpr int RMS_WINDOW_SAMPLES = 4410;  // ~100ms at 44.1kHz
 
     //==============================================================================
     // Filter coefficient calculation methods (analog-matched)
