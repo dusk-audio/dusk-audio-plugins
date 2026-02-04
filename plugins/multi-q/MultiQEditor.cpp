@@ -1627,7 +1627,7 @@ void MultiQEditor::setupBritishControls()
         slider->setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
                                      juce::MathConstants<float>::pi * 2.75f, true);
         slider->setScrollWheelEnabled(true);
-        LunaSliderStyle::configureKnob(*slider);
+        // LunaSlider already has proper Cmd/Ctrl+drag fine control built-in
         slider->setColour(juce::Slider::rotarySliderFillColourId, color);
         slider->setName(name);
         slider->setLookAndFeel(&fourKLookAndFeel);
