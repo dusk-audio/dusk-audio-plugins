@@ -771,28 +771,15 @@ jobs:
             echo "Warning: $PLUGIN_MD not found"
           fi
 
-          # Also update _data/plugins.yml for consistency
-          python3 << EOF
-          import yaml
-
-          with open('_data/plugins.yml', 'r') as f:
-              data = yaml.safe_load(f)
-
-          # Find and update the plugin
-          updated = False
-          for plugin in data.get('plugins', data) if isinstance(data, dict) else data:
-              if isinstance(plugin, dict) and plugin.get('slug') == '$PLUGIN_SLUG':
-                  plugin['version'] = '$PLUGIN_VERSION'
-                  updated = True
-                  print(f"Updated {plugin.get('name', '$PLUGIN_SLUG')} to version $PLUGIN_VERSION in plugins.yml")
-                  break
-
-          if updated:
-              with open('_data/plugins.yml', 'w') as f:
-                  yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-          else:
-              print(f"Warning: Plugin '$PLUGIN_SLUG' not found in plugins.yml")
-          EOF
+          # Update _data/plugins.yml using sed (preserves formatting, no yaml.dump)
+          SLUG_LINE=$(grep -n "slug: ${PLUGIN_SLUG}$" _data/plugins.yml | head -1 | cut -d: -f1)
+          if [ -n "$SLUG_LINE" ]; then
+            # Find and update the version line within 10 lines after the slug
+            sed -i "${SLUG_LINE},$((SLUG_LINE + 10))s/version: .*/version: ${PLUGIN_VERSION}/" _data/plugins.yml
+            echo "Updated $PLUGIN_SLUG to version $PLUGIN_VERSION in plugins.yml"
+          else
+            echo "Warning: Plugin '$PLUGIN_SLUG' not found in plugins.yml"
+          fi
 
           # Check if there are changes
           if git diff --quiet; then
