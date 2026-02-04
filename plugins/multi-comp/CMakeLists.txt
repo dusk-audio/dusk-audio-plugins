@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.15)
 # Include version extraction module
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
-# Get version from git tag or CI environment (fallback to 1.2.1)
+# Get version from git tag or CI environment (fallback to default version)
 set(MULTICOMP_DEFAULT_VERSION "1.2.3")
 get_plugin_version("multi-comp" MULTICOMP_VERSION)
 if(NOT MULTICOMP_VERSION OR MULTICOMP_VERSION STREQUAL "0.0.0")
