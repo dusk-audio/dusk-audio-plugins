@@ -167,7 +167,7 @@ void TapeMachineAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::La
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(panelDark));
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(metalDark));
 
-    // LunaSlider already has proper Cmd/Ctrl+drag fine control built-in
+    // LunaSlider already has Shift+drag fine control and Ctrl/Cmd+click reset built-in
     // Do NOT call LunaSliderStyle::configureKnob() - it would break the custom behavior
 
     addAndMakeVisible(slider);

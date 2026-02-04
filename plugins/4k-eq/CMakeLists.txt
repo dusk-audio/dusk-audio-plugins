@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.15)
 # Include version extraction module
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
-# Get version from git tag or CI environment (fallback to 1.0.5)
+# Get version from git tag or CI environment (fallback to default version)
 set(FOURKEQ_DEFAULT_VERSION "1.0.8")
 get_plugin_version("4k-eq" FOURKEQ_VERSION)
 if(NOT FOURKEQ_VERSION OR FOURKEQ_VERSION STREQUAL "0.0.0")
