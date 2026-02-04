@@ -30,17 +30,39 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Luna Co. A
 | Neural Amp | `neural-amp` | `plugins/neural-amp/` | Neural amp modeler (NAM) |
 | GrooveMind | `groovemind` | `plugins/groovemind/` | ML drum generator (future) |
 
-## Version Management
+## Version Management & Releasing
 
-**Version locations** (update ALL before releasing):
+### MANDATORY: Always use `/release-plugin` for version bumps and tags
 
-| Plugin | CMakeLists.txt Variable | Header File |
-|--------|------------------------|-------------|
-| 4K EQ | `FOURKEQ_DEFAULT_VERSION` | `FourKEQ.h` |
-| Multi-Comp | `MULTICOMP_DEFAULT_VERSION` | - |
-| TapeMachine | `TAPEMACHINE_DEFAULT_VERSION` | - |
-| Multi-Q | `MULTIQ_DEFAULT_VERSION` | `MultiQ.h` |
-| Others | `<NAME>_DEFAULT_VERSION` | - |
+**NEVER manually bump versions or create tags.** Always use the `/release-plugin` skill which automatically:
+1. Bumps CMakeLists.txt version(s)
+2. Updates the website `_data/plugins.yml`
+3. Commits both repos
+4. Creates annotated git tag(s) with changelog
+5. Pushes everything (commits + tags + website)
+
+```bash
+# Single plugin release
+/release-plugin multi-comp 1.2.4
+
+# Auto-increment patch version
+/release-plugin 4k-eq
+
+# Batch release (patch bump all)
+/release-plugin 4k-eq multi-comp tapemachine multi-q
+```
+
+**Version locations** (managed by `/release-plugin`):
+
+| Plugin | CMakeLists.txt Variable |
+|--------|------------------------|
+| 4K EQ | `FOURKEQ_DEFAULT_VERSION` |
+| Multi-Comp | `MULTICOMP_DEFAULT_VERSION` |
+| TapeMachine | `TAPEMACHINE_DEFAULT_VERSION` |
+| Multi-Q | `project(MultiQ VERSION X.Y.Z)` (inline) |
+| Others | `<NAME>_DEFAULT_VERSION` |
+
+**Website**: `/home/marc/projects/lunacoaudio.github.io/_data/plugins.yml` - updated automatically by `/release-plugin`
 
 ## Shared Code (MANDATORY)
 
