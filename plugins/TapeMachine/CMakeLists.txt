@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.15)
 # Include version extraction module
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
-# Get version from git tag or CI environment (fallback to 1.0.1)
-set(TAPEMACHINE_DEFAULT_VERSION "1.0.2")
+# Get version from git tag or CI environment (fallback to default version)
+set(TAPEMACHINE_DEFAULT_VERSION "1.0.3")
 get_plugin_version("tapemachine" TAPEMACHINE_VERSION)
 if(NOT TAPEMACHINE_VERSION OR TAPEMACHINE_VERSION STREQUAL "0.0.0")
     set(TAPEMACHINE_VERSION ${TAPEMACHINE_DEFAULT_VERSION})
