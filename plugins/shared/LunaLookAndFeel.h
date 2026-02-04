@@ -68,16 +68,17 @@ struct LEDMeterStyle
 
 //==============================================================================
 /**
- * Custom slider with proper Cmd/Ctrl+drag fine control
+ * Professional slider with FabFilter-style knob behavior
  *
- * Features:
- * - Cmd/Ctrl+drag reduces sensitivity by 10x for fine adjustments
- * - Smooth transition when modifier is pressed/released mid-drag (no jumps)
- * - Cmd/Ctrl+scroll wheel for fine wheel control
- * - Disables JUCE velocity mode to prevent cursor hiding
+ * Features (matching industry standard - FabFilter, Tokyo Dawn Labs):
+ * - Shift+drag for fine control (5x finer - industry standard modifier)
+ * - Velocity-sensitive dragging: slow movements = precise, fast = coarse
+ * - Ctrl/Cmd+click to reset to default value
+ * - Smooth, jitter-free operation
+ * - Shift+scroll wheel for fine wheel control
  *
- * Uses incremental drag tracking instead of JUCE's default which calculates
- * from mouseDown origin. This ensures seamless modifier key transitions.
+ * The velocity curve makes slow, deliberate movements more precise while
+ * allowing fast sweeps across the full range - just like FabFilter Pro-Q.
  */
 class LunaSlider : public juce::Slider
 {
@@ -102,21 +103,30 @@ public:
 private:
     void initLunaSlider()
     {
-        // MUST disable velocity mode - it hides cursor and conflicts with our tracking
+        // Disable JUCE velocity mode - we implement our own smoother version
         setVelocityBasedMode(false);
     }
 
 public:
     void mouseDown(const juce::MouseEvent& e) override
     {
-        // Ensure velocity mode stays off
+        // Ctrl/Cmd+click = reset to default (FabFilter standard)
+        if (e.mods.isCommandDown() || e.mods.isCtrlDown())
+        {
+            // Reset to default value if double-click reset is enabled
+            if (isDoubleClickReturnEnabled())
+            {
+                setValue(getDoubleClickReturnValue(), juce::sendNotificationSync);
+                return;
+            }
+        }
+
         setVelocityBasedMode(false);
 
-        // Initialize incremental drag tracking
+        // Initialize tracking
         lastDragValue = getValue();
         lastDragY = e.position.y;
         lastDragX = e.position.x;
-        wasInFineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
 
         juce::Slider::mouseDown(e);
     }
@@ -129,8 +139,8 @@ public:
             return;
         }
 
-        bool fineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
-        int sensitivity = fineMode ? fineSensitivity : normalSensitivity;
+        // Shift = fine mode (industry standard - FabFilter, most pro plugins)
+        bool fineMode = e.mods.isShiftDown();
 
         // Calculate pixel movement since last event
         double pixelDiff = 0.0;
@@ -152,24 +162,43 @@ public:
         }
         else
         {
-            // Fall back to base class for other styles
             juce::Slider::mouseDrag(e);
             return;
         }
 
-        // Calculate and apply value change
+        // Apply velocity curve for natural feel (like FabFilter)
+        // Slow movements get extra precision, fast movements cover more range
+        double absPixelDiff = std::abs(pixelDiff);
+        double velocityScale = 1.0;
+
+        if (absPixelDiff < 2.0)
+        {
+            // Very slow movement: extra precision (0.5x)
+            velocityScale = 0.5;
+        }
+        else if (absPixelDiff < 5.0)
+        {
+            // Slow movement: smooth interpolation (0.5 to 1.0)
+            velocityScale = 0.5 + (absPixelDiff - 2.0) * (0.5 / 3.0);
+        }
+        // else: normal speed (1.0x)
+
+        // Base sensitivity: 200 pixels for full range (responsive but controllable)
+        // Fine mode: 5x more pixels needed (1000px) - less jarring than 10x
+        double baseSensitivity = fineMode ? 1000.0 : 200.0;
+
+        // Calculate value change with velocity scaling
         double range = getMaximum() - getMinimum();
-        double valueDelta = (pixelDiff / sensitivity) * range;
+        double valueDelta = (pixelDiff * velocityScale / baseSensitivity) * range;
         double newValue = juce::jlimit(getMinimum(), getMaximum(),
                                         lastDragValue + valueDelta);
 
         setValue(newValue, juce::sendNotificationSync);
 
-        // Update reference for next drag event (key to seamless modifier transitions)
+        // Update for next frame
         lastDragValue = getValue();
         lastDragY = e.position.y;
         lastDragX = e.position.x;
-        wasInFineMode = fineMode;
     }
 
     void mouseWheelMove(const juce::MouseEvent& e,
@@ -181,9 +210,9 @@ public:
             return;
         }
 
-        bool fineMode = e.mods.isCommandDown() || e.mods.isCtrlDown();
+        // Shift = fine mode (consistent with drag behavior)
+        bool fineMode = e.mods.isShiftDown();
 
-        // Determine wheel direction (prefer Y, fall back to X for horizontal scroll)
         float wheelDelta = std::abs(wheel.deltaY) > std::abs(wheel.deltaX)
                            ? wheel.deltaY
                            : -wheel.deltaX;
@@ -191,17 +220,16 @@ public:
         if (wheel.isReversed)
             wheelDelta = -wheelDelta;
 
-        // Normal: 15% of range per wheel unit | Fine: 1.5% (10x finer)
-        double sensitivity = fineMode ? wheelFineSensitivity : wheelNormalSensitivity;
+        // Normal: 10% of range per wheel unit | Fine: 2% (5x finer)
+        double sensitivity = fineMode ? 0.02 : 0.10;
         double proportionDelta = wheelDelta * sensitivity;
 
-        // Apply to current position
         double currentProportion = valueToProportionOfLength(getValue());
         double newProportion = juce::jlimit(0.0, 1.0,
                                             currentProportion + proportionDelta);
         double newValue = proportionOfLengthToValue(newProportion);
 
-        // Ensure minimum interval step for discrete sliders
+        // Handle discrete intervals
         double interval = getInterval();
         if (interval > 0)
         {
@@ -213,46 +241,35 @@ public:
         setValue(snapValue(newValue, notDragging), juce::sendNotificationSync);
     }
 
-    // Sensitivity constants
-    static constexpr int normalSensitivity = 300;    // Pixels for full range drag
-    static constexpr int fineSensitivity = 3000;     // Fine: 10x more pixels needed
-
-    static constexpr double wheelNormalSensitivity = 0.15;   // Proportion per wheel unit
-    static constexpr double wheelFineSensitivity = 0.015;    // Fine: 10x smaller steps
-
 private:
-    // Incremental drag tracking state
+    // Drag tracking state
     double lastDragValue = 0.0;
     float lastDragY = 0.0f;
     float lastDragX = 0.0f;
-    bool wasInFineMode = false;
 };
 
 //==============================================================================
 /**
  * Standard slider/knob configuration for Luna Co. Audio plugins
- * Use these to ensure consistent knob behavior across all plugins
  *
- * For true Cmd/Ctrl+drag fine control, use LunaSlider instead of juce::Slider.
- * The configureKnob() function provides velocity-based control without fine mode.
+ * IMPORTANT: Use LunaSlider instead of juce::Slider for all knobs.
+ * LunaSlider provides professional behavior matching FabFilter/TDR:
+ * - Shift+drag for fine control
+ * - Velocity-sensitive dragging
+ * - Ctrl/Cmd+click to reset
+ *
+ * The configureKnob() function is DEPRECATED - do not use on LunaSlider,
+ * it will break the built-in behavior.
  */
 struct LunaSliderStyle
 {
-    // Velocity mode parameters for professional knob feel
-    static constexpr double sensitivity = 0.5;    // Lower = slower, more controlled movement
-    static constexpr int threshold = 2;           // Ignore tiny mouse movements (reduces jitter)
+    // DEPRECATED: Only kept for backwards compatibility with juce::Slider
+    static constexpr double sensitivity = 0.5;
+    static constexpr int threshold = 2;
 
     /**
-     * Configure a rotary slider with professional Luna knob behavior
-     * Call this after setting slider style to RotaryVerticalDrag
-     *
-     * Features:
-     * - 50% slower base movement for precise control
-     * - Jitter filtering (ignores tiny mouse movements)
-     *
-     * Note: For Cmd/Ctrl fine control, use LunaSlider instead of juce::Slider
-     *
-     * @param slider The slider to configure
+     * DEPRECATED: Do not use on LunaSlider - it breaks the built-in fine control.
+     * Only use this for legacy juce::Slider instances.
      */
     static void configureKnob(juce::Slider& slider)
     {
@@ -261,9 +278,7 @@ struct LunaSliderStyle
     }
 
     /**
-     * Configure a rotary slider with custom sensitivity
-     * @param slider The slider to configure
-     * @param customSensitivity Sensitivity multiplier (0.3 = slower, 1.0 = default JUCE)
+     * DEPRECATED: Do not use on LunaSlider.
      */
     static void configureKnob(juce::Slider& slider, double customSensitivity)
     {
@@ -272,9 +287,7 @@ struct LunaSliderStyle
     }
 
     /**
-     * Full setup for a rotary knob with Luna defaults
-     * Sets style, enables scroll wheel, and configures velocity mode
-     * @param slider The slider to setup
+     * DEPRECATED: Use LunaSlider directly instead.
      */
     static void setupRotaryKnob(juce::Slider& slider)
     {
@@ -293,9 +306,9 @@ struct LunaSliderStyle
  */
 struct LunaTooltips
 {
-    // Common modifier hints
-    static inline const juce::String fineControlHint = " (Cmd/Ctrl+drag for fine control)";
-    static inline const juce::String altResetHint = " (Alt-click to reset)";
+    // Common modifier hints (matching FabFilter/industry standard)
+    static inline const juce::String fineControlHint = " (Shift+drag for fine control)";
+    static inline const juce::String resetHint = " (Ctrl/Cmd+click to reset)";
 
     // Common control descriptions
     static inline const juce::String bypass = "Bypass all processing (Shortcut: B)";
@@ -321,10 +334,16 @@ struct LunaTooltips
         return tooltip + fineControlHint;
     }
 
-    // Helper to add alt-reset hint to a tooltip
-    static juce::String withAltReset(const juce::String& tooltip)
+    // Helper to add reset hint to a tooltip
+    static juce::String withReset(const juce::String& tooltip)
     {
-        return tooltip + altResetHint;
+        return tooltip + resetHint;
+    }
+
+    // Helper to add both hints
+    static juce::String withAllHints(const juce::String& tooltip)
+    {
+        return tooltip + fineControlHint + resetHint;
     }
 };
 
