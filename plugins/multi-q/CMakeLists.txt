@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(MULTIQ_DEFAULT_VERSION "1.0.1")
+set(MULTIQ_DEFAULT_VERSION "0.9.0")
 get_plugin_version("multi-q" MULTIQ_VERSION)
 if(NOT MULTIQ_VERSION OR MULTIQ_VERSION STREQUAL "0.0.0")
     set(MULTIQ_VERSION ${MULTIQ_DEFAULT_VERSION})
