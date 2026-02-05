@@ -117,6 +117,11 @@ public:
             std::fill(channelBuffer.begin(), channelBuffer.end(), 0.0f);
         delayWritePos = 0;
 
+        // Clear oversampled processing delay buffers
+        for (auto& channelBuffer : osDelayBuffer)
+            std::fill(channelBuffer.begin(), channelBuffer.end(), 0.0f);
+        osDelayWritePos = 0;
+
         // Clear capture flags
         oversampledDryCaptured = false;
         normalDryCaptured = false;
@@ -136,6 +141,10 @@ public:
         for (auto& channelBuffer : delayBuffer)
             std::fill(channelBuffer.begin(), channelBuffer.end(), 0.0f);
         delayWritePos = 0;
+
+        for (auto& channelBuffer : osDelayBuffer)
+            std::fill(channelBuffer.begin(), channelBuffer.end(), 0.0f);
+        osDelayWritePos = 0;
 
         oversampledDryCaptured = false;
         normalDryCaptured = false;
@@ -164,13 +173,51 @@ public:
     }
 
     /**
+        Sets the processing latency introduced by the wet signal chain
+        (in samples at base rate). Used to delay the dry signal so it
+        aligns with the wet signal's group delay, preventing comb filtering.
+
+        This works for both Tier 1 (oversampled) and Tier 2 (normal rate) mixing:
+        - Tier 1: delay is scaled by currentOversamplingFactor for ring buffer
+        - Tier 2: delay is used directly at base rate
+
+        Call this before mixing each block, or whenever the processing chain's
+        group delay changes (e.g., wow/flutter toggle, oversampling change).
+
+        @param samplesAtBaseRate  Processing latency in base-rate samples
+    */
+    void setProcessingLatency(int samplesAtBaseRate)
+    {
+        const int maxBase = (MAX_OS_DELAY_SAMPLES - 1) / juce::jmax(1, currentOversamplingFactor);
+        jassert(samplesAtBaseRate <= maxBase);
+        processingLatencyBase = juce::jlimit(0, maxBase, samplesAtBaseRate);
+    }
+
+    int getProcessingLatency() const { return processingLatencyBase; }
+
+    /**
+        Sets the current oversampling factor. Must be called whenever the
+        oversampling factor changes so Tier 1 can correctly scale the
+        processing latency for the ring buffer.
+
+        @param factor  Current oversampling factor (1, 2, or 4)
+    */
+    void setCurrentOversamplingFactor(int factor)
+    {
+        currentOversamplingFactor = juce::jlimit(1, preparedMaxOversamplingFactor > 0 ? preparedMaxOversamplingFactor : 4, factor);
+        // Re-clamp processing latency in case the new factor makes it exceed ring buffer
+        const int maxBase = (MAX_OS_DELAY_SAMPLES - 1) / currentOversamplingFactor;
+        processingLatencyBase = juce::jmin(processingLatencyBase, maxBase);
+    }
+
+    /**
         Gets the total latency for PDC reporting.
 
         @return Total latency in samples at base rate
     */
     int getTotalLatency() const
     {
-        return oversamplingLatency + additionalLatency;
+        return oversamplingLatency + additionalLatency + processingLatencyBase;
     }
 
     //==============================================================================
@@ -252,14 +299,47 @@ public:
         const float wetAmount = mixAmount;
         const float dryAmount = 1.0f - mixAmount;
 
-        for (int ch = 0; ch < numChannels; ++ch)
+        // Scale base-rate processing latency to oversampled rate
+        const int osProcessingLatency = processingLatencyBase * currentOversamplingFactor;
+
+        if (osProcessingLatency <= 0)
         {
-            float* wet = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
-            const float* dry = oversampledDryBuffer.getReadPointer(ch);
+            // No processing delay — direct crossfade (zero overhead)
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* wet = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
+                const float* dry = oversampledDryBuffer.getReadPointer(ch);
+
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    wet[i] = wet[i] * wetAmount + dry[i] * dryAmount;
+                }
+            }
+        }
+        else
+        {
+            // Delay-compensated crossfade: delay the dry signal to align with
+            // the wet processing chain's group delay, preventing comb filtering
+            const int delayToApply = juce::jmin(osProcessingLatency, MAX_OS_DELAY_SAMPLES - 1);
+            const int channelsToProcess = juce::jmin(numChannels, MAX_CHANNELS);
 
             for (int i = 0; i < numSamples; ++i)
             {
-                wet[i] = wet[i] * wetAmount + dry[i] * dryAmount;
+                int readPos = (osDelayWritePos - delayToApply + MAX_OS_DELAY_SAMPLES) & OS_DELAY_MASK;
+
+                for (int ch = 0; ch < channelsToProcess; ++ch)
+                {
+                    float* wet = oversampledBlock.getChannelPointer(static_cast<size_t>(ch));
+                    const float* dry = oversampledDryBuffer.getReadPointer(ch);
+
+                    // Write current dry sample into ring buffer, read delayed
+                    float delayedDry = osDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(readPos)];
+                    osDelayBuffer[static_cast<size_t>(ch)][static_cast<size_t>(osDelayWritePos)] = dry[i];
+
+                    wet[i] = wet[i] * wetAmount + delayedDry * dryAmount;
+                }
+
+                osDelayWritePos = (osDelayWritePos + 1) & OS_DELAY_MASK;
             }
         }
 
@@ -313,7 +393,7 @@ public:
 
         const int numChannels = juce::jmin(buffer.getNumChannels(), normalDryBuffer.getNumChannels());
         const int numSamples = juce::jmin(buffer.getNumSamples(), lastNormalSamples);
-        const int totalDelay = oversamplingLatency + additionalLatency;
+        const int totalDelay = oversamplingLatency + additionalLatency + processingLatencyBase;
 
         // Skip if mix is 100% dry (just copy dry over wet)
         if (mixAmount <= 0.001f)
@@ -422,6 +502,15 @@ private:
     // Ring buffer delay line for latency compensation (tier 2)
     std::array<std::array<float, MAX_DELAY_SAMPLES>, MAX_CHANNELS> delayBuffer{};
     int delayWritePos{0};
+
+    // Ring buffer for oversampled-rate processing delay compensation (tier 1)
+    // Used to delay the dry signal to match the wet processing chain's group delay
+    static constexpr int MAX_OS_DELAY_SAMPLES = 2048;  // Power of 2 (holds up to 512 base * 4x OS)
+    static constexpr int OS_DELAY_MASK = MAX_OS_DELAY_SAMPLES - 1;
+    std::array<std::array<float, MAX_OS_DELAY_SAMPLES>, MAX_CHANNELS> osDelayBuffer{};
+    int osDelayWritePos{0};
+    int processingLatencyBase{0};  // Processing latency in base-rate samples
+    int currentOversamplingFactor{1};  // Current OS factor for Tier 1 scaling
 
     //==============================================================================
     // State Variables
