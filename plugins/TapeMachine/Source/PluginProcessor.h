@@ -2,8 +2,6 @@
 
 #include <JuceHeader.h>
 #include <memory>
-#include <array>
-#include "../../shared/DryWetMixer.h"
 
 class ImprovedTapeEmulation;
 class WowFlutterProcessor;  // Forward declaration for shared wow/flutter
@@ -132,11 +130,6 @@ private:
     std::atomic<float>* outputGainParam = nullptr;
     std::atomic<float>* autoCompParam = nullptr;
     std::atomic<float>* autoCalParam = nullptr;
-    std::atomic<float>* mixParam = nullptr;
-
-    // Phase-coherent dry/wet mixer (prevents comb filtering with oversampling)
-    LunaAudio::DryWetMixer dryWetMixer;
-
     void updateFilters();
 
     // Level metering (RMS-based for VU accuracy)

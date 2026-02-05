@@ -3910,8 +3910,13 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     dryWetMixer.prepare(sampleRate, samplesPerBlock, numChannels, 4);  // max 4x oversampling
 
     // Set latency for phase-coherent dry/wet mixing
+    // currentOversamplingFactor is UI index (0=off, 1=2x, 2=4x), convert to actual factor
+    const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
+                             : (currentOversamplingFactor == 1) ? 2 : 1;
+    dryWetMixer.setCurrentOversamplingFactor(actualOsFactor);
     dryWetMixer.setOversamplingLatency(oversamplingLatency);
     dryWetMixer.setAdditionalLatency(lookaheadBuffer ? lookaheadBuffer->getLookaheadSamples() : 0);
+    dryWetMixer.setProcessingLatency(0);  // Compression adds zero group delay
 
     // Initialize smoothed auto-makeup gain with ~50ms smoothing time
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
@@ -4318,6 +4323,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (oversamplingFactor != currentOversamplingFactor)
     {
         currentOversamplingFactor = oversamplingFactor;
+        // Update DryWetMixer with actual oversampling factor (UI index → factor)
+        const int newOsFactor = (currentOversamplingFactor == 2) ? 4
+                              : (currentOversamplingFactor == 1) ? 2 : 1;
+        dryWetMixer.setCurrentOversamplingFactor(newOsFactor);
         // The actual processing rate adapts automatically based on antiAliasing->processUp/Down
         // which handles the buffer sizing internally without allocation.
     }
@@ -4724,6 +4733,11 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
         const int osNumChannels = static_cast<int>(oversampledBlock.getNumChannels());
         const int osNumSamples = static_cast<int>(oversampledBlock.getNumSamples());
+
+        // Compression processing adds zero group delay (empirically verified)
+        // Gain-based compression is memoryless — sidechain IIR filters affect
+        // only the control signal, not the audio path timing
+        dryWetMixer.setProcessingLatency(0);
 
         // Capture dry signal at OVERSAMPLED rate for phase-coherent mixing
         // This ensures both dry and wet go through the same downsampling filter,
