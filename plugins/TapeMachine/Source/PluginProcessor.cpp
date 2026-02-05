@@ -35,7 +35,6 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     biasParam = apvts.getRawParameterValue("bias");
     calibrationParam = apvts.getRawParameterValue("calibration");
     oversamplingParam = apvts.getRawParameterValue("oversampling");
-    mixParam = apvts.getRawParameterValue("mix");
 
     // Validate all critical parameters exist - fail early if not
     // This catches configuration errors during development rather than during audio processing
@@ -55,14 +54,13 @@ TapeMachineAudioProcessor::TapeMachineAudioProcessor()
     jassert(calibrationParam != nullptr);
     jassert(autoCalParam != nullptr);
     jassert(oversamplingParam != nullptr);
-    jassert(mixParam != nullptr);
 
     // Log error if any critical parameter is missing (helps debug in release builds)
     if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !signalPathParam ||
         !eqStandardParam || !inputGainParam || !highpassFreqParam || !lowpassFreqParam ||
         !noiseAmountParam || !wowAmountParam || !flutterAmountParam ||
         !outputGainParam || !biasParam || !calibrationParam || !autoCalParam ||
-        !oversamplingParam || !mixParam)
+        !oversamplingParam)
     {
         DBG("TapeMachine: CRITICAL ERROR - One or more parameters failed to initialize!");
     }
@@ -202,14 +200,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
         "oversampling", "Oversampling",
         juce::StringArray{"1x", "2x", "4x"},
         2));  // Default to 4x for best quality (index 2)
-
-    // Wet/Dry Mix for parallel processing - all professional tape plugins include this
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "mix", "Mix",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f,
-        juce::String(), juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(value, 1) + "%"; },
-        [](const juce::String& text) { return text.getFloatValue(); }));
 
     return { params.begin(), params.end() };
 }
@@ -409,27 +399,12 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     if (flutterAmountParam)
         smoothedFlutter.setCurrentAndTargetValue(flutterAmountParam->load());
 
-    // Prepare phase-coherent dry/wet mixer for oversampled processing
-    // This prevents comb filtering when mixing dry/wet signals with different latencies
-    dryWetMixer.prepare(sampleRate, samplesPerBlock, 2, 4);  // max 4x oversampling
-
-    // Report latency to host for PDC and update dry/wet mixer
-    dryWetMixer.setCurrentOversamplingFactor(currentOversamplingFactor);
+    // Report latency to host for PDC
     auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
     if (activeOversampler)
-    {
-        int latency = static_cast<int>(activeOversampler->getLatencyInSamples());
-        dryWetMixer.setOversamplingLatency(latency);
-    }
+        setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
     else
-    {
-        dryWetMixer.setOversamplingLatency(0);
-    }
-
-    // Set processing latency for phase-coherent dry/wet mixing (base-rate samples)
-    // This delays the dry signal to align with the wet processing chain's group delay
-    dryWetMixer.setProcessingLatency(calculateProcessingLatency());
-    setLatencySamples(dryWetMixer.getTotalLatency());
+        setLatencySamples(0);
 }
 
 void TapeMachineAudioProcessor::releaseResources()
@@ -438,7 +413,6 @@ void TapeMachineAudioProcessor::releaseResources()
     processorChainRight.reset();
     if (oversampler2x) oversampler2x->reset();
     if (oversampler4x) oversampler4x->reset();
-    dryWetMixer.reset();
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -466,22 +440,6 @@ bool TapeMachineAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
   #endif
 }
 #endif
-
-int TapeMachineAudioProcessor::calculateProcessingLatency() const
-{
-    // Processing latency compensation for the dry/wet mixer ring buffer.
-    //
-    // The Tier 1 architecture (capture dry AFTER upsampling, mix BEFORE downsampling)
-    // eliminates FIR anti-aliasing phase mismatch. The remaining IIR filters in the
-    // wet chain (highpass, tape emulation, lowpass) have negligible group delay (~5-10
-    // oversampled samples) that doesn't cause audible comb filtering.
-    //
-    // NOTE: Previous values (56/67 base-rate samples) were measured through pedalboard,
-    // which intercepts the 'mix' parameter and applies external dry/wet blending.
-    // Those measurements reflected pedalboard artifacts, not actual processing delay.
-    // The large ring buffer delay was CAUSING comb filtering, not preventing it.
-    return 0;
-}
 
 void TapeMachineAudioProcessor::updateFilters()
 {
@@ -534,7 +492,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (!tapeMachineParam || !tapeSpeedParam || !tapeTypeParam || !inputGainParam ||
         !highpassFreqParam || !lowpassFreqParam ||
         !noiseAmountParam || !wowAmountParam || !flutterAmountParam ||
-        !outputGainParam || !biasParam || !calibrationParam || !oversamplingParam || !mixParam)
+        !outputGainParam || !biasParam || !calibrationParam || !oversamplingParam)
     {
         jassertfalse; // Alert during debug builds - this indicates a configuration error
         buffer.clear();  // Output silence rather than unprocessed audio
@@ -566,30 +524,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (buffer.getNumChannels() < 2)
         return;  // Safety check - should never happen now
 
-    // Mix amount for dry/wet mixing (handled at oversampled rate for phase coherence)
-    const float mixAmount = mixParam->load() * 0.01f;  // Convert 0-100% to 0-1
-
-    // At 0% mix (100% dry), skip all processing and return input unchanged
-    // This ensures perfect pass-through without any filter artifacts from oversampling
-    if (mixAmount <= 0.001f)
-    {
-        // Update meters to show input = output (bypass behavior)
-        const float* leftChannel = buffer.getReadPointer(0);
-        const float* rightChannel = buffer.getReadPointer(1);
-        float sumSquaresL = 0.0f, sumSquaresR = 0.0f;
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            sumSquaresL += leftChannel[i] * leftChannel[i];
-            sumSquaresR += rightChannel[i] * rightChannel[i];
-        }
-        float rmsL = std::sqrt(sumSquaresL / buffer.getNumSamples());
-        float rmsR = std::sqrt(sumSquaresR / buffer.getNumSamples());
-        inputLevelL.store(rmsL, std::memory_order_relaxed);
-        inputLevelR.store(rmsR, std::memory_order_relaxed);
-        outputLevelL.store(rmsL, std::memory_order_relaxed);
-        outputLevelR.store(rmsR, std::memory_order_relaxed);
-        return;  // Input unchanged
-    }
 
     // Set processing flag based on DAW transport state
     if (auto* playHead = getPlayHead())
@@ -794,20 +728,11 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         if (sharedWowFlutter)
             sharedWowFlutter->prepare(newOversampledRate, currentOversamplingFactor);
 
-        // Update latency for host PDC and dry/wet mixer (0 for 1x/no oversampling)
-        // Update latency for host PDC and dry/wet mixer
-        dryWetMixer.setCurrentOversamplingFactor(currentOversamplingFactor);
+        // Update latency for host PDC
         if (activeOversampler)
-        {
-            int latency = static_cast<int>(activeOversampler->getLatencyInSamples());
-            dryWetMixer.setOversamplingLatency(latency);
-        }
+            setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
         else
-        {
-            dryWetMixer.setOversamplingLatency(0);
-        }
-        dryWetMixer.setProcessingLatency(calculateProcessingLatency());
-        setLatencySamples(dryWetMixer.getTotalLatency());
+            setLatencySamples(0);
 
         // Re-prepare processor chain with new oversampled rate so the SVF filters
         // store the correct sample rate for coefficient calculation.
@@ -855,29 +780,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     juce::dsp::AudioBlock<float> processBlock = activeOversampler
         ? activeOversampler->processSamplesUp(block)
         : block;
-
-    // Update processing latency each block (tracks parameter changes like wow/flutter toggle)
-    dryWetMixer.setProcessingLatency(calculateProcessingLatency());
-
-    // Capture dry signal for phase-coherent mixing
-    // With oversampling: capture at oversampled rate so both signals go through same anti-aliasing filter
-    // Without oversampling: capture at normal rate (no latency to compensate)
-    bool canMixOversampled = false;
-    bool canMixNormal = false;
-    if (mixAmount < 0.999f)
-    {
-        if (activeOversampler)
-        {
-            // Oversampled mode: capture at oversampled rate to eliminate comb filtering
-            canMixOversampled = dryWetMixer.captureDryAtOversampledRate(processBlock);
-        }
-        else
-        {
-            // 1x mode: capture at normal rate (no oversampling latency to compensate)
-            dryWetMixer.captureDryAtNormalRate(buffer);
-            canMixNormal = true;
-        }
-    }
 
     auto leftBlock = processBlock.getSingleChannelBlock(0);
     auto rightBlock = processBlock.getSingleChannelBlock(1);
@@ -1081,13 +983,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     processorChainLeft.get<3>().process(leftContext);
     processorChainRight.get<3>().process(rightContext);
 
-    // Mix dry/wet at OVERSAMPLED rate BEFORE downsampling
-    // Both signals pass through the same anti-aliasing filter, eliminating comb filtering
-    if (canMixOversampled)
-    {
-        dryWetMixer.mixAtOversampledRate(processBlock, mixAmount);
-    }
-
     // Downsample back to original rate (only if we upsampled)
     if (activeOversampler)
         activeOversampler->processSamplesDown(block);
@@ -1097,14 +992,6 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     if (crossfadeGain < 1.0f)
     {
         buffer.applyGain(crossfadeGain);
-    }
-
-    // Apply wet/dry mixing for 1x (no oversampling) mode
-    // In oversampled modes, mixing was already done at oversampled rate before downsampling
-    if (canMixNormal)
-    {
-        // No oversampling latency to compensate - use simple mixing
-        dryWetMixer.mixAtNormalRate(buffer, mixAmount);
     }
 
     // Calculate RMS output levels after processing (VU-accurate)
