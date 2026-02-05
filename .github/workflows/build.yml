@@ -202,8 +202,8 @@ jobs:
           found_vst3=0
           found_lv2=0
 
-          # Check VST3 plugins in build/lib/ and build/bin/ (different plugins use different output dirs)
-          # Use -print0 and read -d '' to handle paths with spaces
+          # Search build/lib, build/bin, and build/plugins (artefacts directories) for plugin outputs
+          # Different plugins may output to different locations depending on CMakeLists.txt configuration
           while IFS= read -r -d '' vst3; do
             # Skip if no binary exists
             if ! ls "$vst3/Contents/x86_64-linux/"*.so >/dev/null 2>&1; then
@@ -213,9 +213,8 @@ jobs:
             echo "✓ Found: $vst3"
             found_vst3=1
             echo "  ✓ Binary exists"
-          done < <(find build/lib build/bin -name "*.vst3" -type d -print0 2>/dev/null)
+          done < <(find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null)
 
-          # Check LV2 plugins in build/lib/ and build/bin/
           while IFS= read -r -d '' lv2; do
             # Skip if no binary exists
             if ! ls "$lv2/"*.so >/dev/null 2>&1; then
@@ -229,7 +228,7 @@ jobs:
             else
               echo "  ⚠ Missing manifest.ttl"
             fi
-          done < <(find build/lib build/bin -name "*.lv2" -type d -print0 2>/dev/null)
+          done < <(find build/lib build/bin build/plugins -name "*.lv2" -type d -print0 2>/dev/null)
 
           # Fail if no plugins were found
           if [ $found_vst3 -eq 0 ]; then
@@ -249,15 +248,15 @@ jobs:
         run: |
           mkdir -p artifacts/linux/VST3 artifacts/linux/LV2
 
-          # Copy VST3 plugins from build/lib/ and build/bin/ (handles spaces in names)
-          find build/lib build/bin -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
+          # Copy VST3 plugins from build/lib/, build/bin/, and build/plugins/ (handles spaces in names)
+          find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
             if ls "$vst3/Contents/x86_64-linux/"*.so >/dev/null 2>&1; then
               cp -r "$vst3" artifacts/linux/VST3/
             fi
           done
 
-          # Copy LV2 plugins from build/lib/ and build/bin/ (handles spaces in names)
-          find build/lib build/bin -name "*.lv2" -type d -print0 2>/dev/null | while IFS= read -r -d '' lv2; do
+          # Copy LV2 plugins from build/lib/, build/bin/, and build/plugins/ (handles spaces in names)
+          find build/lib build/bin build/plugins -name "*.lv2" -type d -print0 2>/dev/null | while IFS= read -r -d '' lv2; do
             if ls "$lv2/"*.so >/dev/null 2>&1; then
               cp -r "$lv2" artifacts/linux/LV2/
             fi
@@ -317,8 +316,8 @@ jobs:
           Write-Host "=== Validating Windows plugin builds ==="
           $foundVst3 = $false
 
-          # Check VST3 plugins in build/lib/ and build/bin/ (different plugins use different output dirs)
-          $searchPaths = @("build/lib", "build/bin")
+          # Check VST3 plugins in build/lib/, build/bin/, and build/plugins/ (artefacts directories)
+          $searchPaths = @("build/lib", "build/bin", "build/plugins")
           foreach ($searchPath in $searchPaths) {
             $vst3s = Get-ChildItem -Path $searchPath -Recurse -Filter "*.vst3" -Directory -ErrorAction SilentlyContinue
             foreach ($vst3 in $vst3s) {
@@ -348,8 +347,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts/windows/VST3
 
-          # Copy VST3 plugins from build/lib/ and build/bin/ that have actual binaries
-          $searchPaths = @("build/lib", "build/bin")
+          # Copy VST3 plugins from build/lib/, build/bin/, and build/plugins/ that have actual binaries
+          $searchPaths = @("build/lib", "build/bin", "build/plugins")
           foreach ($searchPath in $searchPaths) {
             $vst3s = Get-ChildItem -Path $searchPath -Recurse -Filter "*.vst3" -Directory -ErrorAction SilentlyContinue
             foreach ($vst3 in $vst3s) {
@@ -419,8 +418,7 @@ jobs:
           found_vst3=0
           found_au=0
 
-          # Check VST3 plugins in build/lib/ and build/bin/ (different plugins use different output dirs)
-          # Use -print0 and read -d '' to handle paths with spaces
+          # Search build/lib, build/bin, and build/plugins (artefacts directories) for plugin outputs
           while IFS= read -r -d '' vst3; do
             # Verify binary exists - look for the binary inside Contents/MacOS
             plugin_name=$(basename "$vst3" .vst3)
@@ -438,9 +436,9 @@ jobs:
             else
               echo "  ⚠ May not be universal binary"
             fi
-          done < <(find build/lib build/bin -name "*.vst3" -type d -print0 2>/dev/null)
+          done < <(find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null)
 
-          # Check AU plugins in build/lib/ and build/bin/
+          # Check AU plugins
           while IFS= read -r -d '' au; do
             plugin_name=$(basename "$au" .component)
             if [ ! -f "$au/Contents/MacOS/$plugin_name" ]; then
@@ -449,7 +447,7 @@ jobs:
             fi
             echo "✓ Found AU: $au"
             found_au=1
-          done < <(find build/lib build/bin -name "*.component" -type d -print0 2>/dev/null)
+          done < <(find build/lib build/bin build/plugins -name "*.component" -type d -print0 2>/dev/null)
 
           # Fail if no plugins were found
           if [ $found_vst3 -eq 0 ]; then
@@ -561,16 +559,16 @@ jobs:
             cp -r build/notarize_staging/*.vst3 artifacts/macos/VST3/ 2>/dev/null || true
             cp -r build/notarize_staging/*.component artifacts/macos/AU/ 2>/dev/null || true
           else
-            # Copy VST3 plugins from build/lib/ and build/bin/ (handles spaces in names)
-            find build/lib build/bin -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
+            # Copy VST3 plugins from build/lib/, build/bin/, and build/plugins/ (handles spaces in names)
+            find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
               plugin_name=$(basename "$vst3" .vst3)
               if [ -f "$vst3/Contents/MacOS/$plugin_name" ]; then
                 cp -r "$vst3" artifacts/macos/VST3/
               fi
             done
 
-            # Copy AU plugins from build/lib/ and build/bin/ (handles spaces in names)
-            find build/lib build/bin -name "*.component" -type d -print0 2>/dev/null | while IFS= read -r -d '' au; do
+            # Copy AU plugins from build/lib/, build/bin/, and build/plugins/ (handles spaces in names)
+            find build/lib build/bin build/plugins -name "*.component" -type d -print0 2>/dev/null | while IFS= read -r -d '' au; do
               plugin_name=$(basename "$au" .component)
               if [ -f "$au/Contents/MacOS/$plugin_name" ]; then
                 cp -r "$au" artifacts/macos/AU/
