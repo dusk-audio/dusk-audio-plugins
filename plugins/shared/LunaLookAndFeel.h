@@ -71,11 +71,11 @@ struct LEDMeterStyle
  * Professional slider with FabFilter-style knob behavior
  *
  * Features (matching industry standard - FabFilter, Tokyo Dawn Labs):
- * - Shift+drag for fine control (5x finer - industry standard modifier)
+ * - Shift+drag for fine control (3x finer - matches FabFilter/TDR standard)
  * - Velocity-sensitive dragging: slow movements = precise, fast = coarse
  * - Ctrl/Cmd+click to reset to default value
  * - Smooth, jitter-free operation
- * - Shift+scroll wheel for fine wheel control
+ * - Shift+scroll wheel for fine wheel control (3x finer)
  *
  * The velocity curve makes slow, deliberate movements more precise while
  * allowing fast sweeps across the full range - just like FabFilter Pro-Q.
@@ -123,8 +123,9 @@ public:
 
         setVelocityBasedMode(false);
 
-        // Initialize tracking
-        lastDragValue = getValue();
+        // Track drag in proportion space (0..1) so behavior is consistent
+        // across all parameter ranges and respects skew/log mapping
+        lastDragProportion = valueToProportionOfLength(getValue());
         lastDragY = e.position.y;
         lastDragX = e.position.x;
 
@@ -166,37 +167,19 @@ public:
             return;
         }
 
-        // Apply velocity curve for natural feel (like FabFilter)
-        // Slow movements get extra precision, fast movements cover more range
-        double absPixelDiff = std::abs(pixelDiff);
-        double velocityScale = 1.0;
+        // Fixed sensitivity: 200px for full range, Shift: 600px (3x finer)
+        // Static scaling — no velocity curve — consistent for all parameter ranges
+        double sensitivity = fineMode ? 600.0 : 200.0;
 
-        if (absPixelDiff < 2.0)
-        {
-            // Very slow movement: extra precision (0.5x)
-            velocityScale = 0.5;
-        }
-        else if (absPixelDiff < 5.0)
-        {
-            // Slow movement: smooth interpolation (0.5 to 1.0)
-            velocityScale = 0.5 + (absPixelDiff - 2.0) * (0.5 / 3.0);
-        }
-        // else: normal speed (1.0x)
-
-        // Base sensitivity: 200 pixels for full range (responsive but controllable)
-        // Fine mode: 5x more pixels needed (1000px) - less jarring than 10x
-        double baseSensitivity = fineMode ? 1000.0 : 200.0;
-
-        // Calculate value change with velocity scaling
-        double range = getMaximum() - getMinimum();
-        double valueDelta = (pixelDiff * velocityScale / baseSensitivity) * range;
-        double newValue = juce::jlimit(getMinimum(), getMaximum(),
-                                        lastDragValue + valueDelta);
+        // Proportion-based: works in 0..1 space so behavior is identical
+        // regardless of value range (±12dB gain vs 20-20kHz frequency)
+        // and respects any skew/log mapping on the parameter
+        double proportionDelta = pixelDiff / sensitivity;
+        lastDragProportion = juce::jlimit(0.0, 1.0, lastDragProportion + proportionDelta);
+        double newValue = proportionOfLengthToValue(lastDragProportion);
 
         setValue(newValue, juce::sendNotificationSync);
 
-        // Update for next frame
-        lastDragValue = getValue();
         lastDragY = e.position.y;
         lastDragX = e.position.x;
     }
@@ -220,8 +203,8 @@ public:
         if (wheel.isReversed)
             wheelDelta = -wheelDelta;
 
-        // Normal: 10% of range per wheel unit | Fine: 2% (5x finer)
-        double sensitivity = fineMode ? 0.02 : 0.10;
+        // Normal: 10% of range per wheel unit | Fine: 3.3% (3x finer)
+        double sensitivity = fineMode ? 0.033 : 0.10;
         double proportionDelta = wheelDelta * sensitivity;
 
         double currentProportion = valueToProportionOfLength(getValue());
@@ -242,8 +225,8 @@ public:
     }
 
 private:
-    // Drag tracking state
-    double lastDragValue = 0.0;
+    // Drag tracking state (proportion-based for consistent behavior)
+    double lastDragProportion = 0.0;
     float lastDragY = 0.0f;
     float lastDragX = 0.0f;
 };
