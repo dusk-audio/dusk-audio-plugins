@@ -88,16 +88,23 @@ Update `~/projects/lunacoaudio.github.io/_data/plugins.yml`:
 For each plugin, use `sed` to update the version line. The file uses YAML format where version appears after the plugin's slug line. Use this approach:
 
 ```bash
-# Find the line number of the slug, then update the next "version:" line
 WEBSITE_REPO=~/projects/lunacoaudio.github.io
+
+# 1. Update _data/plugins.yml (version line after slug)
 SLUG_LINE=$(grep -n "slug: <slug>" "$WEBSITE_REPO/_data/plugins.yml" | cut -d: -f1)
 if [ -n "$SLUG_LINE" ]; then
-  # Find the version line within the next 10 lines after slug
   sed -i '' "$((SLUG_LINE)),$(( SLUG_LINE + 10 ))s/version: .*/version: <new-version>/" "$WEBSITE_REPO/_data/plugins.yml"
+fi
+
+# 2. Update _plugins/<slug>.md (front matter version field)
+PLUGIN_MD="$WEBSITE_REPO/_plugins/<slug>.md"
+if [ -f "$PLUGIN_MD" ]; then
+  sed -i '' 's/^version: ".*"/version: "<new-version>"/' "$PLUGIN_MD"
 fi
 ```
 
 **IMPORTANT**: Use `sed` for in-place edits. Do NOT use Python `yaml.dump` - it destroys comments and formatting.
+**IMPORTANT**: Both `_data/plugins.yml` AND `_plugins/<slug>.md` must be updated - the plugin pages read from the markdown files.
 
 If the plugin has `status: in-dev` and is being released for the first time, also update:
 - `status: in-dev` → `status: released`
@@ -120,7 +127,7 @@ For batch: `"Bump versions: 4K EQ v1.0.8, Multi-Comp v1.2.3, ..."`
 **Website repo**:
 ```bash
 cd ~/projects/lunacoaudio.github.io
-git add _data/plugins.yml
+git add _data/plugins.yml _plugins/*.md
 git commit -m "Update <plugin(s)> to v<version>
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
