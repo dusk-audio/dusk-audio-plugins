@@ -26,6 +26,7 @@ Release one or more Luna Co. Audio plugins with automated version bumps, website
 | 4K EQ | 4k-eq | plugins/4k-eq | FOURKEQ | 4keq |
 | Multi-Comp | multi-comp | plugins/multi-comp | MULTICOMP | compressor |
 | TapeMachine | tapemachine | plugins/TapeMachine | TAPEMACHINE | tape |
+| Tape Echo | tape-echo | plugins/tape-echo | TAPEECHO | tapeecho |
 | Multi-Q | multi-q | plugins/multi-q | (inline) | multiq |
 | SilkVerb | silkverb | plugins/SilkVerb | SILKVERB | silkverb |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
@@ -34,8 +35,8 @@ Release one or more Luna Co. Audio plugins with automated version bumps, website
 
 ## Paths
 
-- **Plugins repo**: `/home/marc/projects/plugins` (current working directory)
-- **Website repo**: `/home/marc/projects/lunacoaudio.github.io`
+- **Plugins repo**: Current working directory (the repo where this skill is invoked)
+- **Website repo**: `~/projects/lunacoaudio.github.io`
 
 ## Instructions
 
@@ -82,16 +83,17 @@ project(MultiQ VERSION <new-version>)
 
 ### Step 4: Update Website (Automated)
 
-Update `/home/marc/projects/lunacoaudio.github.io/_data/plugins.yml`:
+Update `~/projects/lunacoaudio.github.io/_data/plugins.yml`:
 
 For each plugin, use `sed` to update the version line. The file uses YAML format where version appears after the plugin's slug line. Use this approach:
 
 ```bash
 # Find the line number of the slug, then update the next "version:" line
-SLUG_LINE=$(grep -n "slug: <slug>" /home/marc/projects/lunacoaudio.github.io/_data/plugins.yml | cut -d: -f1)
+WEBSITE_REPO=~/projects/lunacoaudio.github.io
+SLUG_LINE=$(grep -n "slug: <slug>" "$WEBSITE_REPO/_data/plugins.yml" | cut -d: -f1)
 if [ -n "$SLUG_LINE" ]; then
   # Find the version line within the next 10 lines after slug
-  sed -i "$((SLUG_LINE)),$(( SLUG_LINE + 10 ))s/version: .*/version: <new-version>/" /home/marc/projects/lunacoaudio.github.io/_data/plugins.yml
+  sed -i '' "$((SLUG_LINE)),$(( SLUG_LINE + 10 ))s/version: .*/version: <new-version>/" "$WEBSITE_REPO/_data/plugins.yml"
 fi
 ```
 
@@ -117,7 +119,7 @@ For batch: `"Bump versions: 4K EQ v1.0.8, Multi-Comp v1.2.3, ..."`
 
 **Website repo**:
 ```bash
-cd /home/marc/projects/lunacoaudio.github.io
+cd ~/projects/lunacoaudio.github.io
 git add _data/plugins.yml
 git commit -m "Update <plugin(s)> to v<version>
 
@@ -149,7 +151,7 @@ git push origin <current-branch>
 git push origin <tag1> <tag2> ...
 
 # Push website repo
-cd /home/marc/projects/lunacoaudio.github.io
+cd ~/projects/lunacoaudio.github.io
 git pull --rebase origin main  # Handle any CI-pushed changes
 git push origin main
 ```
