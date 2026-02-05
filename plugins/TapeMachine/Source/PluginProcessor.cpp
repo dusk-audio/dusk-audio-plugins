@@ -414,18 +414,22 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     dryWetMixer.prepare(sampleRate, samplesPerBlock, 2, 4);  // max 4x oversampling
 
     // Report latency to host for PDC and update dry/wet mixer
+    dryWetMixer.setCurrentOversamplingFactor(currentOversamplingFactor);
     auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
     if (activeOversampler)
     {
         int latency = static_cast<int>(activeOversampler->getLatencyInSamples());
-        setLatencySamples(latency);
         dryWetMixer.setOversamplingLatency(latency);
     }
     else
     {
-        setLatencySamples(0);
         dryWetMixer.setOversamplingLatency(0);
     }
+
+    // Set processing latency for phase-coherent dry/wet mixing (base-rate samples)
+    // This delays the dry signal to align with the wet processing chain's group delay
+    dryWetMixer.setProcessingLatency(calculateProcessingLatency());
+    setLatencySamples(dryWetMixer.getTotalLatency());
 }
 
 void TapeMachineAudioProcessor::releaseResources()
@@ -462,6 +466,22 @@ bool TapeMachineAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
   #endif
 }
 #endif
+
+int TapeMachineAudioProcessor::calculateProcessingLatency() const
+{
+    // Processing latency compensation for the dry/wet mixer ring buffer.
+    //
+    // The Tier 1 architecture (capture dry AFTER upsampling, mix BEFORE downsampling)
+    // eliminates FIR anti-aliasing phase mismatch. The remaining IIR filters in the
+    // wet chain (highpass, tape emulation, lowpass) have negligible group delay (~5-10
+    // oversampled samples) that doesn't cause audible comb filtering.
+    //
+    // NOTE: Previous values (56/67 base-rate samples) were measured through pedalboard,
+    // which intercepts the 'mix' parameter and applies external dry/wet blending.
+    // Those measurements reflected pedalboard artifacts, not actual processing delay.
+    // The large ring buffer delay was CAUSING comb filtering, not preventing it.
+    return 0;
+}
 
 void TapeMachineAudioProcessor::updateFilters()
 {
@@ -775,17 +795,19 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             sharedWowFlutter->prepare(newOversampledRate, currentOversamplingFactor);
 
         // Update latency for host PDC and dry/wet mixer (0 for 1x/no oversampling)
+        // Update latency for host PDC and dry/wet mixer
+        dryWetMixer.setCurrentOversamplingFactor(currentOversamplingFactor);
         if (activeOversampler)
         {
             int latency = static_cast<int>(activeOversampler->getLatencyInSamples());
-            setLatencySamples(latency);
             dryWetMixer.setOversamplingLatency(latency);
         }
         else
         {
-            setLatencySamples(0);
             dryWetMixer.setOversamplingLatency(0);
         }
+        dryWetMixer.setProcessingLatency(calculateProcessingLatency());
+        setLatencySamples(dryWetMixer.getTotalLatency());
 
         // Re-prepare processor chain with new oversampled rate so the SVF filters
         // store the correct sample rate for coefficient calculation.
@@ -833,6 +855,9 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     juce::dsp::AudioBlock<float> processBlock = activeOversampler
         ? activeOversampler->processSamplesUp(block)
         : block;
+
+    // Update processing latency each block (tracks parameter changes like wow/flutter toggle)
+    dryWetMixer.setProcessingLatency(calculateProcessingLatency());
 
     // Capture dry signal for phase-coherent mixing
     // With oversampling: capture at oversampled rate so both signals go through same anti-aliasing filter

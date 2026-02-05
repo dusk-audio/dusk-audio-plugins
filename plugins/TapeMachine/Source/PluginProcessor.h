@@ -137,6 +137,9 @@ private:
     // Phase-coherent dry/wet mixer (prevents comb filtering with oversampling)
     LunaAudio::DryWetMixer dryWetMixer;
 
+    // Estimate the wet processing chain's group delay (in oversampled samples)
+    int calculateProcessingLatency() const;
+
     void updateFilters();
 
     // Level metering (RMS-based for VU accuracy)
