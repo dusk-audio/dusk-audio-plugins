@@ -39,6 +39,7 @@ public:
         float range = 12.0f;         // dB (0 to 24) - max gain change
         float ratio = 4.0f;         // Compression ratio (1.0 to 100.0)
         float kneeWidth = 6.0f;      // dB (0 to 12) - soft knee width, 0 = hard knee
+        float ratio = 4.0f;          // Compression ratio (1:1 to 20:1)
         bool enabled = false;        // Per-band dynamics on/off
     };
 
@@ -335,8 +336,8 @@ private:
         float kneeWidth = softKneeEnabled.load(std::memory_order_acquire) ? params.kneeWidth : 0.0f;
         float halfKnee = kneeWidth / 2.0f;
 
-        // Guard against division by zero - ensure ratio is at least 1.0
-        float ratio = std::max(params.ratio, 1.0f);
+        // Configurable compression ratio (1:1 to 20:1)
+        float ratio = juce::jmax(1.0f, params.ratio);
 
         float reduction = 0.0f;
 
