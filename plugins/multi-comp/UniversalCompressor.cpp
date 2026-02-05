@@ -4843,6 +4843,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // Process without oversampling
         // No compensation needed - maintain unity gain
         const float compensationGain = 1.0f; // Unity gain (no compensation)
+
+        // Capture dry signal for mix knob (parallel compression) in non-oversampled mode
+        // No latency to compensate since there's no oversampling FIR filter
+        bool canMixNormal = false;
+        if (needsDryBuffer)
+        {
+            dryWetMixer.captureDryAtNormalRate(buffer);
+            canMixNormal = true;
+        }
         
         for (int channel = 0; channel < numChannels; ++channel)
         {
@@ -4949,6 +4958,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     data[i] = applyDistortion(data[i], distType, distAmount);
                 }
             }
+        }
+
+        // Apply dry/wet mix for non-oversampled mode (parallel compression)
+        if (canMixNormal)
+        {
+            dryWetMixer.mixAtNormalRate(buffer, mixAmount);
+            needsDryBuffer = false;
         }
     }
 
@@ -5204,9 +5220,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         grHistoryWritePos.store(writePos, std::memory_order_relaxed);
     }
     
-    // Mix control is now handled at oversampled rate using DryWetMixer
-    // (see captureDryAtOversampledRate and mixAtOversampledRate above)
-    // This provides phase-coherent mixing that prevents comb filtering
+    // Mix control is handled by DryWetMixer in both paths:
+    // - Oversampled: captureDryAtOversampledRate/mixAtOversampledRate (phase-coherent)
+    // - Non-oversampled: captureDryAtNormalRate/mixAtNormalRate (no latency to compensate)
     juce::ignoreUnused(needsDryBuffer);
 
     // Add subtle analog noise for authenticity (-80dB) if enabled (SIMD-optimized)

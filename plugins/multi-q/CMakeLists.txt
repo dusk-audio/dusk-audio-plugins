@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MultiQ VERSION 1.0.1)
+# Include version extraction module
+include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
+
+# Get version from git tag or CI environment (fallback to default version)
+set(MULTIQ_DEFAULT_VERSION "1.0.1")
+get_plugin_version("multi-q" MULTIQ_VERSION)
+if(NOT MULTIQ_VERSION OR MULTIQ_VERSION STREQUAL "0.0.0")
+    set(MULTIQ_VERSION ${MULTIQ_DEFAULT_VERSION})
+endif()
+
+project(MultiQ VERSION ${MULTIQ_VERSION})
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -82,6 +92,9 @@ target_compile_definitions(MultiQ
         JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
 )
 
+# Set version compile definitions (from git tag or CI)
+set_plugin_version_defines(MultiQ ${MULTIQ_VERSION})
+
 # Link libraries
 target_link_libraries(MultiQ
     PRIVATE
@@ -107,6 +120,12 @@ else()
         target_compile_options(MultiQ PRIVATE -O3 -ffast-math)
     endif()
 endif()
+
+# Set binary output directory (required for CI validation to find built plugins)
+set_target_properties(MultiQ PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 
 # Test target for LinearPhaseEQProcessor
 # Disabled for now - use the standalone test_linear_phase.cpp instead
