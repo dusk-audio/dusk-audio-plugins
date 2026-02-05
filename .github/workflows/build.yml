@@ -594,6 +594,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository (for tag message)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -674,53 +680,50 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION=$(echo "$TAG" | sed 's/.*-v/v/' | sed 's/^v//')
 
-          # Determine if this is a single plugin or all plugins
-          if [ "$PLUGIN_NAME" = "All Plugins" ]; then
-            BODY="## Luna Co. Audio Plugins v${VERSION}
+          # Extract changelog from annotated tag message (skip the first line which is the title)
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG" 2>/dev/null || echo "")
+          # Remove the first line (tag title like "4K EQ v1.0.8") to avoid duplication with release title
+          CHANGELOG=$(echo "$TAG_MESSAGE" | tail -n +2 | sed '/^$/d; 1{/^$/d}')
 
-          ### Installation
+          # Build release body with changelog + installation instructions
+          {
+            echo "## ${PLUGIN_NAME} v${VERSION}"
+            echo ""
 
-          Each zip contains \`VST3/\` and \`LV2/\` (Linux) or \`AU/\` (macOS) folders.
+            # Include changelog from tag if available
+            if [ -n "$CHANGELOG" ]; then
+              echo "$CHANGELOG"
+              echo ""
+            fi
 
-          **Linux:**
-          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`
-          - LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`
+            echo "### Installation"
+            echo ""
+            echo "Each zip contains \`VST3/\` and \`LV2/\` (Linux) or \`AU/\` (macOS) folders."
+            echo ""
+            echo "**Linux:**"
+            echo "- VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`"
+            echo "- LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`"
+            echo ""
+            echo "**Windows:**"
+            echo "- VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`C:\\Program Files\\Common Files\\VST3\\\`"
+            echo ""
+            echo "**macOS:**"
+            echo "- VST3: Copy the \`.vst3\` bundle from \`VST3/\` to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`"
+            echo "- AU: Copy the \`.component\` bundle from \`AU/\` to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`"
 
-          **Windows:**
-          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`C:\\Program Files\\Common Files\\VST3\\\`
-
-          **macOS:**
-          - VST3: Copy the \`.vst3\` bundle from \`VST3/\` to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
-          - AU: Copy the \`.component\` bundle from \`AU/\` to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`
-
-          ### Included Plugins
-          - 4K EQ - SSL 4000 Series Console EQ Emulation
-          - Multi-Comp - Multi-mode compressor with multiband
-          - TapeMachine - Analog tape machine emulation
-          - SilkVerb - Algorithmic reverb (Lexicon/Valhalla style)
-          - Convolution Reverb - IR-based reverb
-          - Multi-Q - Universal 8-band EQ
-          - And more..."
-          else
-            BODY="## ${PLUGIN_NAME} v${VERSION}
-
-          ### Installation
-
-          Each zip contains \`VST3/\` and \`LV2/\` (Linux) or \`AU/\` (macOS) folders.
-
-          **Linux:**
-          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`
-          - LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`
-
-          **Windows:**
-          - VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`C:\\Program Files\\Common Files\\VST3\\\`
-
-          **macOS:**
-          - VST3: Copy the \`.vst3\` bundle from \`VST3/\` to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`
-          - AU: Copy the \`.component\` bundle from \`AU/\` to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`"
-          fi
-
-          echo "$BODY" > release_body.md
+            # Add plugin list for "all plugins" releases
+            if [ "$PLUGIN_NAME" = "All Plugins" ]; then
+              echo ""
+              echo "### Included Plugins"
+              echo "- 4K EQ - SSL 4000 Series Console EQ Emulation"
+              echo "- Multi-Comp - Multi-mode compressor with multiband"
+              echo "- TapeMachine - Analog tape machine emulation"
+              echo "- SilkVerb - Algorithmic reverb (Lexicon/Valhalla style)"
+              echo "- Convolution Reverb - IR-based reverb"
+              echo "- Multi-Q - Universal 8-band EQ"
+              echo "- And more..."
+            fi
+          } > release_body.md
 
       - name: Publish Release
         uses: softprops/action-gh-release@v1
