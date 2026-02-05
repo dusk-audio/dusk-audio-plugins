@@ -247,6 +247,13 @@ void MultiQ::parameterChanged(const juce::String& parameterID, float newValue)
             static_cast<int>(safeGetParam(analyzerResolutionParam, 1.0f)));
         updateFFTSize(res);
     }
+
+    // Update latency when linear phase or dynamics parameters change
+    if (parameterID == ParamIDs::linearPhaseEnabled ||
+        parameterID.startsWith("dyn_enabled"))
+    {
+        setLatencySamples(getLatencySamples());
+    }
 }
 
 //==============================================================================
@@ -2694,21 +2701,43 @@ const juce::String MultiQ::getProgramName(int index)
 //==============================================================================
 int MultiQ::getLatencySamples() const
 {
-    // Report latency for linear phase mode
-    // Linear phase EQ introduces latency of filterLength / 2 samples
+    int totalLatency = 0;
+
+    // Linear phase EQ latency (filterLength / 2 samples)
     if (linearPhaseModeEnabled && linearPhaseEnabledParam &&
         safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f)
     {
-        return linearPhaseEQ[0].getLatencyInSamples();
+        totalLatency += linearPhaseEQ[0].getLatencyInSamples();
     }
 
     // Report oversampling latency
     if (oversamplingMode == 2 && oversampler4x)
-        return static_cast<int>(oversampler4x->getLatencyInSamples());
-    if (oversamplingMode == 1 && oversampler2x)
-        return static_cast<int>(oversampler2x->getLatencyInSamples());
+        totalLatency += static_cast<int>(oversampler4x->getLatencyInSamples());
+    else if (oversamplingMode == 1 && oversampler2x)
+        totalLatency += static_cast<int>(oversampler2x->getLatencyInSamples());
 
-    return 0;
+    // Dynamic EQ lookahead latency (only in Digital mode)
+    auto eqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
+    if (eqType == EQType::Digital)
+    {
+        // Check if any band has dynamics enabled
+        bool anyDynamicsEnabled = false;
+        for (int i = 0; i < NUM_BANDS; ++i)
+        {
+            if (safeGetParam(bandDynEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f)
+            {
+                anyDynamicsEnabled = true;
+                break;
+            }
+        }
+
+        if (anyDynamicsEnabled)
+        {
+            totalLatency += dynamicEQ.getLookaheadSamples();
+        }
+    }
+
+    return totalLatency;
 }
 
 //==============================================================================
