@@ -167,6 +167,8 @@ public:
     /** Process a single channel of audio using overlap-add FFT convolution */
     void processChannel(float* channelData, int numSamples)
     {
+        juce::ScopedNoDenormals noDenormals;
+
         // Swap IR buffer if ready (happens on every EQ parameter change)
         // This is separate from state swap to preserve circular buffer history
         if (irSwapReady.load(std::memory_order_acquire))
@@ -489,6 +491,35 @@ private:
             int srcIdx = (i + halfSize) % workingFilterLength;
             convBuffer[static_cast<size_t>(i)] = designBuffer[static_cast<size_t>(srcIdx)];
         }
+
+        // Apply Kaiser window to reduce spectral leakage
+        // Beta = 8 provides good stopband attenuation (~80dB) with reasonable transition width
+        // Calculate DC response (sum of IR) BEFORE windowing to preserve gain
+        float dcBefore = 0.0f;
+        for (int i = 0; i < workingFilterLength; ++i)
+            dcBefore += convBuffer[static_cast<size_t>(i)];
+
+        juce::dsp::WindowingFunction<float> kaiserWindow(
+            static_cast<size_t>(workingFilterLength),
+            juce::dsp::WindowingFunction<float>::kaiser,
+            false,  // Don't normalize - we compensate manually to preserve DC gain
+            8.0f);  // Beta parameter
+        kaiserWindow.multiplyWithWindowingTable(convBuffer.data(),
+            static_cast<size_t>(workingFilterLength));
+
+        // Calculate DC response AFTER windowing and compensate
+        float dcAfter = 0.0f;
+        for (int i = 0; i < workingFilterLength; ++i)
+            dcAfter += convBuffer[static_cast<size_t>(i)];
+
+        // Compensate for window's gain change to preserve intended frequency response
+        if (std::abs(dcAfter) > 1e-10f)
+        {
+            float dcCompensation = dcBefore / dcAfter;
+            for (int i = 0; i < workingFilterLength; ++i)
+                convBuffer[static_cast<size_t>(i)] *= dcCompensation;
+        }
+
         // Zero-padding from workingFilterLength to convolutionFftSize is already done by initialization
 
         // Transform IR to frequency domain at convolution FFT size
@@ -570,6 +601,33 @@ private:
         return 12.0f;
     }
 
+    //==========================================================================
+    // Helper function to compute exact biquad magnitude response at a given frequency
+    // Uses H(z) = (b0 + b1*z^-1 + b2*z^-2) / (a0 + a1*z^-1 + a2*z^-2)
+    // evaluated at z = e^(j*omega)
+    float calculateBiquadMagnitude(float freq, double sampleRate,
+        float b0, float b1, float b2, float a0, float a1, float a2) const
+    {
+        double omega = juce::MathConstants<double>::twoPi * freq / sampleRate;
+        double cosW = std::cos(omega);
+        double cos2W = std::cos(2.0 * omega);
+        double sinW = std::sin(omega);
+        double sin2W = std::sin(2.0 * omega);
+
+        // Numerator: b0 + b1*z^-1 + b2*z^-2 at z = e^(j*omega)
+        double numRe = b0 + b1 * cosW + b2 * cos2W;
+        double numIm = -b1 * sinW - b2 * sin2W;
+
+        // Denominator: a0 + a1*z^-1 + a2*z^-2 at z = e^(j*omega)
+        double denRe = a0 + a1 * cosW + a2 * cos2W;
+        double denIm = -a1 * sinW - a2 * sin2W;
+
+        double numMag = std::sqrt(numRe * numRe + numIm * numIm);
+        double denMag = std::sqrt(denRe * denRe + denIm * denIm);
+
+        return static_cast<float>(numMag / (denMag + 1e-10));
+    }
+
     float calculateHPFGain(float freq, float cutoff, float slope) const
     {
         if (freq >= cutoff) return 1.0f;
@@ -594,47 +652,77 @@ private:
         return std::pow(10.0f, -attenuationDb / 20.0f);
     }
 
-    float calculateShelfGain(float freq, float shelfFreq, float gainDb, float /*q*/, bool isLowShelf) const
+    // Calculates exact shelf filter magnitude response using RBJ cookbook biquad coefficients
+    float calculateShelfGain(float freq, float shelfFreq, float gainDb, float q, bool isLowShelf) const
     {
         if (std::abs(gainDb) < 0.01f) return 1.0f;
 
-        float gainLinear = std::pow(10.0f, gainDb / 20.0f);
-        float ratio = freq / shelfFreq;
+        double sr = currentSampleRate.load(std::memory_order_acquire);
+        if (sr <= 0) sr = 44100.0;
 
+        // Calculate shelf filter coefficients (RBJ Audio EQ Cookbook)
+        float A = std::pow(10.0f, gainDb / 40.0f);
+        float w0 = juce::MathConstants<float>::twoPi * shelfFreq / static_cast<float>(sr);
+        float sinW0 = std::sin(w0);
+        float cosW0 = std::cos(w0);
+        float qVal = juce::jmax(0.1f, q);
+        float alpha = sinW0 / (2.0f * qVal);
+
+        float b0, b1, b2, a0, a1, a2;
         if (isLowShelf)
         {
-            if (ratio < 0.5f) return gainLinear;
-            if (ratio > 2.0f) return 1.0f;
-
-            float t = (std::log2(ratio) + 1.0f) / 2.0f;
-            t = juce::jlimit(0.0f, 1.0f, t);
-            return gainLinear + (1.0f - gainLinear) * t;
+            float sqrtA = std::sqrt(A);
+            b0 = A * ((A + 1.0f) - (A - 1.0f) * cosW0 + 2.0f * sqrtA * alpha);
+            b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosW0);
+            b2 = A * ((A + 1.0f) - (A - 1.0f) * cosW0 - 2.0f * sqrtA * alpha);
+            a0 = (A + 1.0f) + (A - 1.0f) * cosW0 + 2.0f * sqrtA * alpha;
+            a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosW0);
+            a2 = (A + 1.0f) + (A - 1.0f) * cosW0 - 2.0f * sqrtA * alpha;
         }
-        else
+        else  // High shelf
         {
-            if (ratio > 2.0f) return gainLinear;
-            if (ratio < 0.5f) return 1.0f;
-
-            float t = (std::log2(ratio) + 1.0f) / 2.0f;
-            t = juce::jlimit(0.0f, 1.0f, t);
-            return 1.0f + (gainLinear - 1.0f) * t;
+            float sqrtA = std::sqrt(A);
+            b0 = A * ((A + 1.0f) + (A - 1.0f) * cosW0 + 2.0f * sqrtA * alpha);
+            b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosW0);
+            b2 = A * ((A + 1.0f) + (A - 1.0f) * cosW0 - 2.0f * sqrtA * alpha);
+            a0 = (A + 1.0f) - (A - 1.0f) * cosW0 + 2.0f * sqrtA * alpha;
+            a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosW0);
+            a2 = (A + 1.0f) - (A - 1.0f) * cosW0 - 2.0f * sqrtA * alpha;
         }
+
+        // Normalize coefficients
+        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+
+        return calculateBiquadMagnitude(freq, sr, b0, b1, b2, 1.0f, a1, a2);
     }
 
+    // Calculates exact peaking filter magnitude response using RBJ cookbook biquad coefficients
     float calculateParametricGain(float freq, float centerFreq, float gainDb, float q) const
     {
         if (std::abs(gainDb) < 0.01f) return 1.0f;
 
-        float ratio = freq / centerFreq;
-        float logRatio = std::log2(ratio);
+        double sr = currentSampleRate.load(std::memory_order_acquire);
+        if (sr <= 0) sr = 44100.0;
 
-        float bandwidth = 1.0f / juce::jmax(0.1f, q);
-        float x = logRatio / bandwidth;
+        // Calculate peaking filter coefficients (RBJ Audio EQ Cookbook)
+        float A = std::pow(10.0f, gainDb / 40.0f);
+        float w0 = juce::MathConstants<float>::twoPi * centerFreq / static_cast<float>(sr);
+        float sinW0 = std::sin(w0);
+        float cosW0 = std::cos(w0);
+        float qVal = juce::jmax(0.1f, q);
+        float alpha = sinW0 / (2.0f * qVal);
 
-        float response = std::exp(-0.5f * x * x);
+        float b0 = 1.0f + alpha * A;
+        float b1 = -2.0f * cosW0;
+        float b2 = 1.0f - alpha * A;
+        float a0 = 1.0f + alpha / A;
+        float a1 = -2.0f * cosW0;
+        float a2 = 1.0f - alpha / A;
 
-        float gainLinear = std::pow(10.0f, gainDb / 20.0f);
-        return 1.0f + (gainLinear - 1.0f) * response;
+        // Normalize coefficients
+        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+
+        return calculateBiquadMagnitude(freq, sr, b0, b1, b2, 1.0f, a1, a2);
     }
 
     float calculateTiltShelfGain(float freq, float centerFreq, float gainDb) const

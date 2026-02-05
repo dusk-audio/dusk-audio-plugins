@@ -67,7 +67,7 @@ inline float tubeEQPreWarpFrequency(float freq, double sampleRate)
 class InductorModel
 {
 public:
-    void prepare(double sampleRate)
+    void prepare(double sampleRate, uint32_t characterSeed = 0)
     {
         this->sampleRate = sampleRate;
         reset();
@@ -451,10 +451,10 @@ private:
 class PassiveLCNetwork
 {
 public:
-    void prepare(double sampleRate)
+    void prepare(double sampleRate, uint32_t characterSeed = 0)
     {
         this->sampleRate = sampleRate;
-        inductor.prepare(sampleRate);
+        inductor.prepare(sampleRate, characterSeed);
         reset();
     }
 
@@ -696,9 +696,11 @@ public:
         midHighPeakFilterR.prepare(spec);
 
         // Prepare enhanced analog stages
+        // Use deterministic seed based on sample rate for reproducible vintage character
+        uint32_t characterSeed = static_cast<uint32_t>(sampleRate * 1000.0);
         tubeStage.prepare(sampleRate, numChannels);
-        lfNetwork.prepare(sampleRate);
-        hfInductor.prepare(sampleRate);
+        lfNetwork.prepare(sampleRate, characterSeed);
+        hfInductor.prepare(sampleRate, characterSeed + 1);  // Offset for variation between inductors
 
         // Prepare transformers
         inputTransformer.prepare(sampleRate, numChannels);

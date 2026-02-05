@@ -422,3 +422,36 @@ float TubeEQCurveDisplay::calculateCombinedResponse(float freq) const
 
     return response;
 }
+
+void PultecCurveDisplay::setDisplayScaleMode(DisplayScaleMode mode)
+{
+    scaleMode = mode;
+
+    switch (mode)
+    {
+        case DisplayScaleMode::Linear12dB:
+            minDB = -12.0f;
+            maxDB = 12.0f;
+            break;
+        case DisplayScaleMode::Linear24dB:
+            minDB = -24.0f;
+            maxDB = 24.0f;
+            break;
+        case DisplayScaleMode::Linear30dB:
+            minDB = -30.0f;
+            maxDB = 30.0f;
+            break;
+        case DisplayScaleMode::Linear60dB:
+            minDB = -60.0f;
+            maxDB = 60.0f;
+            break;
+        case DisplayScaleMode::Warped:
+            // Warped mode uses same range as 24dB for now
+            minDB = -24.0f;
+            maxDB = 24.0f;
+            break;
+    }
+
+    needsRepaint = true;
+    repaint();
+}
