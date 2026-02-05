@@ -213,6 +213,7 @@ private:
     std::unique_ptr<juce::Slider> dynAttackSlider;          // Attack time in ms
     std::unique_ptr<juce::Slider> dynReleaseSlider;         // Release time in ms
     std::unique_ptr<juce::Slider> dynRangeSlider;           // Max gain change in dB
+    std::unique_ptr<juce::Slider> dynRatioSlider;           // Compression ratio
 
     // Dynamic mode labels
     juce::Label dynSectionLabel;    // "DYNAMICS" section header
@@ -220,6 +221,7 @@ private:
     juce::Label dynAttackLabel;
     juce::Label dynReleaseLabel;
     juce::Label dynRangeLabel;
+    juce::Label dynRatioLabel;
 
     // Dynamic mode attachments (created/destroyed based on selected band)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> dynEnableAttachment;
@@ -227,6 +229,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynAttackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynReleaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynRangeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynRatioAttachment;
 
     // British mode header controls (matching 4K-EQ)
     juce::TextButton britishCurveCollapseButton;  // "Hide Graph" / "Show Graph"
@@ -314,9 +317,10 @@ private:
 
     bool tubeEQCurveCollapsed = false;  // Track collapse state for Tube EQ mode
 
-    // Tube mode header controls (A/B, Preset, HQ)
+    // Tube mode header controls (A/B, Preset, HQ, Hide Graph)
     juce::TextButton tubeAbButton;
     juce::ComboBox tubePresetSelector;  // Preset selector for Tube mode
+    juce::TextButton tubeCurveCollapseButton;  // "Hide Graph" / "Show Graph"
     std::unique_ptr<juce::ToggleButton> tubeHqButton;
     juce::TextButton tubeEQCurveCollapseButton;  // "Hide Graph" / "Show Graph" for Tube mode
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeHqAttachment;

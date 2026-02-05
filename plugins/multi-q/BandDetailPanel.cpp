@@ -43,6 +43,7 @@ BandDetailPanel::~BandDetailPanel()
     if (attackKnob) attackKnob->setLookAndFeel(nullptr);
     if (releaseKnob) releaseKnob->setLookAndFeel(nullptr);
     if (rangeKnob) rangeKnob->setLookAndFeel(nullptr);
+    if (ratioKnob) ratioKnob->setLookAndFeel(nullptr);
 }
 
 void BandDetailPanel::setupBandButtons()
@@ -132,7 +133,7 @@ void BandDetailPanel::setupKnobs()
     setupDynKnob(rangeKnob);
     rangeKnob->setTooltip("Range: Maximum amount of dynamic gain reduction (0 - 24 dB)");
     setupDynKnob(ratioKnob);
-    ratioKnob->setTooltip("Ratio: Compression ratio (1:1 = no compression, higher = more compression)");
+    ratioKnob->setTooltip("Ratio: Compression ratio (1:1 = no compression, 20:1 = heavy limiting)");
 
     // Toggle buttons
     dynButton = std::make_unique<juce::TextButton>("DYN");
@@ -761,7 +762,7 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
                           {currentX, knobY, knobSize, knobSize + 20}, !dynEnabled);
     }
 
-    // ===== DYNAMICS SECTION LABEL (centered below the 4 dynamics knobs) =====
+    // ===== DYNAMICS SECTION LABEL (centered below the 5 dynamics knobs) =====
     // Calculate dynSection position (must match paint())
     int eqSectionWidth = eqColumnsWidth + 6;
     int eqEndX = (startX + bandIndicatorSize + 10) + eqSectionWidth + 4;

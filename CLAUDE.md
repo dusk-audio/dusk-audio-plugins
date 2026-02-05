@@ -80,7 +80,18 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 ## Build System
 
 **Release builds**: GitHub Actions (automatic on tag push)
-**Local builds**: `./docker/build_release.sh <shortcut>`
+
+### Local Builds
+
+**On macOS**: Build AU component locally for testing in Logic Pro (no Docker needed):
+```bash
+mkdir -p build && cd build
+cmake ..
+cmake --build . --config Release --target <PluginName>_AU -j8
+```
+JUCE automatically installs the `.component` to `~/Library/Audio/Plug-Ins/Components/`
+
+**Cross-platform (Docker)**: `./docker/build_release.sh <shortcut>`
 
 | Shortcut | Plugin |
 |----------|--------|

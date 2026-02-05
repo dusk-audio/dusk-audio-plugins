@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "MultiQ.h"
+#include "EQBand.h"  // For DisplayScaleMode
 
 //==============================================================================
 /**
@@ -25,6 +26,9 @@ public:
     void resized() override;
     void timerCallback() override;
 
+    // Display scale mode (matches Digital mode dropdown)
+    void setDisplayScaleMode(DisplayScaleMode mode);
+
 private:
     MultiQ& audioProcessor;
 
@@ -40,8 +44,11 @@ private:
     // Frequency range
     static constexpr float minFreq = 20.0f;
     static constexpr float maxFreq = 20000.0f;
-    static constexpr float minDB = -25.0f;
-    static constexpr float maxDB = 25.0f;
+
+    // Display scale (modifiable via dropdown)
+    float minDB = -24.0f;  // Default ±24 dB
+    float maxDB = 24.0f;
+    DisplayScaleMode scaleMode = DisplayScaleMode::Linear24dB;
 
     // Cached parameter values for change detection
     struct CachedParams {
