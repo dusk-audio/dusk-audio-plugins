@@ -75,11 +75,6 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
     lowpassFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "lowpassFreq", lowpassFreqSlider);
 
-    setupSlider(mixSlider, mixLabel, "MIX");
-    mixSlider.setTooltip("Wet/Dry Mix\n0% = Dry, 100% = Fully processed");
-    mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "mix", mixSlider);
-
     setupSlider(wowSlider, wowLabel, "WOW");
     wowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "wowAmount", wowSlider);
@@ -402,15 +397,13 @@ void TapeMachineAudioProcessorEditor::resized()
     characterArea.reduce(resizeHelper.scaled(15), resizeHelper.scaled(5));
     characterArea.removeFromTop(resizeHelper.scaled(18));
 
-    // 4 knobs (80px each) + link button (100px) + autocal button (100px)
-    int charSpacing = (characterArea.getWidth() - (knobSize * 4) - 200) / 7;
+    // 3 knobs (80px each) + link button (100px) + autocal button (100px)
+    int charSpacing = (characterArea.getWidth() - (knobSize * 3) - resizeHelper.scaled(200)) / 6;
 
     characterArea.removeFromLeft(charSpacing);
     highpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
     characterArea.removeFromLeft(charSpacing);
     lowpassFreqSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
-    characterArea.removeFromLeft(charSpacing);
-    mixSlider.setBounds(characterArea.removeFromLeft(knobSize).withHeight(knobSize));
     characterArea.removeFromLeft(charSpacing);
 
     // Noise amount knob (0% = off, no separate enable needed)

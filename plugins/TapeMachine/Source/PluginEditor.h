@@ -40,7 +40,6 @@ private:
     LunaSlider biasSlider;
     LunaSlider highpassFreqSlider;
     LunaSlider lowpassFreqSlider;
-    LunaSlider mixSlider;
     LunaSlider wowSlider;
     LunaSlider flutterSlider;
     LunaSlider outputGainSlider;
@@ -64,7 +63,6 @@ private:
     juce::Label biasLabel;
     juce::Label highpassFreqLabel;
     juce::Label lowpassFreqLabel;
-    juce::Label mixLabel;
     juce::Label wowLabel;
     juce::Label flutterLabel;
     juce::Label outputGainLabel;
@@ -86,7 +84,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> biasAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highpassFreqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowpassFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> wowAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flutterAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputGainAttachment;
