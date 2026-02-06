@@ -64,6 +64,10 @@ public:
     // Show/hide master gain overlay
     void setShowMasterGainOverlay(bool show) { showMasterGain = show; repaint(); }
 
+    // Toggle piano keyboard overlay
+    void setShowPianoOverlay(bool show) { showPianoOverlay = show; repaint(); }
+    bool isPianoOverlayVisible() const { return showPianoOverlay; }
+
     // Update master gain value for overlay
     void setMasterGain(float gainDB) { masterGainDB = gainDB; repaint(); }
 
@@ -107,6 +111,7 @@ private:
 
     bool showMasterGain = false;
     float masterGainDB = 0.0f;
+    bool showPianoOverlay = true;  // Piano keyboard note overlay
 
     // Interaction state
     int selectedBand = 0;  // Start with band 1 selected
@@ -142,6 +147,7 @@ private:
 
     // Drawing helpers
     void drawGrid(juce::Graphics& g);
+    void drawPianoOverlay(juce::Graphics& g);
     void drawBandCurve(juce::Graphics& g, int bandIndex);
     void drawCombinedCurve(juce::Graphics& g);
     void drawControlPoints(juce::Graphics& g);

@@ -14,7 +14,7 @@ class MultiQ;
     - Band selector row at top (8 colored pill buttons, 32px height)
     - Colored accent line below selector matching selected band
     - Large rotary knobs with labels above and values with units below
-      FREQ | Q | GAIN | THRESHOLD | ATTACK | RELEASE | RANGE | [DYN] [SOLO]
+      FREQ | Q | GAIN | THRESHOLD | ATTACK | RELEASE | RANGE | RATIO | [DYN] [SOLO]
 
     Click band nodes in the graphic display or selector buttons to select bands.
     Dynamics controls dim when DYN is off.
@@ -61,6 +61,8 @@ private:
     std::unique_ptr<juce::Slider> gainKnob;
     std::unique_ptr<juce::Slider> qKnob;
     std::unique_ptr<juce::ComboBox> slopeSelector;  // For HPF/LPF
+    std::unique_ptr<juce::ComboBox> shapeSelector;  // For parametric bands 3-6
+    std::unique_ptr<juce::ComboBox> routingSelector;  // Per-band channel routing
 
     //==========================================================================
     // Dynamics controls (large rotary knobs)
@@ -68,6 +70,7 @@ private:
     std::unique_ptr<juce::Slider> attackKnob;
     std::unique_ptr<juce::Slider> releaseKnob;
     std::unique_ptr<juce::Slider> rangeKnob;
+    std::unique_ptr<juce::Slider> ratioKnob;
 
     //==========================================================================
     // Toggle buttons
@@ -80,6 +83,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> qAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> slopeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> shapeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> routingAttachment;
 
     // Dynamics attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> dynEnableAttachment;
@@ -87,6 +92,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> rangeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
 
     //==========================================================================
     // Setup methods

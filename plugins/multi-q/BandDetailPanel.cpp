@@ -19,6 +19,9 @@ BandDetailPanel::BandDetailPanel(MultiQ& p)
         processor.parameters.addParameterListener(ParamIDs::bandDynEnabled(i), this);
         processor.parameters.addParameterListener(ParamIDs::bandEnabled(i), this);
     }
+    // Listen for shape changes on parametric bands 3-6
+    for (int i = 3; i <= 6; ++i)
+        processor.parameters.addParameterListener(ParamIDs::bandShape(i), this);
 }
 
 BandDetailPanel::~BandDetailPanel()
@@ -29,6 +32,8 @@ BandDetailPanel::~BandDetailPanel()
         processor.parameters.removeParameterListener(ParamIDs::bandDynEnabled(i), this);
         processor.parameters.removeParameterListener(ParamIDs::bandEnabled(i), this);
     }
+    for (int i = 3; i <= 6; ++i)
+        processor.parameters.removeParameterListener(ParamIDs::bandShape(i), this);
 
     // Release LookAndFeel references before knobs are destroyed
     if (freqKnob) freqKnob->setLookAndFeel(nullptr);
@@ -88,6 +93,24 @@ void BandDetailPanel::setupKnobs()
     slopeSelector->setTooltip("Filter slope: Steeper = sharper cutoff (6-48 dB/octave)");
     addAndMakeVisible(slopeSelector.get());
 
+    // Shape selector for parametric bands 3-6 (Peaking/Notch/Band Pass)
+    shapeSelector = std::make_unique<juce::ComboBox>();
+    shapeSelector->addItem("Peaking", 1);
+    shapeSelector->addItem("Notch", 2);
+    shapeSelector->addItem("Band Pass", 3);
+    shapeSelector->setTooltip("Filter shape: Peaking (boost/cut), Notch (narrow rejection), Band Pass (isolate frequency)");
+    addAndMakeVisible(shapeSelector.get());
+
+    // Per-band channel routing selector
+    routingSelector = std::make_unique<juce::ComboBox>();
+    routingSelector->addItem("Stereo", 1);
+    routingSelector->addItem("Left", 2);
+    routingSelector->addItem("Right", 3);
+    routingSelector->addItem("Mid", 4);
+    routingSelector->addItem("Side", 5);
+    routingSelector->setTooltip("Channel routing: Stereo (both), Left/Right (one channel), Mid/Side (M/S processing)");
+    addAndMakeVisible(routingSelector.get());
+
     // Dynamics knobs (use orange for dynamics section)
     auto setupDynKnob = [this](std::unique_ptr<juce::Slider>& knob) {
         knob = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
@@ -107,6 +130,8 @@ void BandDetailPanel::setupKnobs()
     releaseKnob->setTooltip("Release: How fast gain returns after level drops (10 - 5000 ms)");
     setupDynKnob(rangeKnob);
     rangeKnob->setTooltip("Range: Maximum amount of dynamic gain reduction (0 - 24 dB)");
+    setupDynKnob(ratioKnob);
+    ratioKnob->setTooltip("Ratio: Compression ratio (1:1 = no compression, higher = more compression)");
 
     // Toggle buttons
     dynButton = std::make_unique<juce::TextButton>("DYN");
@@ -165,11 +190,14 @@ void BandDetailPanel::updateAttachments()
     gainAttachment.reset();
     qAttachment.reset();
     slopeAttachment.reset();
+    shapeAttachment.reset();
+    routingAttachment.reset();
     dynEnableAttachment.reset();
     threshAttachment.reset();
     attackAttachment.reset();
     releaseAttachment.reset();
     rangeAttachment.reset();
+    ratioAttachment.reset();
 
     if (selectedBand < 0 || selectedBand >= 8)
         return;
@@ -191,11 +219,34 @@ void BandDetailPanel::updateAttachments()
             processor.parameters, ParamIDs::bandSlope(bandNum), *slopeSelector);
     }
 
+    // Shape selector for parametric bands 3-6 (indices 2-5)
+    if (selectedBand >= 2 && selectedBand <= 5)
+    {
+        shapeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            processor.parameters, ParamIDs::bandShape(bandNum), *shapeSelector);
+    }
+
     if (type != BandType::HighPass && type != BandType::LowPass)
     {
-        gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            processor.parameters, ParamIDs::bandGain(bandNum), *gainKnob);
+        // Only attach gain for peaking shape (notch/bandpass are Q-only)
+        int shape = 0;
+        if (selectedBand >= 2 && selectedBand <= 5)
+        {
+            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandNum));
+            if (shapeParam)
+                shape = static_cast<int>(shapeParam->load());
+        }
+
+        if (shape == 0)  // Peaking (has gain)
+        {
+            gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                processor.parameters, ParamIDs::bandGain(bandNum), *gainKnob);
+        }
     }
+
+    // Per-band channel routing attachment
+    routingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        processor.parameters, ParamIDs::bandChannelRouting(bandNum), *routingSelector);
 
     // Dynamics attachments
     dynEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -212,24 +263,44 @@ void BandDetailPanel::updateAttachments()
 
     rangeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.parameters, ParamIDs::bandDynRange(bandNum), *rangeKnob);
+
+    ratioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.parameters, ParamIDs::bandDynRatio(bandNum), *ratioKnob);
 }
 
 void BandDetailPanel::updateControlsForBandType()
 {
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
+    bool isParametric = (selectedBand >= 2 && selectedBand <= 5);
 
-    // Set visibility - only one should be visible at a time
+    // Determine current shape for parametric bands
+    int shape = 0;
+    if (isParametric)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(selectedBand + 1));
+        if (shapeParam)
+            shape = static_cast<int>(shapeParam->load());
+    }
+
+    bool isNotchOrBandPass = isParametric && (shape == 1 || shape == 2);
+
+    // Shape selector: visible only for parametric bands 3-6
+    shapeSelector->setVisible(isParametric);
+
+    // Slope selector: visible only for HPF/LPF
     slopeSelector->setVisible(isFilter);
-    gainKnob->setVisible(!isFilter);
 
-    // Ensure the visible control is on top (z-order) and force repaint
+    // Gain knob: visible for shelf/parametric with Peaking shape, hidden for filters and notch/bandpass
+    gainKnob->setVisible(!isFilter && !isNotchOrBandPass);
+
+    // Ensure the visible control in the third column is on top
     if (isFilter)
     {
         slopeSelector->toFront(false);
         slopeSelector->repaint();
     }
-    else
+    else if (!isNotchOrBandPass)
     {
         gainKnob->toFront(false);
         gainKnob->repaint();
@@ -245,6 +316,7 @@ void BandDetailPanel::updateDynamicsOpacity()
     attackKnob->setAlpha(alpha);
     releaseKnob->setAlpha(alpha);
     rangeKnob->setAlpha(alpha);
+    ratioKnob->setAlpha(alpha);
 }
 
 juce::Colour BandDetailPanel::getBandColor(int bandIndex) const
@@ -291,6 +363,21 @@ void BandDetailPanel::parameterChanged(const juce::String& parameterID, float /*
                 safeThis->repaint();
         });
     }
+
+    // Update controls when shape changes (show/hide gain knob for notch/bandpass)
+    if (selectedBand >= 2 && selectedBand <= 5 &&
+        parameterID == ParamIDs::bandShape(selectedBand + 1))
+    {
+        juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<BandDetailPanel>(this)]() {
+            if (safeThis != nullptr)
+            {
+                safeThis->updateAttachments();
+                safeThis->updateControlsForBandType();
+                safeThis->resized();
+                safeThis->repaint();
+            }
+        });
+    }
 }
 
 juce::Rectangle<int> BandDetailPanel::getBandButtonBounds(int /*index*/) const
@@ -308,7 +395,7 @@ juce::Rectangle<int> BandDetailPanel::getBandButtonBounds(int /*index*/) const
     int totalContentWidth = bandIndicatorSize + 10
                           + eqColumnsWidth + 10
                           + 12
-                          + (knobSize + knobSpacing) * 4 + 6
+                          + (knobSize + knobSpacing) * 5 + 6
                           + btnWidth;
 
     int startX = (getWidth() - totalContentWidth) / 2;
@@ -380,9 +467,8 @@ void BandDetailPanel::paint(juce::Graphics& g)
     int totalContentWidth = bandIndicatorSize + 10  // Band indicator + gap
                           + eqColumnsWidth + 10  // EQ section + separator gap
                           + 12  // Divider space
-                          + (knobSize + knobSpacing) * 4 + 6  // 4 dynamics knobs + button gap
-                          + btnWidth;  // Buttons
-
+                          + (knobSize + knobSpacing) * 5 + 6  // 5 dynamics knobs + gap before buttons
+                          + btnWidth;  // DYN and SOLO buttons
     // Center the content
     int startX = (getWidth() - totalContentWidth) / 2;
 
@@ -481,7 +567,7 @@ void BandDetailPanel::paint(juce::Graphics& g)
 
     // ===== DYNAMICS SECTION BACKGROUND =====
     int dynStartX = dividerX + 10;
-    int dynSectionWidth = (knobSize + knobSpacing) * 4 + 60;  // 4 knobs + buttons
+    int dynSectionWidth = (knobSize + knobSpacing) * 5 + 60;  // 5 knobs + buttons
     juce::Colour dynBgColor = dynEnabled ? juce::Colour(0xFF28231e) : juce::Colour(0xFF1e1e20);
     juce::Rectangle<float> dynSection(static_cast<float>(dynStartX - 4), 4.0f,
                                        static_cast<float>(dynSectionWidth), bounds.getHeight() - 8.0f);
@@ -512,8 +598,8 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
     int totalContentWidth = bandIndicatorSize + 10  // Band indicator + gap
                           + eqColumnsWidth + 10  // EQ section + separator gap
                           + 12  // Divider space
-                          + (knobSize + knobSpacing) * 4 + 6  // 4 dynamics knobs + button gap
-                          + btnWidth;  // Buttons
+                          + (knobSize + knobSpacing) * 5 + 6  // 5 dynamics knobs + gap before buttons
+                          + btnWidth;  // DYN and SOLO buttons
 
     // Center the content
     int startX = (getWidth() - totalContentWidth) / 2;
@@ -553,21 +639,41 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
                       {currentX, knobY, knobSize, knobSize + 20}, false);
     currentX += knobSize + knobSpacing;
 
-    // Third column: GAIN knob (for parametric/shelf) or SLOPE label (for filters)
-    if (!isFilter)
+    // Third column: GAIN knob (for parametric/shelf), SLOPE label (for filters), or SHAPE label (for notch/bandpass)
     {
-        // GAIN knob - same position and size as FREQ and Q
-        drawKnobWithLabel(g, gainKnob.get(), "GAIN",
-                          formatGain(gainKnob->getValue()),
-                          {currentX, knobY, knobSize, knobSize + 20}, false);
-    }
-    else
-    {
-        // Draw SLOPE label for filter bands - centered over the knobSize column
-        g.setColour(juce::Colour(0xFFb0b0b0));
-        g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-        g.drawText("SLOPE", currentX, knobY - 14, knobSize, 14,
-                   juce::Justification::centred);
+        bool isParametric = (selectedBand >= 2 && selectedBand <= 5);
+        int currentShape = 0;
+        if (isParametric)
+        {
+            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(selectedBand + 1));
+            if (shapeParam)
+                currentShape = static_cast<int>(shapeParam->load());
+        }
+        bool isNotchOrBandPass = isParametric && (currentShape == 1 || currentShape == 2);
+
+        if (isFilter)
+        {
+            // Draw SLOPE label for filter bands - centered over the knobSize column
+            g.setColour(juce::Colour(0xFFb0b0b0));
+            g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+            g.drawText("SLOPE", currentX, knobY - 14, knobSize, 14,
+                       juce::Justification::centred);
+        }
+        else if (isNotchOrBandPass)
+        {
+            // Draw SHAPE label for notch/bandpass - centered over the column
+            g.setColour(juce::Colour(0xFFb0b0b0));
+            g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+            g.drawText("SHAPE", currentX, knobY - 14, knobSize, 14,
+                       juce::Justification::centred);
+        }
+        else
+        {
+            // GAIN knob - same position and size as FREQ and Q
+            drawKnobWithLabel(g, gainKnob.get(), "GAIN",
+                              formatGain(gainKnob->getValue()),
+                              {currentX, knobY, knobSize, knobSize + 20}, false);
+        }
     }
     currentX += knobSize + knobSpacing + 10;
 
@@ -609,6 +715,18 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
     drawKnobWithLabel(g, rangeKnob.get(), "RANGE",
                       formatDb(rangeKnob->getValue()),
                       {currentX, knobY, knobSize, knobSize + 20}, !dynEnabled);
+    currentX += knobSize + knobSpacing;
+
+    // RATIO
+    {
+        auto formatRatio = [](double val) {
+            if (val >= 99.5) return juce::String("Inf:1");
+            return juce::String(val, 1) + ":1";
+        };
+        drawKnobWithLabel(g, ratioKnob.get(), "RATIO",
+                          formatRatio(ratioKnob->getValue()),
+                          {currentX, knobY, knobSize, knobSize + 20}, !dynEnabled);
+    }
 
     // ===== DYNAMICS SECTION LABEL (centered below the 4 dynamics knobs) =====
     // Calculate dynSection position (must match paint())
@@ -616,9 +734,9 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
     int eqEndX = (startX + bandIndicatorSize + 10) + eqSectionWidth + 4;
     int dividerX = eqEndX + 4;
     int dynStartX = dividerX + 10;
-    int dynKnobsWidth = (knobSize + knobSpacing) * 4;  // Width of just the 4 knobs
+    int dynKnobsWidth = (knobSize + knobSpacing) * 5;  // Width of just the 5 knobs
 
-    // Draw "DYNAMICS" label below knobs, centered over the 4 knobs (not the buttons)
+    // Draw "DYNAMICS" label below knobs, centered over the 5 knobs (not the buttons)
     g.setColour(dynEnabled ? juce::Colour(0xFFff8844) : juce::Colour(0xFF505050));
     g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     int labelY = knobY + knobSize + 4;  // Below the knobs
@@ -675,8 +793,8 @@ void BandDetailPanel::resized()
     int totalContentWidth = bandIndicatorSize + 10  // Band indicator + gap
                           + eqColumnsWidth + 10  // EQ section + separator gap
                           + 12  // Divider space
-                          + (knobSize + knobSpacing) * 4 + 6  // 4 dynamics knobs + button gap
-                          + btnWidth;  // Buttons
+                          + (knobSize + knobSpacing) * 5 + 6  // 5 dynamics knobs + gap before buttons
+                          + btnWidth;  // DYN and SOLO buttons
 
     // Center the content
     int startX = (getWidth() - totalContentWidth) / 2;
@@ -692,14 +810,25 @@ void BandDetailPanel::resized()
     qKnob->setBounds(currentX, knobY, knobSize, knobSize);
     currentX += knobSize + knobSpacing;
 
-    // GAIN knob and SLOPE selector share the same column
-    // Position both, then control visibility based on band type
+    // GAIN knob, SLOPE selector, and SHAPE selector share the same column
+    // Position all, then control visibility based on band type and shape
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
+    bool isParametric = (selectedBand >= 2 && selectedBand <= 5);
+
+    // Determine current shape for parametric bands
+    int currentShape = 0;
+    if (isParametric)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(selectedBand + 1));
+        if (shapeParam)
+            currentShape = static_cast<int>(shapeParam->load());
+    }
+    bool isNotchOrBandPass = isParametric && (currentShape == 1 || currentShape == 2);
 
     // GAIN knob - positioned at the third column
     gainKnob->setBounds(currentX, knobY, knobSize, knobSize);
-    gainKnob->setVisible(!isFilter);
+    gainKnob->setVisible(!isFilter && !isNotchOrBandPass);
 
     // SLOPE selector - positioned over the same column, centered vertically
     int selectorHeight = 26;
@@ -708,10 +837,26 @@ void BandDetailPanel::resized()
     slopeSelector->setBounds(selectorX, selectorY, slopeSelectorWidth, selectorHeight);
     slopeSelector->setVisible(isFilter);
 
+    // SHAPE selector - positioned above the band indicator square on the left
+    int shapeSelectorWidth = 80;
+    int shapeSelectorHeight = 22;
+    if (isNotchOrBandPass)
+    {
+        // When gain is hidden, center the shape selector in the column
+        int shapeSelectorX = currentX + (knobSize - shapeSelectorWidth) / 2;
+        shapeSelector->setBounds(shapeSelectorX, selectorY, shapeSelectorWidth, selectorHeight);
+    }
+    else
+    {
+        // Position above the band indicator square (top-left of panel)
+        shapeSelector->setBounds(startX, 5, shapeSelectorWidth, shapeSelectorHeight);
+    }
+    shapeSelector->setVisible(isParametric);
+
     // Ensure the visible control is on top
     if (isFilter)
         slopeSelector->toFront(false);
-    else
+    else if (!isNotchOrBandPass)
         gainKnob->toFront(false);
 
     currentX += knobSize + knobSpacing + 10;
@@ -733,6 +878,10 @@ void BandDetailPanel::resized()
 
     // RANGE knob
     rangeKnob->setBounds(currentX, knobY, knobSize, knobSize);
+    currentX += knobSize + knobSpacing;
+
+    // RATIO knob
+    ratioKnob->setBounds(currentX, knobY, knobSize, knobSize);
     currentX += knobSize + knobSpacing + 6;
 
     // DYN and SOLO buttons (stacked vertically on right)
@@ -741,4 +890,10 @@ void BandDetailPanel::resized()
 
     dynButton->setBounds(currentX, btnY, btnWidth, btnHeight);
     soloButton->setBounds(currentX, btnY + btnHeight + 4, btnWidth, btnHeight);
+
+    // Per-band routing selector - positioned below the band indicator box
+    int routingSelectorWidth = 65;
+    int bandBoxY = knobY + (knobSize - bandIndicatorSize) / 2;
+    int routingY = bandBoxY + bandIndicatorSize + 4;
+    routingSelector->setBounds(startX, routingY, routingSelectorWidth, 18);
 }

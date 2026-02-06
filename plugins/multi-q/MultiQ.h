@@ -106,6 +106,10 @@ public:
     std::atomic<float> outputLevelL{-96.0f};
     std::atomic<float> outputLevelR{-96.0f};
 
+    // Clip indicators (set by audio thread, cleared by UI thread on click)
+    std::atomic<bool> inputClipped{false};
+    std::atomic<bool> outputClipped{false};
+
     // Get current Q-couple mode for UI display
     QCoupleMode getCurrentQCoupleMode() const;
 
@@ -220,14 +224,18 @@ private:
     // Bands 2-7: Shelf and Parametric filters
     std::array<StereoFilter, 6> eqFilters;  // Indices 0-5 for bands 2-7
 
+    // Dynamic gain filters (bands 2-7) - applies dynamic EQ gain independently of static gain
+    std::array<StereoFilter, 6> dynGainFilters;  // Same indices as eqFilters
+
     // Band 8: LPF (variable slope)
     CascadedFilter lpfFilter;
 
     // Oversampling for analog-matched response (prevents Nyquist cramping)
-    // Always pre-allocated at 2x to avoid runtime allocation when toggling HQ mode
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
-    bool hqModeEnabled = false;
-    bool oversamplerReady = false;  // Flag to track if oversampler is initialized
+    // Pre-allocated at both 2x and 4x to avoid runtime allocation when switching
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
+    int oversamplingMode = 0;  // 0=Off, 1=2x, 2=4x
+    bool oversamplerReady = false;  // Flag to track if oversamplers are initialized
 
     // Pre-allocated scratch buffer for British/Pultec processing (avoids heap alloc in processBlock)
     juce::AudioBuffer<float> scratchBuffer;
@@ -332,6 +340,9 @@ private:
     std::array<std::atomic<float>*, NUM_BANDS> bandDynAttackParams{};
     std::array<std::atomic<float>*, NUM_BANDS> bandDynReleaseParams{};
     std::array<std::atomic<float>*, NUM_BANDS> bandDynRangeParams{};
+    std::array<std::atomic<float>*, NUM_BANDS> bandDynRatioParams{};
+    std::array<std::atomic<float>*, NUM_BANDS> bandShapeParams{};  // Shape for parametric bands (Peaking/Notch/BandPass)
+    std::array<std::atomic<float>*, NUM_BANDS> bandRoutingParams{};  // Per-band channel routing
     std::atomic<float>* dynDetectionModeParam = nullptr;
 
     // Safe parameter accessor
@@ -368,9 +379,20 @@ private:
     juce::dsp::IIR::Coefficients<float>::Ptr makePeakingCoefficients(
         double sampleRate, float freq, float gain, float q) const;
 
+    // Notch (band-reject) filter coefficients (analog-matched)
+    juce::dsp::IIR::Coefficients<float>::Ptr makeNotchCoefficients(
+        double sampleRate, float freq, float q) const;
+
+    // Bandpass filter coefficients (analog-matched)
+    juce::dsp::IIR::Coefficients<float>::Ptr makeBandPassCoefficients(
+        double sampleRate, float freq, float q) const;
+
     // Update all filter coefficients
     void updateAllFilters();
     void updateBandFilter(int bandIndex);
+
+    // Update dynamic gain filter for a band (uses same freq/Q but dynamic gain)
+    void updateDynGainFilter(int bandIndex, float dynGainDb);
 
     //==============================================================================
     // Atomic dirty flags for filter updates

@@ -37,6 +37,7 @@ public:
         float attack = 10.0f;        // ms (0.1 to 500)
         float release = 100.0f;      // ms (10 to 5000)
         float range = 12.0f;         // dB (0 to 24) - max gain change
+        float ratio = 4.0f;         // Compression ratio (1.0 to 100.0)
         float kneeWidth = 6.0f;      // dB (0 to 12) - soft knee width, 0 = hard knee
         bool enabled = false;        // Per-band dynamics on/off
     };
@@ -145,7 +146,12 @@ public:
     void setBandParameters(int bandIndex, const BandParameters& params)
     {
         if (bandIndex >= 0 && bandIndex < NUM_BANDS)
-            bandParams[static_cast<size_t>(bandIndex)] = params;
+        {
+            BandParameters validatedParams = params;
+            // Clamp ratio to valid range (1.0 to 100.0) to avoid division issues
+            validatedParams.ratio = juce::jlimit(1.0f, 100.0f, params.ratio);
+            bandParams[static_cast<size_t>(bandIndex)] = validatedParams;
+        }
     }
 
     /** Get current parameters for a band */
@@ -329,8 +335,8 @@ private:
         float kneeWidth = softKneeEnabled.load(std::memory_order_acquire) ? params.kneeWidth : 0.0f;
         float halfKnee = kneeWidth / 2.0f;
 
-        // Fixed ratio for dynamics (could be made configurable)
-        float ratio = 4.0f;
+        // Guard against division by zero - ensure ratio is at least 1.0
+        float ratio = std::max(params.ratio, 1.0f);
 
         float reduction = 0.0f;
 
