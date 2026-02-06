@@ -117,9 +117,10 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     addAndMakeVisible(analogNoiseButton.get());
     addAndMakeVisible(oversamplingSelector.get());
     addAndMakeVisible(sidechainHpSlider.get());
-    // Hide SC EQ and sidechain controls - simplify the header
+    // Sidechain enable is auto-detected from bus state — keep button hidden for backward compat
     addChildComponent(sidechainEnableButton.get());
-    addChildComponent(sidechainListenButton.get());
+    // SC Listen is useful for monitoring the detection signal
+    addAndMakeVisible(sidechainListenButton.get());
     addChildComponent(lookaheadSlider.get());
     addChildComponent(scEqToggleButton.get());
     addChildComponent(scLowFreqSlider.get());
@@ -963,6 +964,23 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
         g.drawText("Oversampling", osLabelBounds, juce::Justification::centredRight);
     }
 
+    // Draw "EXT SC" indicator badge when external sidechain is active
+    // Right-aligned with the oversampling dropdown
+    if (processor.isExternalSidechainActive() && oversamplingSelector)
+    {
+        int badgeWidth = static_cast<int>(60 * scaleFactor);
+        auto badge = juce::Rectangle<int>(
+            oversamplingSelector->getRight() - badgeWidth,
+            static_cast<int>(4 * scaleFactor),
+            badgeWidth,
+            static_cast<int>(16 * scaleFactor));
+        g.setColour(juce::Colour(0xFF00CC66));
+        g.fillRoundedRectangle(badge.toFloat(), 3.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(10.0f * scaleFactor).withStyle("Bold")));
+        g.drawText("EXT SC", badge, juce::Justification::centred);
+    }
+
     // Draw "SC HP" label above sidechain HP knob (centered)
     if (!scHpLabelBounds.isEmpty())
     {
@@ -1031,7 +1049,7 @@ void EnhancedCompressorEditor::resized()
     const int autoGainWidth = static_cast<int>(80 * scaleFactor);       // "Auto Gain" button
     const int analogNoiseWidth = static_cast<int>(95 * scaleFactor);    // "Analog Noise" button
     const int modeToggleWidth = static_cast<int>(70 * scaleFactor);     // "Limit" / "Over Easy"
-    const int osLabelWidth = static_cast<int>(80 * scaleFactor);        // "Oversampling" label
+    const int osLabelWidth = static_cast<int>(100 * scaleFactor);       // "Oversampling" label
     const int osWidth = static_cast<int>(55 * scaleFactor);             // Dropdown for "2x"/"4x"
 
     // LEFT: Mode selector dropdown (aligned with INPUT label)
@@ -1057,11 +1075,13 @@ void EnhancedCompressorEditor::resized()
     bool isAnalogMode = (currentMode != 6 && currentMode != 7);
     bool showModeToggle = (currentMode == 0 || currentMode == 2);  // Limit for Opto, OverEasy for VCA
 
+    int scListenWidth = static_cast<int>(70 * scaleFactor);
     int centerControlsWidth = toggleWidth + gap + autoGainWidth;  // Bypass + Auto Gain
     if (isAnalogMode)
         centerControlsWidth += gap + analogNoiseWidth;  // + Analog Noise
     if (showModeToggle)
         centerControlsWidth += gap + modeToggleWidth;  // + Limit/OverEasy
+    centerControlsWidth += gap + scListenWidth;  // + SC Listen
 
     int centerStartX = headerRow.getX() + (headerRow.getWidth() - centerControlsWidth) / 2;
     int centerY = headerRow.getCentreY() - controlHeight / 2;
@@ -1104,12 +1124,19 @@ void EnhancedCompressorEditor::resized()
         if (currentMode == 2)
             vcaPanel.overEasyButton->setBounds(centerStartX, centerY, modeToggleWidth, controlHeight);
     }
+    if (showModeToggle)
+        centerStartX += modeToggleWidth + gap;
 
-    // Hide Ext SC and SC Listen - still functional via DAW automation
+    // SC Listen button
+    if (sidechainListenButton)
+    {
+        sidechainListenButton->setBounds(centerStartX, centerY, scListenWidth, controlHeight);
+        centerStartX += scListenWidth + gap;
+    }
+
+    // Ext SC enable is auto-detected — keep button hidden
     if (sidechainEnableButton)
         sidechainEnableButton->setVisible(false);
-    if (sidechainListenButton)
-        sidechainListenButton->setVisible(false);
 
     // Hide unused controls (sidechain enable/listen are now shown in header)
     if (lookaheadSlider)
@@ -1397,6 +1424,14 @@ void EnhancedCompressorEditor::timerCallback()
 
 void EnhancedCompressorEditor::updateMeters()
 {
+    // Repaint EXT SC indicator badge when sidechain state changes
+    bool extScActive = processor.isExternalSidechainActive();
+    if (extScActive != lastExternalSidechainState)
+    {
+        lastExternalSidechainState = extScActive;
+        repaint();
+    }
+
     // Update meter stereo mode based on actual channel count (like TapeMachine VU meters)
     // Mono channels show single bar, stereo channels show L/R bars
     bool isStereo = processor.getNumChannels() > 1;
