@@ -122,8 +122,7 @@ void BritishEQCurveDisplay::resized()
     {
         analyzer->setBounds(graphArea.toNearestInt());
         analyzer->setFrequencyRange(minFreq, maxFreq);
-        // Use a fixed spectrum analyzer range (-80 to 0 dB) independent of EQ display scale
-        analyzer->setDisplayRange(-80.0f, 0.0f);
+        analyzer->setDisplayRange(minDisplayDB, maxDisplayDB);
     }
 
     needsRepaint = true;
@@ -614,6 +613,9 @@ void BritishEQCurveDisplay::setDisplayScaleMode(BritishDisplayScaleMode mode)
             maxDisplayDB = 30.0f;
             break;
     }
+    if (analyzer)
+        analyzer->setDisplayRange(minDisplayDB, maxDisplayDB);
+
     needsRepaint = true;
     repaint();
 }
