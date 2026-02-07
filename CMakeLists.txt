@@ -39,6 +39,9 @@ else()
         "  3. Add as submodule: git submodule add https://github.com/juce-framework/JUCE.git external/JUCE")
 endif()
 
+# CI builds don't need to install plugins to system directories
+option(LUNA_COPY_AFTER_BUILD "Copy plugins to system VST3/LV2 dirs after build" ON)
+
 # Option to build all plugins or specific ones
 option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
 option(BUILD_MULTI_COMP "Build Multi-Comp plugin" ON)
