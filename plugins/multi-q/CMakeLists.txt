@@ -57,6 +57,7 @@ juce_add_plugin(MultiQ
     PRODUCT_NAME "Multi-Q"
     DESCRIPTION "Professional 8-band parametric EQ with FFT Analyzer"
     VST3_CAN_REPLACE_VST2 TRUE
+    VST3_AUTO_MANIFEST FALSE
 )
 
 # Generate JuceHeader.h
