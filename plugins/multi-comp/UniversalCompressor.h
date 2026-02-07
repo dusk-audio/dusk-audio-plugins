@@ -94,6 +94,7 @@ public:
     // Channel configuration - for UI to determine mono/stereo display mode
     int getNumChannels() const { return currentNumChannels.load(std::memory_order_relaxed); }
     float getSidechainLevel() const { return sidechainMeter.load(std::memory_order_relaxed); }
+    bool isExternalSidechainActive() const { return externalSidechainActive.load(std::memory_order_relaxed); }
     float getLinkedGainReduction(int channel) const {
         return channel >= 0 && channel < 2 ? linkedGainReduction[channel].load(std::memory_order_relaxed) : 0.0f;
     }
@@ -171,6 +172,7 @@ private:
     std::atomic<float> outputMeter{-60.0f};
     std::atomic<float> grMeter{0.0f};
     std::atomic<float> sidechainMeter{-60.0f};  // Sidechain activity level
+    std::atomic<bool> externalSidechainActive{false};  // True when host has enabled sidechain bus
 
     // Per-channel metering for stereo display
     std::atomic<float> inputMeterL{-60.0f};
