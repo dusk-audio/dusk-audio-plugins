@@ -24,7 +24,7 @@ juce_add_plugin(${PLUGIN_NAME}
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     VST3_CATEGORIES "Fx" "Reverb"
     LV2URI "https://lunaco.audio/plugins/silkverb"
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    COPY_PLUGIN_AFTER_BUILD ${LUNA_COPY_AFTER_BUILD}
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
 )

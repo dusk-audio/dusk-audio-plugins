@@ -206,6 +206,7 @@ jobs:
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DLUNA_COPY_AFTER_BUILD=OFF \
             -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
@@ -322,6 +323,7 @@ jobs:
         run: |
           cmake -B build `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DLUNA_COPY_AFTER_BUILD=OFF `
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
       - name: Build plugins
@@ -423,6 +425,7 @@ jobs:
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DLUNA_COPY_AFTER_BUILD=OFF \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" \
             -DJUCE_PATH=${{ github.workspace }}/JUCE
