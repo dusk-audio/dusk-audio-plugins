@@ -318,6 +318,7 @@ private:
     juce::TextButton tubeAbButton;
     juce::ComboBox tubePresetSelector;  // Preset selector for Tube mode
     std::unique_ptr<juce::ToggleButton> tubeHqButton;
+    juce::TextButton pultecCurveCollapseButton;  // "Hide Graph" / "Show Graph" for Tube mode
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeHqAttachment;
 
     // A/B comparison state
@@ -347,6 +348,13 @@ private:
     // Meters
     std::unique_ptr<LEDMeter> inputMeter;
     std::unique_ptr<LEDMeter> outputMeter;
+
+    // Clip indicators (click-to-reset)
+    juce::Rectangle<int> inputClipBounds;
+    juce::Rectangle<int> outputClipBounds;
+    bool lastInputClipState = false;
+    bool lastOutputClipState = false;
+    void drawClipIndicator(juce::Graphics& g, juce::Rectangle<int> bounds, bool clipped);
 
     // Supporters overlay
     std::unique_ptr<SupportersOverlay> supportersOverlay;

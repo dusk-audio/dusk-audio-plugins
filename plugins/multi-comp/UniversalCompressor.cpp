@@ -1144,7 +1144,7 @@ public:
         convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::LA2A);
     }
     
-    float process(float input, int channel, float peakReduction, float gain, bool limitMode, bool oversample = false, float externalSidechain = 0.0f)
+    float process(float input, int channel, float peakReduction, float gain, bool limitMode, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
@@ -1171,33 +1171,34 @@ public:
         // Apply gain reduction (feedback topology)
         float compressed = transformedInput * detector.envelope;
 
-        // Opto feedback topology: detection from output (or external sidechain if provided)
-        // The external sidechain has already been HP-filtered to prevent pumping from bass
-        // In Compress mode: sidechain = output (or external)
-        // In Limit mode: sidechain = 1/25 input + 24/25 output (or external)
-        float sidechainSignal;
-        bool useExternalSidechain = (externalSidechain != 0.0f);
+        // Opto feedback topology: detection from output (or external sidechain if active)
+        // When external SC is active, use feedforward from external signal
+        // When inactive, use authentic feedback detection from compressed output
+        // In Compress mode: sidechain = output
+        // In Limit mode: sidechain = 1/25 input + 24/25 output
+        float detectionInput;
 
         if (useExternalSidechain)
         {
-            // Use external HP-filtered sidechain for detection
-            sidechainSignal = externalSidechain;
+            // Use external sidechain for detection (already HP-filtered by caller)
+            detectionInput = sidechainSignal;
         }
         else if (limitMode)
         {
             // Limit mode mixes a small amount of input with output
-            sidechainSignal = input * 0.04f + compressed * 0.96f;
+            detectionInput = input * 0.04f + compressed * 0.96f;
         }
         else
         {
             // Compress mode uses pure output feedback
-            sidechainSignal = compressed;
+            detectionInput = compressed;
         }
         
-        // Peak Reduction controls the sidechain amplifier gain (essentially threshold)
-        // 0-100 maps to 0dB to -40dB threshold (inverted control)
-        float sidechainGain = juce::Decibels::decibelsToGain(peakReduction * 0.4f); // 0 to +40dB
-        float detectionLevel = std::abs(sidechainSignal * sidechainGain);
+        // Peak Reduction controls the sidechain amplifier gain (LA-2A style)
+        // Real LA-2A has inherent gain staging — even at minimum, some signal reaches the T4B cell
+        // +4dB baseline ensures typical vocals begin compressing at low settings
+        float sidechainGain = juce::Decibels::decibelsToGain(4.0f + peakReduction * 0.36f); // +4 to +40dB
+        float detectionLevel = std::abs(detectionInput * sidechainGain);
         
         // Frequency-dependent detection (T4 cell is more sensitive to midrange)
         // Simple high-frequency rolloff to simulate T4 response
@@ -1250,7 +1251,7 @@ public:
         // Input-dependent threshold: lower threshold for louder inputs (Opto characteristic)
         // This creates program-dependent behavior where the compressor becomes more sensitive
         // to loud signals, mimicking the T4 cell's nonlinear light response
-        float baseThreshold = 0.5f; // Base internal reference level
+        float baseThreshold = 0.3f; // T4B photocell sensitivity (~-10 dBFS)
         float inputLevel = std::abs(input);
 
         // Dynamic threshold adjustment based on recent input level
@@ -1274,8 +1275,8 @@ public:
             float programDependentRatio = baseRatio + (maxRatio - baseRatio) * ratioFactor;
 
             // Feedback topology: ratio increases with compression amount
-            // This creates the characteristic "gentle start, aggressive end" behavior
-            float variableRatio = programDependentRatio * (1.0f + excess * 8.0f);
+            // Gradual increase models the T4B cell's smooth resistance change
+            float variableRatio = programDependentRatio * (1.0f + excess * 2.0f);
 
             // Calculate gain reduction in dB using feedback formula
             // At low levels: gentle 3:1 compression
@@ -1506,7 +1507,7 @@ public:
     float process(float input, int channel, float inputGainDb, float outputGainDb,
                   float attackMs, float releaseMs, int ratioIndex, bool oversample = false,
                   const LookupTables* lookupTables = nullptr, TransientShaper* transientShaper = nullptr,
-                  bool useMeasuredCurve = false, float transientSensitivity = 0.0f, float externalSidechain = 0.0f)
+                  bool useMeasuredCurve = false, float transientSensitivity = 0.0f, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
@@ -1547,17 +1548,18 @@ public:
         // First, we need to apply the PREVIOUS envelope to get the compressed signal
         float compressed = amplifiedInput * detector.envelope;
 
-        // Detection signal: use external HP-filtered sidechain if provided, otherwise feedback from output
-        // External sidechain allows the SC HP filter to prevent pumping from bass
+        // Detection signal: use external sidechain if active, otherwise feedback from output
+        // When external SC is active, use feedforward from external signal
+        // When inactive, use authentic feedback detection from compressed output (FET characteristic)
         float detectionLevel;
-        if (externalSidechain != 0.0f)
+        if (useExternalSidechain)
         {
-            // Use external HP-filtered sidechain (apply input gain to match compression behavior)
-            detectionLevel = std::abs(externalSidechain * inputGainLin);
+            // Use external sidechain (apply input gain to match compression behavior)
+            detectionLevel = std::abs(sidechainSignal * inputGainLin);
         }
         else
         {
-            // Then detect from the COMPRESSED OUTPUT (feedback)
+            // Detect from the COMPRESSED OUTPUT (feedback)
             // This is what gives the FET its "grabby" characteristic
             detectionLevel = std::abs(compressed);
         }
@@ -1818,7 +1820,7 @@ public:
     }
     
     float process(float input, int channel, float threshold, float ratio,
-                  float attackParam, float releaseParam, float outputGain, bool overEasy = false, bool oversample = false, float externalSidechain = 0.0f)
+                  float attackParam, float releaseParam, float outputGain, bool overEasy = false, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
@@ -1831,10 +1833,10 @@ public:
 
         // VCA feedforward topology: control voltage from input signal or external sidechain
         float detectionLevel;
-        if (externalSidechain != 0.0f)
+        if (useExternalSidechain)
         {
-            // Use external HP-filtered sidechain for detection
-            detectionLevel = std::abs(externalSidechain);
+            // Use external sidechain for detection
+            detectionLevel = std::abs(sidechainSignal);
         }
         else
         {
@@ -2199,7 +2201,7 @@ public:
     }
     
     float process(float input, int channel, float threshold, float ratio,
-                  int attackIndex, int releaseIndex, float makeupGain, float mixAmount = 1.0f, bool oversample = false, float externalSidechain = 0.0f)
+                  int attackIndex, int releaseIndex, float makeupGain, float mixAmount = 1.0f, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
@@ -2217,12 +2219,12 @@ public:
         // Bus Compressor quad VCA topology
         // Uses parallel detection path with feed-forward design
 
-        // Determine detection signal: use external sidechain if provided, otherwise internal filter
+        // Determine detection signal: use external sidechain if active, otherwise internal filter
         float detectionLevel;
-        if (externalSidechain != 0.0f)
+        if (useExternalSidechain)
         {
-            // Use external HP-filtered sidechain for detection
-            detectionLevel = std::abs(externalSidechain);
+            // Use external sidechain for detection
+            detectionLevel = std::abs(sidechainSignal);
         }
         else
         {
@@ -2871,6 +2873,14 @@ public:
         hp3_a.resize(sz);
         hp3_b.resize(sz);
 
+        // Sidechain crossover filters (separate instances for SC band splitting)
+        sc_lp1_a.resize(sz); sc_lp1_b.resize(sz);
+        sc_hp1_a.resize(sz); sc_hp1_b.resize(sz);
+        sc_lp2_a.resize(sz); sc_lp2_b.resize(sz);
+        sc_hp2_a.resize(sz); sc_hp2_b.resize(sz);
+        sc_lp3_a.resize(sz); sc_lp3_b.resize(sz);
+        sc_hp3_a.resize(sz); sc_hp3_b.resize(sz);
+
         // Initialize per-band compressor state
         for (int band = 0; band < NUM_BANDS; ++band)
         {
@@ -2883,6 +2893,8 @@ public:
         {
             bandBuffers[band].setSize(numCh, maxBlockSize);
             bandBuffers[band].clear();
+            scBandBuffers[band].setSize(numCh, maxBlockSize);
+            scBandBuffers[band].clear();
         }
 
         // Temp buffer for crossover processing
@@ -2918,23 +2930,37 @@ public:
         // Apply coefficients to all channels - each stage gets its own filter instance
         for (int ch = 0; ch < numChannels; ++ch)
         {
-            // Crossover 1
+            // Audio crossover filters
             lp1_a[ch].coefficients = lp1Coeffs;
             lp1_b[ch].coefficients = lp1Coeffs;
             hp1_a[ch].coefficients = hp1Coeffs;
             hp1_b[ch].coefficients = hp1Coeffs;
 
-            // Crossover 2
             lp2_a[ch].coefficients = lp2Coeffs;
             lp2_b[ch].coefficients = lp2Coeffs;
             hp2_a[ch].coefficients = hp2Coeffs;
             hp2_b[ch].coefficients = hp2Coeffs;
 
-            // Crossover 3
             lp3_a[ch].coefficients = lp3Coeffs;
             lp3_b[ch].coefficients = lp3Coeffs;
             hp3_a[ch].coefficients = hp3Coeffs;
             hp3_b[ch].coefficients = hp3Coeffs;
+
+            // Sidechain crossover filters (separate instances to avoid corrupting audio path)
+            sc_lp1_a[ch].coefficients = lp1Coeffs;
+            sc_lp1_b[ch].coefficients = lp1Coeffs;
+            sc_hp1_a[ch].coefficients = hp1Coeffs;
+            sc_hp1_b[ch].coefficients = hp1Coeffs;
+
+            sc_lp2_a[ch].coefficients = lp2Coeffs;
+            sc_lp2_b[ch].coefficients = lp2Coeffs;
+            sc_hp2_a[ch].coefficients = hp2Coeffs;
+            sc_hp2_b[ch].coefficients = hp2Coeffs;
+
+            sc_lp3_a[ch].coefficients = lp3Coeffs;
+            sc_lp3_b[ch].coefficients = lp3Coeffs;
+            sc_hp3_a[ch].coefficients = hp3Coeffs;
+            sc_hp3_b[ch].coefficients = hp3Coeffs;
         }
     }
 
@@ -2947,7 +2973,9 @@ public:
                       const std::array<float, NUM_BANDS>& makeups,
                       const std::array<bool, NUM_BANDS>& bypasses,
                       const std::array<bool, NUM_BANDS>& solos,
-                      float outputGain, float mixPercent)
+                      float outputGain, float mixPercent,
+                      const juce::AudioBuffer<float>* sidechainBuffer = nullptr,
+                      bool hasExternalSidechain = false)
     {
         const int numSamples = buffer.getNumSamples();
         const int channels = juce::jmin(buffer.getNumChannels(), numChannels);
@@ -2976,6 +3004,10 @@ public:
         // Split the input signal into 4 bands using crossover filters
         splitIntoBands(buffer, numSamples, channels);
 
+        // Split sidechain into matching bands so each compressor only reacts to SC energy in its range
+        if (hasExternalSidechain && sidechainBuffer != nullptr)
+            splitSidechainIntoBands(*sidechainBuffer, numSamples, channels);
+
         // Process each band through its compressor
         for (int band = 0; band < NUM_BANDS; ++band)
         {
@@ -2987,7 +3019,9 @@ public:
             {
                 processBandCompression(band, bandBuffers[band], numSamples, channels,
                                        thresholds[band], ratios[band],
-                                       attacks[band], releases[band], makeups[band]);
+                                       attacks[band], releases[band], makeups[band],
+                                       hasExternalSidechain ? &scBandBuffers[band] : nullptr,
+                                       hasExternalSidechain);
             }
             else if (!shouldProcess)
             {
@@ -3134,10 +3168,58 @@ private:
         }
     }
 
+    void splitSidechainIntoBands(const juce::AudioBuffer<float>& scInput, int numSamples, int channels)
+    {
+        // Same LR4 crossover as splitIntoBands() but using separate sc_ filter instances
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            const float* in = scInput.getReadPointer(juce::jmin(ch, scInput.getNumChannels() - 1));
+            float* band0 = scBandBuffers[0].getWritePointer(ch);
+            float* band1 = scBandBuffers[1].getWritePointer(ch);
+            float* band2 = scBandBuffers[2].getWritePointer(ch);
+            float* band3 = scBandBuffers[3].getWritePointer(ch);
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float sample = in[i];
+
+                // Band 0: Low (below crossover 1)
+                float lp1 = sc_lp1_a[ch].processSample(sample);
+                lp1 = sc_lp1_b[ch].processSample(lp1);
+                band0[i] = lp1;
+
+                // HP1 for bands 1-3
+                float hp1 = sc_hp1_a[ch].processSample(sample);
+                hp1 = sc_hp1_b[ch].processSample(hp1);
+
+                // Band 1: Low-Mid (between crossover 1 and 2)
+                float lp2 = sc_lp2_a[ch].processSample(hp1);
+                lp2 = sc_lp2_b[ch].processSample(lp2);
+                band1[i] = lp2;
+
+                // HP2 for bands 2-3
+                float hp2 = sc_hp2_a[ch].processSample(hp1);
+                hp2 = sc_hp2_b[ch].processSample(hp2);
+
+                // Band 2: High-Mid (between crossover 2 and 3)
+                float lp3 = sc_lp3_a[ch].processSample(hp2);
+                lp3 = sc_lp3_b[ch].processSample(lp3);
+                band2[i] = lp3;
+
+                // Band 3: High (above crossover 3)
+                float hp3 = sc_hp3_a[ch].processSample(hp2);
+                hp3 = sc_hp3_b[ch].processSample(hp3);
+                band3[i] = hp3;
+            }
+        }
+    }
+
     void processBandCompression(int band, juce::AudioBuffer<float>& bandBuffer,
                                 int numSamples, int channels,
                                 float thresholdDb, float ratio,
-                                float attackMs, float releaseMs, float makeupDb)
+                                float attackMs, float releaseMs, float makeupDb,
+                                const juce::AudioBuffer<float>* sidechainBuffer = nullptr,
+                                bool hasExternalSidechain = false)
     {
         if (sampleRate <= 0.0 || ratio < 1.0f)
             return;
@@ -3155,10 +3237,17 @@ private:
             float* data = bandBuffer.getWritePointer(ch);
             float& envelope = bandEnvelopes[band][ch];
 
+            // Get external sidechain read pointer if available
+            const float* scData = nullptr;
+            if (hasExternalSidechain && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0)
+                scData = sidechainBuffer->getReadPointer(juce::jmin(ch, sidechainBuffer->getNumChannels() - 1));
+
             for (int i = 0; i < numSamples; ++i)
             {
                 float input = data[i];
-                float absInput = std::abs(input);
+
+                // Detection: use external sidechain if active, otherwise band-split audio
+                float absInput = (scData != nullptr) ? std::abs(scData[i]) : std::abs(input);
 
                 // Convert to dB
                 float inputDb = juce::Decibels::gainToDecibels(juce::jmax(absInput, 0.00001f));
@@ -3214,8 +3303,17 @@ private:
     std::vector<juce::dsp::IIR::Filter<float>> lp3_a, lp3_b;  // For band 2
     std::vector<juce::dsp::IIR::Filter<float>> hp3_a, hp3_b;  // For band 3
 
+    // Sidechain crossover filters (separate instances to avoid corrupting audio filter state)
+    std::vector<juce::dsp::IIR::Filter<float>> sc_lp1_a, sc_lp1_b;
+    std::vector<juce::dsp::IIR::Filter<float>> sc_hp1_a, sc_hp1_b;
+    std::vector<juce::dsp::IIR::Filter<float>> sc_lp2_a, sc_lp2_b;
+    std::vector<juce::dsp::IIR::Filter<float>> sc_hp2_a, sc_hp2_b;
+    std::vector<juce::dsp::IIR::Filter<float>> sc_lp3_a, sc_lp3_b;
+    std::vector<juce::dsp::IIR::Filter<float>> sc_hp3_a, sc_hp3_b;
+
     // Band buffers
     std::array<juce::AudioBuffer<float>, NUM_BANDS> bandBuffers;
+    std::array<juce::AudioBuffer<float>, NUM_BANDS> scBandBuffers;  // Sidechain band buffers
     juce::AudioBuffer<float> tempBuffer;
 
     // Per-band envelope followers (per channel)
@@ -4293,7 +4391,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     auto* distortionAmountParam = parameters.getRawParameterValue("distortion_amount");
     auto* globalLookaheadParam = parameters.getRawParameterValue("global_lookahead");
     auto* globalSidechainListenParam = parameters.getRawParameterValue("global_sidechain_listen");
-    auto* sidechainEnableParam = parameters.getRawParameterValue("sidechain_enable");
+    // sidechain_enable parameter kept in APVTS for backward compat but no longer read here
+    // (external sidechain is auto-detected from bus state below)
     auto* stereoLinkModeParam = parameters.getRawParameterValue("stereo_link_mode");
     auto* oversamplingParam = parameters.getRawParameterValue("oversampling");
     auto* scLowFreqParam = parameters.getRawParameterValue("sc_low_freq");
@@ -4306,7 +4405,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     float distAmount = (distortionAmountParam != nullptr) ? (distortionAmountParam->load() / 100.0f) : 0.0f;
     float globalLookaheadMs = (globalLookaheadParam != nullptr) ? globalLookaheadParam->load() : 0.0f;
     bool globalSidechainListen = (globalSidechainListenParam != nullptr) ? (globalSidechainListenParam->load() > 0.5f) : false;
-    bool useExternalSidechain = (sidechainEnableParam != nullptr) ? (sidechainEnableParam->load() > 0.5f) : false;
+    // External sidechain is auto-detected from bus state (industry standard)
+    // No manual toggle needed — when the host routes a track to the SC bus, it enables automatically
     int stereoLinkMode = (stereoLinkModeParam != nullptr) ? static_cast<int>(stereoLinkModeParam->load()) : 0;
     int oversamplingFactor = (oversamplingParam != nullptr) ? static_cast<int>(oversamplingParam->load()) : 0;
 
@@ -4342,9 +4442,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         sidechainEQ->setHighShelf(scHighFreq, scHighGain);
     }
 
-    // Check if external sidechain bus is available and has data
+    // Auto-detect external sidechain from bus state
     auto sidechainBus = getBus(true, 1);  // Input bus 1 = sidechain
-    bool hasExternalSidechain = useExternalSidechain && sidechainBus != nullptr && sidechainBus->isEnabled();
+    bool hasExternalSidechain = sidechainBus != nullptr && sidechainBus->isEnabled();
+    externalSidechainActive.store(hasExternalSidechain, std::memory_order_relaxed);
 
     // Ensure pre-allocated buffers are sized correctly
     if (filteredSidechain.getNumChannels() < numChannels || filteredSidechain.getNumSamples() < numSamples)
@@ -4578,9 +4679,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             solos[band] = solo ? (solo->load() > 0.5f) : false;
         }
 
-        // Process through multiband compressor
+        // Process through multiband compressor (pass sidechain for external SC detection)
         multibandCompressor->processBlock(buffer, thresholds, ratios, attacks, releases,
-                                          makeups, bypasses, solos, mbOutput, mbMix);
+                                          makeups, bypasses, solos, mbOutput, mbMix,
+                                          &filteredSidechain, hasExternalSidechain);
 
         // Update per-band GR meters for UI
         for (int band = 0; band < kNumMultibandBands; ++band)
@@ -4786,22 +4888,22 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             {
                 case CompressorMode::Opto:
                     for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, true, scData[i]);
+                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, true, scData[i], hasExternalSidechain);
                     break;
                 case CompressorMode::FET:
                     for (int i = 0; i < osNumSamples; ++i)
                         data[i] = fetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1],
                                                          cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), true,
                                                          lookupTables.get(), transientShaper.get(),
-                                                         cachedParams[5] > 0.5f, cachedParams[6], scData[i]);
+                                                         cachedParams[5] > 0.5f, cachedParams[6], scData[i], hasExternalSidechain);
                     break;
                 case CompressorMode::VCA:
                     for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, true, scData[i]);
+                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, true, scData[i], hasExternalSidechain);
                     break;
                 case CompressorMode::Bus:
                     for (int i = 0; i < osNumSamples; ++i)
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true, scData[i]);
+                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], true, scData[i], hasExternalSidechain);
                     break;
                 case CompressorMode::StudioFET:
                     // Optimized: use pre-interpolated sidechain with direct pointer access
@@ -4881,7 +4983,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                             scSignal = linkedSidechain.getSample(channel, i);
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
-                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, false, scSignal) * compensationGain;
+                        data[i] = optoCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2] > 0.5f, false, scSignal, hasExternalSidechain) * compensationGain;
                     }
                     break;
                 case CompressorMode::FET:
@@ -4895,7 +4997,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         data[i] = fetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1],
                                                          cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), false,
                                                          lookupTables.get(), transientShaper.get(),
-                                                         cachedParams[5] > 0.5f, cachedParams[6], scSignal) * compensationGain;
+                                                         cachedParams[5] > 0.5f, cachedParams[6], scSignal, hasExternalSidechain) * compensationGain;
                     }
                     break;
                 case CompressorMode::VCA:
@@ -4906,7 +5008,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                             scSignal = linkedSidechain.getSample(channel, i);
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
-                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, false, scSignal) * compensationGain;
+                        data[i] = vcaCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], cachedParams[4], cachedParams[5] > 0.5f, false, scSignal, hasExternalSidechain) * compensationGain;
                     }
                     break;
                 case CompressorMode::Bus:
@@ -4917,7 +5019,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                             scSignal = linkedSidechain.getSample(channel, i);
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
-                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false, scSignal) * compensationGain;
+                        data[i] = busCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], static_cast<int>(cachedParams[2]), static_cast<int>(cachedParams[3]), cachedParams[4], cachedParams[5], false, scSignal, hasExternalSidechain) * compensationGain;
                     }
                     break;
                 case CompressorMode::StudioFET:

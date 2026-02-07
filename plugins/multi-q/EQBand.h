@@ -13,7 +13,9 @@ enum class BandType
     LowShelf,        // Band 2: Low shelf with Q
     Parametric,      // Bands 3-6: Peaking EQ
     HighShelf,       // Band 7: High shelf with Q
-    LowPass          // Band 8: Variable slope LPF
+    LowPass,         // Band 8: Variable slope LPF
+    Notch,           // Bands 3-6: Narrow rejection (Q-only, no gain)
+    BandPass         // Bands 3-6: Bandpass filter (Q-only, no gain)
 };
 
 // Filter slope options for HPF/LPF (dB/octave)
@@ -257,6 +259,13 @@ namespace ParamIDs
     inline juce::String bandDynAttack(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_attack"; }
     inline juce::String bandDynRelease(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_release"; }
     inline juce::String bandDynRange(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_range"; }
+    inline juce::String bandDynRatio(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_ratio"; }
+
+    // Band shape (for parametric bands 3-6 only): 0=Peaking, 1=Notch, 2=BandPass
+    inline juce::String bandShape(int bandNum) { return "band" + juce::String(bandNum) + "_shape"; }
+
+    // Per-band channel routing: 0=Global, 1=Stereo, 2=Left, 3=Right, 4=Mid, 5=Side
+    inline juce::String bandChannelRouting(int bandNum) { return "band" + juce::String(bandNum) + "_routing"; }
 
     // Global dynamic mode parameters
     const juce::String dynDetectionMode = "dyn_detection_mode";  // 0=Peak, 1=RMS

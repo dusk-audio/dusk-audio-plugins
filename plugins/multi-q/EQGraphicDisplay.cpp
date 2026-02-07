@@ -69,6 +69,10 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
     // Draw grid (before curves so curves appear on top)
     drawGrid(g);
 
+    // Draw piano keyboard note overlay (below curves)
+    if (showPianoOverlay)
+        drawPianoOverlay(g);
+
     // Draw individual band curves (with gradient fill)
     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
     {
@@ -150,8 +154,7 @@ void EQGraphicDisplay::resized()
     // Analyzer fills the entire display area
     analyzer->setBounds(getLocalBounds().reduced(40, 20));
     analyzer->setFrequencyRange(minFrequency, maxFrequency);
-    // Use a fixed spectrum analyzer range (-80 to 0 dB) independent of EQ display scale
-    analyzer->setDisplayRange(-80.0f, 0.0f);
+    analyzer->setDisplayRange(minDisplayDB, maxDisplayDB);
 }
 
 //==============================================================================
@@ -269,6 +272,76 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
 
         g.drawText(label, 5, static_cast<int>(y - 7), 28, 14, juce::Justification::right);
     }
+}
+
+void EQGraphicDisplay::drawPianoOverlay(juce::Graphics& g)
+{
+    auto displayBounds = getDisplayBounds();
+
+    // Piano strip at the very bottom of the display area
+    float stripHeight = 16.0f;
+    float stripY = displayBounds.getBottom() - stripHeight;
+
+    // Semi-transparent background for the strip
+    g.setColour(juce::Colour(0x20000000));
+    g.fillRect(displayBounds.getX(), stripY, displayBounds.getWidth(), stripHeight);
+
+    // Note frequencies (A4 = 440 Hz, equal temperament)
+    // MIDI note 0 = C-1 = 8.176 Hz, each semitone = freq * 2^(1/12)
+    // We draw from MIDI 24 (C1 ≈ 32.7 Hz) to MIDI 108 (C8 ≈ 4186 Hz)
+    // Black key pattern: C# D# _ F# G# A# _ (relative to each octave)
+    static const bool isBlackKey[12] = {
+        false, true, false, true, false, false, true, false, true, false, true, false
+    };
+    static const char* noteNames[12] = {
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+    };
+
+    // Draw each note from MIDI 24 (C1 ≈ 32.7 Hz) to MIDI 108 (C8 ≈ 4186 Hz)
+    for (int midi = 24; midi <= 108; ++midi)
+    {
+        float freq = 440.0f * std::pow(2.0f, (midi - 69.0f) / 12.0f);
+        if (freq < minFrequency || freq > maxFrequency)
+            continue;
+
+        float x = getXForFrequency(freq);
+        if (x < displayBounds.getX() || x > displayBounds.getRight())
+            continue;
+
+        int noteInOctave = midi % 12;
+        int octave = (midi / 12) - 1;
+        bool isBlack = isBlackKey[noteInOctave];
+
+        if (noteInOctave == 0)  // C notes - draw label and tick
+        {
+            // Tick mark
+            g.setColour(juce::Colour(0x60ffffff));
+            g.drawLine(x, stripY, x, stripY + stripHeight, 1.0f);
+
+            // Label (e.g., "C4")
+            g.setColour(juce::Colour(0xCC999999));
+            g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+            juce::String label = juce::String(noteNames[noteInOctave]) + juce::String(octave);
+            g.drawText(label, static_cast<int>(x + 2), static_cast<int>(stripY + 1),
+                       24, static_cast<int>(stripHeight - 2), juce::Justification::centredLeft);
+        }
+        else if (isBlack)
+        {
+            // Black key - small dark tick
+            g.setColour(juce::Colour(0x20ffffff));
+            g.drawLine(x, stripY + stripHeight * 0.5f, x, stripY + stripHeight, 0.5f);
+        }
+        else
+        {
+            // White key (non-C) - subtle tick
+            g.setColour(juce::Colour(0x30ffffff));
+            g.drawLine(x, stripY + stripHeight * 0.3f, x, stripY + stripHeight, 0.5f);
+        }
+    }
+
+    // Thin separator line at top of piano strip
+    g.setColour(juce::Colour(0x20ffffff));
+    g.drawLine(displayBounds.getX(), stripY, displayBounds.getRight(), stripY, 0.5f);
 }
 
 void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
@@ -663,10 +736,22 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
     }
 
     // Draw filter type icon (or band number for parametric)
-    // Get the band type from default configs
+    // Get the band type, checking shape parameter for parametric bands
     BandType bandType = (bandIndex >= 0 && bandIndex < 8)
         ? DefaultBandConfigs[static_cast<size_t>(bandIndex)].type
         : BandType::Parametric;
+
+    // Override with Notch/BandPass if shape parameter says so
+    if (bandType == BandType::Parametric && bandIndex >= 2 && bandIndex <= 5)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
+        if (shapeParam)
+        {
+            int shape = static_cast<int>(shapeParam->load());
+            if (shape == 1) bandType = BandType::Notch;
+            else if (shape == 2) bandType = BandType::BandPass;
+        }
+    }
 
     g.setColour(juce::Colours::white.withAlpha((isSelected ? 1.0f : 0.9f) * opacityMult));
 
@@ -725,6 +810,34 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
             shelfPath.lineTo(cx + iconSize * 0.6f, cy + iconSize * 0.3f);
             g.strokePath(shelfPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
                                                           juce::PathStrokeType::rounded));
+            break;
+        }
+        case BandType::Notch:
+        {
+            // Notch icon: V-shaped dip (narrow rejection)
+            juce::Path notchPath;
+            float cx = point.x, cy = point.y;
+            notchPath.startNewSubPath(cx - iconSize * 0.6f, cy - iconSize * 0.3f);
+            notchPath.lineTo(cx - iconSize * 0.15f, cy - iconSize * 0.3f);
+            notchPath.lineTo(cx, cy + iconSize * 0.5f);
+            notchPath.lineTo(cx + iconSize * 0.15f, cy - iconSize * 0.3f);
+            notchPath.lineTo(cx + iconSize * 0.6f, cy - iconSize * 0.3f);
+            g.strokePath(notchPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+            break;
+        }
+        case BandType::BandPass:
+        {
+            // BandPass icon: inverted V / peak shape
+            juce::Path bpPath;
+            float cx = point.x, cy = point.y;
+            bpPath.startNewSubPath(cx - iconSize * 0.6f, cy + iconSize * 0.3f);
+            bpPath.lineTo(cx - iconSize * 0.15f, cy + iconSize * 0.3f);
+            bpPath.lineTo(cx, cy - iconSize * 0.5f);
+            bpPath.lineTo(cx + iconSize * 0.15f, cy + iconSize * 0.3f);
+            bpPath.lineTo(cx + iconSize * 0.6f, cy + iconSize * 0.3f);
+            g.strokePath(bpPath, juce::PathStrokeType(strokeWidth, juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
             break;
         }
         case BandType::Parametric:
@@ -1050,8 +1163,9 @@ void EQGraphicDisplay::setDisplayScaleMode(DisplayScaleMode mode)
             break;
     }
 
-    // Note: Analyzer uses its own fixed display range (-80 to 0 dB)
-    // independent of the EQ display scale
+    if (analyzer)
+        analyzer->setDisplayRange(minDisplayDB, maxDisplayDB);
+
     repaint();
 }
 
@@ -1133,6 +1247,14 @@ juce::Point<float> EQGraphicDisplay::getControlPointPosition(int bandIndex) cons
     if (bandIndex == 0 || bandIndex == 7)
         gain = 0.0f;
 
+    // For Notch/BandPass shapes, show at 0 dB (Q-only filters)
+    if (bandIndex >= 2 && bandIndex <= 5)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
+        if (shapeParam && static_cast<int>(shapeParam->load()) != 0)
+            gain = 0.0f;
+    }
+
     return {getXForFrequency(freq), getYForDB(gain)};
 }
 
@@ -1195,6 +1317,14 @@ void EQGraphicDisplay::setBandGain(int bandIndex, float gain)
     if (bandIndex == 0 || bandIndex == 7)
         return;  // HPF/LPF don't have gain
 
+    // Notch/BandPass shapes don't have gain
+    if (bandIndex >= 2 && bandIndex <= 5)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
+        if (shapeParam && static_cast<int>(shapeParam->load()) != 0)
+            return;
+    }
+
     gain = juce::jlimit(-24.0f, 24.0f, gain);
     if (auto* param = processor.parameters.getParameter(ParamIDs::bandGain(bandIndex + 1)))
     {
@@ -1229,12 +1359,27 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
 
     juce::PopupMenu menu;
 
-    // Band header (non-selectable)
-    menu.addSectionHeader("Band " + juce::String(bandIndex + 1) + " - " +
-                          juce::String(config.type == BandType::HighPass ? "High-Pass" :
-                                       config.type == BandType::LowPass ? "Low-Pass" :
-                                       config.type == BandType::LowShelf ? "Low Shelf" :
-                                       config.type == BandType::HighShelf ? "High Shelf" : "Parametric"));
+    // Band header (non-selectable) - check shape for parametric bands
+    juce::String bandTypeName;
+    if (config.type == BandType::HighPass) bandTypeName = "High-Pass";
+    else if (config.type == BandType::LowPass) bandTypeName = "Low-Pass";
+    else if (config.type == BandType::LowShelf) bandTypeName = "Low Shelf";
+    else if (config.type == BandType::HighShelf) bandTypeName = "High Shelf";
+    else
+    {
+        bandTypeName = "Parametric";
+        if (bandIndex >= 2 && bandIndex <= 5)
+        {
+            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
+            if (shapeParam)
+            {
+                int shape = static_cast<int>(shapeParam->load());
+                if (shape == 1) bandTypeName = "Notch";
+                else if (shape == 2) bandTypeName = "Band Pass";
+            }
+        }
+    }
+    menu.addSectionHeader("Band " + juce::String(bandIndex + 1) + " - " + bandTypeName);
 
     menu.addSeparator();
 

@@ -107,23 +107,37 @@ void PultecCurveDisplay::timerCallback()
 
     CachedParams newParams;
 
-    // Read Pultec mode parameters
+    // Frequency lookup tables (must match MultiQ::processBlock Pultec section)
+    static const float lfFreqValues[] = { 20.0f, 30.0f, 60.0f, 100.0f };
+    static const float hfBoostFreqValues[] = { 3000.0f, 4000.0f, 5000.0f, 8000.0f, 10000.0f, 12000.0f, 16000.0f };
+    static const float hfAttenFreqValues[] = { 5000.0f, 10000.0f, 20000.0f };
+
+    // Read Pultec mode parameters (freq params are indices, convert to Hz)
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfBoostGain))
         newParams.lfBoostGain = p->load();
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfBoostFreq))
-        newParams.lfBoostFreq = p->load();
+    {
+        int idx = juce::jlimit(0, 3, static_cast<int>(p->load()));
+        newParams.lfBoostFreq = lfFreqValues[idx];
+    }
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfAttenGain))
         newParams.lfAttenGain = p->load();
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfBoostGain))
         newParams.hfBoostGain = p->load();
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfBoostFreq))
-        newParams.hfBoostFreq = p->load();
+    {
+        int idx = juce::jlimit(0, 6, static_cast<int>(p->load()));
+        newParams.hfBoostFreq = hfBoostFreqValues[idx];
+    }
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfBoostBandwidth))
         newParams.hfBoostBandwidth = p->load();
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfAttenGain))
         newParams.hfAttenGain = p->load();
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecHfAttenFreq))
-        newParams.hfAttenFreq = p->load();
+    {
+        int idx = juce::jlimit(0, 2, static_cast<int>(p->load()));
+        newParams.hfAttenFreq = hfAttenFreqValues[idx];
+    }
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecTubeDrive))
         newParams.tubeDrive = p->load();
 

@@ -35,6 +35,7 @@ CLEAN_ONLY=false
 USE_FAST=false
 NUM_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 BUILD_DIR="build"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -195,16 +196,16 @@ get_plugin_target() {
 
 # Parse CMakeLists.txt to find enabled plugins
 PLUGINS=()
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ ! -f "$SCRIPT_DIR/CMakeLists.txt" ]; then
     print_error "CMakeLists.txt not found in $SCRIPT_DIR"
     exit 1
 fi
 
+PLUGIN_REGEX='add_subdirectory\(plugins/([^)]+)\)'
 while IFS= read -r line; do
     # Extract plugin directory from add_subdirectory(plugins/xxx)
-    if [[ "$line" =~ add_subdirectory\(plugins/([^)]+)\) ]]; then
+    if [[ "$line" =~ $PLUGIN_REGEX ]]; then
         plugin_dir="${BASH_REMATCH[1]}"
         target=$(get_plugin_target "$plugin_dir")
         if [[ -n "$target" ]]; then
