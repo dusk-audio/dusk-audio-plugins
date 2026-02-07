@@ -1,5 +1,4 @@
 # SilkVerb - Algorithmic Reverb Plugin
-# GPL-3.0 License - Luna Co. Audio
 
 cmake_minimum_required(VERSION 3.22)
 
