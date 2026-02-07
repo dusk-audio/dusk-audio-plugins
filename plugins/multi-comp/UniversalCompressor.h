@@ -172,7 +172,7 @@ private:
     std::atomic<float> outputMeter{-60.0f};
     std::atomic<float> grMeter{0.0f};
     std::atomic<float> sidechainMeter{-60.0f};  // Sidechain activity level
-    std::atomic<bool> externalSidechainActive{false};  // True when host has enabled sidechain bus
+    std::atomic<bool> externalSidechainActive{false};  // True when external sidechain is active
 
     // Per-channel metering for stereo display
     std::atomic<float> inputMeterL{-60.0f};
