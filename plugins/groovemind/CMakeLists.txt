@@ -31,7 +31,7 @@ juce_add_plugin(${PLUGIN_NAME}
     PRODUCT_NAME "GrooveMind"
 
     # Copy plugin after build
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    COPY_PLUGIN_AFTER_BUILD ${LUNA_COPY_AFTER_BUILD}
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
 )
