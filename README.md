@@ -157,7 +157,7 @@ Reusable analog hardware emulation components:
 
 ## License
 
-See individual plugin directories for licensing information.
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ---
 *Luna Co. Audio*
