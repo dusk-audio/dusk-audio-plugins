@@ -117,8 +117,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     addAndMakeVisible(analogNoiseButton.get());
     addAndMakeVisible(oversamplingSelector.get());
     addAndMakeVisible(sidechainHpSlider.get());
-    // Sidechain enable is auto-detected from bus state — keep button hidden for backward compat
-    addChildComponent(sidechainEnableButton.get());
+    addAndMakeVisible(sidechainEnableButton.get());
     // SC Listen is useful for monitoring the detection signal
     addAndMakeVisible(sidechainListenButton.get());
     addChildComponent(lookaheadSlider.get());
@@ -1040,16 +1039,16 @@ void EnhancedCompressorEditor::resized()
     auto headerRow = bounds.removeFromTop(60 * scaleFactor).withTrimmedTop(35 * scaleFactor);
     headerRow.reduce(20 * scaleFactor, 2 * scaleFactor);
 
-    const int gap = static_cast<int>(10 * scaleFactor);
+    const int gap = static_cast<int>(6 * scaleFactor);
     const int controlHeight = static_cast<int>(22 * scaleFactor);
 
-    // Control widths
+    // Control widths (compact to fit Ext SC + SC Listen without overflow)
     const int modeSelectorWidth = static_cast<int>(115 * scaleFactor);  // "Bus Compressor"
-    const int toggleWidth = static_cast<int>(65 * scaleFactor);         // "Bypass" button
-    const int autoGainWidth = static_cast<int>(80 * scaleFactor);       // "Auto Gain" button
-    const int analogNoiseWidth = static_cast<int>(95 * scaleFactor);    // "Analog Noise" button
-    const int modeToggleWidth = static_cast<int>(70 * scaleFactor);     // "Limit" / "Over Easy"
-    const int osLabelWidth = static_cast<int>(100 * scaleFactor);       // "Oversampling" label
+    const int toggleWidth = static_cast<int>(60 * scaleFactor);         // "Bypass" button
+    const int autoGainWidth = static_cast<int>(73 * scaleFactor);       // "Auto Gain" button
+    const int analogNoiseWidth = static_cast<int>(88 * scaleFactor);    // "Analog Noise" button
+    const int modeToggleWidth = static_cast<int>(60 * scaleFactor);     // "Limit" / "Over Easy"
+    const int osLabelWidth = static_cast<int>(85 * scaleFactor);        // "Oversampling" label
     const int osWidth = static_cast<int>(55 * scaleFactor);             // Dropdown for "2x"/"4x"
 
     // LEFT: Mode selector dropdown (aligned with INPUT label)
@@ -1075,12 +1074,14 @@ void EnhancedCompressorEditor::resized()
     bool isAnalogMode = (currentMode != 6 && currentMode != 7);
     bool showModeToggle = (currentMode == 0 || currentMode == 2);  // Limit for Opto, OverEasy for VCA
 
-    int scListenWidth = static_cast<int>(70 * scaleFactor);
+    int extScWidth = static_cast<int>(55 * scaleFactor);
+    int scListenWidth = static_cast<int>(68 * scaleFactor);
     int centerControlsWidth = toggleWidth + gap + autoGainWidth;  // Bypass + Auto Gain
     if (isAnalogMode)
         centerControlsWidth += gap + analogNoiseWidth;  // + Analog Noise
     if (showModeToggle)
         centerControlsWidth += gap + modeToggleWidth;  // + Limit/OverEasy
+    centerControlsWidth += gap + extScWidth;  // + Ext SC
     centerControlsWidth += gap + scListenWidth;  // + SC Listen
 
     int centerStartX = headerRow.getX() + (headerRow.getWidth() - centerControlsWidth) / 2;
@@ -1127,16 +1128,19 @@ void EnhancedCompressorEditor::resized()
     if (showModeToggle)
         centerStartX += modeToggleWidth + gap;
 
+    // Ext SC enable button
+    if (sidechainEnableButton)
+    {
+        sidechainEnableButton->setBounds(centerStartX, centerY, extScWidth, controlHeight);
+        centerStartX += extScWidth + gap;
+    }
+
     // SC Listen button
     if (sidechainListenButton)
     {
         sidechainListenButton->setBounds(centerStartX, centerY, scListenWidth, controlHeight);
         centerStartX += scListenWidth + gap;
     }
-
-    // Ext SC enable is auto-detected — keep button hidden
-    if (sidechainEnableButton)
-        sidechainEnableButton->setVisible(false);
 
     // Hide unused controls (sidechain enable/listen are now shown in header)
     if (lookaheadSlider)
@@ -1429,6 +1433,14 @@ void EnhancedCompressorEditor::updateMeters()
     if (extScActive != lastExternalSidechainState)
     {
         lastExternalSidechainState = extScActive;
+
+        // Gray out Auto Gain when external SC is active (auto-gain would counteract ducking)
+        if (autoGainButton)
+        {
+            autoGainButton->setEnabled(!extScActive);
+            autoGainButton->setAlpha(extScActive ? 0.4f : 1.0f);
+        }
+
         repaint();
     }
 

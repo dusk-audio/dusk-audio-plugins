@@ -100,7 +100,8 @@ namespace PatreonCredits
     // Supporter Tier ($5/month)
     // Development updates, name in credits
     inline const std::vector<juce::String> supporters = {
-        "Stefan Windus",  // First Patreon supporter!
+        "Stefan Windus",
+        "SC",
     };
 
     //==========================================================================
@@ -172,33 +173,33 @@ namespace PatreonCredits
 
         if (!platinumBackers.empty())
         {
-            result += "PLATINUM SUPPORTERS\n";
+            result += "PLATINUM SUPPORTERS\n\n";
             for (const auto& name : platinumBackers)
-                result += "  " + name + "\n";
+                result += name + "\n";
             result += "\n";
         }
 
         if (!goldBackers.empty())
         {
-            result += "GOLD SUPPORTERS\n";
+            result += "GOLD SUPPORTERS\n\n";
             for (const auto& name : goldBackers)
-                result += "  " + name + "\n";
+                result += name + "\n";
             result += "\n";
         }
 
         if (!silverBackers.empty())
         {
-            result += "SILVER SUPPORTERS\n";
+            result += "SILVER SUPPORTERS\n\n";
             for (const auto& name : silverBackers)
-                result += "  " + name + "\n";
+                result += name + "\n";
             result += "\n";
         }
 
         if (!supporters.empty())
         {
-            result += "SUPPORTERS\n";
+            result += "SUPPORTERS\n\n";
             for (const auto& name : supporters)
-                result += "  " + name + "\n";
+                result += name + "\n";
         }
 
         if (result.isEmpty())

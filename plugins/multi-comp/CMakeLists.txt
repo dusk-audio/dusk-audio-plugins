@@ -68,7 +68,7 @@ juce_generate_juce_header(MultiComp)
 # Add source files
 target_sources(MultiComp
     PRIVATE
-        UniversalCompressor.cpp
+        multicomp.cpp
         AnalogLookAndFeel.cpp
         EnhancedCompressorEditor.cpp
         ../shared/LEDMeter.cpp
@@ -166,7 +166,7 @@ if(BUILD_MULTI_COMP_TESTS)
     add_executable(MultiCompTests
         TestRunner.cpp
         UniversalCompressorTests.cpp
-        UniversalCompressor.cpp
+        multicomp.cpp
         AnalogLookAndFeel.cpp
         EnhancedCompressorEditor.cpp
         ../shared/LEDMeter.cpp
