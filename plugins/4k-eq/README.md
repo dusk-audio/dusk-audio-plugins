@@ -215,11 +215,10 @@ cmake --build . --target FourKEQ_All -j8
 - Real-time spectrum analyzer
 - 10 factory presets
 
-## Credits & License
+## Credits
 
 **Developed by**: Luna Co. Audio
 **Framework**: JUCE 7+ (GPL/Commercial dual-license)
-**License**: GPL-2.0 (plugin code) + JUCE license
 
 **Disclaimer**: This is an independent emulation inspired by classic British console EQs. This project is not affiliated with or endorsed by any hardware manufacturer.
 
