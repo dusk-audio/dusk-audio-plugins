@@ -4145,9 +4145,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
     }
 
-    // Read auto-makeup state early - needed for parameter caching
+    // Read auto-makeup and sidechain state early - needed for parameter caching
     auto* autoMakeupParamEarly = parameters.getRawParameterValue("auto_makeup");
-    bool autoMakeup = (autoMakeupParamEarly != nullptr) ? (autoMakeupParamEarly->load() > 0.5f) : false;
+    bool autoMakeupRaw = (autoMakeupParamEarly != nullptr) ? (autoMakeupParamEarly->load() > 0.5f) : false;
+    auto* sidechainEnableParamEarly = parameters.getRawParameterValue("sidechain_enable");
+    bool extScEnabled = (sidechainEnableParamEarly != nullptr) ? (sidechainEnableParamEarly->load() > 0.5f) : false;
+    // Disable auto-gain when external sidechain is active — auto-gain would counteract the ducking effect
+    bool autoMakeup = autoMakeupRaw && !extScEnabled;
 
     // Cache parameters based on mode to avoid repeated lookups
     float cachedParams[10] = {0.0f}; // Max 10 params (Digital mode has the most)
@@ -4391,8 +4395,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     auto* distortionAmountParam = parameters.getRawParameterValue("distortion_amount");
     auto* globalLookaheadParam = parameters.getRawParameterValue("global_lookahead");
     auto* globalSidechainListenParam = parameters.getRawParameterValue("global_sidechain_listen");
-    // sidechain_enable parameter kept in APVTS for backward compat but no longer read here
-    // (external sidechain is auto-detected from bus state below)
+    auto* sidechainEnableParam = parameters.getRawParameterValue("sidechain_enable");
+    bool useExternalSidechain = (sidechainEnableParam != nullptr) ? (sidechainEnableParam->load() > 0.5f) : false;
     auto* stereoLinkModeParam = parameters.getRawParameterValue("stereo_link_mode");
     auto* oversamplingParam = parameters.getRawParameterValue("oversampling");
     auto* scLowFreqParam = parameters.getRawParameterValue("sc_low_freq");
@@ -4405,8 +4409,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     float distAmount = (distortionAmountParam != nullptr) ? (distortionAmountParam->load() / 100.0f) : 0.0f;
     float globalLookaheadMs = (globalLookaheadParam != nullptr) ? globalLookaheadParam->load() : 0.0f;
     bool globalSidechainListen = (globalSidechainListenParam != nullptr) ? (globalSidechainListenParam->load() > 0.5f) : false;
-    // External sidechain is auto-detected from bus state (industry standard)
-    // No manual toggle needed — when the host routes a track to the SC bus, it enables automatically
+    // External sidechain auto-detected from signal on the bus (see below)
     int stereoLinkMode = (stereoLinkModeParam != nullptr) ? static_cast<int>(stereoLinkModeParam->load()) : 0;
     int oversamplingFactor = (oversamplingParam != nullptr) ? static_cast<int>(oversamplingParam->load()) : 0;
 
@@ -4442,9 +4445,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         sidechainEQ->setHighShelf(scHighFreq, scHighGain);
     }
 
-    // Auto-detect external sidechain from bus state
-    auto sidechainBus = getBus(true, 1);  // Input bus 1 = sidechain
-    bool hasExternalSidechain = sidechainBus != nullptr && sidechainBus->isEnabled();
+    // External sidechain controlled by user toggle only.
+    // Bus-state (isEnabled()) is unreliable across formats: LV2 always reports true,
+    // VST3 may report false depending on host. The getBusBuffer channel check below
+    // safely falls back to main input if the host hasn't actually routed audio.
+    bool hasExternalSidechain = useExternalSidechain;
+
     externalSidechainActive.store(hasExternalSidechain, std::memory_order_relaxed);
 
     // Ensure pre-allocated buffers are sized correctly
