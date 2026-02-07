@@ -577,7 +577,7 @@ void MultiQEditor::paint(juce::Graphics& g)
         int totalContentHeight = row1Height + row2Height + row3Height;
         int availableHeight = getHeight() - headerHeight - bottomMargin;
         int extraSpace = availableHeight - totalContentHeight;
-        int rowGap = extraSpace / 4;
+        int rowGap = juce::jmax(5, extraSpace / 4);
 
         int row1Y = headerHeight + rowGap;
         int row2Y = row1Y + row1Height + rowGap;
@@ -1001,17 +1001,26 @@ void MultiQEditor::resized()
         int masterStart = hfEnd;
         int masterEnd = contentRight;
 
-        // Knob sizes and row spacing (larger knobs like 4K-EQ)
+        // Knob sizes and dynamic row spacing (adapts to actual window height)
         int knobSize = 75;  // Larger knobs
-        int knobRowHeight = 125;  // More space between rows
         int sectionLabelHeight = 30;
         int knobLabelHeight = 18;
         int knobLabelOffset = knobSize / 2 + 40;  // Position label below knob
-        int labelY = contentTop + 5;
-        int row1Y = contentTop + sectionLabelHeight + 25;
-        int row2Y = row1Y + knobRowHeight;
-        int row3Y = row2Y + knobRowHeight;
         int btnHeight = 25;
+        int bottomMargin = 30;
+
+        // Per-row visual height: from knob top to label bottom
+        int rowVisualHeight = knobLabelOffset + knobLabelHeight;  // 95
+        int totalContentHeight = sectionLabelHeight + 3 * rowVisualHeight;
+        int availableHeight = getHeight() - contentTop - bottomMargin;
+        int extraSpace = availableHeight - totalContentHeight;
+        int rowGap = juce::jmax(5, extraSpace / 4);
+
+        int labelY = contentTop + 5;
+        int row1Y = contentTop + sectionLabelHeight + rowGap;
+        int row2Y = row1Y + rowVisualHeight + rowGap;
+        int row3Y = row2Y + rowVisualHeight + rowGap;
+
 
         // Helper to center a knob in a section
         auto centerKnobInSection = [&](juce::Slider& slider, int sectionStart, int sectionEnd, int y) {
@@ -2939,7 +2948,7 @@ void MultiQEditor::layoutPultecControls()
     int totalContentHeight = row1Height + row2Height + row3Height;
     int availableHeight = bounds.getHeight() - headerHeight - bottomMargin;
     int extraSpace = availableHeight - totalContentHeight;
-    int rowGap = extraSpace / 4;  // Distribute extra space
+    int rowGap = juce::jmax(5, extraSpace / 4);  // Distribute extra space (min 5px if host constrains window)
 
     // ============== ROW 1: MAIN GAIN CONTROLS (4 knobs) ==============
     int row1Y = headerHeight + rowGap;
