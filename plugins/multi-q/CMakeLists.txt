@@ -102,7 +102,8 @@ target_link_libraries(MultiQ
         juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
+        # Note: juce_recommended_lto_flags removed - causes Windows CI builds to hang
+        # during vst3_helper moduleinfo.json generation (25+ min with no output)
         juce::juce_recommended_warning_flags
 )
 
