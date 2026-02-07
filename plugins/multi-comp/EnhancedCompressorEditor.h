@@ -81,6 +81,7 @@ private:
     std::unique_ptr<juce::Slider> scHighFreqSlider;
     std::unique_ptr<juce::Slider> scHighGainSlider;
     bool scEqVisible = false;  // SC EQ collapsed by default
+    bool lastExternalSidechainState = false;  // For repaint on SC state change
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment;
