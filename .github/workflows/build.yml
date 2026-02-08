@@ -201,18 +201,20 @@ jobs:
             mesa-common-dev
 
       - name: Configure CMake
-        env:
-          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
+          if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
+            export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
+          fi
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DLUNA_COPY_AFTER_BUILD=OFF \
             -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
-        env:
-          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
+          if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
+            export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
+          fi
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
             echo "Building specific target: $TARGET"
@@ -318,18 +320,20 @@ jobs:
           ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
       - name: Configure CMake
-        env:
-          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
+          if ("${{ needs.setup.outputs.plugin_version }}") {
+            $env:PLUGIN_VERSION_OVERRIDE = "${{ needs.setup.outputs.plugin_version }}"
+          }
           cmake -B build `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DLUNA_COPY_AFTER_BUILD=OFF `
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
       - name: Build plugins
-        env:
-          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
+          if ("${{ needs.setup.outputs.plugin_version }}") {
+            $env:PLUGIN_VERSION_OVERRIDE = "${{ needs.setup.outputs.plugin_version }}"
+          }
           $target = "${{ needs.setup.outputs.plugin_target }}"
           if ($target) {
             Write-Host "Building specific target: $target"
@@ -420,9 +424,10 @@ jobs:
           ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
       - name: Configure CMake (Universal Binary)
-        env:
-          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
+          if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
+            export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
+          fi
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DLUNA_COPY_AFTER_BUILD=OFF \
@@ -431,9 +436,10 @@ jobs:
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
       - name: Build plugins
-        env:
-          PLUGIN_VERSION_OVERRIDE: ${{ needs.setup.outputs.plugin_version }}
         run: |
+          if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
+            export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
+          fi
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
             echo "Building specific target: $TARGET"
