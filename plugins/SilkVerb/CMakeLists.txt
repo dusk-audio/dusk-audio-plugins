@@ -16,7 +16,7 @@ juce_add_plugin(${PLUGIN_NAME}
     FORMATS VST3 LV2 Standalone
     PRODUCT_NAME "${PLUGIN_NAME}"
     PLUGIN_NAME "${PLUGIN_NAME}"
-    DESCRIPTION "Algorithmic Reverb with Plate, Room, Hall modes"
+    DESCRIPTION "Algorithmic Reverb with Plate, Room, Hall, Chamber, Cathedral, Ambience modes"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -25,6 +25,7 @@ juce_add_plugin(${PLUGIN_NAME}
     VST3_CATEGORIES "Fx" "Reverb"
     LV2URI "https://lunaco.audio/plugins/silkverb"
     COPY_PLUGIN_AFTER_BUILD ${LUNA_COPY_AFTER_BUILD}
+    VST3_AUTO_MANIFEST FALSE
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
 )
@@ -36,6 +37,8 @@ target_sources(${PLUGIN_NAME}
         Source/PluginEditor.cpp
         Source/PluginEditor.h
         Source/FDNReverb.h
+        Source/SilkVerbPresets.h
+        ../shared/LEDMeter.cpp
 )
 
 target_include_directories(${PLUGIN_NAME}

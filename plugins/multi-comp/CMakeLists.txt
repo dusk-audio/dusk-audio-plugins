@@ -60,6 +60,7 @@ juce_add_plugin(MultiComp
     PRODUCT_NAME "Multi-Comp"
     DESCRIPTION "Multi-mode compressor with Opto, FET, VCA, Bus emulations and 4-band multiband compression"
     VST3_CAN_REPLACE_VST2 TRUE
+    VST3_AUTO_MANIFEST FALSE
 )
 
 # Generate JuceHeader.h
