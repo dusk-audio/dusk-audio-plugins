@@ -150,12 +150,19 @@ git tag -a <slug>-v<version> --cleanup=verbatim -F /tmp/tag_message.txt
 
 ### Step 7: Push Everything
 
+**CRITICAL: Push tags ONE AT A TIME.** GitHub Actions silently drops ALL push events when more than 3 tags are pushed in a single `git push` command. This causes CI builds to never trigger, resulting in broken releases.
+
 ```bash
 # Push plugins repo commits
 git push origin <current-branch>
 
-# Push all new tags
-git push origin <tag1> <tag2> ...
+# Push tags ONE AT A TIME with a delay between each
+# (GitHub silently drops all events when >3 tags are pushed at once)
+git push origin <tag1>
+sleep 2
+git push origin <tag2>
+sleep 2
+# ... repeat for each additional tag
 
 # Push website repo
 cd ~/projects/lunacoaudio.github.io
@@ -184,3 +191,4 @@ Monitor: gh run list --limit 5
 - **Tag already exists**: Warn user and skip (don't overwrite existing tags)
 - **No changes to commit**: Skip the commit step, still create tags if versions changed
 - **Build failures after push**: Use `gh run view <id> --log-failed` to diagnose
+- **Partial tag push failure**: If a tag push fails midway through a batch, report which tags were pushed successfully and which failed. Retry the failed pushes individually. Tags are idempotent — re-pushing an already-pushed tag is a no-op, so it's safe to retry all remaining tags.
