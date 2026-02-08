@@ -33,7 +33,8 @@ juce_add_plugin(TapeMachine
     FORMATS AU VST3 LV2 Standalone
     PRODUCT_NAME "TapeMachine"
     LV2URI "https://lunaco.audio/plugins/tapemachine"
-    VST3_CAN_REPLACE_VST2 TRUE)
+    VST3_CAN_REPLACE_VST2 TRUE
+    VST3_AUTO_MANIFEST FALSE)
 
 # Generate JUCE header
 juce_generate_juce_header(TapeMachine)
