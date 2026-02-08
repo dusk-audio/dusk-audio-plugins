@@ -17,7 +17,9 @@
 #   OUTPUT_VAR  - Variable to store the extracted version
 function(get_plugin_version PLUGIN_SLUG OUTPUT_VAR)
     # Priority 1: Check for version override from CI (most reliable for releases)
-    if(DEFINED ENV{PLUGIN_VERSION_OVERRIDE})
+    # Note: AND NOT STREQUAL "" guard prevents empty env vars (e.g. from workflow_dispatch)
+    # from short-circuiting the git tag detection in Priority 2
+    if(DEFINED ENV{PLUGIN_VERSION_OVERRIDE} AND NOT "$ENV{PLUGIN_VERSION_OVERRIDE}" STREQUAL "")
         set(${OUTPUT_VAR} $ENV{PLUGIN_VERSION_OVERRIDE} PARENT_SCOPE)
         message(STATUS "${PLUGIN_SLUG}: Using CI version override: $ENV{PLUGIN_VERSION_OVERRIDE}")
         return()
