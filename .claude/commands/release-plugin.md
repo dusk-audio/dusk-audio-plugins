@@ -116,21 +116,19 @@ If the plugin has `status: in-dev` and is being released for the first time, als
 **Plugins repo** - Stage and commit all changed CMakeLists.txt files:
 ```bash
 git add plugins/*/CMakeLists.txt
-git commit -m "<summary of version bumps>
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+git commit -m "<summary of version bumps>"
 ```
 
 For single plugin: `"4K EQ v1.0.8: <one-line changelog summary>"`
 For batch: `"Bump versions: 4K EQ v1.0.8, Multi-Comp v1.2.3, ..."`
 
+**Do NOT add Co-Authored-By trailers** — they pollute changelogs and release notes.
+
 **Website repo**:
 ```bash
 cd ~/projects/lunacoaudio.github.io
 git add _data/plugins.yml _plugins/*.md
-git commit -m "Update <plugin(s)> to v<version>
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+git commit -m "Update <plugin(s)> to v<version>"
 ```
 
 ### Step 6: Create Tags
