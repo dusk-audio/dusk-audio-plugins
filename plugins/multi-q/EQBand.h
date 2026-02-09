@@ -26,8 +26,52 @@ enum class FilterSlope
     Slope18dB,      // 3rd order
     Slope24dB,      // 4th order
     Slope36dB,      // 6th order
-    Slope48dB       // 8th order
+    Slope48dB,      // 8th order
+    Slope72dB,      // 12th order
+    Slope96dB       // 16th order
 };
+
+// Butterworth Q values for cascaded 2nd-order stages
+// Each array contains the Q per stage for the even-order portion of the filter
+// Odd-order filters (6, 18 dB/oct) use a 1st-order stage + these values
+namespace ButterworthQ
+{
+    // Q values for cascaded Butterworth stages (standard pole placement)
+    constexpr float order2[] = { 0.7071f };                                          // 12 dB/oct
+    constexpr float order4[] = { 0.5412f, 1.3066f };                                 // 24 dB/oct
+    constexpr float order6[] = { 0.5176f, 0.7071f, 1.9319f };                        // 36 dB/oct
+    constexpr float order8[] = { 0.5098f, 0.6013f, 0.9000f, 2.5629f };               // 48 dB/oct
+    constexpr float order12[] = { 0.5024f, 0.5412f, 0.6313f, 0.7071f, 1.0000f, 1.9319f }; // 72 dB/oct
+    constexpr float order16[] = { 0.5006f, 0.5176f, 0.5612f, 0.6013f, 0.7071f, 0.9000f, 1.3066f, 2.5629f }; // 96 dB/oct
+
+    // Get Butterworth Q for a given stage within a cascaded filter
+    // Returns the ideal Q for maximally-flat passband response
+    // userQ scales the result: 0.707 = flat Butterworth, higher = resonant peak
+    inline float getStageQ(int totalSecondOrderStages, int stageIndex, float userQ)
+    {
+        const float* qValues = nullptr;
+        switch (totalSecondOrderStages)
+        {
+            case 1: qValues = order2; break;
+            case 2: qValues = order4; break;
+            case 3: qValues = order6; break;
+            case 4: qValues = order8; break;
+            case 6: qValues = order12; break;
+            case 8: qValues = order16; break;
+            default: return userQ;  // Fallback for unexpected values
+        }
+
+        if (stageIndex < 0 || stageIndex >= totalSecondOrderStages)
+            return userQ;
+
+        // Scale Butterworth Q by user's Q relative to the default (0.7071)
+        // When userQ == 0.7071, returns the exact Butterworth Q (maximally flat)
+        // When userQ > 0.7071, adds resonance proportionally
+        float butterworthQ = qValues[stageIndex];
+        float qScale = userQ / 0.7071f;
+        return butterworthQ * qScale;
+    }
+}
 
 // Q-Coupling mode for automatic Q adjustment based on gain
 enum class QCoupleMode
