@@ -22,7 +22,9 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <random>
 
 class SSLSaturation
@@ -34,22 +36,22 @@ public:
         GSeries     // G-Series (Black knobs) - cleaner, more 3rd harmonic
     };
 
-    SSLSaturation()
+    // Constructor with optional seed for reproducible tests
+    // Default uses instance address for unique per-instance noise
+    explicit SSLSaturation(unsigned int seed = 0)
     {
-        // Initialize component tolerance variation (±5% per instance)
-        // This simulates real hardware where resistors/capacitors have tolerances
-        // Each plugin instance gets unique "hardware" characteristics
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
+        // Fixed component tolerance values (deterministic for reproducible results)
+        // Simulates typical vintage hardware with slight component variation
+        transformerTolerance = 1.02f;
+        opAmpTolerance = 0.97f;
+        outputTransformerTolerance = 1.01f;
 
-        // Different tolerances for different circuit stages
-        transformerTolerance = 1.0f + dist(gen);     // Input transformer variation
-        opAmpTolerance = 1.0f + dist(gen);           // Op-amp gain variation
-        outputTransformerTolerance = 1.0f + dist(gen); // Output transformer variation
-
-        // Initialize noise generator seed
-        noiseGen = std::mt19937(rd());
+        // Initialize noise generator with unique seed per instance
+        // If seed is 0, derive from instance address for unique noise across instances
+        // Non-zero seeds allow reproducible results for testing
+        unsigned int actualSeed = (seed != 0) ? seed
+            : static_cast<unsigned int>(reinterpret_cast<std::uintptr_t>(this) ^ instanceCounter++);
+        noiseGen = std::mt19937(actualSeed);
         noiseDist = std::uniform_real_distribution<float>(-1.0f, 1.0f);
     }
 
@@ -154,6 +156,9 @@ public:
     }
 
 private:
+    // Static counter for unique instance seeding
+    static inline std::atomic<unsigned int> instanceCounter{0};
+
     ConsoleType consoleType = ConsoleType::ESeries;
     double sampleRate = 44100.0;
 

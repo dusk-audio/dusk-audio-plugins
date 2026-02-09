@@ -107,6 +107,27 @@ void BritishEQCurveDisplay::paint(juce::Graphics& g)
 
     // Restore graphics state
     g.restoreState();
+
+    // Frozen spectrum indicator
+    if (isSpectrumFrozen())
+    {
+        juce::String frozenText = "FROZEN (F)";
+        auto font = juce::FontOptions(11.0f, juce::Font::bold);
+        g.setFont(font);
+        float textWidth = g.getCurrentFont().getStringWidth(frozenText) + 12.0f;
+        float textHeight = 18.0f;
+        float badgeX = graphArea.getX() + 6.0f;
+        float badgeY = graphArea.getY() + 6.0f;
+
+        juce::Rectangle<float> badgeRect(badgeX, badgeY, textWidth, textHeight);
+        g.setColour(juce::Colour(0xCC2e1a1a));
+        g.fillRoundedRectangle(badgeRect, 4.0f);
+        g.setColour(juce::Colour(0x6000ccff));
+        g.drawRoundedRectangle(badgeRect, 4.0f, 1.0f);
+
+        g.setColour(juce::Colour(0xDD00ccff));
+        g.drawText(frozenText, badgeRect, juce::Justification::centred);
+    }
 }
 
 void BritishEQCurveDisplay::resized()

@@ -115,8 +115,8 @@ MultiQ::MultiQ()
         bandDynRangeParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynRange(i + 1));
         bandDynRatioParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandDynRatio(i + 1));
 
-        // Shape parameter only exists for parametric bands 3-6 (indices 2-5)
-        if (i >= 2 && i <= 5)
+        // Shape parameter exists for bands 2-7 (indices 1-6)
+        if (i >= 1 && i <= 6)
             bandShapeParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandShape(i + 1));
 
         // Per-band channel routing
@@ -361,6 +361,32 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     inputRmsSum = 0.0f;
     outputRmsSum = 0.0f;
     rmsSampleCount = 0;
+
+    // Initialize bypass crossfade (~5ms)
+    bypassSmoothed.reset(sampleRate, 0.005);
+    bypassSmoothed.setCurrentAndTargetValue(safeGetParam(bypassParam, 0.0f) > 0.5f ? 1.0f : 0.0f);
+    dryBuffer.setSize(2, samplesPerBlock, false, false, true);
+
+    // Initialize per-band enable smoothing (~3ms)
+    for (int i = 0; i < NUM_BANDS; ++i)
+    {
+        bandEnableSmoothed[static_cast<size_t>(i)].reset(sampleRate, 0.003);
+        float enabled = safeGetParam(bandEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f ? 1.0f : 0.0f;
+        bandEnableSmoothed[static_cast<size_t>(i)].setCurrentAndTargetValue(enabled);
+    }
+
+    // Initialize EQ type crossfade (~10ms)
+    eqTypeCrossfade.reset(sampleRate, 0.01);
+    eqTypeCrossfade.setCurrentAndTargetValue(1.0f);
+    previousEQType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
+    eqTypeChanging = false;
+    prevTypeBuffer.setSize(2, samplesPerBlock, false, false, true);
+
+    // Initialize oversampling crossfade (~5ms)
+    osCrossfade.reset(sampleRate, 0.005);
+    osCrossfade.setCurrentAndTargetValue(1.0f);
+    osChanging = false;
+    prevOsBuffer.setSize(2, samplesPerBlock, false, false, true);
 }
 
 void MultiQ::releaseResources()
@@ -399,14 +425,28 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // Check bypass
-    if (safeGetParam(bypassParam, 0.0f) > 0.5f)
+    // Bypass with smooth crossfade (no clicks)
+    bool bypassed = safeGetParam(bypassParam, 0.0f) > 0.5f;
+    bypassSmoothed.setTargetValue(bypassed ? 1.0f : 0.0f);
+
+    // If fully bypassed and not transitioning, skip all processing
+    if (bypassed && !bypassSmoothed.isSmoothing())
         return;
+
+    // Save dry input for bypass crossfade (before any processing modifies the buffer)
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        dryBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
 
     // Check if oversampling mode changed - handle without calling prepareToPlay() for real-time safety
     int newOsMode = static_cast<int>(safeGetParam(hqEnabledParam, 0.0f));
     if (newOsMode != oversamplingMode)
     {
+        // prevOsBuffer already contains last processed output (saved at end of previous block)
+        // Start crossfade from old processed output to new processed output
+        osChanging = true;
+        osCrossfade.setCurrentAndTargetValue(0.0f);
+        osCrossfade.setTargetValue(1.0f);
+
         oversamplingMode = newOsMode;
         int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
         // Update sample rate for filter coefficient calculations
@@ -425,6 +465,17 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
     // Check EQ type (Digital, British, or Tube)
     auto eqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
+
+    // Detect EQ type change and start crossfade
+    if (eqType != previousEQType)
+    {
+        // prevTypeBuffer already contains last processed output (saved at end of previous block)
+        // Start crossfade from old EQ type's output to new EQ type's output
+        eqTypeChanging = true;
+        eqTypeCrossfade.setCurrentAndTargetValue(0.0f);
+        eqTypeCrossfade.setTargetValue(1.0f);
+        previousEQType = eqType;
+    }
 
     // Update filters if needed (for Digital mode with optional dynamics)
     if (eqType == EQType::Digital && filtersNeedUpdate.exchange(false))
@@ -676,7 +727,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         // Check if linear phase mode is enabled
         useLinearPhase = safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f;
 
-        // Check which bands are enabled
+        // Check which bands are enabled and update smooth crossfade targets
         std::array<bool, NUM_BANDS> bandEnabled{};
         std::array<bool, NUM_BANDS> bandDynEnabled{};
         for (int i = 0; i < NUM_BANDS; ++i)
@@ -696,6 +747,10 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             }
         }
 
+        // Update per-band enable smoothing targets
+        for (int i = 0; i < NUM_BANDS; ++i)
+            bandEnableSmoothed[static_cast<size_t>(i)].setTargetValue(bandEnabled[static_cast<size_t>(i)] ? 1.0f : 0.0f);
+
         if (useLinearPhase)
         {
             // Linear Phase mode: Use FIR-based processing (no per-band dynamics)
@@ -704,6 +759,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             // Gather EQ parameters for the linear phase processor
             std::array<float, NUM_BANDS> lpFreqs{}, lpGains{}, lpQs{};
             std::array<int, 2> lpSlopes{};
+            std::array<int, NUM_BANDS> lpShapes{};
 
             for (int i = 0; i < NUM_BANDS; ++i)
             {
@@ -711,6 +767,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                     DefaultBandConfigs[static_cast<size_t>(i)].defaultFreq);
                 lpGains[static_cast<size_t>(i)] = safeGetParam(bandGainParams[static_cast<size_t>(i)], 0.0f);
                 lpQs[static_cast<size_t>(i)] = safeGetParam(bandQParams[static_cast<size_t>(i)], 0.71f);
+                if (bandShapeParams[static_cast<size_t>(i)])
+                    lpShapes[static_cast<size_t>(i)] = static_cast<int>(bandShapeParams[static_cast<size_t>(i)]->load());
             }
             lpSlopes[0] = static_cast<int>(safeGetParam(bandSlopeParams[0], 0.0f));
             lpSlopes[1] = static_cast<int>(safeGetParam(bandSlopeParams[1], 0.0f));
@@ -724,7 +782,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             {
                 for (auto& proc : linearPhaseEQ)
                 {
-                    proc.updateImpulseResponse(bandEnabled, lpFreqs, lpGains, lpQs, lpSlopes, lpMasterGain);
+                    proc.updateImpulseResponse(bandEnabled, lpFreqs, lpGains, lpQs, lpSlopes, lpMasterGain, lpShapes);
                 }
             }
 
@@ -810,15 +868,36 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                     }
                 };
 
+                // Per-band processing with smooth enable/disable crossfade
+                // Helper: apply band filter with smooth enable blending
+                auto applyBandWithSmoothing = [&](int bandIdx, const auto& applyFn) {
+                    auto& smooth = bandEnableSmoothed[static_cast<size_t>(bandIdx)];
+                    bool active = bandEnabled[static_cast<size_t>(bandIdx)] || smooth.isSmoothing();
+                    if (!active) return;
+
+                    float enableGain = smooth.getNextValue();
+                    if (enableGain < 0.001f) return;  // Fully faded out
+
+                    float prevL = sampleL, prevR = sampleR;
+                    applyFn();
+
+                    // Blend between dry (pre-filter) and wet (post-filter)
+                    if (enableGain < 0.999f)
+                    {
+                        sampleL = prevL + enableGain * (sampleL - prevL);
+                        sampleR = prevR + enableGain * (sampleR - prevR);
+                    }
+                };
+
                 // Band 1: HPF (no dynamics for filters)
-                if (bandEnabled[0])
+                applyBandWithSmoothing(0, [&]() {
                     applyFilterWithRouting(hpfFilter, effectiveRouting[0]);
+                });
 
                 // Bands 2-7: Shelf and Parametric with optional dynamics
                 for (int band = 1; band < 7; ++band)
                 {
-                    if (bandEnabled[static_cast<size_t>(band)])
-                    {
+                    applyBandWithSmoothing(band, [&]() {
                         auto& filter = eqFilters[static_cast<size_t>(band - 1)];
                         int routing = effectiveRouting[static_cast<size_t>(band)];
 
@@ -841,12 +920,13 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                             // Static EQ with per-band routing
                             applyFilterWithRouting(filter, routing);
                         }
-                    }
+                    });
                 }
 
                 // Band 8: LPF (no dynamics for filters)
-                if (bandEnabled[7])
+                applyBandWithSmoothing(7, [&]() {
                     applyFilterWithRouting(lpfFilter, effectiveRouting[7]);
+                });
 
                 procL[i] = sampleL;
                 procR[i] = sampleR;
@@ -939,6 +1019,84 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         rmsSampleCount = 0;
     }
 
+    // Save processed output for potential future crossfades (only when not currently crossfading)
+    // This ensures prevOsBuffer and prevTypeBuffer contain the last fully-processed output
+    if (!osChanging)
+    {
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            prevOsBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
+    }
+    if (!eqTypeChanging)
+    {
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            prevTypeBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
+    }
+
+    // Apply oversampling mode switch crossfade
+    if (osChanging)
+    {
+        int numCh = buffer.getNumChannels();
+        int numSamp = buffer.getNumSamples();
+        if (osCrossfade.isSmoothing())
+        {
+            for (int i = 0; i < numSamp; ++i)
+            {
+                float mix = osCrossfade.getNextValue();
+                for (int ch = 0; ch < numCh; ++ch)
+                {
+                    float prev = prevOsBuffer.getSample(ch, i);
+                    float curr = buffer.getSample(ch, i);
+                    buffer.setSample(ch, i, prev + mix * (curr - prev));
+                }
+            }
+        }
+        else
+        {
+            osChanging = false;
+        }
+    }
+
+    // Apply EQ type switch crossfade
+    if (eqTypeChanging)
+    {
+        int numCh = buffer.getNumChannels();
+        int numSamp = buffer.getNumSamples();
+        if (eqTypeCrossfade.isSmoothing())
+        {
+            for (int i = 0; i < numSamp; ++i)
+            {
+                float mix = eqTypeCrossfade.getNextValue();
+                for (int ch = 0; ch < numCh; ++ch)
+                {
+                    float prev = prevTypeBuffer.getSample(ch, i);
+                    float curr = buffer.getSample(ch, i);
+                    buffer.setSample(ch, i, prev + mix * (curr - prev));
+                }
+            }
+        }
+        else
+        {
+            eqTypeChanging = false;
+        }
+    }
+
+    // Apply bypass crossfade (dry/wet blend)
+    if (bypassSmoothed.isSmoothing())
+    {
+        int numCh = buffer.getNumChannels();
+        int numSamp = buffer.getNumSamples();
+        for (int i = 0; i < numSamp; ++i)
+        {
+            float bypassMix = bypassSmoothed.getNextValue();  // 0 = fully wet, 1 = fully dry
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                float dry = dryBuffer.getSample(ch, i);
+                float wet = buffer.getSample(ch, i);
+                buffer.setSample(ch, i, wet + bypassMix * (dry - wet));
+            }
+        }
+    }
+
     // Push post-EQ samples to analyzer if enabled
     if (analyzerEnabled && !analyzerPreEQ)
     {
@@ -995,17 +1153,29 @@ void MultiQ::updateBandFilter(int bandIndex)
 
     auto& filter = eqFilters[static_cast<size_t>(bandIndex - 1)];
 
-    // Band 2 (index 1): Low Shelf
+    // Band 2 (index 1): Low Shelf / Peaking / High-Pass
     if (bandIndex == 1)
     {
-        filter.setCoefficients(makeLowShelfCoefficients(currentSampleRate, freq, gain, q));
+        int shape = static_cast<int>(safeGetParam(bandShapeParams[1], 0.0f));
+        if (shape == 1)  // Peaking
+            filter.setCoefficients(makePeakingCoefficients(currentSampleRate, freq, gain, q));
+        else if (shape == 2)  // High-Pass (simple 2nd-order)
+            filter.setCoefficients(juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, freq, q));
+        else  // Low Shelf (default)
+            filter.setCoefficients(makeLowShelfCoefficients(currentSampleRate, freq, gain, q));
     }
-    // Band 7 (index 6): High Shelf
+    // Band 7 (index 6): High Shelf / Peaking / Low-Pass
     else if (bandIndex == 6)
     {
-        filter.setCoefficients(makeHighShelfCoefficients(currentSampleRate, freq, gain, q));
+        int shape = static_cast<int>(safeGetParam(bandShapeParams[6], 0.0f));
+        if (shape == 1)  // Peaking
+            filter.setCoefficients(makePeakingCoefficients(currentSampleRate, freq, gain, q));
+        else if (shape == 2)  // Low-Pass (simple 2nd-order)
+            filter.setCoefficients(juce::dsp::IIR::Coefficients<float>::makeLowPass(currentSampleRate, freq, q));
+        else  // High Shelf (default)
+            filter.setCoefficients(makeHighShelfCoefficients(currentSampleRate, freq, gain, q));
     }
-    // Bands 3-6 (indices 2-5): Check shape parameter for Peaking/Notch/BandPass
+    // Bands 3-6 (indices 2-5): Check shape parameter for Peaking/Notch/BandPass/TiltShelf
     else
     {
         int shape = static_cast<int>(safeGetParam(bandShapeParams[static_cast<size_t>(bandIndex)], 0.0f));
@@ -1013,6 +1183,8 @@ void MultiQ::updateBandFilter(int bandIndex)
             filter.setCoefficients(makeNotchCoefficients(currentSampleRate, freq, q));
         else if (shape == 2)  // BandPass
             filter.setCoefficients(makeBandPassCoefficients(currentSampleRate, freq, q));
+        else if (shape == 3)  // Tilt Shelf
+            filter.setCoefficients(makeTiltShelfCoefficients(currentSampleRate, freq, gain));
         else  // Peaking (default)
             filter.setCoefficients(makePeakingCoefficients(currentSampleRate, freq, gain, q));
     }
@@ -1041,10 +1213,26 @@ void MultiQ::updateDynGainFilter(int bandIndex, float dynGainDb)
     float q = getQCoupledValue(baseQ, staticGain, qMode);
 
     // Match the dynamic gain filter type to the static band type
-    if (bandIndex == 1)  // Low Shelf
-        filter.setCoefficients(makeLowShelfCoefficients(currentSampleRate, freq, dynGainDb, q));
-    else if (bandIndex == 6)  // High Shelf
-        filter.setCoefficients(makeHighShelfCoefficients(currentSampleRate, freq, dynGainDb, q));
+    if (bandIndex == 1)
+    {
+        int shape = static_cast<int>(safeGetParam(bandShapeParams[1], 0.0f));
+        if (shape == 1)  // Peaking
+            filter.setCoefficients(makePeakingCoefficients(currentSampleRate, freq, dynGainDb, q));
+        else if (shape == 2)  // HPF - no gain to apply for dynamics
+            filter.setCoefficients(makePeakingCoefficients(currentSampleRate, 1000.0f, 0.0f, 0.71f));
+        else  // Low Shelf
+            filter.setCoefficients(makeLowShelfCoefficients(currentSampleRate, freq, dynGainDb, q));
+    }
+    else if (bandIndex == 6)
+    {
+        int shape = static_cast<int>(safeGetParam(bandShapeParams[6], 0.0f));
+        if (shape == 1)  // Peaking
+            filter.setCoefficients(makePeakingCoefficients(currentSampleRate, freq, dynGainDb, q));
+        else if (shape == 2)  // LPF - no gain to apply for dynamics
+            filter.setCoefficients(makePeakingCoefficients(currentSampleRate, 1000.0f, 0.0f, 0.71f));
+        else  // High Shelf
+            filter.setCoefficients(makeHighShelfCoefficients(currentSampleRate, freq, dynGainDb, q));
+    }
     else  // Parametric bands 3-6: always use peaking for dynamic gain
         filter.setCoefficients(makePeakingCoefficients(currentSampleRate, freq, dynGainDb, q));
 }
@@ -1055,7 +1243,7 @@ void MultiQ::updateDynGainFilter(int bandIndex, float dynGainDb)
 void MultiQ::updateHPFCoefficients(double sampleRate)
 {
     float freq = safeGetParam(bandFreqParams[0], 20.0f);
-    float q = safeGetParam(bandQParams[0], 0.71f);
+    float userQ = safeGetParam(bandQParams[0], 0.71f);
     int slopeIndex = static_cast<int>(safeGetParam(bandSlopeParams[0], 0.0f));
 
     // Frequency pre-warping for analog matching
@@ -1064,42 +1252,46 @@ void MultiQ::updateHPFCoefficients(double sampleRate)
     double warpedFreq = (2.0 / T) * std::tan(w0 * T / 2.0);
     double actualFreq = warpedFreq / (2.0 * juce::MathConstants<double>::pi);
 
-    // Determine number of stages based on slope
+    auto slope = static_cast<FilterSlope>(slopeIndex);
+
+    // Determine number of stages and whether first stage is 1st-order (odd slopes)
     int stages = 1;
-    switch (static_cast<FilterSlope>(slopeIndex))
+    bool firstStageFirstOrder = false;
+    int secondOrderStages = 0;  // Number of 2nd-order stages for Butterworth Q lookup
+
+    switch (slope)
     {
-        case FilterSlope::Slope6dB:  stages = 1; break;
-        case FilterSlope::Slope12dB: stages = 1; break;  // Single 2nd order
-        case FilterSlope::Slope18dB: stages = 2; break;  // 1st + 2nd order
-        case FilterSlope::Slope24dB: stages = 2; break;  // Two 2nd order
-        case FilterSlope::Slope36dB: stages = 3; break;
-        case FilterSlope::Slope48dB: stages = 4; break;
+        case FilterSlope::Slope6dB:  stages = 1; firstStageFirstOrder = true;  secondOrderStages = 0; break;
+        case FilterSlope::Slope12dB: stages = 1; secondOrderStages = 1; break;
+        case FilterSlope::Slope18dB: stages = 2; firstStageFirstOrder = true;  secondOrderStages = 1; break;
+        case FilterSlope::Slope24dB: stages = 2; secondOrderStages = 2; break;
+        case FilterSlope::Slope36dB: stages = 3; secondOrderStages = 3; break;
+        case FilterSlope::Slope48dB: stages = 4; secondOrderStages = 4; break;
+        case FilterSlope::Slope72dB: stages = 6; secondOrderStages = 6; break;
+        case FilterSlope::Slope96dB: stages = 8; secondOrderStages = 8; break;
     }
 
     hpfFilter.activeStages = stages;
 
-    // Create Butterworth cascade
+    // Create Butterworth cascade with proper pole placement
+    int soStageIdx = 0;  // Index into Butterworth Q table (second-order stages only)
     for (int stage = 0; stage < stages; ++stage)
     {
         juce::dsp::IIR::Coefficients<float>::Ptr coeffs;
 
-        if (static_cast<FilterSlope>(slopeIndex) == FilterSlope::Slope6dB && stage == 0)
+        if (firstStageFirstOrder && stage == 0)
         {
-            // 1st order HPF
-            coeffs = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(
-                sampleRate, static_cast<float>(actualFreq));
-        }
-        else if (static_cast<FilterSlope>(slopeIndex) == FilterSlope::Slope18dB && stage == 0)
-        {
-            // First stage is 1st order for 18dB
+            // 1st order HPF (6 dB/oct or first stage of odd-order filter)
             coeffs = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(
                 sampleRate, static_cast<float>(actualFreq));
         }
         else
         {
-            // 2nd order HPF with user-specified Q (non-Butterworth if Q != 0.707)
+            // 2nd order HPF with proper Butterworth Q per stage
+            float stageQ = ButterworthQ::getStageQ(secondOrderStages, soStageIdx, userQ);
             coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(
-                sampleRate, static_cast<float>(actualFreq), q);
+                sampleRate, static_cast<float>(actualFreq), stageQ);
+            ++soStageIdx;
         }
         hpfFilter.stagesL[static_cast<size_t>(stage)].coefficients = coeffs;
         hpfFilter.stagesR[static_cast<size_t>(stage)].coefficients = coeffs;
@@ -1109,7 +1301,7 @@ void MultiQ::updateHPFCoefficients(double sampleRate)
 void MultiQ::updateLPFCoefficients(double sampleRate)
 {
     float freq = safeGetParam(bandFreqParams[7], 20000.0f);
-    float q = safeGetParam(bandQParams[7], 0.71f);
+    float userQ = safeGetParam(bandQParams[7], 0.71f);
     int slopeIndex = static_cast<int>(safeGetParam(bandSlopeParams[1], 0.0f));
 
     // Frequency pre-warping for analog matching
@@ -1121,37 +1313,42 @@ void MultiQ::updateLPFCoefficients(double sampleRate)
     // Clamp to valid range
     actualFreq = juce::jlimit(20.0, sampleRate * 0.45, actualFreq);
 
+    auto slope = static_cast<FilterSlope>(slopeIndex);
+
     int stages = 1;
-    switch (static_cast<FilterSlope>(slopeIndex))
+    bool firstStageFirstOrder = false;
+    int secondOrderStages = 0;
+
+    switch (slope)
     {
-        case FilterSlope::Slope6dB:  stages = 1; break;
-        case FilterSlope::Slope12dB: stages = 1; break;
-        case FilterSlope::Slope18dB: stages = 2; break;
-        case FilterSlope::Slope24dB: stages = 2; break;
-        case FilterSlope::Slope36dB: stages = 3; break;
-        case FilterSlope::Slope48dB: stages = 4; break;
+        case FilterSlope::Slope6dB:  stages = 1; firstStageFirstOrder = true;  secondOrderStages = 0; break;
+        case FilterSlope::Slope12dB: stages = 1; secondOrderStages = 1; break;
+        case FilterSlope::Slope18dB: stages = 2; firstStageFirstOrder = true;  secondOrderStages = 1; break;
+        case FilterSlope::Slope24dB: stages = 2; secondOrderStages = 2; break;
+        case FilterSlope::Slope36dB: stages = 3; secondOrderStages = 3; break;
+        case FilterSlope::Slope48dB: stages = 4; secondOrderStages = 4; break;
+        case FilterSlope::Slope72dB: stages = 6; secondOrderStages = 6; break;
+        case FilterSlope::Slope96dB: stages = 8; secondOrderStages = 8; break;
     }
 
     lpfFilter.activeStages = stages;
 
+    int soStageIdx = 0;
     for (int stage = 0; stage < stages; ++stage)
     {
         juce::dsp::IIR::Coefficients<float>::Ptr coeffs;
 
-        if (static_cast<FilterSlope>(slopeIndex) == FilterSlope::Slope6dB && stage == 0)
-        {
-            coeffs = juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass(
-                sampleRate, static_cast<float>(actualFreq));
-        }
-        else if (static_cast<FilterSlope>(slopeIndex) == FilterSlope::Slope18dB && stage == 0)
+        if (firstStageFirstOrder && stage == 0)
         {
             coeffs = juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass(
                 sampleRate, static_cast<float>(actualFreq));
         }
         else
         {
+            float stageQ = ButterworthQ::getStageQ(secondOrderStages, soStageIdx, userQ);
             coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
-                sampleRate, static_cast<float>(actualFreq), q);
+                sampleRate, static_cast<float>(actualFreq), stageQ);
+            ++soStageIdx;
         }
 
         lpfFilter.stagesL[static_cast<size_t>(stage)].coefficients = coeffs;
@@ -1233,6 +1430,46 @@ juce::dsp::IIR::Coefficients<float>::Ptr MultiQ::makeBandPassCoefficients(
         sampleRate, static_cast<float>(actualFreq), q);
 }
 
+juce::dsp::IIR::Coefficients<float>::Ptr MultiQ::makeTiltShelfCoefficients(
+    double sampleRate, float freq, float gain) const
+{
+    // 1st-order tilt shelf: tilts the spectrum around the center frequency
+    // Below freq: -gain/2 dB, Above freq: +gain/2 dB
+    // Using bilinear transform of 1st-order analog prototype:
+    //   H(s) = (s + w0*sqrt(A)) / (s + w0/sqrt(A))
+    // where A = 10^(gain/40)
+
+    double w0 = 2.0 * juce::MathConstants<double>::pi * freq;
+    double T = 1.0 / sampleRate;
+    double wc = (2.0 / T) * std::tan(w0 * T / 2.0);  // Pre-warped frequency
+
+    double A = std::pow(10.0, gain / 40.0);  // Half-gain for tilt
+    double sqrtA = std::sqrt(A);
+
+    // Bilinear transform: s = (2/T)(z-1)/(z+1)
+    // Numerator: s + wc*sqrtA -> (2/T)(z-1)/(z+1) + wc*sqrtA
+    // = [(2/T + wc*sqrtA)z + (wc*sqrtA - 2/T)] / (z+1)
+    double twoOverT = 2.0 / T;
+    double wcSqrtA = wc * sqrtA;
+    double wcOverSqrtA = wc / sqrtA;
+
+    double b0 = twoOverT + wcSqrtA;
+    double b1 = wcSqrtA - twoOverT;
+    double a0 = twoOverT + wcOverSqrtA;
+    double a1 = wcOverSqrtA - twoOverT;
+
+    // Normalize
+    auto coeffs = new juce::dsp::IIR::Coefficients<float>(
+        static_cast<float>(b0 / a0),
+        static_cast<float>(b1 / a0),
+        0.0f,  // b2 (1st-order, padded to biquad)
+        1.0f,
+        static_cast<float>(a1 / a0),
+        0.0f   // a2
+    );
+    return coeffs;
+}
+
 //==============================================================================
 QCoupleMode MultiQ::getCurrentQCoupleMode() const
 {
@@ -1278,7 +1515,8 @@ float MultiQ::getFrequencyResponseMagnitude(float frequencyHz) const
             if (ratio < 1.0f)
             {
                 int slopeIndex = static_cast<int>(safeGetParam(bandSlopeParams[0], 0.0f));
-                float slopeDB = 6.0f * (slopeIndex + 1);
+                static const float slopeValues[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
+                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
                 response *= std::pow(ratio, slopeDB / 6.0);
             }
         }
@@ -1288,32 +1526,73 @@ float MultiQ::getFrequencyResponseMagnitude(float frequencyHz) const
             if (ratio < 1.0f)
             {
                 int slopeIndex = static_cast<int>(safeGetParam(bandSlopeParams[1], 0.0f));
-                float slopeDB = 6.0f * (slopeIndex + 1);
+                static const float slopeValues[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
+                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
                 response *= std::pow(ratio, slopeDB / 6.0);
             }
         }
-        else if (band == 1)  // Low Shelf
+        else if (band == 1)  // Band 2: shape-aware
         {
-            float gainLinear = juce::Decibels::decibelsToGain(gain);
-            float ratio = frequencyHz / freq;
-            if (ratio < 1.0f)
-                response *= gainLinear;
-            else
+            int shape = static_cast<int>(safeGetParam(bandShapeParams[1], 0.0f));
+            if (shape == 1)  // Peaking
             {
-                float transition = std::pow(ratio, -2.0f / q);
-                response *= 1.0 + (gainLinear - 1.0) * transition;
+                float effectiveQ = getQCoupledValue(q, gain, getCurrentQCoupleMode());
+                float ratio = frequencyHz / freq;
+                float logRatio = std::log2(ratio);
+                float bandwidth = 1.0f / effectiveQ;
+                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                response *= 1.0 + (gainLinear - 1.0) * envelope;
+            }
+            else if (shape == 2)  // High-Pass (12 dB/oct)
+            {
+                float ratio = frequencyHz / freq;
+                if (ratio < 1.0f)
+                    response *= std::pow(ratio, 12.0 / 6.0);
+            }
+            else  // Low Shelf (default)
+            {
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                float ratio = frequencyHz / freq;
+                if (ratio < 1.0f)
+                    response *= gainLinear;
+                else
+                {
+                    float transition = std::pow(ratio, -2.0f / q);
+                    response *= 1.0 + (gainLinear - 1.0) * transition;
+                }
             }
         }
-        else if (band == 6)  // High Shelf
+        else if (band == 6)  // Band 7: shape-aware
         {
-            float gainLinear = juce::Decibels::decibelsToGain(gain);
-            float ratio = frequencyHz / freq;
-            if (ratio > 1.0f)
-                response *= gainLinear;
-            else
+            int shape = static_cast<int>(safeGetParam(bandShapeParams[6], 0.0f));
+            if (shape == 1)  // Peaking
             {
-                float transition = std::pow(ratio, 2.0f / q);
-                response *= 1.0 + (gainLinear - 1.0) * transition;
+                float effectiveQ = getQCoupledValue(q, gain, getCurrentQCoupleMode());
+                float ratio = frequencyHz / freq;
+                float logRatio = std::log2(ratio);
+                float bandwidth = 1.0f / effectiveQ;
+                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                response *= 1.0 + (gainLinear - 1.0) * envelope;
+            }
+            else if (shape == 2)  // Low-Pass (12 dB/oct)
+            {
+                float ratio = freq / frequencyHz;
+                if (ratio < 1.0f)
+                    response *= std::pow(ratio, 12.0 / 6.0);
+            }
+            else  // High Shelf (default)
+            {
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                float ratio = frequencyHz / freq;
+                if (ratio > 1.0f)
+                    response *= gainLinear;
+                else
+                {
+                    float transition = std::pow(ratio, 2.0f / q);
+                    response *= 1.0 + (gainLinear - 1.0) * transition;
+                }
             }
         }
         else  // Parametric bands 3-6
@@ -1335,7 +1614,151 @@ float MultiQ::getFrequencyResponseMagnitude(float frequencyHz) const
                 // BandPass: passes center, rejects elsewhere
                 response *= envelope;
             }
+            else if (shape == 3)  // Tilt Shelf
+            {
+                float tiltRatio = frequencyHz / freq;
+                float tiltTransition = 2.0f / juce::MathConstants<float>::pi * std::atan(std::log2(tiltRatio) * 2.0f);
+                float tiltGainDB = gain * tiltTransition;
+                response *= juce::Decibels::decibelsToGain(tiltGainDB);
+            }
             else  // Peaking (default)
+            {
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                response *= 1.0 + (gainLinear - 1.0) * envelope;
+            }
+        }
+    }
+
+    return static_cast<float>(juce::Decibels::gainToDecibels(response, -100.0));
+}
+
+float MultiQ::getFrequencyResponseWithDynamics(float frequencyHz) const
+{
+    // Same as getFrequencyResponseMagnitude but adds dynamic gain per band
+    double response = 1.0;
+
+    for (int band = 0; band < NUM_BANDS; ++band)
+    {
+        bool enabled = safeGetParam(bandEnabledParams[static_cast<size_t>(band)], 0.0f) > 0.5f;
+        if (!enabled)
+            continue;
+
+        float freq = safeGetParam(bandFreqParams[static_cast<size_t>(band)],
+                                  DefaultBandConfigs[static_cast<size_t>(band)].defaultFreq);
+        float gain = safeGetParam(bandGainParams[static_cast<size_t>(band)], 0.0f);
+        float q = safeGetParam(bandQParams[static_cast<size_t>(band)], 0.71f);
+
+        // Add dynamic gain for bands with dynamics enabled
+        if (isDynamicsEnabled(band))
+            gain += getDynamicGain(band);
+
+        if (band == 0)  // HPF
+        {
+            float ratio = frequencyHz / freq;
+            if (ratio < 1.0f)
+            {
+                int slopeIndex = static_cast<int>(safeGetParam(bandSlopeParams[0], 0.0f));
+                static const float slopeValues[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
+                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
+                response *= std::pow(ratio, slopeDB / 6.0);
+            }
+        }
+        else if (band == 7)  // LPF
+        {
+            float ratio = freq / frequencyHz;
+            if (ratio < 1.0f)
+            {
+                int slopeIndex = static_cast<int>(safeGetParam(bandSlopeParams[1], 0.0f));
+                static const float slopeValues[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
+                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
+                response *= std::pow(ratio, slopeDB / 6.0);
+            }
+        }
+        else if (band == 1)  // Band 2: shape-aware
+        {
+            int shape = static_cast<int>(safeGetParam(bandShapeParams[1], 0.0f));
+            if (shape == 1)  // Peaking
+            {
+                float effectiveQ = getQCoupledValue(q, gain, getCurrentQCoupleMode());
+                float ratio = frequencyHz / freq;
+                float logRatio = std::log2(ratio);
+                float bandwidth = 1.0f / effectiveQ;
+                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                response *= 1.0 + (gainLinear - 1.0) * envelope;
+            }
+            else if (shape == 2)  // High-Pass (12 dB/oct)
+            {
+                float ratio = frequencyHz / freq;
+                if (ratio < 1.0f)
+                    response *= std::pow(ratio, 12.0 / 6.0);
+            }
+            else  // Low Shelf (default)
+            {
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                float ratio = frequencyHz / freq;
+                if (ratio < 1.0f)
+                    response *= gainLinear;
+                else
+                {
+                    float transition = std::pow(ratio, -2.0f / q);
+                    response *= 1.0 + (gainLinear - 1.0) * transition;
+                }
+            }
+        }
+        else if (band == 6)  // Band 7: shape-aware
+        {
+            int shape = static_cast<int>(safeGetParam(bandShapeParams[6], 0.0f));
+            if (shape == 1)  // Peaking
+            {
+                float effectiveQ = getQCoupledValue(q, gain, getCurrentQCoupleMode());
+                float ratio = frequencyHz / freq;
+                float logRatio = std::log2(ratio);
+                float bandwidth = 1.0f / effectiveQ;
+                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                response *= 1.0 + (gainLinear - 1.0) * envelope;
+            }
+            else if (shape == 2)  // Low-Pass (12 dB/oct)
+            {
+                float ratio = freq / frequencyHz;
+                if (ratio < 1.0f)
+                    response *= std::pow(ratio, 12.0 / 6.0);
+            }
+            else  // High Shelf (default)
+            {
+                float gainLinear = juce::Decibels::decibelsToGain(gain);
+                float ratio = frequencyHz / freq;
+                if (ratio > 1.0f)
+                    response *= gainLinear;
+                else
+                {
+                    float transition = std::pow(ratio, 2.0f / q);
+                    response *= 1.0 + (gainLinear - 1.0) * transition;
+                }
+            }
+        }
+        else  // Parametric bands 3-6
+        {
+            int shape = static_cast<int>(safeGetParam(bandShapeParams[static_cast<size_t>(band)], 0.0f));
+            float effectiveQ = getQCoupledValue(q, gain, getCurrentQCoupleMode());
+            float ratio = frequencyHz / freq;
+            float logRatio = std::log2(ratio);
+            float bandwidth = 1.0f / effectiveQ;
+            float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+
+            if (shape == 1)  // Notch
+                response *= 1.0 - envelope;
+            else if (shape == 2)  // BandPass
+                response *= envelope;
+            else if (shape == 3)  // Tilt Shelf
+            {
+                float tiltRatio = frequencyHz / freq;
+                float tiltTransition = 2.0f / juce::MathConstants<float>::pi * std::atan(std::log2(tiltRatio) * 2.0f);
+                float tiltGainDB = gain * tiltTransition;
+                response *= juce::Decibels::decibelsToGain(tiltGainDB);
+            }
+            else  // Peaking
             {
                 float gainLinear = juce::Decibels::decibelsToGain(gain);
                 response *= 1.0 + (gainLinear - 1.0) * envelope;
@@ -1590,13 +2013,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
             0.71f
         ));
 
-        // Shape (for parametric bands 3-6 only: Peaking/Notch/BandPass)
-        if (i >= 2 && i <= 5)
+        // Shape parameter
+        if (i == 1)  // Band 2: Low Shelf with shape options
         {
             params.push_back(std::make_unique<juce::AudioParameterChoice>(
                 juce::ParameterID(ParamIDs::bandShape(bandNum), 1),
                 "Band " + juce::String(bandNum) + " Shape",
-                juce::StringArray{"Peaking", "Notch", "Band Pass"},
+                juce::StringArray{"Low Shelf", "Peaking", "High Pass"},
+                0  // Default: Low Shelf
+            ));
+        }
+        else if (i == 6)  // Band 7: High Shelf with shape options
+        {
+            params.push_back(std::make_unique<juce::AudioParameterChoice>(
+                juce::ParameterID(ParamIDs::bandShape(bandNum), 1),
+                "Band " + juce::String(bandNum) + " Shape",
+                juce::StringArray{"High Shelf", "Peaking", "Low Pass"},
+                0  // Default: High Shelf
+            ));
+        }
+        else if (i >= 2 && i <= 5)  // Bands 3-6: Peaking/Notch/BandPass
+        {
+            params.push_back(std::make_unique<juce::AudioParameterChoice>(
+                juce::ParameterID(ParamIDs::bandShape(bandNum), 1),
+                "Band " + juce::String(bandNum) + " Shape",
+                juce::StringArray{"Peaking", "Notch", "Band Pass", "Tilt Shelf"},
                 0  // Default: Peaking
             ));
         }
@@ -1615,7 +2056,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
             params.push_back(std::make_unique<juce::AudioParameterChoice>(
                 juce::ParameterID(ParamIDs::bandSlope(bandNum), 1),
                 "Band " + juce::String(bandNum) + " Slope",
-                juce::StringArray{"6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct"},
+                juce::StringArray{"6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct"},
                 1  // Default 12 dB/oct
             ));
         }

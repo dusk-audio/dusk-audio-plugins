@@ -119,8 +119,14 @@ public:
     // Get frequency response magnitude at a specific frequency (for curve display)
     float getFrequencyResponseMagnitude(float frequencyHz) const;
 
+    // Get frequency response including dynamic gain (for dynamic curve overlay)
+    float getFrequencyResponseWithDynamics(float frequencyHz) const;
+
     // Get current dynamic gain for a band (for UI visualization, thread-safe)
     float getDynamicGain(int bandIndex) const { return dynamicEQ.getCurrentDynamicGain(bandIndex); }
+
+    // Get current processing mode (0=Stereo, 1=Left, 2=Right, 3=Mid, 4=Side)
+    int getProcessingMode() const { return static_cast<int>(safeGetParam(processingModeParam, 0.0f)); }
 
     // Get dynamics threshold for a band (for visualization)
     float getDynamicsThreshold(int bandIndex) const
@@ -159,7 +165,7 @@ private:
     // Multi-stage cascaded filter for variable slope HPF/LPF
     struct CascadedFilter
     {
-        static constexpr int MAX_STAGES = 4;  // Up to 8th order (48 dB/oct)
+        static constexpr int MAX_STAGES = 8;  // Up to 16th order (96 dB/oct)
         std::array<juce::dsp::IIR::Filter<float>, MAX_STAGES> stagesL;
         std::array<juce::dsp::IIR::Filter<float>, MAX_STAGES> stagesR;
         std::atomic<int> activeStages{1};
@@ -244,6 +250,27 @@ private:
     // Current sample rate (may be oversampled)
     double currentSampleRate = 44100.0;
     double baseSampleRate = 44100.0;  // Original sample rate before oversampling
+
+    //==============================================================================
+    // Crossfade smoothing (prevents clicks on state changes)
+
+    // Bypass crossfade (~5ms)
+    juce::SmoothedValue<float> bypassSmoothed{0.0f};
+    juce::AudioBuffer<float> dryBuffer;  // Copy of input for bypass crossfade
+
+    // Per-band enable/disable crossfade (~3ms)
+    std::array<juce::SmoothedValue<float>, NUM_BANDS> bandEnableSmoothed;
+
+    // EQ type switching crossfade (~10ms)
+    juce::SmoothedValue<float> eqTypeCrossfade{1.0f};  // 1.0 = fully new type
+    juce::AudioBuffer<float> prevTypeBuffer;  // Saved output from previous EQ type
+    EQType previousEQType = EQType::Digital;
+    bool eqTypeChanging = false;
+
+    // Oversampling mode switch crossfade (~5ms)
+    juce::SmoothedValue<float> osCrossfade{1.0f};  // 1.0 = fully new mode
+    juce::AudioBuffer<float> prevOsBuffer;  // Saved output from previous OS mode
+    bool osChanging = false;
 
     //==============================================================================
     // Parameter pointers
@@ -386,6 +413,10 @@ private:
     // Bandpass filter coefficients (analog-matched)
     juce::dsp::IIR::Coefficients<float>::Ptr makeBandPassCoefficients(
         double sampleRate, float freq, float q) const;
+
+    // Tilt shelf filter coefficients (1st-order shelving tilt)
+    juce::dsp::IIR::Coefficients<float>::Ptr makeTiltShelfCoefficients(
+        double sampleRate, float freq, float gain) const;
 
     // Update all filter coefficients
     void updateAllFilters();

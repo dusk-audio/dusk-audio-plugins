@@ -145,7 +145,8 @@ public:
         const std::array<float, 8>& newBandGain,
         const std::array<float, 8>& newBandQ,
         const std::array<int, 2>& newBandSlope,
-        float newMasterGain)
+        float newMasterGain,
+        const std::array<int, 8>& newBandShape = {})
     {
         // Store parameters atomically (using mutex for the arrays)
         {
@@ -155,6 +156,7 @@ public:
             pendingBandGain = newBandGain;
             pendingBandQ = newBandQ;
             pendingBandSlope = newBandSlope;
+            pendingBandShape = newBandShape;
             pendingMasterGain = newMasterGain;
         }
         irNeedsUpdate.store(true);
@@ -349,6 +351,7 @@ private:
                 std::array<float, 8> localBandGain;
                 std::array<float, 8> localBandQ;
                 std::array<int, 2> localBandSlope;
+                std::array<int, 8> localBandShape;
                 float localMasterGain;
                 int localFftSize;
                 bool lengthChanged;
@@ -360,6 +363,7 @@ private:
                     localBandGain = pendingBandGain;
                     localBandQ = pendingBandQ;
                     localBandSlope = pendingBandSlope;
+                    localBandShape = pendingBandShape;
                     localMasterGain = pendingMasterGain;
                     localFftSize = pendingFftSize.load(std::memory_order_acquire);
                     lengthChanged = filterLengthChanged.exchange(false);
@@ -390,7 +394,7 @@ private:
                 // Rebuild IR with current parameters
                 rebuildImpulseResponseBackground(
                     localBandEnabled, localBandFreq, localBandGain,
-                    localBandQ, localBandSlope, localMasterGain, localFftSize);
+                    localBandQ, localBandSlope, localBandShape, localMasterGain, localFftSize);
 
                 // Signal IR is ready to swap
                 irSwapReady.store(true, std::memory_order_release);
@@ -411,6 +415,7 @@ private:
         const std::array<float, 8>& localBandGain,
         const std::array<float, 8>& localBandQ,
         const std::array<int, 2>& localBandSlope,
+        const std::array<int, 8>& localBandShape,
         float localMasterGain,
         int workingFilterLength)
     {
@@ -447,7 +452,7 @@ private:
                     continue;
 
                 float bandGainLinear = calculateBandGain(band, freq,
-                    localBandFreq, localBandGain, localBandQ, localBandSlope);
+                    localBandFreq, localBandGain, localBandQ, localBandSlope, localBandShape);
                 totalGainLinear *= bandGainLinear;
             }
 
@@ -508,7 +513,8 @@ private:
         const std::array<float, 8>& localBandFreq,
         const std::array<float, 8>& localBandGain,
         const std::array<float, 8>& localBandQ,
-        const std::array<int, 2>& localBandSlope) const
+        const std::array<int, 2>& localBandSlope,
+        const std::array<int, 8>& localBandShape) const
     {
         float bandFreqHz = localBandFreq[static_cast<size_t>(band)];
         float bandGainDb = localBandGain[static_cast<size_t>(band)];
@@ -526,24 +532,40 @@ private:
             float slope = getSlopeFromIndex(slopeIndex);
             return calculateLPFGain(freq, bandFreqHz, slope);
         }
-        else if (band == 1)  // Low Shelf
+        else if (band == 1)  // Band 2: shape-aware
         {
-            return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, true);
+            int shape = localBandShape[1];
+            if (shape == 1)  // Peaking
+                return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
+            else if (shape == 2)  // High-Pass (12 dB/oct)
+                return calculateHPFGain(freq, bandFreqHz, 12.0f);
+            else  // Low Shelf (default)
+                return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, true);
         }
-        else if (band == 6)  // High Shelf
+        else if (band == 6)  // Band 7: shape-aware
         {
-            return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, false);
+            int shape = localBandShape[6];
+            if (shape == 1)  // Peaking
+                return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
+            else if (shape == 2)  // Low-Pass (12 dB/oct)
+                return calculateLPFGain(freq, bandFreqHz, 12.0f);
+            else  // High Shelf (default)
+                return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, false);
         }
-        else  // Parametric (bands 2-5)
+        else  // Parametric (bands 2-5) - shape-aware
         {
-            return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
+            int shape = localBandShape[static_cast<size_t>(band)];
+            if (shape == 3)  // Tilt Shelf
+                return calculateTiltShelfGain(freq, bandFreqHz, bandGainDb);
+            else
+                return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
         }
     }
 
     float getSlopeFromIndex(int index) const
     {
-        static const float slopes[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f };
-        if (index >= 0 && index < 6)
+        static const float slopes[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
+        if (index >= 0 && index < 8)
             return slopes[index];
         return 12.0f;
     }
@@ -613,6 +635,17 @@ private:
 
         float gainLinear = std::pow(10.0f, gainDb / 20.0f);
         return 1.0f + (gainLinear - 1.0f) * response;
+    }
+
+    float calculateTiltShelfGain(float freq, float centerFreq, float gainDb) const
+    {
+        if (std::abs(gainDb) < 0.01f) return 1.0f;
+
+        float tiltRatio = freq / centerFreq;
+        float tiltTransition = 2.0f / juce::MathConstants<float>::pi
+            * std::atan(std::log2(tiltRatio) * 2.0f);
+        float tiltGainDB = gainDb * tiltTransition;
+        return std::pow(10.0f, tiltGainDB / 20.0f);
     }
 
     //==========================================================================
@@ -704,6 +737,7 @@ private:
     std::array<float, 8> pendingBandFreq{};
     std::array<float, 8> pendingBandGain{};
     std::array<float, 8> pendingBandQ{};
+    std::array<int, 8> pendingBandShape{};
     std::array<int, 2> pendingBandSlope{};
     float pendingMasterGain = 0.0f;
 

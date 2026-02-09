@@ -149,6 +149,266 @@ void SilkVerbLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton
 }
 
 //==============================================================================
+// LCDDisplay implementation — PCM 90-style VFD
+//==============================================================================
+LCDDisplay::LCDDisplay()
+{
+    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+}
+
+void LCDDisplay::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+
+    // Ambient green glow behind the LCD (VFD screen illumination)
+    g.setColour(juce::Colour(0x0a00d870));
+    g.fillRoundedRectangle(bounds.expanded(3.0f), 7.0f);
+
+    // Outer bezel
+    g.setColour(juce::Colour(0xff080808));
+    g.fillRoundedRectangle(bounds, 5.0f);
+
+    // Display area
+    auto display = bounds.reduced(2.5f);
+
+    // LCD background — very dark with green tint (VFD phosphor look)
+    juce::ColourGradient bg(
+        juce::Colour(0xff0c1e14), display.getX(), display.getY(),
+        juce::Colour(0xff081a10), display.getRight(), display.getBottom(),
+        false);
+    g.setGradientFill(bg);
+    g.fillRoundedRectangle(display, 3.0f);
+
+    // Inner shadow at top edge (inset look)
+    juce::ColourGradient shadow(
+        juce::Colour(0x18000000), display.getX(), display.getY(),
+        juce::Colours::transparentBlack, display.getX(), display.getY() + 6.0f,
+        false);
+    g.setGradientFill(shadow);
+    g.fillRoundedRectangle(display, 3.0f);
+
+    // Inner border
+    g.setColour(juce::Colour(0xff1a2a1a));
+    g.drawRoundedRectangle(display, 3.0f, 1.0f);
+
+    // Scanlines for VFD effect
+    g.setColour(juce::Colour(0x06000000));
+    for (int y = static_cast<int>(display.getY()); y < static_cast<int>(display.getBottom()); y += 2)
+        g.drawHorizontalLine(y, display.getX(), display.getRight());
+
+    // Text areas
+    auto textArea = display.reduced(10.0f, 2.0f);
+    auto line1Area = textArea.removeFromTop(textArea.getHeight() * 0.45f);
+    auto line2Area = textArea;
+
+    juce::Colour textColor(0xff00d870);
+    juce::Colour glowColor(0x1800d870);
+
+    auto monoName = juce::Font::getDefaultMonospacedFontName();
+
+    // Line 1 — category:mode (left) and RT60 (right)
+    g.setFont(juce::Font(juce::FontOptions(monoName, 10.0f, juce::Font::plain)));
+    g.setColour(glowColor);
+    g.drawText(line1, line1Area.expanded(1.0f), juce::Justification::centredLeft);
+    g.setColour(textColor);
+    g.drawText(line1, line1Area, juce::Justification::centredLeft);
+
+    if (line1Right.isNotEmpty())
+    {
+        g.setColour(glowColor);
+        g.drawText(line1Right, line1Area.expanded(1.0f), juce::Justification::centredRight);
+        g.setColour(textColor);
+        g.drawText(line1Right, line1Area, juce::Justification::centredRight);
+    }
+
+    // Line 2 — preset name (larger, bold)
+    g.setFont(juce::Font(juce::FontOptions(monoName, 13.0f, juce::Font::bold)));
+    g.setColour(glowColor);
+    g.drawText(line2, line2Area.expanded(1.0f), juce::Justification::centredLeft);
+    g.setColour(textColor);
+    g.drawText(line2, line2Area, juce::Justification::centredLeft);
+}
+
+void LCDDisplay::mouseDown(const juce::MouseEvent&)
+{
+    if (onClick) onClick();
+}
+
+//==============================================================================
+// PresetBrowserOverlay implementation
+//==============================================================================
+PresetBrowserOverlay::PresetBrowserOverlay(SilkVerbProcessor& p)
+    : processor(p)
+{
+    auto presets = SilkVerbPresets::getFactoryPresets();
+    for (const auto& preset : presets)
+    {
+        if (std::find(categoryOrder.begin(), categoryOrder.end(), preset.category) == categoryOrder.end())
+            categoryOrder.push_back(preset.category);
+    }
+    if (!categoryOrder.empty())
+        selectedCategory = categoryOrder[0];
+}
+
+void PresetBrowserOverlay::paint(juce::Graphics& g)
+{
+    // Semi-transparent backdrop
+    g.fillAll(juce::Colour(0xd0101010));
+
+    auto panel = getLocalBounds().reduced(20, 35);
+
+    // Panel background
+    g.setColour(juce::Colour(0xff1e1e1e));
+    g.fillRoundedRectangle(panel.toFloat(), 8.0f);
+    g.setColour(juce::Colour(0xff6a9ad9));
+    g.drawRoundedRectangle(panel.toFloat(), 8.0f, 1.5f);
+
+    // Header
+    auto header = panel.removeFromTop(30);
+    g.setFont(juce::Font(juce::FontOptions(14.0f)).withStyle(juce::Font::bold));
+    g.setColour(juce::Colour(0xff6a9ad9));
+    g.drawText("PRESETS", header, juce::Justification::centred);
+
+    // Category tabs
+    panel.removeFromTop(2);
+    auto tabRow = panel.removeFromTop(26);
+    tabRow.reduce(6, 0);
+    int numCats = static_cast<int>(categoryOrder.size());
+    int tabWidth = numCats > 0 ? tabRow.getWidth() / numCats : 0;
+
+    g.setFont(juce::Font(juce::FontOptions(10.0f)).withStyle(juce::Font::bold));
+    for (size_t i = 0; i < categoryOrder.size(); ++i)
+    {
+        auto tab = tabRow.removeFromLeft(tabWidth);
+        bool isSelected = (categoryOrder[i] == selectedCategory);
+
+        if (isSelected)
+        {
+            g.setColour(juce::Colour(0xff3a5a89));
+            g.fillRoundedRectangle(tab.reduced(1).toFloat(), 4.0f);
+        }
+
+        g.setColour(isSelected ? juce::Colour(0xffffffff) : juce::Colour(0xff808080));
+        g.drawText(categoryOrder[i], tab, juce::Justification::centred);
+    }
+
+    // Separator
+    panel.removeFromTop(4);
+    g.setColour(juce::Colour(0xff3a3a3a));
+    g.drawHorizontalLine(panel.getY(), static_cast<float>(panel.getX() + 8),
+                         static_cast<float>(panel.getRight() - 8));
+    panel.removeFromTop(6);
+
+    int currentProg = processor.getCurrentProgram();
+
+    // Init entry
+    auto initRow = panel.removeFromTop(22);
+    initRow.reduce(10, 0);
+    if (currentProg == 0)
+    {
+        g.setColour(juce::Colour(0xff2a3a4a));
+        g.fillRoundedRectangle(initRow.toFloat(), 3.0f);
+    }
+    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    g.setColour(currentProg == 0 ? juce::Colour(0xff6a9ad9) : juce::Colour(0xffb0b0b0));
+    g.drawText("Init", initRow.reduced(8, 0), juce::Justification::centredLeft);
+
+    panel.removeFromTop(3);
+
+    // Presets for selected category
+    auto presets = SilkVerbPresets::getFactoryPresets();
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].category != selectedCategory)
+            continue;
+
+        auto row = panel.removeFromTop(22);
+        if (row.getBottom() > getLocalBounds().reduced(20, 35).getBottom() - 8)
+            break;
+
+        row.reduce(10, 0);
+        int progIdx = static_cast<int>(i + 1);
+
+        if (currentProg == progIdx)
+        {
+            g.setColour(juce::Colour(0xff2a3a4a));
+            g.fillRoundedRectangle(row.toFloat(), 3.0f);
+        }
+
+        g.setColour(currentProg == progIdx ? juce::Colour(0xff6a9ad9) : juce::Colour(0xffc0c0c0));
+        g.drawText(presets[i].name, row.reduced(8, 0), juce::Justification::centredLeft);
+    }
+}
+
+void PresetBrowserOverlay::mouseDown(const juce::MouseEvent& event)
+{
+    auto panel = getLocalBounds().reduced(20, 35);
+
+    // Click outside panel = dismiss
+    if (!panel.contains(event.getPosition()))
+    {
+        if (onDismiss) onDismiss();
+        return;
+    }
+
+    // Skip header
+    panel.removeFromTop(30);
+
+    // Category tabs
+    panel.removeFromTop(2);
+    auto tabRow = panel.removeFromTop(26);
+    tabRow.reduce(6, 0);
+    int numCats = static_cast<int>(categoryOrder.size());
+    int tabWidth = numCats > 0 ? tabRow.getWidth() / numCats : 0;
+
+    for (size_t i = 0; i < categoryOrder.size(); ++i)
+    {
+        auto tab = tabRow.removeFromLeft(tabWidth);
+        if (tab.contains(event.getPosition()))
+        {
+            selectedCategory = categoryOrder[i];
+            repaint();
+            return;
+        }
+    }
+
+    // Separator space
+    panel.removeFromTop(10);
+
+    // Init entry
+    auto initRow = panel.removeFromTop(22);
+    initRow.reduce(10, 0);
+    if (initRow.contains(event.getPosition()))
+    {
+        processor.setCurrentProgram(0);
+        if (onDismiss) onDismiss();
+        return;
+    }
+
+    panel.removeFromTop(3);
+
+    // Presets
+    auto presets = SilkVerbPresets::getFactoryPresets();
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].category != selectedCategory)
+            continue;
+
+        auto row = panel.removeFromTop(22);
+        if (row.getBottom() > getLocalBounds().reduced(20, 35).getBottom() - 8)
+            break;
+
+        row.reduce(10, 0);
+        if (row.contains(event.getPosition()))
+        {
+            processor.setCurrentProgram(static_cast<int>(i + 1));
+            if (onDismiss) onDismiss();
+            return;
+        }
+    }
+}
+
+//==============================================================================
 // SilkVerbEditor implementation
 //==============================================================================
 SilkVerbEditor::SilkVerbEditor(SilkVerbProcessor& p)
@@ -175,18 +435,47 @@ SilkVerbEditor::SilkVerbEditor(SilkVerbProcessor& p)
     hallButton.onClick = [this]() { modeButtonClicked(2); };
     addAndMakeVisible(hallButton);
 
-    // Color buttons (Modern/Vintage)
-    modernButton.setButtonText("MODERN");
-    modernButton.setRadioGroupId(2);
-    modernButton.setClickingTogglesState(true);
-    modernButton.onClick = [this]() { colorButtonClicked(0); };
-    addAndMakeVisible(modernButton);
+    chamberButton.setButtonText("CHAMBER");
+    chamberButton.setRadioGroupId(1);
+    chamberButton.setClickingTogglesState(true);
+    chamberButton.onClick = [this]() { modeButtonClicked(3); };
+    addAndMakeVisible(chamberButton);
 
-    vintageButton.setButtonText("VINTAGE");
-    vintageButton.setRadioGroupId(2);
-    vintageButton.setClickingTogglesState(true);
-    vintageButton.onClick = [this]() { colorButtonClicked(1); };
-    addAndMakeVisible(vintageButton);
+    cathedralButton.setButtonText("CATHEDRAL");
+    cathedralButton.setRadioGroupId(1);
+    cathedralButton.setClickingTogglesState(true);
+    cathedralButton.onClick = [this]() { modeButtonClicked(4); };
+    addAndMakeVisible(cathedralButton);
+
+    ambienceButton.setButtonText("AMBIENCE");
+    ambienceButton.setRadioGroupId(1);
+    ambienceButton.setClickingTogglesState(true);
+    ambienceButton.onClick = [this]() { modeButtonClicked(5); };
+    addAndMakeVisible(ambienceButton);
+
+    brightHallButton.setButtonText("BR.HALL");
+    brightHallButton.setRadioGroupId(1);
+    brightHallButton.setClickingTogglesState(true);
+    brightHallButton.onClick = [this]() { modeButtonClicked(6); };
+    addAndMakeVisible(brightHallButton);
+
+    chorusButton.setButtonText("CHORUS");
+    chorusButton.setRadioGroupId(1);
+    chorusButton.setClickingTogglesState(true);
+    chorusButton.onClick = [this]() { modeButtonClicked(7); };
+    addAndMakeVisible(chorusButton);
+
+    randomButton.setButtonText("RANDOM");
+    randomButton.setRadioGroupId(1);
+    randomButton.setClickingTogglesState(true);
+    randomButton.onClick = [this]() { modeButtonClicked(8); };
+    addAndMakeVisible(randomButton);
+
+    dirtyButton.setButtonText("DIRTY");
+    dirtyButton.setRadioGroupId(1);
+    dirtyButton.setClickingTogglesState(true);
+    dirtyButton.onClick = [this]() { modeButtonClicked(9); };
+    addAndMakeVisible(dirtyButton);
 
     // Freeze button
     freezeButton.setButtonText("FREEZE");
@@ -196,71 +485,115 @@ SilkVerbEditor::SilkVerbEditor(SilkVerbProcessor& p)
         audioProcessor.getAPVTS(), "freeze", freezeButton);
     lookAndFeel.setFreezeButton(&freezeButton);
 
-    // Main controls (Row 1)
+    // LED output meter
+    outputMeter.setStereoMode(true);
+    outputMeter.setRefreshRate(30.0f);
+    addAndMakeVisible(outputMeter);
+
+    // Row 1 — Reverb: Size, Pre-Delay, Shape, Spread
     setupSlider(sizeSlider, sizeLabel, "SIZE");
     sizeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "size", sizeSlider);
-
-    setupSlider(dampingSlider, dampingLabel, "DAMPING");
-    dampingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "damping", dampingSlider);
 
     setupSlider(preDelaySlider, preDelayLabel, "PRE-DELAY");
     preDelayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "predelay", preDelaySlider);
 
+    setupSlider(shapeSlider, shapeLabel, "SHAPE");
+    shapeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "ershape", shapeSlider);
+
+    setupSlider(spreadSlider, spreadLabel, "SPREAD");
+    spreadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "erspread", spreadSlider);
+
+    // Row 2 — Tone: Damping, Bass Boost, HF Decay, Diffusion
+    setupSlider(dampingSlider, dampingLabel, "DAMPING");
+    dampingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "damping", dampingSlider);
+
+    setupSlider(bassBoostSlider, bassBoostLabel, "BASS RT");
+    bassBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "bassmult", bassBoostSlider);
+
+    setupSlider(hfDecaySlider, hfDecayLabel, "HF DECAY");
+    hfDecayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "highdecay", hfDecaySlider);
+
+    setupSlider(diffusionSlider, diffusionLabel, "DIFFUSION");
+    diffusionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "latediff", diffusionSlider);
+
+    // Row 3 — Output: Width, Mix, Low Cut, High Cut
+    setupSlider(widthSlider, widthLabel, "WIDTH");
+    widthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getAPVTS(), "width", widthSlider);
+
     setupSlider(mixSlider, mixLabel, "MIX");
     mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "mix", mixSlider);
 
-    // Modulation controls (Row 2)
-    setupSmallSlider(modRateSlider, modRateLabel, "RATE");
-    modRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "modrate", modRateSlider);
-
-    setupSmallSlider(modDepthSlider, modDepthLabel, "DEPTH");
-    modDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "moddepth", modDepthSlider);
-
-    setupSmallSlider(widthSlider, widthLabel, "WIDTH");
-    widthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "width", widthSlider);
-
-    // Diffusion controls (Row 3 left)
-    setupSmallSlider(earlyDiffSlider, earlyDiffLabel, "EARLY");
-    earlyDiffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "earlydiff", earlyDiffSlider);
-
-    setupSmallSlider(lateDiffSlider, lateDiffLabel, "LATE");
-    lateDiffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "latediff", lateDiffSlider);
-
-    // Bass controls (Row 3 right)
-    setupSmallSlider(bassMultSlider, bassMultLabel, "BASS X");
-    bassMultAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "bassmult", bassMultSlider);
-
-    setupSmallSlider(bassFreqSlider, bassFreqLabel, "BASS Hz");
-    bassFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getAPVTS(), "bassfreq", bassFreqSlider);
-
-    // EQ controls (Row 4)
-    setupSmallSlider(lowCutSlider, lowCutLabel, "LOW CUT");
+    setupSlider(lowCutSlider, lowCutLabel, "LOW CUT");
     lowCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "lowcut", lowCutSlider);
 
-    setupSmallSlider(highCutSlider, highCutLabel, "HIGH CUT");
+    setupSlider(highCutSlider, highCutLabel, "HIGH CUT");
     highCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getAPVTS(), "highcut", highCutSlider);
 
+    // Pre-delay sync controls
+    preDelaySyncButton.setButtonText("SYNC");
+    preDelaySyncButton.setClickingTogglesState(true);
+    addAndMakeVisible(preDelaySyncButton);
+    preDelaySyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getAPVTS(), "predelaysync", preDelaySyncButton);
+
+    preDelayNoteBox.addItemList(juce::StringArray{ "1/32", "1/16T", "1/16", "1/8T", "1/8", "1/8D", "1/4", "1/4D" }, 1);
+    addAndMakeVisible(preDelayNoteBox);
+    preDelayNoteAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getAPVTS(), "predelaynote", preDelayNoteBox);
+
+    // Preset navigation — PCM 90-style LCD with prev/next arrows
+    prevPresetButton.setButtonText("<");
+    prevPresetButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff0a0a0a));
+    prevPresetButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff0a0a0a));
+    prevPresetButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff00d870));
+    prevPresetButton.onClick = [this]() { navigatePreset(-1); };
+    addAndMakeVisible(prevPresetButton);
+
+    nextPresetButton.setButtonText(">");
+    nextPresetButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff0a0a0a));
+    nextPresetButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff0a0a0a));
+    nextPresetButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff00d870));
+    nextPresetButton.onClick = [this]() { navigatePreset(1); };
+    addAndMakeVisible(nextPresetButton);
+
+    lcdDisplay.onClick = [this]() { showPresetBrowser(); };
+    addAndMakeVisible(lcdDisplay);
+
+    // Tooltips
+    sizeSlider.setTooltip(LunaTooltips::withAllHints("Reverb decay time"));
+    preDelaySlider.setTooltip(LunaTooltips::withAllHints("Delay before reverb onset"));
+    shapeSlider.setTooltip(LunaTooltips::withAllHints("Early reflection envelope (front-loaded to building)"));
+    spreadSlider.setTooltip(LunaTooltips::withAllHints("Early reflection spacing (dense to sparse)"));
+    dampingSlider.setTooltip(LunaTooltips::withAllHints("High-frequency air absorption"));
+    bassBoostSlider.setTooltip(LunaTooltips::withAllHints("Low-frequency decay ratio"));
+    hfDecaySlider.setTooltip(LunaTooltips::withAllHints("High-frequency decay ratio"));
+    diffusionSlider.setTooltip(LunaTooltips::withAllHints("Late reverb diffusion density"));
+    widthSlider.setTooltip(LunaTooltips::withAllHints("Stereo width"));
+    mixSlider.setTooltip(LunaTooltips::withAllHints("Dry/wet balance"));
+    lowCutSlider.setTooltip(LunaTooltips::withAllHints("Output high-pass filter"));
+    highCutSlider.setTooltip(LunaTooltips::withAllHints("Output low-pass filter"));
+    freezeButton.setTooltip("Infinite sustain — holds the reverb tail");
+    preDelaySyncButton.setTooltip("Sync pre-delay to host tempo");
+
     // Initialize buttons to current state
     updateModeButtons();
-    updateColorButtons();
 
     startTimerHz(30);
 
-    // Initialize resizable UI (500x580 base, range 450-700 width)
-    resizeHelper.initialize(this, &audioProcessor, 500, 580, 450, 520, 700, 800, false);
+    // Initialize resizable UI (560x530 base for 3 rows of knobs)
+    resizeHelper.initialize(this, &audioProcessor, 560, 530, 460, 460, 720, 680, false);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 }
 
@@ -288,23 +621,6 @@ void SilkVerbEditor::setupSlider(juce::Slider& slider, juce::Label& label, const
     addAndMakeVisible(label);
 }
 
-void SilkVerbEditor::setupSmallSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
-{
-    slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    // LunaSlider already has Shift+drag fine control built-in
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 14);
-    slider.setColour(juce::Slider::textBoxTextColourId, juce::Colour(0xffc0c0c0));
-    slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0xff252525));
-    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0xff353535));
-    addAndMakeVisible(slider);
-
-    label.setText(text, juce::dontSendNotification);
-    label.setJustificationType(juce::Justification::centred);
-    label.setColour(juce::Label::textColourId, juce::Colour(0xff909090));
-    label.setFont(juce::Font(juce::FontOptions(10.0f)).withStyle(juce::Font::bold));
-    addAndMakeVisible(label);
-}
-
 void SilkVerbEditor::updateModeButtons()
 {
     auto* modeParam = audioProcessor.getAPVTS().getRawParameterValue("mode");
@@ -316,30 +632,19 @@ void SilkVerbEditor::updateModeButtons()
     plateButton.setToggleState(currentMode == 0, juce::dontSendNotification);
     roomButton.setToggleState(currentMode == 1, juce::dontSendNotification);
     hallButton.setToggleState(currentMode == 2, juce::dontSendNotification);
+    chamberButton.setToggleState(currentMode == 3, juce::dontSendNotification);
+    cathedralButton.setToggleState(currentMode == 4, juce::dontSendNotification);
+    ambienceButton.setToggleState(currentMode == 5, juce::dontSendNotification);
+    brightHallButton.setToggleState(currentMode == 6, juce::dontSendNotification);
+    chorusButton.setToggleState(currentMode == 7, juce::dontSendNotification);
+    randomButton.setToggleState(currentMode == 8, juce::dontSendNotification);
+    dirtyButton.setToggleState(currentMode == 9, juce::dontSendNotification);
 }
 
 void SilkVerbEditor::modeButtonClicked(int mode)
 {
     audioProcessor.getAPVTS().getParameterAsValue("mode").setValue(mode);
     updateModeButtons();
-}
-
-void SilkVerbEditor::updateColorButtons()
-{
-    auto* colorParam = audioProcessor.getAPVTS().getRawParameterValue("color");
-    if (colorParam == nullptr)
-        return;
-
-    int currentColor = static_cast<int>(colorParam->load());
-
-    modernButton.setToggleState(currentColor == 0, juce::dontSendNotification);
-    vintageButton.setToggleState(currentColor == 1, juce::dontSendNotification);
-}
-
-void SilkVerbEditor::colorButtonClicked(int color)
-{
-    audioProcessor.getAPVTS().getParameterAsValue("color").setValue(color);
-    updateColorButtons();
 }
 
 void SilkVerbEditor::paint(juce::Graphics& g)
@@ -349,82 +654,77 @@ void SilkVerbEditor::paint(juce::Graphics& g)
 
     auto bounds = getLocalBounds();
 
-    // Header
-    auto headerArea = bounds.removeFromTop(50);
+    // Header (title row + LCD row)
+    auto headerArea = bounds.removeFromTop(66);
     g.setColour(juce::Colour(0xff222222));
     g.fillRect(headerArea);
 
-    // Title
-    g.setFont(juce::Font(juce::FontOptions(22.0f)).withStyle(juce::Font::bold));
+    // Title (clickable for supporters) — top portion of header
+    auto titleRow = headerArea.withHeight(24);
+    titleClickArea = titleRow.withWidth(120).withX(titleRow.getX() + 10);
+
+    g.setFont(juce::Font(juce::FontOptions(18.0f)).withStyle(juce::Font::bold));
     g.setColour(juce::Colour(0xff6a9ad9));
-    g.drawText("SilkVerb", headerArea, juce::Justification::centred);
+    g.drawText("SilkVerb", titleRow.reduced(12, 0), juce::Justification::centredLeft);
 
-    // Subtitle
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
-    g.setColour(juce::Colour(0xff808080));
-    g.drawText("Algorithmic Reverb", headerArea.withTrimmedTop(28), juce::Justification::centred);
+    // Reserve right side for meter
+    bounds.removeFromRight(30);
 
-    // Mode section background
-    auto modeArea = bounds.removeFromTop(40);
-    modeArea.reduce(10, 5);
-    g.setColour(juce::Colour(0xff252525));
+    // Mode section background (2 rows, compact)
+    auto modeArea = bounds.removeFromTop(56);
+    modeArea.reduce(8, 3);
+    g.setColour(juce::Colour(0xff232323));
     g.fillRoundedRectangle(modeArea.toFloat(), 5.0f);
 
-    // Color section background
+    // Row 1: REVERB knobs section
     bounds.removeFromTop(5);
-    auto colorArea = bounds.removeFromTop(35);
-    colorArea.reduce(10, 2);
-    g.setColour(juce::Colour(0xff252525));
-    g.fillRoundedRectangle(colorArea.toFloat(), 5.0f);
+    auto reverbSection = bounds.removeFromTop(110);
+    reverbSection.reduce(8, 0);
+    g.setColour(juce::Colour(0xff262626));
+    g.fillRoundedRectangle(reverbSection.toFloat(), 5.0f);
+    g.setColour(juce::Colour(0xff2e2e2e));
+    g.drawHorizontalLine(reverbSection.getY() + 1,
+                         static_cast<float>(reverbSection.getX() + 5),
+                         static_cast<float>(reverbSection.getRight() - 5));
 
-    // Main controls section
-    bounds.removeFromTop(8);
-    auto mainSection = bounds.removeFromTop(115);
-    mainSection.reduce(10, 0);
-    g.setColour(juce::Colour(0xff252525));
-    g.fillRoundedRectangle(mainSection.toFloat(), 5.0f);
-
-    // Modulation section
-    bounds.removeFromTop(8);
-    auto modSection = bounds.removeFromTop(95);
-    modSection.reduce(10, 0);
-    g.setColour(juce::Colour(0xff252525));
-    g.fillRoundedRectangle(modSection.toFloat(), 5.0f);
-
-    // Section label
     g.setFont(juce::Font(juce::FontOptions(9.0f)).withStyle(juce::Font::bold));
     g.setColour(juce::Colour(0xff6a9ad9));
-    g.drawText("MODULATION", modSection.removeFromTop(14).reduced(8, 0), juce::Justification::centredLeft);
+    g.drawText("REVERB", reverbSection.removeFromTop(14).reduced(10, 0), juce::Justification::centredLeft);
 
-    // Diffusion & Bass section
-    bounds.removeFromTop(8);
-    auto diffBassSection = bounds.removeFromTop(95);
-    diffBassSection.reduce(10, 0);
-    g.setColour(juce::Colour(0xff252525));
-    g.fillRoundedRectangle(diffBassSection.toFloat(), 5.0f);
+    // Row 2: TONE knobs section
+    bounds.removeFromTop(5);
+    auto toneSection = bounds.removeFromTop(110);
+    toneSection.reduce(8, 0);
+    g.setColour(juce::Colour(0xff262626));
+    g.fillRoundedRectangle(toneSection.toFloat(), 5.0f);
+    g.setColour(juce::Colour(0xff2e2e2e));
+    g.drawHorizontalLine(toneSection.getY() + 1,
+                         static_cast<float>(toneSection.getX() + 5),
+                         static_cast<float>(toneSection.getRight() - 5));
 
-    // Section labels - position at 1/4 and 3/4 points
-    auto diffBassLabelArea = diffBassSection.removeFromTop(14).reduced(8, 0);
-    int quarterWidth = diffBassLabelArea.getWidth() / 4;
+    g.setFont(juce::Font(juce::FontOptions(9.0f)).withStyle(juce::Font::bold));
     g.setColour(juce::Colour(0xff6a9ad9));
-    g.drawText("DIFFUSION", diffBassLabelArea.withWidth(quarterWidth * 2), juce::Justification::centredLeft);
-    g.drawText("BASS DECAY", diffBassLabelArea.withX(diffBassLabelArea.getX() + quarterWidth * 2).withWidth(quarterWidth * 2), juce::Justification::centredLeft);
+    g.drawText("TONE", toneSection.removeFromTop(14).reduced(10, 0), juce::Justification::centredLeft);
 
-    // EQ section
-    bounds.removeFromTop(8);
-    auto eqSection = bounds.removeFromTop(95);
-    eqSection.reduce(10, 0);
-    g.setColour(juce::Colour(0xff252525));
-    g.fillRoundedRectangle(eqSection.toFloat(), 5.0f);
+    // Row 3: OUTPUT knobs section
+    bounds.removeFromTop(5);
+    auto outputSection = bounds.removeFromTop(110);
+    outputSection.reduce(8, 0);
+    g.setColour(juce::Colour(0xff262626));
+    g.fillRoundedRectangle(outputSection.toFloat(), 5.0f);
+    g.setColour(juce::Colour(0xff2e2e2e));
+    g.drawHorizontalLine(outputSection.getY() + 1,
+                         static_cast<float>(outputSection.getX() + 5),
+                         static_cast<float>(outputSection.getRight() - 5));
 
-    // Section label
+    g.setFont(juce::Font(juce::FontOptions(9.0f)).withStyle(juce::Font::bold));
     g.setColour(juce::Colour(0xff6a9ad9));
-    g.drawText("OUTPUT EQ", eqSection.removeFromTop(14).reduced(8, 0), juce::Justification::centredLeft);
+    g.drawText("OUTPUT", outputSection.removeFromTop(14).reduced(10, 0), juce::Justification::centredLeft);
 
     // Footer
     g.setFont(juce::Font(juce::FontOptions(9.0f)).withStyle(juce::Font::italic));
     g.setColour(juce::Colour(0xff606060));
-    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(16), juce::Justification::centred);
+    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(14), juce::Justification::centred);
 }
 
 void SilkVerbEditor::resized()
@@ -432,116 +732,207 @@ void SilkVerbEditor::resized()
     resizeHelper.updateResizer();
 
     auto bounds = getLocalBounds();
-    const int margin = 15;
-    const int sectionGap = 8;
 
-    // Header
-    bounds.removeFromTop(50);
+    // Header (66px — title row + LCD row)
+    auto headerArea = bounds.removeFromTop(66);
 
-    // Mode buttons row
-    auto modeRow = bounds.removeFromTop(40);
-    modeRow.reduce(20, 8);
+    // Freeze button in title row (right of "SilkVerb", left of center)
+    freezeButton.setBounds(140, 1, 80, 22);
 
-    int modeButtonWidth = (modeRow.getWidth() - 20) / 3;
-    plateButton.setBounds(modeRow.removeFromLeft(modeButtonWidth));
-    modeRow.removeFromLeft(10);
-    roomButton.setBounds(modeRow.removeFromLeft(modeButtonWidth));
-    modeRow.removeFromLeft(10);
-    hallButton.setBounds(modeRow);
+    // LCD display and prev/next buttons in lower header
+    auto lcdRow = headerArea.withTop(24).withHeight(40).reduced(16, 0);
+    prevPresetButton.setBounds(lcdRow.removeFromLeft(24));
+    nextPresetButton.setBounds(lcdRow.removeFromRight(24));
+    lcdDisplay.setBounds(lcdRow.reduced(3, 0));
 
-    // Color buttons row (Modern/Vintage + Freeze)
-    bounds.removeFromTop(5);
-    auto colorRow = bounds.removeFromTop(35);
-    colorRow.reduce(20, 4);
+    // Reserve right side for LED meter
+    auto meterStrip = bounds.removeFromRight(30);
 
-    int colorButtonWidth = (colorRow.getWidth() - 20) / 3;  // 3 buttons now
-    modernButton.setBounds(colorRow.removeFromLeft(colorButtonWidth));
-    colorRow.removeFromLeft(10);
-    vintageButton.setBounds(colorRow.removeFromLeft(colorButtonWidth));
-    colorRow.removeFromLeft(10);
-    freezeButton.setBounds(colorRow);
+    // Mode buttons (2 rows of 5, compact)
+    auto modeSection = bounds.removeFromTop(56);
+    modeSection.reduce(12, 3);
 
-    // Main controls section (Size, Damping, PreDelay, Mix)
-    bounds.removeFromTop(sectionGap);
-    auto mainSection = bounds.removeFromTop(115);
-    mainSection.reduce(margin, 8);
+    int modeButtonGap = 3;
+    auto modeRow1 = modeSection.removeFromTop(modeSection.getHeight() / 2).reduced(0, 1);
+    auto modeRow2 = modeSection.reduced(0, 1);
 
-    int mainKnobSize = 65;
+    int modeButtonWidth = (modeRow1.getWidth() - modeButtonGap * 4) / 5;
+    // Row 1: Plate, Room, Hall, Br.Hall, Chamber
+    plateButton.setBounds(modeRow1.removeFromLeft(modeButtonWidth));
+    modeRow1.removeFromLeft(modeButtonGap);
+    roomButton.setBounds(modeRow1.removeFromLeft(modeButtonWidth));
+    modeRow1.removeFromLeft(modeButtonGap);
+    hallButton.setBounds(modeRow1.removeFromLeft(modeButtonWidth));
+    modeRow1.removeFromLeft(modeButtonGap);
+    brightHallButton.setBounds(modeRow1.removeFromLeft(modeButtonWidth));
+    modeRow1.removeFromLeft(modeButtonGap);
+    chamberButton.setBounds(modeRow1);
+
+    // Row 2: Cathedral, Ambience, Chorus, Random, Dirty
+    cathedralButton.setBounds(modeRow2.removeFromLeft(modeButtonWidth));
+    modeRow2.removeFromLeft(modeButtonGap);
+    ambienceButton.setBounds(modeRow2.removeFromLeft(modeButtonWidth));
+    modeRow2.removeFromLeft(modeButtonGap);
+    chorusButton.setBounds(modeRow2.removeFromLeft(modeButtonWidth));
+    modeRow2.removeFromLeft(modeButtonGap);
+    randomButton.setBounds(modeRow2.removeFromLeft(modeButtonWidth));
+    modeRow2.removeFromLeft(modeButtonGap);
+    dirtyButton.setBounds(modeRow2);
+
+    // --- Knob layout: 3 rows of 4 ---
+    int knobSize = 50;
     int labelHeight = 14;
-    int cellWidth = mainSection.getWidth() / 4;
+    int knobsPerRow = 4;
 
-    // Layout main knobs
-    juce::Slider* mainSliders[] = { &sizeSlider, &dampingSlider, &preDelaySlider, &mixSlider };
-    juce::Label* mainLabels[] = { &sizeLabel, &dampingLabel, &preDelayLabel, &mixLabel };
-
-    for (int i = 0; i < 4; ++i)
+    auto layoutKnobRow = [&](juce::Rectangle<int>& parentBounds, int sectionHeight,
+                             juce::Slider* sliders[], juce::Label* labels[],
+                             int preDelaySyncIdx = -1)
     {
-        auto cell = mainSection.withX(mainSection.getX() + i * cellWidth).withWidth(cellWidth);
-        mainLabels[i]->setBounds(cell.removeFromTop(labelHeight));
-        mainSliders[i]->setBounds(cell.withSizeKeepingCentre(mainKnobSize, mainKnobSize + 18));
-    }
+        parentBounds.removeFromTop(5);
+        auto section = parentBounds.removeFromTop(sectionHeight);
+        section.reduce(12, 4);
+        section.removeFromTop(14); // Section label space
 
-    // Modulation section (Rate, Depth, Width)
-    bounds.removeFromTop(sectionGap);
-    auto modSection = bounds.removeFromTop(95);
-    modSection.reduce(margin, 5);
-    modSection.removeFromTop(14); // Section label space
+        int cellWidth = section.getWidth() / knobsPerRow;
 
-    int smallKnobSize = 50;
-    int smallLabelHeight = 12;
-    int modCellWidth = modSection.getWidth() / 3;
+        for (int i = 0; i < knobsPerRow; ++i)
+        {
+            auto cell = section.withX(section.getX() + i * cellWidth).withWidth(cellWidth);
+            labels[i]->setBounds(cell.removeFromTop(labelHeight));
 
-    juce::Slider* modSliders[] = { &modRateSlider, &modDepthSlider, &widthSlider };
-    juce::Label* modLabels[] = { &modRateLabel, &modDepthLabel, &widthLabel };
+            if (i == preDelaySyncIdx)
+            {
+                auto syncArea = cell.removeFromBottom(22).reduced(2, 0);
+                int syncBtnW = syncArea.getWidth() / 3;
+                preDelaySyncButton.setBounds(syncArea.removeFromLeft(syncBtnW));
+                syncArea.removeFromLeft(2);
+                preDelayNoteBox.setBounds(syncArea);
+            }
 
-    for (int i = 0; i < 3; ++i)
-    {
-        auto cell = modSection.withX(modSection.getX() + i * modCellWidth).withWidth(modCellWidth);
-        modLabels[i]->setBounds(cell.removeFromTop(smallLabelHeight));
-        modSliders[i]->setBounds(cell.withSizeKeepingCentre(smallKnobSize, smallKnobSize + 14));
-    }
+            sliders[i]->setBounds(cell.withSizeKeepingCentre(knobSize, knobSize + 16));
+        }
+    };
 
-    // Diffusion & Bass section
-    bounds.removeFromTop(sectionGap);
-    auto diffBassSection = bounds.removeFromTop(95);
-    diffBassSection.reduce(margin, 5);
-    diffBassSection.removeFromTop(14); // Section label space
+    // Row 1: REVERB (Size, Pre-Delay, Shape, Spread)
+    juce::Slider* reverbSliders[] = { &sizeSlider, &preDelaySlider, &shapeSlider, &spreadSlider };
+    juce::Label* reverbLabels[] = { &sizeLabel, &preDelayLabel, &shapeLabel, &spreadLabel };
+    layoutKnobRow(bounds, 110, reverbSliders, reverbLabels, 1);
 
-    // Split into 4 equal columns
-    int quarterWidth = diffBassSection.getWidth() / 4;
+    // Row 2: TONE (Damping, Bass Boost, HF Decay, Diffusion)
+    juce::Slider* toneSliders[] = { &dampingSlider, &bassBoostSlider, &hfDecaySlider, &diffusionSlider };
+    juce::Label* toneLabels[] = { &dampingLabel, &bassBoostLabel, &hfDecayLabel, &diffusionLabel };
+    layoutKnobRow(bounds, 110, toneSliders, toneLabels);
 
-    juce::Slider* diffBassSliders[] = { &earlyDiffSlider, &lateDiffSlider, &bassMultSlider, &bassFreqSlider };
-    juce::Label* diffBassLabels[] = { &earlyDiffLabel, &lateDiffLabel, &bassMultLabel, &bassFreqLabel };
+    // Row 3: OUTPUT (Width, Mix, Low Cut, High Cut)
+    juce::Slider* outputSliders[] = { &widthSlider, &mixSlider, &lowCutSlider, &highCutSlider };
+    juce::Label* outputLabels[] = { &widthLabel, &mixLabel, &lowCutLabel, &highCutLabel };
+    layoutKnobRow(bounds, 110, outputSliders, outputLabels);
 
-    for (int i = 0; i < 4; ++i)
-    {
-        auto cell = diffBassSection.withX(diffBassSection.getX() + i * quarterWidth).withWidth(quarterWidth);
-        diffBassLabels[i]->setBounds(cell.removeFromTop(smallLabelHeight));
-        diffBassSliders[i]->setBounds(cell.withSizeKeepingCentre(smallKnobSize, smallKnobSize + 14));
-    }
+    // LED meter (right strip, spans from modes to bottom)
+    outputMeter.setBounds(meterStrip.withTrimmedTop(30).withTrimmedBottom(16).reduced(4, 0));
 
-    // EQ section (Low Cut, High Cut)
-    bounds.removeFromTop(sectionGap);
-    auto eqSection = bounds.removeFromTop(95);
-    eqSection.reduce(margin, 5);
-    eqSection.removeFromTop(14); // Section label space
-
-    int eqCellWidth = eqSection.getWidth() / 2;
-
-    juce::Slider* eqSliders[] = { &lowCutSlider, &highCutSlider };
-    juce::Label* eqLabels[] = { &lowCutLabel, &highCutLabel };
-
-    for (int i = 0; i < 2; ++i)
-    {
-        auto cell = eqSection.withX(eqSection.getX() + i * eqCellWidth).withWidth(eqCellWidth);
-        eqLabels[i]->setBounds(cell.removeFromTop(smallLabelHeight));
-        eqSliders[i]->setBounds(cell.withSizeKeepingCentre(smallKnobSize, smallKnobSize + 14));
-    }
+    // Overlays (full size)
+    if (supportersOverlay)
+        supportersOverlay->setBounds(getLocalBounds());
+    if (presetBrowser)
+        presetBrowser->setBounds(getLocalBounds());
 }
 
 void SilkVerbEditor::timerCallback()
 {
     // Update buttons in case parameters changed externally
     updateModeButtons();
-    updateColorButtons();
+
+    // Update preset display (includes RT60 in LCD)
+    updatePresetDisplay();
+
+    // Update RT60 in LCD right side
+    float rt60 = audioProcessor.getRT60Display();
+    if (rt60 < 10.0f)
+        lcdDisplay.setLine1Right(juce::String(rt60, 1) + "s");
+    else
+        lcdDisplay.setLine1Right(juce::String(static_cast<int>(rt60)) + "s");
+
+    // Update LED meter
+    float peakL = audioProcessor.getOutputLevelL();
+    float peakR = audioProcessor.getOutputLevelR();
+    float dbL = juce::Decibels::gainToDecibels(peakL, -60.0f);
+    float dbR = juce::Decibels::gainToDecibels(peakR, -60.0f);
+    outputMeter.setStereoLevels(dbL, dbR);
+    outputMeter.repaint();
+}
+
+void SilkVerbEditor::mouseDown(const juce::MouseEvent& event)
+{
+    if (titleClickArea.contains(event.getPosition()))
+    {
+        showSupportersPanel();
+        return;
+    }
+
+    juce::AudioProcessorEditor::mouseDown(event);
+}
+
+void SilkVerbEditor::showSupportersPanel()
+{
+    if (supportersOverlay == nullptr)
+    {
+        supportersOverlay = std::make_unique<SupportersOverlay>("SilkVerb", "1.0.0");
+        supportersOverlay->onDismiss = [this]() {
+            supportersOverlay.reset();
+        };
+        addAndMakeVisible(supportersOverlay.get());
+        supportersOverlay->setBounds(getLocalBounds());
+    }
+}
+
+void SilkVerbEditor::showPresetBrowser()
+{
+    if (presetBrowser == nullptr)
+    {
+        presetBrowser = std::make_unique<PresetBrowserOverlay>(audioProcessor);
+        presetBrowser->onDismiss = [this]() {
+            presetBrowser.reset();
+            updatePresetDisplay();
+            updateModeButtons();
+        };
+        addAndMakeVisible(presetBrowser.get());
+        presetBrowser->setBounds(getLocalBounds());
+    }
+}
+
+void SilkVerbEditor::navigatePreset(int delta)
+{
+    int numPrograms = audioProcessor.getNumPrograms();
+    int current = audioProcessor.getCurrentProgram();
+    int next = (current + delta + numPrograms) % numPrograms;
+    audioProcessor.setCurrentProgram(next);
+    updatePresetDisplay();
+    updateModeButtons();
+}
+
+void SilkVerbEditor::updatePresetDisplay()
+{
+    int prog = audioProcessor.getCurrentProgram();
+    auto presets = SilkVerbPresets::getFactoryPresets();
+
+    static const juce::StringArray modeNames = {
+        "Plate", "Room", "Hall", "Chamber", "Cathedral", "Ambience",
+        "Bright Hall", "Chorus Space", "Random Space", "Dirty Hall"
+    };
+
+    if (prog == 0)
+    {
+        lcdDisplay.setLine1("");
+        lcdDisplay.setLine2("Init");
+    }
+    else if (prog > 0 && prog <= static_cast<int>(presets.size()))
+    {
+        const auto& preset = presets[static_cast<size_t>(prog - 1)];
+        juce::String modeName = (preset.mode >= 0 && preset.mode < modeNames.size())
+            ? modeNames[preset.mode] : "";
+
+        lcdDisplay.setLine1(preset.category + ":  " + modeName);
+        lcdDisplay.setLine2(juce::String(prog).paddedLeft('0', 2) + "  " + preset.name);
+    }
 }
