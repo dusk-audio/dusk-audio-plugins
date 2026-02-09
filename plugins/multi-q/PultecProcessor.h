@@ -40,7 +40,6 @@
 #include <array>
 #include <atomic>
 #include <cmath>
-#include <random>
 
 // Helper for LC filter pre-warping
 inline float pultecPreWarpFrequency(float freq, double sampleRate)
@@ -69,14 +68,10 @@ public:
         this->sampleRate = sampleRate;
         reset();
 
-        // Initialize component tolerance (simulates vintage unit variation)
-        // Random variation of ±5% on Q and ±2% on saturation threshold
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_real_distribution<float> qDist(0.95f, 1.05f);
-        std::uniform_real_distribution<float> satDist(0.98f, 1.02f);
-        componentQVariation = qDist(gen);
-        componentSatVariation = satDist(gen);
+        // Fixed component tolerance values (deterministic for reproducible results)
+        // Simulates a typical vintage unit with slight component variation
+        componentQVariation = 1.02f;
+        componentSatVariation = 0.99f;
     }
 
     void reset()

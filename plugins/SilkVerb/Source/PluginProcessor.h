@@ -14,6 +14,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include "FDNReverb.h"
+#include "SilkVerbPresets.h"
 
 class SilkVerbProcessor : public juce::AudioProcessor
 {
@@ -53,6 +54,9 @@ public:
     float getOutputLevelL() const { return outputLevelL.load(); }
     float getOutputLevelR() const { return outputLevelR.load(); }
 
+    // RT60 readout for UI display
+    float getRT60Display() const { return reverbEngine.getTargetRT60(); }
+
 private:
     juce::AudioProcessorValueTreeState apvts;
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -76,9 +80,21 @@ private:
     std::atomic<float>* bassMultParam = nullptr;
     std::atomic<float>* bassFreqParam = nullptr;
 
-    // Parameter pointers - Diffusion
+    // Parameter pointers - Diffusion & Balance
     std::atomic<float>* earlyDiffParam = nullptr;
     std::atomic<float>* lateDiffParam = nullptr;
+    std::atomic<float>* earlyLateBalParam = nullptr;
+
+    // Parameter pointers - Room Size & HF Decay
+    std::atomic<float>* roomSizeParam = nullptr;
+    std::atomic<float>* highDecayParam = nullptr;
+
+    // Parameter pointers - 4-band decay & ER controls
+    std::atomic<float>* midDecayParam = nullptr;
+    std::atomic<float>* highFreqParam = nullptr;
+    std::atomic<float>* erShapeParam = nullptr;
+    std::atomic<float>* erSpreadParam = nullptr;
+    std::atomic<float>* erBassCutParam = nullptr;
 
     // Parameter pointers - Output EQ
     std::atomic<float>* highCutParam = nullptr;
@@ -86,6 +102,10 @@ private:
 
     // Parameter pointers - Freeze
     std::atomic<float>* freezeParam = nullptr;
+
+    // Parameter pointers - Pre-delay tempo sync
+    std::atomic<float>* preDelaySyncParam = nullptr;
+    std::atomic<float>* preDelayNoteParam = nullptr;
 
     // Smoothed parameters
     juce::SmoothedValue<float> smoothedSize;
@@ -99,12 +119,22 @@ private:
     juce::SmoothedValue<float> smoothedBassFreq;
     juce::SmoothedValue<float> smoothedEarlyDiff;
     juce::SmoothedValue<float> smoothedLateDiff;
+    juce::SmoothedValue<float> smoothedRoomSize;
+    juce::SmoothedValue<float> smoothedEarlyLateBal;
+    juce::SmoothedValue<float> smoothedHighDecay;
+    juce::SmoothedValue<float> smoothedMidDecay;
+    juce::SmoothedValue<float> smoothedHighFreq;
+    juce::SmoothedValue<float> smoothedERShape;
+    juce::SmoothedValue<float> smoothedERSpread;
+    juce::SmoothedValue<float> smoothedERBassCut;
     juce::SmoothedValue<float> smoothedHighCut;
     juce::SmoothedValue<float> smoothedLowCut;
 
-    // Current mode/color tracking
+    // Current mode tracking
     int lastMode = -1;
-    int lastColor = -1;
+
+    // Factory preset index
+    int currentPresetIndex = 0;
 
     // Metering
     std::atomic<float> outputLevelL { 0.0f };

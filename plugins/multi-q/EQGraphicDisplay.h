@@ -134,7 +134,14 @@ private:
 
     // Control point hit testing - larger nodes for Pro-Q style visibility
     static constexpr float CONTROL_POINT_RADIUS = 12.0f;  // 24px diameter
-    static constexpr float CONTROL_POINT_HIT_RADIUS = 16.0f;  // Generous hit area
+    static constexpr float BASE_HIT_RADIUS = 16.0f;  // Base hit area at reference width
+
+    // Scale hit radius with display width for consistent interaction at all sizes
+    float getHitRadius() const
+    {
+        float w = static_cast<float>(getDisplayBounds().getWidth());
+        return juce::jmax(12.0f, BASE_HIT_RADIUS * (w / 900.0f));
+    }
 
     // Coordinate conversion
     float getXForFrequency(float freq) const;

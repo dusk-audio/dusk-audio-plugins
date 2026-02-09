@@ -443,6 +443,18 @@ MultiQEditor::MultiQEditor(MultiQ& p)
 
         int newHeight = pultecCurveCollapsed ? 640 : 750;
         setSize(getWidth(), newHeight);
+
+        // Some hosts (particularly on Linux/X11) process resize requests asynchronously,
+        // which can cause the layout to use stale bounds. Schedule a deferred relayout.
+        juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MultiQEditor>(this), newHeight]() {
+            if (safeThis != nullptr)
+            {
+                if (safeThis->getHeight() != newHeight)
+                    safeThis->setSize(safeThis->getWidth(), newHeight);
+                safeThis->resized();
+                safeThis->repaint();
+            }
+        });
     };
     pultecCurveCollapseButton.setVisible(false);
     addAndMakeVisible(pultecCurveCollapseButton);
@@ -764,16 +776,6 @@ void MultiQEditor::paint(juce::Graphics& g)
         {
             // Get band info for display
             const char* bandTypeNames[] = {"HPF", "Low Shelf", "Para 1", "Para 2", "Para 3", "Para 4", "High Shelf", "LPF"};
-            const juce::Colour bandColors[8] = {
-                juce::Colour(0xFFff5555),  // Red - HPF
-                juce::Colour(0xFFffaa00),  // Orange - Low Shelf
-                juce::Colour(0xFFffee00),  // Yellow - Para 1
-                juce::Colour(0xFF88ee44),  // Lime - Para 2
-                juce::Colour(0xFF00ccff),  // Cyan - Para 3
-                juce::Colour(0xFF5588ff),  // Blue - Para 4
-                juce::Colour(0xFFaa66ff),  // Purple - High Shelf
-                juce::Colour(0xFFff66cc)   // Pink - LPF
-            };
 
             // Draw centered band indicator: "Band 3 - Para 1"
             juce::String bandText = "Band " + juce::String(selectedBand + 1) + " - " + bandTypeNames[selectedBand];
@@ -784,7 +786,7 @@ void MultiQEditor::paint(juce::Graphics& g)
             int totalWidth = dotSize + 8 + textWidth;
             int startX = (getWidth() - totalWidth) / 2;
 
-            g.setColour(bandColors[selectedBand]);
+            g.setColour(DefaultBandConfigs[selectedBand].color);
             float dotY = static_cast<float>(footerY) + (static_cast<float>(footerHeight) - static_cast<float>(dotSize)) / 2.0f;
             g.fillEllipse(static_cast<float>(startX), dotY, static_cast<float>(dotSize), static_cast<float>(dotSize));
 
@@ -1261,15 +1263,17 @@ void MultiQEditor::parameterChanged(const juce::String& parameterID, float newVa
                 // isDynamicMode removed - dynamics are now per-band in Digital mode
                 safeThis->updateEQModeVisibility();
 
-                // Restore window height based on each mode's curve collapse state
+                // Ensure window height meets minimum for current mode
+                // Only shrink if necessary — preserve user's larger window size
+                int minHeight = 640;
                 if (safeThis->isBritishMode)
-                    safeThis->setSize(safeThis->getWidth(),
-                                      safeThis->britishCurveCollapsed ? 530 : 640);
+                    minHeight = safeThis->britishCurveCollapsed ? 530 : 640;
                 else if (safeThis->isPultecMode)
-                    safeThis->setSize(safeThis->getWidth(),
-                                      safeThis->pultecCurveCollapsed ? 640 : 750);
-                else
-                    safeThis->setSize(safeThis->getWidth(), 640);
+                    minHeight = safeThis->pultecCurveCollapsed ? 640 : 750;
+
+                int currentHeight = safeThis->getHeight();
+                if (currentHeight < minHeight)
+                    safeThis->setSize(safeThis->getWidth(), minHeight);
 
                 safeThis->resized();
                 safeThis->repaint();
