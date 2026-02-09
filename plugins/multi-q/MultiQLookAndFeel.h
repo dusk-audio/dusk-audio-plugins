@@ -437,27 +437,10 @@ class BandEnableButton : public juce::ToggleButton
 public:
     BandEnableButton(int bandIndex)
     {
-        // Hardcode colors directly to bypass any initialization issues
-        static const juce::Colour bandColors[8] = {
-            juce::Colour(0xFFff4444),  // Red - HPF
-            juce::Colour(0xFFff8844),  // Orange - Low Shelf
-            juce::Colour(0xFFffcc44),  // Yellow - Para 1
-            juce::Colour(0xFF44cc44),  // Green - Para 2
-            juce::Colour(0xFF44cccc),  // Cyan - Para 3
-            juce::Colour(0xFF4488ff),  // Blue - Para 4
-            juce::Colour(0xFFaa44ff),  // Purple - High Shelf
-            juce::Colour(0xFFff44aa)   // Pink - LPF
-        };
-
-        static const BandType bandTypes[8] = {
-            BandType::HighPass, BandType::LowShelf, BandType::Parametric, BandType::Parametric,
-            BandType::Parametric, BandType::Parametric, BandType::HighShelf, BandType::LowPass
-        };
-
         if (bandIndex >= 0 && bandIndex < 8)
         {
-            bandColor = bandColors[bandIndex];
-            filterType = bandTypes[bandIndex];
+            bandColor = DefaultBandConfigs[bandIndex].color;
+            filterType = DefaultBandConfigs[bandIndex].type;
         }
     }
 

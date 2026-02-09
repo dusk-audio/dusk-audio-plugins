@@ -19,8 +19,8 @@ BandDetailPanel::BandDetailPanel(MultiQ& p)
         processor.parameters.addParameterListener(ParamIDs::bandDynEnabled(i), this);
         processor.parameters.addParameterListener(ParamIDs::bandEnabled(i), this);
     }
-    // Listen for shape changes on parametric bands 3-6
-    for (int i = 3; i <= 6; ++i)
+    // Listen for shape changes on bands 2-7 (indices 1-6 have shape selector)
+    for (int i = 2; i <= 7; ++i)
         processor.parameters.addParameterListener(ParamIDs::bandShape(i), this);
 }
 
@@ -32,7 +32,7 @@ BandDetailPanel::~BandDetailPanel()
         processor.parameters.removeParameterListener(ParamIDs::bandDynEnabled(i), this);
         processor.parameters.removeParameterListener(ParamIDs::bandEnabled(i), this);
     }
-    for (int i = 3; i <= 6; ++i)
+    for (int i = 2; i <= 7; ++i)
         processor.parameters.removeParameterListener(ParamIDs::bandShape(i), this);
 
     // Release LookAndFeel references before knobs are destroyed
@@ -93,12 +93,13 @@ void BandDetailPanel::setupKnobs()
     slopeSelector->setTooltip("Filter slope: Steeper = sharper cutoff (6-48 dB/octave)");
     addAndMakeVisible(slopeSelector.get());
 
-    // Shape selector for parametric bands 3-6 (Peaking/Notch/Band Pass)
+    // Shape selector for bands 2-7 (different options per band)
     shapeSelector = std::make_unique<juce::ComboBox>();
+    // Items are populated dynamically in setSelectedBand() based on band type
     shapeSelector->addItem("Peaking", 1);
     shapeSelector->addItem("Notch", 2);
     shapeSelector->addItem("Band Pass", 3);
-    shapeSelector->setTooltip("Filter shape: Peaking (boost/cut), Notch (narrow rejection), Band Pass (isolate frequency)");
+    shapeSelector->setTooltip("Filter shape");
     addAndMakeVisible(shapeSelector.get());
 
     // Per-band channel routing selector
@@ -219,25 +220,59 @@ void BandDetailPanel::updateAttachments()
             processor.parameters, ParamIDs::bandSlope(bandNum), *slopeSelector);
     }
 
-    // Shape selector for parametric bands 3-6 (indices 2-5)
-    if (selectedBand >= 2 && selectedBand <= 5)
+    // Shape selector for bands 2-7 (indices 1-6)
+    bool hasShape = (selectedBand >= 1 && selectedBand <= 6 && selectedBand != 0 && selectedBand != 7);
+    if (hasShape)
     {
+        // Update shape selector items based on band
+        shapeSelector->clear(juce::dontSendNotification);
+        if (selectedBand == 1)  // Band 2
+        {
+            shapeSelector->addItem("Low Shelf", 1);
+            shapeSelector->addItem("Peaking", 2);
+            shapeSelector->addItem("High Pass", 3);
+            shapeSelector->setTooltip("Filter shape: Low Shelf (default), Peaking (bell), High Pass (cut)");
+        }
+        else if (selectedBand == 6)  // Band 7
+        {
+            shapeSelector->addItem("High Shelf", 1);
+            shapeSelector->addItem("Peaking", 2);
+            shapeSelector->addItem("Low Pass", 3);
+            shapeSelector->setTooltip("Filter shape: High Shelf (default), Peaking (bell), Low Pass (cut)");
+        }
+        else  // Parametric bands 3-6
+        {
+            shapeSelector->addItem("Peaking", 1);
+            shapeSelector->addItem("Notch", 2);
+            shapeSelector->addItem("Band Pass", 3);
+            shapeSelector->addItem("Tilt Shelf", 4);
+            shapeSelector->setTooltip("Filter shape: Peaking, Notch, Band Pass, or Tilt Shelf");
+        }
+
         shapeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
             processor.parameters, ParamIDs::bandShape(bandNum), *shapeSelector);
     }
 
     if (type != BandType::HighPass && type != BandType::LowPass)
     {
-        // Only attach gain for peaking shape (notch/bandpass are Q-only)
+        // Determine current shape to decide if gain knob should be attached
         int shape = 0;
-        if (selectedBand >= 2 && selectedBand <= 5)
+        if (hasShape)
         {
             auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandNum));
             if (shapeParam)
                 shape = static_cast<int>(shapeParam->load());
         }
 
-        if (shape == 0)  // Peaking (has gain)
+        // For bands 3-6: shape 1=Notch, 2=BandPass (Q-only, no gain)
+        // For bands 2 and 7: shape 2=HPF/LPF (no gain), shape 1=Peaking and shape 0=Shelf (both have gain)
+        bool isQOnly = false;
+        if (selectedBand >= 2 && selectedBand <= 5)
+            isQOnly = (shape == 1 || shape == 2);  // Notch or BandPass
+        else if (selectedBand == 1 || selectedBand == 6)
+            isQOnly = (shape == 2);  // HPF or LPF mode
+
+        if (!isQOnly)
         {
             gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
                 processor.parameters, ParamIDs::bandGain(bandNum), *gainKnob);
@@ -272,27 +307,34 @@ void BandDetailPanel::updateControlsForBandType()
 {
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
-    bool isParametric = (selectedBand >= 2 && selectedBand <= 5);
+    bool hasShape = (selectedBand >= 1 && selectedBand <= 6);
 
-    // Determine current shape for parametric bands
+    // Determine current shape
     int shape = 0;
-    if (isParametric)
+    if (hasShape)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(selectedBand + 1));
         if (shapeParam)
             shape = static_cast<int>(shapeParam->load());
     }
 
-    bool isNotchOrBandPass = isParametric && (shape == 1 || shape == 2);
+    // For bands 3-6: shape 1=Notch, 2=BandPass (Q-only)
+    // For band 2: shape 2=HPF (Q-only)
+    // For band 7: shape 2=LPF (Q-only)
+    bool isQOnly = false;
+    if (selectedBand >= 2 && selectedBand <= 5)
+        isQOnly = (shape == 1 || shape == 2);
+    else if (selectedBand == 1 || selectedBand == 6)
+        isQOnly = (shape == 2);
 
-    // Shape selector: visible only for parametric bands 3-6
-    shapeSelector->setVisible(isParametric);
+    // Shape selector: visible for bands 2-7 (not HPF/LPF bands 1 and 8)
+    shapeSelector->setVisible(hasShape && !isFilter);
 
-    // Slope selector: visible only for HPF/LPF
+    // Slope selector: visible only for HPF/LPF (band 1 and 8)
     slopeSelector->setVisible(isFilter);
 
-    // Gain knob: visible for shelf/parametric with Peaking shape, hidden for filters and notch/bandpass
-    gainKnob->setVisible(!isFilter && !isNotchOrBandPass);
+    // Gain knob: visible for shapes with gain, hidden for filters and Q-only shapes
+    gainKnob->setVisible(!isFilter && !isQOnly);
 
     // Ensure the visible control in the third column is on top
     if (isFilter)
@@ -300,7 +342,7 @@ void BandDetailPanel::updateControlsForBandType()
         slopeSelector->toFront(false);
         slopeSelector->repaint();
     }
-    else if (!isNotchOrBandPass)
+    else if (!isQOnly)
     {
         gainKnob->toFront(false);
         gainKnob->repaint();
@@ -365,7 +407,8 @@ void BandDetailPanel::parameterChanged(const juce::String& parameterID, float /*
     }
 
     // Update controls when shape changes (show/hide gain knob for notch/bandpass)
-    if (selectedBand >= 2 && selectedBand <= 5 &&
+    // Bands 2-7 (selectedBand 1-6) have shape selectors
+    if (selectedBand >= 1 && selectedBand <= 6 &&
         parameterID == ParamIDs::bandShape(selectedBand + 1))
     {
         juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<BandDetailPanel>(this)]() {
@@ -441,17 +484,7 @@ void BandDetailPanel::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xFF3a3a3a));
     g.drawHorizontalLine(0, 0.0f, bounds.getWidth());
 
-    // Band colors (hardcoded)
-    const juce::Colour bandColors[8] = {
-        juce::Colour(0xFFff5555),  // Red - HPF
-        juce::Colour(0xFFffaa00),  // Orange - Low Shelf
-        juce::Colour(0xFFffee00),  // Yellow - Para 1
-        juce::Colour(0xFF88ee44),  // Lime - Para 2
-        juce::Colour(0xFF00ccff),  // Cyan - Para 3
-        juce::Colour(0xFF5588ff),  // Blue - Para 4
-        juce::Colour(0xFFaa66ff),  // Purple - High Shelf
-        juce::Colour(0xFFff66cc)   // Pink - LPF
-    };
+    // Band colors from shared config (DefaultBandConfigs in EQBand.h)
 
 
     // ===== CONTROLS AREA =====
@@ -482,7 +515,7 @@ void BandDetailPanel::paint(juce::Graphics& g)
 
     // Ensure selectedBand is valid
     int bandIdx = juce::jlimit(0, 7, selectedBand);
-    juce::Colour bandColor = bandColors[bandIdx];
+    juce::Colour bandColor = DefaultBandConfigs[bandIdx].color;
 
     // Check if band is enabled
     bool bandEnabled = true;
@@ -812,23 +845,32 @@ void BandDetailPanel::resized()
 
     // GAIN knob, SLOPE selector, and SHAPE selector share the same column
     // Position all, then control visibility based on band type and shape
+    // Use same logic as updateControlsForBandType() for consistency
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
-    bool isParametric = (selectedBand >= 2 && selectedBand <= 5);
+    bool hasShape = (selectedBand >= 1 && selectedBand <= 6);
 
-    // Determine current shape for parametric bands
+    // Determine current shape for bands with shape selector
     int currentShape = 0;
-    if (isParametric)
+    if (hasShape)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(selectedBand + 1));
         if (shapeParam)
             currentShape = static_cast<int>(shapeParam->load());
     }
-    bool isNotchOrBandPass = isParametric && (currentShape == 1 || currentShape == 2);
+
+    // For bands 3-6: shape 1=Notch, 2=BandPass (Q-only)
+    // For band 2: shape 2=HPF (Q-only)
+    // For band 7: shape 2=LPF (Q-only)
+    bool isQOnly = false;
+    if (selectedBand >= 2 && selectedBand <= 5)
+        isQOnly = (currentShape == 1 || currentShape == 2);
+    else if (selectedBand == 1 || selectedBand == 6)
+        isQOnly = (currentShape == 2);
 
     // GAIN knob - positioned at the third column
     gainKnob->setBounds(currentX, knobY, knobSize, knobSize);
-    gainKnob->setVisible(!isFilter && !isNotchOrBandPass);
+    gainKnob->setVisible(!isFilter && !isQOnly);
 
     // SLOPE selector - positioned over the same column, centered vertically
     int selectorHeight = 26;
@@ -840,7 +882,7 @@ void BandDetailPanel::resized()
     // SHAPE selector - positioned above the band indicator square on the left
     int shapeSelectorWidth = 80;
     int shapeSelectorHeight = 22;
-    if (isNotchOrBandPass)
+    if (isQOnly)
     {
         // When gain is hidden, center the shape selector in the column
         int shapeSelectorX = currentX + (knobSize - shapeSelectorWidth) / 2;
@@ -851,12 +893,12 @@ void BandDetailPanel::resized()
         // Position above the band indicator square (top-left of panel)
         shapeSelector->setBounds(startX, 5, shapeSelectorWidth, shapeSelectorHeight);
     }
-    shapeSelector->setVisible(isParametric);
+    shapeSelector->setVisible(hasShape && !isFilter);
 
     // Ensure the visible control is on top
     if (isFilter)
         slopeSelector->toFront(false);
-    else if (!isNotchOrBandPass)
+    else if (!isQOnly)
         gainKnob->toFront(false);
 
     currentX += knobSize + knobSpacing + 10;

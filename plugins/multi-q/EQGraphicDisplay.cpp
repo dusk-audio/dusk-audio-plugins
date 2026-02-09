@@ -83,6 +83,41 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
     // Draw combined EQ curve with glow
     drawCombinedCurve(g);
 
+    // Draw dynamic response curve overlay (when any band has dynamics active)
+    if (processor.isInDynamicMode())
+    {
+        auto dynBounds = getDisplayBounds();
+        juce::Path dynPath;
+        bool dynStarted = false;
+        int dynPoints = static_cast<int>(dynBounds.getWidth());
+
+        for (int px = 0; px < dynPoints; ++px)
+        {
+            float x = dynBounds.getX() + static_cast<float>(px);
+            float freq = getFrequencyAtX(x);
+            float response = processor.getFrequencyResponseWithDynamics(freq);
+            float y = getYForDB(response);
+
+            if (!dynStarted)
+            {
+                dynPath.startNewSubPath(x, y);
+                dynStarted = true;
+            }
+            else
+            {
+                dynPath.lineTo(x, y);
+            }
+        }
+
+        // Draw as a semi-transparent orange dashed curve
+        g.setColour(juce::Colour(0x50ffaa44));
+        g.strokePath(dynPath, juce::PathStrokeType(2.5f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour(juce::Colour(0x90ffaa44));
+        g.strokePath(dynPath, juce::PathStrokeType(1.2f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
     // Draw master gain overlay if enabled
     if (showMasterGain && std::abs(masterGainDB) > 0.01f)
         drawMasterGainOverlay(g);
@@ -124,6 +159,57 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
 
     // Draw control points (stalks first, then nodes)
     drawControlPoints(g);
+
+    // Processing mode badge (when not in Stereo mode)
+    {
+        auto displayBounds = getDisplayBounds();
+        int modeIndex = processor.getProcessingMode();
+        if (modeIndex > 0)  // 0 = Stereo (no badge needed)
+        {
+            const char* modeLabels[] = { "", "LEFT", "RIGHT", "MID", "SIDE" };
+            juce::String modeText = modeLabels[juce::jlimit(0, 4, modeIndex)];
+
+            auto font = juce::FontOptions(11.0f, juce::Font::bold);
+            g.setFont(font);
+            float textWidth = g.getCurrentFont().getStringWidth(modeText) + 12.0f;
+            float textHeight = 18.0f;
+            float badgeX = displayBounds.getRight() - textWidth - 6.0f;
+            float badgeY = displayBounds.getY() + 6.0f;
+
+            // Background pill
+            juce::Rectangle<float> badgeRect(badgeX, badgeY, textWidth, textHeight);
+            g.setColour(juce::Colour(0xCC1a1a2e));
+            g.fillRoundedRectangle(badgeRect, 4.0f);
+            g.setColour(juce::Colour(0x60ffffff));
+            g.drawRoundedRectangle(badgeRect, 4.0f, 1.0f);
+
+            // Text
+            g.setColour(juce::Colour(0xDDffffff));
+            g.drawText(modeText, badgeRect, juce::Justification::centred);
+        }
+    }
+
+    // Frozen spectrum indicator
+    if (isSpectrumFrozen())
+    {
+        auto displayBounds = getDisplayBounds();
+        juce::String frozenText = "FROZEN (F)";
+        auto font = juce::FontOptions(11.0f, juce::Font::bold);
+        g.setFont(font);
+        float textWidth = g.getCurrentFont().getStringWidth(frozenText) + 12.0f;
+        float textHeight = 18.0f;
+        float badgeX = displayBounds.getX() + 6.0f;
+        float badgeY = displayBounds.getY() + 6.0f;
+
+        juce::Rectangle<float> badgeRect(badgeX, badgeY, textWidth, textHeight);
+        g.setColour(juce::Colour(0xCC2e1a1a));
+        g.fillRoundedRectangle(badgeRect, 4.0f);
+        g.setColour(juce::Colour(0x6000ccff));
+        g.drawRoundedRectangle(badgeRect, 4.0f, 1.0f);
+
+        g.setColour(juce::Colour(0xDD00ccff));
+        g.drawText(frozenText, badgeRect, juce::Justification::centred);
+    }
 
     // Subtle inner shadow/border for depth
     {
@@ -267,7 +353,7 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
         }
         else
         {
-            g.setColour(juce::Colour(0xFF5a5a5a));
+            g.setColour(juce::Colour(0xFF707070));
         }
 
         g.drawText(label, 5, static_cast<int>(y - 7), 28, 14, juce::Justification::right);
@@ -346,20 +432,8 @@ void EQGraphicDisplay::drawPianoOverlay(juce::Graphics& g)
 
 void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
 {
-    // Vibrant Pro-Q style colors for high visibility
-    static const juce::Colour bandColors[8] = {
-        juce::Colour(0xFFff5555),  // Red - HPF
-        juce::Colour(0xFFffaa00),  // Orange - Low Shelf
-        juce::Colour(0xFFffee00),  // Yellow - Para 1
-        juce::Colour(0xFF88ee44),  // Lime - Para 2
-        juce::Colour(0xFF00ccff),  // Cyan - Para 3
-        juce::Colour(0xFF5588ff),  // Blue - Para 4
-        juce::Colour(0xFFaa66ff),  // Purple - High Shelf
-        juce::Colour(0xFFff66cc)   // Pink - LPF
-    };
-
     auto displayBounds = getDisplayBounds();
-    juce::Colour curveColor = (bandIndex >= 0 && bandIndex < 8) ? bandColors[bandIndex] : juce::Colours::white;
+    juce::Colour curveColor = (bandIndex >= 0 && bandIndex < 8) ? DefaultBandConfigs[bandIndex].color : juce::Colours::white;
 
     juce::Path curvePath;
     bool pathStarted = false;
@@ -378,6 +452,8 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         float gain = getBandGain(bandIndex);
         float q = processor.getEffectiveQ(bandIndex + 1);  // 1-indexed
 
+        static const float slopeValues[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
+
         if (bandIndex == 0)  // HPF
         {
             float ratio = freq / bandFreq;
@@ -385,8 +461,8 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
             {
                 auto slopeParam = processor.parameters.getRawParameterValue(ParamIDs::bandSlope(1));
                 int slopeIndex = slopeParam ? static_cast<int>(slopeParam->load()) : 1;
-                float slopeDB = 6.0f * (slopeIndex + 1);
-                response = slopeDB * std::log2(ratio);  // Negative for attenuation
+                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
+                response = slopeDB * std::log2(ratio);
             }
         }
         else if (bandIndex == 7)  // LPF
@@ -396,38 +472,88 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
             {
                 auto slopeParam = processor.parameters.getRawParameterValue(ParamIDs::bandSlope(8));
                 int slopeIndex = slopeParam ? static_cast<int>(slopeParam->load()) : 1;
-                float slopeDB = 6.0f * (slopeIndex + 1);
+                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
                 response = slopeDB * std::log2(ratio);
             }
         }
-        else if (bandIndex == 1)  // Low Shelf
+        else if (bandIndex == 1)  // Band 2: shape-aware
         {
-            float ratio = freq / bandFreq;
-            if (ratio < 0.5f)
-                response = gain;
-            else if (ratio < 2.0f)
+            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(2));
+            int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
+
+            if (shape == 1)  // Peaking
             {
-                float transition = (std::log2(ratio) + 1.0f) / 2.0f;  // 0 to 1 over one octave each side
-                response = gain * (1.0f - transition);
+                float logRatio = std::log2(freq / bandFreq);
+                float bandwidth = 1.0f / q;
+                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+                response = gain * envelope;
+            }
+            else if (shape == 2)  // High-Pass (12 dB/oct)
+            {
+                float ratio = freq / bandFreq;
+                if (ratio < 1.0f)
+                    response = 12.0f * std::log2(ratio);
+            }
+            else  // Low Shelf (default)
+            {
+                float ratio = freq / bandFreq;
+                if (ratio < 0.5f)
+                    response = gain;
+                else if (ratio < 2.0f)
+                {
+                    float transition = (std::log2(ratio) + 1.0f) / 2.0f;
+                    response = gain * (1.0f - transition);
+                }
             }
         }
-        else if (bandIndex == 6)  // High Shelf
+        else if (bandIndex == 6)  // Band 7: shape-aware
         {
-            float ratio = freq / bandFreq;
-            if (ratio > 2.0f)
-                response = gain;
-            else if (ratio > 0.5f)
+            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(7));
+            int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
+
+            if (shape == 1)  // Peaking
             {
-                float transition = (std::log2(ratio) + 1.0f) / 2.0f;
-                response = gain * transition;
+                float logRatio = std::log2(freq / bandFreq);
+                float bandwidth = 1.0f / q;
+                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+                response = gain * envelope;
+            }
+            else if (shape == 2)  // Low-Pass (12 dB/oct)
+            {
+                float ratio = bandFreq / freq;
+                if (ratio < 1.0f)
+                    response = 12.0f * std::log2(ratio);
+            }
+            else  // High Shelf (default)
+            {
+                float ratio = freq / bandFreq;
+                if (ratio > 2.0f)
+                    response = gain;
+                else if (ratio > 0.5f)
+                {
+                    float transition = (std::log2(ratio) + 1.0f) / 2.0f;
+                    response = gain * transition;
+                }
             }
         }
-        else  // Parametric bands 3-6
+        else  // Parametric bands 3-6 (shape-aware)
         {
-            float logRatio = std::log2(freq / bandFreq);
-            float bandwidth = 1.0f / q;
-            float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
-            response = gain * envelope;
+            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
+            int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
+
+            if (shape == 3)  // Tilt Shelf
+            {
+                float tiltRatio = freq / bandFreq;
+                float tiltTransition = 2.0f / juce::MathConstants<float>::pi * std::atan(std::log2(tiltRatio) * 2.0f);
+                response = gain * tiltTransition;
+            }
+            else
+            {
+                float logRatio = std::log2(freq / bandFreq);
+                float bandwidth = 1.0f / q;
+                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
+                response = gain * envelope;
+            }
         }
 
         float y = getYForDB(response);
@@ -560,11 +686,7 @@ void EQGraphicDisplay::drawControlPoints(juce::Graphics& g)
             bool isHovered = (i == hoveredBand);
 
             // Draw connecting stalk from node to 0dB line
-            static const juce::Colour bandColors[8] = {
-                juce::Colour(0xFFff4444), juce::Colour(0xFFff8844), juce::Colour(0xFFffcc44), juce::Colour(0xFF44cc44),
-                juce::Colour(0xFF44cccc), juce::Colour(0xFF4488ff), juce::Colour(0xFFaa44ff), juce::Colour(0xFFff44aa)
-            };
-            juce::Colour stalkColor = (i >= 0 && i < 8) ? bandColors[i] : juce::Colours::white;
+            juce::Colour stalkColor = (i >= 0 && i < 8) ? DefaultBandConfigs[i].color : juce::Colours::white;
 
             // Gradient stalk from node to 0dB line
             float stalkAlpha = isSelected ? 0.6f : (isHovered ? 0.4f : 0.25f);
@@ -596,20 +718,8 @@ void EQGraphicDisplay::drawControlPoints(juce::Graphics& g)
 
 void EQGraphicDisplay::drawInactiveBandIndicator(juce::Graphics& g, int bandIndex)
 {
-    // Vibrant Pro-Q style colors for high visibility
-    static const juce::Colour bandColors[8] = {
-        juce::Colour(0xFFff5555),  // Red - HPF
-        juce::Colour(0xFFffaa00),  // Orange - Low Shelf
-        juce::Colour(0xFFffee00),  // Yellow - Para 1
-        juce::Colour(0xFF88ee44),  // Lime - Para 2
-        juce::Colour(0xFF00ccff),  // Cyan - Para 3
-        juce::Colour(0xFF5588ff),  // Blue - Para 4
-        juce::Colour(0xFFaa66ff),  // Purple - High Shelf
-        juce::Colour(0xFFff66cc)   // Pink - LPF
-    };
-
     auto point = getControlPointPosition(bandIndex);
-    juce::Colour color = (bandIndex >= 0 && bandIndex < 8) ? bandColors[bandIndex] : juce::Colours::grey;
+    juce::Colour color = (bandIndex >= 0 && bandIndex < 8) ? DefaultBandConfigs[bandIndex].color : juce::Colours::grey;
 
     float radius = CONTROL_POINT_RADIUS * 0.7f;
     float ringThickness = 1.5f;
@@ -634,20 +744,8 @@ void EQGraphicDisplay::drawInactiveBandIndicator(juce::Graphics& g, int bandInde
 
 void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
 {
-    // Vibrant Pro-Q style colors for high visibility
-    static const juce::Colour bandColors[8] = {
-        juce::Colour(0xFFff5555),  // Red - HPF
-        juce::Colour(0xFFffaa00),  // Orange - Low Shelf
-        juce::Colour(0xFFffee00),  // Yellow - Para 1
-        juce::Colour(0xFF88ee44),  // Lime - Para 2
-        juce::Colour(0xFF00ccff),  // Cyan - Para 3
-        juce::Colour(0xFF5588ff),  // Blue - Para 4
-        juce::Colour(0xFFaa66ff),  // Purple - High Shelf
-        juce::Colour(0xFFff66cc)   // Pink - LPF
-    };
-
     auto point = getControlPointPosition(bandIndex);
-    juce::Colour color = (bandIndex >= 0 && bandIndex < 8) ? bandColors[bandIndex] : juce::Colours::white;
+    juce::Colour color = (bandIndex >= 0 && bandIndex < 8) ? DefaultBandConfigs[bandIndex].color : juce::Colours::white;
 
     bool isSelected = (bandIndex == selectedBand);
     bool isHovered = (bandIndex == hoveredBand);
@@ -933,7 +1031,7 @@ void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)
             {
                 auto controlPoint = getControlPointPosition(i);
                 float distance = point.getDistanceFrom(controlPoint);
-                if (distance <= CONTROL_POINT_HIT_RADIUS * 1.2f)  // Slightly larger hit area for inactive
+                if (distance <= getHitRadius() * 1.2f)  // Slightly larger hit area for inactive
                 {
                     hitBand = i;
                     break;
@@ -1268,7 +1366,7 @@ int EQGraphicDisplay::hitTestControlPoint(juce::Point<float> point) const
         auto controlPoint = getControlPointPosition(i);
         float distance = point.getDistanceFrom(controlPoint);
 
-        if (distance <= CONTROL_POINT_HIT_RADIUS)
+        if (distance <= getHitRadius())
             return i;
     }
     return -1;
@@ -1317,11 +1415,12 @@ void EQGraphicDisplay::setBandGain(int bandIndex, float gain)
     if (bandIndex == 0 || bandIndex == 7)
         return;  // HPF/LPF don't have gain
 
-    // Notch/BandPass shapes don't have gain
+    // Notch/BandPass shapes don't have gain (shapes 1 and 2)
     if (bandIndex >= 2 && bandIndex <= 5)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
-        if (shapeParam && static_cast<int>(shapeParam->load()) != 0)
+        int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
+        if (shape == 1 || shape == 2)  // Notch or BandPass
             return;
     }
 
@@ -1359,25 +1458,34 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
 
     juce::PopupMenu menu;
 
-    // Band header (non-selectable) - check shape for parametric bands
+    // Band header (non-selectable) - check current shape
     juce::String bandTypeName;
     if (config.type == BandType::HighPass) bandTypeName = "High-Pass";
     else if (config.type == BandType::LowPass) bandTypeName = "Low-Pass";
-    else if (config.type == BandType::LowShelf) bandTypeName = "Low Shelf";
-    else if (config.type == BandType::HighShelf) bandTypeName = "High Shelf";
+    else if (bandIndex >= 1 && bandIndex <= 6)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
+        int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
+
+        if (bandIndex == 1)
+        {
+            const char* names[] = { "Low Shelf", "Peaking", "High-Pass" };
+            bandTypeName = names[juce::jlimit(0, 2, shape)];
+        }
+        else if (bandIndex == 6)
+        {
+            const char* names[] = { "High Shelf", "Peaking", "Low-Pass" };
+            bandTypeName = names[juce::jlimit(0, 2, shape)];
+        }
+        else
+        {
+            const char* names[] = { "Parametric", "Notch", "Band Pass", "Tilt Shelf" };
+            bandTypeName = names[juce::jlimit(0, 3, shape)];
+        }
+    }
     else
     {
-        bandTypeName = "Parametric";
-        if (bandIndex >= 2 && bandIndex <= 5)
-        {
-            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
-            if (shapeParam)
-            {
-                int shape = static_cast<int>(shapeParam->load());
-                if (shape == 1) bandTypeName = "Notch";
-                else if (shape == 2) bandTypeName = "Band Pass";
-            }
-        }
+        bandTypeName = config.name;
     }
     menu.addSectionHeader("Band " + juce::String(bandIndex + 1) + " - " + bandTypeName);
 
@@ -1399,6 +1507,12 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
 
     // Disable all bands
     menu.addItem(5, "Disable All Bands");
+
+    menu.addSeparator();
+
+    // Undo/Redo
+    menu.addItem(6, "Undo", processor.getUndoManager().canUndo());
+    menu.addItem(7, "Redo", processor.getUndoManager().canRedo());
 
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({screenPos.x, screenPos.y, 1, 1}),
         [this, bandIndex, isEnabled](int result)
@@ -1441,6 +1555,16 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
                 case 5:  // Disable all
                     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
                         setBandEnabled(i, false);
+                    repaint();
+                    break;
+
+                case 6:  // Undo
+                    processor.getUndoManager().undo();
+                    repaint();
+                    break;
+
+                case 7:  // Redo
+                    processor.getUndoManager().redo();
                     repaint();
                     break;
 
