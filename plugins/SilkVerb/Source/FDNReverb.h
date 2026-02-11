@@ -184,6 +184,23 @@ public:
         a2 = ((A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * sqrtA * alpha) / a0;
     }
 
+    void setPeaking(float freq, float gainDb, float q = 1.0f)
+    {
+        float A = std::pow(10.0f, gainDb / 40.0f);
+        float w0 = TWO_PI * std::clamp(freq, 20.0f, static_cast<float>(sampleRate) * 0.49f)
+                   / static_cast<float>(sampleRate);
+        float cosw0 = std::cos(w0);
+        float sinw0 = std::sin(w0);
+        float alpha = sinw0 / (2.0f * std::max(q, 0.1f));
+
+        float a0 = 1.0f + alpha / A;
+        b0 = (1.0f + alpha * A) / a0;
+        b1 = (-2.0f * cosw0) / a0;
+        b2 = (1.0f - alpha * A) / a0;
+        a1 = (-2.0f * cosw0) / a0;
+        a2 = (1.0f - alpha / A) / a0;
+    }
+
     float process(float input)
     {
         float output = b0 * input + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
@@ -355,29 +372,32 @@ public:
     void prepare(double sr)
     {
         sampleRate = (sr > 0.0) ? sr : 44100.0;
-        z1 = z2 = z3 = 0.0f;
+        z1 = z2 = zMid = z3 = 0.0f;
         updateCoefficients();
     }
 
     void clear()
     {
-        z1 = z2 = z3 = 0.0f;
+        z1 = z2 = zMid = z3 = 0.0f;
     }
 
-    void setCrossoverFreqs(float freq1, float freq2, float freq3)
+    void setCrossoverFreqs(float freq1, float freqMid, float freq2, float freq3)
     {
         crossoverFreq1 = std::clamp(freq1, 50.0f, 2000.0f);
+        crossoverFreqMid = std::clamp(freqMid, 100.0f, 8000.0f);
         crossoverFreq2 = std::clamp(freq2, 200.0f, 12000.0f);
         crossoverFreq3 = std::clamp(freq3, 1000.0f, static_cast<float>(sampleRate) * 0.45f);
         // Enforce ordering
-        if (crossoverFreq2 <= crossoverFreq1) crossoverFreq2 = crossoverFreq1 * 2.0f;
+        if (crossoverFreqMid <= crossoverFreq1) crossoverFreqMid = crossoverFreq1 * 1.5f;
+        if (crossoverFreq2 <= crossoverFreqMid) crossoverFreq2 = crossoverFreqMid * 1.5f;
         if (crossoverFreq3 <= crossoverFreq2) crossoverFreq3 = crossoverFreq2 * 2.0f;
         updateCoefficients();
     }
 
-    void setDecayMultipliers(float lowMult, float midMult, float highMult, float trebleMult)
+    void setDecayMultipliers(float lowMult, float lowMidMult, float midMult, float highMult, float trebleMult)
     {
         lowDecayMult = std::clamp(lowMult, 0.25f, 4.0f);
+        lowMidDecayMult = std::clamp(lowMidMult, 0.25f, 4.0f);
         midDecayMult = std::clamp(midMult, 0.25f, 4.0f);
         highDecayMult = std::clamp(highMult, 0.25f, 4.0f);
         trebleDecayMult = std::clamp(trebleMult, 0.25f, 4.0f);
@@ -387,48 +407,59 @@ public:
     void updateGains(float baseGain)
     {
         cachedG1 = std::min(std::pow(baseGain, 1.0f / lowDecayMult), 0.9999f);
-        cachedG2 = std::min(std::pow(baseGain, 1.0f / midDecayMult), 0.9999f);
+        cachedG2a = std::min(std::pow(baseGain, 1.0f / lowMidDecayMult), 0.9999f);
+        cachedG2b = std::min(std::pow(baseGain, 1.0f / midDecayMult), 0.9999f);
         cachedG3 = std::min(std::pow(baseGain, 1.0f / highDecayMult), 0.9999f);
         cachedG4 = std::min(std::pow(baseGain, 1.0f / trebleDecayMult), 0.9999f);
     }
 
     float process(float input)
     {
-        // Three subtractive crossover stages — guarantees flat sum
+        // Three subtractive crossover stages (original topology preserved)
         z1 += coeff1 * (input - z1);
         float band1 = z1;                // Sub-bass (below f1)
 
         float hp1 = input - band1;
         z2 += coeff2 * (hp1 - z2);
-        float band2 = z2;                // Low-mid (f1 to f2)
+        float band2 = z2;                // Full mid (f1 to f2)
 
         float hp2 = hp1 - band2;
         z3 += coeff3 * (hp2 - z3);
         float band3 = z3;                // High-mid (f2 to f3)
         float band4 = hp2 - band3;       // Treble (above f3)
 
-        return band1 * cachedG1 + band2 * cachedG2 + band3 * cachedG3 + band4 * cachedG4;
+        // Split band2 into low-mid and mid sub-bands (4th crossover)
+        // When G2a == G2b, this is mathematically identical to old 4-band
+        zMid += coeffMid * (band2 - zMid);
+        float band2a = zMid;             // Low-mid (f1 to fMid)
+        float band2b = band2 - band2a;   // Mid (fMid to f2)
+
+        return band1 * cachedG1 + band2a * cachedG2a + band2b * cachedG2b
+             + band3 * cachedG3 + band4 * cachedG4;
     }
 
 private:
     void updateCoefficients()
     {
         coeff1 = 1.0f - std::exp(-6.2831853f * crossoverFreq1 / static_cast<float>(sampleRate));
+        coeffMid = 1.0f - std::exp(-6.2831853f * crossoverFreqMid / static_cast<float>(sampleRate));
         coeff2 = 1.0f - std::exp(-6.2831853f * crossoverFreq2 / static_cast<float>(sampleRate));
         coeff3 = 1.0f - std::exp(-6.2831853f * crossoverFreq3 / static_cast<float>(sampleRate));
     }
 
     double sampleRate = 44100.0;
-    float crossoverFreq1 = 200.0f;   // Sub-bass / bass boundary
-    float crossoverFreq2 = 1500.0f;  // Bass / mid boundary
-    float crossoverFreq3 = 5000.0f;  // Mid / treble boundary
+    float crossoverFreq1 = 200.0f;    // Sub-bass / low-mid boundary
+    float crossoverFreqMid = 700.0f;  // Low-mid / mid boundary (NEW)
+    float crossoverFreq2 = 1500.0f;   // Mid / high-mid boundary
+    float crossoverFreq3 = 5000.0f;   // High-mid / treble boundary
     float lowDecayMult = 1.0f;
+    float lowMidDecayMult = 1.0f;
     float midDecayMult = 1.0f;
     float highDecayMult = 1.0f;
     float trebleDecayMult = 1.0f;
-    float coeff1 = 0.1f, coeff2 = 0.1f, coeff3 = 0.1f;
-    float z1 = 0.0f, z2 = 0.0f, z3 = 0.0f;
-    float cachedG1 = 0.9f, cachedG2 = 0.9f, cachedG3 = 0.9f, cachedG4 = 0.9f;
+    float coeff1 = 0.1f, coeffMid = 0.1f, coeff2 = 0.1f, coeff3 = 0.1f;
+    float z1 = 0.0f, zMid = 0.0f, z2 = 0.0f, z3 = 0.0f;
+    float cachedG1 = 0.9f, cachedG2a = 0.9f, cachedG2b = 0.9f, cachedG3 = 0.9f, cachedG4 = 0.9f;
 };
 
 //==============================================================================
@@ -855,6 +886,85 @@ private:
 };
 
 //==============================================================================
+// Parametric Output EQ — 2-band peaking EQ for spectral shaping (optimizer-only)
+class ParametricOutputEQ
+{
+public:
+    void prepare(double sr)
+    {
+        sampleRate = sr;
+        band1L.prepare(sr);
+        band1R.prepare(sr);
+        band2L.prepare(sr);
+        band2R.prepare(sr);
+    }
+
+    void clear()
+    {
+        band1L.clear();
+        band1R.clear();
+        band2L.clear();
+        band2R.clear();
+    }
+
+    void setBand1(float freq, float gainDb, float q)
+    {
+        band1Freq = std::clamp(freq, 100.0f, 8000.0f);
+        band1Gain = std::clamp(gainDb, -12.0f, 12.0f);
+        band1Q = std::clamp(q, 0.3f, 5.0f);
+        if (std::abs(band1Gain) > 0.01f)
+        {
+            band1L.setPeaking(band1Freq, band1Gain, band1Q);
+            band1R.setPeaking(band1Freq, band1Gain, band1Q);
+            band1Active = true;
+        }
+        else
+        {
+            band1Active = false;
+        }
+    }
+
+    void setBand2(float freq, float gainDb, float q)
+    {
+        band2Freq = std::clamp(freq, 100.0f, 8000.0f);
+        band2Gain = std::clamp(gainDb, -12.0f, 12.0f);
+        band2Q = std::clamp(q, 0.3f, 5.0f);
+        if (std::abs(band2Gain) > 0.01f)
+        {
+            band2L.setPeaking(band2Freq, band2Gain, band2Q);
+            band2R.setPeaking(band2Freq, band2Gain, band2Q);
+            band2Active = true;
+        }
+        else
+        {
+            band2Active = false;
+        }
+    }
+
+    void process(float& left, float& right)
+    {
+        if (band1Active)
+        {
+            left = band1L.process(left);
+            right = band1R.process(right);
+        }
+        if (band2Active)
+        {
+            left = band2L.process(left);
+            right = band2R.process(right);
+        }
+    }
+
+private:
+    double sampleRate = 44100.0;
+    float band1Freq = 1000.0f, band1Gain = 0.0f, band1Q = 1.0f;
+    float band2Freq = 4000.0f, band2Gain = 0.0f, band2Q = 1.0f;
+    bool band1Active = false;
+    bool band2Active = false;
+    BiquadFilter band1L, band1R, band2L, band2R;
+};
+
+//==============================================================================
 // Reverb mode enumeration
 enum class ReverbMode
 {
@@ -1225,6 +1335,165 @@ inline ModeParameters getDirtyHallParameters()
 }
 
 //==============================================================================
+// Envelope Shaper — post-FDN amplitude envelope for non-linear presets
+// (gated reverb, reverse, swell effects)
+class EnvelopeShaper
+{
+public:
+    enum class Mode { Off = 0, Gate, Reverse, Swell, Ducked };
+
+    void prepare(double sr)
+    {
+        sampleRate = sr;
+        echoDelayLineL.prepare(sr, 520.0f);  // 500ms + margin
+        echoDelayLineR.prepare(sr, 520.0f);
+        reset();
+    }
+
+    void reset()
+    {
+        sampleCounter = 0;
+        echoDelayLineL.clear();
+        echoDelayLineR.clear();
+        echoFbStateL = 0.0f;
+        echoFbStateR = 0.0f;
+    }
+
+    void setMode(int m) { mode = static_cast<Mode>(std::clamp(m, 0, 4)); }
+
+    void setHoldMs(float ms)
+    {
+        holdSamples = std::max(1, static_cast<int>(std::clamp(ms, 10.0f, 2000.0f) * sampleRate / 1000.0));
+    }
+
+    void setReleaseMs(float ms)
+    {
+        releaseSamples = std::max(1, static_cast<int>(std::clamp(ms, 10.0f, 3000.0f) * sampleRate / 1000.0));
+    }
+
+    void setDepth(float d) { depth = std::clamp(d, 0.0f, 1.0f); }
+
+    void setEchoFeedback(float fb) { echoFeedback = std::clamp(fb, 0.0f, 0.9f); }
+
+    void setEchoDelayMs(float ms)
+    {
+        float clampedMs = std::clamp(ms, 0.0f, 500.0f);
+        echoDelaySamples = static_cast<int>(clampedMs * sampleRate / 1000.0);
+        if (echoDelaySamples > 0)
+        {
+            echoDelayLineL.setDelayMs(clampedMs);
+            echoDelayLineR.setDelayMs(clampedMs);
+        }
+    }
+
+    void process(float& wetL, float& wetR)
+    {
+        if (mode == Mode::Off || depth < 0.001f)
+        {
+            // Still advance echo delay lines to keep them in sync
+            if (echoDelaySamples > 0)
+            {
+                echoDelayLineL.process(wetL);
+                echoDelayLineR.process(wetR);
+            }
+            sampleCounter++;
+            return;
+        }
+
+        float env = computeEnvelope();
+
+        // Echo tap with optional feedback
+        float echoL = 0.0f, echoR = 0.0f;
+        if (echoDelaySamples > 0)
+        {
+            // Feed input + feedback into delay line
+            float echoInputL = wetL + echoFbStateL * echoFeedback;
+            float echoInputR = wetR + echoFbStateR * echoFeedback;
+            echoL = echoDelayLineL.process(echoInputL);
+            echoR = echoDelayLineR.process(echoInputR);
+            echoFbStateL = echoL;
+            echoFbStateR = echoR;
+        }
+
+        // Shaped signal: envelope applied to wet + echo
+        float shapedL = (wetL + echoL) * env;
+        float shapedR = (wetR + echoR) * env;
+
+        // Blend: depth controls how much envelope shaping is applied
+        wetL = wetL * (1.0f - depth) + shapedL * depth;
+        wetR = wetR * (1.0f - depth) + shapedR * depth;
+
+        sampleCounter++;
+    }
+
+private:
+    float computeEnvelope() const
+    {
+        switch (mode)
+        {
+            case Mode::Off:
+                return 1.0f;
+
+            case Mode::Gate:
+                if (sampleCounter < holdSamples)
+                    return 1.0f;
+                else
+                {
+                    int rel = sampleCounter - holdSamples;
+                    return (rel < releaseSamples) ? 1.0f - static_cast<float>(rel) / static_cast<float>(releaseSamples) : 0.0f;
+                }
+
+            case Mode::Reverse:
+                if (sampleCounter < holdSamples)
+                    return static_cast<float>(sampleCounter) / static_cast<float>(holdSamples);
+                else
+                {
+                    int rel = sampleCounter - holdSamples;
+                    return (rel < releaseSamples) ? 1.0f - static_cast<float>(rel) / static_cast<float>(releaseSamples) : 0.0f;
+                }
+
+            case Mode::Swell:
+                if (sampleCounter < holdSamples)
+                {
+                    float t = static_cast<float>(sampleCounter) / static_cast<float>(holdSamples);
+                    return t * t;  // quadratic rise
+                }
+                return 1.0f;
+
+            case Mode::Ducked:
+                // Full level for hold_ms, then fade to (1-depth)*level
+                if (sampleCounter < holdSamples)
+                    return 1.0f;
+                else
+                {
+                    int rel = sampleCounter - holdSamples;
+                    if (rel < releaseSamples)
+                    {
+                        float fade = static_cast<float>(rel) / static_cast<float>(releaseSamples);
+                        return 1.0f - fade;  // Fades from 1.0 to 0.0 (depth blending handles final level)
+                    }
+                    return 0.0f;
+                }
+
+            default:
+                return 1.0f;
+        }
+    }
+
+    DelayLine echoDelayLineL, echoDelayLineR;
+    double sampleRate = 48000.0;
+    Mode mode = Mode::Off;
+    int holdSamples = 24000;
+    int releaseSamples = 24000;
+    float depth = 0.0f;
+    int echoDelaySamples = 0;
+    int sampleCounter = 0;
+    float echoFeedback = 0.0f;
+    float echoFbStateL = 0.0f;
+    float echoFbStateR = 0.0f;
+};
+
+//==============================================================================
 // Main FDN Reverb Engine (Lexicon/Valhalla-enhanced with professional upgrades)
 class FDNReverb
 {
@@ -1285,6 +1554,7 @@ public:
 
         // Prepare output EQ
         outputEQ.prepare(sampleRate);
+        parametricEQ.prepare(sampleRate);
 
         // Prepare DC blockers (per-channel in feedback loop + output pair)
         for (int i = 0; i < NUM_DELAYS; ++i)
@@ -1302,6 +1572,9 @@ public:
         // Prepare era bandwidth limiters
         eraBandwidthL.prepare(sampleRate);
         eraBandwidthR.prepare(sampleRate);
+
+        // Prepare envelope shaper
+        envelopeShaper.prepare(sampleRate);
 
         // Force initialization of waveshaper lookup tables (avoid RT allocation)
         AnalogEmulation::initializeLibrary();
@@ -1350,6 +1623,7 @@ public:
         }
 
         outputEQ.clear();
+        parametricEQ.clear();
 
         erBassCutL.clear();
         erBassCutR.clear();
@@ -1368,6 +1642,8 @@ public:
 
         eraBandwidthL.clear();
         eraBandwidthR.clear();
+
+        envelopeShaper.reset();
 
         feedbackL.fill(0.0f);
         feedbackR.fill(0.0f);
@@ -1555,6 +1831,16 @@ public:
         outputEQ.setLowCut(freq);
     }
 
+    void setOutEQ1(float freq, float gainDb, float q)
+    {
+        parametricEQ.setBand1(freq, gainDb, q);
+    }
+
+    void setOutEQ2(float freq, float gainDb, float q)
+    {
+        parametricEQ.setBand2(freq, gainDb, q);
+    }
+
     void setEarlyDiffusion(float diff)
     {
         earlyDiffusion = std::clamp(diff, 0.0f, 1.0f);
@@ -1596,6 +1882,37 @@ public:
         userHighFreq = std::clamp(freq, 1000.0f, 12000.0f);
         updateFourBandDecay();
     }
+
+    void setTrebleRatio(float ratio)
+    {
+        userTrebleRatio = std::clamp(ratio, 0.3f, 2.0f);
+        updateFourBandDecay();
+    }
+
+    void setLowMidFreq(float freq)
+    {
+        userLowMidFreq = std::clamp(freq, 100.0f, 8000.0f);
+        updateFourBandDecay();
+    }
+
+    void setLowMidDecayMult(float mult)
+    {
+        userLowMidDecayMult = std::clamp(mult, 0.25f, 4.0f);
+        updateFourBandDecay();
+    }
+
+    void setStereoCoupling(float c)
+    {
+        stereoCoupling = std::clamp(c, 0.0f, 0.5f);
+    }
+
+    // Envelope shaper setters (for non-linear presets)
+    void setEnvMode(int m) { envelopeShaper.setMode(m); }
+    void setEnvHold(float ms) { envelopeShaper.setHoldMs(ms); }
+    void setEnvRelease(float ms) { envelopeShaper.setReleaseMs(ms); }
+    void setEnvDepth(float d) { envelopeShaper.setDepth(d); }
+    void setEchoDelay(float ms) { envelopeShaper.setEchoDelayMs(ms); }
+    void setEchoFeedback(float fb) { envelopeShaper.setEchoFeedback(fb); }
 
     void setERShape(float shp)
     {
@@ -1742,7 +2059,7 @@ public:
         // Cross-channel coupling for natural stereo diffusion
         // Blends a small portion of opposite channel into each, preventing
         // the L/R networks from being completely independent (real spaces couple)
-        constexpr float coupling = 0.15f;
+        float coupling = stereoCoupling;
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
             size_t idx = static_cast<size_t>(i);
@@ -1806,6 +2123,12 @@ public:
         // Output EQ (highcut/lowcut)
         outputEQ.process(wetL, wetR);
 
+        // Parametric output EQ (2-band peaking, optimizer-controlled)
+        parametricEQ.process(wetL, wetR);
+
+        // Envelope shaper (for non-linear presets: gate, reverse, swell)
+        envelopeShaper.process(wetL, wetR);
+
         // Width (mid-side)
         float mid = (wetL + wetR) * 0.5f;
         float side = (wetL - wetR) * 0.5f * width;
@@ -1839,9 +2162,13 @@ private:
     float earlyLateBalance = 0.7f;  // Default favors late reverb
     float userHighDecayMult = 1.0f;
     float userMidDecayMult = 1.0f;
+    float userLowMidDecayMult = 1.0f;
+    float userLowMidFreq = 700.0f;
     float userHighFreq = 4000.0f;
     float erShape = 0.5f;
     float erSpread = 0.5f;
+    float userTrebleRatio = 1.0f;
+    float stereoCoupling = 0.15f;
     bool freezeMode = false;
 
     // Internal state
@@ -1902,6 +2229,12 @@ private:
 
     // Output EQ
     OutputEQ outputEQ;
+
+    // Parametric output EQ (2-band peaking, optimizer-only)
+    ParametricOutputEQ parametricEQ;
+
+    // Envelope shaper (for non-linear presets: gate, reverse, swell)
+    EnvelopeShaper envelopeShaper;
 
     // Per-channel DC blockers (inside feedback loop)
     std::array<DCBlocker, NUM_DELAYS> dcBlockersL, dcBlockersR;
@@ -1987,25 +2320,27 @@ private:
     {
         float lowMult = modeParams.lowDecayMult * userBassMult;
         float midMult = modeParams.midDecayMult * userMidDecayMult;
-        // Band 3 (high-mid) and Band 4 (treble) are independently controlled
+        // Low-mid is relative to mid: when userLowMidDecayMult=1.0, same gain as mid (backward compat)
+        float lowMidMult = midMult * userLowMidDecayMult;
+        // Band 4 (high-mid) and Band 5 (treble) are independently controlled
         // by their own parameters — damping only affects DampingFilter (air absorption)
         float highMult = modeParams.highDecayMult * userHighDecayMult;
-        // Treble band: ratio scales with damping — low damping = treble tracks high-mid closely
-        // (bright reverbs), high damping = treble decays faster (dark reverbs)
-        float trebleRatio = 0.85f - damping * 0.35f;  // 0.85 at damping=0, 0.50 at damping=1
-        float trebleMult = highMult * trebleRatio;
+        // Treble band: damping-based ratio, scaled by user multiplier
+        float trebleRatio = 0.85f - damping * 0.35f;
+        float trebleMult = highMult * trebleRatio * userTrebleRatio;
 
         float f1 = userBassFreq;
+        float fMid = userLowMidFreq;
         float f2 = userHighFreq;
         float f3 = std::min(f2 * 2.5f, static_cast<float>(sampleRate) * 0.45f);
 
         for (int i = 0; i < NUM_DELAYS; ++i)
         {
             size_t idx = static_cast<size_t>(i);
-            fourBandL[idx].setCrossoverFreqs(f1, f2, f3);
-            fourBandR[idx].setCrossoverFreqs(f1, f2, f3);
-            fourBandL[idx].setDecayMultipliers(lowMult, midMult, highMult, trebleMult);
-            fourBandR[idx].setDecayMultipliers(lowMult, midMult, highMult, trebleMult);
+            fourBandL[idx].setCrossoverFreqs(f1, fMid, f2, f3);
+            fourBandR[idx].setCrossoverFreqs(f1, fMid, f2, f3);
+            fourBandL[idx].setDecayMultipliers(lowMult, lowMidMult, midMult, highMult, trebleMult);
+            fourBandR[idx].setDecayMultipliers(lowMult, lowMidMult, midMult, highMult, trebleMult);
             // Pre-compute gains for per-sample efficiency
             fourBandL[idx].updateGains(freezeMode ? 0.9997f : feedbackGain);
             fourBandR[idx].updateGains(freezeMode ? 0.9997f : feedbackGain);
