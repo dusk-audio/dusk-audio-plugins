@@ -410,7 +410,7 @@ MLP:
 
 ## License
 
-GrooveMind will be released under GPLv3, consistent with other Luna Co. Audio plugins.
+GrooveMind will be released under GPLv3, consistent with other Dusk Audio plugins.
 
 Training data (Groove MIDI Dataset) is CC BY 4.0 - attribution required in documentation.
 
@@ -418,4 +418,4 @@ Training data (Groove MIDI Dataset) is CC BY 4.0 - attribution required in docum
 
 *Document Version: 1.0*
 *Created: January 2026*
-*Author: Luna Co. Audio*
+*Author: Dusk Audio*

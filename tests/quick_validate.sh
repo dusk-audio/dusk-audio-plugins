@@ -1,6 +1,6 @@
 #!/bin/bash
 #==============================================================================
-# Luna Co. Audio - Quick Plugin Validation
+# Dusk Audio - Quick Plugin Validation
 # Fast sanity checks for all plugins
 #==============================================================================
 
@@ -25,7 +25,7 @@ PLUGINS=(
     "DrummerClone"
 )
 
-echo -e "${BLUE}Luna Co. Audio - Quick Plugin Validation${NC}"
+echo -e "${BLUE}Dusk Audio - Quick Plugin Validation${NC}"
 echo "=========================================="
 echo ""
 

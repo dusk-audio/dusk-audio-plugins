@@ -13,7 +13,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-IMAGE_NAME="luna-plugins-builder"
+IMAGE_NAME="dusk-plugins-builder"
 
 # Plugin lookup functions (compatible with bash 3.2 on macOS)
 get_plugin_target() {
@@ -24,7 +24,8 @@ get_plugin_target() {
         groovemind|groove) echo "GrooveMind_All" ;;
         harmonic) echo "HarmonicGeneratorPlugin_All" ;;
         convolution|impulse|ir) echo "ConvolutionReverb_All" ;;
-        silkverb|silk|reverb|verb) echo "SilkVerb_All" ;;
+        velvet-90|velvet90|v90) echo "Velvet90_All" ;;
+        suede200|suede-200|s200) echo "Suede200_All" ;;
         multiq|multi-q|meq) echo "MultiQ_All" ;;
         neuralamp|neural-amp|nam) echo "NeuralAmp_All" ;;
         tapeecho|tape-echo|echo) echo "TapeEcho_All" ;;
@@ -42,7 +43,8 @@ get_plugin_name() {
         groovemind|groove) echo "GrooveMind" ;;
         harmonic) echo "Harmonic Generator" ;;
         convolution|impulse|ir) echo "Convolution Reverb" ;;
-        silkverb|silk|reverb|verb) echo "SilkVerb" ;;
+        velvet-90|velvet90|v90) echo "Velvet 90" ;;
+        suede200|suede-200|s200) echo "Suede 200" ;;
         multiq|multi-q|meq) echo "Multi-Q" ;;
         neuralamp|neural-amp|nam) echo "Neural Amp" ;;
         tapeecho|tape-echo|echo) echo "Tape Echo" ;;
@@ -56,7 +58,7 @@ get_plugin_name() {
 show_help() {
     echo "Usage: $0 [plugin]"
     echo ""
-    echo "Build Luna Co. Audio plugins in Docker/Podman container."
+    echo "Build Dusk Audio plugins in Docker/Podman container."
     echo ""
     echo "Options:"
     echo "  (no args)    Build all plugins"
@@ -69,7 +71,8 @@ show_help() {
     echo "  groovemind, groove GrooveMind"
     echo "  harmonic           Harmonic Generator"
     echo "  convolution, impulse, ir  Convolution Reverb"
-    echo "  silkverb, silk, reverb, verb  SilkVerb"
+    echo "  velvet-90, velvet90, v90       Velvet 90"
+    echo "  suede200, suede-200, s200     Suede 200"
     echo "  multiq, multi-q, meq   Multi-Q (Universal EQ)"
     echo "  neuralamp, neural-amp, nam  Neural Amp"
     echo "  tapeecho, tape-echo, echo   Tape Echo"
@@ -116,7 +119,7 @@ else
     exit 1
 fi
 
-echo "=== Luna Co. Audio Plugin Release Builder ==="
+echo "=== Dusk Audio Plugin Release Builder ==="
 echo "Using: $CONTAINER_CMD"
 echo "Building with Ubuntu 22.04 (glibc 2.35) for maximum compatibility"
 echo ""

@@ -2,12 +2,12 @@
   ==============================================================================
 
     Oversampling.h
-    Shared high-quality oversampling for Luna Co. Audio plugins
+    Shared high-quality oversampling for Dusk Audio plugins
 
     Uses FIR equiripple filters for superior alias rejection, essential for
     saturation and other nonlinear processing.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */
@@ -19,7 +19,7 @@
 #include <memory>
 #include <atomic>
 
-namespace LunaAudio
+namespace DuskAudio
 {
 
 //==============================================================================
@@ -32,7 +32,7 @@ namespace LunaAudio
 
     Usage:
         // In your processor header:
-        LunaAudio::OversamplingManager oversampling;
+        DuskAudio::OversamplingManager oversampling;
 
         // In prepareToPlay:
         oversampling.prepare(sampleRate, samplesPerBlock, numChannels);
@@ -247,4 +247,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OversamplingManager)
 };
 
-} // namespace LunaAudio
+} // namespace DuskAudio

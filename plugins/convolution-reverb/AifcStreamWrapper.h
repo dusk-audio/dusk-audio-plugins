@@ -3,7 +3,7 @@
 
     Convolution Reverb - AIFC Stream Wrapper
     Patches AIFC files with 'in24' compression type to 'NONE' for JUCE compatibility
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */

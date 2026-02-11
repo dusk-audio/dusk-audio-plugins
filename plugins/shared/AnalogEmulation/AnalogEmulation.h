@@ -2,7 +2,7 @@
   ==============================================================================
 
     AnalogEmulation.h
-    Shared Analog Emulation Library for Luna Co. Audio Plugins
+    Shared Analog Emulation Library for Dusk Audio Plugins
 
     This library provides reusable analog hardware emulation components:
     - Transformer saturation modeling

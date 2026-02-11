@@ -237,7 +237,7 @@ private:
 
     // Phase-coherent dry/wet mixer (prevents comb filtering with oversampling)
     // Replaces manual dryBuffer, oversampledDryBuffer, and delay line implementation
-    LunaAudio::DryWetMixer dryWetMixer;
+    DuskAudio::DryWetMixer dryWetMixer;
 
     // Pre-smoothed gain buffer for auto-makeup optimization
     alignas(64) std::array<float, 8192> smoothedGainBuffer{};

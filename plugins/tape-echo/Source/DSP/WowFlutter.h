@@ -9,7 +9,7 @@
     - Flutter: Faster modulation (5-10Hz, +/-1-2 cents)
     With random modulation depth variation for natural character.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */

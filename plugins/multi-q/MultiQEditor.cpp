@@ -51,7 +51,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     selectedBandLabel.setFont(juce::Font(juce::FontOptions(14.0f).withStyle("Bold")));
     addAndMakeVisible(selectedBandLabel);
 
-    freqSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    freqSlider = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::TextBoxBelow);
     setupSlider(*freqSlider, "");
     freqSlider->setTooltip("Frequency: Center frequency of this band (Cmd/Ctrl+drag for fine control)");
@@ -66,7 +66,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     };
     addAndMakeVisible(freqSlider.get());
 
-    gainSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    gainSlider = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::TextBoxBelow);
     setupSlider(*gainSlider, "");
     gainSlider->setTooltip("Gain: Boost or cut at this frequency (Cmd/Ctrl+drag for fine control)");
@@ -77,7 +77,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     };
     addAndMakeVisible(gainSlider.get());
 
-    qSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    qSlider = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                               juce::Slider::TextBoxBelow);
     setupSlider(*qSlider, "");
     qSlider->setTooltip("Q: Bandwidth/resonance - higher = narrower (Cmd/Ctrl+drag for fine control)");
@@ -104,7 +104,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     slopeLabel.setVisible(false);
 
     // Global controls
-    masterGainSlider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+    masterGainSlider = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                        juce::Slider::TextBoxBelow);
     setupSlider(*masterGainSlider, "");
     masterGainSlider->setTooltip("Master Gain: Output level adjustment (-24 to +24 dB)");
@@ -260,7 +260,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     analyzerSmoothingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.parameters, ParamIDs::analyzerSmoothing, *analyzerSmoothingSelector);
 
-    analyzerDecaySlider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal,
+    analyzerDecaySlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal,
                                                           juce::Slider::TextBoxRight);
     analyzerDecaySlider->setTextValueSuffix(" dB/s");
     analyzerDecaySlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
@@ -535,10 +535,10 @@ void MultiQEditor::paint(juce::Graphics& g)
     juce::String subtitle = isPultecMode ? "Tube EQ" : (isBritishMode ? "Console EQ" : "Universal EQ");
     g.drawText(subtitle, 100, 32, 120, 14, juce::Justification::left);
 
-    // Luna Co. branding (right side)
+    // Dusk Audio branding (right side)
     g.setColour(juce::Colour(0xff606060));
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
-    g.drawText("Luna Co. Audio", getWidth() - 100, 32, 90, 14, juce::Justification::centredRight);
+    g.drawText("Dusk Audio", getWidth() - 100, 32, 90, 14, juce::Justification::centredRight);
 
     // ===== MODE-SPECIFIC TOOLBAR ROW (below header) =====
     if (isPultecMode)
@@ -1765,14 +1765,14 @@ void MultiQEditor::setupBritishControls()
     // This helper sets up a knob exactly like 4K-EQ does
     auto setupBritishKnob = [this](std::unique_ptr<juce::Slider>& slider, const juce::String& name,
                                    bool centerDetented, juce::Colour color) {
-        slider = std::make_unique<LunaSlider>();
+        slider = std::make_unique<DuskSlider>();
         slider->setSliderStyle(juce::Slider::RotaryVerticalDrag);
         slider->setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
         slider->setPopupDisplayEnabled(true, true, this);
         slider->setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
                                      juce::MathConstants<float>::pi * 2.75f, true);
         slider->setScrollWheelEnabled(true);
-        // LunaSlider already has proper Cmd/Ctrl+drag fine control built-in
+        // DuskSlider already has proper Cmd/Ctrl+drag fine control built-in
         slider->setColour(juce::Slider::rotarySliderFillColourId, color);
         slider->setName(name);
         slider->setLookAndFeel(&fourKLookAndFeel);
@@ -2746,7 +2746,7 @@ void MultiQEditor::setupPultecControls()
 
     // Helper to setup Vintage Tube EQ-style rotary knob
     auto setupPultecKnob = [this](std::unique_ptr<juce::Slider>& slider, const juce::String& name) {
-        slider = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+        slider = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                  juce::Slider::NoTextBox);
         slider->setName(name);
         slider->setLookAndFeel(&vintageTubeLookAndFeel);
@@ -3379,7 +3379,7 @@ void MultiQEditor::setupDynamicControls()
     // Helper to setup a dynamic mode slider (compact control bar style)
     auto setupDynSlider = [this](std::unique_ptr<juce::Slider>& slider, const juce::String& name,
                                   const juce::String& suffix, double min, double max, double def) {
-        slider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal,
+        slider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal,
                                                  juce::Slider::TextBoxRight);
         slider->setName(name);
         slider->setRange(min, max, 0.1);

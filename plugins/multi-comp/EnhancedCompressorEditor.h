@@ -6,7 +6,7 @@
 #include "CompressorPresets.h"
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
-#include "../shared/LunaLookAndFeel.h"
+#include "../shared/DuskLookAndFeel.h"
 #include "../shared/ScalableEditorHelper.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -38,7 +38,7 @@ private:
     // Processor reference
     UniversalCompressor& processor;
 
-    // Resizable UI helper (shared across all Luna plugins)
+    // Resizable UI helper (shared across all Dusk Audio plugins)
     ScalableEditorHelper resizeHelper;
 
     // Look and feel instances for each mode

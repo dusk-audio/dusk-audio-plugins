@@ -7,7 +7,7 @@
     Modern, minimal UI design with deep forest green color scheme.
     Features animated tape visualization and mode selector grid.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */
@@ -19,7 +19,7 @@
 #include "UI/TapeEchoLookAndFeel.h"
 #include "UI/TapeVisualization.h"
 #include "../../shared/LEDMeter.h"
-#include "../../shared/LunaLookAndFeel.h"
+#include "../../shared/DuskLookAndFeel.h"
 #include "../../shared/ScalableEditorHelper.h"
 
 class TapeEchoEditor : public juce::AudioProcessorEditor, private juce::Timer
@@ -35,28 +35,28 @@ private:
     TapeEchoProcessor& processor;
     TapeEchoLookAndFeel lookAndFeel;
 
-    // Resizable UI helper (shared across all Luna plugins)
+    // Resizable UI helper (shared across all Dusk Audio plugins)
     ScalableEditorHelper resizeHelper;
 
     // Tape visualization
     TapeVisualization tapeViz;
 
-    // Main knobs (LunaSlider for Cmd/Ctrl+drag fine control)
-    LunaSlider inputKnob;
-    LunaSlider repeatRateKnob;
-    LunaSlider intensityKnob;
-    LunaSlider echoVolumeKnob;
-    LunaSlider reverbVolumeKnob;
+    // Main knobs (DuskSlider for Cmd/Ctrl+drag fine control)
+    DuskSlider inputKnob;
+    DuskSlider repeatRateKnob;
+    DuskSlider intensityKnob;
+    DuskSlider echoVolumeKnob;
+    DuskSlider reverbVolumeKnob;
 
     // Secondary knobs
-    LunaSlider bassKnob;
-    LunaSlider trebleKnob;
-    LunaSlider wowFlutterKnob;
-    LunaSlider dryWetKnob;
+    DuskSlider bassKnob;
+    DuskSlider trebleKnob;
+    DuskSlider wowFlutterKnob;
+    DuskSlider dryWetKnob;
 
     // Tempo sync controls
     juce::ToggleButton tempoSyncButton { "SYNC" };
-    LunaSlider noteDivisionKnob;
+    DuskSlider noteDivisionKnob;
     juce::Label noteDivisionLabel;
 
     // Labels

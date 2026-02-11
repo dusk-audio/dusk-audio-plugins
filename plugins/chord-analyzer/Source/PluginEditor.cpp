@@ -188,7 +188,7 @@ void ChordAnalyzerEditor::paint(juce::Graphics& g)
     // Header
     auto headerArea = bounds.removeFromTop(45);
     ChordAnalyzerLookAndFeel::drawPluginHeader(g, headerArea,
-                                                "CHORD ANALYZER", "Luna Co. Audio");
+                                                "CHORD ANALYZER", "Dusk Audio");
     titleClickArea = headerArea.reduced(10, 5).withWidth(180);
 
     // Main chord display section - taller for better spacing

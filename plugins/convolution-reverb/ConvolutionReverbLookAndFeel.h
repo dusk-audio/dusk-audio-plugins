@@ -2,8 +2,8 @@
   ==============================================================================
 
     Convolution Reverb - Custom Look and Feel
-    Luna Co. Audio visual styling
-    Copyright (c) 2025 Luna Co. Audio
+    Dusk Audio visual styling
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */
@@ -62,7 +62,7 @@ public:
     juce::Colour getEnvelopeColour() const { return envelopeColour; }
 
 private:
-    // Luna unified color scheme
+    // Dusk Audio unified color scheme
     juce::Colour backgroundColour{0xff1a1a1a};
     juce::Colour panelColour{0xff2a2a2a};
     juce::Colour knobColour{0xff3a3a3a};

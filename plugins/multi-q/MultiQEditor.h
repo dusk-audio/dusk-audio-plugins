@@ -11,7 +11,7 @@
 #include "BandDetailPanel.h"
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
-#include "../shared/LunaLookAndFeel.h"
+#include "../shared/DuskLookAndFeel.h"
 #include "../shared/ScalableEditorHelper.h"
 #include "../shared/UserPresetManager.h"
 #include "FourKLookAndFeel.h"
@@ -50,7 +50,7 @@ private:
     PultecLookAndFeel pultecLookAndFeel;  // For Pultec/Tube mode knobs (legacy)
     VintageTubeEQLookAndFeel vintageTubeLookAndFeel;  // For Vintage Tube EQ style
 
-    // Resizable UI helper (shared across all Luna plugins)
+    // Resizable UI helper (shared across all Dusk Audio plugins)
     ScalableEditorHelper resizeHelper;
 
     // Graphic display

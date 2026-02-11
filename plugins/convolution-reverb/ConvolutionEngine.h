@@ -3,7 +3,7 @@
 
     Convolution Reverb - Convolution Engine
     Wrapper around juce::dsp::Convolution with envelope and reverse support
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */
