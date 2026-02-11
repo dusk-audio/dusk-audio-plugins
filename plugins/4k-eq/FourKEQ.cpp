@@ -1231,7 +1231,7 @@ void FourKEQ::getStateInformation(juce::MemoryBlock& destData)
 
     // Add version information for backward/forward compatibility
     xml->setAttribute("pluginVersion", "1.0.2");
-    xml->setAttribute("manufacturer", "Luna Co. Audio");
+    xml->setAttribute("manufacturer", "Dusk Audio");
 
     copyXmlToBinary(*xml, destData);
 }

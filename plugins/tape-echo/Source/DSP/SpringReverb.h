@@ -7,7 +7,7 @@
     Modeled as parallel chirped allpass network (6-8 allpass filters per spring)
     with characteristic metallic attack transient, 2-3s decay time.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */

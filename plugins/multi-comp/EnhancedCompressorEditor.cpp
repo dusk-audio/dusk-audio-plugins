@@ -51,7 +51,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     analogNoiseButton = std::make_unique<juce::ToggleButton>("Analog Noise");
 
     // Lookahead slider (not shown in header, but kept for parameter)
-    lookaheadSlider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    lookaheadSlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
     lookaheadSlider->setRange(0.0, 10.0, 0.1);
     lookaheadSlider->setTextValueSuffix(" ms");
     lookaheadSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 18);
@@ -64,7 +64,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     oversamplingSelector->setSelectedId(2);  // Default to 2x
 
     // Sidechain HP filter vertical slider (Off to 500Hz)
-    sidechainHpSlider = std::make_unique<LunaSlider>(juce::Slider::LinearVertical, juce::Slider::TextBoxBelow);
+    sidechainHpSlider = std::make_unique<DuskSlider>(juce::Slider::LinearVertical, juce::Slider::TextBoxBelow);
     sidechainHpSlider->setRange(0.0, 500.0, 1.0);  // 0 = Off, up to 500Hz
     sidechainHpSlider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 16);
     sidechainHpSlider->setSkewFactorFromMidPoint(80.0);  // Skew so useful range (20-200Hz) is more accessible
@@ -90,24 +90,24 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     };
 
     // Sidechain EQ controls (not in header - too complex, keep hidden for now)
-    scLowFreqSlider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scLowFreqSlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
     scLowFreqSlider->setRange(60.0, 500.0, 1.0);
     scLowFreqSlider->setTextValueSuffix(" Hz");
     scLowFreqSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
     scLowFreqSlider->setSkewFactorFromMidPoint(150.0);
 
-    scLowGainSlider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scLowGainSlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
     scLowGainSlider->setRange(-12.0, 12.0, 0.1);
     scLowGainSlider->setTextValueSuffix(" dB");
     scLowGainSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
 
-    scHighFreqSlider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scHighFreqSlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
     scHighFreqSlider->setRange(2000.0, 16000.0, 10.0);
     scHighFreqSlider->setTextValueSuffix(" Hz");
     scHighFreqSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 16);
     scHighFreqSlider->setSkewFactorFromMidPoint(6000.0);
 
-    scHighGainSlider = std::make_unique<LunaSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
+    scHighGainSlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxLeft);
     scHighGainSlider->setRange(-12.0, 12.0, 0.1);
     scHighGainSlider->setTextValueSuffix(" dB");
     scHighGainSlider->setTextBoxStyle(juce::Slider::TextBoxLeft, false, 45, 16);
@@ -322,8 +322,8 @@ std::unique_ptr<juce::Slider> EnhancedCompressorEditor::createKnob(const juce::S
                                                                    float defaultValue,
                                                                    const juce::String& suffix)
 {
-    // Use LunaSlider for Cmd/Ctrl+drag fine control
-    auto slider = std::make_unique<LunaSlider>(name);
+    // Use DuskSlider for Cmd/Ctrl+drag fine control
+    auto slider = std::make_unique<DuskSlider>(name);
     slider->setSliderStyle(juce::Slider::RotaryVerticalDrag);
     slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
     slider->setRange(min, max, 0.01);
@@ -331,7 +331,7 @@ std::unique_ptr<juce::Slider> EnhancedCompressorEditor::createKnob(const juce::S
     slider->setTextValueSuffix(suffix);
     slider->setDoubleClickReturnValue(true, defaultValue);
 
-    // LunaSlider handles its own drag behavior - no need for configureKnob
+    // DuskSlider handles its own drag behavior - no need for configureKnob
 
     return slider;
 }

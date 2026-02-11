@@ -3,7 +3,7 @@
 
     Convolution Reverb - Envelope Processor
     Attack/Decay/Length envelope for IR shaping
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */

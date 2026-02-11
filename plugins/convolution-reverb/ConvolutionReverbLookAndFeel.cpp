@@ -2,8 +2,8 @@
   ==============================================================================
 
     Convolution Reverb - Custom Look and Feel
-    Luna Co. Audio visual styling
-    Copyright (c) 2025 Luna Co. Audio
+    Dusk Audio visual styling
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */

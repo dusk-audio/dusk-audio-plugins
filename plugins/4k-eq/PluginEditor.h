@@ -6,7 +6,7 @@
 #include "EQCurveDisplay.h"
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
-#include "../shared/LunaLookAndFeel.h"
+#include "../shared/DuskLookAndFeel.h"
 #include "../shared/ScalableEditorHelper.h"
 
 //==============================================================================
@@ -37,31 +37,31 @@ private:
     FourKLookAndFeel lookAndFeel;
 
     // HPF Section
-    LunaSlider hpfFreqSlider;
+    DuskSlider hpfFreqSlider;
     juce::ToggleButton hpfEnableButton;
 
     // LPF Section
-    LunaSlider lpfFreqSlider;
+    DuskSlider lpfFreqSlider;
     juce::ToggleButton lpfEnableButton;
 
     // LF Band
-    LunaSlider lfGainSlider;
-    LunaSlider lfFreqSlider;
+    DuskSlider lfGainSlider;
+    DuskSlider lfFreqSlider;
     juce::ToggleButton lfBellButton;
 
     // LM Band
-    LunaSlider lmGainSlider;
-    LunaSlider lmFreqSlider;
-    LunaSlider lmQSlider;
+    DuskSlider lmGainSlider;
+    DuskSlider lmFreqSlider;
+    DuskSlider lmQSlider;
 
     // HM Band
-    LunaSlider hmGainSlider;
-    LunaSlider hmFreqSlider;
-    LunaSlider hmQSlider;
+    DuskSlider hmGainSlider;
+    DuskSlider hmFreqSlider;
+    DuskSlider hmQSlider;
 
     // HF Band
-    LunaSlider hfGainSlider;
-    LunaSlider hfFreqSlider;
+    DuskSlider hfGainSlider;
+    DuskSlider hfFreqSlider;
     juce::ToggleButton hfBellButton;
 
     // Global Controls
@@ -69,9 +69,9 @@ private:
     juce::ComboBox presetSelector;
     juce::ToggleButton bypassButton;
     juce::ToggleButton autoGainButton;  // Auto-gain compensation toggle
-    LunaSlider inputGainSlider;   // Input gain control
-    LunaSlider outputGainSlider;
-    LunaSlider saturationSlider;
+    DuskSlider inputGainSlider;   // Input gain control
+    DuskSlider outputGainSlider;
+    DuskSlider saturationSlider;
     juce::ComboBox oversamplingSelector;
 
     // Parameter references for UI updates

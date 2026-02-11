@@ -1,6 +1,6 @@
 # Add Plugin
 
-Scaffold a new Luna Co. Audio plugin with all required files and configurations.
+Scaffold a new Dusk Audio plugin with all required files and configurations.
 
 ## Usage
 
@@ -66,9 +66,9 @@ juce_add_plugin(<PluginName>
     PLUGIN_MANUFACTURER_CODE LunC
     FORMATS VST3 LV2 AU Standalone
     PRODUCT_NAME "<Display Name>"
-    COMPANY_NAME "Luna Co. Audio"
-    COMPANY_WEBSITE "https://lunaco.audio"
-    COMPANY_EMAIL "support@lunaco.audio"
+    COMPANY_NAME "Dusk Audio"
+    COMPANY_WEBSITE "https://dusk-audio.github.io"
+    COMPANY_EMAIL "support@dusk-audio.github.io"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -113,7 +113,7 @@ target_link_libraries(<PluginName>
 
 Create `plugins/<slug>/<PluginName>.h` and `plugins/<slug>/<PluginName>.cpp`:
 
-Use existing plugins as templates (e.g., SilkVerb for effects, Multi-Q for analysis).
+Use existing plugins as templates (e.g., Velvet 90 for effects, Multi-Q for analysis).
 
 Required components:
 - `juce::AudioProcessor` subclass
@@ -214,7 +214,7 @@ Next steps:
 | LEDMeter | `shared/LEDMeter.h/cpp` | Input/output level meters |
 | SupportersOverlay | `shared/SupportersOverlay.h` | Patreon credits (click title) |
 | ScalableEditorHelper | `shared/ScalableEditorHelper.h` | Resizable UI with persistence |
-| LunaLookAndFeel | `shared/LunaLookAndFeel.h` | Consistent styling |
+| DuskLookAndFeel | `shared/DuskLookAndFeel.h` | Consistent styling |
 | AnalogEmulation | `shared/AnalogEmulation/` | Saturation, tubes, transformers |
 
 **Check `plugins/shared/` BEFORE writing any new code.**

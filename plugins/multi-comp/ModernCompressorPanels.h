@@ -11,7 +11,7 @@
 #include <JuceHeader.h>
 #include <cmath>
 #include "UniversalCompressor.h"
-#include "../shared/LunaLookAndFeel.h"
+#include "../shared/DuskLookAndFeel.h"
 
 //==============================================================================
 // Modern Look and Feel for Digital/Multiband modes
@@ -115,14 +115,14 @@ public:
         // Main compression controls
         addAndMakeVisible(thresholdSlider);
         thresholdSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider already has proper Cmd/Ctrl+drag fine control built-in
+        // DuskSlider already has proper Cmd/Ctrl+drag fine control built-in
         thresholdSlider.setRange(-60.0, 0.0, 0.1);
         thresholdSlider.setTextValueSuffix(" dB");
         thresholdSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
 
         addAndMakeVisible(ratioSlider);
         ratioSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         ratioSlider.setRange(1.0, 100.0, 0.1);
         ratioSlider.setSkewFactorFromMidPoint(10.0);
         ratioSlider.setTextValueSuffix(":1");
@@ -130,7 +130,7 @@ public:
 
         addAndMakeVisible(kneeSlider);
         kneeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         kneeSlider.setRange(0.0, 20.0, 0.1);
         kneeSlider.setTextValueSuffix(" dB");
         kneeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -138,7 +138,7 @@ public:
         // Time controls
         addAndMakeVisible(attackSlider);
         attackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         attackSlider.setRange(0.01, 500.0, 0.01);
         attackSlider.setSkewFactorFromMidPoint(5.0);
         attackSlider.setTextValueSuffix(" ms");
@@ -146,7 +146,7 @@ public:
 
         addAndMakeVisible(releaseSlider);
         releaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         releaseSlider.setRange(1.0, 5000.0, 1.0);
         releaseSlider.setSkewFactorFromMidPoint(500.0);
         releaseSlider.setTextValueSuffix(" ms");
@@ -155,7 +155,7 @@ public:
         // Lookahead
         addAndMakeVisible(lookaheadSlider);
         lookaheadSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         lookaheadSlider.setRange(0.0, 10.0, 0.1);
         lookaheadSlider.setTextValueSuffix(" ms");
         lookaheadSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -163,7 +163,7 @@ public:
         // Mix control
         addAndMakeVisible(mixSlider);
         mixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         mixSlider.setRange(0.0, 100.0, 1.0);
         mixSlider.setTextValueSuffix(" %");
         mixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -171,7 +171,7 @@ public:
         // Output
         addAndMakeVisible(outputSlider);
         outputSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         outputSlider.setRange(-24.0, 24.0, 0.1);
         outputSlider.setTextValueSuffix(" dB");
         outputSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -291,9 +291,9 @@ private:
     juce::AudioProcessorValueTreeState& parameters;
     float currentScaleFactor = 1.0f;
 
-    LunaSlider thresholdSlider, ratioSlider, kneeSlider;
-    LunaSlider attackSlider, releaseSlider, lookaheadSlider;
-    LunaSlider mixSlider, outputSlider;
+    DuskSlider thresholdSlider, ratioSlider, kneeSlider;
+    DuskSlider attackSlider, releaseSlider, lookaheadSlider;
+    DuskSlider mixSlider, outputSlider;
 
     juce::ToggleButton adaptiveReleaseButton;
     juce::TextButton sidechainEQButton;
@@ -598,7 +598,7 @@ public:
         // Per-band controls (5 knobs) with double-click to reset
         auto setupKnob = [this](juce::Slider& slider, const juce::String& suffix, double defaultVal) {
             slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-            // LunaSlider handles fine control
+            // DuskSlider handles fine control
             slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 14);
             if (suffix.isNotEmpty())
                 slider.setTextValueSuffix(suffix);
@@ -894,7 +894,7 @@ private:
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 3> crossoverAttachments;
 
     // Per-band controls
-    LunaSlider bandThreshold, bandRatio, bandAttack, bandRelease, bandMakeup;
+    DuskSlider bandThreshold, bandRatio, bandAttack, bandRelease, bandMakeup;
     std::array<juce::TextButton, 4> bandSoloButtons;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 4> bandSoloAttachments;
     std::array<juce::Label, 7> knobLabels;
@@ -907,7 +907,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> makeupAttachment;
 
     // Global controls
-    LunaSlider globalOutput, globalMix;
+    DuskSlider globalOutput, globalMix;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
 
@@ -1217,7 +1217,7 @@ public:
         // Threshold control (-40 to +20 dB)
         addAndMakeVisible(thresholdSlider);
         thresholdSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider already has proper Cmd/Ctrl+drag fine control built-in
+        // DuskSlider already has proper Cmd/Ctrl+drag fine control built-in
         thresholdSlider.setRange(-40.0, 20.0, 0.1);
         thresholdSlider.setTextValueSuffix(" dB");
         thresholdSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -1225,7 +1225,7 @@ public:
         // Ratio control (1:1 to 10:1)
         addAndMakeVisible(ratioSlider);
         ratioSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         ratioSlider.setRange(1.0, 10.0, 0.1);
         ratioSlider.setTextValueSuffix(":1");
         ratioSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -1233,7 +1233,7 @@ public:
         // Attack control (0.3 to 75 ms)
         addAndMakeVisible(attackSlider);
         attackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         attackSlider.setRange(0.3, 75.0, 0.1);
         attackSlider.setSkewFactorFromMidPoint(10.0);
         attackSlider.setTextValueSuffix(" ms");
@@ -1242,7 +1242,7 @@ public:
         // Release control (50 to 3000 ms)
         addAndMakeVisible(releaseSlider);
         releaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         releaseSlider.setRange(50.0, 3000.0, 1.0);
         releaseSlider.setSkewFactorFromMidPoint(300.0);
         releaseSlider.setTextValueSuffix(" ms");
@@ -1251,7 +1251,7 @@ public:
         // Output/Makeup gain (-20 to +20 dB)
         addAndMakeVisible(outputSlider);
         outputSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         outputSlider.setRange(-20.0, 20.0, 0.1);
         outputSlider.setTextValueSuffix(" dB");
         outputSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -1259,7 +1259,7 @@ public:
         // Mix control (0 to 100%)
         addAndMakeVisible(mixSlider);
         mixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        // LunaSlider handles fine control
+        // DuskSlider handles fine control
         mixSlider.setRange(0.0, 100.0, 1.0);
         mixSlider.setTextValueSuffix(" %");
         mixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -1356,7 +1356,7 @@ private:
     juce::AudioProcessorValueTreeState& parameters;
     float currentScaleFactor = 1.0f;
 
-    LunaSlider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider, mixSlider;
+    DuskSlider thresholdSlider, ratioSlider, attackSlider, releaseSlider, outputSlider, mixSlider;
 
     std::vector<std::unique_ptr<juce::Label>> labels;
 

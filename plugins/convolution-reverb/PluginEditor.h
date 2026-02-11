@@ -3,7 +3,7 @@
 
     Convolution Reverb - Plugin Editor
     Main UI for the convolution reverb
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */
@@ -16,7 +16,7 @@
 #include "IRBrowser.h"
 #include "IRWaveformDisplay.h"
 #include "LEDMeter.h"
-#include "../shared/LunaLookAndFeel.h"
+#include "../shared/DuskLookAndFeel.h"
 #include "../shared/ScalableEditorHelper.h"
 
 class ConvolutionReverbEditor : public juce::AudioProcessorEditor,
@@ -47,7 +47,7 @@ private:
     ConvolutionReverbProcessor& audioProcessor;
     ConvolutionReverbLookAndFeel lookAndFeel;
 
-    // Resizable UI helper (shared across all Luna plugins)
+    // Resizable UI helper (shared across all Dusk Audio plugins)
     ScalableEditorHelper resizeHelper;
 
     // IR Browser

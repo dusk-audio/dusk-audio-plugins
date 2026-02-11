@@ -3,7 +3,7 @@
 
     Convolution Reverb - IR Browser
     Category-based file browser for impulse responses
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */

@@ -9,7 +9,7 @@
                        → [Reverb Section] → Reverb Volume →
                        → Dry/Wet Mix → Output
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */

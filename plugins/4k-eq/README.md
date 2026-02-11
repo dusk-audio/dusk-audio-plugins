@@ -121,7 +121,7 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
 
 #### Quick Build (All Plugins)
 ```bash
-cd /path/to/Luna/plugins
+cd /path/to/Dusk/plugins
 ./rebuild_all.sh              # Standard build
 ./rebuild_all.sh --fast        # With ccache (if available)
 ./rebuild_all.sh --debug       # Debug build
@@ -130,7 +130,7 @@ cd /path/to/Luna/plugins
 
 #### Manual CMake Build
 ```bash
-cd /path/to/Luna/plugins
+cd /path/to/Dusk/plugins
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . --target FourKEQ_All -j8
@@ -223,7 +223,7 @@ This plugin is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
 
 ## Credits
 
-**Developed by**: Luna Co. Audio
+**Developed by**: Dusk Audio
 
 **Disclaimer**: This is an independent emulation inspired by classic British console EQs. This project is not affiliated with or endorsed by any hardware manufacturer.
 
@@ -260,4 +260,4 @@ For issues, feature requests, or questions:
 
 ---
 
-*Part of the Luna Co. Audio plugin suite*
+*Part of the Dusk Audio plugin suite*

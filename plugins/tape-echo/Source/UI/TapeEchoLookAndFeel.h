@@ -11,7 +11,7 @@
     - Text: Off-white (#e8efe8)
     - Highlights: Warm amber (#d4a055) for LEDs
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */

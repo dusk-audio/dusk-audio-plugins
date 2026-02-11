@@ -1,6 +1,6 @@
 # Release Plugin
 
-Release one or more Luna Co. Audio plugins with automated version bumps, website updates, tagging, and push.
+Release one or more Dusk Audio plugins with automated version bumps, website updates, tagging, and push.
 
 ## Usage
 
@@ -28,7 +28,7 @@ Release one or more Luna Co. Audio plugins with automated version bumps, website
 | TapeMachine | tapemachine | plugins/TapeMachine | TAPEMACHINE | tape |
 | Tape Echo | tape-echo | plugins/tape-echo | TAPEECHO | tapeecho |
 | Multi-Q | multi-q | plugins/multi-q | (inline) | multiq |
-| SilkVerb | silkverb | plugins/SilkVerb | SILKVERB | silkverb |
+| Velvet 90 | velvet-90 | plugins/Velvet90 | VELVET90 | velvet-90 |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
 | Neural Amp | neural-amp | plugins/neural-amp | NEURALAMP | nam |
 | GrooveMind | groovemind | plugins/groovemind | GROOVEMIND | groovemind |
@@ -71,7 +71,7 @@ git log <slug>-v<old-version>..HEAD --oneline -- plugins/shared/
 
 For EACH plugin, update the CMakeLists.txt:
 
-**Standard plugins** (4k-eq, multi-comp, tapemachine, silkverb, convolution-reverb, neural-amp, groovemind):
+**Standard plugins** (4k-eq, multi-comp, tapemachine, velvet-90, convolution-reverb, neural-amp, groovemind):
 ```
 set(<VAR>_DEFAULT_VERSION "<new-version>")
 ```

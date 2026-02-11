@@ -1,4 +1,4 @@
-# Build environment for Luna Co. Audio plugins
+# Build environment for Dusk Audio plugins
 # Uses Ubuntu 22.04 LTS for glibc 2.35 compatibility with modern GCC
 # This ensures plugins work on Debian 12+, Ubuntu 22.04+, and most modern distros
 

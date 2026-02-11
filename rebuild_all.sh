@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #==============================================================================
-# Comprehensive Plugin Build Script for Luna Co. Audio
+# Comprehensive Plugin Build Script for Dusk Audio
 #
 # This script performs a complete clean, build, and install of all audio plugins
 # Usage: ./rebuild_all.sh [options]
@@ -92,7 +92,7 @@ command_exists() {
 
 # Header
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}   Luna Co. Audio - Plugin Build System${NC}"
+echo -e "${BLUE}   Dusk Audio - Plugin Build System${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo
 
@@ -184,7 +184,7 @@ get_plugin_target() {
         groovemind) echo "GrooveMind_All" ;;
         harmonic-generator) echo "HarmonicGeneratorPlugin_All" ;;
         convolution-reverb) echo "ConvolutionReverb_All" ;;
-        SilkVerb) echo "SilkVerb_All" ;;
+        Velvet90) echo "Velvet90_All" ;;
         multi-q) echo "MultiQ_All" ;;
         neural-amp) echo "NeuralAmp_All" ;;
         tape-echo) echo "TapeEcho_All" ;;
@@ -308,7 +308,7 @@ fi
 
 echo
 echo -e "${CYAN}Plugins are ready to use in your DAW!${NC}"
-echo -e "${CYAN}Company: Luna Co. Audio${NC}"
+echo -e "${CYAN}Company: Dusk Audio${NC}"
 
 # Return to original directory
 cd ..

@@ -4,7 +4,7 @@
     PluginEditor.cpp
     Tape Echo - RE-201 Style Plugin UI
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */

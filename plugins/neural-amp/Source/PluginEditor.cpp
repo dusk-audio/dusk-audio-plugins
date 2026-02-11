@@ -294,7 +294,7 @@ void NeuralAmpAudioProcessorEditor::paint(juce::Graphics& g)
     // Company name
     g.setFont(juce::Font(11.0f));
     g.setColour(lookAndFeel.ampCream.withAlpha(0.7f));
-    g.drawText("Luna Co. Audio", getWidth() - 130, 25, 110, 20, juce::Justification::centredRight);
+    g.drawText("Dusk Audio", getWidth() - 130, 25, 110, 20, juce::Justification::centredRight);
 
     // Model display area - wider with LOAD button inside
     auto modelArea = juce::Rectangle<int>(30, 55, 420, 35).toFloat();

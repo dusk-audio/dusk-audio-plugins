@@ -1,6 +1,6 @@
 # Validate Plugin
 
-Run validation tests on Luna Co. Audio plugins using pluginval and optional audio analysis.
+Run validation tests on Dusk Audio plugins using pluginval and optional audio analysis.
 
 ## Usage
 
@@ -29,7 +29,7 @@ Map the input to the correct plugin name for validation:
 | `tape`, `tapemachine`, `"TapeMachine"` | "TapeMachine" |
 | `tapeecho`, `tape-echo`, `"Tape Echo"` | "Tape Echo" |
 | `multiq`, `multi-q`, `"Multi-Q"` | "Multi-Q" |
-| `silkverb`, `"SilkVerb"` | "SilkVerb" |
+| `velvet-90`, `"Velvet 90"` | "Velvet 90" |
 | `convolution`, `"Convolution Reverb"` | "Convolution Reverb" |
 | `nam`, `neural-amp`, `"Neural Amp"` | "Neural Amp" |
 

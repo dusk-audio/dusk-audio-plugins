@@ -3,7 +3,7 @@
 
     Convolution Reverb - IR Waveform Display
     Waveform visualization with envelope overlay
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */

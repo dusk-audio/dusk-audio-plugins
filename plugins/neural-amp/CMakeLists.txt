@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.22)
 set(PLUGIN_NAME "NeuralAmp")
 set(PLUGIN_CODE "NAmp")
 set(PLUGIN_MANUFACTURER_CODE "Luna")
-set(PLUGIN_MANUFACTURER "Luna Co. Audio")
+set(PLUGIN_MANUFACTURER "Dusk Audio")
 set(PLUGIN_VERSION "1.0.0")
 
 # Build the NeuralAmpModelerCore library
@@ -70,7 +70,7 @@ juce_add_plugin(${PLUGIN_NAME}
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     VST3_CATEGORIES "Fx" "Distortion"
     LV2URI "https://lunaco.audio/plugins/neuralamp"
-    COPY_PLUGIN_AFTER_BUILD ${LUNA_COPY_AFTER_BUILD}
+    COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
 )

@@ -6,7 +6,7 @@
 
     Simple vertical level meter with peak hold and color-coded levels.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */

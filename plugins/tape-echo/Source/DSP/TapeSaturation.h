@@ -7,7 +7,7 @@
     Soft-knee saturation with frequency-dependent behavior.
     More saturation at low frequencies, HF roll-off modeling head gap losses.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */
