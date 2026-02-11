@@ -7,7 +7,7 @@
     Shows tape movement synced to repeat rate, with glowing dots for active heads.
     Feedback indicator glows warmer as intensity increases.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */

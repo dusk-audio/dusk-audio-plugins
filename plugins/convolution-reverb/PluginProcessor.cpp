@@ -2,7 +2,7 @@
   ==============================================================================
 
     Convolution Reverb - Plugin Processor
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */
@@ -580,7 +580,7 @@ double ConvolutionReverbProcessor::getCurrentIRSampleRate() const
 juce::File ConvolutionReverbProcessor::getDefaultIRDirectory() const
 {
     return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-        .getChildFile(".local/share/LunaAudio/IRs");
+        .getChildFile(".local/share/DuskAudio/IRs");
 }
 
 juce::File ConvolutionReverbProcessor::getCustomIRDirectory() const

@@ -64,7 +64,7 @@ void BandDetailPanel::updateBandButtonColors()
 void BandDetailPanel::setupKnobs()
 {
     auto setupRotaryKnob = [this](std::unique_ptr<juce::Slider>& knob) {
-        knob = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+        knob = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                juce::Slider::NoTextBox);
         knob->setLookAndFeel(&f6KnobLookAndFeel);
         knob->setColour(juce::Slider::rotarySliderFillColourId, getBandColor(selectedBand));
@@ -114,7 +114,7 @@ void BandDetailPanel::setupKnobs()
 
     // Dynamics knobs (use orange for dynamics section)
     auto setupDynKnob = [this](std::unique_ptr<juce::Slider>& knob) {
-        knob = std::make_unique<LunaSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+        knob = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
                                                juce::Slider::NoTextBox);
         knob->setLookAndFeel(&f6KnobLookAndFeel);
         knob->setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xFFff8844));

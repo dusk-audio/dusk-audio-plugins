@@ -2,7 +2,7 @@
 
 #include <JuceHeader.h>
 #include "EQBand.h"
-#include "../shared/LunaLookAndFeel.h"
+#include "../shared/DuskLookAndFeel.h"
 
 class MultiQ;
 

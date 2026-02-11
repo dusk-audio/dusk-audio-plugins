@@ -5,7 +5,7 @@
 #include "PluginProcessor.h"
 #include "../../shared/LEDMeter.h"
 #include "../../shared/SupportersOverlay.h"
-#include "../../shared/LunaLookAndFeel.h"
+#include "../../shared/DuskLookAndFeel.h"
 
 class NeuralAmpLookAndFeel : public juce::LookAndFeel_V4
 {
@@ -61,31 +61,31 @@ private:
     juce::Label irNameLabel;
     juce::TextButton loadIRButton;
 
-    // Input controls (LunaSlider for Cmd/Ctrl+drag fine control)
-    LunaSlider inputGainSlider;
+    // Input controls (DuskSlider for Cmd/Ctrl+drag fine control)
+    DuskSlider inputGainSlider;
     juce::Label inputGainLabel;
-    LunaSlider gateSlider;
+    DuskSlider gateSlider;
     juce::Label gateLabel;
     juce::ToggleButton gateButton;
 
     // Tone stack
-    LunaSlider bassSlider;
+    DuskSlider bassSlider;
     juce::Label bassLabel;
-    LunaSlider midSlider;
+    DuskSlider midSlider;
     juce::Label midLabel;
-    LunaSlider trebleSlider;
+    DuskSlider trebleSlider;
     juce::Label trebleLabel;
-    LunaSlider presenceSlider;
+    DuskSlider presenceSlider;
     juce::Label presenceLabel;
 
     // Filter controls
-    LunaSlider lowCutSlider;
+    DuskSlider lowCutSlider;
     juce::Label lowCutLabel;
-    LunaSlider highCutSlider;
+    DuskSlider highCutSlider;
     juce::Label highCutLabel;
 
     // Output controls
-    LunaSlider outputSlider;
+    DuskSlider outputSlider;
     juce::Label outputLabel;
     juce::ToggleButton cabButton;
 

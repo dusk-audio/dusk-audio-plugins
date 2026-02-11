@@ -162,8 +162,6 @@ void TapeMachineAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::La
     slider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(panelDark));
     slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(metalDark));
 
-    // LunaSlider already has Shift+drag fine control and Ctrl/Cmd+click reset built-in
-    // Do NOT call LunaSliderStyle::configureKnob() - it would break the custom behavior
 
     addAndMakeVisible(slider);
 
@@ -307,7 +305,7 @@ void TapeMachineAudioProcessorEditor::paint(juce::Graphics& g)
     // Footer with company name - scaled
     g.setFont(juce::Font(resizeHelper.scaled(10.0f), juce::Font::italic));
     g.setColour(juce::Colour(textSecondary).withAlpha(0.6f));
-    g.drawText("Luna Co. Audio", getLocalBounds().removeFromBottom(resizeHelper.scaled(16)),
+    g.drawText("Dusk Audio", getLocalBounds().removeFromBottom(resizeHelper.scaled(16)),
                juce::Justification::centred);
 }
 

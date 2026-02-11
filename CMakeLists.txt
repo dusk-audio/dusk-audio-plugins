@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(LunaPlugins VERSION 1.0.0)
+project(DuskPlugins VERSION 1.0.0)
 
 # C++ standard is set per-plugin:
 # - Most plugins use C++17 (set in their own CMakeLists.txt)
@@ -40,7 +40,7 @@ else()
 endif()
 
 # CI builds don't need to install plugins to system directories
-option(LUNA_COPY_AFTER_BUILD "Copy plugins to system VST3/LV2 dirs after build" ON)
+option(DUSK_COPY_AFTER_BUILD "Copy plugins to system VST3/LV2 dirs after build" ON)
 
 # Option to build all plugins or specific ones
 option(BUILD_4K_EQ "Build 4K EQ plugin" ON)
@@ -49,7 +49,8 @@ option(BUILD_HARMONIC_GENERATOR "Build Harmonic Generator plugin" OFF)  # Direct
 option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
 option(BUILD_GROOVEMIND "Build GrooveMind plugin" ON)  # ML-based intelligent drummer
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
-option(BUILD_SILKVERB "Build SilkVerb plugin" ON)
+option(BUILD_VELVET90 "Build Velvet 90 plugin" ON)
+option(BUILD_SUEDE200 "Build Suede 200 plugin" ON)
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
 option(BUILD_NEURAL_AMP "Build Neural Amp plugin" ON)
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
@@ -81,8 +82,12 @@ if(BUILD_CONVOLUTION_REVERB)
     add_subdirectory(plugins/convolution-reverb)
 endif()
 
-if(BUILD_SILKVERB)
-    add_subdirectory(plugins/SilkVerb)
+if(BUILD_VELVET90)
+    add_subdirectory(plugins/Velvet90)
+endif()
+
+if(BUILD_SUEDE200)
+    add_subdirectory(plugins/Suede200)
 endif()
 
 if(BUILD_MULTI_Q)

@@ -1,0 +1,135 @@
+Suede 200 Coefficient Matching Results
+============================================================
+
+Program 0: Concert Hall
+  IRs matched: 10
+  Score range: 36.6 - 63.5
+  Average:     57.6
+  Coefficient ranges:
+    C0: +0.222 [-0.895 to +0.958] std=0.708 (VARIES)
+    C1: -0.064 [-0.629 to +0.702] std=0.468 (VARIES)
+    C2: -0.101 [-0.794 to +0.739] std=0.528 (VARIES)
+    C3: +0.673 [+0.114 to +0.979] std=0.281 (VARIES)
+    C4: -0.228 [-0.899 to +0.498] std=0.443 (VARIES)
+    C5: +0.005 [-0.523 to +0.736] std=0.470 (VARIES)
+    C6: +0.556 [+0.212 to +0.958] std=0.239 (VARIES)
+    C7: -0.163 [-0.664 to +0.608] std=0.493 (VARIES)
+    C8: +0.058 [-0.749 to +0.947] std=0.501 (VARIES)
+    C9: -0.131 [-0.979 to +0.542] std=0.451 (VARIES)
+    CA: +0.545 [+0.165 to +0.702] std=0.179 (VARIES)
+    CB: +0.383 [-0.255 to +0.757] std=0.373 (VARIES)
+    CC: +0.098 [-0.798 to +0.577] std=0.458 (VARIES)
+    CD: +0.290 [-0.388 to +0.866] std=0.432 (VARIES)
+    CE: -0.217 [-0.820 to +0.888] std=0.533 (VARIES)
+    CF: +0.004 [-0.787 to +0.858] std=0.629 (VARIES)
+
+Program 1: Plate
+  IRs matched: 9
+  Score range: 68.9 - 73.6
+  Average:     72.0
+  Coefficient ranges:
+    C0: -0.181 [-0.464 to +0.139] std=0.195 (VARIES)
+    C1: +0.103 [-0.752 to +0.940] std=0.628 (VARIES)
+    C2: -0.376 [-0.695 to -0.068] std=0.245 (VARIES)
+    C3: +0.655 [+0.416 to +0.965] std=0.218 (VARIES)
+    C4: -0.093 [-0.866 to +0.721] std=0.466 (VARIES)
+    C5: -0.334 [-0.940 to +0.738] std=0.556 (VARIES)
+    C6: +0.606 [+0.325 to +0.921] std=0.250 (VARIES)
+    C7: -0.099 [-0.882 to +0.876] std=0.628 (VARIES)
+    C8: +0.134 [-0.743 to +0.998] std=0.639 (VARIES)
+    C9: -0.207 [-0.990 to +0.275] std=0.431 (VARIES)
+    CA: +0.452 [+0.114 to +0.898] std=0.287 (VARIES)
+    CB: -0.251 [-0.963 to +0.837] std=0.698 (VARIES)
+    CC: -0.141 [-0.496 to +0.381] std=0.245 (VARIES)
+    CD: -0.195 [-0.990 to +0.725] std=0.613 (VARIES)
+    CE: +0.181 [-0.412 to +0.631] std=0.358 (VARIES)
+    CF: +0.349 [-0.971 to +0.989] std=0.665 (VARIES)
+
+Program 2: Chamber
+  IRs matched: 9
+  Score range: 36.8 - 45.1
+  Average:     42.6
+  Coefficient ranges:
+    C0: -0.086 [-0.447 to +0.990] std=0.481 (VARIES)
+    C1: +0.117 [-0.990 to +0.874] std=0.849 (VARIES)
+    C2: +0.112 [-0.727 to +0.854] std=0.486 (VARIES)
+    C3: +0.791 [+0.552 to +0.930] std=0.163 (VARIES)
+    C4: -0.322 [-0.733 to +0.814] std=0.559 (VARIES)
+    C5: -0.646 [-0.979 to +0.974] std=0.602 (VARIES)
+    C6: +0.666 [+0.383 to +0.815] std=0.148 (moderate)
+    C7: -0.221 [-0.392 to +0.399] std=0.249 (VARIES)
+    C8: +0.489 [-0.752 to +0.922] std=0.577 (VARIES)
+    C9: +0.461 [-0.531 to +0.990] std=0.538 (VARIES)
+    CA: +0.808 [+0.275 to +0.933] std=0.208 (VARIES)
+    CB: +0.045 [-0.601 to +0.368] std=0.373 (VARIES)
+    CC: +0.061 [-0.020 to +0.460] std=0.143 (moderate)
+    CD: +0.208 [-0.840 to +0.652] std=0.546 (VARIES)
+    CE: -0.278 [-0.746 to -0.160] std=0.184 (VARIES)
+    CF: -0.510 [-0.990 to +0.886] std=0.601 (VARIES)
+
+Program 3: Rich Plate
+  IRs matched: 9
+  Score range: 40.9 - 45.0
+  Average:     43.3
+  Coefficient ranges:
+    C0: +0.450 [+0.450 to +0.450] std=0.000 (STABLE)
+    C1: +0.470 [+0.470 to +0.470] std=0.000 (STABLE)
+    C2: +0.500 [+0.500 to +0.500] std=0.000 (STABLE)
+    C3: +0.750 [+0.750 to +0.750] std=0.000 (STABLE)
+    C4: +0.350 [+0.350 to +0.350] std=0.000 (STABLE)
+    C5: +0.500 [+0.500 to +0.500] std=0.000 (STABLE)
+    C6: +0.710 [+0.710 to +0.710] std=0.000 (STABLE)
+    C7: +0.550 [+0.550 to +0.550] std=0.000 (STABLE)
+    C8: +0.450 [+0.450 to +0.450] std=0.000 (STABLE)
+    C9: +0.380 [+0.380 to +0.380] std=0.000 (STABLE)
+    CA: +0.730 [+0.730 to +0.730] std=0.000 (STABLE)
+    CB: +0.750 [+0.750 to +0.750] std=0.000 (STABLE)
+    CC: +0.350 [+0.350 to +0.350] std=0.000 (STABLE)
+    CD: +0.150 [+0.150 to +0.150] std=0.000 (STABLE)
+    CE: +0.700 [+0.700 to +0.700] std=0.000 (STABLE)
+    CF: +0.390 [+0.390 to +0.390] std=0.000 (STABLE)
+
+Program 4: Rich Splits
+  IRs matched: 9
+  Score range: 44.9 - 45.0
+  Average:     45.0
+  Coefficient ranges:
+    C0: +0.450 [+0.450 to +0.450] std=0.000 (STABLE)
+    C1: +0.470 [+0.470 to +0.470] std=0.000 (STABLE)
+    C2: +0.500 [+0.500 to +0.500] std=0.000 (STABLE)
+    C3: +0.750 [+0.750 to +0.750] std=0.000 (STABLE)
+    C4: +0.350 [+0.350 to +0.350] std=0.000 (STABLE)
+    C5: +0.500 [+0.500 to +0.500] std=0.000 (STABLE)
+    C6: +0.710 [+0.710 to +0.710] std=0.000 (STABLE)
+    C7: +0.550 [+0.550 to +0.550] std=0.000 (STABLE)
+    C8: +0.450 [+0.450 to +0.450] std=0.000 (STABLE)
+    C9: +0.380 [+0.380 to +0.380] std=0.000 (STABLE)
+    CA: +0.730 [+0.730 to +0.730] std=0.000 (STABLE)
+    CB: +0.750 [+0.750 to +0.750] std=0.000 (STABLE)
+    CC: +0.350 [+0.350 to +0.350] std=0.000 (STABLE)
+    CD: +0.150 [+0.150 to +0.150] std=0.000 (STABLE)
+    CE: +0.700 [+0.700 to +0.700] std=0.000 (STABLE)
+    CF: +0.390 [+0.390 to +0.390] std=0.000 (STABLE)
+
+Program 5: Inverse Rooms
+  IRs matched: 4
+  Score range: 44.0 - 44.4
+  Average:     44.3
+  Coefficient ranges:
+    C0: +0.450 [+0.450 to +0.450] std=0.000 (STABLE)
+    C1: +0.470 [+0.470 to +0.470] std=0.000 (STABLE)
+    C2: +0.500 [+0.500 to +0.500] std=0.000 (STABLE)
+    C3: +0.750 [+0.750 to +0.750] std=0.000 (STABLE)
+    C4: +0.350 [+0.350 to +0.350] std=0.000 (STABLE)
+    C5: +0.500 [+0.500 to +0.500] std=0.000 (STABLE)
+    C6: +0.710 [+0.710 to +0.710] std=0.000 (STABLE)
+    C7: +0.550 [+0.550 to +0.550] std=0.000 (STABLE)
+    C8: +0.450 [+0.450 to +0.450] std=0.000 (STABLE)
+    C9: +0.380 [+0.380 to +0.380] std=0.000 (STABLE)
+    CA: +0.730 [+0.730 to +0.730] std=0.000 (STABLE)
+    CB: +0.750 [+0.750 to +0.750] std=0.000 (STABLE)
+    CC: +0.350 [+0.350 to +0.350] std=0.000 (STABLE)
+    CD: +0.150 [+0.150 to +0.150] std=0.000 (STABLE)
+    CE: +0.700 [+0.700 to +0.700] std=0.000 (STABLE)
+    CF: +0.390 [+0.390 to +0.390] std=0.000 (STABLE)
+

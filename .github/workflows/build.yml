@@ -8,7 +8,8 @@ on:
       - 'multi-comp-v*'         # Multi-Comp only: multi-comp-v1.0.1
       - 'tapemachine-v*'        # TapeMachine only
       - 'tape-echo-v*'          # Tape Echo only
-      - 'silkverb-v*'           # SilkVerb only
+      - 'velvet-90-v*'           # Velvet 90 only
+      - 'suede-200-v*'          # Suede 200 only
       - 'multi-q-v*'            # Multi-Q only
       - 'convolution-reverb-v*' # Convolution Reverb only
       - 'neural-amp-v*'         # Neural Amp only
@@ -26,7 +27,8 @@ on:
           - 'multi-comp'
           - 'tapemachine'
           - 'tape-echo'
-          - 'silkverb'
+          - 'velvet-90'
+          - 'suede-200'
           - 'multi-q'
           - 'convolution-reverb'
           - 'neural-amp'
@@ -55,7 +57,7 @@ jobs:
           # Default: build all
           TARGET=""
           NAME="All Plugins"
-          RELEASE_NAME="LunaCoAudio-Plugins"
+          RELEASE_NAME="DuskAudio-Plugins"
           IS_RELEASE="false"
           VERSION=""
 
@@ -77,10 +79,10 @@ jobs:
               TARGET="TapeMachine_All"
               NAME="TapeMachine"
               RELEASE_NAME="tapemachine"
-            elif [[ "$TAG" == silkverb-v* ]]; then
-              TARGET="SilkVerb_All"
-              NAME="SilkVerb"
-              RELEASE_NAME="silkverb"
+            elif [[ "$TAG" == velvet-90-v* ]]; then
+              TARGET="Velvet90_All"
+              NAME="Velvet 90"
+              RELEASE_NAME="velvet-90"
             elif [[ "$TAG" == multi-q-v* ]]; then
               TARGET="MultiQ_All"
               NAME="Multi-Q"
@@ -101,6 +103,10 @@ jobs:
               TARGET="GrooveMind_All"
               NAME="GrooveMind"
               RELEASE_NAME="groovemind"
+            elif [[ "$TAG" == suede-200-v* ]]; then
+              TARGET="Suede200_All"
+              NAME="Suede 200"
+              RELEASE_NAME="suede-200"
             fi
           elif [[ -n "$MANUAL_PLUGIN" ]]; then
             case "$MANUAL_PLUGIN" in
@@ -108,11 +114,12 @@ jobs:
               multi-comp) TARGET="MultiComp_All"; NAME="Multi-Comp"; RELEASE_NAME="multi-comp" ;;
               tapemachine) TARGET="TapeMachine_All"; NAME="TapeMachine"; RELEASE_NAME="tapemachine" ;;
               tape-echo) TARGET="TapeEcho_All"; NAME="Tape Echo"; RELEASE_NAME="tape-echo" ;;
-              silkverb) TARGET="SilkVerb_All"; NAME="SilkVerb"; RELEASE_NAME="silkverb" ;;
+              velvet-90) TARGET="Velvet90_All"; NAME="Velvet 90"; RELEASE_NAME="velvet-90" ;;
               multi-q) TARGET="MultiQ_All"; NAME="Multi-Q"; RELEASE_NAME="multi-q" ;;
               convolution-reverb) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
               neural-amp) TARGET="NeuralAmp_All"; NAME="Neural Amp"; RELEASE_NAME="neural-amp" ;;
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
+              suede-200) TARGET="Suede200_All"; NAME="Suede 200"; RELEASE_NAME="suede-200" ;;
             esac
           fi
 
@@ -207,7 +214,7 @@ jobs:
           fi
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DLUNA_COPY_AFTER_BUILD=OFF \
+            -DDUSK_COPY_AFTER_BUILD=OFF \
             -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
@@ -326,7 +333,7 @@ jobs:
           }
           cmake -B build `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-            -DLUNA_COPY_AFTER_BUILD=OFF `
+            -DDUSK_COPY_AFTER_BUILD=OFF `
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
       - name: Build plugins
@@ -430,7 +437,7 @@ jobs:
           fi
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DLUNA_COPY_AFTER_BUILD=OFF \
+            -DDUSK_COPY_AFTER_BUILD=OFF \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" \
             -DJUCE_PATH=${{ github.workspace }}/JUCE
@@ -755,7 +762,7 @@ jobs:
               echo "- 4K EQ - SSL 4000 Series Console EQ Emulation"
               echo "- Multi-Comp - Multi-mode compressor with multiband"
               echo "- TapeMachine - Analog tape machine emulation"
-              echo "- SilkVerb - Algorithmic reverb (Lexicon/Valhalla style)"
+              echo "- Velvet 90 - Algorithmic reverb"
               echo "- Convolution Reverb - IR-based reverb"
               echo "- Multi-Q - Universal 8-band EQ"
               echo "- And more..."
@@ -788,7 +795,7 @@ jobs:
           echo "Updating website with $RELEASE_NAME version $PLUGIN_VERSION"
 
           # Clone website repo
-          git clone https://x-access-token:${GH_TOKEN}@github.com/luna-co-software/lunacoaudio.github.io.git website
+          git clone https://x-access-token:${GH_TOKEN}@github.com/dusk-audio/dusk-audio.github.io.git website
           cd website
 
           # Update version in plugins.yml using sed

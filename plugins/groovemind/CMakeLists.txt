@@ -10,10 +10,10 @@ set(PLUGIN_VERSION "0.1.0")
 # Create the plugin target
 juce_add_plugin(${PLUGIN_NAME}
     VERSION ${PLUGIN_VERSION}
-    COMPANY_NAME "Luna Co. Audio"
-    COMPANY_COPYRIGHT "Copyright 2026 Luna Co. Audio"
-    COMPANY_WEBSITE "https://lunaco.audio"
-    COMPANY_EMAIL "support@lunaco.audio"
+    COMPANY_NAME "Dusk Audio"
+    COMPANY_COPYRIGHT "Copyright 2026 Dusk Audio"
+    COMPANY_WEBSITE "https://dusk-audio.github.io"
+    COMPANY_EMAIL "support@dusk-audio.github.io"
 
     PLUGIN_MANUFACTURER_CODE Luna
     PLUGIN_CODE Grvm
@@ -31,7 +31,7 @@ juce_add_plugin(${PLUGIN_NAME}
     PRODUCT_NAME "GrooveMind"
 
     # Copy plugin after build
-    COPY_PLUGIN_AFTER_BUILD ${LUNA_COPY_AFTER_BUILD}
+    COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
 )

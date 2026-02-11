@@ -29,21 +29,17 @@ GrooveMindProcessor::GrooveMindProcessor()
 
 void GrooveMindProcessor::loadPatternLibrary()
 {
-    // Try multiple locations for the pattern library
     juce::StringArray searchPaths;
 
-    // 1. Relative to the plugin binary (for installed plugins)
     auto pluginFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
     searchPaths.add(pluginFile.getParentDirectory().getChildFile("GrooveMind_Patterns").getFullPathName());
 
-    // 2. User's home directory (standard location)
     searchPaths.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
                     .getChildFile(".local/share/GrooveMind/patterns").getFullPathName());
 
-    // 3. Development location (groovemind-training/library)
-    // Go up from plugin directory to find groovemind-training
+    // Walk up from plugin binary to find groovemind-training/library
     auto devPath = pluginFile.getParentDirectory();
-    for (int i = 0; i < 6; ++i)  // Search up to 6 levels
+    for (int i = 0; i < 6; ++i)
     {
         auto trainPath = devPath.getChildFile("groovemind-training/library");
         if (trainPath.isDirectory())
@@ -54,44 +50,27 @@ void GrooveMindProcessor::loadPatternLibrary()
         devPath = devPath.getParentDirectory();
     }
 
-    // 4. Hardcoded development path (fallback)
-    searchPaths.add("/home/marc/projects/plugins/groovemind-training/library");
-
-    // Try each path
     for (const auto& path : searchPaths)
     {
         juce::File libraryDir(path);
-        if (libraryDir.isDirectory())
-        {
-            if (patternLibrary.loadFromDirectory(libraryDir))
-            {
-                DBG("GrooveMind: Loaded " + juce::String(patternLibrary.getPatternCount()) +
-                    " patterns from " + path);
-                return;
-            }
-        }
+        if (libraryDir.isDirectory() && patternLibrary.loadFromDirectory(libraryDir))
+            return;
     }
 
-    DBG("GrooveMind: WARNING - No pattern library found! Searched:");
-    for (const auto& path : searchPaths)
-        DBG("  - " + path);
+    DBG("GrooveMind: No pattern library found");
 }
 
 //==============================================================================
 juce::File GrooveMindProcessor::getResourcesDirectory() const
 {
-    // Try multiple locations for ML models and resources
     juce::StringArray searchPaths;
 
-    // 1. Relative to plugin binary (installed plugins)
     auto pluginFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
     searchPaths.add(pluginFile.getParentDirectory().getChildFile("GrooveMind_Resources").getFullPathName());
 
-    // 2. User's home directory (standard location)
     searchPaths.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
                     .getChildFile(".local/share/GrooveMind/models").getFullPathName());
 
-    // 3. Development location (groovemind-training/rtneural)
     auto devPath = pluginFile.getParentDirectory();
     for (int i = 0; i < 6; ++i)
     {
@@ -104,7 +83,6 @@ juce::File GrooveMindProcessor::getResourcesDirectory() const
         devPath = devPath.getParentDirectory();
     }
 
-    // 4. Plugin Source Resources directory (development)
     devPath = pluginFile.getParentDirectory();
     for (int i = 0; i < 6; ++i)
     {
@@ -117,83 +95,38 @@ juce::File GrooveMindProcessor::getResourcesDirectory() const
         devPath = devPath.getParentDirectory();
     }
 
-    // 5. Hardcoded development paths (fallback)
-    searchPaths.add("/home/marc/projects/plugins/groovemind-training/rtneural");
-    searchPaths.add("/home/marc/projects/plugins/plugins/groovemind/Resources");
-
-    // Find first valid directory
     for (const auto& path : searchPaths)
     {
         juce::File dir(path);
-        if (dir.isDirectory())
+        if (dir.isDirectory() &&
+            (dir.getChildFile("humanizer.json").existsAsFile() ||
+             dir.getChildFile("style_classifier.json").existsAsFile() ||
+             dir.getChildFile("timing_stats.json").existsAsFile()))
         {
-            // Check if it contains at least one expected model file
-            if (dir.getChildFile("humanizer.json").existsAsFile() ||
-                dir.getChildFile("style_classifier.json").existsAsFile() ||
-                dir.getChildFile("timing_stats.json").existsAsFile())
-            {
-                return dir;
-            }
+            return dir;
         }
     }
 
-    // Return empty file if not found
-    DBG("GrooveMind: WARNING - No ML models directory found!");
     return juce::File();
 }
 
 void GrooveMindProcessor::loadMLModels()
 {
     auto resourcesDir = getResourcesDirectory();
-
     if (!resourcesDir.isDirectory())
-    {
-        DBG("GrooveMind: ML models directory not found - using statistical humanization only");
         return;
-    }
 
-    DBG("GrooveMind: Loading ML models from " + resourcesDir.getFullPathName());
-
-    // Load humanizer model
     auto humanizerFile = resourcesDir.getChildFile("humanizer.json");
     if (humanizerFile.existsAsFile())
-    {
-        if (grooveHumanizer.loadModel(humanizerFile))
-            DBG("GrooveMind: Humanizer model loaded");
-        else
-            DBG("GrooveMind: Failed to load humanizer model");
-    }
+        grooveHumanizer.loadModel(humanizerFile);
 
-    // Load timing statistics
     auto timingStatsFile = resourcesDir.getChildFile("timing_stats.json");
     if (timingStatsFile.existsAsFile())
-    {
-        if (grooveHumanizer.loadTimingStats(timingStatsFile))
-            DBG("GrooveMind: Timing statistics loaded");
-        else
-            DBG("GrooveMind: Failed to load timing statistics");
-    }
+        grooveHumanizer.loadTimingStats(timingStatsFile);
 
-    // Load style classifier
     auto styleClassifierFile = resourcesDir.getChildFile("style_classifier.json");
     if (styleClassifierFile.existsAsFile())
-    {
-        if (drummerEngine.loadStyleClassifier(styleClassifierFile))
-            DBG("GrooveMind: Style classifier loaded");
-        else
-            DBG("GrooveMind: Failed to load style classifier");
-    }
-
-    // Report ML status
-    if (grooveHumanizer.isModelLoaded())
-        DBG("GrooveMind: ML humanization enabled");
-    else
-        DBG("GrooveMind: Using statistical humanization (ML model not available)");
-
-    if (drummerEngine.isMLEnabled())
-        DBG("GrooveMind: ML pattern selection enabled");
-    else
-        DBG("GrooveMind: Using query-based pattern selection (ML model not available)");
+        drummerEngine.loadStyleClassifier(styleClassifierFile);
 }
 
 GrooveMindProcessor::~GrooveMindProcessor()
@@ -349,7 +282,7 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // Get transport info from host
+    // Transport info
     if (auto* playHead = getPlayHead())
     {
         if (auto position = playHead->getPosition())
@@ -364,19 +297,12 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // Get follow mode parameter
     bool followEnabled = apvts.getRawParameterValue("follow_enabled")->load() > 0.5f;
-
-    // Process sidechain input for Follow Mode
-    // Check if sidechain bus is enabled and has audio data
-    auto* sidechainBus = getBus(true, 0);  // Input bus 0 = sidechain
+    auto* sidechainBus = getBus(true, 0);
     bool hasSidechain = sidechainBus != nullptr && sidechainBus->isEnabled() && buffer.getNumChannels() >= 2;
 
     if (followEnabled && hasSidechain)
     {
-        // Use AudioAnalyzer to analyze the sidechain audio
-        // This extracts energy, onset density, and spectral changes
-        // which are then used to modulate drum parameters
         audioAnalyzer.processBlock(
             buffer.getReadPointer(0),
             buffer.getReadPointer(1),
@@ -385,17 +311,13 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             currentPositionBeats);
     }
 
-    // Clear audio output (we only produce MIDI)
     buffer.clear();
-
-    // Only generate patterns if transport is playing
     if (!transportPlaying)
     {
         midiMessages.clear();
         return;
     }
 
-    // Get current parameters
     int styleIndex = static_cast<int>(apvts.getRawParameterValue("style")->load());
     int drummerIndex = static_cast<int>(apvts.getRawParameterValue("drummer")->load());
     int sectionIndex = static_cast<int>(apvts.getRawParameterValue("section")->load());
@@ -407,57 +329,40 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     float groove = apvts.getRawParameterValue("groove")->load();
     float swing = apvts.getRawParameterValue("swing")->load();
 
-    // Follow Mode: Modulate parameters based on audio analysis
-    // When Follow Mode is enabled and we have valid analysis, the sidechain audio
-    // controls complexity, loudness, and energy - making the drums respond to the music
     if (followEnabled && hasSidechain)
     {
-        // Get follow mode parameters
         float followAmount = apvts.getRawParameterValue("follow_amount")->load();
         float followSensitivity = apvts.getRawParameterValue("follow_sensitivity")->load();
-
-        // Update analyzer sensitivity
         audioAnalyzer.setSensitivity(followSensitivity);
 
         const auto& analysis = audioAnalyzer.getAnalysis();
 
         if (analysis.isActive && analysis.confidence > 0.3f && followAmount > 0.01f)
         {
-            // Blend factor combines confidence and user's follow amount setting
             float blendFactor = analysis.confidence * followAmount;
 
-            // Modulate complexity based on onset density
-            // More notes in the input = more complex drum patterns
             float targetComplexity = juce::jlimit(0.0f, 1.0f,
                 complexity * 0.3f + analysis.onsetDensity * 0.7f);
             complexity = complexity * (1.0f - blendFactor) + targetComplexity * blendFactor;
 
-            // Modulate loudness based on energy envelope
-            // Louder input = louder drums
             float targetLoudness = juce::jlimit(0.0f, 1.0f,
                 loudness * 0.3f + analysis.smoothedEnergy * 0.7f);
             loudness = loudness * (1.0f - blendFactor) + targetLoudness * blendFactor;
 
-            // Modulate energy based on combined factors
-            // High energy input (lots of transients, high volume) = high energy drums
             float inputEnergy = (analysis.smoothedEnergy + analysis.onsetDensity) * 0.5f;
             float targetEnergy = juce::jlimit(0.0f, 1.0f,
                 energy * 0.3f + inputEnergy * 0.7f);
             energy = energy * (1.0f - blendFactor) + targetEnergy * blendFactor;
 
-            // Trigger fills on section changes (chord changes, dynamics shifts)
-            // Only if follow amount is reasonably high
             if (analysis.suggestFill && followAmount > 0.3f)
             {
-                // Use spectral flux to determine fill intensity
                 float fillIntensity = juce::jlimit(0.3f, 1.0f, analysis.spectralFlux * 2.0f);
                 drummerEngine.setFillIntensity(fillIntensity);
-                drummerEngine.triggerFill(4);  // 1-bar fill
+                drummerEngine.triggerFill(4);
             }
         }
     }
 
-    // Update drummer engine parameters
     drummerEngine.setStyle(styleIndex);
     drummerEngine.setDrummer(drummerIndex);
     drummerEngine.setSection(sectionIndex);
@@ -466,10 +371,8 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     drummerEngine.setLoudness(loudness);
     drummerEngine.setEnergy(energy);
 
-    // Process and generate MIDI
     drummerEngine.process(buffer.getNumSamples(), currentBPM, currentPositionBeats, midiMessages);
 
-    // Apply humanization
     if (groove > 0.01f)
     {
         grooveHumanizer.setGrooveAmount(groove);
@@ -477,10 +380,6 @@ void GrooveMindProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         grooveHumanizer.process(midiMessages, currentBPM);
     }
 
-    // Note: The old FollowModeController groove extraction code has been removed.
-    // Follow Mode now works via AudioAnalyzer which modulates the drum parameters
-    // (complexity, loudness, energy) based on the sidechain audio content,
-    // rather than trying to extract timing from drums.
 }
 
 //==============================================================================
@@ -491,7 +390,6 @@ bool GrooveMindProcessor::isFollowModeEnabled() const
 
 bool GrooveMindProcessor::isFollowModeActive() const
 {
-    // Follow mode is active when enabled AND we have valid audio analysis
     return isFollowModeEnabled() && audioAnalyzer.getAnalysis().isActive;
 }
 
@@ -521,7 +419,6 @@ void GrooveMindProcessor::setStateInformation(const void* data, int sizeInBytes)
 }
 
 //==============================================================================
-// This creates new instances of the plugin
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new GrooveMindProcessor();

@@ -121,4 +121,4 @@ The core uses the **Langevin function** from magnetic hysteresis theory, providi
 - DSP based on Jiles-Atherton magnetic hysteresis theory
 - Pink noise algorithm by Paul Kellett
 
-**Luna Co. Audio**
+**Dusk Audio**

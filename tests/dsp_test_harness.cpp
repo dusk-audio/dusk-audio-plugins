@@ -1,5 +1,5 @@
 /**
- * Luna Co. Audio - DSP Test Harness
+ * Dusk Audio - DSP Test Harness
  * ==================================
  * Standalone C++ test harness for audio plugin DSP testing.
  * Can be compiled against plugin source code to test DSP algorithms
@@ -543,7 +543,7 @@ void runSimpleCompressorTests() {
 
 int main(int argc, char* argv[]) {
     std::cout << "========================================\n";
-    std::cout << "Luna Co. Audio - DSP Test Harness\n";
+    std::cout << "Dusk Audio - DSP Test Harness\n";
     std::cout << "========================================\n\n";
 
     // Run example compressor tests

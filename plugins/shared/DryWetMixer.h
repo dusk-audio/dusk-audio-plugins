@@ -7,7 +7,7 @@
     Prevents comb filtering artifacts that occur when mixing dry and wet signals
     that have different latencies due to FIR anti-aliasing filters in oversampling.
 
-    Copyright (c) 2025 Luna Co. Audio - All rights reserved.
+    Copyright (c) 2025 Dusk Audio - All rights reserved.
 
   ==============================================================================
 */
@@ -20,7 +20,7 @@
 #include <array>
 #include <algorithm>
 
-namespace LunaAudio
+namespace DuskAudio
 {
 
 //==============================================================================
@@ -44,7 +44,7 @@ namespace LunaAudio
     Usage (oversampled mixing - recommended):
     @code
         // In processor header:
-        LunaAudio::DryWetMixer dryWetMixer;
+        DuskAudio::DryWetMixer dryWetMixer;
 
         // In prepareToPlay:
         dryWetMixer.prepare(sampleRate, samplesPerBlock, numChannels, 4);
@@ -529,4 +529,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DryWetMixer)
 };
 
-} // namespace LunaAudio
+} // namespace DuskAudio

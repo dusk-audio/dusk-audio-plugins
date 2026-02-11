@@ -1,4 +1,4 @@
-# Luna Co. Audio Plugins
+# Dusk Audio Plugins
 
 A collection of professional audio VST3/LV2 plugins built with JUCE.
 
@@ -40,13 +40,13 @@ Analog tape machine emulation featuring:
 - Dual stereo VU meters with animated reels
 - 2x/4x oversampling for alias-free processing
 
-### SilkVerb - IN DEVELOPMENT
+### Velvet 90 - IN DEVELOPMENT
 Professional algorithmic reverb:
-- Three modes: Plate, Room, Hall
-- FDN architecture with Hadamard matrix mixing
-- Two-band frequency-dependent decay
-- Complex modulation (3 LFOs + random noise)
-- Feedback saturation for analog warmth
+- 10 modes: Plate, Room, Hall, Chamber, Cathedral, Ambience, Bright Hall, Chorus Space, Random Space, Dirty Hall
+- 8-line FDN architecture with Hadamard matrix mixing
+- 4-band frequency-dependent decay
+- Envelope shaper, echo delay, parametric output EQ
+- Stereo anti-correlation and resonance controls
 
 ### Convolution Reverb - IN DEVELOPMENT
 Zero-latency IR-based reverb:
@@ -100,7 +100,7 @@ For consistent, distributable binaries:
 
 # Build a single plugin (in development)
 ./docker/build_release.sh multiq       # Multi-Q
-./docker/build_release.sh silkverb     # SilkVerb
+./docker/build_release.sh velvet-90    # Velvet 90
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh tapeecho     # Tape Echo
 ./docker/build_release.sh nam          # Neural Amp
@@ -127,7 +127,7 @@ cmake --build . --target TapeMachine_All
 
 # In development
 cmake --build . --target MultiQ_All
-cmake --build . --target SilkVerb_All
+cmake --build . --target Velvet90_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target NeuralAmp_All
@@ -152,7 +152,7 @@ Reusable analog hardware emulation components:
 - High-frequency content estimation
 
 ### Shared UI Components
-- `LunaLookAndFeel.h` - Base look-and-feel for consistent styling
+- `DuskLookAndFeel.h` - Base look-and-feel for consistent styling
 - `LEDMeter.h/cpp` - Shared LED-style level meter component
 
 ## License
@@ -160,4 +160,4 @@ Reusable analog hardware emulation components:
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ---
-*Luna Co. Audio*
+*Dusk Audio*

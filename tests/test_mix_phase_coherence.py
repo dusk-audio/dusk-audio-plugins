@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test mix knob phase coherence for Luna Co. Audio plugins.
+Test mix knob phase coherence for Dusk Audio plugins.
 
 IMPORTANT: pedalboard (the test framework) intercepts the 'mix' parameter
 on all plugins and applies its own external dry/wet blending. This means
@@ -430,7 +430,7 @@ def test_multicomp():
 
 if __name__ == '__main__':
     print("Mix Knob Phase Coherence Test Suite")
-    print("Luna Co. Audio Plugin Validation")
+    print("Dusk Audio Plugin Validation")
     print(f"Sample Rate: {SAMPLE_RATE} Hz")
     print()
     print("NOTE: pedalboard intercepts the 'mix' parameter and applies external")

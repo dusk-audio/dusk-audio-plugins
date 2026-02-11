@@ -5,7 +5,7 @@
 
     Special thanks to our Patreon supporters who make these plugins possible!
 
-    This file is shared across all Luna Co. Audio plugins.
+    This file is shared across all Dusk Audio plugins.
     Edit this single file to update credits in all plugins.
 
     To add new backers:
