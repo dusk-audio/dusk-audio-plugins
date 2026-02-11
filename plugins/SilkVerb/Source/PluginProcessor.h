@@ -103,6 +103,30 @@ private:
     // Parameter pointers - Freeze
     std::atomic<float>* freezeParam = nullptr;
 
+    // Parameter pointers - Treble & Stereo (optimizer-only, not in UI)
+    std::atomic<float>* trebleRatioParam = nullptr;
+    std::atomic<float>* stereoCouplingParam = nullptr;
+
+    // Parameter pointers - Low-Mid decay (optimizer-only, not in UI)
+    std::atomic<float>* lowMidFreqParam = nullptr;
+    std::atomic<float>* lowMidDecayParam = nullptr;
+
+    // Parameter pointers - Envelope Shaper (optimizer-only, not in UI)
+    std::atomic<float>* envModeParam = nullptr;
+    std::atomic<float>* envHoldParam = nullptr;
+    std::atomic<float>* envReleaseParam = nullptr;
+    std::atomic<float>* envDepthParam = nullptr;
+    std::atomic<float>* echoDelayParam = nullptr;
+    std::atomic<float>* echoFeedbackParam = nullptr;
+
+    // Parameter pointers - Parametric Output EQ (optimizer-only, not in UI)
+    std::atomic<float>* outEQ1FreqParam = nullptr;
+    std::atomic<float>* outEQ1GainParam = nullptr;
+    std::atomic<float>* outEQ1QParam = nullptr;
+    std::atomic<float>* outEQ2FreqParam = nullptr;
+    std::atomic<float>* outEQ2GainParam = nullptr;
+    std::atomic<float>* outEQ2QParam = nullptr;
+
     // Parameter pointers - Pre-delay tempo sync
     std::atomic<float>* preDelaySyncParam = nullptr;
     std::atomic<float>* preDelayNoteParam = nullptr;
@@ -129,6 +153,21 @@ private:
     juce::SmoothedValue<float> smoothedERBassCut;
     juce::SmoothedValue<float> smoothedHighCut;
     juce::SmoothedValue<float> smoothedLowCut;
+    juce::SmoothedValue<float> smoothedTrebleRatio;
+    juce::SmoothedValue<float> smoothedStereoCoupling;
+    juce::SmoothedValue<float> smoothedLowMidFreq;
+    juce::SmoothedValue<float> smoothedLowMidDecay;
+    juce::SmoothedValue<float> smoothedEnvHold;
+    juce::SmoothedValue<float> smoothedEnvRelease;
+    juce::SmoothedValue<float> smoothedEnvDepth;
+    juce::SmoothedValue<float> smoothedEchoDelay;
+    juce::SmoothedValue<float> smoothedEchoFeedback;
+    juce::SmoothedValue<float> smoothedOutEQ1Freq;
+    juce::SmoothedValue<float> smoothedOutEQ1Gain;
+    juce::SmoothedValue<float> smoothedOutEQ1Q;
+    juce::SmoothedValue<float> smoothedOutEQ2Freq;
+    juce::SmoothedValue<float> smoothedOutEQ2Gain;
+    juce::SmoothedValue<float> smoothedOutEQ2Q;
 
     // Current mode tracking
     int lastMode = -1;

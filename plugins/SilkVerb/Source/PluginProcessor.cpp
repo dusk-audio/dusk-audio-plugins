@@ -58,6 +58,30 @@ SilkVerbProcessor::SilkVerbProcessor()
     // Freeze
     freezeParam = apvts.getRawParameterValue("freeze");
 
+    // Treble & Stereo (optimizer-controllable)
+    trebleRatioParam = apvts.getRawParameterValue("trebleratio");
+    stereoCouplingParam = apvts.getRawParameterValue("stereocoupling");
+
+    // Low-Mid Decay (optimizer-controllable)
+    lowMidFreqParam = apvts.getRawParameterValue("lowmidfreq");
+    lowMidDecayParam = apvts.getRawParameterValue("lowmiddecay");
+
+    // Envelope Shaper (optimizer-controllable)
+    envModeParam = apvts.getRawParameterValue("envmode");
+    envHoldParam = apvts.getRawParameterValue("envhold");
+    envReleaseParam = apvts.getRawParameterValue("envrelease");
+    envDepthParam = apvts.getRawParameterValue("envdepth");
+    echoDelayParam = apvts.getRawParameterValue("echodelay");
+    echoFeedbackParam = apvts.getRawParameterValue("echofeedback");
+
+    // Parametric Output EQ (optimizer-controllable)
+    outEQ1FreqParam = apvts.getRawParameterValue("outeq1freq");
+    outEQ1GainParam = apvts.getRawParameterValue("outeq1gain");
+    outEQ1QParam = apvts.getRawParameterValue("outeq1q");
+    outEQ2FreqParam = apvts.getRawParameterValue("outeq2freq");
+    outEQ2GainParam = apvts.getRawParameterValue("outeq2gain");
+    outEQ2QParam = apvts.getRawParameterValue("outeq2q");
+
     // Pre-delay tempo sync
     preDelaySyncParam = apvts.getRawParameterValue("predelaysync");
     preDelayNoteParam = apvts.getRawParameterValue("predelaynote");
@@ -358,6 +382,138 @@ juce::AudioProcessorValueTreeState::ParameterLayout SilkVerbProcessor::createPar
         juce::StringArray{ "1/32", "1/16T", "1/16", "1/8T", "1/8", "1/8D", "1/4", "1/4D" },
         4));  // default: 1/8
 
+    // Treble Ratio: multiplier on damping-derived treble decay (optimizer-controllable)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("trebleratio", 1),
+        "Treble Ratio",
+        juce::NormalisableRange<float>(0.3f, 2.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel("")
+            .withStringFromValueFunction([](float value, int) {
+                return juce::String(value, 2) + "x";
+            })));
+
+    // Stereo Coupling: cross-channel feedback amount (optimizer-controllable)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("stereocoupling", 1),
+        "Stereo Coupling",
+        juce::NormalisableRange<float>(0.0f, 0.5f, 0.01f),
+        0.15f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel("")
+            .withStringFromValueFunction([](float value, int) {
+                return juce::String(static_cast<int>(value * 100)) + "%";
+            })));
+
+    // Low-Mid Decay (5-band crossover split, optimizer-controllable)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("lowmidfreq", 1),
+        "Low-Mid Freq",
+        juce::NormalisableRange<float>(100.0f, 8000.0f, 1.0f, 0.5f),
+        700.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel("Hz")
+            .withStringFromValueFunction([](float value, int) {
+                return juce::String(static_cast<int>(value)) + " Hz";
+            })));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("lowmiddecay", 1),
+        "Low-Mid Decay",
+        juce::NormalisableRange<float>(0.25f, 4.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel("x")
+            .withStringFromValueFunction([](float value, int) {
+                return juce::String(value, 2) + "x";
+            })));
+
+    // Envelope Shaper (for non-linear presets, optimizer-controllable)
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID("envmode", 1),
+        "Env Mode",
+        juce::StringArray{ "Off", "Gate", "Reverse", "Swell", "Ducked" },
+        0));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("envhold", 1),
+        "Env Hold",
+        juce::NormalisableRange<float>(10.0f, 2000.0f, 1.0f),
+        500.0f,
+        juce::AudioParameterFloatAttributes().withLabel("ms")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("envrelease", 1),
+        "Env Release",
+        juce::NormalisableRange<float>(10.0f, 3000.0f, 1.0f),
+        500.0f,
+        juce::AudioParameterFloatAttributes().withLabel("ms")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("envdepth", 1),
+        "Env Depth",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("echodelay", 1),
+        "Echo Delay",
+        juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("ms")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("echofeedback", 1),
+        "Echo Feedback",
+        juce::NormalisableRange<float>(0.0f, 90.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
+
+    // Parametric Output EQ (2-band peaking, optimizer-controllable)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("outeq1freq", 1),
+        "Out EQ1 Freq",
+        juce::NormalisableRange<float>(100.0f, 8000.0f, 1.0f, 0.5f),
+        1000.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("outeq1gain", 1),
+        "Out EQ1 Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("outeq1q", 1),
+        "Out EQ1 Q",
+        juce::NormalisableRange<float>(0.3f, 5.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes()));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("outeq2freq", 1),
+        "Out EQ2 Freq",
+        juce::NormalisableRange<float>(100.0f, 8000.0f, 1.0f, 0.5f),
+        4000.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("outeq2gain", 1),
+        "Out EQ2 Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("outeq2q", 1),
+        "Out EQ2 Q",
+        juce::NormalisableRange<float>(0.3f, 5.0f, 0.01f),
+        1.0f,
+        juce::AudioParameterFloatAttributes()));
+
     // Freeze mode toggle
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID("freeze", 1),
@@ -438,6 +594,21 @@ void SilkVerbProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedERBassCut.reset(sampleRate, 0.05);
     smoothedHighCut.reset(sampleRate, 0.05);
     smoothedLowCut.reset(sampleRate, 0.05);
+    smoothedTrebleRatio.reset(sampleRate, 0.05);
+    smoothedStereoCoupling.reset(sampleRate, 0.05);
+    smoothedLowMidFreq.reset(sampleRate, 0.05);
+    smoothedLowMidDecay.reset(sampleRate, 0.05);
+    smoothedEnvHold.reset(sampleRate, 0.05);
+    smoothedEnvRelease.reset(sampleRate, 0.05);
+    smoothedEnvDepth.reset(sampleRate, 0.05);
+    smoothedEchoDelay.reset(sampleRate, 0.05);
+    smoothedEchoFeedback.reset(sampleRate, 0.05);
+    smoothedOutEQ1Freq.reset(sampleRate, 0.05);
+    smoothedOutEQ1Gain.reset(sampleRate, 0.05);
+    smoothedOutEQ1Q.reset(sampleRate, 0.05);
+    smoothedOutEQ2Freq.reset(sampleRate, 0.05);
+    smoothedOutEQ2Gain.reset(sampleRate, 0.05);
+    smoothedOutEQ2Q.reset(sampleRate, 0.05);
 
     // Set initial values
     smoothedSize.setCurrentAndTargetValue(sizeParam->load());
@@ -461,6 +632,29 @@ void SilkVerbProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedERBassCut.setCurrentAndTargetValue(erBassCutParam->load());
     smoothedHighCut.setCurrentAndTargetValue(highCutParam->load());
     smoothedLowCut.setCurrentAndTargetValue(lowCutParam->load());
+    smoothedTrebleRatio.setCurrentAndTargetValue(trebleRatioParam->load());
+    smoothedStereoCoupling.setCurrentAndTargetValue(stereoCouplingParam->load());
+    smoothedLowMidFreq.setCurrentAndTargetValue(lowMidFreqParam->load());
+    smoothedLowMidDecay.setCurrentAndTargetValue(lowMidDecayParam->load());
+    smoothedEnvHold.setCurrentAndTargetValue(envHoldParam->load());
+    smoothedEnvRelease.setCurrentAndTargetValue(envReleaseParam->load());
+    smoothedEnvDepth.setCurrentAndTargetValue(envDepthParam->load());
+    smoothedEchoDelay.setCurrentAndTargetValue(echoDelayParam->load());
+    smoothedEchoFeedback.setCurrentAndTargetValue(echoFeedbackParam->load());
+    smoothedOutEQ1Freq.setCurrentAndTargetValue(outEQ1FreqParam->load());
+    smoothedOutEQ1Gain.setCurrentAndTargetValue(outEQ1GainParam->load());
+    smoothedOutEQ1Q.setCurrentAndTargetValue(outEQ1QParam->load());
+    smoothedOutEQ2Freq.setCurrentAndTargetValue(outEQ2FreqParam->load());
+    smoothedOutEQ2Gain.setCurrentAndTargetValue(outEQ2GainParam->load());
+    smoothedOutEQ2Q.setCurrentAndTargetValue(outEQ2QParam->load());
+
+    // Set initial envelope shaper state
+    reverbEngine.setEnvMode(static_cast<int>(envModeParam->load()));
+    reverbEngine.setEnvHold(envHoldParam->load());
+    reverbEngine.setEnvRelease(envReleaseParam->load());
+    reverbEngine.setEnvDepth(envDepthParam->load() / 100.0f);
+    reverbEngine.setEchoDelay(echoDelayParam->load());
+    reverbEngine.setEchoFeedback(echoFeedbackParam->load() / 100.0f);
 
     // Set initial mode and color
     int mode = static_cast<int>(modeParam->load());
@@ -492,6 +686,12 @@ void SilkVerbProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     reverbEngine.setERBassCut(erBassCutParam->load());
     reverbEngine.setHighCut(highCutParam->load());
     reverbEngine.setLowCut(lowCutParam->load());
+    reverbEngine.setTrebleRatio(trebleRatioParam->load());
+    reverbEngine.setStereoCoupling(stereoCouplingParam->load());
+    reverbEngine.setLowMidFreq(lowMidFreqParam->load());
+    reverbEngine.setLowMidDecayMult(lowMidDecayParam->load());
+    reverbEngine.setOutEQ1(outEQ1FreqParam->load(), outEQ1GainParam->load(), outEQ1QParam->load());
+    reverbEngine.setOutEQ2(outEQ2FreqParam->load(), outEQ2GainParam->load(), outEQ2QParam->load());
 }
 
 void SilkVerbProcessor::releaseResources()
@@ -557,6 +757,24 @@ void SilkVerbProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     smoothedERBassCut.setTargetValue(erBassCutParam->load());
     smoothedHighCut.setTargetValue(highCutParam->load());
     smoothedLowCut.setTargetValue(lowCutParam->load());
+    smoothedTrebleRatio.setTargetValue(trebleRatioParam->load());
+    smoothedStereoCoupling.setTargetValue(stereoCouplingParam->load());
+    smoothedLowMidFreq.setTargetValue(lowMidFreqParam->load());
+    smoothedLowMidDecay.setTargetValue(lowMidDecayParam->load());
+    smoothedEnvHold.setTargetValue(envHoldParam->load());
+    smoothedEnvRelease.setTargetValue(envReleaseParam->load());
+    smoothedEnvDepth.setTargetValue(envDepthParam->load());
+    smoothedEchoDelay.setTargetValue(echoDelayParam->load());
+    smoothedEchoFeedback.setTargetValue(echoFeedbackParam->load());
+    smoothedOutEQ1Freq.setTargetValue(outEQ1FreqParam->load());
+    smoothedOutEQ1Gain.setTargetValue(outEQ1GainParam->load());
+    smoothedOutEQ1Q.setTargetValue(outEQ1QParam->load());
+    smoothedOutEQ2Freq.setTargetValue(outEQ2FreqParam->load());
+    smoothedOutEQ2Gain.setTargetValue(outEQ2GainParam->load());
+    smoothedOutEQ2Q.setTargetValue(outEQ2QParam->load());
+
+    // Envelope mode is discrete — apply directly
+    reverbEngine.setEnvMode(static_cast<int>(envModeParam->load()));
 
     // Pre-delay tempo sync: calculate ms from BPM if sync is active
     bool preDelaySync = preDelaySyncParam->load() > 0.5f;
@@ -706,6 +924,70 @@ void SilkVerbProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
             reverbEngine.setLowCut(smoothedLowCut.getNextValue());
         else
             smoothedLowCut.skip(1);
+
+        if (smoothedTrebleRatio.isSmoothing())
+            reverbEngine.setTrebleRatio(smoothedTrebleRatio.getNextValue());
+        else
+            smoothedTrebleRatio.skip(1);
+
+        if (smoothedStereoCoupling.isSmoothing())
+            reverbEngine.setStereoCoupling(smoothedStereoCoupling.getNextValue());
+        else
+            smoothedStereoCoupling.skip(1);
+
+        if (smoothedLowMidFreq.isSmoothing())
+            reverbEngine.setLowMidFreq(smoothedLowMidFreq.getNextValue());
+        else
+            smoothedLowMidFreq.skip(1);
+
+        if (smoothedLowMidDecay.isSmoothing())
+            reverbEngine.setLowMidDecayMult(smoothedLowMidDecay.getNextValue());
+        else
+            smoothedLowMidDecay.skip(1);
+
+        if (smoothedEnvHold.isSmoothing())
+            reverbEngine.setEnvHold(smoothedEnvHold.getNextValue());
+        else
+            smoothedEnvHold.skip(1);
+
+        if (smoothedEnvRelease.isSmoothing())
+            reverbEngine.setEnvRelease(smoothedEnvRelease.getNextValue());
+        else
+            smoothedEnvRelease.skip(1);
+
+        if (smoothedEnvDepth.isSmoothing())
+            reverbEngine.setEnvDepth(smoothedEnvDepth.getNextValue() / 100.0f);
+        else
+            smoothedEnvDepth.skip(1);
+
+        if (smoothedEchoDelay.isSmoothing())
+            reverbEngine.setEchoDelay(smoothedEchoDelay.getNextValue());
+        else
+            smoothedEchoDelay.skip(1);
+
+        if (smoothedEchoFeedback.isSmoothing())
+            reverbEngine.setEchoFeedback(smoothedEchoFeedback.getNextValue() / 100.0f);
+        else
+            smoothedEchoFeedback.skip(1);
+
+        // Parametric output EQ — update when any band is smoothing
+        if (smoothedOutEQ1Freq.isSmoothing() || smoothedOutEQ1Gain.isSmoothing() || smoothedOutEQ1Q.isSmoothing())
+            reverbEngine.setOutEQ1(smoothedOutEQ1Freq.getNextValue(), smoothedOutEQ1Gain.getNextValue(), smoothedOutEQ1Q.getNextValue());
+        else
+        {
+            smoothedOutEQ1Freq.skip(1);
+            smoothedOutEQ1Gain.skip(1);
+            smoothedOutEQ1Q.skip(1);
+        }
+
+        if (smoothedOutEQ2Freq.isSmoothing() || smoothedOutEQ2Gain.isSmoothing() || smoothedOutEQ2Q.isSmoothing())
+            reverbEngine.setOutEQ2(smoothedOutEQ2Freq.getNextValue(), smoothedOutEQ2Gain.getNextValue(), smoothedOutEQ2Q.getNextValue());
+        else
+        {
+            smoothedOutEQ2Freq.skip(1);
+            smoothedOutEQ2Gain.skip(1);
+            smoothedOutEQ2Q.skip(1);
+        }
 
         float inputL = inputLeftChannel[sample];
         float inputR = inputRightChannel[sample];
