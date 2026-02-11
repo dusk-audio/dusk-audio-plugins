@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Luna Co. Audio Plugin Audio Analyzer
+Dusk Audio Plugin Audio Analyzer
 =====================================
 Performs comprehensive audio analysis similar to DDMF PluginDoctor:
 - Harmonic distortion analysis (THD, THD+N)
@@ -584,7 +584,7 @@ class PluginTester:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Luna Co. Audio Plugin Analyzer")
+    parser = argparse.ArgumentParser(description="Dusk Audio Plugin Analyzer")
     parser.add_argument("--plugin", type=str, default="Universal Compressor",
                        help="Plugin name to test")
     parser.add_argument("--output-dir", type=str, default="./test_output",

@@ -45,14 +45,14 @@ juce_add_plugin(MultiComp
     # VERSION ...                               # Set this if the plugin version is different to the project version
     # ICON_BIG ...                              # ICON_* arguments specify a path to an image file to use as an icon for the Standalone
     # ICON_SMALL ...
-    COMPANY_NAME "Luna Co. Audio"
+    COMPANY_NAME "Dusk Audio"
     BUNDLE_ID "com.LunaCoAudio.MultiComp"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD ${LUNA_COPY_AFTER_BUILD}
+    COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     PLUGIN_MANUFACTURER_CODE LuCo
     PLUGIN_CODE MuCo
     FORMATS ${PLUGIN_FORMATS}

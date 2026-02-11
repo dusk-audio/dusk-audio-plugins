@@ -6,16 +6,12 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 {
     setLookAndFeel(&lookAndFeel);
 
-    // Initialize scalable resize helper with persistence
-    // Base size: 950x640, Min: 760x512 (80%), Max: 1425x960 (150%)
     resizeHelper.initialize(this, &audioProcessor, 950, 640, 760, 512, 1425, 960, false);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
-    // Get parameter references
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
     bypassParam = audioProcessor.parameters.getRawParameterValue("bypass");
 
-    // HPF Section
     setupKnob(hpfFreqSlider, "hpf_freq", "HPF");
     hpfFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hpf_freq", hpfFreqSlider);
@@ -23,7 +19,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     hpfEnableAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.parameters, "hpf_enabled", hpfEnableButton);
 
-    // LPF Section
     setupKnob(lpfFreqSlider, "lpf_freq", "LPF");
     lpfFreqAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lpf_freq", lpfFreqSlider);
@@ -31,14 +26,12 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     lpfEnableAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.parameters, "lpf_enabled", lpfEnableButton);
 
-    // Input Gain (below filters)
     setupKnob(inputGainSlider, "input_gain", "INPUT", true);
     inputGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "input_gain", inputGainSlider);
 
-    // LF Band
     setupKnob(lfGainSlider, "lf_gain", "GAIN", true);  // Center-detented
-    lfGainSlider.setName("lf_gain");  // Set name for color detection
+    lfGainSlider.setName("lf_gain");
     lfGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lf_gain", lfGainSlider);
 
@@ -51,9 +44,8 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     lfBellAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.parameters, "lf_bell", lfBellButton);
 
-    // LM Band
     setupKnob(lmGainSlider, "lm_gain", "GAIN", true);
-    lmGainSlider.setName("lmf_gain");  // Use lmf for lo-mid detection
+    lmGainSlider.setName("lmf_gain");
     lmGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lm_gain", lmGainSlider);
 
@@ -67,9 +59,8 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     lmQAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "lm_q", lmQSlider);
 
-    // HM Band
     setupKnob(hmGainSlider, "hm_gain", "GAIN", true);
-    hmGainSlider.setName("hmf_gain");  // Use hmf for hi-mid detection
+    hmGainSlider.setName("hmf_gain");
     hmGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hm_gain", hmGainSlider);
 
@@ -83,9 +74,8 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     hmQAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hm_q", hmQSlider);
 
-    // HF Band
     setupKnob(hfGainSlider, "hf_gain", "GAIN", true);
-    hfGainSlider.setName("hf_gain");  // Set name for color detection
+    hfGainSlider.setName("hf_gain");
     hfGainAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "hf_gain", hfGainSlider);
 
@@ -98,7 +88,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     hfBellAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.parameters, "hf_bell", hfBellButton);
 
-    // Master Section
     setupButton(bypassButton, "BYPASS");
     bypassButton.setClickingTogglesState(true);
     bypassAttachment = std::make_unique<ButtonAttachment>(
@@ -109,7 +98,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     autoGainAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.parameters, "auto_gain", autoGainButton);
 
-    // A/B Comparison button
     abButton.setButtonText("A");
     abButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));  // Green for A
     abButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe0e0e0));
@@ -117,7 +105,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     abButton.setTooltip("A/B Comparison: Click to switch between two settings. Current settings are saved when switching.");
     addAndMakeVisible(abButton);
 
-    // Initialize A state with current parameters
     stateA = audioProcessor.parameters.copyState();
     stateB = audioProcessor.parameters.copyState();
 
@@ -129,7 +116,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     saturationAttachment = std::make_unique<SliderAttachment>(
         audioProcessor.parameters, "saturation", saturationSlider);
 
-    // EQ Type selector (styled as SSL switch)
     eqTypeSelector.addItem("BROWN", 1);
     eqTypeSelector.addItem("BLACK", 2);
     eqTypeSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
@@ -139,7 +125,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     eqTypeAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "eq_type", eqTypeSelector);
 
-    // Preset selector
     for (int i = 0; i < audioProcessor.getNumPrograms(); ++i)
     {
         presetSelector.addItem(audioProcessor.getProgramName(i), i + 1);
@@ -158,7 +143,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     presetSelector.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xff808080));
     addAndMakeVisible(presetSelector);
 
-    // Oversampling selector
     oversamplingSelector.addItem("Oversample: 2x", 1);
     oversamplingSelector.addItem("Oversample: 4x", 2);
     oversamplingSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
@@ -168,10 +152,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     oversamplingAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "oversampling", oversamplingSelector);
 
-    // Section labels removed - section headers at top are sufficient
-    // (FILTERS, LF, LMF, HMF, HF labels not needed)
-
-    // Setup parameter labels (small text below each knob like SSL)
     auto setupParamLabel = [this](juce::Label& label, const juce::String& text) {
         label.setText(text, juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
@@ -180,9 +160,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
         label.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(label);
     };
-
-    // Frequency range labels removed - tick marks now show all frequencies
-    // Adding functional labels for all knobs
 
     setupParamLabel(hpfLabel, "HPF");
     setupParamLabel(lpfLabel, "LPF");
@@ -200,7 +177,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     setupParamLabel(outputLabel, "OUTPUT");
     setupParamLabel(satLabel, "DRIVE");
 
-    // Add tooltips to all controls for better UX
     hpfFreqSlider.setTooltip("High-Pass Filter Frequency (20Hz - 500Hz)");
     hpfEnableButton.setTooltip("Enable/Disable High-Pass Filter (IN = active)");
     lpfFreqSlider.setTooltip("Low-Pass Filter Frequency (5kHz - 20kHz)");
@@ -231,11 +207,9 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     bypassButton.setTooltip("Bypass all EQ processing");
     autoGainButton.setTooltip("Auto Gain Compensation: Automatically adjusts output to maintain consistent loudness when boosting/cutting");
 
-    // EQ Curve Display - add before meters so meters appear on top
     eqCurveDisplay = std::make_unique<EQCurveDisplay>(audioProcessor);
     addAndMakeVisible(eqCurveDisplay.get());
 
-    // Collapse/expand button for EQ curve (in header)
     curveCollapseButton.setButtonText("Hide");
     curveCollapseButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
     curveCollapseButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffa0a0a0));
@@ -252,7 +226,6 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     };
     addAndMakeVisible(curveCollapseButton);
 
-    // Display scale selector for EQ graph dB range
     displayScaleSelector.addItem(juce::CharPointer_UTF8("\xc2\xb1" "12 dB"), 1);
     displayScaleSelector.addItem(juce::CharPointer_UTF8("\xc2\xb1" "24 dB"), 2);
     displayScaleSelector.addItem(juce::CharPointer_UTF8("\xc2\xb1" "30 dB"), 3);
@@ -270,40 +243,28 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     };
     addAndMakeVisible(displayScaleSelector);
 
-    // Set initial bounds for EQ curve display so it's visible on first paint
     int curveX = 35;
     int curveY = 58;
-    int curveWidth = 950 - 70;  // Initial width based on default size
+    int curveWidth = 950 - 70;
     int curveHeight = 105;
     eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
 
-    // Professional LED meters - add LAST so they're on top of other components
     inputMeterL = std::make_unique<LEDMeter>(LEDMeter::Vertical);
     outputMeterL = std::make_unique<LEDMeter>(LEDMeter::Vertical);
     addAndMakeVisible(inputMeterL.get());
     addAndMakeVisible(outputMeterL.get());
 
-    // Set initial bounds so meters are visible on first paint - use standard width
-    int initialMeterY = 185;  // Start lower to make room for EQ curve and labels
+    int initialMeterY = 185;
     int initialMeterHeight = 640 - initialMeterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
     inputMeterL->setBounds(6, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);
-    // Output meter - center under "OUTPUT" label
     outputMeterL->setBounds(950 - LEDMeterStyle::standardWidth - 10, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);
 
-    // Note: Value readout labels removed - the tick marks around knobs already
-    // show the parameter range, and current values can be seen from knob position
-
-    // Start timer for UI updates
     startTimerHz(30);
 }
 
 FourKEQEditor::~FourKEQEditor()
 {
-    // Save window size for next session
     resizeHelper.saveSize();
-
-    // CRITICAL: Stop timer first to prevent callbacks during destruction
-    // This was causing crashes when touching controls in Ableton
     stopTimer();
     setLookAndFeel(nullptr);
 }
@@ -311,29 +272,24 @@ FourKEQEditor::~FourKEQEditor()
 //==============================================================================
 void FourKEQEditor::paint(juce::Graphics& g)
 {
-    // Unified Luna background
-    g.fillAll(juce::Colour(0xff1a1a1a));  // Dark professional background
+    g.fillAll(juce::Colour(0xff1a1a1a));
 
     auto bounds = getLocalBounds();
 
-    // Draw header with subtle gradient
     juce::ColourGradient headerGradient(
         juce::Colour(0xff2d2d2d), 0, 0,
         juce::Colour(0xff252525), 0, 55, false);
     g.setGradientFill(headerGradient);
     g.fillRect(0, 0, bounds.getWidth(), 55);
 
-    // Header bottom border
     g.setColour(juce::Colour(0xff3a3a3a));
     g.fillRect(0, 54, bounds.getWidth(), 1);
 
-    // Plugin name (clickable - shows supporters panel)
     titleClickArea = juce::Rectangle<int>(60, 10, 200, 40);
     g.setFont(juce::Font(juce::FontOptions(24.0f).withStyle("Bold")));
     g.setColour(juce::Colour(0xffe0e0e0));
     g.drawText("4K EQ", 60, 10, 200, 30, juce::Justification::left);
 
-    // Subtitle with hint
     g.setFont(juce::Font(juce::FontOptions(11.0f)));
     g.setColour(juce::Colour(0xff909090));
     g.drawText("Console-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
@@ -807,21 +763,12 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
                               const juce::String& label, bool centerDetented)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    // No text box - keep clean knob design
     slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    // Enable popup for value display and double-click text entry
     slider.setPopupDisplayEnabled(true, true, this);
-
-    // Professional rotation range
     slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
                                juce::MathConstants<float>::pi * 2.75f, true);
 
-    // Enable mouse wheel control for fine adjustments
     slider.setScrollWheelEnabled(true);
-
-    // LunaSlider already has proper Cmd/Ctrl+drag fine control built-in
-
-    // Color code knobs like the reference image
     if (label.contains("GAIN")) {
         // Red for gain knobs
         slider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffdc3545));
@@ -842,11 +789,9 @@ void FourKEQEditor::setupKnob(juce::Slider& slider, const juce::String& paramID,
         slider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffff8c00));
     }
 
-    // Double-click to reset - center-detented knobs reset to 0.0 (center), others to default
     if (centerDetented) {
         slider.setDoubleClickReturnValue(true, 0.0);
     } else {
-        // Get parameter default from processor for non-center knobs
         auto* param = audioProcessor.parameters.getParameter(paramID);
         if (param) {
             float defaultValue = param->getDefaultValue();
@@ -862,7 +807,6 @@ void FourKEQEditor::setupButton(juce::ToggleButton& button, const juce::String& 
     button.setButtonText(text);
     button.setClickingTogglesState(true);
 
-    // Professional button colors
     button.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff404040));
     button.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffff3030));
     button.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe0e0e0));

@@ -111,7 +111,7 @@ void SpectrumAnalyzerEditor::paint(juce::Graphics& g)
     // Company name
     g.setColour(juce::Colour(SpectrumAnalyzerLookAndFeel::Colors::textSecondary));
     g.setFont(12.0f);
-    g.drawText("Luna Co. Audio", headerArea.reduced(15, 0),
+    g.drawText("Dusk Audio", headerArea.reduced(15, 0),
         juce::Justification::centredRight);
 
     // Header border

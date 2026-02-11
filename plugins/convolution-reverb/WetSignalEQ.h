@@ -3,7 +3,7 @@
 
     Convolution Reverb - Wet Signal EQ
     4-band parametric EQ for the reverb wet signal
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */

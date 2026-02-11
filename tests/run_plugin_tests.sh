@@ -1,6 +1,6 @@
 #!/bin/bash
 #==============================================================================
-# Luna Co. Audio Plugin Test Suite
+# Dusk Audio Plugin Test Suite
 # Comprehensive automated testing for VST3/LV2 plugins
 #==============================================================================
 
@@ -36,7 +36,7 @@ PLUGINS=(
     "DrummerClone"
     "Harmonic Generator"
     "Multi-Q"
-    "SilkVerb"
+    "Velvet 90"
     "Universal Compressor"
     "TapeMachine"
     "Vintage Tape Echo"
@@ -224,7 +224,7 @@ run_audio_tests() {
 #------------------------------------------------------------------------------
 
 main() {
-    print_header "Luna Co. Audio Plugin Test Suite"
+    print_header "Dusk Audio Plugin Test Suite"
 
     echo "Project directory: $PROJECT_DIR"
     echo "VST3 directory: $VST3_DIR"

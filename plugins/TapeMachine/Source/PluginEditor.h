@@ -6,7 +6,7 @@
 #include "GUI/TapeMachineLookAndFeel.h"
 #include "GUI/TapeReelComponent.h"
 #include "../../shared/SupportersOverlay.h"
-#include "../../shared/LunaLookAndFeel.h"
+#include "../../shared/DuskLookAndFeel.h"
 #include "../../shared/ScalableEditorHelper.h"
 
 //==============================================================================
@@ -35,15 +35,15 @@ private:
     juce::ComboBox signalPathSelector;
     juce::ComboBox eqStandardSelector;
 
-    // Sliders (LunaSlider for Cmd/Ctrl+drag fine control)
-    LunaSlider inputGainSlider;
-    LunaSlider biasSlider;
-    LunaSlider highpassFreqSlider;
-    LunaSlider lowpassFreqSlider;
-    LunaSlider wowSlider;
-    LunaSlider flutterSlider;
-    LunaSlider outputGainSlider;
-    LunaSlider noiseAmountSlider;
+    // Sliders (DuskSlider for Cmd/Ctrl+drag fine control)
+    DuskSlider inputGainSlider;
+    DuskSlider biasSlider;
+    DuskSlider highpassFreqSlider;
+    DuskSlider lowpassFreqSlider;
+    DuskSlider wowSlider;
+    DuskSlider flutterSlider;
+    DuskSlider outputGainSlider;
+    DuskSlider noiseAmountSlider;
 
     // Toggle buttons
     juce::ToggleButton autoCompButton;

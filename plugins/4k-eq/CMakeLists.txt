@@ -25,16 +25,16 @@ juce_add_plugin(FourKEQ
     PLUGIN_MANUFACTURER_CODE LunC
     FORMATS VST3 LV2 AU Standalone
     PRODUCT_NAME "4K EQ"
-    COMPANY_NAME "Luna Co. Audio"
-    COMPANY_WEBSITE "https://lunaco.audio"
-    COMPANY_EMAIL "support@lunaco.audio"
+    COMPANY_NAME "Dusk Audio"
+    COMPANY_WEBSITE "https://dusk-audio.github.io"
+    COMPANY_EMAIL "support@dusk-audio.github.io"
     BUNDLE_ID "com.LunaCoAudio.FourKEQ"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD ${LUNA_COPY_AFTER_BUILD}
+    COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     VST3_CATEGORIES Fx EQ
     VST3_AUTO_MANIFEST FALSE
     AU_MAIN_TYPE kAudioUnitType_Effect

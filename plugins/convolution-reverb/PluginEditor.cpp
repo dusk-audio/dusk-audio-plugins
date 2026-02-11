@@ -3,7 +3,7 @@
 
     Convolution Reverb - Plugin Editor
     Main UI for the convolution reverb
-    Copyright (c) 2025 Luna Co. Audio
+    Copyright (c) 2025 Dusk Audio
 
   ==============================================================================
 */
@@ -46,9 +46,9 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     addAndMakeVisible(irNameLabel.get());
 
     // Envelope controls
-    attackSlider = std::make_unique<LunaSlider>();
-    decaySlider = std::make_unique<LunaSlider>();
-    lengthSlider = std::make_unique<LunaSlider>();
+    attackSlider = std::make_unique<DuskSlider>();
+    decaySlider = std::make_unique<DuskSlider>();
+    lengthSlider = std::make_unique<DuskSlider>();
     attackLabel = std::make_unique<juce::Label>();
     decayLabel = std::make_unique<juce::Label>();
     lengthLabel = std::make_unique<juce::Label>();
@@ -61,9 +61,9 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupToggleButton(*reverseButton, "REV");
 
     // Main controls
-    preDelaySlider = std::make_unique<LunaSlider>();
-    widthSlider = std::make_unique<LunaSlider>();
-    mixSlider = std::make_unique<LunaSlider>();
+    preDelaySlider = std::make_unique<DuskSlider>();
+    widthSlider = std::make_unique<DuskSlider>();
+    mixSlider = std::make_unique<DuskSlider>();
     preDelayLabel = std::make_unique<juce::Label>();
     widthLabel = std::make_unique<juce::Label>();
     mixLabel = std::make_unique<juce::Label>();
@@ -73,8 +73,8 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupSlider(*mixSlider, *mixLabel, "MIX", "%");
 
     // Filter controls
-    hpfSlider = std::make_unique<LunaSlider>();
-    lpfSlider = std::make_unique<LunaSlider>();
+    hpfSlider = std::make_unique<DuskSlider>();
+    lpfSlider = std::make_unique<DuskSlider>();
     hpfLabel = std::make_unique<juce::Label>();
     lpfLabel = std::make_unique<juce::Label>();
 
@@ -82,14 +82,14 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupSlider(*lpfSlider, *lpfLabel, "LPF", "Hz");
 
     // EQ controls - simplified to just gain knobs (frequencies are fixed internally)
-    eqLowFreqSlider = std::make_unique<LunaSlider>();
-    eqLowGainSlider = std::make_unique<LunaSlider>();
-    eqLowMidFreqSlider = std::make_unique<LunaSlider>();
-    eqLowMidGainSlider = std::make_unique<LunaSlider>();
-    eqHighMidFreqSlider = std::make_unique<LunaSlider>();
-    eqHighMidGainSlider = std::make_unique<LunaSlider>();
-    eqHighFreqSlider = std::make_unique<LunaSlider>();
-    eqHighGainSlider = std::make_unique<LunaSlider>();
+    eqLowFreqSlider = std::make_unique<DuskSlider>();
+    eqLowGainSlider = std::make_unique<DuskSlider>();
+    eqLowMidFreqSlider = std::make_unique<DuskSlider>();
+    eqLowMidGainSlider = std::make_unique<DuskSlider>();
+    eqHighMidFreqSlider = std::make_unique<DuskSlider>();
+    eqHighMidGainSlider = std::make_unique<DuskSlider>();
+    eqHighFreqSlider = std::make_unique<DuskSlider>();
+    eqHighGainSlider = std::make_unique<DuskSlider>();
     eqLowLabel = std::make_unique<juce::Label>();
     eqLowMidLabel = std::make_unique<juce::Label>();
     eqHighMidLabel = std::make_unique<juce::Label>();
@@ -112,7 +112,7 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     setupToggleButton(*zeroLatencyButton, "ZERO LAT");
 
     // IR Offset control - shortened label to fit
-    irOffsetSlider = std::make_unique<LunaSlider>();
+    irOffsetSlider = std::make_unique<DuskSlider>();
     irOffsetLabel = std::make_unique<juce::Label>();
     setupSlider(*irOffsetSlider, *irOffsetLabel, "OFFSET", "%");
 
@@ -198,9 +198,9 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     filterEnvButton = std::make_unique<juce::ToggleButton>("FILTER ENV");
     setupToggleButton(*filterEnvButton, "FILTER ENV");
 
-    filterEnvInitSlider = std::make_unique<LunaSlider>();
-    filterEnvEndSlider = std::make_unique<LunaSlider>();
-    filterEnvAttackSlider = std::make_unique<LunaSlider>();
+    filterEnvInitSlider = std::make_unique<DuskSlider>();
+    filterEnvEndSlider = std::make_unique<DuskSlider>();
+    filterEnvAttackSlider = std::make_unique<DuskSlider>();
     filterEnvInitLabel = std::make_unique<juce::Label>();
     filterEnvEndLabel = std::make_unique<juce::Label>();
     filterEnvAttackLabel = std::make_unique<juce::Label>();
@@ -358,7 +358,7 @@ void ConvolutionReverbEditor::setupSlider(juce::Slider& slider, juce::Label& lab
                                       const juce::String& labelText, const juce::String& suffix)
 {
     slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    // LunaSlider already has proper Cmd/Ctrl+drag fine control built-in
+    // DuskSlider already has proper Cmd/Ctrl+drag fine control built-in
     slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
                                juce::MathConstants<float>::pi * 2.75f, true);

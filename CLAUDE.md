@@ -1,4 +1,4 @@
-# Luna Co. Audio Plugins - Reference Documentation
+# Dusk Audio Plugins - Reference Documentation
 
 ## Quick Reference
 
@@ -11,10 +11,10 @@
 
 ## Project Overview
 
-Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Luna Co. Audio".
+Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio".
 
-**Website**: https://luna-co-software.github.io/lunacoaudio.github.io/
-**Website repo**: `~/projects/lunacoaudio.github.io/`
+**Website**: https://dusk-audio.github.io/
+**Website repo**: `~/projects/lunacoaudio.github.io/` (rename to `dusk-audio.github.io` after GitHub org rename)
 
 ## Plugins
 
@@ -25,7 +25,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Luna Co. A
 | TapeMachine | `tapemachine` | `plugins/TapeMachine/` | Studer/Ampex tape emulation |
 | Tape Echo | `tape-echo` | `plugins/tape-echo/` | RE-201 Space Echo style delay |
 | Multi-Q | `multi-q` | `plugins/multi-q/` | Universal EQ (Digital/British/Tube) |
-| SilkVerb | `silkverb` | `plugins/SilkVerb/` | Lexicon-style algorithmic reverb |
+| Velvet 90 | `velvet-90` | `plugins/Velvet90/` | Algorithmic reverb |
 | Convolution Reverb | `convolution-reverb` | `plugins/convolution-reverb/` | IR-based reverb |
 | Neural Amp | `neural-amp` | `plugins/neural-amp/` | Neural amp modeler (NAM) |
 | GrooveMind | `groovemind` | `plugins/groovemind/` | ML drum generator (future) |
@@ -62,7 +62,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Luna Co. A
 | Multi-Q | `project(MultiQ VERSION X.Y.Z)` (inline) |
 | Others | `<NAME>_DEFAULT_VERSION` |
 
-**Website**: `/home/marc/projects/lunacoaudio.github.io/_data/plugins.yml` - updated automatically by `/release-plugin`
+**Website**: `~/projects/lunacoaudio.github.io/_data/plugins.yml` - updated automatically by `/release-plugin`
 
 ## Shared Code (MANDATORY)
 
@@ -72,8 +72,8 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Luna Co. A
 |-----------|------|---------|
 | LEDMeter | `LEDMeter.h/cpp` | All level meters |
 | SupportersOverlay | `SupportersOverlay.h` | Patreon credits (click title) |
-| LunaSlider | `LunaLookAndFeel.h` | Rotary/slider controls with fine control |
-| LunaTooltips | `LunaLookAndFeel.h` | Consistent tooltip text |
+| DuskSlider | `DuskLookAndFeel.h` | Rotary/slider controls with fine control |
+| DuskTooltips | `DuskLookAndFeel.h` | Consistent tooltip text |
 | ScalableEditorHelper | `ScalableEditorHelper.h` | Resizable UI with persistence |
 | AnalogEmulation | `AnalogEmulation/*.h` | Saturation, tubes, transformers |
 
@@ -89,7 +89,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Luna Co. A
 | `tape` | TapeMachine |
 | `tapeecho` | Tape Echo |
 | `multiq` | Multi-Q |
-| `silkverb` | SilkVerb |
+| `velvet-90` | Velvet 90 |
 | `convolution` | Convolution Reverb |
 | `nam` | Neural Amp |
 
@@ -105,7 +105,7 @@ plugins/
 │   ├── TapeMachine/
 │   ├── tape-echo/
 │   ├── multi-q/
-│   ├── SilkVerb/
+│   ├── Velvet90/
 │   ├── convolution-reverb/
 │   ├── neural-amp/
 │   └── shared/           # SHARED CODE - CHECK HERE FIRST
@@ -146,4 +146,4 @@ plugins/
 | Validation fails | Run pluginval locally, check parameters |
 
 ---
-*Luna Co. Audio | CMake + JUCE 7.x | Shared code in `plugins/shared/`*
+*Dusk Audio | CMake + JUCE 7.x | Shared code in `plugins/shared/`*
