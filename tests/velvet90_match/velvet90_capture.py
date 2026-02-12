@@ -208,14 +208,23 @@ def nearest_size(seconds: float) -> str:
     return best
 
 
-_DEFAULT_VST_PATH = os.environ.get(
-    'VELVET90_VST3',
-    '/Users/marckorte/projects/Luna/plugins/build_test/plugins/Velvet90/Velvet90_artefacts/Release/VST3/Velvet90.vst3',
-)
+_DEFAULT_VST_PATH = os.environ.get('VELVET90_VST3')
 
 
-def load_plugin(vst_path: str = _DEFAULT_VST_PATH):
+def _get_vst_path(vst_path: str = None) -> str:
+    """Resolve VST path, raising a clear error if not configured."""
+    path = vst_path or _DEFAULT_VST_PATH
+    if path is None:
+        raise EnvironmentError(
+            "Velvet90 VST3 path not configured. "
+            "Set VELVET90_VST3 environment variable or pass vst_path explicitly."
+        )
+    return path
+
+
+def load_plugin(vst_path: str = None):
     """Load or return cached Velvet 90 plugin instance."""
+    vst_path = _get_vst_path(vst_path)
     if vst_path not in _plugin_cache:
         from pedalboard import load_plugin as _load
         _plugin_cache[vst_path] = _load(vst_path)
@@ -225,7 +234,7 @@ def load_plugin(vst_path: str = _DEFAULT_VST_PATH):
 def capture_ir(params: Velvet90Params,
                sr: int = 48000,
                duration_s: float = 6.0,
-               vst_path: str = _DEFAULT_VST_PATH,
+               vst_path: str = None,
                normalize: bool = True) -> np.ndarray:
     """
     Capture an impulse response from Velvet 90.
@@ -258,7 +267,7 @@ def capture_ir_averaged(params: Velvet90Params,
                         sr: int = 48000,
                         duration_s: float = 6.0,
                         n_averages: int = 1,
-                        vst_path: str = _DEFAULT_VST_PATH) -> np.ndarray:
+                        vst_path: str = None) -> np.ndarray:
     """
     Capture IR with optional averaging to reduce modulation artifacts.
 

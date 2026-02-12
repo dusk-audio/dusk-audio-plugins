@@ -74,6 +74,8 @@ public:
             if (isDoubleClickReturnEnabled())
             {
                 setValue(getDoubleClickReturnValue(), juce::sendNotificationSync);
+                // Don't initiate drag, but still handle focus
+                juce::Component::mouseDown(e);
                 return;
             }
         }
@@ -85,7 +87,6 @@ public:
 
         juce::Slider::mouseDown(e);
     }
-
     void mouseDrag(const juce::MouseEvent& e) override
     {
         if (!isEnabled())

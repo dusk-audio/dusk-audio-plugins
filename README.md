@@ -2,6 +2,8 @@
 
 A collection of professional audio VST3/LV2 plugins built with JUCE.
 
+> **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
+
 > **Production Ready:** Only **4K EQ**, **Multi-Comp**, and **TapeMachine** are currently released and recommended for production use. All other plugins are in active development.
 
 ## Plugins
@@ -10,7 +12,7 @@ A collection of professional audio VST3/LV2 plugins built with JUCE.
 Classic British console EQ emulation featuring:
 - 4-band parametric EQ (LF, LMF, HMF, HF) with color-coded knobs
 - High-pass and low-pass filters
-- Brown/Black variants (E-Series/G-Series console emulation)
+- Brown/Black variants (two console voicings)
 - Advanced analog saturation modeling
 - 2x/4x oversampling for anti-aliasing
 
@@ -18,20 +20,20 @@ Classic British console EQ emulation featuring:
 Multi-mode compressor with seven classic compression styles plus 4-band multiband compression:
 
 **Compression Modes:**
-- **Vintage Opto** – Classic 1960s tube optical leveling amplifier (inspired by the LA-2A). Program-dependent attack/release with smooth, musical compression. Features the iconic "Peak Reduction" and "Gain" controls with optional Limit mode.
-- **Vintage FET** – Classic 1967 Rev A "Bluestripe" FET limiting amplifier (inspired by the 1176). All-discrete Class A design with ultra-fast attack times. Features the famous "All Buttons" mode for extreme compression/distortion. Four ratio settings: 4:1, 8:1, 12:1, 20:1, plus All.
-- **Classic VCA** – Fast, precise 1970s VCA compressor (inspired by the dbx 160). Known for its punchy, aggressive character with "OverEasy" soft-knee compression. Great for drums and percussive sources.
-- **Bus Compressor** – Classic British console bus compressor (inspired by the SSL G-Series). The quintessential mix bus glue with fixed attack/release detents and Auto release. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
-- **Studio FET** – Later revision "Blackface" FET limiter (inspired by the 1176 Rev E/F). Cleaner character with approximately 30% of the harmonic content of the vintage version. More controlled transient response.
-- **Studio VCA** – Modern British dual VCA compressor (inspired by the Focusrite Red 3). Clean, musical compression with RMS detection and soft knee. Excellent for vocals and mix bus applications.
+- **Vintage Opto** – Classic 1960s tube optical leveling amplifier. Program-dependent attack/release with smooth, musical compression. Features "Peak Reduction" and "Gain" controls with optional Limit mode.
+- **Vintage FET** – Classic late-1960s FET limiting amplifier. All-discrete Class A design with ultra-fast attack times. Features "All Buttons" mode for extreme compression/distortion. Four ratio settings: 4:1, 8:1, 12:1, 20:1, plus All.
+- **Classic VCA** – Fast, precise 1970s VCA compressor. Known for its punchy, aggressive character with soft-knee compression. Great for drums and percussive sources.
+- **Bus Compressor** – Classic British console bus compressor. The quintessential mix bus glue with fixed attack/release detents and Auto release. 2:1, 4:1, and 10:1 ratios with that distinctive punchy character.
+- **Studio FET** – Later revision FET limiter. Cleaner character with approximately 30% of the harmonic content of the vintage version. More controlled transient response.
+- **Studio VCA** – Modern British dual VCA compressor. Clean, musical compression with RMS detection and soft knee. Excellent for vocals and mix bus applications.
 - **Digital** – Transparent, mathematically precise digital compressor. Zero coloration with accurate peak/RMS detection. Ideal for surgical dynamics control where transparency is paramount.
 - **Multiband** – 4-band multiband compressor with Linkwitz-Riley crossovers. Adjustable crossover frequencies, per-band threshold/ratio/attack/release/makeup, and solo buttons for each band.
 
-**Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, hardware-accurate transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
+**Features:** Sidechain HP filter (20-500Hz), sidechain low/high shelf EQ, auto-makeup gain, parallel mix, analog noise floor simulation, transformer emulation with mode-specific HF rolloff, 2x/4x oversampling, lookahead with true-peak detection.
 
 ### TapeMachine - RELEASED
 Analog tape machine emulation featuring:
-- Swiss800 and Classic102 tape machine models
+- Two tape machine models with distinct characters
 - Four tape formulations: Type 456, GP9, Type 911, Type 250
 - Tape speeds: 7.5, 15, 30 IPS
 - Advanced saturation and hysteresis modeling
@@ -57,15 +59,15 @@ Zero-latency IR-based reverb:
 ### Multi-Q - IN DEVELOPMENT
 Universal EQ with multiple modes:
 - **Digital Mode**: Clean 8-band parametric with color-coded bands
-- **British Mode**: SSL 4000-style console EQ with Brown/Black variants
+- **British Mode**: Classic console EQ with two console voicings
 - Real-time FFT analyzer with pre/post display
 - Q-coupling modes for natural EQ response
 - Interactive graphic display with draggable points
 - HQ mode with 2x oversampling
 
 ### Tape Echo - IN DEVELOPMENT
-RE-201 Roland Space Echo style tape delay:
-- 12 echo modes based on original hardware
+Classic tape delay with spring reverb:
+- 12 echo modes
 - Spring reverb modeling
 - Tape saturation and wow/flutter
 - Tempo sync with multiple note divisions

@@ -159,7 +159,7 @@ cmake --build . --target FourKEQ_All -j8
 ├── PluginEditor.h           # Editor header
 ├── FourKLookAndFeel.cpp     # Custom console-style UI theme
 ├── FourKLookAndFeel.h       # Look and feel header
-├── SSLSaturation.h          # Console saturation modeling (E/G series)
+├── SSLSaturation.h          # Console saturation modeling
 ├── PatreonBackers.h         # Patreon supporters credits list
 ├── CMakeLists.txt           # Build configuration
 └── README.md                # This file

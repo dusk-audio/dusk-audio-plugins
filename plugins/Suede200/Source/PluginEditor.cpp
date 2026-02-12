@@ -151,8 +151,7 @@ void ThreeWaySelector::paint(juce::Graphics& g)
 
     // Three option buttons
     int optionHeight = bounds.getHeight() / 3;
-    for (int i = 0; i < 3 && i < optionLabels.size(); ++i)
-    {
+    for (int i = 0; i < 3 && i < static_cast<int>(optionLabels.size()); ++i)    {
         auto optionArea = bounds.removeFromTop(optionHeight).reduced(2, 1);
         bool isSelected = (i == selectedIndex);
 
@@ -532,10 +531,14 @@ void Suede200Editor::updateDiscreteParams()
 {
     auto& apvts = audioProcessor.getAPVTS();
 
-    diffusionSelector.setSelectedIndex(static_cast<int>(apvts.getRawParameterValue("diffusion")->load()));
-    rtLowSelector.setSelectedIndex(static_cast<int>(apvts.getRawParameterValue("rtlow")->load()));
-    rtHighSelector.setSelectedIndex(static_cast<int>(apvts.getRawParameterValue("rthigh")->load()));
-    rolloffSelector.setSelectedIndex(static_cast<int>(apvts.getRawParameterValue("rolloff")->load()));
+    if (auto* p = apvts.getRawParameterValue("diffusion"))
+        diffusionSelector.setSelectedIndex(static_cast<int>(p->load()));
+    if (auto* p = apvts.getRawParameterValue("rtlow"))
+        rtLowSelector.setSelectedIndex(static_cast<int>(p->load()));
+    if (auto* p = apvts.getRawParameterValue("rthigh"))
+        rtHighSelector.setSelectedIndex(static_cast<int>(p->load()));
+    if (auto* p = apvts.getRawParameterValue("rolloff"))
+        rolloffSelector.setSelectedIndex(static_cast<int>(p->load()));
 }
 
 void Suede200Editor::paint(juce::Graphics& g)

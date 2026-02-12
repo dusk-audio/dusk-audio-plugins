@@ -9889,6 +9889,19 @@ inline std::vector<Preset> getFactoryPresets()
 //==============================================================================
 inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset& preset)
 {
+    // Helper: clamp to parameter range before normalizing to 0-1.
+    // convertTo0to1 does NOT clamp, so out-of-range preset values would
+    // produce values outside [0,1] and trigger jassert in hosts.
+    auto setRanged = [&](const char* id, float value)
+    {
+        if (auto* p = params.getParameter(id))
+        {
+            const auto range = params.getParameterRange(id);
+            const auto clamped = range.snapToLegalValue(value);
+            p->setValueNotifyingHost(range.convertTo0to1(clamped));
+        }
+    };
+
     // Mode (10 choices: normalize by 9.0)
     if (auto* p = params.getParameter("mode"))
         p->setValueNotifyingHost(preset.mode / 9.0f);
@@ -9897,21 +9910,19 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
     if (auto* p = params.getParameter("color"))
         p->setValueNotifyingHost(preset.color / 2.0f);
 
-    // Continuous parameters — use convertTo0to1 for ranged params
+    // Continuous parameters — already 0-1 normalized
     if (auto* p = params.getParameter("size"))
         p->setValueNotifyingHost(preset.size);
 
     if (auto* p = params.getParameter("damping"))
         p->setValueNotifyingHost(preset.damping);
 
-    if (auto* p = params.getParameter("predelay"))
-        p->setValueNotifyingHost(params.getParameterRange("predelay").convertTo0to1(preset.predelay));
+    setRanged("predelay", preset.predelay);
 
     if (auto* p = params.getParameter("mix"))
         p->setValueNotifyingHost(preset.mix);
 
-    if (auto* p = params.getParameter("modrate"))
-        p->setValueNotifyingHost(params.getParameterRange("modrate").convertTo0to1(preset.modRate));
+    setRanged("modrate", preset.modRate);
 
     if (auto* p = params.getParameter("moddepth"))
         p->setValueNotifyingHost(preset.modDepth);
@@ -9925,17 +9936,10 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
     if (auto* p = params.getParameter("latediff"))
         p->setValueNotifyingHost(preset.lateDiff);
 
-    if (auto* p = params.getParameter("bassmult"))
-        p->setValueNotifyingHost(params.getParameterRange("bassmult").convertTo0to1(preset.bassMult));
-
-    if (auto* p = params.getParameter("bassfreq"))
-        p->setValueNotifyingHost(params.getParameterRange("bassfreq").convertTo0to1(preset.bassFreq));
-
-    if (auto* p = params.getParameter("lowcut"))
-        p->setValueNotifyingHost(params.getParameterRange("lowcut").convertTo0to1(preset.lowCut));
-
-    if (auto* p = params.getParameter("highcut"))
-        p->setValueNotifyingHost(params.getParameterRange("highcut").convertTo0to1(preset.highCut));
+    setRanged("bassmult", preset.bassMult);
+    setRanged("bassfreq", preset.bassFreq);
+    setRanged("lowcut", preset.lowCut);
+    setRanged("highcut", preset.highCut);
 
     if (auto* p = params.getParameter("freeze"))
         p->setValueNotifyingHost(preset.freeze ? 1.0f : 0.0f);
@@ -9946,14 +9950,9 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
     if (auto* p = params.getParameter("erlatebal"))
         p->setValueNotifyingHost(preset.earlyLateBal);
 
-    if (auto* p = params.getParameter("highdecay"))
-        p->setValueNotifyingHost(params.getParameterRange("highdecay").convertTo0to1(preset.highDecay));
-
-    if (auto* p = params.getParameter("middecay"))
-        p->setValueNotifyingHost(params.getParameterRange("middecay").convertTo0to1(preset.midDecay));
-
-    if (auto* p = params.getParameter("highfreq"))
-        p->setValueNotifyingHost(params.getParameterRange("highfreq").convertTo0to1(preset.highFreq));
+    setRanged("highdecay", preset.highDecay);
+    setRanged("middecay", preset.midDecay);
+    setRanged("highfreq", preset.highFreq);
 
     if (auto* p = params.getParameter("ershape"))
         p->setValueNotifyingHost(preset.erShape);
@@ -9961,58 +9960,30 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
     if (auto* p = params.getParameter("erspread"))
         p->setValueNotifyingHost(preset.erSpread);
 
-    if (auto* p = params.getParameter("erbasscut"))
-        p->setValueNotifyingHost(params.getParameterRange("erbasscut").convertTo0to1(preset.erBassCut));
+    setRanged("erbasscut", preset.erBassCut);
 
     // Extended parameters
-    if (auto* p = params.getParameter("trebleratio"))
-        p->setValueNotifyingHost(params.getParameterRange("trebleratio").convertTo0to1(preset.trebleRatio));
-
-    if (auto* p = params.getParameter("stereocoupling"))
-        p->setValueNotifyingHost(params.getParameterRange("stereocoupling").convertTo0to1(preset.stereoCoupling));
-
-    if (auto* p = params.getParameter("lowmidfreq"))
-        p->setValueNotifyingHost(params.getParameterRange("lowmidfreq").convertTo0to1(preset.lowMidFreq));
-
-    if (auto* p = params.getParameter("lowmiddecay"))
-        p->setValueNotifyingHost(params.getParameterRange("lowmiddecay").convertTo0to1(preset.lowMidDecay));
+    setRanged("trebleratio", preset.trebleRatio);
+    setRanged("stereocoupling", preset.stereoCoupling);
+    setRanged("lowmidfreq", preset.lowMidFreq);
+    setRanged("lowmiddecay", preset.lowMidDecay);
 
     // Envelope mode (5 choices: normalize by 4.0)
     if (auto* p = params.getParameter("envmode"))
         p->setValueNotifyingHost(preset.envMode / 4.0f);
 
-    if (auto* p = params.getParameter("envhold"))
-        p->setValueNotifyingHost(params.getParameterRange("envhold").convertTo0to1(preset.envHold));
+    setRanged("envhold", preset.envHold);
+    setRanged("envrelease", preset.envRelease);
+    setRanged("envdepth", preset.envDepth);
+    setRanged("echodelay", preset.echoDelay);
+    setRanged("echofeedback", preset.echoFeedback);
 
-    if (auto* p = params.getParameter("envrelease"))
-        p->setValueNotifyingHost(params.getParameterRange("envrelease").convertTo0to1(preset.envRelease));
-
-    if (auto* p = params.getParameter("envdepth"))
-        p->setValueNotifyingHost(params.getParameterRange("envdepth").convertTo0to1(preset.envDepth));
-
-    if (auto* p = params.getParameter("echodelay"))
-        p->setValueNotifyingHost(params.getParameterRange("echodelay").convertTo0to1(preset.echoDelay));
-
-    if (auto* p = params.getParameter("echofeedback"))
-        p->setValueNotifyingHost(params.getParameterRange("echofeedback").convertTo0to1(preset.echoFeedback));
-
-    if (auto* p = params.getParameter("outeq1freq"))
-        p->setValueNotifyingHost(params.getParameterRange("outeq1freq").convertTo0to1(preset.outEQ1Freq));
-
-    if (auto* p = params.getParameter("outeq1gain"))
-        p->setValueNotifyingHost(params.getParameterRange("outeq1gain").convertTo0to1(preset.outEQ1Gain));
-
-    if (auto* p = params.getParameter("outeq1q"))
-        p->setValueNotifyingHost(params.getParameterRange("outeq1q").convertTo0to1(preset.outEQ1Q));
-
-    if (auto* p = params.getParameter("outeq2freq"))
-        p->setValueNotifyingHost(params.getParameterRange("outeq2freq").convertTo0to1(preset.outEQ2Freq));
-
-    if (auto* p = params.getParameter("outeq2gain"))
-        p->setValueNotifyingHost(params.getParameterRange("outeq2gain").convertTo0to1(preset.outEQ2Gain));
-
-    if (auto* p = params.getParameter("outeq2q"))
-        p->setValueNotifyingHost(params.getParameterRange("outeq2q").convertTo0to1(preset.outEQ2Q));
+    setRanged("outeq1freq", preset.outEQ1Freq);
+    setRanged("outeq1gain", preset.outEQ1Gain);
+    setRanged("outeq1q", preset.outEQ1Q);
+    setRanged("outeq2freq", preset.outEQ2Freq);
+    setRanged("outeq2gain", preset.outEQ2Gain);
+    setRanged("outeq2q", preset.outEQ2Q);
 
     if (auto* p = params.getParameter("stereoinvert"))
         p->setValueNotifyingHost(preset.stereoInvert);
@@ -10023,8 +9994,7 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
     if (auto* p = params.getParameter("echopingpong"))
         p->setValueNotifyingHost(preset.echoPingPong);
 
-    if (auto* p = params.getParameter("dynamount"))
-        p->setValueNotifyingHost(params.getParameterRange("dynamount").convertTo0to1(preset.dynAmount));
+    setRanged("dynamount", preset.dynAmount);
 
     if (auto* p = params.getParameter("dynspeed"))
         p->setValueNotifyingHost(preset.dynSpeed);

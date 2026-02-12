@@ -151,11 +151,11 @@ def test_with_pedalboard():
     # Test configurations
     configs = [
         {
-            'name': 'Swiss800 (Studer) - 0VU (input gain 0dB)',
+            'name': 'Swiss800 - 0VU (input gain 0dB)',
             'params': {
                 'tape_machine': 0.0,     # Swiss800
                 'tape_speed': 1.0/2.0,   # 15 IPS (middle of 3 choices)
-                'tape_type': 0.0,        # Ampex 456
+                'tape_type': 0.0,        # Type 456
                 'input_gain': 0.5,       # 0dB (middle of -12 to +12 range)
                 'noise_enabled': 0.0,    # Noise off for clean measurement
                 'wow_amount': 0.0,       # No wow
@@ -165,11 +165,11 @@ def test_with_pedalboard():
             }
         },
         {
-            'name': 'Classic102 (Ampex) - 0VU (input gain 0dB)',
+            'name': 'Classic102 - 0VU (input gain 0dB)',
             'params': {
                 'tape_machine': 1.0,     # Classic102
                 'tape_speed': 1.0/2.0,   # 15 IPS
-                'tape_type': 0.0,        # Ampex 456
+                'tape_type': 0.0,        # Type 456
                 'input_gain': 0.5,       # 0dB
                 'noise_enabled': 0.0,
                 'wow_amount': 0.0,
@@ -179,7 +179,7 @@ def test_with_pedalboard():
             }
         },
         {
-            'name': 'Swiss800 (Studer) - +6VU (input gain +6dB)',
+            'name': 'Swiss800 - +6VU (input gain +6dB)',
             'params': {
                 'tape_machine': 0.0,
                 'tape_speed': 1.0/2.0,
@@ -193,7 +193,7 @@ def test_with_pedalboard():
             }
         },
         {
-            'name': 'Classic102 (Ampex) - +6VU (input gain +6dB)',
+            'name': 'Classic102 - +6VU (input gain +6dB)',
             'params': {
                 'tape_machine': 1.0,
                 'tape_speed': 1.0/2.0,
@@ -287,13 +287,13 @@ def test_offline():
         ("Classic102, 0VU, GP9", 0.5, 0.75, False),
     ]
 
-    for name, sat_depth, sat_point, is_studer in configs:
+    for name, sat_depth, sat_point, is_swiss800 in configs:
         tape_form_scale = 2.0 * (1.0 - sat_point) + 0.6
         drive = 0.08 * np.exp(4.6 * sat_depth) * tape_form_scale
 
-        # Studer: driveK=2.0, minimal asymmetry
-        # Ampex: driveK=1.8, more asymmetry
-        driveK = 2.0 if is_studer else 1.8
+        # Swiss800: driveK=2.0, minimal asymmetry
+        # Classic102: driveK=1.8, more asymmetry
+        driveK = 2.0 if is_swiss800 else 1.8
 
         # Apply tanh saturation (simplified - no band splitting for this estimate)
         effective_drive = driveK * drive

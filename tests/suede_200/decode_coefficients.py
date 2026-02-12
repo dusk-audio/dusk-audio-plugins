@@ -124,9 +124,8 @@ def decode_coeff_bytecode(record, prog_num, verbose=True):
     if verbose:
         print(f"\n  Coefficient Bytecode (Program {prog_num}):")
         print(f"  {'='*60}")
-        print(f"  Region: record[0x033:0x132] (256 bytes)")
+        print(f"  Region: record[0x033:0x133] (256 bytes)")
         print(f"  Bytecode starts at record offset 0x05D (byte 42 in region)")
-
     while pos < len(data):
         ctrl = data[pos]
         if ctrl == 0xFF:

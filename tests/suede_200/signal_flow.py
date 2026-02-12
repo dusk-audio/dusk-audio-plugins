@@ -76,6 +76,11 @@ def load_roms():
 def extract_microcode(roms, prog):
     fn, off = RECORDS[prog]
     rom = roms[fn]
+    required_size = off + 0x2B3 + 128  # Max offset accessed
+    if len(rom) < required_size:
+        raise ValueError(
+            f"ROM '{fn}' too small: {len(rom)} bytes, need {required_size}"
+        )
     steps = []
     for step in range(128):
         mi31_24 = rom[off + 0x133 + step]
@@ -372,6 +377,34 @@ def generate_text_diagram(prog, steps, sections, fb, pairs):
     else:
         long_range = (0, 0)
 
+    # Format offset/coeff lists truncated to fit box width (39 inner chars)
+    def _fmt_offsets(offsets, max_chars=27):
+        parts = [f'0x{o:04X}' for o in offsets]
+        result = ', '.join(parts)
+        if len(result) <= max_chars:
+            return result
+        # Truncate and add ellipsis
+        for n in range(len(parts), 0, -1):
+            candidate = ', '.join(parts[:n]) + '...'
+            if len(candidate) <= max_chars:
+                return candidate
+        return '...'
+
+    def _fmt_coeffs(counts, max_chars=23):
+        parts = [f'C{c:X}(x{n})' for c, n in sorted(counts.items())]
+        result = ', '.join(parts)
+        if len(result) <= max_chars:
+            return result
+        for n in range(len(parts), 0, -1):
+            candidate = ', '.join(parts[:n]) + '...'
+            if len(candidate) <= max_chars:
+                return candidate
+        return '...'
+
+    short_ofst_str = _fmt_offsets(short_offsets)
+    long_ofst_str = _fmt_offsets(long_offsets)
+    coeff_str = _fmt_coeffs(c_code_counts)
+
     print(f"""
   Input ──┐
           │
@@ -380,7 +413,7 @@ def generate_text_diagram(prog, steps, sections, fb, pairs):
   │  Input Diffusion Network              │
   │  {n_short} short delay taps                   │
   │  Range: {short_range[0]:.1f} - {short_range[1]:.1f} ms           │
-  │  Offsets: {', '.join(f'0x{o:04X}' for o in short_offsets[:6])}{"..." if len(short_offsets) > 6 else ""}
+  │  Offsets: {short_ofst_str:<28s}│
   └───────────────┬───────────────────────┘
                   │
                   ▼
@@ -388,9 +421,9 @@ def generate_text_diagram(prog, steps, sections, fb, pairs):
   │  Feedback Delay Network (FDN)         │
   │  {n_long} long delay taps                    │
   │  Range: {long_range[0]:.1f} - {long_range[1]:.1f} ms         │
-  │  Offsets: {', '.join(f'0x{o:04X}' for o in long_offsets[:6])}{"..." if len(long_offsets) > 6 else ""}
+  │  Offsets: {long_ofst_str:<28s}│
   │                                       │
-  │  Coefficient codes: {', '.join(f'C{c:X}(x{n})' for c, n in sorted(c_code_counts.items())[:8])}
+  │  Coeff codes: {coeff_str:<24s}│
   │                                       │
   │  Feedback ◄──────────────────────┐    │
   │      │                           │    │

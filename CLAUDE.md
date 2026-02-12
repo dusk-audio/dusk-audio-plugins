@@ -13,17 +13,17 @@
 
 Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio".
 
-**Website**: https://dusk-audio.github.io/
-**Website repo**: `~/projects/lunacoaudio.github.io/` (rename to `dusk-audio.github.io` after GitHub org rename)
+**Website**: https://luna-co-software.github.io/lunacoaudio.github.io/ (will become https://dusk-audio.github.io/ after GitHub org rename)
+**Website repo**: `~/projects/lunacoaudio.github.io/`
 
 ## Plugins
 
 | Plugin | Slug | Directory | Description |
 |--------|------|-----------|-------------|
-| 4K EQ | `4k-eq` | `plugins/4k-eq/` | SSL 4000 console EQ emulation |
+| 4K EQ | `4k-eq` | `plugins/4k-eq/` | British console EQ emulation |
 | Multi-Comp | `multi-comp` | `plugins/multi-comp/` | 8-mode compressor + multiband |
-| TapeMachine | `tapemachine` | `plugins/TapeMachine/` | Studer/Ampex tape emulation |
-| Tape Echo | `tape-echo` | `plugins/tape-echo/` | RE-201 Space Echo style delay |
+| TapeMachine | `tapemachine` | `plugins/TapeMachine/` | Analog tape emulation |
+| Tape Echo | `tape-echo` | `plugins/tape-echo/` | Classic tape delay |
 | Multi-Q | `multi-q` | `plugins/multi-q/` | Universal EQ (Digital/British/Tube) |
 | Velvet 90 | `velvet-90` | `plugins/Velvet90/` | Algorithmic reverb |
 | Convolution Reverb | `convolution-reverb` | `plugins/convolution-reverb/` | IR-based reverb |
@@ -62,7 +62,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | Multi-Q | `project(MultiQ VERSION X.Y.Z)` (inline) |
 | Others | `<NAME>_DEFAULT_VERSION` |
 
-**Website**: `~/projects/lunacoaudio.github.io/_data/plugins.yml` - updated automatically by `/release-plugin`
+**Website**: `~/projects/lunacoaudio.github.io/_data/plugins.yml` (path will change after org rename) - updated automatically by `/release-plugin`
 
 ## Shared Code (MANDATORY)
 
