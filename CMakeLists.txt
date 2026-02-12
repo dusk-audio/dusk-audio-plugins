@@ -50,7 +50,7 @@ option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
 option(BUILD_GROOVEMIND "Build GrooveMind plugin" ON)  # ML-based intelligent drummer
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_VELVET90 "Build Velvet 90 plugin" ON)
-option(BUILD_SUEDE200 "Build Suede 200 plugin" ON)
+option(BUILD_SUEDE200 "Build Suede 200 plugin" OFF)  # Local development only
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
 option(BUILD_NEURAL_AMP "Build Neural Amp plugin" OFF)  # Disabled: Eigen dependency adds significant compile time
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
@@ -86,7 +86,7 @@ if(BUILD_VELVET90)
     add_subdirectory(plugins/Velvet90)
 endif()
 
-if(BUILD_SUEDE200)
+if(BUILD_SUEDE200 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/Suede200")
     add_subdirectory(plugins/Suede200)
 endif()
 

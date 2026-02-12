@@ -123,6 +123,10 @@ docs/_build/
 *.ogg
 *.flac
 
+# Suede 200 — local development only (not published)
+plugins/Suede200/
+tests/suede_200/
+
 # GrooveMind training data directories
 groovemind-training/groove/
 groovemind-training/brush-patterns/
