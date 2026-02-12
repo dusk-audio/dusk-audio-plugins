@@ -36,7 +36,7 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 ## Paths
 
 - **Plugins repo**: Current working directory (the repo where this skill is invoked)
-- **Website repo**: `~/projects/lunacoaudio.github.io`
+- **Website repo**: `~/projects/dusk-audio.github.io`
 
 ## Instructions
 
@@ -83,12 +83,12 @@ project(MultiQ VERSION <new-version>)
 
 ### Step 4: Update Website (Automated)
 
-Update `~/projects/lunacoaudio.github.io/_data/plugins.yml`:
+Update `~/projects/dusk-audio.github.io/_data/plugins.yml`:
 
 For each plugin, use `sed` to update the version line. The file uses YAML format where version appears after the plugin's slug line. Use this approach:
 
 ```bash
-WEBSITE_REPO=~/projects/lunacoaudio.github.io
+WEBSITE_REPO=~/projects/dusk-audio.github.io
 
 # 1. Update _data/plugins.yml (version line after slug)
 SLUG_LINE=$(grep -n "slug: <slug>" "$WEBSITE_REPO/_data/plugins.yml" | cut -d: -f1)
@@ -126,7 +126,7 @@ For batch: `"Bump versions: 4K EQ v1.0.8, Multi-Comp v1.2.3, ..."`
 
 **Website repo**:
 ```bash
-cd ~/projects/lunacoaudio.github.io
+cd ~/projects/dusk-audio.github.io
 git add _data/plugins.yml _plugins/*.md
 git commit -m "Update <plugin(s)> to v<version>"
 ```
@@ -163,7 +163,7 @@ sleep 2
 # ... repeat for each additional tag
 
 # Push website repo
-cd ~/projects/lunacoaudio.github.io
+cd ~/projects/dusk-audio.github.io
 git pull --rebase origin main  # Handle any CI-pushed changes
 git push origin main
 ```

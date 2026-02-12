@@ -13,8 +13,8 @@
 
 Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio".
 
-**Website**: https://luna-co-software.github.io/lunacoaudio.github.io/ (will become https://dusk-audio.github.io/ after GitHub org rename)
-**Website repo**: `~/projects/lunacoaudio.github.io/`
+**Website**: https://dusk-audio.github.io/
+**Website repo**: `~/projects/dusk-audio.github.io/`
 
 ## Plugins
 
@@ -62,7 +62,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | Multi-Q | `project(MultiQ VERSION X.Y.Z)` (inline) |
 | Others | `<NAME>_DEFAULT_VERSION` |
 
-**Website**: `~/projects/lunacoaudio.github.io/_data/plugins.yml` (path will change after org rename) - updated automatically by `/release-plugin`
+**Website**: `~/projects/dusk-audio.github.io/_data/plugins.yml` - updated automatically by `/release-plugin`
 
 ## Shared Code (MANDATORY)
 
