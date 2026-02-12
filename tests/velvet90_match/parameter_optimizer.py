@@ -353,7 +353,6 @@ def calibrate_rt60(target_rt60: float, mode: str, sr: int = 48000,
 
     # Sweep 2: fine-tune around best
     best_size_s = SIZE_TO_SECONDS[best_size]
-    best_mid = 1.0
     for size_offset in [-1.0, -0.5, 0.0, 0.5, 1.0]:
         size = nearest_size(np.clip(best_size_s + size_offset, 0.1, 10.0))
         for damp_offset in [-10.0, 0.0, 10.0]:
@@ -373,7 +372,7 @@ def calibrate_rt60(target_rt60: float, mode: str, sr: int = 48000,
         print(f"    -> best: size={best_size} damp={best_damping:.0f} "
               f"bass={best_bass:.1f} hf={best_hf:.1f} error={best_error:.3f}s")
 
-    return best_size, best_damping, best_room, best_bass, best_hf, best_mid
+    return best_size, best_damping, best_room, best_bass, best_hf, 1.0  # mid_decay fixed at 1.0
 
 
 def _evaluate(x: np.ndarray, mode: str, color: str,
@@ -600,10 +599,29 @@ def optimize_for_target(target_path: str,
         (2, 80, 800, 500, 150, 50),   # Reverse + echo + feedback
     ]
 
-    # Also probe echo ping-pong with existing echo settings
+    # Probe envelope configs without ping-pong first, then with — so ping-pong
+    # improvements can only build on top of the best non-ping-pong baseline.
+    for env_mode, env_depth, env_hold, env_release, echo_delay, echo_fb in env_probe_configs:
+        trial = best_vector.copy()
+        trial[24] = float(env_mode)
+        trial[25] = float(env_hold)
+        trial[26] = float(env_release)
+        trial[27] = float(env_depth)
+        trial[28] = float(echo_delay)
+        trial[29] = float(echo_fb)
+        trial[38] = 0.0  # no ping-pong
+        score = -_evaluate(trial, best_mode, best_color, target_profile, sr, capture_duration)
+        if score > best_score:
+            if verbose:
+                mode_name = ENV_MODE_NAMES[env_mode]
+                print(f"    {mode_name} d={env_depth}% h={env_hold}ms r={env_release}ms "
+                      f"echo={echo_delay}ms: {score:.1f} (+{score - best_score:.1f})")
+            best_score = score
+            best_vector = trial.copy()
+
+    # Then probe echo ping-pong variants on top of current best
     for env_mode, env_depth, env_hold, env_release, echo_delay, echo_fb in env_probe_configs:
         if echo_delay > 0:
-            # Try each echo config with ping-pong enabled
             for pp in [0.5, 1.0]:
                 trial = best_vector.copy()
                 trial[24] = float(env_mode)
@@ -621,23 +639,6 @@ def optimize_for_target(target_path: str,
                               f"{score:.1f} (+{score - best_score:.1f})")
                     best_score = score
                     best_vector = trial.copy()
-
-    for env_mode, env_depth, env_hold, env_release, echo_delay, echo_fb in env_probe_configs:
-        trial = best_vector.copy()
-        trial[24] = float(env_mode)
-        trial[25] = float(env_hold)
-        trial[26] = float(env_release)
-        trial[27] = float(env_depth)
-        trial[28] = float(echo_delay)
-        trial[29] = float(echo_fb)
-        score = -_evaluate(trial, best_mode, best_color, target_profile, sr, capture_duration)
-        if score > best_score:
-            if verbose:
-                mode_name = ENV_MODE_NAMES[env_mode]
-                print(f"    {mode_name} d={env_depth}% h={env_hold}ms r={env_release}ms "
-                      f"echo={echo_delay}ms: {score:.1f} (+{score - best_score:.1f})")
-            best_score = score
-            best_vector = trial.copy()
 
     if verbose:
         env_idx = int(np.round(best_vector[24]))

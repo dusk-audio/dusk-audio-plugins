@@ -139,8 +139,7 @@ const juce::String Suede200Processor::getName() const
 bool Suede200Processor::acceptsMidi() const { return false; }
 bool Suede200Processor::producesMidi() const { return false; }
 bool Suede200Processor::isMidiEffect() const { return false; }
-double Suede200Processor::getTailLengthSeconds() const { return 10.0; }
-
+double Suede200Processor::getTailLengthSeconds() const { return 70.0; }
 int Suede200Processor::getNumPrograms()
 {
     return static_cast<int>(Suede200Presets::getFactoryPresets().size()) + 1;
@@ -157,10 +156,16 @@ void Suede200Processor::setCurrentProgram(int index)
         Suede200Presets::applyPreset(apvts, preset);
 
         // Load IR-optimized coefficients if available
-        if (preset.hasOptimizedCoeffs)
-            reverbEngine.setOptimizedCoefficients(preset.coefficients.data(), 16, preset.coeffRolloffHz);
+        if (preset.hasOptimizedCoeffs && preset.coefficients.size() >= 16)
+        {
+            reverbEngine.setOptimizedCoefficients(preset.coefficients.data(),
+                                                   static_cast<int>(preset.coefficients.size()),
+                                                   preset.coeffRolloffHz);
+        }
         else
+        {
             reverbEngine.clearOptimizedCoefficients();
+        }
 
         currentPresetIndex = index;
     }

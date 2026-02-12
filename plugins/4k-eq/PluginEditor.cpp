@@ -254,7 +254,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     addAndMakeVisible(inputMeterL.get());
     addAndMakeVisible(outputMeterL.get());
 
-    int initialMeterY = 185;
+    int initialMeterY = 215;  // Matches resized() logic when curve is visible
     int initialMeterHeight = 640 - initialMeterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
     inputMeterL->setBounds(6, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);
     outputMeterL->setBounds(950 - LEDMeterStyle::standardWidth - 10, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);

@@ -26,7 +26,7 @@ juce_add_plugin(${PLUGIN_NAME}
 
     FORMATS VST3 LV2 Standalone
 
-    LV2URI "https://lunaco.audio/plugins/groovemind"
+    LV2URI "https://dusk-audio.github.io/plugins/groovemind"
 
     PRODUCT_NAME "GrooveMind"
 
@@ -94,6 +94,6 @@ target_link_libraries(${PLUGIN_NAME}
         juce::juce_gui_extra
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
+        # juce::juce_recommended_lto_flags  # Disabled locally - CI release builds enable LTO
         juce::juce_recommended_warning_flags
 )

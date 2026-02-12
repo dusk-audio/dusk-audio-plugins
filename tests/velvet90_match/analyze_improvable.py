@@ -17,7 +17,7 @@ from collections import defaultdict
 # Ensure we can import local modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ir_analysis import load_ir, analyze_ir, profile_summary
+from ir_analysis import load_ir, analyze_ir, profile_summary, band_key_hz
 from ir_compare import compare_profiles, ComparisonResult
 from velvet90_capture import Velvet90Params, capture_ir
 
@@ -122,7 +122,8 @@ def analyze_preset(preset_result: dict) -> dict:
     params = Velvet90Params.from_dict(params_dict)
 
     # Determine capture duration based on target RT60 (at least 3x RT60 or 6s)
-    capture_duration = max(6.0, target_profile.rt60 * 3.0)
+    rt60 = target_profile.rt60 if target_profile.rt60 and target_profile.rt60 > 0 else 2.0
+    capture_duration = max(6.0, rt60 * 3.0)
     velvet90_ir = capture_ir(params, sr=target_sr, duration_s=capture_duration)
     velvet90_profile = analyze_ir(velvet90_ir, target_sr, name=f"Velvet 90: {name}")
 
@@ -173,7 +174,7 @@ def analyze_preset(preset_result: dict) -> dict:
 
     all_bands = sorted(
         set(target_profile.band_rt60.keys()) | set(velvet90_profile.band_rt60.keys()),
-        key=lambda x: int(x.replace("Hz", ""))
+        key=lambda x: band_key_hz(x)
     )
     for band in all_bands:
         t_val = target_profile.band_rt60.get(band, 0.0)
@@ -272,7 +273,7 @@ def print_cross_preset_summary(all_results: list):
 
     print(f"    {'Band':<8} {'Avg Diff':>10} {'Median':>10} {'% Too Long':>12} {'% Too Short':>13}")
     print(f"    {'-'*8} {'-'*10} {'-'*10} {'-'*12} {'-'*13}")
-    bands_sorted = sorted(band_diffs_all.keys(), key=lambda x: int(x.replace("Hz", "")))
+    bands_sorted = sorted(band_diffs_all.keys(), key=band_key_hz)
     for band in bands_sorted:
         diffs = band_diffs_all[band]
         avg_diff = np.mean(diffs)

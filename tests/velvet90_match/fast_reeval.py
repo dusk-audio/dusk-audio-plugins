@@ -23,12 +23,13 @@ import json
 import os
 import sys
 import time
-import numpy as np
-from multiprocessing import Pool, current_process
 
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 os.environ.setdefault('MKL_NUM_THREADS', '1')
+
+import numpy as np
+from multiprocessing import Pool, current_process
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -115,10 +116,10 @@ def reeval_single(args_tuple):
 
     except Exception as e:
         print(f"[{worker}] [{index}/{total}] ERROR {preset_name}: {e}", flush=True)
-        return {'error': str(e), 'target_name': preset_name, 'old_score': old_score}
+        return {'error': str(e), 'target_name': preset_name, 'old_score': prev.get('score')}
 
 
-def run_reeval(baseline_dir, output_dir=None, workers=1):
+def run_reeval(baseline_dir, output_dir=None, workers=1, show_degraded=False):
     """Re-evaluate all results from baseline_dir."""
     # Find all JSON result files (skip _all_results.json)
     result_files = sorted([
@@ -158,7 +159,7 @@ def run_reeval(baseline_dir, output_dir=None, workers=1):
 
     if not valid:
         print("No valid results to analyze.")
-        return
+        return all_results  # Return what we have, even if no valid deltas
 
     deltas = [r['delta'] for r in valid]
     improved = [r for r in valid if r['delta'] > 1.0]
@@ -180,26 +181,31 @@ def run_reeval(baseline_dir, output_dir=None, workers=1):
           f"({np.mean(deltas):+.1f})")
     print(f"  Median delta: {np.median(deltas):+.1f}")
 
-    # Per-category breakdown
-    print(f"\n  By Category:")
-    for cat in ['Halls', 'Rooms', 'Plates', 'Creative']:
-        cat_results = [r for r in valid if r.get('category') == cat]
-        if cat_results:
-            cat_old = np.mean([r['old_score'] for r in cat_results])
-            cat_new = np.mean([r['score'] for r in cat_results])
-            print(f"    {cat:10s}: {cat_old:.1f} -> {cat_new:.1f} ({cat_new-cat_old:+.1f})  "
-                  f"({len(cat_results)} presets)")
+    if not show_degraded:
+        # Per-category breakdown
+        print(f"\n  By Category:")
+        for cat in ['Halls', 'Rooms', 'Plates', 'Creative']:
+            cat_results = [r for r in valid if r.get('category') == cat]
+            if cat_results:
+                cat_old = np.mean([r['old_score'] for r in cat_results])
+                cat_new = np.mean([r['score'] for r in cat_results])
+                print(f"    {cat:10s}: {cat_old:.1f} -> {cat_new:.1f} ({cat_new-cat_old:+.1f})  "
+                      f"({len(cat_results)} presets)")
 
     # Show biggest degradations
     if degraded:
         degraded.sort(key=lambda r: r['delta'])
-        print(f"\n  Worst degradations:")
-        for r in degraded[:10]:
+        label = "Degraded presets:" if show_degraded else "Worst degradations:"
+        limit = len(degraded) if show_degraded else 10
+        print(f"\n  {label}")
+        for r in degraded[:limit]:
             print(f"    {r['target_name']:25s}: {r['old_score']:.1f} -> {r['score']:.1f} "
                   f"({r['delta']:+.1f})")
+    elif show_degraded:
+        print(f"\n  No degraded presets.")
 
     # Show biggest improvements
-    if improved:
+    if improved and not show_degraded:
         improved.sort(key=lambda r: -r['delta'])
         print(f"\n  Best improvements:")
         for r in improved[:10]:
@@ -234,6 +240,8 @@ if __name__ == '__main__':
                         help='Output directory for re-evaluated results')
     parser.add_argument('-j', '--workers', type=int, default=1,
                         help='Number of parallel workers')
+    parser.add_argument('--show-degraded', action='store_true',
+                        help='Only show presets that degraded')
     args = parser.parse_args()
 
-    run_reeval(args.baseline, args.output, args.workers)
+    run_reeval(args.baseline, args.output, args.workers, args.show_degraded)

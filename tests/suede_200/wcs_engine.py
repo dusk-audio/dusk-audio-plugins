@@ -19,7 +19,10 @@ import numpy as np
 from dataclasses import dataclass
 
 # Original hardware sample rate
-ORIGINAL_SR = 20480
+# Lexicon 200: 18.432 MHz crystal / 6 / 128 steps = 24,000 Hz
+# Verified by: pre-delay offset 568 / 24000 = 23.7ms (matches 23.3ms measured),
+# service manual "~1.4s delay" = 32768/24000 = 1.365s
+ORIGINAL_SR = 24000
 
 # Try to load native C engine for ~100x speedup
 _native_lib = None
@@ -35,11 +38,27 @@ try:
                 ctypes.c_double,                   # sr
                 ctypes.c_int,                      # n_samples
                 ctypes.c_double,                   # rolloff_hz
+                ctypes.c_double,                   # inject_gain
+                ctypes.c_double,                   # damping
                 ctypes.POINTER(ctypes.c_double),   # output_l
                 ctypes.POINTER(ctypes.c_double),   # output_r
             ]
             _native_lib.wcs_generate_ir.restype = None
-            break
+            # Also register wcs_process_signal for ESS deconvolution
+            if hasattr(_native_lib, 'wcs_process_signal'):
+                _native_lib.wcs_process_signal.argtypes = [
+                    ctypes.POINTER(ctypes.c_uint),    # microcode (128 uint32)
+                    ctypes.POINTER(ctypes.c_double),   # coefficients (16 double)
+                    ctypes.c_double,                   # sr
+                    ctypes.c_int,                      # n_samples
+                    ctypes.c_double,                   # rolloff_hz
+                    ctypes.c_double,                   # damping
+                    ctypes.POINTER(ctypes.c_double),   # input_l
+                    ctypes.POINTER(ctypes.c_double),   # input_r
+                    ctypes.POINTER(ctypes.c_double),   # output_l
+                    ctypes.POINTER(ctypes.c_double),   # output_r
+                ]
+                _native_lib.wcs_process_signal.restype = None            break
 except Exception:
     _native_lib = None
 
@@ -217,6 +236,10 @@ class WCSEngine:
     """
 
     def __init__(self, program: int = 0, sr: int = 44100):
+        if not 0 <= program < len(MICROCODE):
+            raise ValueError(f"program must be 0-{len(MICROCODE)-1}, got {program}")
+        if sr <= 0:
+            raise ValueError(f"sr must be positive, got {sr}")
         self.sr = sr
         self.sr_ratio = sr / ORIGINAL_SR
         self.program = program
@@ -243,8 +266,11 @@ class WCSEngine:
         self.memory = np.zeros(self.memory_size, dtype=np.float64)
         self.write_ptr = 0
 
-        # Register file
+        # Register file (LS670 — 4-location dual-port RAM on hardware)
         self.regs = np.zeros(8, dtype=np.float64)
+
+        # Separate hardware accumulator (LS374, clocked by BCON1/)
+        self.accumulator = 0.0
 
         # LFO
         self.lfo_phase = 0.0
@@ -254,11 +280,14 @@ class WCSEngine:
         self.memory[:] = 0.0
         self.write_ptr = 0
         self.regs[:] = 0.0
+        self.accumulator = 0.0
         self.lfo_phase = 0.0
         self.lfo_value = 0.0
 
     def _generate_ir_native(self, n_samples: int, coefficients: np.ndarray,
-                            rolloff_hz: float) -> np.ndarray:
+                            rolloff_hz: float,
+                            inject_gain: float = 0.0,
+                            damping: float = 1.0) -> np.ndarray:
         """Generate IR using native C engine — ~100x faster than Python."""
         microcode = (ctypes.c_uint * 128)(*MICROCODE[self.program])
         coeffs = (ctypes.c_double * 16)(*np.asarray(coefficients, dtype=np.float64))
@@ -269,6 +298,8 @@ class WCSEngine:
                                     ctypes.c_double(float(self.sr)),
                                     ctypes.c_int(n_samples),
                                     ctypes.c_double(rolloff_hz),
+                                    ctypes.c_double(inject_gain),
+                                    ctypes.c_double(damping),
                                     output_l, output_r)
 
         result = np.zeros((2, n_samples), dtype=np.float32)
@@ -276,8 +307,115 @@ class WCSEngine:
         result[1] = np.frombuffer(output_r, dtype=np.float64).astype(np.float32)
         return result
 
-    def _execute_step(self, step: DecodedStep, coefficients: np.ndarray):
-        """Execute a single WCS step — mirrors C++ executeStep exactly."""
+    def generate_ir_ess(self, duration_s: float, coefficients: np.ndarray,
+                        rolloff_hz: float = 10000.0,
+                        sweep_duration_s: float = 4.0,
+                        sweep_level: float = 0.1,
+                        damping: float = 1.0) -> np.ndarray:
+        """
+        Generate a stereo IR using Exponential Sine Sweep (ESS) deconvolution.
+
+        Unlike cold-start impulse, ESS provides continuous excitation that fills
+        the delay memory, capturing the engine's steady-state linear response.
+        This produces realistic IRs with proper early reflections and decay.
+
+        Args:
+            duration_s: Desired IR length in seconds
+            coefficients: 16-element float array of C-code values
+            rolloff_hz: Lowpass cutoff before reverb
+            sweep_duration_s: Sweep duration (longer = better SNR, slower)
+            sweep_level: Input level (-20dBFS = 0.1)
+            damping: Damping coefficient (0-1)
+
+        Returns:
+            Stereo IR as (2, N) float32 numpy array
+        """
+        if _native_lib is None:
+            raise RuntimeError("ESS IR generation requires the native C engine")
+
+        sr = self.sr
+        ir_samples = int(duration_s * sr)
+        sweep_samples = int(sweep_duration_s * sr)
+        # Total: sweep + tail (for reverb to decay after sweep ends)
+        total_samples = sweep_samples + ir_samples
+
+        # Generate log swept sine (20Hz to Nyquist/2)
+        f1 = 20.0
+        f2 = sr / 2.0 * 0.9  # Stay below Nyquist
+        t = np.arange(sweep_samples, dtype=np.float64) / sr
+        R = np.log(f2 / f1)
+        sweep = np.sin(2.0 * np.pi * f1 * sweep_duration_s / R *
+                       (np.exp(t * R / sweep_duration_s) - 1.0))
+        sweep *= sweep_level
+
+        # Create full input: sweep followed by silence for tail capture
+        input_signal = np.zeros(total_samples, dtype=np.float64)
+        input_signal[:sweep_samples] = sweep
+
+        # Process through WCS engine
+        microcode = (ctypes.c_uint * 128)(*MICROCODE[self.program])
+        coeffs = (ctypes.c_double * 16)(*np.asarray(coefficients, dtype=np.float64))
+        inp_l = (ctypes.c_double * total_samples)(*input_signal)
+        inp_r = (ctypes.c_double * total_samples)(*input_signal)
+        out_l = (ctypes.c_double * total_samples)()
+        out_r = (ctypes.c_double * total_samples)()
+
+        _native_lib.wcs_process_signal(
+            microcode, coeffs,
+            ctypes.c_double(float(sr)),
+            ctypes.c_int(total_samples),
+            ctypes.c_double(rolloff_hz),
+            ctypes.c_double(damping),
+            inp_l, inp_r, out_l, out_r
+        )
+
+        output_l = np.frombuffer(out_l, dtype=np.float64).copy()
+        output_r = np.frombuffer(out_r, dtype=np.float64).copy()
+
+        # Generate inverse filter for deconvolution
+        # For log sweep: inverse is the time-reversed sweep with amplitude envelope
+        inv_sweep = sweep[::-1].copy()
+        # Amplitude envelope correction for log sweep
+        k = np.arange(sweep_samples, dtype=np.float64)
+        inv_sweep *= np.exp(-k * R / (sweep_samples - 1))
+
+        # Deconvolve via FFT: IR = IFFT(FFT(output) * FFT(inverse_filter))
+        # Pad to avoid circular convolution artifacts
+        n_fft = 1
+        while n_fft < total_samples + sweep_samples:
+            n_fft *= 2
+
+        inv_padded = np.zeros(n_fft, dtype=np.float64)
+        inv_padded[:sweep_samples] = inv_sweep
+
+        INV = np.fft.rfft(inv_padded)
+
+        out_l_padded = np.zeros(n_fft, dtype=np.float64)
+        out_r_padded = np.zeros(n_fft, dtype=np.float64)
+        out_l_padded[:total_samples] = output_l
+        out_r_padded[:total_samples] = output_r
+
+        ir_l = np.fft.irfft(np.fft.rfft(out_l_padded) * INV, n=n_fft)
+        ir_r = np.fft.irfft(np.fft.rfft(out_r_padded) * INV, n=n_fft)
+
+        # The IR starts at the sweep_samples offset (where sweep ends)
+        # Trim to desired duration
+        ir_start = sweep_samples - 1  # Align to sweep end
+        ir_l_trimmed = ir_l[ir_start:ir_start + ir_samples]
+        ir_r_trimmed = ir_r[ir_start:ir_start + ir_samples]
+
+        result = np.zeros((2, ir_samples), dtype=np.float32)
+        result[0] = ir_l_trimmed.astype(np.float32)
+        result[1] = ir_r_trimmed.astype(np.float32)
+        return result
+
+    @staticmethod
+    def _q15(x: float) -> float:
+        """16-bit Q15 quantization — models Lexicon 200 fixed-point arithmetic."""
+        return round(x * 32768.0) / 32768.0
+
+    def _execute_step(self, step: DecodedStep, coefficients: np.ndarray, damping: float = 1.0):
+        """Execute a single WCS step — mirrors wcs_native.c execute_step exactly."""
         if step.isNop:
             return
 
@@ -295,43 +433,78 @@ class WCSEngine:
         if read_pos < 0:
             read_pos += self.memory_size
 
-        if step.hasCoeff:
-            # Get multiplier input
-            if step.rai:
-                mul_input = self.memory[read_pos]
-            else:
-                mul_input = self.regs[step.rad]
+        # ── Non-coefficient steps: v4 hybrid routing ──
+        # MWR+MCEN/ combo: load accumulator from memory before writing
+        #   (I/O injection nodes — seeds acc with channel-specific energy)
+        # MCEN/ only: pure tap read → register file only
+        #   (prevents accumulator reset cascade in Plate's dense taps)
+        if not step.hasCoeff:
+            if step.ctrl == 0x1F:
+                return  # NOP
 
-            # Coefficient multiply
-            result = mul_input * coefficients[step.cCode]
+            if step.ctrl & 0x10:
+                # MWR: write register to delay memory
+                # If MCEN/ also set, capture old memory into accumulator first
+                if step.ctrl & 0x08:
+                    self.accumulator = self.memory[read_pos]
 
-            # Soft clamp (16-bit saturation)
-            result = max(-4.0, min(4.0, result))
+                write_val = max(-1.0, min(1.0, self.regs[step.wai]))
+                self.memory[read_pos] = self._q15(write_val)
+            elif step.ctrl & 0x08:
+                # MCEN/ only: pure tap read → register file only
+                self.regs[step.wai] = self.memory[read_pos]
+            return
 
-            # Accumulate or load
-            if step.acc0:
-                self.regs[step.wai] += result
-            else:
-                self.regs[step.wai] = result
+        # ── Coefficient steps: split accumulator architecture ──
+        # Hardware has separate accumulator (LS374, BCON1/) and register file
+        # (LS670, BCON3). BCON controls which receives the ALU output.
+        if step.rai:
+            mul_input = self.memory[read_pos]
+        else:
+            mul_input = self.regs[step.rad]
 
-            # Register clamp
-            self.regs[step.wai] = max(-8.0, min(8.0, self.regs[step.wai]))
+        result = mul_input * coefficients[step.cCode]
 
-        # Memory write
-        do_mem_write = (step.ctrl & 0x10) and (step.ctrl != 0x1F)
+        # OP/ (ctrl bit 2 = MI29): negate for allpass topology
+        if step.ctrl & 0x04:
+            result = -result
 
-        if do_mem_write:
-            write_val = self.regs[step.wai]
-            if write_val > 1.5 or write_val < -1.5:
-                write_val = np.tanh(write_val * 0.667) * 1.5
-            self.memory[read_pos] = write_val
-        elif not step.hasCoeff and step.ctrl != 0x1F:
-            self.regs[step.wai] = self.memory[read_pos]
+        result = self._q15(result)
+        result *= damping
+
+        # ALU operation: accumulate (ACC0=1) or load (ACC0=0)
+        if step.acc0:
+            alu_out = self.accumulator + result
+        else:
+            alu_out = result
+
+        # BCON routing — which data store receives ALU output
+        # From M200 schematics (T&C board, 74LS139):
+        #   BCON=0: Y0/ NOT routed to ARU — true no-op (compute and discard)
+        #   BCON=1,2: accumulator latch
+        #   BCON=3: register file write (AREG/)
+        bcon = step.ctrl & 0x03
+        if bcon == 3:
+            # Register file write (BCON3/AREG/ active)
+            self.regs[step.wai] = max(-4.0, min(4.0, alu_out))
+        elif bcon != 0:
+            # Accumulator latch (BCON=1,2 only)
+            self.accumulator = max(-4.0, min(4.0, alu_out))
+        # BCON=0: ALU output discarded — neither acc nor reg file updated
+
+        # Memory write (MWR): transfer register captures ALU output
+        # From M200 schematics: LS374 (U22/U23) clocked by XCLK/ = MWR/
+        # Independent of BCON — captures alu_out for delay memory write
+        if (step.ctrl & 0x10) and (step.ctrl != 0x1F):
+            write_val = max(-1.0, min(1.0, alu_out))
+            self.memory[read_pos] = self._q15(write_val)
 
     def generate_ir(self, duration_s: float, coefficients: np.ndarray,
                     rolloff_hz: float = 10000.0,
                     pre_delay_ms: float = 0.0,
-                    input_gain: float = 0.25) -> np.ndarray:
+                    input_gain: float = 0.25,
+                    inject_gain: float = 0.0,
+                    damping: float = 1.0) -> np.ndarray:
         """
         Generate a stereo impulse response.
 
@@ -341,6 +514,8 @@ class WCSEngine:
             rolloff_hz: Lowpass cutoff before reverb
             pre_delay_ms: Pre-delay in milliseconds
             input_gain: Input scaling (0.25 matches C++)
+            inject_gain: Memory injection gain (0 = disabled). At sample 0,
+                         seeds delay memory at all coefficient-step read positions.
 
         Returns:
             Stereo IR as (2, N) numpy array
@@ -349,14 +524,15 @@ class WCSEngine:
 
         # Use native C engine if available (~100x faster)
         if _native_lib is not None and pre_delay_ms == 0.0:
-            return self._generate_ir_native(n_samples, coefficients, rolloff_hz)
+            return self._generate_ir_native(n_samples, coefficients, rolloff_hz,
+                                            inject_gain=inject_gain, damping=damping)
 
         self.reset()
         output = np.zeros((2, n_samples), dtype=np.float64)
 
         coefficients = np.asarray(coefficients, dtype=np.float64)
-        assert len(coefficients) == 16
-
+        if len(coefficients) != 16:
+            raise ValueError(f"coefficients must have 16 elements, got {len(coefficients)}")
         # Rolloff filter state (one-pole LP)
         w = np.exp(-2.0 * np.pi * rolloff_hz / self.sr)
         lp_a1 = w
@@ -404,21 +580,29 @@ class WCSEngine:
             pd_l *= input_gain
             pd_r *= input_gain
 
+            # === Memory injection at sample 0 ===
+            # Fill entire delay buffer so ALL steps have immediate input energy.
+            # Simulates the "always populated" state during real hardware capture.
+            if n == 0 and inject_gain != 0.0:
+                self.memory[:] = pd_l * inject_gain
+
             # === WCS Execution ===
             captured_l = 0.0
             captured_r = 0.0
 
-            # Left half (steps 0-63)
+            # Left channel: reset accumulator per-channel
+            self.accumulator = 0.0
             self.regs[2] = pd_l
             for s in range(64):
-                self._execute_step(self.steps[s], coefficients)
+                self._execute_step(self.steps[s], coefficients, damping)
                 if s == self.output_step_l:
                     captured_l = self.regs[1]
 
-            # Right half (steps 64-127)
+            # Right channel: reset accumulator
+            self.accumulator = 0.0
             self.regs[2] = pd_r
             for s in range(64, 128):
-                self._execute_step(self.steps[s], coefficients)
+                self._execute_step(self.steps[s], coefficients, damping)
                 if s == self.output_step_r:
                     captured_r = self.regs[1]
 

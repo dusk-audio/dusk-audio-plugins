@@ -8,7 +8,7 @@ per-dimension breakdown.
 
 import numpy as np
 from dataclasses import dataclass
-from ir_analysis import IRProfile
+from ir_analysis import IRProfile, band_key_hz
 
 
 @dataclass
@@ -56,7 +56,7 @@ class ComparisonResult:
         if self.band_rt60_diffs:
             lines.append(f"  Band RT60 diffs:")
             for band, diff in sorted(self.band_rt60_diffs.items(),
-                                      key=lambda x: int(x[0].replace('Hz', ''))):
+                                      key=lambda x: band_key_hz(x[0])):
                 lines.append(f"    {band}: {diff:+.3f}s")
         return "\n".join(lines)
 
@@ -88,6 +88,9 @@ def _spectral_similarity(spec_a: np.ndarray, spec_b: np.ndarray,
     """
     if spec_a is None or spec_b is None:
         return 50.0  # neutral score if data missing
+
+    if len(spec_a) != len(freq_axis) or len(spec_b) != len(freq_axis):
+        return 50.0  # mismatched dimensions
 
     # Limit to frequency range of interest
     mask = (freq_axis >= low_hz) & (freq_axis <= high_hz)
@@ -187,13 +190,16 @@ def compare_profiles(target: IRProfile, candidate: IRProfile,
     pre_delay_score = _score_from_error(abs(pre_delay_diff), 25.0)
 
     # Stereo score
-    corr_diff = abs(candidate.stereo_correlation - target.stereo_correlation)
-    width_diff = abs(candidate.width_estimate - target.width_estimate)
-    stereo_score = (
-        _score_from_error(corr_diff, 0.25) * 0.5 +
-        _score_from_error(width_diff, 0.15) * 0.5
-    )
-
+    if (target.stereo_correlation is None or candidate.stereo_correlation is None or
+        target.width_estimate is None or candidate.width_estimate is None):
+        stereo_score = 50.0  # neutral if stereo data unavailable
+    else:
+        corr_diff = abs(candidate.stereo_correlation - target.stereo_correlation)
+        width_diff = abs(candidate.width_estimate - target.width_estimate)
+        stereo_score = (
+            _score_from_error(corr_diff, 0.25) * 0.5 +
+            _score_from_error(width_diff, 0.15) * 0.5
+        )
     # Weighted overall
     overall = (
         weights['rt60'] * rt60_score +

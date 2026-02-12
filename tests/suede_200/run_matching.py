@@ -22,10 +22,7 @@ from pathlib import Path
 from wcs_engine import ir_name_to_program, PROGRAM_NAMES, PROGRAM_MAP
 from ir_optimizer import optimize_for_target, batch_optimize, OptimizationResult
 
-IR_BASE = os.environ.get(
-    'SUEDE_IR_BASE',
-    '/Users/marckorte/Downloads/Lexicon 200 impulse set',
-)
+IR_BASE = os.environ.get('SUEDE_IR_BASE')
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), 'match_results')
 
@@ -36,6 +33,10 @@ def discover_irs(base_dir: str = IR_BASE,
     Discover all IRs in the base directory.
     Returns: list of (path, display_name, program_index)
     """
+    if base_dir is None:
+        print("Error: SUEDE_IR_BASE environment variable not set.")
+        print("  export SUEDE_IR_BASE='/path/to/Lexicon 200 impulse set'")
+        return []
     irs = []
     for f in sorted(os.listdir(base_dir)):
         if not f.endswith('.wav'):

@@ -34,10 +34,10 @@ EXCLUDE_KEYWORDS = [
 
 # Dimension weights (matching ir_compare.py defaults)
 WEIGHTS = {
+    'rt60':              0.25,
     'band_rt60':         0.25,
     'edc_shape':         0.15,
     'stereo':            0.12,
-    'rt60':              0.05,  # Note: these 0.05 weights but RT60 tolerance is 25%
     'edt':               0.05,
     'spectral_centroid':  0.05,
     'spectral_late':     0.05,
@@ -57,7 +57,7 @@ def format_band_rt60_table(target_bands: dict, velvet90_bands: dict, diffs: dict
     """Format a side-by-side band RT60 comparison table."""
     all_bands = sorted(
         set(list(target_bands.keys()) + list(velvet90_bands.keys())),
-        key=lambda b: int(b.replace('Hz', ''))
+        key=lambda b: int(b.replace('Hz', '')) if b.replace('Hz', '').isdigit() else 0
     )
     lines = ["      Band      Target    Velvet 90    Diff"]
     lines.append("      " + "-" * 42)

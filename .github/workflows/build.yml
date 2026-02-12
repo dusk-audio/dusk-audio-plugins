@@ -759,7 +759,7 @@ jobs:
             if [ "$PLUGIN_NAME" = "All Plugins" ]; then
               echo ""
               echo "### Included Plugins"
-              echo "- 4K EQ - SSL 4000 Series Console EQ Emulation"
+              echo "- 4K EQ - Classic British Console EQ Emulation"
               echo "- Multi-Comp - Multi-mode compressor with multiband"
               echo "- TapeMachine - Analog tape machine emulation"
               echo "- Velvet 90 - Algorithmic reverb"

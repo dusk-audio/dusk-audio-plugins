@@ -323,8 +323,7 @@ public:
             loadProgram(p);
     }
 
-    void setPreDelay(float ms)       { preDelayMs = ms; }
-    void setReverbTime(float seconds) { reverbTimeSec = juce::jlimit(0.6f, 70.0f, seconds); }
+    void setPreDelay(float ms)       { preDelayMs = juce::jmax(0.0f, ms); }    void setReverbTime(float seconds) { reverbTimeSec = juce::jlimit(0.6f, 70.0f, seconds); }
     void setSize(float meters)        { sizeMeters = juce::jlimit(8.0f, 90.0f, meters); }
     void setMix(float mix01)          { wetMix = juce::jlimit(0.0f, 1.0f, mix01); }
 
@@ -359,7 +358,9 @@ public:
     void setOptimizedCoefficients(const float* coeffs, int numCoeffs, float rolloffHz)
     {
         jassert(numCoeffs == 16);
-        for (int i = 0; i < 16; ++i)
+        if (numCoeffs != 16)
+            return;
+        for (int i = 0; i < numCoeffs; ++i)
             coefficients[i] = juce::jlimit(-0.998f, 0.998f, coeffs[i]);
         useOptimizedCoeffs = true;
 
@@ -462,7 +463,17 @@ public:
 
 private:
     //==============================================================================
-    // WCS step executor — the core of the Suede 200 architecture
+    /** 16-bit Q15 quantization — models the Lexicon 200's fixed-point arithmetic.
+        All multiplies and memory stores in the original hardware truncate to 16-bit
+        resolution (1 sign bit + 15 fractional bits, LSB = 1/32768). */
+    static float q15(float x)
+    {
+        return std::floor(x * 32768.0f + 0.5f) / 32768.0f;
+    }
+
+    //==============================================================================
+    // WCS step executor — the core of the Suede 200 architecture.
+    // Matches wcs_native.c::execute_step() exactly.
     void executeStep(const DecodedStep& step)
     {
         if (step.isNop) return;
@@ -486,49 +497,69 @@ private:
         int readPos = writePtr - scaledOfst;
         if (readPos < 0) readPos += memorySize;
 
-        if (step.hasCoeff)
+        // ── Non-coefficient steps: delay tap routing and I/O ──
+        // CTRL bit 4 (0x10) = MWR  (Memory Write Enable)
+        // CTRL bit 3 (0x08) = MCEN/ (Memory Clock Enable, active LOW on bus,
+        //   but bit SET in microcode = signal asserted = memory read ENABLED).
+        if (!step.hasCoeff)
         {
-            // Get multiplier input: memory (RAI=1) or register file (RAI=0)
-            float mulInput;
-            if (step.rai)
-                mulInput = memory[static_cast<size_t>(readPos)];
-            else
-                mulInput = regs[step.rad];
+            if (step.ctrl == 0x1F)
+                return; // NOP
 
-            // Coefficient multiply
-            float result = mulInput * coefficients[step.cCode];
-
-            // Soft clamp (emulates 16-bit arithmetic saturation)
-            result = juce::jlimit(-4.0f, 4.0f, result);
-
-            // Accumulate or load fresh
-            if (step.acc0)
-                regs[step.wai] += result;
-            else
-                regs[step.wai] = result;
-
-            // Clamp register to prevent unbounded growth
-            regs[step.wai] = juce::jlimit(-8.0f, 8.0f, regs[step.wai]);
+            if (step.ctrl & 0x10)
+            {
+                // MWR set: write register to delay memory (I/O injection)
+                float writeVal = juce::jlimit(-1.0f, 1.0f, regs[step.wai]);
+                memory[static_cast<size_t>(readPos)] = q15(writeVal);
+            }
+            else if (step.ctrl & 0x08)
+            {
+                // MWR=0, MCEN/ asserted (bit 3 set): memory read → register.
+                // Delay tap routing — creates early reflections and stereo.
+                regs[step.wai] = memory[static_cast<size_t>(readPos)];
+            }
+            // else: MWR=0, MCEN/ deasserted (bit 3 clear) — no memory access.
+            return;
         }
 
-        // Memory write: CTRL bit 4 set (0x10) and not the NOP pattern (0x1F)
-        bool doMemWrite = (step.ctrl & 0x10) && (step.ctrl != 0x1F);
+        // ── Coefficient steps ──
 
-        if (doMemWrite)
+        // Get multiplier input: memory (RAI=1) or register file (RAI=0)
+        float mulInput;
+        if (step.rai)
+            mulInput = memory[static_cast<size_t>(readPos)];
+        else
+            mulInput = regs[step.rad];
+
+        // Coefficient multiply
+        float result = mulInput * coefficients[step.cCode];
+
+        // OP/ (ctrl bit 2 = MI29): negate the multiply result.
+        // From Lexicon 200 schematics: MI29→OP/, MI30→MCEN/, MI31→MWR.
+        // The 74F181 ALU subtracts instead of adds when OP/ is set —
+        // essential for allpass topology: y = -g*x + delay + g*feedback
+        if (step.ctrl & 0x04)
+            result = -result;
+
+        // Q15 quantization of multiply result (16-bit fixed-point truncation)
+        result = q15(result);
+
+        // Accumulate or load fresh
+        if (step.acc0)
+            regs[step.wai] += result;
+        else
+            regs[step.wai] = result;
+
+        // Register saturation — wide headroom for intermediate accumulation
+        regs[step.wai] = juce::jlimit(-4.0f, 4.0f, regs[step.wai]);
+
+        // Memory write (MWR / ctrl bit 4): write the COEFFICIENT PRODUCT to memory,
+        // not the accumulated register sum. This ensures each delay line position
+        // decays by the coefficient value per access, giving direct RT60 control.
+        if ((step.ctrl & 0x10) && (step.ctrl != 0x1F))
         {
-            // Write current register value to delay memory
-            float writeVal = regs[step.wai];
-
-            // Soft saturation on memory write (emulates 16-bit fixed-point overflow)
-            if (writeVal > 1.5f || writeVal < -1.5f)
-                writeVal = std::tanh(writeVal * 0.667f) * 1.5f;
-
-            memory[static_cast<size_t>(readPos)] = writeVal;
-        }
-        else if (!step.hasCoeff && step.ctrl != 0x1F)
-        {
-            // No coefficient, no memory write: route memory value to register
-            regs[step.wai] = memory[static_cast<size_t>(readPos)];
+            float writeVal = juce::jlimit(-1.0f, 1.0f, result);
+            memory[static_cast<size_t>(readPos)] = q15(writeVal);
         }
     }
 

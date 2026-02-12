@@ -102,33 +102,21 @@ echo "  • Build Type: ${BUILD_TYPE}"
 echo "  • Parallel Jobs: ${NUM_JOBS}"
 echo "  • Build Directory: ${BUILD_DIR}"
 
-# Check for optional build tools
-if [ "$USE_FAST" = true ]; then
-    print_status "Checking for optimization tools..."
+# Auto-detect ccache (always used if available)
+if command_exists ccache; then
+    export CC="ccache ${CC:-cc}"
+    export CXX="ccache ${CXX:-c++}"
+    print_success "ccache detected - compilation caching enabled"
+else
+    print_warning "ccache not found - builds will be slower without caching"
+    echo "  Install: brew install ccache (macOS) / sudo apt install ccache (Linux)"
+fi
 
-    if command_exists ccache; then
-        export CC="ccache gcc"
-        export CXX="ccache g++"
-        print_success "ccache found - will use for compilation caching"
-
-        # Show ccache stats
-        echo -e "${CYAN}  Cache stats:${NC}"
-        ccache -s | grep "cache hit rate" || true
-    else
-        print_warning "ccache not found - consider installing for faster rebuilds"
-        echo "  Install with: sudo dnf install ccache"
-    fi
-
-    if command_exists ninja; then
-        CMAKE_GENERATOR="-GNinja"
-        BUILD_COMMAND="ninja"
-        print_success "ninja found - will use for faster builds"
-    else
-        CMAKE_GENERATOR=""
-        BUILD_COMMAND="make"
-        print_warning "ninja not found - using make"
-        echo "  Install with: sudo dnf install ninja-build"
-    fi
+# --fast enables ninja generator
+if [ "$USE_FAST" = true ] && command_exists ninja; then
+    CMAKE_GENERATOR="-GNinja"
+    BUILD_COMMAND="ninja"
+    print_success "ninja detected - using for faster builds"
 else
     CMAKE_GENERATOR=""
     BUILD_COMMAND="make"

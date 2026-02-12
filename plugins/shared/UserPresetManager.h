@@ -44,7 +44,10 @@ public:
         {
             auto legacyDir = getLegacyPresetDirectory();
             if (legacyDir.isDirectory())
-                legacyDir.copyDirectoryTo(dir);
+            {
+                if (!legacyDir.copyDirectoryTo(dir))
+                    return dir.createDirectory();
+            }
             else
                 return dir.createDirectory();
         }

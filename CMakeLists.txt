@@ -52,7 +52,7 @@ option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_VELVET90 "Build Velvet 90 plugin" ON)
 option(BUILD_SUEDE200 "Build Suede 200 plugin" ON)
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
-option(BUILD_NEURAL_AMP "Build Neural Amp plugin" ON)
+option(BUILD_NEURAL_AMP "Build Neural Amp plugin" OFF)  # Disabled: Eigen dependency adds significant compile time
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
 option(BUILD_CHORD_ANALYZER "Build Chord Analyzer plugin" ON)
 option(BUILD_SPECTRUM_ANALYZER "Build Spectrum Analyzer plugin" ON)
