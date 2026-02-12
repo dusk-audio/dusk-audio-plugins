@@ -26,8 +26,6 @@ juce_add_plugin(${PLUGIN_NAME}
     LV2URI "https://lunaco.audio/plugins/suede-200"
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     VST3_AUTO_MANIFEST FALSE
-    VST3_COPY_DIR "$ENV{HOME}/.vst3"
-    LV2_COPY_DIR "$ENV{HOME}/.lv2"
 )
 
 target_sources(${PLUGIN_NAME}

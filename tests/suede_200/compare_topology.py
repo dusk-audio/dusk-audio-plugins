@@ -17,8 +17,10 @@ RECORDS = {
 # Extract MI24-31 bytes (operation/routing control) for each program
 mi24_31 = {}
 for prog, (rom, off) in RECORDS.items():
-    mi24_31[prog] = rom[off + 0x133 : off + 0x133 + 128]
-
+    data = rom[off + 0x133 : off + 0x133 + 128]
+    if len(data) != 128:
+        raise ValueError(f"Program {prog}: expected 128 bytes at offset 0x{off + 0x133:X}, got {len(data)}")
+    mi24_31[prog] = data
 print("MI24-31 topology comparison (operation bytes only):")
 print("=" * 60)
 for p1 in range(1, 7):

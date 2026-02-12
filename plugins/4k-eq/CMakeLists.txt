@@ -103,7 +103,7 @@ target_link_libraries(FourKEQ
         juce::juce_gui_extra
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
+        # juce::juce_recommended_lto_flags  # Disabled locally - CI release builds enable LTO
         juce::juce_recommended_warning_flags
 )
 

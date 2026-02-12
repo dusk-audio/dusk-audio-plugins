@@ -1491,12 +1491,18 @@ public:
 private:
     float computeEnvelope() const
     {
+        // Reverse/Swell: exponential curves match PCM 90 better than linear.
+        // Gate/Ducked: linear release matches PCM 90's digital gate behavior.
+        constexpr float kBuild = 4.0f;   // reaches ~98% at end of hold
+        constexpr float kDecay = 5.0f;   // -43 dB at end of release
+
         switch (mode)
         {
             case Mode::Off:
                 return 1.0f;
 
             case Mode::Gate:
+                // Hold at full level, then linear decay (PCM 90 digital gate)
                 if (sampleCounter < holdSamples)
                     return 1.0f;
                 else
@@ -1506,34 +1512,37 @@ private:
                 }
 
             case Mode::Reverse:
-                if (sampleCounter < holdSamples)
-                    return static_cast<float>(sampleCounter) / static_cast<float>(holdSamples);
-                else
-                {
-                    int rel = sampleCounter - holdSamples;
-                    return (rel < releaseSamples) ? 1.0f - static_cast<float>(rel) / static_cast<float>(releaseSamples) : 0.0f;
-                }
-
-            case Mode::Swell:
+                // Exponential build (time-reversed decay), then exponential release
                 if (sampleCounter < holdSamples)
                 {
                     float t = static_cast<float>(sampleCounter) / static_cast<float>(holdSamples);
-                    return t * t;  // quadratic rise
+                    return 1.0f - std::exp(-kBuild * t);
+                }
+                else
+                {
+                    float peak = 1.0f - std::exp(-kBuild);  // ~0.982
+                    float t = static_cast<float>(sampleCounter - holdSamples) / static_cast<float>(releaseSamples);
+                    return (t < 1.0f) ? peak * std::exp(-kDecay * t) : 0.0f;
+                }
+
+            case Mode::Swell:
+                // Slow exponential rise (squared for more gradual onset)
+                if (sampleCounter < holdSamples)
+                {
+                    float t = static_cast<float>(sampleCounter) / static_cast<float>(holdSamples);
+                    float rise = 1.0f - std::exp(-3.0f * t);
+                    return rise * rise;  // squared exponential for gentle build
                 }
                 return 1.0f;
 
             case Mode::Ducked:
+                // Hold at full level, then linear fadeout (matches Gate behavior)
                 if (sampleCounter < holdSamples)
                     return 1.0f;
                 else
                 {
                     int rel = sampleCounter - holdSamples;
-                    if (rel < releaseSamples)
-                    {
-                        float fade = static_cast<float>(rel) / static_cast<float>(releaseSamples);
-                        return 1.0f - fade;
-                    }
-                    return 0.0f;
+                    return (rel < releaseSamples) ? 1.0f - static_cast<float>(rel) / static_cast<float>(releaseSamples) : 0.0f;
                 }
 
             default:

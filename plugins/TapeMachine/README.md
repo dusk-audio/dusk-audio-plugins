@@ -2,13 +2,13 @@
 
 **Professional analog tape emulation for your DAW**
 
-TapeMachine brings the warmth, saturation, and character of classic reel-to-reel tape machines to your productions. Calibrated against real Studer A800 and Ampex ATR-102 hardware measurements, it delivers authentic tape sound from subtle warmth to full saturation.
+TapeMachine brings the warmth, saturation, and character of classic reel-to-reel tape machines to your productions. Calibrated against real vintage hardware measurements, it delivers authentic tape sound from subtle warmth to full saturation.
 
 ## Features
 
 ### Two Classic Machines
-- **Swiss800** (Studer A800 MkIII): Clean, punchy, transformerless design with tight low end and extended highs. The studio workhorse.
-- **Classic102** (Ampex ATR-102): Rich transformer coloration with pronounced head bump and vintage character. The mastering legend.
+- **Swiss800**: Clean, punchy, transformerless design with tight low end and extended highs. The studio workhorse.
+- **Classic102**: Rich transformer coloration with pronounced head bump and vintage character. The mastering classic.
 
 ### Four Tape Formulations
 - **Type 456**: Warm and punchy — perfect for rock, pop, and mix bus
@@ -95,15 +95,15 @@ For those interested in what's under the hood:
 The core uses the **Langevin function** from magnetic hysteresis theory, providing physically-accurate odd-harmonic distortion. Even harmonics come from transformer asymmetry modeling (Classic102 only).
 
 - 3-band processing at 200Hz and 5kHz crossovers
-- Calibrated to match published Studer/Ampex THD measurements
+- Calibrated to match published vintage hardware THD measurements
 - Pade [2,2] approximation for CPU efficiency
 
 ### Harmonic Targets (calibrated against real hardware)
 
 | Machine | H2 | H3 | THD @ 0VU |
 |---------|-----|-----|-----------|
-| Swiss800 (Studer) | negligible | -50 to -54dB | ~0.3% |
-| Classic102 (Ampex) | -52 to -58dB | -46 to -50dB | ~0.5% |
+| Swiss800 | negligible | -50 to -54dB | ~0.3% |
+| Classic102 | -52 to -58dB | -46 to -50dB | ~0.5% |
 
 ### EQ Standards
 

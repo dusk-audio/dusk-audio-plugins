@@ -7,11 +7,16 @@ for all available IR files, based on the PCM 90 preset documentation.
 """
 
 import os
+import sys
 
-PCM90_IR_BASE = os.environ.get(
-    'PCM90_IR_BASE',
-    '/Users/marckorte/Downloads/PCM 90 Impulse Set',
-)
+PCM90_IR_BASE = os.environ.get('PCM90_IR_BASE')
+
+def _require_pcm90_base():
+    if PCM90_IR_BASE is None:
+        print("Error: PCM90_IR_BASE environment variable not set.")
+        print("Set it to the path containing PCM 90 impulse responses.")
+        sys.exit(1)
+    return PCM90_IR_BASE
 
 # Velvet 90 mode indices (matching FDNReverb.h enum)
 MODE_PLATE = 0
@@ -55,7 +60,7 @@ HALLS_MAP = {
     'Vocal Magic (588)':     ('Vocal Magic',      'Halls', MODE_HALL,       'Lovely reverb with short decay'),
     'Wide Vox (590)':        ('Wide Vox',         'Halls', MODE_HALL,       'Close delays double the source, wide'),
     'Slap Hall (582)':       ('Slap Hall',        'Halls', MODE_ROOM,      'Slap initial double tap, dark'),
-    # Live Sound
+    'Tight Space (687)':     ('Tight Space',      'Rooms', MODE_ROOM,      'Vibrancy and attitude with a gated feel'),
     'Live Arena (591)':      ('Live Arena',       'Halls', MODE_HALL,       'Very large hall, moderate decay'),
     'Real Hall (587)':       ('Real Hall',        'Halls', MODE_HALL,       'Small, bright sounding hall'),
     'Great Hall (593)':      ('Great Hall',       'Halls', MODE_HALL,       'Great hall reverb, works with all material'),
@@ -283,7 +288,7 @@ def get_all_ir_mappings() -> list[dict]:
 
     results = []
     for pcm90_bank, mapping in all_maps:
-        ir_dir = os.path.join(PCM90_IR_BASE, pcm90_bank)
+        ir_dir = os.path.join(_require_pcm90_base(), pcm90_bank)
         if not os.path.isdir(ir_dir):
             continue
 

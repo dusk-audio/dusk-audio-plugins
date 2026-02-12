@@ -41,10 +41,14 @@ from velvet90_capture import (
 )
 from parameter_optimizer import optimize_for_target, batch_optimize
 
-PCM90_IR_BASE = os.environ.get(
-    'PCM90_IR_BASE',
-    '/Users/marckorte/Downloads/PCM 90 Impulse Set',
-)
+PCM90_IR_BASE = os.environ.get('PCM90_IR_BASE')
+
+def _require_pcm90_base():
+    if PCM90_IR_BASE is None:
+        print("Error: PCM90_IR_BASE environment variable not set.")
+        print("Set it to the path containing PCM 90 impulse responses.")
+        sys.exit(1)
+    return PCM90_IR_BASE
 
 
 def get_representative_irs() -> list[tuple[str, str, str]]:
@@ -75,7 +79,7 @@ def get_representative_irs() -> list[tuple[str, str, str]]:
     result = []
     for category, files in picks.items():
         for f in files:
-            path = os.path.join(PCM90_IR_BASE, category, f)
+            path = os.path.join(_require_pcm90_base(), category, f)
             name = f.replace('pcm 90, ', '').replace('_dc.wav', '')
             result.append((path, name, category))
     return result
@@ -96,6 +100,8 @@ def cmd_compare(args):
     target_name = os.path.splitext(os.path.basename(args.ir_path))[0]
     sr = 48000
 
+    if target_data.ndim == 1:
+        target_data = target_data.reshape(1, -1)
     if target_sr != sr:
         from scipy.signal import resample
         n_new = int(target_data.shape[1] * sr / target_sr)
@@ -203,6 +209,8 @@ def cmd_plot(args):
     target_name = os.path.splitext(os.path.basename(args.ir_path))[0]
     sr = 48000
 
+    if target_data.ndim == 1:
+        target_data = target_data.reshape(1, -1)
     if target_sr != sr:
         from scipy.signal import resample
         n_new = int(target_data.shape[1] * sr / target_sr)
@@ -293,8 +301,13 @@ def cmd_plot(args):
 
     # 6. Band RT60 comparison
     ax = axes[1, 2]
+    def _band_sort_key(x):
+        try:
+            return int(x.replace('Hz', '').replace('k', '000'))
+        except ValueError:
+            return 0
     bands = sorted(set(target_profile.band_rt60.keys()) & set(velvet_profile.band_rt60.keys()),
-                   key=lambda x: int(x.replace('Hz', '')))
+                   key=_band_sort_key)
     if bands:
         x_pos = np.arange(len(bands))
         t_vals = [target_profile.band_rt60[b] for b in bands]
@@ -325,7 +338,7 @@ def cmd_report(args):
     matplotlib.use('Agg')
 
     category = args.category
-    ir_dir = os.path.join(PCM90_IR_BASE, category)
+    ir_dir = os.path.join(_require_pcm90_base(), category)
 
     if not os.path.isdir(ir_dir):
         print(f"Error: directory not found: {ir_dir}")

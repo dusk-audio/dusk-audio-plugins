@@ -45,9 +45,12 @@ from pcm90_ir_mapping import get_all_ir_mappings, MODE_NAMES
 
 def safe_filename(name: str) -> str:
     """Convert preset name to a safe filename."""
-    return (name.replace(' ', '_').replace("'", '').replace('/', '_')
-            .replace('?', '').replace('#', '').replace('"', ''))
-
+    # Replace characters invalid on Windows/Unix filesystems
+    unsafe = ' \'"/?#\\:*<>|'
+    result = name
+    for char in unsafe:
+        result = result.replace(char, '_' if char in ' /' else '')
+    return result
 
 def optimize_single(args_tuple):
     """
@@ -78,9 +81,8 @@ def optimize_single(args_tuple):
                 print(f"[{worker}] [{index}/{total}] SKIP {preset_name} "
                       f"(score={existing['score']:.1f})", flush=True)
                 return {'skipped': True, **existing}
-        except (json.JSONDecodeError, KeyError):
+        except json.JSONDecodeError:
             pass  # Re-run if corrupt
-
     # Load warm-start params from previous results if available
     warm_start_params = None
     if warm_start_dir:
@@ -89,8 +91,7 @@ def optimize_single(args_tuple):
             try:
                 with open(ws_file) as f:
                     ws_data = json.load(f)
-                if 'params' in ws_data:
-                    warm_start_params = ws_data['params']
+                warm_start_params = ws_data.get('params')
             except (json.JSONDecodeError, KeyError):
                 pass
 

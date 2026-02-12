@@ -5,7 +5,7 @@
 
     "modes": {
         "FET": {
-            "description": "Vintage FET-style compression (1176 Bluestripe inspired)",
+            "description": "Vintage FET-style compression",
             "thd_spec": "< 0.5%",
             "thd_measurements": [
                 {"input_db": -18, "expected_thd_percent": 0.30, "tolerance": 0.15},
@@ -39,7 +39,7 @@
             }
         },
         "Opto": {
-            "description": "Vintage optical compression (LA-2A inspired)",
+            "description": "Vintage optical compression",
             "thd_spec": "< 1.0%",
             "attack_times_ms": {
                 "typical": 10,
@@ -51,7 +51,7 @@
             }
         },
         "VCA": {
-            "description": "Classic VCA compression (DBX 160 inspired)",
+            "description": "Classic VCA compression",
             "thd_spec": "< 0.2%",
             "attack_times_ms": {
                 "fastest": 0.1,
@@ -63,18 +63,18 @@
             }
         },
         "Bus": {
-            "description": "Vintage VCA Bus compression (SSL G-Series inspired)",
+            "description": "Vintage VCA bus compression",
             "thd_spec": "< 0.3%",
             "attack_options_ms": [0.1, 0.3, 1, 3, 10, 30],
             "release_options_sec": [0.1, 0.3, 0.6, 1.2, "auto"]
         },
         "StudioFET": {
-            "description": "Studio FET compression (1176 Rev E Blackface inspired)",
+            "description": "Studio FET compression",
             "thd_spec": "< 0.2%",
             "notes": "30% less harmonics than Vintage FET"
         },
         "StudioVCA": {
-            "description": "Modern VCA compression (Focusrite Red 3 inspired)",
+            "description": "Modern VCA compression",
             "thd_spec": "< 0.1%",
             "notes": "RMS detection with soft knee"
         },

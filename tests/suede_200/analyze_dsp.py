@@ -79,10 +79,10 @@ def extract_microcode(rom4, rom5, prog_num):
             "mi7_0": mi7_0,
             # Decoded fields
             "ofst": mi7_0 | (mi15_8 << 8),
-            "c_code": ((mi23_16 >> 0) & 1) |      # C8 → bit 3
+            "c_code": (((mi23_16 >> 0) & 1) << 3) |  # C8 → bit 3
                       (((mi23_16 >> 3) & 1) << 2) |  # C3 → bit 2
                       (((mi23_16 >> 2) & 1) << 1) |  # C2 → bit 1
-                      (((mi23_16 >> 1) & 1) << 0),    # C1 → bit 0 -- wait this is wrong
+                      ((mi23_16 >> 1) & 1),          # C1 → bit 0
             "c8": (mi23_16 >> 0) & 1,
             "c1": (mi23_16 >> 1) & 1,
             "c2": (mi23_16 >> 2) & 1,
@@ -121,6 +121,9 @@ def analyze_delay_structure(steps, prog_num):
             offsets.append((i, s["ofst"]))
 
     unique_offsets = sorted(set(o for _, o in offsets))
+    if not unique_offsets:
+        print(f"\n  No valid memory offsets found (all NOP or filtered)")
+        return unique_offsets
     print(f"\n  Unique memory offsets: {len(unique_offsets)}")
     print(f"  Offset range: 0x{min(unique_offsets):04X} - 0x{max(unique_offsets):04X}")
     print(f"  Time range: {offset_to_ms(min(unique_offsets)):.1f} ms - "

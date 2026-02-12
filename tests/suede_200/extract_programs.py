@@ -152,6 +152,8 @@ def extract_program_record(roms, prog_num):
 
 def parse_header(record):
     """Parse the 51-byte header of a program record."""
+    if len(record) < HEADER_OFFSET + HEADER_SIZE:
+        return None
     header = {}
     header["id_byte"] = record[0]
     header["raw"] = record[HEADER_OFFSET:HEADER_OFFSET + HEADER_SIZE]
@@ -163,10 +165,7 @@ def parse_header(record):
     # Try to identify sub-sections within the header
     header["config_flags"] = record[1:4]
 
-    # Delay parameter table region (from previous analysis: offset 0x34-0x50)
-    # But within a 51-byte header (0x00-0x32), this is offset 0x34 relative to
-    # record start, which is actually byte 52 — just past the header.
-    # Let me re-examine: the header might be smaller.
+    # TODO: map remaining header fields (delay params at offset 0x34+ may be past header boundary)
 
     return header
 
@@ -463,6 +462,9 @@ def main():
 
         # Parse header
         header = parse_header(record)
+        if header is None:
+            print(f"\n  Record too short for header ({len(record)} bytes), skipping")
+            continue
         print(f"\n  Header (first 51 bytes):")
         print(f"    ID byte: 0x{header['id_byte']:02X}")
         print(f"    Config:  {' '.join(f'{b:02X}' for b in header['config_flags'])}")

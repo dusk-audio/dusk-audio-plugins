@@ -5,11 +5,22 @@ Provides: RT60 measurement, spectral decay analysis, energy-time curve (ETC),
 pre-delay detection, spectral centroid tracking, and frequency-band energy profiles.
 """
 
+import re
+
 import numpy as np
 from scipy import signal
 from scipy.fft import rfft, rfftfreq
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+def band_key_hz(key: str) -> int:
+    """Parse a band key like '1000Hz', '1kHz', or '1000' into an integer Hz value."""
+    m = re.match(r'(\d+)\s*(k?)\s*Hz?', key, re.IGNORECASE)
+    if m:
+        value = int(m.group(1))
+        return value * 1000 if m.group(2).lower() == 'k' else value
+    return 0
 
 
 @dataclass
@@ -304,7 +315,7 @@ def profile_summary(p: IRProfile) -> str:
         f"  Stereo correlation: {p.stereo_correlation:.3f} | Width: {p.width_estimate:.3f}",
         f"  Band RT60:",
     ]
-    for band, rt in sorted(p.band_rt60.items(), key=lambda x: int(x[0].replace('Hz', ''))):
+    for band, rt in sorted(p.band_rt60.items(), key=lambda x: band_key_hz(x[0])):
         lines.append(f"    {band}: {rt:.3f}s")
 
     if len(p.spectral_centroid_hz) > 0:

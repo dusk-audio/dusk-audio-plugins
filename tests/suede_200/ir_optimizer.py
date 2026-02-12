@@ -3,20 +3,23 @@
 Coefficient Optimizer — Find the 16 WCS coefficients that best match a target IR.
 
 The WCS topology is fixed from ROM. Only the 16 coefficient values (C-codes 0x0–0xF)
-are free variables. This is a 16-dimensional continuous optimization problem —
-much cleaner than the 41-parameter Velvet90 matching.
+are free variables. This is a 16+2 dimensional continuous optimization problem:
+  16 coefficients + rolloff_hz + damping = 18 parameters.
+
+Uses ESS (Exponential Sine Sweep) deconvolution for IR generation instead of
+cold-start, avoiding the 3.2-second buffer revolution pre-delay issue.
 
 Strategy:
   1. Start from hand-tuned baseline coefficients (from C++ updateCoefficients)
-  2. Differential evolution for global search (robust for 16D)
+  2. Differential evolution for global search (robust for 18D)
   3. Nelder-Mead polish
   4. Coordinate descent refinement
 
 Performance notes:
-  - popsize=8 gives population of 8*17=136 (not 510 with popsize=30!)
+  - popsize=8 gives population of 8*18=144 per generation
   - scipy DE popsize is multiplied by parameter count
   - Matching at 22050Hz halves IR generation cost with negligible quality loss
-  - Each IR takes ~2-5 min depending on CPU load
+  - Each ESS IR takes ~0.2s with the native C engine
 """
 
 import os
@@ -42,6 +45,7 @@ class OptimizationResult:
     program_name: str
     best_coefficients: np.ndarray
     best_rolloff_hz: float
+    best_damping: float
     best_score: float
     comparison: object  # ComparisonResult
     elapsed_s: float
@@ -51,6 +55,7 @@ class OptimizationResult:
             f"=== {self.target_name} (Program: {self.program_name}) ===",
             f"  Score: {self.best_score:.1f}/100  ({self.elapsed_s:.1f}s)",
             f"  Rolloff: {self.best_rolloff_hz:.0f} Hz",
+            f"  Damping: {self.best_damping:.4f}",
             f"  Coefficients:",
         ]
         for i in range(16):
@@ -64,37 +69,31 @@ class OptimizationResult:
             'program_name': self.program_name,
             'score': self.best_score,
             'rolloff_hz': self.best_rolloff_hz,
+            'damping': self.best_damping,
             'coefficients': self.best_coefficients.tolist(),
         }
 
 
-# Coefficient bounds: most are in [-1, 1] range but feedback can be higher
-COEFF_BOUNDS = [
-    (-0.99, 0.99),  # C0: structural
-    (-0.99, 0.99),  # C1: diffusion A
-    (-0.99, 0.99),  # C2: diffusion B
-    ( 0.10, 0.99),  # C3: main feedback (must be positive for reverb)
-    (-0.99, 0.99),  # C4: auxiliary
-    (-0.99, 0.99),  # C5: structural tap
-    ( 0.10, 0.99),  # C6: secondary feedback
-    (-0.99, 0.99),  # C7: allpass diffusion
-    (-0.99, 0.99),  # C8: size-dependent
-    (-0.99, 0.99),  # C9: HF decay
-    ( 0.10, 0.99),  # CA: decay variant
-    (-0.99, 0.99),  # CB: LF decay
-    (-0.99, 0.99),  # CC: cross-coupling
-    (-0.99, 0.99),  # CD: pre-echo/damping
-    (-0.99, 0.99),  # CE: output stage
-    (-0.99, 0.99),  # CF: reserved
-]
+# Coefficient bounds: [-0.99, 0.99] — the engine uses Q15 quantization
+COEFF_BOUNDS = [(-0.99, 0.99)] * 16
 
 # Rolloff frequency bound (appended as 17th parameter)
 ROLLOFF_BOUNDS = (2000.0, 12000.0)
 
-# All bounds for optimizer (16 coefficients + rolloff)
-ALL_BOUNDS = COEFF_BOUNDS + [ROLLOFF_BOUNDS]
+# Damping factor bound (appended as 18th parameter)
+# Models per-step energy loss from undecoded CTRL bits and 16-bit truncation
+DAMPING_BOUNDS = (0.80, 1.00)
 
-# Baseline coefficients from C++ (RT=2.5s, Size=26m, Diff=Med defaults)
+# All bounds for optimizer (16 coefficients + rolloff + damping = 18 params)
+ALL_BOUNDS = COEFF_BOUNDS + [ROLLOFF_BOUNDS] + [DAMPING_BOUNDS]
+
+# Parameter layout:
+#   [0:16]  = 16 WCS coefficients
+#   [16]    = rolloff Hz
+#   [17]    = damping factor [0.80, 1.00]
+N_PARAMS = len(ALL_BOUNDS)  # 18
+
+# Baseline coefficients (starting point for optimization)
 BASELINE_COEFFICIENTS = np.array([
     0.45, 0.47, 0.50, 0.75,   # C0-C3
     0.35, 0.50, 0.71, 0.55,   # C4-C7
@@ -102,32 +101,51 @@ BASELINE_COEFFICIENTS = np.array([
     0.35, 0.15, 0.70, 0.39,   # CC-CF
 ])
 
+# ESS sweep parameters
+ESS_SWEEP_DURATION = 4.0   # Sweep length in seconds
+ESS_SWEEP_LEVEL = 0.01     # Very low to avoid saturation artifacts in deconvolution
+
 # Default optimization settings
-DEFAULT_POPSIZE = 8       # Population = popsize * 17 = 136 per generation
+DEFAULT_POPSIZE = 8       # Population = popsize * 18 = 144 per generation
 DEFAULT_MAX_ITER = 50     # DE generations
-DEFAULT_MATCH_SR = 22050  # Half rate for 2.5x faster IR generation
+DEFAULT_MATCH_SR = 22050  # Half rate for faster IR generation
 
 
 def _generate_and_compare(params: np.ndarray, engine: WCSEngine,
                            target_profile: IRProfile,
                            duration_s: float) -> float:
-    """Cost function: generate IR with given coefficients, compare to target."""
+    """Cost function: generate IR via ESS deconvolution, compare to target."""
     coefficients = np.clip(params[:16], -0.998, 0.998)
     rolloff_hz = np.clip(params[16], 2000, 12000)
+    damping = np.clip(params[17], 0.80, 1.00) if len(params) > 17 else 1.0
 
-    ir = engine.generate_ir(
-        duration_s=duration_s,
-        coefficients=coefficients,
-        rolloff_hz=rolloff_hz,
-        pre_delay_ms=0.0,
-    )
+    try:
+        ir = engine.generate_ir_ess(
+            duration_s=duration_s,
+            coefficients=coefficients,
+            rolloff_hz=rolloff_hz,
+            sweep_duration_s=ESS_SWEEP_DURATION,
+            sweep_level=ESS_SWEEP_LEVEL,
+            damping=float(damping),
+        )
+    except Exception:
+        return 0.0
 
     # Check for silent or exploding output
     peak = np.max(np.abs(ir))
     if peak < 1e-6:
-        return 0.0  # worst score for silence
-    if peak > 100.0 or np.any(np.isnan(ir)):
-        return 0.0  # worst score for blowup
+        return 0.0  # silent
+    if peak > 200.0 or np.any(np.isnan(ir)):
+        return 0.0  # blowup
+
+    # Stability check: reject solutions with growing energy (positive feedback)
+    # For a stable reverb, the tail energy must be decaying, not growing.
+    n = ir.shape[1]
+    q3_start, q4_start = 2 * n // 4, 3 * n // 4
+    e_q3 = np.mean(ir[0, q3_start:q4_start] ** 2)
+    e_q4 = np.mean(ir[0, q4_start:] ** 2)
+    if e_q4 > e_q3 * 1.1:
+        return 0.0  # energy growing in tail — unstable coefficients
 
     # Normalize
     ir = ir / peak
@@ -186,10 +204,12 @@ def optimize_for_target(target_path: str,
         target_data = target_data / peak
 
     target_profile = analyze_ir(target_data, sr, name=target_name)
-    # Match duration: RT60 * 1.2 is sufficient (captures tail shape)
-    duration_s = min(target_profile.rt60 * 1.2 if target_profile.rt60 > 0
-                     else target_profile.duration_s, 6.0)
-    duration_s = max(duration_s, 1.5)  # minimum 1.5s
+    # Match duration: must be long enough for full decay analysis.
+    # RT60 * 3.0 ensures the EDC crosses -60dB for proper T30/T20/EDT measurement.
+    # Too-short durations cause spurious RT60 matches (engine barely decays).
+    duration_s = min(max(target_profile.rt60 * 3.0, 3.0) if target_profile.rt60 > 0
+                     else target_profile.duration_s, 8.0)
+    duration_s = max(duration_s, 3.0)  # minimum 3.0s for meaningful decay
 
     total_pop = popsize * len(ALL_BOUNDS)
 
@@ -199,6 +219,7 @@ def optimize_for_target(target_path: str,
         print(profile_summary(target_profile))
         print(f"Match SR: {sr}Hz | IR duration: {duration_s:.1f}s | "
               f"DE pop: {total_pop} | max_iter: {max_de_iterations}")
+        print(f"Params: 16 coefficients + 1 rolloff + 1 damping = {N_PARAMS}")
         print(f"{'='*60}\n")
 
     # Create engine
@@ -207,11 +228,19 @@ def optimize_for_target(target_path: str,
     # --- Phase 1: Evaluate baseline ---
     if warm_start is not None:
         x0 = np.array(warm_start, dtype=np.float64)
+        # Handle old format warm starts
+        if len(x0) < N_PARAMS:
+            # Pad with defaults (rolloff=10000, damping=0.95)
+            defaults = [10000.0, 0.95]
+            x0 = np.concatenate([x0, defaults[len(x0)-16:]])
+        elif len(x0) > N_PARAMS:
+            x0 = x0[:N_PARAMS]
         # Clip warm start to bounds to prevent DE rejection
         for i, (lo, hi) in enumerate(ALL_BOUNDS):
-            x0[i] = np.clip(x0[i], lo, hi)
+            if i < len(x0):
+                x0[i] = np.clip(x0[i], lo, hi)
     else:
-        x0 = np.append(BASELINE_COEFFICIENTS.copy(), 10000.0)
+        x0 = np.concatenate([BASELINE_COEFFICIENTS.copy(), [10000.0], [0.95]])
 
     baseline_score = _generate_and_compare(x0, engine, target_profile, duration_s)
 
@@ -309,7 +338,7 @@ def optimize_for_target(target_path: str,
 
     for param_round in range(2):
         improved = False
-        for i in range(17):
+        for i in range(N_PARAMS):
             lo, hi = ALL_BOUNDS[i]
             current = best_x[i]
 
@@ -336,10 +365,16 @@ def optimize_for_target(target_path: str,
     # --- Final evaluation ---
     final_coeffs = np.clip(best_x[:16], -0.998, 0.998)
     final_rolloff = np.clip(best_x[16], 2000, 12000)
+    final_damping = np.clip(best_x[17], 0.80, 1.00) if len(best_x) > 17 else 0.95
 
-    ir_final = engine.generate_ir(duration_s=duration_s,
-                                  coefficients=final_coeffs,
-                                  rolloff_hz=final_rolloff)
+    ir_final = engine.generate_ir_ess(
+        duration_s=duration_s,
+        coefficients=final_coeffs,
+        rolloff_hz=final_rolloff,
+        sweep_duration_s=ESS_SWEEP_DURATION,
+        sweep_level=ESS_SWEEP_LEVEL,
+        damping=float(final_damping),
+    )
     peak = np.max(np.abs(ir_final))
     if peak > 0:
         ir_final = ir_final / peak
@@ -358,6 +393,7 @@ def optimize_for_target(target_path: str,
         program_name=PROGRAM_NAMES[program],
         best_coefficients=final_coeffs,
         best_rolloff_hz=final_rolloff,
+        best_damping=float(final_damping),
         best_score=final_comparison.overall_score,
         comparison=final_comparison,
         elapsed_s=elapsed,
@@ -400,8 +436,11 @@ def batch_optimize(ir_infos: list[tuple[str, str, int]],
         results.append(result)
 
         # Save for warm-starting next IR of same program
-        prev_coeffs[program] = np.append(result.best_coefficients,
-                                         result.best_rolloff_hz)
+        prev_coeffs[program] = np.concatenate([
+            result.best_coefficients,
+            [result.best_rolloff_hz],
+            [result.best_damping],
+        ])
 
     return results
 
@@ -425,6 +464,10 @@ if __name__ == '__main__':
     program = args.program
     if program is None:
         program = ir_name_to_program(os.path.basename(args.ir_path))
+    if program is None:
+        parser.error("Could not auto-detect program from filename. Use --program to specify.")
+    if not (0 <= program <= 5):
+        parser.error(f"Program must be 0-5, got {program}")
 
     result = optimize_for_target(args.ir_path, program, name,
                                  sr=args.sr, popsize=args.popsize,

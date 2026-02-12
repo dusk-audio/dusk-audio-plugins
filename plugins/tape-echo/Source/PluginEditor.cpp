@@ -133,7 +133,7 @@ void TapeEchoEditor::paint(juce::Graphics& g)
     // Title - scale font and positions for consistent sizing
     g.setColour(TapeEchoLookAndFeel::textColor);
     g.setFont(juce::FontOptions(14.0f * scale).withStyle("Bold"));
-    g.drawText("LUNA CO. AUDIO", scaled(15), scaled(10), scaled(150), scaled(25), juce::Justification::centredLeft, true);
+    g.drawText("DUSK AUDIO", scaled(15), scaled(10), scaled(150), scaled(25), juce::Justification::centredLeft, true);
 
     g.setFont(juce::FontOptions(18.0f * scale).withStyle("Bold"));
     g.drawText("TAPE ECHO", getWidth() - scaled(165), scaled(10), scaled(150), scaled(25), juce::Justification::centredRight, true);

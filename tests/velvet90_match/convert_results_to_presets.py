@@ -63,13 +63,15 @@ def size_string_to_normalized(size_str: str) -> float:
     JUCE formula: seconds = 0.3 + value^1.5 * 9.7
     Inverse: value = ((seconds - 0.3) / 9.7)^(1/1.5)
     """
-    seconds = float(size_str.replace('s', ''))
+    try:
+        seconds = float(size_str.replace('s', ''))
+    except (ValueError, AttributeError):
+        return 0.5  # default mid-range
     if seconds <= 0.3:
         return 0.0
     if seconds >= 10.0:
         return 1.0
     return math.pow((seconds - 0.3) / 9.7, 1.0 / 1.5)
-
 
 def er_late_to_normalized(er_late: str) -> float:
     """Convert ER/Late string to normalized 0-1 value.
@@ -96,7 +98,15 @@ def params_to_preset(result: dict) -> dict:
     JUCE 0-1 range params as 0-100 (percentage via display string).
     This function converts back to the Preset struct's native ranges.
     """
+    if 'params' not in result or 'target_name' not in result:
+        raise ValueError(f"Malformed result: missing 'params' or 'target_name' key")
     p = result['params']
+    required_keys = ['mode', 'color', 'size', 'damping', 'pre_delay_ms', 'mod_rate_hz',
+                     'mod_depth', 'width', 'early_diff', 'late_diff', 'bass_mult_x',
+                     'bass_freq_hz', 'low_cut_hz', 'high_cut_hz', 'room_size', 'hf_decay_x']
+    missing = [k for k in required_keys if k not in p]
+    if missing:
+        raise ValueError(f"Preset '{result['target_name']}': missing required params: {missing}")
     category = result.get('category', 'Halls')
 
     return {
