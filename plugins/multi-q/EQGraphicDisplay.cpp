@@ -12,8 +12,8 @@ EQGraphicDisplay::EQGraphicDisplay(MultiQ& proc)
     analyzer->setFillColor(juce::Colour(0x3055999a));   // ~19% fill (more subtle)
     analyzer->setLineColor(juce::Colour(0x6077aaaa));   // ~38% line (reduced)
 
-    // Start timer for UI updates
-    startTimerHz(30);
+    // Start timer for UI updates (60 Hz for smooth drag responsiveness)
+    startTimerHz(60);
 }
 
 EQGraphicDisplay::~EQGraphicDisplay()
@@ -24,54 +24,120 @@ EQGraphicDisplay::~EQGraphicDisplay()
 //==============================================================================
 void EQGraphicDisplay::timerCallback()
 {
-    // Update analyzer data
+    // Update analyzer data (child component repaints itself)
     if (processor.isAnalyzerDataReady())
     {
         analyzer->updateMagnitudes(processor.getAnalyzerMagnitudes());
         processor.clearAnalyzerDataReady();
     }
 
-    repaint();
+    // Smart repaint: only repaint when parameters actually changed
+    bool needsRepaint = false;
+
+    for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
+    {
+        float freq = getBandFrequency(i);
+        float gain = getBandGain(i);
+        float q = getBandQ(i);
+        bool enabled = isBandEnabled(i);
+
+        if (freq != lastBandFreqs[static_cast<size_t>(i)] ||
+            gain != lastBandGains[static_cast<size_t>(i)] ||
+            q != lastBandQs[static_cast<size_t>(i)] ||
+            enabled != lastBandEnabled[static_cast<size_t>(i)])
+        {
+            lastBandFreqs[static_cast<size_t>(i)] = freq;
+            lastBandGains[static_cast<size_t>(i)] = gain;
+            lastBandQs[static_cast<size_t>(i)] = q;
+            lastBandEnabled[static_cast<size_t>(i)] = enabled;
+            needsRepaint = true;
+        }
+
+        // Update smoothed dynamic gains
+        if (processor.isInDynamicMode() && processor.isDynamicsEnabled(i))
+        {
+            float target = processor.getDynamicGain(i);
+            constexpr float kSmoothCoeff = 0.85f;
+            float prev = smoothedDynamicGains[static_cast<size_t>(i)];
+            float smoothed = kSmoothCoeff * prev + (1.0f - kSmoothCoeff) * target;
+            smoothedDynamicGains[static_cast<size_t>(i)] = smoothed;
+
+            if (std::abs(smoothed - prev) > 0.1f)
+                needsRepaint = true;
+        }
+        else
+        {
+            if (smoothedDynamicGains[static_cast<size_t>(i)] != 0.0f)
+            {
+                smoothedDynamicGains[static_cast<size_t>(i)] = 0.0f;
+                needsRepaint = true;
+            }
+        }
+    }
+
+    if (needsRepaint || isDragging)
+        repaint();
 }
 
 //==============================================================================
-void EQGraphicDisplay::paint(juce::Graphics& g)
+void EQGraphicDisplay::renderBackground()
 {
-    auto bounds = getLocalBounds().toFloat();
+    auto bounds = getLocalBounds();
+    if (bounds.isEmpty()) return;
+
+    backgroundCache = juce::Image(juce::Image::ARGB, bounds.getWidth(), bounds.getHeight(), true);
+    juce::Graphics bg(backgroundCache);
+    auto boundsF = bounds.toFloat();
 
     // Logic Pro-style radial gradient background - darker at edges, subtle warmth at center
     {
-        auto centerX = bounds.getCentreX();
-        auto centerY = getYForDB(0.0f);  // Center gradient around 0dB line
+        auto centerX = boundsF.getCentreX();
+        auto centerY = getYForDB(0.0f);
 
         juce::ColourGradient bgGradient(
-            juce::Colour(0xFF1e1e20), centerX, centerY,  // Subtle dark center
-            juce::Colour(0xFF0a0a0c), 0.0f, 0.0f,        // Very dark edges
-            true);  // Radial
+            juce::Colour(0xFF1e1e20), centerX, centerY,
+            juce::Colour(0xFF0a0a0c), 0.0f, 0.0f,
+            true);
         bgGradient.addColour(0.25, juce::Colour(0xFF1a1a1c));
         bgGradient.addColour(0.5, juce::Colour(0xFF141416));
         bgGradient.addColour(0.75, juce::Colour(0xFF0f0f11));
 
-        g.setGradientFill(bgGradient);
-        g.fillRect(bounds);
+        bg.setGradientFill(bgGradient);
+        bg.fillRect(boundsF);
     }
 
     // Subtle vignette overlay for depth
     {
         juce::ColourGradient vignette(
-            juce::Colours::transparentBlack, bounds.getCentreX(), bounds.getCentreY(),
-            juce::Colour(0x30000000), bounds.getX(), bounds.getY(),
+            juce::Colours::transparentBlack, boundsF.getCentreX(), boundsF.getCentreY(),
+            juce::Colour(0x30000000), boundsF.getX(), boundsF.getY(),
             true);
-        g.setGradientFill(vignette);
-        g.fillRect(bounds);
+        bg.setGradientFill(vignette);
+        bg.fillRect(boundsF);
     }
 
-    // Draw grid (before curves so curves appear on top)
-    drawGrid(g);
+    // Draw grid
+    drawGrid(bg);
 
-    // Draw piano keyboard note overlay (below curves)
+    // Draw piano keyboard note overlay
     if (showPianoOverlay)
-        drawPianoOverlay(g);
+        drawPianoOverlay(bg);
+
+    backgroundCacheDirty = false;
+}
+
+void EQGraphicDisplay::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+
+    // Draw cached background (gradients + grid + piano overlay)
+    if (backgroundCacheDirty || !backgroundCache.isValid()
+        || backgroundCache.getWidth() != getWidth()
+        || backgroundCache.getHeight() != getHeight())
+    {
+        renderBackground();
+    }
+    g.drawImageAt(backgroundCache, 0, 0);
 
     // Draw individual band curves (with gradient fill)
     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
@@ -89,11 +155,11 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         auto dynBounds = getDisplayBounds();
         juce::Path dynPath;
         bool dynStarted = false;
-        int dynPoints = static_cast<int>(dynBounds.getWidth());
+        int dynPoints = juce::jmax(100, static_cast<int>(dynBounds.getWidth() * 0.5f));
 
         for (int px = 0; px < dynPoints; ++px)
         {
-            float x = dynBounds.getX() + static_cast<float>(px);
+            float x = dynBounds.getX() + static_cast<float>(px) * dynBounds.getWidth() / static_cast<float>(dynPoints);
             float freq = getFrequencyAtX(x);
             float response = processor.getFrequencyResponseWithDynamics(freq);
             float y = getYForDB(response);
@@ -241,6 +307,7 @@ void EQGraphicDisplay::resized()
     analyzer->setBounds(getLocalBounds().reduced(40, 20));
     analyzer->setFrequencyRange(minFrequency, maxFrequency);
     analyzer->setDisplayRange(minDisplayDB, maxDisplayDB);
+    backgroundCacheDirty = true;
 }
 
 //==============================================================================
@@ -438,12 +505,12 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
     juce::Path curvePath;
     bool pathStarted = false;
 
-    // Calculate band response at each x position (higher resolution for smoother curves)
-    int numPoints = static_cast<int>(displayBounds.getWidth() * 2);  // 2x resolution for smoothness
+    // Calculate band response at each x position
+    int numPoints = juce::jmax(100, static_cast<int>(displayBounds.getWidth() * 0.75f));
 
     for (int px = 0; px < numPoints; ++px)
     {
-        float x = displayBounds.getX() + static_cast<float>(px) * 0.5f;
+        float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
         float freq = getFrequencyAtX(x);
 
         // Get approximate magnitude response for this band only
@@ -628,12 +695,12 @@ void EQGraphicDisplay::drawCombinedCurve(juce::Graphics& g)
     juce::Path combinedPath;
     bool pathStarted = false;
 
-    // Higher resolution for smoother curve
-    int numPoints = static_cast<int>(displayBounds.getWidth() * 1.5f);
+    // Combined curve resolution
+    int numPoints = juce::jmax(100, static_cast<int>(displayBounds.getWidth() * 0.5f));
 
     for (int px = 0; px < numPoints; ++px)
     {
-        float x = displayBounds.getX() + static_cast<float>(px) / 1.5f;
+        float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
         float freq = getFrequencyAtX(x);
 
         float response = processor.getFrequencyResponseMagnitude(freq);
@@ -767,6 +834,26 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
     // Ring thickness varies with state
     float ringThickness = isSelected ? 3.0f : (isHovered ? 2.5f : (isFlat ? 1.5f : 2.0f));
     float innerRadius = radius - ringThickness;
+
+    // Draw ghost at static position when dynamics move the control point
+    if (processor.isInDynamicMode() && processor.isDynamicsEnabled(bandIndex))
+    {
+        float dynGain = smoothedDynamicGains[static_cast<size_t>(bandIndex)];
+        if (std::abs(dynGain) > 0.5f)
+        {
+            auto staticPoint = getStaticControlPointPosition(bandIndex);
+            float ghostRadius = baseRadius * 0.7f;
+
+            // Faint outline ring at static position
+            g.setColour(color.withAlpha(0.25f));
+            g.drawEllipse(staticPoint.x - ghostRadius, staticPoint.y - ghostRadius,
+                          ghostRadius * 2.0f, ghostRadius * 2.0f, 1.5f);
+
+            // Connecting line from static to dynamic position
+            g.setColour(color.withAlpha(0.15f));
+            g.drawLine(staticPoint.x, staticPoint.y, point.x, point.y, 1.0f);
+        }
+    }
 
     // Outer glow effect (multiple layers for soft glow)
     // Only show full glow for bands with gain or when selected/hovered
@@ -1264,6 +1351,7 @@ void EQGraphicDisplay::setDisplayScaleMode(DisplayScaleMode mode)
     if (analyzer)
         analyzer->setDisplayRange(minDisplayDB, maxDisplayDB);
 
+    backgroundCacheDirty = true;
     repaint();
 }
 
@@ -1336,6 +1424,26 @@ float EQGraphicDisplay::getDBAtY(float y) const
 }
 
 //==============================================================================
+juce::Point<float> EQGraphicDisplay::getStaticControlPointPosition(int bandIndex) const
+{
+    float freq = getBandFrequency(bandIndex);
+    float gain = getBandGain(bandIndex);
+
+    // For HPF/LPF, show at 0 dB
+    if (bandIndex == 0 || bandIndex == 7)
+        gain = 0.0f;
+
+    // For Notch/BandPass shapes, show at 0 dB (Q-only filters)
+    if (bandIndex >= 2 && bandIndex <= 5)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
+        if (shapeParam && static_cast<int>(shapeParam->load()) != 0)
+            gain = 0.0f;
+    }
+
+    return {getXForFrequency(freq), getYForDB(gain)};
+}
+
 juce::Point<float> EQGraphicDisplay::getControlPointPosition(int bandIndex) const
 {
     float freq = getBandFrequency(bandIndex);
@@ -1352,6 +1460,10 @@ juce::Point<float> EQGraphicDisplay::getControlPointPosition(int bandIndex) cons
         if (shapeParam && static_cast<int>(shapeParam->load()) != 0)
             gain = 0.0f;
     }
+
+    // Apply dynamic gain offset when dynamics are active
+    if (processor.isInDynamicMode() && processor.isDynamicsEnabled(bandIndex))
+        gain += smoothedDynamicGains[static_cast<size_t>(bandIndex)];
 
     return {getXForFrequency(freq), getYForDB(gain)};
 }

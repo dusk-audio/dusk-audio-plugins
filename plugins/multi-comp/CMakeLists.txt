@@ -53,10 +53,10 @@ juce_add_plugin(MultiComp
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
-    PLUGIN_MANUFACTURER_CODE LuCo
+    PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE MuCo
     FORMATS ${PLUGIN_FORMATS}
-    LV2URI "https://lunacoaudio.com/plugins/multi-comp"
+    LV2URI "https://dusk-audio.github.io/plugins/multi-comp"
     PRODUCT_NAME "Multi-Comp"
     DESCRIPTION "Multi-mode compressor with Opto, FET, VCA, Bus emulations and 4-band multiband compression"
     VST3_CAN_REPLACE_VST2 TRUE

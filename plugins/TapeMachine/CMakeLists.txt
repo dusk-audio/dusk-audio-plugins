@@ -28,11 +28,11 @@ juce_add_plugin(TapeMachine
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
-    PLUGIN_MANUFACTURER_CODE VntA
+    PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE Tape
     FORMATS AU VST3 LV2 Standalone
     PRODUCT_NAME "TapeMachine"
-    LV2URI "https://lunaco.audio/plugins/tapemachine"
+    LV2URI "https://dusk-audio.github.io/plugins/tapemachine"
     VST3_CAN_REPLACE_VST2 TRUE
     VST3_AUTO_MANIFEST FALSE)
 

@@ -37,7 +37,7 @@ juce_add_plugin(ConvolutionReverb
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
-    PLUGIN_MANUFACTURER_CODE LuCo
+    PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE CnvR
     FORMATS ${PLUGIN_FORMATS}
     LV2URI "https://lunaco.audio/plugins/convolution-reverb"

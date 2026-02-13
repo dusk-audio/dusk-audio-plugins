@@ -65,7 +65,7 @@ public:
     void setShowMasterGainOverlay(bool show) { showMasterGain = show; repaint(); }
 
     // Toggle piano keyboard overlay
-    void setShowPianoOverlay(bool show) { showPianoOverlay = show; repaint(); }
+    void setShowPianoOverlay(bool show) { showPianoOverlay = show; backgroundCacheDirty = true; repaint(); }
     bool isPianoOverlayVisible() const { return showPianoOverlay; }
 
     // Update master gain value for overlay
@@ -162,8 +162,11 @@ private:
     void drawBandControlPoint(juce::Graphics& g, int bandIndex);
     void drawMasterGainOverlay(juce::Graphics& g);
 
-    // Get control point position for a band
+    // Get control point position for a band (includes dynamic gain offset)
     juce::Point<float> getControlPointPosition(int bandIndex) const;
+
+    // Get static control point position (without dynamic gain, for ghost display)
+    juce::Point<float> getStaticControlPointPosition(int bandIndex) const;
 
     // Hit test for control points
     int hitTestControlPoint(juce::Point<float> point) const;
@@ -184,6 +187,21 @@ private:
 
     // Enable/disable a band
     void setBandEnabled(int bandIndex, bool enabled);
+
+    // Cached background image (gradients + grid + piano overlay)
+    juce::Image backgroundCache;
+    bool backgroundCacheDirty = true;
+    void renderBackground();
+
+    // Smoothed dynamic gains for visual continuity (UI-side smoothing)
+    static constexpr int kNumBands = 8;
+    std::array<float, kNumBands> smoothedDynamicGains{};
+
+    // Change detection for smart repaint
+    std::array<float, kNumBands> lastBandFreqs{};
+    std::array<float, kNumBands> lastBandGains{};
+    std::array<float, kNumBands> lastBandQs{};
+    std::array<bool, kNumBands> lastBandEnabled{};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EQGraphicDisplay)
 };

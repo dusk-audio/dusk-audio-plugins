@@ -14,10 +14,10 @@ juce_add_plugin(ChordAnalyzer
     IS_MIDI_EFFECT TRUE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
-    PLUGIN_MANUFACTURER_CODE Luna
+    PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE ChAn
     FORMATS VST3 LV2
-    LV2URI "https://lunaco.audio/chord-analyzer"
+    LV2URI "https://dusk-audio.github.io/plugins/chord-analyzer"
     PRODUCT_NAME "Chord Analyzer"
     VST3_CAN_REPLACE_VST2 FALSE
 )

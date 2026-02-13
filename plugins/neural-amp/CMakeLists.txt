@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.22)
 # Plugin configuration
 set(PLUGIN_NAME "NeuralAmp")
 set(PLUGIN_CODE "NAmp")
-set(PLUGIN_MANUFACTURER_CODE "Luna")
+set(PLUGIN_MANUFACTURER_CODE "Dusk")
 set(PLUGIN_MANUFACTURER "Dusk Audio")
 set(PLUGIN_VERSION "1.0.0")
 

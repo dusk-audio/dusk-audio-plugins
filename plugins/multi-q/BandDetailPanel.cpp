@@ -880,7 +880,7 @@ void BandDetailPanel::resized()
     slopeSelector->setVisible(isFilter);
 
     // SHAPE selector - positioned above the band indicator square on the left
-    int shapeSelectorWidth = 80;
+    int shapeSelectorWidth = 100;
     int shapeSelectorHeight = 22;
     if (isQOnly)
     {
@@ -890,8 +890,9 @@ void BandDetailPanel::resized()
     }
     else
     {
-        // Position above the band indicator square (top-left of panel)
-        shapeSelector->setBounds(startX, 5, shapeSelectorWidth, shapeSelectorHeight);
+        // Position above the band indicator square, shifted left for visibility
+        int shapeX = juce::jmax(4, startX - 10);
+        shapeSelector->setBounds(shapeX, 5, shapeSelectorWidth, shapeSelectorHeight);
     }
     shapeSelector->setVisible(hasShape && !isFilter);
 
@@ -934,8 +935,9 @@ void BandDetailPanel::resized()
     soloButton->setBounds(currentX, btnY + btnHeight + 4, btnWidth, btnHeight);
 
     // Per-band routing selector - positioned below the band indicator box
-    int routingSelectorWidth = 65;
+    int routingSelectorWidth = 80;
     int bandBoxY = knobY + (knobSize - bandIndicatorSize) / 2;
     int routingY = bandBoxY + bandIndicatorSize + 4;
-    routingSelector->setBounds(startX, routingY, routingSelectorWidth, 18);
+    int routingX = juce::jmax(4, startX - 10);
+    routingSelector->setBounds(routingX, routingY, routingSelectorWidth, 18);
 }

@@ -15,7 +15,7 @@ juce_add_plugin(${PLUGIN_NAME}
     COMPANY_WEBSITE "https://dusk-audio.github.io"
     COMPANY_EMAIL "support@dusk-audio.github.io"
 
-    PLUGIN_MANUFACTURER_CODE Luna
+    PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE Grvm
 
     IS_SYNTH TRUE

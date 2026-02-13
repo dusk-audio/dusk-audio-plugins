@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.22)
 # Plugin configuration
 set(PLUGIN_NAME "Velvet90")
 set(PLUGIN_CODE "SVrb")
-set(PLUGIN_MANUFACTURER_CODE "Luna")
+set(PLUGIN_MANUFACTURER_CODE "Dusk")
 set(PLUGIN_MANUFACTURER "Dusk Audio")
 set(PLUGIN_VERSION "1.0.0")
 
@@ -23,7 +23,7 @@ juce_add_plugin(${PLUGIN_NAME}
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     VST3_CATEGORIES "Fx" "Reverb"
-    LV2URI "https://lunaco.audio/plugins/velvet-90"
+    LV2URI "https://dusk-audio.github.io/plugins/velvet-90"
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     VST3_AUTO_MANIFEST FALSE
     VST3_COPY_DIR "$ENV{HOME}/.vst3"

@@ -157,15 +157,18 @@ namespace BandColors
 }
 
 // Default band configurations
+// NOTE: Colors are inlined directly (not referencing BandColors namespace) to avoid
+// C++17 static initialization order issues — inline const has unordered dynamic init,
+// which can execute before the non-inline BandColors values are constructed.
 inline const std::array<BandConfig, 8> DefaultBandConfigs = {{
-    { BandType::HighPass,   BandColors::Band1_HPF,       20.0f,    20.0f, 20000.0f, "HPF" },
-    { BandType::LowShelf,   BandColors::Band2_LowShelf, 100.0f,    20.0f, 20000.0f, "Low Shelf" },
-    { BandType::Parametric, BandColors::Band3_Para,     200.0f,    20.0f, 20000.0f, "Para 1" },
-    { BandType::Parametric, BandColors::Band4_Para,     500.0f,    20.0f, 20000.0f, "Para 2" },
-    { BandType::Parametric, BandColors::Band5_Para,    1000.0f,    20.0f, 20000.0f, "Para 3" },
-    { BandType::Parametric, BandColors::Band6_Para,    2000.0f,    20.0f, 20000.0f, "Para 4" },
-    { BandType::HighShelf,  BandColors::Band7_HighShelf, 4000.0f,   20.0f, 20000.0f, "High Shelf" },
-    { BandType::LowPass,    BandColors::Band8_LPF,    20000.0f,    20.0f, 20000.0f, "LPF" }
+    { BandType::HighPass,   juce::Colour(0xFFff5555),    20.0f,    20.0f, 20000.0f, "HPF" },         // Red
+    { BandType::LowShelf,   juce::Colour(0xFFffaa00),   100.0f,    20.0f, 20000.0f, "Low Shelf" },   // Orange
+    { BandType::Parametric, juce::Colour(0xFFffee00),   200.0f,    20.0f, 20000.0f, "Para 1" },      // Yellow
+    { BandType::Parametric, juce::Colour(0xFF88ee44),   500.0f,    20.0f, 20000.0f, "Para 2" },      // Lime
+    { BandType::Parametric, juce::Colour(0xFF00ccff),  1000.0f,    20.0f, 20000.0f, "Para 3" },      // Cyan
+    { BandType::Parametric, juce::Colour(0xFF5588ff),  2000.0f,    20.0f, 20000.0f, "Para 4" },      // Blue
+    { BandType::HighShelf,  juce::Colour(0xFFaa66ff),  4000.0f,    20.0f, 20000.0f, "High Shelf" },  // Purple
+    { BandType::LowPass,    juce::Colour(0xFFff66cc), 20000.0f,    20.0f, 20000.0f, "LPF" }          // Pink
 }};
 
 //==============================================================================
