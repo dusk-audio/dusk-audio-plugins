@@ -27,6 +27,10 @@ private:
     TapeMachineAudioProcessor& audioProcessor;
     TapeMachineLookAndFeel tapeMachineLookAndFeel;
 
+    // Preset selector
+    juce::ComboBox presetSelector;
+    juce::Label presetLabel;
+
     // Combo boxes
     juce::ComboBox tapeMachineSelector;
     juce::ComboBox tapeSpeedSelector;

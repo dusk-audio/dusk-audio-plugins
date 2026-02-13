@@ -262,8 +262,8 @@ void TapeMachineAudioProcessor::setCurrentProgram (int index)
 
     if (index == 0)
     {
-        // Default preset - keeps current values
-        // User can manually adjust parameters from here
+        // Reset all parameters to defaults
+        TapeMachinePresets::applyPreset(TapeMachinePresets::Preset{}, apvts);
         return;
     }
 
