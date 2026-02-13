@@ -446,7 +446,8 @@ MultiQEditor::MultiQEditor(MultiQ& p)
 
         // Some hosts (particularly on Linux/X11) process resize requests asynchronously,
         // which can cause the layout to use stale bounds. Schedule a deferred relayout.
-        juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MultiQEditor>(this), newHeight]() {
+        auto safeThis = juce::Component::SafePointer<MultiQEditor>(this);
+        juce::MessageManager::callAsync([safeThis, newHeight]() {
             if (safeThis != nullptr)
             {
                 if (safeThis->getHeight() != newHeight)
