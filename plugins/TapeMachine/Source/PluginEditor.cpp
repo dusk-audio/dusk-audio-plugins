@@ -26,7 +26,11 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
     {
         int presetIndex = presetSelector.getSelectedId() - 1;
         if (presetIndex >= 0 && presetIndex < audioProcessor.getNumPrograms())
+        {
             audioProcessor.setCurrentProgram(presetIndex);
+            audioProcessor.updateHostDisplay(
+                juce::AudioProcessor::ChangeDetails().withProgramChanged(true));
+        }
     };
     presetSelector.setTooltip("Select factory preset");
     addAndMakeVisible(presetSelector);
@@ -506,6 +510,11 @@ void TapeMachineAudioProcessorEditor::timerCallback()
         if (inputGainParam) lastInputGainValue = inputGainParam->load();
         if (outputGainParam) lastOutputGainValue = outputGainParam->load();
     }
+
+    // Sync preset selector with host (DAW may have changed the program)
+    int currentProgram = audioProcessor.getCurrentProgram();
+    if (presetSelector.getSelectedId() != currentProgram + 1)
+        presetSelector.setSelectedId(currentProgram + 1, juce::dontSendNotification);
 
     // Gray out bias when auto-cal is enabled
     auto* autoCalParam = audioProcessor.getAPVTS().getRawParameterValue("autoCal");
