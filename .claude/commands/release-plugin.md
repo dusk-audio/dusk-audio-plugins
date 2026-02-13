@@ -42,6 +42,20 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 
 When this skill is invoked, execute ALL steps automatically. Do NOT stop to ask questions unless there is an ambiguity that cannot be resolved. Speed is critical.
 
+### Step 0: Branch Guard
+
+**Before doing anything else**, verify the current git branch is `main`:
+
+```bash
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+```
+
+If `CURRENT_BRANCH` is NOT `main`, **stop immediately** and tell the user:
+
+> "Cannot release from branch `<branch>`. Releases must be made from `main` to ensure version bumps are not lost during PR merges. Please switch to `main` first."
+
+Do NOT proceed with any further steps. Do NOT offer to release anyway.
+
 ### Step 1: Parse Arguments and Determine Versions
 
 For EACH plugin specified:
