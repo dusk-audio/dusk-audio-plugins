@@ -35,7 +35,7 @@ struct Preset
     // Character
     float wowAmount = 7.0f;      // 0-100%
     float flutterAmount = 3.0f;  // 0-100%
-    float noiseAmount = 5.0f;    // 0-100%
+    float noiseAmount = 0.0f;    // 0-100%
     bool noiseEnabled = false;
 };
 
