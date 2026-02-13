@@ -12,6 +12,25 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
 {
     setLookAndFeel(&tapeMachineLookAndFeel);
 
+    // Preset selector
+    presetLabel.setText("PRESET", juce::dontSendNotification);
+    presetLabel.setJustificationType(juce::Justification::centredRight);
+    presetLabel.setColour(juce::Label::textColourId, juce::Colour(textPrimary));
+    presetLabel.setFont(juce::Font(10.0f, juce::Font::bold));
+    addAndMakeVisible(presetLabel);
+
+    for (int i = 0; i < audioProcessor.getNumPrograms(); ++i)
+        presetSelector.addItem(audioProcessor.getProgramName(i), i + 1);
+    presetSelector.setSelectedId(audioProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
+    presetSelector.onChange = [this]()
+    {
+        int presetIndex = presetSelector.getSelectedId() - 1;
+        if (presetIndex >= 0 && presetIndex < audioProcessor.getNumPrograms())
+            audioProcessor.setCurrentProgram(presetIndex);
+    };
+    presetSelector.setTooltip("Select factory preset");
+    addAndMakeVisible(presetSelector);
+
     // Setup combo boxes
     setupComboBox(tapeMachineSelector, tapeMachineLabel, "MACHINE");
     tapeMachineSelector.addItem("Swiss 800", 1);
@@ -317,7 +336,16 @@ void TapeMachineAudioProcessorEditor::resized()
     auto area = getLocalBounds();
 
     // Header - scaled
-    area.removeFromTop(resizeHelper.scaled(50));
+    auto headerArea = area.removeFromTop(resizeHelper.scaled(50));
+    {
+        // Preset label + selector on the right side of header
+        auto presetArea = headerArea.removeFromRight(resizeHelper.scaled(260));
+        presetArea.removeFromRight(resizeHelper.scaled(10)); // right margin
+        auto labelArea = presetArea.removeFromLeft(resizeHelper.scaled(60));
+        presetArea.removeFromLeft(resizeHelper.scaled(4)); // gap between label and dropdown
+        presetLabel.setBounds(labelArea.withSizeKeepingCentre(labelArea.getWidth(), resizeHelper.scaled(20)));
+        presetSelector.setBounds(presetArea.withSizeKeepingCentre(presetArea.getWidth(), resizeHelper.scaled(26)));
+    }
 
     // Transport section - scaled
     auto transportArea = area.removeFromTop(resizeHelper.scaled(235));
