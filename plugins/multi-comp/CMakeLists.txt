@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(MULTICOMP_DEFAULT_VERSION "1.2.5")
+set(MULTICOMP_DEFAULT_VERSION "1.2.6")
 get_plugin_version("multi-comp" MULTICOMP_VERSION)
 if(NOT MULTICOMP_VERSION OR MULTICOMP_VERSION STREQUAL "0.0.0")
     set(MULTICOMP_VERSION ${MULTICOMP_DEFAULT_VERSION})
