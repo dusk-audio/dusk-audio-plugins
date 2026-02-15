@@ -288,7 +288,7 @@ private:
                 cathodeBypassCoeffBase = 0.96f;
                 cathodeBypassAmount = 0.1f;    // Reduced from 0.25
                 millerCapCoeffBase = 0.2f;
-                millerCapEffect = 0.02f;       // Minimal from 0.05
+                millerCapEffect = 0.04f;       // HF rolloff for higher harmonics
                 outputScaling = 0.98f;         // Nearly unity
                 break;
 

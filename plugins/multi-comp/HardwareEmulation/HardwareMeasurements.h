@@ -194,20 +194,20 @@ inline HardwareUnitProfile createLA2A()
     profile.inputTransformer = TransformerProfile::createActive(
         0.75f,     // saturationThreshold
         0.15f,     // saturationAmount
-        1.3f,      // lowFreqSaturation (core saturates more at LF)
-        18000.0f,  // highFreqRolloff
-        20.0f,     // dcBlockingFreq
-        0.008f, 0.003f, 0.7f  // h2, h3, evenOddRatio
+        1.3f,      // lowFreqSaturation
+        0.0f,      // highFreqRolloff (disabled — was causing spectrum-dependent gain)
+        2.0f,      // dcBlockingFreq (low to avoid eating broadband energy)
+        0.005f, 0.002f, 0.7f  // h2, h3, balance
     );
 
-    // Output transformer
+    // Output transformer (UTC A-24)
     profile.outputTransformer = TransformerProfile::createActive(
         0.8f,      // saturationThreshold
         0.1f,      // saturationAmount
         1.2f,      // lowFreqSaturation
-        16000.0f,  // highFreqRolloff
-        15.0f,     // dcBlockingFreq
-        0.006f, 0.002f, 0.75f  // h2, h3, evenOddRatio
+        0.0f,      // highFreqRolloff (disabled — was causing spectrum-dependent gain)
+        2.0f,      // dcBlockingFreq (low to avoid eating broadband energy)
+        0.004f, 0.001f, 0.75f  // h2, h3, balance
     );
 
     // Timing: T4B optical cell characteristics
