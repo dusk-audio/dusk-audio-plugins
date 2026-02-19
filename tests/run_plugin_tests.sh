@@ -33,10 +33,8 @@ TESTS_SKIPPED=0
 PLUGINS=(
     "4K EQ"
     "Convolution Reverb"
-    "DrummerClone"
-    "Harmonic Generator"
+    "DuskVerb"
     "Multi-Q"
-    "Velvet 90"
     "Universal Compressor"
     "TapeMachine"
     "Vintage Tape Echo"

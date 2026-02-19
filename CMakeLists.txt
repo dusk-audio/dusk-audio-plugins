@@ -56,6 +56,7 @@ option(BUILD_NEURAL_AMP "Build Neural Amp plugin" OFF)  # Disabled: Eigen depend
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
 option(BUILD_CHORD_ANALYZER "Build Chord Analyzer plugin" ON)
 option(BUILD_SPECTRUM_ANALYZER "Build Spectrum Analyzer plugin" ON)
+option(BUILD_DUSKVERB "Build DuskVerb plugin" ON)
 
 # Add plugin subdirectories
 if(BUILD_4K_EQ)
@@ -108,4 +109,8 @@ endif()
 
 if(BUILD_SPECTRUM_ANALYZER)
     add_subdirectory(plugins/spectrum-analyzer)
+endif()
+
+if(BUILD_DUSKVERB)
+    add_subdirectory(plugins/DuskVerb)
 endif()
