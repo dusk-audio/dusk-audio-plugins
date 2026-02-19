@@ -126,6 +126,7 @@ enum class ProcessingMode
 enum class EQType
 {
     Digital = 0,   // Clean digital EQ with optional per-band dynamics (Multi-Q default)
+    Match,         // Spectrum matching with editable parametric bands
     British,       // 4K EQ style British console EQ
     Tube           // Passive tube EQ style (vintage program equalizer)
 };
@@ -244,6 +245,8 @@ namespace ParamIDs
     inline juce::String bandGain(int bandNum) { return "band" + juce::String(bandNum) + "_gain"; }
     inline juce::String bandQ(int bandNum) { return "band" + juce::String(bandNum) + "_q"; }
     inline juce::String bandSlope(int bandNum) { return "band" + juce::String(bandNum) + "_slope"; }
+    inline juce::String bandShape(int bandNum) { return "band" + juce::String(bandNum) + "_shape"; }
+    inline juce::String bandChannelRouting(int bandNum) { return "band" + juce::String(bandNum) + "_channel_routing"; }
 
     // Global parameters
     const juce::String masterGain = "master_gain";
@@ -254,6 +257,7 @@ namespace ParamIDs
     const juce::String processingMode = "processing_mode";
     const juce::String qCoupleMode = "q_couple_mode";
     const juce::String eqType = "eq_type";
+    const juce::String matchStrength = "match_strength";
 
     // Analyzer parameters
     const juce::String analyzerEnabled = "analyzer_enabled";
@@ -318,12 +322,6 @@ namespace ParamIDs
     inline juce::String bandDynRelease(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_release"; }
     inline juce::String bandDynRange(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_range"; }
     inline juce::String bandDynRatio(int bandNum) { return "band" + juce::String(bandNum) + "_dyn_ratio"; }
-
-    // Band shape (for parametric bands 3-6 only): 0=Peaking, 1=Notch, 2=BandPass
-    inline juce::String bandShape(int bandNum) { return "band" + juce::String(bandNum) + "_shape"; }
-
-    // Per-band channel routing: 0=Global, 1=Stereo, 2=Left, 3=Right, 4=Mid, 5=Side
-    inline juce::String bandChannelRouting(int bandNum) { return "band" + juce::String(bandNum) + "_routing"; }
 
     // Global dynamic mode parameters
     const juce::String dynDetectionMode = "dyn_detection_mode";  // 0=Peak, 1=RMS
