@@ -8,6 +8,7 @@ FFTAnalyzer::FFTAnalyzer()
     std::fill(smoothedMagnitudes.begin(), smoothedMagnitudes.end(), -100.0f);
     std::fill(peakHoldMagnitudes.begin(), peakHoldMagnitudes.end(), -100.0f);
     std::fill(frozenMagnitudes.begin(), frozenMagnitudes.end(), -100.0f);
+    std::fill(preSmoothedMagnitudes.begin(), preSmoothedMagnitudes.end(), -100.0f);
 }
 
 //==============================================================================
@@ -111,6 +112,35 @@ void FFTAnalyzer::paint(juce::Graphics& g)
         g.setColour(lineColor.withAlpha(0.5f));
         g.strokePath(path, juce::PathStrokeType(0.75f,
                      juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    // Draw pre-EQ reference spectrum (behind main spectrum, muted colors)
+    if (showPreSpectrum)
+    {
+        auto prePath = createMagnitudePath(preSmoothedMagnitudes);
+
+        if (!prePath.isEmpty())
+        {
+            auto prePathBounds = prePath.getBounds();
+
+            juce::ColourGradient preFillGradient(
+                preFillColor.withAlpha(0.18f), 0, prePathBounds.getY(),
+                preFillColor.withAlpha(0.01f), 0, bounds.getBottom(),
+                false);
+            preFillGradient.addColour(0.3, preFillColor.withAlpha(0.10f));
+            preFillGradient.addColour(0.6, preFillColor.withAlpha(0.04f));
+
+            g.setGradientFill(preFillGradient);
+            g.fillPath(prePath);
+
+            g.setColour(preLineColor.withAlpha(0.15f));
+            g.strokePath(prePath, juce::PathStrokeType(2.0f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            g.setColour(preLineColor.withAlpha(0.35f));
+            g.strokePath(prePath, juce::PathStrokeType(0.75f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
     }
 
     // Draw peak hold line if enabled (thin line above spectrum)
@@ -233,6 +263,34 @@ void FFTAnalyzer::updateMagnitudes(const std::array<float, 2048>& magnitudes)
     repaint();
 }
 
+void FFTAnalyzer::updatePreMagnitudes(const std::array<float, 2048>& magnitudes)
+{
+    float smoothCoeff = getTemporalSmoothingCoeff();
+    if (smoothCoeff > 0.0f)
+    {
+        for (size_t i = 0; i < 2048; ++i)
+        {
+            float attackCoeff = smoothCoeff * 0.5f;
+            float releaseCoeff = smoothCoeff;
+
+            if (magnitudes[i] > preSmoothedMagnitudes[i])
+                preSmoothedMagnitudes[i] = attackCoeff * preSmoothedMagnitudes[i] +
+                                           (1.0f - attackCoeff) * magnitudes[i];
+            else
+                preSmoothedMagnitudes[i] = releaseCoeff * preSmoothedMagnitudes[i] +
+                                           (1.0f - releaseCoeff) * magnitudes[i];
+        }
+        applySpatialSmoothing(preSmoothedMagnitudes);
+    }
+    else
+    {
+        preSmoothedMagnitudes = magnitudes;
+    }
+
+    if (showPreSpectrum)
+        repaint();
+}
+
 //==============================================================================
 void FFTAnalyzer::setDisplayRange(float minDB, float maxDB)
 {
@@ -300,6 +358,11 @@ float FFTAnalyzer::getDBAtY(float y) const
 //==============================================================================
 juce::Path FFTAnalyzer::createMagnitudePath() const
 {
+    return createMagnitudePath(smoothedMagnitudes);
+}
+
+juce::Path FFTAnalyzer::createMagnitudePath(const std::array<float, 2048>& mags) const
+{
     juce::Path path;
     auto bounds = getLocalBounds().toFloat();
 
@@ -308,14 +371,8 @@ juce::Path FFTAnalyzer::createMagnitudePath() const
 
     bool pathStarted = false;
 
-    // We'll iterate through display x positions and find corresponding bins
-    // Use smoothed magnitudes for smooth appearance
     int numPoints = static_cast<int>(bounds.getWidth());
 
-    // For smoother appearance, use quadratic bezier curves when smoothing is enabled
-    bool useQuadCurves = (smoothingMode != SmoothingMode::Off);
-
-    // Collect points first for bezier curve generation
     std::vector<juce::Point<float>> points;
     points.reserve(static_cast<size_t>(numPoints));
 
@@ -324,13 +381,11 @@ juce::Path FFTAnalyzer::createMagnitudePath() const
         float x = bounds.getX() + static_cast<float>(px);
         float freq = getFrequencyAtX(x);
 
-        // Find the corresponding bin
         float normalizedFreq = std::log(freq / minFrequency) / std::log(maxFrequency / minFrequency);
         int bin = static_cast<int>(normalizedFreq * 2047.0f);
         bin = juce::jlimit(0, 2047, bin);
 
-        // Use smoothed magnitudes for display
-        float dB = smoothedMagnitudes[static_cast<size_t>(bin)];
+        float dB = mags[static_cast<size_t>(bin)];
         float y = getYForDB(dB);
 
         points.emplace_back(x, y);
@@ -339,30 +394,12 @@ juce::Path FFTAnalyzer::createMagnitudePath() const
     if (points.empty())
         return path;
 
-    // Start the path
     path.startNewSubPath(points[0]);
     pathStarted = true;
 
-    if (useQuadCurves && points.size() > 2)
-    {
-        // Use smoothed line segments
-        // The temporal and spatial smoothing already creates a smooth appearance
-        // Just connect the pre-smoothed points
-        for (size_t i = 1; i < points.size(); ++i)
-        {
-            path.lineTo(points[i]);
-        }
-    }
-    else
-    {
-        // Simple line-to for no smoothing
-        for (size_t i = 1; i < points.size(); ++i)
-        {
-            path.lineTo(points[i]);
-        }
-    }
+    for (size_t i = 1; i < points.size(); ++i)
+        path.lineTo(points[i]);
 
-    // Close path for fill
     if (pathStarted)
     {
         path.lineTo(bounds.getRight(), bounds.getBottom());

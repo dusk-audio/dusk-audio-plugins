@@ -105,6 +105,8 @@ void BandStripComponent::setupBandColumn(int index)
         col.slopeSelector->addItem("24 dB", 4);
         col.slopeSelector->addItem("36 dB", 5);
         col.slopeSelector->addItem("48 dB", 6);
+        col.slopeSelector->addItem("72 dB", 7);
+        col.slopeSelector->addItem("96 dB", 8);
         col.slopeSelector->setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF1a1a1a));
         col.slopeSelector->setColour(juce::ComboBox::textColourId, juce::Colour(0xFFa0a0a0));
         col.slopeSelector->setColour(juce::ComboBox::outlineColourId, juce::Colour(0xFF3a3a3a));
@@ -356,8 +358,8 @@ juce::String BandStripComponent::formatQ(float q)
 
 juce::String BandStripComponent::formatSlope(int slopeIndex)
 {
-    static const char* slopes[] = {"6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct"};
-    if (slopeIndex >= 0 && slopeIndex < 6)
+    static const char* slopes[] = {"6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct"};
+    if (slopeIndex >= 0 && slopeIndex < 8)
         return slopes[slopeIndex];
     return "12 dB/oct";
 }
