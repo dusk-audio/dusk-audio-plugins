@@ -72,13 +72,12 @@ public:
             }
         }
 
-        // Initialize detection bandpass filters (one per band per channel)
-        detectionFilters.resize(static_cast<size_t>(numChannels));
-        for (auto& ch : detectionFilters)
+        // Initialize lock-free biquad states (per channel, per band)
+        biquadStates.resize(static_cast<size_t>(numChannels));
+        for (auto& ch : biquadStates)
         {
-            ch.resize(NUM_BANDS);
-            for (auto& filter : ch)
-                filter.reset();
+            for (auto& band : ch)
+                band.reset();
         }
 
         // Initialize lookahead buffers (per band, per channel)
@@ -132,10 +131,10 @@ public:
             }
         }
 
-        for (auto& ch : detectionFilters)
+        for (auto& ch : biquadStates)
         {
-            for (auto& filter : ch)
-                filter.reset();
+            for (auto& band : ch)
+                band.reset();
         }
 
         for (auto& meter : dynamicGainMeters)
@@ -162,22 +161,15 @@ public:
     }
 
     /** Update detection filter for a band (call when band frequency changes)
-     *  Thread-safe: Uses SpinLock to prevent race with processDetection() */
+     *  Lock-free: Computes bandpass coefficients and publishes via SeqLock.
+     *  Audio thread picks up new coefficients on next sample without blocking. */
     void updateDetectionFilter(int bandIndex, float frequency, float q)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS)
             return;
 
-        // Create bandpass filter coefficients for detection
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeBandPass(
-            sampleRate, frequency, q);
-
-        // Lock to prevent race condition with audio thread
-        const juce::SpinLock::ScopedLockType lock(filterLock);
-        for (auto& ch : detectionFilters)
-        {
-            *ch[static_cast<size_t>(bandIndex)].coefficients = *coeffs;
-        }
+        auto dc = computeBandPassCoeffs(sampleRate, frequency, q);
+        coeffTransfers[static_cast<size_t>(bandIndex)].publish(dc);
     }
 
     //==========================================================================
@@ -269,24 +261,44 @@ public:
     /**
      * Process detection for a band using its bandpass filter.
      * Returns the filtered level for sidechain detection.
-     * Thread-safe: Uses SpinLock to prevent race with updateDetectionFilter()
+     * Lock-free: Checks for pending coefficient updates via SeqLock,
+     * always processes with valid bandpass coefficients (never falls back to broadband).
      */
     float processDetection(int bandIndex, float input, int channel)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS ||
-            channel < 0 || channel >= static_cast<int>(detectionFilters.size()))
+            channel < 0 || channel >= static_cast<int>(biquadStates.size()))
             return std::abs(input);
 
-        // Use try-lock to avoid blocking the audio thread
-        // If lock fails (coefficient update in progress), use unfiltered input
-        const juce::SpinLock::ScopedTryLockType lock(filterLock);
-        if (!lock.isLocked())
-            return std::abs(input);
+        auto bi = static_cast<size_t>(bandIndex);
 
-        auto& filter = detectionFilters[static_cast<size_t>(channel)]
-                           [static_cast<size_t>(bandIndex)];
+        // Check for pending coefficient update (lock-free, never blocks)
+        auto& transfer = coeffTransfers[bi];
+        uint32_t seq = transfer.sequence.load(std::memory_order_acquire);
+        if (seq != lastAppliedSeq[bi] && (seq & 1) == 0)
+        {
+            // Even sequence = no write in progress, safe to read
+            DetCoeffs temp = transfer.pending;
+            uint32_t seq2 = transfer.sequence.load(std::memory_order_acquire);
+            if (seq == seq2)
+            {
+                // Consistent read — apply new coefficients
+                activeDetCoeffs[bi] = temp;
+                lastAppliedSeq[bi] = seq;
+            }
+            // If seq != seq2, a write happened during read — skip, use old coeffs
+        }
 
-        return std::abs(filter.processSample(input));
+        // Always filter with current coefficients (never broadband fallback)
+        auto& state = biquadStates[static_cast<size_t>(channel)][bi];
+        const auto& c = activeDetCoeffs[bi].c;
+
+        // Direct Form II Transposed biquad
+        float output = c[0] * input + state.z1;
+        state.z1 = c[1] * input - c[4] * output + state.z2;
+        state.z2 = c[2] * input - c[5] * output;
+
+        return std::abs(output);
     }
 
     //==========================================================================
@@ -368,6 +380,61 @@ private:
     }
 
     //==========================================================================
+    // Lock-free detection filter infrastructure
+    //
+    // Replaces the SpinLock + JUCE IIR::Filter approach. The message thread
+    // publishes bandpass coefficients via SeqLock, and the audio thread picks
+    // them up without ever blocking or falling back to broadband detection.
+    //==========================================================================
+
+    /** Per-band detection filter coefficients: b0,b1,b2, a0(=1), a1, a2 */
+    struct DetCoeffs
+    {
+        float c[6] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    };
+
+    /** SeqLock for lock-free SPSC coefficient transfer.
+     *  Writer increments sequence to odd (writing), writes data, increments to even (done).
+     *  Reader checks sequence is even and unchanged after read. */
+    struct CoeffTransfer
+    {
+        std::atomic<uint32_t> sequence{0};
+        DetCoeffs pending;
+
+        void publish(const DetCoeffs& newCoeffs)
+        {
+            sequence.fetch_add(1, std::memory_order_release); // odd = writing
+            pending = newCoeffs;
+            sequence.fetch_add(1, std::memory_order_release); // even = done
+        }
+    };
+
+    /** Per-channel, per-band biquad filter state (Direct Form II Transposed) */
+    struct BiquadState
+    {
+        float z1 = 0.0f;
+        float z2 = 0.0f;
+        void reset() { z1 = z2 = 0.0f; }
+    };
+
+    /** Compute bandpass filter coefficients (Audio EQ Cookbook) */
+    static DetCoeffs computeBandPassCoeffs(double sr, float freq, float q)
+    {
+        DetCoeffs dc;
+        double w0 = 2.0 * juce::MathConstants<double>::pi * static_cast<double>(freq) / sr;
+        double alpha = std::sin(w0) / (2.0 * static_cast<double>(q));
+        double a0 = 1.0 + alpha;
+
+        dc.c[0] = static_cast<float>(alpha / a0);
+        dc.c[1] = 0.0f;
+        dc.c[2] = static_cast<float>(-alpha / a0);
+        dc.c[3] = 1.0f;
+        dc.c[4] = static_cast<float>(-2.0 * std::cos(w0) / a0);
+        dc.c[5] = static_cast<float>((1.0 - alpha) / a0);
+        return dc;
+    }
+
+    //==========================================================================
     /** Per-channel, per-band envelope state */
     struct BandState
     {
@@ -384,12 +451,11 @@ private:
     std::vector<ChannelState> channelStates;
     std::array<BandParameters, NUM_BANDS> bandParams;
 
-    // Detection bandpass filters (per channel, per band)
-    std::vector<std::vector<juce::dsp::IIR::Filter<float>>> detectionFilters;
-
-    // SpinLock for thread-safe filter coefficient updates
-    // Used between updateDetectionFilter() (message thread) and processDetection() (audio thread)
-    mutable juce::SpinLock filterLock;
+    // Lock-free detection filter state
+    std::array<CoeffTransfer, NUM_BANDS> coeffTransfers;            // SeqLock coefficient transfer
+    std::array<DetCoeffs, NUM_BANDS> activeDetCoeffs;               // Audio thread's current coefficients
+    std::array<uint32_t, NUM_BANDS> lastAppliedSeq{};               // Last consumed sequence per band
+    std::vector<std::array<BiquadState, NUM_BANDS>> biquadStates;   // Per-channel biquad state
 
     // Atomic meters for UI (one per band, shows max across channels)
     std::array<std::atomic<float>, NUM_BANDS> dynamicGainMeters;

@@ -39,6 +39,9 @@ public:
     // Update analyzer with new magnitude data
     void updateMagnitudes(const std::array<float, 2048>& magnitudes);
 
+    // Update pre-EQ magnitude data (for dual spectrum overlay)
+    void updatePreMagnitudes(const std::array<float, 2048>& magnitudes);
+
     // Set display parameters
     void setDisplayRange(float minDB, float maxDB);
     void setFrequencyRange(float minHz, float maxHz);
@@ -46,6 +49,12 @@ public:
     void setLineColor(juce::Colour color) { lineColor = color; }
     void setEnabled(bool enabled) { analyzerEnabled = enabled; repaint(); }
     void setShowPeakHold(bool show) { showPeakHold = show; }
+
+    // Pre-EQ spectrum overlay
+    void setShowPreSpectrum(bool show) { showPreSpectrum = show; repaint(); }
+    bool isPreSpectrumVisible() const { return showPreSpectrum; }
+    void setPreFillColor(juce::Colour color) { preFillColor = color; }
+    void setPreLineColor(juce::Colour color) { preLineColor = color; }
 
     // Smoothing control
     void setSmoothingMode(SmoothingMode mode) { smoothingMode = mode; }
@@ -103,6 +112,12 @@ private:
     juce::Colour fillColor = juce::Colour(0x40888888);
     juce::Colour lineColor = juce::Colour(0xFFAAAAAA);
 
+    // Pre-EQ spectrum overlay
+    std::array<float, 2048> preSmoothedMagnitudes{};
+    bool showPreSpectrum = false;
+    juce::Colour preFillColor = juce::Colour(0x20997755);   // Warm muted orange
+    juce::Colour preLineColor = juce::Colour(0x40aa8855);   // Warm muted line
+
     bool analyzerEnabled = true;
     bool showPeakHold = false;
     bool spectrumFrozen = false;  // True when spectrum is frozen for reference
@@ -119,6 +134,7 @@ private:
 
     // Smooth the magnitude path for display
     juce::Path createMagnitudePath() const;
+    juce::Path createMagnitudePath(const std::array<float, 2048>& mags) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FFTAnalyzer)
 };

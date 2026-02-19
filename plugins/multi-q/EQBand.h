@@ -83,7 +83,8 @@ enum class QCoupleMode
     Strong,             // Preserves most of perceived bandwidth
     AsymmetricLight,    // Stronger coupling for cuts
     AsymmetricMedium,
-    AsymmetricStrong
+    AsymmetricStrong,
+    Vintage             // Power-curve model (German broadcast EQ behavior)
 };
 
 // Analyzer display modes
@@ -212,6 +213,16 @@ inline float getQCoupledValue(float baseQ, float gainDB, QCoupleMode mode)
             strength = 0.20f;
             asymmetric = true;
             break;
+        case QCoupleMode::Vintage:
+        {
+            // Power-curve model inspired by German broadcast EQ (Maihak W86) behavior.
+            // Unlike the linear modes, this uses Q_eff = Q_base * (1 + k * |gain|^p)
+            // where small boosts barely affect Q but larger boosts widen significantly,
+            // with diminishing returns at extreme settings — matching vintage hardware.
+            float k = 0.03f;
+            float p = 1.5f;
+            return baseQ * (1.0f + k * std::pow(absGain, p));
+        }
     }
 
     // Asymmetric: stronger coupling for cuts (negative gain)
@@ -319,4 +330,12 @@ namespace ParamIDs
 
     // Auto-gain compensation
     const juce::String autoGainEnabled = "auto_gain_enabled";
+
+    // Output limiter
+    const juce::String limiterEnabled = "limiter_enabled";
+    const juce::String limiterCeiling = "limiter_ceiling";
+
+    // Per-band saturation (Digital mode, bands 2-7)
+    inline juce::String bandSatType(int bandNum) { return "band" + juce::String(bandNum) + "_sat_type"; }
+    inline juce::String bandSatDrive(int bandNum) { return "band" + juce::String(bandNum) + "_sat_drive"; }
 }
