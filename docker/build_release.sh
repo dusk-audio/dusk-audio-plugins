@@ -31,6 +31,7 @@ get_plugin_target() {
         tapeecho|tape-echo|echo) echo "TapeEcho_All" ;;
         chordanalyzer|chord-analyzer|chord|analyze) echo "ChordAnalyzer_All" ;;
         spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "SpectrumAnalyzer_All" ;;
+        duskverb|dusk-verb|reverb) echo "DuskVerb_All" ;;
         *) echo "" ;;
     esac
 }
@@ -50,6 +51,7 @@ get_plugin_name() {
         tapeecho|tape-echo|echo) echo "Tape Echo" ;;
         chordanalyzer|chord-analyzer|chord|analyze) echo "Chord Analyzer" ;;
         spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "Spectrum Analyzer" ;;
+        duskverb|dusk-verb|reverb) echo "DuskVerb" ;;
         *) echo "" ;;
     esac
 }
@@ -78,6 +80,7 @@ show_help() {
     echo "  tapeecho, tape-echo, echo   Tape Echo"
     echo "  chordanalyzer, chord-analyzer, chord, analyze   Chord Analyzer"
     echo "  spectrumanalyzer, spectrum-analyzer, spectrum, span, fft   Spectrum Analyzer"
+    echo "  duskverb, dusk-verb, reverb   DuskVerb"
     echo ""
     echo "Examples:"
     echo "  $0              # Build all plugins"
