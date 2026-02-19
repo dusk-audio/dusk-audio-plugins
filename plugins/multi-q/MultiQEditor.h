@@ -110,6 +110,14 @@ private:
     std::unique_ptr<juce::ComboBox> eqTypeSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> eqTypeAttachment;
 
+    // Cross-mode transfer button (British/Tube → Digital)
+    juce::TextButton transferToDigitalButton{"Transfer \u2192 Digital"};
+
+    // EQ Match buttons (Digital mode)
+    juce::TextButton eqMatchRefButton{"Capture Ref"};
+    juce::TextButton eqMatchSrcButton{"Capture Src"};
+    juce::TextButton eqMatchApplyButton{"Match EQ"};
+
     // Factory preset selector (Digital mode)
     std::unique_ptr<juce::ComboBox> presetSelector;
     void updatePresetSelector();

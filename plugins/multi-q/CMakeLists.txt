@@ -43,7 +43,7 @@ endif()
 # Create plugin target
 juce_add_plugin(MultiQ
     COMPANY_NAME "Dusk Audio"
-    BUNDLE_ID "com.LunaCoAudio.MultiQ"
+    BUNDLE_ID "com.DuskAudio.MultiQ"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -53,7 +53,7 @@ juce_add_plugin(MultiQ
     PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE MulQ
     FORMATS ${PLUGIN_FORMATS}
-    LV2URI "https://lunacoaudio.com/plugins/multi-q"
+    LV2URI "https://dusk-audio.github.io/plugins/multi-q"
     PRODUCT_NAME "Multi-Q"
     DESCRIPTION "Professional 8-band parametric EQ with FFT Analyzer"
     VST3_CAN_REPLACE_VST2 TRUE

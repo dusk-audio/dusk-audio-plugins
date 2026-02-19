@@ -31,6 +31,13 @@ void EQGraphicDisplay::timerCallback()
         processor.clearAnalyzerDataReady();
     }
 
+    // Update pre-EQ analyzer data (for dual spectrum overlay)
+    if (processor.isPreAnalyzerDataReady())
+    {
+        analyzer->updatePreMagnitudes(processor.getPreAnalyzerMagnitudes());
+        processor.clearPreAnalyzerDataReady();
+    }
+
     // Smart repaint: only repaint when parameters actually changed
     bool needsRepaint = false;
 
@@ -149,33 +156,50 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
     // Draw combined EQ curve with glow
     drawCombinedCurve(g);
 
-    // Draw dynamic response curve overlay (when any band has dynamics active)
+    // Draw dynamic response curve overlay with shaded fill between static and dynamic curves
     if (processor.isInDynamicMode())
     {
         auto dynBounds = getDisplayBounds();
         juce::Path dynPath;
-        bool dynStarted = false;
+        std::vector<juce::Point<float>> staticPoints, dynPointsVec;
         int dynPoints = juce::jmax(100, static_cast<int>(dynBounds.getWidth() * 0.5f));
 
         for (int px = 0; px < dynPoints; ++px)
         {
             float x = dynBounds.getX() + static_cast<float>(px) * dynBounds.getWidth() / static_cast<float>(dynPoints);
             float freq = getFrequencyAtX(x);
-            float response = processor.getFrequencyResponseWithDynamics(freq);
-            float y = getYForDB(response);
 
-            if (!dynStarted)
-            {
-                dynPath.startNewSubPath(x, y);
-                dynStarted = true;
-            }
+            float staticResp = processor.getFrequencyResponseMagnitude(freq);
+            float dynResp = processor.getFrequencyResponseWithDynamics(freq);
+
+            float staticY = getYForDB(staticResp);
+            float dynY = getYForDB(dynResp);
+
+            staticPoints.push_back({x, staticY});
+            dynPointsVec.push_back({x, dynY});
+
+            if (px == 0)
+                dynPath.startNewSubPath(x, dynY);
             else
-            {
-                dynPath.lineTo(x, y);
-            }
+                dynPath.lineTo(x, dynY);
         }
 
-        // Draw as a semi-transparent orange dashed curve
+        // Shaded fill between static (combined) curve and dynamic curve
+        if (!staticPoints.empty())
+        {
+            juce::Path fillRegion;
+            fillRegion.startNewSubPath(dynPointsVec[0]);
+            for (size_t i = 1; i < dynPointsVec.size(); ++i)
+                fillRegion.lineTo(dynPointsVec[i]);
+            for (int i = static_cast<int>(staticPoints.size()) - 1; i >= 0; --i)
+                fillRegion.lineTo(staticPoints[static_cast<size_t>(i)]);
+            fillRegion.closeSubPath();
+
+            g.setColour(juce::Colour(0x22ffaa44));
+            g.fillPath(fillRegion);
+        }
+
+        // Dynamic curve as solid orange line with glow
         g.setColour(juce::Colour(0x50ffaa44));
         g.strokePath(dynPath, juce::PathStrokeType(2.5f,
                      juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -183,6 +207,7 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         g.strokePath(dynPath, juce::PathStrokeType(1.2f,
                      juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
+
 
     // Draw master gain overlay if enabled
     if (showMasterGain && std::abs(masterGainDB) > 0.01f)
@@ -294,6 +319,61 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
             false);
         g.setGradientFill(bottomShadow);
         g.fillRect(bounds.getX(), bounds.getBottom() - 8, bounds.getWidth(), 8.0f);
+    }
+
+    // Hover readout: frequency + dB at cursor position
+    if (showHoverReadout && !isDragging)
+    {
+        auto displayBounds = getDisplayBounds();
+        float hoverFreq = getFrequencyAtX(hoverPosition.x);
+        float hoverDB = getDBAtY(hoverPosition.y);
+        float eqResponse = processor.getFrequencyResponseMagnitude(hoverFreq);
+
+        // Format frequency
+        juce::String freqText;
+        if (hoverFreq >= 1000.0f)
+            freqText = juce::String(hoverFreq / 1000.0f, 2) + " kHz";
+        else
+            freqText = juce::String(static_cast<int>(hoverFreq)) + " Hz";
+
+        // Format cursor dB and EQ response
+        juce::String dbText = juce::String(hoverDB >= 0 ? "+" : "") + juce::String(hoverDB, 1) + " dB";
+        juce::String eqText = juce::String("EQ: ") + (eqResponse >= 0 ? "+" : "") + juce::String(eqResponse, 1) + " dB";
+
+        auto font = juce::FontOptions(10.0f).withStyle("Bold");
+        g.setFont(font);
+        float textW = juce::jmax(g.getCurrentFont().getStringWidth(freqText),
+                                  g.getCurrentFont().getStringWidth(eqText)) + 14.0f;
+        float textH = 42.0f;
+
+        // Position tooltip near cursor, flip if near edges
+        float tooltipX = hoverPosition.x + 14.0f;
+        float tooltipY = hoverPosition.y - textH - 6.0f;
+        if (tooltipX + textW > displayBounds.getRight())
+            tooltipX = hoverPosition.x - textW - 6.0f;
+        if (tooltipY < displayBounds.getY())
+            tooltipY = hoverPosition.y + 14.0f;
+
+        juce::Rectangle<float> tooltipRect(tooltipX, tooltipY, textW, textH);
+
+        // Background pill
+        g.setColour(juce::Colour(0xDD101014));
+        g.fillRoundedRectangle(tooltipRect, 4.0f);
+        g.setColour(juce::Colour(0x50ffffff));
+        g.drawRoundedRectangle(tooltipRect, 4.0f, 0.75f);
+
+        // Text lines
+        g.setColour(juce::Colour(0xFFdddddd));
+        g.drawText(freqText, tooltipRect.reduced(6, 2).removeFromTop(14.0f), juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xFFaaaaaa));
+        g.drawText(dbText, tooltipRect.reduced(6, 2).translated(0, 12.0f).removeFromTop(14.0f), juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xFF88ccff));
+        g.drawText(eqText, tooltipRect.reduced(6, 2).translated(0, 24.0f).removeFromTop(14.0f), juce::Justification::centredLeft);
+
+        // Crosshair lines (subtle)
+        g.setColour(juce::Colour(0x20ffffff));
+        g.drawVerticalLine(static_cast<int>(hoverPosition.x), displayBounds.getY(), displayBounds.getBottom());
+        g.drawHorizontalLine(static_cast<int>(hoverPosition.y), displayBounds.getX(), displayBounds.getRight());
     }
 
     // Subtle outer border
@@ -1269,9 +1349,34 @@ void EQGraphicDisplay::mouseUp(const juce::MouseEvent& /*e*/)
 void EQGraphicDisplay::mouseMove(const juce::MouseEvent& e)
 {
     int hitBand = hitTestControlPoint(e.position);
+    bool changed = false;
+
     if (hitBand != hoveredBand)
     {
         hoveredBand = hitBand;
+        changed = true;
+    }
+
+    // Update hover readout position
+    auto displayBounds = getDisplayBounds();
+    bool inDisplay = displayBounds.contains(e.position);
+    if (inDisplay != showHoverReadout || (inDisplay && e.position != hoverPosition))
+    {
+        showHoverReadout = inDisplay;
+        hoverPosition = e.position;
+        changed = true;
+    }
+
+    if (changed)
+        repaint();
+}
+
+void EQGraphicDisplay::mouseExit(const juce::MouseEvent& /*e*/)
+{
+    if (showHoverReadout || hoveredBand >= 0)
+    {
+        showHoverReadout = false;
+        hoveredBand = -1;
         repaint();
     }
 }
@@ -1614,6 +1719,10 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
     // Solo band (disable all others temporarily - just visual hint)
     menu.addItem(3, "Solo This Band", isEnabled);
 
+    // Delta solo (hear only what this band changes)
+    bool isDelta = processor.isDeltaSoloMode() && processor.isBandSoloed(bandIndex);
+    menu.addItem(8, "Delta Solo (Listen)", isEnabled, isDelta);
+
     // Enable all bands
     menu.addItem(4, "Enable All Bands");
 
@@ -1622,9 +1731,16 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
 
     menu.addSeparator();
 
+    // Pre-EQ spectrum overlay toggle
+    bool preVisible = analyzer ? analyzer->isPreSpectrumVisible() : false;
+    menu.addItem(9, "Show Pre-EQ Spectrum", true, preVisible);
+
+    menu.addSeparator();
+
     // Undo/Redo
     menu.addItem(6, "Undo", processor.getUndoManager().canUndo());
     menu.addItem(7, "Redo", processor.getUndoManager().canRedo());
+
 
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({screenPos.x, screenPos.y, 1, 1}),
         [this, bandIndex, isEnabled](int result)
@@ -1678,6 +1794,30 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
                 case 7:  // Redo
                     processor.getUndoManager().redo();
                     repaint();
+                    break;
+
+                case 8:  // Delta solo toggle
+                {
+                    bool wasActive = processor.isDeltaSoloMode() && processor.isBandSoloed(bandIndex);
+                    if (wasActive)
+                    {
+                        // Turn off delta solo
+                        processor.setDeltaSoloMode(false);
+                        processor.setSoloedBand(-1);
+                    }
+                    else
+                    {
+                        // Activate delta solo for this band
+                        processor.setSoloedBand(bandIndex);
+                        processor.setDeltaSoloMode(true);
+                    }
+                    repaint();
+                    break;
+                }
+
+                case 9:  // Toggle pre-EQ spectrum overlay
+                    if (analyzer)
+                        analyzer->setShowPreSpectrum(!analyzer->isPreSpectrumVisible());
                     break;
 
                 default:

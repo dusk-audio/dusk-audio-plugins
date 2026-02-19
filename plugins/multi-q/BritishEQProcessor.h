@@ -23,26 +23,16 @@
 #include <array>
 #include <atomic>
 
-// Helper function to prevent frequency cramping at high frequencies
+// Standard bilinear transform pre-warping: ensures the filter's cutoff/center
+// frequency lands at the correct position in the digital domain.
+// Previous implementation used a piecewise-linear heuristic for f > 3kHz that
+// was less accurate than the standard tan() formula and could mismatch the
+// actual IIR filter response.
 inline float britishPreWarpFrequency(float freq, double sampleRate)
 {
     const float nyquist = static_cast<float>(sampleRate * 0.5);
     const float omega = juce::MathConstants<float>::pi * freq / static_cast<float>(sampleRate);
     float warpedFreq = static_cast<float>(sampleRate) / juce::MathConstants<float>::pi * std::tan(omega);
-
-    if (freq > 3000.0f)
-    {
-        float ratio = freq / nyquist;
-        float compensation = 1.0f;
-        if (ratio < 0.3f)
-            compensation = 1.0f + (ratio - 0.136f) * 0.15f;
-        else if (ratio < 0.5f)
-            compensation = 1.0f + (ratio - 0.3f) * 0.4f;
-        else
-            compensation = 1.0f + (ratio - 0.5f) * 0.6f;
-        warpedFreq = freq * compensation;
-    }
-
     return std::min(warpedFreq, nyquist * 0.99f);
 }
 

@@ -91,7 +91,9 @@ void BandDetailPanel::setupKnobs()
     slopeSelector->addItem("24 dB/oct", 4);
     slopeSelector->addItem("36 dB/oct", 5);
     slopeSelector->addItem("48 dB/oct", 6);
-    slopeSelector->setTooltip("Filter slope: Steeper = sharper cutoff (6-48 dB/octave)");
+    slopeSelector->addItem("72 dB/oct", 7);
+    slopeSelector->addItem("96 dB/oct", 8);
+    slopeSelector->setTooltip("Filter slope: Steeper = sharper cutoff (6-96 dB/octave)");
     addAndMakeVisible(slopeSelector.get());
 
     // Shape selector for bands 2-7 (different options per band)

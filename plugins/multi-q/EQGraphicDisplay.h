@@ -36,6 +36,7 @@ public:
     void mouseUp(const juce::MouseEvent& e) override;
     void mouseMove(const juce::MouseEvent& e) override;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
     void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override;
 
     // Callback when band enabled state should change
@@ -53,6 +54,17 @@ public:
 
     // Show/hide analyzer
     void setAnalyzerVisible(bool visible);
+
+    // Show/hide pre-EQ spectrum overlay (dual analyzer)
+    void setShowPreSpectrum(bool show)
+    {
+        if (analyzer)
+            analyzer->setShowPreSpectrum(show);
+    }
+    bool isPreSpectrumVisible() const
+    {
+        return analyzer ? analyzer->isPreSpectrumVisible() : false;
+    }
 
     // Set analyzer smoothing mode
     void setAnalyzerSmoothingMode(FFTAnalyzer::SmoothingMode mode)
@@ -197,11 +209,16 @@ private:
     static constexpr int kNumBands = 8;
     std::array<float, kNumBands> smoothedDynamicGains{};
 
+    // Hover readout state
+    bool showHoverReadout = false;
+    juce::Point<float> hoverPosition;
+
     // Change detection for smart repaint
     std::array<float, kNumBands> lastBandFreqs{};
     std::array<float, kNumBands> lastBandGains{};
     std::array<float, kNumBands> lastBandQs{};
     std::array<bool, kNumBands> lastBandEnabled{};
+
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EQGraphicDisplay)
 };

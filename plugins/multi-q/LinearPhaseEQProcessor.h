@@ -170,9 +170,24 @@ public:
         juce::ScopedNoDenormals noDenormals;
 
         // Swap IR buffer if ready (happens on every EQ parameter change)
-        // This is separate from state swap to preserve circular buffer history
+        // Crossfade: snapshot pre-swap output, then blend with post-swap output
         if (irSwapReady.load(std::memory_order_acquire))
         {
+            auto* state = activeState.get();
+            if (state)
+            {
+                // Snapshot the next hopSize output samples for crossfade
+                int fadeLen = state->hopSize;
+                crossfadeLength = fadeLen;
+                crossfadeRemaining = fadeLen;
+                crossfadeBuffer.resize(static_cast<size_t>(fadeLen), 0.0f);
+                for (int i = 0; i < fadeLen; ++i)
+                {
+                    int idx = (state->delayReadPos + i) % (state->fftSize * 2);
+                    crossfadeBuffer[static_cast<size_t>(i)] = state->latencyDelay[static_cast<size_t>(idx)];
+                }
+            }
+
             auto* readyIR = irReadyPtr.load(std::memory_order_acquire);
             auto* activeIR = irActivePtr.load(std::memory_order_acquire);
             irActivePtr.store(readyIR, std::memory_order_release);
@@ -185,6 +200,8 @@ public:
         if (stateSwapReady.load(std::memory_order_acquire))
         {
             std::swap(activeState, readyState);
+            // Reset crossfade on state swap (FFT size changed, buffers incompatible)
+            crossfadeRemaining = 0;
             stateSwapReady.store(false, std::memory_order_release);
         }
 
@@ -212,8 +229,20 @@ public:
             }
 
             // Read output from latency delay buffer
-            channelData[i] = state->latencyDelay[static_cast<size_t>(state->delayReadPos)];
+            float output = state->latencyDelay[static_cast<size_t>(state->delayReadPos)];
             state->delayReadPos = (state->delayReadPos + 1) % (state->fftSize * 2);
+
+            // Apply crossfade if active (blend pre-swap snapshot with post-swap output)
+            if (crossfadeRemaining > 0)
+            {
+                float t = static_cast<float>(crossfadeRemaining) / static_cast<float>(crossfadeLength);
+                int fadeIdx = crossfadeLength - crossfadeRemaining;
+                float oldSample = crossfadeBuffer[static_cast<size_t>(fadeIdx)];
+                output = output * (1.0f - t) + oldSample * t;
+                crossfadeRemaining--;
+            }
+
+            channelData[i] = output;
         }
     }
 
@@ -817,6 +846,11 @@ private:
     std::atomic<std::vector<float>*> irReadyPtr{nullptr};
 
     int maxBlockSize = 512;
+
+    // Crossfade state for smooth IR transitions
+    std::vector<float> crossfadeBuffer;  // Pre-swap output snapshot
+    int crossfadeRemaining = 0;          // Samples remaining in crossfade
+    int crossfadeLength = 0;             // Total crossfade length (= hopSize)
 
     // Parameters (protected by mutex for background thread access)
     std::atomic<double> currentSampleRate{44100.0};
