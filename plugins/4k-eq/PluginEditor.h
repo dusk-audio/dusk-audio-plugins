@@ -117,7 +117,7 @@ private:
     // Section labels (LF, LMF, HMF, HF, FILTERS)
     juce::Label filtersLabel, lfLabel, lmfLabel, hmfLabel, hfLabel;
 
-    // Parameter labels for each knob (positioned near knobs like SSL)
+    // Parameter labels for each knob (positioned near knobs like the hardware)
     juce::Label hpfLabel, lpfLabel;  // Filter labels
     juce::Label lfGainLabel, lfFreqLabel;  // LF band
     juce::Label lmGainLabel, lmFreqLabel, lmQLabel;  // LMF band

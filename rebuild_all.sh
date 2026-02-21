@@ -113,10 +113,16 @@ else
 fi
 
 # --fast enables ninja generator
-if [ "$USE_FAST" = true ] && command_exists ninja; then
-    CMAKE_GENERATOR="-GNinja"
-    BUILD_COMMAND="ninja"
-    print_success "ninja detected - using for faster builds"
+if [ "$USE_FAST" = true ]; then
+    if command_exists ninja; then
+        CMAKE_GENERATOR="-GNinja"
+        BUILD_COMMAND="ninja"
+        print_success "ninja detected - using for faster builds"
+    else
+        CMAKE_GENERATOR=""
+        BUILD_COMMAND="make"
+        print_warning "ninja not found - install for faster builds: sudo apt install ninja-build (Linux) / brew install ninja (macOS)"
+    fi
 else
     CMAKE_GENERATOR=""
     BUILD_COMMAND="make"
@@ -172,7 +178,6 @@ get_plugin_target() {
         groovemind) echo "GrooveMind_All" ;;
         harmonic-generator) echo "HarmonicGeneratorPlugin_All" ;;
         convolution-reverb) echo "ConvolutionReverb_All" ;;
-        Velvet90) echo "Velvet90_All" ;;
         multi-q) echo "MultiQ_All" ;;
         neural-amp) echo "NeuralAmp_All" ;;
         tape-echo) echo "TapeEcho_All" ;;
