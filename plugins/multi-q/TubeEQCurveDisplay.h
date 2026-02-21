@@ -5,16 +5,7 @@
 #include "EQBand.h"  // For DisplayScaleMode
 
 //==============================================================================
-/**
- * Tube EQ Curve Display Component
- *
- * Displays frequency response graph for Tube EQ mode showing:
- * - LF Boost and Atten curves (showing the famous boost/cut trick)
- * - HF Boost curve with bandwidth visualization
- * - HF Atten shelf curve
- * - Combined frequency response with vintage cream/gold styling
- * - Vintage-style grid with tube-era aesthetic
- */
+/** Tube EQ Curve Display -- shows frequency response for Tube mode. */
 class TubeEQCurveDisplay : public juce::Component,
                            private juce::Timer
 {
@@ -48,7 +39,6 @@ private:
     // Display scale (modifiable via dropdown)
     float minDB = -24.0f;  // Default ±24 dB
     float maxDB = 24.0f;
-    DisplayScaleMode scaleMode = DisplayScaleMode::Linear24dB;
 
     // Cached parameter values for change detection
     struct CachedParams {

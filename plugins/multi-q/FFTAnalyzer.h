@@ -2,9 +2,9 @@
 
 #include <JuceHeader.h>
 #include <array>
+#include <atomic>
 #include "EQBand.h"
 
-//==============================================================================
 /**
     FFT Spectrum Analyzer Component for Multi-Q
 
@@ -19,7 +19,7 @@
 class FFTAnalyzer : public juce::Component
 {
 public:
-    // Spectrum smoothing modes (Professional)
+    // Spectrum smoothing modes
     enum class SmoothingMode
     {
         Off = 0,      // Raw FFT data, no smoothing
@@ -45,44 +45,33 @@ public:
     // Set display parameters
     void setDisplayRange(float minDB, float maxDB);
     void setFrequencyRange(float minHz, float maxHz);
-    void setFillColor(juce::Colour color) { fillColor = color; }
-    void setLineColor(juce::Colour color) { lineColor = color; }
-    void setEnabled(bool enabled) { analyzerEnabled = enabled; repaint(); }
-    void setShowPeakHold(bool show) { showPeakHold = show; }
+    void setFillColor(juce::Colour color) { fillColorARGB.store(color.getARGB(), std::memory_order_relaxed); }
+    void setLineColor(juce::Colour color) { lineColorARGB.store(color.getARGB(), std::memory_order_relaxed); }
+    void setEnabled(bool enabled) { analyzerEnabled.store(enabled, std::memory_order_relaxed); repaint(); }
+    void setShowPeakHold(bool show) { showPeakHold.store(show, std::memory_order_relaxed); repaint(); }
 
     // Pre-EQ spectrum overlay
-    void setShowPreSpectrum(bool show) { showPreSpectrum = show; repaint(); }
-    bool isPreSpectrumVisible() const { return showPreSpectrum; }
-    void setPreFillColor(juce::Colour color) { preFillColor = color; }
-    void setPreLineColor(juce::Colour color) { preLineColor = color; }
+    void setShowPreSpectrum(bool show) { showPreSpectrum.store(show, std::memory_order_relaxed); repaint(); }
+    bool isPreSpectrumVisible() const { return showPreSpectrum.load(std::memory_order_relaxed); }
+    void setPreFillColor(juce::Colour color) { preFillColorARGB.store(color.getARGB(), std::memory_order_relaxed); }
+    void setPreLineColor(juce::Colour color) { preLineColorARGB.store(color.getARGB(), std::memory_order_relaxed); }
 
     // Smoothing control
-    void setSmoothingMode(SmoothingMode mode) { smoothingMode = mode; }
-    SmoothingMode getSmoothingMode() const { return smoothingMode; }
+    void setSmoothingMode(SmoothingMode mode) { smoothingMode.store(mode, std::memory_order_relaxed); }
+    SmoothingMode getSmoothingMode() const { return smoothingMode.load(std::memory_order_relaxed); }
 
     // Spectrum freeze (captures current spectrum as reference)
-    void toggleFreeze()
-    {
-        if (spectrumFrozen)
-        {
-            // Unfreeze - clear frozen data
-            spectrumFrozen = false;
-        }
-        else
-        {
-            // Freeze - capture current smoothed magnitudes
-            frozenMagnitudes = smoothedMagnitudes;
-            spectrumFrozen = true;
-        }
-        repaint();
-    }
+    void toggleFreeze();
 
-    bool isFrozen() const { return spectrumFrozen; }
+    bool isFrozen() const { return spectrumFrozen.load(std::memory_order_relaxed); }
 
     void clearFrozen()
     {
-        spectrumFrozen = false;
-        std::fill(frozenMagnitudes.begin(), frozenMagnitudes.end(), -100.0f);
+        {
+            juce::SpinLock::ScopedLockType lock(magnitudeLock);
+            spectrumFrozen.store(false, std::memory_order_relaxed);
+            std::fill(frozenMagnitudes.begin(), frozenMagnitudes.end(), -100.0f);
+        }
         repaint();
     }
 
@@ -99,6 +88,7 @@ public:
     float getDBAtY(float y) const;
 
 private:
+    juce::SpinLock magnitudeLock;  // Protects magnitude arrays (audio→GUI)
     std::array<float, 2048> currentMagnitudes{};
     std::array<float, 2048> smoothedMagnitudes{};  // Temporally smoothed values
     std::array<float, 2048> peakHoldMagnitudes{};
@@ -109,21 +99,25 @@ private:
     float minFrequency = 20.0f;
     float maxFrequency = 20000.0f;
 
-    juce::Colour fillColor = juce::Colour(0x40888888);
-    juce::Colour lineColor = juce::Colour(0xFFAAAAAA);
+    std::atomic<uint32_t> fillColorARGB{0x40888888};
+    std::atomic<uint32_t> lineColorARGB{0xFFAAAAAA};
 
     // Pre-EQ spectrum overlay
     std::array<float, 2048> preSmoothedMagnitudes{};
-    bool showPreSpectrum = false;
-    juce::Colour preFillColor = juce::Colour(0x20997755);   // Warm muted orange
-    juce::Colour preLineColor = juce::Colour(0x40aa8855);   // Warm muted line
+    std::atomic<bool> showPreSpectrum{false};
+    std::atomic<uint32_t> preFillColorARGB{0x20997755};   // Warm muted orange
+    std::atomic<uint32_t> preLineColorARGB{0x40aa8855};   // Warm muted line
 
-    bool analyzerEnabled = true;
-    bool showPeakHold = false;
-    bool spectrumFrozen = false;  // True when spectrum is frozen for reference
+    std::atomic<bool> analyzerEnabled{true};
+    std::atomic<bool> showPeakHold{false};
+    std::atomic<bool> spectrumFrozen{false};  // True when spectrum is frozen for reference
+
+    // Peak hold decay: dB/sec falloff rate
+    float peakDecayRateDbPerSec = 20.0f;
+    std::atomic<double> lastPeakDecayTime{0.0};  // seconds (from juce::Time::getMillisecondCounterHiRes)
 
     // Smoothing settings
-    SmoothingMode smoothingMode = SmoothingMode::Medium;
+    std::atomic<SmoothingMode> smoothingMode{SmoothingMode::Medium};
 
     // Get smoothing coefficients based on mode
     float getTemporalSmoothingCoeff() const;
