@@ -16,7 +16,6 @@
 #include "../shared/UserPresetManager.h"
 #include "FourKLookAndFeel.h"
 
-//==============================================================================
 /**
     Multi-Q Plugin Editor
 
@@ -56,7 +55,7 @@ private:
     // Graphic display
     std::unique_ptr<EQGraphicDisplay> graphicDisplay;
 
-    // Band detail panel (band selector + single-row controls)
+    // Band detail panel (Waves F6 style - band selector + single-row controls)
     std::unique_ptr<BandDetailPanel> bandDetailPanel;
 
     // British mode curve display (4K-EQ style)
@@ -111,12 +110,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> eqTypeAttachment;
 
     // Cross-mode transfer button (British/Tube → Digital)
-    juce::TextButton transferToDigitalButton{"Transfer \u2192 Digital"};
-
-    // EQ Match buttons (Digital mode)
-    juce::TextButton eqMatchRefButton{"Capture Ref"};
-    juce::TextButton eqMatchSrcButton{"Capture Src"};
-    juce::TextButton eqMatchApplyButton{"Match EQ"};
+    juce::TextButton transferToDigitalButton{"Transfer To Digital"};
 
     // Factory preset selector (Digital mode)
     std::unique_ptr<juce::ComboBox> presetSelector;
@@ -210,9 +204,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> britishOutputGainAttachment;
 
     // Track current EQ mode for UI switching
+    bool isMatchMode = false;
     bool isBritishMode = false;
     bool isTubeEQMode = false;
-    // Note: Digital mode (default) includes per-band dynamics capability
 
     // ============== PER-BAND DYNAMICS CONTROLS ==============
     // Dynamics controls (shown in Digital mode for selected band)
@@ -221,7 +215,6 @@ private:
     std::unique_ptr<juce::Slider> dynAttackSlider;          // Attack time in ms
     std::unique_ptr<juce::Slider> dynReleaseSlider;         // Release time in ms
     std::unique_ptr<juce::Slider> dynRangeSlider;           // Max gain change in dB
-    std::unique_ptr<juce::Slider> dynRatioSlider;           // Compression ratio
 
     // Dynamic mode labels
     juce::Label dynSectionLabel;    // "DYNAMICS" section header
@@ -229,7 +222,6 @@ private:
     juce::Label dynAttackLabel;
     juce::Label dynReleaseLabel;
     juce::Label dynRangeLabel;
-    juce::Label dynRatioLabel;
 
     // Dynamic mode attachments (created/destroyed based on selected band)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> dynEnableAttachment;
@@ -237,13 +229,13 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynAttackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynReleaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynRangeAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> dynRatioAttachment;
 
     // British mode header controls (matching 4K-EQ)
     juce::TextButton britishCurveCollapseButton;  // "Hide Graph" / "Show Graph"
     std::unique_ptr<juce::ToggleButton> britishBypassButton;
     std::unique_ptr<juce::ToggleButton> britishAutoGainButton;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishBypassAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishAutoGainAttachment;
     bool britishCurveCollapsed = false;  // Track collapse state for British mode
 
     // British mode header controls (A/B, Presets - like 4K-EQ)
@@ -325,10 +317,9 @@ private:
 
     bool tubeEQCurveCollapsed = false;  // Track collapse state for Tube EQ mode
 
-    // Tube mode header controls (A/B, Preset, HQ, Hide Graph)
+    // Tube mode header controls (A/B, Preset, HQ)
     juce::TextButton tubeAbButton;
     juce::ComboBox tubePresetSelector;  // Preset selector for Tube mode
-    juce::TextButton tubeCurveCollapseButton;  // "Hide Graph" / "Show Graph"
     std::unique_ptr<juce::ToggleButton> tubeHqButton;
     juce::TextButton tubeEQCurveCollapseButton;  // "Hide Graph" / "Show Graph" for Tube mode
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeHqAttachment;
@@ -339,6 +330,8 @@ private:
     void toggleAB();
     void copyCurrentToState(juce::ValueTree& state);
     void applyState(const juce::ValueTree& state);
+    void copyModeParamsToState(juce::ValueTree& state, const std::function<bool(const juce::String&)>& filter);
+    void applyModeParams(const juce::ValueTree& state);
 
     // Analyzer controls
     std::unique_ptr<juce::ToggleButton> analyzerButton;

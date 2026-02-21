@@ -4,6 +4,8 @@
 //==============================================================================
 FFTAnalyzer::FFTAnalyzer()
 {
+    setOpaque(false);  // Ensure parent paints behind us when we draw nothing
+
     std::fill(currentMagnitudes.begin(), currentMagnitudes.end(), -100.0f);
     std::fill(smoothedMagnitudes.begin(), smoothedMagnitudes.end(), -100.0f);
     std::fill(peakHoldMagnitudes.begin(), peakHoldMagnitudes.end(), -100.0f);
@@ -16,7 +18,7 @@ float FFTAnalyzer::getTemporalSmoothingCoeff() const
 {
     // Higher coefficient = more smoothing (slower response)
     // Coefficient represents how much of the previous value to keep
-    switch (smoothingMode)
+    switch (smoothingMode.load(std::memory_order_relaxed))
     {
         case SmoothingMode::Off:    return 0.0f;   // No smoothing
         case SmoothingMode::Light:  return 0.7f;   // Fast response
@@ -29,7 +31,7 @@ float FFTAnalyzer::getTemporalSmoothingCoeff() const
 int FFTAnalyzer::getSpatialSmoothingWidth() const
 {
     // Width of the spatial smoothing kernel (number of bins to average)
-    switch (smoothingMode)
+    switch (smoothingMode.load(std::memory_order_relaxed))
     {
         case SmoothingMode::Off:    return 0;
         case SmoothingMode::Light:  return 1;   // ±1 bin (3-bin average)
@@ -74,13 +76,67 @@ void FFTAnalyzer::applySpatialSmoothing(std::array<float, 2048>& magnitudes) con
 //==============================================================================
 void FFTAnalyzer::paint(juce::Graphics& g)
 {
-    if (!analyzerEnabled)
+    if (!analyzerEnabled.load(std::memory_order_relaxed))
         return;
+
+    // Copy shared arrays under a short-lived lock to minimize audio-thread contention
+    std::array<float, 2048> localSmoothed;
+    std::array<float, 2048> localPreSmoothed;
+    std::array<float, 2048> localFrozen;
+    std::array<float, 2048> localPeakHold;
+    bool localShowPreSpectrum;
+    bool localShowPeakHold;
+    bool localSpectrumFrozen;
+    {
+        juce::SpinLock::ScopedLockType lock(magnitudeLock);
+        localSmoothed = smoothedMagnitudes;
+        localPreSmoothed = preSmoothedMagnitudes;
+        localFrozen = frozenMagnitudes;
+        localPeakHold = peakHoldMagnitudes;
+        localShowPreSpectrum = showPreSpectrum.load(std::memory_order_relaxed);
+        localShowPeakHold = showPeakHold.load(std::memory_order_relaxed);
+        localSpectrumFrozen = spectrumFrozen.load(std::memory_order_relaxed);
+    }
 
     auto bounds = getLocalBounds().toFloat();
 
+    // Load colors atomically for thread-safe access
+    juce::Colour fillColor = juce::Colour(fillColorARGB.load(std::memory_order_relaxed));
+    juce::Colour lineColor = juce::Colour(lineColorARGB.load(std::memory_order_relaxed));
+    juce::Colour preFillColor = juce::Colour(preFillColorARGB.load(std::memory_order_relaxed));
+    juce::Colour preLineColor = juce::Colour(preLineColorARGB.load(std::memory_order_relaxed));
+
+    // Draw pre-EQ reference spectrum first (behind main spectrum, muted colors)
+    if (localShowPreSpectrum)
+    {
+        auto prePath = createMagnitudePath(localPreSmoothed);
+
+        if (!prePath.isEmpty())
+        {
+            auto prePathBounds = prePath.getBounds();
+
+            juce::ColourGradient preFillGradient(
+                preFillColor.withAlpha(0.18f), 0, prePathBounds.getY(),
+                preFillColor.withAlpha(0.01f), 0, bounds.getBottom(),
+                false);
+            preFillGradient.addColour(0.3, preFillColor.withAlpha(0.10f));
+            preFillGradient.addColour(0.6, preFillColor.withAlpha(0.04f));
+
+            g.setGradientFill(preFillGradient);
+            g.fillPath(prePath);
+
+            g.setColour(preLineColor.withAlpha(0.15f));
+            g.strokePath(prePath, juce::PathStrokeType(2.0f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            g.setColour(preLineColor.withAlpha(0.35f));
+            g.strokePath(prePath, juce::PathStrokeType(0.75f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+    }
+
     // Create the magnitude path
-    auto path = createMagnitudePath();
+    auto path = createMagnitudePath(localSmoothed);
 
     if (!path.isEmpty())
     {
@@ -114,37 +170,8 @@ void FFTAnalyzer::paint(juce::Graphics& g)
                      juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
-    // Draw pre-EQ reference spectrum (behind main spectrum, muted colors)
-    if (showPreSpectrum)
-    {
-        auto prePath = createMagnitudePath(preSmoothedMagnitudes);
-
-        if (!prePath.isEmpty())
-        {
-            auto prePathBounds = prePath.getBounds();
-
-            juce::ColourGradient preFillGradient(
-                preFillColor.withAlpha(0.18f), 0, prePathBounds.getY(),
-                preFillColor.withAlpha(0.01f), 0, bounds.getBottom(),
-                false);
-            preFillGradient.addColour(0.3, preFillColor.withAlpha(0.10f));
-            preFillGradient.addColour(0.6, preFillColor.withAlpha(0.04f));
-
-            g.setGradientFill(preFillGradient);
-            g.fillPath(prePath);
-
-            g.setColour(preLineColor.withAlpha(0.15f));
-            g.strokePath(prePath, juce::PathStrokeType(2.0f,
-                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-            g.setColour(preLineColor.withAlpha(0.35f));
-            g.strokePath(prePath, juce::PathStrokeType(0.75f,
-                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        }
-    }
-
     // Draw peak hold line if enabled (thin line above spectrum)
-    if (showPeakHold)
+    if (localShowPeakHold)
     {
         juce::Path peakPath;
         bool pathStarted = false;
@@ -156,7 +183,7 @@ void FFTAnalyzer::paint(juce::Graphics& g)
             float freq = minFrequency * std::pow(maxFrequency / minFrequency, normalizedBin);
 
             float x = getXForFrequency(freq);
-            float y = getYForDB(peakHoldMagnitudes[static_cast<size_t>(i)]);
+            float y = getYForDB(localPeakHold[static_cast<size_t>(i)]);
 
             if (!pathStarted)
             {
@@ -179,7 +206,7 @@ void FFTAnalyzer::paint(juce::Graphics& g)
     }
 
     // Draw frozen spectrum reference line (cyan color to distinguish from live spectrum)
-    if (spectrumFrozen)
+    if (localSpectrumFrozen)
     {
         juce::Path frozenPath;
         bool pathStarted = false;
@@ -191,7 +218,7 @@ void FFTAnalyzer::paint(juce::Graphics& g)
             float freq = minFrequency * std::pow(maxFrequency / minFrequency, normalizedBin);
 
             float x = getXForFrequency(freq);
-            float y = getYForDB(frozenMagnitudes[static_cast<size_t>(i)]);
+            float y = getYForDB(localFrozen[static_cast<size_t>(i)]);
 
             if (!pathStarted)
             {
@@ -217,47 +244,68 @@ void FFTAnalyzer::paint(juce::Graphics& g)
 //==============================================================================
 void FFTAnalyzer::updateMagnitudes(const std::array<float, 2048>& magnitudes)
 {
-    currentMagnitudes = magnitudes;
-
-    // Apply temporal smoothing (exponential moving average)
+    std::array<float, 2048> tempSmoothed;
+    std::array<float, 2048> tempPeakHold;
+    std::array<float, 2048> prevSmoothed;
     float smoothCoeff = getTemporalSmoothingCoeff();
+
+    // Brief lock to read previous state and store raw magnitudes
+    {
+        juce::SpinLock::ScopedLockType lock(magnitudeLock);
+        currentMagnitudes = magnitudes;
+        prevSmoothed = smoothedMagnitudes;
+        tempPeakHold = peakHoldMagnitudes;
+    }
+
+    // Temporal smoothing computed outside the lock
     if (smoothCoeff > 0.0f)
     {
+        float attackCoeff = smoothCoeff * 0.5f;
+        float releaseCoeff = smoothCoeff;
+
         for (size_t i = 0; i < 2048; ++i)
         {
-            // Smooth attack (rising) and release (falling) separately
-            // Attack is faster than release for better transient visibility
-            float attackCoeff = smoothCoeff * 0.5f;   // Faster attack
-            float releaseCoeff = smoothCoeff;          // Normal release
-
-            if (magnitudes[i] > smoothedMagnitudes[i])
-            {
-                // Rising (attack) - use faster coefficient
-                smoothedMagnitudes[i] = attackCoeff * smoothedMagnitudes[i] +
-                                        (1.0f - attackCoeff) * magnitudes[i];
-            }
+            if (magnitudes[i] > prevSmoothed[i])
+                tempSmoothed[i] = attackCoeff * prevSmoothed[i] +
+                                  (1.0f - attackCoeff) * magnitudes[i];
             else
-            {
-                // Falling (release) - use normal coefficient
-                smoothedMagnitudes[i] = releaseCoeff * smoothedMagnitudes[i] +
-                                        (1.0f - releaseCoeff) * magnitudes[i];
-            }
+                tempSmoothed[i] = releaseCoeff * prevSmoothed[i] +
+                                  (1.0f - releaseCoeff) * magnitudes[i];
         }
-
-        // Apply spatial smoothing to the temporally smoothed data
-        applySpatialSmoothing(smoothedMagnitudes);
     }
     else
     {
-        // No smoothing - use raw magnitudes
-        smoothedMagnitudes = magnitudes;
+        tempSmoothed = magnitudes;
     }
 
-    // Update peak hold (uses raw magnitudes for accurate peak detection)
+    // Peak hold with time-based decay (outside the lock)
+    double now = juce::Time::getMillisecondCounterHiRes() / 1000.0;
+    double prevTime = lastPeakDecayTime.load(std::memory_order_acquire);
+    float deltaTime = (prevTime > 0.0)
+        ? static_cast<float>(now - prevTime)
+        : 0.0f;
+    deltaTime = juce::jlimit(0.0f, 0.5f, deltaTime);  // Clamp to avoid large jumps
+    lastPeakDecayTime.store(now, std::memory_order_release);
+
+    float decayAmount = peakDecayRateDbPerSec * deltaTime;
     for (size_t i = 0; i < 2048; ++i)
     {
-        if (magnitudes[i] > peakHoldMagnitudes[i])
-            peakHoldMagnitudes[i] = magnitudes[i];
+        tempPeakHold[i] -= decayAmount;
+        if (tempPeakHold[i] < -100.0f)
+            tempPeakHold[i] = -100.0f;
+        if (magnitudes[i] > tempPeakHold[i])
+            tempPeakHold[i] = magnitudes[i];
+    }
+
+    // Apply spatial smoothing outside the lock (no shared state access)
+    if (smoothCoeff > 0.0f)
+        applySpatialSmoothing(tempSmoothed);
+
+    // Brief lock to publish results
+    {
+        juce::SpinLock::ScopedLockType lock(magnitudeLock);
+        smoothedMagnitudes = tempSmoothed;
+        peakHoldMagnitudes = tempPeakHold;
     }
 
     repaint();
@@ -265,30 +313,65 @@ void FFTAnalyzer::updateMagnitudes(const std::array<float, 2048>& magnitudes)
 
 void FFTAnalyzer::updatePreMagnitudes(const std::array<float, 2048>& magnitudes)
 {
+    std::array<float, 2048> tempPreSmoothed;
+    std::array<float, 2048> prevPreSmoothed;
     float smoothCoeff = getTemporalSmoothingCoeff();
+
+    // Brief lock to read previous state
+    {
+        juce::SpinLock::ScopedLockType lock(magnitudeLock);
+        prevPreSmoothed = preSmoothedMagnitudes;
+    }
+
+    // Temporal smoothing computed outside the lock
     if (smoothCoeff > 0.0f)
     {
+        float attackCoeff = smoothCoeff * 0.5f;
+        float releaseCoeff = smoothCoeff;
+
         for (size_t i = 0; i < 2048; ++i)
         {
-            float attackCoeff = smoothCoeff * 0.5f;
-            float releaseCoeff = smoothCoeff;
-
-            if (magnitudes[i] > preSmoothedMagnitudes[i])
-                preSmoothedMagnitudes[i] = attackCoeff * preSmoothedMagnitudes[i] +
-                                           (1.0f - attackCoeff) * magnitudes[i];
+            if (magnitudes[i] > prevPreSmoothed[i])
+                tempPreSmoothed[i] = attackCoeff * prevPreSmoothed[i] +
+                                     (1.0f - attackCoeff) * magnitudes[i];
             else
-                preSmoothedMagnitudes[i] = releaseCoeff * preSmoothedMagnitudes[i] +
-                                           (1.0f - releaseCoeff) * magnitudes[i];
+                tempPreSmoothed[i] = releaseCoeff * prevPreSmoothed[i] +
+                                     (1.0f - releaseCoeff) * magnitudes[i];
         }
-        applySpatialSmoothing(preSmoothedMagnitudes);
+
+        applySpatialSmoothing(tempPreSmoothed);
     }
     else
     {
-        preSmoothedMagnitudes = magnitudes;
+        tempPreSmoothed = magnitudes;
     }
 
-    if (showPreSpectrum)
+    // Brief lock to publish results
+    {
+        juce::SpinLock::ScopedLockType lock(magnitudeLock);
+        preSmoothedMagnitudes = tempPreSmoothed;
+    }
+
+    if (showPreSpectrum.load(std::memory_order_relaxed))
         repaint();
+}
+
+//==============================================================================
+void FFTAnalyzer::toggleFreeze()
+{
+    {
+        juce::SpinLock::ScopedLockType lock(magnitudeLock);
+        if (spectrumFrozen.load(std::memory_order_relaxed))
+        {
+            spectrumFrozen.store(false, std::memory_order_relaxed);
+        }
+        else
+        {
+            frozenMagnitudes = smoothedMagnitudes;
+            spectrumFrozen.store(true, std::memory_order_relaxed);
+        }
+    }
+    repaint();
 }
 
 //==============================================================================
@@ -358,9 +441,13 @@ float FFTAnalyzer::getDBAtY(float y) const
 //==============================================================================
 juce::Path FFTAnalyzer::createMagnitudePath() const
 {
-    return createMagnitudePath(smoothedMagnitudes);
+    std::array<float, 2048> localMags;
+    {
+        juce::SpinLock::ScopedLockType lock(magnitudeLock);
+        localMags = smoothedMagnitudes;
+    }
+    return createMagnitudePath(localMags);
 }
-
 juce::Path FFTAnalyzer::createMagnitudePath(const std::array<float, 2048>& mags) const
 {
     juce::Path path;

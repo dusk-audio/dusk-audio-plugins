@@ -3,7 +3,7 @@
 
     BritishEQProcessor.h
 
-    British Console EQ processor for Multi-Q's British mode.
+    British console EQ processor for Multi-Q's British mode.
     Based on the standalone 4K-EQ plugin DSP code.
 
     Features:
@@ -31,9 +31,12 @@
 inline float britishPreWarpFrequency(float freq, double sampleRate)
 {
     const float nyquist = static_cast<float>(sampleRate * 0.5);
-    const float omega = juce::MathConstants<float>::pi * freq / static_cast<float>(sampleRate);
+    // Clamp freq below Nyquist to prevent tan() from producing negative/extreme values
+    float safeFreq = std::min(freq, nyquist * 0.98f);
+    safeFreq = std::max(safeFreq, 1.0f);
+    const float omega = juce::MathConstants<float>::pi * safeFreq / static_cast<float>(sampleRate);
     float warpedFreq = static_cast<float>(sampleRate) / juce::MathConstants<float>::pi * std::tan(omega);
-    return std::min(warpedFreq, nyquist * 0.99f);
+    return std::min(std::max(warpedFreq, 1.0f), nyquist * 0.99f);
 }
 
 class BritishEQProcessor
@@ -74,9 +77,9 @@ public:
 
     BritishEQProcessor() = default;
 
-    void prepare(double sampleRate, int samplesPerBlock, int numChannels)
+    void prepare(double sampleRate, int samplesPerBlock, int /*numChannels*/)
     {
-        currentSampleRate = sampleRate;
+        currentSampleRate.store(sampleRate, std::memory_order_release);
 
         juce::dsp::ProcessSpec spec;
         spec.sampleRate = sampleRate;
@@ -134,6 +137,21 @@ public:
         phaseShiftL.reset();
         phaseShiftR.reset();
         consoleSaturation.reset();
+    }
+
+    /** Sample-rate update. Called from processBlock when rate changes.
+        Resets filter state, updates the cached rate, and refreshes rate-dependent
+        components (saturation, phase shift coefficients). Note: updatePhaseShift()
+        allocates a Coefficients object; this is acceptable since sample rate changes
+        are infrequent (typically only at session start). Caller must call
+        setParameters() or otherwise trigger updateFilters() so that filter coefficients
+        are recalculated for the new rate. */
+    void updateSampleRate(double newRate)
+    {
+        currentSampleRate.store(newRate, std::memory_order_release);
+        consoleSaturation.setSampleRate(newRate);
+        updatePhaseShift();
+        reset();
     }
 
     void setParameters(const Parameters& newParams)
@@ -226,7 +244,7 @@ public:
 
 private:
     Parameters params;
-    double currentSampleRate = 44100.0;
+    std::atomic<double> currentSampleRate{44100.0};
 
     // HPF: 3rd order (1st + 2nd order = 18 dB/oct)
     juce::dsp::IIR::Filter<float> hpfStage1L, hpfStage1R;
@@ -249,19 +267,23 @@ private:
 
     void updateFilters()
     {
-        updateHPF();
-        updateLPF();
-        updateLFBand();
-        updateLMBand();
-        updateHMBand();
-        updateHFBand();
+        double sr = currentSampleRate.load(std::memory_order_acquire);
+        updateHPF(sr);
+        updateLPF(sr);
+        updateLFBand(sr);
+        updateLMBand(sr);
+        updateHMBand(sr);
+        updateHFBand(sr);
     }
 
     void updatePhaseShift()
     {
         // All-pass filter for transformer phase rotation at ~200Hz
+        // Creates a new Coefficients instance and swaps via refcounted Ptr
+        // so the audio thread always sees a consistent object.
         float freq = 200.0f;
-        float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(currentSampleRate);
+        double sr = currentSampleRate.load(std::memory_order_acquire);
+        float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sr);
         float tan_w0 = std::tan(w0 / 2.0f);
 
         float a0 = 1.0f + tan_w0;
@@ -269,18 +291,18 @@ private:
         float b0 = a1;
         float b1 = 1.0f;
 
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::Ptr(
+        auto newCoeffs = juce::dsp::IIR::Coefficients<float>::Ptr(
             new juce::dsp::IIR::Coefficients<float>(b0, b1, 0.0f, 1.0f, a1, 0.0f));
-        phaseShiftL.coefficients = coeffs;
-        phaseShiftR.coefficients = coeffs;
+        phaseShiftL.coefficients = newCoeffs;
+        phaseShiftR.coefficients = newCoeffs;
     }
 
-    void updateHPF()
+    void updateHPF(double sr)
     {
         float freq = params.hpfFreq;
 
         // Stage 1: 1st-order highpass
-        auto coeffs1st = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(currentSampleRate, freq);
+        auto coeffs1st = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sr, freq);
         if (coeffs1st)
         {
             hpfStage1L.coefficients = coeffs1st;
@@ -289,7 +311,7 @@ private:
 
         // Stage 2: 2nd-order highpass with console Q
         const float consoleHPFQ = 0.54f;
-        auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, freq, consoleHPFQ);
+        auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, freq, consoleHPFQ);
         if (coeffs2nd)
         {
             hpfStage2L.coefficients = coeffs2nd;
@@ -297,16 +319,16 @@ private:
         }
     }
 
-    void updateLPF()
+    void updateLPF(double sr)
     {
         float freq = params.lpfFreq;
 
         float processFreq = freq;
-        if (freq > currentSampleRate * 0.3f)
-            processFreq = britishPreWarpFrequency(freq, currentSampleRate);
+        if (freq > sr * 0.3f)
+            processFreq = britishPreWarpFrequency(freq, sr);
 
         float q = params.isBlackMode ? 0.8f : 0.707f;
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(currentSampleRate, processFreq, q);
+        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, processFreq, q);
         if (coeffs)
         {
             lpfL.coefficients = coeffs;
@@ -314,34 +336,34 @@ private:
         }
     }
 
-    void updateLFBand()
+    void updateLFBand(double sr)
     {
         if (params.isBlackMode && params.lfBell)
         {
-            auto coeffs = makeConsolePeak(currentSampleRate, params.lfFreq, 0.7f, params.lfGain, params.isBlackMode);
+            auto coeffs = makeConsolePeak(sr, params.lfFreq, 0.7f, params.lfGain, params.isBlackMode);
             lfFilterL.coefficients = coeffs;
             lfFilterR.coefficients = coeffs;
         }
         else
         {
-            auto coeffs = makeConsoleShelf(currentSampleRate, params.lfFreq, 0.7f, params.lfGain, false, params.isBlackMode);
+            auto coeffs = makeConsoleShelf(sr, params.lfFreq, 0.7f, params.lfGain, false, params.isBlackMode);
             lfFilterL.coefficients = coeffs;
             lfFilterR.coefficients = coeffs;
         }
     }
 
-    void updateLMBand()
+    void updateLMBand(double sr)
     {
         float q = params.lmQ;
         if (params.isBlackMode)
             q = calculateDynamicQ(params.lmGain, q);
 
-        auto coeffs = makeConsolePeak(currentSampleRate, params.lmFreq, q, params.lmGain, params.isBlackMode);
+        auto coeffs = makeConsolePeak(sr, params.lmFreq, q, params.lmGain, params.isBlackMode);
         lmFilterL.coefficients = coeffs;
         lmFilterR.coefficients = coeffs;
     }
 
-    void updateHMBand()
+    void updateHMBand(double sr)
     {
         float freq = params.hmFreq;
         float q = params.hmQ;
@@ -358,26 +380,26 @@ private:
 
         float processFreq = freq;
         if (freq > 3000.0f)
-            processFreq = britishPreWarpFrequency(freq, currentSampleRate);
+            processFreq = britishPreWarpFrequency(freq, sr);
 
-        auto coeffs = makeConsolePeak(currentSampleRate, processFreq, q, params.hmGain, params.isBlackMode);
+        auto coeffs = makeConsolePeak(sr, processFreq, q, params.hmGain, params.isBlackMode);
         hmFilterL.coefficients = coeffs;
         hmFilterR.coefficients = coeffs;
     }
 
-    void updateHFBand()
+    void updateHFBand(double sr)
     {
-        float warpedFreq = britishPreWarpFrequency(params.hfFreq, currentSampleRate);
+        float warpedFreq = britishPreWarpFrequency(params.hfFreq, sr);
 
         if (params.isBlackMode && params.hfBell)
         {
-            auto coeffs = makeConsolePeak(currentSampleRate, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
+            auto coeffs = makeConsolePeak(sr, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
             hfFilterL.coefficients = coeffs;
             hfFilterR.coefficients = coeffs;
         }
         else
         {
-            auto coeffs = makeConsoleShelf(currentSampleRate, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
+            auto coeffs = makeConsoleShelf(sr, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
             hfFilterL.coefficients = coeffs;
             hfFilterR.coefficients = coeffs;
         }

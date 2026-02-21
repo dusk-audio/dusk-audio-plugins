@@ -5,82 +5,57 @@
 #include <atomic>
 #include <vector>
 
-//==============================================================================
-/**
- * DynamicEQProcessor - Per-band envelope followers for per-band dynamic EQ
- * processing.
- *
- * Each band can independently have dynamics enabled, with its own:
- * - Threshold (dB)
- * - Attack time (ms)
- * - Release time (ms)
- * - Range (dB) - maximum gain change
- *
- * Enhanced features:
- * - Soft-knee compression for smoother response
- * - Lookahead for peak detection (prevents clipping on transients)
- *
- * When input level at the band's frequency exceeds threshold, the band's
- * gain is dynamically reduced toward 0 dB. This is like a per-band compressor.
- */
+// Per-band dynamic EQ: envelope followers with soft-knee compression and lookahead.
+// Each band acts as an independent compressor at its frequency.
 class DynamicEQProcessor
 {
 public:
     static constexpr int NUM_BANDS = 8;
     static constexpr int MAX_LOOKAHEAD_SAMPLES = 512;  // ~11ms at 44.1kHz
 
-    //==========================================================================
-    /** Per-band dynamic parameters */
     struct BandParameters
     {
         float threshold = -20.0f;    // dB (-48 to 0) - lower = more sensitive
         float attack = 10.0f;        // ms (0.1 to 500)
         float release = 100.0f;      // ms (10 to 5000)
         float range = 12.0f;         // dB (0 to 24) - max gain change
-        float ratio = 4.0f;         // Compression ratio (1.0 to 100.0)
         float kneeWidth = 6.0f;      // dB (0 to 12) - soft knee width, 0 = hard knee
         float ratio = 4.0f;          // Compression ratio (1:1 to 20:1)
         bool enabled = false;        // Per-band dynamics on/off
     };
 
-    //==========================================================================
-    /** Global dynamic EQ settings */
     struct GlobalSettings
     {
         float lookaheadMs = 0.0f;    // 0 to 10ms lookahead
         bool softKneeEnabled = true;
     };
 
-    //==========================================================================
     DynamicEQProcessor() = default;
 
-    /** Prepare the processor for playback */
     void prepare(double newSampleRate, int channelCount)
     {
-        sampleRate = newSampleRate;
+        sampleRate.store(newSampleRate, std::memory_order_release);
         numChannels = channelCount;
 
-        // Initialize channel states
         channelStates.resize(static_cast<size_t>(numChannels));
         for (auto& ch : channelStates)
-        {
             for (auto& band : ch.bands)
-            {
-                band.envelope = 0.0f;
-                band.currentGainDb = 0.0f;
-                band.smoothedGainDb = 0.0f;
-            }
-        }
+                band = {};
 
-        // Initialize lock-free biquad states (per channel, per band)
         biquadStates.resize(static_cast<size_t>(numChannels));
         for (auto& ch : biquadStates)
-        {
             for (auto& band : ch)
                 band.reset();
-        }
 
-        // Initialize lookahead buffers (per band, per channel)
+        activeDetCoeffsPerCh.resize(static_cast<size_t>(numChannels));
+        for (auto& ch : activeDetCoeffsPerCh)
+            for (auto& band : ch)
+                band = DetCoeffs{};
+
+        lastAppliedSeqPerCh.resize(static_cast<size_t>(numChannels));
+        for (auto& ch : lastAppliedSeqPerCh)
+            ch.fill(0);
+
         lookaheadBuffers.resize(static_cast<size_t>(numChannels));
         for (auto& ch : lookaheadBuffers)
         {
@@ -93,32 +68,39 @@ public:
             }
         }
 
-        // Reset gain meters
         for (auto& meter : dynamicGainMeters)
             meter.store(0.0f, std::memory_order_relaxed);
 
-        // Recalculate lookahead samples for new sample rate
-        int samples = static_cast<int>(globalSettings.lookaheadMs * sampleRate / 1000.0);
+        // Reset coefficient transfer state so detection filters recompute for new sample rate
+        for (auto& ct : coeffTransfers)
+        {
+            ct.sequence.store(0, std::memory_order_relaxed);
+            for (auto& p : ct.pending)
+                p.store(0.0f, std::memory_order_relaxed);
+            // Reset to passthrough: b0=1, a0=1
+            ct.pending[0].store(1.0f, std::memory_order_relaxed);
+            ct.pending[3].store(1.0f, std::memory_order_relaxed);
+        }
+
+        // Force audio thread to re-read band parameters from transfers
+        lastBandParamSeq.fill(0);
+
+        int samples = static_cast<int>(globalSettings.lookaheadMs * sampleRate.load(std::memory_order_acquire) / 1000.0);
         samples = juce::jlimit(0, MAX_LOOKAHEAD_SAMPLES - 1, samples);
         lookaheadSamples.store(samples, std::memory_order_release);
     }
 
-    /** Set global settings (thread-safe for audio thread access) */
     void setGlobalSettings(const GlobalSettings& settings)
     {
         globalSettings = settings;
-        // Update atomics for thread-safe audio thread access
         softKneeEnabled.store(settings.softKneeEnabled, std::memory_order_release);
-        // Calculate lookahead in samples
-        int samples = static_cast<int>(settings.lookaheadMs * sampleRate / 1000.0);
+        int samples = static_cast<int>(settings.lookaheadMs * sampleRate.load(std::memory_order_acquire) / 1000.0);
         samples = juce::jlimit(0, MAX_LOOKAHEAD_SAMPLES - 1, samples);
         lookaheadSamples.store(samples, std::memory_order_release);
     }
 
-    /** Get current lookahead in samples (for latency reporting) */
     int getLookaheadSamples() const { return lookaheadSamples.load(std::memory_order_acquire); }
 
-    /** Reset all envelope followers and filters */
     void reset()
     {
         for (auto& ch : channelStates)
@@ -141,8 +123,19 @@ public:
             meter.store(0.0f, std::memory_order_relaxed);
     }
 
-    //==========================================================================
-    /** Set parameters for a specific band */
+    /** Lightweight sample-rate update (no allocation). Safe to call from audio thread.
+        Resets envelope state and updates the cached rate. Caller must call
+        updateDetectionFilter() for each band so that detection filter coefficients
+        are recalculated for the new sample rate. */
+    void updateSampleRate(double newRate)
+    {
+        sampleRate.store(newRate, std::memory_order_release);
+        reset();
+    }
+
+    // Lock-free SPSC band parameter transfer via SeqLock (UI thread writes, audio thread reads).
+    // Torn reads are avoided: the audio thread caches a consistent snapshot and falls back
+    // to the previous snapshot if a write is in progress.
     void setBandParameters(int bandIndex, const BandParameters& params)
     {
         if (bandIndex >= 0 && bandIndex < NUM_BANDS)
@@ -150,54 +143,55 @@ public:
             BandParameters validatedParams = params;
             // Clamp ratio to valid range (1.0 to 100.0) to avoid division issues
             validatedParams.ratio = juce::jlimit(1.0f, 100.0f, params.ratio);
-            bandParams[static_cast<size_t>(bandIndex)] = validatedParams;
+            bandParamTransfers[static_cast<size_t>(bandIndex)].publish(validatedParams);
         }
     }
 
-    /** Get current parameters for a band */
     const BandParameters& getBandParameters(int bandIndex) const
     {
-        return bandParams[static_cast<size_t>(juce::jlimit(0, NUM_BANDS - 1, bandIndex))];
+        return bandParamTransfers[static_cast<size_t>(juce::jlimit(0, NUM_BANDS - 1, bandIndex))].data;
     }
 
-    /** Update detection filter for a band (call when band frequency changes)
-     *  Lock-free: Computes bandpass coefficients and publishes via SeqLock.
-     *  Audio thread picks up new coefficients on next sample without blocking. */
+    // Lock-free: publishes bandpass coefficients via SeqLock
     void updateDetectionFilter(int bandIndex, float frequency, float q)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS)
             return;
 
-        auto dc = computeBandPassCoeffs(sampleRate, frequency, q);
+        auto dc = computeBandPassCoeffs(sampleRate.load(std::memory_order_acquire), frequency, q);
         coeffTransfers[static_cast<size_t>(bandIndex)].publish(dc);
     }
 
-    //==========================================================================
-    /**
-     * Process a single band and return the dynamic gain in dB.
-     * Uses lookahead if enabled for better peak detection on transients.
-     *
-     * @param bandIndex  The band index (0-7)
-     * @param inputLevel The input sample level (absolute value) for detection
-     * @param channel    The channel index
-     * @return Dynamic gain adjustment in dB (0 = no change, negative = reduction)
-     */
+    // Returns dynamic gain adjustment in dB (0 = no change, negative = reduction)
     float processBand(int bandIndex, float inputLevel, int channel)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS ||
             channel < 0 || channel >= static_cast<int>(channelStates.size()))
             return 0.0f;
 
-        const auto& params = bandParams[static_cast<size_t>(bandIndex)];
-
-        // If dynamics not enabled for this band, return 0 (no gain change)
+        // SeqLock read: pick up new parameters into audio thread's cached copy
+        {
+            auto bi = static_cast<size_t>(bandIndex);
+            auto& transfer = bandParamTransfers[bi];
+            uint32_t seq = transfer.sequence.load(std::memory_order_acquire);
+            if (seq != lastBandParamSeq[bi] && (seq & 1) == 0)
+            {
+                BandParameters temp = transfer.data;
+                std::atomic_thread_fence(std::memory_order_acquire);
+                if (transfer.sequence.load(std::memory_order_acquire) == seq)
+                {
+                    activeBandParams[bi] = temp;
+                    lastBandParamSeq[bi] = seq;
+                }
+            }
+        }
+        const auto& params = activeBandParams[static_cast<size_t>(bandIndex)];
         if (!params.enabled)
             return 0.0f;
 
         auto& state = channelStates[static_cast<size_t>(channel)]
                           .bands[static_cast<size_t>(bandIndex)];
 
-        // Use lookahead buffer if enabled (load atomic once for consistency)
         float detectionLevel = inputLevel;
         int currentLookahead = lookaheadSamples.load(std::memory_order_acquire);
         if (currentLookahead > 0 &&
@@ -205,11 +199,8 @@ public:
             bandIndex < static_cast<int>(lookaheadBuffers[static_cast<size_t>(channel)].size()))
         {
             auto& lookahead = lookaheadBuffers[static_cast<size_t>(channel)][static_cast<size_t>(bandIndex)];
-
-            // Store current sample in buffer
             lookahead.buffer[static_cast<size_t>(lookahead.writeIndex)] = inputLevel;
 
-            // Find peak in lookahead window
             float peak = 0.0f;
             int bufSize = static_cast<int>(lookahead.buffer.size());
             for (int i = 0; i < currentLookahead; ++i)
@@ -218,35 +209,25 @@ public:
                 peak = juce::jmax(peak, lookahead.buffer[static_cast<size_t>(idx)]);
             }
 
-            // Use peak for detection (allows gain reduction before the transient hits)
             detectionLevel = peak;
-
-            // Advance write index
             lookahead.writeIndex = (lookahead.writeIndex + 1) % bufSize;
         }
 
-        // Convert detection level to dB
         float inputDb = juce::Decibels::gainToDecibels(detectionLevel, -96.0f);
-
-        // Calculate attack/release coefficients
         float attackCoeff = calcCoefficient(params.attack);
         float releaseCoeff = calcCoefficient(params.release);
 
-        // Envelope follower (one-pole filter)
         if (inputDb > state.envelope)
             state.envelope = attackCoeff * state.envelope + (1.0f - attackCoeff) * inputDb;
         else
             state.envelope = releaseCoeff * state.envelope + (1.0f - releaseCoeff) * inputDb;
 
-        // Calculate dynamic gain (uses soft-knee if enabled)
         state.currentGainDb = calculateDynamicGain(state.envelope, params);
 
-        // Smooth the gain to avoid zipper noise (short smoothing)
-        float smoothCoeff = calcCoefficient(2.0f); // 2ms smoothing
+        float smoothCoeff = calcCoefficient(2.0f);  // 2ms anti-zipper
         state.smoothedGainDb = smoothCoeff * state.smoothedGainDb +
                                (1.0f - smoothCoeff) * state.currentGainDb;
 
-        // Update meter (use max across channels for display)
         float currentMeter = dynamicGainMeters[static_cast<size_t>(bandIndex)]
                                  .load(std::memory_order_relaxed);
         if (std::abs(state.smoothedGainDb) > std::abs(currentMeter) || channel == 0)
@@ -258,12 +239,8 @@ public:
         return state.smoothedGainDb;
     }
 
-    /**
-     * Process detection for a band using its bandpass filter.
-     * Returns the filtered level for sidechain detection.
-     * Lock-free: Checks for pending coefficient updates via SeqLock,
-     * always processes with valid bandpass coefficients (never falls back to broadband).
-     */
+    // Bandpass-filter input for sidechain detection (lock-free coefficient updates)
+    // Each channel maintains its own copy of detection coefficients to avoid data races.
     float processDetection(int bandIndex, float input, int channel)
     {
         if (bandIndex < 0 || bandIndex >= NUM_BANDS ||
@@ -271,29 +248,30 @@ public:
             return std::abs(input);
 
         auto bi = static_cast<size_t>(bandIndex);
+        auto ch = static_cast<size_t>(channel);
 
-        // Check for pending coefficient update (lock-free, never blocks)
+        // SeqLock read: pick up new coefficients into this channel's copy
         auto& transfer = coeffTransfers[bi];
         uint32_t seq = transfer.sequence.load(std::memory_order_acquire);
-        if (seq != lastAppliedSeq[bi] && (seq & 1) == 0)
+        uint32_t appliedSeq = lastAppliedSeqPerCh[ch][bi];
+        if (seq != appliedSeq && (seq & 1) == 0)
         {
-            // Even sequence = no write in progress, safe to read
-            DetCoeffs temp = transfer.pending;
+            DetCoeffs temp;
+            for (int k = 0; k < 6; ++k)
+                temp.c[k] = transfer.pending[static_cast<size_t>(k)].load(std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_acquire);
             uint32_t seq2 = transfer.sequence.load(std::memory_order_acquire);
             if (seq == seq2)
             {
-                // Consistent read — apply new coefficients
-                activeDetCoeffs[bi] = temp;
-                lastAppliedSeq[bi] = seq;
+                activeDetCoeffsPerCh[ch][bi] = temp;
+                lastAppliedSeqPerCh[ch][bi] = seq;
             }
-            // If seq != seq2, a write happened during read — skip, use old coeffs
         }
 
-        // Always filter with current coefficients (never broadband fallback)
-        auto& state = biquadStates[static_cast<size_t>(channel)][bi];
-        const auto& c = activeDetCoeffs[bi].c;
+        auto& state = biquadStates[ch][bi];
+        const auto& c = activeDetCoeffsPerCh[ch][bi].c;
 
-        // Direct Form II Transposed biquad
+        // Direct Form II Transposed
         float output = c[0] * input + state.z1;
         state.z1 = c[1] * input - c[4] * output + state.z2;
         state.z2 = c[2] * input - c[5] * output;
@@ -301,8 +279,6 @@ public:
         return std::abs(output);
     }
 
-    //==========================================================================
-    /** Get current dynamic gain for UI visualization (thread-safe) */
     float getCurrentDynamicGain(int bandIndex) const
     {
         if (bandIndex >= 0 && bandIndex < NUM_BANDS)
@@ -311,7 +287,6 @@ public:
         return 0.0f;
     }
 
-    /** Decay the gain meters (call from UI timer, ~30Hz) */
     void decayMeters(float decayAmount = 0.5f)
     {
         for (auto& meter : dynamicGainMeters)
@@ -325,91 +300,75 @@ public:
     }
 
 private:
-    //==========================================================================
-    /** Calculate one-pole filter coefficient from time in ms */
     float calcCoefficient(float timeMs) const
     {
         if (timeMs <= 0.0f)
             return 0.0f;
-        // tau = time constant, coefficient = exp(-1 / (tau * sampleRate))
         float tau = timeMs / 1000.0f;
-        return std::exp(-1.0f / (tau * static_cast<float>(sampleRate)));
+        return std::exp(-1.0f / (tau * static_cast<float>(sampleRate.load(std::memory_order_acquire))));
     }
 
-    /**
-     * Calculate dynamic gain based on envelope vs threshold.
-     * When envelope exceeds threshold, reduce the band's static gain toward 0.
-     * Implements soft-knee compression for smoother response.
-     */
     float calculateDynamicGain(float envelopeDb, const BandParameters& params) const
     {
         float threshold = params.threshold;
-        // Use atomic load for thread-safe access from audio thread
         float kneeWidth = softKneeEnabled.load(std::memory_order_acquire) ? params.kneeWidth : 0.0f;
         float halfKnee = kneeWidth / 2.0f;
-
-        // Configurable compression ratio (1:1 to 20:1)
         float ratio = juce::jmax(1.0f, params.ratio);
-
         float reduction = 0.0f;
 
         if (envelopeDb < threshold - halfKnee)
-        {
-            // Below threshold (including knee) - no reduction
             reduction = 0.0f;
-        }
         else if (envelopeDb > threshold + halfKnee || kneeWidth <= 0.0f)
         {
-            // Above threshold + knee (hard compression) or hard knee mode
             float overThreshold = envelopeDb - threshold;
             reduction = overThreshold * (1.0f - 1.0f / ratio);
         }
         else
         {
-            // In the soft knee region - quadratic interpolation
+            // Soft knee: quadratic interpolation
             float x = envelopeDb - threshold + halfKnee;
             float kneeGain = (x * x) / (2.0f * kneeWidth);
             reduction = kneeGain * (1.0f - 1.0f / ratio);
         }
 
-        // Limit to range parameter
         reduction = juce::jmin(reduction, params.range);
-
-        // Return as negative dB (gain reduction)
         return -reduction;
     }
 
-    //==========================================================================
-    // Lock-free detection filter infrastructure
-    //
-    // Replaces the SpinLock + JUCE IIR::Filter approach. The message thread
-    // publishes bandpass coefficients via SeqLock, and the audio thread picks
-    // them up without ever blocking or falling back to broadband detection.
-    //==========================================================================
+    // Lock-free SPSC coefficient transfer via SeqLock
 
-    /** Per-band detection filter coefficients: b0,b1,b2, a0(=1), a1, a2 */
+    // Biquad coefficients: b0,b1,b2, a0(=1), a1, a2. Default = passthrough.
     struct DetCoeffs
     {
-        float c[6] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+        float c[6] = {1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
     };
 
-    /** SeqLock for lock-free SPSC coefficient transfer.
-     *  Writer increments sequence to odd (writing), writes data, increments to even (done).
-     *  Reader checks sequence is even and unchanged after read. */
     struct CoeffTransfer
     {
         std::atomic<uint32_t> sequence{0};
-        DetCoeffs pending;
+        std::array<std::atomic<float>, 6> pending;
+
+        // Runtime init for C++17 portability (aggregate init of std::atomic is non-portable pre-C++20)
+        CoeffTransfer()
+        {
+            pending[0].store(1.0f, std::memory_order_relaxed);  // b0
+            pending[1].store(0.0f, std::memory_order_relaxed);  // b1
+            pending[2].store(0.0f, std::memory_order_relaxed);  // b2
+            pending[3].store(1.0f, std::memory_order_relaxed);  // a0
+            pending[4].store(0.0f, std::memory_order_relaxed);  // a1
+            pending[5].store(0.0f, std::memory_order_relaxed);  // a2
+        }
 
         void publish(const DetCoeffs& newCoeffs)
         {
-            sequence.fetch_add(1, std::memory_order_release); // odd = writing
-            pending = newCoeffs;
+            sequence.fetch_add(1, std::memory_order_acq_rel); // odd = writing; acq prevents stores moving up
+            for (int i = 0; i < 6; ++i)
+                pending[static_cast<size_t>(i)].store(newCoeffs.c[i], std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_release); // ensure data written before even
             sequence.fetch_add(1, std::memory_order_release); // even = done
         }
     };
 
-    /** Per-channel, per-band biquad filter state (Direct Form II Transposed) */
     struct BiquadState
     {
         float z1 = 0.0f;
@@ -417,12 +376,17 @@ private:
         void reset() { z1 = z2 = 0.0f; }
     };
 
-    /** Compute bandpass filter coefficients (Audio EQ Cookbook) */
+    // Audio EQ Cookbook bandpass
     static DetCoeffs computeBandPassCoeffs(double sr, float freq, float q)
     {
         DetCoeffs dc;
-        double w0 = 2.0 * juce::MathConstants<double>::pi * static_cast<double>(freq) / sr;
-        double alpha = std::sin(w0) / (2.0 * static_cast<double>(q));
+        if (sr <= 0.0)
+            return dc;
+        float safeFreq = juce::jlimit(20.0f, static_cast<float>(sr * 0.499), freq);
+        float safeQ = juce::jmax(0.01f, q);
+
+        double w0 = 2.0 * juce::MathConstants<double>::pi * static_cast<double>(safeFreq) / sr;
+        double alpha = std::sin(w0) / (2.0 * static_cast<double>(safeQ));
         double a0 = 1.0 + alpha;
 
         dc.c[0] = static_cast<float>(alpha / a0);
@@ -434,8 +398,6 @@ private:
         return dc;
     }
 
-    //==========================================================================
-    /** Per-channel, per-band envelope state */
     struct BandState
     {
         float envelope = 0.0f;        // Current envelope level (dB)
@@ -449,18 +411,33 @@ private:
     };
 
     std::vector<ChannelState> channelStates;
-    std::array<BandParameters, NUM_BANDS> bandParams;
 
-    // Lock-free detection filter state
-    std::array<CoeffTransfer, NUM_BANDS> coeffTransfers;            // SeqLock coefficient transfer
-    std::array<DetCoeffs, NUM_BANDS> activeDetCoeffs;               // Audio thread's current coefficients
-    std::array<uint32_t, NUM_BANDS> lastAppliedSeq{};               // Last consumed sequence per band
-    std::vector<std::array<BiquadState, NUM_BANDS>> biquadStates;   // Per-channel biquad state
+    // Band parameter transfer: UI thread publishes via SeqLock, audio thread caches
+    struct BandParamTransfer
+    {
+        std::atomic<uint32_t> sequence{0};
+        BandParameters data;
 
-    // Atomic meters for UI (one per band, shows max across channels)
+        void publish(const BandParameters& p)
+        {
+            sequence.fetch_add(1, std::memory_order_acq_rel);
+            data = p;
+            std::atomic_thread_fence(std::memory_order_release);
+            sequence.fetch_add(1, std::memory_order_release);
+        }
+    };
+    std::array<BandParamTransfer, NUM_BANDS> bandParamTransfers;
+    std::array<BandParameters, NUM_BANDS> activeBandParams;    // Audio thread's cached copy
+    std::array<uint32_t, NUM_BANDS> lastBandParamSeq{};
+
+    std::array<CoeffTransfer, NUM_BANDS> coeffTransfers;
+    // Per-channel coefficient and sequence tracking to avoid cross-channel data races
+    std::vector<std::array<DetCoeffs, NUM_BANDS>> activeDetCoeffsPerCh;
+    std::vector<std::array<uint32_t, NUM_BANDS>> lastAppliedSeqPerCh;
+    std::vector<std::array<BiquadState, NUM_BANDS>> biquadStates;
+
     std::array<std::atomic<float>, NUM_BANDS> dynamicGainMeters;
 
-    // Lookahead buffers for peak detection (per channel, per band)
     struct LookaheadBuffer
     {
         std::vector<float> buffer;
@@ -469,11 +446,10 @@ private:
     };
     std::vector<std::vector<LookaheadBuffer>> lookaheadBuffers;
 
-    // Global settings and state
     GlobalSettings globalSettings;
-    std::atomic<int> lookaheadSamples{0};      // Thread-safe: written by message thread, read by audio thread
-    std::atomic<bool> softKneeEnabled{true};   // Thread-safe: written by message thread, read by audio thread
+    std::atomic<int> lookaheadSamples{0};
+    std::atomic<bool> softKneeEnabled{true};
     int numChannels = 2;
 
-    double sampleRate = 44100.0;
+    std::atomic<double> sampleRate{44100.0};
 };
