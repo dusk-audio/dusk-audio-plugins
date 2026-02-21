@@ -3,9 +3,8 @@
 #include <JuceHeader.h>
 
 //==============================================================================
-// Premium Photorealistic Tape Reel Component
-// Rivals UAD Studer A800 and Softube Tape in visual quality
-// Uses pure JUCE procedural graphics with performance optimization
+// Tape Reel Component
+// Procedural graphics with cached rendering for performance
 //==============================================================================
 class TapeReelComponent : public juce::Component, private juce::Timer
 {
@@ -15,8 +14,8 @@ public:
     //==========================================================================
     enum class ReelType
     {
-        NAB,        // North American Broadcast - 3-spoke hub (Studer style)
-        Cine        // Cinema style - solid hub with cutouts (Ampex style)
+        NAB,        // North American Broadcast - 3-spoke hub (Type A style)
+        Cine        // Cinema style - solid hub with cutouts (Type B style)
     };
 
     //==========================================================================
@@ -93,7 +92,7 @@ private:
     bool cacheValid = false;
 
     //==========================================================================
-    // Drawing Methods - Premium Quality
+    // Drawing Methods
     //==========================================================================
 
     // Outer flange - photorealistic brushed aluminum
@@ -111,7 +110,7 @@ private:
     void drawBrushedMetalTexture(juce::Graphics& g, juce::Point<float> centre,
                                   float innerRadius, float outerRadius);
 
-    // Premium ventilation/lightening holes with depth
+    // Ventilation/lightening holes with depth effect
     void drawVentilationHoles(juce::Graphics& g, juce::Point<float> centre,
                                float innerRadius, float outerRadius, float rotation);
 
@@ -122,7 +121,7 @@ private:
     // Realistic tape edge (shiny oxide surface)
     void drawTapeEdge(juce::Graphics& g, juce::Point<float> centre, float radius);
 
-    // Hub (NAB 3-spoke or Cine solid style) - premium metallic finish
+    // Hub (NAB 3-spoke or Cine solid style) - metallic gradient finish
     void drawHub(juce::Graphics& g, juce::Point<float> centre, float radius, float rotation);
     void drawNABHub(juce::Graphics& g, juce::Point<float> centre, float radius, float rotation);
     void drawCineHub(juce::Graphics& g, juce::Point<float> centre, float radius, float rotation);

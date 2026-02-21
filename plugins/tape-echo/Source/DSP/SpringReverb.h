@@ -2,7 +2,7 @@
   ==============================================================================
 
     SpringReverb.h
-    Tape Echo - RE-201 Style Spring Reverb
+    Tape Echo - Vintage Spring Reverb
 
     Modeled as parallel chirped allpass network (6-8 allpass filters per spring)
     with characteristic metallic attack transient, 2-3s decay time.

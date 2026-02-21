@@ -29,7 +29,6 @@ Map the input to the correct plugin name for validation:
 | `tape`, `tapemachine`, `"TapeMachine"` | "TapeMachine" |
 | `tapeecho`, `tape-echo`, `"Tape Echo"` | "Tape Echo" |
 | `multiq`, `multi-q`, `"Multi-Q"` | "Multi-Q" |
-| `velvet-90`, `"Velvet 90"` | "Velvet 90" |
 | `convolution`, `"Convolution Reverb"` | "Convolution Reverb" |
 | `nam`, `neural-amp`, `"Neural Amp"` | "Neural Amp" |
 

@@ -269,7 +269,7 @@ public:
     
     // Post-processing: DC blocking only
     // IMPORTANT: No saturation here - all nonlinear processing must happen
-    // in the oversampled domain to avoid aliasing (per UAD/FabFilter standards)
+    // in the oversampled domain to avoid aliasing
     float postProcessSample(float input, int channel)
     {
         if (channel < 0 || channel >= static_cast<int>(channelStates.size())) return input;
@@ -1124,24 +1124,24 @@ public:
         }
 
         // Hardware emulation components
-        // Input transformer (UTC A-10 style)
+        // Input transformer (opto style)
         inputTransformer.prepare(sampleRate, numChannels);
-        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().inputTransformer);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().inputTransformer);
         inputTransformer.setEnabled(true);
 
         // Output transformer
         outputTransformer.prepare(sampleRate, numChannels);
-        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().outputTransformer);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().outputTransformer);
         outputTransformer.setEnabled(true);
 
         // 12AX7 tube stage (output amplifier)
         tubeStage.prepare(sampleRate, numChannels);
         tubeStage.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
-        tubeStage.setDrive(0.3f);  // Moderate drive for LA-2A warmth
+        tubeStage.setDrive(0.3f);  // Moderate drive for opto warmth
 
         // Short convolution for transformer coloration
         convolution.prepare(sampleRate);
-        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::LA2A);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Opto);
     }
     
     float process(float input, int channel, float peakReduction, float gain, bool limitMode, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
@@ -1164,7 +1164,7 @@ public:
 
         auto& detector = detectors[channel];
 
-        // Hardware emulation: Input transformer (UTC A-10 style)
+        // Hardware emulation: Input transformer (opto style)
         // Adds subtle saturation and frequency-dependent coloration
         float transformedInput = inputTransformer.processSample(input, channel);
 
@@ -1194,8 +1194,8 @@ public:
             detectionInput = compressed;
         }
         
-        // Peak Reduction controls the sidechain amplifier gain (LA-2A style)
-        // Real LA-2A has inherent gain staging — even at minimum, some signal reaches the T4B cell
+        // Peak Reduction controls the sidechain amplifier gain (opto compressor style)
+        // Opto compressor has inherent gain staging -- even at minimum, some signal reaches the T4B cell
         // +4dB baseline ensures typical vocals begin compressing at low settings
         float sidechainGain = juce::Decibels::decibelsToGain(4.0f + peakReduction * 0.36f); // +4 to +40dB
         float detectionLevel = std::abs(detectionInput * sidechainGain);
@@ -1399,9 +1399,9 @@ public:
             detector.holdCounter *= 0.999f;
         }
         
-        // LA-2A Output Stage - Realistic tube saturation
+        // Opto Compressor Output Stage - Realistic tube saturation
         // Spec from compressor_specs.json: < 1.0% THD (Opto mode)
-        // Real LA-2A adds subtle 2nd harmonic warmth from tube stages
+        // Opto compressor adds subtle 2nd harmonic warmth from tube stages
         //
         // Harmonic math: For input x = A*sin(wt)
         // - k2*x^2 produces 2nd harmonic at (k2*A^2/2) amplitude
@@ -1413,7 +1413,7 @@ public:
         float makeupGain = juce::Decibels::decibelsToGain(gain);
         float output = compressed * makeupGain;
 
-        // Tube saturation - 2nd harmonic dominant (LA-2A character)
+        // Tube saturation - 2nd harmonic dominant (opto compressor character)
         // k2 = 0.01 gives ~0.5% 2nd harmonic at unity gain
         // k3 = 0.002 gives ~0.15% 3rd harmonic at unity gain
         constexpr float k2 = 0.01f;   // 2nd harmonic coefficient
@@ -1466,7 +1466,7 @@ private:
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
 
-    // Hardware emulation components (LA-2A style)
+    // Hardware emulation components (opto compressor style)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
     HardwareEmulation::TubeEmulation tubeStage;
@@ -1488,20 +1488,20 @@ public:
             detector.previousLevel = 0.0f;
         }
 
-        // Hardware emulation components (1176 style)
-        // Input transformer (Cinemag/Jensen style)
+        // Hardware emulation components (FET compressor style)
+        // Input transformer (console-style)
         inputTransformer.prepare(sampleRate, numChannels);
-        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFET1176().inputTransformer);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFETCompressor().inputTransformer);
         inputTransformer.setEnabled(true);
 
         // Output transformer
         outputTransformer.prepare(sampleRate, numChannels);
-        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFET1176().outputTransformer);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFETCompressor().outputTransformer);
         outputTransformer.setEnabled(true);
 
-        // Short convolution for 1176 transformer coloration
+        // Short convolution for FET transformer coloration
         convolution.prepare(sampleRate);
-        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET_1176);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
     }
     
     float process(float input, int channel, float inputGainDb, float outputGainDb,
@@ -1624,7 +1624,7 @@ public:
         // IMPORTANT: Minimum attack of 100µs prevents the compressor from tracking
         // individual waveform cycles, which causes harmonic distortion.
         // At 48kHz, 100µs = ~5 samples, which is safe for all audio frequencies.
-        // The real 1176 achieves its fast attack through transformer overshoot,
+        // The FET compressor achieves its fast attack through transformer overshoot,
         // not by actually tracking sub-sample level changes.
 
         // Map input parameters (assumed 0-1 range from attackMs/releaseMs) to hardware values
@@ -1730,7 +1730,7 @@ public:
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
         
-        // 1176 FET Output Stage - Realistic FET saturation
+        // FET Compressor Output Stage - Realistic FET saturation
         // Spec from compressor_specs.json: 0.30% THD at -18dB, 0.45% at -6dB
         // FET transistors produce odd harmonics (3rd dominant, some 5th)
         // All-buttons mode has more aggressive saturation character
@@ -1792,7 +1792,7 @@ private:
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
 
-    // Hardware emulation components (1176 style)
+    // Hardware emulation components (FET compressor style)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
     HardwareEmulation::ShortConvolution convolution;
@@ -2184,20 +2184,20 @@ public:
             detector.sidechainFilter->setBypassed<1>(false);
         }
 
-        // Hardware emulation components (SSL Bus Compressor style)
-        // Input transformer (Marinair-style)
+        // Hardware emulation components (VCA bus compressor style)
+        // Input transformer (console-style)
         inputTransformer.prepare(sampleRate, numChannels);
-        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getSSLBus().inputTransformer);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getConsoleBus().inputTransformer);
         inputTransformer.setEnabled(true);
 
         // Output transformer
         outputTransformer.prepare(sampleRate, numChannels);
-        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getSSLBus().outputTransformer);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getConsoleBus().outputTransformer);
         outputTransformer.setEnabled(true);
 
-        // Short convolution for SSL console coloration
+        // Short convolution for console coloration
         convolution.prepare(sampleRate);
-        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::SSL_Console);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Console_Bus);
     }
     
     float process(float input, int channel, float threshold, float ratio,
@@ -2212,7 +2212,7 @@ public:
 
         auto& detector = detectors[channel];
 
-        // Hardware emulation: Input transformer (Marinair-style)
+        // Hardware emulation: Input transformer (console-style)
         // Adds subtle saturation and frequency-dependent coloration
         float transformedInput = inputTransformer.processSample(input, channel);
 
@@ -2325,10 +2325,10 @@ public:
         // Apply the gain reduction envelope to the input signal
         float compressed = transformedInput * detector.envelope;
 
-        // SSL Bus Compressor Output Stage - Subtle console saturation
+        // Bus Compressor Output Stage - Subtle console saturation
         // Spec from compressor_specs.json: < 0.3% THD
-        // The SSL G-Series is a clean VCA design, but the console path adds character.
-        // Marinair transformers add subtle 2nd harmonic warmth.
+        // The VCA bus is a clean VCA design, but the console path adds character.
+        // Console transformers add subtle 2nd harmonic warmth.
         //
         // Harmonic math: For input x = A*sin(wt)
         // - k2*x^2 produces 2nd harmonic at (k2*A^2/2) amplitude
@@ -2337,7 +2337,7 @@ public:
 
         float processed = compressed;
 
-        // SSL console saturation - 2nd harmonic dominant from transformers
+        // Console saturation - 2nd harmonic dominant from transformers
         // k2 = 0.004 gives ~0.2% 2nd harmonic at moderate levels
         // k3 = 0.003 gives subtle 3rd harmonic for "glue"
         constexpr float k2 = 0.004f;   // 2nd harmonic coefficient (asymmetric warmth)
@@ -2381,7 +2381,7 @@ private:
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
 
-    // Hardware emulation components (SSL Bus Compressor style)
+    // Hardware emulation components (VCA bus compressor style)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
     HardwareEmulation::ShortConvolution convolution;
@@ -2730,7 +2730,7 @@ public:
         // Attack and release with adaptive option
         // IMPORTANT: Minimum attack time of 0.1ms (100 microseconds) prevents the compressor
         // from tracking individual waveform cycles, which would cause harmonic distortion.
-        // Professional compressors (SSL, API, etc.) have similar minimums.
+        // Professional compressors have similar minimums.
         float attackTime = juce::jmax(0.0001f, attackMs / 1000.0f);  // Min 0.1ms = 100μs
         float releaseTime = juce::jmax(0.001f, releaseMs / 1000.0f);
 
@@ -4020,7 +4020,7 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
 
-    // Initialize RMS coefficient for ~200ms averaging window (industry standard)
+    // Initialize RMS coefficient for ~200ms averaging window
     // This gives stable, perceptually-accurate loudness matching like Logic Pro's compressor
     // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
     float rmsTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
@@ -4719,7 +4719,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             grHistoryWritePos.store((pos + 1) % GR_HISTORY_SIZE, std::memory_order_relaxed);
         }
 
-        // Apply RMS-based auto-gain for multiband mode (professional-grade level matching)
+        // Apply RMS-based auto-gain for multiband mode
         // Uses running RMS average (~200ms window) for stable, perceptually-accurate gain compensation
         // This matches the approach used in Logic Pro's compressor and other professional plugins
         {
@@ -4938,7 +4938,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             }
 
             // Apply output distortion in the oversampled domain to avoid aliasing
-            // This is critical for professional-grade anti-aliasing (UAD/FabFilter standard)
+            // FIR anti-aliasing is critical for clean oversampled processing
             if (distType != DistortionType::Off && distAmount > 0.0f)
             {
                 for (int i = 0; i < osNumSamples; ++i)
@@ -5145,7 +5145,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Combined gain reduction (min of both channels for display)
     float gainReduction = juce::jmin(grLeft, grRight);
 
-    // Apply RMS-based auto-gain if enabled (professional-grade level matching)
+    // Apply RMS-based auto-gain if enabled
     // Uses running RMS average (~200ms window) for stable, perceptually-accurate gain compensation
     // This compensates for ALL gain changes: compression, input gain, saturation, etc.
     // This matches the approach used in Logic Pro's compressor and other professional plugins
@@ -5196,7 +5196,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 // Apply mode-specific attenuation to compensate:
                 // - Opto: Tube warmth + transformer harmonics (-1.5dB)
                 // - FET: Aggressive FET saturation (-1.0dB)
-                // - Bus: SSL transformer coloration (-0.5dB)
+                // - Bus: Transformer coloration (-0.5dB)
                 // - VCA/Digital/Studio: Cleaner, less compensation needed
                 float loudnessCompensation = 1.0f;
                 switch (mode)
@@ -5208,7 +5208,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                         loudnessCompensation = 0.89f;  // -1.0dB for FET saturation
                         break;
                     case CompressorMode::Bus:
-                        loudnessCompensation = 0.94f;  // -0.5dB for SSL character
+                        loudnessCompensation = 0.94f;  // -0.5dB for bus compressor character
                         break;
                     default:
                         loudnessCompensation = 1.0f;   // No compensation for cleaner modes
@@ -5272,7 +5272,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
     // NOTE: Output distortion is now applied in the oversampled domain (inside the
     // oversample block above) to prevent aliasing. This matches professional standards
-    // (UAD, FabFilter) where all nonlinear processing happens at the oversampled rate.
+    // where all nonlinear processing happens at the oversampled rate.
     // For non-oversampled processing (fallback), distortion was already applied inline.
 
     // Output metering - SIMD optimized with per-channel tracking
