@@ -1,20 +1,16 @@
 #include "MultiQEditor.h"
 
-//==============================================================================
 MultiQEditor::MultiQEditor(MultiQ& p)
     : AudioProcessorEditor(&p), processor(p)
 {
     setLookAndFeel(&lookAndFeel);
 
-    // Initialize user preset manager
     userPresetManager = std::make_unique<UserPresetManager>("Multi-Q");
 
-    // Create graphic display (Digital mode)
     graphicDisplay = std::make_unique<EQGraphicDisplay>(processor);
     addAndMakeVisible(graphicDisplay.get());
     graphicDisplay->onBandSelected = [this](int band) { onBandSelected(band); };
 
-    // Create band detail panel (band selector row + single-row controls)
     bandDetailPanel = std::make_unique<BandDetailPanel>(processor);
     bandDetailPanel->onBandSelected = [this](int band) { onBandSelected(band); };
     addAndMakeVisible(bandDetailPanel.get());
@@ -24,7 +20,6 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     britishCurveDisplay->setVisible(false);  // Hidden by default
     addAndMakeVisible(britishCurveDisplay.get());
 
-    // Create band enable buttons
     for (int i = 0; i < 8; ++i)
     {
         auto& btn = bandEnableButtons[static_cast<size_t>(i)];
@@ -35,7 +30,6 @@ MultiQEditor::MultiQEditor(MultiQ& p)
             processor.parameters, ParamIDs::bandEnabled(i + 1), *btn);
     }
 
-    // Set up onClick handlers AFTER attachments are created to avoid initialization issues
     for (int i = 0; i < 8; ++i)
     {
         bandEnableButtons[static_cast<size_t>(i)]->onClick = [this, i]() {
@@ -172,8 +166,8 @@ MultiQEditor::MultiQEditor(MultiQ& p)
 
     // EQ Type selector (Digital includes per-band dynamics capability)
     eqTypeSelector = std::make_unique<juce::ComboBox>();
-    eqTypeSelector->addItemList({"Digital", "British", "Tube"}, 1);
-    eqTypeSelector->setTooltip("EQ mode: Digital (modern parametric), British (SSL 4000 console), Tube (Pultec EQP-1A)");
+    eqTypeSelector->addItemList({"Digital", "Match", "British", "Tube"}, 1);
+    eqTypeSelector->setTooltip("EQ mode: Digital (modern parametric), Match (spectrum matching), British (classic console), Tube (vintage tube)");
     addAndMakeVisible(eqTypeSelector.get());
     eqTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.parameters, ParamIDs::eqType, *eqTypeSelector);
@@ -182,44 +176,6 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     transferToDigitalButton.setTooltip("Transfer current EQ curve to Digital mode bands");
     transferToDigitalButton.onClick = [this]() { processor.transferCurrentEQToDigital(); };
     addAndMakeVisible(transferToDigitalButton);
-
-    // EQ Match buttons (Digital mode — capture reference/source spectra and apply match)
-    eqMatchRefButton.setTooltip("Capture current analyzer spectrum as the reference (what you want to sound like)");
-    eqMatchRefButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a5a4a));
-    eqMatchRefButton.onClick = [this]() {
-        processor.captureMatchReference();
-        eqMatchRefButton.setButtonText("Ref \u2713");
-        if (processor.hasMatchSource())
-            eqMatchApplyButton.setEnabled(true);
-    };
-    addAndMakeVisible(eqMatchRefButton);
-
-    eqMatchSrcButton.setTooltip("Capture current analyzer spectrum as the source (what your signal sounds like)");
-    eqMatchSrcButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a4a5a));
-    eqMatchSrcButton.onClick = [this]() {
-        processor.captureMatchSource();
-        eqMatchSrcButton.setButtonText("Src \u2713");
-        if (processor.hasMatchReference())
-            eqMatchApplyButton.setEnabled(true);
-    };
-    addAndMakeVisible(eqMatchSrcButton);
-
-    eqMatchApplyButton.setTooltip("Compute and apply EQ match (fits bands 2-7 to match reference)");
-    eqMatchApplyButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a4a3a));
-    eqMatchApplyButton.setEnabled(false);  // Disabled until both captures are done
-    eqMatchApplyButton.onClick = [this]() {
-        int bandsUsed = processor.computeEQMatch();
-        if (bandsUsed > 0)
-        {
-            processor.applyEQMatch();
-            // Reset state for next match
-            processor.clearEQMatch();
-            eqMatchRefButton.setButtonText("Capture Ref");
-            eqMatchSrcButton.setButtonText("Capture Src");
-            eqMatchApplyButton.setEnabled(false);
-        }
-    };
-    addAndMakeVisible(eqMatchApplyButton);
 
     // Factory preset selector (Digital mode)
     presetSelector = std::make_unique<juce::ComboBox>();
@@ -288,12 +244,15 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     analyzerResolutionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.parameters, ParamIDs::analyzerResolution, *analyzerResolutionSelector);
 
-    // Spectrum smoothing selector (smooth spectrum)
+    // Spectrum smoothing selector
     analyzerSmoothingSelector = std::make_unique<juce::ComboBox>();
     analyzerSmoothingSelector->addItemList({"Off", "Light", "Medium", "Heavy"}, 1);
     analyzerSmoothingSelector->setTooltip("Spectrum smoothing: Smoother appearance with slower response");
     analyzerSmoothingSelector->onChange = [this]() {
-        auto mode = static_cast<FFTAnalyzer::SmoothingMode>(analyzerSmoothingSelector->getSelectedItemIndex());
+        int idx = analyzerSmoothingSelector->getSelectedItemIndex();
+        if (idx < 0 || idx > static_cast<int>(FFTAnalyzer::SmoothingMode::Heavy))
+            return;
+        auto mode = static_cast<FFTAnalyzer::SmoothingMode>(idx);
         if (graphicDisplay)
             graphicDisplay->setAnalyzerSmoothingMode(mode);
         if (britishCurveDisplay)
@@ -316,34 +275,37 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     displayScaleSelector->addItemList({"+/-12 dB", "+/-24 dB", "+/-30 dB", "+/-60 dB", "Warped"}, 1);
     displayScaleSelector->setTooltip("Display scale: Range of visible gain (+/-12 to +/-60 dB)");
     displayScaleSelector->onChange = [this]() {
-        auto mode = static_cast<DisplayScaleMode>(displayScaleSelector->getSelectedItemIndex());
-        graphicDisplay->setDisplayScaleMode(mode);
+        int index = displayScaleSelector->getSelectedItemIndex();
+        if (index < 0)
+            return;
+        auto mode = static_cast<DisplayScaleMode>(index);
+        if (graphicDisplay)
+            graphicDisplay->setDisplayScaleMode(mode);
         // Also update British mode display scale (uses equivalent enum)
         if (britishCurveDisplay)
             britishCurveDisplay->setDisplayScaleMode(static_cast<BritishDisplayScaleMode>(mode));
-        // Also update Tube EQ mode display scale
-        if (tubeEQCurveDisplay)
-            tubeEQCurveDisplay->setDisplayScaleMode(mode);
     };
     addAndMakeVisible(displayScaleSelector.get());
     displayScaleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.parameters, ParamIDs::displayScaleMode, *displayScaleSelector);
 
-    // Sync initial display scale mode for all three mode displays
-    auto initialMode = static_cast<DisplayScaleMode>(displayScaleSelector->getSelectedItemIndex());
-    graphicDisplay->setDisplayScaleMode(initialMode);
-    if (britishCurveDisplay)
-        britishCurveDisplay->setDisplayScaleMode(static_cast<BritishDisplayScaleMode>(initialMode));
-    if (tubeEQCurveDisplay)
-        tubeEQCurveDisplay->setDisplayScaleMode(initialMode);
-
+    // Sync initial display scale mode for both Digital and British displays
+    int initialIndex = displayScaleSelector->getSelectedItemIndex();
+    if (initialIndex >= 0)
+    {
+        auto initialMode = static_cast<DisplayScaleMode>(initialIndex);
+        graphicDisplay->setDisplayScaleMode(initialMode);
+        if (britishCurveDisplay)
+            britishCurveDisplay->setDisplayScaleMode(static_cast<BritishDisplayScaleMode>(initialMode));
+    }
     // Sync initial analyzer visibility for both Digital and British mode displays
     auto* analyzerParam = processor.parameters.getRawParameterValue(ParamIDs::analyzerEnabled);
     if (analyzerParam)
     {
         bool analyzerVisible = analyzerParam->load() > 0.5f;
         graphicDisplay->setAnalyzerVisible(analyzerVisible);
-        britishCurveDisplay->setAnalyzerVisible(analyzerVisible);
+        if (britishCurveDisplay)
+            britishCurveDisplay->setAnalyzerVisible(analyzerVisible);
     }
 
     // Meters with stereo mode enabled
@@ -364,7 +326,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     // Setup British mode controls
     setupBritishControls();
 
-    // Setup Tube EQ mode controls
+    // Setup Tube EQ/Tube mode controls
     setupTubeEQControls();
 
     // Setup Dynamic EQ mode controls
@@ -379,10 +341,6 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         britishCurveCollapsed = !britishCurveCollapsed;
         britishCurveCollapseButton.setButtonText(britishCurveCollapsed ? "Show Graph" : "Hide Graph");
 
-        // Sync collapse state to Tube mode
-        tubeEQCurveCollapsed = britishCurveCollapsed;
-        tubeEQCurveCollapseButton.setButtonText(tubeEQCurveCollapsed ? "Show Graph" : "Hide Graph");
-
         // Toggle curve display visibility
         if (britishCurveDisplay)
             britishCurveDisplay->setVisible(!britishCurveCollapsed && isBritishMode);
@@ -390,6 +348,19 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         // Resize the window to match 4K-EQ behavior (smaller window when collapsed)
         int newHeight = britishCurveCollapsed ? 530 : 640;
         setSize(getWidth(), newHeight);
+
+        // Some hosts (particularly on Linux/X11) process resize requests asynchronously,
+        // which can cause the layout to use stale bounds. Schedule a deferred relayout.
+        auto safeThis = juce::Component::SafePointer<MultiQEditor>(this);
+        juce::MessageManager::callAsync([safeThis, newHeight]() {
+            if (safeThis != nullptr)
+            {
+                if (safeThis->getHeight() != newHeight)
+                    safeThis->setSize(safeThis->getWidth(), newHeight);
+                safeThis->resized();
+                safeThis->repaint();
+            }
+        });
     };
     britishCurveCollapseButton.setVisible(false);
     addAndMakeVisible(britishCurveCollapseButton);
@@ -413,6 +384,8 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     // Attach bypass button to the existing bypass parameter
     britishBypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor.parameters, ParamIDs::bypass, *britishBypassButton);
+    britishAutoGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.parameters, ParamIDs::autoGainEnabled, *britishAutoGainButton);
 
     // British mode header controls (A/B, Presets, Oversampling - like 4K-EQ)
     britishAbButton.setButtonText("A");
@@ -473,34 +446,10 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     tubePresetSelector.onChange = [this]() { applyTubePreset(tubePresetSelector.getSelectedId()); };
     addAndMakeVisible(tubePresetSelector);
 
-    // Tube mode "Hide Graph" button (like British mode)
-    tubeEQCurveCollapseButton.setButtonText("Hide Graph");
-    tubeEQCurveCollapseButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
-    tubeEQCurveCollapseButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffa0a0a0));
-    tubeEQCurveCollapseButton.setTooltip("Show/Hide frequency response graph");
-    tubeEQCurveCollapseButton.onClick = [this]() {
-        tubeEQCurveCollapsed = !tubeEQCurveCollapsed;
-        tubeEQCurveCollapseButton.setButtonText(tubeEQCurveCollapsed ? "Show Graph" : "Hide Graph");
-
-        // Sync collapse state to British mode
-        britishCurveCollapsed = tubeEQCurveCollapsed;
-        britishCurveCollapseButton.setButtonText(britishCurveCollapsed ? "Show Graph" : "Hide Graph");
-
-        // Toggle curve display visibility
-        if (tubeEQCurveDisplay)
-            tubeEQCurveDisplay->setVisible(!tubeEQCurveCollapsed && isTubeEQMode);
-
-        // Resize the window to match 4K-EQ behavior (smaller window when collapsed)
-        int newHeight = tubeEQCurveCollapsed ? 530 : 640;
-        setSize(getWidth(), newHeight);
-    };
-    tubeEQCurveCollapseButton.setVisible(false);
-    addAndMakeVisible(tubeEQCurveCollapseButton);
-
     tubeHqButton = std::make_unique<juce::ToggleButton>("HQ");
     tubeHqButton->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a5058));
     tubeHqButton->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe0e0e0));
-    tubeHqButton->setTooltip("Enable 2x/4x oversampling for anti-aliasing");
+    tubeHqButton->setTooltip("Enable oversampling for high-quality processing");
     tubeHqButton->setVisible(false);
     addAndMakeVisible(tubeHqButton.get());
     // Note: hqEnabled is now a Choice parameter, not Bool - no ButtonAttachment
@@ -545,19 +494,21 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     auto* eqTypeParam = processor.parameters.getRawParameterValue(ParamIDs::eqType);
     if (eqTypeParam)
     {
-        // EQType: 0=Digital (with dynamics), 1=British, 2=Tube
+        // EQType: 0=Digital, 1=Match, 2=British, 3=Tube EQ
         int eqTypeIndex = static_cast<int>(eqTypeParam->load());
-        isBritishMode = (eqTypeIndex == 1);
-        isTubeEQMode = (eqTypeIndex == 2);
-        // isDynamicMode removed - dynamics are now per-band in Digital mode
+        isMatchMode = (eqTypeIndex == static_cast<int>(EQType::Match));
+        isBritishMode = (eqTypeIndex == static_cast<int>(EQType::British));
+        isTubeEQMode = (eqTypeIndex == static_cast<int>(EQType::Tube));
     }
+    if (bandDetailPanel)
+        bandDetailPanel->setMatchMode(isMatchMode);
     updateEQModeVisibility();
 
     // Initialize resizable UI using shared helper (handles size persistence)
-    // Default: 950x700, Min: 950x550, Max: 3840x2160 (supports up to 4K displays)
-    // Minimum width 950px prevents toolbar control overlap in Digital mode
-    // (left controls end at x=365, right controls need ~536px from right edge)
-    resizeHelper.initialize(this, &processor, 950, 700, 950, 550, 3840, 2160, false);
+    // Default: 1050x700, Min: 1050x550, Max: 3840x2160 (supports up to 4K displays)
+    // Minimum width 1050px prevents toolbar control overlap in Digital mode
+    // (left controls end at x=314, right controls start at getWidth()-705)
+    resizeHelper.initialize(this, &processor, 1050, 700, 1050, 550, 3840, 2160, false);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     // Enable keyboard focus for shortcuts (1-8 select bands, D toggle dynamics, etc.)
@@ -576,10 +527,53 @@ MultiQEditor::~MultiQEditor()
     processor.parameters.removeParameterListener(ParamIDs::analyzerEnabled, this);
     processor.parameters.removeParameterListener(ParamIDs::eqType, this);
     processor.parameters.removeParameterListener(ParamIDs::britishMode, this);
+
+    // Clear LookAndFeel references from child components before member LnF objects are destroyed.
+    // (Declaration order already ensures safe destruction, but explicit cleanup is defensive.)
+    auto clearLnF = [](juce::Component* c) { if (c) c->setLookAndFeel(nullptr); };
+    // British mode controls (fourKLookAndFeel)
+    clearLnF(britishHpfFreqSlider.get());
+    clearLnF(britishLpfFreqSlider.get());
+    clearLnF(britishLfGainSlider.get());
+    clearLnF(britishLfFreqSlider.get());
+    clearLnF(britishLmGainSlider.get());
+    clearLnF(britishLmFreqSlider.get());
+    clearLnF(britishLmQSlider.get());
+    clearLnF(britishHmGainSlider.get());
+    clearLnF(britishHmFreqSlider.get());
+    clearLnF(britishHmQSlider.get());
+    clearLnF(britishHfGainSlider.get());
+    clearLnF(britishHfFreqSlider.get());
+    clearLnF(britishSaturationSlider.get());
+    clearLnF(britishInputGainSlider.get());
+    clearLnF(britishOutputGainSlider.get());
+    clearLnF(britishHpfEnableButton.get());
+    clearLnF(britishLpfEnableButton.get());
+    clearLnF(britishLfBellButton.get());
+    clearLnF(britishHfBellButton.get());
+    // Tube EQ mode controls (vintageTubeLookAndFeel)
+    clearLnF(tubeEQLfBoostSlider.get());
+    clearLnF(tubeEQLfFreqSelector.get());
+    clearLnF(tubeEQLfAttenSlider.get());
+    clearLnF(tubeEQHfBoostSlider.get());
+    clearLnF(tubeEQHfBoostFreqSelector.get());
+    clearLnF(tubeEQHfBandwidthSlider.get());
+    clearLnF(tubeEQHfAttenSlider.get());
+    clearLnF(tubeEQHfAttenFreqSelector.get());
+    clearLnF(tubeEQInputGainSlider.get());
+    clearLnF(tubeEQOutputGainSlider.get());
+    clearLnF(tubeEQTubeDriveSlider.get());
+    clearLnF(tubeEQMidEnabledButton.get());
+    clearLnF(tubeEQMidLowFreqSelector.get());
+    clearLnF(tubeEQMidLowPeakSlider.get());
+    clearLnF(tubeEQMidDipFreqSelector.get());
+    clearLnF(tubeEQMidDipSlider.get());
+    clearLnF(tubeEQMidHighFreqSelector.get());
+    clearLnF(tubeEQMidHighPeakSlider.get());
+
     setLookAndFeel(nullptr);
 }
 
-//==============================================================================
 void MultiQEditor::paint(juce::Graphics& g)
 {
     // Background
@@ -609,7 +603,7 @@ void MultiQEditor::paint(juce::Graphics& g)
     // Mode-specific subtitle
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.setColour(juce::Colour(0xff808080));
-    juce::String subtitle = isTubeEQMode ? "Tube EQ" : (isBritishMode ? "Console EQ" : "Universal EQ");
+    juce::String subtitle = isTubeEQMode ? "Tube EQ" : (isBritishMode ? "Console EQ" : (isMatchMode ? "Match EQ" : "Universal EQ"));
     g.drawText(subtitle, 100, 32, 120, 14, juce::Justification::left);
 
     // Dusk Audio branding (right side)
@@ -626,11 +620,9 @@ void MultiQEditor::paint(juce::Graphics& g)
         g.setColour(juce::Colour(0xff3a4a50));
         g.fillRect(0, 87, bounds.getWidth(), 1);
 
-        // Content area fill - blue-gray theme for Tube mode
-        // Starts below curve (y=193 = 88+105) or below toolbar (y=88) when collapsed
-        int contentY = tubeEQCurveCollapsed ? 88 : 193;
+        // Dark blue-gray background for content area (below toolbar)
         g.setColour(juce::Colour(0xff31444b));
-        g.fillRect(0, contentY, bounds.getWidth(), bounds.getHeight() - contentY);
+        g.fillRect(0, 88, bounds.getWidth(), bounds.getHeight() - 88);
     }
     else if (isBritishMode)
     {
@@ -653,8 +645,7 @@ void MultiQEditor::paint(juce::Graphics& g)
     {
         // ===== TUBE EQ MODE PAINT - SECTION DIVIDERS =====
         // Calculate positions based on layout (must match layoutTubeEQControls)
-        // headerHeight: 88px base when curve collapsed, 215px when curve visible (below meters)
-        const int headerHeight = tubeEQCurveCollapsed ? 88 : 215;
+        const int headerHeight = tubeEQCurveCollapsed ? 88 : 200;
         const int labelHeight = 22;
         const int knobSize = 105;            // Must match layoutTubeEQControls
         const int smallKnobSize = 90;        // Row 3 knobs
@@ -675,12 +666,9 @@ void MultiQEditor::paint(juce::Graphics& g)
         int row2Y = row1Y + row1Height + rowGap;
         int row3Y = row2Y + row2Height + rowGap;
 
-        // Match the LED clearance margins from layoutTubeEQControls
-        int leftLedClearance = 55;
-        int rightLedClearance = 55;
-        int mainWidth = getWidth() - rightPanelWidth - rightLedClearance;
-        int lineStartX = leftLedClearance + 5;  // Start just inside the left content area
-        int lineEndX = mainWidth - 10;          // End before the right panel divider
+        int mainWidth = getWidth() - rightPanelWidth - meterReserve;
+        int lineStartX = 40;
+        int lineEndX = mainWidth - 30;
 
         // ===== SEPARATOR LINES FOR FREQUENCY ROW (Row 2) =====
         // Draw horizontal separator lines above and below the frequency row
@@ -698,21 +686,19 @@ void MultiQEditor::paint(juce::Graphics& g)
         g.drawLine(static_cast<float>(lineStartX), static_cast<float>(separatorBelowY),
                    static_cast<float>(lineEndX), static_cast<float>(separatorBelowY), 1.0f);
 
-        // Right panel vertical divider - position at the start of the right panel area
-        int rightPanelX = getWidth() - rightPanelWidth - rightLedClearance;
+        // Right panel vertical divider
         g.setColour(juce::Colour(0x40000000));
-        g.fillRect(rightPanelX - 5, headerHeight + 20, 1, getHeight() - headerHeight - 40);
+        g.fillRect(mainWidth - 5, headerHeight + 20, 1, getHeight() - headerHeight - 40);
         g.setColour(juce::Colour(0x30ffffff));
-        g.fillRect(rightPanelX - 4, headerHeight + 20, 1, getHeight() - headerHeight - 40);
+        g.fillRect(mainWidth - 4, headerHeight + 20, 1, getHeight() - headerHeight - 40);
 
         // "MID DIP/PEAK" section label - draw above the mid section
-        // Use leftLedClearance + small offset to clear LED meter area
         g.setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Bold")));
         g.setColour(juce::Colour(0xff70b0d0));  // Teal accent
-        g.drawText("MID DIP/PEAK", leftLedClearance + 5, separatorBelowY + 8, 150, 16, juce::Justification::left);
+        g.drawText("MID DIP/PEAK", 55, separatorBelowY + 8, 150, 16, juce::Justification::left);
 
         // Draw meter labels (INPUT / OUTPUT) for Tube EQ mode
-        if (inputMeter)
+        if (inputMeter && inputMeter->isVisible())
         {
             float inL = processor.inputLevelL.load();
             float inR = processor.inputLevelR.load();
@@ -720,7 +706,7 @@ void MultiQEditor::paint(juce::Graphics& g)
             LEDMeterStyle::drawMeterLabels(g, inputMeter->getBounds(), "INPUT", inputLevel);
         }
 
-        if (outputMeter)
+        if (outputMeter && outputMeter->isVisible())
         {
             float outL = processor.outputLevelL.load();
             float outR = processor.outputLevelR.load();
@@ -800,14 +786,14 @@ void MultiQEditor::paint(juce::Graphics& g)
             LEDMeterStyle::drawMeterLabels(g, outputMeter->getBounds(), "OUTPUT", outputLevel);
         }
 
-        // Draw tick marks and value labels around knobs (console style)
+        // Draw tick marks and value labels around knobs
         drawBritishKnobMarkings(g);
 
-        // Knob labels and meter labels are drawn in paintOverChildren() to ensure they appear on top of the curve
+        // Knob labels are drawn in paintOverChildren() to ensure they appear on top
     }
     else
     {
-        // ===== DIGITAL MODE PAINT =====
+        // ===== DIGITAL MODE PAINT (Waves F6 style layout) =====
         // Constants matching resized() layout
         int detailPanelHeight = 125;  // Controls area with 75px knobs + section headers
         int toolbarHeight = 88;  // Header (50) + toolbar (38)
@@ -831,22 +817,11 @@ void MultiQEditor::paint(juce::Graphics& g)
         g.fillRect(leftMeterArea);
         g.fillRect(rightMeterArea);
 
-        // ===== METER LABELS (using standardized LEDMeterStyle) =====
-        if (inputMeter)
-        {
-            float inL = processor.inputLevelL.load();
-            float inR = processor.inputLevelR.load();
-            float inputLevel = juce::jmax(inL, inR);
-            LEDMeterStyle::drawMeterLabels(g, inputMeter->getBounds(), "INPUT", inputLevel);
-        }
-
-        if (outputMeter)
-        {
-            float outL = processor.outputLevelL.load();
-            float outR = processor.outputLevelR.load();
-            float outputLevel = juce::jmax(outL, outR);
-            LEDMeterStyle::drawMeterLabels(g, outputMeter->getBounds(), "OUTPUT", outputLevel);
-        }
+        // ===== METER LABELS (inside meter area, at top) =====
+        g.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
+        g.setColour(juce::Colour(0xFF808088));
+        g.drawText("IN", leftMeterArea.getX(), toolbarHeight + 3, meterAreaWidth, 14, juce::Justification::centred);
+        g.drawText("OUT", rightMeterArea.getX(), toolbarHeight + 3, meterAreaWidth, 14, juce::Justification::centred);
     }
 
     // Separator line only for digital mode
@@ -950,23 +925,6 @@ void MultiQEditor::paintOverChildren(juce::Graphics& g)
         // MASTER section
         drawLabelBelow(britishSaturationSlider.get(), "DRIVE");
         drawLabelBelow(britishOutputGainSlider.get(), "OUTPUT");
-
-        // Draw meter labels ON TOP of the edge-to-edge curve display
-        if (inputMeter)
-        {
-            float inL = processor.inputLevelL.load();
-            float inR = processor.inputLevelR.load();
-            float inputLevel = juce::jmax(inL, inR);
-            LEDMeterStyle::drawMeterLabels(g, inputMeter->getBounds(), "INPUT", inputLevel);
-        }
-
-        if (outputMeter)
-        {
-            float outL = processor.outputLevelL.load();
-            float outR = processor.outputLevelR.load();
-            float outputLevel = juce::jmax(outL, outR);
-            LEDMeterStyle::drawMeterLabels(g, outputMeter->getBounds(), "OUTPUT", outputLevel);
-        }
     }
 
     // ===== CLIP INDICATORS (all modes with visible meters) =====
@@ -1021,8 +979,7 @@ void MultiQEditor::resized()
 
     if (isTubeEQMode)
     {
-        // ===== TUBE EQ MODE LAYOUT =====
-        // Matches 4K-EQ layout pattern for consistency
+        // ===== VINTAGE TUBE EQ MODE LAYOUT =====
         // Toolbar is handled by layoutUnifiedToolbar() above
 
         // Position Tube EQ curve display (full width, below toolbar)
@@ -1035,7 +992,7 @@ void MultiQEditor::resized()
             tubeEQCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
         }
 
-        // Layout Tube EQ-specific controls
+        // Layout Tube EQ specific controls
         layoutTubeEQControls();
 
         // Hide the tube HQ button (replaced by global oversampling selector)
@@ -1057,37 +1014,6 @@ void MultiQEditor::resized()
 
         // Hide Digital mode toolbar controls in Tube EQ mode
         hqButton->setVisible(false);
-
-        // Calculate curve display dimensions based on collapsed state
-        // Curve starts below toolbar (y=88) and is 105px tall (matching 4K-EQ style)
-        int curveY = 88;
-        int curveHeight = tubeEQCurveCollapsed ? 0 : 105;
-
-        // Position and show/hide Tube EQ curve display
-        // Graph extends edge-to-edge for maximum visual impact
-        if (tubeEQCurveDisplay)
-        {
-            if (!tubeEQCurveCollapsed)
-            {
-                tubeEQCurveDisplay->setBounds(0, curveY, getWidth(), curveHeight);
-                tubeEQCurveDisplay->setVisible(true);
-            }
-            else
-            {
-                tubeEQCurveDisplay->setVisible(false);
-            }
-        }
-
-        // LED Meters - position below curve area (matching 4K-EQ)
-        // meterY: 215 when curve visible (gives 15px margin below curve), 95 when collapsed
-        int meterY = tubeEQCurveCollapsed ? 95 : 215;
-        int meterWidth = LEDMeterStyle::standardWidth;
-        int meterHeight = getHeight() - meterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
-        inputMeter->setBounds(6, meterY, meterWidth, meterHeight);
-        outputMeter->setBounds(getWidth() - meterWidth - 10, meterY, meterWidth, meterHeight);
-
-        // Layout Tube EQ-specific controls (knobs) - starts below curve area
-        layoutTubeEQControls();
     }
     else if (isBritishMode)
     {
@@ -1103,10 +1029,12 @@ void MultiQEditor::resized()
         int curveHeight = britishCurveCollapsed ? 0 : 105;
         int curveY = 88;
 
-        // Position British EQ curve display (full width, edge-to-edge)
+        // Position British EQ curve display (full width)
         if (britishCurveDisplay && !britishCurveCollapsed)
         {
-            britishCurveDisplay->setBounds(0, curveY, getWidth(), curveHeight);
+            int curveX = 0;
+            int curveWidth = getWidth();
+            britishCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
         }
 
         // Adjust meter and content positions based on curve visibility
@@ -1165,7 +1093,6 @@ void MultiQEditor::resized()
         int row1Y = contentTop + sectionLabelHeight + rowGap;
         int row2Y = row1Y + rowVisualHeight + rowGap;
         int row3Y = row2Y + rowVisualHeight + rowGap;
-
 
         // Helper to center a knob in a section
         auto centerKnobInSection = [&](juce::Slider& slider, int sectionStart, int sectionEnd, int y) {
@@ -1400,10 +1327,12 @@ void MultiQEditor::parameterChanged(const juce::String& parameterID, float newVa
         juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MultiQEditor>(this), eqTypeIndex]() {
             if (safeThis != nullptr)
             {
-                // EQType: 0=Digital (with dynamics), 1=British, 2=Tube
-                safeThis->isBritishMode = (eqTypeIndex == 1);
-                safeThis->isTubeEQMode = (eqTypeIndex == 2);
-                // isDynamicMode removed - dynamics are now per-band in Digital mode
+                // EQType: 0=Digital, 1=Match, 2=British, 3=Tube EQ
+                safeThis->isMatchMode = (eqTypeIndex == static_cast<int>(EQType::Match));
+                safeThis->isBritishMode = (eqTypeIndex == static_cast<int>(EQType::British));
+                safeThis->isTubeEQMode = (eqTypeIndex == static_cast<int>(EQType::Tube));
+                if (safeThis->bandDetailPanel)
+                    safeThis->bandDetailPanel->setMatchMode(safeThis->isMatchMode);
                 safeThis->updateEQModeVisibility();
 
                 // Ensure window height meets minimum for current mode
@@ -1549,7 +1478,7 @@ bool MultiQEditor::keyPressed(const juce::KeyPress& key)
     // Cmd+0: Reset window to default size
     if (key == juce::KeyPress('0', juce::ModifierKeys::commandModifier, 0))
     {
-        setSize(950, 700);
+        setSize(1050, 700);
         return true;
     }
 
@@ -1640,7 +1569,7 @@ bool MultiQEditor::keyPressed(const juce::KeyPress& key)
     // Shift+Tab: Cycle to previous band
     if (key.isKeyCode(juce::KeyPress::tabKey) && key.getModifiers().isShiftDown())
     {
-        int prevBand = (selectedBand + 7) % 8;  // -1 with wraparound
+        int prevBand = (selectedBand < 0) ? 7 : (selectedBand + 7) % 8;
         onBandSelected(prevBand);
         return true;
     }
@@ -1786,7 +1715,6 @@ bool MultiQEditor::keyPressed(const juce::KeyPress& key)
     return false;
 }
 
-//==============================================================================
 void MultiQEditor::setupSlider(juce::Slider& slider, const juce::String& suffix)
 {
     slider.setTextValueSuffix(suffix);
@@ -1805,7 +1733,6 @@ void MultiQEditor::setupLabel(juce::Label& label, const juce::String& text)
 
 void MultiQEditor::updateSelectedBandControls()
 {
-    // Clear existing attachments
     freqAttachment.reset();
     gainAttachment.reset();
     qAttachment.reset();
@@ -1826,20 +1753,16 @@ void MultiQEditor::updateSelectedBandControls()
 
     const auto& config = DefaultBandConfigs[static_cast<size_t>(selectedBand)];
 
-    // Update label with band info
     juce::String bandName = "Band " + juce::String(selectedBand + 1) + ": " + config.name;
     selectedBandLabel.setText(bandName, juce::dontSendNotification);
     selectedBandLabel.setColour(juce::Label::textColourId, config.color);
 
-    // Set knob colors and update LookAndFeel
     freqSlider->setColour(juce::Slider::rotarySliderFillColourId, config.color);
     gainSlider->setColour(juce::Slider::rotarySliderFillColourId, config.color);
     qSlider->setColour(juce::Slider::rotarySliderFillColourId, config.color);
 
-    // Update LookAndFeel with selected band color for consistent styling
     lookAndFeel.setSelectedBandColor(config.color);
 
-    // Repaint to update the tinted control section background
     repaint();
 
     // Enable controls and create attachments
@@ -1889,7 +1812,6 @@ void MultiQEditor::onBandSelected(int bandIndex)
     bandDetailPanel->setSelectedBand(bandIndex);
     updateSelectedBandControls();
 
-    // Update dynamics attachments when band changes (Digital mode has per-band dynamics)
     if (!isBritishMode && !isTubeEQMode)
         updateDynamicAttachments();
 }
@@ -1905,14 +1827,10 @@ void MultiQEditor::hideSupportersPanel()
     supportersOverlay->setVisible(false);
 }
 
-//==============================================================================
 // British Mode UI
-//==============================================================================
 
 void MultiQEditor::setupBritishControls()
 {
-    // Setup British mode sliders using FourKLookAndFeel (exact 4K-EQ style)
-    // This helper sets up a knob exactly like 4K-EQ does
     auto setupBritishKnob = [this](std::unique_ptr<juce::Slider>& slider, const juce::String& name,
                                    bool centerDetented, juce::Colour color) {
         slider = std::make_unique<DuskSlider>();
@@ -2131,8 +2049,8 @@ void MultiQEditor::setupBritishControls()
 
 void MultiQEditor::updateEQModeVisibility()
 {
-    // Determine if we're in Digital-style mode (Digital or Dynamic - same 8-band UI)
-    bool isDigitalMode = !isBritishMode && !isTubeEQMode;  // Includes Dynamic mode
+    // Determine if we're in Digital-style mode (Digital, Match, or Dynamic - same 8-band UI)
+    bool isDigitalMode = !isBritishMode && !isTubeEQMode;  // Includes Match mode
 
     // Linear phase controls - only visible in Digital mode
     linearPhaseButton->setVisible(isDigitalMode);
@@ -2151,7 +2069,7 @@ void MultiQEditor::updateEQModeVisibility()
     gainLabel.setVisible(false);
     qLabel.setVisible(false);
 
-    // BandDetailPanel - only in Digital mode
+    // BandDetailPanel (Waves F6 style) - only in Digital mode
     bandDetailPanel->setVisible(isDigitalMode);
 
     // NOTE: A/B buttons, preset selectors, bypass, oversampling, and display scale
@@ -2179,7 +2097,7 @@ void MultiQEditor::updateEQModeVisibility()
     if (tubeEQCurveDisplay)
         tubeEQCurveDisplay->setVisible(isTubeEQMode && !tubeEQCurveCollapsed);
 
-    // Meter visibility - visible in all modes for consistency
+    // Meters visible in all modes
     inputMeter->setVisible(true);
     outputMeter->setVisible(true);
 
@@ -2219,7 +2137,7 @@ void MultiQEditor::updateEQModeVisibility()
 
     // British mode header/master controls
     britishBypassButton->setVisible(isBritishMode);
-    britishAutoGainButton->setVisible(false);  // Using shared autoGainButton in toolbar instead
+    britishAutoGainButton->setVisible(isBritishMode);
 
     // NOTE: British A/B, preset selector, curve collapse button visibility
     // is handled by layoutUnifiedToolbar() - DO NOT set visibility here!
@@ -2345,7 +2263,6 @@ void MultiQEditor::updateEQModeVisibility()
     }
 }
 
-//==============================================================================
 void MultiQEditor::layoutUnifiedToolbar()
 {
     // ===== UNIFIED TOOLBAR LAYOUT =====
@@ -2387,6 +2304,34 @@ void MultiQEditor::layoutUnifiedToolbar()
 
     // ===== MODE-SPECIFIC LEFT-SIDE CONTROLS (same positions, different components) =====
 
+    // Helper to hide all mode-specific toolbar controls
+    auto hideAllModeControls = [&]() {
+        // Digital controls
+        digitalAbButton.setVisible(false);
+        presetSelector->setVisible(false);
+        processingModeSelector->setVisible(false);
+        autoGainButton->setVisible(false);
+        linearPhaseButton->setVisible(false);
+        linearPhaseQualitySelector->setVisible(false);
+        savePresetButton.setVisible(false);
+        undoButton.setVisible(false);
+        redoButton.setVisible(false);
+        transferToDigitalButton.setVisible(false);
+
+        // British controls
+        britishAbButton.setVisible(false);
+        britishPresetSelector.setVisible(false);
+        britishCurveCollapseButton.setVisible(false);
+        britishModeButton->setVisible(false);
+
+        // Tube controls
+        tubeAbButton.setVisible(false);
+        tubePresetSelector.setVisible(false);
+        tubeEQCurveCollapseButton.setVisible(false);
+    };
+
+    hideAllModeControls();
+
     if (isTubeEQMode)
     {
         // Tube mode: A/B, Preset selectors, and Hide Graph button
@@ -2398,31 +2343,6 @@ void MultiQEditor::layoutUnifiedToolbar()
         tubeEQCurveCollapseButton.setVisible(true);
         transferToDigitalButton.setBounds(293, toolbarY, 130, controlHeight);
         transferToDigitalButton.setVisible(true);
-
-        // Auto Gain button - show on right side of toolbar (consistent across all modes)
-        int rightSectionEnd = getWidth() - scaleOffset - 5;
-        autoGainButton->setBounds(rightSectionEnd - 75, toolbarY, 72, controlHeight);
-        autoGainButton->setVisible(true);
-
-        // Hide other Digital-specific controls
-        digitalAbButton.setVisible(false);
-        presetSelector->setVisible(false);
-        processingModeSelector->setVisible(false);
-        linearPhaseButton->setVisible(false);
-        linearPhaseQualitySelector->setVisible(false);
-        savePresetButton.setVisible(false);
-        undoButton.setVisible(false);
-        redoButton.setVisible(false);
-        eqMatchRefButton.setVisible(false);
-        eqMatchSrcButton.setVisible(false);
-        eqMatchApplyButton.setVisible(false);
-
-        // Hide British-specific controls
-        britishAbButton.setVisible(false);
-        britishPresetSelector.setVisible(false);
-        britishCurveCollapseButton.setVisible(false);
-        britishModeButton->setVisible(false);
-        britishAutoGainButton->setVisible(false);  // Use shared autoGainButton instead
     }
     else if (isBritishMode)
     {
@@ -2439,81 +2359,61 @@ void MultiQEditor::layoutUnifiedToolbar()
         // British-specific: Brown/Black mode toggle with text and color
         britishModeButton->setBounds(getWidth() - 400, toolbarY, 70, controlHeight);
         britishModeButton->setVisible(true);
+    }
+    else if (isMatchMode)
+    {
+        // Match mode: A/B + Transfer→Digital + Undo/Redo, plus right-section controls
+        digitalAbButton.setBounds(15, toolbarY, 28, controlHeight);
+        digitalAbButton.setVisible(true);
+        transferToDigitalButton.setBounds(48, toolbarY, 130, controlHeight);
+        transferToDigitalButton.setVisible(true);
+        undoButton.setBounds(183, toolbarY, 28, controlHeight);
+        undoButton.setVisible(true);
+        redoButton.setBounds(216, toolbarY, 28, controlHeight);
+        redoButton.setVisible(true);
 
-        // Auto Gain button - show on right side of toolbar (consistent across all modes)
         int rightSectionEnd = getWidth() - scaleOffset - 5;
-        autoGainButton->setBounds(rightSectionEnd - 75, toolbarY, 72, controlHeight);
+
+        processingModeSelector->setBounds(rightSectionEnd - 85, toolbarY, 82, controlHeight);
+        processingModeSelector->setVisible(true);
+
+        autoGainButton->setBounds(rightSectionEnd - 160, toolbarY, 72, controlHeight);
         autoGainButton->setVisible(true);
 
-        // Hide Digital-specific controls
-        digitalAbButton.setVisible(false);
-        presetSelector->setVisible(false);
-        processingModeSelector->setVisible(false);
-        linearPhaseButton->setVisible(false);
-        linearPhaseQualitySelector->setVisible(false);
-        savePresetButton.setVisible(false);
-        undoButton.setVisible(false);
-        redoButton.setVisible(false);
-        eqMatchRefButton.setVisible(false);
-        eqMatchSrcButton.setVisible(false);
-        eqMatchApplyButton.setVisible(false);
+        linearPhaseButton->setBounds(rightSectionEnd - 245, toolbarY, 82, controlHeight);
+        linearPhaseButton->setVisible(true);
 
-        // Hide Tube-specific controls
-        tubeAbButton.setVisible(false);
-        tubePresetSelector.setVisible(false);
-        tubeEQCurveCollapseButton.setVisible(false);
+        linearPhaseQualitySelector->setBounds(rightSectionEnd - 380, toolbarY, 130, controlHeight);
+        linearPhaseQualitySelector->setVisible(true);
     }
     else
     {
-        // Digital mode: A/B and Preset only (left-aligned below EQ type selector)
+        // Digital mode: A/B, Preset, Save, Undo, Redo (left-aligned below EQ type selector)
         digitalAbButton.setBounds(15, toolbarY, 28, controlHeight);
         digitalAbButton.setVisible(true);
         presetSelector->setBounds(48, toolbarY, 150, controlHeight);
         presetSelector->setVisible(true);
-
-        // Hide Save/Undo/Redo buttons (removed per user request)
-        savePresetButton.setVisible(false);
-        undoButton.setVisible(false);
-        redoButton.setVisible(false);
-        transferToDigitalButton.setVisible(false);
-
-        // EQ Match buttons (after preset selector)
-        eqMatchRefButton.setBounds(203, toolbarY, 85, controlHeight);
-        eqMatchRefButton.setVisible(true);
-        eqMatchSrcButton.setBounds(293, toolbarY, 80, controlHeight);
-        eqMatchSrcButton.setVisible(true);
-        eqMatchApplyButton.setBounds(378, toolbarY, 70, controlHeight);
-        eqMatchApplyButton.setVisible(true);
+        savePresetButton.setBounds(203, toolbarY, 45, controlHeight);
+        savePresetButton.setVisible(true);
+        undoButton.setBounds(253, toolbarY, 28, controlHeight);
+        undoButton.setVisible(true);
+        redoButton.setBounds(286, toolbarY, 28, controlHeight);
+        redoButton.setVisible(true);
 
         // Digital-specific right section (before shared right controls)
         int rightSectionEnd = getWidth() - scaleOffset - 5;
 
-        // Processing mode selector (Stereo/Mid/Side) - wider to show full text
         processingModeSelector->setBounds(rightSectionEnd - 85, toolbarY, 82, controlHeight);
         processingModeSelector->setVisible(true);
 
-        // Auto Gain toggle
         autoGainButton->setBounds(rightSectionEnd - 160, toolbarY, 72, controlHeight);
         autoGainButton->setVisible(true);
 
-        // Linear Phase toggle
         linearPhaseButton->setBounds(rightSectionEnd - 245, toolbarY, 82, controlHeight);
         linearPhaseButton->setVisible(true);
 
-        // Linear Phase quality selector - wider to show "LP: Balanced"
         linearPhaseQualitySelector->setBounds(rightSectionEnd - 380, toolbarY, 130, controlHeight);
         linearPhaseQualitySelector->setVisible(true);
-
-        // Hide British-specific controls
-        britishAbButton.setVisible(false);
-        britishPresetSelector.setVisible(false);
-        britishCurveCollapseButton.setVisible(false);
-        britishModeButton->setVisible(false);
-
-        // Hide Tube-specific controls
-        tubeAbButton.setVisible(false);
-        tubePresetSelector.setVisible(false);
-        tubeEQCurveCollapseButton.setVisible(false);
     }
 }
 
@@ -2581,7 +2481,6 @@ void MultiQEditor::layoutBritishControls()
     // These will be laid out in resized() alongside the EQ type selector
 }
 
-//==============================================================================
 void MultiQEditor::applyBritishPreset(int presetId)
 {
     // Validate presetId is within expected range (1-8)
@@ -2795,7 +2694,6 @@ void MultiQEditor::applyBritishPreset(int presetId)
     }
 }
 
-//==============================================================================
 void MultiQEditor::applyTubePreset(int presetId)
 {
     // Validate presetId is within expected range (1-7)
@@ -2826,10 +2724,10 @@ void MultiQEditor::applyTubePreset(int presetId)
         case 1:  // Default - flat response
             setParam(ParamIDs::pultecLfBoostGain, 0.0f);
             setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 0.0f);  // 60 Hz (index 0)
+            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
             setParam(ParamIDs::pultecHfBoostGain, 0.0f);
             setParam(ParamIDs::pultecHfBoostFreq, 0.0f);  // 3k Hz
-            setParam(ParamIDs::pultecHfBoostBandwidth, 5.0f);
+            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
             setParam(ParamIDs::pultecHfAttenGain, 0.0f);
             setParam(ParamIDs::pultecHfAttenFreq, 0.0f);  // 5k Hz
             setParam(ParamIDs::pultecTubeDrive, 0.0f);
@@ -2841,13 +2739,13 @@ void MultiQEditor::applyTubePreset(int presetId)
         case 2:  // Warm Vocal - boost lows, gentle air
             setParam(ParamIDs::pultecLfBoostGain, 3.0f);
             setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 1.0f);  // 100 Hz
+            setParam(ParamIDs::pultecLfBoostFreq, 3.0f);  // 100 Hz (index 3)
             setParam(ParamIDs::pultecHfBoostGain, 4.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 3.0f);  // 12k Hz
-            setParam(ParamIDs::pultecHfBoostBandwidth, 6.0f);
+            setParam(ParamIDs::pultecHfBoostFreq, 5.0f);  // 12 kHz (index 5)
+            setParam(ParamIDs::pultecHfBoostBandwidth, 0.6f);
             setParam(ParamIDs::pultecHfAttenGain, 2.0f);
-            setParam(ParamIDs::pultecHfAttenFreq, 1.0f);  // 10k Hz
-            setParam(ParamIDs::pultecTubeDrive, 20.0f);
+            setParam(ParamIDs::pultecHfAttenFreq, 1.0f);  // 10 kHz (index 1)
+            setParam(ParamIDs::pultecTubeDrive, 0.2f);
             setParam(ParamIDs::pultecInputGain, 0.0f);
             setParam(ParamIDs::pultecOutputGain, 0.0f);
             setParam(ParamIDs::pultecMidEnabled, 0.0f);
@@ -2856,13 +2754,13 @@ void MultiQEditor::applyTubePreset(int presetId)
         case 3:  // Vintage Bass - classic low-end trick
             setParam(ParamIDs::pultecLfBoostGain, 6.0f);
             setParam(ParamIDs::pultecLfAttenGain, 4.0f);  // Simultaneous boost & cut
-            setParam(ParamIDs::pultecLfBoostFreq, 0.0f);  // 60 Hz
+            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
             setParam(ParamIDs::pultecHfBoostGain, 0.0f);
             setParam(ParamIDs::pultecHfBoostFreq, 0.0f);
-            setParam(ParamIDs::pultecHfBoostBandwidth, 5.0f);
+            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
             setParam(ParamIDs::pultecHfAttenGain, 3.0f);
             setParam(ParamIDs::pultecHfAttenFreq, 2.0f);  // 20k Hz
-            setParam(ParamIDs::pultecTubeDrive, 30.0f);
+            setParam(ParamIDs::pultecTubeDrive, 0.3f);
             setParam(ParamIDs::pultecInputGain, 0.0f);
             setParam(ParamIDs::pultecOutputGain, 0.0f);
             setParam(ParamIDs::pultecMidEnabled, 0.0f);
@@ -2871,13 +2769,13 @@ void MultiQEditor::applyTubePreset(int presetId)
         case 4:  // Silky Highs - smooth high-end boost
             setParam(ParamIDs::pultecLfBoostGain, 0.0f);
             setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 0.0f);
+            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
             setParam(ParamIDs::pultecHfBoostGain, 5.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 2.0f);  // 8k Hz
-            setParam(ParamIDs::pultecHfBoostBandwidth, 7.0f);  // Wide bandwidth
+            setParam(ParamIDs::pultecHfBoostFreq, 3.0f);  // 8 kHz (index 3)
+            setParam(ParamIDs::pultecHfBoostBandwidth, 0.7f);  // Wide bandwidth
             setParam(ParamIDs::pultecHfAttenGain, 0.0f);
             setParam(ParamIDs::pultecHfAttenFreq, 0.0f);
-            setParam(ParamIDs::pultecTubeDrive, 15.0f);
+            setParam(ParamIDs::pultecTubeDrive, 0.15f);
             setParam(ParamIDs::pultecInputGain, 0.0f);
             setParam(ParamIDs::pultecOutputGain, 0.0f);
             setParam(ParamIDs::pultecMidEnabled, 0.0f);
@@ -2886,13 +2784,13 @@ void MultiQEditor::applyTubePreset(int presetId)
         case 5:  // Full Mix - balanced enhancement
             setParam(ParamIDs::pultecLfBoostGain, 3.0f);
             setParam(ParamIDs::pultecLfAttenGain, 1.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 0.0f);  // 60 Hz
+            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
             setParam(ParamIDs::pultecHfBoostGain, 3.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 3.0f);  // 12k Hz
-            setParam(ParamIDs::pultecHfBoostBandwidth, 5.0f);
+            setParam(ParamIDs::pultecHfBoostFreq, 5.0f);  // 12 kHz (index 5)
+            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
             setParam(ParamIDs::pultecHfAttenGain, 1.0f);
             setParam(ParamIDs::pultecHfAttenFreq, 1.0f);  // 10k Hz
-            setParam(ParamIDs::pultecTubeDrive, 25.0f);
+            setParam(ParamIDs::pultecTubeDrive, 0.25f);
             setParam(ParamIDs::pultecInputGain, 0.0f);
             setParam(ParamIDs::pultecOutputGain, 0.0f);
             setParam(ParamIDs::pultecMidEnabled, 0.0f);
@@ -2901,13 +2799,13 @@ void MultiQEditor::applyTubePreset(int presetId)
         case 6:  // Subtle Warmth - gentle coloration
             setParam(ParamIDs::pultecLfBoostGain, 1.5f);
             setParam(ParamIDs::pultecLfAttenGain, 0.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 1.0f);  // 100 Hz
+            setParam(ParamIDs::pultecLfBoostFreq, 3.0f);  // 100 Hz (index 3)
             setParam(ParamIDs::pultecHfBoostGain, 1.5f);
-            setParam(ParamIDs::pultecHfBoostFreq, 3.0f);  // 12k Hz
-            setParam(ParamIDs::pultecHfBoostBandwidth, 5.0f);
+            setParam(ParamIDs::pultecHfBoostFreq, 5.0f);  // 12 kHz (index 5)
+            setParam(ParamIDs::pultecHfBoostBandwidth, 0.5f);
             setParam(ParamIDs::pultecHfAttenGain, 0.5f);
             setParam(ParamIDs::pultecHfAttenFreq, 2.0f);  // 20k Hz
-            setParam(ParamIDs::pultecTubeDrive, 10.0f);
+            setParam(ParamIDs::pultecTubeDrive, 0.1f);
             setParam(ParamIDs::pultecInputGain, 0.0f);
             setParam(ParamIDs::pultecOutputGain, 0.0f);
             setParam(ParamIDs::pultecMidEnabled, 0.0f);
@@ -2916,13 +2814,13 @@ void MultiQEditor::applyTubePreset(int presetId)
         case 7:  // Mastering - subtle wide enhancement
             setParam(ParamIDs::pultecLfBoostGain, 2.0f);
             setParam(ParamIDs::pultecLfAttenGain, 1.0f);
-            setParam(ParamIDs::pultecLfBoostFreq, 0.0f);  // 60 Hz
+            setParam(ParamIDs::pultecLfBoostFreq, 2.0f);  // 60 Hz (index 2)
             setParam(ParamIDs::pultecHfBoostGain, 2.0f);
-            setParam(ParamIDs::pultecHfBoostFreq, 2.0f);  // 8k Hz
-            setParam(ParamIDs::pultecHfBoostBandwidth, 8.0f);  // Very wide
+            setParam(ParamIDs::pultecHfBoostFreq, 3.0f);  // 8 kHz (index 3)
+            setParam(ParamIDs::pultecHfBoostBandwidth, 0.8f);  // Very wide
             setParam(ParamIDs::pultecHfAttenGain, 0.5f);
             setParam(ParamIDs::pultecHfAttenFreq, 2.0f);  // 20k Hz
-            setParam(ParamIDs::pultecTubeDrive, 5.0f);  // Subtle tube warmth
+            setParam(ParamIDs::pultecTubeDrive, 0.05f);  // Subtle tube warmth
             setParam(ParamIDs::pultecInputGain, 0.0f);
             setParam(ParamIDs::pultecOutputGain, 0.0f);
             setParam(ParamIDs::pultecMidEnabled, 0.0f);
@@ -2933,7 +2831,6 @@ void MultiQEditor::applyTubePreset(int presetId)
     }
 }
 
-//==============================================================================
 void MultiQEditor::setupTubeEQControls()
 {
     // Create Tube EQ curve display
@@ -2996,11 +2893,11 @@ void MultiQEditor::setupTubeEQControls()
 
     // Global controls
     setupTubeEQKnob(tubeEQInputGainSlider, "input");
-    tubeEQInputGainSlider->setTooltip("Input gain into the Tube EQ circuit");
+    tubeEQInputGainSlider->setTooltip("Input gain into the tube circuit");
     setupTubeEQKnob(tubeEQOutputGainSlider, "output");
     tubeEQOutputGainSlider->setTooltip("Output gain level");
     setupTubeEQKnob(tubeEQTubeDriveSlider, "tube_drive");
-    tubeEQTubeDriveSlider->setTooltip("Tube drive: 12AX7 saturation and harmonic warmth");
+    tubeEQTubeDriveSlider->setTooltip("Tube drive: saturation and harmonic warmth");
 
     // Mid Section controls
     // Mid Enabled button (IN button) - bypasses the Mid Dip/Peak section only
@@ -3135,17 +3032,13 @@ void MultiQEditor::layoutTubeEQControls()
     auto bounds = getLocalBounds();
 
     // ===== TUBE MODE LAYOUT =====
-    // Header height depends on whether curve display is visible
-    // When curve is visible, controls start lower to accommodate the graph
     // Reorganized layout per user request:
     // - Row 1: [LF BOOST] [LF ATTEN] [HF BOOST] [HF ATTEN]
     // - Row 2: Frequency row with separator lines: [LF FREQ] [HF BANDWIDTH] [HF FREQ] [ATTEN FREQ]
     // - Row 3: MID DIP/PEAK section
     // - Right panel: INPUT → OUTPUT → TUBE DRIVE (vertical signal flow)
 
-    // headerHeight: 88px base (50px header + 38px toolbar)
-    // When curve is visible, add 127px (105px curve + 15px margin + 7px buffer) to push controls below meters
-    const int headerHeight = tubeEQCurveCollapsed ? 88 : 215;
+    const int headerHeight = tubeEQCurveCollapsed ? 88 : 200;  // 88 collapsed, 200 with curve
     const int labelHeight = 22;         // Height for knob labels
     const int knobSize = 105;           // Main knobs
     const int smallKnobSize = 90;       // Row 3 knobs (mid section)
@@ -3155,13 +3048,9 @@ void MultiQEditor::layoutTubeEQControls()
     const int rightPanelWidth = 125;    // Right side panel for INPUT/OUTPUT/DRIVE
     const int meterReserve = 40;        // Space for output meter at right edge
 
-    // Margins - leave space for LED meters on left/right and right panel
-    // LED meters are ~50px wide each (32px meter + spacing + L/R labels)
-    // Must ensure NO controls overlap with LED meter areas
-    int leftLedClearance = 55;   // Clear left LED meter completely
-    int rightLedClearance = 55;  // Clear right LED meter completely
-    int mainX = leftLedClearance;
-    int mainWidth = bounds.getWidth() - leftLedClearance - rightPanelWidth - rightLedClearance - 10;
+    // Margins - leave space for meters and right panel
+    int mainX = 30;
+    int mainWidth = bounds.getWidth() - 60 - rightPanelWidth - meterReserve;
 
     // Calculate row heights
     // Row 1: 4 gain knobs with labels below
@@ -3243,17 +3132,17 @@ void MultiQEditor::layoutTubeEQControls()
     // ============== ROW 3: MID DIP/PEAK SECTION (6 controls + IN toggle) ==============
     int row3Y = row2Y + row2Height + rowGap;
 
-    // IN toggle button on the left - keep within safe area (no overlap with left LED)
+    // IN toggle button on the left
     int inButtonWidth = 45;
     int inButtonHeight = 40;
-    int inButtonX = mainX;  // Start at safe margin, not outside it
+    int inButtonX = 40;  // After input meter (ends at x=36)
     int inButtonY = row3Y + (smallKnobSize - inButtonHeight) / 2;
     if (tubeEQMidEnabledButton)
         tubeEQMidEnabledButton->setBounds(inButtonX, inButtonY, inButtonWidth, inButtonHeight);
 
     // 6 controls evenly spaced after the IN button
-    int midAreaX = mainX + inButtonWidth + 10;
-    int midAreaWidth = mainWidth - inButtonWidth - 10;
+    int midAreaX = mainX + inButtonWidth + 5;
+    int midAreaWidth = mainWidth - inButtonWidth - 5;
     int midKnobSpacing = (midAreaWidth - 6 * smallKnobSize) / 7;
 
     // Dropdown width for frequency selectors
@@ -3316,8 +3205,7 @@ void MultiQEditor::layoutTubeEQControls()
 
     // ============== RIGHT SIDE PANEL: INPUT → OUTPUT → TUBE DRIVE ==============
     // Vertical signal flow: INPUT at top, OUTPUT in middle, TUBE DRIVE at bottom
-    // Position panel to leave clear space for right LED meter (55px clearance)
-    int rightPanelX = bounds.getWidth() - rightPanelWidth - rightLedClearance;
+    int rightPanelX = bounds.getWidth() - rightPanelWidth - meterReserve;
     int rightKnobSize = 85;  // Knob size for right panel
     int rightSpacing = 12;   // Spacing between knobs
     int totalRightHeight = 3 * rightKnobSize + 2 * rightSpacing + 3 * labelHeight;
@@ -3354,32 +3242,30 @@ void MultiQEditor::layoutTubeEQControls()
         tubeEQCurveDisplay->setVisible(isTubeEQMode && !tubeEQCurveCollapsed);
 }
 
-//==============================================================================
 // A/B Comparison Functions
-//==============================================================================
 
 void MultiQEditor::toggleAB()
 {
-    // Save current state to the current slot
-    copyCurrentToState(isStateA ? stateA : stateB);
+    // Tube/Tube EQ mode: save/restore only tubeEQ parameters
+    auto tubeEQFilter = [](const juce::String& id) { return id.startsWith("pultec_"); };
 
-    // Toggle slot
+    copyModeParamsToState(isStateA ? stateA : stateB, tubeEQFilter);
+
     isStateA = !isStateA;
 
-    // Apply the other state (if it exists)
     if (isStateA)
     {
         if (stateA.isValid())
-            applyState(stateA);
+            applyModeParams(stateA);
         tubeAbButton.setButtonText("A");
-        tubeAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));  // Green for A
+        tubeAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));
     }
     else
     {
         if (stateB.isValid())
-            applyState(stateB);
+            applyModeParams(stateB);
         tubeAbButton.setButtonText("B");
-        tubeAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a3a3a));  // Red for B
+        tubeAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a3a3a));
     }
 }
 
@@ -3402,34 +3288,71 @@ void MultiQEditor::applyState(const juce::ValueTree& state)
     processor.setStateInformation(data.getData(), static_cast<int>(data.getSize()));
 }
 
+void MultiQEditor::copyModeParamsToState(juce::ValueTree& state,
+                                          const std::function<bool(const juce::String&)>& filter)
+{
+    state = juce::ValueTree("ModeState");
+    auto fullState = processor.parameters.copyState();
+    for (int i = 0; i < fullState.getNumChildren(); ++i)
+    {
+        auto child = fullState.getChild(i);
+        auto paramId = child.getProperty("id").toString();
+        if (filter(paramId))
+            state.addChild(child.createCopy(), -1, nullptr);
+    }
+}
+
+void MultiQEditor::applyModeParams(const juce::ValueTree& state)
+{
+    if (!state.isValid() || state.getNumChildren() == 0)
+        return;
+
+    auto fullState = processor.parameters.copyState();
+    for (int i = 0; i < state.getNumChildren(); ++i)
+    {
+        auto savedChild = state.getChild(i);
+        auto id = savedChild.getProperty("id").toString();
+        for (int j = 0; j < fullState.getNumChildren(); ++j)
+        {
+            auto existing = fullState.getChild(j);
+            if (existing.getProperty("id").toString() == id)
+            {
+                existing.setProperty("value", savedChild.getProperty("value"), nullptr);
+                break;
+            }
+        }
+    }
+    processor.parameters.replaceState(fullState);
+}
+
 void MultiQEditor::toggleBritishAB()
 {
-    // Save current state to the current slot
-    copyCurrentToState(britishIsStateA ? britishStateA : britishStateB);
+    // British mode: save/restore only british_ parameters
+    auto britishFilter = [](const juce::String& id) { return id.startsWith("british_"); };
 
-    // Toggle slot
+    copyModeParamsToState(britishIsStateA ? britishStateA : britishStateB, britishFilter);
+
     britishIsStateA = !britishIsStateA;
 
-    // Apply the other state (if it exists)
     if (britishIsStateA)
     {
         if (britishStateA.isValid())
-            applyState(britishStateA);
+            applyModeParams(britishStateA);
         britishAbButton.setButtonText("A");
-        britishAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));  // Green for A
+        britishAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));
     }
     else
     {
         if (britishStateB.isValid())
-            applyState(britishStateB);
+            applyModeParams(britishStateB);
         britishAbButton.setButtonText("B");
-        britishAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a3a3a));  // Red for B
+        britishAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a3a3a));
     }
 }
 
 void MultiQEditor::drawBritishKnobMarkings(juce::Graphics& g)
 {
-    // console-style knob tick markings with value labels (matching 4K-EQ exactly)
+    // Knob tick markings with value labels (matching 4K-EQ)
 
     // Rotation range constants (must match setupBritishKnob rotaryParameters)
     const float startAngle = juce::MathConstants<float>::pi * 1.25f;  // 225° = 7 o'clock
@@ -3494,7 +3417,7 @@ void MultiQEditor::drawBritishKnobMarkings(juce::Graphics& g)
         }
     };
 
-    // Helper for console-style evenly spaced ticks
+    // Helper for evenly spaced ticks
     auto drawTicksEvenlySpaced = [&](juce::Rectangle<int> knobBounds,
                                       const std::vector<juce::String>& labels)
     {
@@ -3549,22 +3472,22 @@ void MultiQEditor::drawBritishKnobMarkings(juce::Graphics& g)
     if (britishHmGainSlider) drawTicksLinear(britishHmGainSlider->getBounds(), gainTicks, -20.0f, 20.0f, true);
     if (britishHfGainSlider) drawTicksLinear(britishHfGainSlider->getBounds(), gainTicks, -20.0f, 20.0f, true);
 
-    // ===== HPF (20-500Hz) - 4K E-series style evenly spaced =====
+    // ===== HPF (20-500Hz) =====
     if (britishHpfFreqSlider) drawTicksEvenlySpaced(britishHpfFreqSlider->getBounds(), {"20", "70", "120", "200", "300", "500"});
 
-    // ===== LPF (3000-20000Hz) - console style evenly spaced =====
+    // ===== LPF (3000-20000Hz) =====
     if (britishLpfFreqSlider) drawTicksEvenlySpaced(britishLpfFreqSlider->getBounds(), {"3k", "5k", "8k", "12k", "20k"});
 
-    // ===== LF Frequency (30-480Hz) - 4K E-series style evenly spaced =====
+    // ===== LF Frequency (30-480Hz) =====
     if (britishLfFreqSlider) drawTicksEvenlySpaced(britishLfFreqSlider->getBounds(), {"30", "50", "100", "200", "300", "480"});
 
-    // ===== LMF Frequency (200-2500Hz) - 4K E-series style evenly spaced =====
+    // ===== LMF Frequency (200-2500Hz) =====
     if (britishLmFreqSlider) drawTicksEvenlySpaced(britishLmFreqSlider->getBounds(), {".2", ".5", ".8", "1", "2", "2.5"});
 
-    // ===== HMF Frequency (600-7000Hz) - 4K E-series style evenly spaced =====
+    // ===== HMF Frequency (600-7000Hz) =====
     if (britishHmFreqSlider) drawTicksEvenlySpaced(britishHmFreqSlider->getBounds(), {".6", "1.5", "3", "4.5", "6", "7"});
 
-    // ===== HF Frequency (1500-16000Hz) - 4K E-series style evenly spaced =====
+    // ===== HF Frequency (1500-16000Hz) =====
     if (britishHfFreqSlider) drawTicksEvenlySpaced(britishHfFreqSlider->getBounds(), {"1.5", "8", "10", "14", "16"});
 
     // ===== Q knobs (0.4-4.0, linear) =====
@@ -3593,9 +3516,7 @@ void MultiQEditor::drawBritishKnobMarkings(juce::Graphics& g)
     if (britishSaturationSlider) drawTicksLinear(britishSaturationSlider->getBounds(), satTicks, 0.0f, 100.0f, false);
 }
 
-//==============================================================================
 // Dynamic EQ Mode Setup
-//==============================================================================
 
 void MultiQEditor::setupDynamicControls()
 {
@@ -3652,10 +3573,6 @@ void MultiQEditor::setupDynamicControls()
     setupDynSlider(dynRangeSlider, "dyn_range", " dB", 0.0, 24.0, 12.0);
     dynRangeSlider->setTooltip("Maximum gain change applied by the dynamic EQ");
 
-    // Ratio slider (1:1 to 20:1)
-    setupDynSlider(dynRatioSlider, "dyn_ratio", ":1", 1.0, 20.0, 4.0);
-    dynRatioSlider->setSkewFactorFromMidPoint(4.0);  // More resolution for lower ratios
-
     // Section label (compact)
     dynSectionLabel.setText("DYN", juce::dontSendNotification);
     dynSectionLabel.setJustificationType(juce::Justification::centred);
@@ -3669,7 +3586,6 @@ void MultiQEditor::setupDynamicControls()
     setupDynLabel(dynAttackLabel, "At");
     setupDynLabel(dynReleaseLabel, "Re");
     setupDynLabel(dynRangeLabel, "Rn");
-    setupDynLabel(dynRatioLabel, "Ra");
 }
 
 void MultiQEditor::layoutDynamicControls()
@@ -3689,19 +3605,15 @@ void MultiQEditor::layoutDynamicControls()
     dynReleaseSlider->setVisible(false);
     dynRangeLabel.setVisible(false);
     dynRangeSlider->setVisible(false);
-    dynRatioLabel.setVisible(false);
-    dynRatioSlider->setVisible(false);
 }
 
 void MultiQEditor::updateDynamicAttachments()
 {
-    // Clear existing attachments
     dynEnableAttachment.reset();
     dynThresholdAttachment.reset();
     dynAttackAttachment.reset();
     dynReleaseAttachment.reset();
     dynRangeAttachment.reset();
-    dynRatioAttachment.reset();
 
     // Only create attachments if we have a valid selected band and are in Digital mode
     bool isDigitalStyleMode = !isBritishMode && !isTubeEQMode;
@@ -3725,14 +3637,9 @@ void MultiQEditor::updateDynamicAttachments()
 
     dynRangeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.parameters, ParamIDs::bandDynRange(bandNum), *dynRangeSlider);
-
-    dynRatioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::bandDynRatio(bandNum), *dynRatioSlider);
 }
 
-//==============================================================================
 // Factory Preset Methods
-//==============================================================================
 
 void MultiQEditor::updatePresetSelector()
 {
@@ -3898,9 +3805,7 @@ void MultiQEditor::deleteUserPreset(const juce::String& name)
     refreshUserPresets();
 }
 
-//==============================================================================
 // Undo/Redo System
-//==============================================================================
 
 void MultiQEditor::updateUndoRedoButtons()
 {
@@ -3913,31 +3818,38 @@ void MultiQEditor::updateUndoRedoButtons()
     redoButton.setAlpha(undoManager.canRedo() ? 1.0f : 0.4f);
 }
 
-//==============================================================================
 // Digital Mode A/B Comparison
-//==============================================================================
 
 void MultiQEditor::toggleDigitalAB()
 {
-    // Save current state to the current slot
-    copyCurrentToState(digitalIsStateA ? digitalStateA : digitalStateB);
+    // Digital mode: save/restore band parameters + digital-mode globals
+    auto digitalFilter = [](const juce::String& id) {
+        return id.startsWith("band")
+            || id == ParamIDs::masterGain
+            || id == ParamIDs::qCoupleMode
+            || id == ParamIDs::autoGainEnabled
+            || id == ParamIDs::dynDetectionMode
+            || id == ParamIDs::limiterEnabled
+            || id == ParamIDs::limiterCeiling
+            || id == ParamIDs::matchStrength;
+    };
 
-    // Toggle slot
+    copyModeParamsToState(digitalIsStateA ? digitalStateA : digitalStateB, digitalFilter);
+
     digitalIsStateA = !digitalIsStateA;
 
-    // Apply the other state (if it exists)
     if (digitalIsStateA)
     {
         if (digitalStateA.isValid())
-            applyState(digitalStateA);
+            applyModeParams(digitalStateA);
         digitalAbButton.setButtonText("A");
-        digitalAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));  // Green for A
+        digitalAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a6a3a));
     }
     else
     {
         if (digitalStateB.isValid())
-            applyState(digitalStateB);
+            applyModeParams(digitalStateB);
         digitalAbButton.setButtonText("B");
-        digitalAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a3a3a));  // Red for B
+        digitalAbButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6a3a3a));
     }
 }

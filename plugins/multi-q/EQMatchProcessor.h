@@ -31,7 +31,7 @@ public:
 
     EQMatchProcessor() = default;
 
-    void setSampleRate(double sr) { sampleRate = sr; }
+    void setSampleRate(double sr) { if (sr > 0.0) sampleRate = sr; }
 
     /** Capture the reference spectrum (what you want to sound like). */
     void captureReference(const std::array<float, NUM_BINS>& magnitudes)
@@ -50,11 +50,15 @@ public:
     bool isReferenceSet() const { return hasReference; }
     bool isTargetSet() const { return hasTarget; }
 
-    void clearReference() { hasReference = false; }
-    void clearTarget() { hasTarget = false; }
+    void clearReference() { hasReference = false; hasMatch = false; }
+    void clearTarget() { hasTarget = false; hasMatch = false; }
 
-    /** Get the difference curve (reference - target) in dB. */
+    /** Get the reference spectrum magnitudes in dB. */
+    const std::array<float, NUM_BINS>& getReferenceMagnitudes() const { return referenceMagnitudes; }
+
+    /** Get the difference curve (reference - target) in dB. Only valid after computeMatch(). */
     const std::array<float, NUM_BINS>& getDifferenceCurve() const { return differenceCurve; }
+    bool hasDifferenceCurve() const { return hasMatch; }
 
     /** Compute matched EQ parameters. Returns the number of active bands fitted. */
     int computeMatch(int maxBands = MAX_FIT_BANDS, float matchStrength = 1.0f)
@@ -62,7 +66,7 @@ public:
         if (!hasReference || !hasTarget)
             return 0;
 
-        maxBands = std::min(maxBands, MAX_FIT_BANDS);
+        maxBands = juce::jlimit(0, MAX_FIT_BANDS, maxBands);
 
         // Compute difference curve (reference - target = what we need to add)
         for (int i = 0; i < NUM_BINS; ++i)
@@ -127,6 +131,7 @@ public:
             subtractBandFromResidual(residual, peakFreq, peakGain, q);
         }
 
+        hasMatch = true;
         return bandsUsed;
     }
 
@@ -137,6 +142,7 @@ private:
     double sampleRate = 44100.0;
     bool hasReference = false;
     bool hasTarget = false;
+    bool hasMatch = false;
 
     std::array<float, NUM_BINS> referenceMagnitudes{};
     std::array<float, NUM_BINS> targetMagnitudes{};
@@ -159,19 +165,21 @@ private:
         return static_cast<float>(bin) / static_cast<float>(NUM_BINS) * nyquist;
     }
 
-    /** Estimate Q by measuring the width of the residual peak at -3dB from peak. */
+    /** Estimate Q by measuring the width of the residual peak at -3dB from peak.
+     *  Residual values are in dB, so -3dB point = peakVal - 3.0f (not linear 0.707). */
     float estimateQ(const std::array<float, NUM_BINS>& residual, int peakBin) const
     {
-        float peakVal = std::abs(residual[static_cast<size_t>(peakBin)]);
-        float halfPower = peakVal * 0.707f;  // -3dB point
-        bool isBoost = residual[static_cast<size_t>(peakBin)] > 0;
+        float peakVal = residual[static_cast<size_t>(peakBin)];
+        bool isBoost = peakVal > 0.0f;
+        // -3dB threshold in dB domain: 3 dB less magnitude from the peak
+        float threshold = isBoost ? (peakVal - 3.0f) : (peakVal + 3.0f);
 
         // Search left for -3dB point
-        int leftBin = peakBin;
+        int leftBin = -1;
         for (int i = peakBin - 1; i >= 0; --i)
         {
-            float val = isBoost ? residual[static_cast<size_t>(i)] : -residual[static_cast<size_t>(i)];
-            if (val < halfPower)
+            float val = residual[static_cast<size_t>(i)];
+            if (isBoost ? (val <= threshold) : (val >= threshold))
             {
                 leftBin = i;
                 break;
@@ -179,15 +187,41 @@ private:
         }
 
         // Search right for -3dB point
-        int rightBin = peakBin;
+        int rightBin = -1;
         for (int i = peakBin + 1; i < NUM_BINS; ++i)
         {
-            float val = isBoost ? residual[static_cast<size_t>(i)] : -residual[static_cast<size_t>(i)];
-            if (val < halfPower)
+            float val = residual[static_cast<size_t>(i)];
+            if (isBoost ? (val <= threshold) : (val >= threshold))
             {
                 rightBin = i;
                 break;
             }
+        }
+
+        // Handle cases where threshold wasn't crossed on one or both sides
+        bool leftFound = (leftBin >= 0);
+        bool rightFound = (rightBin >= 0);
+
+        if (!leftFound && !rightFound)
+        {
+            // Neither side crossed threshold — use distance to nearest spectrum edge
+            int edgeDistance = std::min(peakBin, NUM_BINS - 1 - peakBin);
+            if (edgeDistance < 1)
+                return 10.0f;
+            leftBin = peakBin - edgeDistance;
+            rightBin = peakBin + edgeDistance;
+        }
+        else if (!leftFound && rightFound)
+        {
+            // Mirror the found right half-width to the left
+            int halfWidth = rightBin - peakBin;
+            leftBin = std::max(0, peakBin - halfWidth);
+        }
+        else if (leftFound && !rightFound)
+        {
+            // Mirror the found left half-width to the right
+            int halfWidth = peakBin - leftBin;
+            rightBin = std::min(NUM_BINS - 1, peakBin + halfWidth);
         }
 
         // Q = center frequency / bandwidth

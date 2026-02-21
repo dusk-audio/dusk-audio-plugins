@@ -12,7 +12,6 @@
 namespace MultiQPresets
 {
 
-//==============================================================================
 struct BandPreset
 {
     bool enabled = true;
@@ -45,7 +44,6 @@ struct Preset
     float dynRange = 12.0f;
 };
 
-//==============================================================================
 // Category definitions
 inline const juce::StringArray Categories = {
     "Vocals",
@@ -58,7 +56,6 @@ inline const juce::StringArray Categories = {
     "Creative"
 };
 
-//==============================================================================
 // Factory Presets
 inline std::vector<Preset> getFactoryPresets()
 {
@@ -74,7 +71,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0; // Digital
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 2 };       // HPF at 80Hz
         p.bands[1] = { true, 200.0f, -2.5f, 1.0f, 0 };      // Low shelf cut - reduce mud
-        p.bands[2] = { true, 800.0f, 0.0f, 0.71f, 0 };      // Unused
+        p.bands[2] = { true, 800.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[3] = { true, 2500.0f, 2.0f, 1.2f, 0 };      // Presence boost
         p.bands[4] = { true, 5000.0f, 1.5f, 0.8f, 0 };      // Air/clarity
         p.bands[5] = { true, 10000.0f, 1.0f, 0.71f, 0 };    // Brilliance
@@ -322,7 +319,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[4] = { true, 3000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };    // Flat
-        p.bands[7] = { true, 19500.0f, 0.0f, 0.71f, 2 };    // LPF at Nyquist
+        p.bands[7] = { true, 19500.0f, 0.0f, 0.71f, 2 };    // LPF near Nyquist
         p.hqEnabled = true;
         presets.push_back(p);
     }
@@ -384,7 +381,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[4] = { true, 3500.0f, 2.0f, 1.0f, 0 };      // Upper mid
         p.bands[5] = { true, 4500.0f, -6.0f, 0.71f, 0 };    // High cut
         p.bands[6] = { true, 5000.0f, 0.0f, 0.71f, 0 };     // Transition
-        p.bands[7] = { true, 3500.0f, 0.0f, 0.71f, 4 };     // LPF steep
+        p.bands[7] = { true, 5500.0f, 0.0f, 0.71f, 4 };     // LPF steep
         presets.push_back(p);
     }
 
@@ -401,7 +398,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[4] = { true, 3000.0f, -2.0f, 1.2f, 0 };     // Reduce harshness
         p.bands[5] = { true, 6000.0f, -3.0f, 0.71f, 0 };    // Roll off highs
         p.bands[6] = { true, 10000.0f, -4.0f, 0.71f, 0 };   // More rolloff
-        p.bands[7] = { true, 8000.0f, 0.0f, 0.71f, 3 };     // LPF steep
+        p.bands[7] = { true, 11000.0f, 0.0f, 0.71f, 3 };    // LPF steep
         presets.push_back(p);
     }
 
@@ -426,7 +423,6 @@ inline std::vector<Preset> getFactoryPresets()
     return presets;
 }
 
-//==============================================================================
 inline std::vector<Preset> getPresetsByCategory(const juce::String& category)
 {
     std::vector<Preset> result;
@@ -439,14 +435,11 @@ inline std::vector<Preset> getPresetsByCategory(const juce::String& category)
     return result;
 }
 
-//==============================================================================
 inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset& preset)
 {
-    // Set EQ type first
     if (auto* p = params.getParameter(ParamIDs::eqType))
         p->setValueNotifyingHost(params.getParameterRange(ParamIDs::eqType).convertTo0to1(static_cast<float>(preset.eqType)));
 
-    // Apply 8-band EQ settings (Digital mode)
     for (int i = 0; i < 8; ++i)
     {
         const auto& band = preset.bands[static_cast<size_t>(i)];
@@ -473,7 +466,9 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
         p->setValueNotifyingHost(params.getParameterRange(ParamIDs::masterGain).convertTo0to1(preset.masterGain));
 
     if (auto* p = params.getParameter(ParamIDs::hqEnabled))
-        p->setValueNotifyingHost(preset.hqEnabled ? 1.0f : 0.0f);
+        p->setValueNotifyingHost(preset.hqEnabled
+            ? params.getParameterRange(ParamIDs::hqEnabled).convertTo0to1(1.0f)  // "2x"
+            : params.getParameterRange(ParamIDs::hqEnabled).convertTo0to1(0.0f));  // "Off"
 
     if (auto* p = params.getParameter(ParamIDs::qCoupleMode))
         p->setValueNotifyingHost(params.getParameterRange(ParamIDs::qCoupleMode).convertTo0to1(static_cast<float>(preset.qCoupleMode)));
@@ -481,7 +476,6 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
     if (auto* p = params.getParameter(ParamIDs::processingMode))
         p->setValueNotifyingHost(params.getParameterRange(ParamIDs::processingMode).convertTo0to1(static_cast<float>(preset.processingMode)));
 
-    // Apply dynamics settings to all bands (always set enabled state to avoid stale settings)
     for (int i = 1; i <= 8; ++i)
     {
         if (auto* p = params.getParameter(ParamIDs::bandDynEnabled(i)))
