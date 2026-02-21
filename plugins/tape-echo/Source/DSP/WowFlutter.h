@@ -2,7 +2,7 @@
   ==============================================================================
 
     WowFlutter.h
-    Tape Echo - RE-201 Style Wow and Flutter
+    Tape Echo - Vintage Tape Wow and Flutter
 
     Dual LFO system modeling tape transport instabilities:
     - Wow: Slow pitch drift (0.5-2Hz, +/-3-8 cents)

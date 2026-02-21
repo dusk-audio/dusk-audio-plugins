@@ -56,7 +56,7 @@ target_sources(FourKEQ
         FourKLookAndFeel.h
         EQCurveDisplay.cpp
         EQCurveDisplay.h
-        SSLSaturation.h
+        ConsoleSaturation.h
         ../shared/PatreonBackers.h
         ../shared/SupportersOverlay.h
         ../shared/LEDMeter.cpp

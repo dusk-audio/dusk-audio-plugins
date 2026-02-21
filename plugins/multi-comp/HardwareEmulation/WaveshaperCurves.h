@@ -5,10 +5,10 @@
     Lookup table-based waveshapers for hardware-accurate saturation
 
     Pre-computed curves based on measured hardware transfer functions:
-    - LA-2A tube saturation (asymmetric, 2nd harmonic dominant)
-    - 1176 FET saturation (symmetric, odd harmonics)
-    - DBX VCA saturation (nearly linear)
-    - SSL Bus saturation (punchy, slight asymmetry)
+    - Opto tube saturation (asymmetric, 2nd harmonic dominant)
+    - FET saturation (symmetric, odd harmonics)
+    - VCA saturation (nearly linear)
+    - Console bus saturation (punchy, slight asymmetry)
     - Generic transformer saturation
 
   ==============================================================================
@@ -30,10 +30,10 @@ public:
 
     enum class CurveType
     {
-        LA2A_Tube,      // Asymmetric tube saturation
-        FET_1176,       // FET transistor clipping
-        DBX_VCA,        // Clean VCA saturation
-        SSL_Bus,        // SSL console character
+        Opto_Tube,      // Asymmetric tube saturation
+        FET,       // FET transistor clipping
+        Classic_VCA,        // Clean VCA saturation
+        Console_Bus,    // Console bus character
         Transformer,    // Generic transformer saturation
         Linear          // Bypass (no saturation)
     };
@@ -45,10 +45,10 @@ public:
 
     void initialize()
     {
-        initializeLA2ACurve();
+        initializeOptoCurve();
         initializeFETCurve();
         initializeVCACurve();
-        initializeSSLCurve();
+        initializeConsoleCurve();
         initializeTransformerCurve();
         initializeLinearCurve();
     }
@@ -85,10 +85,10 @@ public:
     {
         switch (curve)
         {
-            case CurveType::LA2A_Tube:   return la2aCurve;
-            case CurveType::FET_1176:    return fetCurve;
-            case CurveType::DBX_VCA:     return vcaCurve;
-            case CurveType::SSL_Bus:     return sslCurve;
+            case CurveType::Opto_Tube:   return optoCurve;
+            case CurveType::FET:    return fetCurve;
+            case CurveType::Classic_VCA:     return vcaCurve;
+            case CurveType::Console_Bus: return consoleCurve;
             case CurveType::Transformer: return transformerCurve;
             case CurveType::Linear:
             default:                     return linearCurve;
@@ -96,10 +96,10 @@ public:
     }
 
 private:
-    std::array<float, TABLE_SIZE> la2aCurve;
+    std::array<float, TABLE_SIZE> optoCurve;
     std::array<float, TABLE_SIZE> fetCurve;
     std::array<float, TABLE_SIZE> vcaCurve;
-    std::array<float, TABLE_SIZE> sslCurve;
+    std::array<float, TABLE_SIZE> consoleCurve;
     std::array<float, TABLE_SIZE> transformerCurve;
     std::array<float, TABLE_SIZE> linearCurve;
 
@@ -110,11 +110,11 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // LA-2A tube saturation
+    // Opto tube saturation
     // Characteristics: Asymmetric, 2nd harmonic dominant, soft compression
     // Based on 12AX7 triode transfer curve measurements
     // Target: ~0.25-0.5% THD at +10dBm, 2nd harmonic dominant
-    void initializeLA2ACurve()
+    void initializeOptoCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
@@ -128,7 +128,7 @@ private:
                 float softClip = x / (1.0f + x * 0.12f);
                 // Subtle 2nd harmonic coloration
                 float harmonic2 = softClip * softClip * 0.025f;
-                la2aCurve[i] = softClip - harmonic2;
+                optoCurve[i] = softClip - harmonic2;
             }
             else
             {
@@ -136,13 +136,13 @@ private:
                 // Creates asymmetry for 2nd harmonic character
                 float absX = std::abs(x);
                 float hardClip = -absX / (1.0f + absX * 0.08f);
-                la2aCurve[i] = hardClip;
+                optoCurve[i] = hardClip;
             }
         }
     }
 
     //--------------------------------------------------------------------------
-    // 1176 FET saturation
+    // FET saturation
     // Characteristics: More symmetric, odd harmonics, sharp knee
     // Based on FET transfer characteristics
     // Target: ~0.3-0.5% THD at limiting, odd harmonics dominant (3rd > 2nd)
@@ -163,7 +163,7 @@ private:
             float sign = (x >= 0.0f) ? 1.0f : -1.0f;
 
             // FET compression has distinctive odd-harmonic character
-            // The 1176 uses a FET as a variable resistor which creates
+            // The FET compressor uses a FET as a variable resistor which creates
             // symmetric soft clipping (odd harmonics: 3rd, 5th, 7th)
 
             // Add continuous 3rd and 5th harmonic shaping
@@ -188,9 +188,9 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // DBX 160 VCA saturation
+    // Classic VCA saturation
     // Characteristics: Very clean, nearly linear, gentle limiting only at extremes
-    // Target: ~0.03-0.05% THD (THAT 2180 VCA has measurable but low distortion)
+    // Target: ~0.03-0.05% THD (VCA chip has measurable but low distortion)
     // VCAs typically produce odd harmonics (symmetric nonlinearity)
     void initializeVCACurve()
     {
@@ -224,9 +224,9 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // SSL Bus saturation
+    // Console bus saturation
     // Characteristics: Punchy, console character, slight asymmetry for "punch"
-    void initializeSSLCurve()
+    void initializeConsoleCurve()
     {
         // Pre-calculate threshold values for continuity
         // Asymmetric thresholds for punch (positive clips slightly earlier)
@@ -252,7 +252,7 @@ private:
             {
                 // Linear region with subtle polynomial shaping
                 float subtle = x + x * x * x * h3Coeff;  // Adds 3rd harmonic
-                sslCurve[i] = subtle;
+                consoleCurve[i] = subtle;
             }
             else
             {
@@ -260,7 +260,7 @@ private:
                 float excess = absX - threshold;
                 // Start from shapedAtThreshold and add tanh-limited headroom
                 float sat = shapedAtThreshold + std::tanh(excess * 3.5f) * 0.18f;
-                sslCurve[i] = sign * sat;
+                consoleCurve[i] = sign * sat;
             }
         }
     }
@@ -268,7 +268,7 @@ private:
     //--------------------------------------------------------------------------
     // Generic transformer saturation
     // Characteristics: Progressive compression, 2nd harmonic emphasis
-    // Based on Marinair/Carnhill transformer measurements
+    // Based on classic transformer measurements
     void initializeTransformerCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)

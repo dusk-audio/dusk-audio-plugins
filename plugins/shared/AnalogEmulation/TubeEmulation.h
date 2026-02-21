@@ -7,7 +7,7 @@
     Models the non-linear behavior of common audio tubes:
     - 12AX7 (high gain triode, used in preamps)
     - 12AT7 (medium gain triode)
-    - 12BH7 (output driver, used in LA-2A)
+    - 12BH7 (output driver, used in opto compressors)
     - 6SN7 (dual triode, warm character)
 
     Key characteristics modeled:
@@ -37,7 +37,7 @@ public:
     {
         Triode_12AX7,    // High gain (~100), more 2nd harmonic
         Triode_12AT7,    // Medium gain (~60)
-        Triode_12BH7,    // Output driver (~16), LA-2A output stage
+        Triode_12BH7,    // Output driver (~16), opto compressor output stage
         Triode_6SN7      // Dual triode, warm character
     };
 

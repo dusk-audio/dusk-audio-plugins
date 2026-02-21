@@ -1,20 +1,13 @@
 /*
   ==============================================================================
 
-    SSLSaturation.h
+    ConsoleSaturation.h
 
-    Accurate SSL console harmonic emulation based on:
-    - SSL E-Series (VE-type) channel strip characteristics
-    - SSL G-Series (G+/G384) channel strip characteristics
-    - NE5534 op-amp modeling
-    - Marinair/Carnhill transformer saturation
-    - Measured harmonic data from real SSL consoles
-
-    References:
-    - SSL E-Series: Predominantly 2nd harmonic, warm character
-    - SSL G-Series: More 3rd harmonic, tighter/cleaner
-    - NE5534 op-amp: Asymmetric clipping, ~0.1% THD typical
-    - Transformers: Even-order harmonics, frequency-dependent
+    British console harmonic emulation with two voicings:
+    - E-Series: Warmer character, predominantly 2nd harmonic
+    - G-Series: Cleaner/tighter, more 3rd harmonic
+    - Op-amp modeling with asymmetric clipping
+    - Transformer saturation with even-order harmonics
 
   ==============================================================================
 */
@@ -22,10 +15,12 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <random>
 
-class SSLSaturation
+class ConsoleSaturation
 {
 public:
     enum class ConsoleType
@@ -34,22 +29,22 @@ public:
         GSeries     // G-Series (Black knobs) - cleaner, more 3rd harmonic
     };
 
-    SSLSaturation()
+    // Constructor with optional seed for reproducible tests
+    // Default uses instance address for unique per-instance noise
+    explicit ConsoleSaturation(unsigned int seed = 0)
     {
-        // Initialize component tolerance variation (±5% per instance)
-        // This simulates real hardware where resistors/capacitors have tolerances
-        // Each plugin instance gets unique "hardware" characteristics
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
+        // Fixed component tolerance values (deterministic for reproducible results)
+        // Simulates typical vintage hardware with slight component variation
+        transformerTolerance = 1.02f;
+        opAmpTolerance = 0.97f;
+        outputTransformerTolerance = 1.01f;
 
-        // Different tolerances for different circuit stages
-        transformerTolerance = 1.0f + dist(gen);     // Input transformer variation
-        opAmpTolerance = 1.0f + dist(gen);           // Op-amp gain variation
-        outputTransformerTolerance = 1.0f + dist(gen); // Output transformer variation
-
-        // Initialize noise generator seed
-        noiseGen = std::mt19937(rd());
+        // Initialize noise generator with unique seed per instance
+        // If seed is 0, derive from instance address for unique noise across instances
+        // Non-zero seeds allow reproducible results for testing
+        unsigned int actualSeed = (seed != 0) ? seed
+            : static_cast<unsigned int>(reinterpret_cast<std::uintptr_t>(this) ^ instanceCounter++);
+        noiseGen = std::mt19937(actualSeed);
         noiseDist = std::uniform_real_distribution<float>(-1.0f, 1.0f);
     }
 
@@ -83,12 +78,16 @@ public:
         // Suppress denormals for performance (prevents CPU spikes on older processors)
         juce::ScopedNoDenormals noDenormals;
 
+        // NaN/Inf protection - return silence (0.0f) if input is invalid
+        if (!std::isfinite(input))
+            return 0.0f;
+
         if (drive < 0.001f)
             return input;
 
         // Gentle pre-saturation limiting to prevent extreme aliasing
         // This soft clips peaks before they hit the transformer stage
-        // Only active at very high levels (>0.95) to maintain SSL character
+        // Only active at very high levels (>0.95) to maintain console character
         float limited = input;
         float absInput = std::abs(input);
         if (absInput > 0.95f)
@@ -100,20 +99,20 @@ public:
         }
 
         // Estimate frequency content for frequency-dependent saturation
-        // Real SSL hardware has subtle frequency-dependent behavior:
+        // Real console hardware has subtle frequency-dependent behavior:
         // - Transformers saturate MORE at low frequencies (core saturation - physics-based)
         // - Op-amps have slew-rate limiting at high frequencies (only at extreme overdrive)
         // Modern enhancement: reduce HF saturation to prevent aliasing while maintaining character
         float highFreqContent = estimateHighFrequencyContent(limited, isLeftChannel);
 
         // Progressive HF drive reduction for anti-aliasing
-        // This mimics real SSL behavior: transformers naturally saturate less at HF
+        // This mimics real console behavior: transformers naturally saturate less at HF
         // Scaling increases with both drive amount and frequency content
         float hfReduction = highFreqContent * (0.25f + drive * 0.35f);  // 25-60% reduction based on drive
         float effectiveDrive = drive * (1.0f - hfReduction);
 
         // Stage 1: Input transformer saturation
-        // SSL uses Marinair (E-Series) or Carnhill (G-Series) transformers
+        // Console uses Marinair (E-Series) or Carnhill (G-Series) transformers
         // Apply component tolerance for per-instance variation
         float transformed = processInputTransformer(limited, effectiveDrive * transformerTolerance);
 
@@ -128,7 +127,7 @@ public:
             ? processOutputTransformer(opAmpOut, drive * 0.7f * outputTransformerTolerance)
             : opAmpOut;
 
-        // Add console noise floor (-90dB RMS, typical for SSL)
+        // Add console noise floor (-90dB RMS, typical for vintage consoles)
         // Noise increases slightly with drive (like real hardware)
         // This adds realism and subtle analog character
         float noiseLevel = 0.00003162f * (1.0f + drive * 0.5f); // -90dB base, increases with drive
@@ -140,10 +139,19 @@ public:
         // Mix with dry signal based on drive amount
         // At 100% drive, use 100% wet for maximum saturation effect
         float wetMix = juce::jlimit(0.0f, 1.0f, drive * 1.4f);  // Linear ramp, full wet at high drive
-        return input * (1.0f - wetMix) + output * wetMix;
+        float result = input * (1.0f - wetMix) + output * wetMix;
+
+        // NaN/Inf protection - return clean input if saturation produced invalid output
+        if (!std::isfinite(result))
+            return input;
+
+        return result;
     }
 
 private:
+    // Static counter for unique instance seeding
+    static inline std::atomic<unsigned int> instanceCounter{0};
+
     ConsoleType consoleType = ConsoleType::ESeries;
     double sampleRate = 44100.0;
 
@@ -200,12 +208,12 @@ private:
     // Input transformer saturation
     // Models Marinair/Carnhill transformer behavior
     // Predominantly even-order harmonics (2nd, 4th)
-    // SSL is very clean at normal levels (-18dB), only saturates when driven hot
+    // The console is very clean at normal levels (-18dB), only saturates when driven hot
     float processInputTransformer(float input, float drive)
     {
-        // SSL transformers are very linear at normal levels
+        // Console transformers are very linear at normal levels
         // Only apply saturation when driven hard (above ~0dB)
-        // Drive range allows authentic SSL "pushed" sound without excessive aliasing
+        // Drive range allows authentic console "pushed" sound without excessive aliasing
         // At 100% drive, allows ~18dB of headroom (8x gain) - reduced for cleaner operation
         const float transformerDrive = 1.0f + drive * 7.0f;  // Max 8x gain at full drive
         float driven = input * transformerDrive;
@@ -216,11 +224,11 @@ private:
         // Soft saturation curve with even-order emphasis
         float abs_x = std::abs(driven);
 
-        // Progressive saturation - SSL is linear until driven hard
+        // Progressive saturation - console is linear until driven hard
         float saturated;
         if (abs_x < 0.9f)
         {
-            // Linear region - no saturation (SSL operates here at -18dB)
+            // Linear region - no saturation (the console operates here at -18dB)
             saturated = driven;
         }
         else if (abs_x < 1.5f)
@@ -239,7 +247,7 @@ private:
         }
 
         // Add console-specific harmonic coloration
-        // SSL transformers are very linear until driven moderately hard
+        // Console transformers are very linear until driven moderately hard
         //
         // DESIGN DECISION: Threshold difference dominates harmonic behavior
         // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
@@ -281,9 +289,9 @@ private:
     float processOpAmpStage(float input, float drive)
     {
         // NE5534 has different characteristics than generic op-amps
-        // SSL designs keep op-amps in linear region at normal levels
+        // Console designs keep op-amps in linear region at normal levels
         // THD only becomes measurable when driven very hot
-        // Drive range allows authentic SSL character without excessive aliasing
+        // Drive range allows authentic console character without excessive aliasing
         // At 100% drive, allows ~20dB of headroom (10x gain) - reduced for cleaner operation
 
         const float opAmpDrive = 1.0f + drive * 9.0f;  // Max 10x gain at full drive
@@ -296,12 +304,12 @@ private:
 
         float output;
 
-        // Positive half-cycle (toward V+ rail, ~+15V in SSL)
+        // Positive half-cycle (toward V+ rail, ~+15V in the console)
         if (driven > 0.0f)
         {
             if (driven < 1.0f)
             {
-                // Linear region - SSL operates here at -18dB
+                // Linear region - the console operates here at -18dB
                 // Virtually no distortion
                 output = driven;
             }
@@ -319,7 +327,7 @@ private:
                 output = 1.5f + std::tanh((driven - 1.8f) * clipHardness) * 0.3f;
             }
         }
-        // Negative half-cycle (toward V- rail, ~-15V in SSL)
+        // Negative half-cycle (toward V- rail, ~-15V in the console)
         else
         {
             if (driven > -1.0f)
@@ -341,7 +349,7 @@ private:
             }
         }
 
-        // Console-specific harmonic shaping - SSL op-amps are very linear until driven hard
+        // Console-specific harmonic shaping - console op-amps are very linear until driven hard
         //
         // DESIGN DECISION: Threshold difference dominates harmonic behavior
         // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
@@ -405,8 +413,8 @@ private:
             saturated = (driven > 0.0f) ? compressed : -compressed;
         }
 
-        // Subtle 2nd harmonic emphasis
-        saturated += saturated * saturated * 0.05f;
+        // Subtle 2nd harmonic emphasis (use abs to preserve sign and avoid DC bias)
+        saturated += saturated * std::abs(saturated) * 0.05f;
 
         return saturated / transformerDrive;
     }
@@ -425,5 +433,5 @@ private:
         return output;
     }
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SSLSaturation)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ConsoleSaturation)
 };

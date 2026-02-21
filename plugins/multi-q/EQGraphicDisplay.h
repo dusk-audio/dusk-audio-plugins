@@ -132,7 +132,7 @@ private:
     };
     DragMode currentDragMode = DragMode::None;
 
-    // Control point hit testing - larger nodes for Pro-Q style visibility
+    // Control point hit testing - larger nodes for high visibility
     static constexpr float CONTROL_POINT_RADIUS = 12.0f;  // 24px diameter
     static constexpr float BASE_HIT_RADIUS = 16.0f;  // Base hit area at reference width
 

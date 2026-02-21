@@ -83,27 +83,27 @@ MultiQ::MultiQ()
     britishInputGainParam = parameters.getRawParameterValue(ParamIDs::britishInputGain);
     britishOutputGainParam = parameters.getRawParameterValue(ParamIDs::britishOutputGain);
 
-    // Pultec mode parameters
-    pultecLfBoostGainParam = parameters.getRawParameterValue(ParamIDs::pultecLfBoostGain);
-    pultecLfBoostFreqParam = parameters.getRawParameterValue(ParamIDs::pultecLfBoostFreq);
-    pultecLfAttenGainParam = parameters.getRawParameterValue(ParamIDs::pultecLfAttenGain);
-    pultecHfBoostGainParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostGain);
-    pultecHfBoostFreqParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostFreq);
-    pultecHfBoostBandwidthParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostBandwidth);
-    pultecHfAttenGainParam = parameters.getRawParameterValue(ParamIDs::pultecHfAttenGain);
-    pultecHfAttenFreqParam = parameters.getRawParameterValue(ParamIDs::pultecHfAttenFreq);
-    pultecInputGainParam = parameters.getRawParameterValue(ParamIDs::pultecInputGain);
-    pultecOutputGainParam = parameters.getRawParameterValue(ParamIDs::pultecOutputGain);
-    pultecTubeDriveParam = parameters.getRawParameterValue(ParamIDs::pultecTubeDrive);
+    // Tube EQ mode parameters
+    tubeEQLfBoostGainParam = parameters.getRawParameterValue(ParamIDs::pultecLfBoostGain);
+    tubeEQLfBoostFreqParam = parameters.getRawParameterValue(ParamIDs::pultecLfBoostFreq);
+    tubeEQLfAttenGainParam = parameters.getRawParameterValue(ParamIDs::pultecLfAttenGain);
+    tubeEQHfBoostGainParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostGain);
+    tubeEQHfBoostFreqParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostFreq);
+    tubeEQHfBoostBandwidthParam = parameters.getRawParameterValue(ParamIDs::pultecHfBoostBandwidth);
+    tubeEQHfAttenGainParam = parameters.getRawParameterValue(ParamIDs::pultecHfAttenGain);
+    tubeEQHfAttenFreqParam = parameters.getRawParameterValue(ParamIDs::pultecHfAttenFreq);
+    tubeEQInputGainParam = parameters.getRawParameterValue(ParamIDs::pultecInputGain);
+    tubeEQOutputGainParam = parameters.getRawParameterValue(ParamIDs::pultecOutputGain);
+    tubeEQTubeDriveParam = parameters.getRawParameterValue(ParamIDs::pultecTubeDrive);
 
-    // Pultec Mid Dip/Peak section parameters
-    pultecMidEnabledParam = parameters.getRawParameterValue(ParamIDs::pultecMidEnabled);
-    pultecMidLowFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidLowFreq);
-    pultecMidLowPeakParam = parameters.getRawParameterValue(ParamIDs::pultecMidLowPeak);
-    pultecMidDipFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidDipFreq);
-    pultecMidDipParam = parameters.getRawParameterValue(ParamIDs::pultecMidDip);
-    pultecMidHighFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighFreq);
-    pultecMidHighPeakParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighPeak);
+    // Tube EQ Mid Dip/Peak section parameters
+    tubeEQMidEnabledParam = parameters.getRawParameterValue(ParamIDs::pultecMidEnabled);
+    tubeEQMidLowFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidLowFreq);
+    tubeEQMidLowPeakParam = parameters.getRawParameterValue(ParamIDs::pultecMidLowPeak);
+    tubeEQMidDipFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidDipFreq);
+    tubeEQMidDipParam = parameters.getRawParameterValue(ParamIDs::pultecMidDip);
+    tubeEQMidHighFreqParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighFreq);
+    tubeEQMidHighPeakParam = parameters.getRawParameterValue(ParamIDs::pultecMidHighPeak);
 
     // Dynamic mode per-band parameters
     for (int i = 0; i < NUM_BANDS; ++i)
@@ -274,7 +274,7 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         oversamplerReady = true;
     }
 
-    // Pre-allocate scratch buffer for British/Pultec processing
+    // Pre-allocate scratch buffer for British/Tube EQ processing
     // Size: 2 channels, max oversampled block size (4x input block size for max oversampling)
     maxOversampledBlockSize = samplesPerBlock * 4;
     scratchBuffer.setSize(2, maxOversampledBlockSize, false, false, true);
@@ -321,9 +321,9 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     britishEQ.prepare(currentSampleRate, samplesPerBlock * osFactor, 2);
     britishParamsChanged.store(true);
 
-    // Prepare Pultec EQ processor
-    pultecEQ.prepare(currentSampleRate, samplesPerBlock * osFactor, 2);
-    pultecParamsChanged.store(true);
+    // Prepare Tube EQ processor
+    tubeEQ.prepare(currentSampleRate, samplesPerBlock * osFactor, 2);
+    tubeEQParamsChanged.store(true);
 
     // Prepare Dynamic EQ processor
     dynamicEQ.prepare(currentSampleRate, 2);
@@ -508,7 +508,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         britishEQ.setParameters(britishParams);
     }
 
-    // Update Pultec EQ parameters if needed
+    // Update Tube EQ parameters if needed
     if (eqType == EQType::Tube)
     {
         // LF boost frequency lookup table: 20, 30, 60, 100 Hz
@@ -524,49 +524,49 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         // Mid High frequency lookup table: 1.5, 2.0, 3.0, 4.0, 5.0 kHz
         static const float midHighFreqValues[] = { 1500.0f, 2000.0f, 3000.0f, 4000.0f, 5000.0f };
 
-        PultecProcessor::Parameters pultecParams;
-        pultecParams.lfBoostGain = safeGetParam(pultecLfBoostGainParam, 0.0f);
+        TubeEQProcessor::Parameters tubeEQParams;
+        tubeEQParams.lfBoostGain = safeGetParam(tubeEQLfBoostGainParam, 0.0f);
 
-        int lfFreqIdx = static_cast<int>(safeGetParam(pultecLfBoostFreqParam, 2.0f));
+        int lfFreqIdx = static_cast<int>(safeGetParam(tubeEQLfBoostFreqParam, 2.0f));
         lfFreqIdx = juce::jlimit(0, 3, lfFreqIdx);
-        pultecParams.lfBoostFreq = lfFreqValues[lfFreqIdx];
+        tubeEQParams.lfBoostFreq = lfFreqValues[lfFreqIdx];
 
-        pultecParams.lfAttenGain = safeGetParam(pultecLfAttenGainParam, 0.0f);
-        pultecParams.hfBoostGain = safeGetParam(pultecHfBoostGainParam, 0.0f);
+        tubeEQParams.lfAttenGain = safeGetParam(tubeEQLfAttenGainParam, 0.0f);
+        tubeEQParams.hfBoostGain = safeGetParam(tubeEQHfBoostGainParam, 0.0f);
 
-        int hfBoostFreqIdx = static_cast<int>(safeGetParam(pultecHfBoostFreqParam, 3.0f));
+        int hfBoostFreqIdx = static_cast<int>(safeGetParam(tubeEQHfBoostFreqParam, 3.0f));
         hfBoostFreqIdx = juce::jlimit(0, 6, hfBoostFreqIdx);
-        pultecParams.hfBoostFreq = hfBoostFreqValues[hfBoostFreqIdx];
+        tubeEQParams.hfBoostFreq = hfBoostFreqValues[hfBoostFreqIdx];
 
-        pultecParams.hfBoostBandwidth = safeGetParam(pultecHfBoostBandwidthParam, 0.5f);
-        pultecParams.hfAttenGain = safeGetParam(pultecHfAttenGainParam, 0.0f);
+        tubeEQParams.hfBoostBandwidth = safeGetParam(tubeEQHfBoostBandwidthParam, 0.5f);
+        tubeEQParams.hfAttenGain = safeGetParam(tubeEQHfAttenGainParam, 0.0f);
 
-        int hfAttenFreqIdx = static_cast<int>(safeGetParam(pultecHfAttenFreqParam, 1.0f));
+        int hfAttenFreqIdx = static_cast<int>(safeGetParam(tubeEQHfAttenFreqParam, 1.0f));
         hfAttenFreqIdx = juce::jlimit(0, 2, hfAttenFreqIdx);
-        pultecParams.hfAttenFreq = hfAttenFreqValues[hfAttenFreqIdx];
+        tubeEQParams.hfAttenFreq = hfAttenFreqValues[hfAttenFreqIdx];
 
         // Mid section parameters
-        pultecParams.midEnabled = safeGetParam(pultecMidEnabledParam, 1.0f) > 0.5f;
+        tubeEQParams.midEnabled = safeGetParam(tubeEQMidEnabledParam, 1.0f) > 0.5f;
 
-        int midLowFreqIdx = static_cast<int>(safeGetParam(pultecMidLowFreqParam, 2.0f));
+        int midLowFreqIdx = static_cast<int>(safeGetParam(tubeEQMidLowFreqParam, 2.0f));
         midLowFreqIdx = juce::jlimit(0, 4, midLowFreqIdx);
-        pultecParams.midLowFreq = midLowFreqValues[midLowFreqIdx];
-        pultecParams.midLowPeak = safeGetParam(pultecMidLowPeakParam, 0.0f);
+        tubeEQParams.midLowFreq = midLowFreqValues[midLowFreqIdx];
+        tubeEQParams.midLowPeak = safeGetParam(tubeEQMidLowPeakParam, 0.0f);
 
-        int midDipFreqIdx = static_cast<int>(safeGetParam(pultecMidDipFreqParam, 3.0f));
+        int midDipFreqIdx = static_cast<int>(safeGetParam(tubeEQMidDipFreqParam, 3.0f));
         midDipFreqIdx = juce::jlimit(0, 6, midDipFreqIdx);
-        pultecParams.midDipFreq = midDipFreqValues[midDipFreqIdx];
-        pultecParams.midDip = safeGetParam(pultecMidDipParam, 0.0f);
+        tubeEQParams.midDipFreq = midDipFreqValues[midDipFreqIdx];
+        tubeEQParams.midDip = safeGetParam(tubeEQMidDipParam, 0.0f);
 
-        int midHighFreqIdx = static_cast<int>(safeGetParam(pultecMidHighFreqParam, 2.0f));
+        int midHighFreqIdx = static_cast<int>(safeGetParam(tubeEQMidHighFreqParam, 2.0f));
         midHighFreqIdx = juce::jlimit(0, 4, midHighFreqIdx);
-        pultecParams.midHighFreq = midHighFreqValues[midHighFreqIdx];
-        pultecParams.midHighPeak = safeGetParam(pultecMidHighPeakParam, 0.0f);
+        tubeEQParams.midHighFreq = midHighFreqValues[midHighFreqIdx];
+        tubeEQParams.midHighPeak = safeGetParam(tubeEQMidHighPeakParam, 0.0f);
 
-        pultecParams.inputGain = safeGetParam(pultecInputGainParam, 0.0f);
-        pultecParams.outputGain = safeGetParam(pultecOutputGainParam, 0.0f);
-        pultecParams.tubeDrive = safeGetParam(pultecTubeDriveParam, 0.3f);
-        pultecEQ.setParameters(pultecParams);
+        tubeEQParams.inputGain = safeGetParam(tubeEQInputGainParam, 0.0f);
+        tubeEQParams.outputGain = safeGetParam(tubeEQOutputGainParam, 0.0f);
+        tubeEQParams.tubeDrive = safeGetParam(tubeEQTubeDriveParam, 0.3f);
+        tubeEQ.setParameters(tubeEQParams);
     }
 
     // Input level metering (using peak values to match DAW meters)
@@ -651,7 +651,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         effectiveRouting[static_cast<size_t>(i)] = (perBand == 0) ? globalRouting : (perBand - 1);
     }
 
-    // Global M/S encode for British/Pultec modes (they don't have per-band routing)
+    // Global M/S encode for British/Tube EQ modes (they don't have per-band routing)
     // Digital mode uses per-band routing instead
     bool useMS = (procMode == ProcessingMode::Mid || procMode == ProcessingMode::Side);
 
@@ -695,7 +695,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     }
     else if (eqType == EQType::Tube)
     {
-        // Pultec/Tube mode: Use Pultec EQP-1A style processing
+        // Tube EQ mode: passive tube program EQ style processing
         // Use pre-allocated scratch buffer (no heap allocation in audio thread)
         int numChannels = static_cast<int>(processBlock.getNumChannels());
         int blockSamples = static_cast<int>(processBlock.getNumSamples());
@@ -711,7 +711,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         // Create a view into scratch buffer for the processor (avoids allocation)
         juce::AudioBuffer<float> tempView(scratchBuffer.getArrayOfWritePointers(),
                                           numChannels, blockSamples);
-        pultecEQ.process(tempView);
+        tubeEQ.process(tempView);
 
         // Copy back to processBlock
         for (int ch = 0; ch < numChannels; ++ch)
@@ -938,7 +938,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     // (Linear phase processes raw L/R buffer directly and includes master gain in the IR)
     if (!useLinearPhase)
     {
-        // M/S decode for British/Pultec modes (Digital mode handles M/S per-band)
+        // M/S decode for British/Tube EQ modes (Digital mode handles M/S per-band)
         if (useMS && eqType != EQType::Digital)
         {
             for (int i = 0; i < numSamples; ++i)
@@ -2307,23 +2307,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         0.0f, "dB"
     ));
 
-    // Pultec (Tube) mode parameters
+    // Tube EQ mode parameters
     // LF Section
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecLfBoostGain, 1),
-        "Pultec LF Boost",
+        "Tube EQ LF Boost",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
     ));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::pultecLfBoostFreq, 1),
-        "Pultec LF Boost Freq",
+        "Tube EQ LF Boost Freq",
         juce::StringArray{"20 Hz", "30 Hz", "60 Hz", "100 Hz"},
         2  // 60 Hz default
     ));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecLfAttenGain, 1),
-        "Pultec LF Atten",
+        "Tube EQ LF Atten",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
     ));
@@ -2331,19 +2331,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
     // HF Boost Section
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecHfBoostGain, 1),
-        "Pultec HF Boost",
+        "Tube EQ HF Boost",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
     ));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::pultecHfBoostFreq, 1),
-        "Pultec HF Boost Freq",
+        "Tube EQ HF Boost Freq",
         juce::StringArray{"3 kHz", "4 kHz", "5 kHz", "8 kHz", "10 kHz", "12 kHz", "16 kHz"},
         3  // 8 kHz default
     ));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecHfBoostBandwidth, 1),
-        "Pultec HF Bandwidth",
+        "Tube EQ HF Bandwidth",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.5f  // Medium bandwidth
     ));
@@ -2351,76 +2351,76 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
     // HF Atten Section
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecHfAttenGain, 1),
-        "Pultec HF Atten",
+        "Tube EQ HF Atten",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
     ));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::pultecHfAttenFreq, 1),
-        "Pultec HF Atten Freq",
+        "Tube EQ HF Atten Freq",
         juce::StringArray{"5 kHz", "10 kHz", "20 kHz"},
         1  // 10 kHz default
     ));
 
-    // Global Pultec controls
+    // Global Tube EQ controls
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecInputGain, 1),
-        "Pultec Input Gain",
+        "Tube EQ Input Gain",
         juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
         0.0f, "dB"
     ));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecOutputGain, 1),
-        "Pultec Output Gain",
+        "Tube EQ Output Gain",
         juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
         0.0f, "dB"
     ));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecTubeDrive, 1),
-        "Pultec Tube Drive",
+        "Tube EQ Tube Drive",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.3f  // Moderate tube warmth by default
     ));
 
-    // Pultec Mid Dip/Peak section parameters
+    // Tube EQ Mid Dip/Peak section parameters
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID(ParamIDs::pultecMidEnabled, 1),
-        "Pultec Mid Section Enabled",
+        "Tube EQ Mid Section Enabled",
         true  // Enabled by default
     ));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::pultecMidLowFreq, 1),
-        "Pultec Mid Low Freq",
+        "Tube EQ Mid Low Freq",
         juce::StringArray{"0.2 kHz", "0.3 kHz", "0.5 kHz", "0.7 kHz", "1.0 kHz"},
         2  // 0.5 kHz default
     ));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecMidLowPeak, 1),
-        "Pultec Mid Low Peak",
+        "Tube EQ Mid Low Peak",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
     ));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::pultecMidDipFreq, 1),
-        "Pultec Mid Dip Freq",
+        "Tube EQ Mid Dip Freq",
         juce::StringArray{"0.2 kHz", "0.3 kHz", "0.5 kHz", "0.7 kHz", "1.0 kHz", "1.5 kHz", "2.0 kHz"},
         3  // 0.7 kHz default
     ));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecMidDip, 1),
-        "Pultec Mid Dip",
+        "Tube EQ Mid Dip",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
     ));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::pultecMidHighFreq, 1),
-        "Pultec Mid High Freq",
+        "Tube EQ Mid High Freq",
         juce::StringArray{"1.5 kHz", "2.0 kHz", "3.0 kHz", "4.0 kHz", "5.0 kHz"},
         2  // 3.0 kHz default
     ));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::pultecMidHighPeak, 1),
-        "Pultec Mid High Peak",
+        "Tube EQ Mid High Peak",
         juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f),
         0.0f
     ));
@@ -2437,7 +2437,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
             false
         ));
 
-        // Threshold (-48 to 0 dB) - Pro-Q/F6 style range
+        // Threshold (-48 to 0 dB) - standard dynamic EQ range
         // Lower = more sensitive (dynamics engage earlier)
         // Higher = less sensitive (dynamics only on loud transients)
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -2606,9 +2606,9 @@ void MultiQ::setStateInformation(const void* data, int sizeInBytes)
 
         filtersNeedUpdate.store(true);
 
-        // Notify British/Pultec processors to update their parameters
+        // Notify British/Tube EQ processors to update their parameters
         britishParamsChanged.store(true);
-        pultecParamsChanged.store(true);
+        tubeEQParamsChanged.store(true);
         dynamicParamsChanged.store(true);
         linearPhaseParamsChanged.store(true);
     }
