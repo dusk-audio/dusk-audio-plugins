@@ -625,7 +625,7 @@ void FourKEQEditor::resized()
     int inputKnobY = contentY + sectionLabelHeight + resizeHelper.scaled(25) + knobRowHeight * 2;
     centerKnobInSection(outputGainSlider, masterStart, masterEnd, inputKnobY);
 
-    // Position parameter labels below each knob (SSL style)
+    // Position parameter labels below each knob (console style)
     auto positionLabelBelow = [&](juce::Label& label, const juce::Slider& slider) {
         int labelWidth = resizeHelper.scaled(50);
         int labelHeight = resizeHelper.scaled(18);
@@ -647,7 +647,7 @@ void FourKEQEditor::resized()
     positionLabelBelow(lpfLabel, lpfFreqSlider);
     positionLabelBelow(inputLabel, inputGainSlider);
 
-    // Position IN buttons next to HPF and LPF labels (SSL style: "HPF [IN]")
+    // Position IN buttons next to HPF and LPF labels (console style: "HPF [IN]")
     {
         int btnWidth = resizeHelper.scaled(28);
         int btnHeight = resizeHelper.scaled(18);
@@ -817,7 +817,7 @@ void FourKEQEditor::setupButton(juce::ToggleButton& button, const juce::String& 
 
 void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
 {
-    // SSL-style knob tick markings with value labels
+    // Console-style knob tick markings with value labels
     // Labels are positioned at the correct angular positions based on parameter skew
 
     // Rotation range constants (must match setupKnob rotaryParameters)
@@ -900,7 +900,7 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
         }
     };
 
-    // Helper for SSL-style evenly spaced ticks - draws labels at equal angular intervals
+    // Helper for console-style evenly spaced ticks - draws labels at equal angular intervals
     // The labels show what frequency you GET at each evenly-spaced position
     auto drawTicksEvenlySpaced = [&](juce::Rectangle<int> knobBounds,
                                       const std::vector<juce::String>& labels)
@@ -957,22 +957,22 @@ void FourKEQEditor::drawKnobMarkings(juce::Graphics& g)
     drawTicksLinear(hmGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
     drawTicksLinear(hfGainSlider.getBounds(), gainTicks, -20.0f, 20.0f, true);
 
-    // ===== HPF (20-500Hz) - SSL 4000 E style evenly spaced =====
+    // ===== HPF (20-500Hz) - 4K E-series style evenly spaced =====
     drawTicksEvenlySpaced(hpfFreqSlider.getBounds(), {"20", "70", "120", "200", "300", "500"});
 
-    // ===== LPF (3000-20000Hz) - SSL style evenly spaced =====
+    // ===== LPF (3000-20000Hz) - console style evenly spaced =====
     drawTicksEvenlySpaced(lpfFreqSlider.getBounds(), {"3k", "5k", "8k", "12k", "20k"});
 
-    // ===== LF Frequency (30-480Hz) - SSL 4000 E style evenly spaced =====
+    // ===== LF Frequency (30-480Hz) - 4K E-series style evenly spaced =====
     drawTicksEvenlySpaced(lfFreqSlider.getBounds(), {"30", "50", "100", "200", "300", "480"});
 
-    // ===== LMF Frequency (200-2500Hz) - SSL 4000 E style evenly spaced =====
+    // ===== LMF Frequency (200-2500Hz) - 4K E-series style evenly spaced =====
     drawTicksEvenlySpaced(lmFreqSlider.getBounds(), {".2", ".5", ".8", "1", "2", "2.5"});
 
-    // ===== HMF Frequency (600-7000Hz) - SSL 4000 E style evenly spaced =====
+    // ===== HMF Frequency (600-7000Hz) - 4K E-series style evenly spaced =====
     drawTicksEvenlySpaced(hmFreqSlider.getBounds(), {".6", "1.5", "3", "4.5", "6", "7"});
 
-    // ===== HF Frequency (1500-16000Hz) - SSL 4000 E style evenly spaced =====
+    // ===== HF Frequency (1500-16000Hz) - 4K E-series style evenly spaced =====
     drawTicksEvenlySpaced(hfFreqSlider.getBounds(), {"1.5", "8", "10", "14", "16"});
 
     // ===== Q knobs (0.4-4.0, linear) =====

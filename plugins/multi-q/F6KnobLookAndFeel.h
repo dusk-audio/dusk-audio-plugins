@@ -4,9 +4,9 @@
 
 //==============================================================================
 /**
-    F6-Style Knob Look and Feel
+    Dynamic EQ Knob Look and Feel
 
-    Matches Waves F6 dynamic EQ knob styling:
+    Compact knob styling for dynamic EQ controls:
     - Dark gray knob body
     - Tan/brown center with value display
     - Orange arc indicator showing current position

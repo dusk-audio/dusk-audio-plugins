@@ -36,7 +36,6 @@ PLUGINS=(
     "DrummerClone"
     "Harmonic Generator"
     "Multi-Q"
-    "Velvet 90"
     "Universal Compressor"
     "TapeMachine"
     "Vintage Tape Echo"
