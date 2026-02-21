@@ -3,14 +3,14 @@
 
     BritishEQProcessor.h
 
-    SSL 4000 Series Console EQ processor for Multi-Q's British mode.
+    British Console EQ processor for Multi-Q's British mode.
     Based on the standalone 4K-EQ plugin DSP code.
 
     Features:
     - 4-band parametric EQ (LF, LM, HM, HF)
     - High-pass and low-pass filters
     - Brown/Black knob variants (E-Series/G-Series)
-    - SSL saturation modeling
+    - Console saturation modeling
     - Transformer phase shift (E-Series)
 
   ==============================================================================
@@ -19,7 +19,7 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "SSLSaturation.h"
+#include "ConsoleSaturation.h"
 #include <array>
 #include <atomic>
 
@@ -118,9 +118,9 @@ public:
         phaseShiftR.prepare(spec);
         updatePhaseShift();
 
-        // SSL saturation
-        sslSaturation.setSampleRate(sampleRate);
-        sslSaturation.reset();
+        // Console saturation
+        consoleSaturation.setSampleRate(sampleRate);
+        consoleSaturation.reset();
 
         reset();
     }
@@ -143,16 +143,16 @@ public:
         hfFilterR.reset();
         phaseShiftL.reset();
         phaseShiftR.reset();
-        sslSaturation.reset();
+        consoleSaturation.reset();
     }
 
     void setParameters(const Parameters& newParams)
     {
         params = newParams;
         updateFilters();
-        sslSaturation.setConsoleType(params.isBlackMode
-            ? SSLSaturation::ConsoleType::GSeries
-            : SSLSaturation::ConsoleType::ESeries);
+        consoleSaturation.setConsoleType(params.isBlackMode
+            ? ConsoleSaturation::ConsoleType::GSeries
+            : ConsoleSaturation::ConsoleType::ESeries);
     }
 
     void process(juce::AudioBuffer<float>& buffer)
@@ -211,11 +211,11 @@ public:
                     sample = isLeft ? phaseShiftL.processSample(sample) : phaseShiftR.processSample(sample);
                 }
 
-                // SSL saturation
+                // Console saturation
                 if (params.saturation > 0.1f)
                 {
                     float satAmount = params.saturation * 0.01f;
-                    sample = sslSaturation.processSample(sample, satAmount, isLeft);
+                    sample = consoleSaturation.processSample(sample, satAmount, isLeft);
                 }
 
                 // NaN/Inf protection - zero output if processing produced invalid result
@@ -254,8 +254,8 @@ private:
     // Phase shift for E-Series transformer emulation
     juce::dsp::IIR::Filter<float> phaseShiftL, phaseShiftR;
 
-    // SSL saturation
-    SSLSaturation sslSaturation;
+    // Console saturation
+    ConsoleSaturation consoleSaturation;
 
     void updateFilters()
     {
@@ -297,9 +297,9 @@ private:
             hpfStage1R.coefficients = coeffs1st;
         }
 
-        // Stage 2: 2nd-order highpass with SSL Q
-        const float sslHPFQ = 0.54f;
-        auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, freq, sslHPFQ);
+        // Stage 2: 2nd-order highpass with console Q
+        const float consoleHPFQ = 0.54f;
+        auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(currentSampleRate, freq, consoleHPFQ);
         if (coeffs2nd)
         {
             hpfStage2L.coefficients = coeffs2nd;
@@ -328,13 +328,13 @@ private:
     {
         if (params.isBlackMode && params.lfBell)
         {
-            auto coeffs = makeSSLPeak(currentSampleRate, params.lfFreq, 0.7f, params.lfGain, params.isBlackMode);
+            auto coeffs = makeConsolePeak(currentSampleRate, params.lfFreq, 0.7f, params.lfGain, params.isBlackMode);
             lfFilterL.coefficients = coeffs;
             lfFilterR.coefficients = coeffs;
         }
         else
         {
-            auto coeffs = makeSSLShelf(currentSampleRate, params.lfFreq, 0.7f, params.lfGain, false, params.isBlackMode);
+            auto coeffs = makeConsoleShelf(currentSampleRate, params.lfFreq, 0.7f, params.lfGain, false, params.isBlackMode);
             lfFilterL.coefficients = coeffs;
             lfFilterR.coefficients = coeffs;
         }
@@ -346,7 +346,7 @@ private:
         if (params.isBlackMode)
             q = calculateDynamicQ(params.lmGain, q);
 
-        auto coeffs = makeSSLPeak(currentSampleRate, params.lmFreq, q, params.lmGain, params.isBlackMode);
+        auto coeffs = makeConsolePeak(currentSampleRate, params.lmFreq, q, params.lmGain, params.isBlackMode);
         lmFilterL.coefficients = coeffs;
         lmFilterR.coefficients = coeffs;
     }
@@ -370,7 +370,7 @@ private:
         if (freq > 3000.0f)
             processFreq = britishPreWarpFrequency(freq, currentSampleRate);
 
-        auto coeffs = makeSSLPeak(currentSampleRate, processFreq, q, params.hmGain, params.isBlackMode);
+        auto coeffs = makeConsolePeak(currentSampleRate, processFreq, q, params.hmGain, params.isBlackMode);
         hmFilterL.coefficients = coeffs;
         hmFilterR.coefficients = coeffs;
     }
@@ -381,13 +381,13 @@ private:
 
         if (params.isBlackMode && params.hfBell)
         {
-            auto coeffs = makeSSLPeak(currentSampleRate, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
+            auto coeffs = makeConsolePeak(currentSampleRate, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
             hfFilterL.coefficients = coeffs;
             hfFilterR.coefficients = coeffs;
         }
         else
         {
-            auto coeffs = makeSSLShelf(currentSampleRate, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
+            auto coeffs = makeConsoleShelf(currentSampleRate, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
             hfFilterL.coefficients = coeffs;
             hfFilterR.coefficients = coeffs;
         }
@@ -401,7 +401,7 @@ private:
         return juce::jlimit(0.5f, 8.0f, dynamicQ);
     }
 
-    juce::dsp::IIR::Coefficients<float>::Ptr makeSSLShelf(
+    juce::dsp::IIR::Coefficients<float>::Ptr makeConsoleShelf(
         double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
     {
         float A = std::pow(10.0f, gainDB / 40.0f);
@@ -409,13 +409,13 @@ private:
         float cosw0 = std::cos(w0);
         float sinw0 = std::sin(w0);
 
-        float sslQ = q;
+        float consoleQ = q;
         if (isBlackMode)
-            sslQ *= 1.4f;
+            consoleQ *= 1.4f;
         else
-            sslQ *= 0.65f;
+            consoleQ *= 0.65f;
 
-        float alpha = sinw0 / (2.0f * sslQ);
+        float alpha = sinw0 / (2.0f * consoleQ);
 
         float b0, b1, b2, a0, a1, a2;
 
@@ -444,7 +444,7 @@ private:
             new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
     }
 
-    juce::dsp::IIR::Coefficients<float>::Ptr makeSSLPeak(
+    juce::dsp::IIR::Coefficients<float>::Ptr makeConsolePeak(
         double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
     {
         float A = std::pow(10.0f, gainDB / 40.0f);
@@ -452,19 +452,19 @@ private:
         float cosw0 = std::cos(w0);
         float sinw0 = std::sin(w0);
 
-        float sslQ = q;
+        float consoleQ = q;
 
         if (isBlackMode && std::abs(gainDB) > 0.1f)
         {
             float gainFactor = std::abs(gainDB) / 15.0f;
             if (gainDB > 0.0f)
-                sslQ *= (1.0f + gainFactor * 1.2f);
+                consoleQ *= (1.0f + gainFactor * 1.2f);
             else
-                sslQ *= (1.0f + gainFactor * 0.6f);
+                consoleQ *= (1.0f + gainFactor * 0.6f);
         }
 
-        sslQ = juce::jlimit(0.1f, 10.0f, sslQ);
-        float alpha = sinw0 / (2.0f * sslQ);
+        consoleQ = juce::jlimit(0.1f, 10.0f, consoleQ);
+        float alpha = sinw0 / (2.0f * consoleQ);
 
         float b0 = 1.0f + alpha * A;
         float b1 = -2.0f * cosw0;

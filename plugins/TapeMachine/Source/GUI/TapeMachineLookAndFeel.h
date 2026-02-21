@@ -5,7 +5,7 @@
 //==============================================================================
 // TapeMachine Premium Look and Feel
 // Vintage professional recording studio aesthetic inspired by 1970s tape machines
-// (Studer A800, Ampex ATR-102, MCI JH-24)
+// (classic professional tape machines from the 1970s)
 //==============================================================================
 
 namespace TapeMachineColors
@@ -143,7 +143,7 @@ private:
 };
 
 //==============================================================================
-// Helper class for drawing premium tape reels
+// Helper class for rendering tape reels
 //==============================================================================
 class PremiumReelRenderer
 {

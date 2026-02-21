@@ -1,8 +1,8 @@
-#include "PultecCurveDisplay.h"
+#include "TubeEQCurveDisplay.h"
 #include "EQBand.h"
 #include <cmath>
 
-PultecCurveDisplay::PultecCurveDisplay(MultiQ& processor)
+TubeEQCurveDisplay::TubeEQCurveDisplay(MultiQ& processor)
     : audioProcessor(processor)
 {
     setOpaque(true);
@@ -12,12 +12,12 @@ PultecCurveDisplay::PultecCurveDisplay(MultiQ& processor)
     timerCallback();
 }
 
-PultecCurveDisplay::~PultecCurveDisplay()
+TubeEQCurveDisplay::~TubeEQCurveDisplay()
 {
     stopTimer();
 }
 
-void PultecCurveDisplay::paint(juce::Graphics& g)
+void TubeEQCurveDisplay::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
@@ -94,25 +94,25 @@ void PultecCurveDisplay::paint(juce::Graphics& g)
     g.restoreState();
 }
 
-void PultecCurveDisplay::resized()
+void TubeEQCurveDisplay::resized()
 {
     needsRepaint = true;
     repaint();  // Force immediate repaint when bounds change
 }
 
-void PultecCurveDisplay::timerCallback()
+void TubeEQCurveDisplay::timerCallback()
 {
-    // Check if parameters have changed - use Pultec mode parameter IDs
+    // Check if parameters have changed - use Tube EQ mode parameter IDs
     auto& params = audioProcessor.parameters;
 
     CachedParams newParams;
 
-    // Frequency lookup tables (must match MultiQ::processBlock Pultec section)
+    // Frequency lookup tables (must match MultiQ::processBlock Tube EQ section)
     static const float lfFreqValues[] = { 20.0f, 30.0f, 60.0f, 100.0f };
     static const float hfBoostFreqValues[] = { 3000.0f, 4000.0f, 5000.0f, 8000.0f, 10000.0f, 12000.0f, 16000.0f };
     static const float hfAttenFreqValues[] = { 5000.0f, 10000.0f, 20000.0f };
 
-    // Read Pultec mode parameters (freq params are indices, convert to Hz)
+    // Read Tube EQ mode parameters (freq params are indices, convert to Hz)
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfBoostGain))
         newParams.lfBoostGain = p->load();
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfBoostFreq))
@@ -164,7 +164,7 @@ void PultecCurveDisplay::timerCallback()
     }
 }
 
-float PultecCurveDisplay::freqToX(float freq, const juce::Rectangle<float>& area) const
+float TubeEQCurveDisplay::freqToX(float freq, const juce::Rectangle<float>& area) const
 {
     // Logarithmic frequency to X position within graph area
     float logMin = std::log10(minFreq);
@@ -175,7 +175,7 @@ float PultecCurveDisplay::freqToX(float freq, const juce::Rectangle<float>& area
     return area.getX() + area.getWidth() * normalized;
 }
 
-float PultecCurveDisplay::xToFreq(float x, const juce::Rectangle<float>& area) const
+float TubeEQCurveDisplay::xToFreq(float x, const juce::Rectangle<float>& area) const
 {
     float logMin = std::log10(minFreq);
     float logMax = std::log10(maxFreq);
@@ -185,17 +185,17 @@ float PultecCurveDisplay::xToFreq(float x, const juce::Rectangle<float>& area) c
     return std::pow(10.0f, logMin + normalized * (logMax - logMin));
 }
 
-float PultecCurveDisplay::dbToY(float db, const juce::Rectangle<float>& area) const
+float TubeEQCurveDisplay::dbToY(float db, const juce::Rectangle<float>& area) const
 {
     // dB to Y position (inverted - higher dB = lower Y)
     float normalized = (db - minDB) / (maxDB - minDB);
     return area.getBottom() - area.getHeight() * normalized;
 }
 
-void PultecCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangle<float>& area)
+void TubeEQCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangle<float>& area)
 {
-    // Vertical grid lines at key frequencies (Pultec-relevant)
-    // Emphasize the Pultec frequency selections
+    // Vertical grid lines at key frequencies (tube EQ-relevant)
+    // Emphasize the tube EQ frequency selections
     const float freqLines[] = { 30.0f, 60.0f, 100.0f, 200.0f, 500.0f, 1000.0f,
                                  3000.0f, 5000.0f, 8000.0f, 10000.0f, 16000.0f };
 
@@ -203,12 +203,12 @@ void PultecCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangl
     {
         float x = freqToX(freq, area);
         // Highlight key frequencies
-        bool isPultecFreq = (freq == 30.0f || freq == 60.0f || freq == 100.0f ||
+        bool isTubeEQFreq = (freq == 30.0f || freq == 60.0f || freq == 100.0f ||
                             freq == 3000.0f || freq == 5000.0f || freq == 8000.0f ||
                             freq == 10000.0f || freq == 16000.0f);
 
-        g.setColour(juce::Colour(isPultecFreq ? 0xff404040 : 0xff303030));
-        g.drawLine(x, area.getY(), x, area.getBottom(), isPultecFreq ? 1.0f : 0.5f);
+        g.setColour(juce::Colour(isTubeEQFreq ? 0xff404040 : 0xff303030));
+        g.drawLine(x, area.getY(), x, area.getBottom(), isTubeEQFreq ? 1.0f : 0.5f);
     }
 
     // Horizontal grid lines at key dB levels
@@ -250,7 +250,7 @@ void PultecCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangl
     drawDbLabel(-20.0f, "-20");
 }
 
-void PultecCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<float>& area,
+void TubeEQCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<float>& area,
                                         juce::Colour color, std::function<float(float)> getMagnitude)
 {
     juce::Path path;
@@ -283,7 +283,7 @@ void PultecCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<
     g.strokePath(path, juce::PathStrokeType(1.5f));
 }
 
-void PultecCurveDisplay::drawCombinedCurve(juce::Graphics& g, const juce::Rectangle<float>& area)
+void TubeEQCurveDisplay::drawCombinedCurve(juce::Graphics& g, const juce::Rectangle<float>& area)
 {
     juce::Path path;
     juce::Path fillPath;
@@ -337,9 +337,9 @@ void PultecCurveDisplay::drawCombinedCurve(juce::Graphics& g, const juce::Rectan
     g.strokePath(path, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
-// Filter response calculations matching Pultec characteristics
+// Filter response calculations matching passive tube EQ characteristics
 
-float PultecCurveDisplay::calculateLFBoostResponse(float freq) const
+float TubeEQCurveDisplay::calculateLFBoostResponse(float freq) const
 {
     if (cachedParams.lfBoostGain < 0.1f)
         return 0.0f;
@@ -347,7 +347,7 @@ float PultecCurveDisplay::calculateLFBoostResponse(float freq) const
     float fc = cachedParams.lfBoostFreq;
     float gain = cachedParams.lfBoostGain * 1.4f;  // 0-10 maps to ~0-14 dB
 
-    // Pultec LF boost is a very broad resonant peak
+    // Tube EQ LF boost is a very broad resonant peak
     // Using a broad Gaussian-like response
     float logRatio = std::log(freq / fc);
     float bandwidth = 2.0f;  // Very broad Q
@@ -355,7 +355,7 @@ float PultecCurveDisplay::calculateLFBoostResponse(float freq) const
     return gain * std::exp(-0.5f * std::pow(logRatio / bandwidth, 2.0f));
 }
 
-float PultecCurveDisplay::calculateLFAttenResponse(float freq) const
+float TubeEQCurveDisplay::calculateLFAttenResponse(float freq) const
 {
     if (cachedParams.lfAttenGain < 0.1f)
         return 0.0f;
@@ -373,7 +373,7 @@ float PultecCurveDisplay::calculateLFAttenResponse(float freq) const
     return gain * normalized;
 }
 
-float PultecCurveDisplay::calculateHFBoostResponse(float freq) const
+float TubeEQCurveDisplay::calculateHFBoostResponse(float freq) const
 {
     if (cachedParams.hfBoostGain < 0.1f)
         return 0.0f;
@@ -391,7 +391,7 @@ float PultecCurveDisplay::calculateHFBoostResponse(float freq) const
     return gain * std::exp(-0.5f * std::pow(logRatio / (bandwidth * 0.6f), 2.0f));
 }
 
-float PultecCurveDisplay::calculateHFAttenResponse(float freq) const
+float TubeEQCurveDisplay::calculateHFAttenResponse(float freq) const
 {
     if (cachedParams.hfAttenGain < 0.1f)
         return 0.0f;
@@ -409,12 +409,12 @@ float PultecCurveDisplay::calculateHFAttenResponse(float freq) const
     return gain * normalized;
 }
 
-float PultecCurveDisplay::calculateCombinedResponse(float freq) const
+float TubeEQCurveDisplay::calculateCombinedResponse(float freq) const
 {
     float response = 0.0f;
 
     // Add all band responses
-    // The Pultec "trick" - boost and cut at same frequency interact
+    // The boost/cut "trick" - boost and cut at same frequency interact
     response += calculateLFBoostResponse(freq);
     response += calculateLFAttenResponse(freq);
     response += calculateHFBoostResponse(freq);

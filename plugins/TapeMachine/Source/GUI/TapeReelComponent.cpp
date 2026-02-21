@@ -534,7 +534,7 @@ void TapeReelComponent::drawNABHub(juce::Graphics& g, juce::Point<float> centre,
     g.fillEllipse(centre.x - radius + 2, centre.y - radius + 2,
                   radius * 2.0f, radius * 2.0f);
 
-    // Main hub body - premium chrome gradient
+    // Main hub body - chrome gradient
     float lightX = centre.x + std::cos(kLightAngle) * radius * 0.4f;
     float lightY = centre.y + std::sin(kLightAngle) * radius * 0.4f;
 

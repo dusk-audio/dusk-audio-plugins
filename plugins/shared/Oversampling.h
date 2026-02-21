@@ -2,7 +2,7 @@
   ==============================================================================
 
     Oversampling.h
-    Shared high-quality oversampling for Dusk Audio plugins
+    High-quality oversampling for Dusk Audio plugins
 
     Uses FIR equiripple filters for superior alias rejection, essential for
     saturation and other nonlinear processing.

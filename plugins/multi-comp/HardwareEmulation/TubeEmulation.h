@@ -7,7 +7,7 @@
     Models the non-linear behavior of common audio tubes:
     - 12AX7 (high gain triode, used in preamps)
     - 12AT7 (medium gain triode)
-    - 12BH7 (output driver, used in LA-2A)
+    - 12BH7 (output driver, used in opto compressors)
 
     Key characteristics modeled:
     - Asymmetric transfer curve (grid current vs cutoff)
@@ -33,7 +33,7 @@ public:
     {
         Triode_12AX7,    // High gain (~100), more 2nd harmonic
         Triode_12AT7,    // Medium gain (~60)
-        Triode_12BH7,    // Output driver (~16), LA-2A output stage
+        Triode_12BH7,    // Output driver (~16), opto compressor output stage
         Triode_6SN7      // Dual triode, warm character
     };
 
@@ -282,7 +282,7 @@ private:
                 break;
 
             case TubeType::Triode_12BH7:
-                // Output driver (LA-2A) - target ~0.25% THD (cleanest)
+                // Output driver (opto compressor) - target ~0.25% THD (cleanest)
                 gridCurrentThreshold = 0.8f;   // Very high threshold
                 gridCurrentCoeff = 0.04f;      // Reduced from 0.15
                 cathodeBypassCoeffBase = 0.96f;
