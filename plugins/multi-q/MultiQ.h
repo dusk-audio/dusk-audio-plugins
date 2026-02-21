@@ -14,9 +14,7 @@
 #include "../shared/AnalogEmulation/WaveshaperCurves.h"
 #include "MultiQPresets.h"
 
-//==============================================================================
 // Biquad coefficient storage with magnitude evaluation (no heap allocation)
-//==============================================================================
 struct BiquadCoeffs
 {
     // Stored as normalized: {b0/a0, b1/a0, b2/a0, 1, a1/a0, a2/a0}
@@ -52,16 +50,16 @@ struct BiquadCoeffs
     /** Copy these coefficients into a JUCE IIR filter's pre-allocated Coefficients (no heap allocation) */
     void applyToFilter(juce::dsp::IIR::Filter<float>& filter) const
     {
+        if (filter.coefficients == nullptr)
+            return;
         auto* raw = filter.coefficients->getRawCoefficients();
         for (int i = 0; i < 6; ++i)
             raw[i] = coeffs[i];
     }
 };
 
-//==============================================================================
 // Cytomic SVF (State Variable Filter) for per-sample coefficient interpolation
 // Based on Andrew Simper's "Linear Trapezoidal Integrated SVF" design
-//==============================================================================
 struct SVFCoeffs
 {
     float a1 = 1.0f, a2 = 0.0f, a3 = 0.0f;  // SVF core
@@ -101,10 +99,14 @@ struct CytomicSVF
         converged = true;
     }
 
-    void setSmoothCoeff(float c) { smoothCoeff = c; }
+    void setSmoothCoeff(float c) { smoothCoeff = juce::jlimit(0.0f, 1.0f, c); }
 
     float processSample(float x)
     {
+        // Sanitize input to prevent NaN/Inf from entering or passing through the filter
+        if (!std::isfinite(x))
+            x = 0.0f;
+
         // Per-sample coefficient interpolation (skip when converged)
         if (!converged)
         {
@@ -136,6 +138,14 @@ struct CytomicSVF
         float v2 = ic2eq + coeffs.a2 * ic1eq + coeffs.a3 * v3;
         ic1eq = 2.0f * v1 - ic1eq;
         ic2eq = 2.0f * v2 - ic2eq;
+
+        // Sanitize state variables to prevent NaN/Inf propagation (permanent corruption)
+        if (!std::isfinite(ic1eq) || !std::isfinite(ic2eq))
+        {
+            ic1eq = 0.0f;
+            ic2eq = 0.0f;
+            return 0.0f;  // Zero output when state is corrupted
+        }
 
         return coeffs.m0 * x + coeffs.m1 * v1 + coeffs.m2 * v2;
     }
@@ -174,7 +184,6 @@ struct StereoSVF
     float processSampleR(float s) { return filterR.processSample(s); }
 };
 
-//==============================================================================
 /**
     Multi-Q: Professional 8-Band Parametric EQ with FFT Analyzer
 
@@ -197,15 +206,12 @@ class MultiQ : public juce::AudioProcessor,
                private juce::AudioProcessorValueTreeState::Listener
 {
 public:
-    //==============================================================================
     static constexpr const char* PLUGIN_VERSION = "1.0.0";
     static constexpr int NUM_BANDS = 8;
 
-    //==============================================================================
     MultiQ();
     ~MultiQ() override;
 
-    //==============================================================================
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
 
@@ -215,11 +221,9 @@ public:
 
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
-    //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    //==============================================================================
     const juce::String getName() const override { return JucePlugin_Name; }
 
     bool acceptsMidi() const override { return false; }
@@ -228,7 +232,6 @@ public:
     double getTailLengthSeconds() const override { return 0.0; }
     int getLatencySamples() const;
 
-    //==============================================================================
     int getNumPrograms() override;
     int getCurrentProgram() override;
     void setCurrentProgram(int index) override;
@@ -241,16 +244,13 @@ private:
 
 public:
 
-    //==============================================================================
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    //==============================================================================
     // Undo/Redo system
     juce::UndoManager undoManager;
     juce::UndoManager& getUndoManager() { return undoManager; }
 
-    //==============================================================================
     // Public parameter access for GUI
     juce::AudioProcessorValueTreeState parameters;
 
@@ -258,13 +258,22 @@ public:
     // Thread-safe ring buffer for audio capture
     void pushSamplesToAnalyzer(const float* samples, int numSamples, bool isPreEQ);
 
-    // Get magnitude data for display (call from UI thread)
-    const std::array<float, 2048>& getAnalyzerMagnitudes() const { return analyzerMagnitudes; }
+    // Get magnitude data for display (call from UI thread).
+    // Post-EQ analyzer data (locked copy to prevent data race with audio thread)
+    std::array<float, 2048> getAnalyzerMagnitudes()
+    {
+        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
+        return analyzerMagnitudes;
+    }
     bool isAnalyzerDataReady() const { return analyzerDataReady.load(); }
     void clearAnalyzerDataReady() { analyzerDataReady.store(false); }
 
     // Pre-EQ analyzer data (for dual spectrum overlay)
-    const std::array<float, 2048>& getPreAnalyzerMagnitudes() const { return preAnalyzerMagnitudes; }
+    std::array<float, 2048> getPreAnalyzerMagnitudes()
+    {
+        juce::SpinLock::ScopedLockType lock(preAnalyzerMagnitudesLock);
+        return preAnalyzerMagnitudes;
+    }
     bool isPreAnalyzerDataReady() const { return preAnalyzerDataReady.load(); }
     void clearPreAnalyzerDataReady() { preAnalyzerDataReady.store(false); }
 
@@ -296,6 +305,9 @@ public:
     // Get current processing mode (0=Stereo, 1=Left, 2=Right, 3=Mid, 4=Side)
     int getProcessingMode() const { return static_cast<int>(safeGetParam(processingModeParam, 0.0f)); }
 
+    // Get base sample rate (before oversampling) for UI frequency calculations
+    double getBaseSampleRate() const { return baseSampleRate; }
+
     // Get dynamics threshold for a band (for visualization)
     float getDynamicsThreshold(int bandIndex) const
     {
@@ -310,7 +322,6 @@ public:
     // Check if in Dynamic EQ mode
     bool isInDynamicMode() const;
 
-    //==============================================================================
     // Band Solo functionality
     // When a band is soloed, only that band's effect is heard (all others bypassed)
     void setSoloedBand(int bandIndex)
@@ -327,33 +338,57 @@ public:
     void setDeltaSoloMode(bool delta) { deltaSoloMode.store(delta); }
     bool isDeltaSoloMode() const { return deltaSoloMode.load(); }
 
-    //==============================================================================
     // Output limiter (mastering safety brickwall)
     float getLimiterGainReduction() const { return outputLimiter.getGainReduction(); }
     bool isLimiterEnabled() const;
 
-    //==============================================================================
     // Cross-mode band transfer
     // Transfers the current British/Tube EQ curve to Digital mode parameters
     void transferCurrentEQToDigital();
 
-    //==============================================================================
     // EQ Match (capture reference/source spectra, compute parametric fit, apply)
     void captureMatchReference();   // Snapshot current analyzer as reference
     void captureMatchSource();      // Snapshot current analyzer as source
-    int  computeEQMatch(float strength = 1.0f);  // Fit bands, returns count
-    void applyEQMatch();            // Write fitted bands to Digital mode params
-    bool hasMatchReference() const { return eqMatchProcessor.isReferenceSet(); }
-    bool hasMatchSource() const    { return eqMatchProcessor.isTargetSet(); }
-    void clearEQMatch()            { eqMatchProcessor.clearReference(); eqMatchProcessor.clearTarget(); }
+    int  computeEQMatch(float strength = -1.0f); // Fit bands, returns count (-1 = use param)
+    void applyEQMatch();            // Write fitted bands to Match mode params
+    bool hasMatchReference() const
+    {
+        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
+        return eqMatchProcessor.isReferenceSet();
+    }
+    bool hasMatchSource() const
+    {
+        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
+        return eqMatchProcessor.isTargetSet();
+    }
+    void clearEQMatch()            { pendingMatchClear.store(true); }
+
+    // Match EQ overlay data for UI
+    bool isMatchMode() const
+    {
+        return static_cast<int>(safeGetParam(eqTypeParam, 0.0f)) == static_cast<int>(EQType::Match);
+    }
+    std::array<float, EQMatchProcessor::NUM_BINS> getMatchReferenceMagnitudes() const
+    {
+        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
+        return eqMatchProcessor.getReferenceMagnitudes();
+    }
+    std::array<float, EQMatchProcessor::NUM_BINS> getMatchDifferenceCurve() const
+    {
+        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
+        return eqMatchProcessor.getDifferenceCurve();
+    }
+    bool hasMatchOverlayData() const
+    {
+        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
+        return eqMatchProcessor.isReferenceSet() && eqMatchProcessor.isTargetSet();
+    }
 
 private:
     std::atomic<int> soloedBand{-1};  // -1 = no solo, 0-7 = that band is soloed
     std::atomic<bool> deltaSoloMode{false};  // true = delta solo (hear band's effect only)
-    //==============================================================================
     void parameterChanged(const juce::String& parameterID, float newValue) override;
 
-    //==============================================================================
     // Filter structures for each band type
 
     // Multi-stage cascaded filter for variable slope HPF/LPF
@@ -378,14 +413,16 @@ private:
 
         float processSampleL(float sample)
         {
-            for (int i = 0; i < activeStages; ++i)
+            int stages = activeStages.load(std::memory_order_relaxed);
+            for (int i = 0; i < stages; ++i)
                 sample = stagesL[static_cast<size_t>(i)].processSample(sample);
             return sample;
         }
 
         float processSampleR(float sample)
         {
-            for (int i = 0; i < activeStages; ++i)
+            int stages = activeStages.load(std::memory_order_relaxed);
+            for (int i = 0; i < stages; ++i)
                 sample = stagesR[static_cast<size_t>(i)].processSample(sample);
             return sample;
         }
@@ -406,18 +443,19 @@ private:
     // Pre-allocated at both 2x and 4x to avoid runtime allocation when switching
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
-    int oversamplingMode = 0;  // 0=Off, 1=2x, 2=4x
+    std::atomic<int> oversamplingMode{0};  // 0=Off, 1=2x, 2=4x
     bool oversamplerReady = false;  // Flag to track if oversamplers are initialized
+    int lastPreparedBlockSize = 0;  // Track block size for oversampler reinitialization
 
     // Pre-allocated scratch buffer for British/Tube EQ processing (avoids heap alloc in processBlock)
     juce::AudioBuffer<float> scratchBuffer;
     int maxOversampledBlockSize = 0;  // Maximum block size after oversampling
 
     // Current sample rate (may be oversampled)
-    double currentSampleRate = 44100.0;
-    double baseSampleRate = 44100.0;  // Original sample rate before oversampling
+    // Atomic: written by audio thread (prepareToPlay/processBlock), read by GUI thread (getFrequencyResponseMagnitude)
+    std::atomic<double> currentSampleRate{44100.0};
+    std::atomic<double> baseSampleRate{44100.0};
 
-    //==============================================================================
     // Crossfade smoothing (prevents clicks on state changes)
 
     // Bypass crossfade (~5ms)
@@ -438,7 +476,6 @@ private:
     juce::AudioBuffer<float> prevOsBuffer;  // Saved output from previous OS mode
     bool osChanging = false;
 
-    //==============================================================================
     // Parameter pointers
     std::array<std::atomic<float>*, NUM_BANDS> bandEnabledParams{};
     std::array<std::atomic<float>*, NUM_BANDS> bandFreqParams{};
@@ -465,6 +502,7 @@ private:
 
     // EQ Type parameter
     std::atomic<float>* eqTypeParam = nullptr;
+    std::atomic<float>* matchStrengthParam = nullptr;
 
     // British mode specific parameters
     std::atomic<float>* britishHpfFreqParam = nullptr;
@@ -524,7 +562,7 @@ private:
 
     // Linear Phase EQ processor (one per channel for stereo)
     std::array<LinearPhaseEQProcessor, 2> linearPhaseEQ;
-    bool linearPhaseModeEnabled = false;
+    std::atomic<bool> linearPhaseModeEnabled{false};
     std::atomic<bool> linearPhaseParamsChanged{true};
 
     // Dynamic mode per-band parameters
@@ -548,17 +586,15 @@ private:
         return param ? param->load() : defaultValue;
     }
 
-    //==============================================================================
     // EQ Match processor (spectrum capture + parametric fitting)
     EQMatchProcessor eqMatchProcessor;
+    std::atomic<bool> pendingMatchClear{false};  // Set by UI thread, consumed by audio thread
 
-    //==============================================================================
     // Output limiter (brickwall safety limiter for mastering)
     OutputLimiter outputLimiter;
     std::atomic<float>* limiterEnabledParam = nullptr;
     std::atomic<float>* limiterCeilingParam = nullptr;
 
-    //==============================================================================
     // Auto-gain compensation (maintains consistent loudness for A/B comparison)
     std::atomic<float>* autoGainEnabledParam = nullptr;
     juce::SmoothedValue<float> autoGainCompensation{1.0f};  // Linear gain multiplier
@@ -567,7 +603,6 @@ private:
     int rmsSampleCount = 0;
     static constexpr int RMS_WINDOW_SAMPLES = 22050;  // ~500ms at 44.1kHz (mastering-appropriate)
 
-    //==============================================================================
     // Non-allocating coefficient computation (Audio EQ Cookbook with pre-warping)
     // These compute directly into BiquadCoeffs without any heap allocation,
     // making them safe to call from the audio thread.
@@ -584,7 +619,6 @@ private:
     static void computeFirstOrderLowPassCoeffs(BiquadCoeffs& c, double sr, double freq);
     static void computeTiltShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB);
 
-    //==============================================================================
     // SVF coefficient computation (Cytomic SVF topology)
     // These compute SVFCoeffs for the audio processing path.
     // The biquad methods above are retained for UI curve display and HPF/LPF.
@@ -608,65 +642,66 @@ private:
     void computeBandCoeffs(int bandIndex, BiquadCoeffs& c) const;
     void computeBandCoeffsWithGain(int bandIndex, float overrideGainDB, BiquadCoeffs& c) const;
 
-    //==============================================================================
     // Filter update methods (use non-allocating coefficient computation)
 
     void updateHPFCoefficients(double sampleRate);
     void updateLPFCoefficients(double sampleRate);
-
-    // Shelving filter coefficients (analog-matched)
-    juce::dsp::IIR::Coefficients<float>::Ptr makeLowShelfCoefficients(
-        double sampleRate, float freq, float gain, float q) const;
-    juce::dsp::IIR::Coefficients<float>::Ptr makeHighShelfCoefficients(
-        double sampleRate, float freq, float gain, float q) const;
-
-    // Parametric (peaking) filter coefficients (analog-matched)
-    juce::dsp::IIR::Coefficients<float>::Ptr makePeakingCoefficients(
-        double sampleRate, float freq, float gain, float q) const;
-
-    // Notch (band-reject) filter coefficients (analog-matched)
-    juce::dsp::IIR::Coefficients<float>::Ptr makeNotchCoefficients(
-        double sampleRate, float freq, float q) const;
-
-    // Bandpass filter coefficients (analog-matched)
-    juce::dsp::IIR::Coefficients<float>::Ptr makeBandPassCoefficients(
-        double sampleRate, float freq, float q) const;
-
-    // Tilt shelf filter coefficients (1st-order shelving tilt)
-    juce::dsp::IIR::Coefficients<float>::Ptr makeTiltShelfCoefficients(
-        double sampleRate, float freq, float gain) const;
-
-    // Update all filter coefficients
     void updateAllFilters();
     void updateBandFilter(int bandIndex);
     void updateDynGainFilter(int bandIndex, float dynGainDb);
 
-    //==============================================================================
-    // UI coefficient storage (written by audio thread, read by UI thread for curve display)
-    // Benign data race: UI may briefly see partially-updated coefficients (visual glitch only)
-    std::array<BiquadCoeffs, 6> uiBandCoeffs{};       // Bands 2-7 (index 0-5)
-    std::array<BiquadCoeffs, CascadedFilter::MAX_STAGES> uiHpfCoeffs{};
-    std::array<BiquadCoeffs, CascadedFilter::MAX_STAGES> uiLpfCoeffs{};
-    int uiHpfStages = 0;
-    int uiLpfStages = 0;
+    // UI coefficient storage: lock-free double buffer for thread-safe audio→UI transfer.
+    // Audio thread writes to the inactive buffer, then atomically publishes via index swap.
+    // UI thread reads the active buffer after acquiring the index.
+    struct UICoeffBuffer
+    {
+        std::array<BiquadCoeffs, 6> bandCoeffs{};       // Bands 2-7 (index 0-5)
+        std::array<BiquadCoeffs, CascadedFilter::MAX_STAGES> hpfCoeffs{};
+        std::array<BiquadCoeffs, CascadedFilter::MAX_STAGES> lpfCoeffs{};
+        int hpfStages = 0;
+        int lpfStages = 0;
+    };
+    std::array<UICoeffBuffer, 2> uiCoeffBuffers{};
+    std::atomic<int> uiCoeffActiveIndex{0};  // Audio publishes with release, UI reads with acquire
 
-    //==============================================================================
+    // Helpers for the double buffer
+    UICoeffBuffer& uiWriteBuffer()
+    {
+        return uiCoeffBuffers[static_cast<size_t>(1 - uiCoeffActiveIndex.load(std::memory_order_relaxed))];
+    }
+    void publishUICoeffs()
+    {
+        // Only called from audio thread (single producer)
+        uiCoeffActiveIndex.fetch_xor(1, std::memory_order_release);
+    }
+    const UICoeffBuffer& uiReadBuffer() const
+    {
+        return uiCoeffBuffers[static_cast<size_t>(uiCoeffActiveIndex.load(std::memory_order_acquire))];
+    }
+
     // Atomic dirty flags for filter updates
     std::atomic<bool> filtersNeedUpdate{true};
     std::array<std::atomic<bool>, NUM_BANDS> bandDirty{};
 
-    //==============================================================================
-    // FFT Analyzer
+    // FFT Analyzer — pre-allocated for all 3 sizes to avoid RT allocation
     static constexpr int FFT_ORDER_LOW = 11;    // 2048
     static constexpr int FFT_ORDER_MEDIUM = 12; // 4096
     static constexpr int FFT_ORDER_HIGH = 13;   // 8192
+    static constexpr int NUM_FFT_SIZES = 3;
 
-    std::unique_ptr<juce::dsp::FFT> fft;
-    std::unique_ptr<juce::dsp::WindowingFunction<float>> fftWindow;
+    // Pre-allocated FFT objects and windowing tables for each resolution
+    struct FFTSlot {
+        std::unique_ptr<juce::dsp::FFT> fft;
+        std::unique_ptr<juce::dsp::WindowingFunction<float>> window;
+        std::vector<float> inputBuffer;      // Post-EQ scratch
+        std::vector<float> preInputBuffer;   // Pre-EQ scratch
+        int size = 0;                         // FFT size (e.g. 2048, 4096, 8192)
+    };
+    std::array<FFTSlot, NUM_FFT_SIZES> fftSlots;
+    int activeFFTSlot = 1;  // Default = medium (index 1)
 
-    std::vector<float> fftInputBuffer;
-    std::vector<float> fftOutputBuffer;
     std::array<float, 2048> analyzerMagnitudes{};  // Always 2048 bins for display
+    mutable juce::SpinLock analyzerMagnitudesLock;  // Protects analyzerMagnitudes + match data for UI reads
 
     juce::AbstractFifo analyzerFifo{8192};
     std::vector<float> analyzerAudioBuffer;
@@ -676,20 +711,20 @@ private:
     juce::AbstractFifo preAnalyzerFifo{8192};
     std::vector<float> preAnalyzerAudioBuffer;
     std::array<float, 2048> preAnalyzerMagnitudes{};
+    juce::SpinLock preAnalyzerMagnitudesLock;  // Protects preAnalyzerMagnitudes (audio→GUI)
     std::atomic<bool> preAnalyzerDataReady{false};
-    std::vector<float> preFFTInputBuffer;
     std::array<float, 2048> prePeakHoldValues{};
 
     int currentFFTSize = 4096;
-    void updateFFTSize(AnalyzerResolution resolution);
+    std::atomic<int> pendingFFTOrder{-1};  // -1 = no pending change
+    void updateFFTSize(int order);
     void processFFT();
     void processPreFFT();
 
     // Shared FFT-to-magnitudes conversion (avoids code duplication)
     void convertFFTToMagnitudes(std::vector<float>& fftBuffer,
                                 std::array<float, 2048>& magnitudes,
-                                std::array<float, 2048>& peakHold,
-                                std::atomic<bool>& readyFlag);
+                                std::array<float, 2048>& peakHold);
 
     // Scratch buffer for block-based mono downmix (analyzer feed)
     std::vector<float> analyzerMonoBuffer;
@@ -698,13 +733,11 @@ private:
     std::array<float, 2048> peakHoldValues{};
     float analyzerDecayRate = 20.0f;  // dB per second
 
-    //==============================================================================
     // Parameter layout creation
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    //==============================================================================
     // M/S encoding/decoding
-    // Note: These handle the case where left and right may be the same pointer (mono)
+    // Note: These copy to locals first, so they are safe even if left==right (mono)
     void encodeMS(float& left, float& right) const
     {
         float l = left;

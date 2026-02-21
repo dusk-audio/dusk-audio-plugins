@@ -8,7 +8,6 @@
 #include <condition_variable>
 #include <memory>
 
-//==============================================================================
 /**
     Linear Phase EQ Processor
 
@@ -45,7 +44,6 @@ public:
 
     LinearPhaseEQProcessor()
     {
-        // Initialize both IR buffers to MAXIMUM size to avoid any resize() during operation
         // This prevents race conditions where resize() could be called while audio thread reads
         // Max filter length = Long (16384), convolution FFT size = 2 * Long = 32768
         // Buffer needs 2 * convolution FFT size for complex frequency domain data
@@ -54,17 +52,17 @@ public:
         irBufferA = std::make_unique<std::vector<float>>(maxIrBufferSize, 0.0f);
         irBufferB = std::make_unique<std::vector<float>>(maxIrBufferSize, 0.0f);
 
-        // CRITICAL: Initialize BOTH IR buffers with flat response (unity gain, zero phase)
-        // This ensures audio passes through regardless of which buffer is active
         initializeFlatIR(irBufferA.get(), Medium);  // Default filter length
         initializeFlatIR(irBufferB.get(), Medium);  // Both buffers start with flat IR
 
         irActivePtr.store(irBufferA.get(), std::memory_order_release);
         irReadyPtr.store(irBufferB.get(), std::memory_order_release);
 
-        // Initialize active processor state with default filter length
+        // Pre-allocate per-channel crossfade buffers to maximum hop size (Long / 2)
+        for (auto& fade : crossfadeState)
+            fade.buffer.resize(static_cast<size_t>(Long / 2), 0.0f);
+
         activeState = std::make_unique<ProcessorState>(Medium);
-        // Initialize ready state (will be swapped in when filter length changes)
         readyState = std::make_unique<ProcessorState>(Medium);
 
         startBackgroundThread();
@@ -75,7 +73,6 @@ public:
         stopBackgroundThread();
     }
 
-    //==========================================================================
     void prepare(double sampleRate, int newMaxBlockSize)
     {
         currentSampleRate.store(sampleRate, std::memory_order_release);
@@ -86,23 +83,17 @@ public:
         backgroundCV.notify_one();
     }
 
+    /** Reset all processing state.
+        Must only be called when audio processing is stopped (e.g., from prepareToPlay
+        or releaseResources). JUCE guarantees these are never called concurrently with
+        processBlock, so no additional synchronization is needed. */
     void reset()
     {
         auto* state = activeState.get();
         if (!state) return;
-
-        std::fill(state->inputAccum.begin(), state->inputAccum.end(), 0.0f);
-        std::fill(state->outputAccum.begin(), state->outputAccum.end(), 0.0f);
-        std::fill(state->latencyDelay.begin(), state->latencyDelay.end(), 0.0f);
-        state->inputWritePos = 0;
-        state->outputReadPos = 0;
-        // Start write position ahead of read position by the latency amount
-        state->delayWritePos = state->filterLength / 2;
-        state->delayReadPos = 0;
-        state->samplesInInputBuffer = 0;
+        state->reset();
     }
 
-    //==========================================================================
     void setFilterLength(FilterLength length)
     {
         int newSize = static_cast<int>(length);
@@ -118,22 +109,18 @@ public:
 
     int getFilterLength() const
     {
-        auto* state = activeState.get();
-        return state ? state->filterLength : 8192;
+        return currentFilterLength.load(std::memory_order_relaxed);
     }
 
-    //==========================================================================
     /**
         Returns the latency in samples.
         Linear phase EQ has inherent latency of filterLength/2 samples.
     */
     int getLatencyInSamples() const
     {
-        auto* state = activeState.get();
-        return state ? state->filterLength / 2 : 4096;
+        return currentFilterLength.load(std::memory_order_relaxed) / 2;
     }
 
-    //==========================================================================
     /**
         Update the impulse response with new EQ parameters.
         Call this when EQ band parameters change.
@@ -145,8 +132,7 @@ public:
         const std::array<float, 8>& newBandGain,
         const std::array<float, 8>& newBandQ,
         const std::array<int, 2>& newBandSlope,
-        float newMasterGain,
-        const std::array<int, 8>& newBandShape = {})
+        float newMasterGain)
     {
         // Store parameters atomically (using mutex for the arrays)
         {
@@ -156,90 +142,55 @@ public:
             pendingBandGain = newBandGain;
             pendingBandQ = newBandQ;
             pendingBandSlope = newBandSlope;
-            pendingBandShape = newBandShape;
             pendingMasterGain = newMasterGain;
         }
         irNeedsUpdate.store(true);
         backgroundCV.notify_one();
     }
 
-    //==========================================================================
     /** Process a single channel of audio using overlap-add FFT convolution */
-    void processChannel(float* channelData, int numSamples)
+    void processChannel(int channel, float* channelData, int numSamples)
     {
-        juce::ScopedNoDenormals noDenormals;
-
-        // Swap IR buffer if ready (happens on every EQ parameter change)
-        // Crossfade: snapshot pre-swap output, then blend with post-swap output
-        if (irSwapReady.load(std::memory_order_acquire))
-        {
-            auto* state = activeState.get();
-            if (state)
-            {
-                // Snapshot the next hopSize output samples for crossfade
-                int fadeLen = state->hopSize;
-                crossfadeLength = fadeLen;
-                crossfadeRemaining = fadeLen;
-                crossfadeBuffer.resize(static_cast<size_t>(fadeLen), 0.0f);
-                for (int i = 0; i < fadeLen; ++i)
-                {
-                    int idx = (state->delayReadPos + i) % (state->fftSize * 2);
-                    crossfadeBuffer[static_cast<size_t>(i)] = state->latencyDelay[static_cast<size_t>(idx)];
-                }
-            }
-
-            auto* readyIR = irReadyPtr.load(std::memory_order_acquire);
-            auto* activeIR = irActivePtr.load(std::memory_order_acquire);
-            irActivePtr.store(readyIR, std::memory_order_release);
-            irReadyPtr.store(activeIR, std::memory_order_release);
-            irSwapReady.store(false, std::memory_order_release);
-        }
-
-        // Swap ProcessorState only when filter LENGTH changes
-        // This loses buffer history but is unavoidable when FFT size changes
-        if (stateSwapReady.load(std::memory_order_acquire))
-        {
-            std::swap(activeState, readyState);
-            // Reset crossfade on state swap (FFT size changed, buffers incompatible)
-            crossfadeRemaining = 0;
-            stateSwapReady.store(false, std::memory_order_release);
-        }
-
         auto* state = activeState.get();
-        if (!state || !state->fft)
+        if (!state || !state->fft || channel < 0 || channel >= MAX_CHANNELS)
             return;
 
-        // Get the active IR buffer - needs fftSize * 2 for the frequency domain data
         auto* irBuffer = irActivePtr.load(std::memory_order_acquire);
         if (!irBuffer || irBuffer->size() < static_cast<size_t>(state->fftSize * 2))
             return;
 
+        auto& ch = state->channels[static_cast<size_t>(channel)];
+        auto& fade = crossfadeState[static_cast<size_t>(channel)];
+
         for (int i = 0; i < numSamples; ++i)
         {
-            // Store input sample in accumulation buffer (circular, filterLength size)
-            state->inputAccum[static_cast<size_t>(state->inputWritePos)] = channelData[i];
-            state->inputWritePos = (state->inputWritePos + 1) % state->filterLength;
-            state->samplesInInputBuffer++;
+            ch.inputAccum[static_cast<size_t>(ch.inputWritePos)] = channelData[i];
+            ch.inputWritePos = (ch.inputWritePos + 1) % state->filterLength;
+            ch.samplesInInputBuffer++;
 
-            // When we have a hop's worth of new samples, process FFT
-            if (state->samplesInInputBuffer >= state->hopSize)
+            if (ch.samplesInInputBuffer >= state->hopSize)
             {
-                processFFTBlock(state, irBuffer);
-                state->samplesInInputBuffer = 0;
+                processFFTBlock(state, &ch, irBuffer);
+                ch.samplesInInputBuffer = 0;
             }
 
-            // Read output from latency delay buffer
-            float output = state->latencyDelay[static_cast<size_t>(state->delayReadPos)];
-            state->delayReadPos = (state->delayReadPos + 1) % (state->fftSize * 2);
+            float output = ch.latencyDelay[static_cast<size_t>(ch.delayReadPos)];
+            ch.delayReadPos = (ch.delayReadPos + 1) % (state->fftSize * 2);
 
-            // Apply crossfade if active (blend pre-swap snapshot with post-swap output)
-            if (crossfadeRemaining > 0)
+            // Delayed crossfade: wait for new-IR samples to reach the read position
+            if (fade.delay > 0)
             {
-                float t = static_cast<float>(crossfadeRemaining) / static_cast<float>(crossfadeLength);
-                int fadeIdx = crossfadeLength - crossfadeRemaining;
-                float oldSample = crossfadeBuffer[static_cast<size_t>(fadeIdx)];
+                fade.delay--;
+                if (fade.delay == 0)
+                    fade.remaining = fade.length;
+            }
+            else if (fade.remaining > 0)
+            {
+                float t = static_cast<float>(fade.remaining) / static_cast<float>(fade.length);
+                int fadeIdx = fade.length - fade.remaining;
+                float oldSample = fade.buffer[static_cast<size_t>(fadeIdx)];
                 output = output * (1.0f - t) + oldSample * t;
-                crossfadeRemaining--;
+                fade.remaining--;
             }
 
             channelData[i] = output;
@@ -249,28 +200,68 @@ public:
     /** Process stereo audio */
     void processStereo(juce::AudioBuffer<float>& buffer)
     {
-        for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        juce::ScopedNoDenormals noDenormals;
+
+        // Atomically check if state+IR or just IR needs swapping
+        int swap = swapReady.load(std::memory_order_acquire);
+        if (swap != SwapNone)
         {
-            processChannel(buffer.getWritePointer(channel), buffer.getNumSamples());
+            // Swap ProcessorState FIRST if filter length changed
+            if (swap == SwapStateAndIR)
+            {
+                std::swap(activeState, readyState);
+                for (auto& fade : crossfadeState)
+                {
+                    fade.remaining = 0;
+                    fade.delay = 0;
+                }
+                if (activeState)
+                    currentFilterLength.store(activeState->filterLength, std::memory_order_relaxed);
+            }
+
+            // Swap IR buffer
+            auto* state = activeState.get();
+            if (state)
+            {
+                // Snapshot per-channel crossfade buffers before swapping IR
+                int fadeLen = juce::jmin(state->hopSize, static_cast<int>(crossfadeState[0].buffer.size()));
+                for (int c = 0; c < MAX_CHANNELS; ++c)
+                {
+                    auto& ch = state->channels[static_cast<size_t>(c)];
+                    auto& fade = crossfadeState[static_cast<size_t>(c)];
+                    fade.length = fadeLen;
+                    fade.remaining = 0;
+                    fade.delay = state->hopSize;
+                    for (int i = 0; i < fadeLen; ++i)
+                    {
+                        int idx = (ch.delayReadPos + state->hopSize + i) % (state->fftSize * 2);
+                        fade.buffer[static_cast<size_t>(i)] = ch.latencyDelay[static_cast<size_t>(idx)];
+                    }
+                }
+            }
+
+            auto* readyIR = irReadyPtr.load(std::memory_order_acquire);
+            auto* activeIR = irActivePtr.load(std::memory_order_acquire);
+            irActivePtr.store(readyIR, std::memory_order_release);
+            irReadyPtr.store(activeIR, std::memory_order_release);
+            swapReady.store(SwapNone, std::memory_order_release);
         }
+
+        int numChannels = juce::jmin(buffer.getNumChannels(), MAX_CHANNELS);
+        for (int channel = 0; channel < numChannels; ++channel)
+            processChannel(channel, buffer.getWritePointer(channel), buffer.getNumSamples());
     }
 
 private:
-    //==========================================================================
-    /** Holds all state needed for processing at a specific FFT size */
-    struct ProcessorState
-    {
-        // Note: Declaration order must match initialization order
-        int filterLength;       // The IR/filter length (e.g., 4096, 8192, 16384)
-        int fftOrder;           // Order for 2x filter length FFT (for linear convolution)
-        int fftSize;            // Actual FFT size = 2 * filterLength (for zero-padding)
-        int hopSize;            // Hop size = filterLength / 2 (50% overlap)
-        std::unique_ptr<juce::dsp::FFT> fft;
+    static constexpr int MAX_CHANNELS = 2;
 
-        std::vector<float> fftBuffer;
-        std::vector<float> inputAccum;
-        std::vector<float> outputAccum;
-        std::vector<float> latencyDelay;
+    /** Per-channel convolution buffers and positions */
+    struct ChannelState
+    {
+        std::vector<float> fftBuffer;    // Scratch for FFT computation
+        std::vector<float> inputAccum;   // Circular input accumulation
+        std::vector<float> outputAccum;  // Overlap-add output
+        std::vector<float> latencyDelay; // Delay line for latency compensation
 
         int inputWritePos = 0;
         int outputReadPos = 0;
@@ -278,37 +269,56 @@ private:
         int delayReadPos = 0;
         int samplesInInputBuffer = 0;
 
-        explicit ProcessorState(int irLength)
-            : filterLength(irLength)
-            , fftOrder(static_cast<int>(std::log2(irLength)) + 1)  // +1 for 2x size (linear convolution)
-            , fftSize(irLength * 2)                                  // FFT size = 2 * filter length
-            , hopSize(irLength / 2)                                  // 50% overlap of filter length
-            , fft(std::make_unique<juce::dsp::FFT>(fftOrder))
+        void allocate(int filterLength, int fftSize)
         {
-            // fftBuffer needs to hold 2*fftSize for JUCE's real-only FFT format
             fftBuffer.resize(static_cast<size_t>(fftSize * 2), 0.0f);
-            // inputAccum holds filterLength samples (one IR length)
             inputAccum.resize(static_cast<size_t>(filterLength), 0.0f);
-            // outputAccum and latencyDelay sized for overlap-add output
             outputAccum.resize(static_cast<size_t>(fftSize * 2), 0.0f);
             latencyDelay.resize(static_cast<size_t>(fftSize * 2), 0.0f);
-            delayWritePos = filterLength / 2;  // Start ahead by latency amount
+            delayWritePos = filterLength / 2;
         }
 
-        void reset()
+        void reset(int filterLength)
         {
             std::fill(inputAccum.begin(), inputAccum.end(), 0.0f);
             std::fill(outputAccum.begin(), outputAccum.end(), 0.0f);
             std::fill(latencyDelay.begin(), latencyDelay.end(), 0.0f);
             inputWritePos = 0;
             outputReadPos = 0;
-            delayWritePos = filterLength / 2;  // Latency = half the filter length
+            delayWritePos = filterLength / 2;
             delayReadPos = 0;
             samplesInInputBuffer = 0;
         }
     };
 
-    //==========================================================================
+    /** Holds shared FFT config + per-channel state for a specific FFT size */
+    struct ProcessorState
+    {
+        int filterLength;
+        int fftOrder;
+        int fftSize;
+        int hopSize;
+        std::unique_ptr<juce::dsp::FFT> fft;
+        std::array<ChannelState, MAX_CHANNELS> channels;
+
+        explicit ProcessorState(int irLength)
+            : filterLength(irLength)
+            , fftOrder(static_cast<int>(std::log2(irLength)) + 1)
+            , fftSize(irLength * 2)
+            , hopSize(irLength / 2)
+            , fft(std::make_unique<juce::dsp::FFT>(fftOrder))
+        {
+            for (auto& ch : channels)
+                ch.allocate(filterLength, fftSize);
+        }
+
+        void reset()
+        {
+            for (auto& ch : channels)
+                ch.reset(filterLength);
+        }
+    };
+
     /** Initialize an IR buffer with a flat (unity gain) response
         This is needed so audio passes through until the proper IR is built
         filterLength is the IR length, convolutionFftSize = 2 * filterLength */
@@ -339,7 +349,6 @@ private:
         std::copy(timeDomainIR.begin(), timeDomainIR.begin() + convFftSize * 2, buffer->begin());
     }
 
-    //==========================================================================
     void startBackgroundThread()
     {
         backgroundThreadRunning.store(true);
@@ -368,12 +377,14 @@ private:
 
             if (irNeedsUpdate.exchange(false))
             {
-                // Wait for IR swap to be consumed before writing new IR
-                while (irSwapReady.load(std::memory_order_acquire))
+                // Wait for previous swap to be consumed before writing new data
+                while (swapReady.load(std::memory_order_acquire) != SwapNone)
                 {
                     if (!backgroundThreadRunning.load())
                         return;
-                    std::this_thread::yield();
+                    lock.unlock();
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    lock.lock();
                 }
 
                 // Copy parameters under lock
@@ -382,7 +393,6 @@ private:
                 std::array<float, 8> localBandGain;
                 std::array<float, 8> localBandQ;
                 std::array<int, 2> localBandSlope;
-                std::array<int, 8> localBandShape;
                 float localMasterGain;
                 int localFftSize;
                 bool lengthChanged;
@@ -394,7 +404,6 @@ private:
                     localBandGain = pendingBandGain;
                     localBandQ = pendingBandQ;
                     localBandSlope = pendingBandSlope;
-                    localBandShape = pendingBandShape;
                     localMasterGain = pendingMasterGain;
                     localFftSize = pendingFftSize.load(std::memory_order_acquire);
                     lengthChanged = filterLengthChanged.exchange(false);
@@ -405,17 +414,18 @@ private:
                 bool needsStateSwap = false;
                 if (lengthChanged)
                 {
-                    int currentActiveFilterLength = activeState ? activeState->filterLength : Medium;
+                    // Wait for previous swap to be consumed BEFORE reading activeState
+                    // to prevent data race with audio thread's std::swap
+                    while (swapReady.load(std::memory_order_acquire) != SwapNone)
+                    {
+                        if (!backgroundThreadRunning.load())
+                            return;
+                        std::this_thread::yield();
+                    }
+                    
+                    int currentActiveFilterLength = currentFilterLength.load(std::memory_order_acquire);
                     if (localFftSize != currentActiveFilterLength)
                     {
-                        // Wait for previous state swap to be consumed
-                        while (stateSwapReady.load(std::memory_order_acquire))
-                        {
-                            if (!backgroundThreadRunning.load())
-                                return;
-                            std::this_thread::yield();
-                        }
-
                         // Prepare a new ProcessorState with the new filter length
                         readyState = std::make_unique<ProcessorState>(localFftSize);
                         needsStateSwap = true;
@@ -425,19 +435,15 @@ private:
                 // Rebuild IR with current parameters
                 rebuildImpulseResponseBackground(
                     localBandEnabled, localBandFreq, localBandGain,
-                    localBandQ, localBandSlope, localBandShape, localMasterGain, localFftSize);
+                    localBandQ, localBandSlope, localMasterGain, localFftSize);
 
-                // Signal IR is ready to swap
-                irSwapReady.store(true, std::memory_order_release);
-
-                // Signal state is ready only if filter length changed
-                if (needsStateSwap)
-                    stateSwapReady.store(true, std::memory_order_release);
+                // Signal swap ready — single atomic ensures state+IR are swapped together
+                swapReady.store(needsStateSwap ? SwapStateAndIR : SwapIR,
+                                std::memory_order_release);
             }
         }
     }
 
-    //==========================================================================
     /** Rebuild IR on background thread - writes to the ready IR buffer
         workingFilterLength is the IR length, actual FFT is 2x for linear convolution */
     void rebuildImpulseResponseBackground(
@@ -446,7 +452,6 @@ private:
         const std::array<float, 8>& localBandGain,
         const std::array<float, 8>& localBandQ,
         const std::array<int, 2>& localBandSlope,
-        const std::array<int, 8>& localBandShape,
         float localMasterGain,
         int workingFilterLength)
     {
@@ -483,7 +488,7 @@ private:
                     continue;
 
                 float bandGainLinear = calculateBandGain(band, freq,
-                    localBandFreq, localBandGain, localBandQ, localBandSlope, localBandShape);
+                    localBandFreq, localBandGain, localBandQ, localBandSlope);
                 totalGainLinear *= bandGainLinear;
             }
 
@@ -568,13 +573,11 @@ private:
         // Note: IR swap signaling is handled by backgroundThreadFunc() after this returns
     }
 
-    //==========================================================================
     float calculateBandGain(int band, float freq,
         const std::array<float, 8>& localBandFreq,
         const std::array<float, 8>& localBandGain,
         const std::array<float, 8>& localBandQ,
-        const std::array<int, 2>& localBandSlope,
-        const std::array<int, 8>& localBandShape) const
+        const std::array<int, 2>& localBandSlope) const
     {
         float bandFreqHz = localBandFreq[static_cast<size_t>(band)];
         float bandGainDb = localBandGain[static_cast<size_t>(band)];
@@ -592,45 +595,28 @@ private:
             float slope = getSlopeFromIndex(slopeIndex);
             return calculateLPFGain(freq, bandFreqHz, slope);
         }
-        else if (band == 1)  // Band 2: shape-aware
+        else if (band == 1)  // Low Shelf
         {
-            int shape = localBandShape[1];
-            if (shape == 1)  // Peaking
-                return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
-            else if (shape == 2)  // High-Pass (12 dB/oct)
-                return calculateHPFGain(freq, bandFreqHz, 12.0f);
-            else  // Low Shelf (default)
-                return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, true);
+            return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, true);
         }
-        else if (band == 6)  // Band 7: shape-aware
+        else if (band == 6)  // High Shelf
         {
-            int shape = localBandShape[6];
-            if (shape == 1)  // Peaking
-                return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
-            else if (shape == 2)  // Low-Pass (12 dB/oct)
-                return calculateLPFGain(freq, bandFreqHz, 12.0f);
-            else  // High Shelf (default)
-                return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, false);
+            return calculateShelfGain(freq, bandFreqHz, bandGainDb, bandQVal, false);
         }
-        else  // Parametric (bands 2-5) - shape-aware
+        else  // Parametric (bands 2-5)
         {
-            int shape = localBandShape[static_cast<size_t>(band)];
-            if (shape == 3)  // Tilt Shelf
-                return calculateTiltShelfGain(freq, bandFreqHz, bandGainDb);
-            else
-                return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
+            return calculateParametricGain(freq, bandFreqHz, bandGainDb, bandQVal);
         }
     }
 
     float getSlopeFromIndex(int index) const
     {
         static const float slopes[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
-        if (index >= 0 && index < 8)
+        if (index >= 0 && index < static_cast<int>(std::size(slopes)))
             return slopes[index];
         return 12.0f;
     }
 
-    //==========================================================================
     // Helper function to compute exact biquad magnitude response at a given frequency
     // Uses H(z) = (b0 + b1*z^-1 + b2*z^-2) / (a0 + a1*z^-1 + a2*z^-2)
     // evaluated at z = e^(j*omega)
@@ -754,86 +740,64 @@ private:
         return calculateBiquadMagnitude(freq, sr, b0, b1, b2, 1.0f, a1, a2);
     }
 
-    float calculateTiltShelfGain(float freq, float centerFreq, float gainDb) const
+    void processFFTBlock(ProcessorState* state, ChannelState* ch, std::vector<float>* irBuffer)
     {
-        if (std::abs(gainDb) < 0.01f) return 1.0f;
-
-        float tiltRatio = freq / centerFreq;
-        float tiltTransition = 2.0f / juce::MathConstants<float>::pi
-            * std::atan(std::log2(tiltRatio) * 2.0f);
-        float tiltGainDB = gainDb * tiltTransition;
-        return std::pow(10.0f, tiltGainDB / 20.0f);
-    }
-
-    //==========================================================================
-    void processFFTBlock(ProcessorState* state, std::vector<float>* irBuffer)
-    {
-        if (!state || !state->fft || !irBuffer)
+        if (!state || !state->fft || !ch || !irBuffer)
             return;
 
         int filterLength = state->filterLength;
-        int fftSize = state->fftSize;  // = 2 * filterLength
+        int fftSize = state->fftSize;
         int hopSize = state->hopSize;
 
         // Gather the last filterLength samples from input accumulator (circular buffer)
         for (int i = 0; i < filterLength; ++i)
         {
-            int readIdx = (state->inputWritePos - filterLength + i + filterLength) % filterLength;
-            state->fftBuffer[static_cast<size_t>(i)] = state->inputAccum[static_cast<size_t>(readIdx)];
+            int readIdx = (ch->inputWritePos - filterLength + i + filterLength) % filterLength;
+            ch->fftBuffer[static_cast<size_t>(i)] = ch->inputAccum[static_cast<size_t>(readIdx)];
         }
 
         // Zero-pad from filterLength to fftSize for linear convolution
-        std::fill(state->fftBuffer.begin() + filterLength, state->fftBuffer.begin() + fftSize, 0.0f);
-        // Clear the second half (used for complex output)
-        std::fill(state->fftBuffer.begin() + fftSize, state->fftBuffer.end(), 0.0f);
+        std::fill(ch->fftBuffer.begin() + filterLength, ch->fftBuffer.begin() + fftSize, 0.0f);
+        std::fill(ch->fftBuffer.begin() + fftSize, ch->fftBuffer.end(), 0.0f);
 
-        // Forward FFT of input (fftSize points)
-        state->fft->performRealOnlyForwardTransform(state->fftBuffer.data());
+        state->fft->performRealOnlyForwardTransform(ch->fftBuffer.data());
 
         // Complex multiplication in frequency domain
         int numBins = fftSize / 2 + 1;
         for (int bin = 0; bin < numBins; ++bin)
         {
             size_t idx = static_cast<size_t>(bin * 2);
-            float inRe = state->fftBuffer[idx];
-            float inIm = state->fftBuffer[idx + 1];
+            float inRe = ch->fftBuffer[idx];
+            float inIm = ch->fftBuffer[idx + 1];
             float irRe = (*irBuffer)[idx];
             float irIm = (*irBuffer)[idx + 1];
 
-            // Complex multiplication: (a+bi)(c+di) = (ac-bd) + (ad+bc)i
-            state->fftBuffer[idx] = inRe * irRe - inIm * irIm;
-            state->fftBuffer[idx + 1] = inRe * irIm + inIm * irRe;
+            ch->fftBuffer[idx] = inRe * irRe - inIm * irIm;
+            ch->fftBuffer[idx + 1] = inRe * irIm + inIm * irRe;
         }
 
-        // Inverse FFT
-        state->fft->performRealOnlyInverseTransform(state->fftBuffer.data());
-
-        // NOTE: JUCE's real-only FFT/IFFT pair is already unity-gain on macOS (vDSP).
-        // DO NOT normalize here - the round-trip FFT→IFFT already preserves amplitude.
+        state->fft->performRealOnlyInverseTransform(ch->fftBuffer.data());
 
         // Overlap-add: accumulate the full linear convolution result (fftSize samples)
         for (int i = 0; i < fftSize; ++i)
         {
-            int writeIdx = (state->outputReadPos + i) % (fftSize * 2);
-            state->outputAccum[static_cast<size_t>(writeIdx)] += state->fftBuffer[static_cast<size_t>(i)];
+            int writeIdx = (ch->outputReadPos + i) % (fftSize * 2);
+            ch->outputAccum[static_cast<size_t>(writeIdx)] += ch->fftBuffer[static_cast<size_t>(i)];
         }
 
         // Transfer hopSize samples from output accumulator to latency delay
-        // With 50% overlap and no windowing, each sample receives contributions from
-        // 2 FFT blocks, so we divide by 2 to compensate for the overlap-add doubling.
+        // 50% overlap → divide by 2 to compensate for overlap-add doubling
         for (int i = 0; i < hopSize; ++i)
         {
-            int readIdx = (state->outputReadPos + i) % (fftSize * 2);
-            state->latencyDelay[static_cast<size_t>(state->delayWritePos)] = state->outputAccum[static_cast<size_t>(readIdx)] * 0.5f;
-            state->outputAccum[static_cast<size_t>(readIdx)] = 0.0f;  // Clear for next overlap
-            state->delayWritePos = (state->delayWritePos + 1) % (fftSize * 2);
+            int readIdx = (ch->outputReadPos + i) % (fftSize * 2);
+            ch->latencyDelay[static_cast<size_t>(ch->delayWritePos)] = ch->outputAccum[static_cast<size_t>(readIdx)] * 0.5f;
+            ch->outputAccum[static_cast<size_t>(readIdx)] = 0.0f;
+            ch->delayWritePos = (ch->delayWritePos + 1) % (fftSize * 2);
         }
 
-        // Advance output read position by hop size
-        state->outputReadPos = (state->outputReadPos + hopSize) % (fftSize * 2);
+        ch->outputReadPos = (ch->outputReadPos + hopSize) % (fftSize * 2);
     }
 
-    //==========================================================================
     // Double-buffered ProcessorState for filter length changes
     std::unique_ptr<ProcessorState> activeState;
     std::unique_ptr<ProcessorState> readyState;
@@ -847,10 +811,15 @@ private:
 
     int maxBlockSize = 512;
 
-    // Crossfade state for smooth IR transitions
-    std::vector<float> crossfadeBuffer;  // Pre-swap output snapshot
-    int crossfadeRemaining = 0;          // Samples remaining in crossfade
-    int crossfadeLength = 0;             // Total crossfade length (= hopSize)
+    // Per-channel crossfade state for smooth IR transitions
+    struct CrossfadeState
+    {
+        std::vector<float> buffer;  // Pre-swap output snapshot
+        int remaining = 0;          // Samples remaining in crossfade
+        int length = 0;             // Total crossfade length (= hopSize)
+        int delay = 0;              // Samples to wait before starting crossfade
+    };
+    std::array<CrossfadeState, MAX_CHANNELS> crossfadeState;
 
     // Parameters (protected by mutex for background thread access)
     std::atomic<double> currentSampleRate{44100.0};
@@ -859,20 +828,18 @@ private:
     std::array<float, 8> pendingBandFreq{};
     std::array<float, 8> pendingBandGain{};
     std::array<float, 8> pendingBandQ{};
-    std::array<int, 8> pendingBandShape{};
     std::array<int, 2> pendingBandSlope{};
     float pendingMasterGain = 0.0f;
 
     // Thread synchronization
-    // Separate flags for IR buffer swap vs ProcessorState swap:
-    // - irSwapReady: IR buffer is ready to swap (happens on every parameter change)
-    // - stateSwapReady: ProcessorState is ready to swap (only when filter LENGTH changes)
-    // This separation prevents losing circular buffer history during normal IR updates.
-    std::atomic<bool> irSwapReady{false};
-    std::atomic<bool> stateSwapReady{false};
+    // Single atomic flag for swap readiness to prevent state/IR size mismatch.
+    // When filter length changes, both state AND IR must be swapped atomically.
+    enum SwapMode { SwapNone = 0, SwapIR = 1, SwapStateAndIR = 2 };
+    std::atomic<int> swapReady{SwapNone};
     std::atomic<bool> irNeedsUpdate{true};
     std::atomic<int> pendingFftSize{8192};
     std::atomic<bool> filterLengthChanged{false};
+    std::atomic<int> currentFilterLength{8192};  // Thread-safe filter length for UI queries
 
     // Background thread for IR computation
     std::thread backgroundThread;

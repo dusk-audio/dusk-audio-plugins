@@ -11,6 +11,7 @@
  *   ./test_multiq_dsp
  */
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <iomanip>
@@ -96,7 +97,7 @@ void computePeakingCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB,
 
 void computeLowShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB, float q)
 {
-    double af = preWarpFrequency(freq, sr);
+    double af = jlimit_ns::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
     double A = std::sqrt(dBtoGain(gainDB));
     double w0 = 2.0 * PI * af / sr;
     double cosw0 = std::cos(w0);
@@ -112,7 +113,6 @@ void computeLowShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB
     c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
     c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
 }
-
 void computeHighShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB, float q)
 {
     double af = jlimit_ns::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
@@ -149,7 +149,8 @@ void computeNotchCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 
 void computeHighPassCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 {
-    double w0 = 2.0 * PI * freq / sr;
+    double af = std::max(20.0, std::min(sr * 0.45, preWarpFrequency(freq, sr)));
+    double w0 = 2.0 * PI * af / sr;
     double cosw0 = std::cos(w0);
     double alpha = std::sin(w0) / (2.0 * q);
 
@@ -164,7 +165,8 @@ void computeHighPassCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 
 void computeLowPassCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 {
-    double w0 = 2.0 * PI * freq / sr;
+    double af = std::max(20.0, std::min(sr * 0.45, preWarpFrequency(freq, sr)));
+    double w0 = 2.0 * PI * af / sr;
     double cosw0 = std::cos(w0);
     double alpha = std::sin(w0) / (2.0 * q);
 
@@ -179,6 +181,7 @@ void computeLowPassCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 
 void computeFirstOrderHighPassCoeffs(BiquadCoeffs& c, double sr, double freq)
 {
+    freq = jlimit_ns::jlimit(20.0, sr * 0.45, freq);
     double n = std::tan(PI * freq / sr);
     double a0 = n + 1.0;
     c.coeffs[0] = float(1.0 / a0);
@@ -191,6 +194,7 @@ void computeFirstOrderHighPassCoeffs(BiquadCoeffs& c, double sr, double freq)
 
 void computeFirstOrderLowPassCoeffs(BiquadCoeffs& c, double sr, double freq)
 {
+    freq = jlimit_ns::jlimit(20.0, sr * 0.45, freq);
     double n = std::tan(PI * freq / sr);
     double a0 = n + 1.0;
     c.coeffs[0] = float(n / a0);
@@ -200,9 +204,9 @@ void computeFirstOrderLowPassCoeffs(BiquadCoeffs& c, double sr, double freq)
     c.coeffs[4] = float((n - 1.0) / a0);
     c.coeffs[5] = 0.0f;
 }
-
 void computeTiltShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB)
 {
+    freq = jlimit_ns::jlimit(20.0, sr * 0.45, freq);
     double w0 = 2.0 * PI * freq;
     double T = 1.0 / sr;
     double wc = (2.0 / T) * std::tan(w0 * T / 2.0);
@@ -364,8 +368,7 @@ void testHighPassFilter()
     BiquadCoeffs c;
 
     // 2nd-order HPF at 100 Hz, Q=0.707 (Butterworth)
-    double warpedFreq = preWarpFrequency(100, sr);
-    computeHighPassCoeffs(c, sr, static_cast<float>(warpedFreq), 0.707f);
+    computeHighPassCoeffs(c, sr, 100.0f, 0.707f);
 
     // Well above cutoff: should be ~0 dB
     double magAbove = gaintodB(c.getMagnitudeForFrequency(10000, sr));
@@ -390,8 +393,7 @@ void testLowPassFilter()
     BiquadCoeffs c;
 
     // 2nd-order LPF at 5 kHz, Q=0.707
-    double warpedFreq = preWarpFrequency(5000, sr);
-    computeLowPassCoeffs(c, sr, static_cast<float>(warpedFreq), 0.707f);
+    computeLowPassCoeffs(c, sr, 5000.0f, 0.707f);
 
     // Well below cutoff: should be ~0 dB
     double magBelow = gaintodB(c.getMagnitudeForFrequency(100, sr));
@@ -430,8 +432,7 @@ void testFirstOrderFilters()
     BiquadCoeffs c;
 
     // 1st-order HPF at 200 Hz
-    double wf = preWarpFrequency(200, sr);
-    computeFirstOrderHighPassCoeffs(c, sr, wf);
+    computeFirstOrderHighPassCoeffs(c, sr, 200.0);
 
     double magAbove = gaintodB(c.getMagnitudeForFrequency(10000, sr));
     check("1st-order HPF 200Hz above (10 kHz)", magAbove, 0.0, 0.5);
@@ -440,8 +441,7 @@ void testFirstOrderFilters()
     check("1st-order HPF 200Hz at cutoff (-3dB)", magAtCutoff, -3.0, 0.5);
 
     // 1st-order LPF at 5 kHz
-    wf = preWarpFrequency(5000, sr);
-    computeFirstOrderLowPassCoeffs(c, sr, wf);
+    computeFirstOrderLowPassCoeffs(c, sr, 5000.0);
 
     double magBelow = gaintodB(c.getMagnitudeForFrequency(100, sr));
     check("1st-order LPF 5kHz below (100 Hz)", magBelow, 0.0, 0.5);
@@ -481,10 +481,9 @@ void testCascadedHighPass()
 
     // 4th-order Butterworth HPF at 100 Hz (2 stages, 24 dB/oct)
     // Butterworth Q values for 4th-order: 0.5412, 1.3066
-    double wf = preWarpFrequency(100, sr);
     BiquadCoeffs stage1, stage2;
-    computeHighPassCoeffs(stage1, sr, static_cast<float>(wf), 0.5412f);
-    computeHighPassCoeffs(stage2, sr, static_cast<float>(wf), 1.3066f);
+    computeHighPassCoeffs(stage1, sr, 100.0f, 0.5412f);
+    computeHighPassCoeffs(stage2, sr, 100.0f, 1.3066f);
 
     // Cascaded response = product of individual magnitudes
     double magAbove = gaintodB(
@@ -553,7 +552,7 @@ void testMagnitudeEvaluation()
     // At Nyquist (f=sr/2): |H| = 0
 
     BiquadCoeffs c;
-    computeFirstOrderLowPassCoeffs(c, 44100, preWarpFrequency(1000, 44100));
+    computeFirstOrderLowPassCoeffs(c, 44100, 1000);
 
     // At DC, 1st-order LPF should have unity gain
     double magDC = c.getMagnitudeForFrequency(0.001, 44100);
