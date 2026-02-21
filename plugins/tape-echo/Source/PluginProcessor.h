@@ -2,7 +2,7 @@
   ==============================================================================
 
     PluginProcessor.h
-    Tape Echo - RE-201 Style Tape Delay Plugin
+    Tape Echo - Vintage Tape Delay Plugin
 
     Signal Flow:
     Input → Input Gain → [Echo Section] → Echo Volume →

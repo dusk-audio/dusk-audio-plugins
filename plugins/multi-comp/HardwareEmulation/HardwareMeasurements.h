@@ -4,11 +4,11 @@
     HardwareMeasurements.h
     Hardware measurement data structures for compressor emulation
 
-    Contains measured characteristics from classic hardware units:
-    - Teletronix LA-2A (Opto)
-    - UREI 1176 Rev A (FET)
-    - DBX 160 (VCA)
-    - SSL G-Series Bus Compressor
+    Contains measured characteristics from classic hardware types:
+    - Opto compressor
+    - FET compressor
+    - Classic VCA compressor
+    - Console bus compressor
 
   ==============================================================================
 */
@@ -158,13 +158,13 @@ struct HardwareUnitProfile
 namespace Profiles {
 
 //------------------------------------------------------------------------------
-// LA-2A Opto profile (based on Teletronix measurements)
+// Opto compressor profile
 // Characteristics: Warm, smooth, program-dependent, tube coloration
-inline HardwareUnitProfile createLA2A()
+inline HardwareUnitProfile createOptoCompressor()
 {
     HardwareUnitProfile profile;
-    profile.name = "LA-2A";
-    profile.modeledUnit = "Teletronix LA-2A";
+    profile.name = "Opto Compressor";
+    profile.modeledUnit = "Vintage Opto Compressor";
 
     // Input stage: Tube input (12AX7)
     profile.inputStageHarmonics = HarmonicProfile::create(
@@ -190,7 +190,7 @@ inline HardwareUnitProfile createLA2A()
         0.004f
     );
 
-    // Input transformer (UTC A-10)
+    // Input transformer
     profile.inputTransformer = TransformerProfile::createActive(
         0.75f,     // saturationThreshold
         0.15f,     // saturationAmount
@@ -228,13 +228,13 @@ inline HardwareUnitProfile createLA2A()
 }
 
 //------------------------------------------------------------------------------
-// 1176 FET profile (Rev A "Bluestripe")
+// FET compressor profile
 // Characteristics: Fast, punchy, aggressive, FET coloration
-inline HardwareUnitProfile createFET1176()
+inline HardwareUnitProfile createFETCompressor()
 {
     HardwareUnitProfile profile;
-    profile.name = "1176";
-    profile.modeledUnit = "UREI 1176 Rev A";
+    profile.name = "FET Compressor";
+    profile.modeledUnit = "Vintage FET Compressor";
 
     // Input stage: FET amplifier
     profile.inputStageHarmonics = HarmonicProfile::create(
@@ -263,7 +263,7 @@ inline HardwareUnitProfile createFET1176()
         0.003f
     );
 
-    // Input transformer (UTC O-12)
+    // Input transformer
     profile.inputTransformer = TransformerProfile::createActive(
         0.85f,     // saturationThreshold
         0.08f,     // saturationAmount
@@ -301,13 +301,13 @@ inline HardwareUnitProfile createFET1176()
 }
 
 //------------------------------------------------------------------------------
-// DBX 160 VCA profile
+// Classic VCA compressor profile
 // Characteristics: Clean, transparent, precise, "OverEasy" knee
-inline HardwareUnitProfile createDBX160()
+inline HardwareUnitProfile createClassicVCA()
 {
     HardwareUnitProfile profile;
-    profile.name = "DBX 160";
-    profile.modeledUnit = "DBX 160 VCA";
+    profile.name = "Classic VCA";
+    profile.modeledUnit = "Classic VCA Compressor";
 
     // Input stage: Op-amp (very clean)
     profile.inputStageHarmonics = HarmonicProfile::create(
@@ -330,7 +330,7 @@ inline HardwareUnitProfile createDBX160()
         0.65f
     );
 
-    // No transformers (DBX 160 is transformerless)
+    // No transformers (Classic VCA is transformerless)
     profile.inputTransformer = TransformerProfile::createInactive();
     profile.outputTransformer = TransformerProfile::createInactive();
 
@@ -352,18 +352,18 @@ inline HardwareUnitProfile createDBX160()
 }
 
 //------------------------------------------------------------------------------
-// SSL G-Series Bus Compressor
+// Console Bus Compressor
 // Characteristics: Glue, punch, console sound
-inline HardwareUnitProfile createSSLBus()
+inline HardwareUnitProfile createConsoleBus()
 {
     HardwareUnitProfile profile;
-    profile.name = "SSL Bus";
-    profile.modeledUnit = "SSL G-Series Bus Compressor";
+    profile.name = "Console Bus";
+    profile.modeledUnit = "Console Bus Compressor";
 
     // Input stage: Console electronics
     profile.inputStageHarmonics = HarmonicProfile::create(
         0.004f,
-        0.008f,   // SSL is punchy (odd harmonics)
+        0.008f,   // Console bus is punchy (odd harmonics)
         0.35f,
         0.0f,
         0.003f
@@ -387,7 +387,7 @@ inline HardwareUnitProfile createSSLBus()
         0.004f
     );
 
-    // Input transformer (Marinair style)
+    // Input transformer (console style)
     profile.inputTransformer = TransformerProfile::createActive(
         0.9f,      // saturationThreshold
         0.03f,     // saturationAmount
@@ -425,10 +425,10 @@ inline HardwareUnitProfile createSSLBus()
 }
 
 //------------------------------------------------------------------------------
-// Studio FET (cleaner 1176 variant)
+// Studio FET (cleaner FET variant)
 inline HardwareUnitProfile createStudioFET()
 {
-    HardwareUnitProfile profile = createFET1176();
+    HardwareUnitProfile profile = createFETCompressor();
     profile.name = "Studio FET";
     profile.modeledUnit = "Clean FET Compressor";
 
@@ -523,27 +523,27 @@ inline HardwareUnitProfile createDigital()
 class HardwareProfiles
 {
 public:
-    static const HardwareUnitProfile& getLA2A()
+    static const HardwareUnitProfile& getOptoCompressor()
     {
-        static const HardwareUnitProfile profile = Profiles::createLA2A();
+        static const HardwareUnitProfile profile = Profiles::createOptoCompressor();
         return profile;
     }
 
-    static const HardwareUnitProfile& getFET1176()
+    static const HardwareUnitProfile& getFETCompressor()
     {
-        static const HardwareUnitProfile profile = Profiles::createFET1176();
+        static const HardwareUnitProfile profile = Profiles::createFETCompressor();
         return profile;
     }
 
-    static const HardwareUnitProfile& getDBX160()
+    static const HardwareUnitProfile& getClassicVCA()
     {
-        static const HardwareUnitProfile profile = Profiles::createDBX160();
+        static const HardwareUnitProfile profile = Profiles::createClassicVCA();
         return profile;
     }
 
-    static const HardwareUnitProfile& getSSLBus()
+    static const HardwareUnitProfile& getConsoleBus()
     {
-        static const HardwareUnitProfile profile = Profiles::createSSLBus();
+        static const HardwareUnitProfile profile = Profiles::createConsoleBus();
         return profile;
     }
 

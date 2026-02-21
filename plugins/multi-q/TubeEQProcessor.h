@@ -1,13 +1,13 @@
 /*
   ==============================================================================
 
-    PultecProcessor.h
+    TubeEQProcessor.h
 
-    Pultec EQP-1A Tube Program Equalizer emulation for Multi-Q's Tube mode.
+    Passive tube program equalizer emulation for Multi-Q's Tube mode.
 
-    The EQP-1A is a legendary passive tube EQ known for its unique ability
+    Modeled after classic passive tube EQ designs known for the unique ability
     to simultaneously boost and cut at the same frequency, creating complex
-    harmonic interactions. This creates the famous "Pultec trick" where
+    harmonic interactions. This creates the famous "boost/cut trick" where
     boosting and attenuating at the same frequency creates a unique curve.
 
     Circuit Topology:
@@ -20,15 +20,15 @@
     - True passive LC network with accurate boost/cut interaction curves
     - Inductor non-linearity: frequency-dependent Q, core saturation, hysteresis
     - Program-dependent behavior: compression at high levels
-    - Measured Q curves from real EQP-1A hardware
+    - Measured Q curves from real vintage passive tube EQ hardware
     - Authentic 12AX7 tube stage with cathode follower characteristics
     - Component tolerance modeling for vintage character
-    - Accurate "Pultec trick" frequency response curves
+    - Accurate boost/cut trick frequency response curves
 
     Reference: Based on circuit analysis and measurements from:
-    - Gearslutz EQP-1A frequency response measurements
-    - UAD Pultec white paper technical analysis
-    - AudioXpress Pultec circuit reconstruction
+    - Gearslutz passive tube EQ frequency response measurements
+    - Passive tube EQ technical analysis white papers
+    - Passive tube EQ circuit reconstruction articles
 
   ==============================================================================
 */
@@ -40,19 +40,23 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <vector>
 
 // Helper for LC filter pre-warping
-inline float pultecPreWarpFrequency(float freq, double sampleRate)
+inline float tubeEQPreWarpFrequency(float freq, double sampleRate)
 {
+    if (sampleRate <= 0.0)
+        return freq;
+    freq = std::clamp(freq, 1.0f, static_cast<float>(sampleRate * 0.49));
     const float omega = juce::MathConstants<float>::pi * freq / static_cast<float>(sampleRate);
     return static_cast<float>(sampleRate) / juce::MathConstants<float>::pi * std::tan(omega);
 }
 
 //==============================================================================
 /**
-    Enhanced Inductor model for Pultec LC network emulation.
+    Enhanced Inductor model for passive tube EQ LC network emulation.
 
-    Based on measurements of the 150mH toroidal inductor used in EQP-1A units.
+    Based on measurements of the 150mH toroidal inductor used in vintage passive tube EQ units.
     Real inductors exhibit:
     - Frequency-dependent Q (core losses dominate at low frequencies)
     - Saturation at high signal levels (B-H curve non-linearity)
@@ -84,9 +88,9 @@ public:
     }
 
     /**
-     * Get frequency-dependent Q based on measured Pultec hardware curves.
+     * Get frequency-dependent Q based on measured passive tube EQ hardware curves.
      *
-     * From published measurements of EQP-1A units:
+     * From published measurements of vintage passive tube EQ units:
      * - Q ≈ 0.3 at 20 Hz (very broad due to core losses)
      * - Q ≈ 0.45 at 60 Hz
      * - Q ≈ 0.55 at 100 Hz
@@ -234,26 +238,36 @@ private:
 
 //==============================================================================
 /**
-    Enhanced Pultec tube stage model with cathode follower output.
+    Enhanced tube stage model with cathode follower output.
 
-    The EQP-1A uses a two-stage tube circuit:
+    The classic passive tube EQ uses a two-stage tube circuit:
     1. 12AX7 triode gain stage (high gain, ~100)
     2. 12AX7 cathode follower output (unity gain, low impedance)
 
-    The cathode follower is key to the Pultec sound:
+    The cathode follower is key to the passive tube EQ sound:
     - Provides low output impedance to drive cables
     - Has its own characteristic distortion (asymmetric)
     - Creates slight compression at high levels
     - Adds subtle "bloom" to transients
 */
-class PultecTubeStage
+class TubeEQTubeStage
 {
 public:
     void prepare(double sampleRate, int numChannels)
     {
+        jassert(numChannels > 0);
+        if (numChannels <= 0)
+            numChannels = 2;
+
         this->sampleRate = sampleRate;
-        dcBlockerL.prepare(sampleRate, 8.0f);
-        dcBlockerR.prepare(sampleRate, 8.0f);
+        this->numChannels = numChannels;
+
+        prevSamples.resize(static_cast<size_t>(numChannels), 0.0f);
+        cathodeVoltages.resize(static_cast<size_t>(numChannels), 0.0f);
+        gridCurrents.resize(static_cast<size_t>(numChannels), 0.0f);
+        dcBlockers.resize(static_cast<size_t>(numChannels));
+        for (auto& dc : dcBlockers)
+            dc.prepare(sampleRate, 8.0f);
 
         // Calculate slew rate limiting coefficient
         // Based on 12AX7 plate load and coupling capacitor
@@ -264,14 +278,11 @@ public:
 
     void reset()
     {
-        prevSampleL = 0.0f;
-        prevSampleR = 0.0f;
-        cathodeVoltageL = 0.0f;
-        cathodeVoltageR = 0.0f;
-        gridCurrentL = 0.0f;
-        gridCurrentR = 0.0f;
-        dcBlockerL.reset();
-        dcBlockerR.reset();
+        prevSamples.assign(static_cast<size_t>(numChannels), 0.0f);
+        cathodeVoltages.assign(static_cast<size_t>(numChannels), 0.0f);
+        gridCurrents.assign(static_cast<size_t>(numChannels), 0.0f);
+        for (auto& dc : dcBlockers)
+            dc.reset();
     }
 
     void setDrive(float newDrive)
@@ -284,10 +295,10 @@ public:
         if (drive < 0.01f)
             return input;
 
-        bool isLeft = (channel == 0);
-        float& prevSample = isLeft ? prevSampleL : prevSampleR;
-        float& cathodeVoltage = isLeft ? cathodeVoltageL : cathodeVoltageR;
-        float& gridCurrent = isLeft ? gridCurrentL : gridCurrentR;
+        size_t ch = static_cast<size_t>(std::clamp(channel, 0, numChannels - 1));
+        float& prevSample = prevSamples[ch];
+        float& cathodeVoltage = cathodeVoltages[ch];
+        float& gridCurrent = gridCurrents[ch];
 
         // === Stage 1: 12AX7 Voltage Amplifier ===
         // High gain with plate load resistor creating compression
@@ -296,7 +307,7 @@ public:
         float drivenSignal = input * driveGain;
 
         // Grid current limiting (when signal exceeds grid bias)
-        // This is a key source of 2nd harmonic in real Pultecs
+        // This is a key source of 2nd harmonic in real passive tube EQs
         float gridBias = -1.5f;  // Typical 12AX7 bias point
         float effectiveGrid = drivenSignal + gridBias;
 
@@ -398,8 +409,7 @@ public:
         output *= (1.0f / driveGain) * (1.0f + drive * 0.4f);
 
         // DC blocking
-        auto& dcBlocker = (channel == 0) ? dcBlockerL : dcBlockerR;
-        output = dcBlocker.processSample(output);
+        output = dcBlockers[ch].processSample(output);
 
         prevSample = output;
 
@@ -410,30 +420,26 @@ private:
     double sampleRate = 44100.0;
     float drive = 0.3f;
     float maxSlewRate = 0.003f;
+    int numChannels = 2;
 
-    // Per-channel state
-    float prevSampleL = 0.0f;
-    float prevSampleR = 0.0f;
-    float cathodeVoltageL = 0.0f;
-    float cathodeVoltageR = 0.0f;
-    float gridCurrentL = 0.0f;
-    float gridCurrentR = 0.0f;
-
-    AnalogEmulation::DCBlocker dcBlockerL;
-    AnalogEmulation::DCBlocker dcBlockerR;
+    // Per-channel state (sized to numChannels in prepare())
+    std::vector<float> prevSamples { 0.0f, 0.0f };
+    std::vector<float> cathodeVoltages { 0.0f, 0.0f };
+    std::vector<float> gridCurrents { 0.0f, 0.0f };
+    std::vector<AnalogEmulation::DCBlocker> dcBlockers { 2 };
 };
 
 //==============================================================================
 /**
-    Enhanced Passive LC Network model for accurate Pultec boost/cut interaction.
+    Enhanced Passive LC Network model for accurate tube EQ boost/cut interaction.
 
-    The "Pultec Trick" - Measured Response Curve:
+    The "Boost/Cut Trick" - Measured Response Curve:
     When both boost and attenuation are engaged at the same frequency:
     1. Boost creates a resonant peak at the selected frequency
     2. Attenuation creates a shelf cut BELOW the boost frequency
     3. The result is: boost peak → crossover → attenuation dip
 
-    Measured from real EQP-1A at 60Hz with both boost & atten at 5:
+    Measured from real vintage passive tube EQ at 60Hz with both boost & atten at 5:
     - +4 dB peak at ~90 Hz
     - 0 dB crossover at ~55 Hz
     - -6 dB dip at ~30 Hz
@@ -464,7 +470,7 @@ public:
     }
 
     /**
-     * Process LF section with accurate Pultec trick interaction.
+     * Process LF section with accurate boost/cut trick interaction.
      *
      * The boost and cut share the 150mH toroidal inductor but tap it differently:
      * - Boost: Resonant peak from LC tank circuit
@@ -488,12 +494,12 @@ public:
         frequency = std::clamp(frequency, 10.0f, maxFreq);
 
         // Get frequency-dependent Q from inductor model
-        // Pultec has characteristically broad Q (~0.5 at 60Hz)
+        // Passive tube EQ has characteristically broad Q (~0.5 at 60Hz)
         float baseQ = 0.55f;
         float effectiveQ = inductor.getFrequencyDependentQ(frequency, baseQ);
         effectiveQ = std::max(effectiveQ, 0.2f);
 
-        // === Accurate Pultec Frequency Relationships ===
+        // === Accurate Tube EQ Frequency Relationships ===
         // From circuit analysis:
         // - Boost peaks at the selected frequency
         // - Cut shelf corner is ~0.7x the boost frequency
@@ -558,7 +564,7 @@ public:
             output = output - attenState * (1.0f - attenFactor);
         }
 
-        // === Boost/Cut Interaction ("Pultec Trick") ===
+        // === Boost/Cut Interaction ("Tube EQ Trick") ===
         // When both controls are engaged, the shared LC network creates
         // a characteristic response: boost peak with shelf cut below
         if (boostGain > 0.01f && attenGain > 0.01f)
@@ -607,17 +613,17 @@ private:
     double sampleRate = 44100.0;
     InductorModel inductor;
 
-    // Interaction state for Pultec trick modeling
+    // Interaction state for boost/cut trick modeling
     float interactionStateHP[2] = {0.0f, 0.0f};
     float interactionStateLP[2] = {0.0f, 0.0f};
     float lfShelfState[2] = {0.0f, 0.0f};
 };
 
 //==============================================================================
-class PultecProcessor
+class TubeEQProcessor
 {
 public:
-    // Parameter structure for Pultec EQ
+    // Parameter structure for Tube EQ
     struct Parameters
     {
         // Low Frequency Section
@@ -634,7 +640,7 @@ public:
         float hfAttenGain = 0.0f;      // 0-10 (maps to 0-20 dB cut)
         float hfAttenFreq = 10000.0f;  // 5k, 10k, 20k Hz (3 positions)
 
-        // Mid Dip/Peak Section (MEQ-5 style)
+        // Mid Dip/Peak Section (mid-range tube EQ style)
         bool midEnabled = true;           // Section bypass
         float midLowFreq = 500.0f;        // 0.2, 0.3, 0.5, 0.7, 1.0 kHz
         float midLowPeak = 0.0f;          // 0-10 (maps to 0-12 dB boost)
@@ -650,7 +656,7 @@ public:
         bool bypass = false;
     };
 
-    PultecProcessor()
+    TubeEQProcessor()
     {
         // Initialize with default tube type
     }
@@ -698,7 +704,7 @@ public:
         inputTransformer.prepare(sampleRate, numChannels);
         outputTransformer.prepare(sampleRate, numChannels);
 
-        // Set up transformer profiles for Pultec character
+        // Set up transformer profiles for passive tube EQ character
         setupTransformerProfiles();
 
         // Initialize analog emulation library
@@ -785,7 +791,8 @@ public:
                 sample = inputTransformer.processSample(sample, ch);
 
                 // === Passive LC Network: LF Section with true boost/cut interaction ===
-                int chIdx = isLeft ? 0 : 1;
+                int chIdx = std::min(ch, channels - 1);
+                jassert(chIdx >= 0 && chIdx < 2);  // State arrays are sized for stereo
                 sample = lfNetwork.processLFSection(
                     sample,
                     params.lfBoostGain,
@@ -857,7 +864,7 @@ public:
                     }
                 }
 
-                // === Pultec-specific Tube Makeup Gain Stage ===
+                // === Tube EQ Makeup Gain Stage ===
                 if (params.tubeDrive > 0.01f)
                 {
                     sample = tubeStage.processSample(sample, ch);
@@ -908,7 +915,7 @@ public:
             // Add interaction effect when both boost and atten are engaged
             if (params.lfAttenGain > 0.01f)
             {
-                // The "Pultec trick" creates a bump above the cut frequency
+                // The boost/cut trick creates a bump above the cut frequency
                 float interactionFreq = params.lfBoostFreq * 1.5f;
                 if (frequencyHz > params.lfBoostFreq && frequencyHz < interactionFreq * 1.5f)
                 {
@@ -1021,13 +1028,13 @@ private:
     // HF Atten: High shelf cut
     juce::dsp::IIR::Filter<float> hfAttenFilterL, hfAttenFilterR;
 
-    // Mid Section filters (MEQ-5 style)
+    // Mid Section filters (mid-range tube EQ style)
     juce::dsp::IIR::Filter<float> midLowPeakFilterL, midLowPeakFilterR;
     juce::dsp::IIR::Filter<float> midDipFilterL, midDipFilterR;
     juce::dsp::IIR::Filter<float> midHighPeakFilterL, midHighPeakFilterR;
 
     // Enhanced analog stages
-    PultecTubeStage tubeStage;
+    TubeEQTubeStage tubeStage;
     PassiveLCNetwork lfNetwork;
     InductorModel hfInductor;
 
@@ -1044,7 +1051,7 @@ private:
 
     void setupTransformerProfiles()
     {
-        // Create Pultec-style transformer profiles
+        // Create passive tube EQ-style transformer profiles
         // UTC A-20 input transformer characteristics
         AnalogEmulation::TransformerProfile inputProfile;
         inputProfile.hasTransformer = true;
@@ -1083,27 +1090,27 @@ private:
 
     void updateLFBoost()
     {
-        // Pultec LF boost: Resonant peak at selected frequency
-        // The EQP-1A has a unique broad, musical low boost
-        float freq = pultecPreWarpFrequency(params.lfBoostFreq, currentSampleRate);
+        // Tube EQ LF boost: Resonant peak at selected frequency
+        // Classic passive tube EQs have a unique broad, musical low boost
+        float freq = tubeEQPreWarpFrequency(params.lfBoostFreq, currentSampleRate);
         float gainDB = params.lfBoostGain * 1.4f;  // 0-10 maps to ~0-14 dB
 
         // Get frequency-dependent Q from inductor model
         InductorModel tempInductor;
         tempInductor.prepare(currentSampleRate);
-        float baseQ = 0.5f;  // Very broad (Pultec characteristic)
+        float baseQ = 0.5f;  // Very broad (passive tube EQ characteristic)
         float effectiveQ = tempInductor.getFrequencyDependentQ(params.lfBoostFreq, baseQ);
 
-        auto coeffs = makePultecPeak(currentSampleRate, freq, effectiveQ, gainDB);
+        auto coeffs = makeTubeEQPeak(currentSampleRate, freq, effectiveQ, gainDB);
         lfBoostFilterL.coefficients = coeffs;
         lfBoostFilterR.coefficients = coeffs;
     }
 
     void updateLFAtten()
     {
-        // Pultec LF atten: Shelf cut that interacts with boost
-        // When both are engaged at the same frequency, creates the "Pultec trick"
-        float freq = pultecPreWarpFrequency(params.lfBoostFreq, currentSampleRate);
+        // Tube EQ LF atten: Shelf cut that interacts with boost
+        // When both are engaged at the same frequency, creates the boost/cut trick
+        float freq = tubeEQPreWarpFrequency(params.lfBoostFreq, currentSampleRate);
         float gainDB = -params.lfAttenGain * 1.6f;  // 0-10 maps to ~0-16 dB cut
 
         // The attenuation is a shelf, not a peak
@@ -1114,8 +1121,8 @@ private:
 
     void updateHFBoost()
     {
-        // Pultec HF boost: Resonant peak with variable bandwidth
-        float freq = pultecPreWarpFrequency(params.hfBoostFreq, currentSampleRate);
+        // Tube EQ HF boost: Resonant peak with variable bandwidth
+        float freq = tubeEQPreWarpFrequency(params.hfBoostFreq, currentSampleRate);
         float gainDB = params.hfBoostGain * 1.6f;  // 0-10 maps to ~0-16 dB
 
         // Bandwidth control: Sharp (high Q) to Broad (low Q)
@@ -1127,15 +1134,15 @@ private:
         tempInductor.prepare(currentSampleRate);
         float effectiveQ = tempInductor.getFrequencyDependentQ(params.hfBoostFreq, baseQ);
 
-        auto coeffs = makePultecPeak(currentSampleRate, freq, effectiveQ, gainDB);
+        auto coeffs = makeTubeEQPeak(currentSampleRate, freq, effectiveQ, gainDB);
         hfBoostFilterL.coefficients = coeffs;
         hfBoostFilterR.coefficients = coeffs;
     }
 
     void updateHFAtten()
     {
-        // Pultec HF atten: High shelf cut
-        float freq = pultecPreWarpFrequency(params.hfAttenFreq, currentSampleRate);
+        // Tube EQ HF atten: High shelf cut
+        float freq = tubeEQPreWarpFrequency(params.hfAttenFreq, currentSampleRate);
         float gainDB = -params.hfAttenGain * 2.0f;  // 0-10 maps to ~0-20 dB cut
 
         auto coeffs = makeHighShelf(currentSampleRate, freq, 0.6f, gainDB);
@@ -1146,13 +1153,13 @@ private:
     void updateMidLowPeak()
     {
         // Mid Low Peak: Resonant boost in low-mid range
-        float freq = pultecPreWarpFrequency(params.midLowFreq, currentSampleRate);
+        float freq = tubeEQPreWarpFrequency(params.midLowFreq, currentSampleRate);
         float gainDB = params.midLowPeak * 1.2f;  // 0-10 maps to ~0-12 dB
 
         // Moderate Q for musical character
         float q = 1.2f;
 
-        auto coeffs = makePultecPeak(currentSampleRate, freq, q, gainDB);
+        auto coeffs = makeTubeEQPeak(currentSampleRate, freq, q, gainDB);
         midLowPeakFilterL.coefficients = coeffs;
         midLowPeakFilterR.coefficients = coeffs;
     }
@@ -1160,13 +1167,13 @@ private:
     void updateMidDip()
     {
         // Mid Dip: Cut in mid range
-        float freq = pultecPreWarpFrequency(params.midDipFreq, currentSampleRate);
+        float freq = tubeEQPreWarpFrequency(params.midDipFreq, currentSampleRate);
         float gainDB = -params.midDip * 1.0f;  // 0-10 maps to ~0-10 dB cut
 
         // Broader Q for natural sounding cut
         float q = 0.8f;
 
-        auto coeffs = makePultecPeak(currentSampleRate, freq, q, gainDB);
+        auto coeffs = makeTubeEQPeak(currentSampleRate, freq, q, gainDB);
         midDipFilterL.coefficients = coeffs;
         midDipFilterR.coefficients = coeffs;
     }
@@ -1174,22 +1181,22 @@ private:
     void updateMidHighPeak()
     {
         // Mid High Peak: Resonant boost in upper-mid range
-        float freq = pultecPreWarpFrequency(params.midHighFreq, currentSampleRate);
+        float freq = tubeEQPreWarpFrequency(params.midHighFreq, currentSampleRate);
         float gainDB = params.midHighPeak * 1.2f;  // 0-10 maps to ~0-12 dB
 
         // Moderate Q for presence
         float q = 1.4f;
 
-        auto coeffs = makePultecPeak(currentSampleRate, freq, q, gainDB);
+        auto coeffs = makeTubeEQPeak(currentSampleRate, freq, q, gainDB);
         midHighPeakFilterL.coefficients = coeffs;
         midHighPeakFilterR.coefficients = coeffs;
     }
 
-    // Pultec-style peak filter with inductor characteristics
-    juce::dsp::IIR::Coefficients<float>::Ptr makePultecPeak(
+    // Passive tube EQ-style peak filter with inductor characteristics
+    juce::dsp::IIR::Coefficients<float>::Ptr makeTubeEQPeak(
         double sampleRate, float freq, float q, float gainDB) const
     {
-        // The Pultec uses inductors which have a more gradual slope than
+        // Passive tube EQs use inductors which have a more gradual slope than
         // typical parametric EQs, especially on the low end
         float A = std::pow(10.0f, gainDB / 40.0f);
         float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
@@ -1197,8 +1204,8 @@ private:
         float sinw0 = std::sin(w0);
 
         // Inductor-style Q modification - broader, more musical
-        float pultecQ = q * 0.85f;  // Slightly broader than specified
-        float alpha = sinw0 / (2.0f * pultecQ);
+        float tubeEqQ = q * 0.85f;  // Slightly broader than specified
+        float alpha = sinw0 / (2.0f * tubeEqQ);
 
         float b0 = 1.0f + alpha * A;
         float b1 = -2.0f * cosw0;
@@ -1257,5 +1264,5 @@ private:
             new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
     }
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PultecProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TubeEQProcessor)
 };

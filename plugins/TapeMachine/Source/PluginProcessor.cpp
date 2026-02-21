@@ -95,7 +95,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
         juce::StringArray{"Type 456", "Type GP9", "Type 911", "Type 250"},
         0));
 
-    // Signal path selection (like UAD): Input (electronics only), Sync, Repro, Thru (bypass)
+    // Signal path selection: Input (electronics only), Sync, Repro, Thru (bypass)
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "signalPath", "Signal Path",
         juce::StringArray{"Repro", "Sync", "Input", "Thru"},
@@ -316,7 +316,7 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
         // Ensure we have at least 2 channels for the oversampler
         size_t numChannels = static_cast<size_t>(std::max(2, getTotalNumInputChannels()));
 
-        // Create both 2x and 4x oversamplers using high-quality FIR equiripple filters
+        // Create both 2x and 4x oversamplers using FIR equiripple filters
         // FIR provides superior alias rejection compared to IIR, essential for tape saturation
         oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
             numChannels, 1,
@@ -876,7 +876,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 switch (emulationType)
                 {
                     case ImprovedTapeEmulation::Type456:
-                        optimalBias = 0.50f;  // Ampex 456: standard bias
+                        optimalBias = 0.50f;  // Type 456: standard bias
                         break;
                     case ImprovedTapeEmulation::TypeGP9:
                         optimalBias = 0.55f;  // GP9: slightly higher bias for extended HF
@@ -953,10 +953,10 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         float crosstalkAmount = 0.01f;  // Default -40dB
         switch (machine)
         {
-            case StuderA800:
+            case Swiss800:
                 crosstalkAmount = 0.005f;  // -46dB (excellent separation)
                 break;
-            case AmpexATR102:
+            case Classic102:
                 crosstalkAmount = 0.015f;  // -36dB (vintage character)
                 break;
         }
