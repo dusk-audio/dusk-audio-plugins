@@ -44,7 +44,7 @@ public:
                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                          juce::Slider& slider) override
     {
-        // ===== MODERN ARC-STYLE KNOB (FabFilter/Kilohearts style) =====
+        // ===== MODERN ARC-STYLE KNOB (modern arc style) =====
         auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(4.0f);
         auto diameter = juce::jmin(bounds.getWidth(), bounds.getHeight());
         auto radius = diameter / 2.0f;
