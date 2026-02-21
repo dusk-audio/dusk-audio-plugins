@@ -309,7 +309,7 @@ juce::Path FFTAnalyzer::createMagnitudePath() const
     bool pathStarted = false;
 
     // We'll iterate through display x positions and find corresponding bins
-    // Use smoothed magnitudes for Pro-Q style smooth appearance
+    // Use smoothed magnitudes for smooth appearance
     int numPoints = static_cast<int>(bounds.getWidth());
 
     // For smoother appearance, use quadratic bezier curves when smoothing is enabled

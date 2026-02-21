@@ -2,7 +2,7 @@
   ==============================================================================
 
     TapeEcho.h
-    Tape Echo - RE-201 Style Tape Delay Engine
+    Tape Echo - Vintage Tape Delay Engine
 
     3 virtual playback heads with 12 mode selector:
     - Modes 1-3: Single heads
@@ -426,7 +426,7 @@ private:
 
     void updateHeadConfig()
     {
-        // RE-201 mode configurations:
+        // Tape echo mode configurations:
         // Mode 1: Head 1 only
         // Mode 2: Head 2 only
         // Mode 3: Head 3 only

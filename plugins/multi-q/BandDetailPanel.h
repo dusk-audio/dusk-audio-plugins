@@ -8,7 +8,7 @@ class MultiQ;
 
 //==============================================================================
 /**
-    BandDetailPanel - Waves F6 style bottom section
+    BandDetailPanel - Band selector with single-row controls
 
     Layout (145px total height):
     - Band selector row at top (8 colored pill buttons, 32px height)

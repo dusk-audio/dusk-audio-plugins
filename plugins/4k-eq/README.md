@@ -17,7 +17,7 @@ Professional 4-band parametric equalizer with analog modeling, built with JUCE f
 - **Bell/Shelf switching** on LF and HF bands (Black mode only)
 
 ### Processing Quality
-- **2x/4x oversampling** - Anti-aliased, high-quality processing (2x default for efficiency)
+- **2x/4x oversampling** - Anti-aliased processing (2x default, 4x for maximum quality)
 - **Analog saturation modeling** - Multi-stage: Input transformer → NE5534 op-amp → Output transformer (E-Series only)
   - E-Series: Predominantly 2nd harmonic (warm, transformer-colored)
   - G-Series: More 3rd harmonic (clean, transformerless)
@@ -159,7 +159,7 @@ cmake --build . --target FourKEQ_All -j8
 ├── PluginEditor.h           # Editor header
 ├── FourKLookAndFeel.cpp     # Custom console-style UI theme
 ├── FourKLookAndFeel.h       # Look and feel header
-├── SSLSaturation.h          # Console saturation modeling
+├── ConsoleSaturation.h      # Console saturation modeling
 ├── PatreonBackers.h         # Patreon supporters credits list
 ├── CMakeLists.txt           # Build configuration
 └── README.md                # This file

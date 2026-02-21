@@ -2,7 +2,7 @@
   ==============================================================================
 
     PluginEditor.cpp
-    Tape Echo - RE-201 Style Plugin UI
+    Tape Echo - Tape Echo Plugin UI
 
     Copyright (c) 2025 Dusk Audio - All rights reserved.
 

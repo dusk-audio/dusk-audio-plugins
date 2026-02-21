@@ -7,8 +7,8 @@
 
 //==============================================================================
 /**
- * DynamicEQProcessor - Per-band envelope followers for FabFilter Pro-Q style
- * dynamic EQ processing.
+ * DynamicEQProcessor - Per-band envelope followers for per-band dynamic EQ
+ * processing.
  *
  * Each band can independently have dynamics enabled, with its own:
  * - Threshold (dB)

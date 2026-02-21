@@ -57,8 +57,8 @@ public:
 
     enum TapeMachine
     {
-        StuderA800 = 0,
-        AmpexATR102
+        Swiss800 = 0,
+        Classic102
     };
 
     enum TapeSpeed
@@ -70,7 +70,7 @@ public:
 
     enum TapeType
     {
-        Ampex456 = 0,
+        Type456 = 0,
         GP9,
         BASF911,
         Type250

@@ -126,7 +126,7 @@ enum class EQType
 {
     Digital = 0,   // Clean digital EQ with optional per-band dynamics (Multi-Q default)
     British,       // 4K EQ style British console EQ
-    Tube           // Pultec EQP-1A style tube EQ
+    Tube           // Passive tube EQ style (vintage program equalizer)
 };
 
 //==============================================================================
@@ -143,7 +143,7 @@ struct BandConfig
     const char* name;
 };
 
-// Band colors - vibrant palette for high visibility (Pro-Q style)
+// Band colors - vibrant palette for high visibility
 namespace BandColors
 {
     const juce::Colour Band1_HPF      = juce::Colour(0xFFff5555);  // Red
@@ -278,7 +278,7 @@ namespace ParamIDs
     const juce::String britishInputGain = "british_input_gain";
     const juce::String britishOutputGain = "british_output_gain";
 
-    // Pultec (Tube) mode parameters
+    // Tube EQ mode parameters
     const juce::String pultecLfBoostGain = "pultec_lf_boost_gain";
     const juce::String pultecLfBoostFreq = "pultec_lf_boost_freq";
     const juce::String pultecLfAttenGain = "pultec_lf_atten_gain";
@@ -291,7 +291,7 @@ namespace ParamIDs
     const juce::String pultecOutputGain = "pultec_output_gain";
     const juce::String pultecTubeDrive = "pultec_tube_drive";
 
-    // Pultec Mid Dip/Peak section parameters
+    // Tube EQ Mid Dip/Peak section parameters
     const juce::String pultecMidEnabled = "pultec_mid_enabled";
     const juce::String pultecMidLowFreq = "pultec_mid_low_freq";
     const juce::String pultecMidLowPeak = "pultec_mid_low_peak";

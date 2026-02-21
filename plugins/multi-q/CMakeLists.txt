@@ -71,7 +71,7 @@ target_sources(MultiQ
         EQGraphicDisplay.cpp
         FFTAnalyzer.cpp
         BritishEQCurveDisplay.cpp
-        PultecCurveDisplay.cpp
+        TubeEQCurveDisplay.cpp
         BandDetailPanel.cpp
         ../shared/LEDMeter.cpp
         ../4k-eq/FourKLookAndFeel.cpp

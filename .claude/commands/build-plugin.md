@@ -29,7 +29,6 @@ If a plugin name was provided, map it to the build shortcut:
 | TapeMachine | `tape`, `tapemachine` | tapemachine |
 | Tape Echo | `tapeecho`, `tape-echo` | tape-echo |
 | Multi-Q | `multiq`, `multi-q` | multi-q |
-| Velvet 90 | `velvet-90` | velvet-90 |
 | Convolution Reverb | `convolution`, `convolution-reverb` | convolution-reverb |
 | Neural Amp | `nam`, `neural-amp` | neural-amp |
 | GrooveMind | `groovemind` | groovemind |
@@ -42,7 +41,6 @@ Which plugin would you like to build?
 - tape (TapeMachine)
 - tapeecho (Tape Echo)
 - multiq (Multi-Q)
-- velvet-90 (Velvet 90)
 - convolution (Convolution Reverb)
 - nam (Neural Amp)
 - all (Build all plugins)
@@ -90,7 +88,6 @@ Plugin name mapping for validation:
 | tape | "TapeMachine" |
 | tapeecho | "Tape Echo" |
 | multiq | "Multi-Q" |
-| velvet-90 | "Velvet 90" |
 | convolution | "Convolution Reverb" |
 | nam | "Neural Amp" |
 
@@ -148,6 +145,6 @@ cmake --build . --target <PluginTarget>_All -j8
 
 Build targets:
 - `FourKEQ_All`, `MultiComp_All`, `TapeMachine_All`, `TapeEcho_All`
-- `MultiQ_All`, `Velvet90_All`, `ConvolutionReverb_All`, `NeuralAmp_All`
+- `MultiQ_All`, `ConvolutionReverb_All`, `NeuralAmp_All`
 
 **Note:** Local builds may not be compatible across Linux distributions due to glibc version differences. Use Docker builds for releases.

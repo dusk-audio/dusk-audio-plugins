@@ -4,7 +4,7 @@
 
 //==============================================================================
 // Premium Analog VU Meter Component
-// Photorealistic vintage styling inspired by Studer A800 and Ampex ATR-102
+// Photorealistic vintage styling inspired by classic professional tape machines
 //
 // STANDARDS COMPLIANCE (IEC 60268-17 / ANSI C16.5):
 // - 300ms integration time (99% of steady-state reading)

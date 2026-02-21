@@ -14,12 +14,12 @@
     - Logarithmic frequency scale (20 Hz - 20 kHz)
     - Adjustable decay rate
     - Pre/Post EQ display option
-    - Pro-Q style spectrum smoothing (temporal and spatial)
+    - Spectrum smoothing (temporal and spatial)
 */
 class FFTAnalyzer : public juce::Component
 {
 public:
-    // Spectrum smoothing modes (FabFilter Pro-Q style)
+    // Spectrum smoothing modes (Professional)
     enum class SmoothingMode
     {
         Off = 0,      // Raw FFT data, no smoothing

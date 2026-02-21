@@ -25,7 +25,6 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | TapeMachine | `tapemachine` | `plugins/TapeMachine/` | Analog tape emulation |
 | Tape Echo | `tape-echo` | `plugins/tape-echo/` | Classic tape delay |
 | Multi-Q | `multi-q` | `plugins/multi-q/` | Universal EQ (Digital/British/Tube) |
-| Velvet 90 | `velvet-90` | `plugins/Velvet90/` | Algorithmic reverb |
 | Convolution Reverb | `convolution-reverb` | `plugins/convolution-reverb/` | IR-based reverb |
 | Neural Amp | `neural-amp` | `plugins/neural-amp/` | Neural amp modeler (NAM) |
 | GrooveMind | `groovemind` | `plugins/groovemind/` | ML drum generator (future) |
@@ -89,11 +88,29 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | `tape` | TapeMachine |
 | `tapeecho` | Tape Echo |
 | `multiq` | Multi-Q |
-| `velvet-90` | Velvet 90 |
 | `convolution` | Convolution Reverb |
 | `nam` | Neural Amp |
 
 **Validation**: `./tests/run_plugin_tests.sh --plugin "<Name>" --skip-audio`
+
+### Fast Local Builds
+
+Install ccache for automatic build caching (70-90% faster rebuilds):
+- macOS: `brew install ccache`
+- Linux: `sudo apt install ccache`
+
+ccache is auto-detected by CMake — no extra flags needed. Verify with `ccache -s` after building.
+
+For maximum speed on Linux, use Ninja + unity builds:
+```bash
+mkdir -p build && cd build
+cmake .. -GNinja -DDUSK_UNITY_BUILD=ON
+ninja -j$(nproc) MultiQ_VST3
+```
+
+Build options:
+- `DUSK_UNITY_BUILD=OFF` (default) — enable with `-DDUSK_UNITY_BUILD=ON` for fewer translation units (Linux only; macOS ObjC++ modules are incompatible)
+- Or use `./rebuild_all.sh --fast` which enables Ninja automatically
 
 ## Project Structure
 
@@ -105,7 +122,6 @@ plugins/
 │   ├── TapeMachine/
 │   ├── tape-echo/
 │   ├── multi-q/
-│   ├── Velvet90/
 │   ├── convolution-reverb/
 │   ├── neural-amp/
 │   └── shared/           # SHARED CODE - CHECK HERE FIRST
@@ -113,6 +129,7 @@ plugins/
 │   └── build_release.sh  # Primary build script
 ├── tests/
 │   └── run_plugin_tests.sh
+├── rebuild_all.sh         # Top-level build helper; supports --fast for Ninja incremental builds
 └── CMakeLists.txt
 ```
 

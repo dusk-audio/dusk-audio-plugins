@@ -194,7 +194,7 @@ private:
 
     // GR Meter Ballistics - professional hardware-inspired timing
     // GR meters should be faster than VU meters to show actual compressor behavior
-    // Reference: LA-2A meter ~100ms attack, 1176 meter ~50ms attack
+    // Reference: Opto meter ~100ms attack, FET meter ~50ms attack
     static constexpr float kRefreshRateHz = 60.0f;
     static constexpr float kAttackTimeMs = 50.0f;   // Fast attack to show compression
     static constexpr float kReleaseTimeMs = 150.0f; // Slower release for readability

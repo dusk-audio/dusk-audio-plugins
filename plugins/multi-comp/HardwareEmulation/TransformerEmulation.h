@@ -10,7 +10,7 @@
     - High-frequency rolloff (inductance limiting)
     - DC blocking
 
-    Based on measurements from Marinair, UTC, and Carnhill transformers.
+    Based on measurements from classic audio transformers.
 
   ==============================================================================
 */

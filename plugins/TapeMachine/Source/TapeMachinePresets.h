@@ -18,7 +18,7 @@ struct Preset
     juce::String category;
 
     // Machine settings
-    int tapeMachine = 0;     // 0=Swiss800 (Studer), 1=Classic102 (Ampex)
+    int tapeMachine = 0;     // 0=Swiss800 (Type A), 1=Classic102 (Type B)
     int tapeSpeed = 1;       // 0=7.5 IPS, 1=15 IPS, 2=30 IPS
     int tapeType = 0;        // 0=Type456, 1=GP9, 2=Type911, 3=Type250
 
@@ -61,7 +61,7 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Gentle Warmth",          // name
         "Subtle",                 // category
-        0,                        // tapeMachine: Swiss800 (Studer - cleaner)
+        0,                        // tapeMachine: Swiss800 (Type A - cleaner)
         2,                        // tapeSpeed: 30 IPS (cleanest)
         3,                        // tapeType: Type250 (professional)
         2.0f,                     // inputGain: Light drive
@@ -118,7 +118,7 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Classic Analog",
         "Warm",
-        1,                        // tapeMachine: Classic102 (Ampex - warmer)
+        1,                        // tapeMachine: Classic102 (Type B - warmer)
         1,                        // tapeSpeed: 15 IPS (classic)
         0,                        // tapeType: Type456 (high output, warm)
         5.0f,                     // inputGain: Moderate drive
@@ -154,7 +154,7 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "Tube Console",
         "Warm",
-        1,                        // Classic102 (Ampex warmth)
+        1,                        // Classic102 (vintage warmth)
         1,                        // 15 IPS
         2,                        // Type911 (German precision with warmth)
         7.0f,                     // inputGain: Solid drive
@@ -175,7 +175,7 @@ inline std::vector<Preset> getFactoryPresets()
     presets.push_back({
         "70s Rock",
         "Character",
-        1,                        // Classic102 (Ampex character)
+        1,                        // Classic102 (vintage character)
         1,                        // 15 IPS
         0,                        // Type456
         8.0f,                     // inputGain: Drive hard

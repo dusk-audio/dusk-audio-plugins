@@ -113,7 +113,7 @@ target_link_libraries(<PluginName>
 
 Create `plugins/<slug>/<PluginName>.h` and `plugins/<slug>/<PluginName>.cpp`:
 
-Use existing plugins as templates (e.g., Velvet 90 for effects, Multi-Q for analysis).
+Use existing plugins as templates (e.g., 4K EQ for effects, Multi-Q for analysis).
 
 Required components:
 - `juce::AudioProcessor` subclass

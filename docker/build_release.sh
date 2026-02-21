@@ -24,8 +24,6 @@ get_plugin_target() {
         groovemind|groove) echo "GrooveMind_All" ;;
         harmonic) echo "HarmonicGeneratorPlugin_All" ;;
         convolution|impulse|ir) echo "ConvolutionReverb_All" ;;
-        velvet-90|velvet90|v90) echo "Velvet90_All" ;;
-        suede200|suede-200|s200) echo "Suede200_All" ;;
         multiq|multi-q|meq) echo "MultiQ_All" ;;
         neuralamp|neural-amp|nam) echo "NeuralAmp_All" ;;
         tapeecho|tape-echo|echo) echo "TapeEcho_All" ;;
@@ -43,8 +41,6 @@ get_plugin_name() {
         groovemind|groove) echo "GrooveMind" ;;
         harmonic) echo "Harmonic Generator" ;;
         convolution|impulse|ir) echo "Convolution Reverb" ;;
-        velvet-90|velvet90|v90) echo "Velvet 90" ;;
-        suede200|suede-200|s200) echo "Suede 200" ;;
         multiq|multi-q|meq) echo "Multi-Q" ;;
         neuralamp|neural-amp|nam) echo "Neural Amp" ;;
         tapeecho|tape-echo|echo) echo "Tape Echo" ;;
@@ -71,8 +67,6 @@ show_help() {
     echo "  groovemind, groove GrooveMind"
     echo "  harmonic           Harmonic Generator"
     echo "  convolution, impulse, ir  Convolution Reverb"
-    echo "  velvet-90, velvet90, v90       Velvet 90"
-    echo "  suede200, suede-200, s200     Suede 200"
     echo "  multiq, multi-q, meq   Multi-Q (Universal EQ)"
     echo "  neuralamp, neural-amp, nam  Neural Amp"
     echo "  tapeecho, tape-echo, echo   Tape Echo"

@@ -7,7 +7,7 @@
     This library provides reusable analog hardware emulation components:
     - Transformer saturation modeling
     - Vacuum tube emulation (12AX7, 12AT7, 12BH7, 6SN7)
-    - Waveshaper lookup tables (LA-2A, 1176, DBX, SSL, Transformer, Tape)
+    - Waveshaper lookup tables (Opto, FET, VCA, Console, Transformer, Tape)
     - Hardware profiles (measured characteristics from classic equipment)
     - DC blocking filters
     - High-frequency content estimation
@@ -31,11 +31,11 @@
         // Use transformer emulation
         AnalogEmulation::TransformerEmulation transformer;
         transformer.prepare(sampleRate, 2);
-        transformer.setProfile(AnalogEmulation::HardwareProfileLibrary::getNeve1073().inputTransformer);
+        transformer.setProfile(AnalogEmulation::HardwareProfileLibrary::getBritishConsole().inputTransformer);
         float output = transformer.processSample(input, channel);
 
         // Use hardware profiles
-        auto& la2a = AnalogEmulation::HardwareProfileLibrary::getLA2A();
+        auto& opto = AnalogEmulation::HardwareProfileLibrary::getOptoCompressor();
         auto& studer = AnalogEmulation::HardwareProfileLibrary::getStuderA800();
 
         // Use DC blocker

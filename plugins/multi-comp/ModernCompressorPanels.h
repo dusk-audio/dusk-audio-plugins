@@ -533,7 +533,7 @@ private:
 };
 
 //==============================================================================
-// Multiband Compressor Panel - Modern digital design inspired by FabFilter Pro-MB
+// Multiband Compressor Panel - Modern digital design with per-band controls
 //==============================================================================
 class MultibandCompressorPanel : public juce::Component, private juce::Timer
 {
