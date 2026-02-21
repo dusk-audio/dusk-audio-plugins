@@ -11,9 +11,9 @@
     - Harmonic spectrum analysis
 
     Compare against reference measurements from:
-    - LA-2A: THD < 0.5% @ +10dBm, 2nd harmonic dominant
-    - 1176: THD < 0.5% @ limiting, odd harmonics
-    - SSL Bus: THD < 0.01% @ 0dB GR, 0.1% @ 12dB GR
+    - Opto compressor: THD < 0.5% @ +10dBm, 2nd harmonic dominant
+    - FET compressor: THD < 0.5% @ limiting, odd harmonics
+    - VCA Bus compressor: THD < 0.01% @ 0dB GR, 0.1% @ 12dB GR
 
   ==============================================================================
 */
@@ -189,10 +189,10 @@ void testWaveshaperCurves()
     };
 
     std::array<CurveTest, 5> curves = {{
-        {HardwareEmulation::WaveshaperCurves::CurveType::LA2A_Tube, "LA-2A Tube", 0.5},
-        {HardwareEmulation::WaveshaperCurves::CurveType::FET_1176, "1176 FET", 0.5},
-        {HardwareEmulation::WaveshaperCurves::CurveType::DBX_VCA, "DBX VCA", 0.1},
-        {HardwareEmulation::WaveshaperCurves::CurveType::SSL_Bus, "SSL Bus", 0.1},
+        {HardwareEmulation::WaveshaperCurves::CurveType::Opto_Tube, "Opto Tube", 0.5},
+        {HardwareEmulation::WaveshaperCurves::CurveType::FET, "FET", 0.5},
+        {HardwareEmulation::WaveshaperCurves::CurveType::Classic_VCA, "VCA", 0.1},
+        {HardwareEmulation::WaveshaperCurves::CurveType::Console_Bus, "Console Bus", 0.1},
         {HardwareEmulation::WaveshaperCurves::CurveType::Transformer, "Transformer", 0.3}
     }};
 
@@ -236,11 +236,11 @@ void testTransformerEmulation()
     HardwareEmulation::TransformerEmulation transformer;
     transformer.prepare(SAMPLE_RATE, 1);
 
-    // Test with LA-2A transformer profile
-    transformer.setProfile(HardwareEmulation::HardwareProfiles::getLA2A().inputTransformer);
+    // Test with opto compressor transformer profile
+    transformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().inputTransformer);
     transformer.setEnabled(true);
 
-    std::cout << "LA-2A Input Transformer:\n";
+    std::cout << "Opto Compressor Input Transformer:\n";
     std::cout << std::string(50, '-') << "\n";
 
     // Test at various input levels
@@ -342,9 +342,9 @@ void testConvolutionEngine()
     };
 
     std::array<IRTest, 4> irs = {{
-        {HardwareEmulation::ShortConvolution::TransformerType::LA2A, "LA-2A"},
-        {HardwareEmulation::ShortConvolution::TransformerType::FET_1176, "1176"},
-        {HardwareEmulation::ShortConvolution::TransformerType::SSL_Console, "SSL"},
+        {HardwareEmulation::ShortConvolution::TransformerType::Opto, "Opto"},
+        {HardwareEmulation::ShortConvolution::TransformerType::FET, "FET"},
+        {HardwareEmulation::ShortConvolution::TransformerType::Console_Bus, "Console"},
         {HardwareEmulation::ShortConvolution::TransformerType::Generic, "Generic"}
     }};
 
@@ -399,22 +399,22 @@ void printReferenceComparison()
 {
     std::cout << "\n=== Reference Measurements (Target Values) ===\n\n";
 
-    std::cout << "LA-2A (Teletronix):\n";
+    std::cout << "Opto Compressor:\n";
     std::cout << "  - THD @ +10dBm: < 0.5% (0.25% typical)\n";
     std::cout << "  - 2nd harmonic dominant (tube character)\n";
     std::cout << "  - HF rolloff: -3dB @ 15-18kHz\n\n";
 
-    std::cout << "1176 Rev A (UREI):\n";
+    std::cout << "FET Compressor:\n";
     std::cout << "  - THD @ limiting: < 0.5%\n";
     std::cout << "  - Odd harmonics dominant (FET character)\n";
     std::cout << "  - All-buttons: 3x harmonic content\n\n";
 
-    std::cout << "SSL G-Bus Compressor:\n";
+    std::cout << "VCA Bus Compressor:\n";
     std::cout << "  - THD @ 0dB GR: 0.01%\n";
     std::cout << "  - THD @ 12dB GR: 0.1%\n";
     std::cout << "  - Very clean, subtle coloration\n\n";
 
-    std::cout << "DBX 160:\n";
+    std::cout << "Classic VCA Compressor:\n";
     std::cout << "  - THD: < 0.1% (very clean VCA)\n";
     std::cout << "  - Minimal harmonic distortion\n";
     std::cout << "  - Transparent compression\n\n";

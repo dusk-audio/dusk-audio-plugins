@@ -5,8 +5,8 @@
 #include "MultiQLookAndFeel.h"
 #include "EQGraphicDisplay.h"
 #include "BritishEQCurveDisplay.h"
-#include "PultecCurveDisplay.h"
-#include "PultecLookAndFeel.h"
+#include "TubeEQCurveDisplay.h"
+#include "TubeEQLookAndFeel.h"
 #include "VintageTubeEQLookAndFeel.h"
 #include "BandDetailPanel.h"
 #include "../shared/SupportersOverlay.h"
@@ -47,7 +47,7 @@ private:
     MultiQ& processor;
     MultiQLookAndFeel lookAndFeel;
     FourKLookAndFeel fourKLookAndFeel;  // For British mode sliders
-    PultecLookAndFeel pultecLookAndFeel;  // For Pultec/Tube mode knobs (legacy)
+    TubeEQLookAndFeel tubeEQLookAndFeel;  // For Tube EQ mode knobs (legacy)
     VintageTubeEQLookAndFeel vintageTubeLookAndFeel;  // For Vintage Tube EQ style
 
     // Resizable UI helper (shared across all Dusk Audio plugins)
@@ -56,7 +56,7 @@ private:
     // Graphic display
     std::unique_ptr<EQGraphicDisplay> graphicDisplay;
 
-    // Band detail panel (Waves F6 style - band selector + single-row controls)
+    // Band detail panel (band selector + single-row controls)
     std::unique_ptr<BandDetailPanel> bandDetailPanel;
 
     // British mode curve display (4K-EQ style)
@@ -203,7 +203,7 @@ private:
 
     // Track current EQ mode for UI switching
     bool isBritishMode = false;
-    bool isPultecMode = false;
+    bool isTubeEQMode = false;
     // Note: Digital mode (default) includes per-band dynamics capability
 
     // ============== PER-BAND DYNAMICS CONTROLS ==============
@@ -246,79 +246,79 @@ private:
     juce::ValueTree britishStateA, britishStateB;  // Stored parameter states for British mode
     void toggleBritishAB();
 
-    // ============== PULTEC/TUBE MODE CONTROLS ==============
-    // Pultec mode curve display
-    std::unique_ptr<PultecCurveDisplay> pultecCurveDisplay;
+    // ============== TUBE EQ MODE CONTROLS ==============
+    // Tube EQ mode curve display
+    std::unique_ptr<TubeEQCurveDisplay> tubeEQCurveDisplay;
 
     // LF Section
-    std::unique_ptr<juce::Slider> pultecLfBoostSlider;
-    std::unique_ptr<juce::ComboBox> pultecLfFreqSelector;
-    std::unique_ptr<juce::Slider> pultecLfAttenSlider;
+    std::unique_ptr<juce::Slider> tubeEQLfBoostSlider;
+    std::unique_ptr<juce::ComboBox> tubeEQLfFreqSelector;
+    std::unique_ptr<juce::Slider> tubeEQLfAttenSlider;
 
     // HF Boost Section
-    std::unique_ptr<juce::Slider> pultecHfBoostSlider;
-    std::unique_ptr<juce::ComboBox> pultecHfBoostFreqSelector;
-    std::unique_ptr<juce::Slider> pultecHfBandwidthSlider;
+    std::unique_ptr<juce::Slider> tubeEQHfBoostSlider;
+    std::unique_ptr<juce::ComboBox> tubeEQHfBoostFreqSelector;
+    std::unique_ptr<juce::Slider> tubeEQHfBandwidthSlider;
 
     // HF Atten Section
-    std::unique_ptr<juce::Slider> pultecHfAttenSlider;
-    std::unique_ptr<juce::ComboBox> pultecHfAttenFreqSelector;
+    std::unique_ptr<juce::Slider> tubeEQHfAttenSlider;
+    std::unique_ptr<juce::ComboBox> tubeEQHfAttenFreqSelector;
 
-    // Global Pultec controls
-    std::unique_ptr<juce::Slider> pultecInputGainSlider;
-    std::unique_ptr<juce::Slider> pultecOutputGainSlider;
-    std::unique_ptr<juce::Slider> pultecTubeDriveSlider;
+    // Global Tube EQ controls
+    std::unique_ptr<juce::Slider> tubeEQInputGainSlider;
+    std::unique_ptr<juce::Slider> tubeEQOutputGainSlider;
+    std::unique_ptr<juce::Slider> tubeEQTubeDriveSlider;
 
     // Mid Dip/Peak Section controls
-    std::unique_ptr<juce::ToggleButton> pultecMidEnabledButton;
-    std::unique_ptr<juce::ComboBox> pultecMidLowFreqSelector;   // Dropdown for LOW FREQ (200-1000 Hz)
-    std::unique_ptr<juce::Slider> pultecMidLowPeakSlider;
-    std::unique_ptr<juce::ComboBox> pultecMidDipFreqSelector;   // Dropdown for DIP FREQ (200-2000 Hz)
-    std::unique_ptr<juce::Slider> pultecMidDipSlider;
-    std::unique_ptr<juce::ComboBox> pultecMidHighFreqSelector;  // Dropdown for HIGH FREQ (1500-5000 Hz)
-    std::unique_ptr<juce::Slider> pultecMidHighPeakSlider;
+    std::unique_ptr<juce::ToggleButton> tubeEQMidEnabledButton;
+    std::unique_ptr<juce::ComboBox> tubeEQMidLowFreqSelector;   // Dropdown for LOW FREQ (200-1000 Hz)
+    std::unique_ptr<juce::Slider> tubeEQMidLowPeakSlider;
+    std::unique_ptr<juce::ComboBox> tubeEQMidDipFreqSelector;   // Dropdown for DIP FREQ (200-2000 Hz)
+    std::unique_ptr<juce::Slider> tubeEQMidDipSlider;
+    std::unique_ptr<juce::ComboBox> tubeEQMidHighFreqSelector;  // Dropdown for HIGH FREQ (1500-5000 Hz)
+    std::unique_ptr<juce::Slider> tubeEQMidHighPeakSlider;
 
-    // Pultec section labels
-    juce::Label pultecLfLabel, pultecHfBoostLabel, pultecHfAttenLabel, pultecMasterLabel;
-    juce::Label pultecLfBoostKnobLabel, pultecLfFreqKnobLabel, pultecLfAttenKnobLabel;
-    juce::Label pultecHfBoostKnobLabel, pultecHfBoostFreqKnobLabel, pultecHfBwKnobLabel;
-    juce::Label pultecHfAttenKnobLabel, pultecHfAttenFreqKnobLabel;
-    juce::Label pultecInputKnobLabel, pultecOutputKnobLabel, pultecTubeKnobLabel;
+    // Tube EQ section labels
+    juce::Label tubeEQLfLabel, tubeEQHfBoostLabel, tubeEQHfAttenLabel, tubeEQMasterLabel;
+    juce::Label tubeEQLfBoostKnobLabel, tubeEQLfFreqKnobLabel, tubeEQLfAttenKnobLabel;
+    juce::Label tubeEQHfBoostKnobLabel, tubeEQHfBoostFreqKnobLabel, tubeEQHfBwKnobLabel;
+    juce::Label tubeEQHfAttenKnobLabel, tubeEQHfAttenFreqKnobLabel;
+    juce::Label tubeEQInputKnobLabel, tubeEQOutputKnobLabel, tubeEQTubeKnobLabel;
 
     // Mid section labels
-    juce::Label pultecMidLowFreqLabel, pultecMidLowPeakLabel;
-    juce::Label pultecMidDipFreqLabel, pultecMidDipLabel;
-    juce::Label pultecMidHighFreqLabel, pultecMidHighPeakLabel;
+    juce::Label tubeEQMidLowFreqLabel, tubeEQMidLowPeakLabel;
+    juce::Label tubeEQMidDipFreqLabel, tubeEQMidDipLabel;
+    juce::Label tubeEQMidHighFreqLabel, tubeEQMidHighPeakLabel;
 
-    // Pultec mode attachments
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecLfBoostAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pultecLfFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecLfAttenAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecHfBoostAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pultecHfBoostFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecHfBandwidthAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecHfAttenAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pultecHfAttenFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecInputGainAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecOutputGainAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecTubeDriveAttachment;
+    // Tube EQ mode attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQLfBoostAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tubeEQLfFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQLfAttenAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQHfBoostAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tubeEQHfBoostFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQHfBandwidthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQHfAttenAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tubeEQHfAttenFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQInputGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQOutputGainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQTubeDriveAttachment;
 
     // Mid section attachments
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> pultecMidEnabledAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pultecMidLowFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecMidLowPeakAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pultecMidDipFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecMidDipAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pultecMidHighFreqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pultecMidHighPeakAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeEQMidEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tubeEQMidLowFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQMidLowPeakAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tubeEQMidDipFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQMidDipAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tubeEQMidHighFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tubeEQMidHighPeakAttachment;
 
-    bool pultecCurveCollapsed = false;  // Track collapse state for Pultec mode
+    bool tubeEQCurveCollapsed = false;  // Track collapse state for Tube EQ mode
 
     // Tube mode header controls (A/B, Preset, HQ)
     juce::TextButton tubeAbButton;
     juce::ComboBox tubePresetSelector;  // Preset selector for Tube mode
     std::unique_ptr<juce::ToggleButton> tubeHqButton;
-    juce::TextButton pultecCurveCollapseButton;  // "Hide Graph" / "Show Graph" for Tube mode
+    juce::TextButton tubeEQCurveCollapseButton;  // "Hide Graph" / "Show Graph" for Tube mode
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeHqAttachment;
 
     // A/B comparison state
@@ -379,9 +379,9 @@ private:
     void applyBritishPreset(int presetId);  // Apply British mode factory preset
     void applyTubePreset(int presetId);     // Apply Tube mode factory preset
 
-    // Pultec mode helpers
-    void setupPultecControls();
-    void layoutPultecControls();
+    // Tube EQ mode helpers
+    void setupTubeEQControls();
+    void layoutTubeEQControls();
 
     // Unified toolbar layout (called from resized() for all modes)
     void layoutUnifiedToolbar();

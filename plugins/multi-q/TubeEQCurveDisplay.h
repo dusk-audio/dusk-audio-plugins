@@ -5,21 +5,21 @@
 
 //==============================================================================
 /**
- * Pultec EQ Curve Display Component
+ * Tube EQ Curve Display Component
  *
- * Displays frequency response graph for Pultec (Tube) mode showing:
- * - LF Boost and Atten curves (showing the famous "Pultec trick")
+ * Displays frequency response graph for Tube EQ mode showing:
+ * - LF Boost and Atten curves (showing the famous boost/cut trick)
  * - HF Boost curve with bandwidth visualization
  * - HF Atten shelf curve
  * - Combined frequency response with vintage cream/gold styling
  * - Vintage-style grid with tube-era aesthetic
  */
-class PultecCurveDisplay : public juce::Component,
+class TubeEQCurveDisplay : public juce::Component,
                            private juce::Timer
 {
 public:
-    explicit PultecCurveDisplay(MultiQ& processor);
-    ~PultecCurveDisplay() override;
+    explicit TubeEQCurveDisplay(MultiQ& processor);
+    ~TubeEQCurveDisplay() override;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -75,12 +75,12 @@ private:
                        juce::Colour color, std::function<float(float)> getMagnitude);
     void drawCombinedCurve(juce::Graphics& g, const juce::Rectangle<float>& area);
 
-    // Filter response calculations (matching Pultec characteristics)
+    // Filter response calculations (matching passive tube EQ characteristics)
     float calculateLFBoostResponse(float freq) const;
     float calculateLFAttenResponse(float freq) const;
     float calculateHFBoostResponse(float freq) const;
     float calculateHFAttenResponse(float freq) const;
     float calculateCombinedResponse(float freq) const;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PultecCurveDisplay)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TubeEQCurveDisplay)
 };

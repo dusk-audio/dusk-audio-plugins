@@ -6,7 +6,7 @@
 #include <memory>
 #include "EQBand.h"
 #include "BritishEQProcessor.h"
-#include "PultecProcessor.h"
+#include "TubeEQProcessor.h"
 #include "DynamicEQProcessor.h"
 #include "LinearPhaseEQProcessor.h"
 #include "MultiQPresets.h"
@@ -243,7 +243,7 @@ private:
     int oversamplingMode = 0;  // 0=Off, 1=2x, 2=4x
     bool oversamplerReady = false;  // Flag to track if oversamplers are initialized
 
-    // Pre-allocated scratch buffer for British/Pultec processing (avoids heap alloc in processBlock)
+    // Pre-allocated scratch buffer for British/Tube EQ processing (avoids heap alloc in processBlock)
     juce::AudioBuffer<float> scratchBuffer;
     int maxOversampledBlockSize = 0;  // Maximum block size after oversampling
 
@@ -326,31 +326,31 @@ private:
     BritishEQProcessor britishEQ;
     std::atomic<bool> britishParamsChanged{true};
 
-    // Pultec EQ processor
-    PultecProcessor pultecEQ;
-    std::atomic<bool> pultecParamsChanged{true};
+    // Tube EQ processor
+    TubeEQProcessor tubeEQ;
+    std::atomic<bool> tubeEQParamsChanged{true};
 
-    // Pultec mode specific parameters
-    std::atomic<float>* pultecLfBoostGainParam = nullptr;
-    std::atomic<float>* pultecLfBoostFreqParam = nullptr;
-    std::atomic<float>* pultecLfAttenGainParam = nullptr;
-    std::atomic<float>* pultecHfBoostGainParam = nullptr;
-    std::atomic<float>* pultecHfBoostFreqParam = nullptr;
-    std::atomic<float>* pultecHfBoostBandwidthParam = nullptr;
-    std::atomic<float>* pultecHfAttenGainParam = nullptr;
-    std::atomic<float>* pultecHfAttenFreqParam = nullptr;
-    std::atomic<float>* pultecInputGainParam = nullptr;
-    std::atomic<float>* pultecOutputGainParam = nullptr;
-    std::atomic<float>* pultecTubeDriveParam = nullptr;
+    // Tube EQ mode specific parameters
+    std::atomic<float>* tubeEQLfBoostGainParam = nullptr;
+    std::atomic<float>* tubeEQLfBoostFreqParam = nullptr;
+    std::atomic<float>* tubeEQLfAttenGainParam = nullptr;
+    std::atomic<float>* tubeEQHfBoostGainParam = nullptr;
+    std::atomic<float>* tubeEQHfBoostFreqParam = nullptr;
+    std::atomic<float>* tubeEQHfBoostBandwidthParam = nullptr;
+    std::atomic<float>* tubeEQHfAttenGainParam = nullptr;
+    std::atomic<float>* tubeEQHfAttenFreqParam = nullptr;
+    std::atomic<float>* tubeEQInputGainParam = nullptr;
+    std::atomic<float>* tubeEQOutputGainParam = nullptr;
+    std::atomic<float>* tubeEQTubeDriveParam = nullptr;
 
-    // Pultec Mid Dip/Peak section parameters
-    std::atomic<float>* pultecMidEnabledParam = nullptr;
-    std::atomic<float>* pultecMidLowFreqParam = nullptr;
-    std::atomic<float>* pultecMidLowPeakParam = nullptr;
-    std::atomic<float>* pultecMidDipFreqParam = nullptr;
-    std::atomic<float>* pultecMidDipParam = nullptr;
-    std::atomic<float>* pultecMidHighFreqParam = nullptr;
-    std::atomic<float>* pultecMidHighPeakParam = nullptr;
+    // Tube EQ Mid Dip/Peak section parameters
+    std::atomic<float>* tubeEQMidEnabledParam = nullptr;
+    std::atomic<float>* tubeEQMidLowFreqParam = nullptr;
+    std::atomic<float>* tubeEQMidLowPeakParam = nullptr;
+    std::atomic<float>* tubeEQMidDipFreqParam = nullptr;
+    std::atomic<float>* tubeEQMidDipParam = nullptr;
+    std::atomic<float>* tubeEQMidHighFreqParam = nullptr;
+    std::atomic<float>* tubeEQMidHighPeakParam = nullptr;
 
     // Dynamic EQ processor
     DynamicEQProcessor dynamicEQ;

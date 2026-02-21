@@ -3,7 +3,7 @@
 #include <cmath>
 
 // Helper function to prevent frequency cramping at high frequencies
-// Based on SSL-style analog prototype matching for accurate HF response
+// Based on console-style analog prototype matching for accurate HF response
 static float preWarpFrequency(float freq, double sampleRate)
 {
     const float nyquist = static_cast<float>(sampleRate * 0.5);
@@ -12,7 +12,7 @@ static float preWarpFrequency(float freq, double sampleRate)
     const float omega = juce::MathConstants<float>::pi * freq / static_cast<float>(sampleRate);
     float warpedFreq = static_cast<float>(sampleRate) / juce::MathConstants<float>::pi * std::tan(omega);
 
-    // SSL-specific high-frequency compensation (tuned to match hardware measurements)
+    // Console-specific high-frequency compensation (tuned to match hardware measurements)
     // Applies progressive correction above 3kHz to maintain shelf shape
     if (freq > 3000.0f)
     {
@@ -137,7 +137,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    // High-pass filter - SSL 4000 E style (skew optimized for SSL tick values)
+    // High-pass filter - 4K E-series style (skew optimized for console tick values)
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hpf_freq", "HPF Frequency",
         juce::NormalisableRange<float>(20.0f, 500.0f, 1.0f, 0.58f),
@@ -145,7 +145,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "hpf_enabled", "HPF Enabled", false));  // Off by default - truly bypassed
 
-    // Low-pass filter - SSL 4000 E style
+    // Low-pass filter - 4K E-series style
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lpf_freq", "LPF Frequency",
         juce::NormalisableRange<float>(3000.0f, 20000.0f, 1.0f, 0.57f),
@@ -154,7 +154,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         "lpf_enabled", "LPF Enabled", false));  // Off by default - truly bypassed
 
     // Low frequency band
-    // SSL specs: ±15dB (Brown E-series), ±18dB (Black G-series)
+    // Hardware specs: ±15dB (Brown E-series), ±18dB (Black G-series)
     // Using ±20dB range to accommodate both variants with headroom
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lf_gain", "LF Gain",
@@ -162,7 +162,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lf_freq", "LF Frequency",
-        // SSL Hardware: 30-480Hz - skew 0.51 optimized for SSL tick values
+        // Hardware: 30-480Hz - skew 0.51 optimized for console tick values
         juce::NormalisableRange<float>(30.0f, 480.0f, 1.0f, 0.51f),
         100.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -175,12 +175,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lm_freq", "LM Frequency",
-        // SSL 4000 E style - skew 0.68 optimized for SSL tick values
+        // 4K E-series style - skew 0.68 optimized for console tick values
         juce::NormalisableRange<float>(200.0f, 2500.0f, 1.0f, 0.68f),
         600.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "lm_q", "LM Q",
-        // SSL Hardware: Typical Q range 0.4-4.0 (realistic for both Brown and Black)
+        // Hardware: Typical Q range 0.4-4.0 (realistic for both Brown and Black)
         juce::NormalisableRange<float>(0.4f, 4.0f, 0.01f),
         0.7f));
 
@@ -192,12 +192,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hm_freq", "HM Frequency",
-        // SSL 4000 E style - skew 0.93 optimized for SSL tick values
+        // 4K E-series style - skew 0.93 optimized for console tick values
         juce::NormalisableRange<float>(600.0f, 7000.0f, 1.0f, 0.93f),
         2000.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hm_q", "HM Q",
-        // SSL Hardware: Typical Q range 0.4-4.0 (realistic for both Brown and Black)
+        // Hardware: Typical Q range 0.4-4.0 (realistic for both Brown and Black)
         juce::NormalisableRange<float>(0.4f, 4.0f, 0.01f),
         0.7f));
 
@@ -208,7 +208,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
         0.0f, "dB"));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hf_freq", "HF Frequency",
-        // SSL 4000 E style - skew 1.73 optimized for SSL tick values (1.5kHz-16kHz)
+        // 4K E-series style - skew 1.73 optimized for console tick values (1.5kHz-16kHz)
         juce::NormalisableRange<float>(1500.0f, 16000.0f, 1.0f, 1.73f),
         8000.0f, "Hz"));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -230,7 +230,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "saturation", "Saturation",
         juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f),
-        0.0f, "%"));  // SSL is clean by default - only saturates when driven
+        0.0f, "%"));  // Console is clean by default - only saturates when driven
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         "oversampling", "Oversampling", juce::StringArray("2x", "4x"), 0));
 
@@ -275,7 +275,7 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     // Adaptive oversampling based on sample rate
     // At very high sample rates, oversampling provides diminishing returns for aliasing
-    // while significantly increasing CPU load. Smart adaptation matches UAD behavior:
+    // while significantly increasing CPU load. Smart adaptation:
     //
     // 44.1/48kHz:    Allow user choice of 2x or 4x (aliasing is a concern)
     // 88.2/96kHz:    Force 2x maximum (already high Nyquist, 4x wasteful)
@@ -312,7 +312,7 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     if (needsRecreate)
     {
-        // Initialize oversampling with high-quality FIR filters for better anti-aliasing
+        // Initialize oversampling with FIR equiripple filters for anti-aliasing
         // FIR equiripple provides superior alias rejection compared to IIR, essential for aggressive saturation
         oversampler2x = std::make_unique<juce::dsp::Oversampling<float>>(
             getTotalNumInputChannels(), 1,
@@ -355,9 +355,9 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     lfFilter.prepare(spec);
     lmFilter.prepare(spec);
 
-    // Initialize SSL saturation with oversampled rate
-    sslSaturation.setSampleRate(spec.sampleRate);
-    sslSaturation.reset();
+    // Initialize console saturation with oversampled rate
+    consoleSaturation.setSampleRate(spec.sampleRate);
+    consoleSaturation.reset();
 
     // Initialize transformer phase shift
     // E-series has transformers, G-series is transformerless
@@ -618,8 +618,8 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
                 processSample = hpfFilter.processSample(processSample, useLeftFilter);
             }
 
-            // Apply 4-band EQ (no per-band saturation - removed for SSL accuracy)
-            // Real SSL console saturation is from the channel strip, not individual EQ bands
+            // Apply 4-band EQ (no per-band saturation - removed for accuracy)
+            // Real console saturation is from the channel strip, not individual EQ bands
             processSample = lfFilter.processSample(processSample, useLeftFilter);
             processSample = lmFilter.processSample(processSample, useLeftFilter);
             processSample = hmFilter.processSample(processSample, useLeftFilter);
@@ -642,10 +642,10 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
                 processSample = phaseShift.processSample(processSample, useLeftFilter);
             }
 
-            // Apply global SSL saturation (user-controlled amount)
+            // Apply global console saturation (user-controlled amount)
             float satAmount = saturationParam->load() * 0.01f;  // 0-100% to 0.0-1.0
             if (satAmount > 0.001f)
-                processSample = sslSaturation.processSample(processSample, satAmount, useLeftFilter);
+                processSample = consoleSaturation.processSample(processSample, satAmount, useLeftFilter);
 
             channelData[sample] = processSample;
         }
@@ -658,7 +658,7 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
     }
 
     // Apply stereo crosstalk (before M/S decode)
-    // SSL consoles have ~-60dB crosstalk between channels due to:
+    // Analog consoles have ~-60dB crosstalk between channels due to:
     // - PCB trace proximity
     // - Shared power supply rails
     // - Magnetic coupling in transformers
@@ -736,12 +736,12 @@ void FourKEQ::updateFilters()
     // Optimized: Only update filters that have changed (per-band dirty flags)
     double oversampledRate = currentSampleRate * oversamplingFactor;
 
-    // Update SSL saturation console type based on EQ type
+    // Update saturation console type based on EQ type
     if (eqTypeParam)
     {
         bool isBlack = eqTypeParam->load() > 0.5f;
-        sslSaturation.setConsoleType(isBlack ? SSLSaturation::ConsoleType::GSeries
-                                              : SSLSaturation::ConsoleType::ESeries);
+        consoleSaturation.setConsoleType(isBlack ? ConsoleSaturation::ConsoleType::GSeries
+                                              : ConsoleSaturation::ConsoleType::ESeries);
     }
 
     if (hpfDirty.load())
@@ -788,9 +788,9 @@ void FourKEQ::updateHPF(double sampleRate)
 
     float freq = cachedParams.hpfFreq;
 
-    // SSL HPF: Both Brown (E-series) and Black (G-series) use 18dB/oct
+    // Console HPF: Both Brown (E-series) and Black (G-series) use 18dB/oct
     // Note: Some conflicting sources suggest Brown = 12dB/oct, but most measurements
-    // and official SSL documentation confirm 18dB/oct for both variants
+    // and hardware documentation confirm 18dB/oct for both variants
     //
     // Implementation: 3rd-order (1st-order + 2nd-order cascade)
     // Stage 1: 1st-order highpass (6dB/oct)
@@ -802,13 +802,13 @@ void FourKEQ::updateHPF(double sampleRate)
     }
 
     // Stage 2: 2nd-order highpass (12dB/oct)
-    // SSL uses a custom slightly underdamped response (NOT standard Butterworth Q=0.707)
+    // Uses a custom slightly underdamped response (NOT standard Butterworth Q=0.707)
     // This creates subtle resonance/"punch" at the cutoff frequency
-    // Measured from real SSL hardware: Q ≈ 0.54 (between critically damped and Butterworth)
-    // This is what gives SSL HPFs their characteristic "musical" sound vs. generic filters
-    const float sslHPFQ = 0.54f;  // SSL-specific Q for musical character
+    // Measured from real console hardware: Q ≈ 0.54 (between critically damped and Butterworth)
+    // This is what gives the HPF its characteristic "musical" sound vs. generic filters
+    const float consoleHPFQ = 0.54f;  // Console-specific Q for musical character
     auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(
-        sampleRate, freq, sslHPFQ);
+        sampleRate, freq, consoleHPFQ);
 
     if (coeffs2nd)
     {
@@ -831,7 +831,7 @@ void FourKEQ::updateLPF(double sampleRate)
         processFreq = preWarpFrequency(freq, sampleRate);
     }
 
-    // SSL LPF characteristics differ between E and G series:
+    // Console LPF characteristics differ between E and G series:
     //
     // Brown (E-series): 12dB/oct, maximally flat Butterworth response (Q=0.707)
     // - Gentler, more "musical" rolloff
@@ -842,7 +842,7 @@ void FourKEQ::updateLPF(double sampleRate)
     // - More "focused" sound with slight presence boost before rolloff
     // - This is OPPOSITE to the HPF - G-series LPF has HIGHER Q for character
     //
-    // Note: Both are 12dB/oct (2nd-order), difference is in the Q value
+    // Note: Both are 12dB/oct (2nd-order), the difference is in the Q value
     float q = isBlack ? 0.8f : 0.707f;  // Black has subtle resonance, Brown is flat
 
     auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(
@@ -867,15 +867,15 @@ void FourKEQ::updateLFBand(double sampleRate)
 
     if (isBlack && isBell)
     {
-        // Bell mode in Black variant - use SSL peak coefficients
-        auto coeffs = makeSSLPeak(sampleRate, freq, 0.7f, gain, isBlack);
+        // Bell mode in Black variant - use console peak coefficients
+        auto coeffs = makeConsolePeak(sampleRate, freq, 0.7f, gain, isBlack);
         lfFilter.filter.coefficients = coeffs;
         lfFilter.filterR.coefficients = coeffs;
     }
     else
     {
-        // Shelf mode - use SSL shelf coefficients
-        auto coeffs = makeSSLShelf(sampleRate, freq, 0.7f, gain, false, isBlack);
+        // Shelf mode - use console shelf coefficients
+        auto coeffs = makeConsoleShelf(sampleRate, freq, 0.7f, gain, false, isBlack);
         lfFilter.filter.coefficients = coeffs;
         lfFilter.filterR.coefficients = coeffs;
     }
@@ -891,7 +891,7 @@ void FourKEQ::updateLMBand(double sampleRate)
     float q = cachedParams.lmQ;
     bool isBlack = (cachedParams.eqType > 0.5f);
 
-    // Brown vs Black mode differences (per SSL E-series vs G-series specs)
+    // Brown vs Black mode differences (per E-series vs G-series specs)
     if (isBlack)
     {
         // Black (G-series): Proportional Q - increases with gain for surgical precision
@@ -899,8 +899,8 @@ void FourKEQ::updateLMBand(double sampleRate)
     }
     // else: Brown (E-series): Fixed Q - no proportionality, maintains constant bandwidth
 
-    // Use SSL-specific peak coefficients
-    auto coeffs = makeSSLPeak(sampleRate, freq, q, gain, isBlack);
+    // Use console-specific peak coefficients
+    auto coeffs = makeConsolePeak(sampleRate, freq, q, gain, isBlack);
 
     lmFilter.filter.coefficients = coeffs;
     lmFilter.filterR.coefficients = coeffs;
@@ -916,7 +916,7 @@ void FourKEQ::updateHMBand(double sampleRate)
     float q = cachedParams.hmQ;
     bool isBlack = (cachedParams.eqType > 0.5f);
 
-    // Brown vs Black mode differences (per SSL E-series vs G-series specs)
+    // Brown vs Black mode differences (per E-series vs G-series specs)
     if (isBlack)
     {
         // Black (G-series): Proportional Q, extended frequency range (up to 13kHz)
@@ -926,7 +926,7 @@ void FourKEQ::updateHMBand(double sampleRate)
     else
     {
         // Brown (E-series): Fixed Q, limited to 7kHz
-        // No proportionality - maintains constant bandwidth per SSL E-series design
+        // No proportionality - maintains constant bandwidth per E-series design
         // Soft-limit frequency for Brown mode character
         if (freq > 7000.0f) {
             freq = 7000.0f;
@@ -939,8 +939,8 @@ void FourKEQ::updateHMBand(double sampleRate)
         processFreq = preWarpFrequency(freq, sampleRate);
     }
 
-    // Use SSL-specific peak coefficients
-    auto coeffs = makeSSLPeak(sampleRate, processFreq, q, gain, isBlack);
+    // Use console-specific peak coefficients
+    auto coeffs = makeConsolePeak(sampleRate, processFreq, q, gain, isBlack);
 
     hmFilter.filter.coefficients = coeffs;
     hmFilter.filterR.coefficients = coeffs;
@@ -961,15 +961,15 @@ void FourKEQ::updateHFBand(double sampleRate)
 
     if (isBlack && isBell)
     {
-        // Bell mode in Black variant - use SSL peak coefficients
-        auto coeffs = makeSSLPeak(sampleRate, warpedFreq, 0.7f, gain, isBlack);
+        // Bell mode in Black variant - use console peak coefficients
+        auto coeffs = makeConsolePeak(sampleRate, warpedFreq, 0.7f, gain, isBlack);
         hfFilter.filter.coefficients = coeffs;
         hfFilter.filterR.coefficients = coeffs;
     }
     else
     {
-        // Shelf mode - use SSL shelf coefficients
-        auto coeffs = makeSSLShelf(sampleRate, warpedFreq, 0.7f, gain, true, isBlack);
+        // Shelf mode - use console shelf coefficients
+        auto coeffs = makeConsoleShelf(sampleRate, warpedFreq, 0.7f, gain, true, isBlack);
         hfFilter.filter.coefficients = coeffs;
         hfFilter.filterR.coefficients = coeffs;
     }
@@ -977,14 +977,14 @@ void FourKEQ::updateHFBand(double sampleRate)
 
 float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
 {
-    // SSL Black mode proportional Q behavior (from hardware measurements):
+    // Black mode proportional Q behavior (from hardware measurements):
     // Q INCREASES with gain amount - higher gain = narrower bandwidth = more focused
-    // This is opposite to many generic EQs and is key to SSL's surgical character
-    // Reference: SSL G-Series manual, UAD/Waves emulation analysis
+    // This is opposite to many generic EQs and is key to the console's surgical character
+    // Reference: G-Series manual, hardware emulation analysis
 
     float absGain = std::abs(gain);
 
-    // Scale factors tuned to match SSL hardware measurements
+    // Scale factors tuned to match console hardware measurements
     // Black mode: Aggressive proportional Q (1.5-2.0x at full gain)
     float scale;
     if (gain >= 0.0f)
@@ -1001,14 +1001,14 @@ float FourKEQ::calculateDynamicQ(float gain, float baseQ) const
     }
 
     // Apply proportional Q: dynamicQ = baseQ * (1 + normalized_gain * scale)
-    // Using ±20dB range (slightly exceeds hardware ±15/18dB for headroom)
+    // Using +/-20dB range (slightly exceeds hardware +/-15/18dB for headroom)
     float dynamicQ = baseQ * (1.0f + (absGain / 20.0f) * scale);
 
     // Limit to practical range: 0.5 (broad) to 8.0 (surgical)
     return juce::jlimit(0.5f, 8.0f, dynamicQ);
 }
 
-// Old saturation functions removed - now using SSLSaturation class for accurate modeling
+// Old saturation functions removed - now using ConsoleSaturation class for accurate modeling
 
 float FourKEQ::calculateAutoGainCompensation() const
 {
@@ -1085,14 +1085,14 @@ float FourKEQ::calculateAutoGainCompensation() const
 }
 
 //==============================================================================
-// SSL-Specific Filter Coefficient Generation
+// Console-Specific Filter Coefficient Generation
 // Based on hardware measurements and analog prototype matching
 //==============================================================================
 
-juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
+juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeConsoleShelf(
     double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
 {
-    // SSL shelves have characteristic asymmetric response differences between modes:
+    // Console shelves have characteristic asymmetric response differences between modes:
     // Black mode (G-series): Steeper, more focused shelves for precise tonal shaping
     // Brown mode (E-series): Gentler, broader shelves for musical warmth
     //
@@ -1104,32 +1104,32 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
     float cosw0 = std::cos(w0);
     float sinw0 = std::sin(w0);
 
-    // SSL-specific shelf Q: FIXED for both modes (no gain dependency)
-    float sslQ = q;
+    // Console-specific shelf Q: FIXED for both modes (no gain dependency)
+    float consoleQ = q;
     if (isBlackMode)
     {
         // Black mode (G-series): Steeper, more focused shelves
         // Higher Q = steeper transition = more "modern" sound
-        sslQ *= 1.4f;  // Fixed multiplier - characteristic G-series shelf slope
+        consoleQ *= 1.4f;  // Fixed multiplier - characteristic G-series shelf slope
     }
     else
     {
         // Brown mode (E-series): Gentler, broader shelves
         // Lower Q = gentler transition = more "vintage/musical" sound
-        sslQ *= 0.65f;  // Fixed multiplier - characteristic E-series shelf slope
+        consoleQ *= 0.65f;  // Fixed multiplier - characteristic E-series shelf slope
     }
 
     // NO gain-dependent Q modification for shelves
-    // Real SSL hardware has fixed shelf Q regardless of boost/cut amount
+    // Real console hardware has fixed shelf Q regardless of boost/cut amount
     // Any perceived "resonance" comes from the shelf curve shape itself, not Q variation
 
-    float alpha = sinw0 / (2.0f * sslQ);
+    float alpha = sinw0 / (2.0f * consoleQ);
 
     float b0, b1, b2, a0, a1, a2;
 
     if (isHighShelf)
     {
-        // High shelf with SSL character
+        // High shelf with console character
         b0 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
         b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw0);
         b2 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
@@ -1139,7 +1139,7 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
     }
     else
     {
-        // Low shelf with SSL character
+        // Low shelf with console character
         b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
         b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0);
         b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
@@ -1159,22 +1159,22 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLShelf(
     return juce::dsp::IIR::Coefficients<float>::Ptr(new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
 }
 
-juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLPeak(
+juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeConsolePeak(
     double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
 {
-    // SSL peak filters have fundamentally different Q behavior between modes:
+    // Console peak filters have fundamentally different Q behavior between modes:
     // Black mode (G-series): Proportional Q - bandwidth varies with gain for surgical precision
     // Brown mode (E-series): Constant Q - bandwidth remains fixed at all gains for musical character
     //
-    // This is THE defining difference between E and G series EQ behavior per SSL documentation
+    // This is THE defining difference between E and G series EQ behavior per hardware documentation
 
     float A = std::pow(10.0f, gainDB / 40.0f);
     float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
     float cosw0 = std::cos(w0);
     float sinw0 = std::sin(w0);
 
-    // SSL-specific Q behavior: CRITICAL DIFFERENCE between modes
-    float sslQ = q;
+    // Console-specific Q behavior: CRITICAL DIFFERENCE between modes
+    float consoleQ = q;
 
     if (isBlackMode && std::abs(gainDB) > 0.1f)
     {
@@ -1182,29 +1182,29 @@ juce::dsp::IIR::Coefficients<float>::Ptr FourKEQ::makeSSLPeak(
         // More gain = narrower bandwidth = more surgical/focused
         // This is what makes the G-series sound "precise" and "modern"
 
-        float gainFactor = std::abs(gainDB) / 15.0f;  // Normalize to typical SSL max (±15dB)
+        float gainFactor = std::abs(gainDB) / 15.0f;  // Normalize to typical hardware max (+/-15dB)
 
         if (gainDB > 0.0f)
         {
             // Boosts: Q increases significantly for surgical precision
-            // At +15dB, Q roughly doubles (SSL G-series measured behavior)
-            sslQ *= (1.0f + gainFactor * 1.2f);
+            // At +15dB, Q roughly doubles (G-series measured behavior)
+            consoleQ *= (1.0f + gainFactor * 1.2f);
         }
         else
         {
             // Cuts: Q increases moderately for broad, musical reductions
             // At -15dB, Q increases by ~60% (gentler than boosts)
-            sslQ *= (1.0f + gainFactor * 0.6f);
+            consoleQ *= (1.0f + gainFactor * 0.6f);
         }
     }
     // else: E-Series (Brown) - Q remains COMPLETELY CONSTANT at all gains
     // This is the "musical" E-series character - consistent bandwidth regardless of boost/cut amount
-    // No modification to sslQ for Brown mode - this is intentional and matches hardware!
+    // No modification to consoleQ for Brown mode - this is intentional and matches hardware!
 
-    sslQ = juce::jlimit(0.1f, 10.0f, sslQ);
-    float alpha = sinw0 / (2.0f * sslQ);
+    consoleQ = juce::jlimit(0.1f, 10.0f, consoleQ);
+    float alpha = sinw0 / (2.0f * consoleQ);
 
-    // Standard peaking EQ coefficients with SSL-modified Q
+    // Standard peaking EQ coefficients with console-modified Q
     float b0 = 1.0f + alpha * A;
     float b1 = -2.0f * cosw0;
     float b2 = 1.0f - alpha * A;
@@ -1359,7 +1359,7 @@ void FourKEQ::loadFactoryPreset(int index)
     // Reset first, then apply preset-specific changes
     resetToFlat();
 
-    // Load factory preset parameters (SSL-inspired, musical settings)
+    // Load factory preset parameters (console-inspired, musical settings)
     switch (index)
     {
         case 0:  // Default - Flat/Reset (already set by resetToFlat)
@@ -1377,7 +1377,7 @@ void FourKEQ::loadFactoryPreset(int index)
             setParam("hpf_freq", 80.0f);    // HPF @ 80Hz
             break;
 
-        case 2:  // Kick Punch - Punch without mud (SSL-authentic settings)
+        case 2:  // Kick Punch - Punch without mud (authentic settings)
             setParam("lf_gain", 4.0f);      // +4dB @ 50Hz (punchy but controlled)
             setParam("lf_freq", 50.0f);     // 50Hz
             setParam("lm_gain", -2.5f);     // -2.5dB @ 200Hz (gentler tightening)
@@ -1439,7 +1439,7 @@ void FourKEQ::loadFactoryPreset(int index)
             setParam("hf_freq", 15000.0f);  // 15kHz
             break;
 
-        case 8:  // Glue Bus - Subtle cohesion (SSL-authentic glue settings)
+        case 8:  // Glue Bus - Subtle cohesion (authentic glue settings)
             setParam("lf_gain", 2.0f);      // +2dB @ 100Hz (more audible warmth)
             setParam("hm_gain", -1.5f);     // -1.5dB @ 3kHz
             setParam("hm_freq", 3000.0f);   // 3kHz

@@ -2,7 +2,7 @@
   ==============================================================================
 
     PluginEditor.h
-    Tape Echo - RE-201 Style Plugin UI
+    Tape Echo - Tape Echo Plugin UI
 
     Modern, minimal UI design with deep forest green color scheme.
     Features animated tape visualization and mode selector grid.

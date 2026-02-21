@@ -4,13 +4,13 @@
 #include <array>
 #include <atomic>
 #include <memory>
-#include "SSLSaturation.h"
+#include "ConsoleSaturation.h"
 
 // Forward declaration for LV2 inline display
 
 //==============================================================================
 /**
-    SSL 4000 Series Console EQ Emulation
+    4K Console EQ Emulation
 
     Features:
     - 4-band parametric EQ (LF, LM, HM, HF)
@@ -201,12 +201,12 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
     int oversamplingFactor = 2;
 
-    // SSL-accurate saturation modeling
-    SSLSaturation sslSaturation;
+    // Console-accurate saturation modeling
+    ConsoleSaturation consoleSaturation;
 
     // Transformer phase shift modeling (all-pass filters for phase rotation)
-    // Models the low-frequency phase shift characteristic of SSL transformers
-    // This contributes to the "3D" quality and depth of SSL EQ
+    // Models the low-frequency phase shift characteristic of console transformers
+    // This contributes to the "3D" quality and depth of the EQ
     struct TransformerPhaseShift
     {
         juce::dsp::IIR::Filter<float> allPassL;
@@ -351,11 +351,11 @@ private:
     float calculateDynamicQ(float gain, float baseQ) const;
     float calculateAutoGainCompensation() const;
 
-    // SSL-specific filter coefficient generation
+    // Console-specific filter coefficient generation
     // Based on hardware measurements and analog prototype matching
-    juce::dsp::IIR::Coefficients<float>::Ptr makeSSLShelf(
+    juce::dsp::IIR::Coefficients<float>::Ptr makeConsoleShelf(
         double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const;
-    juce::dsp::IIR::Coefficients<float>::Ptr makeSSLPeak(
+    juce::dsp::IIR::Coefficients<float>::Ptr makeConsolePeak(
         double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const;
 
     // Parameter creation

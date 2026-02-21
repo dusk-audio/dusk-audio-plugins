@@ -2,7 +2,7 @@
   ==============================================================================
 
     TapeSaturation.h
-    Tape Echo - RE-201 Style Tape Saturation
+    Tape Echo - Vintage Tape Saturation
 
     Soft-knee saturation with frequency-dependent behavior.
     More saturation at low frequencies, HF roll-off modeling head gap losses.

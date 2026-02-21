@@ -4,15 +4,14 @@
     HardwareProfiles.h
     Hardware measurement data structures for analog emulation
 
-    Contains measured characteristics from classic hardware units:
-    - Teletronix LA-2A (Opto)
-    - UREI 1176 Rev A (FET)
-    - DBX 160 (VCA)
-    - SSL G-Series Bus Compressor
-    - Studer A800 (Tape Machine)
-    - Ampex ATR-102 (Tape Machine)
-    - Neve 1073 (Preamp)
-    - API 512c (Preamp)
+    Contains measured characteristics from classic hardware types:
+    - Opto compressor
+    - FET compressor
+    - Classic VCA compressor
+    - Console bus compressor
+    - Tape machines
+    - British console preamp
+    - American console preamp
 
     This is the shared library version - all plugins should use this.
 
@@ -262,12 +261,12 @@ struct HardwareUnitProfile
 namespace Profiles {
 
 //------------------------------------------------------------------------------
-// LA-2A Opto profile (based on Teletronix measurements)
-inline HardwareUnitProfile createLA2A()
+// Opto compressor profile
+inline HardwareUnitProfile createOptoCompressor()
 {
     HardwareUnitProfile profile;
-    profile.name = "LA-2A";
-    profile.modeledUnit = "Teletronix LA-2A";
+    profile.name = "Opto Compressor";
+    profile.modeledUnit = "Vintage Opto Compressor";
 
     // Input stage: Tube input (12AX7)
     profile.inputStageHarmonics = HarmonicProfile::create(
@@ -284,7 +283,7 @@ inline HardwareUnitProfile createLA2A()
         0.035f, 0.012f, 0.70f, 0.004f
     );
 
-    // Input transformer (UTC A-10)
+    // Input transformer
     profile.inputTransformer = TransformerProfile::createActive(
         0.75f, 0.15f, 1.3f, 18000.0f, 20.0f,
         0.008f, 0.003f, 0.7f
@@ -312,12 +311,12 @@ inline HardwareUnitProfile createLA2A()
 }
 
 //------------------------------------------------------------------------------
-// 1176 FET profile
-inline HardwareUnitProfile createFET1176()
+// FET compressor profile
+inline HardwareUnitProfile createFETCompressor()
 {
     HardwareUnitProfile profile;
-    profile.name = "1176";
-    profile.modeledUnit = "UREI 1176 Rev A";
+    profile.name = "FET Compressor";
+    profile.modeledUnit = "Vintage FET Compressor";
 
     profile.inputStageHarmonics = HarmonicProfile::create(
         0.008f, 0.015f, 0.35f, 0.002f, 0.005f
@@ -352,12 +351,12 @@ inline HardwareUnitProfile createFET1176()
 }
 
 //------------------------------------------------------------------------------
-// DBX 160 VCA profile
-inline HardwareUnitProfile createDBX160()
+// Classic VCA compressor profile
+inline HardwareUnitProfile createClassicVCA()
 {
     HardwareUnitProfile profile;
-    profile.name = "DBX 160";
-    profile.modeledUnit = "DBX 160 VCA";
+    profile.name = "Classic VCA";
+    profile.modeledUnit = "Classic VCA Compressor";
 
     profile.inputStageHarmonics = HarmonicProfile::create(
         0.003f, 0.002f, 0.55f
@@ -386,12 +385,12 @@ inline HardwareUnitProfile createDBX160()
 }
 
 //------------------------------------------------------------------------------
-// SSL G-Series Bus Compressor
-inline HardwareUnitProfile createSSLBus()
+// Console Bus Compressor
+inline HardwareUnitProfile createConsoleBus()
 {
     HardwareUnitProfile profile;
-    profile.name = "SSL Bus";
-    profile.modeledUnit = "SSL G-Series Bus Compressor";
+    profile.name = "Console Bus";
+    profile.modeledUnit = "Console Bus Compressor";
 
     profile.inputStageHarmonics = HarmonicProfile::create(
         0.004f, 0.008f, 0.35f, 0.0f, 0.003f
@@ -454,12 +453,12 @@ inline TapeProfile createAmpexATR102()
 }
 
 //------------------------------------------------------------------------------
-// Neve 1073 preamp
-inline HardwareUnitProfile createNeve1073()
+// British console preamp
+inline HardwareUnitProfile createBritishConsole()
 {
     HardwareUnitProfile profile;
-    profile.name = "Neve 1073";
-    profile.modeledUnit = "Neve 1073 Preamp";
+    profile.name = "British Console";
+    profile.modeledUnit = "British Console Preamp";
 
     profile.inputStageHarmonics = HarmonicProfile::create(
         0.02f, 0.008f, 0.70f, 0.003f
@@ -469,7 +468,7 @@ inline HardwareUnitProfile createNeve1073()
         0.025f, 0.01f, 0.68f, 0.004f
     );
 
-    // Neve transformers are legendary for their character
+    // British console transformers are known for their character
     profile.inputTransformer = TransformerProfile::createActive(
         0.7f, 0.2f, 1.4f, 18000.0f, 20.0f,
         0.015f, 0.005f, 0.75f
@@ -487,12 +486,12 @@ inline HardwareUnitProfile createNeve1073()
 }
 
 //------------------------------------------------------------------------------
-// API 512c preamp
-inline HardwareUnitProfile createAPI512c()
+// American console preamp
+inline HardwareUnitProfile createAmericanConsole()
 {
     HardwareUnitProfile profile;
-    profile.name = "API 512c";
-    profile.modeledUnit = "API 512c Preamp";
+    profile.name = "American Console";
+    profile.modeledUnit = "American Console Preamp";
 
     profile.inputStageHarmonics = HarmonicProfile::create(
         0.01f, 0.015f, 0.40f, 0.0f, 0.005f
@@ -502,7 +501,7 @@ inline HardwareUnitProfile createAPI512c()
         0.012f, 0.018f, 0.38f, 0.0f, 0.006f
     );
 
-    // API has more aggressive, punchy transformers
+    // American console has more aggressive, punchy transformers
     profile.inputTransformer = TransformerProfile::createActive(
         0.8f, 0.12f, 1.2f, 20000.0f, 15.0f,
         0.006f, 0.01f, 0.4f
@@ -549,39 +548,39 @@ inline HardwareUnitProfile createDigital()
 class HardwareProfileLibrary
 {
 public:
-    static const HardwareUnitProfile& getLA2A()
+    static const HardwareUnitProfile& getOptoCompressor()
     {
-        static const HardwareUnitProfile profile = Profiles::createLA2A();
+        static const HardwareUnitProfile profile = Profiles::createOptoCompressor();
         return profile;
     }
 
-    static const HardwareUnitProfile& getFET1176()
+    static const HardwareUnitProfile& getFETCompressor()
     {
-        static const HardwareUnitProfile profile = Profiles::createFET1176();
+        static const HardwareUnitProfile profile = Profiles::createFETCompressor();
         return profile;
     }
 
-    static const HardwareUnitProfile& getDBX160()
+    static const HardwareUnitProfile& getClassicVCA()
     {
-        static const HardwareUnitProfile profile = Profiles::createDBX160();
+        static const HardwareUnitProfile profile = Profiles::createClassicVCA();
         return profile;
     }
 
-    static const HardwareUnitProfile& getSSLBus()
+    static const HardwareUnitProfile& getConsoleBus()
     {
-        static const HardwareUnitProfile profile = Profiles::createSSLBus();
+        static const HardwareUnitProfile profile = Profiles::createConsoleBus();
         return profile;
     }
 
-    static const HardwareUnitProfile& getNeve1073()
+    static const HardwareUnitProfile& getBritishConsole()
     {
-        static const HardwareUnitProfile profile = Profiles::createNeve1073();
+        static const HardwareUnitProfile profile = Profiles::createBritishConsole();
         return profile;
     }
 
-    static const HardwareUnitProfile& getAPI512c()
+    static const HardwareUnitProfile& getAmericanConsole()
     {
-        static const HardwareUnitProfile profile = Profiles::createAPI512c();
+        static const HardwareUnitProfile profile = Profiles::createAmericanConsole();
         return profile;
     }
 

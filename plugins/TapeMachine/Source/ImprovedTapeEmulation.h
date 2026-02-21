@@ -252,11 +252,11 @@ private:
 //   - No transient/settling behavior
 //   - ~10x less CPU (no RK4 per sample)
 //
-// THD characteristics (Type456, Studer, bias=0.5):
+// THD characteristics (Type456, precision deck, bias=0.5):
 //   0VU: THD≈0.27% (H3 at -51dB, purely odd harmonics)
 //   +6VU: THD≈3.0%
 //   Bias modulates THD: low bias = more saturation
-//   Studer cleaner than Ampex (machine factor)
+//   Type A cleaner than Type B (machine factor)
 //==============================================================================
 class JilesAthertonHysteresis
 {
@@ -285,9 +285,9 @@ public:
         currentParams = params;
     }
 
-    void setMachineType(bool isStuder)
+    void setMachineType(bool isPrecision)
     {
-        studerMode = isStuder;
+        precisionMode = isPrecision;
     }
 
     // Process one sample through Langevin saturation waveshaper
@@ -306,9 +306,9 @@ public:
         float biasFactor = 1.0f + 0.6f * (0.5f - biasLinearization);
 
         // Machine character:
-        // Studer (push-pull, transformerless) = slightly cleaner (×0.92)
-        // Ampex (transformer, single-ended stages) = slightly dirtier (×1.08)
-        float machineFactor = studerMode ? 0.92f : 1.08f;
+        // Type A (push-pull, transformerless) = slightly cleaner (×0.92)
+        // Type B (transformer, single-ended stages) = slightly dirtier (×1.08)
+        float machineFactor = precisionMode ? 0.92f : 1.08f;
 
         float effectiveDrive = drive * biasFactor * machineFactor;
 
@@ -328,7 +328,7 @@ public:
 
 private:
     TapeFormulationParams currentParams;
-    bool studerMode = false;
+    bool precisionMode = false;
 
     // Field scaling: calibrated for target THD at operating levels.
     // With inputGain applied before tape emulation:
@@ -336,7 +336,7 @@ private:
     //   +6VU: amplitude=0.240, drive≈1.86, x≈1.26 → THD≈3-5%
     // The Langevin function's Taylor series: L(x) = x/3 - x³/45 + ...
     // gives H3/H1 ≈ x²/60, producing purely odd-harmonic distortion.
-    // Calibrated empirically against Studer A800 THD measurements.
+    // Calibrated empirically against precision deck THD measurements.
     static constexpr float fieldScale = 3200.0f;
 
     // Langevin function: L(x) = coth(x) - 1/x
@@ -465,13 +465,13 @@ public:
     }
 
     // Set phase characteristics per machine type
-    void setMachineCharacter(bool isStuder)
+    void setMachineCharacter(bool isPrecision)
     {
         // Break frequencies chosen for realistic tape phase response
         float breakFreqs[NUM_STAGES];
-        if (isStuder)
+        if (isPrecision)
         {
-            // Studer: less phase shift (precision engineering)
+            // Type A: less phase shift (precision engineering)
             breakFreqs[0] = 60.0f;
             breakFreqs[1] = 250.0f;
             breakFreqs[2] = 2000.0f;
@@ -479,7 +479,7 @@ public:
         }
         else
         {
-            // Ampex: more phase shift (character, warmth)
+            // Type B: more phase shift (character, warmth)
             breakFreqs[0] = 40.0f;
             breakFreqs[1] = 150.0f;
             breakFreqs[2] = 1200.0f;
@@ -771,8 +771,8 @@ public:
 
     enum TapeMachine
     {
-        Swiss800 = 0,      // Studer A800
-        Classic102         // Ampex ATR-102
+        Swiss800 = 0,      // Precision deck (Type A)
+        Classic102         // Vintage deck (Type B)
     };
 
     enum TapeSpeed

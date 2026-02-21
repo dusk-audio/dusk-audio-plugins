@@ -2,7 +2,7 @@
   ==============================================================================
 
     PluginProcessor.cpp
-    Tape Echo - RE-201 Style Tape Delay Plugin
+    Tape Echo - Tape Echo Plugin
 
     Copyright (c) 2025 Dusk Audio - All rights reserved.
 

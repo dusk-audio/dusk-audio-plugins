@@ -81,7 +81,7 @@ private:
     static juce::String getBandTypeName(BandType type);
 
     //==========================================================================
-    // Value parsing (FabFilter-style)
+    // Value parsing (smart)
     static float parseFrequency(const juce::String& text);
     static float parseGain(const juce::String& text);
     static float parseQ(const juce::String& text);

@@ -259,7 +259,7 @@ void FourKLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, int wid
 {
     if (style == juce::Slider::LinearVertical)
     {
-        // SSL-style vertical fader
+        // Console-style vertical fader
         auto trackWidth = 8.0f;
         auto trackX = x + width * 0.5f - trackWidth * 0.5f;
 
@@ -276,7 +276,7 @@ void FourKLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, int wid
         g.setColour(highlightColour.withAlpha(0.7f));
         g.fillRoundedRectangle(trackX + 2, sliderPos, trackWidth - 4, fillHeight, 1.0f);
 
-        // Fader cap (SSL-style)
+        // Fader cap (console-style)
         auto thumbWidth = 24.0f;
         auto thumbHeight = 12.0f;
         auto thumbX = x + width * 0.5f - thumbWidth * 0.5f;
@@ -313,7 +313,7 @@ void FourKLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& b
     bool isBypass = buttonText.containsIgnoreCase("BYPASS");
     bool isAutoGain = buttonText.containsIgnoreCase("AUTO");
 
-    // SSL-style illuminated push button with improved styling
+    // Console-style illuminated push button with improved styling
 
     // Outer bezel/shadow
     g.setColour(juce::Colour(0xff151515));
@@ -409,7 +409,7 @@ void FourKLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bo
 {
     auto bounds = juce::Rectangle<float>(0, 0, static_cast<float>(width), static_cast<float>(height));
 
-    // SSL-style selector with improved styling
+    // Console-style selector with improved styling
 
     // Outer shadow
     g.setColour(juce::Colour(0xff151515));
@@ -481,7 +481,7 @@ void FourKLookAndFeel::drawLabel(juce::Graphics& g, juce::Label& label)
 {
     auto bounds = label.getLocalBounds().toFloat();
 
-    // SSL-style label text
+    // Console-style label text
     g.setColour(textColour);
     g.setFont(getLabelFont(label));
     g.drawFittedText(label.getText(), bounds.toNearestInt(),

@@ -1,11 +1,11 @@
 /*
   ==============================================================================
 
-    PultecLookAndFeel.h
+    TubeEQLookAndFeel.h
 
-    Vintage Pultec-style Look and Feel for Multi-Q's Tube mode.
+    Vintage passive tube EQ-style Look and Feel for Multi-Q's Tube mode.
 
-    Emulates the classic appearance of the Pultec EQP-1A:
+    Emulates the classic appearance of vintage passive tube equalizers:
     - Cream/ivory colored chassis
     - Large chicken-head style knobs with gold caps
     - Warm brown tones and vintage aesthetics
@@ -19,12 +19,12 @@
 
 #include <JuceHeader.h>
 
-class PultecLookAndFeel : public juce::LookAndFeel_V4
+class TubeEQLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    PultecLookAndFeel()
+    TubeEQLookAndFeel()
     {
-        // Vintage Pultec color palette
+        // Vintage tube EQ color palette
         chassisColor = juce::Colour(0xfff0e8d8);     // Cream/ivory chassis
         knobBodyColor = juce::Colour(0xff2a2520);    // Dark brown knob body
         knobCapColor = juce::Colour(0xffc4a050);     // Gold/brass cap
@@ -72,7 +72,7 @@ public:
         }
         else
         {
-            // Standard Pultec chicken-head style knob
+            // Standard vintage chicken-head style knob
             drawChickenHeadKnob(g, centreX, centreY, radius, angle, slider, isMouseOver, isDragging);
         }
     }
@@ -232,7 +232,8 @@ public:
         g.setColour(juce::Colour(0xffa09080));
         for (int i = 0; i < numSteps; ++i)
         {
-            float notchAngle = startAngle + (static_cast<float>(i) / (numSteps - 1)) * (endAngle - startAngle);
+            float t = (numSteps <= 1) ? 0.0f : static_cast<float>(i) / (numSteps - 1);
+            float notchAngle = startAngle + t * (endAngle - startAngle);
             auto x1 = centreX + radius * 1.08f * std::cos(notchAngle);
             auto y1 = centreY + radius * 1.08f * std::sin(notchAngle);
             auto x2 = centreX + radius * 1.18f * std::cos(notchAngle);
@@ -390,7 +391,7 @@ public:
     }
 
     // Helper to draw vintage scale markings
-    void drawPultecScaleMarkings(juce::Graphics& g, float cx, float cy, float radius,
+    void drawTubeEQScaleMarkings(juce::Graphics& g, float cx, float cy, float radius,
                                   float startAngle, float endAngle, int numSteps)
     {
         for (int i = 0; i <= numSteps; ++i)
@@ -451,5 +452,5 @@ private:
         return knobCapColor;
     }
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PultecLookAndFeel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TubeEQLookAndFeel)
 };

@@ -399,7 +399,7 @@ void EnhancedCompressorEditor::setupFETPanel()
     addChildComponent(fetPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    // FET Input: drives signal into fixed -10dB threshold (authentic 1176 behavior)
+    // FET Input: drives signal into fixed -10dB threshold (authentic FET behavior)
     // Range: -20dB to +40dB, with 0dB default
     fetPanel.inputKnob = createKnob("Input", -20, 40, 0, " dB");
     fetPanel.outputKnob = createKnob("Output", -20, 20, 0, " dB");
@@ -535,7 +535,7 @@ void EnhancedCompressorEditor::setupBusPanel()
     addChildComponent(busPanel.container.get());  // Use addChildComponent so it's initially hidden
     
     // Create controls
-    // Bus threshold: -30dB to +15dB range (SSL Bus compressor style)
+    // Bus threshold: -30dB to +15dB range (bus compressor style)
     busPanel.thresholdKnob = createKnob("Threshold", -30, 15, 0, " dB");
     // Note: Bus ratio uses ComboBox attachment (2:1, 4:1, 10:1) - this knob is not used
     busPanel.ratioKnob = createKnob("Ratio", 2, 10, 4, ":1");  // Placeholder, actual ratio via ComboBox
@@ -883,22 +883,22 @@ void EnhancedCompressorEditor::paint(juce::Graphics& g)
     {
         case 0:
             title = "OPTO COMPRESSOR";
-            description = "LA-2A Style | Program Dependent | Smooth Compression";
+            description = "Opto Style | Program Dependent | Smooth Compression";
             textColor = juce::Colour(0xFFE8D5B7);  // Warm light color
             break;
         case 1:
             title = "FET COMPRESSOR";
-            description = "1176 Style | Fast Attack | Punchy Saturation";
+            description = "FET Style | Fast Attack | Punchy Saturation";
             textColor = juce::Colour(0xFFE0E0E0);  // Light gray (keep)
             break;
         case 2:
             title = "VCA COMPRESSOR";
-            description = "DBX 160 Style | Over Easy Knee | Fast Response";
+            description = "VCA Style | Over Easy Knee | Fast Response";
             textColor = juce::Colour(0xFFDFE6E9);  // Light gray-blue
             break;
         case 3:
             title = "BUS COMPRESSOR";
-            description = "SSL Style | Mix Bus Glue | Analog Character";
+            description = "Bus VCA Style | Mix Bus Glue | Analog Character";
             textColor = juce::Colour(0xFFECF0F1);  // Light gray (keep)
             break;
         case 4:

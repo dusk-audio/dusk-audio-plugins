@@ -8,12 +8,12 @@
 
 enum class CompressorMode : int
 {
-    Opto = 0,       // LA-2A style optical compressor (Vintage Opto)
-    FET = 1,        // 1176 Bluestripe style FET compressor (Vintage FET - aggressive)
-    VCA = 2,        // DBX 160 style VCA compressor (Classic VCA)
-    Bus = 3,        // SSL G-Series Bus compressor (Vintage VCA)
-    StudioFET = 4,  // 1176 Rev E Blackface style (Studio FET - cleaner)
-    StudioVCA = 5,  // Focusrite Red 3 style (Studio VCA - modern)
+    Opto = 0,       // Vintage optical compressor (Vintage Opto)
+    FET = 1,        // Vintage FET compressor (Vintage FET - aggressive)
+    VCA = 2,        // Classic VCA compressor (Classic VCA)
+    Bus = 3,        // Vintage VCA bus compressor (Vintage VCA)
+    StudioFET = 4,  // Studio FET compressor (Studio FET - cleaner)
+    StudioVCA = 5,  // Modern VCA compressor (Studio VCA - modern)
     Digital = 6,    // Transparent digital compressor
     Multiband = 7   // 4-band multiband compressor
 };
@@ -222,8 +222,7 @@ private:
     // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};
 
-    // RMS-based auto-gain accumulators for professional-grade level matching
-    // Using ~200ms averaging window (industry standard for perceived loudness)
+    // RMS-based auto-gain accumulators (~200ms averaging window)
     float inputRmsAccumulator = 0.0f;   // Running RMS of input signal
     float outputRmsAccumulator = 0.0f;  // Running RMS of output signal (before auto-gain)
     float rmsCoefficient = 0.0f;        // One-pole filter coefficient for RMS averaging

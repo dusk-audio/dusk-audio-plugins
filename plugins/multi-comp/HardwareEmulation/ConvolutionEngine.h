@@ -61,9 +61,9 @@ public:
     // Load a synthetic transformer IR based on characteristics
     enum class TransformerType
     {
-        LA2A,           // Warm, 16kHz rolloff, subtle 80Hz resonance
-        FET_1176,       // Clean, 22kHz rolloff, 100Hz presence
-        SSL_Console,    // Punchy, subtle mid presence
+        Opto,           // Warm, 16kHz rolloff, subtle 80Hz resonance
+        FET,            // Clean, 22kHz rolloff, 100Hz presence
+        Console_Bus,    // Punchy, subtle mid presence
         Generic,        // Neutral transformer
         Bypass          // Unity (no coloration)
     };
@@ -72,15 +72,15 @@ public:
     {
         switch (type)
         {
-            case TransformerType::LA2A:
+            case TransformerType::Opto:
                 generateTransformerIR(80.0f, 0.5f, 16000.0f, -1.5f, 64);
                 break;
 
-            case TransformerType::FET_1176:
+            case TransformerType::FET:
                 generateTransformerIR(100.0f, 0.3f, 22000.0f, -0.8f, 48);
                 break;
 
-            case TransformerType::SSL_Console:
+            case TransformerType::Console_Bus:
                 generateTransformerIR(2500.0f, 0.4f, 20000.0f, -0.5f, 32);
                 break;
 

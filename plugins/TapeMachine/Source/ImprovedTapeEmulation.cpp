@@ -40,9 +40,9 @@ float TransformerSaturation::process(float input, float driveAmount, bool isOutp
     // Transformer core asymmetry → even harmonics (H2, H4)
     // Real audio transformers have asymmetric B-H curves from residual
     // core magnetization, generating even-order harmonics at all signal levels.
-    // For ATR-102: H2 target -52 to -58dB at 0VU.
+    // For Classic 102: H2 target -52 to -58dB at 0VU.
     // y = x * (1 + b*x) where b*x² generates H2.
-    // Calibrated empirically against ATR-102 H2 measurements.
+    // Calibrated empirically against vintage deck H2 measurements.
     float asymmetryCoeff = 0.80f * driveAmount;
     if (asymmetryCoeff > 0.0001f)
     {
@@ -383,7 +383,7 @@ void ImprovedTapeEmulation::prepare(double sampleRate, int samplesPerBlock, int 
     preEmphasisEQ.setPreEmphasis(125.0f, 50.0f);   // 8dB boost above ~3kHz
     deEmphasisEQ.setDeEmphasis(50.0f, 125.0f);     // 8dB cut (complementary)
 
-    // Default phase smearing (Studer)
+    // Default phase smearing (Type A / precision)
     phaseSmear.setMachineCharacter(true);
 
     // Saturation envelope followers
@@ -439,7 +439,7 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
     switch (machine)
     {
         case Swiss800:
-            // Studer A800 MkIII: transformerless, precision, odd-harmonic dominant
+            // Type A (Swiss 800): transformerless, precision, odd-harmonic dominant
             chars.headBumpFreq = 48.0f;
             chars.headBumpGain = 3.0f;
             chars.headBumpQ = 1.0f;
@@ -459,7 +459,7 @@ ImprovedTapeEmulation::getMachineCharacteristics(TapeMachine machine)
             break;
 
         case Classic102:
-            // Ampex ATR-102: transformer coloration, even+odd harmonics
+            // Type B (Classic 102): transformer coloration, even+odd harmonics
             chars.headBumpFreq = 62.0f;
             chars.headBumpGain = 4.5f;
             chars.headBumpQ = 1.4f;
@@ -661,19 +661,19 @@ void ImprovedTapeEmulation::updateFilters(TapeMachine machine, TapeSpeed speed,
     // Configure Jiles-Atherton hysteresis for current tape type and machine
     // ========================================================================
     auto jaParams = getJAParams(type);
-    bool isStuder = (machine == Swiss800);
+    bool isPrecision = (machine == Swiss800);
 
     hysteresisBass.setFormulation(jaParams);
-    hysteresisBass.setMachineType(isStuder);
+    hysteresisBass.setMachineType(isPrecision);
     hysteresisMid.setFormulation(jaParams);
-    hysteresisMid.setMachineType(isStuder);
+    hysteresisMid.setMachineType(isPrecision);
     hysteresisTreble.setFormulation(jaParams);
-    hysteresisTreble.setMachineType(isStuder);
+    hysteresisTreble.setMachineType(isPrecision);
 
     // ========================================================================
     // Phase smearing - machine-dependent allpass break frequencies
     // ========================================================================
-    phaseSmear.setMachineCharacter(isStuder);
+    phaseSmear.setMachineCharacter(isPrecision);
 
     // ========================================================================
     // Noise generator speed setting
@@ -820,7 +820,7 @@ float ImprovedTapeEmulation::processSample(float input,
     float signal = input * 0.95f / calibrationGain;
 
     // ========================================================================
-    // 3. Input transformer (Ampex only - Studer MkIII is transformerless)
+    // 3. Input transformer (Type B only - Type A is transformerless)
     // ========================================================================
     float transformerDrive = m_hasTransformers ? saturationDepth * 0.3f : 0.0f;
     if (m_hasTransformers)
@@ -971,7 +971,7 @@ float ImprovedTapeEmulation::processSample(float input,
     signal = phaseSmear.processSample(signal);
 
     // ========================================================================
-    // 17. Output transformer (Ampex only)
+    // 17. Output transformer (Type B only)
     // ========================================================================
     if (m_hasTransformers)
     {
