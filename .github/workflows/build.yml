@@ -778,7 +778,7 @@ jobs:
         env:
           RELEASE_NAME: ${{ needs.setup.outputs.release_name }}
           PLUGIN_VERSION: ${{ needs.setup.outputs.plugin_version }}
-          GH_TOKEN: ${{ secrets.WEBSITE_PAT }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           # Skip if no PAT configured or no version
           if [ -z "$GH_TOKEN" ] || [ -z "$PLUGIN_VERSION" ]; then
