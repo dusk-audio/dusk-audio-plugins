@@ -211,10 +211,19 @@ void TubeEQCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangl
         g.drawLine(x, area.getY(), x, area.getBottom(), isTubeEQFreq ? 1.0f : 0.5f);
     }
 
-    // Horizontal grid lines at key dB levels
-    const float dbLines[] = { -20.0f, -10.0f, 0.0f, 10.0f, 20.0f };
+    // Horizontal grid lines — compute from current minDB/maxDB
+    // Choose a sensible tick step based on the dB range
+    float dbRange = maxDB - minDB;
+    float tickStep;
+    if (dbRange <= 24.0f)
+        tickStep = 6.0f;
+    else if (dbRange <= 48.0f)
+        tickStep = 10.0f;
+    else
+        tickStep = 20.0f;
 
-    for (float db : dbLines)
+    // Generate ticks from minDB to maxDB at the chosen step, always including 0 dB
+    for (float db = std::ceil(minDB / tickStep) * tickStep; db <= maxDB; db += tickStep)
     {
         float y = dbToY(db, area);
         bool isZero = (std::abs(db) < 0.1f);
@@ -239,15 +248,21 @@ void TubeEQCurveDisplay::drawVintageGrid(juce::Graphics& g, const juce::Rectangl
     drawFreqLabel(5000.0f, "5k");
     drawFreqLabel(10000.0f, "10k");
 
-    // dB labels on left with vintage styling
-    auto drawDbLabel = [&](float db, const juce::String& text) {
+    // dB labels on left — dynamic based on current range
+    auto drawDbLabel = [&](float db) {
         float y = dbToY(db, area);
-        g.drawText(text, 4, static_cast<int>(y) - 7, 24, 14, juce::Justification::right);
+        juce::String text;
+        if (db > 0.0f)
+            text = "+" + juce::String(static_cast<int>(db));
+        else
+            text = juce::String(static_cast<int>(db));
+        g.drawText(text, 0, static_cast<int>(y) - 7, 28, 14, juce::Justification::right);
     };
 
-    drawDbLabel(20.0f, "+20");
-    drawDbLabel(0.0f, "0");
-    drawDbLabel(-20.0f, "-20");
+    for (float db = std::ceil(minDB / tickStep) * tickStep; db <= maxDB; db += tickStep)
+    {
+        drawDbLabel(db);
+    }
 }
 
 void TubeEQCurveDisplay::drawBandCurve(juce::Graphics& g, const juce::Rectangle<float>& area,
@@ -421,4 +436,40 @@ float TubeEQCurveDisplay::calculateCombinedResponse(float freq) const
     response += calculateHFAttenResponse(freq);
 
     return response;
+}
+
+void TubeEQCurveDisplay::setDisplayScaleMode(DisplayScaleMode mode)
+{
+    switch (mode)
+    {
+        case DisplayScaleMode::Linear12dB:
+            minDB = -12.0f;
+            maxDB = 12.0f;
+            break;
+        case DisplayScaleMode::Linear24dB:
+            minDB = -24.0f;
+            maxDB = 24.0f;
+            break;
+        case DisplayScaleMode::Linear30dB:
+            minDB = -30.0f;
+            maxDB = 30.0f;
+            break;
+        case DisplayScaleMode::Linear60dB:
+            minDB = -60.0f;
+            maxDB = 60.0f;
+            break;
+        case DisplayScaleMode::Warped:
+            // Warped mode uses same range as 24dB for now
+            minDB = -24.0f;
+            maxDB = 24.0f;
+            break;
+        default:
+            // Safe fallback for unknown enum values
+            minDB = -24.0f;
+            maxDB = 24.0f;
+            break;
+    }
+
+    needsRepaint = true;
+    repaint();
 }
