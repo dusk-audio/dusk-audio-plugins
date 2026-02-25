@@ -1,0 +1,35 @@
+reviews:
+  profile: chill
+  path_instructions:
+    - path: "plugins/**"
+      instructions: |
+        This is a JUCE C++17 audio plugin project (VST3/AU/LV2).
+
+        JUCE framework guarantees to be aware of:
+        - AudioParameterChoice always has ≥2 choices
+        - Plugin I/O is stereo (2 channels max) per CMake config
+        - prepareToPlay() is always called before processBlock() and resets all DSP state
+        - getRawParameterValue() returns denormalized values (choice index as float)
+        - AudioBuffer::setSize with avoidReallocating=true may not clear contents
+
+        Do NOT flag:
+        - Defensive code for impossible channel counts or parameter configurations
+        - Hypothetical future scenarios ("if this range were asymmetric", "if there were only 1 choice")
+        - Missing resets in setSampleRate() when prepareToPlay() handles it
+        - Short-duration juce::SpinLock use on the audio thread for atomic parameter swaps (known safe pattern in this codebase; do not flag absent evidence of contention or long hold times)
+        - Thread safety when internal mutexes/atomics already protect the data
+        - Comment accuracy for edge cases that cannot occur given the codebase constraints
+
+        Rebrand context (do NOT flag):
+        - PLUGIN_MANUFACTURER_CODE changed from "Luna"/"LunC" to "Dusk" — intentional trademark rebrand
+        - LV2URI changed from lunaco.audio to dusk-audio.github.io — intentional
+        - BUNDLE_ID changed from com.LunaCoAudio to com.DuskAudio — intentional
+        - COMPANY_NAME changed from "Luna Co. Audio" to "Dusk Audio" — intentional rebrand
+        - These are known session-breaking changes; all users have been notified
+
+        DO flag:
+        - Actual data races, use-after-free, buffer overflows
+        - Logic errors in DSP (wrong coefficient formulas, missing normalization)
+        - Uninitialized buffers used in crossfades or processing
+        - Real thread safety issues (e.g., heap allocation on audio thread)
+        - State that leaks between plugin instances or sessions
