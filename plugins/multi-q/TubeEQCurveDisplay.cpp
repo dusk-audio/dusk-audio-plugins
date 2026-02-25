@@ -438,7 +438,7 @@ float TubeEQCurveDisplay::calculateCombinedResponse(float freq) const
     return response;
 }
 
-void PultecCurveDisplay::setDisplayScaleMode(DisplayScaleMode mode)
+void TubeEQCurveDisplay::setDisplayScaleMode(DisplayScaleMode mode)
 {
     switch (mode)
     {
