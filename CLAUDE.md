@@ -27,6 +27,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | Multi-Q | `multi-q` | `plugins/multi-q/` | Universal EQ (Digital/British/Tube) |
 | Convolution Reverb | `convolution-reverb` | `plugins/convolution-reverb/` | IR-based reverb |
 | Neural Amp | `neural-amp` | `plugins/neural-amp/` | Neural amp modeler (NAM) |
+| DuskVerb | `duskverb` | `plugins/DuskVerb/` | Algorithmic reverb (Hadamard FDN) |
 | GrooveMind | `groovemind` | `plugins/groovemind/` | ML drum generator (future) |
 
 ## Version Management & Releasing
@@ -59,6 +60,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | Multi-Comp | `MULTICOMP_DEFAULT_VERSION` |
 | TapeMachine | `TAPEMACHINE_DEFAULT_VERSION` |
 | Multi-Q | `project(MultiQ VERSION X.Y.Z)` (inline) |
+| DuskVerb | `DUSKVERB_DEFAULT_VERSION` |
 | Others | `<NAME>_DEFAULT_VERSION` |
 
 **Website**: `~/projects/dusk-audio.github.io/_data/plugins.yml` - updated automatically by `/release-plugin`
@@ -90,6 +92,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | `multiq` | Multi-Q |
 | `convolution` | Convolution Reverb |
 | `nam` | Neural Amp |
+| `duskverb` | DuskVerb |
 
 **Validation**: `./tests/run_plugin_tests.sh --plugin "<Name>" --skip-audio`
 
@@ -124,6 +127,7 @@ plugins/
 │   ├── multi-q/
 │   ├── convolution-reverb/
 │   ├── neural-amp/
+│   ├── DuskVerb/
 │   └── shared/           # SHARED CODE - CHECK HERE FIRST
 ├── docker/
 │   └── build_release.sh  # Primary build script
