@@ -3,7 +3,6 @@
 #include <JuceHeader.h>
 #include "EQBand.h"
 
-//==============================================================================
 /**
     Custom Look and Feel for Multi-Q Plugin
 
@@ -44,7 +43,7 @@ public:
                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                          juce::Slider& slider) override
     {
-        // ===== MODERN ARC-STYLE KNOB (modern arc style) =====
+        // ===== MODERN ARC-STYLE KNOB =====
         auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat().reduced(4.0f);
         auto diameter = juce::jmin(bounds.getWidth(), bounds.getHeight());
         auto radius = diameter / 2.0f;
@@ -320,8 +319,8 @@ public:
     {
         auto bounds = label.getLocalBounds().toFloat();
 
-        // Check if this is a slider value label (has numeric content)
-        bool isValueLabel = label.getText().containsAnyOf("0123456789.-+");
+        // Check if this is a slider value label (child of a Slider component)
+        bool isValueLabel = (dynamic_cast<juce::Slider*>(label.getParentComponent()) != nullptr);
 
         if (isValueLabel)
         {
@@ -356,7 +355,7 @@ public:
 
     juce::Font getLabelFont(juce::Label& label) override
     {
-        // Use a clean sans-serif font with slight letter spacing
+        // Use a clean sans-serif font
         return juce::Font(juce::FontOptions(label.getFont().getHeight()));
     }
 
@@ -385,15 +384,17 @@ public:
 
             auto valueBounds = trackBounds;
             if (isHorizontal)
-                valueBounds.setWidth(sliderPos - static_cast<float>(x));
+                valueBounds.setWidth(juce::jmax(0.0f, sliderPos - trackBounds.getX()));
             else
-                valueBounds.setTop(sliderPos);
+            {
+                valueBounds.setTop(juce::jmin(sliderPos, trackBounds.getBottom()));
+            }
 
             g.setColour(trackColour.withAlpha(0.7f));
             g.fillRoundedRectangle(valueBounds, 2.0f);
 
             // Thumb
-            float thumbSize = isHorizontal ? 12.0f : 12.0f;
+            float thumbSize = 12.0f;
             float thumbX = isHorizontal ? sliderPos - thumbSize * 0.5f : bounds.getCentreX() - thumbSize * 0.5f;
             float thumbY = isHorizontal ? bounds.getCentreY() - thumbSize * 0.5f : sliderPos - thumbSize * 0.5f;
 
@@ -422,12 +423,9 @@ public:
             LookAndFeel_V4::drawLinearSlider(g, x, y, width, height, sliderPos,
                                              minSliderPos, maxSliderPos, style, slider);
         }
-
-        juce::ignoreUnused(minSliderPos, maxSliderPos);
     }
 };
 
-//==============================================================================
 /**
     Band Enable Button with color indicator and filter type icon
     Redesigned with cleaner, minimal line art style (Logic Pro aesthetic)
@@ -437,10 +435,27 @@ class BandEnableButton : public juce::ToggleButton
 public:
     BandEnableButton(int bandIndex)
     {
+        // Hardcode colors directly to bypass any initialization issues
+        static const juce::Colour bandColors[8] = {
+            juce::Colour(0xFFff4444),  // Red - HPF
+            juce::Colour(0xFFff8844),  // Orange - Low Shelf
+            juce::Colour(0xFFffcc44),  // Yellow - Para 1
+            juce::Colour(0xFF44cc44),  // Green - Para 2
+            juce::Colour(0xFF44cccc),  // Cyan - Para 3
+            juce::Colour(0xFF4488ff),  // Blue - Para 4
+            juce::Colour(0xFFaa44ff),  // Purple - High Shelf
+            juce::Colour(0xFFff44aa)   // Pink - LPF
+        };
+
+        static const BandType bandTypes[8] = {
+            BandType::HighPass, BandType::LowShelf, BandType::Parametric, BandType::Parametric,
+            BandType::Parametric, BandType::Parametric, BandType::HighShelf, BandType::LowPass
+        };
+
         if (bandIndex >= 0 && bandIndex < 8)
         {
-            bandColor = DefaultBandConfigs[bandIndex].color;
-            filterType = DefaultBandConfigs[bandIndex].type;
+            bandColor = bandColors[bandIndex];
+            filterType = bandTypes[bandIndex];
         }
     }
 
@@ -572,6 +587,24 @@ private:
                 path.startNewSubPath(cx - w, cy - h * 0.4f);
                 path.lineTo(cx, cy);
                 path.quadraticTo(cx + w * 0.2f, cy + h * 0.6f, cx + w, cy + h * 0.6f);
+                g.strokePath(path, juce::PathStrokeType(strokeWidth,
+                             juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                break;
+
+            case BandType::Notch:
+                // Inverted bell/dip (band-reject)
+                path.startNewSubPath(cx - w, cy);
+                path.quadraticTo(cx - w * 0.5f, cy, cx, cy + h * 0.8f);
+                path.quadraticTo(cx + w * 0.5f, cy, cx + w, cy);
+                g.strokePath(path, juce::PathStrokeType(strokeWidth,
+                             juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                break;
+
+            case BandType::BandPass:
+                // Sharper peaked band (narrower than parametric)
+                path.startNewSubPath(cx - w, cy + h * 0.3f);
+                path.quadraticTo(cx - w * 0.3f, cy + h * 0.3f, cx, cy - h * 0.9f);
+                path.quadraticTo(cx + w * 0.3f, cy + h * 0.3f, cx + w, cy + h * 0.3f);
                 g.strokePath(path, juce::PathStrokeType(strokeWidth,
                              juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
                 break;

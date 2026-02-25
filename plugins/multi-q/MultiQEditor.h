@@ -16,7 +16,6 @@
 #include "../shared/UserPresetManager.h"
 #include "FourKLookAndFeel.h"
 
-//==============================================================================
 /**
     Multi-Q Plugin Editor
 
@@ -56,7 +55,7 @@ private:
     // Graphic display
     std::unique_ptr<EQGraphicDisplay> graphicDisplay;
 
-    // Band detail panel (band selector + single-row controls)
+    // Band detail panel (Waves F6 style - band selector + single-row controls)
     std::unique_ptr<BandDetailPanel> bandDetailPanel;
 
     // British mode curve display (4K-EQ style)
@@ -109,6 +108,9 @@ private:
     // EQ Type selector
     std::unique_ptr<juce::ComboBox> eqTypeSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> eqTypeAttachment;
+
+    // Cross-mode transfer button (British/Tube → Digital)
+    juce::TextButton transferToDigitalButton{"Transfer To Digital"};
 
     // Factory preset selector (Digital mode)
     std::unique_ptr<juce::ComboBox> presetSelector;
@@ -202,9 +204,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> britishOutputGainAttachment;
 
     // Track current EQ mode for UI switching
+    bool isMatchMode = false;
     bool isBritishMode = false;
     bool isTubeEQMode = false;
-    // Note: Digital mode (default) includes per-band dynamics capability
 
     // ============== PER-BAND DYNAMICS CONTROLS ==============
     // Dynamics controls (shown in Digital mode for selected band)
@@ -233,6 +235,7 @@ private:
     std::unique_ptr<juce::ToggleButton> britishBypassButton;
     std::unique_ptr<juce::ToggleButton> britishAutoGainButton;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishBypassAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishAutoGainAttachment;
     bool britishCurveCollapsed = false;  // Track collapse state for British mode
 
     // British mode header controls (A/B, Presets - like 4K-EQ)
@@ -327,6 +330,8 @@ private:
     void toggleAB();
     void copyCurrentToState(juce::ValueTree& state);
     void applyState(const juce::ValueTree& state);
+    void copyModeParamsToState(juce::ValueTree& state, const std::function<bool(const juce::String&)>& filter);
+    void applyModeParams(const juce::ValueTree& state);
 
     // Analyzer controls
     std::unique_ptr<juce::ToggleButton> analyzerButton;

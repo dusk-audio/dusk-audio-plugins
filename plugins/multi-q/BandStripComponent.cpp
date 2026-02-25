@@ -1,7 +1,6 @@
 #include "BandStripComponent.h"
 #include "MultiQ.h"
 
-//==============================================================================
 BandStripComponent::BandStripComponent(MultiQ& proc)
     : processor(proc)
 {
@@ -35,7 +34,6 @@ BandStripComponent::~BandStripComponent()
     }
 }
 
-//==============================================================================
 void BandStripComponent::setupBandColumn(int index)
 {
     auto& col = bandColumns[static_cast<size_t>(index)];
@@ -72,10 +70,11 @@ void BandStripComponent::setupBandColumn(int index)
     {
         col.freqAttachment = std::make_unique<juce::ParameterAttachment>(
             *param,
-            [this, index](float value) {
-                juce::MessageManager::callAsync([this, index, value]() {
-                    bandColumns[static_cast<size_t>(index)].freqLabel->setText(
-                        formatFrequency(value), juce::dontSendNotification);
+            [safeThis = juce::Component::SafePointer<BandStripComponent>(this), index](float value) {
+                juce::MessageManager::callAsync([safeThis, index, value]() {
+                    if (safeThis != nullptr)
+                        safeThis->bandColumns[static_cast<size_t>(index)].freqLabel->setText(
+                            safeThis->formatFrequency(value), juce::dontSendNotification);
                 });
             },
             nullptr);
@@ -105,6 +104,8 @@ void BandStripComponent::setupBandColumn(int index)
         col.slopeSelector->addItem("24 dB", 4);
         col.slopeSelector->addItem("36 dB", 5);
         col.slopeSelector->addItem("48 dB", 6);
+        col.slopeSelector->addItem("72 dB", 7);
+        col.slopeSelector->addItem("96 dB", 8);
         col.slopeSelector->setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF1a1a1a));
         col.slopeSelector->setColour(juce::ComboBox::textColourId, juce::Colour(0xFFa0a0a0));
         col.slopeSelector->setColour(juce::ComboBox::outlineColourId, juce::Colour(0xFF3a3a3a));
@@ -125,11 +126,11 @@ void BandStripComponent::setupBandColumn(int index)
         {
             col.gainAttachment = std::make_unique<juce::ParameterAttachment>(
                 *param,
-                [this, index](float value) {
-                    juce::MessageManager::callAsync([this, index, value]() {
-                        if (bandColumns[static_cast<size_t>(index)].gainLabel)
-                            bandColumns[static_cast<size_t>(index)].gainLabel->setText(
-                                formatGain(value), juce::dontSendNotification);
+                [safeThis = juce::Component::SafePointer<BandStripComponent>(this), index](float value) {
+                    juce::MessageManager::callAsync([safeThis, index, value]() {
+                        if (safeThis != nullptr && safeThis->bandColumns[static_cast<size_t>(index)].gainLabel)
+                            safeThis->bandColumns[static_cast<size_t>(index)].gainLabel->setText(
+                                safeThis->formatGain(value), juce::dontSendNotification);
                     });
                 },
                 nullptr);
@@ -157,10 +158,11 @@ void BandStripComponent::setupBandColumn(int index)
     {
         col.qAttachment = std::make_unique<juce::ParameterAttachment>(
             *param,
-            [this, index](float value) {
-                juce::MessageManager::callAsync([this, index, value]() {
-                    bandColumns[static_cast<size_t>(index)].qLabel->setText(
-                        formatQ(value), juce::dontSendNotification);
+            [safeThis = juce::Component::SafePointer<BandStripComponent>(this), index](float value) {
+                juce::MessageManager::callAsync([safeThis, index, value]() {
+                    if (safeThis != nullptr)
+                        safeThis->bandColumns[static_cast<size_t>(index)].qLabel->setText(
+                            safeThis->formatQ(value), juce::dontSendNotification);
                 });
             },
             nullptr);
@@ -193,7 +195,6 @@ void BandStripComponent::setupEditableLabel(juce::Label& label, const juce::Stri
     label.setFont(juce::Font(juce::FontOptions(13.0f)));  // Increased from 11.0f for better readability
 }
 
-//==============================================================================
 void BandStripComponent::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
@@ -256,7 +257,6 @@ void BandStripComponent::drawSelectionHighlight(juce::Graphics& g, juce::Rectang
     g.drawRoundedRectangle(bounds.reduced(2.0f), 3.0f, 1.0f);
 }
 
-//==============================================================================
 void BandStripComponent::resized()
 {
     auto bounds = getLocalBounds();
@@ -304,7 +304,6 @@ void BandStripComponent::resized()
     }
 }
 
-//==============================================================================
 void BandStripComponent::mouseDown(const juce::MouseEvent& e)
 {
     // Determine which band column was clicked
@@ -332,7 +331,6 @@ void BandStripComponent::setSelectedBand(int bandIndex)
     }
 }
 
-//==============================================================================
 juce::String BandStripComponent::formatFrequency(float freq)
 {
     if (freq >= 1000.0f)
@@ -356,8 +354,8 @@ juce::String BandStripComponent::formatQ(float q)
 
 juce::String BandStripComponent::formatSlope(int slopeIndex)
 {
-    static const char* slopes[] = {"6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct"};
-    if (slopeIndex >= 0 && slopeIndex < 6)
+    static const char* slopes[] = {"6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct"};
+    if (slopeIndex >= 0 && slopeIndex < 8)
         return slopes[slopeIndex];
     return "12 dB/oct";
 }
@@ -371,32 +369,28 @@ juce::String BandStripComponent::getBandTypeName(BandType type)
         case BandType::Parametric: return "Para";
         case BandType::HighShelf:  return "HSh";
         case BandType::LowPass:    return "LPF";
-        default:                   return "";
+        case BandType::Notch:      return "Notch";
+        case BandType::BandPass:   return "BP";
+        default:                   jassertfalse; return "Unknown";
     }
 }
 
-//==============================================================================
 float BandStripComponent::parseFrequency(const juce::String& text)
 {
     juce::String clean = text.trim().toLowerCase();
 
     // Handle "k" suffix for kHz
     if (clean.endsWithChar('k'))
-        return clean.dropLastCharacters(1).getFloatValue() * 1000.0f;
+        return juce::jlimit(20.0f, 20000.0f, clean.dropLastCharacters(1).getFloatValue() * 1000.0f);
 
     // Handle explicit "hz" or "khz"
     if (clean.endsWith("khz") || clean.endsWith(" khz"))
-        return clean.upToFirstOccurrenceOf("k", false, true).trim().getFloatValue() * 1000.0f;
+        return juce::jlimit(20.0f, 20000.0f, clean.upToFirstOccurrenceOf("k", false, true).trim().getFloatValue() * 1000.0f);
     if (clean.endsWith("hz") || clean.endsWith(" hz"))
-        return clean.upToFirstOccurrenceOf("h", false, true).trim().getFloatValue();
+        return juce::jlimit(20.0f, 20000.0f, clean.upToFirstOccurrenceOf("h", false, true).trim().getFloatValue());
 
-    // Plain number - use heuristic
+    // Plain number — treat as Hz (use "k" suffix for kHz)
     float value = clean.getFloatValue();
-
-    // Auto-detect: if value is small (< 20), assume kHz
-    if (value > 0 && value < 20)
-        return value * 1000.0f;
-
     return juce::jlimit(20.0f, 20000.0f, value);
 }
 
@@ -418,7 +412,6 @@ float BandStripComponent::parseQ(const juce::String& text)
     return juce::jlimit(0.1f, 18.0f, value);
 }
 
-//==============================================================================
 void BandStripComponent::parameterChanged(const juce::String& parameterID, float /*newValue*/)
 {
     // Extract band number from parameter ID
@@ -428,8 +421,9 @@ void BandStripComponent::parameterChanged(const juce::String& parameterID, float
         if (bandNum >= 1 && bandNum <= 8)
         {
             int index = bandNum - 1;
-            juce::MessageManager::callAsync([this, index]() {
-                updateBandValues(index);
+            juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<BandStripComponent>(this), index]() {
+                if (safeThis != nullptr)
+                    safeThis->updateBandValues(index);
             });
         }
     }

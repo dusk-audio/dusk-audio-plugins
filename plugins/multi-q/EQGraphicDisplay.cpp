@@ -1,18 +1,14 @@
 #include "EQGraphicDisplay.h"
 #include "MultiQ.h"
 
-//==============================================================================
 EQGraphicDisplay::EQGraphicDisplay(MultiQ& proc)
     : processor(proc)
 {
-    // Create analyzer component
     analyzer = std::make_unique<FFTAnalyzer>();
     addAndMakeVisible(analyzer.get());
-    // Logic Pro-style analyzer colors - subtle cyan/teal tint (~25-30% opacity)
     analyzer->setFillColor(juce::Colour(0x3055999a));   // ~19% fill (more subtle)
     analyzer->setLineColor(juce::Colour(0x6077aaaa));   // ~38% line (reduced)
 
-    // Start timer for UI updates (60 Hz for smooth drag responsiveness)
     startTimerHz(60);
 }
 
@@ -21,17 +17,20 @@ EQGraphicDisplay::~EQGraphicDisplay()
     stopTimer();
 }
 
-//==============================================================================
 void EQGraphicDisplay::timerCallback()
 {
-    // Update analyzer data (child component repaints itself)
     if (processor.isAnalyzerDataReady())
     {
         analyzer->updateMagnitudes(processor.getAnalyzerMagnitudes());
         processor.clearAnalyzerDataReady();
     }
 
-    // Smart repaint: only repaint when parameters actually changed
+    if (processor.isPreAnalyzerDataReady())
+    {
+        analyzer->updatePreMagnitudes(processor.getPreAnalyzerMagnitudes());
+        processor.clearPreAnalyzerDataReady();
+    }
+
     bool needsRepaint = false;
 
     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
@@ -53,7 +52,6 @@ void EQGraphicDisplay::timerCallback()
             needsRepaint = true;
         }
 
-        // Update smoothed dynamic gains
         if (processor.isInDynamicMode() && processor.isDynamicsEnabled(i))
         {
             float target = processor.getDynamicGain(i);
@@ -79,7 +77,6 @@ void EQGraphicDisplay::timerCallback()
         repaint();
 }
 
-//==============================================================================
 void EQGraphicDisplay::renderBackground()
 {
     auto bounds = getLocalBounds();
@@ -89,7 +86,6 @@ void EQGraphicDisplay::renderBackground()
     juce::Graphics bg(backgroundCache);
     auto boundsF = bounds.toFloat();
 
-    // Logic Pro-style radial gradient background - darker at edges, subtle warmth at center
     {
         auto centerX = boundsF.getCentreX();
         auto centerY = getYForDB(0.0f);
@@ -116,10 +112,8 @@ void EQGraphicDisplay::renderBackground()
         bg.fillRect(boundsF);
     }
 
-    // Draw grid
     drawGrid(bg);
 
-    // Draw piano keyboard note overlay
     if (showPianoOverlay)
         drawPianoOverlay(bg);
 
@@ -130,7 +124,6 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    // Draw cached background (gradients + grid + piano overlay)
     if (backgroundCacheDirty || !backgroundCache.isValid()
         || backgroundCache.getWidth() != getWidth()
         || backgroundCache.getHeight() != getHeight())
@@ -139,43 +132,60 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
     }
     g.drawImageAt(backgroundCache, 0, 0);
 
-    // Draw individual band curves (with gradient fill)
     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
     {
         if (isBandEnabled(i))
             drawBandCurve(g, i);
     }
 
-    // Draw combined EQ curve with glow
     drawCombinedCurve(g);
 
-    // Draw dynamic response curve overlay (when any band has dynamics active)
+    if (processor.isMatchMode() && processor.hasMatchOverlayData())
+        drawMatchOverlays(g);
+
     if (processor.isInDynamicMode())
     {
         auto dynBounds = getDisplayBounds();
         juce::Path dynPath;
-        bool dynStarted = false;
+        std::vector<juce::Point<float>> staticPoints, dynPointsVec;
         int dynPoints = juce::jmax(100, static_cast<int>(dynBounds.getWidth() * 0.5f));
 
         for (int px = 0; px < dynPoints; ++px)
         {
             float x = dynBounds.getX() + static_cast<float>(px) * dynBounds.getWidth() / static_cast<float>(dynPoints);
             float freq = getFrequencyAtX(x);
-            float response = processor.getFrequencyResponseWithDynamics(freq);
-            float y = getYForDB(response);
 
-            if (!dynStarted)
-            {
-                dynPath.startNewSubPath(x, y);
-                dynStarted = true;
-            }
+            float staticResp = processor.getFrequencyResponseMagnitude(freq);
+            float dynResp = processor.getFrequencyResponseWithDynamics(freq);
+
+            float staticY = getYForDB(staticResp);
+            float dynY = getYForDB(dynResp);
+
+            staticPoints.push_back({x, staticY});
+            dynPointsVec.push_back({x, dynY});
+
+            if (px == 0)
+                dynPath.startNewSubPath(x, dynY);
             else
-            {
-                dynPath.lineTo(x, y);
-            }
+                dynPath.lineTo(x, dynY);
         }
 
-        // Draw as a semi-transparent orange dashed curve
+        // Shaded fill between static (combined) curve and dynamic curve
+        if (!staticPoints.empty())
+        {
+            juce::Path fillRegion;
+            fillRegion.startNewSubPath(dynPointsVec[0]);
+            for (size_t i = 1; i < dynPointsVec.size(); ++i)
+                fillRegion.lineTo(dynPointsVec[i]);
+            for (int i = static_cast<int>(staticPoints.size()) - 1; i >= 0; --i)
+                fillRegion.lineTo(staticPoints[static_cast<size_t>(i)]);
+            fillRegion.closeSubPath();
+
+            g.setColour(juce::Colour(0x22ffaa44));
+            g.fillPath(fillRegion);
+        }
+
+        // Dynamic curve as solid orange line with glow
         g.setColour(juce::Colour(0x50ffaa44));
         g.strokePath(dynPath, juce::PathStrokeType(2.5f,
                      juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -184,11 +194,9 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
                      juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
-    // Draw master gain overlay if enabled
     if (showMasterGain && std::abs(masterGainDB) > 0.01f)
         drawMasterGainOverlay(g);
 
-    // Draw dynamics threshold line for selected band (when dynamics enabled)
     if (selectedBand >= 0 && selectedBand < MultiQ::NUM_BANDS &&
         processor.isInDynamicMode() && processor.isDynamicsEnabled(selectedBand))
     {
@@ -197,17 +205,14 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
 
         auto displayBounds = getDisplayBounds();
 
-        // Threshold line with dashed style
         juce::Colour threshColor = juce::Colour(0xFFff8844);  // Orange to match dynamics
 
-        // Draw subtle shaded area above threshold (where compression happens)
         juce::Rectangle<float> compressionZone(
             displayBounds.getX(), displayBounds.getY(),
             displayBounds.getWidth(), thresholdY - displayBounds.getY());
         g.setColour(threshColor.withAlpha(0.05f));
         g.fillRect(compressionZone);
 
-        // Draw threshold line with glow
         g.setColour(threshColor.withAlpha(0.15f));
         g.drawHorizontalLine(static_cast<int>(thresholdY - 1), displayBounds.getX(), displayBounds.getRight());
         g.drawHorizontalLine(static_cast<int>(thresholdY + 1), displayBounds.getX(), displayBounds.getRight());
@@ -215,7 +220,6 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         g.setColour(threshColor.withAlpha(0.5f));
         g.drawHorizontalLine(static_cast<int>(thresholdY), displayBounds.getX(), displayBounds.getRight());
 
-        // Draw threshold label on the right side
         g.setColour(threshColor);
         g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
         juce::String threshLabel = "T: " + juce::String(static_cast<int>(threshold)) + " dB";
@@ -223,10 +227,8 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
                    static_cast<int>(thresholdY - 14), 55, 14, juce::Justification::centredRight);
     }
 
-    // Draw control points (stalks first, then nodes)
     drawControlPoints(g);
 
-    // Processing mode badge (when not in Stereo mode)
     {
         auto displayBounds = getDisplayBounds();
         int modeIndex = processor.getProcessingMode();
@@ -255,7 +257,6 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         }
     }
 
-    // Frozen spectrum indicator
     if (isSpectrumFrozen())
     {
         auto displayBounds = getDisplayBounds();
@@ -296,6 +297,61 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         g.fillRect(bounds.getX(), bounds.getBottom() - 8, bounds.getWidth(), 8.0f);
     }
 
+    // Hover readout: frequency + dB at cursor position
+    if (showHoverReadout && !isDragging)
+    {
+        auto displayBounds = getDisplayBounds();
+        float hoverFreq = getFrequencyAtX(hoverPosition.x);
+        float hoverDB = getDBAtY(hoverPosition.y);
+        float eqResponse = processor.getFrequencyResponseMagnitude(hoverFreq);
+
+        // Format frequency
+        juce::String freqText;
+        if (hoverFreq >= 1000.0f)
+            freqText = juce::String(hoverFreq / 1000.0f, 2) + " kHz";
+        else
+            freqText = juce::String(static_cast<int>(hoverFreq)) + " Hz";
+
+        // Format cursor dB and EQ response
+        juce::String dbText = juce::String(hoverDB >= 0 ? "+" : "") + juce::String(hoverDB, 1) + " dB";
+        juce::String eqText = juce::String("EQ: ") + (eqResponse >= 0 ? "+" : "") + juce::String(eqResponse, 1) + " dB";
+
+        auto font = juce::FontOptions(10.0f).withStyle("Bold");
+        g.setFont(font);
+        float textW = juce::jmax(g.getCurrentFont().getStringWidth(freqText),
+                                  g.getCurrentFont().getStringWidth(eqText)) + 14.0f;
+        float textH = 42.0f;
+
+        // Position tooltip near cursor, flip if near edges
+        float tooltipX = hoverPosition.x + 14.0f;
+        float tooltipY = hoverPosition.y - textH - 6.0f;
+        if (tooltipX + textW > displayBounds.getRight())
+            tooltipX = hoverPosition.x - textW - 6.0f;
+        if (tooltipY < displayBounds.getY())
+            tooltipY = hoverPosition.y + 14.0f;
+
+        juce::Rectangle<float> tooltipRect(tooltipX, tooltipY, textW, textH);
+
+        // Background pill
+        g.setColour(juce::Colour(0xDD101014));
+        g.fillRoundedRectangle(tooltipRect, 4.0f);
+        g.setColour(juce::Colour(0x50ffffff));
+        g.drawRoundedRectangle(tooltipRect, 4.0f, 0.75f);
+
+        // Text lines
+        g.setColour(juce::Colour(0xFFdddddd));
+        g.drawText(freqText, tooltipRect.reduced(6, 2).removeFromTop(14.0f), juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xFFaaaaaa));
+        g.drawText(dbText, tooltipRect.reduced(6, 2).translated(0, 12.0f).removeFromTop(14.0f), juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xFF88ccff));
+        g.drawText(eqText, tooltipRect.reduced(6, 2).translated(0, 24.0f).removeFromTop(14.0f), juce::Justification::centredLeft);
+
+        // Crosshair lines (subtle)
+        g.setColour(juce::Colour(0x20ffffff));
+        g.drawVerticalLine(static_cast<int>(hoverPosition.x), displayBounds.getY(), displayBounds.getBottom());
+        g.drawHorizontalLine(static_cast<int>(hoverPosition.y), displayBounds.getX(), displayBounds.getRight());
+    }
+
     // Subtle outer border
     g.setColour(juce::Colour(0xFF2a2a2e));
     g.drawRect(bounds, 1.0f);
@@ -310,7 +366,6 @@ void EQGraphicDisplay::resized()
     backgroundCacheDirty = true;
 }
 
-//==============================================================================
 void EQGraphicDisplay::drawGrid(juce::Graphics& g)
 {
     auto displayBounds = getDisplayBounds();
@@ -341,7 +396,6 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
         }
     }
 
-    // Draw dB grid lines
     float dbStep = 6.0f;
     if (scaleMode == DisplayScaleMode::Linear30dB) dbStep = 10.0f;
     if (scaleMode == DisplayScaleMode::Linear60dB) dbStep = 20.0f;
@@ -362,18 +416,15 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
         }
         else
         {
-            // Regular dB lines (~10% opacity, very subtle)
             g.setColour(juce::Colour(0x1Affffff));  // ~10%
             juce::Line<float> line(displayBounds.getX(), y, displayBounds.getRight(), y);
             g.drawLine(line, 0.5f);
         }
     }
 
-    // Draw frequency labels with refined sans-serif font
     juce::Font labelFont(juce::FontOptions(9.5f).withStyle("Regular"));
     g.setFont(labelFont);
 
-    // Major frequency labels (brighter, refined)
     std::array<std::pair<float, const char*>, 4> majorLabels = {{
         {100.0f, "100"}, {1000.0f, "1k"}, {10000.0f, "10k"}, {20000.0f, "20k"}
     }};
@@ -404,7 +455,6 @@ void EQGraphicDisplay::drawGrid(juce::Graphics& g)
                    30, 14, juce::Justification::centred);
     }
 
-    // Draw dB labels with better contrast
     juce::Font dbFont(juce::FontOptions(9.0f).withStyle("Regular"));
     g.setFont(dbFont);
 
@@ -450,7 +500,6 @@ void EQGraphicDisplay::drawPianoOverlay(juce::Graphics& g)
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
     };
 
-    // Draw each note from MIDI 24 (C1 ≈ 32.7 Hz) to MIDI 108 (C8 ≈ 4186 Hz)
     for (int midi = 24; midi <= 108; ++midi)
     {
         float freq = 440.0f * std::pow(2.0f, (midi - 69.0f) / 12.0f);
@@ -505,7 +554,6 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
     juce::Path curvePath;
     bool pathStarted = false;
 
-    // Calculate band response at each x position
     int numPoints = juce::jmax(100, static_cast<int>(displayBounds.getWidth() * 0.75f));
 
     for (int px = 0; px < numPoints; ++px)
@@ -513,7 +561,6 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
         float freq = getFrequencyAtX(x);
 
-        // Get approximate magnitude response for this band only
         float response = 0.0f;
         float bandFreq = getBandFrequency(bandIndex);
         float gain = getBandGain(bandIndex);
@@ -636,7 +683,6 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         }
     }
 
-    // Create fill path
     juce::Path fillPath = curvePath;
     float zeroY = getYForDB(0.0f);
     fillPath.lineTo(displayBounds.getRight(), zeroY);
@@ -646,11 +692,9 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
     bool isSelected = (bandIndex == selectedBand);
     bool isHovered = (bandIndex == hoveredBand);
 
-    // Get the peak point of the curve for gradient positioning
     auto curveBounds = curvePath.getBounds();
     float peakY = (curveBounds.getY() < zeroY) ? curveBounds.getY() : curveBounds.getBottom();
 
-    // Draw gradient fill from curve color to transparent (~20% opacity at top)
     {
         juce::ColourGradient fillGradient;
         float curveAlpha = isSelected ? 0.35f : (isHovered ? 0.25f : 0.18f);
@@ -674,13 +718,11 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         g.fillPath(fillPath);
     }
 
-    // Draw soft outer glow/shadow for the curve (depth effect)
     float glowAlpha = isSelected ? 0.3f : (isHovered ? 0.2f : 0.12f);
     g.setColour(curveColor.withAlpha(glowAlpha));
     g.strokePath(curvePath, juce::PathStrokeType(isSelected ? 5.0f : 4.0f,
                  juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // Draw anti-aliased curve line with proper stroke
     float lineWidth = isSelected ? 2.5f : (isHovered ? 2.0f : 1.8f);
     float lineAlpha = isSelected ? 1.0f : (isHovered ? 0.9f : 0.75f);
     g.setColour(curveColor.withAlpha(lineAlpha));
@@ -717,23 +759,18 @@ void EQGraphicDisplay::drawCombinedCurve(juce::Graphics& g)
         }
     }
 
-    // Multi-layer glow effect for combined curve (Logic Pro style)
-    // Outermost soft glow
     g.setColour(juce::Colours::white.withAlpha(0.08f));
     g.strokePath(combinedPath, juce::PathStrokeType(8.0f,
                  juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // Middle glow
     g.setColour(juce::Colours::white.withAlpha(0.15f));
     g.strokePath(combinedPath, juce::PathStrokeType(5.0f,
                  juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // Inner glow
     g.setColour(juce::Colours::white.withAlpha(0.35f));
     g.strokePath(combinedPath, juce::PathStrokeType(3.0f,
                  juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // Core bright line
     g.setColour(juce::Colours::white.withAlpha(0.95f));
     g.strokePath(combinedPath, juce::PathStrokeType(1.8f,
                  juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -752,10 +789,8 @@ void EQGraphicDisplay::drawControlPoints(juce::Graphics& g)
             bool isSelected = (i == selectedBand);
             bool isHovered = (i == hoveredBand);
 
-            // Draw connecting stalk from node to 0dB line
             juce::Colour stalkColor = (i >= 0 && i < 8) ? DefaultBandConfigs[i].color : juce::Colours::white;
 
-            // Gradient stalk from node to 0dB line
             float stalkAlpha = isSelected ? 0.6f : (isHovered ? 0.4f : 0.25f);
             juce::ColourGradient stalkGradient(
                 stalkColor.withAlpha(stalkAlpha), point.x, point.y,
@@ -817,25 +852,20 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
     bool isSelected = (bandIndex == selectedBand);
     bool isHovered = (bandIndex == hoveredBand);
 
-    // Check if this band has flat gain (near 0dB) - makes it more subtle
     float gain = getBandGain(bandIndex);
     bool isFlat = (bandIndex > 0 && bandIndex < 7) && std::abs(gain) < 0.5f;  // Within 0.5dB of 0
     bool hasGain = !isFlat;
 
-    // Scale and opacity based on state and whether the band has actual gain
     float baseRadius = CONTROL_POINT_RADIUS;
     float flatScale = isFlat ? 0.85f : 1.0f;  // Flat nodes are slightly smaller
     float scale = (isSelected ? 1.25f : (isHovered ? 1.15f : 1.0f)) * flatScale;
     float radius = baseRadius * scale;
 
-    // Opacity reduction for flat nodes (unless selected/hovered)
     float opacityMult = (isFlat && !isSelected && !isHovered) ? 0.6f : 1.0f;
 
-    // Ring thickness varies with state
     float ringThickness = isSelected ? 3.0f : (isHovered ? 2.5f : (isFlat ? 1.5f : 2.0f));
     float innerRadius = radius - ringThickness;
 
-    // Draw ghost at static position when dynamics move the control point
     if (processor.isInDynamicMode() && processor.isDynamicsEnabled(bandIndex))
     {
         float dynGain = smoothedDynamicGains[static_cast<size_t>(bandIndex)];
@@ -849,32 +879,25 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
             g.drawEllipse(staticPoint.x - ghostRadius, staticPoint.y - ghostRadius,
                           ghostRadius * 2.0f, ghostRadius * 2.0f, 1.5f);
 
-            // Connecting line from static to dynamic position
             g.setColour(color.withAlpha(0.15f));
             g.drawLine(staticPoint.x, staticPoint.y, point.x, point.y, 1.0f);
         }
     }
 
-    // Outer glow effect (multiple layers for soft glow)
-    // Only show full glow for bands with gain or when selected/hovered
     if (isSelected)
     {
-        // Outermost glow
         g.setColour(color.withAlpha(0.15f));
         g.fillEllipse(point.x - radius * 2.2f, point.y - radius * 2.2f,
                       radius * 4.4f, radius * 4.4f);
-        // Middle glow
         g.setColour(color.withAlpha(0.25f));
         g.fillEllipse(point.x - radius * 1.7f, point.y - radius * 1.7f,
                       radius * 3.4f, radius * 3.4f);
-        // Inner glow
         g.setColour(color.withAlpha(0.4f));
         g.fillEllipse(point.x - radius * 1.3f, point.y - radius * 1.3f,
                       radius * 2.6f, radius * 2.6f);
     }
     else if (isHovered)
     {
-        // Subtle glow for hovered state
         g.setColour(color.withAlpha(0.12f));
         g.fillEllipse(point.x - radius * 1.8f, point.y - radius * 1.8f,
                       radius * 3.6f, radius * 3.6f);
@@ -884,27 +907,21 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
     }
     else if (hasGain)
     {
-        // Subtle glow for active bands with gain (not flat)
         g.setColour(color.withAlpha(0.08f));
         g.fillEllipse(point.x - radius * 1.5f, point.y - radius * 1.5f,
                       radius * 3.0f, radius * 3.0f);
     }
 
-    // Drop shadow (offset down-right) - reduced for flat nodes
     g.setColour(juce::Colour(0x40000000).withMultipliedAlpha(opacityMult));
     g.fillEllipse(point.x - radius + 2.0f, point.y - radius + 2.0f, radius * 2.0f, radius * 2.0f);
 
-    // Ring-style handle: colored ring with semi-transparent center
-    // Outer colored ring
     g.setColour(color.withMultipliedAlpha(opacityMult));
     g.fillEllipse(point.x - radius, point.y - radius, radius * 2.0f, radius * 2.0f);
 
-    // Hollow center (dark, semi-transparent)
     juce::Colour centerColor = isSelected ? juce::Colour(0xE0101014) : juce::Colour(0xD0141418);
     g.setColour(centerColor);
     g.fillEllipse(point.x - innerRadius, point.y - innerRadius, innerRadius * 2.0f, innerRadius * 2.0f);
 
-    // Inner highlight ring (subtle 3D effect) - skip for flat unselected nodes
     if (!isFlat || isSelected || isHovered)
     {
         g.setColour(color.brighter(0.3f).withAlpha(0.4f * opacityMult));
@@ -912,7 +929,6 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
                       (innerRadius - 0.5f) * 2.0f, (innerRadius - 0.5f) * 2.0f, 0.75f);
     }
 
-    // Outer white highlight ring for selected
     if (isSelected)
     {
         g.setColour(juce::Colours::white.withAlpha(0.6f));
@@ -920,13 +936,10 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
                       (radius + 0.5f) * 2.0f, (radius + 0.5f) * 2.0f, 1.5f);
     }
 
-    // Draw filter type icon (or band number for parametric)
-    // Get the band type, checking shape parameter for parametric bands
     BandType bandType = (bandIndex >= 0 && bandIndex < 8)
         ? DefaultBandConfigs[static_cast<size_t>(bandIndex)].type
         : BandType::Parametric;
 
-    // Override with Notch/BandPass if shape parameter says so
     if (bandType == BandType::Parametric && bandIndex >= 2 && bandIndex <= 5)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
@@ -1039,27 +1052,20 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
         }
     }
 
-    // Dynamic gain indicator (only in Dynamic mode when dynamics are enabled for this band)
     if (processor.isInDynamicMode() && processor.isDynamicsEnabled(bandIndex))
     {
         float dynGain = processor.getDynamicGain(bandIndex);  // Negative dB for reduction
 
-        // Draw a small arc indicator showing dynamic activity
-        // The arc angle represents the amount of gain reduction (up to 24dB range)
         if (std::abs(dynGain) > 0.5f)  // Only show if significant activity
         {
-            // Normalize gain reduction to 0-1 range (0 = no reduction, 1 = max reduction)
             float normalizedGain = juce::jmin(std::abs(dynGain) / 24.0f, 1.0f);
 
-            // Draw arc around the control point
             float arcRadius = radius + 4.0f;
             float arcThickness = 2.5f;
 
-            // Arc color: green for reduction, fade to yellow for heavy reduction
             juce::Colour arcColor = juce::Colour(0xff00cc66).interpolatedWith(
                 juce::Colour(0xffffcc00), normalizedGain * 0.7f);
 
-            // Arc spans from top, clockwise based on gain reduction
             float startAngle = -juce::MathConstants<float>::halfPi;  // Top
             float endAngle = startAngle + normalizedGain * juce::MathConstants<float>::twoPi * 0.8f;
 
@@ -1071,7 +1077,6 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
             g.strokePath(arcPath, juce::PathStrokeType(arcThickness,
                          juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-            // Add subtle glow
             g.setColour(arcColor.withAlpha(0.3f));
             g.strokePath(arcPath, juce::PathStrokeType(arcThickness + 2.0f,
                          juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -1096,20 +1101,98 @@ void EQGraphicDisplay::drawMasterGainOverlay(juce::Graphics& g)
     g.setColour(juce::Colours::white.withAlpha(0.1f));
     g.fillRect(gainArea);
 
-    // Draw master gain line
     g.setColour(juce::Colours::white.withAlpha(0.5f));
     g.drawHorizontalLine(static_cast<int>(y), displayBounds.getX(), displayBounds.getRight());
 }
 
-//==============================================================================
+void EQGraphicDisplay::drawMatchOverlays(juce::Graphics& g)
+{
+    auto displayBounds = getDisplayBounds();
+    int numPoints = juce::jmax(200, static_cast<int>(displayBounds.getWidth()));
+
+    const auto& refMags = processor.getMatchReferenceMagnitudes();
+    const auto& diffCurve = processor.getMatchDifferenceCurve();
+    float nyquist = static_cast<float>(processor.getBaseSampleRate() * 0.5);
+    if (nyquist < 1.0f) nyquist = 22050.0f;
+
+    // --- Reference spectrum overlay (green filled area) ---
+    juce::Path refPath;
+    juce::Path refFill;
+    bool started = false;
+
+    for (int px = 0; px < numPoints; ++px)
+    {
+        float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
+        float freq = getFrequencyAtX(x);
+
+        int bin = static_cast<int>(freq / nyquist * static_cast<float>(EQMatchProcessor::NUM_BINS));
+        bin = juce::jlimit(0, EQMatchProcessor::NUM_BINS - 1, bin);
+        float refDB = refMags[static_cast<size_t>(bin)];
+        float yPos = getYForDB(refDB);
+
+        if (!started)
+        {
+            refPath.startNewSubPath(x, yPos);
+            refFill.startNewSubPath(x, displayBounds.getBottom());
+            refFill.lineTo(x, yPos);
+            started = true;
+        }
+        else
+        {
+            refPath.lineTo(x, yPos);
+            refFill.lineTo(x, yPos);
+        }
+    }
+
+    float lastX = displayBounds.getX() + displayBounds.getWidth();
+    refFill.lineTo(lastX, displayBounds.getBottom());
+    refFill.closeSubPath();
+
+    g.setColour(juce::Colour(0x1844cc88));
+    g.fillPath(refFill);
+    g.setColour(juce::Colour(0x6044cc88));
+    g.strokePath(refPath, juce::PathStrokeType(1.5f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // --- Difference curve overlay (orange/amber line) ---
+    juce::Path diffPath;
+    started = false;
+
+    for (int px = 0; px < numPoints; ++px)
+    {
+        float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
+        float freq = getFrequencyAtX(x);
+
+        int bin = static_cast<int>(freq / nyquist * static_cast<float>(EQMatchProcessor::NUM_BINS));
+        bin = juce::jlimit(0, EQMatchProcessor::NUM_BINS - 1, bin);
+        float diffDB = diffCurve[static_cast<size_t>(bin)];
+        float yPos = getYForDB(diffDB);
+
+        if (!started)
+        {
+            diffPath.startNewSubPath(x, yPos);
+            started = true;
+        }
+        else
+        {
+            diffPath.lineTo(x, yPos);
+        }
+    }
+
+    g.setColour(juce::Colour(0x50ffaa44));
+    g.strokePath(diffPath, juce::PathStrokeType(2.5f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour(juce::Colour(0x90ffaa44));
+    g.strokePath(diffPath, juce::PathStrokeType(1.2f,
+                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
 void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)
 {
     auto point = e.position;
 
-    // Check if we clicked on a control point (including inactive ones for right-click)
     int hitBand = hitTestControlPoint(point);
 
-    // Also check inactive bands for right-click enabling
     if (hitBand < 0)
     {
         for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
@@ -1127,7 +1210,6 @@ void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)
         }
     }
 
-    // Right-click shows context menu
     if (e.mods.isRightButtonDown() && hitBand >= 0)
     {
         selectedBand = hitBand;
@@ -1138,10 +1220,10 @@ void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)
         return;
     }
 
-    // Alt-click (without Cmd) resets band to default values
     if (e.mods.isAltDown() && !e.mods.isCommandDown() && hitBand >= 0 && isBandEnabled(hitBand))
     {
-        // Reset to default values from DefaultBandConfigs
+        if (hitBand >= 8)
+            return;  // Out of range for DefaultBandConfigs
         const auto& config = DefaultBandConfigs[static_cast<size_t>(hitBand)];
         setBandFrequency(hitBand, config.defaultFreq);
         setBandGain(hitBand, 0.0f);  // Default gain is 0 dB
@@ -1208,12 +1290,10 @@ void EQGraphicDisplay::mouseDrag(const juce::MouseEvent& e)
     float deltaX = point.x - dragStartPoint.x;
     float deltaY = point.y - dragStartPoint.y;
 
-    // Calculate new values based on drag mode
     switch (currentDragMode)
     {
         case DragMode::FrequencyAndGain:
         {
-            // Frequency: logarithmic change
             float freqRatio = std::pow(maxFrequency / minFrequency, deltaX / displayBounds.getWidth());
             float newFreq = dragStartFreq * freqRatio;
             setBandFrequency(selectedBand, newFreq);
@@ -1269,9 +1349,33 @@ void EQGraphicDisplay::mouseUp(const juce::MouseEvent& /*e*/)
 void EQGraphicDisplay::mouseMove(const juce::MouseEvent& e)
 {
     int hitBand = hitTestControlPoint(e.position);
+    bool changed = false;
+
     if (hitBand != hoveredBand)
     {
         hoveredBand = hitBand;
+        changed = true;
+    }
+
+    auto displayBounds = getDisplayBounds();
+    bool inDisplay = displayBounds.contains(e.position);
+    if (inDisplay != showHoverReadout || (inDisplay && e.position != hoverPosition))
+    {
+        showHoverReadout = inDisplay;
+        hoverPosition = e.position;
+        changed = true;
+    }
+
+    if (changed)
+        repaint();
+}
+
+void EQGraphicDisplay::mouseExit(const juce::MouseEvent& /*e*/)
+{
+    if (showHoverReadout || hoveredBand >= 0)
+    {
+        showHoverReadout = false;
+        hoveredBand = -1;
         repaint();
     }
 }
@@ -1280,7 +1384,7 @@ void EQGraphicDisplay::mouseDoubleClick(const juce::MouseEvent& e)
 {
     // Double-click on control point resets band to default
     int hitBand = hitTestControlPoint(e.position);
-    if (hitBand >= 0)
+    if (hitBand >= 0 && hitBand < 8)
     {
         const auto& config = DefaultBandConfigs[static_cast<size_t>(hitBand)];
         setBandFrequency(hitBand, config.defaultFreq);
@@ -1293,7 +1397,6 @@ void EQGraphicDisplay::mouseDoubleClick(const juce::MouseEvent& e)
 
 void EQGraphicDisplay::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
-    // Check if mouse is over a control point, or use selected band
     int targetBand = hitTestControlPoint(e.position);
     if (targetBand < 0)
         targetBand = selectedBand;
@@ -1312,7 +1415,6 @@ void EQGraphicDisplay::mouseWheelMove(const juce::MouseEvent& e, const juce::Mou
     }
 }
 
-//==============================================================================
 void EQGraphicDisplay::setSelectedBand(int bandIndex)
 {
     selectedBand = bandIndex;
@@ -1357,10 +1459,12 @@ void EQGraphicDisplay::setDisplayScaleMode(DisplayScaleMode mode)
 
 void EQGraphicDisplay::setAnalyzerVisible(bool visible)
 {
-    analyzer->setVisible(visible);
-    analyzer->setEnabled(visible);
+    if (analyzer)
+    {
+        analyzer->setVisible(visible);
+        analyzer->setEnabled(visible);
+    }
 }
-//==============================================================================
 juce::Rectangle<float> EQGraphicDisplay::getDisplayBounds() const
 {
     return getLocalBounds().toFloat().reduced(40.0f, 20.0f);
@@ -1423,7 +1527,6 @@ float EQGraphicDisplay::getDBAtY(float y) const
     }
 }
 
-//==============================================================================
 juce::Point<float> EQGraphicDisplay::getStaticControlPointPosition(int bandIndex) const
 {
     float freq = getBandFrequency(bandIndex);
@@ -1433,7 +1536,6 @@ juce::Point<float> EQGraphicDisplay::getStaticControlPointPosition(int bandIndex
     if (bandIndex == 0 || bandIndex == 7)
         gain = 0.0f;
 
-    // For Notch/BandPass shapes, show at 0 dB (Q-only filters)
     if (bandIndex >= 2 && bandIndex <= 5)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
@@ -1453,7 +1555,6 @@ juce::Point<float> EQGraphicDisplay::getControlPointPosition(int bandIndex) cons
     if (bandIndex == 0 || bandIndex == 7)
         gain = 0.0f;
 
-    // For Notch/BandPass shapes, show at 0 dB (Q-only filters)
     if (bandIndex >= 2 && bandIndex <= 5)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
@@ -1461,7 +1562,6 @@ juce::Point<float> EQGraphicDisplay::getControlPointPosition(int bandIndex) cons
             gain = 0.0f;
     }
 
-    // Apply dynamic gain offset when dynamics are active
     if (processor.isInDynamicMode() && processor.isDynamicsEnabled(bandIndex))
         gain += smoothedDynamicGains[static_cast<size_t>(bandIndex)];
 
@@ -1484,7 +1584,6 @@ int EQGraphicDisplay::hitTestControlPoint(juce::Point<float> point) const
     return -1;
 }
 
-//==============================================================================
 float EQGraphicDisplay::getBandFrequency(int bandIndex) const
 {
     auto* param = processor.parameters.getRawParameterValue(ParamIDs::bandFreq(bandIndex + 1));
@@ -1565,6 +1664,9 @@ void EQGraphicDisplay::setBandEnabled(int bandIndex, bool enabled)
 
 void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> screenPos)
 {
+    if (bandIndex < 0 || bandIndex >= 8)
+        return;
+
     const auto& config = DefaultBandConfigs[static_cast<size_t>(bandIndex)];
     bool isEnabled = isBandEnabled(bandIndex);
 
@@ -1603,22 +1705,25 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
 
     menu.addSeparator();
 
-    // Enable/Disable
     menu.addItem(1, isEnabled ? "Disable Band" : "Enable Band", true, false);
 
-    // Reset to default
     menu.addItem(2, "Reset to Default", isEnabled);
 
     menu.addSeparator();
 
-    // Solo band (disable all others temporarily - just visual hint)
     menu.addItem(3, "Solo This Band", isEnabled);
 
-    // Enable all bands
+    bool isDelta = processor.isDeltaSoloMode() && processor.isBandSoloed(bandIndex);
+    menu.addItem(8, "Delta Solo (Listen)", isEnabled, isDelta);
+
     menu.addItem(4, "Enable All Bands");
 
-    // Disable all bands
     menu.addItem(5, "Disable All Bands");
+
+    menu.addSeparator();
+
+    bool preVisible = analyzer ? analyzer->isPreSpectrumVisible() : false;
+    menu.addItem(9, "Show Pre-EQ Spectrum", true, preVisible);
 
     menu.addSeparator();
 
@@ -1627,23 +1732,25 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
     menu.addItem(7, "Redo", processor.getUndoManager().canRedo());
 
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({screenPos.x, screenPos.y, 1, 1}),
-        [this, bandIndex, isEnabled](int result)
+        [safeThis = juce::Component::SafePointer<EQGraphicDisplay>(this), bandIndex, isEnabled](int result)
         {
+            if (safeThis == nullptr)
+                return;
             switch (result)
             {
                 case 1:  // Toggle enable
-                    setBandEnabled(bandIndex, !isEnabled);
-                    repaint();
+                    safeThis->setBandEnabled(bandIndex, !isEnabled);
+                    safeThis->repaint();
                     break;
 
                 case 2:  // Reset to default
                 {
                     const auto& cfg = DefaultBandConfigs[static_cast<size_t>(bandIndex)];
-                    setBandFrequency(bandIndex, cfg.defaultFreq);
+                    safeThis->setBandFrequency(bandIndex, cfg.defaultFreq);
                     if (bandIndex > 0 && bandIndex < 7)
-                        setBandGain(bandIndex, 0.0f);
-                    setBandQ(bandIndex, 0.71f);
-                    repaint();
+                        safeThis->setBandGain(bandIndex, 0.0f);
+                    safeThis->setBandQ(bandIndex, 0.71f);
+                    safeThis->repaint();
                     break;
                 }
 
@@ -1651,33 +1758,57 @@ void EQGraphicDisplay::showBandContextMenu(int bandIndex, juce::Point<int> scree
                     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
                     {
                         if (i != bandIndex)
-                            setBandEnabled(i, false);
+                            safeThis->setBandEnabled(i, false);
                         else
-                            setBandEnabled(i, true);
+                            safeThis->setBandEnabled(i, true);
                     }
-                    repaint();
+                    safeThis->repaint();
                     break;
 
                 case 4:  // Enable all
                     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
-                        setBandEnabled(i, true);
-                    repaint();
+                        safeThis->setBandEnabled(i, true);
+                    safeThis->repaint();
                     break;
 
                 case 5:  // Disable all
                     for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
-                        setBandEnabled(i, false);
-                    repaint();
+                        safeThis->setBandEnabled(i, false);
+                    safeThis->repaint();
                     break;
 
                 case 6:  // Undo
-                    processor.getUndoManager().undo();
-                    repaint();
+                    safeThis->processor.getUndoManager().undo();
+                    safeThis->repaint();
                     break;
 
                 case 7:  // Redo
-                    processor.getUndoManager().redo();
-                    repaint();
+                    safeThis->processor.getUndoManager().redo();
+                    safeThis->repaint();
+                    break;
+
+                case 8:  // Delta solo toggle
+                {
+                    bool wasActive = safeThis->processor.isDeltaSoloMode() && safeThis->processor.isBandSoloed(bandIndex);
+                    if (wasActive)
+                    {
+                        // Turn off delta solo
+                        safeThis->processor.setDeltaSoloMode(false);
+                        safeThis->processor.setSoloedBand(-1);
+                    }
+                    else
+                    {
+                        // Activate delta solo for this band
+                        safeThis->processor.setSoloedBand(bandIndex);
+                        safeThis->processor.setDeltaSoloMode(true);
+                    }
+                    safeThis->repaint();
+                    break;
+                }
+
+                case 9:  // Toggle pre-EQ spectrum overlay
+                    if (safeThis->analyzer)
+                        safeThis->analyzer->setShowPreSpectrum(!safeThis->analyzer->isPreSpectrumVisible());
                     break;
 
                 default:
