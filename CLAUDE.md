@@ -26,7 +26,6 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | Tape Echo | `tape-echo` | `plugins/tape-echo/` | Classic tape delay |
 | Multi-Q | `multi-q` | `plugins/multi-q/` | Universal EQ (Digital/British/Tube) |
 | Convolution Reverb | `convolution-reverb` | `plugins/convolution-reverb/` | IR-based reverb |
-| Neural Amp | `neural-amp` | `plugins/neural-amp/` | Neural amp modeler (NAM) |
 | DuskVerb | `duskverb` | `plugins/DuskVerb/` | Algorithmic reverb (Hadamard FDN) |
 | GrooveMind | `groovemind` | `plugins/groovemind/` | ML drum generator (future) |
 
@@ -59,7 +58,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | 4K EQ | `FOURKEQ_DEFAULT_VERSION` |
 | Multi-Comp | `MULTICOMP_DEFAULT_VERSION` |
 | TapeMachine | `TAPEMACHINE_DEFAULT_VERSION` |
-| Multi-Q | `project(MultiQ VERSION X.Y.Z)` (inline) |
+| Multi-Q | `MULTIQ_DEFAULT_VERSION` |
 | DuskVerb | `DUSKVERB_DEFAULT_VERSION` |
 | Others | `<NAME>_DEFAULT_VERSION` |
 
