@@ -12,6 +12,7 @@ on:
       - 'convolution-reverb-v*' # Convolution Reverb only
       - 'neural-amp-v*'         # Neural Amp only
       - 'groovemind-v*'         # GrooveMind only
+      - 'duskverb-v*'           # DuskVerb only
   workflow_dispatch:
     inputs:
       plugin:
@@ -29,6 +30,7 @@ on:
           - 'convolution-reverb'
           - 'neural-amp'
           - 'groovemind'
+          - 'duskverb'
 
 env:
   BUILD_TYPE: Release
@@ -95,6 +97,10 @@ jobs:
               TARGET="GrooveMind_All"
               NAME="GrooveMind"
               RELEASE_NAME="groovemind"
+            elif [[ "$TAG" == duskverb-v* ]]; then
+              TARGET="DuskVerb_All"
+              NAME="DuskVerb"
+              RELEASE_NAME="duskverb"
             fi
           elif [[ -n "$MANUAL_PLUGIN" ]]; then
             case "$MANUAL_PLUGIN" in
@@ -106,6 +112,7 @@ jobs:
               convolution-reverb) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
               neural-amp) TARGET="NeuralAmp_All"; NAME="Neural Amp"; RELEASE_NAME="neural-amp" ;;
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
+              duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
             esac
           fi
 
