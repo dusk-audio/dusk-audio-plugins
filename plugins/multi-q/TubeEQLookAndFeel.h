@@ -3,14 +3,12 @@
 
     TubeEQLookAndFeel.h
 
-    Vintage passive tube EQ-style Look and Feel for Multi-Q's Tube mode.
+    Vintage tube EQ-style Look and Feel for Multi-Q's Tube mode.
 
-    Emulates the classic appearance of vintage passive tube equalizers:
     - Cream/ivory colored chassis
     - Large chicken-head style knobs with gold caps
     - Warm brown tones and vintage aesthetics
     - Rotary switch styling for frequency selectors
-    - Tube-era VU meter aesthetics
 
   ==============================================================================
 */
@@ -72,7 +70,7 @@ public:
         }
         else
         {
-            // Standard vintage chicken-head style knob
+            // Standard chicken-head style knob
             drawChickenHeadKnob(g, centreX, centreY, radius, angle, slider, isMouseOver, isDragging);
         }
     }
