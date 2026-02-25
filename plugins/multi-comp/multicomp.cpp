@@ -89,23 +89,34 @@ namespace SIMDHelpers {
 
 // Named constants for improved code readability
 namespace Constants {
-    // Filter coefficients
-    // T4B Photocell Multi-Time-Constant Model (validated against hardware measurements)
-    // The T4B has two distinct components:
-    // 1. Fast photoresistor response: ~10ms attack, ~60ms initial decay
-    // 2. Slow phosphor persistence: ~200ms memory effect
-    constexpr float T4B_FAST_ATTACK = 0.010f;      // 10ms fast response
-    constexpr float T4B_FAST_RELEASE = 0.060f;     // 60ms initial decay
-    constexpr float T4B_SLOW_PERSISTENCE = 0.200f; // 200ms phosphor glow
-    constexpr float T4B_MEMORY_COUPLING = 0.4f;    // How much slow affects fast (40%)
-    
-    // T4 Optical cell time constants
-    constexpr float OPTO_ATTACK_TIME = 0.010f; // 10ms average
-    constexpr float OPTO_RELEASE_FAST_MIN = 0.040f; // 40ms
-    constexpr float OPTO_RELEASE_FAST_MAX = 0.080f; // 80ms
-    constexpr float OPTO_RELEASE_SLOW_MIN = 0.5f; // 500ms
-    constexpr float OPTO_RELEASE_SLOW_MAX = 5.0f; // 5 seconds
-    
+    // T4B Optical Cell Model (LA-2A hardware-validated)
+    // CdS photoresistor + electroluminescent panel
+    constexpr float T4B_ATTACK_TIME = 0.002f;        // 2ms CdS fast charge — compensates for feedback topology deceleration
+    constexpr float T4B_FAST_RELEASE_TIME = 0.060f;   // 60ms CdS base discharge (hardware spec)
+    constexpr float T4B_PHOSPHOR_BASE_DECAY = 0.8f;   // 0.8s base phosphor decay (LA-2A recovers faster than typical CdS models)
+    constexpr float T4B_PHOSPHOR_ATTACK_RATIO = 0.3f;  // Phosphor attack relative to decay
+    constexpr float T4B_GAMMA = 2.5f;                  // CdS power law — higher = softer knee (less low-level compression, more at peaks)
+    constexpr float T4B_CONDUCTANCE_K = 8.0f;           // Conductance scaling — moderate K with asymmetric smoothing for stability
+    constexpr float T4B_PHOSPHOR_COUPLING = 0.40f;     // Phosphor persistence provides residual compression between bursts
+    constexpr float T4B_PROG_DEP_CHARGE_RATE = 0.15f;  // Program dependency builds over ~7s
+    constexpr float T4B_PROG_DEP_DISCHARGE_RATE = 0.12f; // Program dependency decays over ~8s (faster to match LA-2A recovery)
+    constexpr float T4B_PROG_DEP_RELEASE_SCALE = 5.0f; // Max release time multiplier (60ms → 300ms)
+    constexpr float T4B_PROG_DEP_PHOSPHOR_SCALE = 2.0f; // Max phosphor decay extension (0.8s → 2.4s) — reduced for faster recovery on pink noise
+    constexpr float COMPRESS_EMPHASIS_FREQ = 150.0f;    // Compress mode sidechain LP corner (Hz)
+    constexpr float COMPRESS_BASS_BOOST = 0.2f;         // Additive bass boost in sidechain — LA-2A Compress mode compresses bass more
+    constexpr float LIMIT_SC_GAIN_BOOST = 1.5f;        // Sidechain gain multiplier in limit mode
+    constexpr float SC_DRIVER_SATURATION = 0.8f;        // 6AQ5 sidechain driver saturation
+    constexpr float SC_DRIVER_OUTPUT_SCALE = 1.0f;     // 6AQ5 output scaling (full range for level-dependent ratio)
+    constexpr float T4B_EL_PANEL_ATTACK_FREQ = 150.0f;   // EL panel thermal mass (~1.1ms) — fast attack for transient response
+    constexpr float T4B_EL_PANEL_RELEASE_FREQ = 5.0f;   // EL panel cools slowly (~32ms) — holds glow between bursts
+    constexpr float T4B_CONDUCTANCE_ATTACK_FREQ = 150.0f; // Fast conductance rise (~1.1ms) — engage compression quickly on 50ms transients
+    constexpr float T4B_CONDUCTANCE_RELEASE_FREQ = 4.0f; // Slow conductance fall (~40ms) — prevents oscillation without over-compressing sustained signals
+    constexpr float SC_DRIVER_THRESHOLD = 0.08f;       // 6AQ5 grid bias cutoff — sharpens compression knee, reduces low-level over-compression
+    constexpr float SC_LEVEL_SMOOTH_FREQ = 200.0f;     // Sidechain envelope smoother — LP to reduce 2f ripple
+    constexpr float PEAK_REDUCTION_MAX_SC_GAIN = 14.0f; // Max sidechain amplifier gain at PR=100
+    constexpr float T4B_MAX_CONDUCTANCE = 6.0f;         // CdS minimum resistance limit (gain floor 1/(1+6)=-16.9dB)
+    constexpr float T4B_MAX_GAIN_RELEASE_RATE = 10.0f; // Max gain recovery speed (units/sec) — ~91ms full recovery, close to LA-2A 60ms fast release
+
     // Vintage FET constants
     constexpr float FET_THRESHOLD_DB = -10.0f; // Fixed threshold
     constexpr float FET_MAX_REDUCTION_DB = 30.0f;
@@ -143,15 +154,6 @@ namespace Constants {
     constexpr float OUTPUT_HARD_LIMIT = 2.0f;
     constexpr float EPSILON = 0.0001f; // Small value to prevent division by zero
 
-    // Transient detection constants
-    constexpr float TRANSIENT_MULTIPLIER = 2.5f; // Threshold multiplier for transient detection
-    constexpr float TRANSIENT_WINDOW_TIME = 0.1f; // 100ms window
-    constexpr float TRANSIENT_NORMALIZE_COUNT = 10.0f; // 10+ transients = dense
-
-    // Helper function to get transient window samples based on sample rate
-    inline int getTransientWindowSamples(double sampleRate) {
-        return static_cast<int>(TRANSIENT_WINDOW_TIME * sampleRate); // ~100ms at any sample rate
-    }
 }
 
 // Unified Anti-aliasing system for all compressor types
@@ -1092,7 +1094,9 @@ inline void getHarmonicScaling(int saturationMode, float& h2Scale, float& h3Scal
     }
 }
 
-// Vintage Opto Compressor
+// LA-2A Optical Leveling Amplifier
+// Authentic feedback topology: gain reduction emerges from the T4B cell
+// interacting with the feedback loop — no hardcoded threshold or ratio.
 class UniversalCompressor::OptoCompressor
 {
 public:
@@ -1100,377 +1104,324 @@ public:
     {
         this->sampleRate = sampleRate;
         detectors.resize(numChannels);
-        for (auto& detector : detectors)
+        for (auto& det : detectors)
         {
-            detector.envelope = 1.0f; // Start at unity gain (no reduction)
-            detector.rms = 0.0f;
-            detector.lightMemory = 0.0f; // T4 cell light memory (legacy)
-            detector.previousReduction = 0.0f;
-            detector.hfFilter = 0.0f;
-            detector.releaseStartTime = 0.0f;
-            detector.releaseStartLevel = 1.0f;
-            detector.releasePhase = 0;
-            detector.maxReduction = 0.0f;
-            detector.holdCounter = 0.0f;
-            detector.saturationLowpass = 0.0f; // Initialize anti-aliasing filter
-            detector.prevInput = 0.0f; // Initialize previous input
-
-            // T4B dual time-constant components
-            detector.fastMemory = 0.0f;
-            detector.slowMemory = 0.0f;
-
-            // Program-dependent release tracking
-            detector.prevInput = 0.0f;
+            det.elPanelLevel = 0.0f;
+            det.cellCharge = 0.0f;
+            det.phosphorGlow = 0.0f;
+            det.accumulatedCharge = 0.0f;
+            det.smoothedConductance = 0.0f;
+            det.t4bGain = 1.0f;
+            det.emphasisFilterState = 0.0f;
         }
 
-        // Hardware emulation components
-        // Input transformer (opto style)
+        // Pre-compute sample-rate-dependent coefficients
+        float sr = static_cast<float>(sampleRate);
+        invSampleRate = 1.0f / sr;
+        attackCoeff = std::exp(-1.0f / (Constants::T4B_ATTACK_TIME * sr));
+        fastReleaseCoeff = std::exp(-1.0f / (Constants::T4B_FAST_RELEASE_TIME * sr));
+        phosphorDecayCoeff = std::exp(-1.0f / (Constants::T4B_PHOSPHOR_BASE_DECAY * sr));
+        emphasisCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::COMPRESS_EMPHASIS_FREQ / sr);
+        phosphorAttackCoeff = std::pow(phosphorDecayCoeff, Constants::T4B_PHOSPHOR_ATTACK_RATIO);
+        condAttackCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_ATTACK_FREQ / sr);
+        condReleaseCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_RELEASE_FREQ / sr);
+        elPanelAttackCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_EL_PANEL_ATTACK_FREQ / sr);
+        elPanelReleaseCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_EL_PANEL_RELEASE_FREQ / sr);
+        scLevelSmoothCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::SC_LEVEL_SMOOTH_FREQ / sr);
+
+        // Hardware emulation: Input transformer (UTC A-10)
         inputTransformer.prepare(sampleRate, numChannels);
         inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().inputTransformer);
         inputTransformer.setEnabled(true);
 
-        // Output transformer
+        // Hardware emulation: Output transformer (UTC A-24)
         outputTransformer.prepare(sampleRate, numChannels);
         outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().outputTransformer);
         outputTransformer.setEnabled(true);
 
-        // 12AX7 tube stage (output amplifier)
+        // Hardware emulation: 12BH7 output tube
         tubeStage.prepare(sampleRate, numChannels);
         tubeStage.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
-        tubeStage.setDrive(0.3f);  // Moderate drive for opto warmth
+        tubeStage.setDrive(0.15f);
 
-        // Short convolution for transformer coloration
-        convolution.prepare(sampleRate);
-        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Opto);
+        // Calibrate hardware gain compensation so PR=0 + Gain=50 = unity
+        // The tube + transformer chain adds ~3.5dB of gain that needs to be removed
+        // Measure it at a reference level to get the exact factor for this sample rate
+        calibrateHardwareGain();
     }
-    
+
     float process(float input, int channel, float peakReduction, float gain, bool limitMode, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
         if (channel >= static_cast<int>(detectors.size()))
             return input;
-
-        // Safety check for sample rate
         if (sampleRate <= 0.0)
             return input;
 
-        // Validate parameters
         peakReduction = juce::jlimit(0.0f, 100.0f, peakReduction);
         gain = juce::jlimit(-40.0f, 40.0f, gain);
 
-        #ifdef DEBUG
-        jassert(!std::isnan(input) && !std::isinf(input));
-        jassert(sampleRate > 0.0);
-        #endif
+        auto& det = detectors[channel];
 
-        auto& detector = detectors[channel];
+        // Stage 1: Input transformer (UTC A-10)
+        float x = inputTransformer.processSample(input, channel);
 
-        // Hardware emulation: Input transformer (opto style)
-        // Adds subtle saturation and frequency-dependent coloration
-        float transformedInput = inputTransformer.processSample(input, channel);
+        // Stage 2: T4B gain cell — apply gain from previous sample's T4B state
+        // This one-sample feedback delay is inherent to the real hardware
+        float compressed = x * det.t4bGain;
 
-        // Apply gain reduction (feedback topology)
-        float compressed = transformedInput * detector.envelope;
-
-        // Opto feedback topology: detection from output (or external sidechain if active)
-        // When external SC is active, use feedforward from external signal
-        // When inactive, use authentic feedback detection from compressed output
-        // In Compress mode: sidechain = output
-        // In Limit mode: sidechain = 1/25 input + 24/25 output
-        float detectionInput;
-
+        // Stage 3: Sidechain signal selection (feedback topology)
+        float scSignal;
         if (useExternalSidechain)
-        {
-            // Use external sidechain for detection (already HP-filtered by caller)
-            detectionInput = sidechainSignal;
-        }
-        else if (limitMode)
-        {
-            // Limit mode mixes a small amount of input with output
-            detectionInput = input * 0.04f + compressed * 0.96f;
-        }
+            scSignal = sidechainSignal;
         else
+            scSignal = compressed; // Feedback: sidechain taps compressed output
+
+        // Stage 4: Sidechain frequency shaping (compress vs limit)
+        // Compress mode: LA-2A's T4B sidechain has bass-heavy response —
+        // data shows 100Hz gets -5.8dB GR vs 1kHz -2.0dB GR at same input level.
+        // Mild additive bass boost: add LP-filtered content to sidechain.
+        // Limit mode: flat/full-range sidechain (no filter)
+        if (!limitMode)
         {
-            // Compress mode uses pure output feedback
-            detectionInput = compressed;
-        }
-        
-        // Peak Reduction controls the sidechain amplifier gain (opto compressor style)
-        // Opto compressor has inherent gain staging -- even at minimum, some signal reaches the T4B cell
-        // +4dB baseline ensures typical vocals begin compressing at low settings
-        float sidechainGain = juce::Decibels::decibelsToGain(4.0f + peakReduction * 0.36f); // +4 to +40dB
-        float detectionLevel = std::abs(detectionInput * sidechainGain);
-        
-        // Frequency-dependent detection (T4 cell is more sensitive to midrange)
-        // Simple high-frequency rolloff to simulate T4 response
-        float hfRolloff = 0.7f; // Reduces high frequency sensitivity
-        detector.hfFilter = detector.hfFilter * hfRolloff + detectionLevel * (1.0f - hfRolloff);
-        detectionLevel = detector.hfFilter;
-        
-        // T4B optical cell dual time-constant model (hardware-validated)
-        // The T4B photocell has two distinct response components:
-        // 1. Fast photoresistor: responds quickly to light changes (~10ms)
-        // 2. Slow phosphor: maintains a "glow" that persists (~200ms)
-
-        float lightInput = detectionLevel;
-
-        // Program-dependent release: faster on transients (Opto characteristic)
-        float absInput = std::abs(input);
-        float inputDelta = absInput - detector.prevInput;
-        detector.prevInput = absInput;
-        // Scale release faster when detecting transients (positive delta)
-        float releaseScale = inputDelta > 0.05f ? 0.6f : 1.0f; // 40% faster on transients
-
-        // Calculate time constants at current sample rate
-        float fastAttackCoeff = std::exp(-1.0f / (Constants::T4B_FAST_ATTACK * static_cast<float>(sampleRate)));
-        float fastReleaseCoeff = std::exp(-1.0f / (Constants::T4B_FAST_RELEASE * static_cast<float>(sampleRate) * releaseScale));
-        float slowPersistCoeff = std::exp(-1.0f / (Constants::T4B_SLOW_PERSISTENCE * static_cast<float>(sampleRate)));
-
-        // Fast photoresistor component: quick attack, program-dependent release
-        if (lightInput > detector.fastMemory)
-            detector.fastMemory = lightInput + (detector.fastMemory - lightInput) * fastAttackCoeff;
-        else
-            detector.fastMemory = lightInput + (detector.fastMemory - lightInput) * fastReleaseCoeff;
-
-        // Slow phosphor persistence: gradual decay creates "memory"
-        detector.slowMemory = lightInput + (detector.slowMemory - lightInput) * slowPersistCoeff;
-
-        // Combine fast and slow components with coupling factor
-        // The slow memory "lifts" the fast response, creating hysteresis
-        float lightLevel = detector.fastMemory + (detector.slowMemory * Constants::T4B_MEMORY_COUPLING);
-
-        // The light level now exhibits proper T4B characteristics:
-        // - Fast initial response (10ms)
-        // - Memory effect prevents immediate return (200ms persistence)
-        // - Creates the Opto's characteristic "sticky" compression
-        
-        // Variable ratio based on feedback topology
-        // Opto ratio varies from ~3:1 (low levels) to ~10:1 (high levels)
-        // This is a key characteristic of the T4 optical cell
-        float reduction = 0.0f;
-
-        // Input-dependent threshold: lower threshold for louder inputs (Opto characteristic)
-        // This creates program-dependent behavior where the compressor becomes more sensitive
-        // to loud signals, mimicking the T4 cell's nonlinear light response
-        float baseThreshold = 0.3f; // T4B photocell sensitivity (~-10 dBFS)
-        float inputLevel = std::abs(input);
-
-        // Dynamic threshold adjustment based on recent input level
-        // Louder inputs lower the threshold by up to 20%
-        float thresholdReduction = juce::jlimit(0.0f, 0.2f, inputLevel * 0.3f);
-        float internalThreshold = baseThreshold * (1.0f - thresholdReduction);
-
-        if (lightLevel > internalThreshold)
-        {
-            float excess = lightLevel - internalThreshold;
-
-            // Program-dependent ratio calculation (authentic opto behavior)
-            // Low levels: ~3:1, Medium: ~4-6:1, High: ~8-10:1
-            float baseRatio = 3.0f;
-            float maxRatio = limitMode ? 20.0f : 10.0f;
-
-            // Logarithmic progression based on light level for natural compression curve
-            // This models the T4 cell's nonlinear photoresistive response
-            float lightIntensity = juce::jlimit(0.0f, 1.0f, lightLevel - internalThreshold);
-            float ratioFactor = std::log10(1.0f + lightIntensity * 9.0f); // 0-1 range, logarithmic
-            float programDependentRatio = baseRatio + (maxRatio - baseRatio) * ratioFactor;
-
-            // Feedback topology: ratio increases with compression amount
-            // Gradual increase models the T4B cell's smooth resistance change
-            float variableRatio = programDependentRatio * (1.0f + excess * 2.0f);
-
-            // Calculate gain reduction in dB using feedback formula
-            // At low levels: gentle 3:1 compression
-            // At high levels: aggressive 8-10:1 limiting
-            reduction = 20.0f * std::log10(1.0f + excess * variableRatio);
-
-            // Opto typically maxes out around 40dB GR
-            reduction = juce::jmin(reduction, 40.0f);
-        }
-        
-        // Opto T4 optical cell time constants
-        // Attack: 10ms average
-        // Release: Two-stage - 40-80ms for first 50%, then 0.5-5 seconds for full recovery
-        float targetGain = juce::Decibels::decibelsToGain(-reduction);
-
-        // Track reduction change for program-dependent behavior
-        detector.previousReduction = reduction;
-
-        // Update signal history for adaptive release behavior
-        // Track peak and average levels for transient detection
-        // Reuse absInput calculated earlier
-        detector.peakLevel = juce::jmax(detector.peakLevel * 0.999f, absInput);
-        detector.averageLevel = detector.averageLevel * 0.9999f + absInput * 0.0001f;
-
-        // Detect transients: sudden level increases significantly above average
-        float inputChange = absInput - detector.averageLevel;
-        if (inputChange > detector.averageLevel * Constants::TRANSIENT_MULTIPLIER)
-        {
-            detector.transientCount++;
-            detector.samplesSinceTransient = 0;
-        }
-        else
-        {
-            detector.samplesSinceTransient++;
+            det.emphasisFilterState += emphasisCoeff * (scSignal - det.emphasisFilterState);
+            scSignal = scSignal + det.emphasisFilterState * Constants::COMPRESS_BASS_BOOST;
         }
 
-        // Update transient density periodically (every ~100ms, scaled to sample rate)
-        detector.sampleWindowCounter++;
-        int transientWindowSamples = Constants::getTransientWindowSamples(sampleRate);
-        if (detector.sampleWindowCounter >= transientWindowSamples)
-        {
-            // Normalize to 0-1 range (10+ transients in 100ms = dense)
-            detector.transientDensity = juce::jlimit(0.0f, 1.0f, detector.transientCount / Constants::TRANSIENT_NORMALIZE_COUNT);
-            detector.transientCount = 0;
-            detector.sampleWindowCounter = 0;
-        }
+        // Stage 5: Peak Reduction = sidechain amplifier gain
+        // This is the primary compression control — NOT a threshold
+        // Limit mode drives the sidechain harder for tighter ratio
+        // Cubic taper: PR=0 → gain=0 (no compression), PR=100 → gain=MAX
+        // Models the real LA-2A pot where low settings barely reach the T4B
+        float prNorm = peakReduction * 0.01f;
+        float peakReductionGain = prNorm * prNorm * prNorm * Constants::PEAK_REDUCTION_MAX_SC_GAIN;
+        float modeGainBoost = limitMode ? Constants::LIMIT_SC_GAIN_BOOST : 1.0f;
 
-        if (targetGain < detector.envelope)
-        {
-            // Attack phase - 10ms average - calculate coefficient properly for actual sample rate
-            float attackTime = Constants::OPTO_ATTACK_TIME;
-            float attackCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, attackTime * static_cast<float>(sampleRate))));
-            detector.envelope = targetGain + (detector.envelope - targetGain) * attackCoeff;
+        // Stage 5b: 6AQ5 sidechain driver tube — soft-clips before the EL panel
+        // The 6AQ5 has a grid bias creating a conduction threshold:
+        // below this drive level, no current flows to the EL panel
+        float scDrive = std::abs(scSignal * peakReductionGain * modeGainBoost);
+        float effectiveDrive = std::max(0.0f, scDrive - Constants::SC_DRIVER_THRESHOLD);
+        float scLevel = std::tanh(effectiveDrive * Constants::SC_DRIVER_SATURATION)
+            * Constants::SC_DRIVER_OUTPUT_SCALE;
 
-            // Reset release tracking
-            detector.releasePhase = 0;
-            detector.releaseStartLevel = detector.envelope;
-            detector.releaseStartTime = 0.0f;
-        }
-        else
-        {
-            // Two-stage release characteristic of T4 cell
-            detector.releaseStartTime += 1.0f / sampleRate;
+        // Stage 6: Sidechain envelope smoothing + T4B cell update
+        // Symmetric LP filter reduces 2f ripple from rectified sidechain.
+        // The real LA-2A has capacitor smoothing in the rectifier circuit.
+        det.scLevelSmoothed += scLevelSmoothCoeff * (scLevel - det.scLevelSmoothed);
+        updateT4BCell(det, det.scLevelSmoothed);
 
-            float releaseTime;
+        // Stage 7: Output stage
+        // Process tube + transformer on the natural compressed signal level,
+        // matching the real LA-2A where the 12BH7 sees the compressed signal
+        // before the output attenuator (makeup gain)
+        float output = compressed;
 
-            // Calculate how far we've recovered
-            float recoveryAmount = (detector.envelope - detector.releaseStartLevel) /
-                                  (1.0f - detector.releaseStartLevel + 0.0001f);
+        // 12BH7 output tube (even-harmonic warmth)
+        output = tubeStage.processSample(output, channel);
 
-            if (recoveryAmount < 0.5f)
-            {
-                // First stage: 40-80ms for first 50% recovery
-                // Faster for smaller reductions, slower for larger
-                float reductionFactor = juce::jlimit(0.0f, 1.0f, detector.maxReduction * 0.05f); // /20.0f
+        // Output transformer (UTC A-24)
+        output = outputTransformer.processSample(output, channel);
 
-                // Adaptive release: faster for transient-dense material (drums, percussion)
-                // slower for sustained material (vocals, bass)
-                // Transient material gets 30-50% faster release to maintain punch
-                float transientFactor = 1.0f - (detector.transientDensity * 0.4f);
-                releaseTime = (Constants::OPTO_RELEASE_FAST_MIN + reductionFactor * (Constants::OPTO_RELEASE_FAST_MAX - Constants::OPTO_RELEASE_FAST_MIN)) * transientFactor;
-                detector.releasePhase = 1;
-            }
-            else
-            {
-                // Second stage: 0.5-5 seconds for remaining recovery
-                // Program and history dependent
-                float lightIntensity = juce::jlimit(0.0f, 1.0f, detector.maxReduction * 0.0333f); // /30.0f
-                float timeHeld = juce::jlimit(0.0f, 1.0f, detector.holdCounter / static_cast<float>(sampleRate * 2.0f));
-
-                // Adaptive release in second stage: sustained material gets longer tail
-                // This preserves natural decay of vocals and instruments
-                float transientFactor = 1.0f + (1.0f - detector.transientDensity) * 0.3f;
-
-                // Longer recovery for stronger/longer compression
-                releaseTime = (Constants::OPTO_RELEASE_SLOW_MIN + (lightIntensity * timeHeld * (Constants::OPTO_RELEASE_SLOW_MAX - Constants::OPTO_RELEASE_SLOW_MIN))) * transientFactor;
-                detector.releasePhase = 2;
-            }
-
-            float releaseCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, releaseTime * static_cast<float>(sampleRate))));
-            detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
-
-            // NaN/Inf safety check
-            if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
-                detector.envelope = 1.0f;
-        }
-
-        // Track compression history for program dependency
-        if (reduction > detector.maxReduction)
-            detector.maxReduction = reduction;
-        
-        if (reduction > 0.5f)
-        {
-            detector.holdCounter = juce::jmin(detector.holdCounter + 1.0f, static_cast<float>(sampleRate * 10.0f));
-        }
-        else
-        {
-            // Slow decay of memory
-            detector.maxReduction *= 0.9999f;
-            detector.holdCounter *= 0.999f;
-        }
-        
-        // Opto Compressor Output Stage - Realistic tube saturation
-        // Spec from compressor_specs.json: < 1.0% THD (Opto mode)
-        // Opto compressor adds subtle 2nd harmonic warmth from tube stages
-        //
-        // Harmonic math: For input x = A*sin(wt)
-        // - k2*x^2 produces 2nd harmonic at (k2*A^2/2) amplitude
-        // - k3*x^3 produces 3rd harmonic at (3*k3*A^3/4) amplitude
-        // THD = sqrt(h2^2 + h3^2 + ...) / fundamental * 100%
-        //
-        // Target: ~0.5% THD at 0dBFS, ~0.3% at -6dB, scaling with level
-
+        // Apply compensation and makeup gain AFTER hardware emulation
         float makeupGain = juce::Decibels::decibelsToGain(gain);
-        float output = compressed * makeupGain;
-
-        // Tube saturation - 2nd harmonic dominant (opto compressor character)
-        // k2 = 0.01 gives ~0.5% 2nd harmonic at unity gain
-        // k3 = 0.002 gives ~0.15% 3rd harmonic at unity gain
-        constexpr float k2 = 0.01f;   // 2nd harmonic coefficient
-        constexpr float k3 = 0.002f;  // 3rd harmonic coefficient
-
-        // Apply waveshaping: y = x + k2*x^2 + k3*x^3
-        float x2 = output * output;
-        float x3 = x2 * output;
-        output = output + k2 * x2 + k3 * x3;
+        output *= hardwareGainCompensation * makeupGain;
 
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
     }
-    
+
     float getGainReduction(int channel) const
     {
         if (channel >= static_cast<int>(detectors.size()))
             return 0.0f;
-        return juce::Decibels::gainToDecibels(detectors[channel].envelope);
+        return juce::Decibels::gainToDecibels(detectors[channel].t4bGain);
     }
 
 private:
     struct Detector
     {
-        float envelope = 1.0f;
-        float rms = 0.0f;
-        float releaseStartLevel = 1.0f;  // For two-stage release
-        int releasePhase = 0;             // 0=idle, 1=fast, 2=slow
-        float maxReduction = 0.0f;       // Track max reduction for program dependency
-        float holdCounter = 0.0f;        // Track how long compression is held
-        float lightMemory = 0.0f;        // T4 cell light memory (legacy, kept for compatibility)
-        float previousReduction = 0.0f;  // Previous reduction for delta tracking
-        float hfFilter = 0.0f;           // High frequency filter state
-        float releaseStartTime = 0.0f;   // Time since release started
-        float saturationLowpass = 0.0f;  // Anti-aliasing filter state
-        float prevInput = 0.0f;          // Previous input for filtering
-
-        // Signal history for adaptive release
-        float peakLevel = 0.0f;          // Peak level tracker
-        float averageLevel = 0.0f;       // Average level tracker
-        int transientCount = 0;          // Transient counter for density
-        float transientDensity = 0.0f;   // 0-1, calculated periodically
-        int samplesSinceTransient = 0;   // Sample counter for transient detection
-        int sampleWindowCounter = 0;     // Window counter for periodic density updates
-
-        // T4B Dual Time-Constant Model (hardware-accurate)
-        float fastMemory = 0.0f;         // Fast photoresistor component (~10ms attack, ~60ms decay)
-        float slowMemory = 0.0f;         // Slow phosphor persistence (~200ms glow)
+        float elPanelLevel = 0.0f;        // EL panel thermal response (smoothed sidechain drive)
+        float cellCharge = 0.0f;          // CdS fast component (~10ms attack, ~60ms release)
+        float phosphorGlow = 0.0f;        // EL panel slow persistence (1-5s decay)
+        float accumulatedCharge = 0.0f;    // Long-term charge for program dependency (0-1)
+        float smoothedConductance = 0.0f; // Bandwidth-limited CdS conductance
+        float t4bGain = 1.0f;             // Current gain from T4B cell (IS the envelope)
+        float emphasisFilterState = 0.0f;  // Compress mode sidechain HP filter state
+        float scLevelSmoothed = 0.0f;     // Symmetric envelope smoother (removes 2f ripple)
     };
-    
-    std::vector<Detector> detectors;
-    double sampleRate = 0.0;  // Set by prepare() from DAW
 
-    // Hardware emulation components (opto compressor style)
+    void updateT4BCell(Detector& det, float scLevel)
+    {
+        // T4B optical cell: EL panel (light) + CdS photoresistor (resistance)
+        //
+        // The T4B has two physical stages:
+        // 1. EL panel: converts 6AQ5 current to light (~150Hz thermal bandwidth)
+        // 2. CdS cell: converts light to resistance change (~10ms attack, ~60ms release)
+        // Plus phosphor persistence and charge accumulation for program dependency.
+
+        // EL panel thermal response: asymmetric — heats fast, cools slowly
+        // Fast attack lets transients through; slow release holds glow steady,
+        // preventing the feedback oscillation where gain drops → sidechain drops → gain rebounds
+        float elCoeff = (scLevel > det.elPanelLevel) ? elPanelAttackCoeff : elPanelReleaseCoeff;
+        det.elPanelLevel += elCoeff * (scLevel - det.elPanelLevel);
+
+        // CdS fast component: charge toward EL panel light level
+        float lightLevel = det.elPanelLevel;
+        if (lightLevel > det.cellCharge)
+        {
+            // Attack: EL panel lights up, CdS resistance drops
+            det.cellCharge = lightLevel + (det.cellCharge - lightLevel) * attackCoeff;
+        }
+        else
+        {
+            // Release: program-dependent — longer compression = slower release
+            float progDepFactor = 1.0f + det.accumulatedCharge * Constants::T4B_PROG_DEP_RELEASE_SCALE;
+            float adjReleaseCoeff = std::pow(fastReleaseCoeff, 1.0f / progDepFactor);
+            det.cellCharge = lightLevel + (det.cellCharge - lightLevel) * adjReleaseCoeff;
+        }
+
+        // EL phosphor persistence: slow component creating two-stage release
+        if (lightLevel > det.phosphorGlow)
+        {
+            // Phosphor charges slowly with sustained light
+            det.phosphorGlow = lightLevel + (det.phosphorGlow - lightLevel) * phosphorAttackCoeff;
+        }
+        else
+        {
+            // Phosphor decays slowly (1-5s, program-dependent)
+            float slowDecayTime = Constants::T4B_PHOSPHOR_BASE_DECAY
+                + det.accumulatedCharge * Constants::T4B_PROG_DEP_PHOSPHOR_SCALE;
+            float phosphorReleaseCoeff = std::exp(-invSampleRate / slowDecayTime);
+            det.phosphorGlow = lightLevel + (det.phosphorGlow - lightLevel) * phosphorReleaseCoeff;
+        }
+
+        // Program-dependent charge accumulation
+        // CdS cells exhibit "memory" — sustained illumination creates deep
+        // charge states that take longer to dissipate
+        det.accumulatedCharge += det.cellCharge * Constants::T4B_PROG_DEP_CHARGE_RATE * invSampleRate
+            - det.accumulatedCharge * Constants::T4B_PROG_DEP_DISCHARGE_RATE * invSampleRate;
+        det.accumulatedCharge = juce::jlimit(0.0f, 1.0f, det.accumulatedCharge);
+
+        // CdS resistance-to-gain mapping (power law)
+        // conductance = k * response^gamma
+        // With gamma > 1, conductance increases superlinearly with cell response,
+        // creating a level-dependent ratio: gentle at low levels, progressively
+        // harder at high levels — matching the real LA-2A's variable ratio
+        float cellResponse = det.cellCharge + det.phosphorGlow * Constants::T4B_PHOSPHOR_COUPLING;
+        cellResponse = juce::jlimit(0.0f, 1.0f, cellResponse);  // CdS has finite min resistance
+        float conductance = (cellResponse > 0.0f)
+            ? std::min(Constants::T4B_CONDUCTANCE_K * std::pow(cellResponse, Constants::T4B_GAMMA),
+                       Constants::T4B_MAX_CONDUCTANCE)
+            : 0.0f;
+
+        // Asymmetric conductance smoothing: fast attack, slow release
+        // Fast attack (30Hz) lets compression engage quickly on transients
+        // Slow release (3Hz) prevents feedback oscillation — conductance can't drop
+        // fast enough for gain to rebound and re-trigger the sidechain
+        float condCoeff = (conductance > det.smoothedConductance) ? condAttackCoeff : condReleaseCoeff;
+        det.smoothedConductance += condCoeff * (conductance - det.smoothedConductance);
+        det.smoothedConductance = juce::jlimit(0.0f, Constants::T4B_MAX_CONDUCTANCE, det.smoothedConductance);
+
+        // Voltage divider: gain = 1 / (1 + conductance)
+        float newGain = 1.0f / (1.0f + det.smoothedConductance);
+        newGain = juce::jlimit(0.01f, 1.0f, newGain);
+
+        // Release-only slew limiter: prevents overshoot when gain recovers
+        // Attack (gain decreasing) is unrestricted — conductance smoothing handles it
+        float gainDelta = newGain - det.t4bGain;
+        if (gainDelta > 0.0f) {
+            float maxReleaseDelta = Constants::T4B_MAX_GAIN_RELEASE_RATE * invSampleRate;
+            gainDelta = std::min(gainDelta, maxReleaseDelta);
+        }
+        det.t4bGain += gainDelta;
+
+        // NaN safety
+        if (std::isnan(det.t4bGain) || std::isinf(det.t4bGain))
+            det.t4bGain = 1.0f;
+    }
+
+    void calibrateHardwareGain()
+    {
+        // Send a reference 1kHz sine at -18dB through the hardware chain
+        // to measure the exact gain added by transformers + tube.
+        // This runs once during prepare(), NOT in the audio thread.
+        constexpr int calibrationSamples = 4800;  // 100ms at 48kHz equivalent
+        constexpr float refAmplitude = 0.126f;     // -18dB peak
+        constexpr float refFreq = 1000.0f;
+
+        float sr = static_cast<float>(sampleRate);
+        float angularStep = 2.0f * juce::MathConstants<float>::pi * refFreq / sr;
+
+        // Reset hardware stages for clean measurement
+        inputTransformer.reset();
+        tubeStage.reset();
+        outputTransformer.reset();
+
+        // Warm up for 50ms to settle filters
+        int warmup = static_cast<int>(sr * 0.05f);
+        for (int i = 0; i < warmup; ++i)
+        {
+            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
+            x = inputTransformer.processSample(x, 0);
+            x = tubeStage.processSample(x, 0);
+            outputTransformer.processSample(x, 0);
+        }
+
+        // Measure RMS of input and output over the calibration window
+        double inputRmsSquared = 0.0;
+        double outputRmsSquared = 0.0;
+        for (int i = 0; i < calibrationSamples; ++i)
+        {
+            float phase = angularStep * static_cast<float>(warmup + i);
+            float input = refAmplitude * std::sin(phase);
+
+            float x = inputTransformer.processSample(input, 0);
+            x = tubeStage.processSample(x, 0);
+            x = outputTransformer.processSample(x, 0);
+
+            inputRmsSquared += static_cast<double>(input * input);
+            outputRmsSquared += static_cast<double>(x * x);
+        }
+
+        inputRmsSquared /= calibrationSamples;
+        outputRmsSquared /= calibrationSamples;
+
+        if (outputRmsSquared > 1e-12 && inputRmsSquared > 1e-12)
+        {
+            float chainGain = static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared));
+            hardwareGainCompensation = 1.0f / chainGain;
+        }
+        else
+        {
+            hardwareGainCompensation = 1.0f;
+        }
+
+        // Reset hardware stages after calibration so audio starts clean
+        inputTransformer.reset();
+        tubeStage.reset();
+        outputTransformer.reset();
+    }
+
+    std::vector<Detector> detectors;
+    double sampleRate = 0.0;
+
+    // Pre-computed coefficients (set in prepare())
+    float invSampleRate = 0.0f;
+    float attackCoeff = 0.0f;
+    float fastReleaseCoeff = 0.0f;
+    float phosphorDecayCoeff = 0.0f;
+    float emphasisCoeff = 0.0f;
+    float phosphorAttackCoeff = 0.0f;
+    float condAttackCoeff = 0.0f;            // Asymmetric conductance smoothing: fast attack
+    float condReleaseCoeff = 0.0f;           // Asymmetric conductance smoothing: slow release
+    float elPanelAttackCoeff = 0.0f;          // EL panel heats fast
+    float elPanelReleaseCoeff = 0.0f;         // EL panel cools slowly
+    float scLevelSmoothCoeff = 0.0f;          // Symmetric sidechain envelope smoother
+    float hardwareGainCompensation = 1.0f;  // Compensates for tube + transformer gain
+
+    // Hardware emulation components (LA-2A)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
     HardwareEmulation::TubeEmulation tubeStage;
-    HardwareEmulation::ShortConvolution convolution;
 };
 
 // Vintage FET Compressor

@@ -34,12 +34,11 @@ public:
         this->sampleRate = sampleRate;
         this->numChannels = numChannels;
 
-        // DC blocker coefficient (10Hz highpass)
-        const float dcCutoff = 10.0f;
-        dcBlockerCoeff = 1.0f - (6.283185f * dcCutoff / static_cast<float>(sampleRate));
+        // DC blocker coefficient from profile (default 10Hz if no profile set)
+        updateDCBlocker(profile.dcBlockingFreq);
 
         // HF rolloff filter coefficient (adjustable via profile)
-        updateHFRolloff(20000.0f);
+        updateHFRolloff(profile.highFreqRolloff);
 
         // Reset state
         reset();
@@ -62,6 +61,7 @@ public:
     {
         profile = newProfile;
         enabled = profile.hasTransformer;
+        updateDCBlocker(profile.dcBlockingFreq);
         updateHFRolloff(profile.highFreqRolloff);
     }
 
@@ -98,7 +98,8 @@ public:
         output = addHarmonics(output, profile.harmonics);
 
         // 6. Apply high-frequency rolloff (transformer inductance)
-        output = applyHFRolloff(output, channel);
+        if (hfRolloffEnabled)
+            output = applyHFRolloff(output, channel);
 
         // 7. DC blocking
         output = processDCBlocker(output, channel);
@@ -135,14 +136,29 @@ private:
 
     // HF rolloff filter
     float hfRolloffCoeff = 0.99f;
+    bool hfRolloffEnabled = true;
     float hfFilterState[2] = {0.0f, 0.0f};
 
     // HF content estimation
     float lastSample[2] = {0.0f, 0.0f};
     float hfEstimate[2] = {0.0f, 0.0f};
 
+    void updateDCBlocker(float cutoffFreq)
+    {
+        // Minimum 0.5Hz to always block true DC, default 10Hz
+        float dcCutoff = std::max(0.5f, cutoffFreq);
+        dcBlockerCoeff = 1.0f - (6.283185f * dcCutoff / static_cast<float>(sampleRate));
+    }
+
     void updateHFRolloff(float cutoffFreq)
     {
+        if (cutoffFreq <= 0.0f)
+        {
+            hfRolloffEnabled = false;
+            hfRolloffCoeff = 1.0f;
+            return;
+        }
+        hfRolloffEnabled = true;
         // Simple one-pole lowpass coefficient
         float w = 6.283185f * cutoffFreq / static_cast<float>(sampleRate);
         hfRolloffCoeff = w / (w + 1.0f);
