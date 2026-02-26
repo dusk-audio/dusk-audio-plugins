@@ -334,21 +334,16 @@ jobs:
           if ("${{ needs.setup.outputs.plugin_version }}") {
             $env:PLUGIN_VERSION_OVERRIDE = "${{ needs.setup.outputs.plugin_version }}"
           }
+          # Disable MSBuild node reuse and MSVC telemetry — both can hang on CI runners
+          $env:MSBUILDDISABLENODEREUSE = "1"
+          $env:VSCMD_SKIP_SENDTELEMETRY = "1"
           $target = "${{ needs.setup.outputs.plugin_target }}"
-          # Watchdog: kill mspdbsrv.exe after 8 minutes if it hangs (known MSVC CI issue)
-          $watchdog = Start-Job { Start-Sleep 480; Stop-Process -Name "mspdbsrv" -Force -ErrorAction SilentlyContinue }
-          try {
-            if ($target) {
-              Write-Host "Building specific target: $target"
-              cmake --build build --config ${{ env.BUILD_TYPE }} --target $target -j $env:NUMBER_OF_PROCESSORS
-            } else {
-              Write-Host "Building all plugins"
-              cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS
-            }
-          } finally {
-            Stop-Job $watchdog -ErrorAction SilentlyContinue
-            Remove-Job $watchdog -ErrorAction SilentlyContinue
-            Stop-Process -Name "mspdbsrv" -Force -ErrorAction SilentlyContinue
+          if ($target) {
+            Write-Host "Building specific target: $target"
+            cmake --build build --config ${{ env.BUILD_TYPE }} --target $target -j $env:NUMBER_OF_PROCESSORS -- /nodeReuse:false
+          } else {
+            Write-Host "Building all plugins"
+            cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS -- /nodeReuse:false
           }
 
       - name: Validate plugins
