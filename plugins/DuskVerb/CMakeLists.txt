@@ -110,7 +110,8 @@ target_link_libraries(DuskVerb
 # Platform-specific compile options
 if(MSVC)
     # MSVC optimization and warning flags
-    target_compile_options(DuskVerb PRIVATE /W4)
+    # /FS forces synchronous PDB writes (prevents mspdbsrv.exe hangs on CI)
+    target_compile_options(DuskVerb PRIVATE /W4 /FS)
     if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
         target_compile_options(DuskVerb PRIVATE /O2 /fp:fast)
     endif()
