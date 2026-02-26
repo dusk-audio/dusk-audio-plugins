@@ -129,7 +129,7 @@ set_target_properties(DuskVerb PROPERTIES
 )
 
 # --- IR Test Tool (standalone, no plugin wrapper) ---
-if(NOT CMAKE_CROSSCOMPILING)
+if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     add_executable(DuskVerb_IRTest
         src/test/IRGenerator.cpp
         src/dsp/FDNReverb.cpp
