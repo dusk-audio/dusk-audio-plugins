@@ -63,7 +63,7 @@ static constexpr AlgorithmConfig kHall = {
     { 0, 3, 5, 8, 10, 11, 14, 15 },
     { 1, 2, 4, 6, 7, 9, 12, 13 },
     { 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f },
-    { 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f },
+    { -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f },
     0.75f, 0.625f,   // input diffusion: Dattorro split
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
@@ -81,10 +81,10 @@ static constexpr AlgorithmConfig kChamber = {
     "Chamber",
     { 751, 809, 863, 929, 997, 1061, 1129, 1193,
       1259, 1327, 1399, 1471, 1543, 1613, 1693, 1777 },
-    { 0, 3, 4, 7, 9, 10, 13, 15 },
-    { 1, 2, 5, 6, 8, 11, 12, 14 },
-    { 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f },
-    { 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f },
+    { 0, 2, 5, 7, 9, 11, 13, 15 },
+    { 1, 3, 4, 6, 8, 10, 12, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
     0.75f, 0.625f,   // input diffusion: Dattorro split
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
@@ -97,21 +97,23 @@ static constexpr AlgorithmConfig kChamber = {
 
 // ---------------------------------------------------------------------------
 // Room: Lexicon PCM70 small rooms / 480L "Small Room".
-// Short delays, ER-dominant, low diffusion, minimal modulation.
+// Geometrically-spaced delays (7-25ms), ER-dominant, moderate modulation.
+// Wider delay ratio (3.56:1) eliminates flutter echo from the old arithmetic
+// spacing. Modulation breaks up metallic ringing per Dattorro/Costello.
 static constexpr AlgorithmConfig kRoom = {
     "Room",
-    { 397, 421, 449, 479, 503, 541, 569, 599,
-      631, 659, 691, 727, 757, 797, 827, 863 },
-    { 0, 1, 4, 5, 8, 9, 12, 13 },
-    { 2, 3, 6, 7, 10, 11, 14, 15 },
-    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
-    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
-    0.55f, 0.45f,    // input diffusion: lower for definition
+    { 307, 331, 359, 389, 431, 461, 503, 547,
+      599, 653, 719, 773, 857, 937, 1009, 1093 },
+    { 0, 3, 5, 6, 9, 10, 12, 15 },
+    { 1, 2, 4, 7, 8, 11, 13, 14 },
+    { 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f },
+    { -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
+    0.65f, 0.55f,    // input diffusion: moderate (was 0.55/0.45)
     1.0f,            // output diffusion scale
     12000.0f,        // bandwidth: bright
     1.5f, 0.6f,      // ER: boosted level, shorter timing
     0.7f,            // late gain: reduced (ER-dominant)
-    0.15f, 1.0f,     // mod: near-zero depth, normal rate
+    0.5f, 1.1f,      // mod: meaningful depth (was 0.15), slightly faster rate
     0.85f, 0.9f,     // damping: slightly darker, less bass buildup
     0.5f, 1.5f       // size range
 };

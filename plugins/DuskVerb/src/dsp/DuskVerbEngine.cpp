@@ -134,6 +134,22 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     fdn_.process (scratchL_.data(), scratchR_.data(),
                   scratchL_.data(), scratchR_.data(), numSamples);
 
+    // DC blocker: apply before output diffusion so allpass filters don't accumulate DC
+    for (int i = 0; i < numSamples; ++i)
+    {
+        auto si = static_cast<size_t> (i);
+
+        float dcOutL = scratchL_[si] - dcX1L_ + dcCoeff_ * dcY1L_;
+        dcX1L_ = scratchL_[si];
+        dcY1L_ = dcOutL;
+        scratchL_[si] = dcOutL;
+
+        float dcOutR = scratchR_[si] - dcX1R_ + dcCoeff_ * dcY1R_;
+        dcX1R_ = scratchR_[si];
+        dcY1R_ = dcOutR;
+        scratchR_[si] = dcOutR;
+    }
+
     outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
 
     // Combine ER + late reverb, apply output EQ + width, then dry/wet mix.
@@ -165,33 +181,24 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         float wetL = scratchL_[si] * lateGainScale_ + erOutL_[si] * er;
         float wetR = scratchR_[si] * lateGainScale_ + erOutR_[si] * er;
 
-        // DC blocker: y[n] = x[n] - x[n-1] + R*y[n-1]
-        float dcOutL = wetL - dcX1L_ + dcCoeff_ * dcY1L_;
-        dcX1L_ = wetL;
-        dcY1L_ = dcOutL;
-
-        float dcOutR = wetR - dcX1R_ + dcCoeff_ * dcY1R_;
-        dcX1R_ = wetR;
-        dcY1R_ = dcOutR;
-
         // Output EQ: lo cut (highpass) then hi cut (lowpass) on wet signal
-        dcOutL = loCutFilter_.processL (dcOutL);
-        dcOutR = loCutFilter_.processR (dcOutR);
-        dcOutL = hiCutFilter_.processL (dcOutL);
-        dcOutR = hiCutFilter_.processR (dcOutR);
+        wetL = loCutFilter_.processL (wetL);
+        wetR = loCutFilter_.processR (wetR);
+        wetL = hiCutFilter_.processL (wetL);
+        wetR = hiCutFilter_.processR (wetR);
 
         // Stereo width: mid/side encoding
-        float mid  = (dcOutL + dcOutR) * 0.5f;
-        float side = (dcOutL - dcOutR) * 0.5f;
-        dcOutL = mid + side * w;
-        dcOutR = mid - side * w;
+        float mid  = (wetL + wetR) * 0.5f;
+        float side = (wetL - wetR) * 0.5f;
+        wetL = mid + side * w;
+        wetR = mid - side * w;
 
         // Algorithm crossfade: ramp wet signal to avoid clicks on switch
         if (fadingOut_)
         {
             float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
-            dcOutL *= fadeGain;
-            dcOutR *= fadeGain;
+            wetL *= fadeGain;
+            wetR *= fadeGain;
 
             if (--fadeCounter_ <= 0)
             {
@@ -209,13 +216,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         {
             // Fade back in after algorithm switch
             float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
-            dcOutL *= fadeGain;
-            dcOutR *= fadeGain;
+            wetL *= fadeGain;
+            wetR *= fadeGain;
             ++fadeCounter_;
         }
 
-        left[i]  = left[i] * dry + dcOutL * wet;
-        right[i] = right[i] * dry + dcOutR * wet;
+        left[i]  = left[i] * dry + wetL * wet;
+        right[i] = right[i] * dry + wetR * wet;
     }
 }
 

@@ -159,10 +159,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             outR += delayOut[rightTaps_[t]] * rightSigns_[t];
         }
 
-        // Fast tanh soft-clips the normalized output (prevents runaway at long decays),
-        // then kOutputGain compensates for the conservative 1/sqrt(8) normalization.
-        outputL[i] = DspUtils::fastTanh (outL * kOutputScale) * kOutputGain;
-        outputR[i] = DspUtils::fastTanh (outR * kOutputScale) * kOutputGain;
+        // Linear output: 1/sqrt(8) normalization + 6dB level match.
+        // Per Dattorro/Lexicon, the output tap sum is linear — soft-clipping
+        // would compress transient onsets and reduce reverb dynamics.
+        // Safety clamp at +12dBFS prevents pathological overflow only.
+        outputL[i] = std::clamp (outL * kOutputScale * kOutputGain, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (outR * kOutputScale * kOutputGain, -kSafetyClip, kSafetyClip);
     }
 }
 

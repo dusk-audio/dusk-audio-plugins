@@ -25,10 +25,17 @@ public:
     static constexpr juce::uint32 kPanel        = 0xff16213e;
     static constexpr juce::uint32 kAccent       = 0xffe94560;
     static constexpr juce::uint32 kKnobFill     = 0xff0f3460;
+    static constexpr juce::uint32 kBorder       = 0xff353560;
+
+    // 4-tier text hierarchy (brightest → dimmest)
+    static constexpr juce::uint32 kValueText    = 0xfff0f0f0;  // value readouts (brightest)
+    static constexpr juce::uint32 kLabelText    = 0xffb0b0b8;  // knob name labels (bold)
+    static constexpr juce::uint32 kGroupText    = 0xff9898a0;  // group titles, inactive buttons
+    static constexpr juce::uint32 kDimText      = 0xff555555;  // disabled controls
+
+    // Legacy aliases (title, tooltips)
     static constexpr juce::uint32 kText         = 0xffe0e0e0;
     static constexpr juce::uint32 kSubtleText   = 0xff888888;
-    static constexpr juce::uint32 kFreezeOn     = 0xff00c8ff;
-    static constexpr juce::uint32 kBorder       = 0xff353560;
 };
 
 struct KnobWithLabel
@@ -41,6 +48,14 @@ struct KnobWithLabel
     void init (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
                const juce::String& paramID, const juce::String& displayName,
                const juce::String& suffix, const juce::String& tooltip = {});
+
+    void setDimmed (bool dimmed)
+    {
+        float alpha = dimmed ? 0.4f : 1.0f;
+        slider.setAlpha (alpha);
+        nameLabel.setAlpha (alpha);
+        valueLabel.setAlpha (alpha);
+    }
 };
 
 // 5-segment horizontal button strip for algorithm selection
@@ -136,6 +151,9 @@ private:
     // Supporters overlay
     std::unique_ptr<SupportersOverlay> supportersOverlay_;
     juce::Rectangle<int> titleClickArea_;
+
+    // Cached parameter pointer (stable for APVTS lifetime)
+    std::atomic<float>* algoParamPtr_ { nullptr };
 
     // Tooltip window (required for setTooltip to display in plugin editors)
     juce::TooltipWindow tooltipWindow_ { this, 500 };
