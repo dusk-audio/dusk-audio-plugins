@@ -33,7 +33,8 @@ private:
     static constexpr double kBaseSampleRate = 44100.0;
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr float kOutputScale = 0.353553f; // 1/sqrt(8) — normalizes 8-tap sum
-    static constexpr float kOutputGain  = 2.0f;      // +6dB compensation after tanh
+    static constexpr float kOutputGain  = 2.0f;      // +6dB compensation for level matching
+    static constexpr float kSafetyClip  = 4.0f;      // Safety clamp (~+12dBFS), never activates normally
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
