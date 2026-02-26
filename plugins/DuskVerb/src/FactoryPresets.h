@@ -74,7 +74,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets(){
         { "Drum Ambient",     "Drums",    4, 4.5f,  25.0f, 0.80f, 0.50f, 1.15f,  800.0f, 0.80f, 0.55f, 1.10f, 0.0f, 0.0f, 0.35f,  80.0f,  9000.0f, 1.50f },  // eff treble 0.55
 
         // -- Guitar --
-        { "Guitar Spring",    "Guitar",   0, 1.8f,  20.0f, 0.50f, 0.45f, 1.0f,  1000.0f, 0.45f, 0.70f, 1.80f, 0.0f, 0.0f, 0.30f,  60.0f,  8000.0f, 1.0f  },  // eff treble 0.45
+        { "Guitar Vintage",   "Guitar",   0, 1.8f,  20.0f, 0.50f, 0.45f, 1.0f,  1000.0f, 0.45f, 0.70f, 1.80f, 0.0f, 0.0f, 0.30f,  60.0f,  8000.0f, 1.0f  },  // eff treble 0.45
         { "Guitar Hall",      "Guitar",   1, 2.8f,  35.0f, 0.75f, 0.58f, 1.10f,  850.0f, 0.75f, 0.45f, 0.70f, 0.50f, 0.55f, 0.30f,  50.0f, 12000.0f, 1.20f },  // eff treble 0.58
 
         // -- Keys / Synth --
@@ -88,7 +88,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets(){
         // -- Rooms --
         { "Small Room",       "Rooms",    3, 0.6f,   3.0f, 0.30f, 0.82f, 1.05f, 1200.0f, 0.40f, 0.10f, 0.35f, 0.65f, 0.30f, 0.25f,  80.0f, 12000.0f, 0.75f },  // eff treble 0.70
         { "Medium Room",      "Rooms",    3, 1.2f,  12.0f, 0.50f, 0.70f, 1.0f,  1000.0f, 0.55f, 0.15f, 0.45f, 0.55f, 0.50f, 0.30f,  60.0f, 12000.0f, 1.0f  },  // eff treble 0.60
-        { "Large Hall",       "Rooms",    1, 4.0f,  45.0f, 0.80f, 0.52f, 1.20f,  750.0f, 0.80f, 0.50f, 0.75f, 0.60f, 0.60f, 0.35f,  40.0f, 14000.0f, 1.30f },  // eff treble 0.52
+        { "Large Room",       "Rooms",    3, 2.0f,  20.0f, 0.70f, 0.65f, 1.10f,  900.0f, 0.60f, 0.20f, 0.50f, 0.60f, 0.55f, 0.30f,  50.0f, 13000.0f, 1.10f },  // eff treble 0.55
 
         // -- Plates --
         { "Short Plate",      "Plates",   0, 0.8f,   5.0f, 0.50f, 0.78f, 0.90f, 1500.0f, 0.90f, 0.20f, 0.50f, 0.0f, 0.0f, 0.30f,  80.0f, 14000.0f, 1.0f  },  // eff treble 0.78
@@ -97,7 +97,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets(){
         // -- Ambient / FX --
         { "Infinite Pad",     "Ambient",  4, 20.0f, 50.0f, 0.90f, 0.40f, 1.25f,  600.0f, 0.95f, 0.65f, 0.95f, 0.0f, 0.0f, 0.60f,  30.0f, 16000.0f, 1.80f },  // eff treble 0.44
         { "Dark Cloud",       "Ambient",  4, 8.0f,  35.0f, 0.80f, 0.30f, 1.30f,  500.0f, 0.85f, 0.50f, 0.70f, 0.0f, 0.0f, 0.45f, 120.0f,  5500.0f, 1.30f },  // eff treble 0.33
-        { "Shimmer Space",    "Ambient",  4, 5.5f,  30.0f, 0.85f, 0.90f, 0.80f, 2000.0f, 0.90f, 0.60f, 1.10f, 0.0f, 0.0f, 0.45f,  20.0f, 18000.0f, 1.70f },  // eff treble 0.99
+        { "Crystal Space",    "Ambient",  4, 5.5f,  30.0f, 0.85f, 0.90f, 0.80f, 2000.0f, 0.90f, 0.60f, 1.10f, 0.0f, 0.0f, 0.45f,  20.0f, 18000.0f, 1.70f },  // eff treble 0.99
         { "Cathedral",        "Ambient",  1, 7.0f,  60.0f, 0.85f, 0.50f, 1.25f,  700.0f, 0.80f, 0.50f, 0.70f, 0.65f, 0.65f, 0.40f,  30.0f, 15000.0f, 1.40f },  // eff treble 0.50
 
         // -- Special --
