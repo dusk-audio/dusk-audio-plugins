@@ -21,16 +21,16 @@ void KnobWithLabel::init (juce::Component& parent,
     nameLabel.setText (displayName, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
     nameLabel.setInterceptsMouseClicks (false, false);
-    nameLabel.setFont (juce::FontOptions (10.0f));
+    nameLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
     nameLabel.setColour (juce::Label::textColourId,
-                         juce::Colour (DuskVerbLookAndFeel::kSubtleText));
+                         juce::Colour (DuskVerbLookAndFeel::kLabelText));
     parent.addAndMakeVisible (nameLabel);
 
     valueLabel.setJustificationType (juce::Justification::centred);
     valueLabel.setInterceptsMouseClicks (false, false);
     valueLabel.setFont (juce::FontOptions (11.0f));
     valueLabel.setColour (juce::Label::textColourId,
-                          juce::Colour (0xffd0d0d0));  // brighter than name label
+                          juce::Colour (DuskVerbLookAndFeel::kValueText));
     parent.addAndMakeVisible (valueLabel);
 
     // Store suffix in name field for formatting
@@ -38,6 +38,22 @@ void KnobWithLabel::init (juce::Component& parent,
 
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         apvts, paramID, slider);
+
+    // Set textFromValueFunction AFTER attachment (attachment overwrites it)
+    auto sfx = suffix;
+    slider.textFromValueFunction = [sfx] (double v)
+    {
+        if (sfx == " s")
+            return v < 1.0 ? juce::String (juce::roundToInt (v * 1000.0)) + " ms"
+                           : juce::String (v, 2) + " s";
+        if (sfx == " ms")   return juce::String (juce::roundToInt (v)) + " ms";
+        if (sfx == " Hz")
+            return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
+                               : juce::String (juce::roundToInt (v)) + " Hz";
+        if (sfx == "x")     return juce::String (v, 2) + "x";
+        if (sfx == "%")     return juce::String (juce::roundToInt (v * 100.0)) + "%";
+        return juce::String (v, 2);
+    };
 }
 
 // =============================================================================
@@ -48,7 +64,7 @@ AlgorithmSelector::AlgorithmSelector (juce::RangedAudioParameter& param)
     : param_ (param),
       attachment_ (param,
                    [this] (float v) {
-                       currentIndex_ = juce::roundToInt (param_.convertFrom0to1 (v));
+                       currentIndex_ = juce::roundToInt (v);
                        repaint();
                    },
                    nullptr)
@@ -102,8 +118,9 @@ void AlgorithmSelector::paint (juce::Graphics& g)
             g.fillRoundedRectangle (seg.reduced (2.0f), cornerRadius - 2.0f);
         }
 
-        g.setColour (selected ? juce::Colour (DuskVerbLookAndFeel::kText)
-                              : juce::Colour (DuskVerbLookAndFeel::kSubtleText));
+        g.setColour (selected ? juce::Colours::white
+                     : hovered ? juce::Colour (0xffd0d0d0)
+                               : juce::Colour (DuskVerbLookAndFeel::kGroupText));
         g.setFont (juce::FontOptions (11.0f, selected ? juce::Font::bold : juce::Font::plain));
         g.drawText (labels_[i], segmentBounds_[static_cast<size_t> (i)],
                     juce::Justification::centred);
@@ -119,7 +136,7 @@ void AlgorithmSelector::mouseDown (const juce::MouseEvent& e)
             if (i != currentIndex_)
             {
                 currentIndex_ = i;
-                attachment_.setValueAsCompleteGesture (param_.convertTo0to1 (static_cast<float> (i)));
+                attachment_.setValueAsCompleteGesture (static_cast<float> (i));
                 repaint();
             }
             break;
@@ -138,6 +155,18 @@ DuskVerbLookAndFeel::DuskVerbLookAndFeel()
     setColour (juce::TooltipWindow::backgroundColourId, juce::Colour (0xf0161630));
     setColour (juce::TooltipWindow::textColourId, juce::Colour (kText));
     setColour (juce::TooltipWindow::outlineColourId, juce::Colour (kBorder));
+
+    // ComboBox: subtle border, no accent outline
+    setColour (juce::ComboBox::backgroundColourId, juce::Colour (kPanel));
+    setColour (juce::ComboBox::outlineColourId, juce::Colour (kBorder));
+    setColour (juce::ComboBox::textColourId, juce::Colour (kText));
+    setColour (juce::ComboBox::arrowColourId, juce::Colour (kGroupText));
+
+    // TextButton: quiet styling for Save/Delete
+    setColour (juce::TextButton::buttonColourId, juce::Colour (kPanel));
+    setColour (juce::TextButton::buttonOnColourId, juce::Colour (kPanel));
+    setColour (juce::TextButton::textColourOffId, juce::Colour (kGroupText));
+    setColour (juce::TextButton::textColourOnId, juce::Colour (kValueText));
 }
 
 void DuskVerbLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
@@ -216,6 +245,15 @@ void DuskVerbLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     float dotY = centre.y - dotDist * std::cos (angle);
     g.setColour (isDragging ? juce::Colours::white : juce::Colour (kText));
     g.fillEllipse (dotX - dotRadius, dotY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
+
+    // Draw value text inside large knobs
+    if (diameter >= 70.0f)
+    {
+        auto text = slider.getTextFromValue (slider.getValue());
+        g.setColour (juce::Colour (kValueText));
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawText (text, bounds.toNearestInt(), juce::Justification::centred);
+    }
 }
 
 void DuskVerbLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
@@ -232,22 +270,36 @@ void DuskVerbLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButto
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (4.0f);
     bool on = button.getToggleState();
-
-    auto accentColour = button.getName() == "freeze"
-                            ? juce::Colour (kFreezeOn)
-                            : juce::Colour (kAccent);
-
-    // Background pill
+    auto accent = juce::Colour (kAccent);
     float cornerSize = bounds.getHeight() * 0.5f;
-    g.setColour (on ? accentColour.withAlpha (0.3f) : juce::Colour (kPanel));
-    g.fillRoundedRectangle (bounds, cornerSize);
 
-    // Border
-    g.setColour (on ? accentColour : juce::Colour (kBorder));
-    g.drawRoundedRectangle (bounds.reduced (0.5f), cornerSize, 1.0f);
+    if (on)
+    {
+        // Active glow (2px larger pill behind)
+        g.setColour (accent.withAlpha (0.4f));
+        g.fillRoundedRectangle (bounds.expanded (2.0f), cornerSize + 2.0f);
 
-    // Text
-    g.setColour (on ? accentColour : juce::Colour (kSubtleText));
+        // Filled pill
+        g.setColour (accent);
+        g.fillRoundedRectangle (bounds, cornerSize);
+
+        // Text
+        g.setColour (juce::Colours::white);
+    }
+    else
+    {
+        // Inactive background
+        g.setColour (juce::Colour (kPanel));
+        g.fillRoundedRectangle (bounds, cornerSize);
+
+        // Border
+        g.setColour (juce::Colour (kBorder));
+        g.drawRoundedRectangle (bounds.reduced (0.5f), cornerSize, 1.0f);
+
+        // Text
+        g.setColour (juce::Colour (kGroupText));
+    }
+
     g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
     g.drawText (button.getButtonText(), bounds, juce::Justification::centred);
 }
@@ -263,21 +315,21 @@ static juce::String formatValue (const juce::Slider& s, const juce::String& suff
     if (suffix == " s")
     {
         if (v < 1.0)
-            return juce::String (v * 1000.0, 0) + " ms";
-        return juce::String (v, 1) + " s";
+            return juce::String (juce::roundToInt (v * 1000.0)) + " ms";
+        return juce::String (v, 2) + " s";
     }
     if (suffix == " ms")
-        return juce::String (v, 0) + " ms";
+        return juce::String (juce::roundToInt (v)) + " ms";
     if (suffix == " Hz")
     {
         if (v >= 1000.0)
-            return juce::String (v / 1000.0, 1) + " kHz";
-        return juce::String (v, 0) + " Hz";
+            return juce::String (v / 1000.0, 2) + " kHz";
+        return juce::String (juce::roundToInt (v)) + " Hz";
     }
     if (suffix == "x")
         return juce::String (v, 2) + "x";
     if (suffix == "%")
-        return juce::String (v * 100.0, 0) + "%";
+        return juce::String (juce::roundToInt (v * 100.0)) + "%";
 
     return juce::String (v, 2);
 }
@@ -326,6 +378,9 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     width_     .init (*this, p.parameters, "width",      "WIDTH",        "%",
         "Stereo width: 0% mono, 100% normal, 200% hyper-wide");
 
+    // Cache raw parameter pointer (stable for APVTS lifetime)
+    algoParamPtr_ = p.parameters.getRawParameterValue ("algorithm");
+
     // Algorithm selector (segmented button strip)
     auto* algoParam = p.parameters.getParameter ("algorithm");
     jassert (algoParam != nullptr);
@@ -359,13 +414,11 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
 
     // Save preset button
     savePresetButton_.setButtonText ("Save");
-    savePresetButton_.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff3a5a8a));
     savePresetButton_.onClick = [this] { saveUserPreset(); };
     addAndMakeVisible (savePresetButton_);
 
     // Delete preset button (only visible when a user preset is selected)
     deletePresetButton_.setButtonText ("Del");
-    deletePresetButton_.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff5a3a3a));
     deletePresetButton_.onClick = [this]
     {
         int id = presetBox_.getSelectedId();
@@ -469,6 +522,12 @@ void DuskVerbEditor::timerCallback()
     update (hiCut_);
     update (width_);
 
+    // Dim ER group when algorithm has no early reflections (Plate=0, Ambient=4)
+    int algoIndex = (algoParamPtr_ != nullptr) ? juce::roundToInt (algoParamPtr_->load()) : 1;
+    bool erDisabled = (algoIndex == 0 || algoIndex == 4);
+    erLevel_.setDimmed (erDisabled);
+    erSize_.setDimmed (erDisabled);
+
     // Gray out mix knob when bus mode is active
     bool busMode = busModeButton_.getToggleState();
     mix_.slider.setEnabled (! busMode);
@@ -500,7 +559,7 @@ static void drawGroupBox (juce::Graphics& g, juce::Rectangle<int> bounds,
     g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 6.0f, 1.0f);
 
     // Group title with letter spacing, left-aligned
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kSubtleText));
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
     g.setFont (juce::FontOptions (10.0f));
 
     juce::String spaced;
@@ -546,9 +605,14 @@ void DuskVerbEditor::paint (juce::Graphics& g)
                           static_cast<float> (contentX + contentW));
 
     // --- Group box positions (must match resized()) ---
-    int topY    = scaler_.scaled (112);
-    int topRowH = scaler_.scaled (200);
-    int gap     = scaler_.scaled (8);
+    int topY   = scaler_.scaled (112);
+    int gap    = scaler_.scaled (8);
+
+    // Proportional split matching resized() (base: 200 top + 250 bottom = 450)
+    int availH  = getHeight() - topY - gap - margin;
+    int topRowH = juce::roundToInt (availH * (200.0f / 450.0f));
+    int bottomH = availH - topRowH;
+    int bottomY = topY + topRowH + gap;
 
     int topUsable  = contentW - gap * 2;
     int inputW     = static_cast<int> (topUsable * 0.28f);
@@ -562,9 +626,6 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     drawGroupBox (g, { inputX, topY, inputW, topRowH }, "INPUT");
     drawGroupBox (g, { timeX, topY, timeW, topRowH }, "TIME");
     drawGroupBox (g, { characterX, topY, characterW, topRowH }, "CHARACTER");
-
-    int bottomY = topY + topRowH + gap;
-    int bottomH = getHeight() - bottomY - margin;
 
     int bottomUsable = contentW - gap * 3;
     int modW    = static_cast<int> (bottomUsable * 0.22f);
@@ -583,7 +644,7 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT");
 
     // Meter labels
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kSubtleText));
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
     g.setFont (juce::FontOptions (8.0f * sf));
     g.drawText ("IN", margin, topY - scaler_.scaled (12), meterW, scaler_.scaled (12),
                 juce::Justification::centred);
@@ -595,10 +656,12 @@ void DuskVerbEditor::paint (juce::Graphics& g)
 // Layout
 // =============================================================================
 
-static void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize)
+static void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize,
+                       float scaleFactor)
 {
-    int nameH  = 14;
-    int valueH = 14;
+    int nameH  = juce::roundToInt (14.0f * scaleFactor);
+    bool largeKnob = (knobSize >= juce::roundToInt (70.0f * scaleFactor));
+    int valueH = largeKnob ? 0 : juce::roundToInt (14.0f * scaleFactor);
     int totalH = nameH + knobSize + valueH;
 
     int yPad = (area.getHeight() - totalH) / 2;
@@ -611,11 +674,21 @@ static void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize
     auto knobArea = col.removeFromTop (knobSize);
     k.slider.setBounds (knobArea.withSizeKeepingCentre (knobSize, knobSize));
 
-    k.valueLabel.setBounds (col.removeFromTop (valueH));
+    if (largeKnob)
+    {
+        k.valueLabel.setBounds (0, 0, 0, 0);
+        k.valueLabel.setVisible (false);
+    }
+    else
+    {
+        k.valueLabel.setVisible (true);
+        k.valueLabel.setBounds (col.removeFromTop (juce::roundToInt (14.0f * scaleFactor)));
+    }
 }
 
 static void layoutKnobsInGroup (juce::Rectangle<int> groupBounds, int topPad,
-                                std::vector<std::pair<KnobWithLabel*, int>> knobs)
+                                std::vector<std::pair<KnobWithLabel*, int>> knobs,
+                                float scaleFactor)
 {
     auto area = groupBounds.reduced (4, 0);
     area.removeFromTop (topPad);
@@ -626,13 +699,14 @@ static void layoutKnobsInGroup (juce::Rectangle<int> groupBounds, int topPad,
     for (auto& [knob, knobSize] : knobs)
     {
         auto col = area.removeFromLeft (colW);
-        placeKnob (*knob, col, knobSize);
+        placeKnob (*knob, col, knobSize, scaleFactor);
     }
 }
 
 void DuskVerbEditor::resized()
 {
     scaler_.updateResizer();
+    auto sf = scaler_.getScaleFactor();
 
     int margin   = scaler_.scaled (10);
     int meterW   = scaler_.scaled (22);
@@ -669,11 +743,17 @@ void DuskVerbEditor::resized()
     int mediumKnob = scaler_.scaled (64);
     int largeKnob  = scaler_.scaled (80);
 
-    // --- Top row ---
-    int topY    = scaler_.scaled (112);
-    int topRowH = scaler_.scaled (200);
-    int gap     = scaler_.scaled (8);
-    int topPad  = scaler_.scaled (20);
+    // --- Vertical layout: proportional split avoids rounding-error accumulation ---
+    // Base values: topY=112, topRowH=200, gap=8, bottomH=250, margin=10
+    int topY   = scaler_.scaled (112);
+    int gap    = scaler_.scaled (8);
+    int topPad = scaler_.scaled (20);
+
+    // Split available height proportionally (base: 200 top + 250 bottom = 450)
+    int availH  = getHeight() - topY - gap - margin;
+    int topRowH = juce::roundToInt (availH * (200.0f / 450.0f));
+    int bottomH = availH - topRowH;
+    int bottomY = topY + topRowH + gap;
 
     int topUsable  = contentW - gap * 2;
     int inputW     = static_cast<int> (topUsable * 0.28f);
@@ -684,40 +764,39 @@ void DuskVerbEditor::resized()
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    // INPUT group: Pre-Delay (small), Diffusion (small)
-    layoutKnobsInGroup ({ inputX, topY, inputW, topRowH }, topPad,
-        { { &preDelay_, smallKnob }, { &diffusion_, smallKnob } });
-
-    // Pre-delay sync dropdown (bottom of INPUT group)
+    // Pre-delay sync dropdown (bottom of INPUT group) — calculate first to reserve space
+    int syncH = scaler_.scaled (20);
+    int syncGap = scaler_.scaled (4);
     {
-        int syncH = scaler_.scaled (20);
         int syncW = inputW - scaler_.scaled (16);
         int syncX = inputX + scaler_.scaled (8);
-        int syncY = topY + topRowH - syncH - scaler_.scaled (6);
+        int syncY = topY + topRowH - syncH - scaler_.scaled (2);
         predelaySyncBox_.setBounds (syncX, syncY, syncW, syncH);
     }
 
-    // TIME group: Decay (LARGE), Size (LARGE)
-    layoutKnobsInGroup ({ timeX, topY, timeW, topRowH }, topPad,
-        { { &decay_, largeKnob }, { &size_, largeKnob } });
+    // INPUT group: Pre-Delay (small), Diffusion (small) — shrink area to clear dropdown
+    layoutKnobsInGroup ({ inputX, topY, inputW, topRowH - syncH - syncGap }, topPad,
+        { { &preDelay_, smallKnob }, { &diffusion_, smallKnob } }, sf);
 
-    // Freeze button (bottom of TIME group)
+    // Freeze button (bottom of TIME group) — calculate first to reserve space
+    int freezeH = scaler_.scaled (22);
+    int freezeGap = scaler_.scaled (4);
     {
-        int freezeH = scaler_.scaled (22);
         int freezeW = timeW - scaler_.scaled (16);
         int freezeX = timeX + scaler_.scaled (8);
-        int freezeY = topY + topRowH - freezeH - scaler_.scaled (6);
+        int freezeY = topY + topRowH - freezeH - scaler_.scaled (2);
         freezeButton_.setBounds (freezeX, freezeY, freezeW, freezeH);
     }
 
+    // TIME group: Decay (LARGE), Size (medium) — shrink area to clear freeze button
+    layoutKnobsInGroup ({ timeX, topY, timeW, topRowH - freezeH - freezeGap }, topPad,
+        { { &decay_, largeKnob }, { &size_, mediumKnob } }, sf);
+
     // CHARACTER group: Bass Mult (small), Treble Mult (small), Crossover (small)
     layoutKnobsInGroup ({ characterX, topY, characterW, topRowH }, topPad,
-        { { &bassMult_, smallKnob }, { &trebleMult_, smallKnob }, { &crossover_, smallKnob } });
+        { { &bassMult_, smallKnob }, { &trebleMult_, smallKnob }, { &crossover_, smallKnob } }, sf);
 
     // --- Bottom row ---
-    int bottomY = topY + topRowH + gap;
-    int bottomH = getHeight() - bottomY - margin;
-
     int bottomUsable = contentW - gap * 3;
     int modW    = static_cast<int> (bottomUsable * 0.22f);
     int erW     = static_cast<int> (bottomUsable * 0.22f);
@@ -731,28 +810,28 @@ void DuskVerbEditor::resized()
 
     // MODULATION group: Depth (small), Rate (small)
     layoutKnobsInGroup ({ modX, bottomY, modW, bottomH }, topPad,
-        { { &modDepth_, smallKnob }, { &modRate_, smallKnob } });
+        { { &modDepth_, smallKnob }, { &modRate_, smallKnob } }, sf);
 
     // EARLY REFLECTIONS group: Level (small), Size (small)
     layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
-        { { &erLevel_, smallKnob }, { &erSize_, smallKnob } });
+        { { &erLevel_, smallKnob }, { &erSize_, smallKnob } }, sf);
 
     // OUTPUT EQ group: Lo Cut (small), Hi Cut (small)
     layoutKnobsInGroup ({ eqX, bottomY, eqW, bottomH }, topPad,
-        { { &loCut_, smallKnob }, { &hiCut_, smallKnob } });
+        { { &loCut_, smallKnob }, { &hiCut_, smallKnob } }, sf);
 
-    // OUTPUT group: Mix (LARGE), Width (medium)
-    layoutKnobsInGroup ({ outputX, bottomY, outputW, bottomH }, topPad,
-        { { &mix_, largeKnob }, { &width_, mediumKnob } });
-
-    // Bus mode toggle (bottom of OUTPUT group)
+    // Bus mode toggle (bottom of OUTPUT group) — calculate first to reserve space
+    int busH = scaler_.scaled (22);
     {
-        int busH = scaler_.scaled (22);
         int busW = outputW - scaler_.scaled (16);
         int busX = outputX + scaler_.scaled (8);
-        int busY = bottomY + bottomH - busH - scaler_.scaled (6);
+        int busY = bottomY + bottomH - busH - scaler_.scaled (2);
         busModeButton_.setBounds (busX, busY, busW, busH);
     }
+
+    // OUTPUT group: Mix (LARGE), Width (medium) — shrink area to clear bus button
+    layoutKnobsInGroup ({ outputX, bottomY, outputW, bottomH - busH - freezeGap }, topPad,
+        { { &mix_, largeKnob }, { &width_, mediumKnob } }, sf);
 
     // Level meters (full height of content area)
     int meterTop = topY;
