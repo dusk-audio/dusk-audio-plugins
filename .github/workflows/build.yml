@@ -319,12 +319,16 @@ jobs:
           path: JUCE
           ref: 8.0.4  # Use JUCE 8.x for modern C++ features
 
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Configure CMake
         run: |
           if ("${{ needs.setup.outputs.plugin_version }}") {
             $env:PLUGIN_VERSION_OVERRIDE = "${{ needs.setup.outputs.plugin_version }}"
           }
-          cmake -B build `
+          cmake -B build -G Ninja `
+            -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DDUSK_COPY_AFTER_BUILD=OFF `
             -DJUCE_PATH=${{ github.workspace }}/JUCE
@@ -334,16 +338,13 @@ jobs:
           if ("${{ needs.setup.outputs.plugin_version }}") {
             $env:PLUGIN_VERSION_OVERRIDE = "${{ needs.setup.outputs.plugin_version }}"
           }
-          # Disable MSBuild node reuse and MSVC telemetry — both can hang on CI runners
-          $env:MSBUILDDISABLENODEREUSE = "1"
-          $env:VSCMD_SKIP_SENDTELEMETRY = "1"
           $target = "${{ needs.setup.outputs.plugin_target }}"
           if ($target) {
             Write-Host "Building specific target: $target"
-            cmake --build build --config ${{ env.BUILD_TYPE }} --target $target -j $env:NUMBER_OF_PROCESSORS -- /nodeReuse:false
+            cmake --build build --target $target -j $env:NUMBER_OF_PROCESSORS
           } else {
             Write-Host "Building all plugins"
-            cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS -- /nodeReuse:false
+            cmake --build build -j $env:NUMBER_OF_PROCESSORS
           }
 
       - name: Validate plugins
