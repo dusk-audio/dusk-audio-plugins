@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(DUSKVERB_DEFAULT_VERSION "0.2.0")
+set(DUSKVERB_DEFAULT_VERSION "0.3.0")
 get_plugin_version("duskverb" DUSKVERB_VERSION)
 if(NOT DUSKVERB_VERSION OR DUSKVERB_VERSION STREQUAL "0.0.0")
     set(DUSKVERB_VERSION ${DUSKVERB_DEFAULT_VERSION})
