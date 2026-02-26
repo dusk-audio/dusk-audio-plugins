@@ -331,6 +331,7 @@ jobs:
             -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DDUSK_COPY_AFTER_BUILD=OFF `
+            -DBUILD_LV2=OFF `
             -DJUCE_PATH=${{ github.workspace }}/JUCE
 
       - name: Build plugins
