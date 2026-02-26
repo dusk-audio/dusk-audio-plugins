@@ -342,6 +342,9 @@ jobs:
             Write-Host "Building all plugins"
             cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS
           }
+          # Kill mspdbsrv.exe — MSVC PDB server can hang indefinitely after build completes,
+          # preventing CMake from exiting on CI runners
+          Stop-Process -Name "mspdbsrv" -ErrorAction SilentlyContinue
 
       - name: Validate plugins
         shell: pwsh
