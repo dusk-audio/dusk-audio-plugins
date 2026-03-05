@@ -69,6 +69,7 @@ target_sources(DuskVerb
         src/PluginProcessor.cpp
         src/PluginEditor.cpp
         src/dsp/FDNReverb.cpp
+        src/dsp/DattorroTank.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
@@ -88,7 +89,6 @@ target_compile_definitions(DuskVerb
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=1
         JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
@@ -134,6 +134,7 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     add_executable(DuskVerb_IRTest
         src/test/IRGenerator.cpp
         src/dsp/FDNReverb.cpp
+        src/dsp/DattorroTank.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
