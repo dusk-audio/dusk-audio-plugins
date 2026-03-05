@@ -12,6 +12,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     diffuser_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize);
+    dattorroTank_.prepare (sampleRate, maxBlockSize);
     outputDiffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
 
@@ -62,6 +63,14 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     // Reset freeze
     frozen_ = false;
+
+    // Reset gate
+    gateEnabled_ = false;
+    gateHoldSamples_ = 0;
+    gateReleaseCoeff_ = 0.0f;
+    gateEnvelope_ = 0.0f;
+    gateHoldCounter_ = 0;
+    gateTriggered_ = false;
 
     // Reset algorithm crossfade state so first setAlgorithm applies immediately
     pendingAlgorithm_ = -1;
@@ -121,6 +130,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         std::memset (erOutR_.data(), 0, static_cast<size_t> (numSamples) * sizeof (float));
     }
 
+    // ER→FDN crossfeed: feed early reflections into the late reverb input
+    // so the FDN tail "grows out of" the ER pattern (ValhallaRoom "Early Send")
+    if (erCrossfeed_ > 0.0f && ! frozen_)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            scratchL_[si] += erOutL_[si] * erCrossfeed_;
+            scratchR_[si] += erOutR_[si] * erCrossfeed_;
+        }
+    }
+
     // Late reverb path: InputDiffusion → FDN → OutputDiffusion
     if (! frozen_)
         diffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
@@ -131,8 +152,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         std::memset (scratchR_.data(), 0, static_cast<size_t> (numSamples) * sizeof (float));
     }
 
-    fdn_.process (scratchL_.data(), scratchR_.data(),
-                  scratchL_.data(), scratchR_.data(), numSamples);
+    // Late reverb: route to Dattorro tank (Room) or Hadamard FDN (all other modes)
+    if (useDattorroTank_)
+        dattorroTank_.process (scratchL_.data(), scratchR_.data(),
+                               scratchL_.data(), scratchR_.data(), numSamples);
+    else
+        fdn_.process (scratchL_.data(), scratchR_.data(),
+                      scratchL_.data(), scratchR_.data(), numSamples);
 
     // DC blocker: apply before output diffusion so allpass filters don't accumulate DC
     for (int i = 0; i < numSamples; ++i)
@@ -150,79 +176,120 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         scratchR_[si] = dcOutR;
     }
 
-    outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
-
-    // Combine ER + late reverb, apply output EQ + width, then dry/wet mix.
-    // All output-stage parameters are smoothed per-sample to prevent zipper noise.
+    // Mix ER into late reverb BEFORE output diffusion so the allpass network
+    // smears discrete ER taps into a smooth buildup (prevents slapback artifacts).
     for (int i = 0; i < numSamples; ++i)
     {
-        // Advance per-sample smoothers
-        float mix = mixSmoother_.next();
-        float er  = erLevelSmoother_.next();
-        float w   = widthSmoother_.next();
-        float wet = mix;
-        float dry = 1.0f - mix;
+        auto si = static_cast<size_t> (i);
+        float er = erLevelSmoother_.next();
+        float lateGain = lateGainScale_ * decayGainComp_;
+        scratchL_[si] = scratchL_[si] * lateGain + erOutL_[si] * er;
+        scratchR_[si] = scratchR_[si] * lateGain + erOutR_[si] * er;
+    }
 
-        // Smooth filter cutoff and update coefficients when changed
-        float loHz = loCutSmoother_.next();
-        if (std::abs (loHz - loCutHz_) > 0.5f)
+    outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
+
+    // Apply output EQ + width, then dry/wet mix.
+    // All output-stage parameters are smoothed per-sample to prevent zipper noise.
+    // Filter coefficients are updated at sub-block boundaries (every 32 samples)
+    // to avoid calling sin/cos/division in the inner sample loop.
+    constexpr int kSubBlock = 32;
+    for (int blockStart = 0; blockStart < numSamples; blockStart += kSubBlock)
+    {
+        int blockEnd = std::min (blockStart + kSubBlock, numSamples);
+
+        // Update filter coefficients once per sub-block (skip trig in inner loop)
+        if (std::abs (loCutSmoother_.current - loCutHz_) > 0.5f)
         {
-            loCutHz_ = loHz;
+            loCutHz_ = loCutSmoother_.current;
             updateLoCutCoeffs();
         }
-        float hiHz = hiCutSmoother_.next();
-        if (std::abs (hiHz - hiCutHz_) > 1.0f)
+        if (std::abs (hiCutSmoother_.current - hiCutHz_) > 1.0f)
         {
-            hiCutHz_ = hiHz;
+            hiCutHz_ = hiCutSmoother_.current;
             updateHiCutCoeffs();
         }
 
-        auto si = static_cast<size_t> (i);
-        float wetL = scratchL_[si] * lateGainScale_ + erOutL_[si] * er;
-        float wetR = scratchR_[si] * lateGainScale_ + erOutR_[si] * er;
-
-        // Output EQ: lo cut (highpass) then hi cut (lowpass) on wet signal
-        wetL = loCutFilter_.processL (wetL);
-        wetR = loCutFilter_.processR (wetR);
-        wetL = hiCutFilter_.processL (wetL);
-        wetR = hiCutFilter_.processR (wetR);
-
-        // Stereo width: mid/side encoding
-        float mid  = (wetL + wetR) * 0.5f;
-        float side = (wetL - wetR) * 0.5f;
-        wetL = mid + side * w;
-        wetR = mid - side * w;
-
-        // Algorithm crossfade: ramp wet signal to avoid clicks on switch
-        if (fadingOut_)
+        for (int i = blockStart; i < blockEnd; ++i)
         {
-            float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
-            wetL *= fadeGain;
-            wetR *= fadeGain;
+            // Advance per-sample smoothers
+            float mix = mixSmoother_.next();
+            float w   = widthSmoother_.next();
+            float wet = mix;
+            float dry = 1.0f - mix;
+            loCutSmoother_.next();
+            hiCutSmoother_.next();
 
-            if (--fadeCounter_ <= 0)
+            auto si = static_cast<size_t> (i);
+            float wetL = scratchL_[si];
+            float wetR = scratchR_[si];
+
+            // Output EQ: lo cut (highpass) then hi cut (lowpass) on wet signal
+            wetL = loCutFilter_.processL (wetL);
+            wetR = loCutFilter_.processR (wetR);
+            wetL = hiCutFilter_.processL (wetL);
+            wetR = hiCutFilter_.processR (wetR);
+
+            // Stereo width: mid/side encoding
+            float mid  = (wetL + wetR) * 0.5f;
+            float side = (wetL - wetR) * 0.5f;
+            wetL = mid + side * w;
+            wetR = mid - side * w;
+
+            // Algorithm crossfade: ramp wet signal to avoid clicks on switch
+            if (fadingOut_)
             {
-                // At zero crossing, apply the new algorithm config
-                if (pendingAlgorithm_ >= 0)
-                {
-                    applyAlgorithm (pendingAlgorithm_);
-                    pendingAlgorithm_ = -1;
-                }
-                fadingOut_ = false;
-                fadeCounter_ = 0; // Start fade-in from silence
-            }
-        }
-        else if (fadeCounter_ < kFadeSamples)
-        {
-            // Fade back in after algorithm switch
-            float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
-            wetL *= fadeGain;
-            wetR *= fadeGain;
-            ++fadeCounter_;
-        }
+                float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
+                wetL *= fadeGain;
+                wetR *= fadeGain;
 
-        left[i]  = left[i] * dry + wetL * wet;
-        right[i] = right[i] * dry + wetR * wet;
+                if (--fadeCounter_ <= 0)
+                {
+                    // At zero crossing, apply the new algorithm config
+                    if (pendingAlgorithm_ >= 0)
+                    {
+                        applyAlgorithm (pendingAlgorithm_);
+                        pendingAlgorithm_ = -1;
+                    }
+                    fadingOut_ = false;
+                    fadeCounter_ = 0; // Start fade-in from silence
+                }
+            }
+            else if (fadeCounter_ < kFadeSamples)
+            {
+                // Fade back in after algorithm switch
+                float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
+                wetL *= fadeGain;
+                wetR *= fadeGain;
+                ++fadeCounter_;
+            }
+
+            // Gate envelope: truncate reverb tail for gated reverb presets
+            if (gateEnabled_)
+            {
+                float inputLevel = std::abs (left[i]) + std::abs (right[i]);
+                if (inputLevel > 1e-6f)
+                {
+                    gateTriggered_ = true;
+                    gateHoldCounter_ = gateHoldSamples_;
+                    gateEnvelope_ = 1.0f;
+                }
+
+                if (gateTriggered_)
+                {
+                    if (gateHoldCounter_ > 0)
+                        --gateHoldCounter_;
+                    else
+                        gateEnvelope_ *= gateReleaseCoeff_;
+                }
+
+                wetL *= gateEnvelope_;
+                wetR *= gateEnvelope_;
+            }
+
+            left[i]  = left[i] * dry + wetL * wet;
+            right[i] = right[i] * dry + wetR * wet;
+        }
     }
 }
 
@@ -248,8 +315,14 @@ void DuskVerbEngine::setAlgorithm (int index)
 void DuskVerbEngine::applyAlgorithm (int index)
 {
     config_ = &getAlgorithmConfig (index);
+    useDattorroTank_ = config_->useDattorroTank;
 
-    // Push structural config to FDN
+    // Clear buffers to prevent noise burst from old delay structure
+    fdn_.clearBuffers();
+    dattorroTank_.clearBuffers();
+
+    // Push structural config to FDN (always configure it, even if inactive,
+    // so switching away from Dattorro mode produces correct FDN output)
     fdn_.setBaseDelays (config_->delayLengths);
     fdn_.setOutputTaps (config_->leftTaps, config_->rightTaps,
                         config_->leftSigns, config_->rightSigns);
@@ -259,8 +332,9 @@ void DuskVerbEngine::applyAlgorithm (int index)
     diffuser_.setMaxCoefficients (config_->inputDiffMaxCoeff12,
                                   config_->inputDiffMaxCoeff34);
 
-    // Set ER time scale
+    // Set ER time scale and gain distribution
     er_.setTimeScale (config_->erTimeScale);
+    er_.setGainExponent (config_->erGainExponent);
 
     // Update bandwidth filter
     inputBwCoeff_ = std::exp (-6.283185307179586f * config_->bandwidthHz
@@ -269,8 +343,26 @@ void DuskVerbEngine::applyAlgorithm (int index)
     // Store scaling factors
     erLevelScale_ = config_->erLevelScale;
     lateGainScale_ = config_->lateGainScale;
+    erCrossfeed_ = config_->erCrossfeed;
+
+    // FDN-specific config (only applies when FDN is active, but set anyway)
+    fdn_.setInlineDiffusion (config_->inlineDiffusionCoeff);
+    fdn_.setModDepthFloor (config_->modDepthFloor);
+    fdn_.setFeedbackLP (config_->feedbackLPHz);
+    fdn_.setFeedbackLP4thOrder (config_->feedbackLP4thOrder);
+    fdn_.setNoiseModDepth (config_->noiseModDepth);
+    fdn_.setHadamardPerturbation (config_->hadamardPerturbation);
+    fdn_.setStructuralHFDamping (config_->structuralHFDampingHz);
+    setGateParams (config_->gateHoldMs, config_->gateReleaseMs);
+    fdn_.setDualSlope (config_->dualSlopeRatio, config_->dualSlopeFastCount,
+                       config_->dualSlopeFastGain);
+
+    // DattorroTank size range
+    dattorroTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
+    dattorroTank_.setLateGainScale (config_->lateGainScale);
 
     // Re-apply current parameter values with new scaling
+    setDecayTime (decayTime_);
     setModDepth (lastModDepth_);
     setModRate (lastModRate_);
     setTrebleMultiply (lastTrebleMult_);
@@ -283,36 +375,64 @@ void DuskVerbEngine::applyAlgorithm (int index)
 void DuskVerbEngine::setDecayTime (float seconds)
 {
     decayTime_ = seconds;
-    fdn_.setDecayTime (seconds);
+    float scaledDecay = seconds * config_->decayTimeScale;
+    fdn_.setDecayTime (scaledDecay);
+    dattorroTank_.setDecayTime (scaledDecay);
+
+    // Decay-dependent output compensation: boost at short decay times to match
+    // VintageVerb's higher energy density at low feedback coefficients.
+    // Linear ramp: full boost at decayTime=0, zero at knee.
+    if (config_->shortDecayBoostDB > 0.0f && config_->shortDecayBoostKnee > 0.0f)
+    {
+        float t = std::clamp (scaledDecay / config_->shortDecayBoostKnee, 0.0f, 1.0f);
+        float boostDB = config_->shortDecayBoostDB * (1.0f - t);
+        decayGainComp_ = std::pow (10.0f, boostDB / 20.0f);
+    }
+    else
+    {
+        decayGainComp_ = 1.0f;
+    }
 }
 
 void DuskVerbEngine::setBassMultiply (float mult)
 {
     lastBassMult_ = mult;
     fdn_.setBassMultiply (mult * config_->bassMultScale);
+    dattorroTank_.setBassMultiply (mult * config_->bassMultScale);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
 {
     lastTrebleMult_ = mult;
     fdn_.setTrebleMultiply (mult * config_->trebleMultScale);
+    dattorroTank_.setTrebleMultiply (mult * config_->trebleMultScale);
 }
 
-void DuskVerbEngine::setCrossoverFreq (float hz)       { fdn_.setCrossoverFreq (hz); }
+void DuskVerbEngine::setCrossoverFreq (float hz)
+{
+    fdn_.setCrossoverFreq (hz);
+    dattorroTank_.setCrossoverFreq (hz);
+}
 
 void DuskVerbEngine::setModDepth (float depth)
 {
     lastModDepth_ = depth;
     fdn_.setModDepth (depth * config_->modDepthScale);
+    dattorroTank_.setModDepth (depth * config_->modDepthScale);
 }
 
 void DuskVerbEngine::setModRate (float hz)
 {
     lastModRate_ = hz;
     fdn_.setModRate (hz * config_->modRateScale);
+    dattorroTank_.setModRate (hz * config_->modRateScale);
 }
 
-void DuskVerbEngine::setSize (float size)              { fdn_.setSize (size); }
+void DuskVerbEngine::setSize (float size)
+{
+    fdn_.setSize (size);
+    dattorroTank_.setSize (size);
+}
 
 void DuskVerbEngine::setPreDelay (float milliseconds)
 {
@@ -331,7 +451,10 @@ void DuskVerbEngine::setOutputDiffusion (float amount)
     lastOutputDiffusion_ = amount;
     // Decay-linked limiting: reduce output diffusion at long decay times
     // to prevent allpass ringing (inspired by Dattorro's decay_diffusion_2 coupling)
-    float decayFactor = std::clamp (5.0f / std::max (decayTime_, 0.2f), 0.4f, 1.0f);
+    // Gentler curve: full density up to 8s, floor at 0.5 (was 5s/0.4)
+    // Ambient/Pad users running 8-15s decays retain more output density
+    float effectiveDecay = decayTime_ * config_->decayTimeScale;
+    float decayFactor = std::clamp (8.0f / std::max (effectiveDecay, 0.2f), 0.5f, 1.0f);
     outputDiffuser_.setDiffusion (amount * decayFactor * config_->outputDiffScale);
 }
 
@@ -369,7 +492,22 @@ void DuskVerbEngine::setFreeze (bool frozen)
     {
         frozen_ = frozen;
         fdn_.setFreeze (frozen);
+        dattorroTank_.setFreeze (frozen);
     }
+}
+
+void DuskVerbEngine::setGateParams (float holdMs, float releaseMs)
+{
+    if (holdMs <= 0.0f)
+    {
+        gateEnabled_ = false;
+        return;
+    }
+    gateEnabled_ = true;
+    gateHoldSamples_ = static_cast<int> (holdMs * 0.001f * static_cast<float> (sampleRate_));
+    // Release coefficient: reach -60dB in releaseMs
+    float releaseSamples = std::max (1.0f, releaseMs * 0.001f * static_cast<float> (sampleRate_));
+    gateReleaseCoeff_ = std::exp (-6.908f / releaseSamples);
 }
 
 // Second-order Butterworth highpass coefficients (12 dB/oct)
