@@ -87,35 +87,33 @@ namespace SIMDHelpers {
     }
 }
 
-// Named constants for improved code readability
 namespace Constants {
-    // T4B Optical Cell Model (LA-2A hardware-validated)
-    // CdS photoresistor + electroluminescent panel
-    constexpr float T4B_ATTACK_TIME = 0.002f;        // 2ms CdS fast charge — compensates for feedback topology deceleration
-    constexpr float T4B_FAST_RELEASE_TIME = 0.060f;   // 60ms CdS base discharge (hardware spec)
-    constexpr float T4B_PHOSPHOR_BASE_DECAY = 0.8f;   // 0.8s base phosphor decay (LA-2A recovers faster than typical CdS models)
-    constexpr float T4B_PHOSPHOR_ATTACK_RATIO = 0.3f;  // Phosphor attack relative to decay
-    constexpr float T4B_GAMMA = 2.5f;                  // CdS power law — higher = softer knee (less low-level compression, more at peaks)
-    constexpr float T4B_CONDUCTANCE_K = 8.0f;           // Conductance scaling — moderate K with asymmetric smoothing for stability
-    constexpr float T4B_PHOSPHOR_COUPLING = 0.40f;     // Phosphor persistence provides residual compression between bursts
-    constexpr float T4B_PROG_DEP_CHARGE_RATE = 0.15f;  // Program dependency builds over ~7s
-    constexpr float T4B_PROG_DEP_DISCHARGE_RATE = 0.12f; // Program dependency decays over ~8s (faster to match LA-2A recovery)
-    constexpr float T4B_PROG_DEP_RELEASE_SCALE = 5.0f; // Max release time multiplier (60ms → 300ms)
-    constexpr float T4B_PROG_DEP_PHOSPHOR_SCALE = 2.0f; // Max phosphor decay extension (0.8s → 2.4s) — reduced for faster recovery on pink noise
-    constexpr float COMPRESS_EMPHASIS_FREQ = 150.0f;    // Compress mode sidechain LP corner (Hz)
-    constexpr float COMPRESS_BASS_BOOST = 0.2f;         // Additive bass boost in sidechain — LA-2A Compress mode compresses bass more
-    constexpr float LIMIT_SC_GAIN_BOOST = 1.5f;        // Sidechain gain multiplier in limit mode
-    constexpr float SC_DRIVER_SATURATION = 0.8f;        // 6AQ5 sidechain driver saturation
-    constexpr float SC_DRIVER_OUTPUT_SCALE = 1.0f;     // 6AQ5 output scaling (full range for level-dependent ratio)
-    constexpr float T4B_EL_PANEL_ATTACK_FREQ = 150.0f;   // EL panel thermal mass (~1.1ms) — fast attack for transient response
-    constexpr float T4B_EL_PANEL_RELEASE_FREQ = 5.0f;   // EL panel cools slowly (~32ms) — holds glow between bursts
-    constexpr float T4B_CONDUCTANCE_ATTACK_FREQ = 150.0f; // Fast conductance rise (~1.1ms) — engage compression quickly on 50ms transients
-    constexpr float T4B_CONDUCTANCE_RELEASE_FREQ = 4.0f; // Slow conductance fall (~40ms) — prevents oscillation without over-compressing sustained signals
-    constexpr float SC_DRIVER_THRESHOLD = 0.08f;       // 6AQ5 grid bias cutoff — sharpens compression knee, reduces low-level over-compression
-    constexpr float SC_LEVEL_SMOOTH_FREQ = 200.0f;     // Sidechain envelope smoother — LP to reduce 2f ripple
-    constexpr float PEAK_REDUCTION_MAX_SC_GAIN = 14.0f; // Max sidechain amplifier gain at PR=100
-    constexpr float T4B_MAX_CONDUCTANCE = 6.0f;         // CdS minimum resistance limit (gain floor 1/(1+6)=-16.9dB)
-    constexpr float T4B_MAX_GAIN_RELEASE_RATE = 10.0f; // Max gain recovery speed (units/sec) — ~91ms full recovery, close to LA-2A 60ms fast release
+    // T4B Optical Cell — CdS photoresistor + electroluminescent panel
+    constexpr float T4B_ATTACK_TIME = 0.002f;             // 2ms CdS fast charge
+    constexpr float T4B_FAST_RELEASE_TIME = 0.060f;       // 60ms CdS base discharge
+    constexpr float T4B_PHOSPHOR_BASE_DECAY = 0.8f;       // 0.8s phosphor decay
+    constexpr float T4B_PHOSPHOR_ATTACK_RATIO = 0.3f;     // Phosphor attack relative to decay
+    constexpr float T4B_GAMMA = 6.0f;                     // CdS power law exponent
+    constexpr float T4B_CONDUCTANCE_K = 8.0f;             // Conductance scaling
+    constexpr float T4B_PHOSPHOR_COUPLING = 0.40f;        // Residual compression between bursts
+    constexpr float T4B_PROG_DEP_CHARGE_RATE = 0.15f;     // Program dependency charge (~7s)
+    constexpr float T4B_PROG_DEP_DISCHARGE_RATE = 0.12f;  // Program dependency decay (~8s)
+    constexpr float T4B_PROG_DEP_RELEASE_SCALE = 5.0f;    // Max release time multiplier (60ms → 300ms)
+    constexpr float T4B_PROG_DEP_PHOSPHOR_SCALE = 2.0f;   // Max phosphor extension (0.8s → 2.4s)
+    constexpr float COMPRESS_EMPHASIS_FREQ = 150.0f;       // Sidechain LP corner Hz
+    constexpr float COMPRESS_BASS_BOOST = 0.2f;            // Sidechain bass emphasis
+    constexpr float LIMIT_SC_GAIN_BOOST = 1.5f;            // Limit mode sidechain gain
+    constexpr float SC_DRIVER_SATURATION = 0.8f;           // 6AQ5 saturation
+    constexpr float SC_DRIVER_OUTPUT_SCALE = 1.0f;         // 6AQ5 output scaling
+    constexpr float T4B_EL_PANEL_ATTACK_FREQ = 150.0f;    // EL panel attack (~1.1ms)
+    constexpr float T4B_EL_PANEL_RELEASE_FREQ = 5.0f;     // EL panel release (~32ms)
+    constexpr float T4B_CONDUCTANCE_ATTACK_FREQ = 150.0f;  // Conductance rise (~1.1ms)
+    constexpr float T4B_CONDUCTANCE_RELEASE_FREQ = 4.0f;   // Conductance fall (~40ms)
+    constexpr float SC_DRIVER_THRESHOLD = 0.03f;           // 6AQ5 grid bias cutoff
+    constexpr float SC_LEVEL_SMOOTH_FREQ = 800.0f;         // Envelope smoother (passes bass 2f ripple)
+    constexpr float PEAK_REDUCTION_MAX_SC_GAIN = 14.0f;    // Max sidechain gain at PR=100
+    constexpr float T4B_MAX_CONDUCTANCE = 6.0f;            // Gain floor 1/(1+6) = -16.9dB
+    constexpr float T4B_MAX_GAIN_RELEASE_RATE = 10.0f;     // Max gain recovery speed (units/sec)
 
     // Vintage FET constants
     constexpr float FET_THRESHOLD_DB = -10.0f; // Fixed threshold
@@ -1142,7 +1140,7 @@ public:
         // Hardware emulation: 12BH7 output tube
         tubeStage.prepare(sampleRate, numChannels);
         tubeStage.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
-        tubeStage.setDrive(0.15f);
+        tubeStage.setDrive(0.20f);
 
         // Calibrate hardware gain compensation so PR=0 + Gain=50 = unity
         // The tube + transformer chain adds ~3.5dB of gain that needs to be removed
@@ -1169,17 +1167,18 @@ public:
         // This one-sample feedback delay is inherent to the real hardware
         float compressed = x * det.t4bGain;
 
-        // Stage 3: Sidechain signal selection (feedback topology)
+        // Stage 3: Sidechain signal selection
+        // Feedback topology: sidechain taps compressed output (one-sample delay)
         float scSignal;
         if (useExternalSidechain)
             scSignal = sidechainSignal;
         else
-            scSignal = compressed; // Feedback: sidechain taps compressed output
+            scSignal = compressed;
 
         // Stage 4: Sidechain frequency shaping (compress vs limit)
         // Compress mode: LA-2A's T4B sidechain has bass-heavy response —
         // data shows 100Hz gets -5.8dB GR vs 1kHz -2.0dB GR at same input level.
-        // Mild additive bass boost: add LP-filtered content to sidechain.
+        // First-order low shelf boosts bass without adding broadband energy.
         // Limit mode: flat/full-range sidechain (no filter)
         if (!limitMode)
         {
@@ -1197,10 +1196,10 @@ public:
         float modeGainBoost = limitMode ? Constants::LIMIT_SC_GAIN_BOOST : 1.0f;
 
         // Stage 5b: 6AQ5 sidechain driver tube — soft-clips before the EL panel
-        // The 6AQ5 has a grid bias creating a conduction threshold:
-        // below this drive level, no current flows to the EL panel
         float scDrive = std::abs(scSignal * peakReductionGain * modeGainBoost);
+
         float effectiveDrive = std::max(0.0f, scDrive - Constants::SC_DRIVER_THRESHOLD);
+
         float scLevel = std::tanh(effectiveDrive * Constants::SC_DRIVER_SATURATION)
             * Constants::SC_DRIVER_OUTPUT_SCALE;
 
@@ -1236,6 +1235,7 @@ public:
         return juce::Decibels::gainToDecibels(detectors[channel].t4bGain);
     }
 
+
 private:
     struct Detector
     {
@@ -1245,7 +1245,7 @@ private:
         float accumulatedCharge = 0.0f;    // Long-term charge for program dependency (0-1)
         float smoothedConductance = 0.0f; // Bandwidth-limited CdS conductance
         float t4bGain = 1.0f;             // Current gain from T4B cell (IS the envelope)
-        float emphasisFilterState = 0.0f;  // Compress mode sidechain HP filter state
+        float emphasisFilterState = 0.0f;  // Compress mode sidechain LP filter state
         float scLevelSmoothed = 0.0f;     // Symmetric envelope smoother (removes 2f ripple)
     };
 
@@ -1301,13 +1301,9 @@ private:
             - det.accumulatedCharge * Constants::T4B_PROG_DEP_DISCHARGE_RATE * invSampleRate;
         det.accumulatedCharge = juce::jlimit(0.0f, 1.0f, det.accumulatedCharge);
 
-        // CdS resistance-to-gain mapping (power law)
-        // conductance = k * response^gamma
-        // With gamma > 1, conductance increases superlinearly with cell response,
-        // creating a level-dependent ratio: gentle at low levels, progressively
-        // harder at high levels — matching the real LA-2A's variable ratio
+        // CdS resistance-to-gain mapping
         float cellResponse = det.cellCharge + det.phosphorGlow * Constants::T4B_PHOSPHOR_COUPLING;
-        cellResponse = juce::jlimit(0.0f, 1.0f, cellResponse);  // CdS has finite min resistance
+        cellResponse = juce::jlimit(0.0f, 1.0f, cellResponse);
         float conductance = (cellResponse > 0.0f)
             ? std::min(Constants::T4B_CONDUCTANCE_K * std::pow(cellResponse, Constants::T4B_GAMMA),
                        Constants::T4B_MAX_CONDUCTANCE)
@@ -1325,8 +1321,8 @@ private:
         float newGain = 1.0f / (1.0f + det.smoothedConductance);
         newGain = juce::jlimit(0.01f, 1.0f, newGain);
 
-        // Release-only slew limiter: prevents overshoot when gain recovers
-        // Attack (gain decreasing) is unrestricted — conductance smoothing handles it
+        // Release slew limiter: CdS cell cannot recover faster than ~91ms
+        // Attack is unrestricted — CdS resistance drops quickly with light
         float gainDelta = newGain - det.t4bGain;
         if (gainDelta > 0.0f) {
             float maxReleaseDelta = Constants::T4B_MAX_GAIN_RELEASE_RATE * invSampleRate;
@@ -3414,7 +3410,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         "opto_gain", "Gain", 
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 50.0f)); // Unity gain at 50%
     layout.add(std::make_unique<juce::AudioParameterBool>("opto_limit", "Limit Mode", false));
-    
     // FET parameters (Vintage FET style)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "fet_input", "Input", 
@@ -5142,30 +5137,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 // Gain = sqrt(inputRMS² / outputRMS²) = inputRMS / outputRMS
                 targetAutoGain = std::sqrt(inputRmsAccumulator / outputRmsAccumulator);
 
-                // Psychoacoustic loudness compensation for modes with harmonic distortion
-                // Harmonic content increases perceived loudness without changing RMS level
-                // Apply mode-specific attenuation to compensate:
-                // - Opto: Tube warmth + transformer harmonics (-1.5dB)
-                // - FET: Aggressive FET saturation (-1.0dB)
-                // - Bus: Transformer coloration (-0.5dB)
-                // - VCA/Digital/Studio: Cleaner, less compensation needed
-                float loudnessCompensation = 1.0f;
-                switch (mode)
-                {
-                    case CompressorMode::Opto:
-                        loudnessCompensation = 0.84f;  // -1.5dB for tube/transformer harmonics
-                        break;
-                    case CompressorMode::FET:
-                        loudnessCompensation = 0.89f;  // -1.0dB for FET saturation
-                        break;
-                    case CompressorMode::Bus:
-                        loudnessCompensation = 0.94f;  // -0.5dB for bus compressor character
-                        break;
-                    default:
-                        loudnessCompensation = 1.0f;   // No compensation for cleaner modes
-                        break;
-                }
-                targetAutoGain *= loudnessCompensation;
+                // No per-mode loudness compensation — harmonic distortion from analog
+                // modeling is mild (< 1% THD) and doesn't meaningfully change perceived
+                // loudness. Auto-gain should match input level across all modes.
 
                 // Limit compensation range to ±40dB to handle extreme input gain settings
                 // (e.g., FET input at -20dB can create 30+ dB level differences)
