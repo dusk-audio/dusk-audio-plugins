@@ -1,16 +1,4 @@
-/*
-  ==============================================================================
-
-    ConvolutionEngine.h
-    Short-IR convolution for transformer/cabinet coloration
-
-    Uses direct convolution (not FFT) for short impulse responses,
-    optimized for low latency with IRs of 32-256 samples.
-
-    Includes synthetic IR generation for transformer characteristics.
-
-  ==============================================================================
-*/
+// ConvolutionEngine.h — Short-IR direct convolution for transformer coloration
 
 #pragma once
 
@@ -285,8 +273,6 @@ private:
     }
 };
 
-//==============================================================================
-// Stereo convolution wrapper
 class StereoConvolution
 {
 public:

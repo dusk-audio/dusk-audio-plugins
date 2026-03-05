@@ -1,22 +1,4 @@
-/*
-  ==============================================================================
-
-    HardwareProfiles.h
-    Hardware measurement data structures for analog emulation
-
-    Contains measured characteristics from classic hardware types:
-    - Opto compressor
-    - FET compressor
-    - Classic VCA compressor
-    - Console bus compressor
-    - Tape machines
-    - British console preamp
-    - American console preamp
-
-    This is the shared library version - all plugins should use this.
-
-  ==============================================================================
-*/
+// HardwareProfiles.h — Hardware profiles for analog emulation
 
 #pragma once
 
@@ -25,36 +7,27 @@
 
 namespace AnalogEmulation {
 
-//==============================================================================
-// Harmonic profile from hardware measurements
 struct HarmonicProfile
 {
-    float h2 = 0.0f;          // 2nd harmonic (even, warm)
-    float h3 = 0.0f;          // 3rd harmonic (odd, aggressive)
-    float h4 = 0.0f;          // 4th harmonic (even)
-    float h5 = 0.0f;          // 5th harmonic (odd)
-    float h6 = 0.0f;          // 6th harmonic (even)
-    float h7 = 0.0f;          // 7th harmonic (odd)
-    float evenOddRatio = 0.5f; // Balance: 0=all odd, 1=all even
+    float h2 = 0.0f;
+    float h3 = 0.0f;
+    float h4 = 0.0f;
+    float h5 = 0.0f;
+    float h6 = 0.0f;
+    float h7 = 0.0f;
+    float evenOddRatio = 0.5f; // 0=all odd, 1=all even
 
-    // Scale all harmonics by a factor
     void scale(float factor)
     {
-        h2 *= factor;
-        h3 *= factor;
-        h4 *= factor;
-        h5 *= factor;
-        h6 *= factor;
-        h7 *= factor;
+        h2 *= factor; h3 *= factor; h4 *= factor;
+        h5 *= factor; h6 *= factor; h7 *= factor;
     }
 
-    // Get total harmonic content
     float getTotalHarmonics() const
     {
         return h2 + h3 + h4 + h5 + h6 + h7;
     }
 
-    // Factory method for C++17 compatibility
     static HarmonicProfile create(float h2_, float h3_, float evenOddRatio_,
                                    float h4_ = 0.0f, float h5_ = 0.0f,
                                    float h6_ = 0.0f, float h7_ = 0.0f)
@@ -71,17 +44,15 @@ struct HarmonicProfile
     }
 };
 
-//==============================================================================
-// Timing characteristics measured from hardware
 struct TimingProfile
 {
-    float attackMinMs = 0.0f;     // Fastest attack
-    float attackMaxMs = 0.0f;     // Slowest attack
-    float releaseMinMs = 0.0f;    // Fastest release
-    float releaseMaxMs = 0.0f;    // Slowest release
+    float attackMinMs = 0.0f;
+    float attackMaxMs = 0.0f;
+    float releaseMinMs = 0.0f;
+    float releaseMaxMs = 0.0f;
     float attackCurve = 0.0f;     // 0=linear, 1=logarithmic
-    float releaseCurve = 0.0f;    // 0=linear, 1=logarithmic
-    bool programDependent = false; // Adaptive timing
+    float releaseCurve = 0.0f;
+    bool programDependent = false;
 
     static TimingProfile create(float atkMin, float atkMax, float relMin, float relMax,
                                  float atkCurve, float relCurve, bool progDep)
@@ -98,8 +69,6 @@ struct TimingProfile
     }
 };
 
-//==============================================================================
-// Frequency response deviations from flat
 struct FrequencyResponse
 {
     float lowShelfFreq = 100.0f;
@@ -111,16 +80,14 @@ struct FrequencyResponse
     float resonanceGain = 0.0f;   // dB
 };
 
-//==============================================================================
-// Transformer characteristics
 struct TransformerProfile
 {
     bool hasTransformer = true;
-    float saturationThreshold = 0.8f;  // Level where saturation begins (0-1)
-    float saturationAmount = 0.0f;     // 0-1 saturation intensity
-    float lowFreqSaturation = 1.0f;    // LF saturation multiplier (transformers saturate more at LF)
-    float highFreqRolloff = 20000.0f;  // -3dB point in Hz
-    float dcBlockingFreq = 10.0f;      // Hz
+    float saturationThreshold = 0.8f;
+    float saturationAmount = 0.0f;
+    float lowFreqSaturation = 1.0f;    // LF saturates more (core physics)
+    float highFreqRolloff = 20000.0f;  // -3dB Hz
+    float dcBlockingFreq = 10.0f;
     HarmonicProfile harmonics;
 
     static TransformerProfile createActive(float satThresh, float satAmt, float lfSat,
@@ -146,8 +113,6 @@ struct TransformerProfile
     }
 };
 
-//==============================================================================
-// Tube stage characteristics
 struct TubeProfile
 {
     bool hasTubeStage = false;
@@ -174,8 +139,6 @@ struct TubeProfile
     }
 };
 
-//==============================================================================
-// Tape machine characteristics
 struct TapeProfile
 {
     const char* machineName = "";
@@ -223,95 +186,59 @@ struct TapeProfile
     }
 };
 
-//==============================================================================
-// Complete hardware unit profile
 struct HardwareUnitProfile
 {
     const char* name = "";
     const char* modeledUnit = "";
 
-    // Stage-specific harmonic profiles
     HarmonicProfile inputStageHarmonics;
     HarmonicProfile compressionStageHarmonics;
     HarmonicProfile outputStageHarmonics;
 
-    // Transformer characteristics
     TransformerProfile inputTransformer;
     TransformerProfile outputTransformer;
 
-    // Tube stages (if applicable)
     TubeProfile inputTube;
     TubeProfile outputTube;
 
-    // Frequency response shaping
     FrequencyResponse preCompressionEQ;
     FrequencyResponse postCompressionEQ;
 
-    // Timing characteristics
     TimingProfile timing;
 
-    // General specs
     float noiseFloor = -90.0f;         // dBFS
     float headroom = 20.0f;            // dB above 0VU
     float intermodulationDistortion = 0.0f; // IMD percentage
 };
 
-//==============================================================================
-// Measured profiles for each hardware type
 namespace Profiles {
 
-//------------------------------------------------------------------------------
-// Opto compressor profile
+// Opto compressor
 inline HardwareUnitProfile createOptoCompressor()
 {
     HardwareUnitProfile profile;
     profile.name = "Opto Compressor";
     profile.modeledUnit = "Vintage Opto Compressor";
 
-    // Input stage: Tube input (12AX7)
-    profile.inputStageHarmonics = HarmonicProfile::create(
-        0.025f, 0.008f, 0.75f, 0.003f, 0.001f
-    );
+    profile.inputStageHarmonics = HarmonicProfile::create(0.025f, 0.008f, 0.75f, 0.003f, 0.001f);
+    profile.compressionStageHarmonics = HarmonicProfile::create(0.015f, 0.003f, 0.85f);
+    profile.outputStageHarmonics = HarmonicProfile::create(0.035f, 0.012f, 0.70f, 0.004f);
 
-    // Compression stage: T4B optical cell
-    profile.compressionStageHarmonics = HarmonicProfile::create(
-        0.015f, 0.003f, 0.85f
-    );
-
-    // Output stage: 12AX7/12BH7 tubes
-    profile.outputStageHarmonics = HarmonicProfile::create(
-        0.035f, 0.012f, 0.70f, 0.004f
-    );
-
-    // Input transformer
     profile.inputTransformer = TransformerProfile::createActive(
-        0.75f, 0.15f, 1.3f, 18000.0f, 20.0f,
-        0.008f, 0.003f, 0.7f
-    );
-
-    // Output transformer
+        0.75f, 0.15f, 1.3f, 18000.0f, 20.0f, 0.008f, 0.003f, 0.7f);
     profile.outputTransformer = TransformerProfile::createActive(
-        0.8f, 0.1f, 1.2f, 16000.0f, 15.0f,
-        0.006f, 0.002f, 0.75f
-    );
+        0.8f, 0.1f, 1.2f, 16000.0f, 15.0f, 0.006f, 0.002f, 0.75f);
 
-    // Tube stages
     profile.inputTube = TubeProfile::create(0.4f, 0.025f, 0.008f, 0.75f);
     profile.outputTube = TubeProfile::create(0.5f, 0.035f, 0.012f, 0.70f);
 
-    // Timing
-    profile.timing = TimingProfile::create(
-        10.0f, 10.0f, 60.0f, 5000.0f, 0.3f, 0.8f, true
-    );
-
+    profile.timing = TimingProfile::create(10.0f, 10.0f, 60.0f, 5000.0f, 0.3f, 0.8f, true);
     profile.noiseFloor = -70.0f;
     profile.headroom = 18.0f;
-
     return profile;
 }
 
-//------------------------------------------------------------------------------
-// FET compressor profile
+// FET compressor
 inline HardwareUnitProfile createFETCompressor()
 {
     HardwareUnitProfile profile;
@@ -350,8 +277,7 @@ inline HardwareUnitProfile createFETCompressor()
     return profile;
 }
 
-//------------------------------------------------------------------------------
-// Classic VCA compressor profile
+// Classic VCA compressor
 inline HardwareUnitProfile createClassicVCA()
 {
     HardwareUnitProfile profile;
@@ -370,7 +296,6 @@ inline HardwareUnitProfile createClassicVCA()
         0.002f, 0.001f, 0.65f
     );
 
-    // No transformers
     profile.inputTransformer = TransformerProfile::createInactive();
     profile.outputTransformer = TransformerProfile::createInactive();
 
@@ -384,8 +309,7 @@ inline HardwareUnitProfile createClassicVCA()
     return profile;
 }
 
-//------------------------------------------------------------------------------
-// Console Bus Compressor
+// Console Bus compressor
 inline HardwareUnitProfile createConsoleBus()
 {
     HardwareUnitProfile profile;
@@ -424,8 +348,7 @@ inline HardwareUnitProfile createConsoleBus()
     return profile;
 }
 
-//------------------------------------------------------------------------------
-// Studer A800 tape machine
+// Studer A800
 inline TapeProfile createStuderA800()
 {
     return TapeProfile::create(
@@ -438,8 +361,7 @@ inline TapeProfile createStuderA800()
     );
 }
 
-//------------------------------------------------------------------------------
-// Ampex ATR-102 tape machine
+// Ampex ATR-102
 inline TapeProfile createAmpexATR102()
 {
     return TapeProfile::create(
@@ -452,7 +374,6 @@ inline TapeProfile createAmpexATR102()
     );
 }
 
-//------------------------------------------------------------------------------
 // British console preamp
 inline HardwareUnitProfile createBritishConsole()
 {
@@ -468,7 +389,6 @@ inline HardwareUnitProfile createBritishConsole()
         0.025f, 0.01f, 0.68f, 0.004f
     );
 
-    // British console transformers are known for their character
     profile.inputTransformer = TransformerProfile::createActive(
         0.7f, 0.2f, 1.4f, 18000.0f, 20.0f,
         0.015f, 0.005f, 0.75f
@@ -485,7 +405,6 @@ inline HardwareUnitProfile createBritishConsole()
     return profile;
 }
 
-//------------------------------------------------------------------------------
 // American console preamp
 inline HardwareUnitProfile createAmericanConsole()
 {
@@ -501,7 +420,6 @@ inline HardwareUnitProfile createAmericanConsole()
         0.012f, 0.018f, 0.38f, 0.0f, 0.006f
     );
 
-    // American console has more aggressive, punchy transformers
     profile.inputTransformer = TransformerProfile::createActive(
         0.8f, 0.12f, 1.2f, 20000.0f, 15.0f,
         0.006f, 0.01f, 0.4f
@@ -518,15 +436,12 @@ inline HardwareUnitProfile createAmericanConsole()
     return profile;
 }
 
-//------------------------------------------------------------------------------
-// Clean/Digital (transparent)
+// Digital (transparent)
 inline HardwareUnitProfile createDigital()
 {
     HardwareUnitProfile profile;
     profile.name = "Digital";
     profile.modeledUnit = "Transparent Digital";
-
-    // Zero harmonics - use defaults
 
     profile.inputTransformer = TransformerProfile::createInactive();
     profile.outputTransformer = TransformerProfile::createInactive();
@@ -543,8 +458,6 @@ inline HardwareUnitProfile createDigital()
 
 } // namespace Profiles
 
-//==============================================================================
-// Profile accessor class for cached profiles
 class HardwareProfileLibrary
 {
 public:
