@@ -72,6 +72,8 @@ private:
     std::atomic<float>* freezeParam_    = nullptr;
     std::atomic<float>* predelaySyncParam_ = nullptr;
     std::atomic<float>* busModeParam_ = nullptr;
+    std::atomic<float>* gateHoldParam_ = nullptr;
+    std::atomic<float>* gateReleaseParam_ = nullptr;
 
     juce::SmoothedValue<float> decaySmooth_;
     juce::SmoothedValue<float> preDelaySmooth_;

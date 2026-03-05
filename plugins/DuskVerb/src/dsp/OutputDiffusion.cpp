@@ -9,22 +9,25 @@ void OutputDiffusion::prepare (double sampleRate, int /*maxBlockSize*/)
     static constexpr float kTwoPi = 6.283185307179586f;
     float ratio = static_cast<float> (sampleRate / 44100.0);
 
+    float totalAPs = static_cast<float> (kNumStages * 2);
+
     for (int s = 0; s < kNumStages; ++s)
     {
         float delay = static_cast<float> (kBaseDelays[s]) * ratio;
         int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (delay)) + 4);
 
-        // Light LFO modulation: depth 0.3-0.5 samples, rate 0.2-0.5 Hz
+        // Light LFO modulation: depth 0.3-0.5 samples @44.1kHz, rate 0.2-0.5 Hz
+        // Depth scaled by sample rate ratio for consistent modulation across rates
         // 4 allpasses total (2L + 2R), phases spread evenly across 2*pi
-        float phaseL = kTwoPi * static_cast<float> (s) / 4.0f;
-        float rateL  = 0.2f + 0.3f * static_cast<float> (s) / static_cast<float> (kNumStages * 2 - 1);
-        float depthL = 0.3f + 0.2f * static_cast<float> (s) / static_cast<float> (kNumStages * 2 - 1);
+        float phaseL = kTwoPi * static_cast<float> (s) / totalAPs;
+        float rateL  = 0.2f + 0.3f * static_cast<float> (s) / (totalAPs - 1.0f);
+        float depthL = (0.3f + 0.2f * static_cast<float> (s) / (totalAPs - 1.0f)) * ratio;
         leftAP_[s].prepare (bufSize, delay, rateL, depthL, phaseL, sampleRate);
 
         int ri = s + kNumStages;
-        float phaseR = kTwoPi * static_cast<float> (ri) / 4.0f;
-        float rateR  = 0.2f + 0.3f * static_cast<float> (ri) / static_cast<float> (kNumStages * 2 - 1);
-        float depthR = 0.3f + 0.2f * static_cast<float> (ri) / static_cast<float> (kNumStages * 2 - 1);
+        float phaseR = kTwoPi * static_cast<float> (ri) / totalAPs;
+        float rateR  = 0.2f + 0.3f * static_cast<float> (ri) / (totalAPs - 1.0f);
+        float depthR = (0.3f + 0.2f * static_cast<float> (ri) / (totalAPs - 1.0f)) * ratio;
         rightAP_[s].prepare (bufSize, delay, rateR, depthR, phaseR, sampleRate);
     }
 }

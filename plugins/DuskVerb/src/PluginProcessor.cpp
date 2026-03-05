@@ -41,11 +41,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mod_depth", 1 }, "Mod Depth",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.4f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.4f));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mod_rate", 1 }, "Mod Rate",
-        juce::NormalisableRange<float> (0.1f, 3.0f), 0.8f));
+        juce::NormalisableRange<float> (0.10f, 10000.0f, 0.0f, 0.12f), 0.8f));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "er_level", 1 }, "Early Ref Level",
@@ -81,6 +81,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bus_mode", 1 }, "Bus Mode", false));
 
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "gate_hold", 1 }, "Gate Hold",
+        juce::NormalisableRange<float> (0.0f, 2000.0f, 0.0f, 1.0f), 0.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "gate_release", 1 }, "Gate Release",
+        juce::NormalisableRange<float> (1.0f, 500.0f, 0.0f, 1.0f), 50.0f));
+
     return layout;
 }
 
@@ -109,6 +117,8 @@ DuskVerbProcessor::DuskVerbProcessor()
     freezeParam_    = parameters.getRawParameterValue ("freeze");
     predelaySyncParam_ = parameters.getRawParameterValue ("predelay_sync");
     busModeParam_ = parameters.getRawParameterValue ("bus_mode");
+    gateHoldParam_ = parameters.getRawParameterValue ("gate_hold");
+    gateReleaseParam_ = parameters.getRawParameterValue ("gate_release");
 }
 
 bool DuskVerbProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -253,6 +263,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // Freeze is discrete (boolean), no smoothing needed
     engine_.setFreeze (freezeParam_->load() >= 0.5f);
+
+    // Gate: discrete parameters, no smoothing needed
+    engine_.setGateParams (gateHoldParam_->load(), gateReleaseParam_->load());
 
     // Sub-block processing for smooth parameter transitions
     int samplesRemaining = numSamples;

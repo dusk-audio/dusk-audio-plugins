@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AlgorithmConfig.h"
+#include "DattorroTank.h"
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
@@ -58,12 +59,15 @@ public:
     void setHiCut (float hz);
     void setWidth (float width);
     void setFreeze (bool frozen);
+    void setGateParams (float holdMs, float releaseMs);
 
 private:
     DiffusionStage diffuser_;
     FDNReverb fdn_;
+    DattorroTank dattorroTank_;
     OutputDiffusion outputDiffuser_;
     EarlyReflections er_;
+    bool useDattorroTank_ = false;
 
     const AlgorithmConfig* config_ = &kHall;
 
@@ -90,6 +94,8 @@ private:
 
     float erLevelScale_ = 1.0f;
     float lateGainScale_ = 1.0f;
+    float decayGainComp_ = 1.0f; // Decay-dependent output compensation (short-decay boost)
+    float erCrossfeed_ = 0.0f;
 
     float decayTime_ = 2.5f; // Cached for decay-linked output diffusion
 
@@ -146,6 +152,14 @@ private:
 
     // Freeze mode
     bool frozen_ = false;
+
+    // Gate envelope: truncates reverb tail (gated reverb effect)
+    bool gateEnabled_ = false;
+    int gateHoldSamples_ = 0;
+    float gateReleaseCoeff_ = 0.0f;
+    float gateEnvelope_ = 0.0f;
+    int gateHoldCounter_ = 0;
+    bool gateTriggered_ = false;
 
     // Algorithm crossfade: mute-and-morph to prevent clicks on algorithm switch
     static constexpr int kFadeSamples = 64;
