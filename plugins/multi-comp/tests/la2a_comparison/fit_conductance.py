@@ -139,7 +139,7 @@ def rational_fn(x, a, b, c, d):
     x3 = x2 * x
     num = a * x2 + b * x3
     den = 1.0 + c * x + d * x2
-    return np.where(x > 0, num / den, 0.0)
+    return np.where((x > 0) & (np.abs(den) > 1e-10), num / den, 0.0)
 
 
 def poly5(x, *coeffs):
