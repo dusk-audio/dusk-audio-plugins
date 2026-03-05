@@ -1,18 +1,4 @@
-/*
-  ==============================================================================
-
-    WaveshaperCurves.h
-    Lookup table-based waveshapers for hardware-accurate saturation
-
-    Pre-computed curves based on measured hardware transfer functions:
-    - Opto tube saturation (asymmetric, 2nd harmonic dominant)
-    - FET saturation (symmetric, odd harmonics)
-    - VCA saturation (nearly linear)
-    - Console bus saturation (punchy, slight asymmetry)
-    - Generic transformer saturation
-
-  ==============================================================================
-*/
+// WaveshaperCurves.h — Lookup table waveshapers for hardware saturation curves
 
 #pragma once
 
@@ -110,10 +96,7 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // Opto tube saturation
-    // Characteristics: Asymmetric, 2nd harmonic dominant, soft compression
-    // Based on 12AX7 triode transfer curve measurements
-    // Target: ~0.25-0.5% THD at +10dBm, 2nd harmonic dominant
+    // Opto tube — asymmetric, 2nd harmonic dominant
     void initializeOptoCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
@@ -122,18 +105,12 @@ private:
 
             if (x >= 0.0f)
             {
-                // Positive half: Softer saturation (grid current region)
-                // Creates 2nd harmonic through subtle asymmetry
-                // Reduced saturation coefficient for lower THD
                 float softClip = x / (1.0f + x * 0.12f);
-                // Subtle 2nd harmonic coloration
                 float harmonic2 = softClip * softClip * 0.025f;
                 optoCurve[i] = softClip - harmonic2;
             }
             else
             {
-                // Negative half: Slightly harder clipping (cutoff region)
-                // Creates asymmetry for 2nd harmonic character
                 float absX = std::abs(x);
                 float hardClip = -absX / (1.0f + absX * 0.08f);
                 optoCurve[i] = hardClip;
@@ -142,19 +119,14 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // FET saturation
-    // Characteristics: More symmetric, odd harmonics, sharp knee
-    // Based on FET transfer characteristics
-    // Target: ~0.3-0.5% THD at limiting, odd harmonics dominant (3rd > 2nd)
+    // FET — symmetric, odd harmonics (3rd + 5th)
     void initializeFETCurve()
     {
-        // Pre-calculate the shaped value at the threshold for continuity
         constexpr float threshold = 1.0f;
         constexpr float h3Coeff = 0.18f;
         constexpr float h5Coeff = 0.04f;
         constexpr float shapedAtThreshold = threshold + (threshold * threshold * threshold) * h3Coeff
                                           + (threshold * threshold * threshold * threshold * threshold) * h5Coeff;
-        // shapedAtThreshold ≈ 1.0 + 0.18 + 0.04 = 1.22
 
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
@@ -162,23 +134,13 @@ private:
             float absX = std::abs(x);
             float sign = (x >= 0.0f) ? 1.0f : -1.0f;
 
-            // FET compression has distinctive odd-harmonic character
-            // The FET compressor uses a FET as a variable resistor which creates
-            // symmetric soft clipping (odd harmonics: 3rd, 5th, 7th)
-
-            // Add continuous 3rd and 5th harmonic shaping
             float x3 = x * x * x;
             float x5 = x3 * x * x;
-            float harmonic3 = x3 * h3Coeff;
-            float harmonic5 = x5 * h5Coeff;
+            float shaped = x + x3 * h3Coeff + x5 * h5Coeff;
 
-            float shaped = x + harmonic3 + harmonic5;
-
-            // Soft limiting at extremes - continuous from shaped value at threshold
             if (absX > threshold)
             {
                 float excess = absX - threshold;
-                // Start from shapedAtThreshold and add tanh-limited headroom
                 float limit = shapedAtThreshold + std::tanh(excess * 1.5f) * 0.15f;
                 shaped = sign * limit;
             }
@@ -188,17 +150,12 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // Classic VCA saturation
-    // Characteristics: Very clean, nearly linear, gentle limiting only at extremes
-    // Target: ~0.03-0.05% THD (VCA chip has measurable but low distortion)
-    // VCAs typically produce odd harmonics (symmetric nonlinearity)
+    // VCA — nearly linear, gentle limiting at extremes
     void initializeVCACurve()
     {
-        // Pre-calculate the shaped value at the threshold for continuity
         constexpr float threshold = 1.5f;
         constexpr float h3Coeff = 0.018f;
         constexpr float shapedAtThreshold = threshold + (threshold * threshold * threshold) * h3Coeff;
-        // shapedAtThreshold ≈ 1.5 + 3.375 * 0.018 ≈ 1.56
 
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
@@ -208,14 +165,10 @@ private:
 
             if (absX < threshold)
             {
-                // Nearly linear with subtle 3rd harmonic
-                // VCAs have symmetric transfer = odd harmonics only
-                float harmonic3 = x * x * x * h3Coeff;
-                vcaCurve[i] = x + harmonic3;
+                vcaCurve[i] = x + x * x * x * h3Coeff;
             }
             else
             {
-                // Very gentle saturation at extremes - continuous from threshold
                 float excess = absX - threshold;
                 float sat = shapedAtThreshold + std::tanh(excess * 0.3f) * 0.14f;
                 vcaCurve[i] = sign * sat;
@@ -224,18 +177,12 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // Console bus saturation
-    // Characteristics: Punchy, console character, slight asymmetry for "punch"
+    // Console bus — asymmetric thresholds for punch
     void initializeConsoleCurve()
     {
-        // Pre-calculate threshold values for continuity
-        // Asymmetric thresholds for punch (positive clips slightly earlier)
         constexpr float thresholdPos = 0.92f;
         constexpr float thresholdNeg = 0.88f;
         constexpr float h3Coeff = 0.02f;
-
-        // Calculate shaped values at thresholds for continuity
-        // At threshold, the linear formula gives: threshold + threshold^3 * h3Coeff
         constexpr float shapedAtThresholdPos = thresholdPos + (thresholdPos * thresholdPos * thresholdPos) * h3Coeff;
         constexpr float shapedAtThresholdNeg = thresholdNeg + (thresholdNeg * thresholdNeg * thresholdNeg) * h3Coeff;
 
@@ -250,15 +197,11 @@ private:
 
             if (absX < threshold)
             {
-                // Linear region with subtle polynomial shaping
-                float subtle = x + x * x * x * h3Coeff;  // Adds 3rd harmonic
-                consoleCurve[i] = subtle;
+                consoleCurve[i] = x + x * x * x * h3Coeff;
             }
             else
             {
-                // Console-style saturation - continuous from threshold
                 float excess = absX - threshold;
-                // Start from shapedAtThreshold and add tanh-limited headroom
                 float sat = shapedAtThreshold + std::tanh(excess * 3.5f) * 0.18f;
                 consoleCurve[i] = sign * sat;
             }
@@ -266,9 +209,7 @@ private:
     }
 
     //--------------------------------------------------------------------------
-    // Generic transformer saturation
-    // Characteristics: Progressive compression, 2nd harmonic emphasis
-    // Based on classic transformer measurements
+    // Transformer — progressive compression, 2nd harmonic emphasis
     void initializeTransformerCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
@@ -279,23 +220,19 @@ private:
 
             if (absX < 0.7f)
             {
-                // Linear region with subtle 2nd harmonic
-                // Using x * |x| for asymmetric transfer (true 2nd harmonic)
+                // x * |x| gives asymmetric transfer → 2nd harmonic
                 float harmonic2 = x * absX * 0.05f;
                 transformerCurve[i] = x + harmonic2;
             }
             else if (absX < 1.2f)
             {
-                // Progressive saturation (core approaching saturation)
                 float excess = absX - 0.7f;
                 float compressed = 0.7f + excess * (1.0f - excess * 0.25f);
-                // 2nd harmonic increases with saturation (asymmetric)
                 float harmonic2 = (sign * compressed) * compressed * 0.08f;
                 transformerCurve[i] = sign * compressed + harmonic2;
             }
             else
             {
-                // Hard saturation (core saturated)
                 float excess = absX - 1.2f;
                 float hard = 1.05f + std::tanh(excess * 1.5f) * 0.15f;
                 transformerCurve[i] = sign * hard;
@@ -314,14 +251,7 @@ private:
     }
 };
 
-//==============================================================================
-// Singleton accessor for shared waveshaper instance
-//
-// WARNING: First call initializes ~96KB of lookup tables (6 tables × 4096 floats).
-// To avoid blocking an audio/RT thread, call this function once during plugin
-// initialization (e.g., in prepareToPlay or constructor) before any RT processing.
-//
-// Example: auto& curves = HardwareEmulation::getWaveshaperCurves(); // Force init
+// First call initializes lookup tables — call from prepareToPlay, not the audio thread.
 inline WaveshaperCurves& getWaveshaperCurves()
 {
     static WaveshaperCurves instance;

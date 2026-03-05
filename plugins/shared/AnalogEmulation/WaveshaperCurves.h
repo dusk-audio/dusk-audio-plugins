@@ -1,20 +1,4 @@
-/*
-  ==============================================================================
-
-    WaveshaperCurves.h
-    Lookup table-based waveshapers for hardware-accurate saturation
-
-    Pre-computed curves based on measured hardware transfer functions:
-    - Opto tube saturation (asymmetric, 2nd harmonic dominant)
-    - FET saturation (symmetric, odd harmonics)
-    - VCA saturation (nearly linear)
-    - Console bus saturation (punchy, slight asymmetry)
-    - Generic transformer saturation
-
-    This is the shared library version - all plugins should use this.
-
-  ==============================================================================
-*/
+// WaveshaperCurves.h — Lookup table waveshapers for hardware saturation curves
 
 #pragma once
 
@@ -124,11 +108,7 @@ private:
         return (static_cast<float>(index) / (TABLE_SIZE - 1)) * TABLE_RANGE - TABLE_RANGE / 2.0f;
     }
 
-    //--------------------------------------------------------------------------
-    // Opto tube saturation
-    // Characteristics: Asymmetric, 2nd harmonic dominant, soft compression
-    // Based on 12AX7 triode transfer curve measurements
-    // Target: ~0.25-0.5% THD at +10dBm, 2nd harmonic dominant
+    // Opto tube saturation (asymmetric, 2nd harmonic dominant)
     void initializeOptoCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
@@ -137,14 +117,12 @@ private:
 
             if (x >= 0.0f)
             {
-                // Positive half: Softer saturation (grid current region)
                 float softClip = x / (1.0f + x * 0.12f);
                 float harmonic2 = softClip * softClip * 0.025f;
                 optoCurve[i] = softClip - harmonic2;
             }
             else
             {
-                // Negative half: Slightly harder clipping (cutoff region)
                 float absX = std::abs(x);
                 float hardClip = -absX / (1.0f + absX * 0.08f);
                 optoCurve[i] = hardClip;
@@ -152,9 +130,7 @@ private:
         }
     }
 
-    //--------------------------------------------------------------------------
-    // FET saturation
-    // Characteristics: More symmetric, odd harmonics, sharp knee
+    // FET saturation (symmetric, odd harmonics)
     void initializeFETCurve()
     {
         constexpr float threshold = 1.0f;
@@ -187,9 +163,7 @@ private:
         }
     }
 
-    //--------------------------------------------------------------------------
-    // Classic VCA saturation
-    // Characteristics: Very clean, nearly linear, gentle limiting only at extremes
+    // Classic VCA saturation (nearly linear)
     void initializeVCACurve()
     {
         constexpr float threshold = 1.5f;
@@ -216,9 +190,7 @@ private:
         }
     }
 
-    //--------------------------------------------------------------------------
-    // Console bus saturation
-    // Characteristics: Punchy, console character, slight asymmetry for "punch"
+    // Console bus saturation (asymmetric thresholds)
     void initializeConsoleCurve()
     {
         constexpr float thresholdPos = 0.92f;
@@ -251,9 +223,7 @@ private:
         }
     }
 
-    //--------------------------------------------------------------------------
-    // Generic transformer saturation
-    // Characteristics: Progressive compression, 2nd harmonic emphasis
+    // Transformer saturation (progressive compression, 2nd harmonic)
     void initializeTransformerCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
@@ -283,9 +253,7 @@ private:
         }
     }
 
-    //--------------------------------------------------------------------------
-    // Tape saturation
-    // Characteristics: Smooth, warm, subtle hysteresis-like behavior
+    // Tape saturation (smooth, asymmetric)
     void initializeTapeCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
@@ -294,27 +262,21 @@ private:
             float absX = std::abs(x);
             float sign = (x >= 0.0f) ? 1.0f : -1.0f;
 
-            // Tape has very smooth saturation with gradual onset
-            // Slightly asymmetric for warmth
             if (x >= 0.0f)
             {
-                // Positive: softer compression (recording head behavior)
                 float softClip = x / (1.0f + x * 0.15f);
                 float harmonic2 = softClip * softClip * 0.02f;
                 tapeCurve[i] = softClip + harmonic2;
             }
             else
             {
-                // Negative: slightly harder (playback head)
                 float softClip = x / (1.0f + absX * 0.12f);
                 tapeCurve[i] = softClip;
             }
         }
     }
 
-    //--------------------------------------------------------------------------
-    // Triode tube saturation
-    // Characteristics: Classic tube warmth, asymmetric, 2nd harmonic dominant
+    // Triode tube saturation (asymmetric, 2nd harmonic dominant)
     void initializeTriodeCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
@@ -323,7 +285,6 @@ private:
 
             if (x >= 0.0f)
             {
-                // Positive grid: grid current causes soft compression
                 float normalized = x / (1.0f + x * 0.4f);
                 triodeCurve[i] = normalized * (1.0f - normalized * 0.12f);
             }
@@ -350,9 +311,7 @@ private:
         }
     }
 
-    //--------------------------------------------------------------------------
-    // Pentode tube saturation
-    // Characteristics: More aggressive, odd harmonics, sharper knee
+    // Pentode tube saturation (odd harmonics, sharper knee)
     void initializePentodeCurve()
     {
         for (int i = 0; i < TABLE_SIZE; ++i)
@@ -361,16 +320,13 @@ private:
             float absX = std::abs(x);
             float sign = (x >= 0.0f) ? 1.0f : -1.0f;
 
-            // Pentodes have sharper cutoff and more odd harmonics
             if (absX < 0.6f)
             {
-                // Linear region with subtle 3rd harmonic
                 float h3 = x * x * x * 0.03f;
                 pentodeCurve[i] = x + h3;
             }
             else if (absX < 1.0f)
             {
-                // Transition region
                 float excess = absX - 0.6f;
                 float compressed = 0.6f + excess * (1.0f - excess * 0.4f);
                 float h3 = (sign * compressed) * compressed * compressed * 0.05f;
@@ -378,7 +334,6 @@ private:
             }
             else
             {
-                // Hard limiting (screen grid saturation)
                 float excess = absX - 1.0f;
                 float hard = 0.92f + std::tanh(excess * 3.0f) * 0.15f;
                 pentodeCurve[i] = sign * hard;
@@ -386,7 +341,6 @@ private:
         }
     }
 
-    //--------------------------------------------------------------------------
     // Linear (bypass)
     void initializeLinearCurve()
     {
@@ -397,14 +351,7 @@ private:
     }
 };
 
-//==============================================================================
-// Singleton accessor for shared waveshaper instance
-//
-// WARNING: First call initializes lookup tables (~144KB for 9 tables).
-// To avoid blocking an audio/RT thread, call this function once during plugin
-// initialization (e.g., in prepareToPlay or constructor) before any RT processing.
-//
-// Example: auto& curves = AnalogEmulation::getWaveshaperCurves(); // Force init
+// Singleton accessor — call once during init to build tables off the RT thread
 inline WaveshaperCurves& getWaveshaperCurves()
 {
     static WaveshaperCurves instance;

@@ -159,29 +159,39 @@ def measure_la2a_reference(sr=SAMPLE_RATE):
     # Output level at loudest tone
     output_at_max = last[2]
 
+    # Mid-range target for 3-point calibration (-10 dBFS tone)
+    # Levels go -40, -38, ..., 0 in steps of 2. Index for -10 is (40-10)/2 = 15
+    mid_idx = 15
+    output_at_mid = gains[mid_idx][2] if mid_idx < len(gains) else None
+    mid_level_db = gains[mid_idx][0] if mid_idx < len(gains) else -10
+    gr_at_mid = gains[mid_idx][3] - flat_gain if mid_idx < len(gains) else None
+
     return {
         'flat_gain': flat_gain,
         'gr_at_max': gr_at_max,
         'output_at_max': output_at_max,
+        'output_at_mid': output_at_mid,
+        'gr_at_mid': gr_at_mid,
+        'mid_level_db': mid_level_db,
         'gains': gains,
     }
 
 
 def calibrate(plugin, la2a_ref, sr=SAMPLE_RATE):
-    """Auto-calibrate MC to match the LA-2A reference bounce."""
+    """Auto-calibrate MC to match the LA-2A reference bounce.
+    2-point: Calibrate Gain (flat region) + PR (0 dBFS).
+    """
     print(f"\n  LA-2A reference:")
     print(f"    Flat-region gain: {la2a_ref['flat_gain']:+.1f} dB")
     print(f"    GR at 0 dBFS: {la2a_ref['gr_at_max']:+.1f} dB")
     print(f"    Output at 0 dBFS: {la2a_ref['output_at_max']:.1f} dBFS")
 
-    # Step 1: Find Gain that matches flat-region gain (use -40 dB tone, no compression)
-    # Gain mapping: (gainParam - 50) * 0.8 = dB of makeup
+    # Step 1: Find Gain that matches flat-region gain
     print(f"\n  Step 1: Matching flat-region gain...")
     gain_low, gain_high = 0.0, 100.0
     for i in range(25):
         gain_mid = (gain_low + gain_high) / 2.0
         out = measure_steady_state(plugin, pr=0.0, gain=gain_mid, level_db=-40.0)
-        # At PR=0, no compression, so output = input + gain
         mc_flat_gain = out - rms_db(generate_tone(sr, 1.0, -40.0))
         if abs(mc_flat_gain - la2a_ref['flat_gain']) < 0.1:
             break
@@ -194,23 +204,24 @@ def calibrate(plugin, la2a_ref, sr=SAMPLE_RATE):
     mc_flat = out - rms_db(generate_tone(sr, 1.0, -40.0))
     print(f"    Gain={best_gain:.1f} -> flat gain={mc_flat:+.1f} dB (target={la2a_ref['flat_gain']:+.1f})")
 
-    # Step 2: Find PR that matches compression at 0 dBFS (matching reference level)
+    # Step 2: Binary search PR to match compression at 0 dBFS
     print(f"\n  Step 2: Matching compression at 0 dBFS...")
     target_output = la2a_ref['output_at_max']
     pr_low, pr_high = 0.0, 100.0
-    for i in range(25):
+    for i in range(15):
         pr_mid = (pr_low + pr_high) / 2.0
         out = measure_steady_state(plugin, pr=pr_mid, gain=best_gain, level_db=0.0)
         if abs(out - target_output) < 0.1:
             break
         if out > target_output:
-            pr_low = pr_mid  # Need more compression
+            pr_low = pr_mid
         else:
-            pr_high = pr_mid  # Need less
+            pr_high = pr_mid
     best_pr = (pr_low + pr_high) / 2.0
+
     out = measure_steady_state(plugin, pr=best_pr, gain=best_gain, level_db=0.0)
     mc_gr = out - rms_db(generate_tone(sr, 1.0, 0.0)) - mc_flat
-    print(f"    PR={best_pr:.1f} -> output={out:.1f} dBFS (target={target_output:.1f})")
+    print(f"    PR={best_pr:.1f} -> output={out:.1f} dBFS (target={la2a_ref['output_at_max']:.1f})")
     print(f"    MC GR at 0dB: {mc_gr:+.1f} dB (LA-2A: {la2a_ref['gr_at_max']:+.1f})")
 
     print(f"\n  Calibrated: PR={best_pr:.1f}, Gain={best_gain:.1f}")
