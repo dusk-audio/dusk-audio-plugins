@@ -84,6 +84,13 @@ void EarlyReflections::setTimeScale (float scale)
         tapsNeedUpdate_.store (true, std::memory_order_release);
 }
 
+void EarlyReflections::setGainExponent (float exponent)
+{
+    gainExponent_ = std::clamp (exponent, 0.0f, 2.0f);
+    if (prepared_)
+        tapsNeedUpdate_.store (true, std::memory_order_release);
+}
+
 void EarlyReflections::updateTaps()
 {
     static_assert (kNumTaps > 1, "kNumTaps must be > 1 to avoid division by zero");
@@ -107,11 +114,14 @@ void EarlyReflections::updateTaps()
         tapsL_[i].delaySamples = std::max (1, static_cast<int> (timeMsL * 0.001f * sr));
         tapsR_[i].delaySamples = std::max (1, static_cast<int> (timeMsR * 0.001f * sr));
 
-        // Inverse distance law: gain ∝ 1/distance ∝ 1/time
+        // Distance attenuation with configurable exponent:
+        // 1.0 = inverse distance (default), 0.5 = sqrt (gentler), 0.0 = flat
         float normL = timeMsL / kMinTimeMs;
         float normR = timeMsR / kMinTimeMs;
-        tapsL_[i].gain = 1.0f / normL;
-        tapsR_[i].gain = 1.0f / normR;
+        float attenL = (gainExponent_ > 0.0f) ? std::pow (normL, gainExponent_) : 1.0f;
+        float attenR = (gainExponent_ > 0.0f) ? std::pow (normR, gainExponent_) : 1.0f;
+        tapsL_[i].gain = kSignsL[i] / attenL;
+        tapsR_[i].gain = kSignsR[i] / attenR;
 
         // Air absorption: one-pole lowpass per tap
         // Cutoff sweeps from 12kHz (earliest) to 2kHz (latest)
@@ -119,18 +129,14 @@ void EarlyReflections::updateTaps()
         float cutoffR = 12000.0f * std::pow (2000.0f / 12000.0f, tR);
         tapsL_[i].lpCoeff = std::exp (-kTwoPi * cutoffL / sr);
         tapsR_[i].lpCoeff = std::exp (-kTwoPi * cutoffR / sr);
-
-        tapsL_[i].lpState = 0.0f;
-        tapsR_[i].lpState = 0.0f;
     }
 
-    // Normalize tap gains so each channel sums to 1.0.
-    // Without this, 16 inverse-distance-law taps sum to ~5.7x gain.
+    // Normalize so absolute gains sum to 1.0 (preserving signs).
     float sumL = 0.0f, sumR = 0.0f;
     for (int i = 0; i < kNumTaps; ++i)
     {
-        sumL += tapsL_[i].gain;
-        sumR += tapsR_[i].gain;
+        sumL += std::abs (tapsL_[i].gain);
+        sumR += std::abs (tapsR_[i].gain);
     }
     if (sumL > 0.0f)
         for (int i = 0; i < kNumTaps; ++i)

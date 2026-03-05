@@ -30,11 +30,72 @@ struct AlgorithmConfig
 
     float sizeRangeMin;
     float sizeRangeMax;
+
+    float erCrossfeed; // Fraction of ER output fed into FDN input (ValhallaRoom "Early Send")
+
+    float inlineDiffusionCoeff; // Schroeder allpass gain inside FDN feedback (Dattorro "decay diffusion")
+
+    float modDepthFloor; // Minimum modulation depth scaling for shortest delay (0.0-1.0)
+
+    float structuralHFDampingHz; // First-order LP in FDN feedback modeling air absorption (Hz).
+                                 // Applied after TwoBandDamping, before feedbackLP. 0 = bypassed.
+                                 // Per-algorithm: higher values = gentler damping. Typical: 12000-18000.
+
+    float feedbackLPHz;  // Butterworth LP in FDN feedback path (Hz). 0 = bypassed.
+                         // Order set by feedbackLP4thOrder: 12 dB/oct (2nd) or 24 dB/oct (4th).
+
+    bool feedbackLP4thOrder; // true = 4th-order Linkwitz-Riley (24 dB/oct), false = 2nd-order Butterworth (12 dB/oct).
+                             // 4th-order doubles per-pass HF attenuation — needed for short-delay Room modes.
+                             // L-R alignment avoids the resonance peak of Butterworth 4th-order.
+
+    float noiseModDepth; // Per-sample random delay jitter (samples at 44.1kHz base rate).
+                         // Complements the slow sinusoidal LFO with fast per-sample mode blurring.
+                         // Higher values = more aggressive ringing suppression. 0 = off.
+
+    float hadamardPerturbation; // Random perturbation of Hadamard matrix entries (0.0 = pure Hadamard).
+                                // Breaks deterministic mode coupling. Range 0.0-0.15. 0 = off.
+
+    float erGainExponent; // Exponent for ER distance-attenuation law.
+                          // 1.0 = inverse distance (default — loud early, quiet late),
+                          // 0.5 = sqrt rolloff (gentler — more even energy spread),
+                          // 0.0 = flat (all taps equal level).
+
+    bool useDattorroTank; // true = use DattorroTank (cross-coupled allpass loops) instead of
+                          // Hadamard FDN for late reverb. Better for Room: allpasses embedded
+                          // in the feedback loop smear modal energy rather than concentrating it.
+
+    float decayTimeScale; // Multiplier for the user's decay time parameter.
+                          // Allows per-algorithm scaling of the effective decay range.
+                          // 1.0 = pass through (default). Room uses 3.0 to extend
+                          // the 0.2-30s UI range to 0.6-90s effective RT60.
+
+    float dualSlopeRatio;     // Fast-group RT60 as fraction of effective RT60 (0 = disabled).
+                              // Room uses 0.08 → fast RT60 = 4.4s when effective = 55s.
+
+    int   dualSlopeFastCount; // Number of fast-decay channels (0 = disabled, 8 = half).
+                              // Channels [0, fastCount) get the shorter RT60.
+
+    float dualSlopeFastGain;  // Output tap gain multiplier for fast channels.
+                              // Boosts fast channels in output sum to create loud initial burst.
+                              // 3.5 = +11 dB boost per tap. 1.0 = unity (disabled).
+
+    float shortDecayBoostDB;  // Max boost in dB at short effective decay times (0 = disabled).
+                              // Compensates for lower energy density at low feedback coefficients.
+                              // Applied as a linear ramp: full boost at decayTime=0, zero at knee.
+
+    float shortDecayBoostKnee; // Effective decay time (seconds) at which short-decay boost reaches zero.
+                               // Must be > 0 when shortDecayBoostDB > 0.
+
+    float gateHoldMs;      // Gate hold time (ms). 0 = gate disabled.
+                           // How long the reverb tail plays at full level before the gate closes.
+    float gateReleaseMs;   // Gate release time (ms). Exponential fade-out after hold expires.
+                           // Only active when gateHoldMs > 0.
 };
 
 // ---------------------------------------------------------------------------
 // Plate: EMT 140 / Lexicon 224 character.
 // Tight delay clustering (15-40ms), maximum diffusion, no ERs, bright.
+// Level-matched to VintageVerb Plate; mild ringing suppression.
 static constexpr AlgorithmConfig kPlate = {
     "Plate",
     { 661, 709, 743, 787, 811, 853, 883, 919,
@@ -47,15 +108,29 @@ static constexpr AlgorithmConfig kPlate = {
     1.0f,            // output diffusion scale
     14000.0f,        // bandwidth: bright
     0.0f, 1.0f,      // ER: forced off
-    1.0f,            // late gain
-    0.3f, 1.0f,      // mod: minimal depth, normal rate
-    1.0f, 1.0f,      // damping: neutral (plates sustain treble)
-    0.5f, 1.5f       // size range
+    0.47f,           // late gain: reduced from 0.52 to fix Large Plate +5.0 dB
+    0.5f, 1.0f,      // mod: moderate depth for mode blurring, normal rate
+    1.30f, 1.0f,     // damping: compensate FDN structural HF damping (Drum Plate HF -0.39 at 1.30; Tight Plate -0.26 borderline)
+    0.5f, 1.5f,      // size range
+    0.0f,            // ER crossfeed: off (no ERs)
+    0.10f,           // inline diffusion: mild density boost
+    1.0f,            // mod depth floor: 1.0 = uniform modulation
+    0.0f,            // structural HF damping: off (trebleMultScale=1.30 already compensates)
+    0.0f,            // feedback LP: off
+    false,           // feedback LP 4th order: off
+    0.9f,            // noise mod: mild jitter (provides nonlinear HF correction matching VV Plate; 0.7→0.9 to fix Short ringing)
+    0.12f,           // Hadamard perturbation: break symmetry
+    1.0f,            // ER gain exponent: inverse distance (default)
+    false,           // useDattorroTank: off (FDN)
+    1.0f,            // decay time scale: pass through
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 0.9f,     // short-decay boost: +2 dB at very short RT60, fading to 0 by effective 0.9s
+    0.0f, 0.0f      // gate: disabled
 };
 
 // ---------------------------------------------------------------------------
 // Hall: Lexicon 480L "Random Hall" / 224 "Concert Hall".
-// This is the current DuskVerb — all scale factors are 1.0.
+// Level-matched to VintageVerb Concert Hall; HF decay matched.
 static constexpr AlgorithmConfig kHall = {
     "Hall",
     { 887, 953, 1039, 1151, 1277, 1399, 1549, 1699,
@@ -68,15 +143,30 @@ static constexpr AlgorithmConfig kHall = {
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
     1.0f, 1.0f,      // ER: full
-    1.0f,            // late gain
+    0.65f,           // late gain: level-matched to VV Concert Hall (~-9.5 dB wet gain)
     1.0f, 1.0f,      // mod: full
-    1.0f, 1.0f,      // damping: neutral
-    0.5f, 1.5f       // size range
+    0.65f, 1.0f,     // damping: bright HF sustain for Concert Hall (Hall1984 compensated down in test suite)
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed: subtle
+    0.0f,            // inline diffusion: off (preserve hall character)
+    1.0f,            // mod depth floor: 1.0 = uniform modulation
+    18000.0f,        // structural HF damping: 18kHz LP for air absorption (fix Homestar/Pad Hall/Huge Synth Hall)
+    0.0f,            // feedback LP: off
+    false,           // feedback LP 4th order: off
+    0.0f,            // noise mod: off (preserve hall character)
+    0.0f,            // Hadamard perturbation: off
+    1.0f,            // ER gain exponent: inverse distance (default)
+    false,           // useDattorroTank: off (FDN)
+    1.0f,            // decay time scale: pass through
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    4.5f, 1.5f,     // short-decay boost: +4.5 dB at very short RT60, fading to 0 by effective 1.5s
+    0.0f, 0.0f      // gate: disabled
 };
 
 // ---------------------------------------------------------------------------
 // Chamber: Lexicon 480L "Rich Chamber" / AMS RMX16 "Ambience".
 // Medium delay spread, slightly brighter than hall, moderate ER.
+// Level-matched to VintageVerb Chamber; mild ringing suppression.
 static constexpr AlgorithmConfig kChamber = {
     "Chamber",
     { 751, 809, 863, 929, 997, 1061, 1129, 1193,
@@ -89,38 +179,66 @@ static constexpr AlgorithmConfig kChamber = {
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
     0.8f, 0.85f,     // ER: slightly reduced level, tighter timing
-    1.0f,            // late gain
-    0.6f, 1.0f,      // mod: moderate depth, normal rate
-    1.15f, 1.0f,     // damping: brighter treble
-    0.5f, 1.5f       // size range
+    0.45f,           // late gain: level-matched to VV Chamber (~-10.5 dB wet gain)
+    0.8f, 1.0f,      // mod: increased depth for mode blurring, normal rate
+    1.20f, 1.0f,     // damping: compensate FDN HF damping (Snare Plate -0.30, Thin Plate -0.34 at 1.20; 1.40 regressed)
+    0.5f, 1.5f,      // size range
+    0.2f,            // ER crossfeed: medium
+    0.10f,           // inline diffusion: mild density boost
+    1.0f,            // mod depth floor: 1.0 = uniform modulation
+    0.0f,            // structural HF damping: off (trebleMultScale=1.20 already compensates)
+    0.0f,            // feedback LP: off
+    false,           // feedback LP 4th order: off
+    1.5f,            // noise mod: mild jitter for ringing suppression
+    0.10f,           // Hadamard perturbation: break symmetry
+    1.0f,            // ER gain exponent: inverse distance (default)
+    false,           // useDattorroTank: off (FDN)
+    1.0f,            // decay time scale: pass through
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled (Chamber has static lateGainScale tuning)
+    0.0f, 0.0f      // gate: disabled
 };
 
 // ---------------------------------------------------------------------------
-// Room: Lexicon PCM70 small rooms / 480L "Small Room".
-// Geometrically-spaced delays (7-25ms), ER-dominant, moderate modulation.
-// Wider delay ratio (3.56:1) eliminates flutter echo from the old arithmetic
-// spacing. Modulation breaks up metallic ringing per Dattorro/Costello.
+// Room: Clone of VintageVerb Room (0.500).
+// Long-sustaining reverb with moderate ER character. Unlike Ambient (pure wash),
+// Room retains some sense of enclosed space via early reflections.
 static constexpr AlgorithmConfig kRoom = {
     "Room",
-    { 307, 331, 359, 389, 431, 461, 503, 547,
-      599, 653, 719, 773, 857, 937, 1009, 1093 },
-    { 0, 3, 5, 6, 9, 10, 12, 15 },
-    { 1, 2, 4, 7, 8, 11, 13, 14 },
-    { 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f },
-    { -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
-    0.65f, 0.55f,    // input diffusion: moderate (was 0.55/0.45)
+    { 1087, 1171, 1279, 1381, 1493, 1607, 1733, 1861,
+      2003, 2153, 2309, 2467, 2633, 2801, 2963, 3137 },
+    { 0, 3, 4, 7, 9, 10, 13, 15 },
+    { 1, 2, 5, 6, 8, 11, 12, 14 },
+    { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.70f,    // input diffusion: moderate-high
     1.0f,            // output diffusion scale
-    12000.0f,        // bandwidth: bright
-    1.5f, 0.6f,      // ER: boosted level, shorter timing
-    0.7f,            // late gain: reduced (ER-dominant)
-    0.5f, 1.1f,      // mod: meaningful depth (was 0.15), slightly faster rate
-    0.85f, 0.9f,     // damping: slightly darker, less bass buildup
-    0.5f, 1.5f       // size range
+    5000.0f,         // bandwidth: dark input to match VV Room's extreme HF rolloff
+    0.5f, 0.90f,     // ER: moderate level, slightly tighter timing
+    0.70f,           // late gain: calibrated to VV Room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
+    1.0f, 1.0f,      // mod: neutral (calibrate from comparison)
+    0.45f, 0.85f,    // damping: HF reduction (preset-suite median HF delta was -0.20 at 0.35; 0.45 compensates)
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed: light
+    0.0f,            // inline diffusion: off (long delays = sufficient density)
+    1.0f,            // mod depth floor: uniform
+    0.0f,            // structural HF damping: off (already very dark, trebleMultScale=0.45)
+    0.0f,            // feedback LP: off (trebleMultScale handles HF decay)
+    false,           // feedback LP 4th order: off
+    0.8f,            // noise mod: moderate jitter for ringing suppression (dual-slope fast gain amplifies modes)
+    0.08f,           // Hadamard perturbation: mild symmetry breaking
+    0.75f,           // ER gain exponent: moderate rolloff
+    false,           // useDattorroTank: off (FDN)
+    3.0f,            // decay time scale: 3x (UI 0.2-30s → effective 0.6-90s; allows short RT60 matching)
+    0.0f, 0, 1.0f,   // dual-slope: disabled (standard 16-channel FDN for matched tail energy)
+    0.0f, 0.0f,      // short-decay boost: disabled (Room uses lateGainScale calibration)
+    0.0f, 0.0f       // gate: disabled
 };
 
 // ---------------------------------------------------------------------------
 // Ambient: Lexicon PCM96 "Infinite" / Strymon BigSky "Cloud".
 // Widest delay spread, max diffusion, heavy modulation, no ERs.
+// Level-matched to VintageVerb Room/Chorus Space; HF decay matched.
 static constexpr AlgorithmConfig kAmbient = {
     "Ambient",
     { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,
@@ -133,10 +251,24 @@ static constexpr AlgorithmConfig kAmbient = {
     1.0f,            // output diffusion scale
     8000.0f,         // bandwidth: soft input
     0.0f, 1.0f,      // ER: forced off
-    1.0f,            // late gain
+    0.60f,           // late gain: preset-suite avg was +1.9 dB at 0.70; 0.60 reduces ~1.3 dB
     1.5f, 1.3f,      // mod: heavy depth and rate
-    1.1f, 1.2f,      // damping: extended treble and bass sustain
-    0.5f, 1.5f       // size range
+    0.60f, 1.0f,     // damping: reduce HF sustain (Ambience Plate HF -0.32 at 0.60; 0.70 regressed)
+    0.5f, 1.5f,      // size range
+    0.0f,            // ER crossfeed: off (no ERs)
+    0.0f,            // inline diffusion: off (preserve ambient character)
+    1.0f,            // mod depth floor: 1.0 = uniform modulation
+    0.0f,            // structural HF damping: off (no benefit — regressions outweigh gains)
+    0.0f,            // feedback LP: off
+    false,           // feedback LP 4th order: off
+    0.0f,            // noise mod: off (preserve ambient character)
+    0.0f,            // Hadamard perturbation: off
+    1.0f,            // ER gain exponent: inverse distance (default)
+    false,           // useDattorroTank: off (FDN)
+    1.0f,            // decay time scale: pass through
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled (Ambient already matched)
+    0.0f, 0.0f      // gate: disabled
 };
 
 // ---------------------------------------------------------------------------

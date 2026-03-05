@@ -75,16 +75,18 @@ void DiffusionStage::prepare (double sampleRate, int /*maxBlockSize*/)
         int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (delay)) + 4);
 
         // Left channel allpass (index s of 8 total)
+        // LFO depth scaled by sample rate ratio so modulation is consistent
+        // across 44.1/48/96kHz (depth is in samples, represents a fixed time)
         float phaseL = kTwoPi * static_cast<float> (s) / 8.0f;
         float rateL  = 0.3f + 0.5f * static_cast<float> (s) / 7.0f;
-        float depthL = 0.5f + 1.0f * static_cast<float> (s) / 7.0f;
+        float depthL = (0.5f + 1.0f * static_cast<float> (s) / 7.0f) * ratio;
         leftAP_[s].prepare (bufSize, delay, rateL, depthL, phaseL, sampleRate);
 
         // Right channel allpass (index s+4 of 8 total, different phase/rate/depth)
         int ri = s + kNumStages;
         float phaseR = kTwoPi * static_cast<float> (ri) / 8.0f;
         float rateR  = 0.3f + 0.5f * static_cast<float> (ri) / 7.0f;
-        float depthR = 0.5f + 1.0f * static_cast<float> (ri) / 7.0f;
+        float depthR = (0.5f + 1.0f * static_cast<float> (ri) / 7.0f) * ratio;
         rightAP_[s].prepare (bufSize, delay, rateR, depthR, phaseR, sampleRate);
     }
 }
