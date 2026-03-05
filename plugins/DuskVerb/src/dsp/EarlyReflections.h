@@ -18,12 +18,25 @@ public:
 
     void setSize (float size);
     void setTimeScale (float scale);
+    void setGainExponent (float exponent);
 
 private:
     static constexpr int kNumTaps = 16;
     static constexpr float kMinTimeMs = 5.0f;
     static constexpr float kMaxTimeMs = 80.0f;
     static constexpr float kTwoPi = 6.283185307179586f;
+
+    // Polarity signs per tap — 8 positive, 8 negative per channel.
+    // Breaks up comb filtering from closely-spaced all-positive taps.
+    // L/R patterns differ for stereo decorrelation.
+    static constexpr float kSignsL[kNumTaps] = {
+         1, -1,  1,  1, -1,  1, -1, -1,
+         1, -1, -1,  1,  1, -1,  1, -1
+    };
+    static constexpr float kSignsR[kNumTaps] = {
+        -1,  1, -1,  1,  1, -1,  1, -1,
+        -1,  1,  1, -1, -1,  1, -1,  1
+    };
 
     struct Tap
     {
@@ -43,6 +56,7 @@ private:
 
     float erSize_ = 1.0f;
     float timeScale_ = 1.0f;
+    float gainExponent_ = 1.0f;
     double sampleRate_ = 44100.0;
     bool prepared_ = false;
     std::atomic<bool> tapsNeedUpdate_ { false };

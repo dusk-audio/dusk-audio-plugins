@@ -49,9 +49,10 @@ void KnobWithLabel::init (juce::Component& parent,
         if (sfx == " ms")   return juce::String (juce::roundToInt (v)) + " ms";
         if (sfx == " Hz")
             return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
-                               : juce::String (juce::roundToInt (v)) + " Hz";
+                               : v < 100.0 ? juce::String (v, 2) + " Hz"
+                                           : juce::String (juce::roundToInt (v)) + " Hz";
         if (sfx == "x")     return juce::String (v, 2) + "x";
-        if (sfx == "%")     return juce::String (juce::roundToInt (v * 100.0)) + "%";
+        if (sfx == "%")     return juce::String (v * 100.0, 1) + "%";
         return juce::String (v, 2);
     };
 }
@@ -324,12 +325,14 @@ static juce::String formatValue (const juce::Slider& s, const juce::String& suff
     {
         if (v >= 1000.0)
             return juce::String (v / 1000.0, 2) + " kHz";
+        if (v < 100.0)
+            return juce::String (v, 2) + " Hz";
         return juce::String (juce::roundToInt (v)) + " Hz";
     }
     if (suffix == "x")
         return juce::String (v, 2) + "x";
     if (suffix == "%")
-        return juce::String (juce::roundToInt (v * 100.0)) + "%";
+        return juce::String (v * 100.0, 1) + "%";
 
     return juce::String (v, 2);
 }
