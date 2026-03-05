@@ -1,25 +1,4 @@
-/*
-  ==============================================================================
-
-    TubeEmulation.h
-    Vacuum tube (valve) emulation for audio processing
-
-    Models the non-linear behavior of common audio tubes:
-    - 12AX7 (high gain triode, used in preamps)
-    - 12AT7 (medium gain triode)
-    - 12BH7 (output driver, used in opto compressors)
-    - 6SN7 (dual triode, warm character)
-
-    Key characteristics modeled:
-    - Asymmetric transfer curve (grid current vs cutoff)
-    - Miller capacitance (HF rolloff under gain)
-    - Cathode bypass (frequency response shaping)
-    - Grid current compression (soft limiting on positive excursions)
-
-    This is the shared library version - all plugins should use this.
-
-  ==============================================================================
-*/
+// TubeEmulation.h — Vacuum tube modeling (12AX7, 12AT7, 12BH7, 6SN7)
 
 #pragma once
 

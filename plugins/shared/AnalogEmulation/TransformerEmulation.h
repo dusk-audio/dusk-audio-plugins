@@ -1,21 +1,4 @@
-/*
-  ==============================================================================
-
-    TransformerEmulation.h
-    Audio transformer saturation modeling
-
-    Models the non-linear behavior of audio transformers:
-    - Frequency-dependent saturation (LF saturates more due to core physics)
-    - Harmonic generation (primarily even harmonics)
-    - High-frequency rolloff (inductance limiting)
-    - DC blocking
-
-    Based on measurements from classic audio transformers.
-
-    This is the shared library version - all plugins should use this.
-
-  ==============================================================================
-*/
+// TransformerEmulation.h — Audio transformer saturation modeling
 
 #pragma once
 
