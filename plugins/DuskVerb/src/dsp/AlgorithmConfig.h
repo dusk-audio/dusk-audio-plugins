@@ -39,7 +39,12 @@ struct AlgorithmConfig
 
     float structuralHFDampingHz; // First-order LP in FDN feedback modeling air absorption (Hz).
                                  // Applied after TwoBandDamping, before feedbackLP. 0 = bypassed.
-                                 // Per-algorithm: higher values = gentler damping. Typical: 12000-18000.
+                                 // Effective frequency scales with treble_multiply: effectiveHz = baseHz * (0.5 + treble * 0.5).
+                                 // Per-algorithm: higher values = gentler damping. Typical: 14000-19000.
+
+    float structuralLFDampingHz; // First-order HP in FDN feedback reducing bass RT60 inflation (Hz).
+                                 // Applied after structural HF damping. 0 = bypassed.
+                                 // Room uses ~200Hz to tame 1.3-1.6x bass overshoot.
 
     float feedbackLPHz;  // Butterworth LP in FDN feedback path (Hz). 0 = bypassed.
                          // Order set by feedbackLP4thOrder: 12 dB/oct (2nd) or 24 dB/oct (4th).
@@ -116,6 +121,7 @@ static constexpr AlgorithmConfig kPlate = {
     0.10f,           // inline diffusion: mild density boost
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off (trebleMultScale=1.30 already compensates)
+    0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
     0.9f,            // noise mod: mild jitter (provides nonlinear HF correction matching VV Plate; 0.7→0.9 to fix Short ringing)
@@ -150,7 +156,8 @@ static constexpr AlgorithmConfig kHall = {
     0.15f,           // ER crossfeed: subtle
     0.0f,            // inline diffusion: off (preserve hall character)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
-    18000.0f,        // structural HF damping: 18kHz LP for air absorption (fix Homestar/Pad Hall/Huge Synth Hall)
+    18000.0f,        // structural HF damping: 18kHz base, inverted treble-scaling (treble=1.0→18kHz, treble=0.5→22.5kHz less damping)
+    0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
     0.0f,            // noise mod: off (preserve hall character)
@@ -187,6 +194,7 @@ static constexpr AlgorithmConfig kChamber = {
     0.10f,           // inline diffusion: mild density boost
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off (trebleMultScale=1.20 already compensates)
+    0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
     1.5f,            // noise mod: mild jitter for ringing suppression
@@ -223,6 +231,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.0f,            // inline diffusion: off (long delays = sufficient density)
     1.0f,            // mod depth floor: uniform
     0.0f,            // structural HF damping: off (already very dark, trebleMultScale=0.45)
+    40.0f,           // structural LF damping: 40Hz HP to gently tame bass RT60 inflation
     0.0f,            // feedback LP: off (trebleMultScale handles HF decay)
     false,           // feedback LP 4th order: off
     0.8f,            // noise mod: moderate jitter for ringing suppression (dual-slope fast gain amplifies modes)
@@ -258,7 +267,8 @@ static constexpr AlgorithmConfig kAmbient = {
     0.0f,            // ER crossfeed: off (no ERs)
     0.0f,            // inline diffusion: off (preserve ambient character)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
-    0.0f,            // structural HF damping: off (no benefit — regressions outweigh gains)
+    0.0f,            // structural HF damping: off (trebleMultScale=0.60 already handles HF)
+    0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
     0.0f,            // noise mod: off (preserve ambient character)

@@ -285,6 +285,15 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 filtered = structHFState_[ch];
             }
 
+            // Structural LF damping: first-order highpass to reduce bass inflation (Room)
+            if (structLFEnabled_ && ! frozen_)
+            {
+                float hp = filtered - structLFState_[ch];
+                structLFState_[ch] = (1.0f - structLFCoeff_) * filtered
+                                   + structLFCoeff_ * structLFState_[ch];
+                filtered = hp;
+            }
+
             // Feedback lowpass: Butterworth LP applied after damping.
             // 2nd-order (12 dB/oct) or 4th-order L-R (24 dB/oct) per algorithm.
             // Direct Form II Transposed for numerical stability.
@@ -402,7 +411,10 @@ void FDNReverb::setFreeze (bool frozen)
     if (frozen)
     {
         for (int i = 0; i < N; ++i)
+        {
             structHFState_[i] = 0.0f;
+            structLFState_[i] = 0.0f;
+        }
     }
 }
 
@@ -555,16 +567,36 @@ void FDNReverb::setModDepthFloor (float floor)
         updateDelayLengths();
 }
 
-void FDNReverb::setStructuralHFDamping (float hz)
+void FDNReverb::setStructuralHFDamping (float baseFreqHz, float trebleMultiply)
 {
-    if (hz <= 0.0f)
+    structHFBaseFreq_ = baseFreqHz;
+    if (baseFreqHz <= 0.0f)
     {
         structHFEnabled_ = false;
         structHFCoeff_ = 0.0f;
         return;
     }
+    // Inverted treble scaling: dark presets (low treble) already have strong TwoBandDamping,
+    // so structural damping is reduced (higher effectiveHz). Bright presets (high treble) have
+    // weaker TwoBandDamping, so they get full structural damping (effectiveHz = baseFreqHz).
+    // At treble=1.0: effectiveHz = baseFreqHz (full structural damping).
+    // At treble=0.5: effectiveHz = baseFreqHz * 1.25 (reduced damping for dark presets).
+    // At treble=0.1: effectiveHz = baseFreqHz * 1.45 (minimal damping for very dark presets).
+    float effectiveHz = baseFreqHz * (1.5f - std::clamp (trebleMultiply, 0.1f, 1.0f) * 0.5f);
     structHFEnabled_ = true;
-    structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
+    structHFCoeff_ = std::exp (-kTwoPi * effectiveHz / static_cast<float> (sampleRate_));
+}
+
+void FDNReverb::setStructuralLFDamping (float hz)
+{
+    if (hz <= 0.0f)
+    {
+        structLFEnabled_ = false;
+        structLFCoeff_ = 0.0f;
+        return;
+    }
+    structLFEnabled_ = true;
+    structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
 void FDNReverb::clearBuffers()
@@ -581,6 +613,7 @@ void FDNReverb::clearBuffers()
         fbLPZ3_[i] = 0.0f;
         fbLPZ4_[i] = 0.0f;
         structHFState_[i] = 0.0f;
+        structLFState_[i] = 0.0f;
     }
 }
 

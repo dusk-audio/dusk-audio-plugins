@@ -33,7 +33,8 @@ public:
     void setFeedbackLP4thOrder (bool enable);
     void setNoiseModDepth (float samples);
     void setHadamardPerturbation (float amount);
-    void setStructuralHFDamping (float hz);
+    void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
+    void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void clearBuffers();
 
@@ -145,9 +146,17 @@ private:
 
     // Structural HF damping: gentle first-order LP modeling air absorption.
     // Per-algorithm, applied after TwoBandDamping in feedback loop.
+    // Effective frequency scales with treble_multiply: lower treble → lower cutoff → more damping.
     float structHFState_[N] {};
     float structHFCoeff_ = 0.0f;
+    float structHFBaseFreq_ = 0.0f;  // Stored for re-computation when treble changes
     bool structHFEnabled_ = false;
+
+    // Structural LF damping: first-order highpass in feedback loop.
+    // Reduces bass RT60 inflation (Room mode). Applied after structural HF damping.
+    float structLFState_[N] {};
+    float structLFCoeff_ = 0.0f;   // exp(-2π·f/sr), 0 = bypassed
+    bool structLFEnabled_ = false;
 
     // Cheap xorshift32 PRNG returning float in [-1, +1].
     // Used for Lexicon-style "Wander" — aperiodic LFO drift.
