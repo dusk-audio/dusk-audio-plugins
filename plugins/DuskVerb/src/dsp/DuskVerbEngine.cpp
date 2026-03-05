@@ -352,7 +352,8 @@ void DuskVerbEngine::applyAlgorithm (int index)
     fdn_.setFeedbackLP4thOrder (config_->feedbackLP4thOrder);
     fdn_.setNoiseModDepth (config_->noiseModDepth);
     fdn_.setHadamardPerturbation (config_->hadamardPerturbation);
-    fdn_.setStructuralHFDamping (config_->structuralHFDampingHz);
+    fdn_.setStructuralHFDamping (config_->structuralHFDampingHz, lastTrebleMult_);
+    fdn_.setStructuralLFDamping (config_->structuralLFDampingHz);
     setGateParams (config_->gateHoldMs, config_->gateReleaseMs);
     fdn_.setDualSlope (config_->dualSlopeRatio, config_->dualSlopeFastCount,
                        config_->dualSlopeFastGain);
@@ -404,8 +405,13 @@ void DuskVerbEngine::setBassMultiply (float mult)
 void DuskVerbEngine::setTrebleMultiply (float mult)
 {
     lastTrebleMult_ = mult;
-    fdn_.setTrebleMultiply (mult * config_->trebleMultScale);
-    dattorroTank_.setTrebleMultiply (mult * config_->trebleMultScale);
+    float scaledTreble = mult * config_->trebleMultScale;
+    fdn_.setTrebleMultiply (scaledTreble);
+    dattorroTank_.setTrebleMultiply (scaledTreble);
+    // Re-compute structural HF damping with raw treble (not scaled by trebleMultScale).
+    // Raw treble gives better differentiation: Concert Wave (raw=1.0) gets minimal
+    // structural damping, while dark presets (raw=0.3) get significant damping.
+    fdn_.setStructuralHFDamping (config_->structuralHFDampingHz, mult);
 }
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
