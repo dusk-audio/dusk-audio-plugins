@@ -1,0 +1,2819 @@
+{
+  "metadata": {
+    "generated": "2026-03-05T11:09:42.565637",
+    "sample_rate": 48000,
+    "num_presets": 50,
+    "num_gate_excluded": 3
+  },
+  "presets": {
+    "A Plate": {
+      "name": "A Plate",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.952,
+        "num_matched": 100,
+        "num_vv_taps": 105,
+        "num_dv_taps": 108,
+        "mean_time_error_ms": 0.44,
+        "mean_level_error_db": 0.2,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": -5.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 10.0,
+        "plateau_delta": -64.0,
+        "dv_time_to_gaussian": 45.0,
+        "vv_time_to_gaussian": 25.0
+      },
+      "spectral_decay": {
+        "bands_passing": 6,
+        "bands_total": 21,
+        "worst_band": "8k",
+        "worst_ratio": 0.541
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 3.818,
+        "depth_delta_cents": 255.33,
+        "shape_match": true,
+        "dv_depth": 739.22,
+        "vv_depth": 483.89,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.189,
+        "iacc_late_delta": 0.071,
+        "free_path_delta_ms": -0.06,
+        "t_first_delta_ms": -6.62,
+        "dv_iacc_early": 0.295,
+        "vv_iacc_early": 0.106
+      },
+      "pass_er": true,
+      "pass_diffusion": true,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Ambience": {
+      "name": "Ambience",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.961,
+        "num_matched": 99,
+        "num_vv_taps": 103,
+        "num_dv_taps": 110,
+        "mean_time_error_ms": 0.52,
+        "mean_level_error_db": 3.4,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": 0.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 5.0,
+        "plateau_delta": -14.0,
+        "dv_time_to_gaussian": 45.0,
+        "vv_time_to_gaussian": 55.0
+      },
+      "spectral_decay": {
+        "bands_passing": 16,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.517
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 1.041,
+        "depth_delta_cents": -477.56,
+        "shape_match": true,
+        "dv_depth": 479.49,
+        "vv_depth": 957.05,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.081,
+        "iacc_late_delta": 0.07,
+        "free_path_delta_ms": -0.14,
+        "t_first_delta_ms": 2.85,
+        "dv_iacc_early": 0.206,
+        "vv_iacc_early": 0.125
+      },
+      "pass_er": true,
+      "pass_diffusion": true,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Ambience Plate": {
+      "name": "Ambience Plate",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.691,
+        "num_matched": 67,
+        "num_vv_taps": 97,
+        "num_dv_taps": 68,
+        "mean_time_error_ms": 0.46,
+        "mean_level_error_db": -4.5,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 2,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.927
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 2.643,
+        "depth_delta_cents": 226.36,
+        "shape_match": true,
+        "dv_depth": 786.12,
+        "vv_depth": 559.76,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.04,
+        "t_first_delta_ms": 44.5,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Ambience Tiled Room": {
+      "name": "Ambience Tiled Room",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.611,
+        "num_matched": 66,
+        "num_vv_taps": 108,
+        "num_dv_taps": 68,
+        "mean_time_error_ms": 0.51,
+        "mean_level_error_db": 3.3,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": 5.0,
+        "plateau_delta": -63.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": 115.0
+      },
+      "spectral_decay": {
+        "bands_passing": 13,
+        "bands_total": 21,
+        "worst_band": "5k",
+        "worst_ratio": 0.759
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.032,
+        "depth_delta_cents": 129.93,
+        "shape_match": true,
+        "dv_depth": 785.55,
+        "vv_depth": 655.62,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.884,
+        "iacc_late_delta": 0.897,
+        "free_path_delta_ms": 0.0,
+        "t_first_delta_ms": 67.87,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.116
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Big Ambience Gate": {
+      "name": "Big Ambience Gate",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": true,
+      "er": {
+        "match_rate": 0.527,
+        "num_matched": 39,
+        "num_vv_taps": 74,
+        "num_dv_taps": 40,
+        "mean_time_error_ms": 0.67,
+        "mean_level_error_db": -8.6,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": 235.0
+      },
+      "spectral_decay": {
+        "bands_passing": 7,
+        "bands_total": 21,
+        "worst_band": "160",
+        "worst_ratio": 1.294
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 5.452,
+        "depth_delta_cents": -37.52,
+        "shape_match": true,
+        "dv_depth": 811.95,
+        "vv_depth": 849.47,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.17,
+        "t_first_delta_ms": 85.81,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Clear Chamber": {
+      "name": "Clear Chamber",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.91,
+        "num_matched": 101,
+        "num_vv_taps": 111,
+        "num_dv_taps": 105,
+        "mean_time_error_ms": 0.72,
+        "mean_level_error_db": 5.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": -15.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 20.0,
+        "plateau_delta": -38.0,
+        "dv_time_to_gaussian": 55.0,
+        "vv_time_to_gaussian": 25.0
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "800",
+        "worst_ratio": 1.158
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 2.754,
+        "depth_delta_cents": -34.83,
+        "shape_match": true,
+        "dv_depth": 464.02,
+        "vv_depth": 498.85,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.157,
+        "iacc_late_delta": 0.042,
+        "free_path_delta_ms": 0.13,
+        "t_first_delta_ms": -0.5,
+        "dv_iacc_early": 0.279,
+        "vv_iacc_early": 0.122
+      },
+      "pass_er": true,
+      "pass_diffusion": true,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Concert Wave": {
+      "name": "Concert Wave",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.726,
+        "num_matched": 61,
+        "num_vv_taps": 84,
+        "num_dv_taps": 65,
+        "mean_time_error_ms": 0.59,
+        "mean_level_error_db": 3.8,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 14,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 0.368
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 3.889,
+        "depth_delta_cents": -74.34,
+        "shape_match": true,
+        "dv_depth": 357.6,
+        "vv_depth": 431.94,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.11,
+        "t_first_delta_ms": 41.02,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Cross Stick Room": {
+      "name": "Cross Stick Room",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.67,
+        "num_matched": 63,
+        "num_vv_taps": 94,
+        "num_dv_taps": 64,
+        "mean_time_error_ms": 0.79,
+        "mean_level_error_db": -2.3,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 16,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.42
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -0.011,
+        "depth_delta_cents": -613.21,
+        "shape_match": true,
+        "dv_depth": 711.32,
+        "vv_depth": 1324.53,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.851,
+        "iacc_late_delta": 0.84,
+        "free_path_delta_ms": 0.09,
+        "t_first_delta_ms": 43.27,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.149
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Dark Vocal Room": {
+      "name": "Dark Vocal Room",
+      "mode": "Room",
+      "algorithm": "Room",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.848,
+        "num_matched": 89,
+        "num_vv_taps": 105,
+        "num_dv_taps": 90,
+        "mean_time_error_ms": 0.9,
+        "mean_level_error_db": 3.2,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 10,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 2.122
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -0.774,
+        "depth_delta_cents": -64.6,
+        "shape_match": true,
+        "dv_depth": 593.11,
+        "vv_depth": 657.71,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.07,
+        "t_first_delta_ms": 13.78,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Drum Air": {
+      "name": "Drum Air",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.647,
+        "num_matched": 66,
+        "num_vv_taps": 102,
+        "num_dv_taps": 67,
+        "mean_time_error_ms": 1.04,
+        "mean_level_error_db": 3.9,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 19,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.338
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 4.303,
+        "depth_delta_cents": -195.8,
+        "shape_match": true,
+        "dv_depth": 631.65,
+        "vv_depth": 827.45,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.848,
+        "iacc_late_delta": 0.838,
+        "free_path_delta_ms": 0.14,
+        "t_first_delta_ms": 44.83,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.152
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Drum Plate": {
+      "name": "Drum Plate",
+      "mode": "Plate",
+      "algorithm": "Plate",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.932,
+        "num_matched": 96,
+        "num_vv_taps": 103,
+        "num_dv_taps": 105,
+        "mean_time_error_ms": 0.75,
+        "mean_level_error_db": 0.6,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": -25.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 30.0,
+        "plateau_delta": -54.0,
+        "dv_time_to_gaussian": 45.0,
+        "vv_time_to_gaussian": 155.0
+      },
+      "spectral_decay": {
+        "bands_passing": 14,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 0.556
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 3.889,
+        "depth_delta_cents": 12.89,
+        "shape_match": true,
+        "dv_depth": 467.61,
+        "vv_depth": 454.72,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.081,
+        "iacc_late_delta": 0.072,
+        "free_path_delta_ms": 0.18,
+        "t_first_delta_ms": -4.35,
+        "dv_iacc_early": 0.376,
+        "vv_iacc_early": 0.295
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Exciting Snare room": {
+      "name": "Exciting Snare room",
+      "mode": "Room",
+      "algorithm": "Room",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.729,
+        "num_matched": 70,
+        "num_vv_taps": 96,
+        "num_dv_taps": 74,
+        "mean_time_error_ms": 0.87,
+        "mean_level_error_db": -3.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 15,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.437
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -0.929,
+        "depth_delta_cents": -235.62,
+        "shape_match": true,
+        "dv_depth": 681.05,
+        "vv_depth": 916.67,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.08,
+        "t_first_delta_ms": 27.81,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Fat Drums": {
+      "name": "Fat Drums",
+      "mode": "Plate",
+      "algorithm": "Plate",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.667,
+        "num_matched": 58,
+        "num_vv_taps": 87,
+        "num_dv_taps": 68,
+        "mean_time_error_ms": 0.21,
+        "mean_level_error_db": 0.2,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "125",
+        "worst_ratio": 1.209
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 4.445,
+        "depth_delta_cents": -74.63,
+        "shape_match": true,
+        "dv_depth": 462.45,
+        "vv_depth": 537.08,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.783,
+        "iacc_late_delta": 0.869,
+        "free_path_delta_ms": -0.29,
+        "t_first_delta_ms": 53.14,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.217
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Fat Plate": {
+      "name": "Fat Plate",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.827,
+        "num_matched": 86,
+        "num_vv_taps": 104,
+        "num_dv_taps": 89,
+        "mean_time_error_ms": 0.39,
+        "mean_level_error_db": 0.3,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "5k",
+        "worst_ratio": 0.804
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -0.005,
+        "depth_delta_cents": -3.05,
+        "shape_match": true,
+        "dv_depth": 444.61,
+        "vv_depth": 447.66,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.11,
+        "t_first_delta_ms": 3.65,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": true,
+      "pass_size": true
+    },
+    "Fat Snare Hall": {
+      "name": "Fat Snare Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.755,
+        "num_matched": 71,
+        "num_vv_taps": 94,
+        "num_dv_taps": 75,
+        "mean_time_error_ms": 0.51,
+        "mean_level_error_db": -4.9,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 15,
+        "bands_total": 21,
+        "worst_band": "125",
+        "worst_ratio": 1.414
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 1.79,
+        "depth_delta_cents": 264.57,
+        "shape_match": true,
+        "dv_depth": 794.63,
+        "vv_depth": 530.06,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.14,
+        "t_first_delta_ms": 28.58,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Fat Snare Room": {
+      "name": "Fat Snare Room",
+      "mode": "Room",
+      "algorithm": "Room",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.792,
+        "num_matched": 84,
+        "num_vv_taps": 106,
+        "num_dv_taps": 85,
+        "mean_time_error_ms": 1.15,
+        "mean_level_error_db": -4.1,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 15,
+        "bands_total": 21,
+        "worst_band": "160",
+        "worst_ratio": 1.463
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -3.364,
+        "depth_delta_cents": 23.67,
+        "shape_match": true,
+        "dv_depth": 650.34,
+        "vv_depth": 626.67,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.06,
+        "t_first_delta_ms": 36.88,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Gated Snare": {
+      "name": "Gated Snare",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": true,
+      "er": {
+        "match_rate": 0.667,
+        "num_matched": 66,
+        "num_vv_taps": 99,
+        "num_dv_taps": 69,
+        "mean_time_error_ms": 0.92,
+        "mean_level_error_db": -6.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 0,
+        "bands_total": 21,
+        "worst_band": "200",
+        "worst_ratio": 9.064
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.687,
+        "depth_delta_cents": -428.49,
+        "shape_match": true,
+        "dv_depth": 515.23,
+        "vv_depth": 943.72,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.13,
+        "t_first_delta_ms": 40.64,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Homestar Blade Runner": {
+      "name": "Homestar Blade Runner",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.753,
+        "num_matched": 58,
+        "num_vv_taps": 77,
+        "num_dv_taps": 59,
+        "mean_time_error_ms": 0.86,
+        "mean_level_error_db": 0.6,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 13,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 3.603
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 3.889,
+        "depth_delta_cents": 13.84,
+        "shape_match": true,
+        "dv_depth": 441.2,
+        "vv_depth": 427.36,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.02,
+        "t_first_delta_ms": 36.38,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Huge Synth Hall": {
+      "name": "Huge Synth Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.0,
+        "num_matched": 0,
+        "num_vv_taps": 25,
+        "num_dv_taps": 0,
+        "mean_time_error_ms": 0.0,
+        "mean_level_error_db": 0.0,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 11,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 2.732
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.0,
+        "depth_delta_cents": -66.85,
+        "shape_match": true,
+        "dv_depth": 408.21,
+        "vv_depth": 475.06,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -1.76,
+        "t_first_delta_ms": null,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Large Ambience": {
+      "name": "Large Ambience",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.91,
+        "num_matched": 101,
+        "num_vv_taps": 111,
+        "num_dv_taps": 103,
+        "mean_time_error_ms": 0.69,
+        "mean_level_error_db": 3.1,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 15.0,
+        "dv_time_to_gaussian": 25.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.219
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 4.451,
+        "depth_delta_cents": 154.3,
+        "shape_match": true,
+        "dv_depth": 829.55,
+        "vv_depth": 675.25,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": -0.779,
+        "iacc_late_delta": -0.732,
+        "free_path_delta_ms": 0.13,
+        "t_first_delta_ms": -21.87,
+        "dv_iacc_early": 0.221,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Large Chamber": {
+      "name": "Large Chamber",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.767,
+        "num_matched": 79,
+        "num_vv_taps": 103,
+        "num_dv_taps": 79,
+        "mean_time_error_ms": 0.74,
+        "mean_level_error_db": -0.8,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "5k",
+        "worst_ratio": 0.939
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -1.344,
+        "depth_delta_cents": -44.37,
+        "shape_match": true,
+        "dv_depth": 581.42,
+        "vv_depth": 625.79,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.13,
+        "t_first_delta_ms": 22.75,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Large Gated Snare": {
+      "name": "Large Gated Snare",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.636,
+        "num_matched": 63,
+        "num_vv_taps": 99,
+        "num_dv_taps": 66,
+        "mean_time_error_ms": 0.69,
+        "mean_level_error_db": -7.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 20,
+        "bands_total": 21,
+        "worst_band": "160",
+        "worst_ratio": 1.264
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 1.983,
+        "depth_delta_cents": 295.71,
+        "shape_match": true,
+        "dv_depth": 984.33,
+        "vv_depth": 688.62,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.04,
+        "t_first_delta_ms": 41.36,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Large Plate": {
+      "name": "Large Plate",
+      "mode": "Plate",
+      "algorithm": "Plate",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.681,
+        "num_matched": 62,
+        "num_vv_taps": 91,
+        "num_dv_taps": 62,
+        "mean_time_error_ms": 0.71,
+        "mean_level_error_db": 7.4,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 19,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 1.402
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -1.111,
+        "depth_delta_cents": -0.91,
+        "shape_match": true,
+        "dv_depth": 443.58,
+        "vv_depth": 444.49,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.694,
+        "iacc_late_delta": 0.851,
+        "free_path_delta_ms": -0.09,
+        "t_first_delta_ms": 53.85,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.306
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": true,
+      "pass_size": false
+    },
+    "Large Wood Room": {
+      "name": "Large Wood Room",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.962,
+        "num_matched": 102,
+        "num_vv_taps": 106,
+        "num_dv_taps": 108,
+        "mean_time_error_ms": 0.6,
+        "mean_level_error_db": 3.3,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": 0.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 5.0,
+        "plateau_delta": -28.0,
+        "dv_time_to_gaussian": 35.0,
+        "vv_time_to_gaussian": 25.0
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "3.15k",
+        "worst_ratio": 0.866
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 3.913,
+        "depth_delta_cents": -114.64,
+        "shape_match": true,
+        "dv_depth": 542.42,
+        "vv_depth": 657.06,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.117,
+        "iacc_late_delta": 0.051,
+        "free_path_delta_ms": -0.02,
+        "t_first_delta_ms": -5.42,
+        "dv_iacc_early": 0.237,
+        "vv_iacc_early": 0.12
+      },
+      "pass_er": true,
+      "pass_diffusion": true,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Live Vox Chamber": {
+      "name": "Live Vox Chamber",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.955,
+        "num_matched": 106,
+        "num_vv_taps": 111,
+        "num_dv_taps": 110,
+        "mean_time_error_ms": 0.67,
+        "mean_level_error_db": 8.9,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 52.0,
+        "dv_time_to_gaussian": 35.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "800",
+        "worst_ratio": 1.133
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -1.374,
+        "depth_delta_cents": 97.7,
+        "shape_match": true,
+        "dv_depth": 653.82,
+        "vv_depth": 556.12,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": -0.847,
+        "iacc_late_delta": -0.844,
+        "free_path_delta_ms": 0.04,
+        "t_first_delta_ms": -13.23,
+        "dv_iacc_early": 0.153,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Lively Snare Room": {
+      "name": "Lively Snare Room",
+      "mode": "Room",
+      "algorithm": "Room",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.735,
+        "num_matched": 72,
+        "num_vv_taps": 98,
+        "num_dv_taps": 73,
+        "mean_time_error_ms": 0.94,
+        "mean_level_error_db": -3.4,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 15,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.682
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -1.464,
+        "depth_delta_cents": 124.49,
+        "shape_match": true,
+        "dv_depth": 655.12,
+        "vv_depth": 530.63,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.02,
+        "t_first_delta_ms": 39.15,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Long Dark 70s Snare Room": {
+      "name": "Long Dark 70s Snare Room",
+      "mode": "Room",
+      "algorithm": "Room",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.69,
+        "num_matched": 69,
+        "num_vv_taps": 100,
+        "num_dv_taps": 70,
+        "mean_time_error_ms": 1.02,
+        "mean_level_error_db": -6.0,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 19,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.454
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 5.481,
+        "depth_delta_cents": -88.8,
+        "shape_match": true,
+        "dv_depth": 540.33,
+        "vv_depth": 629.13,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.23,
+        "t_first_delta_ms": 33.9,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Long Synth Hall": {
+      "name": "Long Synth Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.869,
+        "num_matched": 86,
+        "num_vv_taps": 99,
+        "num_dv_taps": 92,
+        "mean_time_error_ms": 0.63,
+        "mean_level_error_db": 1.2,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 15,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.884
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -3.334,
+        "depth_delta_cents": -31.62,
+        "shape_match": true,
+        "dv_depth": 403.25,
+        "vv_depth": 434.87,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.805,
+        "iacc_late_delta": 0.831,
+        "free_path_delta_ms": -0.01,
+        "t_first_delta_ms": 17.6,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.195
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Med Ambience": {
+      "name": "Med Ambience",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.911,
+        "num_matched": 102,
+        "num_vv_taps": 112,
+        "num_dv_taps": 104,
+        "mean_time_error_ms": 0.88,
+        "mean_level_error_db": 0.6,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 15.0,
+        "dv_time_to_gaussian": 25.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 19,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.375
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 4.86,
+        "depth_delta_cents": 114.94,
+        "shape_match": true,
+        "dv_depth": 655.91,
+        "vv_depth": 540.97,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.013,
+        "iacc_late_delta": 0.117,
+        "free_path_delta_ms": 0.15,
+        "t_first_delta_ms": -11.6,
+        "dv_iacc_early": 0.209,
+        "vv_iacc_early": 0.196
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Medium Gate": {
+      "name": "Medium Gate",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.945,
+        "num_matched": 104,
+        "num_vv_taps": 110,
+        "num_dv_taps": 112,
+        "mean_time_error_ms": 0.69,
+        "mean_level_error_db": 2.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 28.5,
+        "dv_time_to_gaussian": 25.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 0,
+        "bands_total": 21,
+        "worst_band": "630",
+        "worst_ratio": 2.315
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -2.645,
+        "depth_delta_cents": 91.43,
+        "shape_match": true,
+        "dv_depth": 692.3,
+        "vv_depth": 600.87,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": -0.777,
+        "iacc_late_delta": -0.822,
+        "free_path_delta_ms": -0.04,
+        "t_first_delta_ms": -10.13,
+        "dv_iacc_early": 0.223,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Pad Hall": {
+      "name": "Pad Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.0,
+        "num_matched": 0,
+        "num_vv_taps": 23,
+        "num_dv_taps": 0,
+        "mean_time_error_ms": 0.0,
+        "mean_level_error_db": 0.0,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 13,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 3.3
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 1.111,
+        "depth_delta_cents": -32.47,
+        "shape_match": true,
+        "dv_depth": 402.02,
+        "vv_depth": 434.49,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -2.0,
+        "t_first_delta_ms": null,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Rich Chamber": {
+      "name": "Rich Chamber",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.747,
+        "num_matched": 65,
+        "num_vv_taps": 87,
+        "num_dv_taps": 66,
+        "mean_time_error_ms": 0.98,
+        "mean_level_error_db": -4.3,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 17,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 0.748
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -2.211,
+        "depth_delta_cents": 62.2,
+        "shape_match": true,
+        "dv_depth": 529.94,
+        "vv_depth": 467.74,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.07,
+        "t_first_delta_ms": 32.61,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Short Dark Snare Room": {
+      "name": "Short Dark Snare Room",
+      "mode": "Room",
+      "algorithm": "Room",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.631,
+        "num_matched": 70,
+        "num_vv_taps": 111,
+        "num_dv_taps": 73,
+        "mean_time_error_ms": 0.73,
+        "mean_level_error_db": -2.5,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": 10.0,
+        "plateau_delta": -40.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": 175.0
+      },
+      "spectral_decay": {
+        "bands_passing": 9,
+        "bands_total": 21,
+        "worst_band": "125",
+        "worst_ratio": 1.554
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.779,
+        "depth_delta_cents": 330.13,
+        "shape_match": true,
+        "dv_depth": 1033.02,
+        "vv_depth": 702.89,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.831,
+        "iacc_late_delta": 0.819,
+        "free_path_delta_ms": 0.18,
+        "t_first_delta_ms": 55.96,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.169
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Short Vocal Ambience": {
+      "name": "Short Vocal Ambience",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.681,
+        "num_matched": 62,
+        "num_vv_taps": 91,
+        "num_dv_taps": 62,
+        "mean_time_error_ms": 1.13,
+        "mean_level_error_db": -1.0,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 17,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.294
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -1.456,
+        "depth_delta_cents": 144.13,
+        "shape_match": true,
+        "dv_depth": 716.09,
+        "vv_depth": 571.96,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.04,
+        "t_first_delta_ms": 45.23,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Small Ambience": {
+      "name": "Small Ambience",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.972,
+        "num_matched": 106,
+        "num_vv_taps": 109,
+        "num_dv_taps": 107,
+        "mean_time_error_ms": 0.85,
+        "mean_level_error_db": 0.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 18.0,
+        "dv_time_to_gaussian": 25.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 17,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.47
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -8.887,
+        "depth_delta_cents": 124.3,
+        "shape_match": true,
+        "dv_depth": 573.87,
+        "vv_depth": 449.57,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.114,
+        "iacc_late_delta": 0.127,
+        "free_path_delta_ms": 0.03,
+        "t_first_delta_ms": -10.44,
+        "dv_iacc_early": 0.308,
+        "vv_iacc_early": 0.194
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Small Chamber1": {
+      "name": "Small Chamber1",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.99,
+        "num_matched": 103,
+        "num_vv_taps": 104,
+        "num_dv_taps": 111,
+        "mean_time_error_ms": 0.26,
+        "mean_level_error_db": 6.3,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 49.0,
+        "dv_time_to_gaussian": 55.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 17,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 0.75
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -1.279,
+        "depth_delta_cents": -92.13,
+        "shape_match": true,
+        "dv_depth": 618.47,
+        "vv_depth": 710.6,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.079,
+        "iacc_late_delta": 0.006,
+        "free_path_delta_ms": -0.07,
+        "t_first_delta_ms": -5.17,
+        "dv_iacc_early": 0.193,
+        "vv_iacc_early": 0.114
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Small Chamber2": {
+      "name": "Small Chamber2",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.991,
+        "num_matched": 105,
+        "num_vv_taps": 106,
+        "num_dv_taps": 112,
+        "mean_time_error_ms": 0.31,
+        "mean_level_error_db": 5.5,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 48.0,
+        "dv_time_to_gaussian": 45.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "160",
+        "worst_ratio": 0.813
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 1.94,
+        "depth_delta_cents": -71.07,
+        "shape_match": true,
+        "dv_depth": 603.17,
+        "vv_depth": 674.24,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": -0.811,
+        "iacc_late_delta": -0.853,
+        "free_path_delta_ms": -0.06,
+        "t_first_delta_ms": -10.98,
+        "dv_iacc_early": 0.189,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Small Drum Room": {
+      "name": "Small Drum Room",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.743,
+        "num_matched": 75,
+        "num_vv_taps": 101,
+        "num_dv_taps": 76,
+        "mean_time_error_ms": 0.55,
+        "mean_level_error_db": -4.0,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 18,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.345
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 2.802,
+        "depth_delta_cents": -103.95,
+        "shape_match": true,
+        "dv_depth": 742.42,
+        "vv_depth": 846.37,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.02,
+        "t_first_delta_ms": 35.29,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Small Vocal Hall": {
+      "name": "Small Vocal Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.739,
+        "num_matched": 65,
+        "num_vv_taps": 88,
+        "num_dv_taps": 70,
+        "mean_time_error_ms": 0.61,
+        "mean_level_error_db": 0.6,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 17,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 1.352
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 4.753,
+        "depth_delta_cents": -84.29,
+        "shape_match": true,
+        "dv_depth": 738.23,
+        "vv_depth": 822.52,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.08,
+        "t_first_delta_ms": 25.21,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Snare Ambience": {
+      "name": "Snare Ambience",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.946,
+        "num_matched": 105,
+        "num_vv_taps": 111,
+        "num_dv_taps": 112,
+        "mean_time_error_ms": 0.95,
+        "mean_level_error_db": 1.3,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": null,
+        "plateau_delta": 65.0,
+        "dv_time_to_gaussian": 55.0,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 17,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.552
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.916,
+        "depth_delta_cents": 1091.9,
+        "shape_match": true,
+        "dv_depth": 1639.66,
+        "vv_depth": 547.76,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.029,
+        "iacc_late_delta": 0.046,
+        "free_path_delta_ms": 0.08,
+        "t_first_delta_ms": -5.29,
+        "dv_iacc_early": 0.184,
+        "vv_iacc_early": 0.155
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Snare Hall": {
+      "name": "Snare Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.758,
+        "num_matched": 75,
+        "num_vv_taps": 99,
+        "num_dv_taps": 79,
+        "mean_time_error_ms": 0.83,
+        "mean_level_error_db": 2.9,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 15,
+        "bands_total": 21,
+        "worst_band": "125",
+        "worst_ratio": 1.496
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.026,
+        "depth_delta_cents": 31.46,
+        "shape_match": true,
+        "dv_depth": 660.11,
+        "vv_depth": 628.65,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.05,
+        "t_first_delta_ms": 24.46,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Snare Plate": {
+      "name": "Snare Plate",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.26,
+        "num_matched": 20,
+        "num_vv_taps": 77,
+        "num_dv_taps": 20,
+        "mean_time_error_ms": 3.18,
+        "mean_level_error_db": -8.1,
+        "window_widened": true,
+        "match_window_ms": 4.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 12,
+        "bands_total": 21,
+        "worst_band": "5k",
+        "worst_ratio": 0.666
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.001,
+        "depth_delta_cents": 119.24,
+        "shape_match": true,
+        "dv_depth": 793.39,
+        "vv_depth": 674.15,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.07,
+        "t_first_delta_ms": 68.73,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Steel Plate": {
+      "name": "Steel Plate",
+      "mode": "Plate",
+      "algorithm": "Plate",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.674,
+        "num_matched": 64,
+        "num_vv_taps": 95,
+        "num_dv_taps": 66,
+        "mean_time_error_ms": 0.95,
+        "mean_level_error_db": 3.9,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 13,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 0.513
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 1.667,
+        "depth_delta_cents": 10.51,
+        "shape_match": true,
+        "dv_depth": 399.03,
+        "vv_depth": 388.52,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.02,
+        "t_first_delta_ms": 46.18,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Thin Plate": {
+      "name": "Thin Plate",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.982,
+        "num_matched": 110,
+        "num_vv_taps": 112,
+        "num_dv_taps": 116,
+        "mean_time_error_ms": 0.38,
+        "mean_level_error_db": 6.1,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": 0.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 5.0,
+        "plateau_delta": -28.0,
+        "dv_time_to_gaussian": 45.0,
+        "vv_time_to_gaussian": 25.0
+      },
+      "spectral_decay": {
+        "bands_passing": 18,
+        "bands_total": 21,
+        "worst_band": "5k",
+        "worst_ratio": 0.786
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 1.19,
+        "depth_delta_cents": -216.45,
+        "shape_match": true,
+        "dv_depth": 621.22,
+        "vv_depth": 837.67,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.083,
+        "iacc_late_delta": 0.034,
+        "free_path_delta_ms": -0.04,
+        "t_first_delta_ms": -3.21,
+        "dv_iacc_early": 0.189,
+        "vv_iacc_early": 0.106
+      },
+      "pass_er": true,
+      "pass_diffusion": true,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Tight Ambience Gate": {
+      "name": "Tight Ambience Gate",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": true,
+      "er": {
+        "match_rate": 0.63,
+        "num_matched": 63,
+        "num_vv_taps": 100,
+        "num_dv_taps": 64,
+        "mean_time_error_ms": 0.97,
+        "mean_level_error_db": -5.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 0,
+        "bands_total": 21,
+        "worst_band": "1.6k",
+        "worst_ratio": 2.338
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -4.95,
+        "depth_delta_cents": 45.79,
+        "shape_match": true,
+        "dv_depth": 769.41,
+        "vv_depth": 723.62,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.11,
+        "t_first_delta_ms": 43.27,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Tight Plate": {
+      "name": "Tight Plate",
+      "mode": "Plate",
+      "algorithm": "Plate",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.615,
+        "num_matched": 59,
+        "num_vv_taps": 96,
+        "num_dv_taps": 60,
+        "mean_time_error_ms": 1.12,
+        "mean_level_error_db": -6.1,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 7,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 0.524
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 3.58,
+        "depth_delta_cents": 58.74,
+        "shape_match": true,
+        "dv_depth": 574.78,
+        "vv_depth": 516.04,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.763,
+        "iacc_late_delta": 0.848,
+        "free_path_delta_ms": 0.21,
+        "t_first_delta_ms": 49.44,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.237
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Tiled Room": {
+      "name": "Tiled Room",
+      "mode": "Chamber",
+      "algorithm": "Chamber",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.759,
+        "num_matched": 82,
+        "num_vv_taps": 108,
+        "num_dv_taps": 85,
+        "mean_time_error_ms": 0.87,
+        "mean_level_error_db": 0.1,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 1.203
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 0.134,
+        "depth_delta_cents": 66.35,
+        "shape_match": true,
+        "dv_depth": 653.3,
+        "vv_depth": 586.95,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.869,
+        "iacc_late_delta": 0.868,
+        "free_path_delta_ms": 0.03,
+        "t_first_delta_ms": 27.02,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.131
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Trip Hop Snare": {
+      "name": "Trip Hop Snare",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.433,
+        "num_matched": 42,
+        "num_vv_taps": 97,
+        "num_dv_taps": 43,
+        "mean_time_error_ms": 0.74,
+        "mean_level_error_db": -10.1,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 17,
+        "bands_total": 21,
+        "worst_band": "125",
+        "worst_ratio": 1.428
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -0.135,
+        "depth_delta_cents": -631.01,
+        "shape_match": true,
+        "dv_depth": 604.08,
+        "vv_depth": 1235.09,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.975,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": -0.01,
+        "t_first_delta_ms": 77.68,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.025
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Very Nice Hall": {
+      "name": "Very Nice Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.387,
+        "num_matched": 24,
+        "num_vv_taps": 62,
+        "num_dv_taps": 27,
+        "mean_time_error_ms": 0.82,
+        "mean_level_error_db": -7.2,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 9,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.903
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -5.555,
+        "depth_delta_cents": -24.85,
+        "shape_match": true,
+        "dv_depth": 409.01,
+        "vv_depth": 433.86,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.06,
+        "t_first_delta_ms": 74.6,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": false,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Very Small Ambience": {
+      "name": "Very Small Ambience",
+      "mode": "Ambience",
+      "algorithm": "Ambient",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.912,
+        "num_matched": 103,
+        "num_vv_taps": 113,
+        "num_dv_taps": 106,
+        "mean_time_error_ms": 0.96,
+        "mean_level_error_db": 1.7,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": 0.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 5.0,
+        "plateau_delta": -41.5,
+        "dv_time_to_gaussian": 35.0,
+        "vv_time_to_gaussian": 65.0
+      },
+      "spectral_decay": {
+        "bands_passing": 19,
+        "bands_total": 21,
+        "worst_band": "125",
+        "worst_ratio": 1.301
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -1.51,
+        "depth_delta_cents": 523.71,
+        "shape_match": true,
+        "dv_depth": 1210.44,
+        "vv_depth": 686.73,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.24,
+        "iacc_late_delta": 0.155,
+        "free_path_delta_ms": 0.14,
+        "t_first_delta_ms": -0.23,
+        "dv_iacc_early": 0.388,
+        "vv_iacc_early": 0.148
+      },
+      "pass_er": true,
+      "pass_diffusion": true,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Vocal Hall": {
+      "name": "Vocal Hall",
+      "mode": "Concert Hall",
+      "algorithm": "Hall",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.83,
+        "num_matched": 78,
+        "num_vv_taps": 94,
+        "num_dv_taps": 82,
+        "mean_time_error_ms": 0.33,
+        "mean_level_error_db": 1.0,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 15,
+        "bands_total": 21,
+        "worst_band": "100",
+        "worst_ratio": 1.85
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -2.777,
+        "depth_delta_cents": -6.33,
+        "shape_match": true,
+        "dv_depth": 450.01,
+        "vv_depth": 456.34,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.774,
+        "iacc_late_delta": 0.825,
+        "free_path_delta_ms": -0.08,
+        "t_first_delta_ms": 25.67,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 0.226
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": false,
+      "pass_modulation": false,
+      "pass_size": false
+    },
+    "Vocal Plate": {
+      "name": "Vocal Plate",
+      "mode": "Plate",
+      "algorithm": "Plate",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.73,
+        "num_matched": 65,
+        "num_vv_taps": 89,
+        "num_dv_taps": 66,
+        "mean_time_error_ms": 0.94,
+        "mean_level_error_db": 12.4,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": null,
+        "dv_onset_ms": null,
+        "vv_onset_ms": null,
+        "plateau_delta": 0.0,
+        "dv_time_to_gaussian": null,
+        "vv_time_to_gaussian": null
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "2k",
+        "worst_ratio": 1.129
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": 8.217,
+        "depth_delta_cents": -16.15,
+        "shape_match": true,
+        "dv_depth": 773.12,
+        "vv_depth": 789.27,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.0,
+        "iacc_late_delta": 0.0,
+        "free_path_delta_ms": 0.04,
+        "t_first_delta_ms": 28.48,
+        "dv_iacc_early": 1.0,
+        "vv_iacc_early": 1.0
+      },
+      "pass_er": true,
+      "pass_diffusion": false,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    },
+    "Vox Plate": {
+      "name": "Vox Plate",
+      "mode": "Plate",
+      "algorithm": "Plate",
+      "is_gate": false,
+      "er": {
+        "match_rate": 0.962,
+        "num_matched": 102,
+        "num_vv_taps": 106,
+        "num_dv_taps": 109,
+        "mean_time_error_ms": 0.38,
+        "mean_level_error_db": 8.5,
+        "window_widened": false,
+        "match_window_ms": 2.0
+      },
+      "diffusion": {
+        "onset_delta_ms": 0.0,
+        "dv_onset_ms": 5.0,
+        "vv_onset_ms": 5.0,
+        "plateau_delta": 1.0,
+        "dv_time_to_gaussian": 55.0,
+        "vv_time_to_gaussian": 215.0
+      },
+      "spectral_decay": {
+        "bands_passing": 21,
+        "bands_total": 21,
+        "worst_band": "10k",
+        "worst_ratio": 1.23
+      },
+      "modulation": {
+        "both_reliable": true,
+        "rate_delta_hz": -4.584,
+        "depth_delta_cents": 74.53,
+        "shape_match": true,
+        "dv_depth": 906.39,
+        "vv_depth": 831.86,
+        "dv_shape": "random",
+        "vv_shape": "random"
+      },
+      "size": {
+        "iacc_early_delta": 0.076,
+        "iacc_late_delta": 0.003,
+        "free_path_delta_ms": -0.06,
+        "t_first_delta_ms": -1.48,
+        "dv_iacc_early": 0.313,
+        "vv_iacc_early": 0.237
+      },
+      "pass_er": true,
+      "pass_diffusion": true,
+      "pass_spectral": true,
+      "pass_modulation": false,
+      "pass_size": true
+    }
+  }
+}
