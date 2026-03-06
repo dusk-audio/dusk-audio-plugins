@@ -37,13 +37,13 @@ AUDIT_PRESETS = {
     "Ambient": ["Short Vocal Ambience", "Big Ambience Gate"],
 }
 
-# 1/3-octave band definitions (matching reverb_metrics.THIRD_OCTAVE_BANDS)
+# 1/3-octave band definitions (extended to 16kHz for shape analysis)
 THIRD_OCTAVE_BANDS = {
     "100": 100, "125": 125, "160": 160, "200": 200, "250": 250,
     "315": 315, "400": 400, "500": 500, "630": 630, "800": 800,
     "1k": 1000, "1.25k": 1250, "1.6k": 1600, "2k": 2000, "2.5k": 2500,
     "3.15k": 3150, "4k": 4000, "5k": 5000, "6.3k": 6300, "8k": 8000,
-    "10k": 10000,
+    "10k": 10000, "12.5k": 12500, "16k": 16000,
 }
 
 BAND_NAMES = list(THIRD_OCTAVE_BANDS.keys())
@@ -52,7 +52,7 @@ BAND_FREQS = list(THIRD_OCTAVE_BANDS.values())
 # Frequency regions for summary
 LOW_RANGE = (100, 500)
 MID_RANGE = (500, 2000)
-HIGH_RANGE = (2000, 16000)
+HIGH_RANGE = (2000, 16001)  # Inclusive of 16kHz band
 
 
 def classify_ratio(ratio):
@@ -166,9 +166,13 @@ def capture_ir_pair(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
 
 
 def print_preset_table(name, algo, dv_ir, vv_ir, info_str, sr=SAMPLE_RATE):
-    """Print per-band RT60 comparison for a preset. Returns rt60_ratios dict."""
-    dv_rt60 = metrics.measure_rt60_third_octave(dv_ir, sr)
-    vv_rt60 = metrics.measure_rt60_third_octave(vv_ir, sr)
+    """Print per-band RT60 comparison for a preset.
+
+    Returns (rt60_ratios, dv_rt60, vv_rt60) for downstream shape analysis.
+    """
+    # Use extended bands (including 12.5k, 16k)
+    dv_rt60 = metrics.measure_rt60_per_band(dv_ir, sr, bands=THIRD_OCTAVE_BANDS)
+    vv_rt60 = metrics.measure_rt60_per_band(vv_ir, sr, bands=THIRD_OCTAVE_BANDS)
 
     print(f"\n=== {algo}: {name} ===")
     if info_str:
@@ -193,7 +197,42 @@ def print_preset_table(name, algo, dv_ir, vv_ir, info_str, sr=SAMPLE_RATE):
             vv_s = f"{vv_val:.2f}" if vv_val is not None else "N/A"
             print(f"    {band_name:>6s}  {vv_s:>10s}  {dv_s:>10s}  {'N/A':>6s}   N/A")
 
-    return rt60_ratios
+    return rt60_ratios, dv_rt60, vv_rt60
+
+
+def print_decay_shape(name, algo, dv_rt60, vv_rt60):
+    """Print normalized decay shape: both curves relative to their 500Hz RT60.
+
+    This reveals whether DV's HF mismatch is a uniform slope offset (trebleMultScale)
+    or a shape/knee difference (filter topology).
+    """
+    vv_ref = vv_rt60.get("500")
+    dv_ref = dv_rt60.get("500")
+
+    if not vv_ref or not dv_ref or vv_ref <= 0 or dv_ref <= 0:
+        print(f"\n    [Shape: skipped — 500Hz RT60 unmeasurable]")
+        return
+
+    # Show bands from 500Hz upward (shape analysis region)
+    shape_bands = [b for b in BAND_NAMES if THIRD_OCTAVE_BANDS[b] >= 500]
+
+    print(f"\n    --- Normalized Decay Shape (relative to 500Hz) ---")
+    print(f"    {'Band':>6s}  {'VV (rel 500Hz)':>14s}  {'DV (rel 500Hz)':>14s}  {'Shape delta':>12s}")
+    print("    " + "-" * 52)
+
+    for band_name in shape_bands:
+        vv_val = vv_rt60.get(band_name)
+        dv_val = dv_rt60.get(band_name)
+
+        if vv_val is not None and dv_val is not None and vv_val > 0 and dv_val > 0:
+            vv_norm = vv_val / vv_ref
+            dv_norm = dv_val / dv_ref
+            delta = dv_norm - vv_norm
+            # Flag large shape differences
+            marker = "  <-" if abs(delta) > 0.10 else ""
+            print(f"    {band_name:>6s}  {vv_norm:>14.3f}  {dv_norm:>14.3f}  {delta:>+12.3f}{marker}")
+        else:
+            print(f"    {band_name:>6s}  {'N/A':>14s}  {'N/A':>14s}  {'N/A':>12s}")
 
 
 def print_algorithm_summary(algo_data):
@@ -293,7 +332,8 @@ def main():
             print(" done")
 
             dv_ir, vv_ir, dv_params, info_str = result
-            ratios = print_preset_table(pname, algo, dv_ir, vv_ir, info_str)
+            ratios, dv_rt60, vv_rt60 = print_preset_table(pname, algo, dv_ir, vv_ir, info_str)
+            print_decay_shape(pname, algo, dv_rt60, vv_rt60)
             algo_data[algo].append(ratios)
 
     # Print summary

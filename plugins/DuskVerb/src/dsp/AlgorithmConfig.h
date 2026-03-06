@@ -26,6 +26,9 @@ struct AlgorithmConfig
     float modRateScale;
 
     float trebleMultScale;
+    float trebleMultScaleMax; // Bright-end target for treble curve interpolation.
+                               // At treble_multiply=1.0, scaledTreble interpolates to this value.
+                               // >1.0 means no HF rolloff (flat, like VV at HighShelf=0).
     float bassMultScale;
 
     float sizeRangeMin;
@@ -115,12 +118,12 @@ static constexpr AlgorithmConfig kPlate = {
     0.0f, 1.0f,      // ER: forced off
     0.47f,           // late gain: reduced from 0.52 to fix Large Plate +5.0 dB
     0.5f, 1.0f,      // mod: moderate depth for mode blurring, normal rate
-    1.30f, 1.0f,     // damping: compensate FDN structural HF damping (Drum Plate HF -0.39 at 1.30; Tight Plate -0.26 borderline)
+    1.30f, 1.4f, 1.0f, // damping: trebleMultScale=1.30 (dark), trebleMultScaleMax=1.4 (bright), bassMultScale=1.0
     0.5f, 1.5f,      // size range
     0.0f,            // ER crossfeed: off (no ERs)
     0.10f,           // inline diffusion: mild density boost
     1.0f,            // mod depth floor: 1.0 = uniform modulation
-    0.0f,            // structural HF damping: off (trebleMultScale=1.30 already compensates)
+    0.0f,            // structural HF damping: off (Plate HF already too fast; trebleMultScale=1.30 handles HF)
     0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
@@ -151,7 +154,7 @@ static constexpr AlgorithmConfig kHall = {
     1.0f, 1.0f,      // ER: full
     0.65f,           // late gain: level-matched to VV Concert Hall (~-9.5 dB wet gain)
     1.0f, 1.0f,      // mod: full
-    0.65f, 1.0f,     // damping: bright HF sustain for Concert Hall (Hall1984 compensated down in test suite)
+    0.65f, 0.70f, 1.0f, // damping: trebleMultScale=0.65 (dark), trebleMultScaleMax=0.70 (bright), bassMultScale=1.0
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed: subtle
     0.0f,            // inline diffusion: off (preserve hall character)
@@ -188,12 +191,12 @@ static constexpr AlgorithmConfig kChamber = {
     0.8f, 0.85f,     // ER: slightly reduced level, tighter timing
     0.45f,           // late gain: level-matched to VV Chamber (~-10.5 dB wet gain)
     0.8f, 1.0f,      // mod: increased depth for mode blurring, normal rate
-    1.20f, 1.0f,     // damping: compensate FDN HF damping (Snare Plate -0.30, Thin Plate -0.34 at 1.20; 1.40 regressed)
+    1.20f, 1.1f, 1.0f, // damping: trebleMultScale=1.20 (dark), trebleMultScaleMax=1.1 (bright), bassMultScale=1.0
     0.5f, 1.5f,      // size range
     0.2f,            // ER crossfeed: medium
     0.10f,           // inline diffusion: mild density boost
     1.0f,            // mod depth floor: 1.0 = uniform modulation
-    0.0f,            // structural HF damping: off (trebleMultScale=1.20 already compensates)
+    0.0f,            // structural HF damping: off (Chamber HF already too fast; trebleMultScale=1.20 handles HF)
     0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
@@ -225,7 +228,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.5f, 0.90f,     // ER: moderate level, slightly tighter timing
     0.70f,           // late gain: calibrated to VV Room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
     1.0f, 1.0f,      // mod: neutral (calibrate from comparison)
-    0.45f, 0.85f,    // damping: HF reduction (preset-suite median HF delta was -0.20 at 0.35; 0.45 compensates)
+    0.45f, 0.85f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.85 (bright), bassMultScale=0.85
     0.5f, 1.5f,      // size range
     0.10f,           // ER crossfeed: light
     0.0f,            // inline diffusion: off (long delays = sufficient density)
@@ -234,7 +237,7 @@ static constexpr AlgorithmConfig kRoom = {
     40.0f,           // structural LF damping: 40Hz HP to gently tame bass RT60 inflation
     0.0f,            // feedback LP: off (trebleMultScale handles HF decay)
     false,           // feedback LP 4th order: off
-    0.8f,            // noise mod: moderate jitter for ringing suppression (dual-slope fast gain amplifies modes)
+    0.0f,            // noise mod: off (VV Room uses coherent sinusoidal LFO, not random jitter)
     0.08f,           // Hadamard perturbation: mild symmetry breaking
     0.75f,           // ER gain exponent: moderate rolloff
     false,           // useDattorroTank: off (FDN)
@@ -262,12 +265,12 @@ static constexpr AlgorithmConfig kAmbient = {
     0.0f, 1.0f,      // ER: forced off
     0.60f,           // late gain: preset-suite avg was +1.9 dB at 0.70; 0.60 reduces ~1.3 dB
     1.5f, 1.3f,      // mod: heavy depth and rate
-    0.60f, 1.0f,     // damping: reduce HF sustain (Ambience Plate HF -0.32 at 0.60; 0.70 regressed)
+    0.60f, 1.0f, 1.0f, // damping: trebleMultScale=0.60 (dark), trebleMultScaleMax=1.0 (bright), bassMultScale=1.0
     0.5f, 1.5f,      // size range
     0.0f,            // ER crossfeed: off (no ERs)
     0.0f,            // inline diffusion: off (preserve ambient character)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
-    0.0f,            // structural HF damping: off (trebleMultScale=0.60 already handles HF)
+    0.0f,            // structural HF damping: off (Ambient HF slightly fast; trebleMultScale=0.60 handles HF)
     0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
