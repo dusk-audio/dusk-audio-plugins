@@ -46,7 +46,7 @@ struct AlgorithmConfig
     float modDepthFloor; // Minimum modulation depth scaling for shortest delay (0.0-1.0)
 
     float structuralHFDampingHz; // First-order LP in FDN feedback modeling air absorption (Hz).
-                                 // Applied after TwoBandDamping, before feedbackLP. 0 = bypassed.
+                                 // Applied after ThreeBandDamping, before feedbackLP. 0 = bypassed.
                                  // Effective frequency scales with treble_multiply: effectiveHz = baseHz * (0.5 + treble * 0.5).
                                  // Per-algorithm: higher values = gentler damping. Typical: 14000-19000.
 
@@ -79,8 +79,7 @@ struct AlgorithmConfig
 
     float decayTimeScale; // Multiplier for the user's decay time parameter.
                           // Allows per-algorithm scaling of the effective decay range.
-                          // 1.0 = pass through (default). Room uses 3.0 to extend
-                          // the 0.2-30s UI range to 0.6-90s effective RT60.
+                          // 1.0 = pass through (default, all algorithms currently use 1.0).
 
     float dualSlopeRatio;     // Fast-group RT60 as fraction of effective RT60 (0 = disabled).
                               // Room uses 0.08 → fast RT60 = 4.4s when effective = 55s.

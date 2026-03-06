@@ -583,9 +583,9 @@ void FDNReverb::setStructuralHFDamping (float baseFreqHz, float trebleMultiply)
         structHFCoeff_ = 0.0f;
         return;
     }
-    // Inverted treble scaling: dark presets (low treble) already have strong TwoBandDamping,
+    // Inverted treble scaling: dark presets (low treble) already have strong ThreeBandDamping,
     // so structural damping is reduced (higher effectiveHz). Bright presets (high treble) have
-    // weaker TwoBandDamping, so they get full structural damping (effectiveHz = baseFreqHz).
+    // weaker ThreeBandDamping, so they get full structural damping (effectiveHz = baseFreqHz).
     // At treble=1.0: effectiveHz = baseFreqHz (full structural damping).
     // At treble=0.5: effectiveHz = baseFreqHz * 1.25 (reduced damping for dark presets).
     // At treble=0.1: effectiveHz = baseFreqHz * 1.45 (minimal damping for very dark presets).
