@@ -17,6 +17,7 @@ public:
     void setBassMultiply (float mult);
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
+    void setHighCrossoverFreq (float hz);
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -121,7 +122,7 @@ private:
     float inlineDiffCoeff_ = 0.0f;
     float inlineDiffCoeff2_ = 0.0f;
     float inlineDiffCoeff3_ = 0.0f;
-    TwoBandDamping dampFilter_[N];
+    ThreeBandDamping dampFilter_[N];
     float lfoPhase_[N] {};
     float lfoPhaseInc_[N] {};
     uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state for LFO drift
@@ -186,6 +187,7 @@ private:
     float bassMultiply_ = 1.0f;
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
+    float highCrossoverFreq_ = 6000.0f;
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
