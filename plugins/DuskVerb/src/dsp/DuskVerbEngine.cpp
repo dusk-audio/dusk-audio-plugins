@@ -405,7 +405,13 @@ void DuskVerbEngine::setBassMultiply (float mult)
 void DuskVerbEngine::setTrebleMultiply (float mult)
 {
     lastTrebleMult_ = mult;
-    float scaledTreble = mult * config_->trebleMultScale;
+    // Nonlinear treble scaling: squared curve interpolates between dark-end
+    // (trebleMultScale) and bright-end (trebleMultScaleMax) targets.
+    // At treble=1.0: scaledTreble = trebleMultScaleMax (flat/bright, like VV HighShelf=0)
+    // At treble=0.0: scaledTreble = trebleMultScale (steep HF rolloff)
+    float trebleCurve = mult * mult;
+    float scaledTreble = config_->trebleMultScale * (1.0f - trebleCurve)
+                       + config_->trebleMultScaleMax * trebleCurve;
     fdn_.setTrebleMultiply (scaledTreble);
     dattorroTank_.setTrebleMultiply (scaledTreble);
     // Re-compute structural HF damping with raw treble (not scaled by trebleMultScale).
