@@ -37,3 +37,55 @@ private:
     float lpCoeff_ = 0.0f;
     float lpState_ = 0.0f;
 };
+
+// Three-band shelving damping filter for FDN feedback loops.
+// Extends TwoBandDamping with a second crossover to separate mid and high bands:
+//   Low  (< lowCrossover):   gLow  = gBase^(1/bassMultiply)  — bass decay
+//   Mid  (lowCrossover..highCrossover): gMid = gBase           — broadband reference
+//   High (> highCrossover):  gHigh = gBase^(1/trebleMultiply) — treble decay
+//
+// This allows finer spectral control: mid frequencies (2.5-6kHz) decay at the
+// natural rate while HF damping (treble multiply) only affects very high frequencies.
+// When highCrossoverHz >= Nyquist, the high band is empty and this collapses to
+// two-band behavior with gMid replacing gHigh.
+class ThreeBandDamping
+{
+public:
+    void setCoefficients (float gLow, float gMid, float gHigh,
+                          float lowCrossoverCoeff, float highCrossoverCoeff)
+    {
+        gLow_ = gLow;
+        gMid_ = gMid;
+        gHigh_ = gHigh;
+        lpCoeff1_ = lowCrossoverCoeff;
+        lpCoeff2_ = highCrossoverCoeff;
+    }
+
+    float process (float input)
+    {
+        // LP1: split into low band and mid+high
+        lp1State_ = (1.0f - lpCoeff1_) * input + lpCoeff1_ * lp1State_;
+        float midHigh = input - lp1State_;
+
+        // LP2: split mid+high into mid band and high band
+        lp2State_ = (1.0f - lpCoeff2_) * midHigh + lpCoeff2_ * lp2State_;
+        float high = midHigh - lp2State_;
+
+        return gLow_ * lp1State_ + gMid_ * lp2State_ + gHigh_ * high;
+    }
+
+    void reset()
+    {
+        lp1State_ = 0.0f;
+        lp2State_ = 0.0f;
+    }
+
+private:
+    float gLow_ = 1.0f;
+    float gMid_ = 1.0f;
+    float gHigh_ = 1.0f;
+    float lpCoeff1_ = 0.0f;  // Low crossover coefficient
+    float lpCoeff2_ = 0.0f;  // High crossover coefficient
+    float lp1State_ = 0.0f;
+    float lp2State_ = 0.0f;
+};

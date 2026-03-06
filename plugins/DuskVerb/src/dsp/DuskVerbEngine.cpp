@@ -352,6 +352,7 @@ void DuskVerbEngine::applyAlgorithm (int index)
     fdn_.setFeedbackLP4thOrder (config_->feedbackLP4thOrder);
     fdn_.setNoiseModDepth (config_->noiseModDepth);
     fdn_.setHadamardPerturbation (config_->hadamardPerturbation);
+    fdn_.setHighCrossoverFreq (config_->highCrossoverHz);
     fdn_.setStructuralHFDamping (config_->structuralHFDampingHz, lastTrebleMult_);
     fdn_.setStructuralLFDamping (config_->structuralLFDampingHz);
     setGateParams (config_->gateHoldMs, config_->gateReleaseMs);
