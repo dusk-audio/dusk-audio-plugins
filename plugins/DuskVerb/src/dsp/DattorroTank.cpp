@@ -150,7 +150,7 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            // LFO modulation with Lexicon "Wander" drift
+            // LFO modulation with "Wander" drift (classic reverb technique)
             float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
@@ -424,10 +424,10 @@ void DattorroTank::updateDecayCoefficients()
         // This gives -60dB attenuation after RT60 seconds.
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
 
-        // Bass sustain longer (Lexicon "Bass Multiply")
+        // Bass sustain longer ("Bass Multiply")
         float gLow = std::pow (gBase, 1.0f / bassMultiply_);
 
-        // Treble rolls off faster (Lexicon "Treble Multiply")
+        // Treble rolls off faster ("Treble Multiply")
         float gHigh = std::pow (gBase, 1.0f / trebleMultiply_);
 
         tank.damping.setCoefficients (gLow, gHigh, crossoverCoeff);

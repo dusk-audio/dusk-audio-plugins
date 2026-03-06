@@ -17,8 +17,8 @@ import sys
 import numpy as np
 from pedalboard import load_plugin
 
-from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-                    apply_duskverb_params, apply_valhalla_params)
+from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+                    apply_duskverb_params, apply_reference_params)
 from generate_test_signals import make_impulse
 import reverb_metrics as metrics
 
@@ -110,13 +110,13 @@ def calibrate_dv_to_rt60(dv_plugin, target_rt60, dv_params, sr,
 
 def main():
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path or not vv_path:
-        print(f"ERROR: {'DuskVerb' if not dv_path else 'VintageVerb'} not found")
+        print(f"ERROR: {'DuskVerb' if not dv_path else 'ReferenceReverb'} not found")
         return
 
     print(f"DuskVerb:     {dv_path}")
-    print(f"VintageVerb:  {vv_path}")
+    print(f"ReferenceReverb:  {vv_path}")
 
     dv = load_plugin(dv_path, parameter_values={"dry_wet": 1.0})
     vv = load_plugin(vv_path)
@@ -185,7 +185,7 @@ def main():
             }
 
             impulse = make_impulse(sig_dur)
-            apply_valhalla_params(vv, vv_config)
+            apply_reference_params(vv, vv_config)
             flush_plugin(vv, SR, 3.0)
             vv_ir, _ = process_stereo(vv, impulse, SR)
             flush_plugin(vv, SR, 3.0)

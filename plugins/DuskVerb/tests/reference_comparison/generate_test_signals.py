@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate reverb-optimized test signals for DuskVerb vs VintageVerb comparison.
+Generate reverb-optimized test signals for DuskVerb vs ReferenceReverb comparison.
 
 Signals are designed to reveal specific reverb quality characteristics:
 - Impulse: full IR capture (RT60, EDC, stereo, modal analysis)

@@ -1,5 +1,5 @@
 ===============================================================================
-DuskVerb vs VintageVerb — IR Analysis Report
+DuskVerb vs ReferenceReverb — IR Analysis Report
 Generated: 2026-03-05  |  50 presets  |  5 algorithms
 ===============================================================================
 
