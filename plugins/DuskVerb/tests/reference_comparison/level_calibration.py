@@ -17,8 +17,8 @@ import numpy as np
 from pedalboard import load_plugin
 
 sys.path.insert(0, os.path.dirname(__file__))
-from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-                    apply_duskverb_params, apply_valhalla_params)
+from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+                    apply_duskverb_params, apply_reference_params)
 from generate_test_signals import make_impulse
 import reverb_metrics as metrics
 
@@ -67,13 +67,13 @@ def rms_db(signal, sr, start_s, end_s):
 
 def main():
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path or not vv_path:
         print("ERROR: Plugin(s) not found")
         sys.exit(1)
 
     print(f"DuskVerb:     {dv_path}")
-    print(f"VintageVerb:  {vv_path}")
+    print(f"ReferenceReverb:  {vv_path}")
     print(f"Sample rate:  {SR} Hz")
     print(f"Settings:     treble={TREBLE}, size={SIZE}, mod_depth={MOD_DEPTH}")
     print()
@@ -128,7 +128,7 @@ def main():
             }
 
             flush_plugin(vv, SR)
-            apply_valhalla_params(vv, vv_config)
+            apply_reference_params(vv, vv_config)
             flush_plugin(vv, SR)
             vv_l, _ = process_stereo(vv, imp, SR)
             flush_plugin(vv, SR)

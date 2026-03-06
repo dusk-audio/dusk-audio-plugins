@@ -3,8 +3,8 @@
 
 import numpy as np
 import pedalboard
-from config import (SAMPLE_RATE, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-                     find_plugin, apply_duskverb_params, VALHALLA_PARAM_MAP)
+from config import (SAMPLE_RATE, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+                     find_plugin, apply_duskverb_params, REFERENCE_PARAM_MAP)
 
 SR = SAMPLE_RATE
 
@@ -17,7 +17,7 @@ def load_plugin(path):
 
 def apply_vv(plugin, params):
     for key, value in params.items():
-        name = VALHALLA_PARAM_MAP.get(key, key.lstrip("_"))
+        name = REFERENCE_PARAM_MAP.get(key, key.lstrip("_"))
         try:
             setattr(plugin, name, value)
         except Exception:
@@ -71,7 +71,7 @@ def main():
     dv = load_plugin(dv_path)
     if not dv: return
 
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     vv = load_plugin(vv_path) if vv_path else None
 
     # Standard settings for each mode (100% wet, moderate decay)
@@ -122,7 +122,7 @@ def main():
     }
 
     print("=" * 70)
-    print("  Absolute Wet Gain: DuskVerb vs VintageVerb (100% wet, pink noise)")
+    print("  Absolute Wet Gain: DuskVerb vs ReferenceReverb (100% wet, pink noise)")
     print("=" * 70)
     print(f"  {'Mode':<12s}  {'Input':>8s}  {'DV Out':>8s}  {'DV Gain':>8s}  {'VV Out':>8s}  {'VV Gain':>8s}")
     print(f"  {'-'*62}")

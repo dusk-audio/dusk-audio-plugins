@@ -131,7 +131,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     }
 
     // ER→FDN crossfeed: feed early reflections into the late reverb input
-    // so the FDN tail "grows out of" the ER pattern (ValhallaRoom "Early Send")
+    // so the FDN tail "grows out of" the ER pattern
     if (erCrossfeed_ > 0.0f && ! frozen_)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -382,7 +382,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     dattorroTank_.setDecayTime (scaledDecay);
 
     // Decay-dependent output compensation: boost at short decay times to match
-    // VintageVerb's higher energy density at low feedback coefficients.
+    // reference reverb's higher energy density at low feedback coefficients.
     // Linear ramp: full boost at decayTime=0, zero at knee.
     if (config_->shortDecayBoostDB > 0.0f && config_->shortDecayBoostKnee > 0.0f)
     {
@@ -408,10 +408,10 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     lastTrebleMult_ = mult;
     // Nonlinear treble scaling: squared curve interpolates between dark-end
     // (trebleMultScale) and bright-end (trebleMultScaleMax) targets.
-    // At treble=1.0: scaledTreble = trebleMultScaleMax (bright VV presets need
-    //   more HF damping to match VV's inherent structural HF loss)
-    // At treble=0.0: scaledTreble = trebleMultScale (dark VV presets need less
-    //   HF damping because VV's user-applied HighShelf is already heavy)
+    // At treble=1.0: scaledTreble = trebleMultScaleMax (bright presets need
+    //   more HF damping to match inherent structural HF loss in reference reverbs)
+    // At treble=0.0: scaledTreble = trebleMultScale (dark presets need less
+    //   HF damping because the user-applied high shelf is already heavy)
     float trebleCurve = mult * mult;
     float scaledTreble = config_->trebleMultScale * (1.0f - trebleCurve)
                        + config_->trebleMultScaleMax * trebleCurve;

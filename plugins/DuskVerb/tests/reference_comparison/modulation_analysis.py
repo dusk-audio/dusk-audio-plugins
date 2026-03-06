@@ -18,8 +18,8 @@ import numpy as np
 from pedalboard import load_plugin
 
 sys.path.insert(0, os.path.dirname(__file__))
-from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-                    apply_duskverb_params, apply_valhalla_params)
+from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+                    apply_duskverb_params, apply_reference_params)
 
 SR = SAMPLE_RATE
 
@@ -353,7 +353,7 @@ def run_algorithm(dv, vv, algo, vv_mode_float):
 
     print(f"  Capturing VV IR (mod_depth=1.0, mod_rate={mod_rate_vv})...")
     flush_plugin(vv, SR, 5.0)
-    apply_valhalla_params(vv, vv_config)
+    apply_reference_params(vv, vv_config)
     flush_plugin(vv, SR, 5.0)
     vv_l, vv_r = process_stereo(vv, imp, SR)
     flush_plugin(vv, SR, 5.0)
@@ -446,7 +446,7 @@ def run_algorithm(dv, vv, algo, vv_mode_float):
     flush_plugin(dv, SR, 5.0)
 
     flush_plugin(vv, SR, 5.0)
-    apply_valhalla_params(vv, vv_config_low)
+    apply_reference_params(vv, vv_config_low)
     flush_plugin(vv, SR, 5.0)
     vv_low_l, vv_low_r = process_stereo(vv, imp, SR)
     flush_plugin(vv, SR, 5.0)
@@ -484,13 +484,13 @@ def main():
     args = parser.parse_args()
 
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path or not vv_path:
         print("ERROR: Plugin(s) not found")
         sys.exit(1)
 
     print(f"DuskVerb:     {dv_path}")
-    print(f"VintageVerb:  {vv_path}")
+    print(f"ReferenceReverb:  {vv_path}")
     print(f"Sample rate:  {SR} Hz")
 
     dv = load_plugin(dv_path)

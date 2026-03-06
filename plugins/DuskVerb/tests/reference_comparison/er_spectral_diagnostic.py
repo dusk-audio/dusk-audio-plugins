@@ -2,7 +2,7 @@
 """
 ER vs Tail spectral diagnostic: isolate where DuskVerb's darkness originates.
 
-Processes pink noise through both DuskVerb and VintageVerb with very short decay
+Processes pink noise through both DuskVerb and ReferenceReverb with very short decay
 (ER character only, minimal tail). Compares 1/3-octave spectral energy in two
 time windows:
   - ER region (0-150ms): captures early reflections and input filtering
@@ -16,8 +16,8 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 from pedalboard import load_plugin
 
-from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-                    apply_duskverb_params, apply_valhalla_params)
+from config import (SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+                    apply_duskverb_params, apply_reference_params)
 from generate_test_signals import make_noise_burst
 
 SR = SAMPLE_RATE
@@ -117,8 +117,8 @@ def configure_dv_for_er(plugin, algo, decay=0.3):
 
 
 def configure_vv_for_er(plugin, mode_float, decay=0.05):
-    """Configure VintageVerb for ER isolation: short decay, flat EQ."""
-    apply_valhalla_params(plugin, {
+    """Configure ReferenceReverb for ER isolation: short decay, flat EQ."""
+    apply_reference_params(plugin, {
         "_reverbmode": mode_float,
         "_colormode": 0.666667,    # "Now" — brightest/flattest
         "_decay": decay,
@@ -224,13 +224,13 @@ def main():
     args = parser.parse_args()
 
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path or not vv_path:
-        print(f"ERROR: {'DuskVerb' if not dv_path else 'VintageVerb'} not found")
+        print(f"ERROR: {'DuskVerb' if not dv_path else 'ReferenceReverb'} not found")
         return
 
     print(f"DuskVerb:     {dv_path}")
-    print(f"VintageVerb:  {vv_path}")
+    print(f"ReferenceReverb:  {vv_path}")
 
     dv = load_plugin(dv_path, parameter_values={"dry_wet": 1.0})
     vv = load_plugin(vv_path)

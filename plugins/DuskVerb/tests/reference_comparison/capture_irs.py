@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IR Capture Pipeline — ground-truth DuskVerb vs VintageVerb impulse responses.
+IR Capture Pipeline — ground-truth DuskVerb vs ReferenceReverb impulse responses.
 
 Captures stereo IRs for every qualifying preset and a reference set at
 diagnostic settings (flat EQ, no mod, 5 decay times × 5 algorithms).
@@ -25,8 +25,8 @@ import soundfile as sf
 from pedalboard import load_plugin
 
 from config import (
-    SAMPLE_RATE, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-    find_plugin, apply_duskverb_params, apply_valhalla_params,
+    SAMPLE_RATE, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+    find_plugin, apply_duskverb_params, apply_reference_params,
 )
 from generate_test_signals import make_impulse
 from preset_suite import (
@@ -141,7 +141,7 @@ def capture_preset(dv, vv, preset_info, sr, output_dir):
     impulse = make_impulse(sig_dur)
 
     # Capture VV IR
-    apply_valhalla_params(vv, vv_config)
+    apply_reference_params(vv, vv_config)
     flush_plugin(vv, sr, flush_dur)
     vv_l, vv_r = process_stereo(vv, impulse, sr)
     flush_plugin(vv, sr, flush_dur)
@@ -246,7 +246,7 @@ def capture_reference(dv, vv, algo, vv_decay, sr, output_dir):
     impulse = make_impulse(sig_dur)
 
     # Capture VV
-    apply_valhalla_params(vv, vv_config)
+    apply_reference_params(vv, vv_config)
     flush_plugin(vv, sr, flush_dur)
     vv_l, vv_r = process_stereo(vv, impulse, sr)
     flush_plugin(vv, sr, flush_dur)
@@ -411,13 +411,13 @@ def main():
     os.makedirs(os.path.join(output_dir, "reference"), exist_ok=True)
 
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path or not vv_path:
-        print("ERROR: Need both DuskVerb and VintageVerb installed.")
+        print("ERROR: Need both DuskVerb and ReferenceReverb installed.")
         return
 
     print(f"DuskVerb:     {dv_path}")
-    print(f"VintageVerb:  {vv_path}")
+    print(f"ReferenceReverb:  {vv_path}")
     print(f"Output:       {output_dir}")
 
     n_workers = args.jobs if args.jobs > 0 else min(multiprocessing.cpu_count(), 8)

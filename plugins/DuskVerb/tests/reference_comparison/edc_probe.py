@@ -3,8 +3,8 @@
 
 import numpy as np
 import pedalboard
-from config import (SAMPLE_RATE, VALHALLA_PARAM_MAP, apply_duskverb_params,
-                     DUSKVERB_PATHS, VINTAGEVERB_PATHS, find_plugin)
+from config import (SAMPLE_RATE, REFERENCE_PARAM_MAP, apply_duskverb_params,
+                     DUSKVERB_PATHS, REFERENCE_REVERB_PATHS, find_plugin)
 
 def load_plugin(path):
     try:
@@ -15,7 +15,7 @@ def load_plugin(path):
 
 def apply_vv(plugin, params):
     for key, value in params.items():
-        name = VALHALLA_PARAM_MAP.get(key, key.lstrip("_"))
+        name = REFERENCE_PARAM_MAP.get(key, key.lstrip("_"))
         try:
             setattr(plugin, name, value)
         except Exception:
@@ -92,7 +92,7 @@ def main():
         analyze(name, ir)
 
     # VV Room reference
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     vv = load_plugin(vv_path) if vv_path else None
     if vv:
         vv_params = {
