@@ -228,7 +228,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.5f, 0.90f,     // ER: moderate level, slightly tighter timing
     0.70f,           // late gain: calibrated to VV Room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
     1.0f, 1.0f,      // mod: neutral (calibrate from comparison)
-    0.45f, 0.85f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.85 (bright), bassMultScale=0.85
+    0.45f, 0.95f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.95 (bright), bassMultScale=0.85
     0.5f, 1.5f,      // size range
     0.10f,           // ER crossfeed: light
     0.0f,            // inline diffusion: off (long delays = sufficient density)
@@ -241,7 +241,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.08f,           // Hadamard perturbation: mild symmetry breaking
     0.75f,           // ER gain exponent: moderate rolloff
     false,           // useDattorroTank: off (FDN)
-    3.0f,            // decay time scale: 3x (UI 0.2-30s → effective 0.6-90s; allows short RT60 matching)
+    1.0f,            // decay time scale: 1x pass through (was 3x, caused knob-to-sound mismatch vs VV)
     0.0f, 0, 1.0f,   // dual-slope: disabled (standard 16-channel FDN for matched tail energy)
     0.0f, 0.0f,      // short-decay boost: disabled (Room uses lateGainScale calibration)
     0.0f, 0.0f       // gate: disabled
