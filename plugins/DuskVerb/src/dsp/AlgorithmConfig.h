@@ -154,7 +154,7 @@ static constexpr AlgorithmConfig kHall = {
     1.0f, 1.0f,      // ER: full
     0.65f,           // late gain: level-matched to VV Concert Hall (~-9.5 dB wet gain)
     1.0f, 1.0f,      // mod: full
-    0.65f, 0.70f, 1.0f, // damping: trebleMultScale=0.65 (dark), trebleMultScaleMax=0.70 (bright), bassMultScale=1.0
+    0.75f, 0.65f, 1.0f, // damping: trebleMultScale=0.75 (dark end: less HF damping for VV HighShelf=1.0), trebleMultScaleMax=0.65 (bright end: more HF damping for VV HighShelf=0), bassMultScale=1.0
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed: subtle
     0.0f,            // inline diffusion: off (preserve hall character)
@@ -228,7 +228,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.5f, 0.90f,     // ER: moderate level, slightly tighter timing
     0.70f,           // late gain: calibrated to VV Room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
     1.0f, 1.0f,      // mod: neutral (calibrate from comparison)
-    0.45f, 0.95f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.95 (bright), bassMultScale=0.85
+    0.45f, 0.65f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.65 (bright; was 0.95, lowered to fix HF-too-slow shape), bassMultScale=0.85
     0.5f, 1.5f,      // size range
     0.10f,           // ER crossfeed: light
     0.0f,            // inline diffusion: off (long delays = sufficient density)
