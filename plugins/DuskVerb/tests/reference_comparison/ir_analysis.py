@@ -1,5 +1,5 @@
 """
-IR Analysis Library — reusable analysis functions for DuskVerb vs VintageVerb.
+IR Analysis Library — reusable analysis functions for DuskVerb vs ReferenceReverb.
 
 Pure functions: numpy arrays in, dicts out. No I/O, no plotting.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DuskVerb vs VintageVerb — specific preset comparison.
+DuskVerb vs ReferenceReverb — specific preset comparison.
 
 Compares a VV preset against DuskVerb with matched settings.
 Reports: level, RT60, EDC, slapback, spectral balance, echo density, ringing.
@@ -13,9 +13,9 @@ Usage:
 import numpy as np
 import pedalboard
 from config import (
-    SAMPLE_RATE, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-    find_plugin, apply_duskverb_params, apply_valhalla_params,
-    VALHALLA_PARAM_MAP,
+    SAMPLE_RATE, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+    find_plugin, apply_duskverb_params, apply_reference_params,
+    REFERENCE_PARAM_MAP,
 )
 import reverb_metrics as metrics
 
@@ -152,7 +152,7 @@ def print_section(title):
 # Preset definitions
 # ---------------------------------------------------------------------------
 
-# VintageVerb "Fat Snare Room" preset
+# ReferenceReverb "Fat Snare Room" preset
 # MODE: Room (0.1250), COLOR: 1980s (0.333)
 # From screenshot: size 38.8%, attack 12.4%, early diff 68%, late diff 100%,
 # mod rate 1.50Hz, depth 30.8%, hi-cut 4500Hz, lo-cut 10Hz,
@@ -201,7 +201,7 @@ DV_FAT_SNARE_ROOM = {
 def main():
     # Load plugins
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
 
     if not dv_path:
         print("ERROR: DuskVerb not found"); return
@@ -214,7 +214,7 @@ def main():
     # DIAGNOSTIC
     # -----------------------------------------------------------------------
     print_section("Configuration: VV Fat Snare Room vs DV Room")
-    print(f"  VintageVerb: Room mode, 1980s color")
+    print(f"  ReferenceReverb: Room mode, 1980s color")
     print(f"    decay=0.70 (display), size=38.8%, predelay=9ms")
     print(f"    hi-cut=4500Hz, highshelf=-24dB, bassmult=1.25X")
     print()
@@ -233,7 +233,7 @@ def main():
     flush(dv, 10.0)  # VV Room needs long flush
 
     if vv:
-        apply_valhalla_params(vv, VV_FAT_SNARE_ROOM)
+        apply_reference_params(vv, VV_FAT_SNARE_ROOM)
         flush(vv, 10.0)
 
     # Use longer IR capture for VV Room (long tails)
@@ -249,7 +249,7 @@ def main():
     if vv:
         flush(vv, 10.0)
         _, vv_out, vv_gain = measure_wet_gain(vv)
-        print(f"  VintageVerb:  input={in_db:+.1f}dB  output={vv_out:+.1f}dB  gain={vv_gain:+.1f}dB")
+        print(f"  ReferenceReverb:  input={in_db:+.1f}dB  output={vv_out:+.1f}dB  gain={vv_gain:+.1f}dB")
         print(f"  Delta: {dv_gain - vv_gain:+.1f}dB")
 
     # -----------------------------------------------------------------------
@@ -316,7 +316,7 @@ def main():
 
     if vv:
         vv_peaks = find_slapback_peaks(vv_ir_l)
-        print(f"\n  VintageVerb Fat Snare Room — top echoes:")
+        print(f"\n  ReferenceReverb Fat Snare Room — top echoes:")
         if not vv_peaks:
             print(f"    (none)")
         else:
@@ -349,7 +349,7 @@ def main():
           f"@ {dv_ring['worst_freq_hz']:.0f}Hz")
     if vv:
         vv_ring = metrics.detect_modal_resonances(vv_ir_l, SR)
-        print(f"  VintageVerb:  max prominence = {vv_ring['max_peak_prominence_db']:.1f}dB "
+        print(f"  ReferenceReverb:  max prominence = {vv_ring['max_peak_prominence_db']:.1f}dB "
               f"@ {vv_ring['worst_freq_hz']:.0f}Hz")
 
     # -----------------------------------------------------------------------
@@ -390,7 +390,7 @@ def main():
     if vv and len(vv_ir_l) > 100:
         tail_len_vv = min(int(SR * 2), len(vv_ir_l), len(vv_ir_r))
         vv_corr = float(np.corrcoef(vv_ir_l[:tail_len_vv], vv_ir_r[:tail_len_vv])[0, 1])
-        print(f"  VintageVerb:  L-R correlation = {vv_corr:.3f}")
+        print(f"  ReferenceReverb:  L-R correlation = {vv_corr:.3f}")
 
     # -----------------------------------------------------------------------
     # 9. Tail smoothness
@@ -402,7 +402,7 @@ def main():
 
     if vv and len(vv_ir_l) > 100:
         vv_smooth = metrics.tail_smoothness(vv_ir_l, SR)
-        print(f"  VintageVerb:  envelope_std={vv_smooth['envelope_std_db']:.2f}dB  "
+        print(f"  ReferenceReverb:  envelope_std={vv_smooth['envelope_std_db']:.2f}dB  "
               f"decay_rate={vv_smooth['decay_rate_db_per_sec']:.1f}dB/s")
 
     # -----------------------------------------------------------------------

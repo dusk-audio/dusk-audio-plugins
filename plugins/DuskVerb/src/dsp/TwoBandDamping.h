@@ -4,9 +4,8 @@
 // Uses a first-order lowpass at the crossover frequency to split the signal,
 // then applies independent gains below (g_low) and above (g_high) the crossover.
 //
-// This is the "Bass Multiply / Treble Multiply" architecture from the Lexicon 480L:
-// lows can sustain longer than mids (bassMultiply > 1) while highs roll off faster
-// (trebleMultiply < 1).
+// Classic "Bass Multiply / Treble Multiply" architecture: lows can sustain longer
+// than mids (bassMultiply > 1) while highs roll off faster (trebleMultiply < 1).
 class TwoBandDamping
 {
 public:

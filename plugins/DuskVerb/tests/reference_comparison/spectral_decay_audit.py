@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Spectral decay audit: 1/3-octave RT60 comparison between DuskVerb and VintageVerb.
+"""Spectral decay audit: 1/3-octave RT60 comparison between DuskVerb and ReferenceReverb.
 
 Captures IRs for representative presets per algorithm, measures RT60 at every
 1/3-octave band, and prints a detailed comparison showing where DV's frequency
@@ -16,8 +16,8 @@ from pedalboard import load_plugin
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import (
-    SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-    apply_duskverb_params, apply_valhalla_params,
+    SAMPLE_RATE, find_plugin, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+    apply_duskverb_params, apply_reference_params,
 )
 from generate_test_signals import make_impulse
 from preset_suite import (
@@ -133,7 +133,7 @@ def capture_ir_pair(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
     impulse = make_impulse(sig_dur)
 
     # Capture VV IR
-    apply_valhalla_params(vv_plugin, vv_config)
+    apply_reference_params(vv_plugin, vv_config)
     flush_plugin(vv_plugin, sr, flush_dur)
     vv_ir_l, _ = process_stereo(vv_plugin, impulse, sr)
     flush_plugin(vv_plugin, sr, flush_dur)
@@ -293,16 +293,16 @@ def print_algorithm_summary(algo_data):
 def main():
     # Find plugins
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path:
         print("ERROR: DuskVerb plugin not found")
         sys.exit(1)
     if not vv_path:
-        print("ERROR: VintageVerb plugin not found")
+        print("ERROR: ReferenceReverb plugin not found")
         sys.exit(1)
 
     print(f"DuskVerb:     {dv_path}")
-    print(f"VintageVerb:  {vv_path}")
+    print(f"ReferenceReverb:  {vv_path}")
     print(f"Sample rate:  {SAMPLE_RATE} Hz")
 
     dv_plugin = load_plugin(dv_path)

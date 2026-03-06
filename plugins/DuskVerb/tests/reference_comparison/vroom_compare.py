@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-DuskVerb Room vs ValhallaRoom "SmallWoodRoom" preset comparison.
+DuskVerb Room vs ReferenceRoom "SmallWoodRoom" preset comparison.
 
-ValhallaRoom's "Dark Room" is a short, dark room reverb — completely different
-from VintageVerb Room (which is a long-sustaining mode with ~55s RT60).
+ReferenceRoom's "Dark Room" is a short, dark room reverb — completely different
+from ReferenceReverb Room (which is a long-sustaining mode with ~55s RT60).
 
 This test compares:
   - Level (absolute wet gain)
@@ -25,8 +25,8 @@ SmallWoodRoom preset (from user screenshot):
 import numpy as np
 import pedalboard
 from config import (
-    SAMPLE_RATE, DUSKVERB_PATHS, VALHALLAROOM_PATHS,
-    find_plugin, apply_duskverb_params, apply_valhallaroom_params,
+    SAMPLE_RATE, DUSKVERB_PATHS, REFERENCE_ROOM_PATHS,
+    find_plugin, apply_duskverb_params, apply_reference_room_params,
 )
 import reverb_metrics as metrics
 
@@ -153,11 +153,11 @@ def compute_edc_at_times(ir, times_sec):
 
 
 # ---------------------------------------------------------------------------
-# ValhallaRoom "SmallWoodRoom" preset (Dark Room type)
+# ReferenceRoom "SmallWoodRoom" preset (Dark Room type)
 # ---------------------------------------------------------------------------
 # Translated from the user's screenshot to pedalboard 0-1 normalized params.
 #
-# ValhallaRoom type mapping (12 types, evenly spaced 0-1):
+# ReferenceRoom type mapping (12 types, evenly spaced 0-1):
 #   0.000 = Large Room, 0.083 = Medium Room, 0.167 = Bright Room,
 #   0.250 = Large Chamber, 0.333 = Dark Room, 0.417 = Dark Chamber,
 #   0.500 = Dark Hall, 0.583 = Bright Hall, 0.667 = Large Hall,
@@ -230,7 +230,7 @@ def print_section(title):
 def main():
     # Load plugins
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vr_path = find_plugin(VALHALLAROOM_PATHS)
+    vr_path = find_plugin(REFERENCE_ROOM_PATHS)
 
     if not dv_path:
         print("ERROR: DuskVerb not found")
@@ -255,7 +255,7 @@ def main():
     print(f"  Fast-group effective RT60 = {DV_ROOM_MATCHED['decay_time'] * 10.0 * 0.15:.1f}s")
     print(f"  Slow-group effective RT60 = {DV_ROOM_MATCHED['decay_time'] * 10.0:.1f}s")
     print()
-    print(f"  Target: ValhallaRoom SmallWoodRoom has ~0.6s decay.")
+    print(f"  Target: ReferenceRoom SmallWoodRoom has ~0.6s decay.")
 
     # -----------------------------------------------------------------------
     # Configure plugins
@@ -264,7 +264,7 @@ def main():
     flush(dv)
 
     if vr:
-        apply_valhallaroom_params(vr, VROOM_SMALLWOODROOM)
+        apply_reference_room_params(vr, VROOM_SMALLWOODROOM)
         flush(vr)
 
     # -----------------------------------------------------------------------
@@ -277,7 +277,7 @@ def main():
     if vr:
         flush(vr)
         _, vr_out, vr_gain = measure_wet_gain(vr)
-        print(f"  ValhallaRoom: input={in_db:+.1f}dB  output={vr_out:+.1f}dB  gain={vr_gain:+.1f}dB")
+        print(f"  ReferenceRoom: input={in_db:+.1f}dB  output={vr_out:+.1f}dB  gain={vr_gain:+.1f}dB")
         print(f"  Delta: {dv_gain - vr_gain:+.1f}dB")
 
     # -----------------------------------------------------------------------
@@ -342,7 +342,7 @@ def main():
 
     if vr:
         vr_peaks = find_slapback_peaks(vr_ir_l)
-        print(f"\n  ValhallaRoom SmallWoodRoom — top echoes:")
+        print(f"\n  ReferenceRoom SmallWoodRoom — top echoes:")
         if not vr_peaks:
             print(f"    (none — clean diffuse buildup)")
         else:
@@ -376,7 +376,7 @@ def main():
 
     if vr:
         vr_ring = metrics.detect_modal_resonances(vr_ir_l, SR)
-        print(f"  ValhallaRoom: max prominence = {vr_ring['max_peak_prominence_db']:.1f}dB "
+        print(f"  ReferenceRoom: max prominence = {vr_ring['max_peak_prominence_db']:.1f}dB "
               f"@ {vr_ring['worst_freq_hz']:.0f}Hz")
 
     # -----------------------------------------------------------------------
@@ -416,7 +416,7 @@ def main():
 
     if vr:
         vr_smooth = metrics.tail_smoothness(vr_ir_l, SR)
-        print(f"  ValhallaRoom: envelope_std={vr_smooth['envelope_std_db']:.2f}dB  "
+        print(f"  ReferenceRoom: envelope_std={vr_smooth['envelope_std_db']:.2f}dB  "
               f"decay_rate={vr_smooth['decay_rate_db_per_sec']:.1f}dB/s")
 
     # -----------------------------------------------------------------------
@@ -430,7 +430,7 @@ def main():
     if vr:
         tail_len_vr = min(int(SR * 1), len(vr_ir_l), len(vr_ir_r))
         vr_corr = float(np.corrcoef(vr_ir_l[:tail_len_vr], vr_ir_r[:tail_len_vr])[0, 1])
-        print(f"  ValhallaRoom: L-R correlation = {vr_corr:.3f}")
+        print(f"  ReferenceRoom: L-R correlation = {vr_corr:.3f}")
 
     # -----------------------------------------------------------------------
     # Summary
@@ -438,7 +438,7 @@ def main():
     print_section("Summary: Key Differences")
     print(f"  DuskVerb Room has decayTimeScale=10.0, so UI decay 0.6s → effective 6.0s")
     print(f"  Plus dual-slope (fast=0.9s, slow=6.0s) makes it a long reverb at any setting.")
-    print(f"  ValhallaRoom Dark Room is a true short room reverb with 0.6s decay.")
+    print(f"  ReferenceRoom Dark Room is a true short room reverb with 0.6s decay.")
     print()
     print(f"  To make DuskVerb Room match short room presets, consider:")
     print(f"    1. Lower decayTimeScale (10.0 → 1.0 or 2.0) to preserve short decay range")
