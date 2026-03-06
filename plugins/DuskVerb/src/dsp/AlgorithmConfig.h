@@ -31,6 +31,11 @@ struct AlgorithmConfig
                                // >1.0 means no HF rolloff (flat, like VV at HighShelf=0).
     float bassMultScale;
 
+    float highCrossoverHz;  // Three-band damping: mid/high crossover frequency (Hz).
+                            // Below user crossover: gLow = gBase^(1/bassMultiply).
+                            // User crossover to highCrossover: gMid = gBase (natural decay).
+                            // Above highCrossover: gHigh = gBase^(1/trebleMultiply).
+
     float sizeRangeMin;
     float sizeRangeMax;
 
@@ -119,6 +124,7 @@ static constexpr AlgorithmConfig kPlate = {
     0.47f,           // late gain: reduced from 0.52 to fix Large Plate +5.0 dB
     0.5f, 1.0f,      // mod: moderate depth for mode blurring, normal rate
     1.30f, 1.4f, 1.0f, // damping: trebleMultScale=1.30 (dark), trebleMultScaleMax=1.4 (bright), bassMultScale=1.0
+    6000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
     0.0f,            // ER crossfeed: off (no ERs)
     0.10f,           // inline diffusion: mild density boost
@@ -154,7 +160,8 @@ static constexpr AlgorithmConfig kHall = {
     1.0f, 1.0f,      // ER: full
     0.65f,           // late gain: level-matched to VV Concert Hall (~-9.5 dB wet gain)
     0.5f, 1.0f,      // mod: depth halved to match VV Hall chorus width (DV was 2x wider), rate 1x
-    0.75f, 0.65f, 1.0f, // damping: trebleMultScale=0.75 (dark end: less HF damping for VV HighShelf=1.0), trebleMultScaleMax=0.65 (bright end: more HF damping for VV HighShelf=0), bassMultScale=1.0
+    0.75f, 0.55f, 1.0f, // damping: trebleMultScale=0.75 (dark end), trebleMultScaleMax=0.55 (bright end: aggressive HF damping with three-band mid at gBase), bassMultScale=1.0
+    6000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed: subtle
     0.0f,            // inline diffusion: off (preserve hall character)
@@ -192,6 +199,7 @@ static constexpr AlgorithmConfig kChamber = {
     0.45f,           // late gain: level-matched to VV Chamber (~-10.5 dB wet gain)
     0.8f, 1.0f,      // mod: increased depth for mode blurring, normal rate
     1.20f, 1.1f, 1.0f, // damping: trebleMultScale=1.20 (dark), trebleMultScaleMax=1.1 (bright), bassMultScale=1.0
+    5000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
     0.2f,            // ER crossfeed: medium
     0.10f,           // inline diffusion: mild density boost
@@ -229,6 +237,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.70f,           // late gain: calibrated to VV Room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
     1.5f, 1.0f,      // mod: depth 1.5x to match VV Room chorus (median ~6 Hz; DV was ~4 Hz at 1.0x), rate 1x
     0.45f, 0.65f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.65 (bright; was 0.95, lowered to fix HF-too-slow shape), bassMultScale=0.85
+    6000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
     0.10f,           // ER crossfeed: light
     0.0f,            // inline diffusion: off (long delays = sufficient density)
@@ -266,6 +275,7 @@ static constexpr AlgorithmConfig kAmbient = {
     0.60f,           // late gain: preset-suite avg was +1.9 dB at 0.70; 0.60 reduces ~1.3 dB
     1.5f, 1.3f,      // mod: heavy depth and rate
     0.60f, 1.0f, 1.0f, // damping: trebleMultScale=0.60 (dark), trebleMultScaleMax=1.0 (bright), bassMultScale=1.0
+    8000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
     0.0f,            // ER crossfeed: off (no ERs)
     0.0f,            // inline diffusion: off (preserve ambient character)
