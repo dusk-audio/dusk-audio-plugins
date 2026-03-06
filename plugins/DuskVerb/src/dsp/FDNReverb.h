@@ -146,7 +146,7 @@ private:
     bool fbLP4thOrder_ = false; // true = cascade two identical sections (L-R 24 dB/oct)
 
     // Structural HF damping: gentle first-order LP modeling air absorption.
-    // Per-algorithm, applied after TwoBandDamping in feedback loop.
+    // Per-algorithm, applied after ThreeBandDamping in feedback loop.
     // Effective frequency scales with treble_multiply: lower treble → lower cutoff → more damping.
     float structHFState_[N] {};
     float structHFCoeff_ = 0.0f;
