@@ -407,8 +407,10 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     lastTrebleMult_ = mult;
     // Nonlinear treble scaling: squared curve interpolates between dark-end
     // (trebleMultScale) and bright-end (trebleMultScaleMax) targets.
-    // At treble=1.0: scaledTreble = trebleMultScaleMax (flat/bright, like VV HighShelf=0)
-    // At treble=0.0: scaledTreble = trebleMultScale (steep HF rolloff)
+    // At treble=1.0: scaledTreble = trebleMultScaleMax (bright VV presets need
+    //   more HF damping to match VV's inherent structural HF loss)
+    // At treble=0.0: scaledTreble = trebleMultScale (dark VV presets need less
+    //   HF damping because VV's user-applied HighShelf is already heavy)
     float trebleCurve = mult * mult;
     float scaledTreble = config_->trebleMultScale * (1.0f - trebleCurve)
                        + config_->trebleMultScaleMax * trebleCurve;
