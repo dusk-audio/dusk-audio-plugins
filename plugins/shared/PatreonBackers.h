@@ -97,11 +97,17 @@ namespace PatreonCredits
         // "Jane Smith",
     };
 
-    // Supporter Tier ($5/month)
+    // Supporter Tier ($3/month)
     // Development updates, name in credits
     inline const std::vector<juce::String> supporters = {
+        "Jano",
+        "Eblen Macari",
+        "S C",
+    };
+
+    // Past Supporters — thank you for your support!
+    inline const std::vector<juce::String> pastSupporters = {
         "Stefan Windus",
-        "SC",
     };
 
     //==========================================================================
@@ -202,6 +208,13 @@ namespace PatreonCredits
                 result += name + "\n";
         }
 
+        if (!pastSupporters.empty())
+        {
+            result += "\nPAST SUPPORTERS\n\n";
+            for (const auto& name : pastSupporters)
+                result += name + "\n";
+        }
+
         if (result.isEmpty())
             result = "Be the first to support development on Patreon!\n\nYour name could be here!";
 
@@ -226,7 +239,8 @@ namespace PatreonCredits
     inline int getTotalBackerCount()
     {
         return static_cast<int>(platinumBackers.size() + goldBackers.size() +
-                                silverBackers.size() + supporters.size());
+                                silverBackers.size() + supporters.size() +
+                                pastSupporters.size());
     }
 
     /** Get number of backers for a specific tier */
