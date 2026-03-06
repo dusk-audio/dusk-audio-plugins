@@ -52,7 +52,7 @@ ALGO_SETTINGS = {
                     lo_cut=20, hi_cut=20000, width=1.6),
 }
 
-# Reference targets (based on ValhallaVintageVerb / Lexicon measurements)
+# Reference targets (based on ReferenceReverb / reference measurements)
 QUALITY_TARGETS = {
     "echo_density_1000ms": 1000,   # echoes/sec at 1s (Schroeder threshold)
     "modal_ringing_db":    -40,    # max peak above noise floor in tail spectrum

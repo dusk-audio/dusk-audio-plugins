@@ -1,14 +1,14 @@
 """
-Configuration for DuskVerb vs VintageVerb reverb comparison.
+Configuration for DuskVerb vs ReferenceReverb reverb comparison.
 
 Plugin paths, mode pairings, and matched parameter sets.
-VintageVerb v4.0.5 uses 22 modes at step 1/24 (~0.0417).
+ReferenceReverb v4.0.5 uses 22 modes at step 1/24 (~0.0417).
 """
 
 import os
 
 SAMPLE_RATE = 48000
-SIGNAL_DURATION = 12.0  # seconds of tail capture (VintageVerb tails can exceed 8s)
+SIGNAL_DURATION = 12.0  # seconds of tail capture (ReferenceReverb tails can exceed 8s)
 
 # ---------------------------------------------------------------------------
 # Plugin discovery
@@ -18,18 +18,18 @@ DUSKVERB_PATHS = [
     "~/.vst3/DuskVerb.vst3",
 ]
 
-VINTAGEVERB_PATHS = [
-    "/Library/Audio/Plug-Ins/Components/ValhallaVintageVerbAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ValhallaVintageVerbAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ValhallaVintageVerb.component",
-    "~/Library/Audio/Plug-Ins/VST3/ValhallaVintageVerb.vst3",
-    "~/.vst3/ValhallaVintageVerb.vst3",
+REFERENCE_REVERB_PATHS = [
+    "/Library/Audio/Plug-Ins/Components/ReferenceReverbAU64.component",
+    "~/Library/Audio/Plug-Ins/Components/ReferenceReverbAU64.component",
+    "~/Library/Audio/Plug-Ins/Components/ReferenceReverb.component",
+    "~/Library/Audio/Plug-Ins/VST3/ReferenceReverb.vst3",
+    "~/.vst3/ReferenceReverb.vst3",
 ]
 
-VALHALLAROOM_PATHS = [
-    "/Library/Audio/Plug-Ins/Components/ValhallaRoomAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ValhallaRoomAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ValhallaRoom.component",
+REFERENCE_ROOM_PATHS = [
+    "/Library/Audio/Plug-Ins/Components/ReferenceRoomAU64.component",
+    "~/Library/Audio/Plug-Ins/Components/ReferenceRoomAU64.component",
+    "~/Library/Audio/Plug-Ins/Components/ReferenceRoom.component",
 ]
 
 
@@ -59,7 +59,7 @@ def discover_params(plugin):
 
 
 # ---------------------------------------------------------------------------
-# Mode pairings: DuskVerb algorithm <-> VintageVerb color/mode
+# Mode pairings: DuskVerb algorithm <-> ReferenceReverb color/mode
 # ---------------------------------------------------------------------------
 # Each pairing has matched parameters for fair A/B comparison:
 #   - 100% wet (isolate reverb character)
@@ -73,7 +73,7 @@ MODE_PAIRINGS = [
         "auto_calibrate": True,
         "duskverb": {
             "algorithm": "Room",
-            "decay_time": 1.0,          # Medium decay — match VintageVerb Chamber
+            "decay_time": 1.0,          # Medium decay — match ReferenceReverb Chamber
             "size": 0.50,               # Medium size
             "diffusion": 0.70,          # Moderate diffusion
             "treble_multiply": 0.55,    # HF damping
@@ -88,7 +88,7 @@ MODE_PAIRINGS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.1250,      # Room (VV v4.0.5: 22 modes, step 1/24)
             "_colormode": 0.333,        # 1980s (neutral)
             "_decay": 0.10,             # Short-medium decay
@@ -126,7 +126,7 @@ MODE_PAIRINGS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.0417,      # Concert Hall (VV v4.0.5)
             "_colormode": 0.333,        # 1980s (neutral)
             "_decay": 0.18,             # Medium decay to match ~2.5s
@@ -164,7 +164,7 @@ MODE_PAIRINGS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.0833,      # Plate (VV v4.0.5)
             "_colormode": 0.333,        # 1980s (neutral)
             "_decay": 0.15,             # Medium decay to match ~2.0s
@@ -202,7 +202,7 @@ MODE_PAIRINGS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.1667,      # Chamber (VV v4.0.5)
             "_colormode": 0.333,        # 1980s (neutral)
             "_decay": 0.14,             # Medium decay to match ~1.8s
@@ -240,7 +240,7 @@ MODE_PAIRINGS = [
             "hi_cut": 20000,
             "width": 1.6,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.2917,      # Ambience (VV v4.0.5)
             "_colormode": 0.333,        # 1980s (neutral)
             "_decay": 0.35,             # Longer decay to match ~6.0s
@@ -262,14 +262,14 @@ MODE_PAIRINGS = [
 ]
 
 # ---------------------------------------------------------------------------
-# VintageVerb parameter name mapping
+# ReferenceReverb parameter name mapping
 # ---------------------------------------------------------------------------
 # Populated after running: python3 compare_reverbs.py --list-params
 # Maps our semantic names (_mode, _decay, etc.) to pedalboard attribute names.
 # Update these after discovery:
 
-# VintageVerb parameter mapping (discovered via --list-params)
-# All VintageVerb params are 0.0-1.0 normalized.
+# ReferenceReverb parameter mapping (discovered via --list-params)
+# All ReferenceReverb params are 0.0-1.0 normalized.
 #
 # ReverbMode values (22 modes, step = 1/24 ≈ 0.0417):
 #   0.0417 = Concert Hall    0.0833 = Plate           0.1250 = Room
@@ -284,7 +284,7 @@ MODE_PAIRINGS = [
 # ColorMode values (3 color options):
 #   0.000 = 1970s (dark), 0.333 = 1980s (neutral), 0.667 = Now (bright)
 #
-VALHALLA_PARAM_MAP = {
+REFERENCE_PARAM_MAP = {
     "_reverbmode": "reverbmode",    # Algorithm selector (0-1, 22 modes)
     "_colormode": "colormode",      # Color/era selector (0-1, 3 modes)
     "_decay": "decay",              # Decay time (0-1 normalized)
@@ -306,15 +306,15 @@ VALHALLA_PARAM_MAP = {
 
 
 # ---------------------------------------------------------------------------
-# ValhallaRoom parameter name mapping
+# ReferenceRoom parameter name mapping
 # ---------------------------------------------------------------------------
-# All ValhallaRoom params are 0.0-1.0 normalized.
+# All ReferenceRoom params are 0.0-1.0 normalized.
 # Discovered via pedalboard parameter inspection.
 #
 # Type values (12 types, evenly spaced 0-1):
 #   0.000 = Large Room, 0.083 = Medium Room, 0.167 = Bright Room, ...
 #
-VALHALLAROOM_PARAM_MAP = {
+REFERENCE_ROOM_PARAM_MAP = {
     "_type": "type",                    # Algorithm type selector (0-1, 12 types)
     "_space": "space",                  # Space modifier (0-1)
     "_decay": "decay",                  # Decay time (0-1 normalized)
@@ -340,12 +340,12 @@ VALHALLAROOM_PARAM_MAP = {
 }
 
 
-def apply_valhallaroom_params(plugin, config):
-    """Apply ValhallaRoom parameters using the discovered mapping."""
+def apply_reference_room_params(plugin, config):
+    """Apply ReferenceRoom parameters using the discovered mapping."""
     for semantic_key, value in config.items():
         if not semantic_key.startswith('_'):
             continue
-        mapped = VALHALLAROOM_PARAM_MAP.get(semantic_key)
+        mapped = REFERENCE_ROOM_PARAM_MAP.get(semantic_key)
         if mapped is None:
             print(f"  WARNING: No VRoom mapping for {semantic_key}")
             continue
@@ -361,20 +361,20 @@ def apply_valhallaroom_params(plugin, config):
         pass
 
 
-def apply_valhalla_params(plugin, valhalla_config):
-    """Apply VintageVerb parameters using the discovered mapping.
+def apply_reference_params(plugin, reference_config):
+    """Apply ReferenceReverb parameters using the discovered mapping.
 
-    valhalla_config keys start with '_' (semantic names).
-    VALHALLA_PARAM_MAP maps them to actual pedalboard attribute names.
+    reference_config keys start with '_' (semantic names).
+    REFERENCE_PARAM_MAP maps them to actual pedalboard attribute names.
     """
-    if not VALHALLA_PARAM_MAP:
-        print("WARNING: VALHALLA_PARAM_MAP is empty. Run --list-params first.")
+    if not REFERENCE_PARAM_MAP:
+        print("WARNING: REFERENCE_PARAM_MAP is empty. Run --list-params first.")
         return
 
-    for semantic_key, value in valhalla_config.items():
+    for semantic_key, value in reference_config.items():
         if not semantic_key.startswith('_'):
             continue
-        mapped = VALHALLA_PARAM_MAP.get(semantic_key)
+        mapped = REFERENCE_PARAM_MAP.get(semantic_key)
         if mapped is None:
             print(f"  WARNING: No mapping for {semantic_key}")
             continue
@@ -384,7 +384,7 @@ def apply_valhalla_params(plugin, valhalla_config):
             print(f"  WARNING: Failed to set {mapped}={value}: {e}")
 
     # Always set 100% wet
-    mix_attr = VALHALLA_PARAM_MAP.get("_mix")
+    mix_attr = REFERENCE_PARAM_MAP.get("_mix")
     if mix_attr:
         try:
             setattr(plugin, mix_attr, 1.0)

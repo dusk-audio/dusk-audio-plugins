@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DuskVerb vs Valhalla VintageVerb comparison tool.
+DuskVerb vs Reference ReferenceReverb comparison tool.
 
 Loads both plugins via pedalboard, processes identical test signals through
 each, runs comprehensive reverb analysis metrics, generates visual reports,
@@ -26,11 +26,11 @@ from pedalboard import load_plugin
 
 from config import (
     SAMPLE_RATE, SIGNAL_DURATION,
-    DUSKVERB_PATHS, VINTAGEVERB_PATHS, VALHALLAROOM_PATHS,
-    MODE_PAIRINGS, VALHALLA_PARAM_MAP, VALHALLAROOM_PARAM_MAP,
+    DUSKVERB_PATHS, REFERENCE_REVERB_PATHS, REFERENCE_ROOM_PATHS,
+    MODE_PAIRINGS, REFERENCE_PARAM_MAP, REFERENCE_ROOM_PARAM_MAP,
     TUNING_MAP,
     find_plugin, discover_params,
-    apply_duskverb_params, apply_valhalla_params, apply_valhallaroom_params,
+    apply_duskverb_params, apply_reference_params, apply_reference_room_params,
 )
 from generate_test_signals import (
     make_impulse, make_log_sweep, make_noise_burst,
@@ -57,11 +57,11 @@ def flush_plugin(plugin, sr, duration_sec=2.0):
     process_stereo(plugin, silence, sr)
 
 
-def measure_vh_rt60(plugin, valhalla_config, decay_val, sr, apply_fn=None):
+def measure_ref_rt60(plugin, reference_config, decay_val, sr, apply_fn=None):
     """Set reference plugin decay and measure RT60, flushing state first."""
     if apply_fn is None:
-        apply_fn = apply_valhalla_params
-    trial_config = dict(valhalla_config)
+        apply_fn = apply_reference_params
+    trial_config = dict(reference_config)
     trial_config["_decay"] = decay_val
     apply_fn(plugin, trial_config)
 
@@ -77,16 +77,16 @@ def measure_vh_rt60(plugin, valhalla_config, decay_val, sr, apply_fn=None):
     return rt60
 
 
-def calibrate_decay(plugin, target_rt60, valhalla_config, sr, max_iter=14, tolerance=0.10,
+def calibrate_decay(plugin, target_rt60, reference_config, sr, max_iter=14, tolerance=0.10,
                     apply_fn=None):
     """Binary search a reference plugin's _decay parameter to match a target RT60.
 
     First sweeps to understand the decay mapping direction, then binary searches.
 
     Args:
-        plugin: loaded reference plugin (VintageVerb or ValhallaRoom)
+        plugin: loaded reference plugin (ReferenceReverb or ReferenceRoom)
         target_rt60: desired RT60 in seconds (from DuskVerb config)
-        valhalla_config: dict of VH params (mode, color, etc.)
+        reference_config: dict of VH params (mode, color, etc.)
         sr: sample rate
         max_iter: maximum binary search iterations
         tolerance: acceptable RT60 ratio error (0.10 = ±10%)
@@ -99,7 +99,7 @@ def calibrate_decay(plugin, target_rt60, valhalla_config, sr, max_iter=14, toler
     probe_rt60s = {}
     print(f"    Probing decay mapping...")
     for val in probe_points:
-        rt60 = measure_vh_rt60(plugin, valhalla_config, val, sr, apply_fn=apply_fn)
+        rt60 = measure_ref_rt60(plugin, reference_config, val, sr, apply_fn=apply_fn)
         probe_rt60s[val] = rt60
         rt60_str = f"{rt60:.2f}s" if rt60 else "N/A"
         print(f"      decay={val:.1f} -> RT60={rt60_str}")
@@ -135,7 +135,7 @@ def calibrate_decay(plugin, target_rt60, valhalla_config, sr, max_iter=14, toler
 
     for iteration in range(max_iter):
         mid = (lo + hi) / 2.0
-        rt60 = measure_vh_rt60(plugin, valhalla_config, mid, sr, apply_fn=apply_fn)
+        rt60 = measure_ref_rt60(plugin, reference_config, mid, sr, apply_fn=apply_fn)
 
         if rt60 is None or rt60 <= 0:
             # Measurement failed — try the other direction
@@ -265,7 +265,7 @@ def print_comparison_header(mode_name):
     print(f"{'='*78}")
 
 
-def print_rt60_comparison(dv_rt60, vh_rt60=None, ref_name="VintageVerb"):
+def print_rt60_comparison(dv_rt60, vh_rt60=None, ref_name="ReferenceReverb"):
     """Print RT60 per band comparison table."""
     print(f"\n  --- RT60 Per Octave Band ---")
     if vh_rt60:
@@ -291,7 +291,7 @@ def print_rt60_comparison(dv_rt60, vh_rt60=None, ref_name="VintageVerb"):
             print(f"  {band:>10s}  {dv:.3f}s" if dv else f"  {band:>10s}  N/A")
 
 
-def print_ringing_analysis(dv_res, vh_res=None, label="Impulse", ref_name="VintageVerb"):
+def print_ringing_analysis(dv_res, vh_res=None, label="Impulse", ref_name="ReferenceReverb"):
     """Print modal resonance analysis."""
     print(f"\n  --- Modal Ringing ({label}) ---")
     print(f"  DuskVerb:     {dv_res['max_peak_prominence_db']:.1f} dB peak at "
@@ -307,7 +307,7 @@ def print_ringing_analysis(dv_res, vh_res=None, label="Impulse", ref_name="Vinta
             print(f"    {freq:7.0f} Hz: +{prom:.1f} dB (seen in {windows} windows)")
 
 
-def print_decay_comparison(dv_rates, vh_rates=None, ref_name="VintageVerb"):
+def print_decay_comparison(dv_rates, vh_rates=None, ref_name="ReferenceReverb"):
     """Print frequency-dependent decay rates."""
     print(f"\n  --- Decay Rates (dB/sec per band) ---")
     if vh_rates:
@@ -325,7 +325,7 @@ def print_decay_comparison(dv_rates, vh_rates=None, ref_name="VintageVerb"):
             print(f"  {band:>10s}  {dv:>11.1f}")
 
 
-def print_freq_response(dv_fr, vh_fr=None, ref_name="VintageVerb"):
+def print_freq_response(dv_fr, vh_fr=None, ref_name="ReferenceReverb"):
     """Print frequency response comparison."""
     print(f"\n  --- Frequency Response ---")
     if vh_fr:
@@ -342,7 +342,7 @@ def print_freq_response(dv_fr, vh_fr=None, ref_name="VintageVerb"):
             print(f"  {band:>20s}  {dv_fr[band]:>11.1f}")
 
 
-def print_stereo_analysis(dv_stereo, vh_stereo=None, ref_name="VintageVerb"):
+def print_stereo_analysis(dv_stereo, vh_stereo=None, ref_name="ReferenceReverb"):
     """Print stereo decorrelation summary."""
     print(f"\n  --- Stereo Decorrelation ---")
     times_dv, corr_dv = dv_stereo
@@ -365,7 +365,7 @@ def print_tuning_recommendations(mode_name, dv_results, vh_results=None):
     recommendations = []
 
     if vh_results is None:
-        print("  (No VintageVerb reference — showing DuskVerb self-analysis only)")
+        print("  (No ReferenceReverb reference — showing DuskVerb self-analysis only)")
         # Still check for obvious issues
         dv_rt60 = dv_results.get("impulse", {}).get("rt60", {})
         if dv_rt60:
@@ -472,11 +472,11 @@ def save_outputs(outputs, mode_name, plugin_name, output_dir):
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="DuskVerb vs Valhalla VintageVerb comparison")
+        description="DuskVerb vs Reference ReferenceReverb comparison")
     parser.add_argument("--mode", type=str, default=None,
                         help="Compare specific mode (Room/Hall/Plate/Chamber/Ambient)")
     parser.add_argument("--duskverb-only", action="store_true",
-                        help="Analyze DuskVerb alone (no VintageVerb needed)")
+                        help="Analyze DuskVerb alone (no ReferenceReverb needed)")
     parser.add_argument("--list-params", action="store_true",
                         help="Print all accessible parameters for both plugins")
     parser.add_argument("--save", action="store_true",
@@ -486,7 +486,7 @@ def main():
     parser.add_argument("--json", action="store_true",
                         help="Save results as JSON")
     parser.add_argument("--calibrate", action="store_true",
-                        help="Calibrate VintageVerb decay to match DuskVerb RT60")
+                        help="Calibrate ReferenceReverb decay to match DuskVerb RT60")
     args = parser.parse_args()
 
     # --- Load plugins ---
@@ -500,26 +500,26 @@ def main():
     duskverb = load_plugin(dv_path)
     print(f"  Loaded: {duskverb}")
 
-    valhalla = None
-    valhallaroom = None
+    reference_reverb = None
+    reference_room = None
     if not args.duskverb_only:
-        vh_path = find_plugin(VINTAGEVERB_PATHS)
+        vh_path = find_plugin(REFERENCE_REVERB_PATHS)
         if vh_path:
-            print(f"Loading VintageVerb: {vh_path}")
-            valhalla = load_plugin(vh_path)
-            print(f"  Loaded: {valhalla}")
+            print(f"Loading ReferenceReverb: {vh_path}")
+            reference_reverb = load_plugin(vh_path)
+            print(f"  Loaded: {reference_reverb}")
         else:
-            print("WARNING: VintageVerb not found.")
+            print("WARNING: ReferenceReverb not found.")
 
-        vr_path = find_plugin(VALHALLAROOM_PATHS)
+        vr_path = find_plugin(REFERENCE_ROOM_PATHS)
         if vr_path:
-            print(f"Loading ValhallaRoom: {vr_path}")
-            valhallaroom = load_plugin(vr_path)
-            print(f"  Loaded: {valhallaroom}")
+            print(f"Loading ReferenceRoom: {vr_path}")
+            reference_room = load_plugin(vr_path)
+            print(f"  Loaded: {reference_room}")
         else:
-            print("WARNING: ValhallaRoom not found.")
+            print("WARNING: ReferenceRoom not found.")
 
-        if not valhalla and not valhallaroom:
+        if not reference_reverb and not reference_room:
             print("No reference plugins found. Running DuskVerb-only analysis.")
 
     # --- List params mode ---
@@ -530,21 +530,21 @@ def main():
         for name, val in discover_params(duskverb):
             print(f"  {name:30s} = {val}")
 
-        if valhalla:
+        if reference_reverb:
             print(f"\n{'='*60}")
-            print("VintageVerb parameters:")
+            print("ReferenceReverb parameters:")
             print(f"{'='*60}")
-            for name, val in discover_params(valhalla):
+            for name, val in discover_params(reference_reverb):
                 print(f"  {name:30s} = {val}")
 
-        if valhallaroom:
+        if reference_room:
             print(f"\n{'='*60}")
-            print("ValhallaRoom parameters:")
+            print("ReferenceRoom parameters:")
             print(f"{'='*60}")
-            for name, val in discover_params(valhallaroom):
+            for name, val in discover_params(reference_room):
                 print(f"  {name:30s} = {val}")
 
-        if not valhalla and not valhallaroom:
+        if not reference_reverb and not reference_room:
             print("\nNo reference plugins loaded (install them or check paths in config.py)")
 
         return
@@ -585,19 +585,19 @@ def main():
                                                  signals["_log_sweep_inverse"])
 
         # Determine which reference plugin to use for this mode
-        ref_type = pairing.get("reference", "vintageverb")
-        if ref_type == "valhallaroom" and valhallaroom:
-            ref_plugin = valhallaroom
-            ref_config = pairing.get("valhallaroom", {})
-            ref_name = "ValhallaRoom"
-            ref_apply = apply_valhallaroom_params
-            ref_param_map = VALHALLAROOM_PARAM_MAP
-        elif valhalla:
-            ref_plugin = valhalla
-            ref_config = pairing.get("valhalla", {})
-            ref_name = "VintageVerb"
-            ref_apply = apply_valhalla_params
-            ref_param_map = VALHALLA_PARAM_MAP
+        ref_type = pairing.get("reference", "reference_reverb")
+        if ref_type == "reference_room" and reference_room:
+            ref_plugin = reference_room
+            ref_config = pairing.get("reference_room", {})
+            ref_name = "ReferenceRoom"
+            ref_apply = apply_reference_room_params
+            ref_param_map = REFERENCE_ROOM_PARAM_MAP
+        elif reference_reverb:
+            ref_plugin = reference_reverb
+            ref_config = pairing.get("reference", {})
+            ref_name = "ReferenceReverb"
+            ref_apply = apply_reference_params
+            ref_param_map = REFERENCE_PARAM_MAP
         else:
             ref_plugin = None
             ref_config = {}
@@ -801,7 +801,7 @@ def main():
 
         all_results[mode_name] = {
             "duskverb": dv_results,
-            "valhalla": vh_results,
+            "reference": vh_results,
             "ref_name": ref_label,
         }
 
@@ -809,7 +809,7 @@ def main():
         if args.save:
             save_outputs(dv_outputs, mode_name, "duskverb", OUTPUT_DIR)
             if vh_outputs:
-                ref_file_tag = ref_label.lower().replace(" ", "_") if ref_label else "valhalla"
+                ref_file_tag = ref_label.lower().replace(" ", "_") if ref_label else "reference"
                 save_outputs(vh_outputs, mode_name, ref_file_tag, OUTPUT_DIR)
             print(f"\n  WAVs saved to {OUTPUT_DIR}/{mode_name.lower()}/")
 
@@ -839,8 +839,8 @@ def main():
 
         for mode_name, data in all_results.items():
             dv_rt60 = data["duskverb"].get("impulse", {}).get("rt60", {})
-            vh_rt60 = (data["valhalla"].get("impulse", {}).get("rt60", {})
-                       if data["valhalla"] else {})
+            vh_rt60 = (data["reference"].get("impulse", {}).get("rt60", {})
+                       if data["reference"] else {})
             print(f"  {mode_name:>10s}", end="")
             for band in metrics.OCTAVE_BANDS:
                 dv = dv_rt60.get(band)

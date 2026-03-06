@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IR Analysis Report — comprehensive DuskVerb vs VintageVerb comparison.
+IR Analysis Report — comprehensive DuskVerb vs ReferenceReverb comparison.
 
 Loads captured IRs, runs all 5 analysis categories, and produces:
   - ir_report.json       (machine-readable)
@@ -223,7 +223,7 @@ def generate_text_report(results, mod_unreliable_count, total_non_gate):
     L = lines.append
 
     L("=" * 79)
-    L("DuskVerb vs VintageVerb — IR Analysis Report")
+    L("DuskVerb vs ReferenceReverb — IR Analysis Report")
     L(f"Generated: {datetime.date.today().isoformat()}  |  "
       f"{total_non_gate} presets  |  5 algorithms")
     L("=" * 79)

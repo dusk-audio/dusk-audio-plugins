@@ -86,7 +86,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets(){
         { "Mix Glue",         "Mix",      2, 0.5f,   8.0f, 0.30f, 1.00f, 0.74f, 1000.0f, 0.40f, 0.10f, 0.30f, 0.40f, 0.30f, 0.08f, 120.0f, 12000.0f, 1.0f  },  // moved to Chamber (was Room algo 3)
         { "Mix Space",        "Mix",      1, 1.2f,  15.0f, 0.50f, 0.79f, 1.0f,  1000.0f, 0.55f, 0.25f, 0.50f, 0.45f, 0.45f, 0.10f, 100.0f, 12000.0f, 1.0f  },  // eff treble 0.51 (compensated: 0.62 * 0.83/0.65)
 
-        // -- Rooms (Chamber algo for short rooms, Room algo for long-sustaining VV Room character) --
+        // -- Rooms (Chamber algo for short rooms, Room algo for long-sustaining room character) --
         { "Small Room",       "Rooms",    2, 0.6f,   3.0f, 0.30f, 1.00f, 0.74f, 1200.0f, 0.40f, 0.10f, 0.40f, 0.65f, 0.30f, 0.25f,  80.0f, 12000.0f, 0.75f },  // Chamber algo — short room
         { "Medium Room",      "Rooms",    2, 1.2f,  12.0f, 0.50f, 1.00f, 0.70f, 1000.0f, 0.55f, 0.15f, 0.50f, 0.55f, 0.50f, 0.30f,  60.0f, 12000.0f, 1.0f  },  // Chamber algo — short room
         { "Large Room",       "Rooms",    2, 2.0f,  20.0f, 0.70f, 1.00f, 0.77f,  900.0f, 0.60f, 0.20f, 0.50f, 0.60f, 0.55f, 0.30f,  50.0f, 13000.0f, 1.10f },  // Chamber algo — short room

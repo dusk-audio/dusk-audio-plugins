@@ -207,7 +207,7 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
             delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
 
-            // Advance LFO with Lexicon-style "Wander" drift.
+            // Advance LFO with "Wander" drift (classic reverb technique).
             // Adds ±8% random perturbation to the phase increment each sample
             // so the modulation never exactly repeats — organic, not mechanical.
             float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
@@ -726,7 +726,7 @@ void FDNReverb::updateDecayCoefficients()
         // Mid-band gain: treble-direction-dependent.
         // trebleMultiply < 1 (Hall/Room/Ambient): HF is being damped, so mid band at
         //   gBase gives neutral decay in 1-6kHz → less damping than old two-band.
-        //   Concert Wave benefits: mid-range sustains closer to VV's flat decay.
+        //   Concert Wave benefits: mid-range sustains closer to a flat reference decay.
         // trebleMultiply >= 1 (Plate/Chamber): HF is being extended (gHigh > gBase),
         //   so gMid = gHigh preserves the old two-band behavior. Otherwise gMid = gBase
         //   would create a spectral dip where mids decay faster than highs.

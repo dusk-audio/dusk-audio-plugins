@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Preset-level DuskVerb vs VintageVerb comparison suite.
+Preset-level DuskVerb vs ReferenceReverb comparison suite.
 
 Loads qualifying VV factory presets, translates parameters to DV equivalents,
 calibrates decay time via binary search, renders impulse responses through both
 plugins, and compares key metrics.
 
-Phase 2 of the DuskVerb ↔ VintageVerb matching plan.
+Phase 2 of the DuskVerb ↔ ReferenceReverb matching plan.
 
 Usage:
     python3 preset_suite.py                      # Run all qualifying presets
@@ -25,8 +25,8 @@ import numpy as np
 from pedalboard import load_plugin
 
 from config import (
-    SAMPLE_RATE, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-    find_plugin, apply_duskverb_params, apply_valhalla_params,
+    SAMPLE_RATE, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+    find_plugin, apply_duskverb_params, apply_reference_params,
 )
 from generate_test_signals import make_impulse
 import reverb_metrics as metrics
@@ -411,7 +411,7 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
     impulse = make_impulse(sig_dur)
 
     # Step 1: Configure VV with exact preset params and measure RT60
-    apply_valhalla_params(vv_plugin, vv_config)
+    apply_reference_params(vv_plugin, vv_config)
     flush_plugin(vv_plugin, sr, flush_dur)
     vv_imp_l, vv_imp_r = process_stereo(vv_plugin, impulse, sr)
     flush_plugin(vv_plugin, sr, flush_dur)
@@ -674,7 +674,7 @@ def print_summary(results, csv_path=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DuskVerb vs VintageVerb preset comparison")
+    parser = argparse.ArgumentParser(description="DuskVerb vs ReferenceReverb preset comparison")
     parser.add_argument("--mode", type=str, help="Filter by VV mode name (e.g. Room, Plate)")
     parser.add_argument("--preset", type=str, help="Run a single preset by name")
     parser.add_argument("--list", action="store_true", help="List qualifying presets and exit")
@@ -705,9 +705,9 @@ def main():
 
     # Find plugins
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path or not vv_path:
-        print("ERROR: Need both DuskVerb and VintageVerb installed.")
+        print("ERROR: Need both DuskVerb and ReferenceReverb installed.")
         return
 
     n_workers = args.jobs if args.jobs > 0 else min(multiprocessing.cpu_count(), 8)
@@ -716,7 +716,7 @@ def main():
     if use_parallel:
         print(f"Running {len(presets)} preset comparison(s) with {n_workers} workers...\n")
         print(f"Loading DuskVerb: {dv_path}")
-        print(f"Loading VintageVerb: {vv_path}")
+        print(f"Loading ReferenceReverb: {vv_path}")
 
         with multiprocessing.Pool(
             processes=n_workers,
@@ -739,8 +739,8 @@ def main():
         print(f"Running {len(presets)} preset comparison(s)...\n")
         print(f"Loading DuskVerb: {dv_path}")
         duskverb = load_plugin(dv_path)
-        print(f"Loading VintageVerb: {vv_path}")
-        vintageverb = load_plugin(vv_path)
+        print(f"Loading ReferenceReverb: {vv_path}")
+        reference_reverb = load_plugin(vv_path)
 
         results = []
         current_mode = None
@@ -755,7 +755,7 @@ def main():
                 print(f"{'='*70}")
 
             print(f"\n  --- {preset['name']} ---")
-            result = compare_preset(duskverb, vintageverb, preset, SAMPLE_RATE)
+            result = compare_preset(duskverb, reference_reverb, preset, SAMPLE_RATE)
             results.append(result)
             print_preset_result(result)
 

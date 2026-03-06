@@ -1,5 +1,5 @@
 """
-Visual report generator for DuskVerb vs VintageVerb comparison.
+Visual report generator for DuskVerb vs ReferenceReverb comparison.
 
 Generates multi-panel matplotlib figures (saved as PNG) showing
 side-by-side analysis of reverb characteristics.
@@ -17,7 +17,7 @@ import reverb_metrics as metrics
 
 # Color palette
 COLOR_DV = "#2196F3"    # DuskVerb: blue
-COLOR_VH = "#FF5722"    # VintageVerb: orange
+COLOR_VH = "#FF5722"    # ReferenceReverb: orange
 COLOR_REF = "#999999"   # Reference: gray
 COLOR_BG = "#1a1a2e"    # Dark background
 COLOR_FG = "#e0e0e0"    # Light foreground
@@ -43,7 +43,7 @@ def generate_report(all_results, output_dir, sr):
     """Generate visual comparison reports for all mode pairings.
 
     Args:
-        all_results: dict of mode_name -> {"duskverb": {...}, "valhalla": {...}}
+        all_results: dict of mode_name -> {"duskverb": {...}, "reference": {...}}
         output_dir: directory for output PNGs
         sr: sample rate
     """
@@ -51,7 +51,7 @@ def generate_report(all_results, output_dir, sr):
 
     for mode_name, data in all_results.items():
         dv = data["duskverb"]
-        vh = data.get("valhalla")
+        vh = data.get("reference")
 
         fig = _create_mode_report(mode_name, dv, vh, sr)
         path = os.path.join(output_dir, f"{mode_name.lower()}_comparison.png")
@@ -73,7 +73,7 @@ def _create_mode_report(mode_name, dv, vh, sr):
     has_vh = vh is not None
 
     fig = plt.figure(figsize=(20, 42))
-    fig.suptitle(f"DuskVerb vs VintageVerb — {mode_name} Mode",
+    fig.suptitle(f"DuskVerb vs ReferenceReverb — {mode_name} Mode",
                  fontsize=18, fontweight='bold', y=0.99)
 
     gs = GridSpec(6, 3, figure=fig, hspace=0.35, wspace=0.30,
@@ -97,10 +97,10 @@ def _create_mode_report(mode_name, dv, vh, sr):
     if vh_impulse:
         _plot_spectrogram(fig.add_subplot(gs[1, 1]),
                           vh_impulse.get("spectrogram", ([], [], [[]])),
-                          "VintageVerb Waterfall")
+                          "ReferenceReverb Waterfall")
     else:
         ax = fig.add_subplot(gs[1, 1])
-        ax.text(0.5, 0.5, "VintageVerb\nnot available",
+        ax.text(0.5, 0.5, "ReferenceReverb\nnot available",
                 ha='center', va='center', fontsize=14, color='#666')
         ax.set_facecolor('#111')
 
@@ -166,7 +166,7 @@ def _plot_rt60(ax, dv_rt60, vh_rt60, mode_name):
 
     if vh_rt60:
         vh_vals = [vh_rt60.get(b, 0) or 0 for b in bands]
-        ax.bar(x + width/2, vh_vals, width, label="VintageVerb", color=COLOR_VH, alpha=0.85)
+        ax.bar(x + width/2, vh_vals, width, label="ReferenceReverb", color=COLOR_VH, alpha=0.85)
 
     ax.set_xticks(x)
     ax.set_xticklabels(bands, rotation=45, ha='right', fontsize=8)
@@ -186,7 +186,7 @@ def _plot_edc(ax, dv_edc, vh_edc):
     if vh_edc:
         t_vh, edc_vh = vh_edc
         if len(t_vh) > 0:
-            ax.plot(t_vh, edc_vh, color=COLOR_VH, linewidth=1.5, label="VintageVerb")
+            ax.plot(t_vh, edc_vh, color=COLOR_VH, linewidth=1.5, label="ReferenceReverb")
 
     # Reference lines
     ax.axhline(-60, color=COLOR_REF, linestyle='--', linewidth=0.8, alpha=0.5, label="-60 dB")
@@ -215,7 +215,7 @@ def _plot_freq_response(ax, dv_fr, vh_fr):
 
     if vh_fr:
         vh_vals = [vh_fr.get(b, -100) for b in bands]
-        ax.bar(x + width/2, vh_vals, width, label="VintageVerb", color=COLOR_VH, alpha=0.85)
+        ax.bar(x + width/2, vh_vals, width, label="ReferenceReverb", color=COLOR_VH, alpha=0.85)
 
     ax.set_xticks(x)
     ax.set_xticklabels([b.split('(')[0].strip() for b in bands], rotation=45, ha='right', fontsize=7)
@@ -296,12 +296,12 @@ def _plot_ringing(ax, dv_res, vh_res, dv_tone_res):
         proms = [p[1] for p in dv_res["persistent_peaks"]]
         ax.bar(freqs, proms, width=50, color=COLOR_DV, alpha=0.7, label="DuskVerb (impulse)")
 
-    # Plot VintageVerb persistent peaks
+    # Plot ReferenceReverb persistent peaks
     if vh_res and vh_res.get("persistent_peaks"):
         freqs = [p[0] for p in vh_res["persistent_peaks"]]
         proms = [p[1] for p in vh_res["persistent_peaks"]]
         ax.bar([f+25 for f in freqs], proms, width=50, color=COLOR_VH, alpha=0.7,
-               label="VintageVerb (impulse)")
+               label="ReferenceReverb (impulse)")
 
     # Highlight 1500 Hz tone burst results
     if dv_tone_res and dv_tone_res.get("persistent_peaks"):
@@ -333,7 +333,7 @@ def _plot_echo_density(ax, dv_dens, vh_dens):
     if vh_dens:
         t_vh, d_vh = vh_dens
         if len(t_vh) > 0:
-            ax.plot(t_vh, d_vh, color=COLOR_VH, linewidth=1.5, label="VintageVerb")
+            ax.plot(t_vh, d_vh, color=COLOR_VH, linewidth=1.5, label="ReferenceReverb")
 
     ax.axhline(1000, color=COLOR_REF, linestyle='--', linewidth=0.8,
                label="Schroeder threshold")
@@ -354,7 +354,7 @@ def _plot_stereo(ax, dv_stereo, vh_stereo):
     if vh_stereo:
         t_vh, c_vh = vh_stereo
         if len(t_vh) > 0:
-            ax.plot(t_vh, c_vh, color=COLOR_VH, linewidth=1.5, label="VintageVerb")
+            ax.plot(t_vh, c_vh, color=COLOR_VH, linewidth=1.5, label="ReferenceReverb")
 
     ax.axhline(0.3, color=COLOR_REF, linestyle='--', linewidth=0.8, label="Good (<0.3)")
 
@@ -378,7 +378,7 @@ def _plot_early_reflections(ax, dv_er, vh_er):
         times = [p["time_ms"] for p in vh_er["peaks"]]
         levels = [p["level_db"] for p in vh_er["peaks"]]
         ax.stem(times, levels, linefmt=COLOR_VH, markerfmt='s', basefmt='',
-                label="VintageVerb")
+                label="ReferenceReverb")
 
     ax.set_xlabel("Time (ms)")
     ax.set_ylabel("Level (dB)")
@@ -399,7 +399,7 @@ def _plot_decay_rates(ax, dv_rates, vh_rates):
 
     if vh_rates:
         vh_vals = [abs(vh_rates.get(b, 0)) for b in bands]
-        ax.bar(x + width/2, vh_vals, width, label="VintageVerb", color=COLOR_VH, alpha=0.85)
+        ax.bar(x + width/2, vh_vals, width, label="ReferenceReverb", color=COLOR_VH, alpha=0.85)
 
     ax.set_xticks(x)
     ax.set_xticklabels(bands, rotation=45, ha='right', fontsize=8)
@@ -422,7 +422,7 @@ def _plot_score_table(ax, dv_impulse, vh_impulse):
     ]
 
     # Header
-    cols = ["Metric", "DuskVerb", "VintageVerb", "Delta"]
+    cols = ["Metric", "DuskVerb", "ReferenceReverb", "Delta"]
     if not vh_impulse:
         cols = ["Metric", "DuskVerb", "", ""]
 
@@ -494,7 +494,7 @@ def _plot_iacc(ax, dv_iacc, vh_iacc):
     if vh_iacc:
         t_vh, v_vh = vh_iacc
         if len(t_vh) > 0:
-            ax.plot(t_vh, v_vh, color=COLOR_VH, linewidth=1.5, label="VintageVerb")
+            ax.plot(t_vh, v_vh, color=COLOR_VH, linewidth=1.5, label="ReferenceReverb")
 
     ax.axhline(0.3, color=COLOR_REF, linestyle='--', linewidth=0.8, label="Wide (<0.3)")
 
@@ -515,7 +515,7 @@ def _plot_crest_factor(ax, dv_crest, vh_crest):
     if vh_crest:
         t_vh, v_vh = vh_crest
         if len(t_vh) > 0:
-            ax.plot(t_vh, v_vh, color=COLOR_VH, linewidth=1.5, label="VintageVerb")
+            ax.plot(t_vh, v_vh, color=COLOR_VH, linewidth=1.5, label="ReferenceReverb")
 
     # Reference: Gaussian noise crest factor = sqrt(2) ≈ 1.41
     ax.axhline(1.41, color=COLOR_REF, linestyle='--', linewidth=0.8,
@@ -650,7 +650,7 @@ def _create_summary_report(all_results):
     """Create a summary comparing all modes."""
     n_modes = len(all_results)
     fig, axes = plt.subplots(2, 1, figsize=(16, 12))
-    fig.suptitle("DuskVerb vs VintageVerb — All Modes Summary",
+    fig.suptitle("DuskVerb vs ReferenceReverb — All Modes Summary",
                  fontsize=16, fontweight='bold')
 
     # Panel 1: RT60 ratios across modes and bands
@@ -662,8 +662,8 @@ def _create_summary_report(all_results):
 
     for i, (mode_name, data) in enumerate(all_results.items()):
         dv_rt60 = data["duskverb"].get("impulse", {}).get("rt60", {})
-        vh_rt60 = (data["valhalla"].get("impulse", {}).get("rt60", {})
-                   if data.get("valhalla") else {})
+        vh_rt60 = (data["reference"].get("impulse", {}).get("rt60", {})
+                   if data.get("reference") else {})
 
         if vh_rt60:
             ratios = []

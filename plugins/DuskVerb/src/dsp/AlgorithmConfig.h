@@ -28,7 +28,7 @@ struct AlgorithmConfig
     float trebleMultScale;
     float trebleMultScaleMax; // Bright-end target for treble curve interpolation.
                                // At treble_multiply=1.0, scaledTreble interpolates to this value.
-                               // >1.0 means no HF rolloff (flat, like VV at HighShelf=0).
+                               // >1.0 means no HF rolloff (flat, as if high shelf is fully open).
     float bassMultScale;
 
     float highCrossoverHz;  // Three-band damping: mid/high crossover frequency (Hz).
@@ -39,7 +39,7 @@ struct AlgorithmConfig
     float sizeRangeMin;
     float sizeRangeMax;
 
-    float erCrossfeed; // Fraction of ER output fed into FDN input (ValhallaRoom "Early Send")
+    float erCrossfeed; // Fraction of ER output fed into FDN input ("Early Send")
 
     float inlineDiffusionCoeff; // Schroeder allpass gain inside FDN feedback (Dattorro "decay diffusion")
 
@@ -105,9 +105,8 @@ struct AlgorithmConfig
 };
 
 // ---------------------------------------------------------------------------
-// Plate: EMT 140 / Lexicon 224 character.
+// Plate: Classic metal plate reverb character.
 // Tight delay clustering (15-40ms), maximum diffusion, no ERs, bright.
-// Level-matched to VintageVerb Plate; mild ringing suppression.
 static constexpr AlgorithmConfig kPlate = {
     "Plate",
     { 661, 709, 743, 787, 811, 853, 883, 919,
@@ -132,7 +131,7 @@ static constexpr AlgorithmConfig kPlate = {
     0.0f,            // structural LF damping: off
     0.0f,            // feedback LP: off
     false,           // feedback LP 4th order: off
-    0.9f,            // noise mod: mild jitter (provides nonlinear HF correction matching VV Plate; 0.7→0.9 to fix Short ringing)
+    0.9f,            // noise mod: mild jitter (provides nonlinear HF correction for Plate character; 0.7→0.9 to fix Short ringing)
     0.12f,           // Hadamard perturbation: break symmetry
     1.0f,            // ER gain exponent: inverse distance (default)
     false,           // useDattorroTank: off (FDN)
@@ -143,8 +142,8 @@ static constexpr AlgorithmConfig kPlate = {
 };
 
 // ---------------------------------------------------------------------------
-// Hall: Lexicon 480L "Random Hall" / 224 "Concert Hall".
-// Level-matched to VintageVerb Concert Hall; HF decay matched.
+// Hall: Large concert hall reverb.
+// Wide delay spread, moderate diffusion, full early reflections.
 static constexpr AlgorithmConfig kHall = {
     "Hall",
     { 887, 953, 1039, 1151, 1277, 1399, 1549, 1699,
@@ -156,9 +155,9 @@ static constexpr AlgorithmConfig kHall = {
     0.75f, 0.625f,   // input diffusion: Dattorro split
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
-    0.50f, 1.0f,     // ER: reduced level (was 1.0→0.70→0.50; ER-to-late ratio +2.4dB vs VV), onset at 5.2ms via kMinTimeMs=8
-    0.65f,           // late gain: level-matched to VV Concert Hall (~-9.5 dB wet gain)
-    0.5f, 1.0f,      // mod: depth halved to match VV Hall chorus width (DV was 2x wider), rate 1x
+    0.50f, 1.0f,     // ER: reduced level (was 1.0→0.70→0.50; ER-to-late ratio +2.4dB vs reference), onset at 5.2ms via kMinTimeMs=8
+    0.65f,           // late gain: level-matched to reference concert hall (~-9.5 dB wet gain)
+    0.5f, 1.0f,      // mod: depth halved to match reference hall chorus width (DV was 2x wider), rate 1x
     0.75f, 0.55f, 1.0f, // damping: trebleMultScale=0.75 (dark end), trebleMultScaleMax=0.55 (bright end: aggressive HF damping with three-band mid at gBase), bassMultScale=1.0
     6000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
@@ -180,9 +179,8 @@ static constexpr AlgorithmConfig kHall = {
 };
 
 // ---------------------------------------------------------------------------
-// Chamber: Lexicon 480L "Rich Chamber" / AMS RMX16 "Ambience".
+// Chamber: Rich chamber reverb.
 // Medium delay spread, slightly brighter than hall, moderate ER.
-// Level-matched to VintageVerb Chamber; mild ringing suppression.
 static constexpr AlgorithmConfig kChamber = {
     "Chamber",
     { 751, 809, 863, 929, 997, 1061, 1129, 1193,
@@ -194,8 +192,8 @@ static constexpr AlgorithmConfig kChamber = {
     0.75f, 0.625f,   // input diffusion: Dattorro split
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
-    0.12f, 1.30f,    // ER: reduced level (was 0.8→0.25→0.12; ER-to-late +7.2dB vs VV), wider timing (was 0.85; onset -5ms vs VV)
-    0.45f,           // late gain: level-matched to VV Chamber (~-10.5 dB wet gain)
+    0.12f, 1.30f,    // ER: reduced level (was 0.8→0.25→0.12; ER-to-late +7.2dB vs reference), wider timing (was 0.85; onset -5ms vs reference)
+    0.45f,           // late gain: level-matched to reference chamber (~-10.5 dB wet gain)
     0.8f, 1.0f,      // mod: increased depth for mode blurring, normal rate
     1.20f, 1.1f, 1.0f, // damping: trebleMultScale=1.20 (dark), trebleMultScaleMax=1.1 (bright), bassMultScale=1.0
     5000.0f,            // high crossover: three-band damping mid/high split (Hz)
@@ -218,7 +216,7 @@ static constexpr AlgorithmConfig kChamber = {
 };
 
 // ---------------------------------------------------------------------------
-// Room: Clone of VintageVerb Room (0.500).
+// Room: Sustaining room reverb with spatial character.
 // Long-sustaining reverb with moderate ER character. Unlike Ambient (pure wash),
 // Room retains some sense of enclosed space via early reflections.
 static constexpr AlgorithmConfig kRoom = {
@@ -231,10 +229,10 @@ static constexpr AlgorithmConfig kRoom = {
     { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     0.75f, 0.70f,    // input diffusion: moderate-high
     1.0f,            // output diffusion scale
-    5000.0f,         // bandwidth: dark input to match VV Room's extreme HF rolloff
-    0.12f, 1.30f,    // ER: reduced level (was 0.5→0.25→0.12; ER-to-late +5.5dB vs VV), wider timing (was 0.90; onset -4.8ms vs VV)
-    0.70f,           // late gain: calibrated to VV Room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
-    1.5f, 1.0f,      // mod: depth 1.5x to match VV Room chorus (median ~6 Hz; DV was ~4 Hz at 1.0x), rate 1x
+    5000.0f,         // bandwidth: dark input for extreme HF rolloff
+    0.12f, 1.30f,    // ER: reduced level (was 0.5→0.25→0.12; ER-to-late +5.5dB vs reference), wider timing (was 0.90; onset -4.8ms vs reference)
+    0.70f,           // late gain: calibrated to reference room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
+    1.5f, 1.0f,      // mod: depth 1.5x to match reference room chorus (median ~6 Hz; DV was ~4 Hz at 1.0x), rate 1x
     0.45f, 0.65f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.65 (bright; was 0.95, lowered to fix HF-too-slow shape), bassMultScale=0.85
     6000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
@@ -245,20 +243,19 @@ static constexpr AlgorithmConfig kRoom = {
     40.0f,           // structural LF damping: 40Hz HP to gently tame bass RT60 inflation
     0.0f,            // feedback LP: off (trebleMultScale handles HF decay)
     false,           // feedback LP 4th order: off
-    0.0f,            // noise mod: off (VV Room uses coherent sinusoidal LFO, not random jitter)
+    0.0f,            // noise mod: off (uses coherent sinusoidal LFO, not random jitter)
     0.08f,           // Hadamard perturbation: mild symmetry breaking
     0.75f,           // ER gain exponent: moderate rolloff
     false,           // useDattorroTank: off (FDN)
-    1.0f,            // decay time scale: 1x pass through (was 3x, caused knob-to-sound mismatch vs VV)
+    1.0f,            // decay time scale: 1x pass through (was 3x, caused knob-to-sound mismatch)
     0.0f, 0, 1.0f,   // dual-slope: disabled (standard 16-channel FDN for matched tail energy)
     0.0f, 0.0f,      // short-decay boost: disabled (Room uses lateGainScale calibration)
     0.0f, 0.0f       // gate: disabled
 };
 
 // ---------------------------------------------------------------------------
-// Ambient: Lexicon PCM96 "Infinite" / Strymon BigSky "Cloud".
+// Ambient: Infinite-style wash reverb.
 // Widest delay spread, max diffusion, heavy modulation, no ERs.
-// Level-matched to VintageVerb Room/Chorus Space; HF decay matched.
 static constexpr AlgorithmConfig kAmbient = {
     "Ambient",
     { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,

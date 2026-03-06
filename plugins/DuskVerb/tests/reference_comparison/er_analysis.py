@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Early Reflections analysis: DuskVerb vs VintageVerb.
+Early Reflections analysis: DuskVerb vs ReferenceReverb.
 
 Captures short IRs and compares ER characteristics:
   - Onset time (ms to first significant reflection)
@@ -23,10 +23,10 @@ import numpy as np
 from config import (
     SAMPLE_RATE,
     DUSKVERB_PATHS,
-    VINTAGEVERB_PATHS,
+    REFERENCE_REVERB_PATHS,
     find_plugin,
     apply_duskverb_params,
-    apply_valhalla_params,
+    apply_reference_params,
 )
 from generate_test_signals import make_impulse
 
@@ -52,7 +52,7 @@ ER_CONFIGS = {
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.0417,      # Concert Hall
             "_colormode": 0.333,        # 1980s
             "_decay": 0.03,             # Minimum decay
@@ -89,7 +89,7 @@ ER_CONFIGS = {
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.1667,      # Chamber
             "_colormode": 0.333,
             "_decay": 0.03,
@@ -126,7 +126,7 @@ ER_CONFIGS = {
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhalla": {
+        "reference": {
             "_reverbmode": 0.1250,      # Room
             "_colormode": 0.333,
             "_decay": 0.03,
@@ -262,7 +262,7 @@ def save_er_plot(ir_dv_l, ir_vv_l, sr, algo_name, output_dir):
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     # Waveform overlay
-    axes[0].plot(time_ms, ir_vv_l[:window_samples], alpha=0.7, label='VintageVerb', color='blue')
+    axes[0].plot(time_ms, ir_vv_l[:window_samples], alpha=0.7, label='ReferenceReverb', color='blue')
     axes[0].plot(time_ms, ir_dv_l[:window_samples], alpha=0.7, label='DuskVerb', color='red')
     axes[0].set_ylabel('Amplitude')
     axes[0].set_title(f'{algo_name} — Early Reflections Comparison')
@@ -273,7 +273,7 @@ def save_er_plot(ir_dv_l, ir_vv_l, sr, algo_name, output_dir):
     from scipy.signal import hilbert
     env_vv = np.abs(hilbert(ir_vv_l[:window_samples]))
     env_dv = np.abs(hilbert(ir_dv_l[:window_samples]))
-    axes[1].plot(time_ms, 20 * np.log10(env_vv + 1e-10), alpha=0.7, label='VintageVerb', color='blue')
+    axes[1].plot(time_ms, 20 * np.log10(env_vv + 1e-10), alpha=0.7, label='ReferenceReverb', color='blue')
     axes[1].plot(time_ms, 20 * np.log10(env_dv + 1e-10), alpha=0.7, label='DuskVerb', color='red')
     axes[1].set_xlabel('Time (ms)')
     axes[1].set_ylabel('Level (dB)')
@@ -301,8 +301,8 @@ def analyze_algo(algo_name, dv_plugin, vv_plugin, do_plot=False):
     print(f"\nCapturing: {algo_name} ...", end=" ", flush=True)
     ir_dv_l, ir_dv_r = capture_er_ir(dv_plugin, apply_duskverb_params,
                                       config["duskverb"], sr)
-    ir_vv_l, ir_vv_r = capture_er_ir(vv_plugin, apply_valhalla_params,
-                                      config["valhalla"], sr)
+    ir_vv_l, ir_vv_r = capture_er_ir(vv_plugin, apply_reference_params,
+                                      config["reference"], sr)
     print("done")
 
     # Mono sum for analysis
@@ -351,7 +351,7 @@ def analyze_algo(algo_name, dv_plugin, vv_plugin, do_plot=False):
 
     # Report
     print(f"\n=== {algo_name} ===")
-    print(f"  {'Metric':<30s} {'DuskVerb':>12s} {'VintageVerb':>12s} {'Delta':>10s}")
+    print(f"  {'Metric':<30s} {'DuskVerb':>12s} {'ReferenceReverb':>12s} {'Delta':>10s}")
     print(f"  {'-'*64}")
 
     def row(label, dv_val, vv_val, fmt=".1f", unit=""):
@@ -392,7 +392,7 @@ def analyze_algo(algo_name, dv_plugin, vv_plugin, do_plot=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DuskVerb vs VintageVerb ER analysis")
+    parser = argparse.ArgumentParser(description="DuskVerb vs ReferenceReverb ER analysis")
     parser.add_argument("--algo", choices=list(ER_CONFIGS.keys()),
                         help="Analyze single algorithm")
     parser.add_argument("--plot", action="store_true",
@@ -401,14 +401,14 @@ def main():
 
     # Discover plugins
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     if not dv_path:
         print("ERROR: DuskVerb not found"); sys.exit(1)
     if not vv_path:
-        print("ERROR: VintageVerb not found"); sys.exit(1)
+        print("ERROR: ReferenceReverb not found"); sys.exit(1)
 
     print(f"DuskVerb:     {dv_path}")
-    print(f"VintageVerb:  {vv_path}")
+    print(f"ReferenceReverb:  {vv_path}")
     print(f"Sample rate:  {SAMPLE_RATE} Hz")
 
     from pedalboard import load_plugin

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Detect slapback/discrete echo artifacts in DuskVerb vs VintageVerb impulse responses."""
+"""Detect slapback/discrete echo artifacts in DuskVerb vs ReferenceReverb impulse responses."""
 
 import numpy as np
 import pedalboard
-from config import (SAMPLE_RATE, DUSKVERB_PATHS, VINTAGEVERB_PATHS,
-                     find_plugin, apply_duskverb_params, VALHALLA_PARAM_MAP)
+from config import (SAMPLE_RATE, DUSKVERB_PATHS, REFERENCE_REVERB_PATHS,
+                     find_plugin, apply_duskverb_params, REFERENCE_PARAM_MAP)
 
 SR = SAMPLE_RATE
 
@@ -30,7 +30,7 @@ def flush(plugin, dur=5.0):
 
 def apply_vv(plugin, params):
     for key, value in params.items():
-        name = VALHALLA_PARAM_MAP.get(key, key.lstrip("_"))
+        name = REFERENCE_PARAM_MAP.get(key, key.lstrip("_"))
         try:
             setattr(plugin, name, value)
         except Exception:
@@ -125,7 +125,7 @@ def main():
     dv = load_plugin(dv_path)
     if not dv: return
 
-    vv_path = find_plugin(VINTAGEVERB_PATHS)
+    vv_path = find_plugin(REFERENCE_REVERB_PATHS)
     vv = load_plugin(vv_path) if vv_path else None
 
     # Test with typical percussive preset settings (moderate size, some diffusion)
@@ -188,7 +188,7 @@ def main():
 
     if vv:
         print("\n" + "=" * 70)
-        print("  VintageVerb — Reference")
+        print("  ReferenceReverb — Reference")
         print("=" * 70)
 
         for mode, params in vv_modes.items():

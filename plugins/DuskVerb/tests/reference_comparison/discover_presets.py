@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Discover VintageVerb factory presets and all parameter values via pedalboard.
+Discover ReferenceReverb factory presets and all parameter values via pedalboard.
 
 Research script - prints findings to stdout, does not modify any files.
 
 Key findings:
   - Factory presets are .vpreset files (XML format) stored in:
-    /Library/Application Support/Valhalla DSP, LLC/ValhallaVintageVerb/Presets/Factory/
+    /Library/Application Support/ReferenceReverb/ReferenceReverb/Presets/Factory/
   - 160 factory presets, 53 designer presets
-  - VintageVerb v4.0.5 has 24+ reverb modes (not just 7!)
+  - ReferenceReverb v4.0.5 has 24+ reverb modes (not just 7!)
   - All parameters are 0.0-1.0 normalized
   - State format: binary plist wrapping XML
   - pedalboard has no factory preset enumeration API; we read .vpreset files directly
@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import VINTAGEVERB_PATHS, find_plugin
+from config import REFERENCE_REVERB_PATHS, find_plugin
 
 try:
     import pedalboard
@@ -31,7 +31,7 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# VintageVerb reverb modes (discovered from binary inspection)
+# ReferenceReverb reverb modes (discovered from binary inspection)
 # ---------------------------------------------------------------------------
 # The ReverbMode parameter is 0.0-1.0 continuous. The plugin has 24 modes
 # internally (discovered via binary strings and the Rev2010 method names).
@@ -89,9 +89,9 @@ def parse_vpreset(filepath):
 
 def main():
     # --- 1. Load plugin for reference ---
-    plugin_path = find_plugin(VINTAGEVERB_PATHS)
+    plugin_path = find_plugin(REFERENCE_REVERB_PATHS)
     if plugin_path is None:
-        print("ERROR: VintageVerb not found")
+        print("ERROR: ReferenceReverb not found")
         sys.exit(1)
 
     plugin = load_plugin(plugin_path)
@@ -138,8 +138,8 @@ def main():
     print("FACTORY PRESETS")
     print("=" * 100)
 
-    factory_dir = "/Library/Application Support/Valhalla DSP, LLC/ValhallaVintageVerb/Presets/Factory"
-    designer_dir = "/Library/Application Support/Valhalla DSP, LLC/ValhallaVintageVerb/Presets/Designer"
+    factory_dir = "/Library/Application Support/ReferenceReverb/ReferenceReverb/Presets/Factory"
+    designer_dir = "/Library/Application Support/ReferenceReverb/ReferenceReverb/Presets/Designer"
 
     all_presets = []
     categories = defaultdict(list)
@@ -353,7 +353,7 @@ def main():
     1970s (dark, downsampled), 1980s (neutral), Now (bright)
 
   FACTORY PRESETS:
-    Location: /Library/Application Support/Valhalla DSP, LLC/ValhallaVintageVerb/Presets/
+    Location: /Library/Application Support/ReferenceReverb/ReferenceReverb/Presets/
     Factory: {sum(1 for p in all_presets if p['type'] == 'Factory')} presets in {len([c for c in categories if c.startswith('Factory')])} categories
     Designer: {sum(1 for p in all_presets if p['type'] == 'Designer')} presets in {len([c for c in categories if c.startswith('Designer')])} categories
     Format: XML (.vpreset files), same format as raw_state XML

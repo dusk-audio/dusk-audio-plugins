@@ -211,7 +211,7 @@ private:
 
     // -----------------------------------------------------------------------
     // Cheap xorshift32 PRNG returning float in [-1, +1].
-    // Used for Lexicon-style "Wander" — aperiodic LFO drift.
+    // Used for aperiodic LFO drift ("Wander").
     static float nextDrift (uint32_t& state)
     {
         state ^= state << 13;

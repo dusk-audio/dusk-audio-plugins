@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Multi-preset DuskVerb vs ValhallaRoom comparison.
+Multi-preset DuskVerb vs ReferenceRoom comparison.
 
 Tests DuskVerb Room mode against multiple VRoom presets at different sizes/decays,
 printing a summary table of ringing, RT60 match, and level match.
@@ -10,15 +10,15 @@ import numpy as np
 from pedalboard import load_plugin
 
 from config import (
-    SAMPLE_RATE, DUSKVERB_PATHS, VALHALLAROOM_PATHS,
-    find_plugin, apply_duskverb_params, apply_valhallaroom_params,
+    SAMPLE_RATE, DUSKVERB_PATHS, REFERENCE_ROOM_PATHS,
+    find_plugin, apply_duskverb_params, apply_reference_room_params,
 )
 from generate_test_signals import make_impulse, make_tone_burst
 import reverb_metrics as metrics
 
 
 # ---------------------------------------------------------------------------
-# Preset definitions: matched DuskVerb <-> ValhallaRoom configurations
+# Preset definitions: matched DuskVerb <-> ReferenceRoom configurations
 # ---------------------------------------------------------------------------
 PRESETS = [
     {
@@ -40,7 +40,7 @@ PRESETS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhallaroom": {
+        "reference_room": {
             "_type": 0.0833333358,
             "_decay": 0.00500500482,
             "_predelay": 0.0,
@@ -82,7 +82,7 @@ PRESETS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhallaroom": {
+        "reference_room": {
             "_type": 0.0833333358,      # Medium Room
             "_decay": 0.05,
             "_predelay": 0.02,
@@ -124,7 +124,7 @@ PRESETS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhallaroom": {
+        "reference_room": {
             "_type": 0.0,               # Large Room
             "_decay": 0.12,
             "_predelay": 0.05,
@@ -166,7 +166,7 @@ PRESETS = [
             "hi_cut": 20000,
             "width": 1.0,
         },
-        "valhallaroom": {
+        "reference_room": {
             "_type": 0.1666666716,      # Bright Room
             "_decay": 0.03,
             "_predelay": 0.01,
@@ -208,19 +208,19 @@ def main():
 
     # Load plugins
     dv_path = find_plugin(DUSKVERB_PATHS)
-    vr_path = find_plugin(VALHALLAROOM_PATHS)
+    vr_path = find_plugin(REFERENCE_ROOM_PATHS)
 
     if not dv_path:
         print("ERROR: DuskVerb not found. Build it first.")
         return
     if not vr_path:
-        print("ERROR: ValhallaRoom not found.")
+        print("ERROR: ReferenceRoom not found.")
         return
 
     print(f"Loading DuskVerb: {dv_path}")
     duskverb = load_plugin(dv_path)
-    print(f"Loading ValhallaRoom: {vr_path}")
-    valhallaroom = load_plugin(vr_path)
+    print(f"Loading ReferenceRoom: {vr_path}")
+    reference_room = load_plugin(vr_path)
 
     # Test signals
     impulse = make_impulse()
@@ -236,21 +236,21 @@ def main():
         apply_duskverb_params(duskverb, preset["duskverb"])
         flush_plugin(duskverb, sr)
 
-        # Configure and flush ValhallaRoom
-        apply_valhallaroom_params(valhallaroom, preset["valhallaroom"])
-        flush_plugin(valhallaroom, sr)
+        # Configure and flush ReferenceRoom
+        apply_reference_room_params(reference_room, preset["reference_room"])
+        flush_plugin(reference_room, sr)
 
         # Process impulse
         dv_imp_l, dv_imp_r = process_stereo(duskverb, impulse, sr)
         flush_plugin(duskverb, sr)
-        vr_imp_l, vr_imp_r = process_stereo(valhallaroom, impulse, sr)
-        flush_plugin(valhallaroom, sr)
+        vr_imp_l, vr_imp_r = process_stereo(reference_room, impulse, sr)
+        flush_plugin(reference_room, sr)
 
         # Process tone burst
         dv_tone_l, _ = process_stereo(duskverb, tone, sr)
         flush_plugin(duskverb, sr)
-        vr_tone_l, _ = process_stereo(valhallaroom, tone, sr)
-        flush_plugin(valhallaroom, sr)
+        vr_tone_l, _ = process_stereo(reference_room, tone, sr)
+        flush_plugin(reference_room, sr)
 
         # Analyze impulse ringing
         dv_imp_ring = metrics.detect_modal_resonances(dv_imp_l, sr)
@@ -314,7 +314,7 @@ def main():
 
     # Summary table
     print("\n" + "=" * 110)
-    print("  MULTI-PRESET SUMMARY: DuskVerb (Dattorro Tank) vs ValhallaRoom")
+    print("  MULTI-PRESET SUMMARY: DuskVerb (Dattorro Tank) vs ReferenceRoom")
     print("=" * 110)
 
     header = (f"  {'Preset':<16s} "
