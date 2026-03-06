@@ -156,13 +156,13 @@ static constexpr AlgorithmConfig kHall = {
     0.75f, 0.625f,   // input diffusion: Dattorro split
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
-    1.0f, 1.0f,      // ER: full
+    0.50f, 1.0f,     // ER: reduced level (was 1.0→0.70→0.50; ER-to-late ratio +2.4dB vs VV), onset at 5.2ms via kMinTimeMs=8
     0.65f,           // late gain: level-matched to VV Concert Hall (~-9.5 dB wet gain)
     0.5f, 1.0f,      // mod: depth halved to match VV Hall chorus width (DV was 2x wider), rate 1x
     0.75f, 0.55f, 1.0f, // damping: trebleMultScale=0.75 (dark end), trebleMultScaleMax=0.55 (bright end: aggressive HF damping with three-band mid at gBase), bassMultScale=1.0
     6000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
-    0.15f,           // ER crossfeed: subtle
+    0.05f,           // ER crossfeed: reduced from 0.15→0.10→0.05 (less ER→FDN bleed inflating early tail)
     0.0f,            // inline diffusion: off (preserve hall character)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     18000.0f,        // structural HF damping: 18kHz base, inverted treble-scaling (treble=1.0→18kHz, treble=0.5→22.5kHz less damping)
@@ -194,13 +194,13 @@ static constexpr AlgorithmConfig kChamber = {
     0.75f, 0.625f,   // input diffusion: Dattorro split
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
-    0.8f, 0.85f,     // ER: slightly reduced level, tighter timing
+    0.12f, 1.30f,    // ER: reduced level (was 0.8→0.25→0.12; ER-to-late +7.2dB vs VV), wider timing (was 0.85; onset -5ms vs VV)
     0.45f,           // late gain: level-matched to VV Chamber (~-10.5 dB wet gain)
     0.8f, 1.0f,      // mod: increased depth for mode blurring, normal rate
     1.20f, 1.1f, 1.0f, // damping: trebleMultScale=1.20 (dark), trebleMultScaleMax=1.1 (bright), bassMultScale=1.0
     5000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
-    0.2f,            // ER crossfeed: medium
+    0.03f,           // ER crossfeed: reduced from 0.20→0.10→0.03 (less ER→FDN bleed inflating early tail)
     0.10f,           // inline diffusion: mild density boost
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off (Chamber HF already too fast; trebleMultScale=1.20 handles HF)
@@ -232,13 +232,13 @@ static constexpr AlgorithmConfig kRoom = {
     0.75f, 0.70f,    // input diffusion: moderate-high
     1.0f,            // output diffusion scale
     5000.0f,         // bandwidth: dark input to match VV Room's extreme HF rolloff
-    0.5f, 0.90f,     // ER: moderate level, slightly tighter timing
+    0.12f, 1.30f,    // ER: reduced level (was 0.5→0.25→0.12; ER-to-late +5.5dB vs VV), wider timing (was 0.90; onset -4.8ms vs VV)
     0.70f,           // late gain: calibrated to VV Room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
     1.5f, 1.0f,      // mod: depth 1.5x to match VV Room chorus (median ~6 Hz; DV was ~4 Hz at 1.0x), rate 1x
     0.45f, 0.65f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.65 (bright; was 0.95, lowered to fix HF-too-slow shape), bassMultScale=0.85
     6000.0f,            // high crossover: three-band damping mid/high split (Hz)
     0.5f, 1.5f,      // size range
-    0.10f,           // ER crossfeed: light
+    0.02f,           // ER crossfeed: reduced from 0.10→0.05→0.02 (less ER→FDN bleed inflating early tail)
     0.0f,            // inline diffusion: off (long delays = sufficient density)
     1.0f,            // mod depth floor: uniform
     0.0f,            // structural HF damping: off (already very dark, trebleMultScale=0.45)

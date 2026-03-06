@@ -8,8 +8,8 @@ void EarlyReflections::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
 
-    // Buffer for max tap time (80ms) at current sample rate
-    int maxSamples = static_cast<int> (std::ceil (kMaxTimeMs * 0.001f
+    // Buffer for max tap time at any erTimeScale (up to 1.5) and erSize
+    int maxSamples = static_cast<int> (std::ceil (kMaxBufferMs * 0.001f
                                                   * static_cast<float> (sampleRate))) + 1;
     int bufSize = DspUtils::nextPowerOf2 (maxSamples);
 
@@ -78,8 +78,8 @@ void EarlyReflections::setSize (float size)
 
 void EarlyReflections::setTimeScale (float scale)
 {
-    // Clamp to [0.1, 1.0] — buffer is sized for kMaxTimeMs at scale 1.0
-    timeScale_ = std::clamp (scale, 0.1f, 1.0f);
+    // Clamp to [0.1, 1.5] — buffer is sized for kMaxTimeMs * 1.5
+    timeScale_ = std::clamp (scale, 0.1f, 1.5f);
     if (prepared_)
         tapsNeedUpdate_.store (true, std::memory_order_release);
 }

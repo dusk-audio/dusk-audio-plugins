@@ -55,7 +55,7 @@ struct FactoryPreset
 // Effective value = raw param * algorithm scale factor
 // Algorithm trebleMultScale: Plate=1.30, Hall=0.75, Chamber=1.20, Room=0.45, Ambient=0.60
 // Algorithm bassMultScale:   Plate=1.0, Hall=1.0,  Chamber=1.0, Room=0.85, Ambient=1.0
-// Algorithm erLevelScale:    Plate=0.0, Hall=1.0,  Chamber=0.8, Room=0.5,  Ambient=0.0
+// Algorithm erLevelScale:    Plate=0.0, Hall=0.50, Chamber=0.12, Room=0.12, Ambient=0.0
 // Algorithm lateGainScale:   Plate=0.47, Hall=0.65, Chamber=0.45, Room=0.70,  Ambient=0.60
 // Algorithm decayTimeScale:  Plate=1.0, Hall=1.0,  Chamber=1.0, Room=1.0,  Ambient=1.0
 //

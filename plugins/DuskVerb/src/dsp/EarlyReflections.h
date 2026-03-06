@@ -22,8 +22,9 @@ public:
 
 private:
     static constexpr int kNumTaps = 16;
-    static constexpr float kMinTimeMs = 5.0f;
+    static constexpr float kMinTimeMs = 8.0f;
     static constexpr float kMaxTimeMs = 80.0f;
+    static constexpr float kMaxBufferMs = 120.0f; // Buffer headroom for erTimeScale up to 1.5
     static constexpr float kTwoPi = 6.283185307179586f;
 
     // Polarity signs per tap — 8 positive, 8 negative per channel.
