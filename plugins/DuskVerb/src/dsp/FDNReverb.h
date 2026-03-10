@@ -17,7 +17,6 @@ public:
     void setBassMultiply (float mult);
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
-    void setHighCrossoverFreq (float hz);
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -122,7 +121,7 @@ private:
     float inlineDiffCoeff_ = 0.0f;
     float inlineDiffCoeff2_ = 0.0f;
     float inlineDiffCoeff3_ = 0.0f;
-    ThreeBandDamping dampFilter_[N];
+    TwoBandDamping dampFilter_[N];
     float lfoPhase_[N] {};
     float lfoPhaseInc_[N] {};
     uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state for LFO drift
@@ -146,7 +145,7 @@ private:
     bool fbLP4thOrder_ = false; // true = cascade two identical sections (L-R 24 dB/oct)
 
     // Structural HF damping: gentle first-order LP modeling air absorption.
-    // Per-algorithm, applied after ThreeBandDamping in feedback loop.
+    // Per-algorithm, applied after TwoBandDamping in feedback loop.
     // Effective frequency scales with treble_multiply: lower treble → lower cutoff → more damping.
     float structHFState_[N] {};
     float structHFCoeff_ = 0.0f;
@@ -160,7 +159,7 @@ private:
     bool structLFEnabled_ = false;
 
     // Cheap xorshift32 PRNG returning float in [-1, +1].
-    // Used for aperiodic LFO drift ("Wander").
+    // Used for Lexicon-style "Wander" — aperiodic LFO drift.
     static float nextDrift (uint32_t& state)
     {
         state ^= state << 13;
@@ -187,7 +186,6 @@ private:
     float bassMultiply_ = 1.0f;
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
-    float highCrossoverFreq_ = 6000.0f;
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;

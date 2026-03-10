@@ -31,10 +31,14 @@ struct AlgorithmConfig
                                // >1.0 means no HF rolloff (flat, as if high shelf is fully open).
     float bassMultScale;
 
-    float highCrossoverHz;  // Three-band damping: mid/high crossover frequency (Hz).
-                            // Below user crossover: gLow = gBase^(1/bassMultiply).
-                            // User crossover to highCrossover: gMid = gBase (natural decay).
-                            // Above highCrossover: gHigh = gBase^(1/trebleMultiply).
+    float highCrossoverHz; // Second crossover for ThreeBandDamping (Hz).
+                           // Splits "treble" into mid (lowCrossover..highCrossover) and air (>highCrossover).
+                           // Room=6000 (independent air band control). Others=20000 (effectively two-band).
+
+    float airDampingScale; // Independent air band (>highCrossover) damping multiplier.
+                           // Applied directly as gHigh = gBase^(1/airDampingScale).
+                           // Lower = faster air decay (darker tail). 1.0 = same as base decay.
+                           // Independent of user's treble knob. Per-algorithm tunable.
 
     float sizeRangeMin;
     float sizeRangeMax;
@@ -46,7 +50,7 @@ struct AlgorithmConfig
     float modDepthFloor; // Minimum modulation depth scaling for shortest delay (0.0-1.0)
 
     float structuralHFDampingHz; // First-order LP in FDN feedback modeling air absorption (Hz).
-                                 // Applied after ThreeBandDamping, before feedbackLP. 0 = bypassed.
+                                 // Applied after TwoBandDamping, before feedbackLP. 0 = bypassed.
                                  // Effective frequency scales with treble_multiply: effectiveHz = baseHz * (0.5 + treble * 0.5).
                                  // Per-algorithm: higher values = gentler damping. Typical: 14000-19000.
 
@@ -102,6 +106,36 @@ struct AlgorithmConfig
                            // How long the reverb tail plays at full level before the gate closes.
     float gateReleaseMs;   // Gate release time (ms). Exponential fade-out after hold expires.
                            // Only active when gateHoldMs > 0.
+
+    float erAirAbsorptionCeilingHz; // Ceiling frequency for ER air absorption LP sweep (Hz).
+                                     // Per-tap LP sweeps from this value (earliest tap) down to floor (latest).
+                                     // 12000 = default, 18000 = brighter early taps.
+
+    float erAirAbsorptionFloorHz; // Floor frequency for ER air absorption LP sweep (Hz).
+                                   // 2000 = aggressive darkening (default), 6000 = brighter late taps.
+
+    float erDecorrCoeff; // Post-tap Schroeder allpass decorrelation coefficient (0.0-0.7).
+                          // Two cascaded allpasses per channel with different prime delays
+                          // create phase differences for stereo widening.
+                          // 0.0 = bypassed (default), 0.55 = strong decorrelation.
+
+    float outputGain;      // Per-algorithm output gain multiplier applied to combined ER+late signal
+                           // before dry/wet crossfade. Compensates for differences in internal gain
+                           // structure vs reference reverbs. 1.0 = unity (default).
+
+    float stereoCoupling;  // Stereo architecture: splits 16 FDN channels into L (0-7) and R (8-15)
+                           // groups with two independent 8×8 Hadamard transforms.
+                           // 0.0 = fully independent L/R (widest stereo), 0.5 = fully mixed (mono).
+                           // ~0.25 matches VintageVerb's -9.4dB L→R coupling.
+                           // Negative values disable stereo split (use full 16×16 Hadamard).
+
+    float outputLowShelfDB;   // Low shelf EQ at 250Hz (dB). Negative = cut bass. 0 = bypassed.
+    float outputHighShelfDB;  // High shelf EQ (dB). Positive = boost presence. 0 = bypassed.
+    float outputHighShelfHz;  // High shelf frequency (Hz). Per-algorithm tunable.
+
+    float outputMidEQHz;      // Mid parametric EQ center frequency (Hz). 0 = bypassed.
+    float outputMidEQDB;      // Mid parametric EQ gain (dB). Negative = cut.
+    float outputMidEQQ;       // Mid parametric EQ Q factor. Higher = narrower. 0.7 = gentle, 2.0 = surgical.
 };
 
 // ---------------------------------------------------------------------------
@@ -115,30 +149,38 @@ static constexpr AlgorithmConfig kPlate = {
     { 1, 3, 4, 6, 8, 10, 12, 14 },
     { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
-    0.75f, 0.75f,   // input diffusion: uniform high
-    1.0f,            // output diffusion scale
-    14000.0f,        // bandwidth: bright
-    0.0f, 1.0f,      // ER: forced off
-    0.47f,           // late gain: reduced from 0.52 to fix Large Plate +5.0 dB
-    0.5f, 1.0f,      // mod: moderate depth for mode blurring, normal rate
-    1.30f, 1.4f, 1.0f, // damping: trebleMultScale=1.30 (dark), trebleMultScaleMax=1.4 (bright), bassMultScale=1.0
-    6000.0f,            // high crossover: three-band damping mid/high split (Hz)
+    0.58f, 0.58f,   // input diffusion: matched to VV early diffusion
+    0.75f,           // output diffusion scale: reduced for crisper transient output
+    20000.0f,        // bandwidth: full spectrum input (no HF attenuation before FDN)
+    0.80f, 0.70f,    // ER: level=0.80, timeScale=0.70
+    0.35f,           // late gain: 0.35
+    0.25f, 1.0f,     // mod: reduced depth to match VV FM width (was 0.5 — 2.6x too wide), normal rate
+    0.60f, 1.00f, 1.0f, // damping: trebleMultScaleMax=1.00 (0.70 overdamped decay_shape 40.2; use feedbackLP for HF control instead)
+    20000.0f,        // high crossover: 20kHz (two-band — Plate trebleMult>1.0 needs uniform bright boost across all HF)
+    1.0f,            // airDampingScale: 1.0 (no extra air damping — Plate needs full brightness)
     0.5f, 1.5f,      // size range
-    0.0f,            // ER crossfeed: off (no ERs)
-    0.10f,           // inline diffusion: mild density boost
+    0.0f,            // ER crossfeed: off
+    0.0f,            // inline diffusion: off (preserve discrete early echoes for punch)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off (Plate HF already too fast; trebleMultScale=1.30 handles HF)
     0.0f,            // structural LF damping: off
-    0.0f,            // feedback LP: off
-    false,           // feedback LP 4th order: off
-    0.9f,            // noise mod: mild jitter (provides nonlinear HF correction for Plate character; 0.7→0.9 to fix Short ringing)
+    9000.0f,         // feedback LP: 9kHz (8.5kHz overdarkened centroid_late 97→76.1)
+    false,           // feedback LP 4th order: off (2nd order for gentler slope)
+    0.3f,            // noise mod: 0.3
     0.12f,           // Hadamard perturbation: break symmetry
     1.0f,            // ER gain exponent: inverse distance (default)
     false,           // useDattorroTank: off (FDN)
-    1.0f,            // decay time scale: pass through
+    1.40f,           // decay time scale: 1.40 (1.20 wasn't enough — T30 still 1.386 vs VV 2.045)
     0.0f, 0, 1.0f,  // dual-slope: disabled
     2.0f, 0.9f,     // short-decay boost: +2 dB at very short RT60, fading to 0 by effective 0.9s
-    0.0f, 0.0f      // gate: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f,        // ER air absorption ceiling: default
+    2000.0f,         // ER air absorption floor: default
+    0.0f,            // ER decorrelation: off (no ERs in Plate)
+    1.00f,           // output gain: 1.00 (was 0.75; signal_level 72.5)
+    0.20f,           // stereo coupling: 0.20 (was 0.35; DV +0.1dB vs VV -2.0dB — too mono)
+    0.0f, 0.0f, 2500.0f, // output EQ: high shelf bypassed (was -1.5dB; darkened ERs too much — centroid_early 74.3)
+    0.0f, 0.0f, 0.7f    // output mid EQ: bypassed
 };
 
 // ---------------------------------------------------------------------------
@@ -146,36 +188,49 @@ static constexpr AlgorithmConfig kPlate = {
 // Wide delay spread, moderate diffusion, full early reflections.
 static constexpr AlgorithmConfig kHall = {
     "Hall",
-    { 887, 953, 1039, 1151, 1277, 1399, 1549, 1699,
-      1873, 2063, 2281, 2503, 2719, 2927, 3089, 3251 },
-    { 0, 3, 5, 8, 10, 11, 14, 15 },
-    { 1, 2, 4, 6, 7, 9, 12, 13 },
-    { 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f },
-    { -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f },
-    0.75f, 0.625f,   // input diffusion: Dattorro split
-    1.0f,            // output diffusion scale
-    10000.0f,        // bandwidth: standard
-    0.50f, 1.0f,     // ER: reduced level (was 1.0→0.70→0.50; ER-to-late ratio +2.4dB vs reference), onset at 5.2ms via kMinTimeMs=8
-    0.65f,           // late gain: level-matched to reference concert hall (~-9.5 dB wet gain)
-    0.5f, 1.0f,      // mod: depth halved to match reference hall chorus width (DV was 2x wider), rate 1x
-    0.75f, 0.55f, 1.0f, // damping: trebleMultScale=0.75 (dark end), trebleMultScaleMax=0.55 (bright end: aggressive HF damping with three-band mid at gBase), bassMultScale=1.0
-    6000.0f,            // high crossover: three-band damping mid/high split (Hz)
+    // delay lengths: 1801-5521 samples (41-125ms @ 44.1kHz) — doubled to match VV Concert Hall range (48-130ms)
+    { 1801, 1949, 2111, 2293, 2503, 2741, 2999, 3251,
+      3511, 3767, 4027, 4297, 4603, 4909, 5231, 5521 },
+    { 0, 1, 2, 3, 4, 5, 6, 7 },       // leftTaps: L group (stereo split)
+    { 8, 9, 10, 11, 12, 13, 14, 15 },  // rightTaps: R group (stereo split)
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },  // alternating signs for decorrelation
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion: 0.55/0.45 (was 0.75/0.625 — 50ms density 5300 vs VV 2450, need sparser early onset)
+    0.5f,            // output diffusion: 0.5
+    20000.0f,        // bandwidth: full spectrum input
+    0.90f, 0.85f,    // ER: level=0.90, timeScale=0.85 (0.80 crashed C80 to 58.4)
+    0.22f,           // late gain: 0.22 (0.25 crashed C80 to 52.5)
+    2.0f, 1.0f,      // mod: modDepthScale=2.0 (3.0 dropped spectral_tilt 73.8→63.9, modulation still 0)
+    0.50f, 1.50f, 1.0f, // damping: bassMultScale=1.0 (0.90 gains can't be compensated without crashing centroid_late)
+    4000.0f,         // high crossover: 4kHz (3kHz regressed — pushed too much into air band, kurtosis diverged)
+    0.70f,           // airDampingScale: 0.70 (0.60 dropped spectral_tilt 73.8→65.0)
     0.5f, 1.5f,      // size range
-    0.05f,           // ER crossfeed: reduced from 0.15→0.10→0.05 (less ER→FDN bleed inflating early tail)
-    0.0f,            // inline diffusion: off (preserve hall character)
+    0.25f,           // ER crossfeed: 0.25 (0.22 dropped MFCC/EDT — keep at 0.25)
+    0.0f,            // inline diffusion: off (even 0.05 wrecked centroid_late 97.6→69.9, spectral_tilt 95.4→58.8)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
-    18000.0f,        // structural HF damping: 18kHz base, inverted treble-scaling (treble=1.0→18kHz, treble=0.5→22.5kHz less damping)
-    0.0f,            // structural LF damping: off
-    0.0f,            // feedback LP: off
-    false,           // feedback LP 4th order: off
-    0.0f,            // noise mod: off (preserve hall character)
-    0.0f,            // Hadamard perturbation: off
-    1.0f,            // ER gain exponent: inverse distance (default)
+    0.0f,            // structural HF damping: off (feedbackLP at 15kHz handles extreme HF instead)
+    40.0f,           // structural LF damping: 40Hz HP (90Hz destroyed bass ratio and raised centroid — output EQ handles 80-250Hz instead)
+    9500.0f,         // feedback LP: 9.5kHz 4th order (10kHz dropped centroid_late to 89.6, spectral_tilt to 69.4)
+    true,            // feedback LP 4th order: on
+    0.35f,           // noise mod: 0.35 (0.50 crashed MFCC/EDT — keep at 0.35)
+    0.10f,           // Hadamard perturbation: 0.10 (0.05 wasn't enough — still audible repetition in tail)
+    1.0f,            // ER gain exponent: 1.0 inverse distance (1.5 caused audible pulse after transients)
     false,           // useDattorroTank: off (FDN)
-    1.0f,            // decay time scale: pass through
+    1.50f,           // decay time scale: 1.50 (baseline)
     0.0f, 0, 1.0f,  // dual-slope: disabled
-    4.5f, 1.5f,     // short-decay boost: +4.5 dB at very short RT60, fading to 0 by effective 1.5s
-    0.0f, 0.0f      // gate: disabled
+    2.0f, 1.5f,     // short-decay boost: +2.0 dB (4.5 contributed to transient pulse)
+    0.0f, 0.0f,     // gate: disabled
+    20000.0f,        // ER air absorption ceiling: 20kHz (earliest taps: no filtering)
+    18000.0f,        // ER air absorption floor: 18kHz
+    0.55f,           // ER decorrelation: strong allpass decorrelation (IACC 0.747→target 0.321)
+    3.0f,            // output gain: 3.0 (best total: 74.6, MFCC 64.5; signal_level 78.1 at 1% weight is acceptable)
+    -1.0f,           // stereo coupling: -1.0 = full 16×16 Hadamard (was 0.15 split 8+8; coupling -21.6 dB vs VV -1.7 dB)
+    -1.5f,           // output low shelf: -1.5dB at 250Hz (restored)
+    -5.0f,           // output high shelf: -5dB at 1.1kHz (locked — -3dB@1.5kHz crashed centroid_late to 62.1)
+    1100.0f,         // output high shelf freq: 1.1kHz (locked)
+    630.0f,          // output mid EQ: 630Hz center
+    -3.0f,           // output mid EQ: -3dB cut
+    0.8f             // output mid EQ: Q=0.8
 };
 
 // ---------------------------------------------------------------------------
@@ -192,27 +247,35 @@ static constexpr AlgorithmConfig kChamber = {
     0.75f, 0.625f,   // input diffusion: Dattorro split
     1.0f,            // output diffusion scale
     10000.0f,        // bandwidth: standard
-    0.12f, 1.30f,    // ER: reduced level (was 0.8→0.25→0.12; ER-to-late +7.2dB vs reference), wider timing (was 0.85; onset -5ms vs reference)
-    0.45f,           // late gain: level-matched to reference chamber (~-10.5 dB wet gain)
+    1.2f, 0.55f,     // ER: boosted level, very tight timing for C50
+    0.50f,           // late gain: slightly boosted for EDT
     0.8f, 1.0f,      // mod: increased depth for mode blurring, normal rate
-    1.20f, 1.1f, 1.0f, // damping: trebleMultScale=1.20 (dark), trebleMultScaleMax=1.1 (bright), bassMultScale=1.0
-    5000.0f,            // high crossover: three-band damping mid/high split (Hz)
+    0.90f, 0.90f, 1.0f, // damping: trebleMultScale=0.90, trebleMultScaleMax=0.90, bassMultScale=1.0
+    20000.0f,        // high crossover: 20kHz (effectively two-band — mid and air bands unified)
+    1.0f,            // airDampingScale: 1.0 (no extra air damping)
     0.5f, 1.5f,      // size range
-    0.03f,           // ER crossfeed: reduced from 0.20→0.10→0.03 (less ER→FDN bleed inflating early tail)
-    0.10f,           // inline diffusion: mild density boost
+    0.2f,            // ER crossfeed: medium
+    0.30f,           // inline diffusion: moderate density for smoother spectral envelope
     1.0f,            // mod depth floor: 1.0 = uniform modulation
-    0.0f,            // structural HF damping: off (Chamber HF already too fast; trebleMultScale=1.20 handles HF)
+    0.0f,            // structural HF damping: off
     0.0f,            // structural LF damping: off
-    0.0f,            // feedback LP: off
+    12000.0f,        // feedback LP: 12kHz
     false,           // feedback LP 4th order: off
-    1.5f,            // noise mod: mild jitter for ringing suppression
+    1.5f,            // noise mod: mild jitter
     0.10f,           // Hadamard perturbation: break symmetry
     1.0f,            // ER gain exponent: inverse distance (default)
     false,           // useDattorroTank: off (FDN)
     1.0f,            // decay time scale: pass through
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled (Chamber has static lateGainScale tuning)
-    0.0f, 0.0f      // gate: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f,        // ER air absorption ceiling: default
+    2000.0f,         // ER air absorption floor: default
+    0.50f,           // ER decorrelation: strong (reduce early IACC from 0.617 toward 0.241)
+    1.0f,            // output gain: unity
+    0.15f,           // stereo coupling: moderate (wider stereo for IACC match)
+    0.0f, 0.0f, 3000.0f, // output EQ: bypassed
+    0.0f, 0.0f, 0.7f    // output mid EQ: bypassed
 };
 
 // ---------------------------------------------------------------------------
@@ -229,28 +292,36 @@ static constexpr AlgorithmConfig kRoom = {
     { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     0.75f, 0.70f,    // input diffusion: moderate-high
     1.0f,            // output diffusion scale
-    5000.0f,         // bandwidth: dark input for extreme HF rolloff
-    0.12f, 1.30f,    // ER: reduced level (was 0.5→0.25→0.12; ER-to-late +5.5dB vs reference), wider timing (was 0.90; onset -4.8ms vs reference)
-    0.70f,           // late gain: calibrated to reference room preset suite (avg level +4.7 at 0.90 → +2.5 at 0.70)
-    1.5f, 1.0f,      // mod: depth 1.5x to match reference room chorus (median ~6 Hz; DV was ~4 Hz at 1.0x), rate 1x
-    0.45f, 0.65f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.65 (bright; was 0.95, lowered to fix HF-too-slow shape), bassMultScale=0.85
-    6000.0f,            // high crossover: three-band damping mid/high split (Hz)
+    18000.0f,        // bandwidth: wide input (structural HF damping handles per-loop rolloff)
+    1.4f, 0.45f,     // ER: boosted level + tighter timing for C50
+    0.55f,           // late gain: reduced for C50 ratio (more ER, less late)
+    1.3f, 1.0f,      // mod: wider stereo (modDepthScale=1.3, modRateScale=1.0)
+    0.45f, 0.75f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.75 (bright, was 0.95), bassMultScale=0.85
+    6000.0f,         // high crossover: 6kHz (three-band: bass/mid/air — independent air band control)
+    0.75f,           // airDampingScale: 0.75 (Room — faster air decay for natural room character)
     0.5f, 1.5f,      // size range
-    0.02f,           // ER crossfeed: reduced from 0.10→0.05→0.02 (less ER→FDN bleed inflating early tail)
-    0.0f,            // inline diffusion: off (long delays = sufficient density)
+    0.10f,           // ER crossfeed: light
+    0.0f,            // inline diffusion: off (0.20 crashed MFCC 56→17)
     1.0f,            // mod depth floor: uniform
-    0.0f,            // structural HF damping: off (already very dark, trebleMultScale=0.45)
+    0.0f,            // structural HF damping: off (trebleMultScaleMax=0.75 handles HF decay)
     40.0f,           // structural LF damping: 40Hz HP to gently tame bass RT60 inflation
-    0.0f,            // feedback LP: off (trebleMultScale handles HF decay)
+    9500.0f,         // feedback LP: 9.5kHz (balance late tail darkness — 7kHz too aggressive, target VV centroid ~1894Hz)
     false,           // feedback LP 4th order: off
-    0.0f,            // noise mod: off (uses coherent sinusoidal LFO, not random jitter)
+    0.0f,            // noise mod: off (2.0 was 4x too aggressive, crashed MFCC)
     0.08f,           // Hadamard perturbation: mild symmetry breaking
-    0.75f,           // ER gain exponent: moderate rolloff
+    0.30f,           // ER gain exponent: gentle rolloff (more energy in later taps)
     false,           // useDattorroTank: off (FDN)
-    1.0f,            // decay time scale: 1x pass through (was 3x, caused knob-to-sound mismatch)
+    1.4f,            // decay time scale: 1.4x to match reference RT60 at equivalent knob positions
     0.0f, 0, 1.0f,   // dual-slope: disabled (standard 16-channel FDN for matched tail energy)
     0.0f, 0.0f,      // short-decay boost: disabled (Room uses lateGainScale calibration)
-    0.0f, 0.0f       // gate: disabled
+    0.0f, 0.0f,      // gate: disabled
+    10000.0f,         // ER air absorption ceiling: darken earliest taps slightly (centroid_early 6207→5521)
+    2000.0f,          // ER air absorption floor: default
+    0.35f,            // ER decorrelation: moderate (improve L/R spectral variation for MFCC)
+    1.0f,             // output gain: unity
+    0.20f,            // stereo coupling: moderate (rooms have natural coupling from walls)
+    0.0f, 0.0f, 3000.0f, // output EQ: bypassed (output EQ consistently hurts MFCC/spectral_tilt)
+    0.0f, 0.0f, 0.7f    // output mid EQ: bypassed
 };
 
 // ---------------------------------------------------------------------------
@@ -266,19 +337,20 @@ static constexpr AlgorithmConfig kAmbient = {
     { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
     0.80f, 0.80f,    // input diffusion: maximum
     1.0f,            // output diffusion scale
-    8000.0f,         // bandwidth: soft input
+    18000.0f,        // bandwidth: wide input (let full spectrum in for bright Ambient)
     0.0f, 1.0f,      // ER: forced off
-    0.60f,           // late gain: preset-suite avg was +1.9 dB at 0.70; 0.60 reduces ~1.3 dB
+    0.55f,           // late gain: calibrated (0.65 hurt centroid_late and MFCC)
     1.5f, 1.3f,      // mod: heavy depth and rate
-    0.60f, 1.0f, 1.0f, // damping: trebleMultScale=0.60 (dark), trebleMultScaleMax=1.0 (bright), bassMultScale=1.0
-    8000.0f,            // high crossover: three-band damping mid/high split (Hz)
+    0.80f, 1.0f, 1.0f, // damping: trebleMultScale=0.80 (brighter), trebleMultScaleMax=1.0, bassMultScale=1.0
+    20000.0f,        // high crossover: 20kHz (effectively two-band — mid and air bands unified)
+    1.0f,            // airDampingScale: 1.0 (no extra air damping)
     0.5f, 1.5f,      // size range
     0.0f,            // ER crossfeed: off (no ERs)
     0.0f,            // inline diffusion: off (preserve ambient character)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off (Ambient HF slightly fast; trebleMultScale=0.60 handles HF)
     0.0f,            // structural LF damping: off
-    0.0f,            // feedback LP: off
+    0.0f,            // feedback LP: off (12kHz overcorrected centroid_late 2708→1798, target 2322)
     false,           // feedback LP 4th order: off
     0.0f,            // noise mod: off (preserve ambient character)
     0.0f,            // Hadamard perturbation: off
@@ -287,7 +359,14 @@ static constexpr AlgorithmConfig kAmbient = {
     1.0f,            // decay time scale: pass through
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled (Ambient already matched)
-    0.0f, 0.0f      // gate: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f,        // ER air absorption ceiling: default
+    2000.0f,         // ER air absorption floor: default (no ERs in Ambient)
+    0.0f,            // ER decorrelation: off
+    1.0f,            // output gain: unity
+    0.05f,           // stereo coupling: minimal (0.0 didn't help width enough)
+    0.0f, 0.0f, 3000.0f, // output EQ: bypassed
+    0.0f, 0.0f, 0.7f    // output mid EQ: bypassed
 };
 
 // ---------------------------------------------------------------------------

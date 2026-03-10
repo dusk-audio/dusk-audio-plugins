@@ -8,7 +8,7 @@ ReferenceReverb v4.0.5 uses 22 modes at step 1/24 (~0.0417).
 import os
 
 SAMPLE_RATE = 48000
-SIGNAL_DURATION = 12.0  # seconds of tail capture (ReferenceReverb tails can exceed 8s)
+SIGNAL_DURATION = 40.0  # seconds of tail capture (Hall1984 1970s RT60 can exceed 12s)
 
 # ---------------------------------------------------------------------------
 # Plugin discovery
@@ -19,17 +19,14 @@ DUSKVERB_PATHS = [
 ]
 
 REFERENCE_REVERB_PATHS = [
-    "/Library/Audio/Plug-Ins/Components/ReferenceReverbAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ReferenceReverbAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ReferenceReverb.component",
-    "~/Library/Audio/Plug-Ins/VST3/ReferenceReverb.vst3",
-    "~/.vst3/ReferenceReverb.vst3",
+    "/Library/Audio/Plug-Ins/Components/ValhallaVintageVerbAU64.component",  # AU preferred (raw values verified in Logic Pro)
+    "~/Library/Audio/Plug-Ins/Components/ValhallaVintageVerbAU64.component",
+    "/Library/Audio/Plug-Ins/VST3/ValhallaVintageVerb.vst3",
 ]
 
 REFERENCE_ROOM_PATHS = [
-    "/Library/Audio/Plug-Ins/Components/ReferenceRoomAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ReferenceRoomAU64.component",
-    "~/Library/Audio/Plug-Ins/Components/ReferenceRoom.component",
+    "/Library/Audio/Plug-Ins/Components/ValhallaRoomAU64.component",
+    "~/Library/Audio/Plug-Ins/Components/ValhallaRoomAU64.component",
 ]
 
 
@@ -73,190 +70,200 @@ MODE_PAIRINGS = [
         "auto_calibrate": True,
         "duskverb": {
             "algorithm": "Room",
-            "decay_time": 1.0,          # Medium decay — match ReferenceReverb Chamber
-            "size": 0.50,               # Medium size
-            "diffusion": 0.70,          # Moderate diffusion
-            "treble_multiply": 0.55,    # HF damping
-            "bass_multiply": 1.0,       # Neutral bass
-            "crossover": 1000,
-            "mod_depth": 0.30,          # Moderate modulation
-            "mod_rate": 0.5,
-            "early_ref_level": 0.50,    # Moderate ERs
-            "early_ref_size": 0.35,
-            "pre_delay": 5.0,           # Small pre-delay
+            "decay_time": 0.76,
+            "size": 0.388,
+            "diffusion": 0.50,
+            "treble_multiply": 1.00,
+            "bass_multiply": 1.26,
+            "crossover": 633,
+            "mod_depth": 0.309,
+            "mod_rate": 1.50,
+            "early_ref_level": 0.55,
+            "early_ref_size": 0.45,
+            "pre_delay": 9.0,
             "lo_cut": 20,
-            "hi_cut": 20000,
+            "hi_cut": 12000,
             "width": 1.0,
         },
         "reference": {
-            "_reverbmode": 0.1250,      # Room (VV v4.0.5: 22 modes, step 1/24)
-            "_colormode": 0.333,        # 1980s (neutral)
-            "_decay": 0.10,             # Short-medium decay
-            "_size": 0.50,
-            "_predelay": 0.02,
-            "_diffusion_early": 0.70,
-            "_diffusion_late": 0.70,
-            "_mod_rate": 0.25,
-            "_mod_depth": 0.30,
-            "_high_cut": 1.0,
-            "_low_cut": 0.0,
-            "_bassmult": 0.50,
-            "_bassxover": 0.40,
+            # Exact values from VV factory preset "Fat Snare Room"
+            "_reverbmode": 0.125,           # Room
+            "_colormode": 0.67,             # Now (from Fat Snare Room screenshot)
+            "_decay": 0.229916,             # Factory value (auto_calibrate overrides)
+            "_size": 0.388,
+            "_predelay": 0.17725,
+            "_attack": 0.124,
+            "_bassmult": 0.56595,
+            "_bassxover": 0.484,
             "_highshelf": 0.0,
-            "_highfreq": 0.50,
-            "_attack": 0.50,
+            "_highfreq": 0.528385,
+            "_diffusion_early": 0.68,
+            "_diffusion_late": 1.0,
+            "_mod_rate": 0.141414,
+            "_mod_depth": 0.308,
+            "_high_cut": 0.422995,
+            "_low_cut": 0.05,               # ~25Hz (from Fat Snare Room screenshot)
         },
     },
     {
         "name": "Hall",
+        "auto_calibrate": True,
         "duskverb": {
             "algorithm": "Hall",
-            "decay_time": 2.5,
-            "size": 0.70,
-            "diffusion": 0.70,
-            "treble_multiply": 0.58,
-            "bass_multiply": 1.15,
-            "crossover": 900,
-            "mod_depth": 0.40,
-            "mod_rate": 0.8,
-            "early_ref_level": 0.55,
-            "early_ref_size": 0.50,
-            "pre_delay": 30.0,
-            "lo_cut": 20,
-            "hi_cut": 20000,
+            "decay_time": 1.15,
+            "size": 0.504,
+            "diffusion": 1.0,
+            "treble_multiply": 0.50,
+            "bass_multiply": 1.40,
+            "crossover": 430,
+            "mod_depth": 1.0,
+            "mod_rate": 0.46,
+            "early_ref_level": 0.51,
+            "early_ref_size": 0.40,
+            "pre_delay": 23.0,
+            "lo_cut": 90,
+            "hi_cut": 4000,
             "width": 1.0,
         },
         "reference": {
-            "_reverbmode": 0.0417,      # Concert Hall (VV v4.0.5)
-            "_colormode": 0.333,        # 1980s (neutral)
-            "_decay": 0.18,             # Medium decay to match ~2.5s
-            "_size": 0.70,
-            "_predelay": 0.10,          # ~30ms (normalized)
-            "_diffusion_early": 0.80,
-            "_diffusion_late": 0.80,
-            "_mod_rate": 0.30,
-            "_mod_depth": 0.35,
-            "_high_cut": 1.0,
-            "_low_cut": 0.0,
-            "_bassmult": 0.60,
-            "_bassxover": 0.40,
-            "_highshelf": 0.0,
-            "_highfreq": 0.50,
-            "_attack": 0.50,
+            # VV "Small Vocal Hall" preset — exact AU raw values from Logic Pro
+            # AU uses different 0-1 normalization than VST3; these are verified correct
+            "_reverbmode": 0.04,            # Concert Hall
+            "_colormode": 0.67,             # 1980s
+            "_decay": 0.28,                 # 1.15s display (auto_calibrate overrides)
+            "_size": 0.50,                  # 50.4%
+            "_predelay": 0.27,              # 23ms
+            "_attack": 0.18,                # 18.4%
+            "_bassmult": 0.60,              # 1.40x
+            "_bassxover": 0.43,             # 430Hz
+            "_highshelf": 0.0,              # -24.00dB (maximum HF damping)
+            "_highfreq": 0.39,              # 4000Hz
+            "_diffusion_early": 0.49,       # 48.8%
+            "_diffusion_late": 1.0,         # 100%
+            "_mod_rate": 0.04,              # 0.46Hz
+            "_mod_depth": 1.0,              # 100%
+            "_high_cut": 0.39,              # 4000Hz
+            "_low_cut": 0.05,               # 90Hz
         },
     },
     {
         "name": "Plate",
+        "auto_calibrate": True,
         "duskverb": {
             "algorithm": "Plate",
-            "decay_time": 2.0,
-            "size": 0.65,
-            "diffusion": 0.80,
-            "treble_multiply": 0.70,
-            "bass_multiply": 1.0,
-            "crossover": 1200,
-            "mod_depth": 0.25,
-            "mod_rate": 0.6,
-            "early_ref_level": 0.0,
-            "early_ref_size": 0.0,
+            "decay_time": 1.2,
+            "size": 0.672,
+            "diffusion": 1.0,
+            "treble_multiply": 1.0,
+            "bass_multiply": 1.16,
+            "crossover": 357,
+            "mod_depth": 0.192,
+            "mod_rate": 0.15,
+            "early_ref_level": 0.70,
+            "early_ref_size": 0.54,
             "pre_delay": 0.0,
             "lo_cut": 20,
-            "hi_cut": 20000,
+            "hi_cut": 6000,
             "width": 1.0,
         },
         "reference": {
-            "_reverbmode": 0.0833,      # Plate (VV v4.0.5)
-            "_colormode": 0.333,        # 1980s (neutral)
-            "_decay": 0.15,             # Medium decay to match ~2.0s
-            "_size": 0.65,
-            "_predelay": 0.0,           # No pre-delay
-            "_diffusion_early": 0.90,
-            "_diffusion_late": 0.90,
-            "_mod_rate": 0.20,
-            "_mod_depth": 0.25,
-            "_high_cut": 1.0,
-            "_low_cut": 0.0,
-            "_bassmult": 0.50,
-            "_bassxover": 0.40,
+            # Exact values from VV factory preset "Vox Plate"
+            "_reverbmode": 0.083333,        # Plate
+            "_colormode": 1.0,              # Now+ (factory value)
+            "_decay": 0.281755,             # Factory value (auto_calibrate overrides)
+            "_size": 0.672,
+            "_predelay": 0.0,
+            "_attack": 0.144,
+            "_bassmult": 0.553585,
+            "_bassxover": 0.426918,
             "_highshelf": 0.0,
-            "_highfreq": 0.50,
-            "_attack": 0.50,
+            "_highfreq": 0.439205,
+            "_diffusion_early": 0.58,
+            "_diffusion_late": 1.0,
+            "_mod_rate": 0.092,
+            "_mod_depth": 0.192,
+            "_high_cut": 0.74591,
+            "_low_cut": 0.05,               # 90Hz (from Vox Plate screenshot)
         },
     },
     {
         "name": "Chamber",
+        "auto_calibrate": True,
         "duskverb": {
             "algorithm": "Chamber",
-            "decay_time": 1.8,
-            "size": 0.60,
-            "diffusion": 0.70,
-            "treble_multiply": 0.55,
-            "bass_multiply": 1.10,
-            "crossover": 1000,
-            "mod_depth": 0.35,
-            "mod_rate": 0.7,
-            "early_ref_level": 0.60,
-            "early_ref_size": 0.50,
-            "pre_delay": 20.0,
-            "lo_cut": 20,
-            "hi_cut": 20000,
+            "decay_time": 2.5,
+            "size": 0.70,
+            "diffusion": 1.0,
+            "treble_multiply": 1.0,
+            "bass_multiply": 1.21,
+            "crossover": 218,
+            "mod_depth": 0.16,
+            "mod_rate": 0.17,
+            "early_ref_level": 0.48,
+            "early_ref_size": 0.56,
+            "pre_delay": 30.0,
+            "lo_cut": 25,
+            "hi_cut": 14000,
             "width": 1.0,
         },
         "reference": {
-            "_reverbmode": 0.1667,      # Chamber (VV v4.0.5)
-            "_colormode": 0.333,        # 1980s (neutral)
-            "_decay": 0.14,             # Medium decay to match ~1.8s
-            "_size": 0.60,
-            "_predelay": 0.07,          # ~20ms (normalized)
-            "_diffusion_early": 0.80,
-            "_diffusion_late": 0.80,
-            "_mod_rate": 0.25,
-            "_mod_depth": 0.30,
-            "_high_cut": 1.0,
-            "_low_cut": 0.0,
-            "_bassmult": 0.55,
-            "_bassxover": 0.40,
+            # Exact values from VV factory preset "Rich Chamber"
+            "_reverbmode": 0.1667,          # Chamber
+            "_colormode": 0.67,             # Now (bright)
+            "_decay": 0.34,                 # Factory value (auto_calibrate overrides)
+            "_size": 0.70,
+            "_predelay": 0.28,              # ~84ms
+            "_attack": 0.25,
+            "_bassmult": 0.57,
+            "_bassxover": 0.32,
             "_highshelf": 0.0,
-            "_highfreq": 0.50,
-            "_attack": 0.50,
+            "_highfreq": 0.63,
+            "_diffusion_early": 1.0,
+            "_diffusion_late": 1.0,
+            "_mod_rate": 0.12,
+            "_mod_depth": 0.16,
+            "_high_cut": 0.49,              # ~1910Hz
+            "_low_cut": 0.05,               # ~25Hz
         },
     },
     {
         "name": "Ambient",
+        "auto_calibrate": True,
         "duskverb": {
             "algorithm": "Ambient",
-            "decay_time": 6.0,
-            "size": 0.85,
-            "diffusion": 0.90,
-            "treble_multiply": 0.48,
-            "bass_multiply": 1.20,
-            "crossover": 700,
-            "mod_depth": 0.60,
-            "mod_rate": 0.9,
+            "decay_time": 0.90,
+            "size": 0.20,
+            "diffusion": 1.0,
+            "treble_multiply": 1.0,
+            "bass_multiply": 1.84,
+            "crossover": 200,
+            "mod_depth": 0.36,
+            "mod_rate": 0.11,
             "early_ref_level": 0.0,
             "early_ref_size": 0.0,
-            "pre_delay": 40.0,
-            "lo_cut": 20,
+            "pre_delay": 0.0,
+            "lo_cut": 25,
             "hi_cut": 20000,
-            "width": 1.6,
+            "width": 1.0,
         },
         "reference": {
-            "_reverbmode": 0.2917,      # Ambience (VV v4.0.5)
-            "_colormode": 0.333,        # 1980s (neutral)
-            "_decay": 0.35,             # Longer decay to match ~6.0s
-            "_size": 0.85,
-            "_predelay": 0.13,          # ~40ms (normalized)
+            # Exact values from VV factory preset "Ambience"
+            "_reverbmode": 0.2917,          # Ambience
+            "_colormode": 0.67,             # Now (bright)
+            "_decay": 0.24,                 # Factory value (auto_calibrate overrides)
+            "_size": 0.20,
+            "_predelay": 0.0,
+            "_attack": 0.36,
+            "_bassmult": 0.72,
+            "_bassxover": 0.28,
+            "_highshelf": 0.0,
+            "_highfreq": 0.67,
             "_diffusion_early": 1.0,
             "_diffusion_late": 1.0,
-            "_mod_rate": 0.40,
-            "_mod_depth": 0.50,
-            "_high_cut": 1.0,
-            "_low_cut": 0.0,
-            "_bassmult": 0.65,
-            "_bassxover": 0.40,
-            "_highshelf": 0.0,
-            "_highfreq": 0.50,
-            "_attack": 0.50,
+            "_mod_rate": 0.02,
+            "_mod_depth": 0.36,
+            "_high_cut": 0.85,              # ~10kHz
+            "_low_cut": 0.05,               # ~25Hz
         },
     },
 ]
@@ -366,10 +373,24 @@ def apply_reference_params(plugin, reference_config):
 
     reference_config keys start with '_' (semantic names).
     REFERENCE_PARAM_MAP maps them to actual pedalboard attribute names.
+
+    Config values are AU 0-1 normalized (verified from Logic Pro parameter inspector).
+    Uses setattr for AU plugins. For VST3, uses raw_value (but AU is preferred).
     """
     if not REFERENCE_PARAM_MAP:
         print("WARNING: REFERENCE_PARAM_MAP is empty. Run --list-params first.")
         return
+
+    params_dict = plugin.parameters
+    is_vst3 = hasattr(plugin, '_path') and '.vst3' in str(getattr(plugin, '_path', ''))
+    # Heuristic: if 'mix' param has range > 1, it's VST3-style
+    mix_param = params_dict.get("mix")
+    if mix_param is not None:
+        try:
+            # VST3 mix range is 0-100, AU is 0-1
+            is_vst3 = mix_param.max_value > 1.5
+        except Exception:
+            pass
 
     for semantic_key, value in reference_config.items():
         if not semantic_key.startswith('_'):
@@ -378,18 +399,40 @@ def apply_reference_params(plugin, reference_config):
         if mapped is None:
             print(f"  WARNING: No mapping for {semantic_key}")
             continue
-        try:
-            setattr(plugin, mapped, value)
-        except Exception as e:
-            print(f"  WARNING: Failed to set {mapped}={value}: {e}")
+
+        if is_vst3:
+            # VST3: use raw_value (0-1 normalized bypasses unit conversion)
+            param = params_dict.get(mapped)
+            if param is not None:
+                try:
+                    param.raw_value = value
+                except Exception as e:
+                    print(f"  WARNING: Failed to set {mapped}={value} via raw_value: {e}")
+        else:
+            # AU: setattr with 0-1 values works directly
+            try:
+                setattr(plugin, mapped, value)
+            except Exception as e:
+                print(f"  WARNING: Failed to set AU {mapped}={value}: {e}")
 
     # Always set 100% wet
-    mix_attr = REFERENCE_PARAM_MAP.get("_mix")
-    if mix_attr:
+    if is_vst3:
+        if mix_param is not None:
+            mix_param.raw_value = 1.0
+    else:
         try:
-            setattr(plugin, mix_attr, 1.0)
+            plugin.mix = 1.0
         except Exception:
             pass
+
+    # Verify critical VV parameters were applied
+    print("  Verifying VV parameters:")
+    for key in ["mix", "reverbmode", "colormode", "decay", "highcut", "lowcut"]:
+        param = params_dict.get(key)
+        if param:
+            print(f"    {key} = {getattr(plugin, key, '?')} (raw={param.raw_value:.4f})")
+        else:
+            print(f"    {key} = NOT FOUND")
 
 
 def apply_duskverb_params(plugin, duskverb_config):
@@ -407,6 +450,14 @@ def apply_duskverb_params(plugin, duskverb_config):
             setattr(plugin, key, value)
         except Exception as e:
             print(f"  WARNING: Failed to set DuskVerb {key}={value}: {e}")
+
+    # Verify critical parameters were applied
+    for key in ["dry_wet", "algorithm", "hi_cut", "lo_cut"]:
+        try:
+            actual = getattr(plugin, key)
+            print(f"    Verify: {key} = {actual}")
+        except Exception:
+            print(f"    Verify: {key} = CANNOT READ")
 
 
 # ---------------------------------------------------------------------------

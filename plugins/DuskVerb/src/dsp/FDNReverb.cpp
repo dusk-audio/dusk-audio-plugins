@@ -207,7 +207,7 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
             delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
 
-            // Advance LFO with "Wander" drift (classic reverb technique).
+            // Advance LFO with Lexicon-style "Wander" drift.
             // Adds ±8% random perturbation to the phase increment each sample
             // so the modulation never exactly repeats — organic, not mechanical.
             float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
@@ -269,7 +269,7 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             hadamardInPlace16 (feedback);
         }
 
-        // --- 3) Three-band damping + input injection -> write to delay lines ---
+        // --- 3) Two-band damping + input injection -> write to delay lines ---
         for (int ch = 0; ch < N; ++ch)
         {
             auto& dl = delayLines_[ch];
@@ -377,13 +377,6 @@ void FDNReverb::setTrebleMultiply (float mult)
 void FDNReverb::setCrossoverFreq (float hz)
 {
     crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void FDNReverb::setHighCrossoverFreq (float hz)
-{
-    highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -583,9 +576,9 @@ void FDNReverb::setStructuralHFDamping (float baseFreqHz, float trebleMultiply)
         structHFCoeff_ = 0.0f;
         return;
     }
-    // Inverted treble scaling: dark presets (low treble) already have strong ThreeBandDamping,
+    // Inverted treble scaling: dark presets (low treble) already have strong TwoBandDamping,
     // so structural damping is reduced (higher effectiveHz). Bright presets (high treble) have
-    // weaker ThreeBandDamping, so they get full structural damping (effectiveHz = baseFreqHz).
+    // weaker TwoBandDamping, so they get full structural damping (effectiveHz = baseFreqHz).
     // At treble=1.0: effectiveHz = baseFreqHz (full structural damping).
     // At treble=0.5: effectiveHz = baseFreqHz * 1.25 (reduced damping for dark presets).
     // At treble=0.1: effectiveHz = baseFreqHz * 1.45 (minimal damping for very dark presets).
@@ -685,10 +678,9 @@ void FDNReverb::updateDelayLengths()
 
 void FDNReverb::updateDecayCoefficients()
 {
-    // Two crossover coefficients for three-band damping: c = exp(-2*pi*fc/sr)
-    float sr = static_cast<float> (sampleRate_);
-    float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
-    float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
+    // Crossover lowpass coefficient: c = exp(-2*pi*fc/sr)
+    float crossoverCoeff = std::exp (-kTwoPi * crossoverFreq_
+                                     / static_cast<float> (sampleRate_));
 
     for (int i = 0; i < N; ++i)
     {
@@ -714,26 +706,17 @@ void FDNReverb::updateDecayCoefficients()
                 effectiveLength += static_cast<float> (kInlineAPDelays3[i]) * rateRatio;
         }
         float gBase = std::pow (10.0f, -3.0f * effectiveLength
-                                       / (channelRT60 * sr));
+                                       / (channelRT60 * static_cast<float> (sampleRate_)));
 
-        // Three-band gains:
-        // Low  (< crossoverFreq_):     gLow  = gBase^(1/bassMultiply)  — bass sustain
-        // Mid  (crossover..highCross):  depends on treble direction (see below)
-        // High (> highCrossoverFreq_): gHigh = gBase^(1/trebleMultiply) — HF rolloff
+        // Bass Multiply: g_low = g_base^(1/bassMultiply)
+        // bassMultiply > 1.0 → lows sustain longer (g_low > g_base)
         float gLow = std::pow (gBase, 1.0f / bassMultiply_);
+
+        // Treble Multiply: g_high = g_base^(1/trebleMultiply)
+        // trebleMultiply < 1.0 → highs decay faster (g_high < g_base)
         float gHigh = std::pow (gBase, 1.0f / trebleMultiply_);
 
-        // Mid-band gain: treble-direction-dependent.
-        // trebleMultiply < 1 (Hall/Room/Ambient): HF is being damped, so mid band at
-        //   gBase gives neutral decay in 1-6kHz → less damping than old two-band.
-        //   Concert Wave benefits: mid-range sustains closer to a flat reference decay.
-        // trebleMultiply >= 1 (Plate/Chamber): HF is being extended (gHigh > gBase),
-        //   so gMid = gHigh preserves the old two-band behavior. Otherwise gMid = gBase
-        //   would create a spectral dip where mids decay faster than highs.
-        float gMid = (trebleMultiply_ >= 1.0f) ? gHigh : gBase;
-
-        dampFilter_[i].setCoefficients (gLow, gMid, gHigh,
-                                        lowCrossoverCoeff, highCrossoverCoeff);
+        dampFilter_[i].setCoefficients (gLow, gHigh, crossoverCoeff);
     }
 }
 

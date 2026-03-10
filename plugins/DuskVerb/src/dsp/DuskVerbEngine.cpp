@@ -131,7 +131,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     }
 
     // ER→FDN crossfeed: feed early reflections into the late reverb input
-    // so the FDN tail "grows out of" the ER pattern
+    // so the FDN tail "grows out of" the ER pattern (ValhallaRoom "Early Send")
     if (erCrossfeed_ > 0.0f && ! frozen_)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -352,7 +352,6 @@ void DuskVerbEngine::applyAlgorithm (int index)
     fdn_.setFeedbackLP4thOrder (config_->feedbackLP4thOrder);
     fdn_.setNoiseModDepth (config_->noiseModDepth);
     fdn_.setHadamardPerturbation (config_->hadamardPerturbation);
-    fdn_.setHighCrossoverFreq (config_->highCrossoverHz);
     fdn_.setStructuralHFDamping (config_->structuralHFDampingHz, lastTrebleMult_);
     fdn_.setStructuralLFDamping (config_->structuralLFDampingHz);
     setGateParams (config_->gateHoldMs, config_->gateReleaseMs);
@@ -382,7 +381,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     dattorroTank_.setDecayTime (scaledDecay);
 
     // Decay-dependent output compensation: boost at short decay times to match
-    // reference reverb's higher energy density at low feedback coefficients.
+    // VintageVerb's higher energy density at low feedback coefficients.
     // Linear ramp: full boost at decayTime=0, zero at knee.
     if (config_->shortDecayBoostDB > 0.0f && config_->shortDecayBoostKnee > 0.0f)
     {
@@ -408,10 +407,8 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     lastTrebleMult_ = mult;
     // Nonlinear treble scaling: squared curve interpolates between dark-end
     // (trebleMultScale) and bright-end (trebleMultScaleMax) targets.
-    // At treble=1.0: scaledTreble = trebleMultScaleMax (bright presets need
-    //   more HF damping to match inherent structural HF loss in reference reverbs)
-    // At treble=0.0: scaledTreble = trebleMultScale (dark presets need less
-    //   HF damping because the user-applied high shelf is already heavy)
+    // At treble=1.0: scaledTreble = trebleMultScaleMax (flat/bright, like VV HighShelf=0)
+    // At treble=0.0: scaledTreble = trebleMultScale (steep HF rolloff)
     float trebleCurve = mult * mult;
     float scaledTreble = config_->trebleMultScale * (1.0f - trebleCurve)
                        + config_->trebleMultScaleMax * trebleCurve;
