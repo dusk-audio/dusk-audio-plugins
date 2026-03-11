@@ -65,7 +65,7 @@ public:
                 break;
 
             case TransformerType::FET:
-                generateTransformerIR(100.0f, 0.3f, 22000.0f, -0.8f, 48);
+                generateTransformerIR(100.0f, 0.3f, 30000.0f, -0.3f, 48);
                 break;
 
             case TransformerType::Console_Bus:

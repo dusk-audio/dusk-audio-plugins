@@ -162,9 +162,14 @@ def measure_la2a_reference(sr=SAMPLE_RATE):
     # Mid-range target for 3-point calibration (-10 dBFS tone)
     # Levels go -40, -38, ..., 0 in steps of 2. Index for -10 is (40-10)/2 = 15
     mid_idx = 15
-    output_at_mid = gains[mid_idx][2] if mid_idx < len(gains) else None
-    mid_level_db = gains[mid_idx][0] if mid_idx < len(gains) else -10
-    gr_at_mid = gains[mid_idx][3] - flat_gain if mid_idx < len(gains) else None
+    if mid_idx < len(gains):
+        output_at_mid = gains[mid_idx][2]
+        mid_level_db = gains[mid_idx][0]
+        gr_at_mid = gains[mid_idx][3] - flat_gain
+    else:
+        output_at_mid = None
+        mid_level_db = None
+        gr_at_mid = None
 
     return {
         'flat_gain': flat_gain,

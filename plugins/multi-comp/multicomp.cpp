@@ -118,7 +118,8 @@ namespace Constants {
     // Vintage FET constants
     constexpr float FET_THRESHOLD_DB = -10.0f; // Fixed threshold
     constexpr float FET_MAX_REDUCTION_DB = 30.0f;
-    constexpr float FET_ALLBUTTONS_ATTACK = 0.0001f; // 100 microseconds
+    constexpr float FET_ALLBUTTONS_MIN_ATTACK = 0.0008f; // 800µs — ABI floor (matches normal FET max)
+    constexpr float FET_ALLBUTTONS_MAX_ATTACK = 0.005f;  // 5ms — ABI ceiling (wider range for lag control)
 
     // Classic VCA constants
     constexpr float VCA_RMS_TIME_CONSTANT = 0.003f; // 3ms RMS averaging
@@ -322,15 +323,10 @@ public:
     
     int getLatency() const
     {
+        if (oversamplingOff)
+            return 0;
         auto* oversampler = use4x ? oversampler4x.get() : oversampler2x.get();
-        return oversampler ? static_cast<int>(oversampler->getLatencyInSamples()) : 0;
-    }
-
-    // Get maximum latency (for consistent PDC reporting)
-    int getMaxLatency() const
-    {
-        // Report 4x latency always for consistent PDC
-        return oversampler4x ? static_cast<int>(oversampler4x->getLatencyInSamples()) : 0;
+        return oversampler ? static_cast<int>(std::lround(oversampler->getLatencyInSamples())) : 0;
     }
 
     bool isOversamplingEnabled() const { return oversampler2x != nullptr || oversampler4x != nullptr; }
@@ -1485,8 +1481,8 @@ public:
         float amplifiedInput = transformedInput * inputGainLin;
 
         // Ratio mapping: 4:1, 8:1, 12:1, 20:1, all-buttons mode
-        // All-buttons mode: Hardware measurements show >100:1 effective ratio
-        std::array<float, 5> ratios = {4.0f, 8.0f, 12.0f, 20.0f, 120.0f}; // All-buttons >100:1
+        // All-buttons mode: effective ratio 12:1–20:1 (uses non-linear curve, not this value)
+        std::array<float, 5> ratios = {4.0f, 8.0f, 12.0f, 20.0f, 20.0f};
         float ratio = ratios[juce::jlimit(0, 4, ratioIndex)];
 
         // FEEDBACK TOPOLOGY for authentic FET behavior
@@ -1521,26 +1517,25 @@ public:
             // Classic FET compression curve
             if (ratioIndex == 4) // All-buttons mode (FET mode)
             {
-                // Use lookup table if available, otherwise fall back to piecewise calculation
+                // Use lookup table if available, otherwise fall back to inline calculation
                 if (lookupTables != nullptr)
                 {
                     reduction = lookupTables->getAllButtonsReduction(overThreshDb, useMeasuredCurve);
                 }
                 else
                 {
-                    // Fallback: piecewise approximation (Modern curve)
-                    if (overThreshDb < 3.0f)
+                    // Fallback: ~16:1 hard knee with slight softening near threshold
+                    // Real ABI is 12:1–20:1 with a "severe plateau" curve
+                    if (overThreshDb < 2.0f)
                     {
-                        reduction = overThreshDb * 0.33f;
-                    }
-                    else if (overThreshDb < 10.0f)
-                    {
-                        float t = (overThreshDb - 3.0f) / 7.0f;
-                        reduction = 1.0f + (overThreshDb - 3.0f) * (0.75f + t * 0.15f);
+                        // Slight soft knee right at threshold
+                        float t = overThreshDb / 2.0f;
+                        reduction = overThreshDb * (0.5f + t * 0.44f); // Ramps from ~2:1 to ~16:1
                     }
                     else
                     {
-                        reduction = 6.25f + (overThreshDb - 10.0f) * 0.95f;
+                        // Full ABI compression: ~16:1 effective ratio
+                        reduction = 0.94f + (overThreshDb - 2.0f) * 0.9375f;
                     }
                 }
 
@@ -1591,14 +1586,21 @@ public:
         // All-buttons mode (FET mode) affects timing
         if (ratioIndex == 4)
         {
-            // All-buttons mode has fast attack and modified release
-            // Enforce minimum of 100µs to prevent waveform-tracking distortion
-            attackTime = juce::jmax(attackTime, 0.0001f); // 100 microseconds minimum (was jmin - bug!)
-            releaseTime *= 0.7f; // Somewhat faster release
-            
-            // Add some program-dependent variation for the unique FET mode sound
+            // ABI has a "lag time on initial transients" (reverse look-ahead effect)
+            // The bias point shifts cause the detector to respond slower to transients,
+            // letting them punch through. ABI gets its own wider attack range (0.8ms–5ms)
+            // so the attack knob still controls the amount of transient lag.
+            attackTime = Constants::FET_ALLBUTTONS_MIN_ATTACK *
+                std::pow(Constants::FET_ALLBUTTONS_MAX_ATTACK / Constants::FET_ALLBUTTONS_MIN_ATTACK, attackNorm);
+
+            // ABI release creates a "plateau" — compression holds/tightens on sustained content
+            // before eventually releasing. Slower base release + program-dependent hold.
+            releaseTime *= 1.5f;
+
+            // Program-dependent: more compression = longer hold (plateau deepens)
+            // "Ratio increases after the transient" — modeled by extending release with GR depth
             float reductionFactor = juce::jlimit(0.0f, 1.0f, reduction / 20.0f);
-            releaseTime *= (1.0f + reductionFactor * 0.3f); // Slightly slower release with more compression
+            releaseTime *= (1.0f + reductionFactor * 0.5f);
         }
         
         // Program-dependent behavior: timing varies with program material
@@ -1628,23 +1630,21 @@ public:
         float releaseCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, releaseTime * static_cast<float>(sampleRate))));
         
         
-        // FET mode has unique envelope behavior
+        // ABI mode envelope: uses the modified (slower) timing from above
+        // The transient punch comes from the 1ms attack lag, not special envelope math
         if (ratioIndex == 4)
         {
-            // All-buttons mode has faster but still controlled envelope following
-            // This creates the characteristic "pumping" effect without instability
             if (targetGain < detector.envelope)
             {
-                // Fast attack in FET mode but not instantaneous to avoid distortion
-                float fetAttackCoeff = std::exp(-1.0f / (Constants::FET_ALLBUTTONS_ATTACK * static_cast<float>(sampleRate)));
-                detector.envelope = fetAttackCoeff * detector.envelope + (1.0f - fetAttackCoeff) * targetGain;
+                // ABI attack: use the calculated attack time (with 1ms minimum lag)
+                // This creates the transient punch-through — NOT a fast attack
+                detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
             }
             else
             {
-                // Release with characteristic FET mode "breathing"
-                // Slightly faster release but still smooth
-                float fetReleaseCoeff = releaseCoeff * 0.98f; // Slightly faster than normal
-                detector.envelope = fetReleaseCoeff * detector.envelope + (1.0f - fetReleaseCoeff) * targetGain;
+                // ABI release: slow release creates the "plateau" effect
+                // Compression holds on sustained content before gradually releasing
+                detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
             }
         }
         else
@@ -2370,13 +2370,14 @@ public:
 
         // Ratio selection (same as Vintage FET)
         float ratio;
+        bool isAllButtons = (ratioIndex == 4);
         switch (ratioIndex)
         {
             case 0: ratio = 4.0f; break;
             case 1: ratio = 8.0f; break;
             case 2: ratio = 12.0f; break;
             case 3: ratio = 20.0f; break;
-            case 4: ratio = 100.0f; break;  // All-buttons
+            case 4: ratio = 20.0f; break;  // All-buttons (uses custom curve below)
             default: ratio = 4.0f; break;
         }
 
@@ -2385,13 +2386,29 @@ public:
         if (detectionLevel > threshold)
         {
             float overDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
-            reduction = overDb * (1.0f - 1.0f / ratio);
+
+            if (isAllButtons)
+            {
+                // ABI: ~16:1 hard knee with slight softening near threshold
+                // Same curve shape as Vintage FET ABI but applied in feedforward topology
+                if (overDb < 2.0f)
+                {
+                    float t = overDb / 2.0f;
+                    reduction = overDb * (0.5f + t * 0.44f);
+                }
+                else
+                {
+                    reduction = 0.94f + (overDb - 2.0f) * 0.9375f;
+                }
+            }
+            else
+            {
+                reduction = overDb * (1.0f - 1.0f / ratio);
+            }
             reduction = juce::jmin(reduction, 30.0f);
         }
 
         // Studio FET timing - same fast response, but cleaner
-        // IMPORTANT: Minimum attack of 100µs prevents waveform-tracking distortion
-        // (At 48kHz, 100µs = ~5 samples, safe for all audio frequencies)
         const float minAttack = 0.0001f;   // 100µs (safe minimum)
         const float maxAttack = 0.0008f;   // 800µs
         const float minRelease = 0.05f;    // 50ms
@@ -2402,6 +2419,17 @@ public:
 
         float attackTime = minAttack * std::pow(maxAttack / minAttack, attackNorm);
         float releaseTime = minRelease * std::pow(maxRelease / minRelease, releaseNorm);
+
+        // ABI timing: lag on transients + plateau release (same as Vintage FET)
+        if (isAllButtons)
+        {
+            // ABI gets its own wider attack range (0.8ms–5ms) for transient lag control
+            attackTime = Constants::FET_ALLBUTTONS_MIN_ATTACK *
+                std::pow(Constants::FET_ALLBUTTONS_MAX_ATTACK / Constants::FET_ALLBUTTONS_MIN_ATTACK, attackNorm);
+            releaseTime *= 1.5f;
+            float reductionFactor = juce::jlimit(0.0f, 1.0f, reduction / 20.0f);
+            releaseTime *= (1.0f + reductionFactor * 0.5f);
+        }
 
         // Envelope following
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
@@ -2763,6 +2791,53 @@ public:
     int getLookaheadSamples() const
     {
         return currentLookaheadSamples;
+    }
+
+    // Pass audio through the lookahead delay only (no gain reduction).
+    // Used in bypass path to maintain reported latency for Digital mode.
+    float processLookaheadOnly(float input, int channel, float lookaheadMs)
+    {
+        if (channel >= numChannels || sampleRate <= 0.0 || maxLookaheadSamples <= 0)
+            return input;
+
+        int lookaheadSamples = static_cast<int>(std::round((lookaheadMs / 1000.0f) * static_cast<float>(sampleRate)));
+        lookaheadSamples = juce::jlimit(0, maxLookaheadSamples - 1, lookaheadSamples);
+
+        if (lookaheadSamples <= 0)
+            return input;
+
+        int& writePos = lookaheadWritePos[static_cast<size_t>(channel)];
+        int bufferSize = maxLookaheadSamples;
+
+        int readPos = (writePos - lookaheadSamples + bufferSize) % bufferSize;
+        float delayedInput = lookaheadBuffer.getSample(channel, readPos);
+
+        lookaheadBuffer.setSample(channel, writePos, input);
+        writePos = (writePos + 1) % bufferSize;
+
+        return delayedInput;
+    }
+
+    // Pass audio through a delay of exactly delaySamples (no gain reduction).
+    // Used in bypass path where the caller computes the exact delay to match
+    // the reported PDC latency (which depends on the current OS factor).
+    float processDelayOnly(float input, int channel, int delaySamples)
+    {
+        if (channel >= numChannels || maxLookaheadSamples <= 0 || delaySamples <= 0)
+            return input;
+
+        delaySamples = juce::jlimit(1, maxLookaheadSamples - 1, delaySamples);
+
+        int& writePos = lookaheadWritePos[static_cast<size_t>(channel)];
+        int bufferSize = maxLookaheadSamples;
+
+        int readPos = (writePos - delaySamples + bufferSize) % bufferSize;
+        float delayedInput = lookaheadBuffer.getSample(channel, readPos);
+
+        lookaheadBuffer.setSample(channel, writePos, input);
+        writePos = (writePos + 1) % bufferSize;
+
+        return delayedInput;
     }
 
 private:
@@ -3652,12 +3727,13 @@ void UniversalCompressor::LookupTables::initialize()
     // Measured curve: based on hardware analysis of real FET units
 
     // Hardware-measured data points (overThresh dB → reduction dB):
-    // 0→0, 2→0.4, 4→1.2, 6→2.8, 8→5.0, 10→7.5, 12→10.2, 15→13.8, 20→18.5, 30→28.0
-    // Interpolate between these for the measured curve
+    // Real 1176 ABI is 12:1–20:1 with a "severe plateau" (hard knee, heavy compression).
+    // These points approximate ~16:1 with a slight soft knee near threshold,
+    // matching the documented behavior where ABI is dramatically different from 4:1.
 
     constexpr float measuredPoints[][2] = {
-        {0.0f, 0.0f}, {2.0f, 0.4f}, {4.0f, 1.2f}, {6.0f, 2.8f}, {8.0f, 5.0f},
-        {10.0f, 7.5f}, {12.0f, 10.2f}, {15.0f, 13.8f}, {20.0f, 18.5f}, {30.0f, 28.0f}
+        {0.0f, 0.0f}, {1.0f, 0.6f}, {2.0f, 1.5f}, {4.0f, 3.5f}, {6.0f, 5.5f},
+        {8.0f, 7.4f}, {10.0f, 9.3f}, {15.0f, 14.0f}, {20.0f, 18.7f}, {30.0f, 28.0f}
     };
     constexpr int numPoints = sizeof(measuredPoints) / sizeof(measuredPoints[0]);
 
@@ -3666,19 +3742,16 @@ void UniversalCompressor::LookupTables::initialize()
         // Input range: 0-30dB over threshold
         float overThreshDb = 30.0f * static_cast<float>(i) / static_cast<float>(ALLBUTTONS_TABLE_SIZE - 1);
 
-        // Modern curve (current piecewise implementation)
-        if (overThreshDb < 3.0f)
+        // Modern curve: ~16:1 hard knee with slight softening near threshold
+        // Matches the "severe plateau" documented in 1176 ABI literature
+        if (overThreshDb < 2.0f)
         {
-            allButtonsModernCurve[i] = overThreshDb * 0.33f;
-        }
-        else if (overThreshDb < 10.0f)
-        {
-            float t = (overThreshDb - 3.0f) / 7.0f;
-            allButtonsModernCurve[i] = 1.0f + (overThreshDb - 3.0f) * (0.75f + t * 0.15f);
+            float t = overThreshDb / 2.0f;
+            allButtonsModernCurve[i] = overThreshDb * (0.5f + t * 0.44f);
         }
         else
         {
-            allButtonsModernCurve[i] = 6.25f + (overThreshDb - 10.0f) * 0.95f;
+            allButtonsModernCurve[i] = 0.94f + (overThreshDb - 2.0f) * 0.9375f;
         }
         allButtonsModernCurve[i] = juce::jmin(allButtonsModernCurve[i], 30.0f);
 
@@ -3903,13 +3976,8 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
         lookaheadBuffer->prepare(sampleRate, numChannels);
 
     // Prepare anti-aliasing for internal oversampling
-    int oversamplingLatency = 0;
     if (antiAliasing)
-    {
         antiAliasing->prepare(sampleRate, samplesPerBlock, numChannels);
-        // Use max latency (4x) for consistent PDC regardless of current setting
-        oversamplingLatency = antiAliasing->getMaxLatency();
-    }
 
     // Prepare sidechain EQ
     if (sidechainEQ)
@@ -3923,15 +3991,23 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     if (transientShaper)
         transientShaper->prepare(sampleRate, numChannels);
 
-    // Report only oversampling latency - lookahead is 0 by default and rarely used
-    // This gives much lower latency (4 samples vs 484) for typical use
-    // If user enables lookahead, they accept the additional latency
-    // Note: lookahead latency is handled dynamically based on parameter value
-    setLatencySamples(oversamplingLatency);
+    // Sync oversampling setting from parameter before first latency report
+    // Without this, antiAliasing may still be in its default state (e.g. 2x)
+    // when the session was saved with Off or 4x, causing wrong PDC until processBlock
+    if (antiAliasing)
+    {
+        if (auto* oversamplingParam = parameters.getRawParameterValue("oversampling"))
+        {
+            currentOversamplingFactor = static_cast<int>(oversamplingParam->load());
+            antiAliasing->setOversamplingFactor(currentOversamplingFactor);
+        }
+    }
+
+    // Report actual current latency (oversampling + lookahead) for correct DAW PDC
+    updateLatencyReport();
 
     // GR meter delay only needs to match oversampling latency
-    // Lookahead doesn't affect GR timing - the compressor "looks ahead" in the audio
-    // but the GR is calculated at the same time as the output
+    int oversamplingLatency = antiAliasing ? antiAliasing->getLatency() : 0;
     int delayInBlocks = (oversamplingLatency + samplesPerBlock - 1) / samplesPerBlock;
     grDelayBuffer.fill(0.0f);
     grDelayWritePos.store(0, std::memory_order_relaxed);
@@ -3959,8 +4035,24 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
                              : (currentOversamplingFactor == 1) ? 2 : 1;
     dryWetMixer.setCurrentOversamplingFactor(actualOsFactor);
     dryWetMixer.setOversamplingLatency(oversamplingLatency);
-    dryWetMixer.setAdditionalLatency(lookaheadBuffer ? lookaheadBuffer->getLookaheadSamples() : 0);
-    dryWetMixer.setProcessingLatency(0);  // Compression adds zero group delay
+    // Global lookahead is applied to the buffer BEFORE dry capture, so both dry and
+    // wet signals already contain the global lookahead delay. Don't include it in
+    // additionalLatency or the dry signal gets double-delayed → comb filtering.
+    // Only Digital mode's internal lookahead creates a dry/wet offset (applied inside process()).
+    dryWetMixer.setAdditionalLatency(0);
+    {
+        int digitalDelay = 0;
+        if (getCurrentMode() == CompressorMode::Digital && sampleRate > 0)
+        {
+            auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
+            float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
+            // Digital compressor is always prepared at 4x rate
+            constexpr int maxOsMultiplier = 4;
+            int delay4x = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(sampleRate) * maxOsMultiplier));
+            digitalDelay = delay4x / actualOsFactor;
+        }
+        dryWetMixer.setProcessingLatency(digitalDelay);
+    }
 
     // Initialize smoothed auto-makeup gain with ~50ms smoothing time
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
@@ -4018,8 +4110,77 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     
     // Check for valid parameter pointers and bypass
     auto* bypassParam = parameters.getRawParameterValue("bypass");
-    if (!bypassParam || *bypassParam > 0.5f)
+    if (!bypassParam)
         return;
+
+    // When bypassed, still apply delay paths so the signal stays time-aligned
+    // with the reported latency (prevents track jumping when toggling bypass)
+    if (*bypassParam > 0.5f)
+    {
+        const int numChannels = buffer.getNumChannels();
+        const int numSamples = buffer.getNumSamples();
+
+        // Apply lookahead delay to maintain reported latency
+        if (lookaheadBuffer && currentSampleRate > 0)
+        {
+            auto* glParam = parameters.getRawParameterValue("global_lookahead");
+            float glMs = (glParam != nullptr) ? glParam->load() : 0.0f;
+            if (glMs > 0.0f)
+            {
+                for (int channel = 0; channel < numChannels; ++channel)
+                {
+                    float* data = buffer.getWritePointer(channel);
+                    for (int i = 0; i < numSamples; ++i)
+                        data[i] = lookaheadBuffer->processSample(data[i], channel, glMs);
+                }
+            }
+        }
+
+        // Apply digital mode internal lookahead to maintain reported latency.
+        // IMPORTANT: The Digital compressor is always prepared at 4x rate, so its delay
+        // buffer uses 4x-rate iterations. In bypass (called at base rate), we must compute
+        // the exact delay in base-rate samples to match the reported PDC latency, which is:
+        //   delay4xSamples / actualOsFactor
+        // Using processDelayOnly() with this exact sample count avoids the rate mismatch
+        // that processLookaheadOnly() would have (it computes delay using 4x internal rate).
+        if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
+        {
+            auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
+            float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
+            if (dlMs > 0.0f)
+            {
+                // Compute delay exactly as updateLatencyReport() does
+                constexpr int maxOsMultiplier = 4;
+                int delay4xSamples = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
+                const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
+                                         : (currentOversamplingFactor == 1) ? 2 : 1;
+                int bypassDelaySamples = delay4xSamples / actualOsFactor;
+
+                for (int channel = 0; channel < numChannels; ++channel)
+                {
+                    float* data = buffer.getWritePointer(channel);
+                    for (int i = 0; i < numSamples; ++i)
+                        data[i] = digitalCompressor->processDelayOnly(data[i], channel, bypassDelaySamples);
+                }
+            }
+        }
+
+        // Apply oversampling round-trip to maintain FIR filter latency
+        if (antiAliasing && antiAliasing->isReady())
+        {
+            auto* osParam = parameters.getRawParameterValue("oversampling");
+            int osFactor = (osParam != nullptr) ? static_cast<int>(osParam->load()) : 0;
+            antiAliasing->setOversamplingFactor(osFactor);
+            if (!antiAliasing->isOversamplingOff())
+            {
+                juce::dsp::AudioBlock<float> block(buffer);
+                antiAliasing->processUp(block);
+                antiAliasing->processDown(block);
+            }
+        }
+
+        return;
+    }
     
     // Get stereo link and mix parameters with proper null checks
     auto* stereoLinkParam = parameters.getRawParameterValue("stereo_link");
@@ -4043,13 +4204,57 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // for phase-coherent mixing that prevents comb filtering
     bool needsDryBuffer = (mixAmount > 0.001f && mixAmount < 0.999f);
 
-    // At 0% mix (100% dry), skip all processing and return input unchanged
-    // This ensures perfect pass-through without any filter artifacts from oversampling
+    // At 0% mix (100% dry), skip compression but still apply delay paths
+    // to match the reported PDC latency (prevents phase issues on parallel bus)
     if (mixAmount <= 0.001f)
     {
-        // Update meters to show input = output (bypass behavior)
         const int bypassChannels = buffer.getNumChannels();
         const int bypassSamples = buffer.getNumSamples();
+
+        // Apply same delay paths as bypass to maintain reported latency
+        if (lookaheadBuffer && currentSampleRate > 0)
+        {
+            auto* glParam = parameters.getRawParameterValue("global_lookahead");
+            float glMs = (glParam != nullptr) ? glParam->load() : 0.0f;
+            if (glMs > 0.0f)
+            {
+                for (int ch = 0; ch < bypassChannels; ++ch)
+                {
+                    float* data = buffer.getWritePointer(ch);
+                    for (int i = 0; i < bypassSamples; ++i)
+                        data[i] = lookaheadBuffer->processSample(data[i], ch, glMs);
+                }
+            }
+        }
+
+        if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
+        {
+            auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
+            float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
+            if (dlMs > 0.0f)
+            {
+                constexpr int maxOsMultiplier = 4;
+                int delay4xSamples = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
+                const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
+                                         : (currentOversamplingFactor == 1) ? 2 : 1;
+                int delaySamples = delay4xSamples / actualOsFactor;
+                for (int ch = 0; ch < bypassChannels; ++ch)
+                {
+                    float* data = buffer.getWritePointer(ch);
+                    for (int i = 0; i < bypassSamples; ++i)
+                        data[i] = digitalCompressor->processDelayOnly(data[i], ch, delaySamples);
+                }
+            }
+        }
+
+        if (antiAliasing && antiAliasing->isReady() && !antiAliasing->isOversamplingOff())
+        {
+            juce::dsp::AudioBlock<float> block(buffer);
+            antiAliasing->processUp(block);
+            antiAliasing->processDown(block);
+        }
+
+        // Update meters to show input = output (bypass behavior)
         for (int ch = 0; ch < bypassChannels; ++ch)
         {
             float rms = 0.0f;
@@ -4070,7 +4275,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             }
         }
         grMeter.store(0.0f, std::memory_order_relaxed);
-        return;  // Input unchanged
+        return;
     }
 
     // Internal oversampling is always enabled for better quality
@@ -4089,6 +4294,12 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         primeRmsAccumulators = true;
         // Reset smoothed gain to unity to avoid sudden volume jumps
         smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+        // Digital mode has internal lookahead that affects PDC and dry/wet alignment
+        // Reset processing latency when leaving Digital mode to prevent stale delay
+        if (mode != CompressorMode::Digital)
+            dryWetMixer.setProcessingLatency(0);
+        lastReportedLookaheadSamples = -1;  // Force re-evaluation of lookahead
+        updateLatencyReport();
     }
 
     // Read auto-makeup and sidechain state early - needed for parameter caching
@@ -4376,8 +4587,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         const int newOsFactor = (currentOversamplingFactor == 2) ? 4
                               : (currentOversamplingFactor == 1) ? 2 : 1;
         dryWetMixer.setCurrentOversamplingFactor(newOsFactor);
-        // The actual processing rate adapts automatically based on antiAliasing->processUp/Down
-        // which handles the buffer sizing internally without allocation.
+        // Notify host of latency change so DAW PDC stays correct
+        updateLatencyReport();
     }
 
     // Update sidechain EQ parameters
@@ -4530,6 +4741,41 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             // Blend independent and linked based on stereoLinkAmount
             leftSC[i] = leftLevel * (1.0f - stereoLinkAmount) + maxLevel * stereoLinkAmount;
             rightSC[i] = rightLevel * (1.0f - stereoLinkAmount) + maxLevel * stereoLinkAmount;
+        }
+    }
+
+    // Track lookahead changes for DAW PDC updates and dry/wet alignment
+    {
+        int globalLookaheadSamples = static_cast<int>(std::round((globalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate)));
+
+        // Digital mode's internal lookahead creates a processing delay between dry and wet.
+        // IMPORTANT: The Digital compressor is ALWAYS prepared at 4x rate (for thread safety),
+        // so its internal delay is round(lookaheadMs * baseRate * 4) iterations, regardless of
+        // the current OS factor. When running at < 4x, each iteration = more base-rate time.
+        int digitalLookaheadBaseSamples = 0;
+        if (mode == CompressorMode::Digital)
+        {
+            auto* digitalLookaheadParam = parameters.getRawParameterValue("digital_lookahead");
+            float digitalLookaheadMs = (digitalLookaheadParam != nullptr) ? digitalLookaheadParam->load() : 0.0f;
+            // Delay in 4x-rate samples (matches what the Digital compressor actually applies)
+            constexpr int maxOsMultiplier = 4;
+            int delay4xSamples = static_cast<int>(std::round((digitalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
+            // Convert to base-rate equivalent: actual base-rate delay depends on current OS
+            const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
+                                     : (currentOversamplingFactor == 1) ? 2 : 1;
+            digitalLookaheadBaseSamples = delay4xSamples / actualOsFactor;
+        }
+
+        int totalLookaheadSamples = globalLookaheadSamples + digitalLookaheadBaseSamples;
+
+        if (totalLookaheadSamples != lastReportedLookaheadSamples)
+        {
+            lastReportedLookaheadSamples = totalLookaheadSamples;
+            // Global lookahead is already applied to the buffer before dry capture,
+            // so it doesn't cause dry/wet offset. Only Digital's internal lookahead
+            // (applied inside process()) creates a timing mismatch needing compensation.
+            dryWetMixer.setProcessingLatency(digitalLookaheadBaseSamples);
+            updateLatencyReport();
         }
     }
 
@@ -4788,10 +5034,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         const int osNumChannels = static_cast<int>(oversampledBlock.getNumChannels());
         const int osNumSamples = static_cast<int>(oversampledBlock.getNumSamples());
 
-        // Compression processing adds zero group delay (empirically verified)
-        // Gain-based compression is memoryless — sidechain IIR filters affect
-        // only the control signal, not the audio path timing
-        dryWetMixer.setProcessingLatency(0);
+        // Processing latency (Digital mode lookahead) is set per-block in the
+        // lookahead tracking section above. All other modes add zero group delay.
 
         // Capture dry signal at OVERSAMPLED rate for phase-coherent mixing
         // This ensures both dry and wet go through the same downsampling filter,
@@ -5337,25 +5581,114 @@ CompressorMode UniversalCompressor::getCurrentMode() const
     return CompressorMode::Opto; // Default fallback
 }
 
-double UniversalCompressor::getLatencyInSamples() const
+void UniversalCompressor::updateLatencyReport()
 {
-    double latency = 0.0;
-
-    // Report latency from oversampler only
-    // Lookahead is 0 by default and rarely changed, so we don't include it
-    // This gives much lower latency for typical use
+    int latency = 0;
     if (antiAliasing)
+        latency += antiAliasing->getLatency();
+
+    // Compute global lookahead from parameter directly (not from buffer state,
+    // which may be stale if processSample() hasn't run yet with the new value)
+    if (lookaheadBuffer && currentSampleRate > 0)
     {
-        latency += static_cast<double>(antiAliasing->getLatency());
+        auto* globalLookaheadParam = parameters.getRawParameterValue("global_lookahead");
+        float globalLookaheadMs = (globalLookaheadParam != nullptr) ? globalLookaheadParam->load() : 0.0f;
+        int globalLookaheadSamples = static_cast<int>(std::round((globalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate)));
+        globalLookaheadSamples = juce::jlimit(0, lookaheadBuffer->getMaxLookaheadSamples() - 1, globalLookaheadSamples);
+        latency += globalLookaheadSamples;
     }
 
-    return latency;
+    // Digital mode has its own internal lookahead delay that must also be reported.
+    // IMPORTANT: The Digital compressor is always prepared at 4x rate, so its actual
+    // delay in base-rate samples depends on the current oversampling factor.
+    if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
+    {
+        auto* digitalLookaheadParam = parameters.getRawParameterValue("digital_lookahead");
+        float digitalLookaheadMs = (digitalLookaheadParam != nullptr) ? digitalLookaheadParam->load() : 0.0f;
+        constexpr int maxOsMultiplier = 4;
+        int delay4xSamples = static_cast<int>(std::round((digitalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
+        const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
+                                 : (currentOversamplingFactor == 1) ? 2 : 1;
+        latency += delay4xSamples / actualOsFactor;
+    }
+
+    setLatencySamples(latency);
+}
+
+juce::AudioProcessorParameter* UniversalCompressor::getBypassParameter() const
+{
+    // Return our "bypass" parameter so the AU/VST3 wrapper routes host bypass
+    // through processBlock (where our internal bypass applies correct delay paths)
+    // instead of processBlockBypassed or skipping rendering entirely.
+    // Without this, Logic Pro's disable button stops calling the AU but still
+    // applies PDC → phase offset on parallel buses.
+    return parameters.getParameter("bypass");
+}
+
+void UniversalCompressor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    // When the HOST bypasses the plugin (Logic Pro's power button, not our internal bypass),
+    // JUCE calls processBlockBypassed() instead of processBlock(). The default JUCE
+    // implementation passes audio through with ZERO delay — but the plugin still reports
+    // its latency via getLatencySamples(). The DAW compensates other tracks by this latency,
+    // so if we don't apply the same delay here, the bypassed bus arrives early → phase issues.
+    //
+    // This is the #1 cause of "phase difference when plugin is disabled on a bus" reports.
+    // NOTE: Logic Pro's "disable" button does NOT call this — it stops rendering entirely
+    // but still applies PDC. That case is a Logic limitation we cannot fix from the plugin.
+
+    const int numChannels = buffer.getNumChannels();
+    const int numSamples = buffer.getNumSamples();
+
+    // 1. Apply global lookahead delay
+    if (lookaheadBuffer && currentSampleRate > 0)
+    {
+        auto* glParam = parameters.getRawParameterValue("global_lookahead");
+        float glMs = (glParam != nullptr) ? glParam->load() : 0.0f;
+        if (glMs > 0.0f)
+        {
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* data = buffer.getWritePointer(ch);
+                for (int i = 0; i < numSamples; ++i)
+                    data[i] = lookaheadBuffer->processSample(data[i], ch, glMs);
+            }
+        }
+    }
+
+    // 2. Apply Digital mode internal lookahead delay
+    if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
+    {
+        auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
+        float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
+        if (dlMs > 0.0f)
+        {
+            constexpr int maxOsMultiplier = 4;
+            int delay4xSamples = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
+            const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
+                                     : (currentOversamplingFactor == 1) ? 2 : 1;
+            int delaySamples = delay4xSamples / actualOsFactor;
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* data = buffer.getWritePointer(ch);
+                for (int i = 0; i < numSamples; ++i)
+                    data[i] = digitalCompressor->processDelayOnly(data[i], ch, delaySamples);
+            }
+        }
+    }
+
+    // 3. Apply oversampling round-trip to maintain FIR filter latency
+    if (antiAliasing && antiAliasing->isReady() && !antiAliasing->isOversamplingOff())
+    {
+        juce::dsp::AudioBlock<float> block(buffer);
+        antiAliasing->processUp(block);
+        antiAliasing->processDown(block);
+    }
 }
 
 double UniversalCompressor::getTailLengthSeconds() const
 {
-    // Account for lookahead delay if implemented
-    return currentSampleRate > 0 ? getLatencyInSamples() / currentSampleRate : 0.0;
+    return currentSampleRate > 0 ? static_cast<double>(getLatencySamples()) / currentSampleRate : 0.0;
 }
 
 bool UniversalCompressor::isBusesLayoutSupported(const BusesLayout& layouts) const

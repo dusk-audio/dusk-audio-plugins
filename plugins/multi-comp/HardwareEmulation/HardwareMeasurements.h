@@ -191,11 +191,11 @@ inline HardwareUnitProfile createFETCompressor()
         0.006f, 0.010f, 0.40f, 0.0f, 0.003f);
 
     profile.inputTransformer = TransformerProfile::createActive(
-        0.85f, 0.08f, 1.15f, 20000.0f, 15.0f,
+        0.85f, 0.08f, 1.05f, 0.0f, 15.0f,
         0.004f, 0.002f, 0.65f);
 
     profile.outputTransformer = TransformerProfile::createActive(
-        0.9f, 0.05f, 1.1f, 22000.0f, 12.0f,
+        0.9f, 0.05f, 1.03f, 0.0f, 12.0f,
         0.003f, 0.002f, 0.6f);
 
     profile.timing = TimingProfile::create(

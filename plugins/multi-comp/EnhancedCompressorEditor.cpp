@@ -41,7 +41,66 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     // Remove listener - the attachment and parameterChanged handle it
     addAndMakeVisible(modeSelector.get());
 
-    // Presets are exposed via DAW's native preset menu (getNumPrograms/setCurrentProgram/getProgramName)
+    // User preset manager
+    userPresetManager_ = std::make_unique<UserPresetManager>("Multi-Comp");
+
+    // Preset browser (factory + user presets)
+    presetBox_.setJustificationType(juce::Justification::centred);
+    presetBox_.onChange = [this]
+    {
+        int id = presetBox_.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int>(userPresets.size()))
+                loadUserPreset(userPresets[static_cast<size_t>(userIdx)].name);
+        }
+        else if (id >= 2)
+        {
+            loadPreset(id - 2);
+        }
+        updateDeleteButtonVisibility();
+    };
+    addAndMakeVisible(presetBox_);
+    refreshPresetList();
+
+    // Save preset button
+    savePresetButton_.setButtonText("Save");
+    savePresetButton_.onClick = [this] { saveUserPreset(); };
+    addAndMakeVisible(savePresetButton_);
+
+    // Delete preset button (only visible when a user preset is selected)
+    deletePresetButton_.setButtonText("Del");
+    deletePresetButton_.onClick = [this]
+    {
+        int id = presetBox_.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int>(userPresets.size()))
+            {
+                auto name = userPresets[static_cast<size_t>(userIdx)].name;
+                juce::Component::SafePointer<EnhancedCompressorEditor> safeThis(this);
+
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Delete Preset",
+                    "Delete \"" + name + "\"?",
+                    "Delete", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create([safeThis, name](int result) {
+                        if (result == 1 && safeThis != nullptr)
+                        {
+                            safeThis->deleteUserPreset(name);
+                            safeThis->updateDeleteButtonVisibility();
+                        }
+                    }));
+            }
+        }
+    };
+    addAndMakeVisible(deletePresetButton_);
+    deletePresetButton_.setVisible(false);
 
     // Create global controls with full readable labels
     bypassButton = std::make_unique<juce::ToggleButton>("Bypass");
@@ -1030,62 +1089,84 @@ void EnhancedCompressorEditor::resized()
         static_cast<int>(35 * scaleFactor));
 
     // ========================================================================
-    // TOP HEADER - Aligned with INPUT label (left) to OUTPUT label (right)
-    // Row: [Mode] [Bypass] [AutoGain] [AnalogNoise] [ModeToggle] ... [Oversampling dropdown]
+    // TOP HEADER - Two rows for better organization
+    // Row 1: [Mode] [Preset] [Save] [Del]  ...  [Oversampling label + dropdown]
+    // Row 2: [Bypass] [AutoGain] [AnalogNoise] [ModeToggle] [ExtSC] [SCListen]
     // ========================================================================
 
-    // Header row - below title, single clean row
-    // Left margin matches main area (20px) so mode selector aligns with INPUT label
-    auto headerRow = bounds.removeFromTop(60 * scaleFactor).withTrimmedTop(35 * scaleFactor);
-    headerRow.reduce(20 * scaleFactor, 2 * scaleFactor);
+    // Two header rows below title
+    auto headerArea = bounds.removeFromTop(static_cast<int>(82 * scaleFactor)).withTrimmedTop(static_cast<int>(35 * scaleFactor));
+    headerArea.reduce(static_cast<int>(20 * scaleFactor), 0);
 
     const int gap = static_cast<int>(6 * scaleFactor);
     const int controlHeight = static_cast<int>(22 * scaleFactor);
+    const int rowHeight = headerArea.getHeight() / 2;
 
-    // Control widths (compact to fit Ext SC + SC Listen without overflow)
-    const int modeSelectorWidth = static_cast<int>(115 * scaleFactor);  // "Bus Compressor"
-    const int toggleWidth = static_cast<int>(60 * scaleFactor);         // "Bypass" button
-    const int autoGainWidth = static_cast<int>(73 * scaleFactor);       // "Auto Gain" button
-    const int analogNoiseWidth = static_cast<int>(88 * scaleFactor);    // "Analog Noise" button
-    const int modeToggleWidth = static_cast<int>(60 * scaleFactor);     // "Limit" / "Over Easy"
-    const int osLabelWidth = static_cast<int>(85 * scaleFactor);        // "Oversampling" label
-    const int osWidth = static_cast<int>(55 * scaleFactor);             // Dropdown for "2x"/"4x"
+    auto headerRow1 = headerArea.removeFromTop(rowHeight);
+    headerRow1.reduce(0, static_cast<int>(2 * scaleFactor));
+    auto headerRow2 = headerArea;
+    headerRow2.reduce(0, static_cast<int>(2 * scaleFactor));
 
-    // LEFT: Mode selector dropdown (aligned with INPUT label)
-    // Add small offset to align with meter center
-    headerRow.removeFromLeft(static_cast<int>(8 * scaleFactor));
-    if (modeSelector)
-    {
-        auto area = headerRow.removeFromLeft(modeSelectorWidth);
-        modeSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
-    }
+    // Control widths
+    const int modeSelectorWidth = static_cast<int>(115 * scaleFactor);
+    const int presetBoxWidth = static_cast<int>(180 * scaleFactor);
+    const int saveWidth = static_cast<int>(45 * scaleFactor);
+    const int delWidth = static_cast<int>(35 * scaleFactor);
+    const int toggleWidth = static_cast<int>(60 * scaleFactor);
+    const int autoGainWidth = static_cast<int>(73 * scaleFactor);
+    const int analogNoiseWidth = static_cast<int>(88 * scaleFactor);
+    const int modeToggleWidth = static_cast<int>(60 * scaleFactor);
+    const int osLabelWidth = static_cast<int>(85 * scaleFactor);
+    const int osWidth = static_cast<int>(55 * scaleFactor);
 
-    // RIGHT: Oversampling label + dropdown (aligned with OUTPUT label)
+    // ---- ROW 1: Mode + Preset + Save/Del (centered) + Oversampling (right) ----
+    int row1Y = headerRow1.getCentreY() - controlHeight / 2;
+
+    // RIGHT: Oversampling label + dropdown (placed first so centering excludes it)
+    auto row1ForOs = headerRow1;
     if (oversamplingSelector)
     {
-        auto area = headerRow.removeFromRight(osWidth);
-        oversamplingSelector->setBounds(area.withHeight(controlHeight).withY(area.getCentreY() - controlHeight / 2));
+        auto area = row1ForOs.removeFromRight(osWidth);
+        oversamplingSelector->setBounds(area.withHeight(controlHeight).withY(row1Y));
     }
-    headerRow.removeFromRight(static_cast<int>(4 * scaleFactor));  // Small gap
-    osLabelBounds = headerRow.removeFromRight(osLabelWidth).withHeight(controlHeight);
-    osLabelBounds = osLabelBounds.withY(headerRow.getY() + (headerRow.getHeight() - controlHeight) / 2);
+    row1ForOs.removeFromRight(static_cast<int>(4 * scaleFactor));
+    osLabelBounds = row1ForOs.removeFromRight(osLabelWidth).withHeight(controlHeight);
+    osLabelBounds = osLabelBounds.withY(row1Y);
 
-    // CENTER: Calculate total width of center controls and center them in remaining space
+    // CENTER: Mode + Preset + Save + Del centered over row 2 buttons
+    int row1GroupWidth = modeSelectorWidth + gap + presetBoxWidth + gap + saveWidth + gap + delWidth;
+    int row1StartX = headerRow1.getX() + (headerRow1.getWidth() - row1GroupWidth) / 2;
+
+    if (modeSelector)
+    {
+        modeSelector->setBounds(row1StartX, row1Y, modeSelectorWidth, controlHeight);
+        row1StartX += modeSelectorWidth + gap;
+    }
+
+    presetBox_.setBounds(row1StartX, row1Y, presetBoxWidth, controlHeight);
+    row1StartX += presetBoxWidth + gap;
+
+    savePresetButton_.setBounds(row1StartX, row1Y, saveWidth, controlHeight);
+    row1StartX += saveWidth + gap;
+
+    deletePresetButton_.setBounds(row1StartX, row1Y, delWidth, controlHeight);
+
+    // ---- ROW 2: Toggle buttons centered ----
     bool isAnalogMode = (currentMode != 6 && currentMode != 7);
-    bool showModeToggle = (currentMode == 0 || currentMode == 2);  // Limit for Opto, OverEasy for VCA
+    bool showModeToggle = (currentMode == 0 || currentMode == 2);
 
     int extScWidth = static_cast<int>(55 * scaleFactor);
     int scListenWidth = static_cast<int>(68 * scaleFactor);
-    int centerControlsWidth = toggleWidth + gap + autoGainWidth;  // Bypass + Auto Gain
+    int centerControlsWidth = toggleWidth + gap + autoGainWidth;
     if (isAnalogMode)
-        centerControlsWidth += gap + analogNoiseWidth;  // + Analog Noise
+        centerControlsWidth += gap + analogNoiseWidth;
     if (showModeToggle)
-        centerControlsWidth += gap + modeToggleWidth;  // + Limit/OverEasy
-    centerControlsWidth += gap + extScWidth;  // + Ext SC
-    centerControlsWidth += gap + scListenWidth;  // + SC Listen
+        centerControlsWidth += gap + modeToggleWidth;
+    centerControlsWidth += gap + extScWidth;
+    centerControlsWidth += gap + scListenWidth;
 
-    int centerStartX = headerRow.getX() + (headerRow.getWidth() - centerControlsWidth) / 2;
-    int centerY = headerRow.getCentreY() - controlHeight / 2;
+    int centerStartX = headerRow2.getX() + (headerRow2.getWidth() - centerControlsWidth) / 2;
+    int centerY = headerRow2.getCentreY() - controlHeight / 2;
 
     // Bypass toggle
     if (bypassButton)
@@ -1101,7 +1182,7 @@ void EnhancedCompressorEditor::resized()
         centerStartX += autoGainWidth + gap;
     }
 
-    // Analog Noise toggle - only visible for analog modes (not Digital=6 or Multiband=7)
+    // Analog Noise toggle
     if (analogNoiseButton)
     {
         analogNoiseButton->setVisible(isAnalogMode);
@@ -1190,10 +1271,8 @@ void EnhancedCompressorEditor::resized()
     // Center area
     mainArea.reduce(20 * scaleFactor, 0);
 
-    // Presets are exposed via DAW's native preset menu (no UI dropdowns needed)
-
     // VU Meter at top center with SC HP vertical slider to the right
-    auto vuArea = mainArea.removeFromTop(static_cast<int>(190 * scaleFactor));  // More space without preset selectors
+    auto vuArea = mainArea.removeFromTop(static_cast<int>(175 * scaleFactor));
 
     // SC HP slider area on the right side of VU meter (tight against VU)
     const int scHpSliderWidth = static_cast<int>(28 * scaleFactor);   // Narrow vertical slider
@@ -1685,4 +1764,126 @@ void EnhancedCompressorEditor::mouseDown(const juce::MouseEvent& e)
     }
 }
 
-// Presets are now exposed via DAW's native preset menu (getNumPrograms/setCurrentProgram/getProgramName)
+//==============================================================================
+// Preset Management
+//==============================================================================
+
+void EnhancedCompressorEditor::loadPreset(int index)
+{
+    const auto& presets = CompressorPresets::getFactoryPresets();
+    if (index >= 0 && index < static_cast<int>(presets.size()))
+        CompressorPresets::applyPreset(processor.getParameters(), presets[static_cast<size_t>(index)]);
+}
+
+void EnhancedCompressorEditor::refreshPresetList()
+{
+    int currentId = presetBox_.getSelectedId();
+    presetBox_.clear(juce::dontSendNotification);
+
+    const auto& presets = CompressorPresets::getFactoryPresets();
+    juce::String lastCategory;
+    int id = 2;
+
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].category != lastCategory)
+        {
+            presetBox_.addSeparator();
+            presetBox_.addSectionHeading(presets[i].category);
+            lastCategory = presets[i].category;
+        }
+        presetBox_.addItem(presets[i].name, id++);
+    }
+
+    if (userPresetManager_)
+    {
+        auto userPresets = userPresetManager_->loadUserPresets();
+        if (!userPresets.empty())
+        {
+            presetBox_.addSeparator();
+            presetBox_.addSectionHeading("User Presets");
+
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                presetBox_.addItem(userPresets[i].name, static_cast<int>(1001 + i));
+        }
+    }
+
+    if (currentId > 0)
+        presetBox_.setSelectedId(currentId, juce::dontSendNotification);
+}
+
+void EnhancedCompressorEditor::saveUserPreset()
+{
+    if (!userPresetManager_)
+        return;
+
+    auto* dialog = new juce::AlertWindow("Save Preset",
+                                          "Enter a name for this preset:",
+                                          juce::MessageBoxIconType::QuestionIcon);
+    dialog->addTextEditor("name", "My Preset", "Preset Name:");
+    dialog->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<EnhancedCompressorEditor> safeThis(this);
+    juce::Component::SafePointer<juce::AlertWindow> safeDialog(dialog);
+
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create(
+        [safeThis, safeDialog](int result) mutable
+        {
+            juce::String name;
+            if (result == 1 && safeDialog != nullptr)
+                name = safeDialog->getTextEditorContents("name").trim();
+
+            if (safeThis == nullptr || name.isEmpty())
+                return;
+
+            if (safeThis->userPresetManager_->presetExists(name))
+            {
+                juce::Component::SafePointer<EnhancedCompressorEditor> safeInner(safeThis.getComponent());
+
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::QuestionIcon,
+                    "Overwrite Preset?",
+                    "A preset named \"" + name + "\" already exists. Overwrite it?",
+                    "Overwrite", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create([safeInner, name](int confirmResult) {
+                        if (confirmResult == 1 && safeInner != nullptr)
+                        {
+                            auto state = safeInner->processor.getParameters().copyState();
+                            if (safeInner->userPresetManager_->saveUserPreset(name, state, JucePlugin_VersionString))
+                                safeInner->refreshPresetList();
+                        }
+                    }));
+            }
+            else
+            {
+                auto state = safeThis->processor.getParameters().copyState();
+                if (safeThis->userPresetManager_->saveUserPreset(name, state, JucePlugin_VersionString))
+                    safeThis->refreshPresetList();
+            }
+        }), true);
+}
+
+void EnhancedCompressorEditor::loadUserPreset(const juce::String& name)
+{
+    if (!userPresetManager_)
+        return;
+
+    auto state = userPresetManager_->loadUserPreset(name);
+    if (state.isValid())
+        processor.getParameters().replaceState(state);
+}
+
+void EnhancedCompressorEditor::deleteUserPreset(const juce::String& name)
+{
+    if (!userPresetManager_)
+        return;
+
+    userPresetManager_->deleteUserPreset(name);
+    refreshPresetList();
+}
+
+void EnhancedCompressorEditor::updateDeleteButtonVisibility()
+{
+    deletePresetButton_.setVisible(presetBox_.getSelectedId() >= 1001);
+}
