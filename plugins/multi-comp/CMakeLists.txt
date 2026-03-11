@@ -201,6 +201,8 @@ if(BUILD_MULTI_COMP_TESTS)
             JUCE_STANDALONE_APPLICATION=1
             JUCE_VST3_CAN_REPLACE_VST2=1
             JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
+            JucePlugin_VersionString="0.0.0"
+            JucePlugin_Name="Multi-Comp"
     )
 
     # Enable AddressSanitizer for tests in debug builds or when explicitly requested (compiler-specific)
