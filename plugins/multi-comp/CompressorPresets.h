@@ -39,6 +39,9 @@ struct Preset
     int busAttackIndex = 2;      // 0=0.1, 1=0.3, 2=1, 3=3, 4=10, 5=30 ms
     int busReleaseIndex = 2;     // 0=0.1, 1=0.3, 2=0.6, 3=1.2, 4=Auto
 
+    // VCA-specific
+    float vcaOvereasy = 0.0f;    // dB (0 = hard knee)
+
     // Opto-specific
     float peakReduction = 0.0f;  // % (0-100 scale)
     bool limitMode = false;
@@ -82,6 +85,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,                            // Unused
         2,                            // Unused
         2,                            // Unused
+        0.0f,                         // vcaOvereasy (N/A for Opto)
         50.0f,                        // PeakRed: 50% (The sweet spot on a real unit)
         false                         // Compress Mode (Limit is too hard for vox)
     });
@@ -105,6 +109,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,                            // fetRatio: 4:1 (Classic Vocal)
         2,                            // Unused
         2,                            // Unused
+        0.0f,                         // vcaOvereasy (N/A for FET)
         0.0f,
         false
     });
@@ -127,6 +132,7 @@ inline std::vector<Preset> getFactoryPresets()
         1,                            // fetRatio: 8:1 (Tighter control)
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for Studio FET)
         0.0f,
         false
     });
@@ -152,6 +158,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,
         5,                            // Attack Index: 30ms (Slowest)
         4,                            // Release Index: Auto
+        0.0f,                         // vcaOvereasy (N/A for Bus)
         0.0f,
         false
     });
@@ -164,8 +171,8 @@ inline std::vector<Preset> getFactoryPresets()
         1,                            // Vintage FET
         -24.0f,                       // Smash it
         20.0f,
-        0.8f,                         // Attack: ~800µs (Knob at 1/Slow) allows explosion
-        50.0f,                        // Release: 50ms (Fastest) for max distortion
+        0.8f,                         // Attack: ~800µs (clamped to 1ms by ABI lag)
+        150.0f,                       // Release: 150ms (lets the ABI plateau develop)
         12.0f,
         100.0f,
         60.0f,
@@ -174,6 +181,7 @@ inline std::vector<Preset> getFactoryPresets()
         4,                            // fetRatio: ALL BUTTONS
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for FET)
         0.0f,
         false
     });
@@ -196,6 +204,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,
         2,
         2,
+        0.0f,                         // vcaOvereasy: hard knee for punchy snare
         0.0f,
         false
     });
@@ -220,6 +229,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,                            // fetRatio: 4:1
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for FET)
         0.0f,
         false
     });
@@ -242,6 +252,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for Opto)
         65.0f,                        // High reduction
         false
     });
@@ -266,6 +277,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for Studio VCA)
         0.0f,
         false
     });
@@ -288,6 +300,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,                            // 4:1
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for FET)
         0.0f,
         false
     });
@@ -312,6 +325,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,
         4,                            // Attack Index: 10ms (Classic Glue)
         4,                            // Release Index: Auto
+        0.0f,                         // vcaOvereasy (N/A for Bus)
         0.0f,
         false
     });
@@ -334,6 +348,7 @@ inline std::vector<Preset> getFactoryPresets()
         0,
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for Studio VCA)
         0.0f,
         false
     });
@@ -358,6 +373,7 @@ inline std::vector<Preset> getFactoryPresets()
         3,                            // 20:1
         2,
         2,
+        0.0f,                         // vcaOvereasy (N/A for FET)
         0.0f,
         false
     });
@@ -431,6 +447,8 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
                 p->setValueNotifyingHost(params.getParameterRange("vca_release").convertTo0to1(preset.release));
             if (auto* p = params.getParameter("vca_output"))
                 p->setValueNotifyingHost(params.getParameterRange("vca_output").convertTo0to1(preset.makeup));
+            if (auto* p = params.getParameter("vca_overeasy"))
+                p->setValueNotifyingHost(params.getParameterRange("vca_overeasy").convertTo0to1(preset.vcaOvereasy));
             break;
 
         case 3: // Bus Compressor
