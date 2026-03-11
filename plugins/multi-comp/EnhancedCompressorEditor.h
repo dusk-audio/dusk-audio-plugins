@@ -8,6 +8,7 @@
 #include "../shared/LEDMeter.h"
 #include "../shared/DuskLookAndFeel.h"
 #include "../shared/ScalableEditorHelper.h"
+#include "../shared/UserPresetManager.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
@@ -62,8 +63,18 @@ private:
     std::unique_ptr<juce::ComboBox> modeSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeSelectorAttachment;
 
-    // Presets are exposed via DAW's native preset menu (getNumPrograms/setCurrentProgram/getProgramName)
-    
+    // Preset browser
+    juce::ComboBox presetBox_;
+    std::unique_ptr<UserPresetManager> userPresetManager_;
+    juce::TextButton savePresetButton_;
+    juce::TextButton deletePresetButton_;
+    void refreshPresetList();
+    void loadPreset (int index);
+    void saveUserPreset();
+    void loadUserPreset (const juce::String& name);
+    void deleteUserPreset (const juce::String& name);
+    void updateDeleteButtonVisibility();
+
     // Global controls
     std::unique_ptr<juce::ToggleButton> bypassButton;
     std::unique_ptr<juce::ToggleButton> autoGainButton;

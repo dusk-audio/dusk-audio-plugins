@@ -44,6 +44,7 @@ public:
     void releaseResources() override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     void processBlock(juce::AudioBuffer<double>&, juce::MidiBuffer&) override;
+    void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -53,7 +54,8 @@ public:
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override;
-    double getLatencyInSamples() const;
+    void updateLatencyReport();
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     // Bus layout support for sidechain
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
@@ -212,6 +214,7 @@ private:
     int currentBlockSize{0};  // Set by prepareToPlay from DAW
     int currentOversamplingFactor{-1};  // Track current oversampling to detect changes
     int lastCompressorMode{-1};  // Track mode changes to reset auto-gain accumulators
+    int lastReportedLookaheadSamples{0};  // Track lookahead changes for PDC updates
 
     // Current preset index (for UI preset menu, not exposed as VST3 Program parameter)
     int currentPresetIndex = 0;

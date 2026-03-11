@@ -73,6 +73,9 @@ public:
         // Comprehensive phase alignment test for mix knob
         testMixKnobPhaseAlignment();
 
+        // Exhaustive comb filtering test: every mode × sample rate × OS × mix
+        testCombFilteringComprehensive();
+
         // IR comparison tests disabled by default - requires reference IR files
         // beginTest("IR Comparison Tests");
         // testIRComparison();
@@ -440,7 +443,7 @@ private:
         UniversalCompressor compressor;
         compressor.prepareToPlay(48000.0, 512);
 
-        double latency = compressor.getLatencyInSamples();
+        double latency = static_cast<double>(compressor.getLatencySamples());
 
         // With 2x oversampling enabled, should report some latency
         // Latency should be reasonable (not zero, not huge)
@@ -1210,7 +1213,7 @@ private:
             logMessage("OS " + modeStr + ": GR during comb test = " + juce::String(gr, 1) + " dB");
 
             // Debug: Print the reported latency after warmup
-            double reportedLatency = compressor.getLatencyInSamples();
+            double reportedLatency = static_cast<double>(compressor.getLatencySamples());
             logMessage("OS " + modeStr + ": Reported latency = " + juce::String(reportedLatency) + " samples");
 
             // Measure actual delay by passing an impulse
@@ -1329,6 +1332,493 @@ private:
             {
                 logMessage("  " + juce::String(static_cast<int>(testFreqs[f])) + " Hz: " +
                            juce::String(20.0f * std::log10(levelRatios[f] + 1e-10f), 1) + " dB");
+            }
+        }
+    }
+
+    //==========================================================================
+    // COMPREHENSIVE COMB FILTERING TEST
+    // Tests every combination of: mode × sample rate × oversampling × mix
+    // Also tests global lookahead and Digital internal lookahead
+    //==========================================================================
+
+    // Mode names for logging (prefixed to avoid shadowing local variables)
+    static constexpr const char* combTestModeNames[] = {
+        "Opto", "FET", "VCA", "Bus", "StudioFET", "StudioVCA", "Digital"
+    };
+
+    static constexpr const char* combTestOsNames[] = { "Off", "2x", "4x" };
+
+    // Set compressor to "no compression" for a given mode (signal passes through unchanged)
+    void setNoCompression(juce::AudioProcessorValueTreeState& params, int modeIndex)
+    {
+        // Set mode
+        if (auto* p = params.getRawParameterValue("mode"))
+            *p = static_cast<float>(modeIndex);
+
+        switch (modeIndex)
+        {
+            case 0: // Opto
+                if (auto* p = params.getRawParameterValue("opto_peak_reduction"))
+                    *p = 0.0f; // No peak reduction
+                break;
+            case 1: // FET
+                if (auto* p = params.getRawParameterValue("fet_input"))
+                    *p = 0.0f; // No input drive
+                if (auto* p = params.getRawParameterValue("fet_output"))
+                    *p = 0.0f;
+                break;
+            case 2: // VCA
+                if (auto* p = params.getRawParameterValue("vca_threshold"))
+                    *p = 0.0f; // 0 dB threshold (signal below)
+                if (auto* p = params.getRawParameterValue("vca_ratio"))
+                    *p = 1.0f; // Minimum ratio
+                break;
+            case 3: // Bus
+                if (auto* p = params.getRawParameterValue("bus_threshold"))
+                    *p = 15.0f; // Max threshold to ensure signal stays below
+                if (auto* p = params.getRawParameterValue("bus_ratio"))
+                    *p = 0.0f; // Lowest ratio index
+                break;
+            case 4: // StudioFET
+                if (auto* p = params.getRawParameterValue("studio_fet_input"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("studio_fet_output"))
+                    *p = 0.0f;
+                break;
+            case 5: // StudioVCA
+                if (auto* p = params.getRawParameterValue("studio_vca_threshold"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("studio_vca_ratio"))
+                    *p = 1.0f;
+                break;
+            case 6: // Digital
+                if (auto* p = params.getRawParameterValue("digital_threshold"))
+                    *p = 0.0f; // 0 dB threshold
+                if (auto* p = params.getRawParameterValue("digital_ratio"))
+                    *p = 1.0f; // 1:1 = no compression
+                if (auto* p = params.getRawParameterValue("digital_lookahead"))
+                    *p = 0.0f; // No internal lookahead (unless test specifically enables it)
+                break;
+        }
+    }
+
+    // Measure frequency-domain consistency at a given mix level
+    // Returns max frequency variation in dB (< 3dB = no comb filtering)
+    float measureCombFiltering(UniversalCompressor& compressor, float mixPercent,
+                               double sampleRate, int blockSize)
+    {
+        auto& params = compressor.getParameters();
+
+        if (auto* mixParam = params.getRawParameterValue("mix"))
+            *mixParam = mixPercent;
+
+        juce::MidiBuffer midiBuffer;
+
+        // Use frequencies that are well below Nyquist for all sample rates
+        // and avoid harmonics of each other to get independent measurements
+        std::array<float, 5> testFreqs = {300.0f, 700.0f, 1500.0f, 3100.0f, 6300.0f};
+        std::array<float, 5> levelRatios;
+
+        for (size_t f = 0; f < testFreqs.size(); ++f)
+        {
+            float freq = testFreqs[f];
+
+            // Skip frequencies above Nyquist/3 for safety
+            if (freq > static_cast<float>(sampleRate) / 3.0f)
+            {
+                levelRatios[f] = 1.0f;
+                continue;
+            }
+
+            // Process multiple blocks of the test signal to flush any delay buffers
+            // (Digital lookahead can be up to 10ms * 4x = 1920 samples at 48kHz OS:Off)
+            // First pass: flush delay buffers with the test frequency
+            for (int flush = 0; flush < 6; ++flush)
+            {
+                juce::AudioBuffer<float> flushBuffer(2, blockSize);
+                fillBufferWithSineWave(flushBuffer, 0.1f, freq, sampleRate);
+                compressor.processBlock(flushBuffer, midiBuffer);
+            }
+
+            // Now measure: the delay buffers are fully flushed with this frequency
+            juce::AudioBuffer<float> testBuffer(2, blockSize * 2);
+            fillBufferWithSineWave(testBuffer, 0.1f, freq, sampleRate);
+
+            float inputRms = 0.0f;
+            int measureStart = blockSize / 2;
+            int measureEnd = blockSize + blockSize / 2;
+            for (int i = measureStart; i < measureEnd; ++i)
+            {
+                float s = testBuffer.getSample(0, i);
+                inputRms += s * s;
+            }
+            inputRms = std::sqrt(inputRms / static_cast<float>(measureEnd - measureStart));
+
+            compressor.processBlock(testBuffer, midiBuffer);
+
+            float outputRms = 0.0f;
+            for (int i = measureStart; i < measureEnd; ++i)
+            {
+                float s = testBuffer.getSample(0, i);
+                outputRms += s * s;
+            }
+            outputRms = std::sqrt(outputRms / static_cast<float>(measureEnd - measureStart));
+
+            levelRatios[f] = (inputRms > 1e-6f) ? (outputRms / inputRms) : 1.0f;
+        }
+
+        float minRatio = *std::min_element(levelRatios.begin(), levelRatios.end());
+        float maxRatio = *std::max_element(levelRatios.begin(), levelRatios.end());
+
+        if (minRatio < 1e-6f) minRatio = 1e-6f;
+        return 20.0f * std::log10(maxRatio / minRatio + 1e-10f);
+    }
+
+    void testCombFilteringComprehensive()
+    {
+        // Mode indices: 0=Opto, 1=FET, 2=VCA, 3=Bus, 4=StudioFET, 5=StudioVCA, 6=Digital
+        constexpr int numModes = 7;
+        constexpr double sampleRates[] = {44100.0, 48000.0, 96000.0, 192000.0};
+        constexpr int numSampleRates = 4;
+        constexpr int osModes[] = {0, 1, 2};  // Off, 2x, 4x
+        constexpr int numOsModes = 3;
+        constexpr float mixLevels[] = {25.0f, 50.0f, 75.0f};
+        constexpr int numMixLevels = 3;
+        constexpr int blockSize = 512;
+        constexpr float maxVariationDb = 4.0f;  // Comb filtering is typically 6-12+ dB; Bus mode has ~3.8dB inherent sidechain coloration
+
+        int totalTests = 0;
+        int passedTests = 0;
+
+        beginTest("Comb Filtering - All Modes × Sample Rates × OS × Mix");
+
+        for (int modeIdx = 0; modeIdx < numModes; ++modeIdx)
+        {
+            for (int srIdx = 0; srIdx < numSampleRates; ++srIdx)
+            {
+                double sr = sampleRates[srIdx];
+
+                for (int osIdx = 0; osIdx < numOsModes; ++osIdx)
+                {
+                    // Create fresh compressor for each OS/SR combo
+                    UniversalCompressor compressor;
+                    compressor.prepareToPlay(sr, blockSize);
+
+                    auto& params = compressor.getParameters();
+
+                    // Disable bypass, noise, auto-makeup
+                    if (auto* p = params.getRawParameterValue("bypass"))
+                        *p = 0.0f;
+                    if (auto* p = params.getRawParameterValue("noise_enable"))
+                        *p = 0.0f;
+                    if (auto* p = params.getRawParameterValue("auto_makeup"))
+                        *p = 0.0f;
+                    if (auto* p = params.getRawParameterValue("global_lookahead"))
+                        *p = 0.0f;
+
+                    // Set oversampling
+                    if (auto* p = params.getRawParameterValue("oversampling"))
+                        *p = static_cast<float>(osModes[osIdx]);
+
+                    // Set mode with no compression
+                    setNoCompression(params, modeIdx);
+
+                    // Warm up (let oversampling filters settle)
+                    juce::MidiBuffer midiBuffer;
+                    for (int w = 0; w < 30; ++w)
+                    {
+                        juce::AudioBuffer<float> warmup(2, blockSize);
+                        fillBufferWithSineWave(warmup, 0.1f, 1000.0f, sr);
+                        compressor.processBlock(warmup, midiBuffer);
+                    }
+
+                    for (int mixIdx = 0; mixIdx < numMixLevels; ++mixIdx)
+                    {
+                        float mixLevel = mixLevels[mixIdx];
+                        float variationDb = measureCombFiltering(compressor, mixLevel, sr, blockSize);
+
+                        totalTests++;
+                        juce::String label = juce::String(combTestModeNames[modeIdx]) + " | " +
+                                             juce::String(static_cast<int>(sr)) + "Hz | OS:" +
+                                             juce::String(combTestOsNames[osIdx]) + " | Mix:" +
+                                             juce::String(static_cast<int>(mixLevel)) + "%";
+
+                        bool passed = variationDb < maxVariationDb;
+                        if (passed) passedTests++;
+
+                        expect(passed,
+                               label + " — freq variation " + juce::String(variationDb, 1) +
+                               " dB (max " + juce::String(maxVariationDb, 0) + " dB)");
+
+                        if (!passed)
+                        {
+                            logMessage("FAIL: " + label + " — " + juce::String(variationDb, 1) + " dB variation");
+                        }
+                    }
+                }
+            }
+        }
+
+        logMessage("Comb filtering base test: " + juce::String(passedTests) + "/" +
+                   juce::String(totalTests) + " passed");
+
+        //======================================================================
+        // GLOBAL LOOKAHEAD TEST
+        // Global lookahead delays the buffer BEFORE dry capture — both dry and
+        // wet should have the same delay, so mixing should be phase-coherent.
+        //======================================================================
+        beginTest("Comb Filtering - Global Lookahead");
+
+        constexpr float lookaheadValues[] = {1.0f, 3.0f, 5.0f};  // ms
+
+        for (float laMs : lookaheadValues)
+        {
+            // Test a few representative modes with global lookahead
+            for (int modeIdx : {0, 1, 3})  // Opto, FET, Bus
+            {
+                for (int osIdx = 0; osIdx < numOsModes; ++osIdx)
+                {
+                    UniversalCompressor compressor;
+                    compressor.prepareToPlay(48000.0, blockSize);
+
+                    auto& params = compressor.getParameters();
+
+                    if (auto* p = params.getRawParameterValue("bypass"))
+                        *p = 0.0f;
+                    if (auto* p = params.getRawParameterValue("noise_enable"))
+                        *p = 0.0f;
+                    if (auto* p = params.getRawParameterValue("auto_makeup"))
+                        *p = 0.0f;
+                    if (auto* p = params.getRawParameterValue("oversampling"))
+                        *p = static_cast<float>(osModes[osIdx]);
+                    if (auto* p = params.getRawParameterValue("global_lookahead"))
+                        *p = laMs;
+
+                    setNoCompression(params, modeIdx);
+
+                    // Warm up (extra blocks for lookahead buffer to fill)
+                    juce::MidiBuffer midiBuffer;
+                    for (int w = 0; w < 50; ++w)
+                    {
+                        juce::AudioBuffer<float> warmup(2, blockSize);
+                        fillBufferWithSineWave(warmup, 0.1f, 1000.0f, 48000.0);
+                        compressor.processBlock(warmup, midiBuffer);
+                    }
+
+                    float variationDb = measureCombFiltering(compressor, 50.0f, 48000.0, blockSize);
+
+                    juce::String label = juce::String(combTestModeNames[modeIdx]) + " | LA:" +
+                                         juce::String(laMs, 0) + "ms | OS:" +
+                                         juce::String(combTestOsNames[osIdx]) + " | Mix:50%";
+
+                    expect(variationDb < maxVariationDb,
+                           label + " — freq variation " + juce::String(variationDb, 1) +
+                           " dB (max " + juce::String(maxVariationDb, 0) + " dB)");
+
+                    if (variationDb >= maxVariationDb)
+                        logMessage("FAIL: " + label + " — " + juce::String(variationDb, 1) + " dB");
+                }
+            }
+        }
+
+        //======================================================================
+        // DIGITAL MODE INTERNAL LOOKAHEAD TEST
+        // Digital mode has its own circular buffer lookahead inside process().
+        // The DryWetMixer must compensate for this delay via processingLatency.
+        //======================================================================
+        beginTest("Comb Filtering - Digital Internal Lookahead");
+
+        constexpr float digitalLaValues[] = {0.0f, 1.0f, 3.0f, 5.0f, 10.0f};  // ms
+
+        for (float dlMs : digitalLaValues)
+        {
+            for (int osIdx = 0; osIdx < numOsModes; ++osIdx)
+            {
+                UniversalCompressor compressor;
+                compressor.prepareToPlay(48000.0, blockSize);
+
+                auto& params = compressor.getParameters();
+
+                if (auto* p = params.getRawParameterValue("bypass"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("noise_enable"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("auto_makeup"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("global_lookahead"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("oversampling"))
+                    *p = static_cast<float>(osModes[osIdx]);
+
+                // Digital mode with specific internal lookahead
+                if (auto* p = params.getRawParameterValue("mode"))
+                    *p = 6.0f;
+                if (auto* p = params.getRawParameterValue("digital_threshold"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("digital_ratio"))
+                    *p = 1.0f;  // 1:1 = no compression
+                if (auto* p = params.getRawParameterValue("digital_lookahead"))
+                    *p = dlMs;
+
+                // Extra warmup for lookahead buffers
+                juce::MidiBuffer midiBuffer;
+                for (int w = 0; w < 60; ++w)
+                {
+                    juce::AudioBuffer<float> warmup(2, blockSize);
+                    fillBufferWithSineWave(warmup, 0.1f, 1000.0f, 48000.0);
+                    compressor.processBlock(warmup, midiBuffer);
+                }
+
+                // Test at 25%, 50%, 75% mix
+                for (float mixLevel : {25.0f, 50.0f, 75.0f})
+                {
+                    float variationDb = measureCombFiltering(compressor, mixLevel, 48000.0, blockSize);
+
+                    juce::String label = "Digital | DLA:" + juce::String(dlMs, 0) +
+                                         "ms | OS:" + juce::String(combTestOsNames[osIdx]) +
+                                         " | Mix:" + juce::String(static_cast<int>(mixLevel)) + "%";
+
+                    expect(variationDb < maxVariationDb,
+                           label + " — freq variation " + juce::String(variationDb, 1) +
+                           " dB (max " + juce::String(maxVariationDb, 0) + " dB)");
+
+                    if (variationDb >= maxVariationDb)
+                        logMessage("FAIL: " + label + " — " + juce::String(variationDb, 1) + " dB");
+                }
+            }
+        }
+
+        //======================================================================
+        // COMBINED GLOBAL + DIGITAL LOOKAHEAD
+        // Both lookaheads active simultaneously — the hardest case
+        //======================================================================
+        beginTest("Comb Filtering - Combined Global + Digital Lookahead");
+
+        for (int osIdx = 0; osIdx < numOsModes; ++osIdx)
+        {
+            UniversalCompressor compressor;
+            compressor.prepareToPlay(48000.0, blockSize);
+
+            auto& params = compressor.getParameters();
+
+            if (auto* p = params.getRawParameterValue("bypass"))
+                *p = 0.0f;
+            if (auto* p = params.getRawParameterValue("noise_enable"))
+                *p = 0.0f;
+            if (auto* p = params.getRawParameterValue("auto_makeup"))
+                *p = 0.0f;
+            if (auto* p = params.getRawParameterValue("oversampling"))
+                *p = static_cast<float>(osModes[osIdx]);
+
+            // Global lookahead = 3ms + Digital lookahead = 5ms
+            if (auto* p = params.getRawParameterValue("global_lookahead"))
+                *p = 3.0f;
+            if (auto* p = params.getRawParameterValue("mode"))
+                *p = 6.0f;
+            if (auto* p = params.getRawParameterValue("digital_threshold"))
+                *p = 0.0f;
+            if (auto* p = params.getRawParameterValue("digital_ratio"))
+                *p = 1.0f;
+            if (auto* p = params.getRawParameterValue("digital_lookahead"))
+                *p = 5.0f;
+
+            juce::MidiBuffer midiBuffer;
+            for (int w = 0; w < 60; ++w)
+            {
+                juce::AudioBuffer<float> warmup(2, blockSize);
+                fillBufferWithSineWave(warmup, 0.1f, 1000.0f, 48000.0);
+                compressor.processBlock(warmup, midiBuffer);
+            }
+
+            float variationDb = measureCombFiltering(compressor, 50.0f, 48000.0, blockSize);
+
+            juce::String label = "Digital | GLA:3ms+DLA:5ms | OS:" +
+                                 juce::String(combTestOsNames[osIdx]) + " | Mix:50%";
+
+            expect(variationDb < maxVariationDb,
+                   label + " — freq variation " + juce::String(variationDb, 1) +
+                   " dB (max " + juce::String(maxVariationDb, 0) + " dB)");
+
+            logMessage(label + ": " + juce::String(variationDb, 1) + " dB variation");
+        }
+
+        //======================================================================
+        // LATENCY REPORTING CONSISTENCY
+        // Verify reported latency matches actual delay for all OS/lookahead combos
+        //======================================================================
+        beginTest("Latency Reporting - All Modes Consistent");
+
+        for (int modeIdx = 0; modeIdx < numModes; ++modeIdx)
+        {
+            for (int osIdx = 0; osIdx < numOsModes; ++osIdx)
+            {
+                UniversalCompressor compressor;
+                compressor.prepareToPlay(48000.0, blockSize);
+
+                auto& params = compressor.getParameters();
+                if (auto* p = params.getRawParameterValue("bypass"))
+                    *p = 0.0f;
+                if (auto* p = params.getRawParameterValue("oversampling"))
+                    *p = static_cast<float>(osModes[osIdx]);
+
+                setNoCompression(params, modeIdx);
+
+                if (auto* p = params.getRawParameterValue("mix"))
+                    *p = 100.0f;  // 100% wet
+
+                // Warm up
+                juce::MidiBuffer midiBuffer;
+                for (int w = 0; w < 30; ++w)
+                {
+                    juce::AudioBuffer<float> warmup(2, blockSize);
+                    fillBufferWithSineWave(warmup, 0.1f, 1000.0f, 48000.0);
+                    compressor.processBlock(warmup, midiBuffer);
+                }
+
+                int reportedLatency = compressor.getLatencySamples();
+
+                // Send impulse and find where it appears in output
+                juce::AudioBuffer<float> impulseBuffer(2, blockSize);
+                impulseBuffer.clear();
+                impulseBuffer.setSample(0, 0, 1.0f);
+                impulseBuffer.setSample(1, 0, 1.0f);
+                compressor.processBlock(impulseBuffer, midiBuffer);
+
+                int peakPos = 0;
+                float peakVal = 0.0f;
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    float absVal = std::abs(impulseBuffer.getSample(0, i));
+                    if (absVal > peakVal)
+                    {
+                        peakVal = absVal;
+                        peakPos = i;
+                    }
+                }
+
+                // Peak should appear near the reported latency (within ±2 samples)
+                int error = std::abs(peakPos - reportedLatency);
+
+                juce::String label = juce::String(combTestModeNames[modeIdx]) + " | OS:" +
+                                     juce::String(combTestOsNames[osIdx]);
+
+                if (reportedLatency > 0 && reportedLatency < blockSize)
+                {
+                    expect(error <= 2,
+                           label + " — impulse at " + juce::String(peakPos) +
+                           ", reported " + juce::String(reportedLatency) +
+                           " (error: " + juce::String(error) + " samples)");
+                }
+                else if (reportedLatency == 0)
+                {
+                    // No latency — impulse should be at position 0
+                    expect(peakPos == 0,
+                           label + " — zero latency but impulse at " + juce::String(peakPos));
+                }
+
+                logMessage(label + ": latency=" + juce::String(reportedLatency) +
+                           ", impulse=" + juce::String(peakPos));
             }
         }
     }
