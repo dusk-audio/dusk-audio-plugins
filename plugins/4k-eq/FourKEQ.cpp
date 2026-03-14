@@ -250,6 +250,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout FourKEQ::createParameterLayo
 }
 
 //==============================================================================
+juce::AudioProcessorParameter* FourKEQ::getBypassParameter() const
+{
+    return parameters.getParameter("bypass");
+}
+
+//==============================================================================
 void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     // Validate sample rate and buffer size to prevent invalid filter calculations
@@ -372,9 +378,11 @@ void FourKEQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     // Report latency introduced by oversampling to host
     if (oversamplingFactor == 4 && oversampler4x)
-        setLatencySamples(static_cast<int>(oversampler4x->getLatencyInSamples()));
-    else if (oversampler2x)
-        setLatencySamples(static_cast<int>(oversampler2x->getLatencyInSamples()));
+        setLatencySamples(static_cast<int>(std::lround(oversampler4x->getLatencyInSamples())));
+    else if (oversamplingFactor == 2 && oversampler2x)
+        setLatencySamples(static_cast<int>(std::lround(oversampler2x->getLatencyInSamples())));
+    else
+        setLatencySamples(0);
 }
 
 void FourKEQ::releaseResources()
@@ -452,8 +460,20 @@ void FourKEQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /
     }
 
     // Check bypass - skip ALL processing when bypassed (including output gain and saturation)
+    // Report zero latency so host passes audio through undelayed
     if (bypassParam && bypassParam->load() > 0.5f)
+    {
+        setLatencySamples(0);
         return;
+    }
+
+    // Not bypassed - restore correct oversampling latency
+    if (oversamplingFactor == 4 && oversampler4x)
+        setLatencySamples(static_cast<int>(std::lround(oversampler4x->getLatencyInSamples())));
+    else if (oversamplingFactor == 2 && oversampler2x)
+        setLatencySamples(static_cast<int>(std::lround(oversampler2x->getLatencyInSamples())));
+    else
+        setLatencySamples(0);
 
     // Check if oversamplers are initialized
     if (!oversampler2x || !oversampler4x)
