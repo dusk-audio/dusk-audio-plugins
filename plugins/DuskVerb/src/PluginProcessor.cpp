@@ -141,6 +141,8 @@ bool DuskVerbProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine_.prepare (sampleRate, samplesPerBlock);
+    originalLatencySamples_ = 0;  // FDN reverb has zero inherent latency
+    setLatencySamples (originalLatencySamples_);
 
     // Initialize algorithm from saved state (edge-case: DAW restores state before first processBlock)
     cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
@@ -204,6 +206,10 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         setLatencySamples (0);
         return;
     }
+
+    // Restore latency after bypass
+    if (getLatencySamples() != originalLatencySamples_)
+        setLatencySamples (originalLatencySamples_);
 
     // Handle mono input: duplicate channel 0 to channel 1
     if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)

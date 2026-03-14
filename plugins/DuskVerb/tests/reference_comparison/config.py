@@ -364,8 +364,8 @@ def apply_reference_room_params(plugin, config):
     # Always set 100% wet
     try:
         plugin.mix = 1.0
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  WARNING: Failed to set VRoom mix=1.0: {e}")
 
 
 def apply_reference_params(plugin, reference_config):

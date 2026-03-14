@@ -229,6 +229,7 @@ private:
     float smoothedGrDb = 0.0f;          // Smoothed gain reduction in dB (negative = compression)
     float grSmoothCoeff = 0.0f;         // One-pole filter coefficient for GR smoothing (~200ms)
     bool primeGrAccumulator = true;     // Flag to instantly prime on mode change
+    bool wasBypassedLastBlock = false;
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal

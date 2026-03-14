@@ -282,7 +282,6 @@ EnhancedCompressorEditor::~EnhancedCompressorEditor()
     // Save window size for next session
     resizeHelper.saveSize();
 
-    // Stop timer first to prevent callbacks during destruction
     stopTimer();
 
     processor.removePresetChangeListener(this);
@@ -1792,7 +1791,7 @@ void EnhancedCompressorEditor::loadPreset(int index)
 
 void EnhancedCompressorEditor::refreshPresetList()
 {
-    int currentId = presetBox_.getSelectedId();
+    auto currentName = presetBox_.getText();
     presetBox_.clear(juce::dontSendNotification);
 
     const auto& presets = CompressorPresets::getFactoryPresets();
@@ -1823,8 +1822,14 @@ void EnhancedCompressorEditor::refreshPresetList()
         }
     }
 
-    if (currentId > 0)
-        presetBox_.setSelectedId(currentId, juce::dontSendNotification);
+    for (int i = 0; i < presetBox_.getNumItems(); ++i)
+    {
+        if (presetBox_.getItemText(i) == currentName)
+        {
+            presetBox_.setSelectedItemIndex(i, juce::dontSendNotification);
+            break;
+        }
+    }
 }
 
 void EnhancedCompressorEditor::saveUserPreset()

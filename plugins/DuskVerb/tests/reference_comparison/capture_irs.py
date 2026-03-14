@@ -120,7 +120,7 @@ def capture_preset(dv, vv, preset_info, sr, output_dir):
     vv_path = os.path.join(output_dir, "presets", f"{safe_name}_VV.wav")
 
     # Translate VV → DV params
-    dv_params = translate_preset(vv_params, dv_algorithm, mode_name)
+    dv_params = translate_preset(vv_params, dv_algorithm, mode_name, name=name)
 
     # Build VV config
     param_key_map = {

@@ -641,10 +641,9 @@ def main():
         print_comparison_header(mode_name)
 
         # Determine which reference plugin to use for this mode
-        ref_type = pairing.get("reference", "reference_reverb")
-        if ref_type == "reference_room" and reference_room:
+        if "reference_room" in pairing and reference_room:
             ref_plugin = reference_room
-            ref_config = pairing.get("reference_room", {})
+            ref_config = pairing["reference_room"]
             ref_name = "ReferenceRoom"
             ref_apply = apply_reference_room_params
             ref_param_map = REFERENCE_ROOM_PARAM_MAP
@@ -693,6 +692,7 @@ def main():
         # Configure and process DuskVerb (with potentially calibrated decay_time)
         print(f"\n  Processing DuskVerb ({mode_name})...")
         apply_duskverb_params(duskverb, dv_config)
+        flush_plugin(duskverb, SAMPLE_RATE)
 
         dv_outputs = {}
         for sig_name, signal in processable.items():
@@ -714,6 +714,7 @@ def main():
 
                 print(f"\n  Processing {ref_name} ({mode_name})...")
                 ref_apply(ref_plugin, ref_config)
+                flush_plugin(ref_plugin, SAMPLE_RATE)
 
                 for sig_name, signal in processable.items():
                     vh_outputs[sig_name] = process_stereo(ref_plugin, signal, SAMPLE_RATE)

@@ -651,7 +651,7 @@ void TapeMachineAudioProcessorEditor::loadPreset(int index)
 
 void TapeMachineAudioProcessorEditor::refreshPresetList()
 {
-    int currentId = presetSelector.getSelectedId();
+    auto currentName = presetSelector.getText();
     presetSelector.clear(juce::dontSendNotification);
 
     const auto& presets = TapeMachinePresets::getFactoryPresets();
@@ -682,8 +682,14 @@ void TapeMachineAudioProcessorEditor::refreshPresetList()
         }
     }
 
-    if (currentId > 0)
-        presetSelector.setSelectedId(currentId, juce::dontSendNotification);
+    for (int i = 0; i < presetSelector.getNumItems(); ++i)
+    {
+        if (presetSelector.getItemText(i) == currentName)
+        {
+            presetSelector.setSelectedItemIndex(i, juce::dontSendNotification);
+            break;
+        }
+    }
 }
 
 void TapeMachineAudioProcessorEditor::saveUserPreset()

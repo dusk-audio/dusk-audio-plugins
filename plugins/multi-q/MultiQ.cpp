@@ -437,9 +437,10 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         matchConvolution.prepare(matchSpec);
         matchConvolution.reset();
     }
-    // Clear learned spectra and correction data — they were captured at the old
-    // sample rate and are invalid after a rate change.
-    eqMatchProcessor.reset();
+    // Clear learned spectra and correction data only if sample rate changed —
+    // they were captured at the old rate and would be invalid.
+    if (std::abs(eqMatchProcessor.getSampleRate() - sampleRate) > 0.5)
+        eqMatchProcessor.reset();
     eqMatchProcessor.prepare(sampleRate, samplesPerBlock);
     matchConvolutionActive.store(false);
 

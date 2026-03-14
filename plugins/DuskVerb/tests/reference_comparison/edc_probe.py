@@ -18,8 +18,8 @@ def apply_vv(plugin, params):
         name = REFERENCE_PARAM_MAP.get(key, key.lstrip("_"))
         try:
             setattr(plugin, name, value)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  WARNING: Failed to set {name}={value}: {e}")
 
 def render_ir(plugin, duration=40.0):
     n = int(SAMPLE_RATE * duration)

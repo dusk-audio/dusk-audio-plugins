@@ -324,6 +324,11 @@ void ConvolutionReverbProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
         return;
     }
 
+    // Restore latency when not bypassed
+    int expectedLatency = (zeroLatencyParam->load() > 0.5f) ? 0 : convolutionEngine.getLatencyInSamples();
+    if (getLatencySamples() != expectedLatency)
+        setLatencySamples(expectedLatency);
+
     // Get parameters
     float mix = mixParam->load();
     float preDelayMs = preDelayParam->load();

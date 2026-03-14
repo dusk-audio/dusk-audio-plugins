@@ -144,8 +144,7 @@ inline HardwareUnitProfile createOptoCompressor()
     profile.outputStageHarmonics = HarmonicProfile::create(
         0.035f, 0.012f, 0.70f, 0.004f);
 
-    // Input transformer (UTC A-10) — H2-dominant even harmonics for warmth.
-    // Real UTC iron-core transformers produce asymmetric saturation → H2 dominant.
+    // Input transformer (UTC A-10) — H2-dominant, iron-core
     profile.inputTransformer = TransformerProfile::createActive(
         0.75f,    // saturationThreshold
         0.06f,    // saturationAmount
@@ -253,8 +252,7 @@ inline HardwareUnitProfile createConsoleBus()
     profile.outputStageHarmonics = HarmonicProfile::create(
         0.008f, 0.015f, 0.35f, 0.0f, 0.004f);
 
-    // SSL G-Bus is a clean VCA design with active electronics.
-    // Flat frequency response — no significant transformer rolloff.
+    // SSL G-Bus: clean VCA, flat response
     profile.inputTransformer = TransformerProfile::createActive(
         0.9f, 0.03f, 1.05f, 100000.0f, 10.0f,
         0.002f, 0.004f, 0.4f);

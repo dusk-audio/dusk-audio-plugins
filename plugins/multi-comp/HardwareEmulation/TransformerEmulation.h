@@ -66,21 +66,16 @@ public:
 
         channel = std::clamp(channel, 0, 1);
 
-        // 1. Estimate high-frequency content for frequency-dependent saturation
         float hfContent = estimateHighFrequencyContent(input, channel);
 
-        // 2. Calculate frequency-dependent drive
-        // Low frequencies saturate more (transformer core physics)
+        // LF saturates more (transformer core physics)
         float lfMultiplier = profile.lowFreqSaturation * (1.0f - hfContent * 0.5f);
 
-        // 3. Apply transformer saturation curve with drive
         float driven = input * lfMultiplier;
         float saturated = applyTransformerSaturation(driven);
-
-        // 4. Blend based on saturation amount
         float output = input + (saturated - input) * profile.saturationAmount;
 
-        // 4b. Magnetic hysteresis: slight memory effect from core magnetization
+        // Magnetic hysteresis
         if (profile.hysteresisAmount > 0.0f)
         {
             float hystDelta = profile.hysteresisAmount * hysteresisState[channel];
@@ -89,14 +84,11 @@ public:
                                      + (output - input) * 0.05f;
         }
 
-        // 5. Add harmonics based on profile
         output = addHarmonics(output, profile.harmonics);
 
-        // 6. Apply high-frequency rolloff (transformer inductance)
         if (hfRolloffEnabled)
             output = applyHFRolloff(output, channel);
 
-        // 7. DC blocking
         output = processDCBlocker(output, channel);
 
         return output;
@@ -193,15 +185,8 @@ private:
 
         float output = x;
 
-        // 2nd harmonic (even - creates asymmetry)
-        // x² is always positive, adding it directly creates the asymmetric
-        // transfer function characteristic of even harmonics
-        output += harmonics.h2 * x2;
-
-        // 3rd harmonic (odd - symmetric)
-        output += harmonics.h3 * x3;
-
-        // 4th harmonic (even)
+        output += harmonics.h2 * x2;  // H2 (even — asymmetry/warmth)
+        output += harmonics.h3 * x3;  // H3 (odd — symmetric)
         if (harmonics.h4 > 0.0f)
             output += harmonics.h4 * x2 * x2;
 

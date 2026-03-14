@@ -102,5 +102,7 @@ private:
     std::atomic<float> outputLevelL_ { -100.0f };
     std::atomic<float> outputLevelR_ { -100.0f };
 
+    int originalLatencySamples_ = 0;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DuskVerbProcessor)
 };

@@ -428,7 +428,7 @@ void TapeEchoEditor::loadPreset (int index)
 
 void TapeEchoEditor::refreshPresetList()
 {
-    int currentId = presetBox_.getSelectedId();
+    auto currentName = presetBox_.getText();
     presetBox_.clear (juce::dontSendNotification);
 
     // Factory presets grouped by category (IDs starting at 2)
@@ -462,9 +462,15 @@ void TapeEchoEditor::refreshPresetList()
         }
     }
 
-    // Restore selection
-    if (currentId > 0)
-        presetBox_.setSelectedId (currentId, juce::dontSendNotification);
+    // Restore selection by name
+    for (int i = 0; i < presetBox_.getNumItems(); ++i)
+    {
+        if (presetBox_.getItemText (i) == currentName)
+        {
+            presetBox_.setSelectedItemIndex (i, juce::dontSendNotification);
+            break;
+        }
+    }
 }
 
 void TapeEchoEditor::saveUserPreset()

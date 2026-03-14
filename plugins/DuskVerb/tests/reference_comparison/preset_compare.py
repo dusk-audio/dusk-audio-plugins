@@ -7,7 +7,6 @@ Reports: level, RT60, EDC, slapback, spectral balance, echo density, ringing.
 
 Usage:
     python3 preset_compare.py                    # Run Fat Snare Room comparison
-    python3 preset_compare.py --preset fat_snare # Same
 """
 
 import numpy as np
@@ -94,9 +93,9 @@ def find_slapback_peaks(ir, min_time_ms=5, max_time_ms=200, threshold_db=-30):
 
     peaks = []
     for i in range(min_idx, max_idx):
-        half_ms = int(0.001 * SR)
-        lo = max(0, i - half_ms)
-        hi = min(len(abs_ir), i + half_ms)
+        one_ms = int(0.001 * SR)
+        lo = max(0, i - one_ms)
+        hi = min(len(abs_ir), i + one_ms)
         if abs_ir[i] < np.max(abs_ir[lo:hi]) * 0.99:
             continue
         env_lo = max(0, i - int(0.003 * SR))
