@@ -1539,10 +1539,9 @@ void EnhancedCompressorEditor::updateMeters()
         float inputDbR = processor.getInputLevelR();
         inputMeter->setStereoLevels(inputDbL, inputDbR);
 
-        // Apply smoothing for internal tracking (use max for display text)
+        // Capture max peak between display refreshes
         float inputDb = std::max(inputDbL, inputDbR);
-        smoothedInputLevel = smoothedInputLevel * levelSmoothingFactor +
-                           inputDb * (1.0f - levelSmoothingFactor);
+        peakInputLevel = std::max(peakInputLevel, inputDb);
     }
 
     if (vuMeter && vuMeter->isVisible())
@@ -1569,21 +1568,37 @@ void EnhancedCompressorEditor::updateMeters()
         float outputDbR = processor.getOutputLevelR();
         outputMeter->setStereoLevels(outputDbL, outputDbR);
 
-        // Apply smoothing for internal tracking (use max for display text)
+        // Capture max peak between display refreshes
         float outputDb = std::max(outputDbL, outputDbR);
-        smoothedOutputLevel = smoothedOutputLevel * levelSmoothingFactor +
-                            outputDb * (1.0f - levelSmoothingFactor);
+        peakOutputLevel = std::max(peakOutputLevel, outputDb);
     }
 
-    // Throttle the text display updates to make them more readable
+    // Logic Pro style: update display at ~5Hz, show peak then decay slowly
     levelDisplayCounter++;
     if (levelDisplayCounter >= levelDisplayInterval)
     {
         levelDisplayCounter = 0;
-        displayedInputLevel = smoothedInputLevel;
-        displayedOutputLevel = smoothedOutputLevel;
 
-        // Only repaint when the displayed values actually update
+        // If a new peak exceeds the displayed value, jump to it immediately
+        // Otherwise decay the displayed value slowly (~6dB/sec)
+        if (peakInputLevel > displayedInputLevel)
+            displayedInputLevel = peakInputLevel;
+        else
+            displayedInputLevel -= levelDecayPerUpdate;
+
+        if (peakOutputLevel > displayedOutputLevel)
+            displayedOutputLevel = peakOutputLevel;
+        else
+            displayedOutputLevel -= levelDecayPerUpdate;
+
+        // Clamp floor
+        displayedInputLevel = std::max(displayedInputLevel, -60.0f);
+        displayedOutputLevel = std::max(displayedOutputLevel, -60.0f);
+
+        // Reset peak capture for next interval
+        peakInputLevel = -60.0f;
+        peakOutputLevel = -60.0f;
+
         repaint(inputMeter ? inputMeter->getBounds().expanded(20, 30) : juce::Rectangle<int>());
         repaint(outputMeter ? outputMeter->getBounds().expanded(20, 30) : juce::Rectangle<int>());
     }

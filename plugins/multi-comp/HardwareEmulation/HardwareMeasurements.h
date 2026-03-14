@@ -77,6 +77,7 @@ struct TransformerProfile
     float lowFreqSaturation = 1.0f;    // LF saturates more (core physics)
     float highFreqRolloff = 20000.0f;  // -3dB Hz, 0=disabled
     float dcBlockingFreq = 10.0f;
+    float hysteresisAmount = 0.0f;    // Magnetic hysteresis (0=none, 0.02=subtle iron saturation)
     HarmonicProfile harmonics;
 
     static TransformerProfile createActive(float satThresh, float satAmt, float lfSat,
@@ -143,26 +144,29 @@ inline HardwareUnitProfile createOptoCompressor()
     profile.outputStageHarmonics = HarmonicProfile::create(
         0.035f, 0.012f, 0.70f, 0.004f);
 
-    // Input transformer (UTC A-10) — light saturation to avoid cascaded intermod.
-    // h3=0.025 adds 3rd harmonic directly (no intermod cascade) to match LA-2A profile.
+    // Input transformer (UTC A-10) — H2-dominant even harmonics for warmth.
+    // Real UTC iron-core transformers produce asymmetric saturation → H2 dominant.
     profile.inputTransformer = TransformerProfile::createActive(
         0.75f,    // saturationThreshold
         0.06f,    // saturationAmount
-        1.15f,    // lowFreqSaturation
+        1.05f,    // lowFreqSaturation — gentle LF boost (was 1.15, too much on kicks)
         0.0f,     // highFreqRolloff (disabled)
         2.0f,     // dcBlockingFreq
-        0.003f, 0.025f, 0.7f  // h2, h3, balance
+        0.012f, 0.004f, 0.75f  // h2, h3, balance — H2 dominant, moderate level
     );
 
-    // Output transformer (UTC A-24) — very light saturation, h3 for fullness.
+    // Output transformer (UTC A-24) — H2-dominant, lighter than input.
     profile.outputTransformer = TransformerProfile::createActive(
         0.8f,     // saturationThreshold
         0.04f,    // saturationAmount
         1.1f,     // lowFreqSaturation
         0.0f,     // highFreqRolloff (disabled)
         2.0f,     // dcBlockingFreq
-        0.002f, 0.008f, 0.75f  // h2, h3, balance
+        0.012f, 0.004f, 0.78f  // h2, h3, balance — H2 dominant (even = warm)
     );
+
+    profile.inputTransformer.hysteresisAmount = 0.02f;   // UTC iron-core transformer
+    profile.outputTransformer.hysteresisAmount = 0.02f;
 
     profile.timing = TimingProfile::create(
         10.0f, 10.0f, 60.0f, 5000.0f, 0.3f, 0.8f, true);
@@ -198,6 +202,9 @@ inline HardwareUnitProfile createFETCompressor()
         0.9f, 0.05f, 1.03f, 0.0f, 12.0f,
         0.003f, 0.002f, 0.6f);
 
+    profile.inputTransformer.hysteresisAmount = 0.015f;  // Cinemag/Jensen transformer
+    profile.outputTransformer.hysteresisAmount = 0.015f;
+
     profile.timing = TimingProfile::create(
         0.02f, 0.8f, 50.0f, 1100.0f, 0.1f, 0.6f, true);
 
@@ -223,7 +230,7 @@ inline HardwareUnitProfile createClassicVCA()
     profile.outputTransformer = TransformerProfile::createInactive();
 
     profile.timing = TimingProfile::create(
-        3.0f, 15.0f, 0.0f, 0.0f, 0.5f, 0.5f, true);
+        3.0f, 15.0f, 100.0f, 1000.0f, 0.5f, 0.5f, true);
 
     profile.noiseFloor = -85.0f;
     profile.headroom = 21.0f;
@@ -246,13 +253,18 @@ inline HardwareUnitProfile createConsoleBus()
     profile.outputStageHarmonics = HarmonicProfile::create(
         0.008f, 0.015f, 0.35f, 0.0f, 0.004f);
 
+    // SSL G-Bus is a clean VCA design with active electronics.
+    // Flat frequency response — no significant transformer rolloff.
     profile.inputTransformer = TransformerProfile::createActive(
-        0.9f, 0.03f, 1.05f, 22000.0f, 10.0f,
+        0.9f, 0.03f, 1.05f, 100000.0f, 10.0f,
         0.002f, 0.004f, 0.4f);
 
     profile.outputTransformer = TransformerProfile::createActive(
-        0.92f, 0.02f, 1.03f, 24000.0f, 8.0f,
+        0.92f, 0.02f, 1.03f, 100000.0f, 8.0f,
         0.002f, 0.003f, 0.45f);
+
+    profile.inputTransformer.hysteresisAmount = 0.008f;  // SSL active transformer (minimal)
+    profile.outputTransformer.hysteresisAmount = 0.008f;
 
     profile.timing = TimingProfile::create(
         0.1f, 30.0f, 100.0f, 1200.0f, 0.2f, 0.5f, false);
