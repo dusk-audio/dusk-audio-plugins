@@ -92,11 +92,11 @@ def _create_mode_report(mode_name, dv, vh, sr):
 
     # Row 2: Spectrograms
     _plot_spectrogram(fig.add_subplot(gs[1, 0]),
-                      dv_impulse.get("spectrogram", ([], [], [[]])),
+                      dv_impulse.get("spectrogram", (np.array([]), np.array([]), np.empty((0, 0)))),
                       "DuskVerb Waterfall")
     if vh_impulse:
         _plot_spectrogram(fig.add_subplot(gs[1, 1]),
-                          vh_impulse.get("spectrogram", ([], [], [[]])),
+                          vh_impulse.get("spectrogram", (np.array([]), np.array([]), np.empty((0, 0)))),
                           "ReferenceReverb Waterfall")
     else:
         ax = fig.add_subplot(gs[1, 1])

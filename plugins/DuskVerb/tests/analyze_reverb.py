@@ -420,10 +420,17 @@ def process_signal(plugin, signal, algo_name, settings):
     for key, value in settings.items():
         setattr(plugin, key, value)
 
-    # Make stereo input (mono duplicated)
-    stereo_in = np.stack([signal, signal], axis=0).astype(np.float32)
+    # Flush plugin state with silence before processing
+    flush_samples = int(SAMPLE_RATE * 2)
+    silence = np.zeros((2, flush_samples), dtype=np.float32)
+    plugin(silence, SAMPLE_RATE)
 
-    # Process with enough tail
+    # Make stereo input with tail padding for reverb capture
+    tail_samples = int(SAMPLE_RATE * 4)  # 4s tail
+    padded = np.concatenate([signal, np.zeros(tail_samples)])
+    stereo_in = np.stack([padded, padded], axis=0).astype(np.float32)
+
+    # Process
     output = plugin(stereo_in, SAMPLE_RATE)
     return output[0], output[1]  # left, right
 
