@@ -8,6 +8,8 @@
 #include "../shared/LEDMeter.h"
 #include "../shared/DuskLookAndFeel.h"
 #include "../shared/ScalableEditorHelper.h"
+#include "../shared/UserPresetManager.h"
+#include "FourKEQPresets.h"
 
 //==============================================================================
 /**
@@ -168,6 +170,17 @@ private:
     void updateValueLabels();
     void drawKnobMarkings(juce::Graphics& g);
     juce::String formatValue(float value, const juce::String& suffix);
+
+    // User preset management
+    std::unique_ptr<UserPresetManager> userPresetManager_;
+    juce::TextButton savePresetButton_;
+    juce::TextButton deletePresetButton_;
+    void refreshPresetList();
+    void loadPreset (int index);
+    void saveUserPreset();
+    void loadUserPreset (const juce::String& name);
+    void deleteUserPreset (const juce::String& name);
+    void updateDeleteButtonVisibility();
 
     // Patreon supporters overlay (uses shared component)
     std::unique_ptr<SupportersOverlay> supportersOverlay;
