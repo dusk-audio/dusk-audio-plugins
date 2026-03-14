@@ -6,7 +6,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
 {
     setLookAndFeel(&lookAndFeel);
 
-    resizeHelper.initialize(this, &audioProcessor, 950, 640, 760, 512, 1425, 960, false);
+    resizeHelper.initialize(this, &audioProcessor, 950, 655, 760, 527, 1425, 975, false);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     eqTypeParam = audioProcessor.parameters.getRawParameterValue("eq_type");
@@ -125,23 +125,73 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     eqTypeAttachment = std::make_unique<ComboBoxAttachment>(
         audioProcessor.parameters, "eq_type", eqTypeSelector);
 
-    for (int i = 0; i < audioProcessor.getNumPrograms(); ++i)
+    // User preset manager
+    userPresetManager_ = std::make_unique<UserPresetManager>("4K EQ");
+
+    // Preset browser (factory + user presets)
+    presetSelector.setJustificationType(juce::Justification::centred);
+    presetSelector.onChange = [this]
     {
-        presetSelector.addItem(audioProcessor.getProgramName(i), i + 1);
-    }
-    presetSelector.setSelectedId(audioProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
-    presetSelector.onChange = [this]()
-    {
-        int presetIndex = presetSelector.getSelectedId() - 1;
-        if (presetIndex >= 0 && presetIndex < audioProcessor.getNumPrograms())
+        int id = presetSelector.getSelectedId();
+        if (id >= 1001)
         {
-            audioProcessor.setCurrentProgram(presetIndex);
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int>(userPresets.size()))
+                loadUserPreset(userPresets[static_cast<size_t>(userIdx)].name);
         }
+        else if (id >= 2)
+        {
+            loadPreset(id - 2);
+        }
+        updateDeleteButtonVisibility();
     };
     presetSelector.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff3a3a3a));
     presetSelector.setColour(juce::ComboBox::textColourId, juce::Colour(0xffe0e0e0));
     presetSelector.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xff808080));
     addAndMakeVisible(presetSelector);
+    refreshPresetList();
+
+    // Save preset button
+    savePresetButton_.setButtonText("Save");
+    savePresetButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
+    savePresetButton_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffa0a0a0));
+    savePresetButton_.onClick = [this] { saveUserPreset(); };
+    addAndMakeVisible(savePresetButton_);
+
+    // Delete preset button (only visible when a user preset is selected)
+    deletePresetButton_.setButtonText("Del");
+    deletePresetButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
+    deletePresetButton_.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffa0a0a0));
+    deletePresetButton_.onClick = [this]
+    {
+        int id = presetSelector.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int>(userPresets.size()))
+            {
+                auto name = userPresets[static_cast<size_t>(userIdx)].name;
+                juce::Component::SafePointer<FourKEQEditor> safeThis(this);
+
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Delete Preset",
+                    "Delete \"" + name + "\"?",
+                    "Delete", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create([safeThis, name](int result) {
+                        if (result == 1 && safeThis != nullptr)
+                        {
+                            safeThis->deleteUserPreset(name);
+                            safeThis->updateDeleteButtonVisibility();
+                        }
+                    }));
+            }
+        }
+    };
+    addAndMakeVisible(deletePresetButton_);
+    deletePresetButton_.setVisible(false);
 
     oversamplingSelector.addItem("Oversample: 2x", 1);
     oversamplingSelector.addItem("Oversample: 4x", 2);
@@ -220,8 +270,8 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
         if (eqCurveDisplay)
             eqCurveDisplay->setVisible(!isCurveCollapsed);
 
-        // Resize the window based on graph visibility
-        int newHeight = isCurveCollapsed ? 530 : 640;
+        // Resize the window based on graph visibility (+15px for two-row header)
+        int newHeight = isCurveCollapsed ? 545 : 655;
         setSize(getWidth(), newHeight);
     };
     addAndMakeVisible(curveCollapseButton);
@@ -244,7 +294,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     addAndMakeVisible(displayScaleSelector);
 
     int curveX = 35;
-    int curveY = 58;
+    int curveY = 73;
     int curveWidth = 950 - 70;
     int curveHeight = 105;
     eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
@@ -254,7 +304,7 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     addAndMakeVisible(inputMeterL.get());
     addAndMakeVisible(outputMeterL.get());
 
-    int initialMeterY = 215;  // Matches resized() logic when curve is visible
+    int initialMeterY = 230;  // Matches resized() logic when curve is visible (+15px for two-row header)
     int initialMeterHeight = 640 - initialMeterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 10;
     inputMeterL->setBounds(6, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);
     outputMeterL->setBounds(950 - LEDMeterStyle::standardWidth - 10, initialMeterY, LEDMeterStyle::standardWidth, initialMeterHeight);
@@ -276,32 +326,34 @@ void FourKEQEditor::paint(juce::Graphics& g)
 
     auto bounds = getLocalBounds();
 
+    // Header background — two-row header (75px)
+    int headerH = resizeHelper.scaled(72);
     juce::ColourGradient headerGradient(
         juce::Colour(0xff2d2d2d), 0, 0,
-        juce::Colour(0xff252525), 0, 55, false);
+        juce::Colour(0xff252525), 0, static_cast<float>(headerH), false);
     g.setGradientFill(headerGradient);
-    g.fillRect(0, 0, bounds.getWidth(), 55);
+    g.fillRect(0, 0, bounds.getWidth(), headerH);
 
     g.setColour(juce::Colour(0xff3a3a3a));
-    g.fillRect(0, 54, bounds.getWidth(), 1);
+    g.fillRect(0, headerH - 1, bounds.getWidth(), 1);
 
-    titleClickArea = juce::Rectangle<int>(60, 10, 200, 40);
-    g.setFont(juce::Font(juce::FontOptions(24.0f).withStyle("Bold")));
+    // Title on left side, vertically centered in header
+    titleClickArea = juce::Rectangle<int>(resizeHelper.scaled(15), resizeHelper.scaled(8), resizeHelper.scaled(200), resizeHelper.scaled(55));
+    g.setFont(juce::Font(juce::FontOptions(22.0f).withStyle("Bold")));
     g.setColour(juce::Colour(0xffe0e0e0));
-    g.drawText("4K EQ", 60, 10, 200, 30, juce::Justification::left);
+    g.drawText("4K EQ", resizeHelper.scaled(15), resizeHelper.scaled(10), 200, 24, juce::Justification::left);
 
-    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.setColour(juce::Colour(0xff909090));
-    g.drawText("Console-Style Equalizer", 60, 32, 200, 20, juce::Justification::left);
+    g.drawText("Console-Style Equalizer", resizeHelper.scaled(15), resizeHelper.scaled(30), 200, 18, juce::Justification::left);
 
-    // EQ Type indicator badge - styled as muted amber/gold for Brown, dark grey for Black
+    // EQ Type indicator badge - positioned on Row 1 to the left of EQ type dropdown
     bool isBlack = eqTypeParam != nullptr && eqTypeParam->load() > 0.5f;
     g.setFont(juce::Font(juce::FontOptions(resizeHelper.scaled(11.0f)).withStyle("Bold")));
 
-    // Position badge to the left of the dropdown (dropdown is at getWidth() - scaled(110))
-    // Badge positioned at getWidth() - scaled(190), matching scaled layout
-    float badgeX = static_cast<float>(getWidth()) - resizeHelper.scaled(190.0f);
-    float badgeY = resizeHelper.scaled(17.0f);
+    // Badge to the left of eqTypeSelector (which is at getWidth() - scaled(105), w=95)
+    float badgeX = static_cast<float>(getWidth()) - resizeHelper.scaled(185.0f);
+    float badgeY = resizeHelper.scaled(9.0f);
     float badgeW = resizeHelper.scaled(70.0f);
     float badgeH = resizeHelper.scaled(24.0f);
     auto eqTypeRect = juce::Rectangle<float>(badgeX, badgeY, badgeW, badgeH);
@@ -331,7 +383,7 @@ void FourKEQEditor::paint(juce::Graphics& g)
     }
 
     // Main content area - adjust based on curve visibility (matches contentY in resized())
-    int contentTopOffset = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(200);
+    int contentTopOffset = isCurveCollapsed ? resizeHelper.scaled(80) : resizeHelper.scaled(215);
     bounds = getLocalBounds().withTrimmedTop(contentTopOffset);  // Account for header + optional curve
 
     // Section X boundaries - scale proportionally to window width (same as resized())
@@ -466,35 +518,47 @@ void FourKEQEditor::resized()
 
     auto bounds = getLocalBounds();
 
-    // Header controls - preset and oversampling selectors
-    auto headerBounds = bounds.removeFromTop(resizeHelper.scaled(60));
-    int centerX = headerBounds.getCentreX();
+    // Header controls - two rows for clean layout
+    bounds.removeFromTop(resizeHelper.scaled(75));
+    int ctrlH = resizeHelper.scaled(26);
+    int btnGap = resizeHelper.scaled(4);
 
-    // A/B button (far left of header controls) - shifted left for more room
-    abButton.setBounds(centerX - resizeHelper.scaled(280), resizeHelper.scaled(15),
-                       resizeHelper.scaled(32), resizeHelper.scaled(28));
+    // === ROW 1 (y=8): A/B + Preset + Save + Del (centered) | EQ Type (right) ===
+    int row1Y = resizeHelper.scaled(8);
 
-    // Preset selector (left of center) - shifted left
-    presetSelector.setBounds(centerX - resizeHelper.scaled(240), resizeHelper.scaled(15),
-                            resizeHelper.scaled(200), resizeHelper.scaled(28));
+    // EQ Type selector (right side of row 1)
+    int eqTypeW = resizeHelper.scaled(95);
+    eqTypeSelector.setBounds(getWidth() - resizeHelper.scaled(10) - eqTypeW, row1Y, eqTypeW, ctrlH);
 
-    // Oversampling selector - shifted left
-    oversamplingSelector.setBounds(centerX - resizeHelper.scaled(20), resizeHelper.scaled(15),
-                                   resizeHelper.scaled(130), resizeHelper.scaled(28));
+    // A/B + Preset + Save + Del centered in row 1
+    int abW = resizeHelper.scaled(32);
+    int presetW = resizeHelper.scaled(170);
+    int saveW = resizeHelper.scaled(45);
+    int delW = resizeHelper.scaled(35);
+    int row1GroupW = abW + btnGap + presetW + btnGap + saveW + btnGap + delW;
+    int row1StartX = (getWidth() - row1GroupW) / 2;
 
-    // EQ Type selector in header (upper right)
-    eqTypeSelector.setBounds(getWidth() - resizeHelper.scaled(110), resizeHelper.scaled(15),
-                            resizeHelper.scaled(95), resizeHelper.scaled(28));
+    abButton.setBounds(row1StartX, row1Y, abW, ctrlH);
+    presetSelector.setBounds(row1StartX + abW + btnGap, row1Y, presetW, ctrlH);
+    savePresetButton_.setBounds(row1StartX + abW + btnGap + presetW + btnGap, row1Y, saveW, ctrlH);
+    deletePresetButton_.setBounds(row1StartX + abW + btnGap + presetW + btnGap + saveW + btnGap, row1Y, delW, ctrlH);
 
-    // Position collapse button - shifted left for more room
-    curveCollapseButton.setBounds(centerX + resizeHelper.scaled(120), resizeHelper.scaled(17),
-                                  resizeHelper.scaled(70), resizeHelper.scaled(24));
+    // === ROW 2 (y=40): Oversampling + Hide/Show + Scale (centered) ===
+    int row2Y = resizeHelper.scaled(40);
 
-    // Display scale selector - positioned after collapse button (only visible when graph is shown)
+    int osW = resizeHelper.scaled(130);
+    int hideW = resizeHelper.scaled(70);
+    int scaleW = resizeHelper.scaled(65);
+    int row2GroupW = osW + btnGap + hideW;
+    if (!isCurveCollapsed) row2GroupW += btnGap + scaleW;
+    int row2StartX = (getWidth() - row2GroupW) / 2;
+
+    oversamplingSelector.setBounds(row2StartX, row2Y, osW, ctrlH);
+    curveCollapseButton.setBounds(row2StartX + osW + btnGap, row2Y, hideW, ctrlH);
+
     if (!isCurveCollapsed)
     {
-        displayScaleSelector.setBounds(centerX + resizeHelper.scaled(200), resizeHelper.scaled(17),
-                                       resizeHelper.scaled(65), resizeHelper.scaled(24));
+        displayScaleSelector.setBounds(row2StartX + osW + btnGap + hideW + btnGap, row2Y, scaleW, ctrlH);
         displayScaleSelector.setVisible(true);
     }
     else
@@ -503,12 +567,11 @@ void FourKEQEditor::resized()
     }
 
     // EQ Curve Display - spans across the top area below header
-    // Increased height from 105 to 135 to use available space
     int curveHeight = isCurveCollapsed ? 0 : resizeHelper.scaled(135);
     if (eqCurveDisplay && !isCurveCollapsed)
     {
         int curveX = resizeHelper.scaled(35);
-        int curveY = resizeHelper.scaled(58);
+        int curveY = resizeHelper.scaled(73);
         int curveWidth = getWidth() - resizeHelper.scaled(70);
         eqCurveDisplay->setBounds(curveX, curveY, curveWidth, curveHeight);
     }
@@ -516,7 +579,7 @@ void FourKEQEditor::resized()
     // LED Meters - scale meter width and position
     int meterWidth = resizeHelper.scaled(LEDMeterStyle::standardWidth);
     // Adjust meter Y position based on curve visibility (matches contentY offset)
-    int meterY = isCurveCollapsed ? resizeHelper.scaled(80) : resizeHelper.scaled(215);
+    int meterY = isCurveCollapsed ? resizeHelper.scaled(95) : resizeHelper.scaled(230);
     int meterHeight = getHeight() - meterY - resizeHelper.scaled(LEDMeterStyle::valueHeight + LEDMeterStyle::labelSpacing + 10);
 
     if (inputMeterL)
@@ -527,8 +590,8 @@ void FourKEQEditor::resized()
         outputMeterL->setBounds(getWidth() - meterWidth - resizeHelper.scaled(10), meterY, meterWidth, meterHeight);
 
     // Scaled layout constants
-    // Adjusted contentY to account for taller graph (135 instead of 105)
-    int contentY = isCurveCollapsed ? resizeHelper.scaled(65) : resizeHelper.scaled(200);
+    // Adjusted contentY to account for two-row header (+15px)
+    int contentY = isCurveCollapsed ? resizeHelper.scaled(80) : resizeHelper.scaled(215);
     int sectionLabelHeight = resizeHelper.scaled(30);
     int knobSize = resizeHelper.scaled(75);
     int knobRowHeight = resizeHelper.scaled(125);
@@ -1134,4 +1197,132 @@ void FourKEQEditor::copyCurrentToState(juce::ValueTree& state)
 void FourKEQEditor::applyState(const juce::ValueTree& state)
 {
     audioProcessor.parameters.replaceState(state);
+}
+
+//==============================================================================
+// Preset Management
+//==============================================================================
+
+void FourKEQEditor::loadPreset(int index)
+{
+    const auto& presets = FourKEQPresets::getFactoryPresets();
+    if (index >= 0 && index < static_cast<int>(presets.size()))
+        presets[static_cast<size_t>(index)].applyTo(audioProcessor.parameters);
+}
+
+void FourKEQEditor::refreshPresetList()
+{
+    int currentId = presetSelector.getSelectedId();
+    presetSelector.clear(juce::dontSendNotification);
+
+    // Factory presets grouped by category (IDs starting at 2)
+    const auto& presets = FourKEQPresets::getFactoryPresets();
+    juce::String lastCategory;
+    int id = 2;
+
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        juce::String cat(presets[i].category);
+        if (cat != lastCategory)
+        {
+            presetSelector.addSeparator();
+            presetSelector.addSectionHeading(cat);
+            lastCategory = cat;
+        }
+        presetSelector.addItem(presets[i].name, id++);
+    }
+
+    // User presets (IDs starting at 1001)
+    if (userPresetManager_)
+    {
+        auto userPresets = userPresetManager_->loadUserPresets();
+        if (!userPresets.empty())
+        {
+            presetSelector.addSeparator();
+            presetSelector.addSectionHeading("User Presets");
+
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                presetSelector.addItem(userPresets[i].name, static_cast<int>(1001 + i));
+        }
+    }
+
+    // Restore selection
+    if (currentId > 0)
+        presetSelector.setSelectedId(currentId, juce::dontSendNotification);
+}
+
+void FourKEQEditor::saveUserPreset()
+{
+    if (!userPresetManager_)
+        return;
+
+    auto* dialog = new juce::AlertWindow("Save Preset",
+                                          "Enter a name for this preset:",
+                                          juce::MessageBoxIconType::QuestionIcon);
+    dialog->addTextEditor("name", "My Preset", "Preset Name:");
+    dialog->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<FourKEQEditor> safeThis(this);
+    juce::Component::SafePointer<juce::AlertWindow> safeDialog(dialog);
+
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create(
+        [safeThis, safeDialog](int result) mutable
+        {
+            juce::String name;
+            if (result == 1 && safeDialog != nullptr)
+                name = safeDialog->getTextEditorContents("name").trim();
+
+            if (safeThis == nullptr || name.isEmpty())
+                return;
+
+            if (safeThis->userPresetManager_->presetExists(name))
+            {
+                juce::Component::SafePointer<FourKEQEditor> safeInner(safeThis.getComponent());
+
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::QuestionIcon,
+                    "Overwrite Preset?",
+                    "A preset named \"" + name + "\" already exists. Overwrite it?",
+                    "Overwrite", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create([safeInner, name](int confirmResult) {
+                        if (confirmResult == 1 && safeInner != nullptr)
+                        {
+                            auto state = safeInner->audioProcessor.parameters.copyState();
+                            if (safeInner->userPresetManager_->saveUserPreset(name, state, JucePlugin_VersionString))
+                                safeInner->refreshPresetList();
+                        }
+                    }));
+            }
+            else
+            {
+                auto state = safeThis->audioProcessor.parameters.copyState();
+                if (safeThis->userPresetManager_->saveUserPreset(name, state, JucePlugin_VersionString))
+                    safeThis->refreshPresetList();
+            }
+        }), true);
+}
+
+void FourKEQEditor::loadUserPreset(const juce::String& name)
+{
+    if (!userPresetManager_)
+        return;
+
+    auto state = userPresetManager_->loadUserPreset(name);
+    if (state.isValid())
+        audioProcessor.parameters.replaceState(state);
+}
+
+void FourKEQEditor::deleteUserPreset(const juce::String& name)
+{
+    if (!userPresetManager_)
+        return;
+
+    userPresetManager_->deleteUserPreset(name);
+    refreshPresetList();
+}
+
+void FourKEQEditor::updateDeleteButtonVisibility()
+{
+    deletePresetButton_.setVisible(presetSelector.getSelectedId() >= 1001);
 }
