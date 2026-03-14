@@ -337,6 +337,63 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     resizeHelper.initialize(this, &audioProcessor, 900, 700, 720, 560, 1350, 1050, false);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
+    // User preset manager (no factory presets — IR-dependent plugin)
+    userPresetManager_ = std::make_unique<UserPresetManager> ("ConvolutionReverb");
+
+    // Preset browser (user presets only)
+    presetBox_.setJustificationType (juce::Justification::centred);
+    presetBox_.onChange = [this]
+    {
+        int id = presetBox_.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int> (userPresets.size()))
+                loadUserPreset (userPresets[static_cast<size_t> (userIdx)].name);
+        }
+        updateDeleteButtonVisibility();
+    };
+    addAndMakeVisible (presetBox_);
+    refreshPresetList();
+
+    // Save preset button
+    savePresetButton_.setButtonText ("Save");
+    savePresetButton_.onClick = [this] { saveUserPreset(); };
+    addAndMakeVisible (savePresetButton_);
+
+    // Delete preset button (only visible when a user preset is selected)
+    deletePresetButton_.setButtonText ("Del");
+    deletePresetButton_.onClick = [this]
+    {
+        int id = presetBox_.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int> (userPresets.size()))
+            {
+                auto name = userPresets[static_cast<size_t> (userIdx)].name;
+                juce::Component::SafePointer<ConvolutionReverbEditor> safeThis (this);
+
+                juce::AlertWindow::showOkCancelBox (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Delete Preset",
+                    "Delete \"" + name + "\"?",
+                    "Delete", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create ([safeThis, name] (int result) {
+                        if (result == 1 && safeThis != nullptr)
+                        {
+                            safeThis->deleteUserPreset (name);
+                            safeThis->updateDeleteButtonVisibility();
+                        }
+                    }));
+            }
+        }
+    };
+    addAndMakeVisible (deletePresetButton_);
+    deletePresetButton_.setVisible (false);
+
     // Initial value labels update
     updateValueLabels();
 
@@ -405,13 +462,13 @@ void ConvolutionReverbEditor::paint(juce::Graphics& g)
     // Company name
     g.setFont(juce::Font(12.0f, juce::Font::bold));
     g.setColour(lookAndFeel.getAccentColour());
-    g.drawText("LUNA CO. AUDIO", headerBounds.removeFromRight(170).reduced(20, 0),
+    g.drawText("DUSK AUDIO", headerBounds.removeFromRight(170).reduced(20, 0),
                juce::Justification::centredRight);
 
     // A/B toggle label
     g.setFont(juce::Font(10.0f, juce::Font::bold));
     g.setColour(juce::Colour(0xff707070));
-    g.drawText("A/B", 380, 18, 30, 15, juce::Justification::centred);
+    g.drawText("A/B", 510, 18, 30, 15, juce::Justification::centred);
 
     // Header divider with gradient effect
     juce::ColourGradient dividerGrad(
@@ -499,9 +556,24 @@ void ConvolutionReverbEditor::resized()
 
     auto bounds = getLocalBounds();
 
-    // A/B buttons in header area
-    abToggleButton->setBounds(410, 15, 40, 25);
-    abCopyButton->setBounds(455, 15, 50, 25);
+    // Preset browser in header (between title and A/B buttons)
+    {
+        int presetW = 170;
+        int presetH = 22;
+        int presetY = 17;
+        int saveW   = 45;
+        int delW    = 35;
+        int btnGap  = 4;
+        int presetStartX = 240;
+        presetBox_.setBounds (presetStartX, presetY, presetW, presetH);
+        savePresetButton_.setBounds (presetStartX + presetW + btnGap, presetY, saveW, presetH);
+        deletePresetButton_.setBounds (presetStartX + presetW + btnGap + saveW + btnGap,
+                                       presetY, delW, presetH);
+    }
+
+    // A/B buttons in header area (shifted right to make room for preset controls)
+    abToggleButton->setBounds(540, 15, 40, 25);
+    abCopyButton->setBounds(585, 15, 50, 25);
 
     // Skip header
     bounds.removeFromTop(60);
@@ -1216,4 +1288,129 @@ void ConvolutionReverbEditor::drawEQCurve(juce::Graphics& g, juce::Rectangle<flo
     g.setColour(juce::Colour(0x806abeFF));  // Brighter blue, 50% opacity
     g.strokePath(responsePath, juce::PathStrokeType(1.0f, juce::PathStrokeType::curved,
                                                      juce::PathStrokeType::rounded));
+}
+
+// =============================================================================
+// User Preset Management
+// =============================================================================
+
+void ConvolutionReverbEditor::refreshPresetList()
+{
+    int currentId = presetBox_.getSelectedId();
+    presetBox_.clear (juce::dontSendNotification);
+
+    // No factory presets for IR-dependent plugin — user presets only
+    if (userPresetManager_)
+    {
+        auto userPresets = userPresetManager_->loadUserPresets();
+        if (! userPresets.empty())
+        {
+            presetBox_.addSectionHeading ("User Presets");
+
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                presetBox_.addItem (userPresets[i].name, static_cast<int> (1001 + i));
+        }
+    }
+
+    // Restore selection
+    if (currentId > 0)
+        presetBox_.setSelectedId (currentId, juce::dontSendNotification);
+}
+
+void ConvolutionReverbEditor::saveUserPreset()
+{
+    if (! userPresetManager_)
+        return;
+
+    auto* dialog = new juce::AlertWindow ("Save Preset",
+                                           "Enter a name for this preset:",
+                                           juce::MessageBoxIconType::QuestionIcon);
+    dialog->addTextEditor ("name", "My Preset", "Preset Name:");
+    dialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    dialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<ConvolutionReverbEditor> safeThis (this);
+    juce::Component::SafePointer<juce::AlertWindow> safeDialog (dialog);
+
+    dialog->enterModalState (true, juce::ModalCallbackFunction::create (
+        [safeThis, safeDialog] (int result) mutable
+        {
+            juce::String name;
+            if (result == 1 && safeDialog != nullptr)
+                name = safeDialog->getTextEditorContents ("name").trim();
+
+            if (safeThis == nullptr || name.isEmpty())
+                return;
+
+            if (safeThis->userPresetManager_->presetExists (name))
+            {
+                juce::Component::SafePointer<ConvolutionReverbEditor> safeInner (safeThis.getComponent());
+
+                juce::AlertWindow::showOkCancelBox (
+                    juce::MessageBoxIconType::QuestionIcon,
+                    "Overwrite Preset?",
+                    "A preset named \"" + name + "\" already exists. Overwrite it?",
+                    "Overwrite", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create ([safeInner, name] (int confirmResult) {
+                        if (confirmResult == 1 && safeInner != nullptr)
+                        {
+                            // Include IR path and custom directory in state (same as getStateInformation)
+                            auto state = safeInner->audioProcessor.getValueTreeState().copyState();
+                            state.setProperty ("irPath", safeInner->audioProcessor.getCurrentIRPath(), nullptr);
+                            state.setProperty ("customIRDirectory", safeInner->audioProcessor.getCustomIRDirectory().getFullPathName(), nullptr);
+                            if (safeInner->userPresetManager_->saveUserPreset (name, state, JucePlugin_VersionString))
+                                safeInner->refreshPresetList();
+                        }
+                    }));
+            }
+            else
+            {
+                // Include IR path and custom directory in state (same as getStateInformation)
+                auto state = safeThis->audioProcessor.getValueTreeState().copyState();
+                state.setProperty ("irPath", safeThis->audioProcessor.getCurrentIRPath(), nullptr);
+                state.setProperty ("customIRDirectory", safeThis->audioProcessor.getCustomIRDirectory().getFullPathName(), nullptr);
+                if (safeThis->userPresetManager_->saveUserPreset (name, state, JucePlugin_VersionString))
+                    safeThis->refreshPresetList();
+            }
+        }), true);
+}
+
+void ConvolutionReverbEditor::loadUserPreset (const juce::String& name)
+{
+    if (! userPresetManager_)
+        return;
+
+    auto state = userPresetManager_->loadUserPreset (name);
+    if (! state.isValid())
+        return;
+
+    // Restore APVTS parameters
+    audioProcessor.getValueTreeState().replaceState (state);
+
+    // Restore IR path (same as setStateInformation)
+    juce::String irPath = state.getProperty ("irPath", "");
+    if (irPath.isNotEmpty())
+    {
+        juce::File irFile (irPath);
+        if (irFile.existsAsFile())
+            audioProcessor.loadImpulseResponse (irFile);
+    }
+
+    // Update waveform and name display
+    updateWaveformDisplay();
+    updateIRNameLabel();
+}
+
+void ConvolutionReverbEditor::deleteUserPreset (const juce::String& name)
+{
+    if (! userPresetManager_)
+        return;
+
+    userPresetManager_->deleteUserPreset (name);
+    refreshPresetList();
+}
+
+void ConvolutionReverbEditor::updateDeleteButtonVisibility()
+{
+    deletePresetButton_.setVisible (presetBox_.getSelectedId() >= 1001);
 }

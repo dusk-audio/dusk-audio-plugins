@@ -47,6 +47,7 @@ ConvolutionReverbProcessor::ConvolutionReverbProcessor()
     filterEnvEndFreqParam = parameters.getRawParameterValue("filter_env_end_freq");
     filterEnvAttackParam = parameters.getRawParameterValue("filter_env_attack");
     stereoModeParam = parameters.getRawParameterValue("stereo_mode");
+    bypassParam = dynamic_cast<juce::AudioParameterBool*>(parameters.getParameter("bypass"));
 
     // Set default IR directory
     customIRDirectory = getDefaultIRDirectory();
@@ -216,6 +217,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvolutionReverbProcessor::
         juce::StringArray{"True Stereo", "Mono-to-Stereo"},
         0));  // Default: True Stereo
 
+    // Bypass
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "bypass", "Bypass", false));
+
     return {params.begin(), params.end()};
 }
 
@@ -311,6 +316,13 @@ void ConvolutionReverbProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     // Clear unused output channels
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, numSamples);
+
+    // Bypass: pass audio through unprocessed
+    if (bypassParam != nullptr && bypassParam->get())
+    {
+        setLatencySamples(0);
+        return;
+    }
 
     // Get parameters
     float mix = mixParam->load();
