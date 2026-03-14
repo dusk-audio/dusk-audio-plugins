@@ -225,11 +225,10 @@ private:
     // Smoothed auto-makeup gain to avoid audible distortion from abrupt changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> smoothedAutoMakeupGain{1.0f};
 
-    // RMS-based auto-gain accumulators (~200ms averaging window)
-    float inputRmsAccumulator = 0.0f;   // Running RMS of input signal
-    float outputRmsAccumulator = 0.0f;  // Running RMS of output signal (before auto-gain)
-    float rmsCoefficient = 0.0f;        // One-pole filter coefficient for RMS averaging
-    bool primeRmsAccumulators = false;  // Flag to instantly prime accumulators on mode change
+    // GR-based auto-gain (industry-standard approach: invert the gain reduction)
+    float smoothedGrDb = 0.0f;          // Smoothed gain reduction in dB (negative = compression)
+    float grSmoothCoeff = 0.0f;         // One-pole filter coefficient for GR smoothing (~200ms)
+    bool primeGrAccumulator = true;     // Flag to instantly prime on mode change
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal

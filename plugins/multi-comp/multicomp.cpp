@@ -91,17 +91,17 @@ namespace Constants {
     // T4B Optical Cell — CdS photoresistor + electroluminescent panel
     constexpr float T4B_ATTACK_TIME = 0.002f;             // 2ms CdS fast charge
     constexpr float T4B_FAST_RELEASE_TIME = 0.060f;       // 60ms CdS base discharge
-    constexpr float T4B_PHOSPHOR_BASE_DECAY = 0.8f;       // 0.8s phosphor decay
+    constexpr float T4B_PHOSPHOR_BASE_DECAY = 1.5f;       // 1.5s phosphor decay (real T4B measured 1.5-2s)
     constexpr float T4B_PHOSPHOR_ATTACK_RATIO = 0.3f;     // Phosphor attack relative to decay
-    constexpr float T4B_GAMMA = 6.0f;                     // CdS power law exponent
-    constexpr float T4B_CONDUCTANCE_K = 8.0f;             // Conductance scaling
+    constexpr float T4B_GAMMA = 0.7f;                     // CdS power law exponent (real CdS ~0.5-1.0)
+    constexpr float T4B_CONDUCTANCE_K = 3.0f;             // Conductance scaling (re-tuned for gamma=0.7)
     constexpr float T4B_PHOSPHOR_COUPLING = 0.40f;        // Residual compression between bursts
     constexpr float T4B_PROG_DEP_CHARGE_RATE = 0.15f;     // Program dependency charge (~7s)
     constexpr float T4B_PROG_DEP_DISCHARGE_RATE = 0.12f;  // Program dependency decay (~8s)
     constexpr float T4B_PROG_DEP_RELEASE_SCALE = 5.0f;    // Max release time multiplier (60ms → 300ms)
-    constexpr float T4B_PROG_DEP_PHOSPHOR_SCALE = 2.0f;   // Max phosphor extension (0.8s → 2.4s)
-    constexpr float COMPRESS_EMPHASIS_FREQ = 150.0f;       // Sidechain LP corner Hz
-    constexpr float COMPRESS_BASS_BOOST = 0.2f;            // Sidechain bass emphasis
+    constexpr float T4B_PROG_DEP_PHOSPHOR_SCALE = 3.0f;   // Max phosphor extension (1.5s → 6s under sustained compression)
+    constexpr float COMPRESS_EMPHASIS_FREQ = 1000.0f;      // R37 emphasis corner Hz
+    constexpr float COMPRESS_HF_EMPHASIS = 0.3f;           // Sidechain HF emphasis (Compress mode)
     constexpr float LIMIT_SC_GAIN_BOOST = 1.5f;            // Limit mode sidechain gain
     constexpr float SC_DRIVER_SATURATION = 0.8f;           // 6AQ5 saturation
     constexpr float SC_DRIVER_OUTPUT_SCALE = 1.0f;         // 6AQ5 output scaling
@@ -118,8 +118,8 @@ namespace Constants {
     // Vintage FET constants
     constexpr float FET_THRESHOLD_DB = -10.0f; // Fixed threshold
     constexpr float FET_MAX_REDUCTION_DB = 30.0f;
-    constexpr float FET_ALLBUTTONS_MIN_ATTACK = 0.0008f; // 800µs — ABI floor (matches normal FET max)
-    constexpr float FET_ALLBUTTONS_MAX_ATTACK = 0.005f;  // 5ms — ABI ceiling (wider range for lag control)
+    constexpr float FET_ALLBUTTONS_MIN_ATTACK = 0.0002f; // 200µs — ABI still grabs fast
+    constexpr float FET_ALLBUTTONS_MAX_ATTACK = 0.002f;  // 2ms — ABI ceiling (lag control)
 
     // Classic VCA constants
     constexpr float VCA_RMS_TIME_CONSTANT = 0.003f; // 3ms RMS averaging
@@ -1107,6 +1107,7 @@ public:
             det.smoothedConductance = 0.0f;
             det.t4bGain = 1.0f;
             det.emphasisFilterState = 0.0f;
+            det.t4bDcState = 0.0f;
         }
 
         // Pre-compute sample-rate-dependent coefficients
@@ -1136,11 +1137,42 @@ public:
         // Hardware emulation: 12BH7 output tube
         tubeStage.prepare(sampleRate, numChannels);
         tubeStage.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
-        tubeStage.setDrive(0.20f);
+        tubeStage.setDrive(0.15f);  // Baseline drive — scales dynamically in process()
 
         // Calibrate hardware gain compensation so PR=0 + Gain=50 = unity
         // The tube + transformer chain adds ~3.5dB of gain that needs to be removed
         // Measure it at a reference level to get the exact factor for this sample rate
+        calibrateHardwareGain();
+    }
+
+    // Lightweight sample rate update for oversampling changes (no allocation)
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate <= 0.0 || newSampleRate == sampleRate)
+            return;
+        sampleRate = newSampleRate;
+        int numCh = static_cast<int>(detectors.size());
+
+        float sr = static_cast<float>(sampleRate);
+        invSampleRate = 1.0f / sr;
+        attackCoeff = std::exp(-1.0f / (Constants::T4B_ATTACK_TIME * sr));
+        fastReleaseCoeff = std::exp(-1.0f / (Constants::T4B_FAST_RELEASE_TIME * sr));
+        phosphorDecayCoeff = std::exp(-1.0f / (Constants::T4B_PHOSPHOR_BASE_DECAY * sr));
+        emphasisCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::COMPRESS_EMPHASIS_FREQ / sr);
+        phosphorAttackCoeff = std::pow(phosphorDecayCoeff, Constants::T4B_PHOSPHOR_ATTACK_RATIO);
+        condAttackCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_ATTACK_FREQ / sr);
+        condReleaseCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_RELEASE_FREQ / sr);
+        elPanelAttackCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_EL_PANEL_ATTACK_FREQ / sr);
+        elPanelReleaseCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_EL_PANEL_RELEASE_FREQ / sr);
+        scLevelSmoothCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::SC_LEVEL_SMOOTH_FREQ / sr);
+
+        inputTransformer.prepare(sampleRate, numCh);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().inputTransformer);
+        outputTransformer.prepare(sampleRate, numCh);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getOptoCompressor().outputTransformer);
+        tubeStage.prepare(sampleRate, numCh);
+        tubeStage.setTubeType(HardwareEmulation::TubeEmulation::TubeType::Triode_12BH7);
+        tubeStage.setDrive(0.15f);  // Baseline drive — scales dynamically in process()
         calibrateHardwareGain();
     }
 
@@ -1161,7 +1193,28 @@ public:
 
         // Stage 2: T4B gain cell — apply gain from previous sample's T4B state
         // This one-sample feedback delay is inherent to the real hardware
+        //
+        // Real T4B photocell: CdS (cadmium sulfide) has nonlinear resistance
+        // that varies with illumination. Under gain reduction, the cell's
+        // resistance curve produces even-order harmonics (primarily H2).
+        // More GR = more nonlinearity = more "warmth" and "fullness."
+        // This is the core of the LA-2A's character — NOT just the tube.
         float compressed = x * det.t4bGain;
+
+        // T4B even-harmonic distortion: proportional to gain reduction depth
+        float grAmount = 1.0f - det.t4bGain;  // 0 = no GR, 1 = full GR
+        if (grAmount > 0.01f)
+        {
+            // CdS cell produces predominantly 2nd harmonic (asymmetric transfer curve)
+            // DC-blocked x² gives pure H2 without level shift
+            float sq = compressed * compressed;
+            det.t4bDcState = det.t4bDcState * 0.9999f + sq * 0.0001f;
+            float h2 = sq - det.t4bDcState;
+
+            // Scale: subtle at light GR, rich at heavy GR (~2-4% THD)
+            float k2 = grAmount * 0.12f;
+            compressed = compressed + k2 * h2;
+        }
 
         // Stage 3: Sidechain signal selection
         // Feedback topology: sidechain taps compressed output (one-sample delay)
@@ -1172,14 +1225,16 @@ public:
             scSignal = compressed;
 
         // Stage 4: Sidechain frequency shaping (compress vs limit)
-        // Compress mode: LA-2A's T4B sidechain has bass-heavy response —
-        // data shows 100Hz gets -5.8dB GR vs 1kHz -2.0dB GR at same input level.
-        // First-order low shelf boosts bass without adding broadband energy.
+        // Compress mode: R37 emphasis makes sidechain more HF-sensitive →
+        // output has warmer, bass-heavy character (real LA-2A behavior).
         // Limit mode: flat/full-range sidechain (no filter)
         if (!limitMode)
         {
+            // R37 emphasis: HPF in sidechain makes compressor more sensitive to HF
+            // More HF compression → output sounds warmer/bass-heavy (real LA-2A behavior)
             det.emphasisFilterState += emphasisCoeff * (scSignal - det.emphasisFilterState);
-            scSignal = scSignal + det.emphasisFilterState * Constants::COMPRESS_BASS_BOOST;
+            float hfEmphasis = scSignal - det.emphasisFilterState;
+            scSignal = scSignal + hfEmphasis * Constants::COMPRESS_HF_EMPHASIS;
         }
 
         // Stage 5: Peak Reduction = sidechain amplifier gain
@@ -1205,21 +1260,38 @@ public:
         det.scLevelSmoothed += scLevelSmoothCoeff * (scLevel - det.scLevelSmoothed);
         updateT4BCell(det, det.scLevelSmoothed);
 
-        // Stage 7: Output stage
-        // Process tube + transformer on the natural compressed signal level,
-        // matching the real LA-2A where the 12BH7 sees the compressed signal
-        // before the output attenuator (makeup gain)
-        float output = compressed;
+        // Stage 7: Output stage — real LA-2A signal chain
+        // In the real LA-2A, the 12BH7 IS the makeup gain amplifier.
+        // When compressing hard, you turn up the Gain knob to compensate,
+        // which drives the tube harder → more even-harmonic warmth.
+        // This is why LA-2A compression sounds "full and alive."
+        float makeupGain = juce::Decibels::decibelsToGain(gain);
 
-        // 12BH7 output tube (even-harmonic warmth)
+        // Drive the tube proportionally harder when compression is applied.
+        // Models the real behavior: more GR → user turns up gain → tube driven harder.
+        // Scale up before the tube, then scale back down to preserve output level.
+        // The nonlinear tube harmonics survive the scaling, adding warmth.
+        float grCompensation = 1.0f / juce::jmax(0.1f, det.t4bGain);
+        float tubeBoost = 1.0f + (grCompensation - 1.0f) * 0.7f;  // 70% GR compensation
+
+        float output = compressed * makeupGain * tubeBoost;
+
+        // Dynamic tube drive: more GR → user turns up Gain → tube driven harder
+        // Models real LA-2A behavior where compression + makeup = harmonically rich
+        float dynamicDrive = 0.15f + grAmount * 0.3f;  // 0.15 clean to 0.45 pushed
+        tubeStage.setDrive(dynamicDrive);
+
+        // 12BH7 output tube — driven harder when compression is active
         output = tubeStage.processSample(output, channel);
+
+        // Scale back to preserve level (harmonics are retained)
+        output /= tubeBoost;
 
         // Output transformer (UTC A-24)
         output = outputTransformer.processSample(output, channel);
 
-        // Apply compensation and makeup gain AFTER hardware emulation
-        float makeupGain = juce::Decibels::decibelsToGain(gain);
-        output *= hardwareGainCompensation * makeupGain;
+        // Only apply hardware compensation (not makeup, already applied)
+        output *= hardwareGainCompensation;
 
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
     }
@@ -1243,6 +1315,7 @@ private:
         float t4bGain = 1.0f;             // Current gain from T4B cell (IS the envelope)
         float emphasisFilterState = 0.0f;  // Compress mode sidechain LP filter state
         float scLevelSmoothed = 0.0f;     // Symmetric envelope smoother (removes 2f ripple)
+        float t4bDcState = 0.0f;          // DC blocker for T4B even-harmonic distortion
     };
 
     void updateT4BCell(Detector& det, float scLevel)
@@ -1429,6 +1502,16 @@ public:
             detector.envelope = 1.0f;
             detector.prevOutput = 0.0f;
             detector.previousLevel = 0.0f;
+            detector.previousGR = 0.0f;
+            detector.modulationPhase = 0.0f;
+            detector.dcState = 0.0f;
+            detector.prevSq = 0.0f;
+            detector.peakHold = 0.0f;
+            detector.transientCounter = 0;
+            detector.releaseMemory = 0.0f;
+            detector.voltageSag = 0.0f;
+            detector.sagCounter = 0;
+            detector.hfChokeState = 0.0f;
         }
 
         // Hardware emulation components (FET compressor style)
@@ -1445,8 +1528,26 @@ public:
         // Short convolution for FET transformer coloration
         convolution.prepare(sampleRate);
         convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
+
+        // Calibrate hardware gain compensation for the full analog chain
+        calibrateHardwareGain();
     }
-    
+
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate <= 0.0 || newSampleRate == sampleRate)
+            return;
+        sampleRate = newSampleRate;
+        int numCh = static_cast<int>(detectors.size());
+        inputTransformer.prepare(sampleRate, numCh);
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFETCompressor().inputTransformer);
+        outputTransformer.prepare(sampleRate, numCh);
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFETCompressor().outputTransformer);
+        convolution.prepare(sampleRate);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::FET);
+        calibrateHardwareGain();
+    }
+
     float process(float input, int channel, float inputGainDb, float outputGainDb,
                   float attackMs, float releaseMs, int ratioIndex, bool oversample = false,
                   const LookupTables* lookupTables = nullptr, TransientShaper* transientShaper = nullptr,
@@ -1488,238 +1589,311 @@ public:
         // FEEDBACK TOPOLOGY for authentic FET behavior
         // The FET uses feedback compression which creates its characteristic sound
 
-        // First, we need to apply the PREVIOUS envelope to get the compressed signal
+        // Apply the PREVIOUS envelope to get the compressed signal
         float compressed = amplifiedInput * detector.envelope;
 
-        // Detection signal: use external sidechain if active, otherwise feedback from output
-        // When external SC is active, use feedforward from external signal
-        // When inactive, use authentic feedback detection from compressed output (FET characteristic)
+        // ─── FET saturation stage (asymmetric) ───
+        // Applied BEFORE feedback detection so harmonics interact with compression pumping.
+        // In the real 1176, the FET gain element is inside the feedback loop — its
+        // nonlinearity colors the signal that the sidechain sees.
+        float saturated = compressed;
+        float sr = static_cast<float>(sampleRate);
+        {
+            float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+            float grNorm = juce::jlimit(0.0f, 1.0f, grDb / 20.0f);
+
+            float k2, k3;
+            if (ratioIndex == 4)
+            {
+                // ABI: heavy FET distortion — GR pushes FET outside linear region
+                k2 = 0.04f + grNorm * 0.04f;   // 2nd harmonic: 0.04-0.08
+                k3 = 0.005f + grNorm * 0.010f;  // 3rd harmonic: 0.005-0.015
+            }
+            else
+            {
+                // Normal ratios: FET coloring (~0.3-0.5% THD target)
+                k2 = 0.032f;
+                k3 = 0.006f;
+            }
+
+            float x = saturated;
+
+            float sq = x * x;
+
+            // DC-blocked square term: first-order highpass at ~10Hz
+            float alpha = 1.0f / (1.0f + 6.2831853f * 10.0f / sr);
+            float h2 = alpha * (detector.dcState + sq - detector.prevSq);
+            detector.dcState = h2;
+            detector.prevSq = sq;
+
+            float h3 = x * x * x;
+            saturated = x + k2 * h2 + k3 * h3;
+        }
+
+        // ─── HF choke in feedback path (refinement #4) ───
+        // As GR increases, the FET's junction capacitance rises, creating a
+        // low-pass effect in the feedback loop. Corner slides from 20kHz → 15kHz.
+        if (ratioIndex == 4)
+        {
+            float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+            float grNorm = juce::jlimit(0.0f, 1.0f, grDb / 20.0f);
+
+            // Corner frequency: 20kHz at 0dB GR, 15kHz at 20dB GR
+            float cornerHz = 20000.0f - grNorm * 5000.0f;
+            float w = 6.2831853f * cornerHz / sr;
+            float lpCoeff = 1.0f - std::exp(-w);
+
+            // 1st-order one-pole LPF on the saturated signal (feedback path only)
+            detector.hfChokeState += lpCoeff * (saturated - detector.hfChokeState);
+            saturated = detector.hfChokeState;
+        }
+
+        // ─── Feedback detection ───
         float detectionLevel;
         if (useExternalSidechain)
         {
-            // Use external sidechain (apply input gain to match compression behavior)
             detectionLevel = std::abs(sidechainSignal * inputGainLin);
+        }
+        else if (ratioIndex == 4)
+        {
+            // ABI: feedback detection with peak-hold capacitor and saturation ceiling.
+            float instantLevel = std::abs(saturated);
+
+            // Saturation ceiling: soft-clip detection at ~1.5x threshold
+            float detCeiling = threshold * 1.5f;
+            if (instantLevel > detCeiling)
+                instantLevel = detCeiling + (instantLevel - detCeiling) / (1.0f + (instantLevel - detCeiling));
+
+            // Peak-hold: fast attack (~50µs), medium release (~5ms)
+            float peakAttackCoeff = std::exp(-1.0f / (0.00005f * sr));
+            float peakReleaseCoeff = std::exp(-1.0f / (0.005f * sr));
+            if (instantLevel > detector.peakHold)
+                detector.peakHold += (1.0f - peakAttackCoeff) * (instantLevel - detector.peakHold);
+            else
+                detector.peakHold += (1.0f - peakReleaseCoeff) * (instantLevel - detector.peakHold);
+            detectionLevel = detector.peakHold;
         }
         else
         {
-            // Detect from the COMPRESSED OUTPUT (feedback)
-            // This is what gives the FET its "grabby" characteristic
-            detectionLevel = std::abs(compressed);
+            detectionLevel = std::abs(saturated);
         }
-        
-        // Calculate gain reduction based on how much we exceed threshold
-        float reduction = 0.0f;
-        if (detectionLevel > threshold)
-        {
-            // Calculate how much we're over threshold in dB
-            float overThreshDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
 
-            // Classic FET compression curve
-            if (ratioIndex == 4) // All-buttons mode (FET mode)
+        // ─── Gain reduction calculation ───
+        float reduction = 0.0f;
+
+        if (ratioIndex == 4)
+        {
+            // ABI threshold shift: combined resistor networks lower effective threshold by ~6dB
+            float abiThreshold = threshold * 0.5f;
+
+            if (detectionLevel > abiThreshold)
             {
-                // Use lookup table if available, otherwise fall back to inline calculation
+                float overThreshDb = juce::Decibels::gainToDecibels(detectionLevel / abiThreshold);
+
+                // Nonlinear soft-knee transfer function with smoothed over-compression
                 if (lookupTables != nullptr)
                 {
                     reduction = lookupTables->getAllButtonsReduction(overThreshDb, useMeasuredCurve);
                 }
                 else
                 {
-                    // Fallback: ~16:1 hard knee with slight softening near threshold
-                    // Real ABI is 12:1–20:1 with a "severe plateau" curve
-                    if (overThreshDb < 2.0f)
+                    float knee = 4.0f;
+                    if (overThreshDb < knee)
                     {
-                        // Slight soft knee right at threshold
-                        float t = overThreshDb / 2.0f;
-                        reduction = overThreshDb * (0.5f + t * 0.44f); // Ramps from ~2:1 to ~16:1
+                        float t = overThreshDb / knee;
+                        reduction = overThreshDb * t * 0.95f;
                     }
                     else
                     {
-                        // Full ABI compression: ~16:1 effective ratio
-                        reduction = 0.94f + (overThreshDb - 2.0f) * 0.9375f;
+                        float baseReduction = knee * 0.95f + (overThreshDb - knee) * 0.98f;
+
+                        // Wraparound with micro-knee smoothing (refinement #5):
+                        // Instead of a hard transition at 15dB, use a smooth tanh blend
+                        // over a 2dB window (14-16dB) to prevent aliasing on fast transients.
+                        float wrapOnset = 14.0f;
+                        float wrapFull = 16.0f;
+                        if (overThreshDb > wrapOnset)
+                        {
+                            // Smooth blend from 0 to full over-compression rate
+                            float wrapT = juce::jlimit(0.0f, 1.0f, (overThreshDb - wrapOnset) / (wrapFull - wrapOnset));
+                            // Smoothstep for alias-free transition
+                            float smooth = wrapT * wrapT * (3.0f - 2.0f * wrapT);
+                            float excess = overThreshDb - wrapOnset;
+                            baseReduction += excess * 0.05f * smooth;
+                        }
+                        reduction = baseReduction;
                     }
                 }
 
-                // Apply transient shaping: let transients punch through
                 if (transientShaper != nullptr && transientSensitivity > 0.01f)
                 {
                     float transientMod = transientShaper->process(input, channel, transientSensitivity);
-                    // Reduce compression amount for transients (higher modifier = less reduction)
                     reduction /= transientMod;
                 }
 
-                // All-buttons mode can achieve substantial gain reduction but not extreme
-                reduction = juce::jmin(reduction, 30.0f); // Max 30dB reduction (same as normal)
-            }
-            else
-            {
-                // Standard compression ratios
-                reduction = overThreshDb * (1.0f - 1.0f / ratio);
-                // Limit maximum gain reduction for normal modes
-                reduction = juce::jmin(reduction, Constants::FET_MAX_REDUCTION_DB);
+                reduction = juce::jmin(reduction, 30.0f);
             }
         }
-        
-        // FET attack and release times with LOGARITHMIC curves (hardware-accurate)
-        // Attack: 100µs (0.0001s) to 800µs (0.0008s) - logarithmic taper
-        // Release: 50ms to 1.1s - logarithmic taper
-        //
-        // IMPORTANT: Minimum attack of 100µs prevents the compressor from tracking
-        // individual waveform cycles, which causes harmonic distortion.
-        // At 48kHz, 100µs = ~5 samples, which is safe for all audio frequencies.
-        // The FET compressor achieves its fast attack through transformer overshoot,
-        // not by actually tracking sub-sample level changes.
+        else if (detectionLevel > threshold)
+        {
+            float overThreshDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
+            reduction = overThreshDb * (1.0f - 1.0f / ratio);
+            reduction = juce::jmin(reduction, Constants::FET_MAX_REDUCTION_DB);
+        }
 
-        // Map input parameters (assumed 0-1 range from attackMs/releaseMs) to hardware values
-        // If attackMs is already in ms, we need to map it logarithmically
-        const float minAttack = 0.0001f;   // 100 microseconds (safe minimum)
-        const float maxAttack = 0.0008f;   // 800 microseconds
-        const float minRelease = 0.05f;    // 50 milliseconds
-        const float maxRelease = 1.1f;     // 1.1 seconds
-
-        // Logarithmic interpolation for authentic FET feel
-        float attackNorm = juce::jlimit(0.0f, 1.0f, attackMs / 0.8f); // Normalize to 0-1 if in ms
-        float releaseNorm = juce::jlimit(0.0f, 1.0f, releaseMs / 1100.0f); // Normalize to 0-1 if in ms
-
-        float attackTime = minAttack * std::pow(maxAttack / minAttack, attackNorm);
+        // ─── Time constants ───
+        const float minRelease = 0.05f;
+        const float maxRelease = 1.1f;
+        float attackTime = juce::jmax(0.0001f, attackMs / 1000.0f);
+        float releaseNorm = juce::jlimit(0.0f, 1.0f, releaseMs / 1100.0f);
         float releaseTime = minRelease * std::pow(maxRelease / minRelease, releaseNorm);
-        
-        // All-buttons mode (FET mode) affects timing
+
         if (ratioIndex == 4)
         {
-            // ABI has a "lag time on initial transients" (reverse look-ahead effect)
-            // The bias point shifts cause the detector to respond slower to transients,
-            // letting them punch through. ABI gets its own wider attack range (0.8ms–5ms)
-            // so the attack knob still controls the amount of transient lag.
-            attackTime = Constants::FET_ALLBUTTONS_MIN_ATTACK *
-                std::pow(Constants::FET_ALLBUTTONS_MAX_ATTACK / Constants::FET_ALLBUTTONS_MIN_ATTACK, attackNorm);
+            attackTime = juce::jmax(0.0002f, attackTime * 2.0f);
 
-            // ABI release creates a "plateau" — compression holds/tightens on sustained content
-            // before eventually releasing. Slower base release + program-dependent hold.
-            releaseTime *= 1.5f;
-
-            // Program-dependent: more compression = longer hold (plateau deepens)
-            // "Ratio increases after the transient" — modeled by extending release with GR depth
             float reductionFactor = juce::jlimit(0.0f, 1.0f, reduction / 20.0f);
             releaseTime *= (1.0f + reductionFactor * 0.5f);
+
+            // Release memory (refinement #1b): rapid transients lengthen the slow tail.
+            // Each attack onset bumps the memory up; it decays with ~500ms time constant.
+            // This simulates the sidechain capacitor not fully discharging between hits.
+            float memoryDecay = std::exp(-1.0f / (0.5f * sr));
+            detector.releaseMemory *= memoryDecay;
+            // Bump memory on each new attack onset
+            if (detector.transientCounter == 0 && reduction > 3.0f)
+                detector.releaseMemory = juce::jmin(1.0f, detector.releaseMemory + 0.15f);
+            // Apply: up to 30% longer slow tail when memory is saturated
+            releaseTime *= (1.0f + detector.releaseMemory * 0.3f);
         }
-        
-        // Program-dependent behavior: timing varies with program material
+
+        // Program-dependent timing
         float programFactor = juce::jlimit(0.5f, 2.0f, 1.0f + reduction * 0.05f);
-        
-        // Track signal dynamics for program dependency
         float signalDelta = std::abs(detectionLevel - detector.previousLevel);
         detector.previousLevel = detectionLevel;
-        
-        // Adjust timing based on program content
-        if (signalDelta > 0.1f) // Transient material
+
+        if (signalDelta > 0.1f)
         {
-            attackTime *= 0.8f; // Faster attack for transients
-            releaseTime *= 1.2f; // Slower release for transients
+            attackTime *= 0.8f;
+            releaseTime *= 1.2f;
         }
-        else // Sustained material
+        else
         {
             attackTime *= programFactor;
             releaseTime *= programFactor;
         }
-        
-        // Envelope following with proper exponential coefficients
+
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
-        
-        // Calculate proper exponential coefficients for smooth envelope with safety checks
-        float attackCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, attackTime * static_cast<float>(sampleRate))));
-        float releaseCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, releaseTime * static_cast<float>(sampleRate))));
-        
-        
-        // ABI mode envelope: uses the modified (slower) timing from above
-        // The transient punch comes from the 1ms attack lag, not special envelope math
+        float attackCoeff = std::exp(-1.0f / juce::jmax(Constants::EPSILON, attackTime * sr));
+        float releaseCoeff = std::exp(-1.0f / juce::jmax(Constants::EPSILON, releaseTime * sr));
+
+        // ─── Envelope follower ───
         if (ratioIndex == 4)
         {
             if (targetGain < detector.envelope)
             {
-                // ABI attack: use the calculated attack time (with 1ms minimum lag)
-                // This creates the transient punch-through — NOT a fast attack
-                detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+                // ABI program-dependent attack delay:
+                // First ~30 samples use a slower attack to let transient poke through.
+                if (detector.transientCounter < 30)
+                {
+                    float delayedAttack = attackCoeff * 0.5f + 0.5f;
+                    detector.envelope = delayedAttack * detector.envelope + (1.0f - delayedAttack) * targetGain;
+                    detector.transientCounter++;
+                }
+                else
+                {
+                    detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+                }
             }
             else
             {
-                // ABI release: slow release creates the "plateau" effect
-                // Compression holds on sustained content before gradually releasing
-                detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
+                detector.transientCounter = 0;
+
+                // Context-aware release (refinement #1a):
+                float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+
+                // Stage 1 (fast recovery): linear scale from 50ms → 25ms as GR goes 0 → 20dB
+                // At >12dB GR this is noticeably faster than before, creating aggressive pump
+                float fastTimeBase = 0.05f;   // 50ms at 0dB GR
+                float fastTimeMin = 0.025f;   // 25ms at 20dB GR
+                float grScale = juce::jlimit(0.0f, 1.0f, grDb / 20.0f);
+                float fastTime = fastTimeBase - grScale * (fastTimeBase - fastTimeMin);
+                float fastCoeff = std::exp(-1.0f / juce::jmax(Constants::EPSILON, fastTime * sr));
+
+                // Stage 2 (slow tail): user's release, stays slow for "breathing"
+                float blend = grScale;
+                float effectiveCoeff = fastCoeff * blend + releaseCoeff * (1.0f - blend);
+                detector.envelope = effectiveCoeff * detector.envelope + (1.0f - effectiveCoeff) * targetGain;
             }
         }
         else
         {
-            // Normal FET envelope behavior for standard ratios
             if (targetGain < detector.envelope)
-            {
-                // Attack phase - FET response
                 detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+            else
+                detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
+        }
+
+        detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
+
+        // Envelope hysteresis
+        float currentGR = 1.0f - detector.envelope;
+        currentGR = 0.85f * currentGR + 0.15f * detector.previousGR;
+        detector.previousGR = currentGR;
+        detector.envelope = 1.0f - currentGR;
+
+        if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
+            detector.envelope = 1.0f;
+
+        // ─── Voltage sag (refinement #3) ───
+        // Power supply sag under sustained heavy load. When GR > 15dB for >100ms,
+        // the output ceiling drops 0.5-1.0dB, recovering slowly (~300ms) when load lifts.
+        // This creates subtle "darkening" and "weight" during heavy compression.
+        float sagGain = 1.0f;
+        if (ratioIndex == 4)
+        {
+            float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+            int sagThresholdSamples = static_cast<int>(sr * 0.1f); // 100ms
+
+            if (grDb > 15.0f)
+            {
+                detector.sagCounter = juce::jmin(detector.sagCounter + 1, sagThresholdSamples + 1);
             }
             else
             {
-                // Release phase
-                detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
+                // Sag counter decays when load lifts (doesn't snap to zero)
+                detector.sagCounter = juce::jmax(0, detector.sagCounter - 1);
             }
+
+            // Target sag: 0 below 100ms, ramps to ~0.75dB above 100ms
+            float sagTarget = (detector.sagCounter > sagThresholdSamples) ? 0.75f : 0.0f;
+
+            // Smooth the sag envelope: attack ~50ms, release ~300ms
+            float sagAttack = std::exp(-1.0f / (0.05f * sr));
+            float sagRelease = std::exp(-1.0f / (0.3f * sr));
+            if (sagTarget > detector.voltageSag)
+                detector.voltageSag += (1.0f - sagAttack) * (sagTarget - detector.voltageSag);
+            else
+                detector.voltageSag += (1.0f - sagRelease) * (sagTarget - detector.voltageSag);
+
+            sagGain = juce::Decibels::decibelsToGain(-detector.voltageSag);
         }
-        
-        // Ensure envelope stays within valid range for stability
-        // In feedback topology, we need to prevent runaway gain
-        detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
 
-        // Envelope hysteresis: blend with previous gain reduction for analog memory
-        // This creates smoother transitions and mimics analog circuit capacitance
-        float currentGR = 1.0f - detector.envelope; // Convert to gain reduction amount
-        currentGR = 0.85f * currentGR + 0.15f * detector.previousGR; // 15% memory
-        detector.previousGR = currentGR;
-        detector.envelope = 1.0f - currentGR; // Convert back to envelope
+        // ─── Output chain ───
+        float output = saturated;
+        output = outputTransformer.processSample(output, channel);
+        output = convolution.processSample(output, channel);
+        output *= hardwareGainCompensation;
 
-        // NaN/Inf safety check
-        if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
-            detector.envelope = 1.0f;
-        
-        // FET Compressor Output Stage - Realistic FET saturation
-        // Spec from compressor_specs.json: 0.30% THD at -18dB, 0.45% at -6dB
-        // FET transistors produce odd harmonics (3rd dominant, some 5th)
-        // All-buttons mode has more aggressive saturation character
-        //
-        // Harmonic math: For input x = A*sin(wt)
-        // - k3*x^3 produces 3rd harmonic at amplitude (3*k3*A^3)/4
-        // - THD from 3rd ≈ (3*k3*A^2)/4 / A = 0.75*k3*A
-        // At A=0.5 (-6dB): For 0.3% THD: k3 = 0.003 / (0.75*0.5) = 0.008
-        // At A=1.0 (0dB): For 0.4% THD: k3 = 0.004 / 0.75 = 0.0053
-        // Note: Transformer emulation also adds harmonics, so reduce k3 further
+        // Apply voltage sag before makeup gain
+        output *= sagGain;
 
-        float output = compressed;
-
-        // All-buttons mode gets 1.5x the saturation (reduced from 2x)
-        float satMultiplier = (ratioIndex == 4) ? 1.5f : 1.0f;
-
-        // FET saturation - odd harmonics dominant (symmetric)
-        // Reduced coefficients to achieve target <0.5% THD
-        // k3 = 0.006 gives ~0.15-0.2% THD at moderate levels
-        // k5 = 0.001 adds subtle 5th harmonic character
-        constexpr float k3_base = 0.006f;   // 3rd harmonic coefficient (reduced from 0.04)
-        constexpr float k5_base = 0.001f;   // 5th harmonic coefficient (reduced from 0.008)
-
-        float k3 = k3_base * satMultiplier;
-        float k5 = k5_base * satMultiplier;
-
-        // Apply waveshaping: y = x + k3*x^3 + k5*x^5
-        float x2 = output * output;
-        float x3 = x2 * output;
-        float x5 = x3 * x2;
-        output = output + k3 * x3 + k5 * x5;
-
-        // FET Output knob - makeup gain control
         float outputGainLin = juce::Decibels::decibelsToGain(outputGainDb);
-
-        // Apply makeup gain
         float finalOutput = output * outputGainLin;
-        
-        // Ensure output is within reasonable bounds
+
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, finalOutput);
     }
-    
+
     float getGainReduction(int channel) const
     {
         if (channel >= static_cast<int>(detectors.size()))
@@ -1734,15 +1908,85 @@ private:
         float prevOutput = 0.0f;
         float previousLevel = 0.0f; // For program-dependent behavior
         float previousGR = 0.0f;    // For envelope hysteresis
+        float modulationPhase = 0.0f;
+        float modulationRate = 4.5f;
+        float dcState = 0.0f;         // Highpass state for H2 DC blocker
+        float prevSq = 0.0f;         // Previous x² for H2 DC blocker
+        float peakHold = 0.0f;       // Peak-hold envelope for ABI detection
+        int transientCounter = 0;    // ABI: counts samples since last transient onset
+        // ABI analog behavioral state
+        float releaseMemory = 0.0f;  // Capacitor discharge accumulator (release lengthening)
+        float voltageSag = 0.0f;     // PSU sag envelope (0 = no sag, 1 = full sag)
+        int sagCounter = 0;          // Samples sustained above 15dB GR
+        float hfChokeState = 0.0f;   // 1-pole LPF state for HF choke in feedback
     };
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
+    float hardwareGainCompensation = 1.0f;
 
     // Hardware emulation components (FET compressor style)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
-    HardwareEmulation::ShortConvolution convolution;
+    HardwareEmulation::StereoConvolution convolution;
+
+    // Calibrate hardware chain gain (input xfmr + output xfmr + convolution)
+    // so that the analog emulation is level-neutral at unity settings.
+    // Follows the same pattern as OptoCompressor::calibrateHardwareGain()
+    void calibrateHardwareGain()
+    {
+        constexpr int calibrationSamples = 4800;
+        constexpr float refAmplitude = 0.126f;  // -18dB peak
+        constexpr float refFreq = 1000.0f;
+
+        float sr = static_cast<float>(sampleRate);
+        float angularStep = 2.0f * juce::MathConstants<float>::pi * refFreq / sr;
+
+        inputTransformer.reset();
+        outputTransformer.reset();
+
+        // Warm up filters (use channel 0 only — both channels have identical IR)
+        int warmup = static_cast<int>(sr * 0.05f);
+        for (int i = 0; i < warmup; ++i)
+        {
+            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
+            x = inputTransformer.processSample(x, 0);
+            x = outputTransformer.processSample(x, 0);
+            convolution.processSample(x, 0);
+        }
+
+        double inputRmsSquared = 0.0;
+        double outputRmsSquared = 0.0;
+        for (int i = 0; i < calibrationSamples; ++i)
+        {
+            float phase = angularStep * static_cast<float>(warmup + i);
+            float input = refAmplitude * std::sin(phase);
+
+            float x = inputTransformer.processSample(input, 0);
+            x = outputTransformer.processSample(x, 0);
+            x = convolution.processSample(x, 0);
+
+            inputRmsSquared += static_cast<double>(input * input);
+            outputRmsSquared += static_cast<double>(x * x);
+        }
+
+        inputRmsSquared /= calibrationSamples;
+        outputRmsSquared /= calibrationSamples;
+
+        if (outputRmsSquared > 1e-12 && inputRmsSquared > 1e-12)
+        {
+            float chainGain = static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared));
+            hardwareGainCompensation = 1.0f / chainGain;
+        }
+        else
+        {
+            hardwareGainCompensation = 1.0f;
+        }
+
+        inputTransformer.reset();
+        outputTransformer.reset();
+        convolution.reset();
+    }
 };
 
 // Classic VCA Compressor
@@ -1763,9 +2007,11 @@ public:
             detector.envelopeRate = 0.0f;
             detector.previousInput = 0.0f;
             detector.overshootAmount = 0.0f; // For VCA attack overshoot
+            detector.dcState = 0.0f;
+            detector.prevSq = 0.0f;
         }
     }
-    
+
     float process(float input, int channel, float threshold, float ratio,
                   float attackParam, float releaseParam, float outputGain, bool overEasy = false, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
@@ -1817,49 +2063,42 @@ public:
         float thresholdLin = juce::Decibels::decibelsToGain(threshold);
         
         float reduction = 0.0f;
-        if (rmsLevel > thresholdLin)
-        {
-            float overThreshDb = juce::Decibels::gainToDecibels(rmsLevel / thresholdLin);
-            
-            // VCA OverEasy mode - proprietary soft knee with PARABOLIC curve
-            if (overEasy)
-            {
-                // VCA OverEasy uses a parabolic curve for smooth, musical compression
-                // Knee width is approximately 10dB centered around threshold
-                float kneeWidth = 10.0f;
-                float kneeStart = -kneeWidth * 0.5f;
-                float kneeEnd = kneeWidth * 0.5f;
+        float overThreshDb = juce::Decibels::gainToDecibels(
+            juce::jmax(Constants::EPSILON, rmsLevel) / thresholdLin);
 
-                if (overThreshDb <= kneeStart)
-                {
-                    // Below knee - no compression
-                    reduction = 0.0f;
-                }
-                else if (overThreshDb <= kneeEnd)
-                {
-                    // Inside knee - parabolic transition (quadratic curve)
-                    // VCA uses parabolic curve: f(x) = x² for smooth onset
-                    float kneePosition = (overThreshDb - kneeStart) / kneeWidth; // 0-1
-                    float parabolaGain = kneePosition * kneePosition; // Quadratic (parabolic)
-                    reduction = overThreshDb * parabolaGain * (1.0f - 1.0f / ratio);
-                }
-                else
-                {
-                    // Above knee - full compression with knee compensation
-                    float kneeReduction = kneeEnd * 1.0f * (1.0f - 1.0f / ratio); // Full reduction at knee end
-                    reduction = kneeReduction + (overThreshDb - kneeEnd) * (1.0f - 1.0f / ratio);
-                }
+        if (overEasy)
+        {
+            // dbx OverEasy: parabolic soft knee, engages 5dB below threshold
+            float kneeWidth = 10.0f;
+            float kneeStart = -kneeWidth * 0.5f;  // -5dB below threshold
+            float kneeEnd = kneeWidth * 0.5f;      // +5dB above threshold
+
+            if (overThreshDb <= kneeStart)
+            {
+                reduction = 0.0f;
+            }
+            else if (overThreshDb < kneeEnd)
+            {
+                // Soft knee from kneeStart..kneeEnd with smooth onset below threshold
+                float x = overThreshDb - kneeStart; // 0..kneeWidth
+                reduction = (1.0f - 1.0f / ratio) * (x * x) / (2.0f * kneeWidth);
             }
             else
             {
-                // Hard knee compression (original VCA without OverEasy)
+                // Above knee - full compression
                 reduction = overThreshDb * (1.0f - 1.0f / ratio);
             }
-            
-            // VCA can achieve infinite compression (approximately 120:1) with complete stability
-            // Feed-forward design prevents instability issues of feedback compressors
-            reduction = juce::jmin(reduction, Constants::VCA_MAX_REDUCTION_DB); // Practical limit for musical content
         }
+        else
+        {
+            // Hard knee - only compress above threshold
+            if (rmsLevel > thresholdLin)
+            {
+                reduction = overThreshDb * (1.0f - 1.0f / ratio);
+            }
+        }
+
+        reduction = juce::jmin(juce::jmax(0.0f, reduction), Constants::VCA_MAX_REDUCTION_DB);
         
         // VCA program-dependent attack and release times that "track" signal envelope
         // Attack times automatically vary with rate of level change in program material
@@ -1926,9 +2165,8 @@ public:
         // Feed-forward design is inherently stable even at infinite compression ratios
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
         
-        // Calculate proper exponential coefficients for VCA-style response with safety
+        // Exponential attack coefficient (release uses constant-rate dB/sec below)
         float attackCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, attackTime * static_cast<float>(sampleRate))));
-        float releaseCoeff = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, releaseTime * static_cast<float>(sampleRate))));
         
         if (targetGain < detector.envelope)
         {
@@ -1955,8 +2193,22 @@ public:
         }
         else
         {
-            // Release phase - constant 120dB/second release rate
-            detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
+            // Release phase - constant 120dB/second release rate (dbx 160 defining characteristic)
+            // Linear in dB space: gain recovers at a fixed dB/sec rate, not exponentially
+            float currentDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, detector.envelope));
+            float targetDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, targetGain));
+
+            // Calculate effective release rate in dB/sec
+            // Blend between program-dependent 120dB/sec and user release time
+            float effectiveRate;
+            if (reduction > 0.1f)
+                effectiveRate = reduction / juce::jmax(0.001f, releaseTime);  // dB/sec from blended time
+            else
+                effectiveRate = 120.0f;  // Default rate
+
+            float releaseStepDb = effectiveRate / static_cast<float>(sampleRate);  // dB per sample
+            currentDb = juce::jmin(currentDb + releaseStepDb, targetDb);
+            detector.envelope = juce::Decibels::decibelsToGain(currentDb);
 
             // No overshoot during release
             detector.overshootAmount *= 0.98f; // Quick decay
@@ -1991,63 +2243,58 @@ public:
         // Calculate actual signal level in dB for harmonic generation
         float levelDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, absLevel));
         
-        // VCA harmonic distortion - much cleaner than other compressor types
+        // VCA harmonic distortion - cleaner than tube/FET types but not silent
         if (absLevel > 0.01f)  // Process non-silence
         {
             float sign = (processed < 0.0f) ? -1.0f : 1.0f;
-            
-            // Classic VCA harmonics - extremely clean, even at high compression ratios
+
+            // Classic VCA harmonics: circuit path coloration + compression harmonics
+            // Real dbx 160 has ~0.05-0.1% THD even at unity from VCA chip bias + op-amps
             float h2_level = 0.0f;
             float h3_level = 0.0f;
-            
-            // No pre-saturation compensation needed anymore
-            // We apply compensation AFTER saturation to avoid compression effects
-            float harmonicCompensation = 1.0f; // No pre-compensation
-            float h2Boost = harmonicCompensation;
-            float h3Boost = harmonicCompensation;
-            
-            // VCA harmonic generation - per actual manual specification
-            // Manual spec: 0.75% 2nd harmonic, 0.5% 3rd harmonic at infinite compression
-            // Logic Pro shows similar levels (~-60dB to -81dB for 3rd harmonic)
+
+            // Always-on circuit coloration (VCA chip bias current + op-amp stages)
+            // dbx 202C VCA chip: control voltage feedthrough + op-amp crossover
+            // Real dbx 160 measures ~0.05-0.1% THD passthrough
+            float circuitH2 = 0.0003f;  // VCA chip even-order from bias asymmetry
+            float circuitH3 = 0.0006f;  // Op-amp odd-order from output stage
+
+            h2_level = circuitH2;
+            h3_level = circuitH3;
+
+            // Compression-dependent harmonics ADD to circuit base
+            // Manual spec: 0.75% 2nd, 0.5% 3rd at infinite compression at +4dBm
             if (levelDb > -30.0f && reduction > 2.0f)
             {
-                // Compression factor scales harmonics based on how hard we're compressing
                 float compressionFactor = juce::jmin(1.0f, reduction / 30.0f);
 
-                // 2nd harmonic - VCA manual: 0.75% at infinite compression at +4dBm output
-                // 0.75% = 0.0075 linear = -42.5dB
-                float h2_scale = 0.0075f / (absLevel * absLevel + 0.0001f);
-                h2_level = absLevel * absLevel * h2_scale * compressionFactor * h2Boost;
+                // 2nd harmonic boost from VCA gain element under compression
+                float h2_comp = 0.001f * compressionFactor;
+                h2_level += h2_comp;
 
-                // 3rd harmonic - VCA manual: 0.5% typical at infinite compression
-                // 0.5% = 0.005 linear = -46dB
-                // Account for frequency dependence (decreases linearly with frequency)
+                // 3rd harmonic from VCA at heavy compression (>10dB GR)
                 if (reduction > 10.0f)
                 {
-                    float freqFactor = 50.0f / 1000.0f;  // Linear decrease with frequency
-                    float h3_scale = (0.005f * freqFactor) / (absLevel * absLevel * absLevel + 0.0001f);
-                    h3_level = absLevel * absLevel * absLevel * h3_scale * compressionFactor * h3Boost;
+                    float h3_comp = 0.0008f * compressionFactor;
+                    h3_level += h3_comp;
                 }
             }
             
-            // Apply minimal harmonics - Classic VCA is known for its cleanliness
+            // Apply VCA harmonics using proper waveshaping
             processed = compressed;
-            
-            // Add very subtle 2nd harmonic
-            if (h2_level > 0.0f)
-            {
-                // Use waveshaping for consistent harmonic generation
-                float squared = compressed * compressed * sign;
-                processed += squared * h2_level;
-            }
-            
-            // Add very subtle 3rd harmonic
-            if (h3_level > 0.0f)
-            {
-                // Use waveshaping for consistent harmonic generation
-                float cubed = compressed * compressed * compressed;
-                processed += cubed * h3_level;
-            }
+
+            // 2nd harmonic (even): x² is always positive → asymmetric → H2
+            // Highpass at ~10Hz to remove DC from x² while preserving harmonic content
+            float sq = compressed * compressed;
+            float hpAlpha = 1.0f / (1.0f + 6.2831853f * 10.0f / static_cast<float>(sampleRate));
+            float h2_signal = hpAlpha * (detector.dcState + sq - detector.prevSq);
+            detector.dcState = h2_signal;
+            detector.prevSq = sq;
+            processed += h2_signal * h2_level;
+
+            // 3rd harmonic (odd): x³ is symmetric → H3
+            float h3_signal = compressed * compressed * compressed;
+            processed += h3_signal * h3_level;
             
             // Classic VCA has very high headroom - minimal saturation
             if (absLevel > 1.5f)
@@ -2084,10 +2331,19 @@ private:
         float envelopeRate = 0.0f;      // Rate of envelope change
         float previousInput = 0.0f;     // Previous input for envelope tracking
         float overshootAmount = 0.0f;   // Attack overshoot for Classic VCA characteristic
+        float dcState = 0.0f;           // Highpass state for H2 DC blocker
+        float prevSq = 0.0f;           // Previous x² for H2 DC blocker
     };
-    
+
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
+
+public:
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate > 0.0 && newSampleRate != sampleRate)
+            sampleRate = newSampleRate;
+    }
 };
 
 // Bus Compressor
@@ -2145,8 +2401,41 @@ public:
         // Short convolution for console coloration
         convolution.prepare(sampleRate);
         convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Console_Bus);
+
+        // Calibrate hardware gain compensation for the full analog chain
+        calibrateHardwareGain();
     }
-    
+
+    // Lightweight sample rate update — only recalculates filter coefficients,
+    // no memory allocation. Safe to call from audio thread when oversampling changes.
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate <= 0.0 || newSampleRate == sampleRate)
+            return;
+        sampleRate = newSampleRate;
+
+        // Update sidechain filter coefficients
+        for (auto& detector : detectors)
+        {
+            if (detector.sidechainFilter)
+            {
+                detector.sidechainFilter->get<0>().coefficients =
+                    juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 60.0f, 0.707f);
+                detector.sidechainFilter->get<1>().coefficients =
+                    juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 20000.0f, 0.707f);
+            }
+        }
+
+        // Update transformer and convolution filter coefficients
+        inputTransformer.prepare(sampleRate, static_cast<int>(detectors.size()));
+        inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getConsoleBus().inputTransformer);
+        outputTransformer.prepare(sampleRate, static_cast<int>(detectors.size()));
+        outputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getConsoleBus().outputTransformer);
+        convolution.prepare(sampleRate);
+        convolution.loadTransformerIR(HardwareEmulation::ShortConvolution::TransformerType::Console_Bus);
+        calibrateHardwareGain();
+    }
+
     float process(float input, int channel, float threshold, float ratio,
                   int attackIndex, int releaseIndex, float makeupGain, float mixAmount = 1.0f, bool oversample = false, float sidechainSignal = 0.0f, bool useExternalSidechain = false)
     {
@@ -2175,15 +2464,13 @@ public:
         }
         else
         {
-            // Use simple inline filter instead of complex ProcessorChain for per-sample processing
+            // 60Hz 1st-order Butterworth HPF for sidechain (prevents LF pumping)
             float sidechainInput = transformedInput;
-            if (detector.sidechainFilter)
             {
-                // Simple 60Hz highpass filter (much faster than full ProcessorChain)
-                const float hpCutoff = 60.0f / static_cast<float>(sampleRate);
-                const float hpAlpha = juce::jmin(1.0f, hpCutoff);
-                detector.hpState = input - detector.prevInput + detector.hpState * (1.0f - hpAlpha);
-                detector.prevInput = input;
+                float sr = static_cast<float>(sampleRate);
+                float alpha = 1.0f / (1.0f + 6.2831853f * 60.0f / sr);
+                detector.hpState = alpha * (detector.hpState + transformedInput - detector.prevInput);
+                detector.prevInput = transformedInput;
                 sidechainInput = detector.hpState;
             }
             detectionLevel = std::abs(sidechainInput);
@@ -2245,16 +2532,14 @@ public:
         
         if (targetGain < detector.envelope)
         {
-            // Attack phase - Bus compressor is known for smooth attack response - approximate exp
-            float divisor = juce::jmax(Constants::EPSILON, attackTime * static_cast<float>(sampleRate));
-            float attackCoeff = juce::jmax(0.0f, juce::jmin(0.9999f, 1.0f - 1.0f / divisor));
+            // Attack phase — exponential envelope for authentic SSL snap
+            float attackCoeff = std::exp(-1.0f / juce::jmax(1.0f, attackTime * static_cast<float>(sampleRate)));
             detector.envelope = targetGain + (detector.envelope - targetGain) * attackCoeff;
         }
         else
         {
-            // Release phase with Bus characteristic smoothness - approximate exp
-            float divisor = juce::jmax(Constants::EPSILON, releaseTime * static_cast<float>(sampleRate));
-            float releaseCoeff = juce::jmax(0.0f, juce::jmin(0.9999f, 1.0f - 1.0f / divisor));
+            // Release phase — exponential envelope for smooth SSL recovery
+            float releaseCoeff = std::exp(-1.0f / juce::jmax(1.0f, releaseTime * static_cast<float>(sampleRate)));
             detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
         }
         
@@ -2295,6 +2580,15 @@ public:
         float x3 = x2 * processed;
         processed = processed + k2 * x2 + k3 * x3;
 
+        // Bus output transformer — console iron coloration
+        processed = outputTransformer.processSample(processed, channel);
+
+        // Console transformer frequency response (short convolution — 2.5kHz punch, HF extension)
+        processed = convolution.processSample(processed, channel);
+
+        // Hardware gain compensation (measured at prepare time)
+        processed *= hardwareGainCompensation;
+
         // Apply makeup gain
         float output = processed * juce::Decibels::decibelsToGain(makeupGain);
 
@@ -2331,7 +2625,63 @@ private:
     // Hardware emulation components (VCA bus compressor style)
     HardwareEmulation::TransformerEmulation inputTransformer;
     HardwareEmulation::TransformerEmulation outputTransformer;
-    HardwareEmulation::ShortConvolution convolution;
+    HardwareEmulation::StereoConvolution convolution;
+    float hardwareGainCompensation = 1.0f;
+
+    void calibrateHardwareGain()
+    {
+        constexpr int calibrationSamples = 4800;
+        constexpr float refAmplitude = 0.126f;
+        constexpr float refFreq = 1000.0f;
+
+        float sr = static_cast<float>(sampleRate);
+        float angularStep = 2.0f * juce::MathConstants<float>::pi * refFreq / sr;
+
+        inputTransformer.reset();
+        outputTransformer.reset();
+
+        // Calibrate using channel 0 only — both channels have identical IR
+        int warmup = static_cast<int>(sr * 0.05f);
+        for (int i = 0; i < warmup; ++i)
+        {
+            float x = refAmplitude * std::sin(angularStep * static_cast<float>(i));
+            x = inputTransformer.processSample(x, 0);
+            x = outputTransformer.processSample(x, 0);
+            convolution.processSample(x, 0);
+        }
+
+        double inputRmsSquared = 0.0;
+        double outputRmsSquared = 0.0;
+        for (int i = 0; i < calibrationSamples; ++i)
+        {
+            float phase = angularStep * static_cast<float>(warmup + i);
+            float input = refAmplitude * std::sin(phase);
+
+            float x = inputTransformer.processSample(input, 0);
+            x = outputTransformer.processSample(x, 0);
+            x = convolution.processSample(x, 0);
+
+            inputRmsSquared += static_cast<double>(input * input);
+            outputRmsSquared += static_cast<double>(x * x);
+        }
+
+        inputRmsSquared /= calibrationSamples;
+        outputRmsSquared /= calibrationSamples;
+
+        if (outputRmsSquared > 1e-12 && inputRmsSquared > 1e-12)
+        {
+            float chainGain = static_cast<float>(std::sqrt(outputRmsSquared / inputRmsSquared));
+            hardwareGainCompensation = 1.0f / chainGain;
+        }
+        else
+        {
+            hardwareGainCompensation = 1.0f;
+        }
+
+        inputTransformer.reset();
+        outputTransformer.reset();
+        convolution.reset();
+    }
 };
 
 // Studio FET Compressor (cleaner than Vintage FET)
@@ -2347,28 +2697,32 @@ public:
             detector.envelope = 1.0f;
             detector.previousLevel = 0.0f;
             detector.previousGR = 0.0f;
+            detector.modulationPhase = 0.0f;
+            detector.dcState = 0.0f;
+            detector.peakHold = 0.0f;
+            detector.transientCounter = 0;
+            detector.releaseMemory = 0.0f;
         }
     }
 
     float process(float input, int channel, float inputGain, float outputGain,
-                  float attackMs, float releaseMs, int ratioIndex, float sidechainInput)
+                  float attackMs, float releaseMs, int ratioIndex, float sidechainInput, bool useExternalSidechain = false)
     {
         if (channel >= static_cast<int>(detectors.size()) || sampleRate <= 0.0)
             return input;
 
         auto& detector = detectors[static_cast<size_t>(channel)];
+        float sr = static_cast<float>(sampleRate);
 
         // Apply input gain (drives signal into fixed threshold)
-        float gained = input * juce::Decibels::decibelsToGain(inputGain);
+        float inputGainLin = juce::Decibels::decibelsToGain(inputGain);
+        float gained = input * inputGainLin;
 
         // Fixed threshold at -10dBFS (FET spec)
         constexpr float thresholdDb = Constants::STUDIO_FET_THRESHOLD_DB;
         const float threshold = juce::Decibels::decibelsToGain(thresholdDb);
 
-        // Use sidechain input for detection
-        float detectionLevel = std::abs(sidechainInput) * juce::Decibels::decibelsToGain(inputGain);
-
-        // Ratio selection (same as Vintage FET)
+        // Ratio selection
         float ratio;
         bool isAllButtons = (ratioIndex == 4);
         switch (ratioIndex)
@@ -2377,91 +2731,215 @@ public:
             case 1: ratio = 8.0f; break;
             case 2: ratio = 12.0f; break;
             case 3: ratio = 20.0f; break;
-            case 4: ratio = 20.0f; break;  // All-buttons (uses custom curve below)
+            case 4: ratio = 20.0f; break;
             default: ratio = 4.0f; break;
+        }
+
+        // FEEDBACK detection — Studio FET is an 1176 variant (Rev F / modern reissue)
+        // Apply previous envelope to get compressed signal for feedback detection
+        float compressed = gained * detector.envelope;
+
+        float detectionLevel;
+        if (useExternalSidechain)
+        {
+            // Use external sidechain (apply input gain to match compression behavior)
+            detectionLevel = std::abs(sidechainInput * inputGainLin);
+        }
+        else if (isAllButtons)
+        {
+            // ABI: feedback detection with peak-hold capacitor and saturation ceiling
+            // (matches Vintage FET fix — prevents over-detection on transients)
+            float instantLevel = std::abs(compressed);
+
+            // Saturation ceiling: soft-clip detection at ~1.5x threshold
+            float detCeiling = threshold * 1.5f;
+            if (instantLevel > detCeiling)
+                instantLevel = detCeiling + (instantLevel - detCeiling) / (1.0f + (instantLevel - detCeiling));
+
+            // Peak-hold: fast attack (~50µs), medium release (~5ms)
+            float peakAttackCoeff = std::exp(-1.0f / (0.00005f * sr));
+            float peakReleaseCoeff = std::exp(-1.0f / (0.005f * sr));
+            if (instantLevel > detector.peakHold)
+                detector.peakHold += (1.0f - peakAttackCoeff) * (instantLevel - detector.peakHold);
+            else
+                detector.peakHold += (1.0f - peakReleaseCoeff) * (instantLevel - detector.peakHold);
+            detectionLevel = detector.peakHold;
+        }
+        else
+        {
+            // Feedback detection from compressed output (1176 topology)
+            detectionLevel = std::abs(compressed);
         }
 
         // Calculate gain reduction
         float reduction = 0.0f;
-        if (detectionLevel > threshold)
-        {
-            float overDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
 
-            if (isAllButtons)
+        if (isAllButtons)
+        {
+            // ABI threshold shift: combined resistor networks lower effective threshold by ~6dB
+            // (matches Vintage FET fix)
+            float abiThreshold = threshold * 0.5f;
+
+            if (detectionLevel > abiThreshold)
             {
-                // ABI: ~16:1 hard knee with slight softening near threshold
-                // Same curve shape as Vintage FET ABI but applied in feedforward topology
-                if (overDb < 2.0f)
+                float overDb = juce::Decibels::gainToDecibels(detectionLevel / abiThreshold);
+
+                // ABI: near-limiting transfer curve
+                if (overDb < 1.0f)
                 {
-                    float t = overDb / 2.0f;
-                    reduction = overDb * (0.5f + t * 0.44f);
+                    float t = overDb;
+                    reduction = overDb * (0.7f + t * 0.28f);
                 }
                 else
                 {
-                    reduction = 0.94f + (overDb - 2.0f) * 0.9375f;
+                    reduction = 0.98f + (overDb - 1.0f) * 0.99f;
                 }
+                reduction = juce::jmin(reduction, 30.0f);
             }
             else
             {
-                reduction = overDb * (1.0f - 1.0f / ratio);
+                // Expansion bump below threshold (same as Vintage FET)
+                float levelDb = juce::Decibels::gainToDecibels(detectionLevel + 0.0001f);
+                float threshDb2 = juce::Decibels::gainToDecibels(abiThreshold);
+                float belowThresh = threshDb2 - levelDb;
+
+                if (belowThresh < 3.0f && belowThresh > 0.0f)
+                {
+                    float bumpPosition = belowThresh / 3.0f;
+                    float bump = std::sin(bumpPosition * 3.14159f) * 1.0f;
+                    reduction = -bump;  // Negative reduction = expansion (gain > unity)
+                }
             }
+        }
+        else if (detectionLevel > threshold)
+        {
+            float overDb = juce::Decibels::gainToDecibels(detectionLevel / threshold);
+            reduction = overDb * (1.0f - 1.0f / ratio);
             reduction = juce::jmin(reduction, 30.0f);
         }
 
-        // Studio FET timing - same fast response, but cleaner
-        const float minAttack = 0.0001f;   // 100µs (safe minimum)
-        const float maxAttack = 0.0008f;   // 800µs
-        const float minRelease = 0.05f;    // 50ms
-        const float maxRelease = 1.1f;     // 1.1s
+        // Studio FET timing (same 1176 range as Vintage FET)
+        const float minRelease = 0.05f;
+        const float maxRelease = 1.1f;
 
-        float attackNorm = juce::jlimit(0.0f, 1.0f, attackMs / 0.8f);
+        float attackTime = juce::jmax(0.0001f, attackMs / 1000.0f);
         float releaseNorm = juce::jlimit(0.0f, 1.0f, releaseMs / 1100.0f);
-
-        float attackTime = minAttack * std::pow(maxAttack / minAttack, attackNorm);
         float releaseTime = minRelease * std::pow(maxRelease / minRelease, releaseNorm);
 
-        // ABI timing: lag on transients + plateau release (same as Vintage FET)
+        // ABI timing: attack lag + release memory (matches Vintage FET fixes)
         if (isAllButtons)
         {
-            // ABI gets its own wider attack range (0.8ms–5ms) for transient lag control
-            attackTime = Constants::FET_ALLBUTTONS_MIN_ATTACK *
-                std::pow(Constants::FET_ALLBUTTONS_MAX_ATTACK / Constants::FET_ALLBUTTONS_MIN_ATTACK, attackNorm);
-            releaseTime *= 1.5f;
+            attackTime = juce::jmax(0.0002f, attackTime * 2.0f);
+
             float reductionFactor = juce::jlimit(0.0f, 1.0f, reduction / 20.0f);
             releaseTime *= (1.0f + reductionFactor * 0.5f);
+
+            // Release memory: rapid transients lengthen the slow tail.
+            // Each attack onset bumps the memory up; it decays with ~500ms time constant.
+            float memoryDecay = std::exp(-1.0f / (0.5f * sr));
+            detector.releaseMemory *= memoryDecay;
+            if (detector.transientCounter == 0 && reduction > 3.0f)
+                detector.releaseMemory = juce::jmin(1.0f, detector.releaseMemory + 0.15f);
+            releaseTime *= (1.0f + detector.releaseMemory * 0.3f);
         }
 
         // Envelope following
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
-        float attackCoeff = std::exp(-1.0f / (juce::jmax(0.0001f, attackTime * static_cast<float>(sampleRate))));
-        float releaseCoeff = std::exp(-1.0f / (juce::jmax(0.0001f, releaseTime * static_cast<float>(sampleRate))));
+        float attackCoeff = std::exp(-1.0f / juce::jmax(Constants::EPSILON, attackTime * sr));
+        float releaseCoeff = std::exp(-1.0f / juce::jmax(Constants::EPSILON, releaseTime * sr));
 
-        if (targetGain < detector.envelope)
-            detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
-        else
-            detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
-
-        detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
-
-        // Apply compression
-        float compressed = gained * detector.envelope;
-
-        // Studio FET - MUCH cleaner harmonics (30% of Vintage FET)
-        // Rev E Blackface was the "Low Noise" revision
-        float absLevel = std::abs(compressed);
-        if (absLevel > 0.01f && reduction > 0.5f)
+        if (isAllButtons)
         {
-            float sign = compressed > 0.0f ? 1.0f : -1.0f;
-            float harmonicAmount = reduction / 30.0f * Constants::STUDIO_FET_HARMONIC_SCALE;
+            if (targetGain < detector.envelope)
+            {
+                // ABI program-dependent attack delay:
+                // First ~30 samples use a slower attack to let transient poke through.
+                if (detector.transientCounter < 30)
+                {
+                    float delayedAttack = attackCoeff * 0.5f + 0.5f;
+                    detector.envelope = delayedAttack * detector.envelope + (1.0f - delayedAttack) * targetGain;
+                    detector.transientCounter++;
+                }
+                else
+                {
+                    detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+                }
+            }
+            else
+            {
+                detector.transientCounter = 0;
 
-            // Subtle 2nd harmonic only
-            float h2 = absLevel * absLevel * harmonicAmount * 0.002f;
-            compressed += sign * h2;
+                // Context-aware release:
+                float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+
+                // Stage 1 (fast recovery): linear scale from 50ms → 25ms as GR goes 0 → 20dB
+                float fastTimeBase = 0.05f;
+                float fastTimeMin = 0.025f;
+                float grScale = juce::jlimit(0.0f, 1.0f, grDb / 20.0f);
+                float fastTime = fastTimeBase - grScale * (fastTimeBase - fastTimeMin);
+                float fastCoeff = std::exp(-1.0f / juce::jmax(Constants::EPSILON, fastTime * sr));
+
+                // Stage 2 (slow tail): user's release, stays slow for "breathing"
+                float blend = grScale;
+                float effectiveCoeff = fastCoeff * blend + releaseCoeff * (1.0f - blend);
+                detector.envelope = effectiveCoeff * detector.envelope + (1.0f - effectiveCoeff) * targetGain;
+            }
+        }
+        else
+        {
+            if (targetGain < detector.envelope)
+                detector.envelope = attackCoeff * detector.envelope + (1.0f - attackCoeff) * targetGain;
+            else
+                detector.envelope = releaseCoeff * detector.envelope + (1.0f - releaseCoeff) * targetGain;
+        }
+
+        // Allow up to ~1dB expansion (1.12) for ABI vintage bump below threshold
+        float maxEnvelope = isAllButtons ? 1.12f : 1.0f;
+        detector.envelope = juce::jlimit(0.001f, maxEnvelope, detector.envelope);
+
+        // Envelope hysteresis
+        float currentGR = 1.0f - detector.envelope;
+        currentGR = 0.85f * currentGR + 0.15f * detector.previousGR;
+        detector.previousGR = currentGR;
+        detector.envelope = 1.0f - currentGR;
+
+        if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
+            detector.envelope = 1.0f;
+
+        // Re-apply compression with updated envelope
+        compressed = gained * detector.envelope;
+
+        // Studio FET saturation — JFET square-law (even-harmonic), 30% of Vintage
+        // Models Rev F / modern reissue 1176 (Q-bias keeps FET closer to linear)
+        float output = compressed;
+        {
+            float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+            float grNorm = juce::jlimit(0.0f, 1.0f, grDb / 20.0f);
+            float scale = Constants::STUDIO_FET_HARMONIC_SCALE;  // 30% of Vintage
+
+            float k2, k3;
+            if (isAllButtons)
+            {
+                k2 = (0.04f + grNorm * 0.12f) * scale;
+                k3 = (0.005f + grNorm * 0.015f) * scale;
+            }
+            else
+            {
+                k2 = 0.004f * scale;
+                k3 = 0.001f * scale;
+            }
+
+            float x = output;
+            float sq = x * x;
+            detector.dcState = detector.dcState * 0.9999f + sq * 0.0001f;
+            float h2 = sq - detector.dcState;
+            float h3 = x * x * x;
+            output = x + k2 * h2 + k3 * h3;
         }
 
         // Apply output gain
-        float output = compressed * juce::Decibels::decibelsToGain(outputGain);
-        return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
+        float finalOutput = output * juce::Decibels::decibelsToGain(outputGain);
+        return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, finalOutput);
     }
 
     float getGainReduction(int channel) const
@@ -2477,10 +2955,24 @@ private:
         float envelope = 1.0f;
         float previousLevel = 0.0f;
         float previousGR = 0.0f;
+        // ABI control loop instability
+        float modulationPhase = 0.0f;
+        float modulationRate = 4.5f;
+        float dcState = 0.0f;         // DC blocker for FET square-law saturation
+        float peakHold = 0.0f;        // Peak-hold envelope for ABI detection
+        int transientCounter = 0;     // ABI: counts samples since last transient onset
+        float releaseMemory = 0.0f;   // Capacitor discharge accumulator (release lengthening)
     };
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;
+
+public:
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate > 0.0 && newSampleRate != sampleRate)
+            sampleRate = newSampleRate;
+    }
 };
 
 // Studio VCA Compressor (modern, versatile)
@@ -2560,11 +3052,11 @@ public:
 
         // Studio VCA is very clean - minimal harmonics
         float absLevel = std::abs(compressed);
-        if (absLevel > 0.8f)
+        if (absLevel > 1.2f)
         {
-            // Gentle soft clipping at high levels
-            float excess = absLevel - 0.8f;
-            float softClip = 0.8f + 0.2f * std::tanh(excess * 5.0f);
+            // Modern VCA has headroom above 0dBFS
+            float excess = absLevel - 1.2f;
+            float softClip = 1.2f + 0.3f * std::tanh(excess * 3.0f);
             compressed = (compressed > 0.0f ? 1.0f : -1.0f) * softClip;
         }
 
@@ -2590,6 +3082,13 @@ private:
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;
+
+public:
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate > 0.0 && newSampleRate != sampleRate)
+            sampleRate = newSampleRate;
+    }
 };
 
 //==============================================================================
@@ -2608,13 +3107,13 @@ public:
             detector.adaptiveRelease = 0.0f;
         }
 
-        // Calculate max lookahead samples for buffer allocation
-        // Use centralized constant from LookaheadBuffer
+        // Calculate max lookahead samples for current rate
         maxLookaheadSamples = static_cast<int>(std::ceil((LookaheadBuffer::MAX_LOOKAHEAD_MS / 1000.0) * sampleRate));
 
-        // Allocate lookahead buffer: needs to hold maxLookaheadSamples for delay
-        // We use a circular buffer sized to maxLookaheadSamples
-        lookaheadBuffer.setSize(numCh, maxLookaheadSamples);
+        // Allocate buffer for max possible OS rate (4x) so runtime OS changes never exceed capacity.
+        // At worst this over-allocates by 4x at native rate (~1920 samples at 48kHz — negligible).
+        int maxPossibleSamples = static_cast<int>(std::ceil((LookaheadBuffer::MAX_LOOKAHEAD_MS / 1000.0) * sampleRate * 4.0));
+        lookaheadBuffer.setSize(numCh, maxPossibleSamples);
         lookaheadBuffer.clear();
 
         // Initialize write positions per channel
@@ -2793,6 +3292,22 @@ public:
         return currentLookaheadSamples;
     }
 
+    void reset()
+    {
+        lookaheadBuffer.clear();
+        for (auto& wp : lookaheadWritePos)
+            wp = 0;
+        currentLookaheadSamples = 0;
+        for (auto& detector : detectors)
+        {
+            detector.envelope = 1.0f;
+            detector.adaptiveRelease = 0.0f;
+            detector.peakHold = 0.0f;
+            detector.rmsLevel = 0.0f;
+            detector.crestFactor = 1.0f;
+        }
+    }
+
     // Pass audio through the lookahead delay only (no gain reduction).
     // Used in bypass path to maintain reported latency for Digital mode.
     float processLookaheadOnly(float input, int channel, float lookaheadMs)
@@ -2857,6 +3372,17 @@ private:
     int currentLookaheadSamples = 0;
     int numChannels = 2;
     double sampleRate = 0.0;
+
+public:
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate <= 0.0 || newSampleRate == sampleRate)
+            return;
+        sampleRate = newSampleRate;
+        // Recalculate lookahead for new rate (buffer was preallocated for 4x max OS)
+        int newMax = static_cast<int>(std::ceil((LookaheadBuffer::MAX_LOOKAHEAD_MS / 1000.0) * sampleRate));
+        maxLookaheadSamples = juce::jmin(newMax, lookaheadBuffer.getNumSamples());
+    }
 };
 
 //==============================================================================
@@ -3117,7 +3643,7 @@ public:
         return bandGainReduction[band];
     }
 
-    // Get overall (max) gain reduction across all bands
+    // Get overall (max) gain reduction across all bands — for GR meter display
     float getMaxGainReduction() const
     {
         float maxGr = 0.0f;
@@ -3126,6 +3652,16 @@ public:
             maxGr = juce::jmin(maxGr, bandGainReduction[band]);
         }
         return maxGr;
+    }
+
+    // Get average gain reduction across all bands — for auto-gain compensation
+    // Using average prevents one narrow band from over-compensating the full signal
+    float getAverageGainReduction() const
+    {
+        float sumGr = 0.0f;
+        for (int band = 0; band < NUM_BANDS; ++band)
+            sumGr += bandGainReduction[band];
+        return sumGr / static_cast<float>(NUM_BANDS);
     }
 
 private:
@@ -3350,6 +3886,16 @@ private:
     double sampleRate = 0.0;
     int numChannels = 2;
     int maxBlockSize = 512;
+
+public:
+    void updateSampleRate(double newSampleRate)
+    {
+        if (newSampleRate <= 0.0 || newSampleRate == sampleRate)
+            return;
+        sampleRate = newSampleRate;
+        // Recalculate crossover filters for new sample rate
+        updateCrossoverFrequencies(crossoverFreqs[0], crossoverFreqs[1], crossoverFreqs[2]);
+    }
 };
 
 // Parameter layout creation
@@ -3493,8 +4039,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         "fet_output", "Output", 
         juce::NormalisableRange<float>(-20.0f, 20.0f, 0.1f), 0.0f)); // Default to 0dB (unity gain)
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        "fet_attack", "Attack", 
-        juce::NormalisableRange<float>(0.02f, 0.8f, 0.01f), 0.02f));
+        "fet_attack", "Attack",
+        juce::NormalisableRange<float>(0.02f, 80.0f, 0.01f, 0.3f), 0.2f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         "fet_release", "Release", 
         juce::NormalisableRange<float>(50.0f, 1100.0f, 1.0f), 400.0f));
@@ -3727,13 +4273,14 @@ void UniversalCompressor::LookupTables::initialize()
     // Measured curve: based on hardware analysis of real FET units
 
     // Hardware-measured data points (overThresh dB → reduction dB):
-    // Real 1176 ABI is 12:1–20:1 with a "severe plateau" (hard knee, heavy compression).
-    // These points approximate ~16:1 with a slight soft knee near threshold,
-    // matching the documented behavior where ABI is dramatically different from 4:1.
+    // Real 1176 ABI is extreme — essentially a limiter with unique distortion.
+    // All four ratio buttons engaged simultaneously create competing feedback loops
+    // that produce an effective ratio of ~100:1 or higher, with heavy harmonic
+    // distortion and the characteristic "nuke" pumping effect.
 
     constexpr float measuredPoints[][2] = {
-        {0.0f, 0.0f}, {1.0f, 0.6f}, {2.0f, 1.5f}, {4.0f, 3.5f}, {6.0f, 5.5f},
-        {8.0f, 7.4f}, {10.0f, 9.3f}, {15.0f, 14.0f}, {20.0f, 18.7f}, {30.0f, 28.0f}
+        {0.0f, 0.0f}, {1.0f, 0.9f}, {2.0f, 1.9f}, {4.0f, 3.85f}, {6.0f, 5.8f},
+        {8.0f, 7.8f}, {10.0f, 9.8f}, {15.0f, 14.8f}, {20.0f, 19.7f}, {30.0f, 29.5f}
     };
     constexpr int numPoints = sizeof(measuredPoints) / sizeof(measuredPoints[0]);
 
@@ -3742,16 +4289,20 @@ void UniversalCompressor::LookupTables::initialize()
         // Input range: 0-30dB over threshold
         float overThreshDb = 30.0f * static_cast<float>(i) / static_cast<float>(ALLBUTTONS_TABLE_SIZE - 1);
 
-        // Modern curve: ~16:1 hard knee with slight softening near threshold
-        // Matches the "severe plateau" documented in 1176 ABI literature
-        if (overThreshDb < 2.0f)
+        // Modern curve: extreme compression (~100:1 effective ratio)
+        // Real 1176 ABI creates competing feedback loops from all 4 ratio circuits,
+        // resulting in near-limiting behavior with heavy harmonic distortion.
+        // This is the "nuke" setting — NOT just a high ratio, it's a wall.
+        if (overThreshDb < 1.0f)
         {
-            float t = overThreshDb / 2.0f;
-            allButtonsModernCurve[i] = overThreshDb * (0.5f + t * 0.44f);
+            // Gentle onset right at threshold
+            float t = overThreshDb;
+            allButtonsModernCurve[i] = overThreshDb * (0.7f + t * 0.28f);
         }
         else
         {
-            allButtonsModernCurve[i] = 0.94f + (overThreshDb - 2.0f) * 0.9375f;
+            // Near-limiting: ~0.99 slope = ~100:1 effective ratio
+            allButtonsModernCurve[i] = 0.98f + (overThreshDb - 1.0f) * 0.99f;
         }
         allButtonsModernCurve[i] = juce::jmin(allButtonsModernCurve[i], 30.0f);
 
@@ -3936,17 +4487,20 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     int numChannels = juce::jmax(1, getTotalNumOutputChannels());
     currentNumChannels.store(numChannels, std::memory_order_relaxed);  // For UI mono/stereo display
 
-    // ALWAYS prepare for maximum oversampling (4x) to avoid memory allocation in processBlock
-    // This is critical for thread safety - prepare() does buffer allocation which is not
-    // safe to call from the audio thread. By preparing for 4x, we can switch between
-    // 2x and 4x oversampling without re-allocation during playback.
-    // The compressor filters work correctly at any rate >= 2x, and using 4x rate ensures
-    // they have adequate headroom for the highest quality setting.
-    constexpr int maxOversamplingMultiplier = 4;
-    double oversampledRate = sampleRate * maxOversamplingMultiplier;
-    int oversampledBlockSize = samplesPerBlock * maxOversamplingMultiplier;
+    // Read oversampling parameter early so compressor filters are tuned for the
+    // actual processing rate (not always 4x). Filter coefficients (transformer HF
+    // rolloff, DC blockers, tube emulation) depend on the sample rate — preparing
+    // at 4x when running at 2x causes the HF rolloff to be an octave too low.
+    // Memory allocation in prepare() is safe here (message thread, not audio thread).
+    int osParamValue = 0;
+    if (auto* oversamplingParam = parameters.getRawParameterValue("oversampling"))
+        osParamValue = static_cast<int>(oversamplingParam->load());
+    const int oversamplingMultiplier = (osParamValue == 2) ? 4
+                                     : (osParamValue == 1) ? 2 : 1;
+    double oversampledRate = sampleRate * oversamplingMultiplier;
+    int oversampledBlockSize = samplesPerBlock * oversamplingMultiplier;
 
-    // Prepare all compressor types at max oversampled rate for thread safety
+    // Prepare all compressor types at the actual oversampled rate
     // This ensures transformer emulation, DC blockers, and HF filters
     // are correctly tuned for the rate at which they actually process audio
     if (optoCompressor)
@@ -3994,14 +4548,10 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Sync oversampling setting from parameter before first latency report
     // Without this, antiAliasing may still be in its default state (e.g. 2x)
     // when the session was saved with Off or 4x, causing wrong PDC until processBlock
+    // osParamValue was already read at the top of prepareToPlay()
+    currentOversamplingFactor = osParamValue;
     if (antiAliasing)
-    {
-        if (auto* oversamplingParam = parameters.getRawParameterValue("oversampling"))
-        {
-            currentOversamplingFactor = static_cast<int>(oversamplingParam->load());
-            antiAliasing->setOversamplingFactor(currentOversamplingFactor);
-        }
-    }
+        antiAliasing->setOversamplingFactor(currentOversamplingFactor);
 
     // Report actual current latency (oversampling + lookahead) for correct DAW PDC
     updateLatencyReport();
@@ -4059,21 +4609,17 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
 
     // Initialize RMS coefficient for ~200ms averaging window
-    // This gives stable, perceptually-accurate loudness matching like Logic Pro's compressor
+    // GR-based auto-gain: smooth the gain reduction with ~200ms time constant
     // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
-    float rmsTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
-    int rmsBlockSize = juce::jmax(1, samplesPerBlock);  // Prevent division by zero
-    // Ensure sampleRate is valid (should be guaranteed by prepareToPlay, but defense in depth)
+    float grTimeConstantSec = 0.043f;  // 43ms time constant (~200ms to 99%)
+    int grBlockSize = juce::jmax(1, samplesPerBlock);  // Prevent division by zero
     double safeSampleRate = juce::jlimit(8000.0, 384000.0, sampleRate);
-    float blocksPerSecond = static_cast<float>(safeSampleRate) / static_cast<float>(rmsBlockSize);
-    rmsCoefficient = 1.0f - std::exp(-1.0f / (blocksPerSecond * rmsTimeConstantSec));
-    // Ensure coefficient is in valid range (0, 1)
-    rmsCoefficient = juce::jlimit(0.001f, 0.999f, rmsCoefficient);
-    // Reset RMS accumulators and mode tracking
-    inputRmsAccumulator = 0.0f;
-    outputRmsAccumulator = 0.0f;
+    float blocksPerSecond = static_cast<float>(safeSampleRate) / static_cast<float>(grBlockSize);
+    grSmoothCoeff = 1.0f - std::exp(-1.0f / (blocksPerSecond * grTimeConstantSec));
+    grSmoothCoeff = juce::jlimit(0.001f, 0.999f, grSmoothCoeff);
+    smoothedGrDb = 0.0f;
     lastCompressorMode = -1;  // Force mode change detection on first processBlock
-    primeRmsAccumulators = true;  // Prime accumulators on first block
+    primeGrAccumulator = true;  // Prime on first block
 
     // Initialize crossover frequency smoothers (~20ms smoothing to prevent zipper noise)
     smoothedCrossover1.reset(sampleRate, 0.02);
@@ -4113,75 +4659,35 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (!bypassParam)
         return;
 
-    // When bypassed, still apply delay paths so the signal stays time-aligned
-    // with the reported latency (prevents track jumping when toggling bypass)
+    // When bypassed (host or internal), pass audio through with zero processing
+    // and report zero latency so the DAW removes PDC for this plugin.
+    // This prevents phase offset when the plugin is disabled on a parallel bus.
     if (*bypassParam > 0.5f)
     {
-        const int numChannels = buffer.getNumChannels();
-        const int numSamples = buffer.getNumSamples();
+        // Report 0 latency during bypass so DAW doesn't apply PDC
+        // for a plugin that isn't processing. This is the key fix for
+        // "disabled plugin on bus causes phase issues".
+        if (getLatencySamples() != 0)
+            setLatencySamples(0);
 
-        // Apply lookahead delay to maintain reported latency
-        if (lookaheadBuffer && currentSampleRate > 0)
-        {
-            auto* glParam = parameters.getRawParameterValue("global_lookahead");
-            float glMs = (glParam != nullptr) ? glParam->load() : 0.0f;
-            if (glMs > 0.0f)
-            {
-                for (int channel = 0; channel < numChannels; ++channel)
-                {
-                    float* data = buffer.getWritePointer(channel);
-                    for (int i = 0; i < numSamples; ++i)
-                        data[i] = lookaheadBuffer->processSample(data[i], channel, glMs);
-                }
-            }
-        }
+        // Clear lookahead buffer state so stale pre-bypass audio doesn't
+        // bleed into the first non-bypassed block when bypass is turned off.
+        if (lookaheadBuffer)
+            lookaheadBuffer->reset();
 
-        // Apply digital mode internal lookahead to maintain reported latency.
-        // IMPORTANT: The Digital compressor is always prepared at 4x rate, so its delay
-        // buffer uses 4x-rate iterations. In bypass (called at base rate), we must compute
-        // the exact delay in base-rate samples to match the reported PDC latency, which is:
-        //   delay4xSamples / actualOsFactor
-        // Using processDelayOnly() with this exact sample count avoids the rate mismatch
-        // that processLookaheadOnly() would have (it computes delay using 4x internal rate).
-        if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
-        {
-            auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
-            float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
-            if (dlMs > 0.0f)
-            {
-                // Compute delay exactly as updateLatencyReport() does
-                constexpr int maxOsMultiplier = 4;
-                int delay4xSamples = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
-                const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
-                                         : (currentOversamplingFactor == 1) ? 2 : 1;
-                int bypassDelaySamples = delay4xSamples / actualOsFactor;
+        // Also clear Digital mode's internal delay state (separate circular buffer)
+        if (digitalCompressor)
+            digitalCompressor->reset();
 
-                for (int channel = 0; channel < numChannels; ++channel)
-                {
-                    float* data = buffer.getWritePointer(channel);
-                    for (int i = 0; i < numSamples; ++i)
-                        data[i] = digitalCompressor->processDelayOnly(data[i], channel, bypassDelaySamples);
-                }
-            }
-        }
-
-        // Apply oversampling round-trip to maintain FIR filter latency
-        if (antiAliasing && antiAliasing->isReady())
-        {
-            auto* osParam = parameters.getRawParameterValue("oversampling");
-            int osFactor = (osParam != nullptr) ? static_cast<int>(osParam->load()) : 0;
-            antiAliasing->setOversamplingFactor(osFactor);
-            if (!antiAliasing->isOversamplingOff())
-            {
-                juce::dsp::AudioBlock<float> block(buffer);
-                antiAliasing->processUp(block);
-                antiAliasing->processDown(block);
-            }
-        }
-
+        // Audio passes through undelayed — no processing, no delay paths.
+        // We reported 0 latency above so the DAW won't apply PDC either.
+        // This ensures perfect phase alignment when disabled on a parallel bus.
         return;
     }
-    
+
+    // Restore actual latency when exiting bypass (DAW will recalculate PDC)
+    updateLatencyReport();
+
     // Get stereo link and mix parameters with proper null checks
     auto* stereoLinkParam = parameters.getRawParameterValue("stereo_link");
     auto* mixParam = parameters.getRawParameterValue("mix");
@@ -4204,57 +4710,17 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // for phase-coherent mixing that prevents comb filtering
     bool needsDryBuffer = (mixAmount > 0.001f && mixAmount < 0.999f);
 
-    // At 0% mix (100% dry), skip compression but still apply delay paths
-    // to match the reported PDC latency (prevents phase issues on parallel bus)
+    // At 0% mix (100% dry), skip all processing and pass through undelayed.
+    // Report 0 latency so DAW doesn't apply PDC (same approach as bypass).
     if (mixAmount <= 0.001f)
     {
+        if (getLatencySamples() != 0)
+            setLatencySamples(0);
+
         const int bypassChannels = buffer.getNumChannels();
         const int bypassSamples = buffer.getNumSamples();
 
-        // Apply same delay paths as bypass to maintain reported latency
-        if (lookaheadBuffer && currentSampleRate > 0)
-        {
-            auto* glParam = parameters.getRawParameterValue("global_lookahead");
-            float glMs = (glParam != nullptr) ? glParam->load() : 0.0f;
-            if (glMs > 0.0f)
-            {
-                for (int ch = 0; ch < bypassChannels; ++ch)
-                {
-                    float* data = buffer.getWritePointer(ch);
-                    for (int i = 0; i < bypassSamples; ++i)
-                        data[i] = lookaheadBuffer->processSample(data[i], ch, glMs);
-                }
-            }
-        }
-
-        if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
-        {
-            auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
-            float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
-            if (dlMs > 0.0f)
-            {
-                constexpr int maxOsMultiplier = 4;
-                int delay4xSamples = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
-                const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
-                                         : (currentOversamplingFactor == 1) ? 2 : 1;
-                int delaySamples = delay4xSamples / actualOsFactor;
-                for (int ch = 0; ch < bypassChannels; ++ch)
-                {
-                    float* data = buffer.getWritePointer(ch);
-                    for (int i = 0; i < bypassSamples; ++i)
-                        data[i] = digitalCompressor->processDelayOnly(data[i], ch, delaySamples);
-                }
-            }
-        }
-
-        if (antiAliasing && antiAliasing->isReady() && !antiAliasing->isOversamplingOff())
-        {
-            juce::dsp::AudioBlock<float> block(buffer);
-            antiAliasing->processUp(block);
-            antiAliasing->processDown(block);
-        }
-
-        // Update meters to show input = output (bypass behavior)
+        // Update meters to show input = output
         for (int ch = 0; ch < bypassChannels; ++ch)
         {
             float rms = 0.0f;
@@ -4264,15 +4730,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             rms = std::sqrt(rms / static_cast<float>(bypassSamples));
 
             if (ch == 0)
-            {
                 linkedGainReduction[0].store(0.0f, std::memory_order_relaxed);
-                inputRmsAccumulator = rms * rms;
-                outputRmsAccumulator = rms * rms;
-            }
             else
-            {
                 linkedGainReduction[1].store(0.0f, std::memory_order_relaxed);
-            }
         }
         grMeter.store(0.0f, std::memory_order_relaxed);
         return;
@@ -4282,16 +4742,15 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     bool oversample = true; // Always use oversampling internally
     CompressorMode mode = getCurrentMode();
 
-    // Detect mode change and reset auto-gain accumulators
-    // Each compressor mode has different gain characteristics, so the RMS accumulators
+    // Detect mode change and reset auto-gain state
+    // Each compressor mode has different gain characteristics, so the GR accumulator
     // must be reset to prevent incorrect auto-gain from stale data
     int currentModeInt = static_cast<int>(mode);
     if (currentModeInt != lastCompressorMode)
     {
         lastCompressorMode = currentModeInt;
-        // Flag to prime RMS accumulators with first block's values (instant convergence)
-        // This avoids the ~200ms delay that would occur if we reset to 0
-        primeRmsAccumulators = true;
+        // Flag to prime GR accumulator with first block's GR value (instant convergence)
+        primeGrAccumulator = true;
         // Reset smoothed gain to unity to avoid sudden volume jumps
         smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
         // Digital mode has internal lookahead that affects PDC and dry/wet alignment
@@ -4506,40 +4965,6 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     inputMeterL.store(inputDbL, std::memory_order_relaxed);
     inputMeterR.store(numChannels > 1 ? inputDbR : inputDbL, std::memory_order_relaxed);  // Mono: use same value for both
 
-    // Calculate input RMS for auto-gain (running average across blocks)
-    // This gives stable, perceptually-accurate loudness matching
-    if (autoMakeup)
-    {
-        float blockRmsSquared = 0.0f;
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            const float* data = buffer.getReadPointer(ch);
-            for (int i = 0; i < numSamples; ++i)
-                blockRmsSquared += data[i] * data[i];
-        }
-        // Safe division (prevent division by zero in edge cases)
-        int divisor = juce::jmax(1, numSamples * numChannels);
-        blockRmsSquared /= static_cast<float>(divisor);
-
-        // Clamp block RMS to prevent numerical issues from pathological inputs
-        // Max corresponds to ~+6dBFS RMS (4.0 linear squared), min to -80dBFS
-        blockRmsSquared = juce::jlimit(1e-8f, 4.0f, blockRmsSquared);
-
-        // Prime accumulator instantly on mode change for immediate auto-gain response
-        if (primeRmsAccumulators)
-        {
-            inputRmsAccumulator = blockRmsSquared;
-        }
-        else
-        {
-            // One-pole smoothing filter for RMS averaging (~200ms window)
-            inputRmsAccumulator += rmsCoefficient * (blockRmsSquared - inputRmsAccumulator);
-        }
-
-        // Bounds check accumulator to prevent drift in long sessions
-        inputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, inputRmsAccumulator);
-    }
-
     // Get sidechain HP filter frequency and update filter if changed (0 = Off/bypassed)
     auto* sidechainHpParam = parameters.getRawParameterValue("sidechain_hp");
     float sidechainHpFreq = (sidechainHpParam != nullptr) ? sidechainHpParam->load() : 80.0f;
@@ -4575,11 +5000,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (antiAliasing)
         antiAliasing->setOversamplingFactor(oversamplingFactor);
 
-    // Track oversampling factor changes for internal state
-    // NOTE: We NO LONGER re-prepare compressors here because prepare() does memory allocation
-    // which is not thread-safe and causes crashes in pluginval level 10 testing.
-    // All compressors are prepared for MAX oversampling (4x) in prepareToPlay() so they
-    // work correctly regardless of the current oversampling setting.
+    // Track oversampling factor changes and update compressor filter coefficients
     if (oversamplingFactor != currentOversamplingFactor)
     {
         currentOversamplingFactor = oversamplingFactor;
@@ -4587,6 +5008,20 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         const int newOsFactor = (currentOversamplingFactor == 2) ? 4
                               : (currentOversamplingFactor == 1) ? 2 : 1;
         dryWetMixer.setCurrentOversamplingFactor(newOsFactor);
+
+        // Recalculate compressor filter coefficients for the new oversampled rate.
+        // This is lightweight (no allocation) — only updates transformer HF rolloff,
+        // DC blocker, tube emulation, and timing coefficients.
+        double newOsRate = currentSampleRate * newOsFactor;
+        if (optoCompressor) optoCompressor->updateSampleRate(newOsRate);
+        if (fetCompressor) fetCompressor->updateSampleRate(newOsRate);
+        if (vcaCompressor) vcaCompressor->updateSampleRate(newOsRate);
+        if (busCompressor) busCompressor->updateSampleRate(newOsRate);
+        if (studioFetCompressor) studioFetCompressor->updateSampleRate(newOsRate);
+        if (studioVcaCompressor) studioVcaCompressor->updateSampleRate(newOsRate);
+        if (digitalCompressor) digitalCompressor->updateSampleRate(newOsRate);
+        // Note: multibandCompressor operates at native rate, not oversampled — no update needed
+
         // Notify host of latency change so DAW PDC stays correct
         updateLatencyReport();
     }
@@ -4735,12 +5170,14 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             float leftLevel = std::abs(leftSCFiltered[i]);
             float rightLevel = std::abs(rightSCFiltered[i]);
 
-            // Max of both channels for linked portion
-            float maxLevel = juce::jmax(leftLevel, rightLevel);
+            // Bus mode: average L+R (SSL G-Bus behavior); other modes: max(L,R)
+            float linkedLevel = (mode == CompressorMode::Bus)
+                ? (leftLevel + rightLevel) * 0.5f
+                : juce::jmax(leftLevel, rightLevel);
 
             // Blend independent and linked based on stereoLinkAmount
-            leftSC[i] = leftLevel * (1.0f - stereoLinkAmount) + maxLevel * stereoLinkAmount;
-            rightSC[i] = rightLevel * (1.0f - stereoLinkAmount) + maxLevel * stereoLinkAmount;
+            leftSC[i] = leftLevel * (1.0f - stereoLinkAmount) + linkedLevel * stereoLinkAmount;
+            rightSC[i] = rightLevel * (1.0f - stereoLinkAmount) + linkedLevel * stereoLinkAmount;
         }
     }
 
@@ -4889,12 +5326,13 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                                           std::memory_order_relaxed);
         }
 
-        // Get overall GR for main meter
-        float grLeft = multibandCompressor->getMaxGainReduction();
-        float grRight = grLeft;  // Multiband processes stereo together
-        linkedGainReduction[0].store(grLeft, std::memory_order_relaxed);
-        linkedGainReduction[1].store(grRight, std::memory_order_relaxed);
-        float gainReduction = grLeft;
+        // Get overall GR for main meter (max = worst band, for display)
+        float grMax = multibandCompressor->getMaxGainReduction();
+        linkedGainReduction[0].store(grMax, std::memory_order_relaxed);
+        linkedGainReduction[1].store(grMax, std::memory_order_relaxed);
+        float gainReduction = grMax;
+        // Note: getAverageGainReduction() is available but max GR works better
+        // for auto-gain since the most-compressed band dominates perception
 
         // Update GR meter
         grMeter.store(gainReduction, std::memory_order_relaxed);
@@ -4911,60 +5349,34 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             grHistoryWritePos.store((pos + 1) % GR_HISTORY_SIZE, std::memory_order_relaxed);
         }
 
-        // Apply RMS-based auto-gain for multiband mode
-        // Uses running RMS average (~200ms window) for stable, perceptually-accurate gain compensation
-        // This matches the approach used in Logic Pro's compressor and other professional plugins
+        // GR-based auto-gain for multiband mode
+        // Inverts the compressor's own gain reduction for deterministic compensation
         {
             float targetAutoGain = 1.0f;
 
             if (autoMakeup)
             {
-                // Calculate output RMS for this block (before auto-gain compensation)
-                float blockOutputRmsSquared = 0.0f;
-                for (int ch = 0; ch < numChannels; ++ch)
-                {
-                    const float* data = buffer.getReadPointer(ch);
-                    for (int i = 0; i < numSamples; ++i)
-                        blockOutputRmsSquared += data[i] * data[i];
-                }
-                blockOutputRmsSquared /= static_cast<float>(numSamples * numChannels);
+                // Use max band GR for compensation — the most-compressed band dominates
+                // perception, and for narrowband signals, only that band's GR matters
+                float avgGrDb = grMax;
 
-                // Clamp block RMS to prevent numerical issues
-                blockOutputRmsSquared = juce::jlimit(1e-8f, 4.0f, blockOutputRmsSquared);
-
-                // Prime accumulator instantly on mode change for immediate auto-gain response
-                bool justPrimed = false;
-                if (primeRmsAccumulators)
+                // Smooth the GR to avoid pumping
+                if (primeGrAccumulator)
                 {
-                    outputRmsAccumulator = blockOutputRmsSquared;
-                    primeRmsAccumulators = false;  // Clear flag after priming both accumulators
-                    justPrimed = true;
+                    smoothedGrDb = avgGrDb;
+                    primeGrAccumulator = false;
+                    smoothedAutoMakeupGain.setCurrentAndTargetValue(
+                        juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 40.0f, -avgGrDb)));
                 }
                 else
                 {
-                    // Update running RMS accumulator with one-pole smoothing
-                    outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+                    smoothedGrDb += grSmoothCoeff * (avgGrDb - smoothedGrDb);
                 }
 
-                // Bounds check accumulator to prevent drift
-                outputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, outputRmsAccumulator);
-
-                // Calculate gain compensation from RMS levels
-                // Both accumulators are in squared (power) domain
-                if (outputRmsAccumulator > 1e-8f && inputRmsAccumulator > 1e-8f)
-                {
-                    // Gain = sqrt(inputRMS² / outputRMS²) = inputRMS / outputRMS
-                    targetAutoGain = std::sqrt(inputRmsAccumulator / outputRmsAccumulator);
-
-                    // Limit compensation range to ±40dB to handle extreme settings
-                    targetAutoGain = juce::jlimit(0.01f, 100.0f, targetAutoGain);  // -40dB to +40dB
-                }
-
-                // If we just primed, set gain immediately without smoothing
-                if (justPrimed)
-                {
-                    smoothedAutoMakeupGain.setCurrentAndTargetValue(targetAutoGain);
-                }
+                // Base compensation: invert the smoothed gain reduction
+                float autoGainDb = -smoothedGrDb;
+                autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
+                targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
             }
 
             smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
@@ -5105,7 +5517,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                     // Optimized: use pre-interpolated sidechain with direct pointer access
                     for (int i = 0; i < osNumSamples; ++i)
                     {
-                        data[i] = studioFetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), scData[i]);
+                        data[i] = studioFetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), scData[i], hasExternalSidechain);
                     }
                     break;
                 case CompressorMode::StudioVCA:
@@ -5228,7 +5640,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                             scSignal = linkedSidechain.getSample(channel, i);
                         else
                             scSignal = filteredSidechain.getSample(channel, i);
-                        data[i] = studioFetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), scSignal) * compensationGain;
+                        data[i] = studioFetCompressor->process(data[i], channel, cachedParams[0], cachedParams[1], cachedParams[2], cachedParams[3], static_cast<int>(cachedParams[4]), scSignal, hasExternalSidechain) * compensationGain;
                     }
                     break;
                 case CompressorMode::StudioVCA:
@@ -5335,70 +5747,44 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Combined gain reduction (min of both channels for display)
     float gainReduction = juce::jmin(grLeft, grRight);
 
-    // Apply RMS-based auto-gain if enabled
-    // Uses running RMS average (~200ms window) for stable, perceptually-accurate gain compensation
-    // This compensates for ALL gain changes: compression, input gain, saturation, etc.
-    // This matches the approach used in Logic Pro's compressor and other professional plugins
+    // GR-based auto-gain: invert the compressor's gain reduction for deterministic compensation
+    // Industry-standard approach (FabFilter Pro-C, Waves CLA series)
     {
         float targetAutoGain = 1.0f;
 
         if (autoMakeup)
         {
-            // Calculate output RMS for this block (before auto-gain compensation)
-            float blockOutputRmsSquared = 0.0f;
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                const float* data = buffer.getReadPointer(ch);
-                for (int i = 0; i < numSamples; ++i)
-                    blockOutputRmsSquared += data[i] * data[i];
-            }
-            blockOutputRmsSquared /= static_cast<float>(numSamples * numChannels);
+            // Average GR across channels (negative dB = compression)
+            float avgGrDb = (grLeft + grRight) * 0.5f;
 
-            // Clamp block RMS to prevent numerical issues
-            blockOutputRmsSquared = juce::jlimit(1e-8f, 4.0f, blockOutputRmsSquared);
-
-            // Prime accumulator instantly on mode change for immediate auto-gain response
-            bool justPrimed = false;
-            if (primeRmsAccumulators)
+            // Smooth the GR to avoid pumping (~200ms time constant)
+            if (primeGrAccumulator)
             {
-                outputRmsAccumulator = blockOutputRmsSquared;
-                primeRmsAccumulators = false;  // Clear flag after priming both accumulators
-                justPrimed = true;
+                smoothedGrDb = avgGrDb;
+                primeGrAccumulator = false;
+                // Set gain immediately without smoothing on first block
+                float autoGainDb = -avgGrDb;
+                if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
+                    autoGainDb -= cachedParams[0];  // Compensate for input gain knob
+                autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
+                smoothedAutoMakeupGain.setCurrentAndTargetValue(
+                    juce::Decibels::decibelsToGain(autoGainDb));
             }
             else
             {
-                // Update running RMS accumulator with one-pole smoothing
-                outputRmsAccumulator += rmsCoefficient * (blockOutputRmsSquared - outputRmsAccumulator);
+                smoothedGrDb += grSmoothCoeff * (avgGrDb - smoothedGrDb);
             }
 
-            // Bounds check accumulator to prevent drift
-            outputRmsAccumulator = juce::jlimit(1e-8f, 4.0f, outputRmsAccumulator);
+            // Base compensation: invert the smoothed gain reduction
+            float autoGainDb = -smoothedGrDb;
 
-            // Calculate gain compensation from RMS levels
-            // Both accumulators are in squared (power) domain
-            if (outputRmsAccumulator > 1e-8f && inputRmsAccumulator > 1e-8f)
-            {
-                // Gain = sqrt(inputRMS² / outputRMS²) = inputRMS / outputRMS
-                targetAutoGain = std::sqrt(inputRmsAccumulator / outputRmsAccumulator);
+            // FET/StudioFET: also compensate for the input gain knob
+            // When user turns input down, auto-gain should restore the original level
+            if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
+                autoGainDb -= cachedParams[0];  // cachedParams[0] = fet_input parameter
 
-                // No per-mode loudness compensation — harmonic distortion from analog
-                // modeling is mild (< 1% THD) and doesn't meaningfully change perceived
-                // loudness. Auto-gain should match input level across all modes.
-
-                // Limit compensation range to ±40dB to handle extreme input gain settings
-                // (e.g., FET input at -20dB can create 30+ dB level differences)
-                // This range is needed because:
-                // - FET/VCA input gain ranges from -20dB to +20dB
-                // - Heavy compression can add another 20dB of gain reduction
-                // - Combined effect can require 30-40dB of compensation
-                targetAutoGain = juce::jlimit(0.01f, 100.0f, targetAutoGain);  // -40dB to +40dB
-            }
-
-            // If we just primed, set gain immediately without smoothing
-            if (justPrimed)
-            {
-                smoothedAutoMakeupGain.setCurrentAndTargetValue(targetAutoGain);
-            }
+            autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
+            targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
         }
 
         // Update target and apply smoothed gain sample-by-sample
@@ -5584,7 +5970,11 @@ CompressorMode UniversalCompressor::getCurrentMode() const
 void UniversalCompressor::updateLatencyReport()
 {
     int latency = 0;
-    if (antiAliasing)
+    const auto mode = getCurrentMode();
+
+    // Multiband runs at native rate (no oversampling), so exclude anti-aliasing latency
+    const bool usesOversamplingPath = (mode != CompressorMode::Multiband);
+    if (usesOversamplingPath && antiAliasing)
         latency += antiAliasing->getLatency();
 
     // Compute global lookahead from parameter directly (not from buffer state,
@@ -5599,17 +5989,14 @@ void UniversalCompressor::updateLatencyReport()
     }
 
     // Digital mode has its own internal lookahead delay that must also be reported.
-    // IMPORTANT: The Digital compressor is always prepared at 4x rate, so its actual
-    // delay in base-rate samples depends on the current oversampling factor.
-    if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
+    // The digitalLookaheadMs parameter is in real milliseconds, so convert directly
+    // to base-rate samples regardless of internal oversampling factor.
+    if (mode == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
     {
         auto* digitalLookaheadParam = parameters.getRawParameterValue("digital_lookahead");
         float digitalLookaheadMs = (digitalLookaheadParam != nullptr) ? digitalLookaheadParam->load() : 0.0f;
-        constexpr int maxOsMultiplier = 4;
-        int delay4xSamples = static_cast<int>(std::round((digitalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
-        const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
-                                 : (currentOversamplingFactor == 1) ? 2 : 1;
-        latency += delay4xSamples / actualOsFactor;
+        int digitalLookaheadSamples = static_cast<int>(std::round((digitalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate)));
+        latency += digitalLookaheadSamples;
     }
 
     setLatencySamples(latency);
@@ -5627,63 +6014,12 @@ juce::AudioProcessorParameter* UniversalCompressor::getBypassParameter() const
 
 void UniversalCompressor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
-    // When the HOST bypasses the plugin (Logic Pro's power button, not our internal bypass),
-    // JUCE calls processBlockBypassed() instead of processBlock(). The default JUCE
-    // implementation passes audio through with ZERO delay — but the plugin still reports
-    // its latency via getLatencySamples(). The DAW compensates other tracks by this latency,
-    // so if we don't apply the same delay here, the bypassed bus arrives early → phase issues.
-    //
-    // This is the #1 cause of "phase difference when plugin is disabled on a bus" reports.
-    // NOTE: Logic Pro's "disable" button does NOT call this — it stops rendering entirely
-    // but still applies PDC. That case is a Logic limitation we cannot fix from the plugin.
-
-    const int numChannels = buffer.getNumChannels();
-    const int numSamples = buffer.getNumSamples();
-
-    // 1. Apply global lookahead delay
-    if (lookaheadBuffer && currentSampleRate > 0)
-    {
-        auto* glParam = parameters.getRawParameterValue("global_lookahead");
-        float glMs = (glParam != nullptr) ? glParam->load() : 0.0f;
-        if (glMs > 0.0f)
-        {
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                float* data = buffer.getWritePointer(ch);
-                for (int i = 0; i < numSamples; ++i)
-                    data[i] = lookaheadBuffer->processSample(data[i], ch, glMs);
-            }
-        }
-    }
-
-    // 2. Apply Digital mode internal lookahead delay
-    if (getCurrentMode() == CompressorMode::Digital && digitalCompressor && currentSampleRate > 0)
-    {
-        auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
-        float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
-        if (dlMs > 0.0f)
-        {
-            constexpr int maxOsMultiplier = 4;
-            int delay4xSamples = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
-            const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
-                                     : (currentOversamplingFactor == 1) ? 2 : 1;
-            int delaySamples = delay4xSamples / actualOsFactor;
-            for (int ch = 0; ch < numChannels; ++ch)
-            {
-                float* data = buffer.getWritePointer(ch);
-                for (int i = 0; i < numSamples; ++i)
-                    data[i] = digitalCompressor->processDelayOnly(data[i], ch, delaySamples);
-            }
-        }
-    }
-
-    // 3. Apply oversampling round-trip to maintain FIR filter latency
-    if (antiAliasing && antiAliasing->isReady() && !antiAliasing->isOversamplingOff())
-    {
-        juce::dsp::AudioBlock<float> block(buffer);
-        antiAliasing->processUp(block);
-        antiAliasing->processDown(block);
-    }
+    // Host bypass (fallback — with getBypassParameter() set, this should rarely be called).
+    // Report 0 latency and pass audio through undelayed, same as our internal bypass.
+    if (getLatencySamples() != 0)
+        setLatencySamples(0);
+    // Audio passes through unchanged — JUCE default clears output, we just leave input as-is.
+    juce::ignoreUnused(buffer);
 }
 
 double UniversalCompressor::getTailLengthSeconds() const
@@ -5741,12 +6077,11 @@ void UniversalCompressor::setStateInformation(const void* data, int sizeInBytes)
 
 void UniversalCompressor::resetDSPState()
 {
-    // Reset smoothed auto-makeup gain and RMS accumulators to neutral
+    // Reset smoothed auto-makeup gain and GR accumulator to neutral
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
-    inputRmsAccumulator = 0.0f;
-    outputRmsAccumulator = 0.0f;
+    smoothedGrDb = 0.0f;
     lastCompressorMode = -1;  // Force mode change detection on next processBlock
-    primeRmsAccumulators = true;  // Prime accumulators on first block after reset
+    primeGrAccumulator = true;  // Prime accumulator on first block after reset
 
     // Reset dry/wet mixer state (for oversampling latency compensation)
     dryWetMixer.reset();

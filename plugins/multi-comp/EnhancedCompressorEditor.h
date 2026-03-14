@@ -221,14 +221,15 @@ private:
     // Background texture
     juce::Image backgroundTexture;
 
-    // Smoothed level readouts for better readability
-    float smoothedInputLevel = -60.0f;
-    float smoothedOutputLevel = -60.0f;
-    float displayedInputLevel = -60.0f;   // Level shown in text (updated less frequently)
-    float displayedOutputLevel = -60.0f;  // Level shown in text (updated less frequently)
-    int levelDisplayCounter = 0;          // Counter to throttle text updates
-    const int levelDisplayInterval = 10;  // Update text every N frames (~3x per second at 30Hz)
-    const float levelSmoothingFactor = 0.9f;  // Smoothing for internal tracking
+    // Peak-hold meter labels (Logic Pro style): capture max between display updates,
+    // hold briefly, then decay ~6dB/sec for readable but accurate readouts
+    float peakInputLevel = -60.0f;        // Max peak captured between display refreshes
+    float peakOutputLevel = -60.0f;
+    float displayedInputLevel = -60.0f;   // Currently shown value (decays slowly)
+    float displayedOutputLevel = -60.0f;
+    int levelDisplayCounter = 0;
+    const int levelDisplayInterval = 6;   // Update text every 6 frames (~5Hz at 30Hz timer)
+    const float levelDecayPerUpdate = 1.2f;  // dB to decay per display update (~6dB/sec)
     
     // Helper methods
     void setupOptoPanel();

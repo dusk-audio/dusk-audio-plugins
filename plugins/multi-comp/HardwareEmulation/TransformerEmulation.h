@@ -40,6 +40,7 @@ public:
             hfFilterState[ch] = 0.0f;
             lastSample[ch] = 0.0f;
             hfEstimate[ch] = 0.0f;
+            hysteresisState[ch] = 0.0f;
         }
     }
     void setProfile(const TransformerProfile& newProfile)
@@ -78,6 +79,15 @@ public:
 
         // 4. Blend based on saturation amount
         float output = input + (saturated - input) * profile.saturationAmount;
+
+        // 4b. Magnetic hysteresis: slight memory effect from core magnetization
+        if (profile.hysteresisAmount > 0.0f)
+        {
+            float hystDelta = profile.hysteresisAmount * hysteresisState[channel];
+            output += hystDelta;
+            hysteresisState[channel] = hysteresisState[channel] * 0.95f
+                                     + (output - input) * 0.05f;
+        }
 
         // 5. Add harmonics based on profile
         output = addHarmonics(output, profile.harmonics);
@@ -128,6 +138,9 @@ private:
     float lastSample[2] = {0.0f, 0.0f};
     float hfEstimate[2] = {0.0f, 0.0f};
 
+    // Magnetic hysteresis state
+    float hysteresisState[2] = {0.0f, 0.0f};
+
     void updateDCBlocker(float cutoffFreq)
     {
         // Minimum 0.5Hz to always block true DC, default 10Hz
@@ -144,9 +157,9 @@ private:
             return;
         }
         hfRolloffEnabled = true;
-        // Simple one-pole lowpass coefficient
+        // One-pole lowpass coefficient (correct exponential form)
         float w = 6.283185f * cutoffFreq / static_cast<float>(sampleRate);
-        hfRolloffCoeff = w / (w + 1.0f);
+        hfRolloffCoeff = 1.0f - std::exp(-w);
     }
 
     float estimateHighFrequencyContent(float input, int channel)

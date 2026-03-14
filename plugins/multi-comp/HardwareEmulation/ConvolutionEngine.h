@@ -61,7 +61,8 @@ public:
         switch (type)
         {
             case TransformerType::Opto:
-                generateTransformerIR(80.0f, 0.5f, 16000.0f, -1.5f, 64);
+                // UTC transformer: 80Hz warmth, gentle HF rolloff (real LA-2A rolls off top end)
+                generateTransformerIR(80.0f, 0.5f, 16000.0f, -1.0f, 64);
                 break;
 
             case TransformerType::FET:
@@ -69,7 +70,8 @@ public:
                 break;
 
             case TransformerType::Console_Bus:
-                generateTransformerIR(2500.0f, 0.4f, 20000.0f, -0.5f, 32);
+                // SSL G-Bus: 2.5kHz mid punch, flat to 20kHz (real SSL is transparent)
+                generateTransformerIR(2500.0f, 0.4f, 30000.0f, -0.3f, 32);
                 break;
 
             case TransformerType::Generic:
@@ -255,7 +257,7 @@ private:
         // One-pole lowpass applied iteratively for smooth rolloff
         // Each pass adds ~0.75dB additional rolloff at cutoff frequency
         float w = 2.0f * 3.14159f * freq / static_cast<float>(sampleRate);
-        float coeff = w / (w + 1.0f);
+        float coeff = 1.0f - std::exp(-w);  // Correct one-pole coefficient (w/(w+1) is inaccurate near Nyquist)
 
         // Number of filter passes based on rolloff steepness
         // -0.5dB -> 1 pass, -1.0dB -> 1 pass, -1.5dB -> 2 passes
@@ -306,6 +308,11 @@ public:
             left.processBlock(channelData[0], numSamples);
         if (numChannels >= 2)
             right.processBlock(channelData[1], numSamples);
+    }
+
+    float processSample(float input, int channel)
+    {
+        return (channel == 0) ? left.processSample(input) : right.processSample(input);
     }
 
     int getLatency() const { return left.getLatency(); }
