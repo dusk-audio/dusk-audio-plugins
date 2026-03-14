@@ -175,7 +175,7 @@ def _schroeder_rt60(signal, sr, fit_range_db=(-5, -35)):
     ss_tot = np.sum((values - np.mean(values)) ** 2)
     r_squared = 1.0 - ss_res / max(ss_tot, 1e-20)
 
-    if r_squared < 0.95:
+    if r_squared < 0.90:
         return None  # Poor fit (double-slope, non-exponential, etc.)
 
     # RT60 = time to decay 60 dB
@@ -892,6 +892,203 @@ def measure_rt60_third_octave(ir, sr):
         dict mapping band name -> RT60 in seconds (None if unmeasurable)
     """
     return measure_rt60_per_band(ir, sr, bands=THIRD_OCTAVE_BANDS)
+
+
+# ---------------------------------------------------------------------------
+# 16. Spectral envelope matching (steady-state tail shape comparison)
+# ---------------------------------------------------------------------------
+SPECTRAL_ENVELOPE_BANDS = {k: v for k, v in THIRD_OCTAVE_BANDS.items() if v >= 200}
+
+
+def spectral_envelope_match(ir_a, ir_b, sr, start_ms=200, end_ms=2000):
+    """Compare steady-state spectral shape of two reverb tails.
+
+    Extracts the tail window, computes energy per 1/3-octave band (200 Hz+),
+    level-normalizes (shape comparison, not level), and reports deviation.
+
+    Bands below 200 Hz are excluded — bandpass filters are unreliable there
+    and sub-bass energy is dominated by room modes, not algorithm character.
+
+    Returns:
+        dict with "band_deviations", "max_deviation", "mean_deviation"
+    """
+    start_samp = int(sr * start_ms / 1000)
+    end_samp = min(int(sr * end_ms / 1000), len(ir_a), len(ir_b))
+
+    if end_samp - start_samp < int(sr * 0.05):
+        return {"band_deviations": {}, "max_deviation": 0.0, "mean_deviation": 0.0}
+
+    tail_a = ir_a[start_samp:end_samp].astype(np.float64)
+    tail_b = ir_b[start_samp:end_samp].astype(np.float64)
+
+    # Energy per 1/3-octave band (200 Hz and above)
+    bands_a = {}
+    bands_b = {}
+    for name, fc in SPECTRAL_ENVELOPE_BANDS.items():
+        fa = _third_octave_bandpass(tail_a.astype(np.float32), sr, fc)
+        fb = _third_octave_bandpass(tail_b.astype(np.float32), sr, fc)
+        bands_a[name] = 10.0 * np.log10(max(np.mean(fa.astype(np.float64) ** 2), 1e-20))
+        bands_b[name] = 10.0 * np.log10(max(np.mean(fb.astype(np.float64) ** 2), 1e-20))
+
+    # Level-normalize: subtract overall RMS so we compare shape only
+    vals_a = np.array(list(bands_a.values()))
+    vals_b = np.array(list(bands_b.values()))
+    # Use median as robust center (avoids outlier bands skewing normalization)
+    norm_a = vals_a - np.median(vals_a)
+    norm_b = vals_b - np.median(vals_b)
+
+    deviations = {}
+    for i, name in enumerate(SPECTRAL_ENVELOPE_BANDS.keys()):
+        deviations[name] = float(norm_a[i] - norm_b[i])
+
+    dev_vals = list(deviations.values())
+    return {
+        "band_deviations": deviations,
+        "max_deviation": float(max(abs(d) for d in dev_vals)) if dev_vals else 0.0,
+        "mean_deviation": float(np.mean([abs(d) for d in dev_vals])) if dev_vals else 0.0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 17. Echo density buildup time
+# ---------------------------------------------------------------------------
+def echo_density_buildup(ir, sr, target_kurtosis=1.0, window_ms=50, hop_ms=25):
+    """Measure time for reverb to reach diffuse noise (low kurtosis).
+
+    Uses normalized_echo_density (Fisher kurtosis where Gaussian = 0).
+    target_kurtosis=1.0 means "nearly diffuse" (slightly peaked).
+
+    Returns:
+        dict with density_time_ms, kurtosis at key time points
+    """
+    times, kurt = normalized_echo_density(ir, sr, window_ms, hop_ms)
+
+    if len(times) == 0:
+        return {"density_time_ms": None, "kurtosis_at_50ms": None,
+                "kurtosis_at_100ms": None, "kurtosis_at_200ms": None}
+
+    # Find first time kurtosis drops below target
+    density_time = None
+    for t, k in zip(times, kurt):
+        if k <= target_kurtosis:
+            density_time = float(t * 1000)  # ms
+            break
+
+    # Kurtosis at key time points
+    def kurt_at_ms(ms):
+        target_t = ms / 1000.0
+        idx = np.argmin(np.abs(times - target_t))
+        if abs(times[idx] - target_t) < 0.05:  # within 50ms tolerance
+            return float(kurt[idx])
+        return None
+
+    return {
+        "density_time_ms": density_time,
+        "kurtosis_at_50ms": kurt_at_ms(50),
+        "kurtosis_at_100ms": kurt_at_ms(100),
+        "kurtosis_at_200ms": kurt_at_ms(200),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 18. Modulation character (pitch wobble and spectral shimmer)
+# ---------------------------------------------------------------------------
+def modulation_character(ir, sr, window_ms=50, hop_ms=25):
+    """Measure modulation artifacts via ZCR variance and spectral centroid variance.
+
+    Returns:
+        dict with zcr_variance, centroid_variance, centroid_mean_hz
+    """
+    # ZCR variance from existing function
+    pv = pitch_variance(ir, sr, window_ms=window_ms, hop_ms=hop_ms)
+    zcr_var = pv["zcr_variance_ratio"]
+
+    # Spectral centroid variance over time
+    win = int(sr * window_ms / 1000)
+    hop = int(sr * hop_ms / 1000)
+    start_samp = int(sr * 0.2)  # Start at 200ms (skip early reflections)
+
+    centroids = []
+    for pos in range(start_samp, len(ir) - win, hop):
+        chunk = ir[pos:pos + win].astype(np.float64)
+        if rms_db(chunk.astype(np.float32)) < -60:
+            break
+
+        spec = np.abs(np.fft.rfft(chunk * np.hanning(win)))
+        freqs = np.fft.rfftfreq(win, 1.0 / sr)
+
+        total_energy = np.sum(spec)
+        if total_energy > 1e-10:
+            centroid = float(np.sum(freqs * spec) / total_energy)
+            centroids.append(centroid)
+
+    if len(centroids) < 3:
+        return {"zcr_variance": zcr_var, "centroid_variance": 0.0, "centroid_mean_hz": 0.0}
+
+    centroids = np.array(centroids)
+    centroid_mean = float(np.mean(centroids))
+    centroid_var = float(np.std(centroids) / centroid_mean) if centroid_mean > 0 else 0.0
+
+    return {
+        "zcr_variance": zcr_var,
+        "centroid_variance": centroid_var,
+        "centroid_mean_hz": centroid_mean,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 19. EDC shape match (full decay curve comparison)
+# ---------------------------------------------------------------------------
+def edc_shape_match(ir_a, ir_b, sr, sample_interval_ms=100):
+    """Compare Energy Decay Curves of two IRs.
+
+    Samples both EDCs at regular intervals and computes deviation.
+    Truncates where either EDC drops below -50 dB.
+
+    Returns:
+        dict with max_deviation, rms_deviation, deviations_at (time->dB)
+    """
+    time_a, edc_a = compute_edc(ir_a, sr)
+    time_b, edc_b = compute_edc(ir_b, sr)
+
+    if len(time_a) == 0 or len(time_b) == 0:
+        return {"max_deviation": 0.0, "rms_deviation": 0.0, "deviations_at": {}}
+
+    # Sample at regular intervals
+    max_time = min(time_a[-1], time_b[-1])
+    interval_s = sample_interval_ms / 1000.0
+    sample_times = np.arange(0, max_time, interval_s)
+
+    deviations = {}
+    dev_values = []
+
+    for t in sample_times:
+        idx_a = int(t * sr)
+        idx_b = int(t * sr)
+
+        if idx_a >= len(edc_a) or idx_b >= len(edc_b):
+            break
+
+        val_a = float(edc_a[idx_a])
+        val_b = float(edc_b[idx_b])
+
+        # Stop at noise floor
+        if val_a < -50 or val_b < -50:
+            break
+
+        dev = val_a - val_b
+        deviations[f"{t:.1f}"] = float(dev)
+        dev_values.append(dev)
+
+    if not dev_values:
+        return {"max_deviation": 0.0, "rms_deviation": 0.0, "deviations_at": {}}
+
+    dev_arr = np.array(dev_values)
+    return {
+        "max_deviation": float(np.max(np.abs(dev_arr))),
+        "rms_deviation": float(np.sqrt(np.mean(dev_arr ** 2))),
+        "deviations_at": deviations,
+    }
 
 
 # ---------------------------------------------------------------------------

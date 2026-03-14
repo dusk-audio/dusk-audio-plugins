@@ -415,7 +415,7 @@ def _build_priority_matrix(active, per_algo, mod_unreliable, total):
                 })
 
     # Cross-cutting: gate mode
-    gate_count = 3  # known gate presets
+    gate_count = len(GATE_PRESETS)
     items.append({
         "action": f"Gate mode DSP: implement for {gate_count} presets",
         "impact": gate_count,

@@ -37,10 +37,12 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     widthSmoother_.setSmoothingTime (sampleRate, kSmoothTimeMs);
     loCutSmoother_.setSmoothingTime (sampleRate, kSmoothTimeMs);
     hiCutSmoother_.setSmoothingTime (sampleRate, kSmoothTimeMs);
+    outputGainSmoother_.setSmoothingTime (sampleRate, kSmoothTimeMs);
 
     mixSmoother_.reset (1.0f);
     erLevelSmoother_.reset (0.5f);
     widthSmoother_.reset (1.0f);
+    outputGainSmoother_.reset (config_->outputGain);
     loCutSmoother_.reset (loCutHz_);
     hiCutSmoother_.reset (hiCutHz_);
 
@@ -60,6 +62,12 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     hiCutFilter_.reset();
     updateLoCutCoeffs();
     updateHiCutCoeffs();
+
+    // Output anti-alias LP at 14kHz
+    outputLPStage1_.reset();
+    outputLPStage2_.reset();
+    outputLPStage3_.reset();
+    updateOutputLPCoeffs();
 
     // Reset freeze
     frozen_ = false;
@@ -131,7 +139,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     }
 
     // ER→FDN crossfeed: feed early reflections into the late reverb input
-    // so the FDN tail "grows out of" the ER pattern (ValhallaRoom "Early Send")
+    // so the FDN tail "grows out of" the ER pattern
     if (erCrossfeed_ > 0.0f && ! frozen_)
     {
         for (int i = 0; i < numSamples; ++i)
@@ -178,14 +186,49 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
 
     // Mix ER into late reverb BEFORE output diffusion so the allpass network
     // smears discrete ER taps into a smooth buildup (prevents slapback artifacts).
+    // Then apply per-algorithm output gain to compensate for internal gain differences.
     for (int i = 0; i < numSamples; ++i)
     {
         auto si = static_cast<size_t> (i);
         float er = erLevelSmoother_.next();
         float lateGain = lateGainScale_ * decayGainComp_;
-        scratchL_[si] = scratchL_[si] * lateGain + erOutL_[si] * er;
-        scratchR_[si] = scratchR_[si] * lateGain + erOutR_[si] * er;
+        float outGain = outputGainSmoother_.next();
+        scratchL_[si] = std::clamp ((scratchL_[si] * lateGain + erOutL_[si] * er) * outGain, -16.0f, 16.0f);
+        scratchR_[si] = std::clamp ((scratchR_[si] * lateGain + erOutR_[si] * er) * outGain, -16.0f, 16.0f);
     }
+
+    // Output EQ: low shelf at 250Hz + mid parametric + high shelf
+    if (lowShelfEnabled_ || highShelfEnabled_ || midEQEnabled_)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            if (lowShelfEnabled_)
+            {
+                scratchL_[si] = lowShelfFilter_.processL (scratchL_[si]);
+                scratchR_[si] = lowShelfFilter_.processR (scratchR_[si]);
+            }
+            if (midEQEnabled_)
+            {
+                scratchL_[si] = midEQFilter_.processL (scratchL_[si]);
+                scratchR_[si] = midEQFilter_.processR (scratchR_[si]);
+            }
+            if (highShelfEnabled_)
+            {
+                scratchL_[si] = highShelfFilter_.processL (scratchL_[si]);
+                scratchR_[si] = highShelfFilter_.processR (scratchR_[si]);
+            }
+        }
+    }
+
+    // Output anti-alias LP: BYPASSED — 6th-order Butterworth at 14kHz was killing all air above 12kHz.
+    // The 16kHz aliasing spike will be addressed differently later.
+    // for (int i = 0; i < numSamples; ++i)
+    // {
+    //     auto si = static_cast<size_t> (i);
+    //     scratchL_[si] = outputLPStage3_.processL (outputLPStage2_.processL (outputLPStage1_.processL (scratchL_[si])));
+    //     scratchR_[si] = outputLPStage3_.processR (outputLPStage2_.processR (outputLPStage1_.processR (scratchR_[si])));
+    // }
 
     outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
 
@@ -332,9 +375,18 @@ void DuskVerbEngine::applyAlgorithm (int index)
     diffuser_.setMaxCoefficients (config_->inputDiffMaxCoeff12,
                                   config_->inputDiffMaxCoeff34);
 
-    // Set ER time scale and gain distribution
+    // Set ER time scale, gain distribution, brightness, and stereo decorrelation
     er_.setTimeScale (config_->erTimeScale);
     er_.setGainExponent (config_->erGainExponent);
+    er_.setAirAbsorptionCeiling (config_->erAirAbsorptionCeilingHz);
+    er_.setAirAbsorptionFloor (config_->erAirAbsorptionFloorHz);
+    er_.setDecorrCoeff (config_->erDecorrCoeff);
+
+    // Load custom mono-panned ER tap table if provided by this algorithm
+    if (config_->numCustomERTaps > 0)
+        er_.setCustomTaps (config_->customERTaps, config_->numCustomERTaps);
+    else
+        er_.setCustomTaps (nullptr, 0); // Revert to generated mode
 
     // Update bandwidth filter
     inputBwCoeff_ = std::exp (-6.283185307179586f * config_->bandwidthHz
@@ -344,19 +396,41 @@ void DuskVerbEngine::applyAlgorithm (int index)
     erLevelScale_ = config_->erLevelScale;
     lateGainScale_ = config_->lateGainScale;
     erCrossfeed_ = config_->erCrossfeed;
+    outputGainSmoother_.setTarget (config_->outputGain);
 
     // FDN-specific config (only applies when FDN is active, but set anyway)
     fdn_.setInlineDiffusion (config_->inlineDiffusionCoeff);
     fdn_.setModDepthFloor (config_->modDepthFloor);
+    fdn_.setPerChannelLP (config_->perChannelLPStrength, config_->perChannelLPExponent);
+    fdn_.setPerChannelShelf (config_->perChannelShelfStrength);
     fdn_.setFeedbackLP (config_->feedbackLPHz);
     fdn_.setFeedbackLP4thOrder (config_->feedbackLP4thOrder);
+    fdn_.setFeedbackShelf (config_->feedbackShelfHz, config_->feedbackShelfDB, config_->feedbackShelfQ);
     fdn_.setNoiseModDepth (config_->noiseModDepth);
     fdn_.setHadamardPerturbation (config_->hadamardPerturbation);
+    fdn_.setUseHouseholder (config_->useHouseholderFeedback);
+    fdn_.setUseWeightedGains (config_->useWeightedGains);
+    fdn_.setHighCrossoverFreq (config_->highCrossoverHz);
+    fdn_.setAirTrebleMultiply (config_->airDampingScale);
     fdn_.setStructuralHFDamping (config_->structuralHFDampingHz, lastTrebleMult_);
     fdn_.setStructuralLFDamping (config_->structuralLFDampingHz);
     setGateParams (config_->gateHoldMs, config_->gateReleaseMs);
     fdn_.setDualSlope (config_->dualSlopeRatio, config_->dualSlopeFastCount,
                        config_->dualSlopeFastGain);
+    fdn_.setStereoCoupling (config_->stereoCoupling);
+
+    // Output EQ (low shelf at 250Hz + mid parametric + high shelf)
+    lowShelfEnabled_ = (config_->outputLowShelfDB != 0.0f);
+    highShelfEnabled_ = (config_->outputHighShelfDB != 0.0f);
+    midEQEnabled_ = (config_->outputMidEQHz > 0.0f && config_->outputMidEQDB != 0.0f);
+    if (lowShelfEnabled_ || highShelfEnabled_ || midEQEnabled_)
+        updateOutputEQCoeffs();
+    if (!lowShelfEnabled_)
+        lowShelfFilter_.reset();
+    if (!highShelfEnabled_)
+        highShelfFilter_.reset();
+    if (!midEQEnabled_)
+        midEQFilter_.reset();
 
     // DattorroTank size range
     dattorroTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
@@ -381,7 +455,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     dattorroTank_.setDecayTime (scaledDecay);
 
     // Decay-dependent output compensation: boost at short decay times to match
-    // VintageVerb's higher energy density at low feedback coefficients.
+    // reference reverb's higher energy density at low feedback coefficients.
     // Linear ramp: full boost at decayTime=0, zero at knee.
     if (config_->shortDecayBoostDB > 0.0f && config_->shortDecayBoostKnee > 0.0f)
     {
@@ -407,7 +481,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     lastTrebleMult_ = mult;
     // Nonlinear treble scaling: squared curve interpolates between dark-end
     // (trebleMultScale) and bright-end (trebleMultScaleMax) targets.
-    // At treble=1.0: scaledTreble = trebleMultScaleMax (flat/bright, like VV HighShelf=0)
+    // At treble=1.0: scaledTreble = trebleMultScaleMax (flat/bright, as if high shelf is fully open)
     // At treble=0.0: scaledTreble = trebleMultScale (steep HF rolloff)
     float trebleCurve = mult * mult;
     float scaledTreble = config_->trebleMultScale * (1.0f - trebleCurve)
@@ -555,3 +629,92 @@ void DuskVerbEngine::updateHiCutCoeffs()
     hiCutFilter_.a1 = (-2.0f * cs) / a0;
     hiCutFilter_.a2 = (1.0f - alpha) / a0;
 }
+
+// Shelf biquad coefficients: Audio EQ Cookbook (Robert Bristow-Johnson), Q=0.707.
+static void computeShelfCoeffs (float& b0, float& b1, float& b2,
+                                 float& a1, float& a2,
+                                 float sr, float freqHz, float gainDB, bool isHighShelf)
+{
+    float A = std::pow (10.0f, gainDB / 40.0f);
+    float omega = 6.283185307179586f * freqHz / sr;
+    float sn = std::sin (omega);
+    float cs = std::cos (omega);
+    float alpha = sn / (2.0f * 0.707f);
+    float sqA = 2.0f * std::sqrt (A) * alpha;
+
+    if (isHighShelf)
+    {
+        float a0 = (A + 1.0f) - (A - 1.0f) * cs + sqA;
+        b0 = (A * ((A + 1.0f) + (A - 1.0f) * cs + sqA)) / a0;
+        b1 = (-2.0f * A * ((A - 1.0f) + (A + 1.0f) * cs)) / a0;
+        b2 = (A * ((A + 1.0f) + (A - 1.0f) * cs - sqA)) / a0;
+        a1 = (2.0f * ((A - 1.0f) - (A + 1.0f) * cs)) / a0;
+        a2 = ((A + 1.0f) - (A - 1.0f) * cs - sqA) / a0;
+    }
+    else
+    {
+        float a0 = (A + 1.0f) + (A - 1.0f) * cs + sqA;
+        b0 = (A * ((A + 1.0f) - (A - 1.0f) * cs + sqA)) / a0;
+        b1 = (2.0f * A * ((A - 1.0f) - (A + 1.0f) * cs)) / a0;
+        b2 = (A * ((A + 1.0f) - (A - 1.0f) * cs - sqA)) / a0;
+        a1 = (-2.0f * ((A - 1.0f) + (A + 1.0f) * cs)) / a0;
+        a2 = ((A + 1.0f) + (A - 1.0f) * cs - sqA) / a0;
+    }
+}
+
+void DuskVerbEngine::updateOutputEQCoeffs()
+{
+    float sr = static_cast<float> (sampleRate_);
+    if (lowShelfEnabled_)
+        computeShelfCoeffs (lowShelfFilter_.b0, lowShelfFilter_.b1, lowShelfFilter_.b2,
+                            lowShelfFilter_.a1, lowShelfFilter_.a2,
+                            sr, 250.0f, config_->outputLowShelfDB, false);
+    if (highShelfEnabled_)
+        computeShelfCoeffs (highShelfFilter_.b0, highShelfFilter_.b1, highShelfFilter_.b2,
+                            highShelfFilter_.a1, highShelfFilter_.a2,
+                            sr, config_->outputHighShelfHz, config_->outputHighShelfDB, true);
+    if (midEQEnabled_)
+    {
+        // Peaking EQ (Audio EQ Cookbook)
+        float A = std::pow (10.0f, config_->outputMidEQDB / 40.0f);
+        float omega = 6.283185307179586f * config_->outputMidEQHz / sr;
+        float sn = std::sin (omega);
+        float cs = std::cos (omega);
+        float alpha = sn / (2.0f * config_->outputMidEQQ);
+
+        float a0 = 1.0f + alpha / A;
+        midEQFilter_.b0 = (1.0f + alpha * A) / a0;
+        midEQFilter_.b1 = (-2.0f * cs) / a0;
+        midEQFilter_.b2 = (1.0f - alpha * A) / a0;
+        midEQFilter_.a1 = (-2.0f * cs) / a0;
+        midEQFilter_.a2 = (1.0f - alpha / A) / a0;
+    }
+}
+
+// 6th-order Butterworth LP at 14kHz: three cascaded 2nd-order sections (-36dB/oct).
+// All sections use standard Butterworth LP coefficients (Q=0.707).
+void DuskVerbEngine::updateOutputLPCoeffs()
+{
+    float sr = static_cast<float> (sampleRate_);
+    float freq = 14000.0f;
+    float omega = 6.283185307179586f * freq / sr;
+    float sn = std::sin (omega);
+    float cs = std::cos (omega);
+    float alpha = sn / 1.4142135623730951f; // Q = 0.707 (Butterworth)
+
+    float a0 = 1.0f + alpha;
+    float b0 = ((1.0f - cs) * 0.5f) / a0;
+    float b1 = (1.0f - cs) / a0;
+    float b2 = ((1.0f - cs) * 0.5f) / a0;
+    float a1 = (-2.0f * cs) / a0;
+    float a2 = (1.0f - alpha) / a0;
+
+    // All three stages use identical coefficients
+    outputLPStage1_.b0 = b0; outputLPStage1_.b1 = b1; outputLPStage1_.b2 = b2;
+    outputLPStage1_.a1 = a1; outputLPStage1_.a2 = a2;
+    outputLPStage2_.b0 = b0; outputLPStage2_.b1 = b1; outputLPStage2_.b2 = b2;
+    outputLPStage2_.a1 = a1; outputLPStage2_.a2 = a2;
+    outputLPStage3_.b0 = b0; outputLPStage3_.b1 = b1; outputLPStage3_.b2 = b2;
+    outputLPStage3_.a1 = a1; outputLPStage3_.a2 = a2;
+}
+

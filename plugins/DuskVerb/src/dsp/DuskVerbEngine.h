@@ -96,6 +96,7 @@ private:
     float lateGainScale_ = 1.0f;
     float decayGainComp_ = 1.0f; // Decay-dependent output compensation (short-decay boost)
     float erCrossfeed_ = 0.0f;
+    OnePoleSmoother outputGainSmoother_; // Per-algorithm output gain (smoothed to avoid clicks)
 
     float decayTime_ = 2.5f; // Cached for decay-linked output diffusion
 
@@ -149,6 +150,22 @@ private:
     float hiCutHz_ = 20000.0f;
     void updateLoCutCoeffs();
     void updateHiCutCoeffs();
+
+    // Per-algorithm output EQ: low shelf at 250Hz + mid parametric + high shelf.
+    Biquad lowShelfFilter_;
+    Biquad highShelfFilter_;
+    Biquad midEQFilter_;
+    bool lowShelfEnabled_ = false;
+    bool highShelfEnabled_ = false;
+    bool midEQEnabled_ = false;
+    void updateOutputEQCoeffs();
+
+    // Output anti-alias LP: 6th-order Butterworth at 14kHz (three cascaded 2nd-order sections).
+    // Kills FDN aliasing spike at 16kHz (-36dB/oct rolloff). Applied universally after shelf EQs.
+    Biquad outputLPStage1_;
+    Biquad outputLPStage2_;
+    Biquad outputLPStage3_;
+    void updateOutputLPCoeffs();
 
     // Freeze mode
     bool frozen_ = false;

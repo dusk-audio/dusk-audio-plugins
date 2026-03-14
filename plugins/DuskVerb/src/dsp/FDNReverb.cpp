@@ -85,6 +85,41 @@ void hadamardInPlace8 (float* data)
     }
 }
 
+// In-place Householder reflection for N=16: H = I - (2/N) * ones * ones^T.
+// Provides moderate inter-channel mixing (each output = input - mean),
+// avoiding the eigentone clustering that maximum-mixing Hadamard causes.
+// O(N) complexity: one sum + N subtracts. Energy-preserving (unitary matrix).
+void householderInPlace16 (float* data)
+{
+    constexpr int n = 16;
+    constexpr float kScale = 2.0f / static_cast<float> (n); // 0.125
+
+    float sum = 0.0f;
+    for (int i = 0; i < n; ++i)
+        sum += data[i];
+
+    sum *= kScale;
+
+    for (int i = 0; i < n; ++i)
+        data[i] -= sum;
+}
+
+// In-place Householder reflection for N=8 (stereo split mode).
+void householderInPlace8 (float* data)
+{
+    constexpr int n = 8;
+    constexpr float kScale = 2.0f / static_cast<float> (n); // 0.25
+
+    float sum = 0.0f;
+    for (int i = 0; i < n; ++i)
+        sum += data[i];
+
+    sum *= kScale;
+
+    for (int i = 0; i < n; ++i)
+        data[i] -= sum;
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -156,19 +191,29 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP3_[i].mask = apBufSize - 1;
     }
 
-    // Reset feedback lowpass biquad state (both sections for 4th-order capability)
+    // Reset feedback lowpass and shelf biquad state
     std::memset (fbLPZ1_, 0, sizeof (fbLPZ1_));
     std::memset (fbLPZ2_, 0, sizeof (fbLPZ2_));
     std::memset (fbLPZ3_, 0, sizeof (fbLPZ3_));
     std::memset (fbLPZ4_, 0, sizeof (fbLPZ4_));
+    std::memset (fbShelfZ1_, 0, sizeof (fbShelfZ1_));
+    std::memset (fbShelfZ2_, 0, sizeof (fbShelfZ2_));
 
-    // Evenly-spaced initial LFO phases
-    for (int i = 0; i < N; ++i)
-        lfoPhase_[i] = kTwoPi * static_cast<float> (i) / static_cast<float> (N);
+    // Randomize LFO starting phases so successive IR captures see different
+    // modulation state (like VV's stochastic modulation). The evenly-spaced
+    // offsets between channels are preserved; only the base phase is random.
+    {
+        std::random_device rd;
+        float basePhase = std::uniform_real_distribution<float> (0.0f, kTwoPi) (rd);
+        for (int i = 0; i < N; ++i)
+            lfoPhase_[i] = std::fmod (basePhase + kTwoPi * static_cast<float> (i)
+                                                         / static_cast<float> (N), kTwoPi);
 
-    // Seed per-channel PRNG with coprime offsets for LFO drift
-    for (int i = 0; i < N; ++i)
-        lfoPRNG_[i] = static_cast<uint32_t> (i * 1847 + 2053);
+        // Random PRNG seeds so drift pattern varies per prepare() call
+        uint32_t baseSeed = rd();
+        for (int i = 0; i < N; ++i)
+            lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
+    }
 
     updateModDepth();
     updateLFORates();
@@ -207,7 +252,7 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
             delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
 
-            // Advance LFO with Lexicon-style "Wander" drift.
+            // Advance LFO with "Wander" drift (classic reverb technique).
             // Adds ±8% random perturbation to the phase increment each sample
             // so the modulation never exactly repeats — organic, not mechanical.
             float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
@@ -242,7 +287,63 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
         // --- 2) Feedback mixing ---
         float feedback[N];
-        if (usePerturbedMatrix_)
+        if (useHouseholder_)
+        {
+            // Householder reflection: H = I - (2/N) * ones * ones^T.
+            // Moderate mixing avoids eigentone clustering (better for plates).
+            std::memcpy (feedback, delayOut, sizeof (feedback));
+            if (stereoSplitEnabled_ && dualSlopeFastCount_ == 0)
+            {
+                householderInPlace8 (feedback);
+                householderInPlace8 (feedback + 8);
+                if (stereoCoupling_ > 0.0f)
+                {
+                    float sinC = stereoCoupling_;
+                    float cosC = std::sqrt (1.0f - sinC * sinC);
+                    for (int ch = 0; ch < 8; ++ch)
+                    {
+                        float l = feedback[ch];
+                        float r = feedback[ch + 8];
+                        feedback[ch]     =  l * cosC + r * sinC;
+                        feedback[ch + 8] = -l * sinC + r * cosC;
+                    }
+                }
+            }
+            else if (dualSlopeFastCount_ == 8)
+            {
+                householderInPlace8 (feedback);
+                householderInPlace8 (feedback + 8);
+            }
+            else
+            {
+                householderInPlace16 (feedback);
+            }
+        }
+        else if (stereoSplitEnabled_ && ! usePerturbedMatrix_ && dualSlopeFastCount_ == 0)
+        {
+            // Stereo split: two independent 8×8 Hadamards for L (0-7) and R (8-15) groups.
+            // Each group maintains its own spatial identity with controlled cross-coupling.
+            std::memcpy (feedback, delayOut, sizeof (feedback));
+            hadamardInPlace8 (feedback);      // L group: channels 0-7
+            hadamardInPlace8 (feedback + 8);  // R group: channels 8-15
+
+            // Rotation-based cross-coupling: orthogonal matrix guarantees
+            // |L'|²+|R'|² = |L|²+|R|² regardless of signal correlation.
+            // stereoCoupling_ = sin(θ), so L→R leakage = 20·log10(c) dB.
+            if (stereoCoupling_ > 0.0f)
+            {
+                float sinC = stereoCoupling_;
+                float cosC = std::sqrt (1.0f - sinC * sinC);
+                for (int ch = 0; ch < 8; ++ch)
+                {
+                    float l = feedback[ch];
+                    float r = feedback[ch + 8];
+                    feedback[ch]     =  l * cosC + r * sinC;
+                    feedback[ch + 8] = -l * sinC + r * cosC;
+                }
+            }
+        }
+        else if (usePerturbedMatrix_)
         {
             // Perturbed matrix: N×N multiply breaks deterministic modal coupling.
             // 256 multiply-adds per sample (vs 64 for fast Hadamard) — negligible overhead.
@@ -269,13 +370,22 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             hadamardInPlace16 (feedback);
         }
 
-        // --- 3) Two-band damping + input injection -> write to delay lines ---
+        // --- 3) Three-band damping + input injection -> write to delay lines ---
         for (int ch = 0; ch < N; ++ch)
         {
             auto& dl = delayLines_[ch];
 
             // When frozen, bypass damping (unity feedback) to sustain tail indefinitely
             float filtered = frozen_ ? feedback[ch] : dampFilter_[ch].process (feedback[ch]);
+
+            // Feedback shelf: cumulative HF cut per recirculation (in-loop darkening)
+            if (fbShelfEnabled_ && ! frozen_)
+            {
+                float in = filtered;
+                filtered = fbShelfB0_[ch] * in + fbShelfZ1_[ch];
+                fbShelfZ1_[ch] = fbShelfB1_[ch] * in - fbShelfA1_[ch] * filtered + fbShelfZ2_[ch];
+                fbShelfZ2_[ch] = fbShelfB2_[ch] * in - fbShelfA2_[ch] * filtered;
+            }
 
             // Structural HF damping: gentle air-absorption LP (per-algorithm)
             if (structHFEnabled_ && ! frozen_)
@@ -299,31 +409,32 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             // Direct Form II Transposed for numerical stability.
             if (fbLPEnabled_ && ! frozen_)
             {
-                // Section 1 (always active)
+                // Section 1 (always active) — per-channel coefficients
                 float in1 = filtered;
-                float out1 = fbLP_b0_ * in1 + fbLPZ1_[ch];
-                fbLPZ1_[ch] = fbLP_b1_ * in1 - fbLP_a1_ * out1 + fbLPZ2_[ch];
-                fbLPZ2_[ch] = fbLP_b2_ * in1 - fbLP_a2_ * out1;
+                float out1 = fbLP_b0_[ch] * in1 + fbLPZ1_[ch];
+                fbLPZ1_[ch] = fbLP_b1_[ch] * in1 - fbLP_a1_[ch] * out1 + fbLPZ2_[ch];
+                fbLPZ2_[ch] = fbLP_b2_[ch] * in1 - fbLP_a2_[ch] * out1;
                 filtered = out1;
 
-                // Section 2 (identical coefficients, only when 4th-order enabled)
+                // Section 2 (per-channel coefficients, only when 4th-order enabled)
                 if (fbLP4thOrder_)
                 {
                     float in2 = out1;
-                    float out2 = fbLP_b0_ * in2 + fbLPZ3_[ch];
-                    fbLPZ3_[ch] = fbLP_b1_ * in2 - fbLP_a1_ * out2 + fbLPZ4_[ch];
-                    fbLPZ4_[ch] = fbLP_b2_ * in2 - fbLP_a2_ * out2;
+                    float out2 = fbLP_b0_[ch] * in2 + fbLPZ3_[ch];
+                    fbLPZ3_[ch] = fbLP_b1_[ch] * in2 - fbLP_a1_[ch] * out2 + fbLPZ4_[ch];
+                    fbLPZ4_[ch] = fbLP_b2_[ch] * in2 - fbLP_a2_[ch] * out2;
                     filtered = out2;
                 }
             }
 
-            // Inject stereo input: even channels get L, odd channels get R.
-            // This preserves the stereo decorrelation from input diffusion
-            // instead of mono-summing and discarding it.
+            // Inject stereo input into delay lines.
+            // When stereo split is active: channels 0-7 get L, 8-15 get R (group-based).
+            // When disabled (legacy): even channels get L, odd channels get R (interleaved).
             // When frozen, mute new input to keep only the existing tail.
-            float inputGain = frozen_ ? 0.0f : 0.25f;
+            float inputGain = frozen_ ? 0.0f : 0.25f * inputGainScale_[ch];
             float polarity = (ch & 1) ? -1.0f : 1.0f;
-            float inputSample = (ch & 1) ? inR : inL;
+            float inputSample = stereoSplitEnabled_ ? ((ch < 8) ? inL : inR)
+                                                    : ((ch & 1) ? inR : inL);
             float denormalBias = ((dl.writePos ^ ch) & 1)
                                      ? DspUtils::kDenormalPrevention
                                      : -DspUtils::kDenormalPrevention;
@@ -339,16 +450,16 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         float outL = 0.0f, outR = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
         {
-            outL += delayOut[leftTaps_[t]] * leftSigns_[t] * outputTapGain_[leftTaps_[t]];
-            outR += delayOut[rightTaps_[t]] * rightSigns_[t] * outputTapGain_[rightTaps_[t]];
+            outL += delayOut[leftTaps_[t]] * leftSigns_[t] * outputTapGain_[leftTaps_[t]] * outputGainScale_[leftTaps_[t]];
+            outR += delayOut[rightTaps_[t]] * rightSigns_[t] * outputTapGain_[rightTaps_[t]] * outputGainScale_[rightTaps_[t]];
         }
 
         // Linear output: 1/sqrt(8) normalization + 6dB level match.
         // sizeCompensation_ = sqrt(sizeScale) normalizes steady-state energy
         // across sizes — shorter delays at small sizes pack more recirculations
         // per unit time, producing higher energy density without compensation.
-        outputL[i] = std::clamp (outL * kOutputScale * kOutputGain * sizeCompensation_, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (outR * kOutputScale * kOutputGain * sizeCompensation_, -kSafetyClip, kSafetyClip);
+        outputL[i] = std::clamp (outL * kOutputScale * kOutputGain * kOutputBoost * sizeCompensation_, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (outR * kOutputScale * kOutputGain * kOutputBoost * sizeCompensation_, -kSafetyClip, kSafetyClip);
     }
 }
 
@@ -539,6 +650,18 @@ void FDNReverb::setHadamardPerturbation (float amount)
     }
 }
 
+void FDNReverb::setUseHouseholder (bool enable)
+{
+    useHouseholder_ = enable;
+}
+
+void FDNReverb::setUseWeightedGains (bool enable)
+{
+    useWeightedGains_ = enable;
+    if (prepared_)
+        updateDelayLengths();
+}
+
 void FDNReverb::setDualSlope (float ratio, int fastCount, float fastGain)
 {
     dualSlopeRatio_ = std::max (ratio, 0.0f);
@@ -553,6 +676,22 @@ void FDNReverb::setDualSlope (float ratio, int fastCount, float fastGain)
         updateDecayCoefficients();
 }
 
+void FDNReverb::setStereoCoupling (float amount)
+{
+    // Negative values disable stereo split (use full 16×16 Hadamard).
+    // Zero or positive enables split; zero coupling = fully independent L/R (no leakage).
+    if (amount < 0.0f)
+    {
+        stereoSplitEnabled_ = false;
+        stereoCoupling_ = 0.0f;
+    }
+    else
+    {
+        stereoSplitEnabled_ = true;
+        stereoCoupling_ = std::clamp (amount, 0.0f, 0.75f);
+    }
+}
+
 void FDNReverb::setNoiseModDepth (float samples)
 {
     noiseModDepthParam_ = std::max (samples, 0.0f);
@@ -565,6 +704,20 @@ void FDNReverb::setModDepthFloor (float floor)
     modDepthFloor_ = std::clamp (floor, 0.0f, 1.0f);
     if (prepared_)
         updateDelayLengths();
+}
+
+void FDNReverb::setHighCrossoverFreq (float hz)
+{
+    highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void FDNReverb::setAirTrebleMultiply (float mult)
+{
+    airTrebleMultiply_ = std::clamp (mult, 0.1f, 1.5f);
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void FDNReverb::setStructuralHFDamping (float baseFreqHz, float trebleMultiply)
@@ -612,36 +765,133 @@ void FDNReverb::clearBuffers()
         fbLPZ2_[i] = 0.0f;
         fbLPZ3_[i] = 0.0f;
         fbLPZ4_[i] = 0.0f;
+        fbShelfZ1_[i] = 0.0f;
+        fbShelfZ2_[i] = 0.0f;
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
     }
 }
 
+void FDNReverb::setPerChannelLP (float strength, float exponent)
+{
+    perChannelLPStrength_ = strength;
+    perChannelLPExponent_ = exponent;
+}
+
+void FDNReverb::setPerChannelShelf (float strength)
+{
+    perChannelShelfStrength_ = strength;
+}
+
 void FDNReverb::setFeedbackLP (float hz)
 {
-    if (hz <= 0.0f || hz >= static_cast<float> (sampleRate_) * 0.5f)
+    float sr = static_cast<float> (sampleRate_);
+
+    if (hz <= 0.0f || hz >= sr * 0.5f)
     {
         fbLPEnabled_ = false;
-        fbLP_b0_ = 1.0f;
-        fbLP_b1_ = fbLP_b2_ = fbLP_a1_ = fbLP_a2_ = 0.0f;
+        for (int ch = 0; ch < N; ++ch)
+        {
+            fbLP_b0_[ch] = 1.0f;
+            fbLP_b1_[ch] = fbLP_b2_[ch] = fbLP_a1_[ch] = fbLP_a2_[ch] = 0.0f;
+        }
         return;
     }
 
-    // Second-order Butterworth lowpass (12 dB/oct).
-    float sr = static_cast<float> (sampleRate_);
-    float omega = kTwoPi * hz / sr;
-    float sn = std::sin (omega);
-    float cs = std::cos (omega);
-    float alpha = sn / 1.4142135623730951f; // sqrt(2) for Butterworth Q
+    // Find max delay length for per-channel ratio computation
+    float maxDelay = 1.0f;
+    if (perChannelLPStrength_ > 0.0f)
+    {
+        for (int ch = 0; ch < N; ++ch)
+            maxDelay = std::max (maxDelay, delayLength_[ch]);
+    }
 
-    float a0 = 1.0f + alpha;
-    fbLP_b0_ = ((1.0f - cs) * 0.5f) / a0;
-    fbLP_b1_ = (1.0f - cs) / a0;
-    fbLP_b2_ = ((1.0f - cs) * 0.5f) / a0;
-    fbLP_a1_ = (-2.0f * cs) / a0;
-    fbLP_a2_ = (1.0f - alpha) / a0;
+    // Compute per-channel Butterworth lowpass coefficients (12 dB/oct).
+    for (int ch = 0; ch < N; ++ch)
+    {
+        float channelHz = hz;
+        if (perChannelLPStrength_ > 0.0f && maxDelay > 0.0f)
+        {
+            float ratio = delayLength_[ch] / maxDelay; // ~0.5 to 1.0
+            float scaledRatio = std::pow (ratio, perChannelLPExponent_);
+            // lerp(1.0, scaledRatio, strength): at strength=0 all get hz, at strength=1 short channels get lower hz
+            channelHz = hz * (1.0f - perChannelLPStrength_ * (1.0f - scaledRatio));
+        }
+
+        // Clamp to valid range
+        channelHz = std::min (channelHz, sr * 0.499f);
+        channelHz = std::max (channelHz, 20.0f);
+
+        float omega = kTwoPi * channelHz / sr;
+        float sn = std::sin (omega);
+        float cs = std::cos (omega);
+        float alpha = sn / 1.4142135623730951f; // sqrt(2) for Butterworth Q
+
+        float a0 = 1.0f + alpha;
+        fbLP_b0_[ch] = ((1.0f - cs) * 0.5f) / a0;
+        fbLP_b1_[ch] = (1.0f - cs) / a0;
+        fbLP_b2_[ch] = ((1.0f - cs) * 0.5f) / a0;
+        fbLP_a1_[ch] = (-2.0f * cs) / a0;
+        fbLP_a2_[ch] = (1.0f - alpha) / a0;
+    }
 
     fbLPEnabled_ = true;
+}
+
+void FDNReverb::setFeedbackShelf (float freqHz, float gainDB, float Q)
+{
+    if (std::abs (gainDB) < 0.01f || freqHz <= 0.0f)
+    {
+        fbShelfEnabled_ = false;
+        for (int ch = 0; ch < N; ++ch)
+        {
+            fbShelfB0_[ch] = 1.0f;
+            fbShelfB1_[ch] = fbShelfB2_[ch] = fbShelfA1_[ch] = fbShelfA2_[ch] = 0.0f;
+        }
+        return;
+    }
+
+    // Find max delay length for per-channel ratio computation
+    float maxDelay = 1.0f;
+    if (perChannelShelfStrength_ > 0.0f)
+    {
+        for (int ch = 0; ch < N; ++ch)
+            maxDelay = std::max (maxDelay, delayLength_[ch]);
+    }
+
+    float sr = static_cast<float> (sampleRate_);
+
+    // Compute per-channel RBJ high shelf coefficients.
+    for (int ch = 0; ch < N; ++ch)
+    {
+        float channelGainDB = gainDB;
+        if (perChannelShelfStrength_ > 0.0f && maxDelay > 0.0f)
+        {
+            float ratio = delayLength_[ch] / maxDelay; // ~0.5 to 1.0
+            // Shorter channels (lower ratio) get more shelf cut (more negative dB)
+            channelGainDB = gainDB * (1.0f + perChannelShelfStrength_ * (1.0f - ratio));
+        }
+
+        float A = std::pow (10.0f, channelGainDB / 40.0f);
+        float omega = kTwoPi * freqHz / sr;
+        float sn = std::sin (omega);
+        float cs = std::cos (omega);
+        float alpha = sn / (2.0f * Q);
+        float sqA = 2.0f * std::sqrt (A) * alpha;
+
+        float a0 = (A + 1.0f) - (A - 1.0f) * cs + sqA;
+        fbShelfB0_[ch] = (A * ((A + 1.0f) + (A - 1.0f) * cs + sqA)) / a0;
+        fbShelfB1_[ch] = (-2.0f * A * ((A - 1.0f) + (A + 1.0f) * cs)) / a0;
+        fbShelfB2_[ch] = (A * ((A + 1.0f) + (A - 1.0f) * cs - sqA)) / a0;
+        fbShelfA1_[ch] = (2.0f * ((A - 1.0f) - (A + 1.0f) * cs)) / a0;
+        fbShelfA2_[ch] = ((A + 1.0f) - (A - 1.0f) * cs - sqA) / a0;
+    }
+
+    fbShelfEnabled_ = true;
+
+    // Reset state to prevent transient from old coefficients
+    std::memset (fbShelfZ1_, 0, sizeof (fbShelfZ1_));
+    std::memset (fbShelfZ2_, 0, sizeof (fbShelfZ2_));
 }
 
 // ---------------------------------------------------------------------------
@@ -674,13 +924,51 @@ void FDNReverb::updateDelayLengths()
         float scale = (maxDelay > 0.0f) ? delayLength_[i] / maxDelay : 1.0f;
         modDepthScale_[i] = std::max (scale, modDepthFloor_);
     }
+
+    // Per-channel input/output gain scaling for uniform modal excitation.
+    // Weight by 1/sqrt(delay_length / min_delay) so shorter delays (which recirculate
+    // more often) get higher gain, compensating for their naturally lower energy
+    // accumulation per pass. This flattens the spectral envelope of the reverb tail.
+    if (useWeightedGains_)
+    {
+        float minDelay = delayLength_[0];
+        for (int i = 1; i < N; ++i)
+            minDelay = std::min (minDelay, delayLength_[i]);
+
+        float sumSqIn = 0.0f;
+        for (int i = 0; i < N; ++i)
+        {
+            inputGainScale_[i] = 1.0f / std::sqrt (delayLength_[i] / minDelay);
+            sumSqIn += inputGainScale_[i] * inputGainScale_[i];
+        }
+        // Normalize so RMS of gain vector equals 1 (preserves overall input energy)
+        float normIn = std::sqrt (static_cast<float> (N) / sumSqIn);
+        for (int i = 0; i < N; ++i)
+            inputGainScale_[i] *= normIn;
+
+        // Output gains: same weighting (symmetry for spectral flatness)
+        for (int i = 0; i < N; ++i)
+            outputGainScale_[i] = inputGainScale_[i];
+    }
+    else
+    {
+        for (int i = 0; i < N; ++i)
+        {
+            inputGainScale_[i] = 1.0f;
+            outputGainScale_[i] = 1.0f;
+        }
+    }
 }
 
 void FDNReverb::updateDecayCoefficients()
 {
-    // Crossover lowpass coefficient: c = exp(-2*pi*fc/sr)
-    float crossoverCoeff = std::exp (-kTwoPi * crossoverFreq_
-                                     / static_cast<float> (sampleRate_));
+    // Low crossover: bass/mid split (user-controlled crossover frequency, ~633Hz)
+    float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_
+                                        / static_cast<float> (sampleRate_));
+
+    // High crossover: mid/air split (per-algorithm, e.g. Room=6kHz, others=20kHz)
+    float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_
+                                         / static_cast<float> (sampleRate_));
 
     for (int i = 0; i < N; ++i)
     {
@@ -712,11 +1000,17 @@ void FDNReverb::updateDecayCoefficients()
         // bassMultiply > 1.0 → lows sustain longer (g_low > g_base)
         float gLow = std::pow (gBase, 1.0f / bassMultiply_);
 
-        // Treble Multiply: g_high = g_base^(1/trebleMultiply)
-        // trebleMultiply < 1.0 → highs decay faster (g_high < g_base)
-        float gHigh = std::pow (gBase, 1.0f / trebleMultiply_);
+        // Mid band (lowCrossover..highCrossover): same as old gHigh formula.
+        // Preserves the matched 4kHz RT60 from TwoBandDamping calibration.
+        float gMid = std::pow (gBase, 1.0f / trebleMultiply_);
 
-        dampFilter_[i].setCoefficients (gLow, gHigh, crossoverCoeff);
+        // Air band (> highCrossover): independent damping via airTrebleMultiply_.
+        // gHigh = gBase^(1/airTrebleMultiply_): lower values = faster decay.
+        // At airTrebleMultiply_=1.0: gHigh = gBase (natural rate, no extra damping).
+        // At airTrebleMultiply_=0.70: gHigh = gBase^1.43 (significant extra damping).
+        float gHigh = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_, 0.01f));
+
+        dampFilter_[i].setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
     }
 }
 

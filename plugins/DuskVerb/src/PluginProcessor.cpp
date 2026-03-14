@@ -89,6 +89,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "gate_release", 1 }, "Gate Release",
         juce::NormalisableRange<float> (1.0f, 500.0f, 0.0f, 1.0f), 50.0f));
 
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "bypass", 1 }, "Bypass", false));
+
     return layout;
 }
 
@@ -119,6 +122,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     busModeParam_ = parameters.getRawParameterValue ("bus_mode");
     gateHoldParam_ = parameters.getRawParameterValue ("gate_hold");
     gateReleaseParam_ = parameters.getRawParameterValue ("gate_release");
+    bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 }
 
 bool DuskVerbProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -193,6 +197,13 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Clear any unused output channels
     for (int ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
         buffer.clear (ch, 0, numSamples);
+
+    // Bypass: pass audio through unprocessed
+    if (bypassParam_ != nullptr && bypassParam_->get())
+    {
+        setLatencySamples (0);
+        return;
+    }
 
     // Handle mono input: duplicate channel 0 to channel 1
     if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)

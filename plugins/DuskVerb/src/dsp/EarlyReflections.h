@@ -1,14 +1,20 @@
 #pragma once
 
+#include "AlgorithmConfig.h"
 #include "DspUtils.h"
 
+#include <algorithm>
 #include <atomic>
 #include <vector>
 
 // Multi-tap delay line generating discrete early reflections.
-// 16 taps per channel with exponentially-distributed delay times (5-80ms),
-// inverse distance gain rolloff, and per-tap air absorption filtering.
-// Left and right channels use different tap patterns for stereo decorrelation.
+//
+// Two modes:
+// 1. **Generated** (default): 16 taps per channel with exponentially-distributed
+//    delay times (8-80ms), inverse distance gain rolloff, and per-tap air absorption.
+// 2. **Custom** (when setCustomTaps is called): uses a fixed mono-panned tap table
+//    from AlgorithmConfig, derived from reference reverb ER extraction (Phase 11 OMP).
+//    Each tap outputs to L or R only (never both), matching VV's ER architecture.
 class EarlyReflections
 {
 public:
@@ -19,6 +25,14 @@ public:
     void setSize (float size);
     void setTimeScale (float scale);
     void setGainExponent (float exponent);
+    void setAirAbsorptionFloor (float hz);
+    void setAirAbsorptionCeiling (float hz);
+    void setDecorrCoeff (float coeff);
+
+    // Load a custom mono-panned tap table from AlgorithmConfig.
+    // When numTaps > 0, the custom table overrides the generated tap formula.
+    // Pass numTaps=0 to revert to generated mode.
+    void setCustomTaps (const CustomERTap* taps, int numTaps);
 
 private:
     static constexpr int kNumTaps = 16;
@@ -47,20 +61,75 @@ private:
         float lpState = 0.0f;
     };
 
+    // Mono-panned custom tap (used in custom mode).
+    struct MonoTap
+    {
+        int delaySamples = 0;
+        float gain = 0.0f;     // Amplitude (sign included)
+        int channel = 0;       // 0 = left, 1 = right
+        float lpCoeff = 0.0f;  // Air absorption per tap
+        float lpState = 0.0f;
+    };
+
+    // Post-tap decorrelation allpass (Schroeder)
+    struct DecorrAllpass
+    {
+        std::vector<float> buffer;
+        int writePos = 0;
+        int length = 0;
+
+        void init (int delaySamples)
+        {
+            length = delaySamples;
+            buffer.assign (static_cast<size_t> (length), 0.0f);
+            writePos = 0;
+        }
+
+        float process (float input, float g)
+        {
+            int readPos = ((writePos - length) % length + length) % length;
+            float delayed = buffer[static_cast<size_t> (readPos)];
+            float v = input - g * delayed;
+            buffer[static_cast<size_t> (writePos)] = v;
+            writePos = (writePos + 1) % length;
+            return delayed + g * v;
+        }
+
+        void clear()
+        {
+            std::fill (buffer.begin(), buffer.end(), 0.0f);
+            writePos = 0;
+        }
+    };
+
     std::vector<float> bufferL_;
     std::vector<float> bufferR_;
     int writePos_ = 0;
     int mask_ = 0;
 
+    // Generated mode taps
     Tap tapsL_[kNumTaps] {};
     Tap tapsR_[kNumTaps] {};
+
+    // Custom mode taps
+    MonoTap customTaps_[kMaxCustomERTaps] {};
+    int numCustomTaps_ = 0;
+    bool useCustomTaps_ = false;
+
+    // Two cascaded allpasses per channel, different prime delays for L vs R
+    DecorrAllpass decorr_L1_, decorr_L2_;
+    DecorrAllpass decorr_R1_, decorr_R2_;
+    std::atomic<float> decorrCoeff_ { 0.0f }; // 0 = bypassed
 
     float erSize_ = 1.0f;
     float timeScale_ = 1.0f;
     float gainExponent_ = 1.0f;
+    float airAbsorptionFloorHz_ = 2000.0f;
+    float airAbsorptionCeilingHz_ = 12000.0f;
     double sampleRate_ = 44100.0;
     bool prepared_ = false;
     std::atomic<bool> tapsNeedUpdate_ { false };
 
     void updateTaps();
+    void updateCustomTaps();
 };

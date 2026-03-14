@@ -2,6 +2,7 @@
 
 #include "TwoBandDamping.h"
 
+#include <random>
 #include <vector>
 
 class FDNReverb
@@ -31,11 +32,19 @@ public:
     void setModDepthFloor (float floor);
     void setFeedbackLP (float hz);
     void setFeedbackLP4thOrder (bool enable);
+    void setPerChannelLP (float strength, float exponent);
+    void setPerChannelShelf (float strength);
     void setNoiseModDepth (float samples);
     void setHadamardPerturbation (float amount);
+    void setUseHouseholder (bool enable);
+    void setUseWeightedGains (bool enable);
+    void setFeedbackShelf (float freqHz, float gainDB, float Q);
+    void setHighCrossoverFreq (float hz);
+    void setAirTrebleMultiply (float mult);
     void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
+    void setStereoCoupling (float amount);
     void clearBuffers();
 
 private:
@@ -44,11 +53,12 @@ private:
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr float kOutputScale = 0.353553f; // 1/sqrt(8) — normalizes 8-tap sum
     static constexpr float kOutputGain  = 2.0f;      // +6dB compensation for level matching
+    static constexpr float kOutputBoost = 1.585f;     // +4 dB global reverb output level boost
     static constexpr float kSafetyClip  = 32.0f;     // Safety clamp — raised for dual-slope (high fast-tap gain)
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
-    static constexpr int kMaxBaseDelay = 3251;
+    static constexpr int kMaxBaseDelay = 5521;
 
     // Mutable delay and tap configuration (initialized to Hall defaults)
     int baseDelays_[N];
@@ -121,11 +131,14 @@ private:
     float inlineDiffCoeff_ = 0.0f;
     float inlineDiffCoeff2_ = 0.0f;
     float inlineDiffCoeff3_ = 0.0f;
-    TwoBandDamping dampFilter_[N];
+    ThreeBandDamping dampFilter_[N];
     float lfoPhase_[N] {};
     float lfoPhaseInc_[N] {};
     uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state for LFO drift
     float delayLength_[N] {};
+    float inputGainScale_[N] {};  // Per-channel input gain: 1/sqrt(delay_length/min_delay) for uniform modal excitation
+    float outputGainScale_[N] {}; // Per-channel output gain: same weighting for spectral flatness
+    bool useWeightedGains_ = false; // Enable delay-weighted input/output gains
     float modDepthScale_[N] {}; // Per-delay mod scaling (proportional to delay length)
     float modDepthFloor_ = 0.35f; // Minimum mod depth scaling (per-algorithm)
     float noiseModDepthParam_ = 0.0f; // Raw noise mod depth (unscaled)
@@ -138,11 +151,26 @@ private:
     float fbLPZ2_[N] {};
     float fbLPZ3_[N] {};  // Section 2 state (only used when fbLP4thOrder_)
     float fbLPZ4_[N] {};
-    // Shared biquad coefficients (section 1, always used)
-    float fbLP_b0_ = 1.0f, fbLP_b1_ = 0.0f, fbLP_b2_ = 0.0f;
-    float fbLP_a1_ = 0.0f, fbLP_a2_ = 0.0f;
+    // Per-channel biquad coefficients: each channel gets its own LP cutoff
+    // based on delay length ratio (shorter delays → lower cutoff → more HF damping).
+    float fbLP_b0_[N] {}, fbLP_b1_[N] {}, fbLP_b2_[N] {};
+    float fbLP_a1_[N] {}, fbLP_a2_[N] {};
     bool fbLPEnabled_ = false;
     bool fbLP4thOrder_ = false; // true = cascade two identical sections (L-R 24 dB/oct)
+    float perChannelLPStrength_ = 0.0f;
+    float perChannelLPExponent_ = 0.5f;
+
+    // Feedback loop shelving EQ: per-channel biquad high shelf for cumulative
+    // spectral darkening inside the feedback loop ("in-loop" damping topology).
+    // Each recirculation applies a small HF cut that compounds over the tail,
+    // matching the natural spectral evolution of vintage digital reverbs.
+    // Per-channel coefficients: shorter delays get proportionally more shelf cut.
+    float fbShelfB0_[N] {}, fbShelfB1_[N] {}, fbShelfB2_[N] {};
+    float fbShelfA1_[N] {}, fbShelfA2_[N] {};
+    float fbShelfZ1_[N] = {};  // per-channel biquad state
+    float fbShelfZ2_[N] = {};
+    bool  fbShelfEnabled_ = false;
+    float perChannelShelfStrength_ = 0.0f;
 
     // Structural HF damping: gentle first-order LP modeling air absorption.
     // Per-algorithm, applied after TwoBandDamping in feedback loop.
@@ -159,7 +187,7 @@ private:
     bool structLFEnabled_ = false;
 
     // Cheap xorshift32 PRNG returning float in [-1, +1].
-    // Used for Lexicon-style "Wander" — aperiodic LFO drift.
+    // Used for aperiodic LFO drift ("Wander").
     static float nextDrift (uint32_t& state)
     {
         state ^= state << 13;
@@ -173,6 +201,13 @@ private:
     // Row-normalized to preserve approximate energy conservation.
     float perturbMatrix_[N][N] {};
     bool usePerturbedMatrix_ = false;
+    bool useHouseholder_ = false;
+
+    // Stereo split: channels 0-7 = L group, 8-15 = R group.
+    // Two independent 8×8 Hadamards with controlled cross-coupling between groups.
+    // coupling=0 → fully independent L/R (widest), coupling=0.5 → fully mixed (mono).
+    float stereoCoupling_ = 0.0f;
+    bool stereoSplitEnabled_ = false;
 
     // Dual-slope decay: channels [0, dualSlopeFastCount_) get shorter RT60
     // and boosted output tap gain to create double-slope decay (loud fast + quiet slow).
@@ -185,7 +220,9 @@ private:
     float decayTime_ = 1.0f;
     float bassMultiply_ = 1.0f;
     float trebleMultiply_ = 0.5f;
+    float airTrebleMultiply_ = 1.0f;  // Independent air band damping (above highCrossoverFreq)
     float crossoverFreq_ = 1000.0f;
+    float highCrossoverFreq_ = 20000.0f;
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
