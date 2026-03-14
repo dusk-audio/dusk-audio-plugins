@@ -225,6 +225,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
@@ -346,42 +347,71 @@ public:
     // Transfers the current British/Tube EQ curve to Digital mode parameters
     void transferCurrentEQToDigital();
 
-    // EQ Match (capture reference/source spectra, compute parametric fit, apply)
-    void captureMatchReference();   // Snapshot current analyzer as reference
-    void captureMatchSource();      // Snapshot current analyzer as source
-    int  computeEQMatch(float strength = -1.0f); // Fit bands, returns count (-1 = use param)
-    void applyEQMatch();            // Write fitted bands to Match mode params
-    bool hasMatchReference() const
+    // Match EQ — Logic Pro Match EQ style (Welch's method + FIR convolution)
+    void startLearnCurrent()
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        return eqMatchProcessor.isReferenceSet();
+        pendingStopLearning.store(false);         // Cancel any pending stop
+        pendingStartLearnReference.store(false);   // Cancel any pending reference start
+        pendingStartLearnCurrent.store(true);
     }
-    bool hasMatchSource() const
+    void startLearnReference()
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        return eqMatchProcessor.isTargetSet();
+        pendingStopLearning.store(false);
+        pendingStartLearnCurrent.store(false);
+        pendingStartLearnReference.store(true);
     }
-    void clearEQMatch()            { pendingMatchClear.store(true); }
+    void stopLearning()
+    {
+        pendingStartLearnCurrent.store(false);    // Cancel any pending starts
+        pendingStartLearnReference.store(false);
+        pendingStopLearning.store(true);
+    }
+    bool computeMatchCorrection();  // Compute smoothed FIR, load into convolution
+    void clearMatchEQ()         { pendingMatchClear.store(true); }
 
-    // Match EQ overlay data for UI
+    // Match EQ state queries — pending-aware to avoid UI/audio thread race
+    bool isMatchLearning() const { return eqMatchProcessor.isLearning(); }
+    bool isMatchLearningOrPending() const
+    {
+        return eqMatchProcessor.isLearning()
+            || pendingStartLearnCurrent.load(std::memory_order_acquire)
+            || pendingStartLearnReference.load(std::memory_order_acquire);
+    }
+    bool isMatchLearningCurrent() const { return eqMatchProcessor.isLearningCurrent(); }
+    bool isMatchLearningCurrentOrPending() const
+    {
+        return eqMatchProcessor.isLearningCurrent()
+            || pendingStartLearnCurrent.load(std::memory_order_acquire);
+    }
+    bool isMatchLearningReference() const { return eqMatchProcessor.isLearningReference(); }
+    bool isMatchLearningReferenceOrPending() const
+    {
+        return eqMatchProcessor.isLearningReference()
+            || pendingStartLearnReference.load(std::memory_order_acquire);
+    }
+    int getMatchLearningFrameCount() const { return eqMatchProcessor.getLearningFrameCount(); }
+    bool hasMatchCurrentSpectrum() const { return eqMatchProcessor.hasCurrentSpectrum(); }
+    bool hasMatchReferenceSpectrum() const { return eqMatchProcessor.hasReferenceSpectrum(); }
+    bool hasMatchCorrectionCurve() const { return eqMatchProcessor.hasCorrectionCurve(); }
+    bool isMatchConvolutionActive() const { return matchConvolutionActive.load(std::memory_order_acquire); }
+
     bool isMatchMode() const
     {
         return static_cast<int>(safeGetParam(eqTypeParam, 0.0f)) == static_cast<int>(EQType::Match);
     }
-    std::array<float, EQMatchProcessor::NUM_BINS> getMatchReferenceMagnitudes() const
+
+    // Spectrum data for display (thread-safe)
+    void getMatchCurrentSpectrumDB(std::array<float, EQMatchProcessor::NUM_BINS>& out) const
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        return eqMatchProcessor.getReferenceMagnitudes();
+        eqMatchProcessor.getCurrentSpectrumDB(out);
     }
-    std::array<float, EQMatchProcessor::NUM_BINS> getMatchDifferenceCurve() const
+    void getMatchReferenceSpectrumDB(std::array<float, EQMatchProcessor::NUM_BINS>& out) const
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        return eqMatchProcessor.getDifferenceCurve();
+        eqMatchProcessor.getReferenceSpectrumDB(out);
     }
-    bool hasMatchOverlayData() const
+    void getMatchCorrectionCurveDB(std::array<float, EQMatchProcessor::NUM_BINS>& out) const
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        return eqMatchProcessor.isReferenceSet() && eqMatchProcessor.isTargetSet();
+        eqMatchProcessor.getCorrectionCurveDB(out);
     }
 
 private:
@@ -502,7 +532,12 @@ private:
 
     // EQ Type parameter
     std::atomic<float>* eqTypeParam = nullptr;
-    std::atomic<float>* matchStrengthParam = nullptr;
+
+    // Match EQ parameters
+    std::atomic<float>* matchApplyParam = nullptr;
+    std::atomic<float>* matchSmoothingParam = nullptr;
+    std::atomic<float>* matchLimitBoostParam = nullptr;
+    std::atomic<float>* matchLimitCutParam = nullptr;
 
     // British mode specific parameters
     std::atomic<float>* britishHpfFreqParam = nullptr;
@@ -586,9 +621,18 @@ private:
         return param ? param->load() : defaultValue;
     }
 
-    // EQ Match processor (spectrum capture + parametric fitting)
+    // Match EQ processor (Welch's method + FIR generation)
     EQMatchProcessor eqMatchProcessor;
-    std::atomic<bool> pendingMatchClear{false};  // Set by UI thread, consumed by audio thread
+
+    // Match EQ convolution engine (applies the correction FIR)
+    juce::dsp::Convolution matchConvolution;
+    std::atomic<bool> matchConvolutionActive{false};  // True when FIR is loaded and active
+
+    // Thread-safe pending operations (UI -> audio thread)
+    std::atomic<bool> pendingMatchClear{false};
+    std::atomic<bool> pendingStartLearnCurrent{false};
+    std::atomic<bool> pendingStartLearnReference{false};
+    std::atomic<bool> pendingStopLearning{false};
 
     // Output limiter (brickwall safety limiter for mastering)
     OutputLimiter outputLimiter;

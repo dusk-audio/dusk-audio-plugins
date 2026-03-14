@@ -136,3 +136,39 @@ set_target_properties(MultiQ PROPERTIES
 # Test target for LinearPhaseEQProcessor
 # Disabled for now - use the standalone test_linear_phase.cpp instead
 # The JUCE-based test requires complex linking that's better handled by the plugin itself
+
+# --- Match EQ Test (standalone, no plugin wrapper) ---
+if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+    add_executable(MultiQMatchTest
+        tests/test_match_eq.cpp
+    )
+
+    target_include_directories(MultiQMatchTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode
+    )
+
+    target_compile_definitions(MultiQMatchTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_STANDALONE_APPLICATION=1
+    )
+
+    target_link_libraries(MultiQMatchTest
+        PRIVATE
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+
+    add_dependencies(MultiQMatchTest MultiQ_All)
+endif()

@@ -55,7 +55,12 @@ MultiQ::MultiQ()
 
     // EQ Type parameter
     eqTypeParam = parameters.getRawParameterValue(ParamIDs::eqType);
-    matchStrengthParam = parameters.getRawParameterValue(ParamIDs::matchStrength);
+
+    // Match EQ parameters
+    matchApplyParam = parameters.getRawParameterValue(ParamIDs::matchApply);
+    matchSmoothingParam = parameters.getRawParameterValue(ParamIDs::matchSmoothing);
+    matchLimitBoostParam = parameters.getRawParameterValue(ParamIDs::matchLimitBoost);
+    matchLimitCutParam = parameters.getRawParameterValue(ParamIDs::matchLimitCut);
 
     // British mode parameters
     britishHpfFreqParam = parameters.getRawParameterValue(ParamIDs::britishHpfFreq);
@@ -423,6 +428,21 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         currentFFTSize = fftSlots[static_cast<size_t>(activeFFTSlot)].size;
     }
 
+    // Prepare Match EQ convolution engine and processor
+    {
+        juce::dsp::ProcessSpec matchSpec;
+        matchSpec.sampleRate = sampleRate;
+        matchSpec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
+        matchSpec.numChannels = 2;
+        matchConvolution.prepare(matchSpec);
+        matchConvolution.reset();
+    }
+    // Clear learned spectra and correction data — they were captured at the old
+    // sample rate and are invalid after a rate change.
+    eqMatchProcessor.reset();
+    eqMatchProcessor.prepare(sampleRate, samplesPerBlock);
+    matchConvolutionActive.store(false);
+
     // Reset analyzers (post-EQ and pre-EQ)
     analyzerFifo.reset();
     std::fill(analyzerMagnitudes.begin(), analyzerMagnitudes.end(), -100.0f);
@@ -501,12 +521,35 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             updateFFTSize(order);
     }
 
-    // Apply any pending EQ match clear (deferred from UI thread to avoid data race)
+    // Handle pending Match EQ operations (deferred from UI thread)
     if (pendingMatchClear.exchange(false))
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        eqMatchProcessor.clearReference();
-        eqMatchProcessor.clearTarget();
+        eqMatchProcessor.clearAll();
+        matchConvolutionActive.store(false, std::memory_order_release);
+        // Cancel any queued learn requests so they don't restart learning this cycle
+        pendingStartLearnCurrent.store(false, std::memory_order_relaxed);
+        pendingStartLearnReference.store(false, std::memory_order_relaxed);
+        pendingStopLearning.store(false, std::memory_order_relaxed);
+    }
+    // Process stop BEFORE start so that start always wins if both are set
+    if (pendingStopLearning.exchange(false))
+        eqMatchProcessor.stopLearning();
+    if (pendingStartLearnCurrent.exchange(false))
+        eqMatchProcessor.startLearningCurrent();
+    if (pendingStartLearnReference.exchange(false))
+        eqMatchProcessor.startLearningReference();
+
+    // Feed Match EQ learning BEFORE bypass check — learning needs raw input audio
+    // even when the plugin is bypassed (no processing needed, just spectrum capture)
+    if (eqMatchProcessor.isLearning())
+    {
+        int n = juce::jmin(buffer.getNumSamples(), static_cast<int>(analyzerMonoBuffer.size()));
+        const float* readL = buffer.getReadPointer(0);
+        const float* readR = buffer.getNumChannels() > 1 ? buffer.getReadPointer(1) : readL;
+        juce::FloatVectorOperations::copy(analyzerMonoBuffer.data(), readL, n);
+        juce::FloatVectorOperations::add(analyzerMonoBuffer.data(), readR, n);
+        juce::FloatVectorOperations::multiply(analyzerMonoBuffer.data(), 0.5f, n);
+        eqMatchProcessor.feedLearningBlock(analyzerMonoBuffer.data(), n);
     }
 
     auto totalNumInputChannels = getTotalNumInputChannels();
@@ -521,11 +564,23 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     bypassSmoothed.setTargetValue(bypassed ? 1.0f : 0.0f);
 
     // If fully bypassed and not transitioning, skip all processing.
+    // Report 0 latency during bypass so DAW doesn't apply PDC
+    // for a plugin that isn't processing — prevents phase offset
+    // when disabled on a parallel bus.
     // Advance the smoother so its internal state stays current for un-bypass.
     if (bypassed && !bypassSmoothed.isSmoothing())
     {
+        if (getLatencySamples() != 0)
+            setLatencySamples(0);
         bypassSmoothed.skip(buffer.getNumSamples());
         return;
+    }
+
+    // Restore actual latency when exiting bypass (DAW will recalculate PDC)
+    {
+        int correctLatency = getLatencySamples();
+        if (AudioProcessor::getLatencySamples() != correctLatency)
+            setLatencySamples(correctLatency);
     }
 
     // Save dry input for bypass crossfade (before any processing modifies the buffer)
@@ -734,6 +789,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         pushSamplesToAnalyzer(analyzerMonoBuffer.data(), n, true);
     }
 
+    // (Match EQ learning feed moved above bypass check — see line ~533)
+
     // Get processing mode
     auto procMode = static_cast<ProcessingMode>(
         static_cast<int>(safeGetParam(processingModeParam, 0.0f)));
@@ -862,9 +919,17 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             bandDynEnabled[static_cast<size_t>(i)] = safeGetParam(bandDynEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
         }
 
-        // Match mode is not a dynamic EQ — disable all per-band dynamics
+        // Match mode: disable dynamics, and skip bands 2-7 when FIR convolution is active
         if (eqType == EQType::Match)
+        {
             bandDynEnabled.fill(false);
+            if (matchConvolutionActive.load(std::memory_order_acquire))
+            {
+                // FIR handles the correction — skip parametric bands 2-7
+                for (int i = 1; i < 7; ++i)
+                    bandEnabled[static_cast<size_t>(i)] = false;
+            }
+        }
 
         // Apply solo mode: if any band is soloed, only that band is processed
         // Delta solo: all bands stay active, we capture before/after the target band
@@ -1173,6 +1238,14 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             oversampler4x->processSamplesDown(block);
         else if (oversamplingMode == 1 && oversampler2x)
             oversampler2x->processSamplesDown(block);
+
+        // Match EQ convolution (FIR correction filter, after downsample, before master gain)
+        if (eqType == EQType::Match && matchConvolutionActive.load(std::memory_order_acquire))
+        {
+            juce::dsp::AudioBlock<float> matchBlock(buffer);
+            juce::dsp::ProcessContextReplacing<float> ctx(matchBlock);
+            matchConvolution.process(ctx);
+        }
 
         // Apply master gain
         float masterGain = juce::Decibels::decibelsToGain(safeGetParam(masterGainParam, 0.0f));
@@ -2297,6 +2370,149 @@ void MultiQ::transferCurrentEQToDigital()
         setParam(ParamIDs::masterGain, safeGetParam(tubeEQOutputGainParam, 0.0f));
     }
 
+    else if (eqType == EQType::Match)
+    {
+        if (!eqMatchProcessor.hasCorrectionCurve())
+            return;
+
+        // Get the correction curve (already smoothed, scaled, and limited)
+        std::array<float, EQMatchProcessor::NUM_BINS> corrDB{};
+        eqMatchProcessor.getCorrectionCurveDB(corrDB);
+        double sr = baseSampleRate.load();
+        float nyquist = static_cast<float>(sr * 0.5);
+        float binWidth = nyquist / static_cast<float>(EQMatchProcessor::NUM_BINS - 1);
+
+        // Useful bin range: 30 Hz to 18 kHz
+        int minBin = std::max(1, static_cast<int>(30.0f / binWidth));
+        int maxBin = std::min(EQMatchProcessor::NUM_BINS - 1, static_cast<int>(18000.0f / binWidth));
+
+        // Disable all bands first
+        for (int i = 1; i <= 8; ++i)
+            setBoolParam(ParamIDs::bandEnabled(i), false);
+
+        // Residual starts as a copy of the correction curve
+        std::array<float, EQMatchProcessor::NUM_BINS> residual = corrDB;
+
+        // Fitted band storage
+        struct FittedBand { float freq; float gain; float q; };
+        std::vector<FittedBand> fittedBands;
+
+        // Helper: compute peaking EQ magnitude response in dB at a given frequency
+        auto peakingMagDB = [&](float centerFreq, float gainDB, float Q, float evalFreq) -> float {
+            if (evalFreq <= 0.0f || centerFreq <= 0.0f || Q <= 0.0f)
+                return 0.0f;
+            double A = std::pow(10.0, static_cast<double>(gainDB) / 40.0);
+            double w0 = 2.0 * juce::MathConstants<double>::pi * centerFreq / sr;
+            double wEval = 2.0 * juce::MathConstants<double>::pi * evalFreq / sr;
+            double cosw0 = std::cos(w0);
+            double sinw0 = std::sin(w0);
+            double alpha = sinw0 / (2.0 * Q);
+
+            double b0 = 1.0 + alpha * A;
+            double b1 = -2.0 * cosw0;
+            double b2 = 1.0 - alpha * A;
+            double a0 = 1.0 + alpha / A;
+            double a1 = -2.0 * cosw0;
+            double a2 = 1.0 - alpha / A;
+
+            double cosw = std::cos(wEval);
+            double sinw = std::sin(wEval);
+            double cos2w = std::cos(2.0 * wEval);
+            double sin2w = std::sin(2.0 * wEval);
+
+            double numRe = b0 + b1 * cosw + b2 * cos2w;
+            double numIm = -(b1 * sinw + b2 * sin2w);
+            double denRe = a0 + a1 * cosw + a2 * cos2w;
+            double denIm = -(a1 * sinw + a2 * sin2w);
+
+            double numMag2 = numRe * numRe + numIm * numIm;
+            double denMag2 = denRe * denRe + denIm * denIm;
+            if (denMag2 < 1e-30) return 0.0f;
+
+            return static_cast<float>(10.0 * std::log10(numMag2 / denMag2));
+        };
+
+        // Iterative peak-finding: 6 bands
+        for (int iter = 0; iter < 6; ++iter)
+        {
+            // Find bin with maximum absolute residual
+            int peakBin = minBin;
+            float peakAbs = 0.0f;
+            for (int k = minBin; k <= maxBin; ++k)
+            {
+                float absVal = std::abs(residual[static_cast<size_t>(k)]);
+                if (absVal > peakAbs)
+                {
+                    peakAbs = absVal;
+                    peakBin = k;
+                }
+            }
+
+            float peakFreq = static_cast<float>(peakBin) * binWidth;
+            float peakGain = residual[static_cast<size_t>(peakBin)];
+
+            // Skip if residual is negligible
+            if (std::abs(peakGain) < 0.5f)
+                break;
+
+            // Estimate Q: find where |residual| drops below half peak magnitude
+            float halfPeak = peakAbs * 0.5f;
+            int lowerBin = peakBin;
+            int upperBin = peakBin;
+
+            for (int k = peakBin - 1; k >= minBin; --k)
+            {
+                if (std::abs(residual[static_cast<size_t>(k)]) < halfPeak)
+                    break;
+                lowerBin = k;
+            }
+            for (int k = peakBin + 1; k <= maxBin; ++k)
+            {
+                if (std::abs(residual[static_cast<size_t>(k)]) < halfPeak)
+                    break;
+                upperBin = k;
+            }
+
+            float lowerFreq = static_cast<float>(lowerBin) * binWidth;
+            float upperFreq = static_cast<float>(upperBin) * binWidth;
+            float bandwidth = upperFreq - lowerFreq;
+            float Q = (bandwidth > 1.0f) ? (peakFreq / bandwidth) : 2.0f;
+            Q = juce::jlimit(0.3f, 10.0f, Q);
+
+            fittedBands.push_back({peakFreq, peakGain, Q});
+
+            // Subtract this band's response from the residual
+            for (int k = minBin; k <= maxBin; ++k)
+            {
+                float freq = static_cast<float>(k) * binWidth;
+                residual[static_cast<size_t>(k)] -= peakingMagDB(peakFreq, peakGain, Q, freq);
+            }
+        }
+
+        // Sort fitted bands by frequency
+        std::sort(fittedBands.begin(), fittedBands.end(),
+                  [](const FittedBand& a, const FittedBand& b) { return a.freq < b.freq; });
+
+        // Assign to Digital bands 2-7
+        for (int i = 0; i < static_cast<int>(fittedBands.size()) && i < 6; ++i)
+        {
+            int bandNum = i + 2; // bands 2-7
+            auto& fb = fittedBands[static_cast<size_t>(i)];
+
+            setBoolParam(ParamIDs::bandEnabled(bandNum), true);
+            setParam(ParamIDs::bandFreq(bandNum), juce::jlimit(20.0f, 20000.0f, fb.freq));
+            setParam(ParamIDs::bandGain(bandNum), juce::jlimit(-24.0f, 24.0f, fb.gain));
+            setParam(ParamIDs::bandQ(bandNum), fb.q);
+            // Bands 2 and 7 default to shelf (shape 0); force peaking (shape 1)
+            // for fitted bands so they act as parametric EQ, not shelves.
+            int shape = (bandNum == 2 || bandNum == 7) ? 1 : 0;
+            setChoiceParam(ParamIDs::bandShape(bandNum), shape);
+        }
+
+        // Deactivate Match convolution
+        matchConvolutionActive.store(false, std::memory_order_release);
+    }
+
     // Switch to Digital mode after transfer
     setChoiceParam(ParamIDs::eqType, static_cast<int>(EQType::Digital));
 
@@ -2304,87 +2520,61 @@ void MultiQ::transferCurrentEQToDigital()
     filtersNeedUpdate.store(true);
 }
 
-// EQ Match
+// Match EQ — Logic Pro Match EQ style
 
-void MultiQ::captureMatchReference()
+bool MultiQ::computeMatchCorrection()
 {
-    eqMatchProcessor.setSampleRate(baseSampleRate);
-    std::array<float, 2048> snapshot;
+    float applyPct = safeGetParam(matchApplyParam, 100.0f);
+    float applyAmount = applyPct / 100.0f;  // -1.0 to +1.0
+    float smoothingSemitones = safeGetParam(matchSmoothingParam, 12.0f);
+    bool limitBoost = safeGetParam(matchLimitBoostParam, 0.0f) > 0.5f;
+    bool limitCut = safeGetParam(matchLimitCutParam, 0.0f) > 0.5f;
+
+    float maxBoostDB = limitBoost ? 6.0f : 0.0f;    // 0 = use hard limit only (±15 dB)
+    float maxCutDB = limitCut ? -6.0f : 0.0f;        // Limit buttons tighten to ±6 dB
+
+    DBG("MultiQ::computeMatchCorrection - apply=" + juce::String(applyAmount, 2)
+        + " smooth=" + juce::String(smoothingSemitones, 1)
+        + " limitBoost=" + juce::String(limitBoost ? 1 : 0)
+        + " limitCut=" + juce::String(limitCut ? 1 : 0)
+        + " baseSampleRate=" + juce::String(baseSampleRate.load()));
+
+    bool success = eqMatchProcessor.computeCorrection(
+        smoothingSemitones, applyAmount, maxBoostDB, maxCutDB, true /* minimum phase */);
+
+    DBG("  computeCorrection returned: " + juce::String(success ? "true" : "false"));
+
+    if (success)
     {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        snapshot = analyzerMagnitudes;
-    }
-    eqMatchProcessor.captureReference(snapshot);
-}
-
-void MultiQ::captureMatchSource()
-{
-    eqMatchProcessor.setSampleRate(baseSampleRate);
-    std::array<float, 2048> snapshot;
-    {
-        juce::SpinLock::ScopedLockType lock(analyzerMagnitudesLock);
-        snapshot = analyzerMagnitudes;
-    }
-    eqMatchProcessor.captureTarget(snapshot);
-}
-
-int MultiQ::computeEQMatch(float strength)
-{
-    eqMatchProcessor.setSampleRate(baseSampleRate);
-    if (strength < 0.0f)
-        strength = safeGetParam(matchStrengthParam, 1.0f);
-    return eqMatchProcessor.computeMatch(EQMatchProcessor::MAX_FIT_BANDS, strength);
-}
-
-void MultiQ::applyEQMatch()
-{
-    const auto& bands = eqMatchProcessor.getMatchedBands();
-
-    // Helper to set a parameter value by ID
-    auto setParam = [&](const juce::String& paramID, float value) {
-        if (auto* param = parameters.getParameter(paramID))
-            param->setValueNotifyingHost(param->getNormalisableRange().convertTo0to1(value));
-    };
-
-    auto setBoolParam = [&](const juce::String& paramID, bool value) {
-        if (auto* param = parameters.getParameter(paramID))
-            param->setValueNotifyingHost(value ? 1.0f : 0.0f);
-    };
-
-    auto setChoiceParam = [&](const juce::String& paramID, int index) {
-        if (auto* param = parameters.getParameter(paramID))
+        juce::AudioBuffer<float> ir = eqMatchProcessor.getCorrectionIR();
+        DBG("  IR samples: " + juce::String(ir.getNumSamples())
+            + " peak: " + juce::String(ir.getNumSamples() > 0 ? ir.getMagnitude(0, ir.getNumSamples()) : 0.0f, 6));
+        if (ir.getNumSamples() > 0)
         {
-            int numChoices = param->getNumSteps();
-            if (numChoices > 1)
-                param->setValueNotifyingHost(static_cast<float>(index) / static_cast<float>(numChoices - 1));
-        }
-    };
+            matchConvolution.loadImpulseResponse(
+                std::move(ir),
+                baseSampleRate,
+                juce::dsp::Convolution::Stereo::no,
+                juce::dsp::Convolution::Trim::no,
+                juce::dsp::Convolution::Normalise::no);
 
-    // Switch to Match mode
-    setChoiceParam(ParamIDs::eqType, static_cast<int>(EQType::Match));
+            matchConvolutionActive.store(true, std::memory_order_release);
 
-    // Apply fitted bands to bands 2-7 (indices 0-5 in the fitted array)
-    for (int i = 0; i < EQMatchProcessor::MAX_FIT_BANDS; ++i)
-    {
-        int bandNum = i + 2;  // Bands 2-7
-        const auto& fitted = bands[static_cast<size_t>(i)];
-
-        if (fitted.active)
-        {
-            setBoolParam(ParamIDs::bandEnabled(bandNum), true);
-            setParam(ParamIDs::bandFreq(bandNum), fitted.freq);
-            setParam(ParamIDs::bandGain(bandNum), fitted.gainDB);
-            setParam(ParamIDs::bandQ(bandNum), fitted.q);
-            setChoiceParam(ParamIDs::bandShape(bandNum), 0);  // Peaking
-        }
-        else
-        {
-            setBoolParam(ParamIDs::bandEnabled(bandNum), false);
+            // Switch to Match mode if not already
+            if (auto* param = parameters.getParameter(ParamIDs::eqType))
+            {
+                int numChoices = param->getNumSteps();
+                if (numChoices > 1)
+                    param->setValueNotifyingHost(
+                        static_cast<float>(static_cast<int>(EQType::Match))
+                        / static_cast<float>(numChoices - 1));
+            }
+            DBG("  Match correction APPLIED successfully, convolution active");
+            return true;
         }
     }
-
-    // Force filter update
-    filtersNeedUpdate.store(true);
+    DBG("  Match correction FAILED");
+    return false;
 }
 
 // FFT Analyzer
@@ -2765,15 +2955,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         0  // Digital by default (includes per-band dynamics capability)
     ));
 
+    // Match EQ parameters
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID(ParamIDs::matchStrength, 1),
-        "Match Strength",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        1.0f,
+        juce::ParameterID(ParamIDs::matchApply, 1),
+        "Match Apply",
+        juce::NormalisableRange<float>(-100.0f, 100.0f, 1.0f),
+        100.0f,
         juce::String(),
         juce::AudioProcessorParameter::genericParameter,
-        [](float value, int) { return juce::String(juce::roundToInt(value * 100.0f)) + "%"; },
-        [](const juce::String& text) { return text.trimCharactersAtEnd("%").getFloatValue() / 100.0f; }
+        [](float v, int) { return juce::String(juce::roundToInt(v)) + "%"; },
+        [](const juce::String& t) { return t.trimCharactersAtEnd("%").getFloatValue(); }
+    ));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::matchSmoothing, 1),
+        "Match Smoothing",
+        juce::NormalisableRange<float>(1.0f, 24.0f, 0.5f),
+        12.0f,
+        juce::String(),
+        juce::AudioProcessorParameter::genericParameter,
+        [](float v, int) { return juce::String(v, 1) + " st"; },
+        [](const juce::String& t) { return t.trimCharactersAtEnd(" st").getFloatValue(); }
+    ));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::matchLimitBoost, 1),
+        "Match Limit Boost",
+        false
+    ));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(ParamIDs::matchLimitCut, 1),
+        "Match Limit Cut",
+        false
     ));
 
     // Analyzer parameters
@@ -3360,12 +3574,22 @@ int MultiQ::getLatencySamples() const
     // Report oversampling latency + limiter lookahead
     int latency = 0;
     if (oversamplingMode == 2 && oversampler4x)
-        latency = static_cast<int>(oversampler4x->getLatencyInSamples());
+        latency = static_cast<int>(std::lround(oversampler4x->getLatencyInSamples()));
     else if (oversamplingMode == 1 && oversampler2x)
-        latency = static_cast<int>(oversampler2x->getLatencyInSamples());
+        latency = static_cast<int>(std::lround(oversampler2x->getLatencyInSamples()));
 
     latency += outputLimiter.getLatencySamples();
     return latency;
+}
+
+juce::AudioProcessorParameter* MultiQ::getBypassParameter() const
+{
+    // Return our "bypass" parameter so the AU/VST3 wrapper routes host bypass
+    // through processBlock (where our internal bypass applies correct delay paths)
+    // instead of processBlockBypassed or skipping rendering entirely.
+    // Without this, Logic Pro's disable button stops calling the AU but still
+    // applies PDC -> phase offset on parallel buses.
+    return parameters.getParameter(ParamIDs::bypass);
 }
 
 juce::AudioProcessorEditor* MultiQ::createEditor()
