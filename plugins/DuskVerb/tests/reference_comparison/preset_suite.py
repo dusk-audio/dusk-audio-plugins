@@ -54,7 +54,7 @@ VV_MODE_NAMES = {
 }
 
 # DV algorithms that use ERs
-DV_ER_ALGORITHMS = {"Hall", "Chamber", "Room"}
+DV_ER_ALGORITHMS = {"Hall", "Chamber", "Room", "Plate"}
 
 # ---------------------------------------------------------------------------
 # Per-VV-mode trebleMultScale overrides.
@@ -66,21 +66,21 @@ DV_ER_ALGORITHMS = {"Hall", "Chamber", "Room"}
 # This is exact:      effective = adjusted_treble * global_tMS = raw_treble * desired_tMS
 # ---------------------------------------------------------------------------
 MODE_TREBLE_MULT_SCALE = {
-    "Concert Hall": 0.75,   # Hall algo global=0.75 → no compensation needed
-    "Plate":        1.30,   # Plate algo global=1.30 → no compensation needed
+    "Concert Hall": 0.75,   # Hall algo global=0.50 → compensation = 0.75/0.50 = 1.50
+    "Plate":        1.30,   # Plate algo global=0.65 → compensation = 1.30/0.65 = 2.00
     "Room":         0.45,   # Room algo global=0.45 → no compensation needed
-    "Chamber":      1.55,   # Chamber algo global=1.20 → brighten to fix HF on plate-like presets
-    "Ambience":     0.78,   # Ambient algo global=0.60 → brighten to fix HF on plate-like presets
-    "Hall1984":     0.50,   # Hall1984: darker than Concert Hall (compensation = 0.50/0.75 = 0.667)
+    "Chamber":      1.55,   # Chamber algo global=0.90 → compensation = 1.55/0.90 = 1.72
+    "Ambience":     0.78,   # Ambient algo global=0.80 → compensation = 0.78/0.80 = 0.975
+    "Hall1984":     0.50,   # Hall algo global=0.50 → no compensation needed
 }
 
 # Global trebleMultScale values from AlgorithmConfig.h (used for compensation math)
 DV_GLOBAL_TREBLE_MULT_SCALE = {
-    "Plate":   1.30,
-    "Hall":    0.75,
-    "Chamber": 1.20,
+    "Plate":   0.65,
+    "Hall":    0.50,
+    "Chamber": 0.90,
     "Room":    0.45,
-    "Ambient": 0.60,
+    "Ambient": 0.80,
 }
 
 # ---------------------------------------------------------------------------

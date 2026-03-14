@@ -285,8 +285,7 @@ public:
         return dcBlocked;
     }
     
-    // Generate harmonics using band-limited additive synthesis
-    // This ensures no aliasing from harmonic generation
+    // Band-limited additive synthesis (no aliasing from harmonic generation)
     // fundamentalPhase: current phase of the fundamental in radians [0, 2π)
     // fundamentalFreq: fundamental frequency in Hz (for band-limiting check)
     float addHarmonics(float fundamental, float fundamentalPhase, float fundamentalFreq,
@@ -2214,8 +2213,7 @@ public:
             detector.overshootAmount *= 0.98f; // Quick decay
         }
         
-        // Feed-forward stability: ensure envelope stays within bounds
-        // This prevents the instability that plagues feedback compressors at high ratios
+        // Clamp envelope (feed-forward stability at high ratios)
         detector.envelope = juce::jlimit(0.0001f, 1.0f, detector.envelope);
 
         // NaN/Inf safety check
@@ -3158,8 +3156,7 @@ public:
             writePos = (writePos + 1) % bufferSize;
         }
 
-        // Peak detection uses current (future) sidechain input for gain computation
-        // This allows the compressor to "see ahead" and react before the audio arrives
+        // Lookahead: use future sidechain input for gain computation
         float detectionLevel = std::abs(sidechainInput);
         float detectionDb = juce::Decibels::gainToDecibels(juce::jmax(detectionLevel, 0.00001f));
 
@@ -4500,9 +4497,7 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     double oversampledRate = sampleRate * oversamplingMultiplier;
     int oversampledBlockSize = samplesPerBlock * oversamplingMultiplier;
 
-    // Prepare all compressor types at the actual oversampled rate
-    // This ensures transformer emulation, DC blockers, and HF filters
-    // are correctly tuned for the rate at which they actually process audio
+    // Prepare all compressor types at the oversampled rate
     if (optoCompressor)
         optoCompressor->prepare(oversampledRate, numChannels);
     if (fetCompressor)
@@ -4574,9 +4569,7 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Allocate interpolated sidechain for max 4x oversampling
     interpolatedSidechain.setSize(numChannels, safeBlockSize * 4);
 
-    // Prepare phase-coherent dry/wet mixer for oversampling
-    // This ensures dry and wet signals are time-aligned when mixing (parallel compression)
-    // and prevents comb filtering from FIR anti-aliasing filter latency mismatch
+    // Phase-coherent dry/wet mixer (compensates FIR anti-aliasing latency)
     dryWetMixer.prepare(sampleRate, samplesPerBlock, numChannels, 4);  // max 4x oversampling
 
     // Set latency for phase-coherent dry/wet mixing
@@ -4596,10 +4589,8 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
         {
             auto* dlParam = parameters.getRawParameterValue("digital_lookahead");
             float dlMs = (dlParam != nullptr) ? dlParam->load() : 0.0f;
-            // Digital compressor is always prepared at 4x rate
-            constexpr int maxOsMultiplier = 4;
-            int delay4x = static_cast<int>(std::round((dlMs / 1000.0f) * static_cast<float>(sampleRate) * maxOsMultiplier));
-            digitalDelay = delay4x / actualOsFactor;
+            digitalDelay = static_cast<int>(std::round(
+                (dlMs / 1000.0f) * static_cast<float>(sampleRate)));
         }
         dryWetMixer.setProcessingLatency(digitalDelay);
     }
@@ -4659,9 +4650,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (!bypassParam)
         return;
 
-    // When bypassed (host or internal), pass audio through with zero processing
-    // and report zero latency so the DAW removes PDC for this plugin.
-    // This prevents phase offset when the plugin is disabled on a parallel bus.
+    // Bypassed: zero latency, no processing (clean parallel bus behavior)
     if (*bypassParam > 0.5f)
     {
         // Report 0 latency during bypass so DAW doesn't apply PDC
@@ -4679,14 +4668,16 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         if (digitalCompressor)
             digitalCompressor->reset();
 
-        // Audio passes through undelayed — no processing, no delay paths.
-        // We reported 0 latency above so the DAW won't apply PDC either.
-        // This ensures perfect phase alignment when disabled on a parallel bus.
+        wasBypassedLastBlock = true;
         return;
     }
 
-    // Restore actual latency when exiting bypass (DAW will recalculate PDC)
-    updateLatencyReport();
+    // Restore latency on bypass→active transition
+    if (wasBypassedLastBlock)
+    {
+        wasBypassedLastBlock = false;
+        updateLatencyReport();
+    }
 
     // Get stereo link and mix parameters with proper null checks
     auto* stereoLinkParam = parameters.getRawParameterValue("stereo_link");
@@ -4742,9 +4733,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     bool oversample = true; // Always use oversampling internally
     CompressorMode mode = getCurrentMode();
 
-    // Detect mode change and reset auto-gain state
-    // Each compressor mode has different gain characteristics, so the GR accumulator
-    // must be reset to prevent incorrect auto-gain from stale data
+    // Reset auto-gain state on mode change
     int currentModeInt = static_cast<int>(mode);
     if (currentModeInt != lastCompressorMode)
     {
@@ -4753,8 +4742,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         primeGrAccumulator = true;
         // Reset smoothed gain to unity to avoid sudden volume jumps
         smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
-        // Digital mode has internal lookahead that affects PDC and dry/wet alignment
-        // Reset processing latency when leaving Digital mode to prevent stale delay
+        // Reset Digital mode's lookahead latency
         if (mode != CompressorMode::Digital)
             dryWetMixer.setProcessingLatency(0);
         lastReportedLookaheadSamples = -1;  // Force re-evaluation of lookahead
@@ -5194,13 +5182,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         {
             auto* digitalLookaheadParam = parameters.getRawParameterValue("digital_lookahead");
             float digitalLookaheadMs = (digitalLookaheadParam != nullptr) ? digitalLookaheadParam->load() : 0.0f;
-            // Delay in 4x-rate samples (matches what the Digital compressor actually applies)
-            constexpr int maxOsMultiplier = 4;
-            int delay4xSamples = static_cast<int>(std::round((digitalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate) * maxOsMultiplier));
-            // Convert to base-rate equivalent: actual base-rate delay depends on current OS
-            const int actualOsFactor = (currentOversamplingFactor == 2) ? 4
-                                     : (currentOversamplingFactor == 1) ? 2 : 1;
-            digitalLookaheadBaseSamples = delay4xSamples / actualOsFactor;
+            digitalLookaheadBaseSamples = static_cast<int>(std::round(
+                (digitalLookaheadMs / 1000.0f) * static_cast<float>(currentSampleRate)));
         }
 
         int totalLookaheadSamples = globalLookaheadSamples + digitalLookaheadBaseSamples;
@@ -5449,9 +5432,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         // Processing latency (Digital mode lookahead) is set per-block in the
         // lookahead tracking section above. All other modes add zero group delay.
 
-        // Capture dry signal at OVERSAMPLED rate for phase-coherent mixing
-        // This ensures both dry and wet go through the same downsampling filter,
-        // eliminating FIR pre-ring artifacts that cause comb filtering
+        // Capture dry at oversampled rate so both paths share the downsampling filter
         bool needsOversampledDry = needsDryBuffer && (mixAmount < 0.999f);
         if (needsOversampledDry)
         {
@@ -5856,9 +5837,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     outputMeterL.store(outputDbL, std::memory_order_relaxed);
     outputMeterR.store(numChannels > 1 ? outputDbR : outputDbL, std::memory_order_relaxed);  // Mono: use same value for both
 
-    // Store gain reduction through delay buffer to sync meter with audio output
-    // This ensures the GR display matches what you hear after PDC latency compensation
-    // We delay by numSamples each block (processing one block's worth of GR at a time)
+    // Delay GR meter by PDC latency to match audible output
     float delayedGR = gainReduction;  // Default if no delay
     // Use acquire ordering to synchronize with prepareToPlay's release store
     int currentDelaySamples = grDelaySamples.load(std::memory_order_acquire);
@@ -6018,6 +5997,8 @@ void UniversalCompressor::processBlockBypassed(juce::AudioBuffer<float>& buffer,
     // Report 0 latency and pass audio through undelayed, same as our internal bypass.
     if (getLatencySamples() != 0)
         setLatencySamples(0);
+    // Mark as bypassed so processBlock can detect the transition and restore latency.
+    wasBypassedLastBlock = true;
     // Audio passes through unchanged — JUCE default clears output, we just leave input as-is.
     juce::ignoreUnused(buffer);
 }

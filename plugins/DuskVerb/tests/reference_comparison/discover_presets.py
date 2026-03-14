@@ -62,7 +62,9 @@ REVERB_MODES = {
     "Palace":           "room / large spaces simulator, sparse initial echo density, lush balanced modulation",
     "Chamber1979":      "late 70s chamber algorithm. lower initial echo density, lush balanced modulation",
     "Hall1984":         "slow attack, low initial echo density, lush random modulation, bright initial tone",
-    # "Darkness" referenced in binary but may be a UI theme, not a reverb mode
+    "Darkness":         "dark tone variant, low initial echo density, subtle modulation",
+    "Spring":           "spring reverb emulation, fast attack, metallic resonances",
+    "Inverse":          "reverse envelope reverb, swelling tail, chorused modulation",
 }
 
 COLOR_MODES = {

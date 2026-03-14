@@ -77,8 +77,8 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     sampleRate_ = sampleRate;
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
 
-    // Modulation headroom beyond the max scaled delay
-    int maxModExcursion = 32;
+    // Modulation headroom beyond the max scaled delay (scale with sample rate)
+    const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
@@ -120,6 +120,9 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     updateDelayLengths();
     updateDecayCoefficients();
     updateLFORates();
+
+    // Re-apply mod depth scaled for the new sample rate
+    setModDepth (lastModDepthRaw_);
 }
 
 // -----------------------------------------------------------------------
@@ -312,6 +315,7 @@ void DattorroTank::setCrossoverFreq (float hz)
 
 void DattorroTank::setModDepth (float depth)
 {
+    lastModDepthRaw_ = depth;
     // Map 0-1 knob range to 0-16 samples peak excursion (Dattorro: 8 samples typical)
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     modDepthSamples_ = depth * 16.0f * rateRatio;

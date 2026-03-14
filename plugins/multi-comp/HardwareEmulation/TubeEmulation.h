@@ -160,17 +160,8 @@ private:
 
     void initializePlateTransferFunction()
     {
-        // Model 12AX7 triode plate characteristics
-        // Based on Ia/Vg curves from tube datasheets
-        // Target: < 0.5% THD at normal operating levels
+        // Plate transfer function from Ia/Vg curves (per-type via plateK2)
         // Asymmetric: positive grid clips softer (grid current), negative clips harder (cutoff)
-        //
-        // For real tubes at moderate levels, THD is typically:
-        // - 12AX7: 0.3-0.5% THD at rated output
-        // - 12BH7: 0.2-0.4% THD (cleaner output driver)
-        //
-        // The key is to keep the transfer function nearly linear in the normal
-        // operating range (-1 to +1) and only apply soft nonlinearity at extremes.
 
         for (int i = 0; i < TRANSFER_TABLE_SIZE; ++i)
         {

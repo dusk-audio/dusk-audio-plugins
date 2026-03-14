@@ -228,6 +228,7 @@ private:
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
     float modDepthSamples_ = 8.0f;  // Peak excursion in samples
+    float lastModDepthRaw_ = 0.5f;  // Raw 0-1 depth before sample rate scaling
     float modRateHz_ = 1.0f;
     float sizeParam_ = 0.5f;
     float sizeRangeMin_ = 0.5f;
