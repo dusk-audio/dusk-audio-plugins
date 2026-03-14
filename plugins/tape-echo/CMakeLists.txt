@@ -19,7 +19,7 @@ juce_add_plugin(TapeEcho
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE TpEc
-    FORMATS VST3 LV2 Standalone
+    FORMATS AU VST3 LV2 Standalone
     PRODUCT_NAME "Tape Echo"
     LV2URI "https://dusk-audio.github.io/plugins/tapeecho"
     VST3_CAN_REPLACE_VST2 TRUE)

@@ -31,6 +31,7 @@ TapeEchoProcessor::TapeEchoProcessor()
     dryWetParam = apvts.getRawParameterValue("dryWet");
     tempoSyncParam = apvts.getRawParameterValue("tempoSync");
     noteDivisionParam = apvts.getRawParameterValue("noteDivision");
+    bypassParam = dynamic_cast<juce::AudioParameterBool*>(apvts.getParameter("bypass"));
 }
 
 TapeEchoProcessor::~TapeEchoProcessor()
@@ -136,6 +137,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeEchoProcessor::createPar
         noteDivisions,
         5));  // Default to 1/8 note
 
+    // Bypass
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID { "bypass", 1 },
+        "Bypass",
+        false));
+
     return { params.begin(), params.end() };
 }
 
@@ -224,6 +231,13 @@ void TapeEchoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     if (numChannels == 0 || numSamples == 0)
         return;
+
+    // Bypass: pass audio through unprocessed
+    if (bypassParam != nullptr && bypassParam->get())
+    {
+        setLatencySamples(0);
+        return;
+    }
 
     // Try to acquire lock - if we can't, just clear and return
     const juce::SpinLock::ScopedTryLockType tryLock(processLock);

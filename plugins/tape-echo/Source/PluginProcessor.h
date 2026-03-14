@@ -54,6 +54,8 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
+
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
     // Metering
@@ -106,6 +108,7 @@ private:
     std::atomic<float>* dryWetParam = nullptr;
     std::atomic<float>* tempoSyncParam = nullptr;
     std::atomic<float>* noteDivisionParam = nullptr;
+    juce::AudioParameterBool* bypassParam = nullptr;
 
     // Smoothed parameters
     juce::SmoothedValue<float> smoothedInputGain;

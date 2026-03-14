@@ -16,11 +16,13 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
+#include "TapeEchoPresets.h"
 #include "UI/TapeEchoLookAndFeel.h"
 #include "UI/TapeVisualization.h"
 #include "../../shared/LEDMeter.h"
 #include "../../shared/DuskLookAndFeel.h"
 #include "../../shared/ScalableEditorHelper.h"
+#include "../../shared/UserPresetManager.h"
 
 class TapeEchoEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -89,6 +91,18 @@ private:
     // Level meters (using shared LEDMeter with stereo mode)
     std::unique_ptr<LEDMeter> inputMeter;
     std::unique_ptr<LEDMeter> outputMeter;
+
+    // Preset browser
+    juce::ComboBox presetBox_;
+    std::unique_ptr<UserPresetManager> userPresetManager_;
+    juce::TextButton savePresetButton_;
+    juce::TextButton deletePresetButton_;
+    void refreshPresetList();
+    void loadPreset (int index);
+    void saveUserPreset();
+    void loadUserPreset (const juce::String& name);
+    void deleteUserPreset (const juce::String& name);
+    void updateDeleteButtonVisibility();
 
     void timerCallback() override;
     void setupKnob(juce::Slider& knob, juce::Label& label, const juce::String& text);
