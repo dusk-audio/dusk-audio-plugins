@@ -310,7 +310,7 @@ def run_algorithm(dv, vv, algo, vv_mode_float):
     dv_config = {
         'algorithm': algo,
         'decay_time': decay,
-        'room_size': size,
+        'size': size,
         'mod_depth': mod_depth_ui,
         'mod_rate': vv_mod_rate_hz,  # Match the Hz value
         'treble_multiply': treble,
