@@ -109,6 +109,7 @@ private:
     std::atomic<float>* tempoSyncParam = nullptr;
     std::atomic<float>* noteDivisionParam = nullptr;
     juce::AudioParameterBool* bypassParam = nullptr;
+    int originalLatencySamples_ = 0;
 
     // Smoothed parameters
     juce::SmoothedValue<float> smoothedInputGain;

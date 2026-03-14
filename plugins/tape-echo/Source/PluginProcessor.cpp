@@ -200,6 +200,10 @@ void TapeEchoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedBass.reset(sampleRate, 0.02);
     smoothedTreble.reset(sampleRate, 0.02);
 
+    // Set latency from oversampling and store for bypass restoration
+    originalLatencySamples_ = static_cast<int>(oversampling->getLatencyInSamples());
+    setLatencySamples(originalLatencySamples_);
+
     // Now ready to process
     readyToProcess.store(true, std::memory_order_release);
 }
@@ -238,6 +242,10 @@ void TapeEchoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         setLatencySamples(0);
         return;
     }
+
+    // Restore latency after bypass
+    if (getLatencySamples() != originalLatencySamples_)
+        setLatencySamples(originalLatencySamples_);
 
     // Try to acquire lock - if we can't, just clear and return
     const juce::SpinLock::ScopedTryLockType tryLock(processLock);

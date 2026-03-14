@@ -1383,8 +1383,10 @@ def run_phase4c(dv_ir_l, vv_ir_l, sr, results, out_dir, save):
         lag_hi = int(0.20 * sr)
         ir_norm = ir_hp / (np.max(np.abs(ir_hp)) + 1e-30)
         n = len(ir_norm)
-        autocorr = np.correlate(ir_norm[:n // 2], ir_norm[:n // 2], mode='full')
-        autocorr = autocorr[len(autocorr) // 2:]  # positive lags only
+        # FFT-based autocorrelation (O(N log N) instead of O(N²))
+        half = ir_norm[:n // 2]
+        fft_half = np.fft.rfft(half, n=2 * len(half))
+        autocorr = np.fft.irfft(np.abs(fft_half) ** 2)[:len(half)]
         autocorr = autocorr / (autocorr[0] + 1e-30)  # normalize
         return autocorr, lag_lo, lag_hi
 
@@ -2135,9 +2137,9 @@ def run_phase6a(dv_ir_l, vv_ir_l, sr, results, out_dir, save):
         phase = np.unwrap(np.angle(spectrum))
         omega = 2.0 * np.pi * freqs
         d_omega = omega[1] - omega[0]
-        group_delay_samples = -np.diff(phase) / d_omega
+        group_delay_sec = -np.diff(phase) / d_omega
         # Convert to ms
-        group_delay_ms = group_delay_samples / sr * 1000.0
+        group_delay_ms = group_delay_sec * 1000.0
         
         # Smooth group delay for readability
         kernel_size = 15
@@ -3275,10 +3277,7 @@ def run_phase8c(dv_plugin, vv_plugin, pairing, sr, results, out_dir, save):
         # For DuskVerb, decay_time is in seconds; for VV, it's 0-1 normalized
         if "decay_time" in mod_config:
             # DuskVerb: set absolute decay time
-            if decay_val < 1.0:
-                mod_config["decay_time"] = 1.0
-            else:
-                mod_config["decay_time"] = 5.0
+            mod_config["decay_time"] = 1.0 if decay_val == short_decay else 5.0
         elif "_decay" in mod_config:
             # VintageVerb: set normalized decay
             mod_config["_decay"] = decay_val

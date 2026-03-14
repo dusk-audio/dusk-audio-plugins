@@ -441,7 +441,7 @@
       "name": "Medium Gate",
       "mode": "Chamber",
       "dv_algorithm": "Chamber",
-      "is_gate": false,
+      "is_gate": true,
       "dv_path": "presets/Medium_Gate_DV.wav",
       "vv_path": "presets/Medium_Gate_VV.wav",
       "dv_peak_dbfs": -38.099998474121094,

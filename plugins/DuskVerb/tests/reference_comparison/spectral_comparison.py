@@ -43,17 +43,14 @@ def smoothed_spectrum(signal, sr, smoothing_octave=1/6):
     log_freqs = np.log2(freqs[1:] + 1e-30)  # skip DC
     mag_db_no_dc = mag_db[1:]
 
-    smoothed = np.zeros_like(mag_db_no_dc)
     half_width = smoothing_octave / 2
 
+    # O(N) smoothing using binary search for window bounds
+    smoothed = np.zeros_like(mag_db_no_dc)
     for i in range(len(log_freqs)):
-        lo = log_freqs[i] - half_width
-        hi = log_freqs[i] + half_width
-        mask = (log_freqs >= lo) & (log_freqs <= hi)
-        if np.any(mask):
-            smoothed[i] = np.mean(mag_db_no_dc[mask])
-        else:
-            smoothed[i] = mag_db_no_dc[i]
+        lo = np.searchsorted(log_freqs, log_freqs[i] - half_width)
+        hi = np.searchsorted(log_freqs, log_freqs[i] + half_width, side='right')
+        smoothed[i] = np.mean(mag_db_no_dc[lo:hi])
 
     return freqs[1:], smoothed
 
@@ -62,7 +59,7 @@ def compute_mfcc_per_frame(signal, sr, n_mfcc=13, frame_ms=50, hop_ms=25):
     """Compute MFCCs per frame using simple mel filterbank."""
     frame_len = int(sr * frame_ms / 1000)
     hop_len = int(sr * hop_ms / 1000)
-    n_frames = max(1, (len(signal) - frame_len) // hop_len)
+    n_frames = max(1, (len(signal) - frame_len) // hop_len + 1)
 
     # Mel filterbank (40 filters, 20-16000 Hz)
     n_filt = 40
@@ -87,7 +84,10 @@ def compute_mfcc_per_frame(signal, sr, n_mfcc=13, frame_ms=50, hop_ms=25):
 
     for i in range(n_frames):
         start = i * hop_len
-        frame = signal[start:start + frame_len] * window
+        chunk = signal[start:start + frame_len]
+        if len(chunk) < frame_len:
+            chunk = np.pad(chunk, (0, frame_len - len(chunk)))
+        frame = chunk * window
         power = np.abs(np.fft.rfft(frame)) ** 2
         mel_energy = np.dot(filterbank, power)
         mel_log = np.log(mel_energy + 1e-30)

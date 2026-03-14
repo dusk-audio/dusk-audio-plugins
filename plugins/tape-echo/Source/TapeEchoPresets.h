@@ -21,6 +21,8 @@ struct Preset
     float treble       = 0.0f;    // -6 to 6 dB
     float wowFlutter   = 15.0f;   // 0 to 100%
     float dryWet       = 50.0f;   // 0 to 100%
+    bool  tempoSync    = false;   // tempo sync on/off
+    int   noteDivision = 0;       // 0-14 (note subdivision index)
 
     void applyTo (juce::AudioProcessorValueTreeState& apvts) const
     {
@@ -40,6 +42,8 @@ struct Preset
         setParam ("treble",       treble);
         setParam ("wowFlutter",   wowFlutter);
         setParam ("dryWet",       dryWet);
+        setParam ("tempoSync",    tempoSync ? 1.0f : 0.0f);
+        setParam ("noteDivision", static_cast<float> (noteDivision));
     }
 };
 

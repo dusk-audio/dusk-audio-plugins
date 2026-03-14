@@ -254,13 +254,9 @@ private:
     }
     void applyLowpass(float freq, float db)
     {
-        // One-pole lowpass applied iteratively for smooth rolloff
-        // Each pass adds ~0.75dB additional rolloff at cutoff frequency
+        // Iterative one-pole lowpass (~0.75dB/pass at cutoff)
         float w = 2.0f * 3.14159f * freq / static_cast<float>(sampleRate);
-        float coeff = 1.0f - std::exp(-w);  // Correct one-pole coefficient (w/(w+1) is inaccurate near Nyquist)
-
-        // Number of filter passes based on rolloff steepness
-        // -0.5dB -> 1 pass, -1.0dB -> 1 pass, -1.5dB -> 2 passes
+        float coeff = 1.0f - std::exp(-w);
         int numPasses = std::max(1, static_cast<int>(std::abs(db) / 0.75f + 0.5f));
 
         for (int pass = 0; pass < numPasses; ++pass)
