@@ -97,6 +97,67 @@ TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
     noteDivisionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, "noteDivision", noteDivisionKnob);
 
+    // User preset manager
+    userPresetManager_ = std::make_unique<UserPresetManager> ("TapeEcho");
+
+    // Preset browser (factory + user presets)
+    presetBox_.setJustificationType (juce::Justification::centred);
+    presetBox_.onChange = [this]
+    {
+        int id = presetBox_.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int> (userPresets.size()))
+                loadUserPreset (userPresets[static_cast<size_t> (userIdx)].name);
+        }
+        else if (id >= 2)
+        {
+            loadPreset (id - 2);
+        }
+        updateDeleteButtonVisibility();
+    };
+    addAndMakeVisible (presetBox_);
+    refreshPresetList();
+
+    // Save preset button
+    savePresetButton_.setButtonText ("Save");
+    savePresetButton_.onClick = [this] { saveUserPreset(); };
+    addAndMakeVisible (savePresetButton_);
+
+    // Delete preset button (only visible when a user preset is selected)
+    deletePresetButton_.setButtonText ("Del");
+    deletePresetButton_.onClick = [this]
+    {
+        int id = presetBox_.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int> (userPresets.size()))
+            {
+                auto name = userPresets[static_cast<size_t> (userIdx)].name;
+                juce::Component::SafePointer<TapeEchoEditor> safeThis (this);
+
+                juce::AlertWindow::showOkCancelBox (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Delete Preset",
+                    "Delete \"" + name + "\"?",
+                    "Delete", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create ([safeThis, name] (int result) {
+                        if (result == 1 && safeThis != nullptr)
+                        {
+                            safeThis->deleteUserPreset (name);
+                            safeThis->updateDeleteButtonVisibility();
+                        }
+                    }));
+            }
+        }
+    };
+    addAndMakeVisible (deletePresetButton_);
+    deletePresetButton_.setVisible (false);
+
     // Timer for UI updates
     startTimerHz(30);
 
@@ -189,6 +250,22 @@ void TapeEchoEditor::resized()
 
     // Header area
     bounds.removeFromTop(scaled(50));
+
+    // Preset browser in header (centered between title texts)
+    {
+        int presetW = scaled(180);
+        int presetH = scaled(22);
+        int presetY = scaled(14);
+        int saveW   = scaled(45);
+        int delW    = scaled(35);
+        int btnGap  = scaled(4);
+        int totalPresetW = presetW + btnGap + saveW + btnGap + delW;
+        int presetStartX = (getWidth() - totalPresetW) / 2;
+        presetBox_.setBounds (presetStartX, presetY, presetW, presetH);
+        savePresetButton_.setBounds (presetStartX + presetW + btnGap, presetY, saveW, presetH);
+        deletePresetButton_.setBounds (presetStartX + presetW + btnGap + saveW + btnGap,
+                                       presetY, delW, presetH);
+    }
 
     // Tape visualization (top portion)
     auto vizArea = bounds.removeFromTop(scaled(120));
@@ -336,4 +413,132 @@ void TapeEchoEditor::updateModeButtons()
     {
         modeButtons[i]->setToggleState(i + 1 == currentMode, juce::dontSendNotification);
     }
+}
+
+// =============================================================================
+// Preset Management
+// =============================================================================
+
+void TapeEchoEditor::loadPreset (int index)
+{
+    const auto& presets = TapeEchoPresets::getFactoryPresets();
+    if (index >= 0 && index < static_cast<int> (presets.size()))
+        presets[static_cast<size_t> (index)].applyTo (processor.getAPVTS());
+}
+
+void TapeEchoEditor::refreshPresetList()
+{
+    int currentId = presetBox_.getSelectedId();
+    presetBox_.clear (juce::dontSendNotification);
+
+    // Factory presets grouped by category (IDs starting at 2)
+    const auto& presets = TapeEchoPresets::getFactoryPresets();
+    juce::String lastCategory;
+    int id = 2;
+
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        juce::String cat (presets[i].category);
+        if (cat != lastCategory)
+        {
+            presetBox_.addSeparator();
+            presetBox_.addSectionHeading (cat);
+            lastCategory = cat;
+        }
+        presetBox_.addItem (presets[i].name, id++);
+    }
+
+    // User presets (IDs starting at 1001)
+    if (userPresetManager_)
+    {
+        auto userPresets = userPresetManager_->loadUserPresets();
+        if (! userPresets.empty())
+        {
+            presetBox_.addSeparator();
+            presetBox_.addSectionHeading ("User Presets");
+
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                presetBox_.addItem (userPresets[i].name, static_cast<int> (1001 + i));
+        }
+    }
+
+    // Restore selection
+    if (currentId > 0)
+        presetBox_.setSelectedId (currentId, juce::dontSendNotification);
+}
+
+void TapeEchoEditor::saveUserPreset()
+{
+    if (! userPresetManager_)
+        return;
+
+    auto* dialog = new juce::AlertWindow ("Save Preset",
+                                           "Enter a name for this preset:",
+                                           juce::MessageBoxIconType::QuestionIcon);
+    dialog->addTextEditor ("name", "My Preset", "Preset Name:");
+    dialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    dialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<TapeEchoEditor> safeThis (this);
+    juce::Component::SafePointer<juce::AlertWindow> safeDialog (dialog);
+
+    dialog->enterModalState (true, juce::ModalCallbackFunction::create (
+        [safeThis, safeDialog] (int result) mutable
+        {
+            juce::String name;
+            if (result == 1 && safeDialog != nullptr)
+                name = safeDialog->getTextEditorContents ("name").trim();
+
+            if (safeThis == nullptr || name.isEmpty())
+                return;
+
+            if (safeThis->userPresetManager_->presetExists (name))
+            {
+                juce::Component::SafePointer<TapeEchoEditor> safeInner (safeThis.getComponent());
+
+                juce::AlertWindow::showOkCancelBox (
+                    juce::MessageBoxIconType::QuestionIcon,
+                    "Overwrite Preset?",
+                    "A preset named \"" + name + "\" already exists. Overwrite it?",
+                    "Overwrite", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create ([safeInner, name] (int confirmResult) {
+                        if (confirmResult == 1 && safeInner != nullptr)
+                        {
+                            auto state = safeInner->processor.getAPVTS().copyState();
+                            if (safeInner->userPresetManager_->saveUserPreset (name, state, JucePlugin_VersionString))
+                                safeInner->refreshPresetList();
+                        }
+                    }));
+            }
+            else
+            {
+                auto state = safeThis->processor.getAPVTS().copyState();
+                if (safeThis->userPresetManager_->saveUserPreset (name, state, JucePlugin_VersionString))
+                    safeThis->refreshPresetList();
+            }
+        }), true);
+}
+
+void TapeEchoEditor::loadUserPreset (const juce::String& name)
+{
+    if (! userPresetManager_)
+        return;
+
+    auto state = userPresetManager_->loadUserPreset (name);
+    if (state.isValid())
+        processor.getAPVTS().replaceState (state);
+}
+
+void TapeEchoEditor::deleteUserPreset (const juce::String& name)
+{
+    if (! userPresetManager_)
+        return;
+
+    userPresetManager_->deleteUserPreset (name);
+    refreshPresetList();
+}
+
+void TapeEchoEditor::updateDeleteButtonVisibility()
+{
+    deletePresetButton_.setVisible (presetBox_.getSelectedId() >= 1001);
 }
