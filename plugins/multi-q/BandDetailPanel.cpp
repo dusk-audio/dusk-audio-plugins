@@ -141,61 +141,93 @@ void BandDetailPanel::setupKnobs()
 
 void BandDetailPanel::setupMatchControls()
 {
-    matchCaptureRefButton.setTooltip("Capture current analyzer spectrum as the reference (what you want to sound like)");
-    matchCaptureRefButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a4a3a));
-    matchCaptureRefButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88ccaa));
-    matchCaptureRefButton.onClick = [this]() {
-        processor.captureMatchReference();
-        matchCaptureRefButton.setButtonText("Ref ✓");
-        matchCaptureRefButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff44bb66));
-        matchCaptureRefButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        if (processor.hasMatchSource())
-            matchComputeButton.setEnabled(true);
+    // Learn Current button — toggles learning on/off
+    learnCurrentButton.setTooltip("Learn the spectrum of your current audio (play audio while learning)");
+    learnCurrentButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a3a4a));
+    learnCurrentButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88aacc));
+    learnCurrentButton.onClick = [this]() {
+        if (processor.isMatchLearningCurrentOrPending())
+        {
+            // Stop current learning
+            processor.stopLearning();
+            stopTimer();
+            updateLearnButtonStates();
+        }
+        else
+        {
+            // Start current learning (cancels any other pending learning)
+            processor.startLearnCurrent();
+            learnCurrentButton.setButtonText("Stop");
+            learnCurrentButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffcc4444));
+            // Reset reference button to its non-learning state
+            learnReferenceButton.setButtonText(processor.hasMatchReferenceSpectrum() ? "Reference *" : "Learn Reference");
+            learnReferenceButton.setColour(juce::TextButton::buttonColourId,
+                processor.hasMatchReferenceSpectrum() ? juce::Colour(0xff44bb66) : juce::Colour(0xff2a4a3a));
+            startTimer(100);
+        }
     };
-    matchCaptureRefButton.setVisible(false);
-    addAndMakeVisible(matchCaptureRefButton);
+    learnCurrentButton.setVisible(false);
+    addAndMakeVisible(learnCurrentButton);
 
-    matchCaptureSrcButton.setTooltip("Capture current analyzer spectrum as the source (what your signal sounds like)");
-    matchCaptureSrcButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a3a4a));
-    matchCaptureSrcButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88aacc));
-    matchCaptureSrcButton.onClick = [this]() {
-        processor.captureMatchSource();
-        matchCaptureSrcButton.setButtonText("Src ✓");
-        matchCaptureSrcButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4488cc));
-        matchCaptureSrcButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        if (processor.hasMatchReference())
-            matchComputeButton.setEnabled(true);
+    // Learn Reference button — toggles learning on/off
+    learnReferenceButton.setTooltip("Learn the spectrum of the reference audio (play reference while learning)");
+    learnReferenceButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a4a3a));
+    learnReferenceButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88ccaa));
+    learnReferenceButton.onClick = [this]() {
+        if (processor.isMatchLearningReferenceOrPending())
+        {
+            // Stop reference learning
+            processor.stopLearning();
+            stopTimer();
+            updateLearnButtonStates();
+        }
+        else
+        {
+            // Start reference learning (cancels any other pending learning)
+            processor.startLearnReference();
+            learnReferenceButton.setButtonText("Stop");
+            learnReferenceButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffcc4444));
+            // Reset current button to its non-learning state
+            learnCurrentButton.setButtonText(processor.hasMatchCurrentSpectrum() ? "Current *" : "Learn Current");
+            learnCurrentButton.setColour(juce::TextButton::buttonColourId,
+                processor.hasMatchCurrentSpectrum() ? juce::Colour(0xff4488cc) : juce::Colour(0xff2a3a4a));
+            startTimer(100);
+        }
     };
-    matchCaptureSrcButton.setVisible(false);
-    addAndMakeVisible(matchCaptureSrcButton);
+    learnReferenceButton.setVisible(false);
+    addAndMakeVisible(learnReferenceButton);
 
-    matchComputeButton.setTooltip("Compute and apply EQ match (fits bands 2-7 to match reference)");
+    // Match (compute) button
+    matchComputeButton.setTooltip("Compute correction curve from learned spectra and apply FIR filter");
     matchComputeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff5a4030));
     matchComputeButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffccaa88));
     matchComputeButton.setEnabled(false);
     matchComputeButton.onClick = [this]() {
-        int bandsUsed = processor.computeEQMatch();
-        if (bandsUsed > 0)
+        if (processor.computeMatchCorrection())
         {
-            processor.applyEQMatch();
+            // Transfer correction curve to parametric bands and switch to Digital mode
+            processor.transferCurrentEQToDigital();
             matchComputeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffcc8844));
             matchComputeButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+            if (auto* parent = getParentComponent())
+                parent->repaint();
         }
     };
     matchComputeButton.setVisible(false);
     addAndMakeVisible(matchComputeButton);
 
-    matchClearButton.setTooltip("Clear captured spectra and reset match state");
+    // Clear button
+    matchClearButton.setTooltip("Clear all learned spectra and correction curve");
     matchClearButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a4a4a));
     matchClearButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff999999));
     matchClearButton.onClick = [this]() {
-        processor.clearEQMatch();
-        matchCaptureRefButton.setButtonText("Capture Ref");
-        matchCaptureRefButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a4a3a));
-        matchCaptureRefButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88ccaa));
-        matchCaptureSrcButton.setButtonText("Capture Source");
-        matchCaptureSrcButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a3a4a));
-        matchCaptureSrcButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88aacc));
+        processor.clearMatchEQ();
+        learnCurrentButton.setButtonText("Learn Current");
+        learnCurrentButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a3a4a));
+        learnCurrentButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88aacc));
+        learnReferenceButton.setButtonText("Learn Reference");
+        learnReferenceButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a4a3a));
+        learnReferenceButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88ccaa));
         matchComputeButton.setEnabled(false);
         matchComputeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff5a4030));
         matchComputeButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xffccaa88));
@@ -203,14 +235,88 @@ void BandDetailPanel::setupMatchControls()
     matchClearButton.setVisible(false);
     addAndMakeVisible(matchClearButton);
 
-    matchStrengthSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
-                                                          juce::Slider::TextBoxRight);
-    matchStrengthSlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
-    matchStrengthSlider->setTooltip("Match strength: how aggressively to match the reference spectrum (0-100%)");
-    matchStrengthSlider->setVisible(false);
-    addAndMakeVisible(matchStrengthSlider.get());
-    matchStrengthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.parameters, ParamIDs::matchStrength, *matchStrengthSlider);
+    // Limit Boost / Limit Cut toggles
+    limitBoostButton.setClickingTogglesState(true);
+    limitBoostButton.setTooltip("Limit maximum boost to +20 dB");
+    limitBoostButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
+    limitBoostButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff5588aa));
+    limitBoostButton.setVisible(false);
+    addAndMakeVisible(limitBoostButton);
+    limitBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.parameters, ParamIDs::matchLimitBoost, limitBoostButton);
+
+    limitCutButton.setClickingTogglesState(true);
+    limitCutButton.setTooltip("Limit maximum cut to -20 dB");
+    limitCutButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
+    limitCutButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff5588aa));
+    limitCutButton.setVisible(false);
+    addAndMakeVisible(limitCutButton);
+    limitCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.parameters, ParamIDs::matchLimitCut, limitCutButton);
+
+    // Apply slider (-100% to +100%)
+    matchApplySlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
+                                                       juce::Slider::TextBoxRight);
+    matchApplySlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    matchApplySlider->setTooltip("Apply amount: 100% = full correction, 0% = bypass, negative = inverse");
+    matchApplySlider->setVisible(false);
+    matchApplySlider->onValueChange = [this]() {
+        if (processor.hasMatchCorrectionCurve())
+            processor.computeMatchCorrection();
+    };
+    addAndMakeVisible(matchApplySlider.get());
+    matchApplyAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.parameters, ParamIDs::matchApply, *matchApplySlider);
+
+    // Smoothing slider (1-24 semitones)
+    matchSmoothingSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
+                                                           juce::Slider::TextBoxRight);
+    matchSmoothingSlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    matchSmoothingSlider->setTooltip("Smoothing: wider = smoother correction (in semitones, 12 = 1 octave)");
+    matchSmoothingSlider->setVisible(false);
+    matchSmoothingSlider->onValueChange = [this]() {
+        if (processor.hasMatchCorrectionCurve())
+            processor.computeMatchCorrection();
+    };
+    addAndMakeVisible(matchSmoothingSlider.get());
+    matchSmoothingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.parameters, ParamIDs::matchSmoothing, *matchSmoothingSlider);
+
+    // Learning status label
+    learningStatusLabel.setText("", juce::dontSendNotification);
+    learningStatusLabel.setColour(juce::Label::textColourId, juce::Colour(0xffcccccc));
+    learningStatusLabel.setFont(juce::FontOptions(10.0f));
+    learningStatusLabel.setVisible(false);
+    addAndMakeVisible(learningStatusLabel);
+}
+
+void BandDetailPanel::updateLearnButtonStates()
+{
+    // Current button
+    learnCurrentButton.setButtonText(processor.hasMatchCurrentSpectrum() ? "Current *" : "Learn Current");
+    learnCurrentButton.setColour(juce::TextButton::buttonColourId,
+        processor.hasMatchCurrentSpectrum() ? juce::Colour(0xff4488cc) : juce::Colour(0xff2a3a4a));
+    // Reference button
+    learnReferenceButton.setButtonText(processor.hasMatchReferenceSpectrum() ? "Reference *" : "Learn Reference");
+    learnReferenceButton.setColour(juce::TextButton::buttonColourId,
+        processor.hasMatchReferenceSpectrum() ? juce::Colour(0xff44bb66) : juce::Colour(0xff2a4a3a));
+    // Match button enable
+    matchComputeButton.setEnabled(processor.hasMatchCurrentSpectrum() && processor.hasMatchReferenceSpectrum());
+    learningStatusLabel.setText("", juce::dontSendNotification);
+}
+
+void BandDetailPanel::timerCallback()
+{
+    if (processor.isMatchLearningOrPending())
+    {
+        int frames = processor.getMatchLearningFrameCount();
+        learningStatusLabel.setText(juce::String(frames) + " frames", juce::dontSendNotification);
+    }
+    else
+    {
+        stopTimer();
+        updateLearnButtonStates();
+    }
 }
 
 void BandDetailPanel::setMatchMode(bool isMatch)
@@ -230,11 +336,31 @@ void BandDetailPanel::setMatchMode(bool isMatch)
     dynButton->setVisible(showDyn);
     soloButton->setVisible(showDyn);
 
-    matchCaptureRefButton.setVisible(matchMode);
-    matchCaptureSrcButton.setVisible(matchMode);
+    learnCurrentButton.setVisible(matchMode);
+    learnReferenceButton.setVisible(matchMode);
     matchComputeButton.setVisible(matchMode);
     matchClearButton.setVisible(matchMode);
-    matchStrengthSlider->setVisible(matchMode);
+    limitBoostButton.setVisible(matchMode);
+    limitCutButton.setVisible(matchMode);
+    matchApplySlider->setVisible(matchMode);
+    matchSmoothingSlider->setVisible(matchMode);
+    learningStatusLabel.setVisible(matchMode);
+
+    // Resync match control states from processor when showing the match section
+    if (matchMode)
+    {
+        updateLearnButtonStates();
+
+        // If learning is in progress, restart the timer to update frame count
+        if (processor.isMatchLearningOrPending())
+            startTimer(100);
+        else
+            stopTimer();
+    }
+    else
+    {
+        stopTimer();
+    }
 
     resized();
     repaint();
@@ -698,12 +824,6 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
 
     if (matchMode)
     {
-        // "STRENGTH" label to the left of the slider
-        g.setColour(juce::Colour(0xFF909090));
-        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-        auto sliderBounds = matchStrengthSlider->getBounds();
-        g.drawText("STRENGTH", sliderBounds.getX(), sliderBounds.getY() - 14,
-                   80, 12, juce::Justification::centredLeft);
 
         // "MATCH EQ" section label
         g.setColour(juce::Colour(0xFF44aa88));
@@ -856,30 +976,36 @@ void BandDetailPanel::resized()
 
     if (matchMode)
     {
-        // Two-row layout for match controls
-        // Row 1 (upper): [Capture Ref]  [Capture Source]
-        // Row 2 (lower): STRENGTH [====slider====]  [Match]  [Clear]
-        int btnHeight = 32;
-        int rowGap = 6;
-        int totalRows = btnHeight * 2 + rowGap;
-        int row1Y = knobY + (knobSize - totalRows) / 2;
+        // Three-row layout for match controls, anchored at top of knob area
+        int btnHeight = 28;
+        int rowGap = 4;
+        int row1Y = knobY;
         int row2Y = row1Y + btnHeight + rowGap;
+        int row3Y = row2Y + btnHeight + rowGap;
 
-        // Row 1: Capture buttons — wider for prominence
-        int capBtnWidth = 130;
-        int capGap = 10;
-        int row1Width = capBtnWidth * 2 + capGap;
-        int row1X = currentX + ((knobSize + knobSpacing) * 5 + btnWidth - row1Width) / 2;  // Center in right section
-        matchCaptureRefButton.setBounds(row1X, row1Y, capBtnWidth, btnHeight);
-        matchCaptureSrcButton.setBounds(row1X + capBtnWidth + capGap, row1Y, capBtnWidth, btnHeight);
+        // Row 1: Learn buttons + status
+        int learnBtnWidth = 120;
+        int learnGap = 8;
+        int statusWidth = 80;
+        learnCurrentButton.setBounds(currentX, row1Y, learnBtnWidth, btnHeight);
+        learnReferenceButton.setBounds(currentX + learnBtnWidth + learnGap, row1Y, learnBtnWidth, btnHeight);
+        learningStatusLabel.setBounds(currentX + (learnBtnWidth + learnGap) * 2, row1Y, statusWidth, btnHeight);
 
-        // Row 2: Strength slider + Match + Clear
+        // Row 2: Apply slider + Smoothing slider
+        int totalWidth = (knobSize + knobSpacing) * 5 + btnWidth;
+        int sliderWidth = (totalWidth - 16) / 2;  // Split evenly with gap
+        matchApplySlider->setBounds(currentX, row2Y, sliderWidth, btnHeight);
+        matchSmoothingSlider->setBounds(currentX + sliderWidth + 16, row2Y, sliderWidth, btnHeight);
+
+        // Row 3: Match + Limit+ + Limit- + Clear
         int matchBtnWidth = 70;
+        int limitBtnWidth = 60;
         int clearBtnWidth = 60;
-        int sliderWidth = (knobSize + knobSpacing) * 5 + btnWidth - matchBtnWidth - clearBtnWidth - 20;
-        matchStrengthSlider->setBounds(currentX, row2Y, sliderWidth, btnHeight);
-        matchComputeButton.setBounds(currentX + sliderWidth + 8, row2Y, matchBtnWidth, btnHeight);
-        matchClearButton.setBounds(currentX + sliderWidth + 8 + matchBtnWidth + 6, row2Y, clearBtnWidth, btnHeight);
+        int btnGap = 6;
+        matchComputeButton.setBounds(currentX, row3Y, matchBtnWidth, btnHeight);
+        limitBoostButton.setBounds(currentX + matchBtnWidth + btnGap, row3Y, limitBtnWidth, btnHeight);
+        limitCutButton.setBounds(currentX + matchBtnWidth + limitBtnWidth + btnGap * 2, row3Y, limitBtnWidth, btnHeight);
+        matchClearButton.setBounds(currentX + matchBtnWidth + limitBtnWidth * 2 + btnGap * 3, row3Y, clearBtnWidth, btnHeight);
     }
     else
     {

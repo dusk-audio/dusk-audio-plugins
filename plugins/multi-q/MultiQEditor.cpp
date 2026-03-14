@@ -3831,7 +3831,10 @@ void MultiQEditor::toggleDigitalAB()
             || id == ParamIDs::dynDetectionMode
             || id == ParamIDs::limiterEnabled
             || id == ParamIDs::limiterCeiling
-            || id == ParamIDs::matchStrength;
+            || id == ParamIDs::matchApply
+            || id == ParamIDs::matchSmoothing
+            || id == ParamIDs::matchLimitBoost
+            || id == ParamIDs::matchLimitCut;
     };
 
     copyModeParamsToState(digitalIsStateA ? digitalStateA : digitalStateB, digitalFilter);

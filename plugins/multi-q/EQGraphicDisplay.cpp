@@ -140,7 +140,7 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
 
     drawCombinedCurve(g);
 
-    if (processor.isMatchMode() && processor.hasMatchOverlayData())
+    if (processor.isMatchMode())
         drawMatchOverlays(g);
 
     if (processor.isInDynamicMode())
@@ -1109,82 +1109,116 @@ void EQGraphicDisplay::drawMatchOverlays(juce::Graphics& g)
 {
     auto displayBounds = getDisplayBounds();
     int numPoints = juce::jmax(200, static_cast<int>(displayBounds.getWidth()));
-
-    const auto& refMags = processor.getMatchReferenceMagnitudes();
-    const auto& diffCurve = processor.getMatchDifferenceCurve();
     float nyquist = static_cast<float>(processor.getBaseSampleRate() * 0.5);
     if (nyquist < 1.0f) nyquist = 22050.0f;
+    float binWidth = nyquist / static_cast<float>(EQMatchProcessor::NUM_BINS - 1);
 
-    // --- Reference spectrum overlay (green filled area) ---
-    juce::Path refPath;
-    juce::Path refFill;
-    bool started = false;
-
-    for (int px = 0; px < numPoints; ++px)
+    // Helper to draw a spectrum overlay (filled area from bottom)
+    auto drawSpectrumOverlay = [&](const std::array<float, EQMatchProcessor::NUM_BINS>& specDB,
+                                    juce::Colour fillColour, juce::Colour lineColour)
     {
-        float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
-        float freq = getFrequencyAtX(x);
+        juce::Path path, fill;
+        bool started = false;
 
-        int bin = static_cast<int>(freq / nyquist * static_cast<float>(EQMatchProcessor::NUM_BINS));
-        bin = juce::jlimit(0, EQMatchProcessor::NUM_BINS - 1, bin);
-        float refDB = refMags[static_cast<size_t>(bin)];
-        float yPos = getYForDB(refDB);
+        for (int px = 0; px < numPoints; ++px)
+        {
+            float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
+            float freq = getFrequencyAtX(x);
+            int bin = juce::jlimit(0, EQMatchProcessor::NUM_BINS - 1,
+                                   static_cast<int>(freq / binWidth));
+            float dB = specDB[static_cast<size_t>(bin)];
+            float y = getYForDB(dB);
 
-        if (!started)
-        {
-            refPath.startNewSubPath(x, yPos);
-            refFill.startNewSubPath(x, displayBounds.getBottom());
-            refFill.lineTo(x, yPos);
-            started = true;
+            if (!started)
+            {
+                path.startNewSubPath(x, y);
+                fill.startNewSubPath(x, displayBounds.getBottom());
+                fill.lineTo(x, y);
+                started = true;
+            }
+            else
+            {
+                path.lineTo(x, y);
+                fill.lineTo(x, y);
+            }
         }
-        else
-        {
-            refPath.lineTo(x, yPos);
-            refFill.lineTo(x, yPos);
-        }
+
+        float lastX = displayBounds.getX() + displayBounds.getWidth();
+        fill.lineTo(lastX, displayBounds.getBottom());
+        fill.closeSubPath();
+
+        g.setColour(fillColour);
+        g.fillPath(fill);
+        g.setColour(lineColour);
+        g.strokePath(path, juce::PathStrokeType(1.5f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    };
+
+    // --- Current learned spectrum (blue) ---
+    if (processor.hasMatchCurrentSpectrum())
+    {
+        std::array<float, EQMatchProcessor::NUM_BINS> currentDB{};
+        processor.getMatchCurrentSpectrumDB(currentDB);
+        drawSpectrumOverlay(currentDB, juce::Colour(0x184488cc), juce::Colour(0x604488cc));
     }
 
-    float lastX = displayBounds.getX() + displayBounds.getWidth();
-    refFill.lineTo(lastX, displayBounds.getBottom());
-    refFill.closeSubPath();
-
-    g.setColour(juce::Colour(0x1844cc88));
-    g.fillPath(refFill);
-    g.setColour(juce::Colour(0x6044cc88));
-    g.strokePath(refPath, juce::PathStrokeType(1.5f,
-                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    // --- Difference curve overlay (orange/amber line) ---
-    juce::Path diffPath;
-    started = false;
-
-    for (int px = 0; px < numPoints; ++px)
+    // --- Reference learned spectrum (green) ---
+    if (processor.hasMatchReferenceSpectrum())
     {
-        float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
-        float freq = getFrequencyAtX(x);
-
-        int bin = static_cast<int>(freq / nyquist * static_cast<float>(EQMatchProcessor::NUM_BINS));
-        bin = juce::jlimit(0, EQMatchProcessor::NUM_BINS - 1, bin);
-        float diffDB = diffCurve[static_cast<size_t>(bin)];
-        float yPos = getYForDB(diffDB);
-
-        if (!started)
-        {
-            diffPath.startNewSubPath(x, yPos);
-            started = true;
-        }
-        else
-        {
-            diffPath.lineTo(x, yPos);
-        }
+        std::array<float, EQMatchProcessor::NUM_BINS> refDB{};
+        processor.getMatchReferenceSpectrumDB(refDB);
+        drawSpectrumOverlay(refDB, juce::Colour(0x1844cc88), juce::Colour(0x6044cc88));
     }
 
-    g.setColour(juce::Colour(0x50ffaa44));
-    g.strokePath(diffPath, juce::PathStrokeType(2.5f,
-                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour(juce::Colour(0x90ffaa44));
-    g.strokePath(diffPath, juce::PathStrokeType(1.2f,
-                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    // --- Correction curve (orange/amber, filled from 0 dB baseline) ---
+    if (processor.hasMatchCorrectionCurve())
+    {
+        std::array<float, EQMatchProcessor::NUM_BINS> corrDB{};
+        processor.getMatchCorrectionCurveDB(corrDB);
+
+        juce::Path corrPath, corrFill;
+        float zeroY = getYForDB(0.0f);
+        bool started = false;
+
+        for (int px = 0; px < numPoints; ++px)
+        {
+            float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
+            float freq = getFrequencyAtX(x);
+            int bin = juce::jlimit(0, EQMatchProcessor::NUM_BINS - 1,
+                                   static_cast<int>(freq / binWidth));
+            float dB = corrDB[static_cast<size_t>(bin)];
+            float y = getYForDB(dB);
+
+            if (!started)
+            {
+                corrPath.startNewSubPath(x, y);
+                corrFill.startNewSubPath(x, zeroY);
+                corrFill.lineTo(x, y);
+                started = true;
+            }
+            else
+            {
+                corrPath.lineTo(x, y);
+                corrFill.lineTo(x, y);
+            }
+        }
+
+        float lastX = displayBounds.getX() + displayBounds.getWidth();
+        corrFill.lineTo(lastX, zeroY);
+        corrFill.closeSubPath();
+
+        // Orange fill between 0dB and correction curve
+        g.setColour(juce::Colour(0x40ffaa44));
+        g.fillPath(corrFill);
+
+        // Correction curve line with glow
+        g.setColour(juce::Colour(0x80ffaa44));
+        g.strokePath(corrPath, juce::PathStrokeType(2.5f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour(juce::Colour(0xccffaa44));
+        g.strokePath(corrPath, juce::PathStrokeType(1.2f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
 }
 
 void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)

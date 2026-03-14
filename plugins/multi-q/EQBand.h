@@ -227,7 +227,10 @@ namespace ParamIDs
     const juce::String processingMode = "processing_mode";
     const juce::String qCoupleMode = "q_couple_mode";
     const juce::String eqType = "eq_type";
-    const juce::String matchStrength = "match_strength";
+    const juce::String matchApply = "match_apply";             // -100 to +100%
+    const juce::String matchSmoothing = "match_smoothing";       // 1.0-24.0 semitones
+    const juce::String matchLimitBoost = "match_limit_boost";    // bool
+    const juce::String matchLimitCut = "match_limit_cut";        // bool
 
     const juce::String analyzerEnabled = "analyzer_enabled";
     const juce::String analyzerPrePost = "analyzer_pre_post";  // 0=post, 1=pre
