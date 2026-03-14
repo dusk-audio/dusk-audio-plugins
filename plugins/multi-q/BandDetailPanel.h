@@ -19,7 +19,8 @@ class MultiQ;
     EQ knob arcs reflect selected band color.
 */
 class BandDetailPanel : public juce::Component,
-                        private juce::AudioProcessorValueTreeState::Listener
+                        private juce::AudioProcessorValueTreeState::Listener,
+                        private juce::Timer
 {
 public:
     explicit BandDetailPanel(MultiQ& processor);
@@ -86,14 +87,26 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> rangeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
 
-    // Match mode state and controls (shown instead of dynamics)
+    // Match mode state and controls (Logic Pro Match EQ style)
     bool matchMode = false;
-    juce::TextButton matchCaptureRefButton{"Capture Ref"};
-    juce::TextButton matchCaptureSrcButton{"Capture Source"};
+    juce::TextButton learnCurrentButton{"Learn Current"};
+    juce::TextButton learnReferenceButton{"Learn Reference"};
     juce::TextButton matchComputeButton{"Match"};
     juce::TextButton matchClearButton{"Clear"};
-    std::unique_ptr<juce::Slider> matchStrengthSlider;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> matchStrengthAttachment;
+    juce::TextButton limitBoostButton{"Limit +"};
+    juce::TextButton limitCutButton{"Limit -"};
+    juce::Label learningStatusLabel;
+
+    std::unique_ptr<juce::Slider> matchApplySlider;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> matchApplyAttachment;
+    std::unique_ptr<juce::Slider> matchSmoothingSlider;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> matchSmoothingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> limitBoostAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> limitCutAttachment;
+
+    // Timer ID for learning progress updates
+    void timerCallback() override;
+    bool learningTimerActive = false;
 
     // Setup methods
     void setupKnobs();
@@ -101,6 +114,7 @@ private:
     void updateAttachments();
     void updateControlsForBandType();
     void updateDynamicsOpacity();
+    void updateLearnButtonStates();
 
     // Drawing helpers
     void drawKnobWithLabel(juce::Graphics& g, juce::Slider* knob,
