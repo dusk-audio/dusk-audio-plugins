@@ -25,6 +25,7 @@ public:
     bool hasEditor() const override;
 
     const juce::String getName() const override;
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     bool acceptsMidi() const override;
     bool producesMidi() const override;
