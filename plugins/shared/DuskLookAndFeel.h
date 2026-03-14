@@ -7,11 +7,11 @@ struct LEDMeterStyle
 {
     static constexpr int standardWidth = 32;
     static constexpr int meterAreaWidth = 60;
-    static constexpr int labelHeight = 16;
-    static constexpr int valueHeight = 20;
+    static constexpr int labelHeight = 18;
+    static constexpr int valueHeight = 22;
     static constexpr int labelSpacing = 4;
-    static constexpr float labelFontSize = 10.0f;
-    static constexpr float valueFontSize = 10.0f;
+    static constexpr float labelFontSize = 12.0f;
+    static constexpr float valueFontSize = 12.0f;
 
     static inline juce::Colour getLabelColor() { return juce::Colour(0xffe0e0e0); }
     static inline juce::Colour getValueColor() { return juce::Colour(0xffcccccc); }
