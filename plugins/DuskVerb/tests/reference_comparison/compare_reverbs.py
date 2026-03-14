@@ -173,6 +173,75 @@ def calibrate_decay(plugin, target_rt60, reference_config, sr, max_iter=14, tole
     return best_decay, best_rt60
 
 
+def measure_dv_rt60(plugin, duskverb_config, decay_time, sr):
+    """Set DuskVerb decay_time and measure RT60@500Hz, flushing state first."""
+    trial_config = dict(duskverb_config)
+    trial_config["decay_time"] = decay_time
+    apply_duskverb_params(plugin, trial_config)
+
+    flush_plugin(plugin, sr)
+
+    impulse = make_impulse()
+    out_l, _ = process_stereo(plugin, impulse, sr)
+
+    rt60 = metrics.measure_rt60_per_band(out_l, sr, {"500 Hz": 500}).get("500 Hz")
+    return rt60
+
+
+def calibrate_dv_decay(plugin, target_rt60, duskverb_config, sr, max_iter=14,
+                        tolerance=0.05):
+    """Binary search DuskVerb's decay_time to match a target RT60@500Hz.
+
+    Searches the range [0.1, 30.0] seconds for the decay_time value that
+    produces the target RT60.
+
+    Returns:
+        (calibrated_decay_time, measured_rt60) or (None, None) if failed
+    """
+    # Probe 3 points to understand the mapping
+    probe_points = [0.3, 2.0, 10.0]
+    probe_rt60s = {}
+    print(f"    Probing DV decay mapping...")
+    for val in probe_points:
+        rt60 = measure_dv_rt60(plugin, duskverb_config, val, sr)
+        probe_rt60s[val] = rt60
+        rt60_str = f"{rt60:.2f}s" if rt60 else "N/A"
+        print(f"      decay_time={val:.1f} -> RT60={rt60_str}")
+
+    # DV should always be normal: higher decay_time = longer RT60
+    lo, hi = 0.1, 30.0
+    best_decay = None
+    best_rt60 = None
+    best_error = float('inf')
+
+    for iteration in range(max_iter):
+        mid = (lo + hi) / 2.0
+        rt60 = measure_dv_rt60(plugin, duskverb_config, mid, sr)
+
+        if rt60 is None or rt60 <= 0:
+            hi = mid
+            continue
+
+        error = abs(rt60 / target_rt60 - 1.0)
+        if error < best_error:
+            best_error = error
+            best_decay = mid
+            best_rt60 = rt60
+
+        print(f"    iter {iteration+1}: decay_time={mid:.3f} -> RT60={rt60:.2f}s "
+              f"(target={target_rt60:.2f}s, error={error*100:.1f}%)")
+
+        if error < tolerance:
+            return mid, rt60
+
+        if rt60 > target_rt60:
+            hi = mid
+        else:
+            lo = mid
+
+    return best_decay, best_rt60
+
+
 def generate_test_signals():
     """Generate all test signals for analysis."""
     signals = {
@@ -571,19 +640,6 @@ def main():
         mode_name = pairing["name"]
         print_comparison_header(mode_name)
 
-        # Configure and process DuskVerb
-        print(f"\n  Processing DuskVerb ({mode_name})...")
-        apply_duskverb_params(duskverb, pairing["duskverb"])
-
-        dv_outputs = {}
-        for sig_name, signal in processable.items():
-            dv_outputs[sig_name] = process_stereo(duskverb, signal, SAMPLE_RATE)
-
-        # Store inverse filter for deconvolution (not processed)
-        if "_log_sweep_inverse" in signals:
-            dv_outputs["_log_sweep_inverse"] = (signals["_log_sweep_inverse"],
-                                                 signals["_log_sweep_inverse"])
-
         # Determine which reference plugin to use for this mode
         ref_type = pairing.get("reference", "reference_reverb")
         if ref_type == "reference_room" and reference_room:
@@ -605,6 +661,48 @@ def main():
             ref_apply = None
             ref_param_map = {}
 
+        # Auto-calibrate: render VV first (fixed reference), measure its RT60,
+        # then binary-search DV's decay_time to match.
+        dv_config = dict(pairing["duskverb"])
+        should_calibrate = args.calibrate or pairing.get("auto_calibrate", False)
+        if should_calibrate and ref_plugin and not args.duskverb_only and ref_param_map:
+            # Step 1: Render reference with its preset settings (unchanged)
+            print(f"\n  Rendering {ref_name} ({mode_name}) for RT60 measurement...")
+            ref_apply(ref_plugin, ref_config)
+            flush_plugin(ref_plugin, SAMPLE_RATE)
+            impulse = make_impulse()
+            ref_ir_l, _ = process_stereo(ref_plugin, impulse, SAMPLE_RATE)
+            ref_rt60_500 = metrics.measure_rt60_per_band(
+                ref_ir_l, SAMPLE_RATE, {"500 Hz": 500}).get("500 Hz")
+
+            if ref_rt60_500 and ref_rt60_500 > 0:
+                original_decay = dv_config["decay_time"]
+                print(f"\n  Calibrating DuskVerb decay_time to match {ref_name} RT60={ref_rt60_500:.3f}s...")
+                cal_decay, cal_rt60 = calibrate_dv_decay(
+                    duskverb, ref_rt60_500, dv_config, SAMPLE_RATE)
+                if cal_decay is not None:
+                    dv_config["decay_time"] = cal_decay
+                    print(f"  Auto-calibrate: {ref_name} RT60@500Hz = {ref_rt60_500:.3f}s, "
+                          f"DV calibrated decay_time = {cal_decay:.3f} "
+                          f"(preset was {original_decay:.3f})")
+                else:
+                    print(f"  DV calibration failed, using preset decay_time={original_decay:.3f}")
+            else:
+                print(f"\n  {ref_name} RT60 measurement failed, using preset DV decay_time")
+
+        # Configure and process DuskVerb (with potentially calibrated decay_time)
+        print(f"\n  Processing DuskVerb ({mode_name})...")
+        apply_duskverb_params(duskverb, dv_config)
+
+        dv_outputs = {}
+        for sig_name, signal in processable.items():
+            dv_outputs[sig_name] = process_stereo(duskverb, signal, SAMPLE_RATE)
+
+        # Store inverse filter for deconvolution (not processed)
+        if "_log_sweep_inverse" in signals:
+            dv_outputs["_log_sweep_inverse"] = (signals["_log_sweep_inverse"],
+                                                 signals["_log_sweep_inverse"])
+
         # Configure and process reference plugin
         vh_results = None
         vh_outputs = {}
@@ -613,31 +711,6 @@ def main():
                 print(f"\n  WARNING: {ref_name} param map is empty.")
                 print(f"  Skipping {ref_name} processing.")
             else:
-                # Calibrate: measure DV's actual RT60, then binary-search ref's
-                # _decay to match it. Auto-calibrate if pairing says so.
-                should_calibrate = args.calibrate or pairing.get("auto_calibrate", False)
-                if should_calibrate:
-                    dv_ir_l, _ = dv_outputs.get("impulse", (None, None))
-                    dv_rt60_500 = None
-                    if dv_ir_l is not None:
-                        dv_rt60_map = metrics.measure_rt60_per_band(
-                            dv_ir_l, SAMPLE_RATE, {"500 Hz": 500})
-                        dv_rt60_500 = dv_rt60_map.get("500 Hz")
-
-                    if dv_rt60_500 and dv_rt60_500 > 0:
-                        print(f"\n  Calibrating {ref_name} to match DV RT60={dv_rt60_500:.2f}s...")
-                        cal_decay, cal_rt60 = calibrate_decay(
-                            ref_plugin, dv_rt60_500,
-                            ref_config, SAMPLE_RATE,
-                            apply_fn=ref_apply)
-                        if cal_decay is not None:
-                            ref_config["_decay"] = cal_decay
-                            print(f"  {ref_name} _decay calibrated to {cal_decay:.4f} "
-                                  f"(RT60={cal_rt60:.2f}s, target={dv_rt60_500:.2f}s)")
-                        else:
-                            print(f"  {ref_name} calibration failed, using default _decay")
-                    else:
-                        print(f"\n  DV RT60 measurement failed, using default {ref_name} _decay")
 
                 print(f"\n  Processing {ref_name} ({mode_name})...")
                 ref_apply(ref_plugin, ref_config)
@@ -662,14 +735,28 @@ def main():
                         print(f"  Transient alignment: {offset} samples "
                               f"({offset / SAMPLE_RATE * 1000:.1f} ms)")
                         # Also align right channels with same offset
+                        target_len = len(dv_imp_l_a)
                         if offset > 0:
-                            vh_imp_r_a = vh_imp_r[offset:offset + len(dv_imp_l_a)]
-                            dv_imp_r_a = dv_imp_r[:len(dv_imp_l_a)]
+                            vh_start = min(offset, len(vh_imp_r))
+                            vh_end = min(offset + target_len, len(vh_imp_r))
+                            vh_imp_r_a = vh_imp_r[vh_start:vh_end]
+                            dv_imp_r_a = dv_imp_r[:len(vh_imp_r_a)]
                         else:
-                            dv_imp_r_a = dv_imp_r[-offset:-offset + len(vh_imp_l_a)]
-                            vh_imp_r_a = vh_imp_r[:len(vh_imp_l_a)]
-                        dv_outputs["impulse"] = (dv_imp_l_a, dv_imp_r_a)
-                        vh_outputs["impulse"] = (vh_imp_l_a, vh_imp_r_a)
+                            dv_start = min(-offset, len(dv_imp_r))
+                            dv_end = min(-offset + target_len, len(dv_imp_r))
+                            dv_imp_r_a = dv_imp_r[dv_start:dv_end]
+                            vh_imp_r_a = vh_imp_r[:len(dv_imp_r_a)]
+                        # Ensure all four channels are the same length
+                        min_len = min(len(dv_imp_l_a), len(vh_imp_l_a),
+                                      len(dv_imp_r_a), len(vh_imp_r_a))
+                        if min_len > 0:
+                            dv_outputs["impulse"] = (dv_imp_l_a[:min_len], dv_imp_r_a[:min_len])
+                            vh_outputs["impulse"] = (vh_imp_l_a[:min_len], vh_imp_r_a[:min_len])
+                        else:
+                            print("  WARNING: Aligned IR channels have zero length, "
+                                  "falling back to original unaligned IRs")
+                            dv_outputs["impulse"] = (dv_imp_l, dv_imp_r)
+                            vh_outputs["impulse"] = (vh_imp_l, vh_imp_r)
 
                     # Compute spectral MSE between aligned, level-normalized IRs
                     dv_rms = np.sqrt(np.mean(dv_imp_l_a.astype(np.float64) ** 2))

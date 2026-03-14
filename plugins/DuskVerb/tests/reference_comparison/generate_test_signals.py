@@ -25,30 +25,31 @@ from config import SAMPLE_RATE, SIGNAL_DURATION
 TAIL_DURATION = SIGNAL_DURATION  # seconds of silence after excitation
 
 
-def make_impulse(duration=None):
+def make_impulse(duration=None, sr=SAMPLE_RATE):
     """Single-sample Dirac delta — captures the full impulse response.
 
     Args:
         duration: tail capture in seconds.  Defaults to TAIL_DURATION (config.py).
                   Use longer values for very long RT60 modes (e.g. 40s for 55s RT60).
+        sr: sample rate.
     """
     dur = duration if duration is not None else TAIL_DURATION
-    n = int(SAMPLE_RATE * dur)
+    n = int(sr * dur)
     sig = np.zeros(n, dtype=np.float32)
     sig[0] = 1.0
     return sig
 
 
-def make_log_sweep(duration=4.0, f_start=20, f_end=20000):
+def make_log_sweep(duration=4.0, f_start=20, f_end=20000, sr=SAMPLE_RATE):
     """Logarithmic sine sweep + inverse filter for deconvolution.
 
     Returns (sweep_with_tail, inverse_filter).
     The sweep is followed by TAIL_DURATION of silence for the reverb tail.
     Convolving the plugin output with inverse_filter yields a high-SNR IR.
     """
-    n_sweep = int(SAMPLE_RATE * duration)
-    n_total = n_sweep + int(SAMPLE_RATE * TAIL_DURATION)
-    t = np.arange(n_sweep, dtype=np.float64) / SAMPLE_RATE
+    n_sweep = int(sr * duration)
+    n_total = n_sweep + int(sr * TAIL_DURATION)
+    t = np.arange(n_sweep, dtype=np.float64) / sr
 
     # Logarithmic sweep
     R = np.log(f_end / f_start)
@@ -60,7 +61,7 @@ def make_log_sweep(duration=4.0, f_start=20, f_end=20000):
     sweep *= envelope
 
     # Fade in/out to avoid clicks
-    fade = int(SAMPLE_RATE * 0.01)
+    fade = int(sr * 0.01)
     sweep[:fade] *= np.linspace(0, 1, fade)
     sweep[-fade:] *= np.linspace(1, 0, fade)
 
@@ -82,13 +83,13 @@ def make_log_sweep(duration=4.0, f_start=20, f_end=20000):
     return sig, inverse
 
 
-def make_noise_burst(burst_ms=100):
+def make_noise_burst(burst_ms=100, sr=SAMPLE_RATE):
     """Short burst of pink noise — tests broadband response.
 
     Pink noise has equal energy per octave, matching how we hear.
     """
-    n = int(SAMPLE_RATE * TAIL_DURATION)
-    burst_len = int(SAMPLE_RATE * burst_ms / 1000)
+    n = int(sr * TAIL_DURATION)
+    burst_len = int(sr * burst_ms / 1000)
 
     # Generate white noise
     rng = np.random.default_rng(42)
@@ -105,7 +106,7 @@ def make_noise_burst(burst_ms=100):
 
     # Envelope (5ms fade in/out)
     env = np.ones(burst_len, dtype=np.float32)
-    fade = int(SAMPLE_RATE * 0.005)
+    fade = int(sr * 0.005)
     env[:fade] = np.linspace(0, 1, fade, dtype=np.float32)
     env[-fade:] = np.linspace(1, 0, fade, dtype=np.float32)
     pink *= env
@@ -115,14 +116,14 @@ def make_noise_burst(burst_ms=100):
     return sig
 
 
-def make_snare_transient():
+def make_snare_transient(sr=SAMPLE_RATE):
     """Synthetic snare: 200Hz body + 5kHz noise burst, ~10ms attack, ~50ms decay.
 
     Sharp transient that excites modal resonances effectively.
     """
-    n = int(SAMPLE_RATE * TAIL_DURATION)
-    burst_len = int(SAMPLE_RATE * 0.05)
-    t = np.arange(burst_len, dtype=np.float32) / SAMPLE_RATE
+    n = int(sr * TAIL_DURATION)
+    burst_len = int(sr * 0.05)
+    t = np.arange(burst_len, dtype=np.float32) / sr
 
     env = np.exp(-t / 0.012)
     body = 0.6 * np.sin(2 * np.pi * 200 * t) * env
@@ -136,16 +137,16 @@ def make_snare_transient():
     return sig
 
 
-def make_tone_burst(freq=1500, burst_ms=50):
+def make_tone_burst(freq=1500, burst_ms=50, sr=SAMPLE_RATE):
     """Narrowband tone burst at specified frequency.
 
     Used to probe specific resonant frequencies in the reverb.
     The 1500 Hz burst directly tests the suspected ringing from
     converging delay-line harmonics in Room mode.
     """
-    n = int(SAMPLE_RATE * TAIL_DURATION)
-    burst_len = int(SAMPLE_RATE * burst_ms / 1000)
-    t = np.arange(burst_len, dtype=np.float32) / SAMPLE_RATE
+    n = int(sr * TAIL_DURATION)
+    burst_len = int(sr * burst_ms / 1000)
+    t = np.arange(burst_len, dtype=np.float32) / sr
 
     tone = np.sin(2 * np.pi * freq * t).astype(np.float32)
 
@@ -159,16 +160,16 @@ def make_tone_burst(freq=1500, burst_ms=50):
     return sig
 
 
-def make_multitone_burst(freqs=(500, 1000, 1500, 2000, 4000), burst_ms=50):
+def make_multitone_burst(freqs=(500, 1000, 1500, 2000, 4000), burst_ms=50, sr=SAMPLE_RATE):
     """Multiple simultaneous tone bursts for frequency-selective ringing analysis.
 
     Each frequency at -12dBFS so the sum stays below 0dBFS.
     After processing, examine each frequency's decay independently
     to create a ringing map.
     """
-    n = int(SAMPLE_RATE * TAIL_DURATION)
-    burst_len = int(SAMPLE_RATE * burst_ms / 1000)
-    t = np.arange(burst_len, dtype=np.float32) / SAMPLE_RATE
+    n = int(sr * TAIL_DURATION)
+    burst_len = int(sr * burst_ms / 1000)
+    t = np.arange(burst_len, dtype=np.float32) / sr
 
     from scipy.signal.windows import tukey
     window = tukey(burst_len, alpha=0.2).astype(np.float32)
@@ -202,11 +203,11 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     signals = [
-        ("impulse.wav", make_impulse, "Dirac delta impulse"),
-        ("noise_burst.wav", make_noise_burst, "100ms pink noise burst"),
-        ("snare_hit.wav", make_snare_transient, "Synthetic snare transient"),
-        ("tone_burst_1500hz.wav", lambda: make_tone_burst(1500), "1500 Hz ringing probe"),
-        ("multitone_burst.wav", make_multitone_burst, "5-freq ringing map"),
+        ("impulse.wav", lambda: make_impulse(sr=sr), "Dirac delta impulse"),
+        ("noise_burst.wav", lambda: make_noise_burst(sr=sr), "100ms pink noise burst"),
+        ("snare_hit.wav", lambda: make_snare_transient(sr=sr), "Synthetic snare transient"),
+        ("tone_burst_1500hz.wav", lambda: make_tone_burst(1500, sr=sr), "1500 Hz ringing probe"),
+        ("multitone_burst.wav", lambda: make_multitone_burst(sr=sr), "5-freq ringing map"),
     ]
 
     print(f"Generating test signals at {sr} Hz...")
@@ -220,7 +221,7 @@ def main():
         print(f"  {filename:30s} {dur:.1f}s  {desc}")
 
     # Log sweep + inverse filter (special case: two files)
-    sweep, inverse = make_log_sweep()
+    sweep, inverse = make_log_sweep(sr=sr)
     sweep_path = os.path.join(args.outdir, "log_sweep.wav")
     inv_path = os.path.join(args.outdir, "log_sweep_inverse.wav")
     save_stereo(sweep_path, sweep, sr)

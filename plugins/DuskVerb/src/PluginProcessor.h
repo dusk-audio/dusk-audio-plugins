@@ -34,6 +34,8 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam_; }
+
     // Direct XML access for preset management
     std::unique_ptr<juce::XmlElement> getStateXML();
     void setStateXML (const juce::XmlElement& xml);
@@ -74,6 +76,7 @@ private:
     std::atomic<float>* busModeParam_ = nullptr;
     std::atomic<float>* gateHoldParam_ = nullptr;
     std::atomic<float>* gateReleaseParam_ = nullptr;
+    juce::AudioParameterBool* bypassParam_ = nullptr;
 
     juce::SmoothedValue<float> decaySmooth_;
     juce::SmoothedValue<float> preDelaySmooth_;

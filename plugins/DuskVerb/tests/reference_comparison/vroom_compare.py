@@ -64,7 +64,8 @@ def render_ir(plugin, duration=3.0):
 def measure_wet_gain(plugin, duration=4.0):
     """Send pink noise and measure wet output RMS relative to input RMS."""
     n = int(SR * duration)
-    white = np.random.randn(n).astype(np.float32) * 0.1
+    rng = np.random.default_rng(42)
+    white = rng.standard_normal(n).astype(np.float32) * 0.1
     pink = np.zeros(n, dtype=np.float32)
     b = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     for i in range(n):
