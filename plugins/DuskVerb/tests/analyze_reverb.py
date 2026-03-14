@@ -272,7 +272,7 @@ def analyze_stereo(left, right):
     """Analyze stereo field: correlation, width, balance."""
     # Normalized cross-correlation
     if len(left) == 0:
-        return {"correlation": 1.0, "width_ratio": 0.0}
+        return {"correlation": 1.0, "width_ratio_db": 0.0}
 
     # Use the reverb tail only (skip first 50ms)
     start = int(SAMPLE_RATE * 0.05)
@@ -284,7 +284,7 @@ def analyze_stereo(left, right):
     env_r = rms_envelope(r, SAMPLE_RATE)
     mask = (env_l > -60) | (env_r > -60)
     if not np.any(mask):
-        return {"correlation": 1.0, "width_ratio": 0.0}
+        return {"correlation": 1.0, "width_ratio_db": 0.0}
 
     l = l[mask]
     r = r[mask]
@@ -303,7 +303,6 @@ def analyze_stereo(left, right):
     width_ratio = side_rms - mid_rms  # Higher = wider
 
     return {"correlation": corr, "width_ratio_db": width_ratio}
-
 
 def analyze_tail_smoothness(ir, sr):
     """Measure how smooth the decay envelope is.
