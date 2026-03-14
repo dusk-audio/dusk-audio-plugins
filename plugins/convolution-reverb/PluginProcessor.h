@@ -43,6 +43,8 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
+
     // Parameter access
     juce::AudioProcessorValueTreeState& getValueTreeState() { return parameters; }
 
@@ -153,6 +155,7 @@ private:
     std::atomic<float>* filterEnvEndFreqParam = nullptr;  // Filter envelope end frequency
     std::atomic<float>* filterEnvAttackParam = nullptr;   // Filter envelope attack time
     std::atomic<float>* stereoModeParam = nullptr;        // Stereo mode (0=True Stereo, 1=Mono-to-Stereo)
+    juce::AudioParameterBool* bypassParam = nullptr;
 
     // Internal methods
     void updateFilters();

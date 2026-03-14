@@ -18,6 +18,7 @@
 #include "LEDMeter.h"
 #include "../shared/DuskLookAndFeel.h"
 #include "../shared/ScalableEditorHelper.h"
+#include "../shared/UserPresetManager.h"
 
 class ConvolutionReverbEditor : public juce::AudioProcessorEditor,
                            private juce::Timer,
@@ -139,10 +140,16 @@ private:
     std::unique_ptr<juce::ComboBox> stereoModeComboBox;
     std::unique_ptr<juce::Label> stereoModeLabel;
 
-    // Preset controls
-    std::unique_ptr<juce::ComboBox> presetComboBox;
-    std::unique_ptr<juce::TextButton> savePresetButton;
-    std::unique_ptr<juce::TextButton> deletePresetButton;
+    // Preset controls (user presets only — no factory presets for IR-dependent plugin)
+    juce::ComboBox presetBox_;
+    std::unique_ptr<UserPresetManager> userPresetManager_;
+    juce::TextButton savePresetButton_;
+    juce::TextButton deletePresetButton_;
+    void refreshPresetList();
+    void saveUserPreset();
+    void loadUserPreset (const juce::String& name);
+    void deleteUserPreset (const juce::String& name);
+    void updateDeleteButtonVisibility();
 
     // A/B comparison
     std::unique_ptr<juce::ToggleButton> abToggleButton;
