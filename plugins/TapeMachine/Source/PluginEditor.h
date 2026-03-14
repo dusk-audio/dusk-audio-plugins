@@ -8,6 +8,8 @@
 #include "../../shared/SupportersOverlay.h"
 #include "../../shared/DuskLookAndFeel.h"
 #include "../../shared/ScalableEditorHelper.h"
+#include "../../shared/UserPresetManager.h"
+#include "TapeMachinePresets.h"
 
 //==============================================================================
 // Main Plugin Editor
@@ -111,6 +113,17 @@ private:
     float lastInputGainValue = 0.0f;
     float lastOutputGainValue = 0.0f;
     bool isUpdatingGainSliders = false;
+
+    // User preset management
+    std::unique_ptr<UserPresetManager> userPresetManager_;
+    juce::TextButton savePresetButton_;
+    juce::TextButton deletePresetButton_;
+    void refreshPresetList();
+    void loadPreset (int index);
+    void saveUserPreset();
+    void loadUserPreset (const juce::String& name);
+    void deleteUserPreset (const juce::String& name);
+    void updateDeleteButtonVisibility();
 
     // Supporters overlay
     std::unique_ptr<SupportersOverlay> supportersOverlay;

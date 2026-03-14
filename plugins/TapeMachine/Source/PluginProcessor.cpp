@@ -201,12 +201,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout TapeMachineAudioProcessor::c
         juce::StringArray{"1x", "2x", "4x"},
         2));  // Default to 4x for best quality (index 2)
 
+    // Bypass parameter - exposed to host via getBypassParameter() so Logic Pro
+    // routes host bypass through processBlock instead of skipping rendering.
+    // Without this, disabled plugin on a bus causes phase offset from stale PDC.
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "bypass", "Bypass", false));
+
     return { params.begin(), params.end() };
 }
 
 const juce::String TapeMachineAudioProcessor::getName() const
 {
     return JucePlugin_Name;
+}
+
+juce::AudioProcessorParameter* TapeMachineAudioProcessor::getBypassParameter() const
+{
+    return apvts.getParameter("bypass");
 }
 
 bool TapeMachineAudioProcessor::acceptsMidi() const
@@ -402,7 +413,7 @@ void TapeMachineAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     // Report latency to host for PDC
     auto* activeOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
     if (activeOversampler)
-        setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
+        setLatencySamples(static_cast<int>(std::lround(activeOversampler->getLatencyInSamples())));
     else
         setLatencySamples(0);
 }
@@ -507,6 +518,32 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     if (buffer.getNumSamples() == 0)
         return;
+
+    // When bypassed (host or internal), pass through undelayed and report 0 latency.
+    // This prevents phase offset when the plugin is disabled on a parallel bus —
+    // DAW won't apply PDC for a plugin that reports 0 latency.
+    auto* bypassParamPtr = apvts.getRawParameterValue("bypass");
+    if (bypassParamPtr != nullptr && bypassParamPtr->load() > 0.5f)
+    {
+        if (getLatencySamples() != 0)
+            setLatencySamples(0);
+        return;
+    }
+
+    // Restore actual latency when not bypassed
+    {
+        auto* currentOversampler = (currentOversamplingFactor == 4) ? oversampler4x.get() : oversampler2x.get();
+        if (currentOversamplingFactor > 1 && currentOversampler)
+        {
+            int expectedLatency = static_cast<int>(std::lround(currentOversampler->getLatencyInSamples()));
+            if (getLatencySamples() != expectedLatency)
+                setLatencySamples(expectedLatency);
+        }
+        else if (getLatencySamples() != 0)
+        {
+            setLatencySamples(0);
+        }
+    }
 
     // Detect mono vs stereo from bus layout (reflects track configuration)
     const auto inputBus = getBusesLayout().getMainInputChannelSet();
@@ -730,7 +767,7 @@ void TapeMachineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
         // Update latency for host PDC
         if (activeOversampler)
-            setLatencySamples(static_cast<int>(activeOversampler->getLatencyInSamples()));
+            setLatencySamples(static_cast<int>(std::lround(activeOversampler->getLatencyInSamples())));
         else
             setLatencySamples(0);
 

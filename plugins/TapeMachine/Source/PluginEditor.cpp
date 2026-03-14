@@ -12,28 +12,67 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
 {
     setLookAndFeel(&tapeMachineLookAndFeel);
 
-    // Preset selector
-    presetLabel.setText("PRESET", juce::dontSendNotification);
-    presetLabel.setJustificationType(juce::Justification::centredRight);
-    presetLabel.setColour(juce::Label::textColourId, juce::Colour(textPrimary));
-    presetLabel.setFont(juce::Font(10.0f, juce::Font::bold));
-    addAndMakeVisible(presetLabel);
+    // User preset manager
+    userPresetManager_ = std::make_unique<UserPresetManager>("TapeMachine");
 
-    for (int i = 0; i < audioProcessor.getNumPrograms(); ++i)
-        presetSelector.addItem(audioProcessor.getProgramName(i), i + 1);
-    presetSelector.setSelectedId(audioProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
-    presetSelector.onChange = [this]()
+    // Preset browser (factory + user presets)
+    presetSelector.setJustificationType(juce::Justification::centred);
+    presetSelector.onChange = [this]
     {
-        int presetIndex = presetSelector.getSelectedId() - 1;
-        if (presetIndex >= 0 && presetIndex < audioProcessor.getNumPrograms())
+        int id = presetSelector.getSelectedId();
+        if (id >= 1001)
         {
-            audioProcessor.setCurrentProgram(presetIndex);
-            audioProcessor.updateHostDisplay(
-                juce::AudioProcessor::ChangeDetails().withProgramChanged(true));
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int>(userPresets.size()))
+                loadUserPreset(userPresets[static_cast<size_t>(userIdx)].name);
+        }
+        else if (id >= 2)
+        {
+            loadPreset(id - 2);
+        }
+        updateDeleteButtonVisibility();
+    };
+    presetSelector.setTooltip("Select preset");
+    addAndMakeVisible(presetSelector);
+    refreshPresetList();
+
+    // Save preset button
+    savePresetButton_.setButtonText("Save");
+    savePresetButton_.onClick = [this] { saveUserPreset(); };
+    addAndMakeVisible(savePresetButton_);
+
+    // Delete preset button (only visible when a user preset is selected)
+    deletePresetButton_.setButtonText("Del");
+    deletePresetButton_.onClick = [this]
+    {
+        int id = presetSelector.getSelectedId();
+        if (id >= 1001)
+        {
+            int userIdx = id - 1001;
+            auto userPresets = userPresetManager_->loadUserPresets();
+            if (userIdx >= 0 && userIdx < static_cast<int>(userPresets.size()))
+            {
+                auto name = userPresets[static_cast<size_t>(userIdx)].name;
+                juce::Component::SafePointer<TapeMachineAudioProcessorEditor> safeThis(this);
+
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Delete Preset",
+                    "Delete \"" + name + "\"?",
+                    "Delete", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create([safeThis, name](int result) {
+                        if (result == 1 && safeThis != nullptr)
+                        {
+                            safeThis->deleteUserPreset(name);
+                            safeThis->updateDeleteButtonVisibility();
+                        }
+                    }));
+            }
         }
     };
-    presetSelector.setTooltip("Select factory preset");
-    addAndMakeVisible(presetSelector);
+    addAndMakeVisible(deletePresetButton_);
+    deletePresetButton_.setVisible(false);
 
     // Setup combo boxes
     setupComboBox(tapeMachineSelector, tapeMachineLabel, "MACHINE");
@@ -342,13 +381,25 @@ void TapeMachineAudioProcessorEditor::resized()
     // Header - scaled
     auto headerArea = area.removeFromTop(resizeHelper.scaled(50));
     {
-        // Preset label + selector on the right side of header
-        auto presetArea = headerArea.removeFromRight(resizeHelper.scaled(260));
+        // Preset selector + Save/Del buttons on the right side of header
+        auto presetArea = headerArea.removeFromRight(resizeHelper.scaled(340));
         presetArea.removeFromRight(resizeHelper.scaled(10)); // right margin
-        auto labelArea = presetArea.removeFromLeft(resizeHelper.scaled(60));
-        presetArea.removeFromLeft(resizeHelper.scaled(4)); // gap between label and dropdown
-        presetLabel.setBounds(labelArea.withSizeKeepingCentre(labelArea.getWidth(), resizeHelper.scaled(20)));
-        presetSelector.setBounds(presetArea.withSizeKeepingCentre(presetArea.getWidth(), resizeHelper.scaled(26)));
+        int presetH = resizeHelper.scaled(26);
+        int btnGap = resizeHelper.scaled(4);
+
+        auto selectorArea = presetArea.removeFromLeft(resizeHelper.scaled(190));
+        presetSelector.setBounds(selectorArea.withSizeKeepingCentre(selectorArea.getWidth(), presetH));
+
+        presetArea.removeFromLeft(btnGap);
+        auto saveArea = presetArea.removeFromLeft(resizeHelper.scaled(45));
+        savePresetButton_.setBounds(saveArea.withSizeKeepingCentre(saveArea.getWidth(), presetH));
+
+        presetArea.removeFromLeft(btnGap);
+        auto delArea = presetArea.removeFromLeft(resizeHelper.scaled(35));
+        deletePresetButton_.setBounds(delArea.withSizeKeepingCentre(delArea.getWidth(), presetH));
+
+        // Hide the old preset label (no longer needed)
+        presetLabel.setVisible(false);
     }
 
     // Transport section - scaled
@@ -511,11 +562,6 @@ void TapeMachineAudioProcessorEditor::timerCallback()
         if (outputGainParam) lastOutputGainValue = outputGainParam->load();
     }
 
-    // Sync preset selector with host (DAW may have changed the program)
-    int currentProgram = audioProcessor.getCurrentProgram();
-    if (presetSelector.getSelectedId() != currentProgram + 1)
-        presetSelector.setSelectedId(currentProgram + 1, juce::dontSendNotification);
-
     // Gray out bias when auto-cal is enabled
     auto* autoCalParam = audioProcessor.getAPVTS().getRawParameterValue("autoCal");
     bool autoCalEnabled = autoCalParam && autoCalParam->load() > 0.5f;
@@ -590,4 +636,128 @@ void TapeMachineAudioProcessorEditor::hideSupportersPanel()
 {
     if (supportersOverlay)
         supportersOverlay->setVisible(false);
+}
+
+//==============================================================================
+// Preset Management
+//==============================================================================
+
+void TapeMachineAudioProcessorEditor::loadPreset(int index)
+{
+    const auto& presets = TapeMachinePresets::getFactoryPresets();
+    if (index >= 0 && index < static_cast<int>(presets.size()))
+        TapeMachinePresets::applyPreset(presets[static_cast<size_t>(index)], audioProcessor.getAPVTS());
+}
+
+void TapeMachineAudioProcessorEditor::refreshPresetList()
+{
+    int currentId = presetSelector.getSelectedId();
+    presetSelector.clear(juce::dontSendNotification);
+
+    const auto& presets = TapeMachinePresets::getFactoryPresets();
+    juce::String lastCategory;
+    int id = 2;
+
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].category != lastCategory)
+        {
+            presetSelector.addSeparator();
+            presetSelector.addSectionHeading(presets[i].category);
+            lastCategory = presets[i].category;
+        }
+        presetSelector.addItem(presets[i].name, id++);
+    }
+
+    if (userPresetManager_)
+    {
+        auto userPresets = userPresetManager_->loadUserPresets();
+        if (!userPresets.empty())
+        {
+            presetSelector.addSeparator();
+            presetSelector.addSectionHeading("User Presets");
+
+            for (size_t i = 0; i < userPresets.size(); ++i)
+                presetSelector.addItem(userPresets[i].name, static_cast<int>(1001 + i));
+        }
+    }
+
+    if (currentId > 0)
+        presetSelector.setSelectedId(currentId, juce::dontSendNotification);
+}
+
+void TapeMachineAudioProcessorEditor::saveUserPreset()
+{
+    if (!userPresetManager_)
+        return;
+
+    auto* dialog = new juce::AlertWindow("Save Preset",
+                                          "Enter a name for this preset:",
+                                          juce::MessageBoxIconType::QuestionIcon);
+    dialog->addTextEditor("name", "My Preset", "Preset Name:");
+    dialog->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<TapeMachineAudioProcessorEditor> safeThis(this);
+    juce::Component::SafePointer<juce::AlertWindow> safeDialog(dialog);
+
+    dialog->enterModalState(true, juce::ModalCallbackFunction::create(
+        [safeThis, safeDialog](int result) mutable
+        {
+            juce::String name;
+            if (result == 1 && safeDialog != nullptr)
+                name = safeDialog->getTextEditorContents("name").trim();
+
+            if (safeThis == nullptr || name.isEmpty())
+                return;
+
+            if (safeThis->userPresetManager_->presetExists(name))
+            {
+                juce::Component::SafePointer<TapeMachineAudioProcessorEditor> safeInner(safeThis.getComponent());
+
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::QuestionIcon,
+                    "Overwrite Preset?",
+                    "A preset named \"" + name + "\" already exists. Overwrite it?",
+                    "Overwrite", "Cancel", nullptr,
+                    juce::ModalCallbackFunction::create([safeInner, name](int confirmResult) {
+                        if (confirmResult == 1 && safeInner != nullptr)
+                        {
+                            auto state = safeInner->audioProcessor.getAPVTS().copyState();
+                            if (safeInner->userPresetManager_->saveUserPreset(name, state, JucePlugin_VersionString))
+                                safeInner->refreshPresetList();
+                        }
+                    }));
+            }
+            else
+            {
+                auto state = safeThis->audioProcessor.getAPVTS().copyState();
+                if (safeThis->userPresetManager_->saveUserPreset(name, state, JucePlugin_VersionString))
+                    safeThis->refreshPresetList();
+            }
+        }), true);
+}
+
+void TapeMachineAudioProcessorEditor::loadUserPreset(const juce::String& name)
+{
+    if (!userPresetManager_)
+        return;
+
+    auto state = userPresetManager_->loadUserPreset(name);
+    if (state.isValid())
+        audioProcessor.getAPVTS().replaceState(state);
+}
+
+void TapeMachineAudioProcessorEditor::deleteUserPreset(const juce::String& name)
+{
+    if (!userPresetManager_)
+        return;
+
+    userPresetManager_->deleteUserPreset(name);
+    refreshPresetList();
+}
+
+void TapeMachineAudioProcessorEditor::updateDeleteButtonVisibility()
+{
+    deletePresetButton_.setVisible(presetSelector.getSelectedId() >= 1001);
 }
