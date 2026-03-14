@@ -148,6 +148,7 @@ private:
     float cathodeBypassAmount = 0.3f;
     float millerCapCoeff = 0.3f;
     float millerCapEffect = 0.1f;
+    float plateK2 = 0.02f;             // Quadratic nonlinearity coefficient (per tube type)
 
     // Per-channel state
     float millerCapState[2] = {0.0f, 0.0f};
@@ -183,13 +184,13 @@ private:
                 {
                     // Nearly linear with very subtle 2nd harmonic (asymmetry)
                     // k2 coefficient of ~0.02 gives ~0.3% THD at 0dB
-                    plateTransferTable[i] = vg + vg * vg * 0.02f;
+                    plateTransferTable[i] = vg + vg * vg * plateK2;
                 }
                 else
                 {
                     // Soft compression above 0.8 (grid current loading)
                     float excess = vg - 0.8f;
-                    float base = 0.8f + 0.8f * 0.8f * 0.02f;  // Value at threshold
+                    float base = 0.8f + 0.8f * 0.8f * plateK2;  // Value at threshold
                     float compressed = base + excess / (1.0f + excess * 0.5f);
                     plateTransferTable[i] = compressed;
                 }
@@ -202,13 +203,13 @@ private:
                 if (absVg < 0.8f)
                 {
                     // Nearly linear region with subtle 2nd harmonic
-                    plateTransferTable[i] = vg - vg * absVg * 0.02f;
+                    plateTransferTable[i] = vg - vg * absVg * plateK2;
                 }
                 else if (absVg < 1.5f)
                 {
                     // Approaching cutoff - gradual compression
                     float excess = absVg - 0.8f;
-                    float base = 0.8f + 0.8f * 0.8f * 0.02f;
+                    float base = 0.8f + 0.8f * 0.8f * plateK2;
                     float compressed = base + excess * (1.0f - excess * 0.3f);
                     plateTransferTable[i] = -compressed;
                 }
@@ -250,6 +251,7 @@ private:
                 millerCapCoeffBase = 0.35f;
                 millerCapEffect = 0.05f;       // Reduced from 0.12
                 outputScaling = 0.95f;         // Less scaling needed
+                plateK2 = 0.02f;
                 break;
 
             case TubeType::Triode_12AT7:
@@ -261,17 +263,19 @@ private:
                 millerCapCoeffBase = 0.25f;
                 millerCapEffect = 0.04f;       // Reduced from 0.08
                 outputScaling = 0.95f;
+                plateK2 = 0.015f;
                 break;
 
             case TubeType::Triode_12BH7:
                 // Output driver (opto compressor) - target ~0.25% THD (cleanest)
                 gridCurrentThreshold = 0.8f;   // Very high threshold
-                gridCurrentCoeff = 0.04f;      // Reduced from 0.15
+                gridCurrentCoeff = 0.08f;      // Sweet spot: matches 12AX7, was over-reduced to 0.04
                 cathodeBypassCoeffBase = 0.96f;
-                cathodeBypassAmount = 0.1f;    // Reduced from 0.25
+                cathodeBypassAmount = 0.15f;   // Restores cathode bypass asymmetry (was over-reduced to 0.1)
                 millerCapCoeffBase = 0.2f;
                 millerCapEffect = 0.04f;       // HF rolloff for higher harmonics
                 outputScaling = 0.98f;         // Nearly unity
+                plateK2 = 0.01f;
                 break;
 
             case TubeType::Triode_6SN7:
@@ -283,6 +287,7 @@ private:
                 millerCapCoeffBase = 0.28f;
                 millerCapEffect = 0.04f;       // Reduced from 0.1
                 outputScaling = 0.95f;
+                plateK2 = 0.018f;
                 break;
 
             default:
@@ -294,9 +299,11 @@ private:
                 millerCapCoeffBase = 0.35f;
                 millerCapEffect = 0.05f;
                 outputScaling = 0.95f;
+                plateK2 = 0.02f;
                 break;
         }
 
+        initializePlateTransferFunction();
         updateCoefficients();
     }
 
