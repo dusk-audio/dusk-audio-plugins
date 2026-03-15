@@ -103,7 +103,6 @@ JUCE automatically installs the `.component` to `~/Library/Audio/Plug-Ins/Compon
 | `tapeecho` | Tape Echo |
 | `multiq` | Multi-Q |
 | `convolution` | Convolution Reverb |
-| `nam` | Neural Amp |
 | `duskverb` | DuskVerb |
 
 **Validation**: `./tests/run_plugin_tests.sh --plugin "<Name>" --skip-audio`
@@ -138,7 +137,6 @@ plugins/
 │   ├── tape-echo/
 │   ├── multi-q/
 │   ├── convolution-reverb/
-│   ├── neural-amp/
 │   ├── DuskVerb/
 │   └── shared/           # SHARED CODE - CHECK HERE FIRST
 ├── docker/

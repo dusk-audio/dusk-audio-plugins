@@ -10,7 +10,6 @@ on:
       - 'tape-echo-v*'          # Tape Echo only
       - 'multi-q-v*'            # Multi-Q only
       - 'convolution-reverb-v*' # Convolution Reverb only
-      - 'neural-amp-v*'         # Neural Amp only
       - 'groovemind-v*'         # GrooveMind only
       - 'duskverb-v*'           # DuskVerb only
   workflow_dispatch:
@@ -28,7 +27,6 @@ on:
           - 'tape-echo'
           - 'multi-q'
           - 'convolution-reverb'
-          - 'neural-amp'
           - 'groovemind'
           - 'duskverb'
 
@@ -89,10 +87,6 @@ jobs:
               TARGET="ConvolutionReverb_All"
               NAME="Convolution Reverb"
               RELEASE_NAME="convolution-reverb"
-            elif [[ "$TAG" == neural-amp-v* ]]; then
-              TARGET="NeuralAmp_All"
-              NAME="Neural Amp"
-              RELEASE_NAME="neural-amp"
             elif [[ "$TAG" == groovemind-v* ]]; then
               TARGET="GrooveMind_All"
               NAME="GrooveMind"
@@ -110,7 +104,6 @@ jobs:
               tape-echo) TARGET="TapeEcho_All"; NAME="Tape Echo"; RELEASE_NAME="tape-echo" ;;
               multi-q) TARGET="MultiQ_All"; NAME="Multi-Q"; RELEASE_NAME="multi-q" ;;
               convolution-reverb) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
-              neural-amp) TARGET="NeuralAmp_All"; NAME="Neural Amp"; RELEASE_NAME="neural-amp" ;;
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
               duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
             esac
@@ -763,7 +756,6 @@ jobs:
               echo "- Multi-Q - Universal 8-band EQ"
               echo "- Tape Echo - Vintage tape delay"
               echo "- Convolution Reverb - IR-based reverb"
-              echo "- Neural Amp - Neural amp modeler"
               echo "- GrooveMind - ML drum generator"
             fi
           } > release_body.md

@@ -1241,6 +1241,8 @@ public:
         if (useExternalSidechain)
         {
             scSignal = sidechainSignal;
+            det.shelfX1 = 0.0f;
+            det.shelfY1 = 0.0f;
         }
         else if (!limitMode)
         {
@@ -1256,6 +1258,8 @@ public:
         {
             // Limit: partially feed-forward tap — blend input + output for tighter ratio
             scSignal = input * 0.5f + compressed * 0.5f;
+            det.shelfX1 = 0.0f;
+            det.shelfY1 = 0.0f;
         }
 
         // Stage 5: Peak Reduction = sidechain amplifier gain

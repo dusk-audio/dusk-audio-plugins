@@ -29,7 +29,6 @@ Release one or more Dusk Audio plugins with automated version bumps, website upd
 | Tape Echo | tape-echo | plugins/tape-echo | TAPEECHO | tapeecho |
 | Multi-Q | multi-q | plugins/multi-q | (inline) | multiq |
 | Convolution Reverb | convolution-reverb | plugins/convolution-reverb | CONVOLUTION | convolution |
-| Neural Amp | neural-amp | plugins/neural-amp | NEURALAMP | nam |
 | GrooveMind | groovemind | plugins/groovemind | GROOVEMIND | groovemind |
 
 ## Paths
@@ -84,7 +83,7 @@ git log <slug>-v<old-version>..HEAD --oneline -- plugins/shared/
 
 For EACH plugin, update the CMakeLists.txt:
 
-**Standard plugins** (4k-eq, multi-comp, tapemachine, convolution-reverb, neural-amp, groovemind):
+**Standard plugins** (4k-eq, multi-comp, tapemachine, convolution-reverb, groovemind):
 ```
 set(<VAR>_DEFAULT_VERSION "<new-version>")
 ```

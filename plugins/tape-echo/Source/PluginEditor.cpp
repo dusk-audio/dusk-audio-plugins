@@ -186,7 +186,7 @@ TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
         }
     };
     addAndMakeVisible (deletePresetButton_);
-    deletePresetButton_.setVisible (false);
+    updateDeleteButtonVisibility();
 
     // Timer for UI updates
     startTimerHz(30);

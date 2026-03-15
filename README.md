@@ -65,12 +65,6 @@ Classic tape delay with spring reverb:
 - Tempo sync with multiple note divisions
 - Animated tape visualization
 
-### Neural Amp - IN DEVELOPMENT
-Neural network amp modeling (NAM):
-- Load .nam model files
-- Guitar and bass amp tones
-- Low-latency inference
-
 ### GrooveMind - IN DEVELOPMENT
 > ⚠️ Early development - not functional yet.
 ML-powered intelligent drum pattern generator:
@@ -96,7 +90,6 @@ For consistent, distributable binaries:
 ./docker/build_release.sh multiq       # Multi-Q
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh tapeecho     # Tape Echo
-./docker/build_release.sh nam          # Neural Amp
 ./docker/build_release.sh groovemind   # GrooveMind
 
 # Show all available shortcuts
@@ -122,7 +115,6 @@ cmake --build . --target TapeMachine_All
 cmake --build . --target MultiQ_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
-cmake --build . --target NeuralAmp_All
 cmake --build . --target GrooveMind_All
 ```
 

@@ -179,7 +179,6 @@ get_plugin_target() {
         harmonic-generator) echo "HarmonicGeneratorPlugin_All" ;;
         convolution-reverb) echo "ConvolutionReverb_All" ;;
         multi-q) echo "MultiQ_All" ;;
-        neural-amp) echo "NeuralAmp_All" ;;
         tape-echo) echo "TapeEcho_All" ;;
         chord-analyzer) echo "ChordAnalyzer_All" ;;
         spectrum-analyzer) echo "SpectrumAnalyzer_All" ;;

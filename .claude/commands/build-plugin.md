@@ -30,7 +30,6 @@ If a plugin name was provided, map it to the build shortcut:
 | Tape Echo | `tapeecho`, `tape-echo` | tape-echo |
 | Multi-Q | `multiq`, `multi-q` | multi-q |
 | Convolution Reverb | `convolution`, `convolution-reverb` | convolution-reverb |
-| Neural Amp | `nam`, `neural-amp` | neural-amp |
 | GrooveMind | `groovemind` | groovemind |
 
 If no plugin provided, ask the user:
@@ -42,7 +41,6 @@ Which plugin would you like to build?
 - tapeecho (Tape Echo)
 - multiq (Multi-Q)
 - convolution (Convolution Reverb)
-- nam (Neural Amp)
 - all (Build all plugins)
 ```
 
@@ -89,7 +87,6 @@ Plugin name mapping for validation:
 | tapeecho | "Tape Echo" |
 | multiq | "Multi-Q" |
 | convolution | "Convolution Reverb" |
-| nam | "Neural Amp" |
 
 ### 5. Report Results
 
@@ -145,6 +142,6 @@ cmake --build . --target <PluginTarget>_All -j8
 
 Build targets:
 - `FourKEQ_All`, `MultiComp_All`, `TapeMachine_All`, `TapeEcho_All`
-- `MultiQ_All`, `ConvolutionReverb_All`, `NeuralAmp_All`
+- `MultiQ_All`, `ConvolutionReverb_All`
 
 **Note:** Local builds may not be compatible across Linux distributions due to glibc version differences. Use Docker builds for releases.
