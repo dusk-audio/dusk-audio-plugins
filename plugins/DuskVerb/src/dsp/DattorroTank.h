@@ -2,6 +2,7 @@
 
 #include "TwoBandDamping.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
