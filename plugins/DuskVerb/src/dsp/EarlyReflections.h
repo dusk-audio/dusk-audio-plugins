@@ -10,11 +10,10 @@
 // Multi-tap delay line generating discrete early reflections.
 //
 // Two modes:
-// 1. **Generated** (default): 16 taps per channel with exponentially-distributed
+// 1. **Generated** (default): 24 taps per channel with exponentially-distributed
 //    delay times (8-80ms), inverse distance gain rolloff, and per-tap air absorption.
 // 2. **Custom** (when setCustomTaps is called): uses a fixed mono-panned tap table
-//    from AlgorithmConfig, derived from reference reverb ER extraction (Phase 11 OMP).
-//    Each tap outputs to L or R only (never both), matching VV's ER architecture.
+//    from AlgorithmConfig. Each tap outputs to L or R only (never both).
 class EarlyReflections
 {
 public:
@@ -35,22 +34,24 @@ public:
     void setCustomTaps (const CustomERTap* taps, int numTaps);
 
 private:
-    static constexpr int kNumTaps = 16;
+    static constexpr int kNumTaps = 24;
     static constexpr float kMinTimeMs = 8.0f;
     static constexpr float kMaxTimeMs = 80.0f;
     static constexpr float kMaxBufferMs = 120.0f; // Buffer headroom for erTimeScale up to 1.5
     static constexpr float kTwoPi = 6.283185307179586f;
 
-    // Polarity signs per tap — 8 positive, 8 negative per channel.
+    // Polarity signs per tap — 12 positive, 12 negative per channel.
     // Breaks up comb filtering from closely-spaced all-positive taps.
     // L/R patterns differ for stereo decorrelation.
     static constexpr float kSignsL[kNumTaps] = {
          1, -1,  1,  1, -1,  1, -1, -1,
-         1, -1, -1,  1,  1, -1,  1, -1
+         1, -1, -1,  1,  1, -1,  1, -1,
+        -1,  1,  1, -1,  1, -1, -1,  1
     };
     static constexpr float kSignsR[kNumTaps] = {
         -1,  1, -1,  1,  1, -1,  1, -1,
-        -1,  1,  1, -1, -1,  1, -1,  1
+        -1,  1,  1, -1, -1,  1, -1,  1,
+         1, -1, -1,  1, -1,  1,  1, -1
     };
 
     struct Tap

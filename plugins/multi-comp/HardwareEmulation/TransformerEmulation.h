@@ -68,8 +68,8 @@ public:
 
         float hfContent = estimateHighFrequencyContent(input, channel);
 
-        // LF saturates more (transformer core physics)
-        float lfMultiplier = profile.lowFreqSaturation * (1.0f - hfContent * 0.5f);
+        // LF saturates more (transformer core physics — subtle effect)
+        float lfMultiplier = profile.lowFreqSaturation * (1.0f - hfContent * 0.15f);
 
         float driven = input * lfMultiplier;
         float saturated = applyTransformerSaturation(driven);

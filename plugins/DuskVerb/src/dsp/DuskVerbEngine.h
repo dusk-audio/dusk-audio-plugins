@@ -60,6 +60,7 @@ public:
     void setWidth (float width);
     void setFreeze (bool frozen);
     void setGateParams (float holdMs, float releaseMs);
+    void setGainTrim (float dB);
 
 private:
     DiffusionStage diffuser_;
@@ -99,6 +100,7 @@ private:
     OnePoleSmoother outputGainSmoother_; // Per-algorithm output gain (smoothed to avoid clicks)
 
     float decayTime_ = 2.5f; // Cached for decay-linked output diffusion
+    float gainTrimLinear_ = 1.0f; // Per-preset level correction (linear multiplier from dB)
 
     // Cached raw param values for re-application after algorithm switch
     float lastDiffusion_ = 0.75f;
@@ -160,12 +162,8 @@ private:
     bool midEQEnabled_ = false;
     void updateOutputEQCoeffs();
 
-    // Output anti-alias LP: 6th-order Butterworth at 14kHz (three cascaded 2nd-order sections).
-    // Kills FDN aliasing spike at 16kHz (-36dB/oct rolloff). Applied universally after shelf EQs.
-    Biquad outputLPStage1_;
-    Biquad outputLPStage2_;
-    Biquad outputLPStage3_;
-    void updateOutputLPCoeffs();
+    // Anti-alias filtering is handled inside the FDN feedback loop (first-order LP at ~17kHz).
+    // Accumulates naturally across iterations — no output-stage filter needed.
 
     // Freeze mode
     bool frozen_ = false;

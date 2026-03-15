@@ -655,6 +655,8 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
         "pass_ring": pass_ring,
         "pass_mse": pass_mse,
         "status": "PASS" if all_pass else "FAIL",
+        "dv_params": dv_params,
+        "vv_params": vv_params,
     }
 
 
@@ -903,6 +905,137 @@ def print_summary(results, csv_path=None):
         print(f"\n  CSV report saved to: {csv_path}")
 
 
+DV_ALGO_INDEX = {"Plate": 0, "Hall": 1, "Chamber": 2, "Room": 3, "Ambient": 4}
+DV_ALGO_CATEGORY = {"Plate": "Plates", "Hall": "Halls", "Chamber": "Chambers",
+                     "Room": "Rooms", "Ambient": "Ambience"}
+
+# Original mix values from FactoryPresets.h (hand-tuned, not derived from VV comparison)
+ORIGINAL_MIX = {
+    "Concert Wave": 0.3, "Fat Snare Hall": 0.25, "Homestar Blade Runner": 0.3,
+    "Huge Synth Hall": 0.35, "Long Synth Hall": 0.35, "Pad Hall": 0.45,
+    "Small Vocal Hall": 0.25, "Snare Hall": 0.25, "Very Nice Hall": 0.3,
+    "Vocal Hall": 0.25, "A Plate": 0.3, "Ambience Plate": 0.45,
+    "Drum Plate": 0.25, "Fat Drums": 0.25, "Fat Plate": 0.3,
+    "Large Plate": 0.35, "Snare Plate": 0.25, "Steel Plate": 0.3,
+    "Thin Plate": 0.3, "Tight Plate": 0.3, "Vocal Plate": 0.25,
+    "Vox Plate": 0.25, "Dark Vocal Room": 0.25, "Exciting Snare room": 0.25,
+    "Fat Snare Room": 0.25, "Lively Snare Room": 0.25,
+    "Long Dark 70s Snare Room": 0.35, "Short Dark Snare Room": 0.25,
+    "Clear Chamber": 0.3, "Large Chamber": 0.35, "Large Wood Room": 0.35,
+    "Live Vox Chamber": 0.25, "Medium Gate": 0.5, "Rich Chamber": 0.3,
+    "Small Chamber1": 0.3, "Small Chamber2": 0.3, "Tiled Room": 0.3,
+    "Ambience": 0.45, "Ambience Tiled Room": 0.45, "Big Ambience Gate": 0.5,
+    "Cross Stick Room": 0.3, "Drum Air": 0.25, "Gated Snare": 0.5,
+    "Large Ambience": 0.45, "Large Gated Snare": 0.5, "Med Ambience": 0.45,
+    "Short Vocal Ambience": 0.45, "Small Ambience": 0.45,
+    "Small Drum Room": 0.25, "Snare Ambience": 0.45,
+    "Tight Ambience Gate": 0.5, "Trip Hop Snare": 0.25,
+    "Very Small Ambience": 0.45,
+}
+
+
+def _vv_display_decay(vv_decay_norm):
+    """Convert VV's normalized Decay (0-1) to its displayed time in seconds.
+
+    VV maps Decay 0-1 exponentially: display = 0.2 * 150^Decay.
+    Verified: Decay=0.232 → 0.71s (matches VV UI screenshot).
+    """
+    return 0.2 * (150.0 ** vv_decay_norm)
+
+
+def export_factory_presets(results):
+    """Emit C++ FactoryPreset initializers for FactoryPresets.h.
+
+    Uses VV's displayed decay time directly instead of RT60-calibrated values.
+    RT60 calibration produced systematically longer tails (1.8-2.6x) because
+    matching RT60@500Hz doesn't match perceived tail length.
+
+    Prints ready-to-paste C++ code grouped by category.
+    """
+    # Group by category (derived from DV algorithm)
+    categories = {}
+    for r in results:
+        dv = r.get("dv_params")
+        vv = r.get("vv_params")
+        if dv is None:
+            continue
+        algo = dv["algorithm"]
+        cat = DV_ALGO_CATEGORY.get(algo, "Unknown")
+        if cat not in categories:
+            categories[cat] = []
+        # Override decay_time with VV's display value.
+        # For gated presets, keep fixed decay_time=2.0 (gate controls tail, not decay).
+        if vv and dv.get("gate_hold", 0) > 0:
+            dv["decay_time"] = 2.0  # fixed for gated presets
+        elif vv:
+            vv_decay_norm = vv.get("Decay", 0.3)
+            dv["decay_time"] = _vv_display_decay(vv_decay_norm)
+        categories[cat].append((r["name"], algo, dv))
+
+    # Category order matching FactoryPresets.h
+    cat_order = ["Halls", "Plates", "Rooms", "Chambers", "Ambience"]
+    print("// clang-format off")
+    print("//")
+    print("// Translated from VintageVerb factory presets.")
+    print("// Effective value = raw param * algorithm scale factor")
+    print(f"// Algorithm trebleMultScale: Plate={0.65:.2f}, Hall={0.50:.2f}, "
+          f"Chamber={0.90:.2f}, Room={0.45:.2f}, Ambient={0.80:.2f}")
+    print(f"// Algorithm bassMultScale:   Plate=1.0, Hall=1.0,  "
+          f"Chamber=1.0, Room=0.85, Ambient=1.0")
+    print(f"// Algorithm erLevelScale:    Plate=0.90, Hall=0.90,  "
+          f"Chamber=1.20, Room=1.40,  Ambient=0.0")
+    print(f"// Algorithm lateGainScale:   Plate=0.20, Hall=0.22, "
+          f"Chamber=0.38, Room=0.38, Ambient=0.35")
+    print(f"// Algorithm decayTimeScale:  Plate=0.94, Hall=0.79,  "
+          f"Chamber=0.99, Room=1.28,  Ambient=0.99")
+    print("//")
+    print("inline const std::vector<FactoryPreset>& getFactoryPresets(){")
+    print("    static const std::vector<FactoryPreset> presets = {")
+    print("        //                                              algo  decay  pre    "
+          "size   damp  bass   xover   diff  modD   modR  erLv  erSz  mix   loCut  "
+          "hiCut   width  gHold  gRel")
+
+    for cat in cat_order:
+        entries = categories.get(cat, [])
+        if not entries:
+            continue
+        # Sort alphabetically within category
+        entries.sort(key=lambda e: e[0])
+        print(f"        // -- {cat} --")
+        for name, algo, dv in entries:
+            idx = DV_ALGO_INDEX[algo]
+            decay = dv.get("decay_time", 1.0)
+            pre = dv.get("pre_delay", 0.0)
+            size = dv.get("size", 0.5)
+            damp = dv.get("treble_multiply", 1.0)
+            bass = dv.get("bass_multiply", 1.0)
+            xover = dv.get("crossover", 500)
+            diff = dv.get("diffusion", 1.0)
+            modd = dv.get("mod_depth", 0.3)
+            modr = dv.get("mod_rate", 1.0)
+            erlv = dv.get("early_ref_level", 0.0)
+            ersz = dv.get("early_ref_size", 0.0)
+            mix = ORIGINAL_MIX.get(name, 0.3)  # preserve hand-tuned mix from original presets
+            locut = dv.get("lo_cut", 20.0)
+            hicut = dv.get("hi_cut", 20000.0)
+            width = dv.get("width", 1.0)
+            ghold = dv.get("gate_hold", 0.0)
+            grel = dv.get("gate_release", 50.0)
+            # Format to match existing FactoryPresets.h style
+            print(f'        {{ "{name}",{" " * max(1, 35 - len(name))}"{cat}",'
+                  f'{" " * max(1, 12 - len(cat))}{idx}, '
+                  f'{decay:.2f}f, {pre:.1f}f, {size:.3f}f, {damp:.2f}f, '
+                  f'{bass:.2f}f, {xover:.1f}f, {diff:.2f}f, {modd:.3f}f, '
+                  f'{modr:.2f}f, {erlv:.2f}f, {ersz:.2f}f, {mix:.1f}f, '
+                  f'{locut:.1f}f, {hicut:.1f}f, {width:.1f}f, '
+                  f'{ghold:.1f}f, {grel:.1f}f }},')
+
+    print("    };")
+    print("    return presets;")
+    print("}")
+    print("// clang-format on")
+
+
 def main():
     parser = argparse.ArgumentParser(description="DuskVerb vs ReferenceReverb preset comparison")
     parser.add_argument("--mode", type=str, help="Filter by VV mode name (e.g. Room, Plate)")
@@ -915,6 +1048,8 @@ def main():
                         help="Number of parallel workers (0=auto, default=auto)")
     parser.add_argument("--baseline", action="store_true",
                         help="Run all presets and print per-mode deep metric baselines (no thresholds)")
+    parser.add_argument("--export-factory", action="store_true",
+                        help="Export re-translated presets as C++ FactoryPreset code")
     args = parser.parse_args()
 
     presets = load_qualifying_presets()
@@ -1006,6 +1141,13 @@ def main():
             print_preset_result(result)
 
     print_summary(results, args.csv)
+
+    if args.export_factory:
+        print("\n" + "=" * 70)
+        print("  FACTORY PRESET EXPORT (C++)")
+        print("=" * 70 + "\n")
+        export_factory_presets(results)
+
     print("\nDone.")
 
 
