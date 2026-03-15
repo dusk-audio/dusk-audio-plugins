@@ -63,12 +63,6 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     updateLoCutCoeffs();
     updateHiCutCoeffs();
 
-    // Output anti-alias LP at 14kHz
-    outputLPStage1_.reset();
-    outputLPStage2_.reset();
-    outputLPStage3_.reset();
-    updateOutputLPCoeffs();
-
     // Reset freeze
     frozen_ = false;
 
@@ -193,8 +187,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         float er = erLevelSmoother_.next();
         float lateGain = lateGainScale_ * decayGainComp_;
         float outGain = outputGainSmoother_.next();
-        scratchL_[si] = std::clamp ((scratchL_[si] * lateGain + erOutL_[si] * er) * outGain, -16.0f, 16.0f);
-        scratchR_[si] = std::clamp ((scratchR_[si] * lateGain + erOutR_[si] * er) * outGain, -16.0f, 16.0f);
+        scratchL_[si] = DspUtils::fastTanh ((scratchL_[si] * lateGain + erOutL_[si] * er) * outGain / 16.0f) * 16.0f;
+        scratchR_[si] = DspUtils::fastTanh ((scratchR_[si] * lateGain + erOutR_[si] * er) * outGain / 16.0f) * 16.0f;
     }
 
     // Output EQ: low shelf at 250Hz + mid parametric + high shelf
@@ -221,14 +215,7 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
     }
 
-    // Output anti-alias LP: BYPASSED — 6th-order Butterworth at 14kHz was killing all air above 12kHz.
-    // The 16kHz aliasing spike will be addressed differently later.
-    // for (int i = 0; i < numSamples; ++i)
-    // {
-    //     auto si = static_cast<size_t> (i);
-    //     scratchL_[si] = outputLPStage3_.processL (outputLPStage2_.processL (outputLPStage1_.processL (scratchL_[si])));
-    //     scratchR_[si] = outputLPStage3_.processR (outputLPStage2_.processR (outputLPStage1_.processR (scratchR_[si])));
-    // }
+    // Anti-alias filtering is handled inside the FDN feedback loop (first-order LP at ~17kHz).
 
     outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
 
@@ -330,8 +317,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 wetR *= gateEnvelope_;
             }
 
-            left[i]  = left[i] * dry + wetL * wet;
-            right[i] = right[i] * dry + wetR * wet;
+            left[i]  = left[i] * dry + wetL * wet * gainTrimLinear_;
+            right[i] = right[i] * dry + wetR * wet * gainTrimLinear_;
         }
     }
 }
@@ -401,11 +388,6 @@ void DuskVerbEngine::applyAlgorithm (int index)
     // FDN-specific config (only applies when FDN is active, but set anyway)
     fdn_.setInlineDiffusion (config_->inlineDiffusionCoeff);
     fdn_.setModDepthFloor (config_->modDepthFloor);
-    fdn_.setPerChannelLP (config_->perChannelLPStrength, config_->perChannelLPExponent);
-    fdn_.setPerChannelShelf (config_->perChannelShelfStrength);
-    fdn_.setFeedbackLP (config_->feedbackLPHz);
-    fdn_.setFeedbackLP4thOrder (config_->feedbackLP4thOrder);
-    fdn_.setFeedbackShelf (config_->feedbackShelfHz, config_->feedbackShelfDB, config_->feedbackShelfQ);
     fdn_.setNoiseModDepth (config_->noiseModDepth);
     fdn_.setHadamardPerturbation (config_->hadamardPerturbation);
     fdn_.setUseHouseholder (config_->useHouseholderFeedback);
@@ -540,7 +522,7 @@ void DuskVerbEngine::setOutputDiffusion (float amount)
     // Gentler curve: full density up to 8s, floor at 0.5 (was 5s/0.4)
     // Ambient/Pad users running 8-15s decays retain more output density
     float effectiveDecay = decayTime_ * config_->decayTimeScale;
-    float decayFactor = std::clamp (8.0f / std::max (effectiveDecay, 0.2f), 0.5f, 1.0f);
+    float decayFactor = std::clamp (8.0f / std::max (effectiveDecay, 0.2f), 0.65f, 1.0f);
     outputDiffuser_.setDiffusion (amount * decayFactor * config_->outputDiffScale);
 }
 
@@ -569,7 +551,7 @@ void DuskVerbEngine::setHiCut (float hz)
 
 void DuskVerbEngine::setWidth (float width)
 {
-    widthSmoother_.setTarget (std::clamp (width, 0.0f, 2.0f));
+    widthSmoother_.setTarget (std::clamp (width, 0.0f, 1.5f));
 }
 
 void DuskVerbEngine::setFreeze (bool frozen)
@@ -594,6 +576,11 @@ void DuskVerbEngine::setGateParams (float holdMs, float releaseMs)
     // Release coefficient: reach -60dB in releaseMs
     float releaseSamples = std::max (1.0f, releaseMs * 0.001f * static_cast<float> (sampleRate_));
     gateReleaseCoeff_ = std::exp (-6.908f / releaseSamples);
+}
+
+void DuskVerbEngine::setGainTrim (float dB)
+{
+    gainTrimLinear_ = std::pow (10.0f, dB / 20.0f);
 }
 
 // Second-order Butterworth highpass coefficients (12 dB/oct)
@@ -691,30 +678,5 @@ void DuskVerbEngine::updateOutputEQCoeffs()
     }
 }
 
-// 6th-order Butterworth LP at 14kHz: three cascaded 2nd-order sections (-36dB/oct).
-// All sections use standard Butterworth LP coefficients (Q=0.707).
-void DuskVerbEngine::updateOutputLPCoeffs()
-{
-    float sr = static_cast<float> (sampleRate_);
-    float freq = 14000.0f;
-    float omega = 6.283185307179586f * freq / sr;
-    float sn = std::sin (omega);
-    float cs = std::cos (omega);
-    float alpha = sn / 1.4142135623730951f; // Q = 0.707 (Butterworth)
 
-    float a0 = 1.0f + alpha;
-    float b0 = ((1.0f - cs) * 0.5f) / a0;
-    float b1 = (1.0f - cs) / a0;
-    float b2 = ((1.0f - cs) * 0.5f) / a0;
-    float a1 = (-2.0f * cs) / a0;
-    float a2 = (1.0f - alpha) / a0;
-
-    // All three stages use identical coefficients
-    outputLPStage1_.b0 = b0; outputLPStage1_.b1 = b1; outputLPStage1_.b2 = b2;
-    outputLPStage1_.a1 = a1; outputLPStage1_.a2 = a2;
-    outputLPStage2_.b0 = b0; outputLPStage2_.b1 = b1; outputLPStage2_.b2 = b2;
-    outputLPStage2_.a1 = a1; outputLPStage2_.a2 = a2;
-    outputLPStage3_.b0 = b0; outputLPStage3_.b1 = b1; outputLPStage3_.b2 = b2;
-    outputLPStage3_.a1 = a1; outputLPStage3_.a2 = a2;
-}
 

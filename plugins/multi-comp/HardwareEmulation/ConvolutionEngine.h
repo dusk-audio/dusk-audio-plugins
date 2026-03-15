@@ -66,12 +66,19 @@ public:
                 break;
 
             case TransformerType::FET:
-                generateTransformerIR(100.0f, 0.3f, 30000.0f, -0.3f, 48);
+                // Cinemag/Jensen transformer: genuinely flat — bypass convolution
+                // (TransformerEmulation handles saturation/harmonics)
+                irLength = 1;
+                impulseResponse[0] = 1.0f;
+                reversedIR[0] = 1.0f;
                 break;
 
             case TransformerType::Console_Bus:
-                // SSL G-Bus: 2.5kHz mid punch, flat to 20kHz (real SSL is transparent)
-                generateTransformerIR(2500.0f, 0.4f, 30000.0f, -0.3f, 32);
+                // SSL G-Bus: transparent active design — bypass convolution
+                // (TransformerEmulation handles saturation/harmonics)
+                irLength = 1;
+                impulseResponse[0] = 1.0f;
+                reversedIR[0] = 1.0f;
                 break;
 
             case TransformerType::Generic:

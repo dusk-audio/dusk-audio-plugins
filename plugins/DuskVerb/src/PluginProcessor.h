@@ -40,6 +40,9 @@ public:
     std::unique_ptr<juce::XmlElement> getStateXML();
     void setStateXML (const juce::XmlElement& xml);
 
+    // Per-preset level correction (called from editor on factory preset load)
+    void setGainTrim (float dB) { engine_.setGainTrim (dB); }
+
     juce::AudioProcessorValueTreeState parameters;
 
     // Level metering (audio thread writes, UI thread reads)
