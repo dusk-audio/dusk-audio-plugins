@@ -860,7 +860,7 @@ def print_summary(results, csv_path=None):
         dr_thresh = DEEP_THRESHOLDS["density_ratio"]
         if dr_thresh is not None and dr_vals:
             if dr_avg < dr_thresh[0] or dr_avg > dr_thresh[1]:
-                fails.append(f"Dens")
+                fails.append(f"Dens={dr_avg:.2f}x (need {dr_thresh[0]:.1f}-{dr_thresh[1]:.1f})")
         edc_thresh = DEEP_THRESHOLDS["edc_max_dev"]
         if edc_thresh is not None and em_avg > edc_thresh:
             fails.append(f"EDC>{edc_thresh}")

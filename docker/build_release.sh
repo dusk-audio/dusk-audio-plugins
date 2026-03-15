@@ -25,7 +25,6 @@ get_plugin_target() {
         harmonic) echo "HarmonicGeneratorPlugin_All" ;;
         convolution|impulse|ir) echo "ConvolutionReverb_All" ;;
         multiq|multi-q|meq) echo "MultiQ_All" ;;
-        neuralamp|neural-amp|nam) echo "NeuralAmp_All" ;;
         tapeecho|tape-echo|echo) echo "TapeEcho_All" ;;
         chordanalyzer|chord-analyzer|chord|analyze) echo "ChordAnalyzer_All" ;;
         spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "SpectrumAnalyzer_All" ;;
@@ -43,7 +42,6 @@ get_plugin_name() {
         harmonic) echo "Harmonic Generator" ;;
         convolution|impulse|ir) echo "Convolution Reverb" ;;
         multiq|multi-q|meq) echo "Multi-Q" ;;
-        neuralamp|neural-amp|nam) echo "Neural Amp" ;;
         tapeecho|tape-echo|echo) echo "Tape Echo" ;;
         chordanalyzer|chord-analyzer|chord|analyze) echo "Chord Analyzer" ;;
         spectrumanalyzer|spectrum-analyzer|spectrum|span|fft) echo "Spectrum Analyzer" ;;
@@ -70,7 +68,6 @@ show_help() {
     echo "  harmonic           Harmonic Generator"
     echo "  convolution, impulse, ir  Convolution Reverb"
     echo "  multiq, multi-q, meq   Multi-Q (Universal EQ)"
-    echo "  neuralamp, neural-amp, nam  Neural Amp"
     echo "  tapeecho, tape-echo, echo   Tape Echo"
     echo "  chordanalyzer, chord-analyzer, chord, analyze   Chord Analyzer"
     echo "  spectrumanalyzer, spectrum-analyzer, spectrum, span, fft   Spectrum Analyzer"
