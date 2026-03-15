@@ -3699,9 +3699,15 @@ void MultiQEditor::updatePresetSelector()
                 if (userPresets2[i].name == savedName)
                 {
                     presetSelector->setSelectedId(static_cast<int>(1001 + i), juce::dontSendNotification);
+                    found = true;
                     break;
                 }
             }
+        }
+        // Fallback if saved preset no longer exists
+        if (!found && numFactoryPresets > 0)
+        {
+            presetSelector->setSelectedId(processor.getCurrentProgram() + 1, juce::dontSendNotification);
         }
     }
     else if (numFactoryPresets > 0)

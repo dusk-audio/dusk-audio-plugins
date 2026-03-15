@@ -1,10 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 project(DuskPlugins VERSION 1.0.0)
 
-# C++ standard is set per-plugin:
-# - Most plugins use C++17 (set in their own CMakeLists.txt)
-# - Neural Amp uses C++20 (required for NAM Core)
-# This avoids conflicts and ensures each plugin compiles with its required standard
+# C++ standard is set per-plugin (most use C++17, set in their own CMakeLists.txt)
 
 # Include global settings
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GlobalSettings.cmake)
@@ -50,7 +47,6 @@ option(BUILD_TAPE_MACHINE "Build TapeMachine plugin" ON)
 option(BUILD_GROOVEMIND "Build GrooveMind plugin" ON)  # ML-based intelligent drummer
 option(BUILD_CONVOLUTION_REVERB "Build Convolution Reverb plugin" ON)
 option(BUILD_MULTI_Q "Build Multi-Q plugin" ON)
-option(BUILD_NEURAL_AMP "Build Neural Amp plugin" OFF)  # Disabled: Eigen dependency adds significant compile time
 option(BUILD_TAPE_ECHO "Build Tape Echo plugin" ON)
 option(BUILD_CHORD_ANALYZER "Build Chord Analyzer plugin" ON)
 option(BUILD_SPECTRUM_ANALYZER "Build Spectrum Analyzer plugin" ON)
@@ -83,10 +79,6 @@ endif()
 
 if(BUILD_MULTI_Q)
     add_subdirectory(plugins/multi-q)
-endif()
-
-if(BUILD_NEURAL_AMP)
-    add_subdirectory(plugins/neural-amp)
 endif()
 
 if(BUILD_TAPE_ECHO)
