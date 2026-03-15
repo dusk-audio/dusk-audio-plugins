@@ -27,6 +27,7 @@ struct FactoryPreset
     float width;           // 0-2
     float gateHold;        // 0-500 ms (0 = disabled)
     float gateRelease;     // 5-500 ms
+    float gainTrim;        // dB offset applied to wet signal (0.0 = no adjustment)
 
     void applyTo (juce::AudioProcessorValueTreeState& apvts) const
     {
@@ -58,73 +59,73 @@ struct FactoryPreset
 //
 // Translated from VintageVerb factory presets.
 // Effective value = raw param * algorithm scale factor
-// Algorithm trebleMultScale: Plate=1.30, Hall=0.75, Chamber=1.20, Room=0.45, Ambient=0.60
+// Algorithm trebleMultScale: Plate=0.65, Hall=0.50, Chamber=0.90, Room=0.45, Ambient=0.80
 // Algorithm bassMultScale:   Plate=1.0, Hall=1.0,  Chamber=1.0, Room=0.85, Ambient=1.0
-// Algorithm erLevelScale:    Plate=0.0, Hall=1.0,  Chamber=0.8, Room=0.5,  Ambient=0.0
-// Algorithm lateGainScale:   Plate=0.47, Hall=0.65, Chamber=0.45, Room=1.10, Ambient=0.60
-// Algorithm decayTimeScale:  Plate=1.0, Hall=1.0,  Chamber=1.0, Room=1.4,  Ambient=1.0
+// Algorithm erLevelScale:    Plate=0.90, Hall=0.90, Chamber=1.20, Room=1.40, Ambient=0.0
+// Algorithm lateGainScale:   Plate=0.20, Hall=0.22, Chamber=0.38, Room=0.38, Ambient=0.35
+// Algorithm decayTimeScale:  Plate=0.94, Hall=0.79, Chamber=0.99, Room=1.28, Ambient=0.99
 //
 inline const std::vector<FactoryPreset>& getFactoryPresets(){
     static const std::vector<FactoryPreset> presets = {
-        //                                              algo  decay  pre    size   damp  bass   xover   diff  modD   modR  erLv  erSz  mix   loCut  hiCut   width  gHold  gRel
+        //                                              algo  decay  pre    size   damp  bass   xover   diff  modD   modR  erLv  erSz  mix   loCut  hiCut   width  gHold  gRel   trim
         // -- Halls --
-        { "Concert Wave",                  "Halls",       1, 2.99f, 21.9f, 1.0f, 1.0f, 1.0f, 4000.0f, 0.48f, 0.35f, 0.55f, 0.04f, 0.59f, 0.3f, 20.0f, 6476.6f, 1.0f, 0.0f, 50.0f },
-        { "Fat Snare Hall",                "Halls",       1, 0.55f, 11.2f, 0.568f, 1.0f, 1.2f, 348.9f, 1.0f, 1.0f, 0.11f, 0.13f, 0.56f, 0.25f, 20.0f, 1000.0f, 1.0f, 0.0f, 50.0f },
-        { "Homestar Blade Runner",         "Halls",       1, 4.86f, 27.3f, 1.0f, 1.0f, 1.41f, 415.9f, 0.7f, 0.356f, 0.61f, 0.14f, 0.62f, 0.3f, 20.0f, 2000.0f, 1.0f, 0.0f, 50.0f },
-        { "Huge Synth Hall",               "Halls",       1, 2.99f, 84.6f, 0.812f, 1.0f, 1.41f, 415.9f, 0.8f, 0.808f, 0.27f, 0.0f, 0.46f, 0.35f, 22.3f, 2000.0f, 1.0f, 0.0f, 50.0f },
-        { "Long Synth Hall",               "Halls",       1, 2.06f, 8.5f, 1.0f, 0.7f, 1.84f, 500.0f, 1.0f, 0.492f, 0.16f, 0.15f, 0.57f, 0.35f, 20.0f, 3223.4f, 1.0f, 0.0f, 50.0f },
-        { "Pad Hall",                      "Halls",       1, 4.86f, 84.6f, 1.0f, 1.0f, 1.41f, 327.3f, 1.0f, 0.38f, 0.31f, 0.0f, 0.46f, 0.45f, 21.1f, 2313.5f, 1.0f, 0.0f, 50.0f },
-        { "Small Vocal Hall",              "Halls",       1, 0.78f, 21.1f, 0.504f, 1.0f, 1.32f, 365.6f, 1.0f, 1.0f, 0.12f, 0.4f, 0.57f, 0.25f, 25.4f, 1232.5f, 1.0f, 0.0f, 50.0f },
-        { "Snare Hall",                    "Halls",       1, 0.4f, 11.2f, 0.5f, 1.0f, 1.2f, 348.9f, 1.0f, 1.0f, 0.11f, 0.19f, 0.52f, 0.25f, 20.0f, 2000.0f, 1.0f, 0.0f, 50.0f },
-        { "Very Nice Hall",                "Halls",       1, 7.65f, 35.7f, 0.716f, 0.5f, 1.82f, 339.6f, 0.64f, 0.508f, 0.21f, 0.06f, 0.68f, 0.3f, 27.9f, 4764.3f, 1.0f, 0.0f, 50.0f },
-        { "Vocal Hall",                    "Halls",       1, 1.83f, 8.5f, 1.0f, 0.8f, 1.84f, 500.0f, 1.0f, 0.23f, 0.27f, 0.23f, 0.54f, 0.25f, 22.3f, 2479.7f, 1.0f, 0.0f, 50.0f },
+        { "Concert Wave",                       "Halls",       1, 1.91f, 24.1f, 1.000f, 1.00f, 1.00f, 4000.0f, 0.48f, 0.350f, 3.78f, 0.30f, 0.80f, 0.3f, 20.0f, 12263.4f, 1.0f, 0.0f, 50.0f, 6.6f },
+        { "Fat Snare Hall",                     "Halls",       1, 0.63f, 11.0f, 0.568f, 1.00f, 1.25f, 401.0f, 1.00f, 1.000f, 0.40f, 0.23f, 0.45f, 0.2f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f, 0.8f },
+        { "Homestar Blade Runner",              "Halls",       1, 3.27f, 31.1f, 1.000f, 1.00f, 1.50f, 528.0f, 0.70f, 0.356f, 3.99f, 0.36f, 0.80f, 0.3f, 20.0f, 6004.0f, 1.0f, 0.0f, 50.0f, 8.1f },
+        { "Huge Synth Hall",                    "Halls",       1, 2.18f, 115.1f, 0.812f, 1.00f, 1.50f, 528.0f, 0.80f, 0.808f, 2.25f, 0.30f, 0.65f, 0.3f, 45.8f, 6004.0f, 1.0f, 0.0f, 50.0f, 8.3f },
+        { "Long Synth Hall",                    "Halls",       1, 1.13f, 8.0f, 1.000f, 1.00f, 2.00f, 700.0f, 1.00f, 0.492f, 1.13f, 0.35f, 0.80f, 0.3f, 20.0f, 8314.1f, 1.0f, 0.0f, 50.0f, 3.0f },
+        { "Pad Hall",                           "Halls",       1, 3.19f, 115.1f, 1.000f, 1.00f, 1.50f, 363.0f, 1.00f, 0.380f, 2.53f, 0.43f, 0.80f, 0.5f, 27.9f, 6674.1f, 1.0f, 0.0f, 50.0f, 8.6f },
+        { "Small Vocal Hall",                   "Halls",       1, 0.81f, 23.1f, 0.504f, 1.00f, 1.40f, 432.0f, 1.00f, 1.000f, 0.46f, 0.51f, 0.40f, 0.2f, 87.5f, 4003.6f, 1.0f, 0.0f, 50.0f, 0.7f },
+        { "Snare Hall",                         "Halls",       1, 0.48f, 11.0f, 0.500f, 1.00f, 1.25f, 401.0f, 1.00f, 1.000f, 0.40f, 0.18f, 0.40f, 0.2f, 20.0f, 6004.0f, 1.0f, 0.0f, 50.0f, -2.7f },
+        { "Very Nice Hall",                     "Halls",       1, 2.75f, 42.3f, 0.716f, 0.75f, 1.98f, 385.0f, 0.64f, 0.508f, 1.64f, 0.29f, 0.57f, 0.3f, 117.3f, 10443.8f, 1.0f, 0.0f, 50.0f, 8.9f },
+        { "Vocal Hall",                         "Halls",       1, 1.13f, 8.0f, 1.000f, 1.00f, 2.00f, 700.0f, 1.00f, 0.230f, 2.25f, 0.55f, 0.80f, 0.2f, 45.8f, 7004.1f, 1.0f, 0.0f, 50.0f, 2.3f },
         // -- Plates --
-        { "A Plate",                       "Plates",      0, 1.36f, 0.0f, 0.6f, 0.66f, 0.68f, 407.4f, 1.0f, 0.312f, 0.12f, 0.0f, 0.0f, 0.3f, 20.0f, 3349.6f, 1.0f, 0.0f, 50.0f },
-        { "Ambience Plate",                "Plates",      0, 1.25f, 15.1f, 0.168f, 0.3f, 1.73f, 656.1f, 1.0f, 0.748f, 0.21f, 0.0f, 0.0f, 0.45f, 21.5f, 3258.6f, 1.0f, 0.0f, 50.0f },
-        { "Drum Plate",                    "Plates",      0, 1.13f, 0.0f, 0.8f, 0.55f, 1.41f, 2529.1f, 1.0f, 0.192f, 0.17f, 0.0f, 0.0f, 0.25f, 20.0f, 1511.6f, 1.0f, 0.0f, 50.0f },
-        { "Fat Drums",                     "Plates",      0, 1.36f, 10.3f, 0.7f, 0.72f, 1.41f, 833.3f, 1.0f, 0.192f, 0.22f, 0.0f, 0.0f, 0.25f, 20.0f, 9928.1f, 1.0f, 0.0f, 50.0f },
-        { "Fat Plate",                     "Plates",      0, 1.36f, 2.6f, 0.95f, 1.0f, 1.0f, 716.1f, 1.0f, 0.312f, 0.12f, 0.0f, 0.0f, 0.3f, 20.0f, 3868.3f, 1.0f, 0.0f, 50.0f },
-        { "Large Plate",                   "Plates",      0, 1.83f, 10.3f, 0.75f, 1.0f, 0.84f, 200.0f, 1.0f, 0.192f, 0.15f, 0.0f, 0.0f, 0.35f, 20.0f, 8663.3f, 1.0f, 0.0f, 50.0f },
-        { "Snare Plate",                   "Plates",      0, 1.6f, 48.3f, 0.5f, 0.66f, 0.68f, 200.0f, 1.0f, 0.312f, 0.12f, 0.0f, 0.0f, 0.25f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f },
-        { "Steel Plate",                   "Plates",      0, 2.3f, 14.6f, 0.472f, 1.0f, 1.39f, 357.1f, 1.0f, 0.192f, 0.15f, 0.0f, 0.0f, 0.3f, 36.1f, 20000.0f, 1.0f, 0.0f, 50.0f },
-        { "Thin Plate",                    "Plates",      0, 1.01f, 0.0f, 0.45f, 1.0f, 0.68f, 407.4f, 1.0f, 0.312f, 0.12f, 0.0f, 0.0f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f },
-        { "Tight Plate",                   "Plates",      0, 0.78f, 10.3f, 0.35f, 0.55f, 1.41f, 758.4f, 1.0f, 0.192f, 0.17f, 0.0f, 0.0f, 0.3f, 20.0f, 1000.0f, 1.0f, 0.0f, 50.0f },
-        { "Vocal Plate",                   "Plates",      0, 0.67f, 18.8f, 0.44f, 0.85f, 1.0f, 3664.8f, 1.0f, 0.192f, 0.22f, 0.0f, 0.0f, 0.25f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f },
-        { "Vox Plate",                     "Plates",      0, 1.13f, 0.0f, 0.672f, 1.0f, 1.16f, 357.1f, 1.0f, 0.192f, 0.15f, 0.0f, 0.0f, 0.25f, 20.0f, 6206.5f, 1.0f, 0.0f, 50.0f },
+        { "A Plate",                            "Plates",      0, 1.08f, 0.0f, 0.600f, 1.00f, 0.60f, 511.0f, 1.00f, 0.312f, 0.50f, 0.60f, 0.48f, 0.3f, 20.0f, 8514.1f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Ambience Plate",                     "Plates",      0, 0.84f, 15.5f, 0.168f, 0.60f, 1.88f, 1042.0f, 1.00f, 0.748f, 1.64f, 0.38f, 0.13f, 0.5f, 33.8f, 8370.4f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Drum Plate",                         "Plates",      0, 0.82f, 0.0f, 0.800f, 1.00f, 1.50f, 4000.0f, 1.00f, 0.192f, 1.20f, 0.60f, 0.64f, 0.2f, 20.0f, 4803.8f, 1.0f, 0.0f, 50.0f, -0.9f },
+        { "Fat Drums",                          "Plates",      0, 0.93f, 10.0f, 0.700f, 1.00f, 1.50f, 1449.0f, 1.00f, 0.192f, 1.80f, 0.31f, 0.56f, 0.2f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f, 2.3f },
+        { "Fat Plate",                          "Plates",      0, 1.07f, 2.0f, 0.950f, 1.00f, 1.00f, 1178.0f, 1.00f, 0.312f, 0.50f, 0.34f, 0.76f, 0.3f, 20.0f, 9282.0f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Large Plate",                        "Plates",      0, 1.06f, 10.0f, 0.750f, 1.00f, 0.80f, 200.0f, 1.00f, 0.192f, 1.01f, 0.60f, 0.60f, 0.3f, 20.0f, 14102.8f, 1.0f, 0.0f, 50.0f, 0.1f },
+        { "Snare Plate",                        "Plates",      0, 1.03f, 60.1f, 0.500f, 1.00f, 0.60f, 200.0f, 1.00f, 0.312f, 0.50f, 0.39f, 0.40f, 0.2f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Steel Plate",                        "Plates",      0, 1.25f, 15.0f, 0.472f, 1.00f, 1.48f, 416.0f, 1.00f, 0.192f, 1.01f, 0.60f, 0.38f, 0.3f, 200.7f, 20000.0f, 1.0f, 0.0f, 50.0f, 5.1f },
+        { "Thin Plate",                         "Plates",      0, 0.95f, 0.0f, 0.450f, 1.00f, 0.60f, 511.0f, 1.00f, 0.312f, 0.50f, 0.60f, 0.36f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Tight Plate",                        "Plates",      0, 0.56f, 10.0f, 0.350f, 1.00f, 1.50f, 1275.0f, 1.00f, 0.192f, 1.20f, 0.55f, 0.28f, 0.3f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Vocal Plate",                        "Plates",      0, 0.64f, 20.1f, 0.440f, 1.00f, 1.00f, 4000.0f, 1.00f, 0.192f, 1.80f, 0.50f, 0.35f, 0.2f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.1f },
+        { "Vox Plate",                          "Plates",      0, 0.82f, 0.0f, 0.672f, 1.00f, 1.20f, 416.0f, 1.00f, 0.192f, 1.01f, 0.53f, 0.54f, 0.2f, 20.0f, 12003.4f, 1.0f, 0.0f, 50.0f, -1.3f },
         // -- Rooms --
-        { "Dark Vocal Room",               "Rooms",       3, 2.06f, 9.4f, 0.5f, 0.7f, 1.0f, 348.9f, 0.8f, 0.0f, 0.14f, 0.2f, 0.54f, 0.25f, 20.0f, 9928.1f, 1.0f, 0.0f, 50.0f },
-        { "Exciting Snare room",           "Rooms",       3, 0.4f, 16.3f, 0.324f, 1.0f, 1.32f, 444.3f, 1.0f, 0.144f, 0.14f, 0.48f, 0.55f, 0.25f, 20.0f, 1105.5f, 1.0f, 0.0f, 50.0f },
-        { "Fat Snare Room",                "Rooms",       3, 0.84f, 9.4f, 0.388f, 1.0f, 1.2f, 464.5f, 1.0f, 0.308f, 0.19f, 0.35f, 0.57f, 0.25f, 20.0f, 1402.9f, 1.0f, 0.0f, 50.0f },
-        { "Lively Snare Room",             "Rooms",       3, 0.67f, 11.2f, 0.504f, 1.0f, 1.2f, 500.0f, 1.0f, 0.188f, 0.19f, 0.39f, 0.58f, 0.25f, 20.0f, 2479.7f, 1.0f, 0.0f, 50.0f },
-        { "Long Dark 70s Snare Room",      "Rooms",       3, 1.48f, 16.3f, 1.0f, 1.0f, 1.32f, 444.3f, 1.0f, 0.188f, 0.19f, 0.01f, 0.63f, 0.35f, 20.0f, 1000.0f, 1.0f, 0.0f, 50.0f },
-        { "Short Dark Snare Room",         "Rooms",       3, 0.43f, 5.7f, 0.368f, 1.0f, 1.2f, 500.0f, 1.0f, 0.188f, 0.19f, 0.43f, 0.56f, 0.25f, 20.0f, 1068.9f, 1.0f, 0.0f, 50.0f },
+        { "Dark Vocal Room",                    "Rooms",       3, 0.96f, 9.0f, 0.500f, 0.70f, 1.00f, 401.0f, 0.80f, 0.000f, 0.80f, 0.51f, 0.40f, 0.2f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f, 2.1f },
+        { "Exciting Snare room",                "Rooms",       3, 0.40f, 17.0f, 0.324f, 1.00f, 1.40f, 584.0f, 1.00f, 0.144f, 0.78f, 0.60f, 0.26f, 0.2f, 20.0f, 3603.4f, 1.0f, 0.0f, 50.0f, -1.6f },
+        { "Fat Snare Room",                     "Rooms",       3, 0.63f, 9.0f, 0.388f, 1.00f, 1.25f, 626.0f, 1.00f, 0.308f, 1.50f, 0.54f, 0.31f, 0.2f, 20.0f, 4503.7f, 1.0f, 0.0f, 50.0f, 1.3f },
+        { "Lively Snare Room",                  "Rooms",       3, 0.54f, 11.0f, 0.504f, 1.00f, 1.25f, 700.0f, 1.00f, 0.188f, 1.50f, 0.60f, 0.40f, 0.2f, 20.0f, 7004.1f, 1.0f, 0.0f, 50.0f, -1.9f },
+        { "Long Dark 70s Snare Room",           "Rooms",       3, 0.89f, 17.0f, 1.000f, 1.00f, 1.40f, 584.0f, 1.00f, 0.188f, 1.50f, 0.37f, 0.80f, 0.3f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f, 3.2f },
+        { "Short Dark Snare Room",              "Rooms",       3, 0.45f, 5.0f, 0.368f, 1.00f, 1.25f, 700.0f, 1.00f, 0.188f, 1.50f, 0.52f, 0.29f, 0.2f, 20.0f, 3483.3f, 1.0f, 0.0f, 50.0f, -1.1f },
         // -- Chambers --
-        { "Clear Chamber",                 "Chambers",    2, 1.83f, 0.0f, 1.0f, 1.0f, 1.41f, 309.0f, 1.0f, 0.192f, 0.18f, 0.21f, 0.53f, 0.3f, 20.0f, 6206.5f, 1.0f, 0.0f, 50.0f },
-        { "Large Chamber",                 "Chambers",    2, 1.6f, 10.3f, 1.0f, 1.0f, 0.96f, 395.2f, 1.0f, 0.304f, 0.13f, 0.14f, 0.59f, 0.35f, 20.0f, 2183.4f, 1.0f, 0.0f, 50.0f },
-        { "Large Wood Room",               "Chambers",    2, 1.36f, 0.0f, 0.6f, 1.0f, 0.84f, 558.3f, 1.0f, 0.312f, 0.12f, 0.29f, 0.53f, 0.35f, 20.0f, 3349.6f, 1.0f, 0.0f, 50.0f },
-        { "Live Vox Chamber",              "Chambers",    2, 1.01f, 0.0f, 0.7f, 1.0f, 1.41f, 256.3f, 0.8f, 0.36f, 0.11f, 0.36f, 0.54f, 0.25f, 53.1f, 9928.1f, 1.0f, 0.0f, 50.0f },
-        { "Medium Gate",                   "Chambers",    2, 2.0f, 0.0f, 0.14f, 1.0f, 1.41f, 309.0f, 1.0f, 0.192f, 0.18f, 0.4f, 0.57f, 0.5f, 20.0f, 3034.6f, 1.0f, 106.0f, 19.5f },
-        { "Rich Chamber",                  "Chambers",    2, 2.53f, 22.7f, 0.7f, 1.0f, 1.2f, 222.0f, 1.0f, 0.16f, 0.17f, 0.13f, 0.6f, 0.3f, 20.0f, 1912.3f, 1.0f, 0.0f, 50.0f },
-        { "Small Chamber1",                "Chambers",    2, 0.9f, 0.0f, 0.5f, 1.0f, 1.41f, 256.3f, 1.0f, 0.192f, 0.17f, 0.37f, 0.53f, 0.3f, 20.0f, 9928.1f, 1.0f, 0.0f, 50.0f },
-        { "Small Chamber2",                "Chambers",    2, 0.9f, 0.0f, 0.5f, 1.0f, 1.41f, 309.0f, 1.0f, 0.192f, 0.17f, 0.3f, 0.56f, 0.3f, 20.0f, 9928.1f, 1.0f, 0.0f, 50.0f },
-        { "Tiled Room",                    "Chambers",    2, 0.67f, 4.7f, 0.107f, 1.0f, 1.2f, 1432.4f, 0.5f, 0.144f, 0.14f, 0.45f, 0.52f, 0.3f, 20.0f, 4408.4f, 1.0f, 0.0f, 50.0f },
+        { "Clear Chamber",                      "Chambers",    2, 0.95f, 0.0f, 1.000f, 1.00f, 1.50f, 332.0f, 1.00f, 0.192f, 1.40f, 0.60f, 0.80f, 0.3f, 20.0f, 12003.4f, 1.0f, 0.0f, 50.0f, -0.2f },
+        { "Large Chamber",                      "Chambers",    2, 0.89f, 10.0f, 1.000f, 1.00f, 0.95f, 488.0f, 1.00f, 0.304f, 0.74f, 0.42f, 0.80f, 0.3f, 20.0f, 6404.1f, 1.0f, 0.0f, 50.0f, -0.7f },
+        { "Large Wood Room",                    "Chambers",    2, 0.87f, 0.0f, 0.600f, 1.00f, 0.80f, 825.0f, 1.00f, 0.312f, 0.50f, 0.53f, 0.48f, 0.3f, 20.0f, 8514.1f, 1.0f, 0.0f, 50.0f, -0.7f },
+        { "Live Vox Chamber",                   "Chambers",    2, 0.67f, 0.0f, 0.700f, 1.00f, 1.50f, 250.0f, 0.80f, 0.360f, 0.32f, 0.50f, 0.56f, 0.2f, 325.9f, 15002.4f, 1.0f, 0.0f, 50.0f, -1.0f },
+        { "Medium Gate",                        "Chambers",    2, 2.00f, 0.0f, 0.140f, 1.00f, 1.50f, 332.0f, 1.00f, 0.192f, 1.32f, 0.36f, 0.11f, 0.5f, 20.0f, 8004.1f, 1.0f, 106.0f, 19.5f, -2.2f },
+        { "Rich Chamber",                       "Chambers",    2, 1.11f, 25.1f, 0.700f, 1.00f, 1.25f, 203.0f, 1.00f, 0.160f, 1.30f, 0.47f, 0.56f, 0.3f, 20.0f, 5804.0f, 1.0f, 0.0f, 50.0f, 2.5f },
+        { "Small Chamber1",                     "Chambers",    2, 0.67f, 0.0f, 0.500f, 1.00f, 1.50f, 250.0f, 1.00f, 0.192f, 1.20f, 0.47f, 0.40f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f, -1.8f },
+        { "Small Chamber2",                     "Chambers",    2, 0.68f, 0.0f, 0.500f, 1.00f, 1.50f, 332.0f, 1.00f, 0.192f, 1.20f, 0.43f, 0.40f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f, -0.9f },
+        { "Tiled Room",                         "Chambers",    2, 0.60f, 4.0f, 0.107f, 1.00f, 1.25f, 2850.0f, 0.50f, 0.144f, 0.78f, 0.60f, 0.09f, 0.3f, 20.0f, 10003.9f, 1.0f, 0.0f, 50.0f, -3.9f },
         // -- Ambience --
-        { "Ambience",                      "Ambience",    4, 0.9f, 0.0f, 0.2f, 1.0f, 1.84f, 200.0f, 1.0f, 0.36f, 0.11f, 0.0f, 0.0f, 0.45f, 20.0f, 9928.1f, 1.0f, 0.0f, 50.0f },
-        { "Ambience Tiled Room",           "Ambience",    4, 0.84f, 4.7f, 0.107f, 1.0f, 1.2f, 1432.4f, 0.5f, 0.144f, 0.14f, 0.0f, 0.0f, 0.45f, 20.0f, 4408.4f, 1.0f, 0.0f, 50.0f },
-        { "Big Ambience Gate",             "Ambience",    4, 2.0f, 11.2f, 1.0f, 1.0f, 1.0f, 348.9f, 1.0f, 1.0f, 0.19f, 0.0f, 0.0f, 0.5f, 20.0f, 1000.0f, 1.0f, 450.0f, 5.0f },
-        { "Cross Stick Room",              "Ambience",    4, 0.55f, 16.3f, 0.1f, 1.0f, 1.32f, 365.6f, 1.0f, 0.664f, 0.39f, 0.0f, 0.0f, 0.3f, 20.0f, 1586.9f, 1.0f, 0.0f, 50.0f },
-        { "Drum Air",                      "Ambience",    4, 0.46f, 9.4f, 0.1f, 1.0f, 1.0f, 500.0f, 1.0f, 1.0f, 0.11f, 0.0f, 0.0f, 0.25f, 20.0f, 1000.0f, 1.0f, 0.0f, 50.0f },
-        { "Gated Snare",                   "Ambience",    4, 2.0f, 9.4f, 0.72f, 1.0f, 1.0f, 500.0f, 0.82f, 0.524f, 0.11f, 0.0f, 0.0f, 0.5f, 20.0f, 1000.0f, 1.0f, 338.0f, 8.7f },
-        { "Large Ambience",                "Ambience",    4, 2.06f, 0.0f, 0.6f, 1.0f, 1.2f, 309.0f, 1.0f, 1.0f, 0.19f, 0.0f, 0.0f, 0.45f, 20.0f, 1000.0f, 1.0f, 0.0f, 50.0f },
-        { "Large Gated Snare",             "Ambience",    4, 0.78f, 11.2f, 0.404f, 1.0f, 1.0f, 348.9f, 1.0f, 1.0f, 0.23f, 0.0f, 0.0f, 0.5f, 20.0f, 1586.9f, 1.0f, 0.0f, 50.0f },
-        { "Med Ambience",                  "Ambience",    4, 1.83f, 0.0f, 0.5f, 1.0f, 1.2f, 309.0f, 1.0f, 1.0f, 0.19f, 0.0f, 0.0f, 0.45f, 20.0f, 1105.5f, 1.0f, 0.0f, 50.0f },
-        { "Short Vocal Ambience",          "Ambience",    4, 0.67f, 21.1f, 0.15f, 1.0f, 1.0f, 348.9f, 1.0f, 1.0f, 0.14f, 0.0f, 0.0f, 0.45f, 20.0f, 1000.0f, 1.0f, 0.0f, 50.0f },
-        { "Small Ambience",                "Ambience",    4, 1.25f, 0.0f, 0.22f, 1.0f, 1.2f, 309.0f, 1.0f, 1.0f, 0.19f, 0.0f, 0.0f, 0.45f, 20.0f, 1367.7f, 1.0f, 0.0f, 50.0f },
-        { "Small Drum Room",               "Ambience",    4, 0.43f, 11.2f, 0.3f, 1.0f, 1.0f, 500.0f, 1.0f, 1.0f, 0.11f, 0.0f, 0.0f, 0.25f, 20.0f, 1000.0f, 1.0f, 0.0f, 50.0f },
-        { "Snare Ambience",                "Ambience",    4, 1.01f, 0.0f, 0.34f, 1.0f, 1.84f, 200.0f, 1.0f, 0.36f, 0.11f, 0.0f, 0.0f, 0.45f, 20.0f, 9928.1f, 1.0f, 0.0f, 50.0f },
-        { "Tight Ambience Gate",           "Ambience",    4, 2.0f, 11.2f, 0.352f, 1.0f, 1.0f, 348.9f, 1.0f, 1.0f, 0.14f, 0.0f, 0.0f, 0.5f, 20.0f, 1000.0f, 1.0f, 190.8f, 5.0f },
-        { "Trip Hop Snare",                "Ambience",    4, 1.13f, 16.3f, 0.636f, 1.0f, 1.32f, 365.6f, 1.0f, 1.0f, 0.11f, 0.0f, 0.0f, 0.25f, 20.0f, 1586.9f, 1.0f, 0.0f, 50.0f },
-        { "Very Small Ambience",           "Ambience",    4, 0.67f, 0.0f, 0.1f, 1.0f, 1.2f, 309.0f, 1.0f, 1.0f, 0.12f, 0.0f, 0.0f, 0.45f, 20.0f, 1367.7f, 1.0f, 0.0f, 50.0f },
+        { "Ambience",                           "Ambience",    4, 0.68f, 0.0f, 0.200f, 0.97f, 2.00f, 200.0f, 1.00f, 0.360f, 0.32f, 0.00f, 0.00f, 0.5f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f, 0.7f },
+        { "Ambience Tiled Room",                "Ambience",    4, 0.60f, 4.0f, 0.107f, 0.97f, 1.25f, 2850.0f, 0.50f, 0.144f, 0.78f, 0.00f, 0.00f, 0.5f, 20.0f, 10003.9f, 1.0f, 0.0f, 50.0f, -3.0f },
+        { "Big Ambience Gate",                  "Ambience",    4, 2.00f, 11.0f, 1.000f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 1.53f, 0.00f, 0.00f, 0.5f, 20.0f, 2596.4f, 1.0f, 450.0f, 5.0f, 1.7f },
+        { "Cross Stick Room",                   "Ambience",    4, 0.48f, 17.0f, 0.100f, 0.97f, 1.40f, 432.0f, 1.00f, 0.664f, 3.00f, 0.00f, 0.00f, 0.3f, 20.0f, 5003.8f, 1.0f, 0.0f, 50.0f, -1.2f },
+        { "Drum Air",                           "Ambience",    4, 0.48f, 9.0f, 0.100f, 0.97f, 1.00f, 700.0f, 1.00f, 1.000f, 0.40f, 0.00f, 0.00f, 0.2f, 20.0f, 2002.5f, 1.0f, 0.0f, 50.0f, -4.1f },
+        { "Gated Snare",                        "Ambience",    4, 2.00f, 9.0f, 0.720f, 0.83f, 1.00f, 700.0f, 0.82f, 0.524f, 0.40f, 0.00f, 0.00f, 0.5f, 20.0f, 3003.1f, 1.0f, 338.0f, 8.7f, -0.5f },
+        { "Large Ambience",                     "Ambience",    4, 1.08f, 0.0f, 0.600f, 0.97f, 1.25f, 332.0f, 1.00f, 1.000f, 1.50f, 0.00f, 0.00f, 0.5f, 20.0f, 2903.1f, 1.0f, 0.0f, 50.0f, 0.1f },
+        { "Large Gated Snare",                  "Ambience",    4, 0.63f, 11.0f, 0.404f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 1.88f, 0.00f, 0.00f, 0.5f, 20.0f, 5003.8f, 1.0f, 0.0f, 50.0f, 4.3f },
+        { "Med Ambience",                       "Ambience",    4, 0.96f, 0.0f, 0.500f, 0.83f, 1.25f, 332.0f, 1.00f, 1.000f, 1.50f, 0.00f, 0.00f, 0.5f, 20.0f, 3603.4f, 1.0f, 0.0f, 50.0f, 0.9f },
+        { "Short Vocal Ambience",               "Ambience",    4, 0.59f, 23.1f, 0.150f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 0.80f, 0.00f, 0.00f, 0.5f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f, 0.9f },
+        { "Small Ambience",                     "Ambience",    4, 0.75f, 0.0f, 0.220f, 0.83f, 1.25f, 332.0f, 1.00f, 1.000f, 1.50f, 0.00f, 0.00f, 0.5f, 20.0f, 4403.7f, 1.0f, 0.0f, 50.0f, -1.8f },
+        { "Small Drum Room",                    "Ambience",    4, 0.48f, 11.0f, 0.300f, 0.97f, 1.00f, 700.0f, 1.00f, 1.000f, 0.40f, 0.00f, 0.00f, 0.2f, 20.0f, 2002.5f, 1.0f, 0.0f, 50.0f, 2.1f },
+        { "Snare Ambience",                     "Ambience",    4, 0.68f, 0.0f, 0.340f, 0.97f, 2.00f, 200.0f, 1.00f, 0.360f, 0.32f, 0.00f, 0.00f, 0.5f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f, 2.5f },
+        { "Tight Ambience Gate",                "Ambience",    4, 2.00f, 11.0f, 0.352f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 0.89f, 0.00f, 0.00f, 0.5f, 20.0f, 2596.4f, 1.0f, 190.8f, 5.0f, 0.2f },
+        { "Trip Hop Snare",                     "Ambience",    4, 0.71f, 17.0f, 0.636f, 0.97f, 1.40f, 432.0f, 1.00f, 1.000f, 0.40f, 0.00f, 0.00f, 0.2f, 20.0f, 5003.8f, 1.0f, 0.0f, 50.0f, 3.7f },
+        { "Very Small Ambience",                "Ambience",    4, 0.54f, 0.0f, 0.100f, 0.83f, 1.25f, 332.0f, 1.00f, 1.000f, 0.50f, 0.00f, 0.00f, 0.5f, 20.0f, 4403.7f, 1.0f, 0.0f, 50.0f, -4.9f },
     };
     return presets;
 }

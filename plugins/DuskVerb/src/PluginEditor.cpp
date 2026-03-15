@@ -379,7 +379,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     hiCut_     .init (*this, p.parameters, "hi_cut",     "HI CUT",       " Hz",
         "Low-pass filter on reverb output. Darkens the reverb");
     width_     .init (*this, p.parameters, "width",      "WIDTH",        "%",
-        "Stereo width: 0% mono, 100% normal, 200% hyper-wide");
+        "Stereo width: 0% mono, 100% normal, 150% wide");
 
     // Cache raw parameter pointer (stable for APVTS lifetime)
     algoParamPtr_ = p.parameters.getRawParameterValue ("algorithm");
@@ -414,6 +414,36 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     };
     addAndMakeVisible (presetBox_);
     refreshPresetList();
+
+    // Restore preset selection from saved state
+    {
+        auto savedName = processorRef.parameters.state.getProperty ("presetName", "").toString();
+        if (savedName.isNotEmpty())
+        {
+            const auto& presets = getFactoryPresets();
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                if (juce::String (presets[i].name) == savedName)
+                {
+                    presetBox_.setSelectedId (static_cast<int> (i) + 2, juce::dontSendNotification);
+                    break;
+                }
+            }
+            if (presetBox_.getSelectedId() == 0 && userPresetManager_)
+            {
+                auto userPresets = userPresetManager_->loadUserPresets();
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    if (userPresets[i].name == savedName)
+                    {
+                        presetBox_.setSelectedId (static_cast<int> (1001 + i), juce::dontSendNotification);
+                        break;
+                    }
+                }
+            }
+        }
+        updateDeleteButtonVisibility();
+    }
 
     // Save preset button
     savePresetButton_.setButtonText ("Save");
@@ -847,7 +877,14 @@ void DuskVerbEditor::loadPreset (int index)
 {
     const auto& presets = getFactoryPresets();
     if (index >= 0 && index < static_cast<int> (presets.size()))
+    {
         presets[static_cast<size_t> (index)].applyTo (processorRef.parameters);
+        processorRef.setGainTrim (presets[static_cast<size_t> (index)].gainTrim);
+        processorRef.parameters.state.setProperty ("presetName",
+            juce::String (presets[static_cast<size_t> (index)].name), nullptr);
+        processorRef.parameters.state.setProperty ("gainTrim",
+            presets[static_cast<size_t> (index)].gainTrim, nullptr);
+    }
 }
 
 // =============================================================================
@@ -954,7 +991,12 @@ void DuskVerbEditor::loadUserPreset (const juce::String& name)
 
     auto state = userPresetManager_->loadUserPreset (name);
     if (state.isValid())
+    {
         processorRef.parameters.replaceState (state);
+        processorRef.setGainTrim (0.0f);
+        processorRef.parameters.state.setProperty ("presetName", name, nullptr);
+        processorRef.parameters.state.setProperty ("gainTrim", 0.0f, nullptr);
+    }
 }
 
 void DuskVerbEditor::deleteUserPreset (const juce::String& name)

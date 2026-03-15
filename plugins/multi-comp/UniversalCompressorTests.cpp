@@ -297,7 +297,7 @@ private:
             *bypass = 0.0f;
 
         // Test all modes
-        for (int mode = 0; mode < 4; ++mode)
+        for (int mode = 0; mode < 8; ++mode)
         {
             if (auto* modeParam = params.getRawParameterValue("mode"))
                 *modeParam = static_cast<float>(mode);
@@ -708,9 +708,9 @@ private:
             compressor.processBlock(buffer, midiBuffer);
 
         // Benchmark all compressor modes
-        std::vector<juce::String> modeNames = {"Opto", "FET", "VCA", "Bus"};
+        std::vector<juce::String> modeNames = {"Opto", "FET", "VCA", "Bus", "StudioFET", "StudioVCA", "Digital", "Multiband"};
 
-        for (int mode = 0; mode < 4; ++mode)
+        for (int mode = 0; mode < 8; ++mode)
         {
             if (auto* modeParam = params.getRawParameterValue("mode"))
                 *modeParam = static_cast<float>(mode);

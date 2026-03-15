@@ -152,6 +152,36 @@ FourKEQEditor::FourKEQEditor(FourKEQ& p)
     addAndMakeVisible(presetSelector);
     refreshPresetList();
 
+    // Restore preset selection from saved state
+    {
+        auto savedName = audioProcessor.parameters.state.getProperty("presetName", "").toString();
+        if (savedName.isNotEmpty())
+        {
+            const auto& presets = FourKEQPresets::getFactoryPresets();
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                if (juce::String(presets[i].name) == savedName)
+                {
+                    presetSelector.setSelectedId(static_cast<int>(i) + 2, juce::dontSendNotification);
+                    break;
+                }
+            }
+            if (presetSelector.getSelectedId() == 0 && userPresetManager_)
+            {
+                auto userPresets = userPresetManager_->loadUserPresets();
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    if (userPresets[i].name == savedName)
+                    {
+                        presetSelector.setSelectedId(static_cast<int>(1001 + i), juce::dontSendNotification);
+                        break;
+                    }
+                }
+            }
+        }
+        updateDeleteButtonVisibility();
+    }
+
     // Save preset button
     savePresetButton_.setButtonText("Save");
     savePresetButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a3a));
@@ -1207,7 +1237,11 @@ void FourKEQEditor::loadPreset(int index)
 {
     const auto& presets = FourKEQPresets::getFactoryPresets();
     if (index >= 0 && index < static_cast<int>(presets.size()))
+    {
         presets[static_cast<size_t>(index)].applyTo(audioProcessor.parameters);
+        audioProcessor.parameters.state.setProperty("presetName",
+            juce::String(presets[static_cast<size_t>(index)].name), nullptr);
+    }
 }
 
 void FourKEQEditor::refreshPresetList()
@@ -1310,7 +1344,10 @@ void FourKEQEditor::loadUserPreset(const juce::String& name)
 
     auto state = userPresetManager_->loadUserPreset(name);
     if (state.isValid())
+    {
         audioProcessor.parameters.replaceState(state);
+        audioProcessor.parameters.state.setProperty("presetName", name, nullptr);
+    }
 }
 
 void FourKEQEditor::deleteUserPreset(const juce::String& name)

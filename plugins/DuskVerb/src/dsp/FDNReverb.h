@@ -30,15 +30,10 @@ public:
     void setSizeRange (float min, float max);
     void setInlineDiffusion (float coeff);
     void setModDepthFloor (float floor);
-    void setFeedbackLP (float hz);
-    void setFeedbackLP4thOrder (bool enable);
-    void setPerChannelLP (float strength, float exponent);
-    void setPerChannelShelf (float strength);
     void setNoiseModDepth (float samples);
     void setHadamardPerturbation (float amount);
     void setUseHouseholder (bool enable);
     void setUseWeightedGains (bool enable);
-    void setFeedbackShelf (float freqHz, float gainDB, float Q);
     void setHighCrossoverFreq (float hz);
     void setAirTrebleMultiply (float mult);
     void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
@@ -51,10 +46,8 @@ private:
     static constexpr int N = 16;
     static constexpr double kBaseSampleRate = 44100.0;
     static constexpr float kTwoPi = 6.283185307179586f;
-    static constexpr float kOutputScale = 0.353553f; // 1/sqrt(8) — normalizes 8-tap sum
-    static constexpr float kOutputGain  = 2.0f;      // +6dB compensation for level matching
-    static constexpr float kOutputBoost = 1.585f;     // +4 dB global reverb output level boost
-    static constexpr float kSafetyClip  = 32.0f;     // Safety clamp — raised for dual-slope (high fast-tap gain)
+    static constexpr float kOutputLevel = 1.121f;     // 1/sqrt(8) * 2.0 * 1.585 — consolidated output scaling
+    static constexpr float kSafetyClip  = 32.0f;     // Soft-clip ceiling — raised for dual-slope (high fast-tap gain)
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
@@ -144,34 +137,6 @@ private:
     float noiseModDepthParam_ = 0.0f; // Raw noise mod depth (unscaled)
     float noiseModDepth_ = 0.0f;      // Per-sample random delay jitter (samples, scaled by rate)
 
-    // Per-channel Butterworth lowpass in the feedback path.
-    // 2nd-order (12 dB/oct) or 4th-order Linkwitz-Riley (24 dB/oct) per algorithm.
-    // Direct Form II Transposed: 2 state variables per biquad section per channel.
-    float fbLPZ1_[N] {};  // Section 1 state
-    float fbLPZ2_[N] {};
-    float fbLPZ3_[N] {};  // Section 2 state (only used when fbLP4thOrder_)
-    float fbLPZ4_[N] {};
-    // Per-channel biquad coefficients: each channel gets its own LP cutoff
-    // based on delay length ratio (shorter delays → lower cutoff → more HF damping).
-    float fbLP_b0_[N] {}, fbLP_b1_[N] {}, fbLP_b2_[N] {};
-    float fbLP_a1_[N] {}, fbLP_a2_[N] {};
-    bool fbLPEnabled_ = false;
-    bool fbLP4thOrder_ = false; // true = cascade two identical sections (L-R 24 dB/oct)
-    float perChannelLPStrength_ = 0.0f;
-    float perChannelLPExponent_ = 0.5f;
-
-    // Feedback loop shelving EQ: per-channel biquad high shelf for cumulative
-    // spectral darkening inside the feedback loop ("in-loop" damping topology).
-    // Each recirculation applies a small HF cut that compounds over the tail,
-    // matching the natural spectral evolution of vintage digital reverbs.
-    // Per-channel coefficients: shorter delays get proportionally more shelf cut.
-    float fbShelfB0_[N] {}, fbShelfB1_[N] {}, fbShelfB2_[N] {};
-    float fbShelfA1_[N] {}, fbShelfA2_[N] {};
-    float fbShelfZ1_[N] = {};  // per-channel biquad state
-    float fbShelfZ2_[N] = {};
-    bool  fbShelfEnabled_ = false;
-    float perChannelShelfStrength_ = 0.0f;
-
     // Structural HF damping: gentle first-order LP modeling air absorption.
     // Per-algorithm, applied after TwoBandDamping in feedback loop.
     // Effective frequency scales with treble_multiply: lower treble → lower cutoff → more damping.
@@ -186,6 +151,19 @@ private:
     float structLFCoeff_ = 0.0f;   // exp(-2π·f/sr), 0 = bypassed
     bool structLFEnabled_ = false;
 
+    // Anti-alias LP: gentle first-order LP at ~17kHz inside feedback loop.
+    // Accumulates across iterations to suppress modulation-induced aliasing
+    // without killing air on the first pass (unlike the 6th-order output LP).
+    float antiAliasState_[N] {};
+    float antiAliasCoeff_ = 0.0f;  // exp(-2*pi*17000/sr), 0 = bypassed
+
+    // Per-channel DC blocker (first-order highpass, ~5Hz).
+    // Prevents DC accumulation inside the FDN feedback loop from
+    // denormal bias and allpass filter drift.
+    float dcX1_[N] {};   // Previous input
+    float dcY1_[N] {};   // Previous output
+    float dcCoeff_ = 0.9993f;  // R = 1 - 2*pi*5/sr
+
     // Cheap xorshift32 PRNG returning float in [-1, +1].
     // Used for aperiodic LFO drift ("Wander").
     static float nextDrift (uint32_t& state)
@@ -198,7 +176,7 @@ private:
 
     // Perturbed feedback mixing matrix (optional replacement for Hadamard).
     // Small random offsets break deterministic mode coupling that causes ringing.
-    // Row-normalized to preserve approximate energy conservation.
+    // Projected to nearest orthogonal matrix via polar decomposition for energy conservation.
     float perturbMatrix_[N][N] {};
     bool usePerturbedMatrix_ = false;
     bool useHouseholder_ = false;

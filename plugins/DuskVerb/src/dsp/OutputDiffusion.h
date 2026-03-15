@@ -2,7 +2,7 @@
 
 #include "DiffusionStage.h" // reuses ModulatedAllpass
 
-// Post-FDN output diffusion: 2 cascaded allpass filters per channel.
+// Post-FDN output diffusion: 4 cascaded allpass filters per channel.
 // Lower coefficient than input diffusion to add density without smearing stereo image.
 class OutputDiffusion
 {
@@ -12,8 +12,8 @@ public:
     void setDiffusion (float amount);
 
 private:
-    static constexpr int kNumStages = 2;
-    static constexpr int kBaseDelays[kNumStages] = { 523, 163 };
+    static constexpr int kNumStages = 4;
+    static constexpr int kBaseDelays[kNumStages] = { 523, 163, 349, 241 };
 
     ModulatedAllpass leftAP_[kNumStages];
     ModulatedAllpass rightAP_[kNumStages];

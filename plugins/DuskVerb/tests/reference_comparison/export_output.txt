@@ -1,0 +1,2640 @@
+Running 53 preset comparison(s) with 8 workers...
+
+Loading DuskVerb: /Users/marckorte/Library/Audio/Plug-Ins/Components/DuskVerb.component
+Loading ReferenceReverb: /Library/Audio/Plug-Ins/Components/ValhallaVintageVerbAU64.component
+  Completed 1/53: Huge Synth Hall                     → PASS  Completed 2/53: Concert Wave                        → PASS  Completed 3/53: Fat Snare Hall                      → PASS  Completed 4/53: Homestar Blade Runner               → PASS  Completed 5/53: Pad Hall                            → PASS  Completed 6/53: Long Synth Hall                     → PASS  Completed 7/53: Snare Hall                          → PASS  Completed 8/53: Small Vocal Hall                    → PASS  Completed 9/53: Very Nice Hall                      → PASS  Completed 10/53: Steel Plate                         → PASS  Completed 11/53: Fat Drums                           → PASS  Completed 12/53: Large Plate                         → PASS  Completed 13/53: Vocal Hall                          → PASS  Completed 14/53: Drum Plate                          → PASS  Completed 15/53: Vocal Plate                         → PASS  Completed 16/53: Tight Plate                         → PASS  Completed 17/53: Vox Plate                           → PASS  Completed 18/53: A Plate                             → PASS  Completed 19/53: Fat Plate                           → PASS  Completed 20/53: Clear Chamber                       → PASS  Completed 21/53: Dark Vocal Room                     → PASS  Completed 22/53: Lively Snare Room                   → PASS  Completed 23/53: Large Chamber                       → PASS  Completed 24/53: Long Dark 70s Snare Room            → PASS  Completed 25/53: Large Wood Room                     → PASS  Completed 26/53: Fat Snare Room                      → PASS  Completed 27/53: Short Dark Snare Room               → PASS  Completed 28/53: Live Vox Chamber                    → PASS  Completed 29/53: Exciting Snare room                 → PASS  Completed 30/53: Rich Chamber                        → PASS  Completed 31/53: Snare Plate                         → PASS  Completed 32/53: Small Chamber1                      → PASS  Completed 33/53: Small Chamber2                      → PASS  Completed 34/53: Medium Gate                         → PASS  Completed 35/53: Thin Plate                          → PASS  Completed 36/53: Tiled Room                          → PASS  Completed 37/53: Ambience                            → PASS  Completed 38/53: Gated Snare                         → PASS  Completed 39/53: Big Ambience Gate                   → PASS  Completed 40/53: Ambience Plate                      → PASS  Completed 41/53: Ambience Tiled Room                 → PASS  Completed 42/53: Large Ambience                      → PASS  Completed 43/53: Cross Stick Room                    → PASS  Completed 44/53: Drum Air                            → PASS  Completed 45/53: Large Gated Snare                   → PASS  Completed 46/53: Med Ambience                        → PASS  Completed 47/53: Small Ambience                      → PASS  Completed 48/53: Short Vocal Ambience                → PASS  Completed 49/53: Small Drum Room                     → PASS  Completed 50/53: Snare Ambience                      → PASS  Completed 51/53: Trip Hop Snare                      → PASS  Completed 52/53: Tight Ambience Gate                 → PASS  Completed 53/53: Very Small Ambience                 → PASS  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 0.333333 (raw=0.3333)
+    decay = 0.175034 (raw=0.1750)
+    highcut = 0.5 (raw=0.5000)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.083333 (raw=0.0833)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.207 (raw=0.2070)
+    highcut = 0.334 (raw=0.3340)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.337 (raw=0.3370)
+    highcut = 0.612 (raw=0.6120)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.336 (raw=0.3360)
+    highcut = 0.643244 (raw=0.6432)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 9281.9677734
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 9281.9677734
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 9281.9677734
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 9281.9677734
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 9281.9677734
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.29836 (raw=0.2984)
+    highcut = 0.519054 (raw=0.5191)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 6404.065918
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 6404.065918
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 6404.065918
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 6404.065918
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 6404.065918
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 6404.065918
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 6404.065918
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.342092 (raw=0.3421)
+    highcut = 0.490265 (raw=0.4903)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 5807.1713867
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 5807.1713867
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 5807.1713867
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 5807.1713867
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 5807.1713867
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 5807.1713867
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 5807.1713867
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.286 (raw=0.2860)
+    highcut = 0.606 (raw=0.6060)
+    lowcut = 0.016 (raw=0.0160)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 8374.4511719
+    Verify: lo_cut = 33.8720016
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.264439 (raw=0.2644)
+    highcut = 0.417487 (raw=0.4175)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.278 (raw=0.2780)
+    highcut = 0.395 (raw=0.3950)
+    lowcut = 0.052 (raw=0.0520)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 4009.6760254
+    Verify: lo_cut = 87.5
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.083333 (raw=0.0833)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.232 (raw=0.2320)
+    highcut = 1.0 (raw=1.0000)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.125 (raw=0.1250)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.161 (raw=0.1610)
+    highcut = 0.364 (raw=0.3640)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3489.8356934
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.312 (raw=0.3120)
+    highcut = 1.0 (raw=1.0000)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.142403 (raw=0.1424)
+    highcut = 0.334 (raw=0.3340)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.312368 (raw=0.3124)
+    highcut = 0.371256 (raw=0.3713)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 0.333333 (raw=0.3333)
+    decay = 0.23 (raw=0.2300)
+    highcut = 0.334 (raw=0.3340)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.083333 (raw=0.0833)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.283 (raw=0.2830)
+    highcut = 0.439205 (raw=0.4392)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 4803.7998047
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 4803.7998047
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 4803.7998047
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 4803.7998047
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 4803.7998047
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 4803.7998047
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 4803.7998047
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.125 (raw=0.1250)
+    colormode = 0.333333 (raw=0.3333)
+    decay = 0.298 (raw=0.2980)
+    highcut = 0.334 (raw=0.3340)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.240214 (raw=0.2402)
+    highcut = 0.848 (raw=0.8480)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.014 (raw=0.0140)
+    highcut = 0.306 (raw=0.3060)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.215141 (raw=0.2151)
+    highcut = 0.334 (raw=0.3340)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 3006.875
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.346 (raw=0.3460)
+    highcut = 0.604 (raw=0.6040)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 8314.0673828
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 8314.0673828
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 8314.0673828
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 8314.0673828
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 8314.0673828
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 8314.0673828
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.083333 (raw=0.0833)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.366 (raw=0.3660)
+    highcut = 1.0 (raw=1.0000)
+    lowcut = 0.128 (raw=0.1280)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 200.9580994
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 200.9580994
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 200.9580994
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 200.9580994
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.125 (raw=0.1250)
+    colormode = 0.333333 (raw=0.3333)
+    decay = 0.312368 (raw=0.3124)
+    highcut = 0.848 (raw=0.8480)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.240301 (raw=0.2403)
+    highcut = 0.848 (raw=0.8480)
+    lowcut = 0.212 (raw=0.2120)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 325.8800049
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.218288 (raw=0.2183)
+    highcut = 0.672 (raw=0.6720)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.337 (raw=0.3370)
+    highcut = 0.327 (raw=0.3270)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2903.0705566
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2903.0705566
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2903.0705566
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2903.0705566
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2903.0705566
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.243242 (raw=0.2432)
+    highcut = 0.848 (raw=0.8480)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.451 (raw=0.4510)
+    highcut = 0.755158 (raw=0.7552)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 12265.0996094
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 12265.0996094
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 12265.0996094
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 12265.0996094
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 12265.0996094
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.346 (raw=0.3460)
+    highcut = 0.547 (raw=0.5470)
+    lowcut = 0.024 (raw=0.0240)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 45.8355179
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.125 (raw=0.1250)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.197486 (raw=0.1975)
+    highcut = 0.547 (raw=0.5470)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 7004.0878906
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.0 (raw=0.0000)
+    highcut = 0.591 (raw=0.5910)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8004.0893555
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.175034 (raw=0.1750)
+    highcut = 0.262065 (raw=0.2621)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.254135 (raw=0.2541)
+    highcut = 0.45 (raw=0.4500)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.477 (raw=0.4770)
+    highcut = 0.5 (raw=0.5000)
+    lowcut = 0.024 (raw=0.0240)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 45.8355179
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 45.8355179
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.523 (raw=0.5230)
+    highcut = 0.688483 (raw=0.6885)
+    lowcut = 0.072 (raw=0.0720)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 10443.7958984
+    Verify: lo_cut = 117.2799835
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 10443.7958984
+    Verify: lo_cut = 117.2799835
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 10443.7958984
+    Verify: lo_cut = 117.2799835
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 10443.7958984
+    Verify: lo_cut = 117.2799835
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.083333 (raw=0.0833)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.282 (raw=0.2820)
+    highcut = 0.746 (raw=0.7460)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.312 (raw=0.3120)
+    highcut = 0.746 (raw=0.7460)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 12003.4355469
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.293069 (raw=0.2931)
+    highcut = 0.612 (raw=0.6120)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 8517.1796875
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.244 (raw=0.2440)
+    highcut = 0.848 (raw=0.8480)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Chamber
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.174 (raw=0.1740)
+    highcut = 0.45 (raw=0.4500)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.014 (raw=0.0140)
+    highcut = 0.306 (raw=0.3060)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2597.8999023
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.557459 (raw=0.5575)
+    highcut = 0.5 (raw=0.5000)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6004.015625
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.083333 (raw=0.0833)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.306 (raw=0.3060)
+    highcut = 0.848 (raw=0.8480)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.125 (raw=0.1250)
+    colormode = 0.333333 (raw=0.3333)
+    decay = 0.138 (raw=0.1380)
+    highcut = 0.371256 (raw=0.3713)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 3603.4074707
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.243242 (raw=0.2432)
+    highcut = 0.848 (raw=0.8480)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 15002.4072266
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.23 (raw=0.2300)
+    highcut = 0.45 (raw=0.4500)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 5003.8466797
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.197486 (raw=0.1975)
+    highcut = 0.417487 (raw=0.4175)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 4403.6821289
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.042 (raw=0.0420)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.553 (raw=0.5530)
+    highcut = 0.532 (raw=0.5320)
+    lowcut = 0.012 (raw=0.0120)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6674.0805664
+    Verify: lo_cut = 27.8799992
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6674.0805664
+    Verify: lo_cut = 27.8799992
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6674.0805664
+    Verify: lo_cut = 27.8799992
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6674.0805664
+    Verify: lo_cut = 27.8799992
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Hall
+    Verify: hi_cut = 6674.0805664
+    Verify: lo_cut = 27.8799992
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.083333 (raw=0.0833)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.333251 (raw=0.3333)
+    highcut = 0.818327 (raw=0.8183)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 14102.7675781
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 14102.7675781
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 14102.7675781
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 14102.7675781
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 14102.7675781
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 14102.7675781
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.125 (raw=0.1250)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.23 (raw=0.2300)
+    highcut = 0.423 (raw=0.4230)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Room
+    Verify: hi_cut = 4503.7104492
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.167 (raw=0.1670)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.327431 (raw=0.3274)
+    highcut = 1.0 (raw=1.0000)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Plate
+    Verify: hi_cut = 20000.0
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 0.667 (raw=0.6670)
+    decay = 0.218288 (raw=0.2183)
+    highcut = 0.672 (raw=0.6720)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 10003.8789062
+    Verify: lo_cut = 20.0
+  Verifying VV parameters:
+    mix = 1.0 (raw=1.0000)
+    reverbmode = 0.292 (raw=0.2920)
+    colormode = 1.0 (raw=1.0000)
+    decay = 0.175034 (raw=0.1750)
+    highcut = 0.262065 (raw=0.2621)
+    lowcut = 0.0 (raw=0.0000)
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+    Verify: dry_wet = 1.0
+    Verify: algorithm = Ambient
+    Verify: hi_cut = 2005.1003418
+    Verify: lo_cut = 20.0
+
+
+======================================================================
+  Concert Hall → DV Hall
+======================================================================
+
+  --- Concert Wave ---
+    Calibrated: DV decay_time=5.79s → RT60=4.59s (target=5.09s)
+    Level: -3.5 dB  RT60@500: DV=4.60s VV=5.09s (0.90x)
+    HF ratio delta: +0.03  RT60@4k: 0.93x
+    Ringing: DV=10.7dB @1811Hz  VV=6.7dB  MSE=4751.9dB²
+    Stereo L/R: DV=-0.1dB lag=-9.8ms  VV=-0.0dB lag=+4.0ms
+
+    EDC:  0.5s=-2.3dB  2.0s=-4.1dB  5.0s=-6.2dB
+    Deep: SpEnv=1.6dB  Density=N/A  ModZCR=0.00x  ModCent=3.50x  EDC=5.6dB
+    → PASS
+
+  --- Fat Snare Hall ---
+    Calibrated: DV decay_time=1.13s → RT60=1.32s (target=1.21s)
+    Level: +2.3 dB  RT60@500: DV=1.22s VV=1.21s (1.01x)
+    HF ratio delta: +0.09  RT60@4k: 1.13x
+    Ringing: DV=8.4dB @4184Hz  VV=9.9dB  MSE=2028.2dB²
+    Stereo L/R: DV=+0.3dB lag=-6.9ms  VV=-0.0dB lag=-2.2ms
+
+    EDC:  0.5s=-1.4dB  2.0s=-7.7dB  5.0s=N/A
+    Deep: SpEnv=1.3dB  Density=0.42x (DV=125ms VV=300ms)  ModZCR=0.00x  ModCent=N/A  EDC=1.5dB
+    → PASS
+
+  --- Homestar Blade Runner ---
+    Calibrated: DV decay_time=9.51s → RT60=11.68s (target=12.15s)
+    Level: +0.1 dB  RT60@500: DV=11.68s VV=12.15s (0.96x)
+    HF ratio delta: +0.25  RT60@4k: 1.55x
+    Ringing: DV=10.0dB @1811Hz  VV=8.3dB  MSE=7824.1dB²
+    Stereo L/R: DV=-0.0dB lag=-9.8ms  VV=+0.2dB lag=+6.6ms
+
+    EDC:  0.5s=-0.6dB  2.0s=-1.1dB  5.0s=-3.5dB
+    Deep: SpEnv=2.1dB  Density=N/A  ModZCR=N/A  ModCent=0.37x  EDC=8.3dB
+    → PASS
+
+  --- Huge Synth Hall ---
+    Calibrated: DV decay_time=5.79s → RT60=7.04s (target=7.52s)
+    Level: -2.1 dB  RT60@500: DV=7.10s VV=7.52s (0.94x)
+    HF ratio delta: +0.19  RT60@4k: 1.32x
+    Ringing: DV=7.6dB @299Hz  VV=10.1dB  MSE=5677.2dB²
+    Stereo L/R: DV=+0.0dB lag=-0.3ms  VV=-0.1dB lag=+6.6ms
+
+    EDC:  0.5s=-0.0dB  2.0s=-0.6dB  5.0s=-5.3dB
+    Deep: SpEnv=1.7dB  Density=N/A  ModZCR=N/A  ModCent=0.38x  EDC=6.3dB
+    → PASS
+
+  --- Long Synth Hall ---
+    Calibrated: DV decay_time=2.99s → RT60=4.49s (target=4.17s)
+    Level: +1.0 dB  RT60@500: DV=4.44s VV=4.17s (1.06x)
+    HF ratio delta: +0.04  RT60@4k: 1.14x
+    Ringing: DV=9.3dB @6545Hz  VV=9.0dB  MSE=3964.7dB²
+    Stereo L/R: DV=-0.1dB lag=-9.7ms  VV=-0.1dB lag=-5.0ms
+
+    EDC:  0.5s=-0.7dB  2.0s=-1.5dB  5.0s=-12.4dB
+    Deep: SpEnv=1.2dB  Density=0.92x (DV=275ms VV=300ms)  ModZCR=0.93x  ModCent=0.77x  EDC=5.8dB
+    → PASS
+
+  --- Pad Hall ---
+    Calibrated: DV decay_time=9.51s → RT60=11.63s (target=11.75s)
+    Level: -2.1 dB  RT60@500: DV=11.68s VV=11.75s (0.99x)
+    HF ratio delta: +0.21  RT60@4k: 1.47x
+    Ringing: DV=8.3dB @1090Hz  VV=9.1dB  MSE=7644.5dB²
+    Stereo L/R: DV=+0.0dB lag=+5.7ms  VV=+0.1dB lag=+6.6ms
+
+    EDC:  0.5s=+0.3dB  2.0s=+0.1dB  5.0s=-2.4dB
+    Deep: SpEnv=2.2dB  Density=N/A  ModZCR=N/A  ModCent=0.44x  EDC=9.0dB
+    → PASS
+
+  --- Small Vocal Hall ---
+    Calibrated: DV decay_time=1.36s → RT60=1.57s (target=1.73s)
+    Level: +3.6 dB  RT60@500: DV=1.56s VV=1.73s (0.90x)
+    HF ratio delta: +0.06  RT60@4k: 0.97x
+    Ringing: DV=8.6dB @9416Hz  VV=11.1dB  MSE=2613.9dB²
+    Stereo L/R: DV=+0.0dB lag=-6.5ms  VV=+0.1dB lag=+6.6ms
+
+    EDC:  0.5s=-2.4dB  2.0s=-11.6dB  5.0s=N/A
+    Deep: SpEnv=2.1dB  Density=0.60x (DV=150ms VV=250ms)  ModZCR=0.00x  ModCent=N/A  EDC=6.5dB
+    → PASS
+
+  --- Snare Hall ---
+    Calibrated: DV decay_time=0.90s → RT60=0.97s (target=1.06s)
+    Level: +6.1 dB (adj +3.1)  RT60@500: DV=1.05s VV=1.06s (0.99x)
+    HF ratio delta: +0.02  RT60@4k: 1.02x
+    Ringing: DV=8.9dB @2795Hz  VV=7.4dB  MSE=2767.9dB²
+    Stereo L/R: DV=+0.1dB lag=-2.9ms  VV=+0.5dB lag=+0.6ms
+
+    EDC:  0.5s=+0.8dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=1.7dB  Density=0.60x (DV=225ms VV=375ms)  ModZCR=0.00x  ModCent=N/A  EDC=3.0dB
+    → PASS
+
+  --- Very Nice Hall ---
+    Calibrated: DV decay_time=11.38s → RT60=11.74s (target=10.77s)
+    Level: -4.5 dB  RT60@500: DV=11.85s VV=10.77s (1.10x)
+    HF ratio delta: -0.09  RT60@4k: 0.95x
+    Ringing: DV=10.1dB @158Hz  VV=10.2dB  MSE=4435.5dB²
+    Stereo L/R: DV=+0.0dB lag=-7.9ms  VV=+0.1dB lag=+6.6ms
+
+    EDC:  0.5s=-0.5dB  2.0s=+0.7dB  5.0s=+1.0dB
+    Deep: SpEnv=1.8dB  Density=N/A  ModZCR=0.00x  ModCent=0.71x  EDC=2.2dB
+    → PASS
+
+  --- Vocal Hall ---
+    Calibrated: DV decay_time=2.99s → RT60=4.47s (target=4.55s)
+    Level: +2.7 dB  RT60@500: DV=4.47s VV=4.55s (0.98x)
+    HF ratio delta: +0.09  RT60@4k: 1.15x
+    Ringing: DV=9.4dB @2760Hz  VV=8.4dB  MSE=3893.6dB²
+    Stereo L/R: DV=+0.0dB lag=-9.7ms  VV=+0.0dB lag=-2.4ms
+
+    EDC:  0.5s=-1.2dB  2.0s=-2.9dB  5.0s=-15.3dB
+    Deep: SpEnv=1.3dB  Density=0.92x (DV=275ms VV=300ms)  ModZCR=0.87x  ModCent=0.93x  EDC=7.7dB
+    → PASS
+
+======================================================================
+  Plate → DV Plate
+======================================================================
+
+  --- Drum Plate ---
+    Calibrated: DV decay_time=1.60s → RT60=2.38s (target=2.58s)
+    Level: +1.6 dB  RT60@500: DV=2.38s VV=2.58s (0.92x)
+    HF ratio delta: -0.09  RT60@4k: 0.83x
+    Ringing: DV=10.8dB @1184Hz  VV=8.6dB  MSE=4344.7dB²
+    Stereo L/R: DV=-0.4dB lag=+0.1ms  VV=+0.0dB lag=-9.7ms
+
+    EDC:  0.5s=-4.0dB  2.0s=-5.3dB  5.0s=N/A
+    Deep: SpEnv=3.7dB  Density=0.36x (DV=100ms VV=275ms)  ModZCR=0.33x  ModCent=2.77x  EDC=5.2dB
+    → PASS
+
+  --- Fat Drums ---
+    Calibrated: DV decay_time=2.06s → RT60=2.88s (target=2.83s)
+    Level: +0.5 dB  RT60@500: DV=2.88s VV=2.83s (1.02x)
+    HF ratio delta: +0.01  RT60@4k: 1.03x
+    Ringing: DV=10.6dB @6164Hz  VV=10.5dB  MSE=1871.5dB²
+    Stereo L/R: DV=-0.7dB lag=+0.0ms  VV=-0.0dB lag=-7.0ms
+
+    EDC:  0.5s=-1.4dB  2.0s=-1.1dB  5.0s=N/A
+    Deep: SpEnv=0.9dB  Density=0.40x (DV=100ms VV=250ms)  ModZCR=0.49x  ModCent=1.44x  EDC=2.0dB
+    → PASS
+
+  --- Large Plate ---
+    Calibrated: DV decay_time=2.99s → RT60=2.93s (target=2.72s)
+    Level: +3.7 dB  RT60@500: DV=2.94s VV=2.72s (1.08x)
+    HF ratio delta: +0.06  RT60@4k: 1.16x
+    Ringing: DV=10.9dB @9059Hz  VV=8.8dB  MSE=2032.6dB²
+    Stereo L/R: DV=-0.5dB lag=+0.0ms  VV=-0.0dB lag=+0.6ms
+
+    EDC:  0.5s=-1.7dB  2.0s=+2.3dB  5.0s=N/A
+    Deep: SpEnv=0.8dB  Density=0.36x (DV=100ms VV=275ms)  ModZCR=0.43x  ModCent=2.20x  EDC=2.3dB
+    → PASS
+
+  --- Steel Plate ---
+    Calibrated: DV decay_time=3.92s → RT60=4.60s (target=4.27s)
+    Level: -0.8 dB  RT60@500: DV=4.59s VV=4.27s (1.08x)
+    HF ratio delta: +0.07  RT60@4k: 1.21x
+    Ringing: DV=12.0dB @11279Hz  VV=11.9dB  MSE=2197.8dB²
+    Stereo L/R: DV=-0.6dB lag=+0.1ms  VV=+1.3dB lag=+9.1ms
+
+    EDC:  0.5s=-1.0dB  2.0s=+1.1dB  5.0s=-3.1dB
+    Deep: SpEnv=0.6dB  Density=0.50x (DV=100ms VV=200ms)  ModZCR=0.83x  ModCent=0.84x  EDC=1.4dB
+    → PASS
+
+  --- Tight Plate ---
+    Calibrated: DV decay_time=0.90s → RT60=1.28s (target=1.40s)
+    Level: +0.4 dB  RT60@500: DV=1.28s VV=1.40s (0.91x)
+    HF ratio delta: -0.02  RT60@4k: 0.88x
+    Ringing: DV=11.6dB @1752Hz  VV=11.7dB  MSE=2947.1dB²
+    Stereo L/R: DV=-0.2dB lag=-0.4ms  VV=+2.1dB lag=+0.6ms
+
+    EDC:  0.5s=-0.4dB  2.0s=-12.3dB  5.0s=N/A
+    Deep: SpEnv=4.3dB  Density=0.60x (DV=75ms VV=125ms)  ModZCR=0.66x  ModCent=N/A  EDC=1.5dB
+    → PASS
+
+  --- Vocal Plate ---
+    Calibrated: DV decay_time=1.13s → RT60=1.13s (target=1.15s)
+    Level: +1.2 dB  RT60@500: DV=1.13s VV=1.15s (0.97x)
+    HF ratio delta: +0.03  RT60@4k: 1.01x
+    Ringing: DV=10.1dB @10506Hz  VV=8.9dB  MSE=1591.8dB²
+    Stereo L/R: DV=-0.5dB lag=-2.0ms  VV=+2.4dB lag=+7.3ms
+
+    EDC:  0.5s=-0.9dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=1.1dB  Density=0.31x (DV=100ms VV=325ms)  ModZCR=0.47x  ModCent=N/A  EDC=1.3dB
+    → PASS
+
+  --- Vox Plate ---
+    Calibrated: DV decay_time=1.60s → RT60=1.76s (target=1.93s)
+    Level: +5.4 dB (adj +2.4)  RT60@500: DV=1.75s VV=1.93s (0.91x)
+    HF ratio delta: +0.04  RT60@4k: 0.95x
+    Ringing: DV=12.7dB @11766Hz  VV=8.1dB  MSE=2746.6dB²
+    Stereo L/R: DV=-0.4dB lag=+0.1ms  VV=+0.1dB lag=+6.6ms
+
+    EDC:  0.5s=-4.5dB  2.0s=-12.1dB  5.0s=N/A
+    Deep: SpEnv=1.7dB  Density=0.33x (DV=100ms VV=300ms)  ModZCR=0.57x  ModCent=N/A  EDC=7.7dB
+    → PASS
+
+======================================================================
+  Room → DV Room
+======================================================================
+
+  --- Dark Vocal Room ---
+    Calibrated: DV decay_time=2.06s → RT60=1.79s (target=1.68s)
+    Level: +0.2 dB  RT60@500: DV=1.81s VV=1.68s (1.07x)
+    HF ratio delta: -0.19  RT60@4k: 0.86x
+    Ringing: DV=10.5dB @9521Hz  VV=11.1dB  MSE=2549.1dB²
+    Stereo L/R: DV=-0.3dB lag=+7.2ms  VV=+0.3dB lag=+3.1ms
+
+    EDC:  0.5s=-3.0dB  2.0s=-1.2dB  5.0s=N/A
+    Deep: SpEnv=2.3dB  Density=0.14x (DV=100ms VV=700ms)  ModZCR=0.51x  ModCent=2.15x  EDC=3.1dB
+    → PASS
+
+  --- Exciting Snare room ---
+    Calibrated: DV decay_time=0.37s → RT60=0.49s (target=0.47s)
+    Level: +2.7 dB  RT60@500: DV=0.49s VV=0.47s (1.03x)
+    HF ratio delta: -0.07  RT60@4k: 0.94x
+    Ringing: DV=9.7dB @1646Hz  VV=14.4dB  MSE=2224.0dB²
+    Stereo L/R: DV=-0.1dB lag=-8.1ms  VV=+0.1dB lag=-8.1ms
+
+    EDC:  0.5s=+2.1dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=1.9dB  Density=N/A  ModZCR=0.00x  ModCent=N/A  EDC=4.4dB
+    → PASS
+
+  --- Fat Snare Room ---
+    Calibrated: DV decay_time=0.90s → RT60=1.08s (target=0.98s)
+    Level: +2.0 dB  RT60@500: DV=1.08s VV=0.98s (1.10x)
+    HF ratio delta: -0.09  RT60@4k: 0.98x
+    Ringing: DV=10.1dB @6064Hz  VV=12.1dB  MSE=1902.8dB²
+    Stereo L/R: DV=-0.1dB lag=+9.3ms  VV=+0.2dB lag=-8.9ms
+
+    EDC:  0.5s=+2.3dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=3.0dB  Density=0.17x (DV=75ms VV=450ms)  ModZCR=0.54x  ModCent=N/A  EDC=4.8dB
+    → PASS
+
+  --- Lively Snare Room ---
+    Calibrated: DV decay_time=0.67s → RT60=0.78s (target=0.80s)
+    Level: +1.4 dB  RT60@500: DV=0.79s VV=0.80s (0.99x)
+    HF ratio delta: -0.08  RT60@4k: 0.90x
+    Ringing: DV=9.4dB @3498Hz  VV=12.0dB  MSE=2149.4dB²
+    Stereo L/R: DV=-0.2dB lag=+7.2ms  VV=+0.3dB lag=-8.5ms
+
+    EDC:  0.5s=+3.3dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=1.8dB  Density=N/A  ModZCR=0.55x  ModCent=N/A  EDC=4.6dB
+    → PASS
+
+  --- Long Dark 70s Snare Room ---
+    Calibrated: DV decay_time=1.60s → RT60=2.00s (target=1.90s)
+    Level: -0.2 dB  RT60@500: DV=1.99s VV=1.90s (1.05x)
+    HF ratio delta: -0.03  RT60@4k: 1.01x
+    Ringing: DV=10.3dB @3961Hz  VV=9.6dB  MSE=1527.4dB²
+    Stereo L/R: DV=-0.4dB lag=-9.0ms  VV=+0.1dB lag=-4.3ms
+
+    EDC:  0.5s=-1.8dB  2.0s=-0.9dB  5.0s=N/A
+    Deep: SpEnv=2.0dB  Density=N/A  ModZCR=N/A  ModCent=0.00x  EDC=2.0dB
+    → PASS
+
+  --- Short Dark Snare Room ---
+    Calibrated: DV decay_time=0.43s → RT60=0.53s (target=0.55s)
+    Level: +3.1 dB  RT60@500: DV=0.52s VV=0.55s (0.95x)
+    HF ratio delta: -0.07  RT60@4k: 0.87x
+    Ringing: DV=10.9dB @4975Hz  VV=12.2dB  MSE=2107.5dB²
+    Stereo L/R: DV=+0.3dB lag=+6.2ms  VV=+0.6dB lag=-8.6ms
+
+    EDC:  0.5s=-1.3dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=2.7dB  Density=N/A  ModZCR=0.28x  ModCent=N/A  EDC=1.8dB
+    → PASS
+
+======================================================================
+  Chamber → DV Plate
+======================================================================
+
+  --- A Plate ---
+    Calibrated: DV decay_time=2.06s → RT60=1.56s (target=1.68s)
+    Level: +2.4 dB  RT60@500: DV=1.56s VV=1.68s (0.93x)
+    HF ratio delta: -0.13  RT60@4k: 0.83x
+    Ringing: DV=11.0dB @2848Hz  VV=9.0dB  MSE=4585.6dB²
+    Stereo L/R: DV=-0.4dB lag=+0.0ms  VV=-0.1dB lag=+1.4ms
+
+    EDC:  0.5s=-6.3dB  2.0s=-11.4dB  5.0s=N/A
+    Deep: SpEnv=2.4dB  Density=0.75x (DV=75ms VV=100ms)  ModZCR=1.08x  ModCent=1.69x  EDC=10.1dB
+    → PASS
+
+  --- Clear Chamber ---
+    Calibrated: DV decay_time=1.83s → RT60=2.00s (target=2.02s)
+    Level: +3.1 dB  RT60@500: DV=1.99s VV=2.02s (0.99x)
+    HF ratio delta: -0.05  RT60@4k: 0.93x
+    Ringing: DV=11.0dB @10957Hz  VV=9.4dB  MSE=2009.9dB²
+    Stereo L/R: DV=+0.5dB lag=-4.4ms  VV=+0.2dB lag=-2.6ms
+
+    EDC:  0.5s=-3.0dB  2.0s=-0.4dB  5.0s=N/A
+    Deep: SpEnv=1.5dB  Density=1.00x (DV=100ms VV=100ms)  ModZCR=1.23x  ModCent=2.92x  EDC=3.0dB
+    → PASS
+
+  --- Fat Plate ---
+    Calibrated: DV decay_time=2.06s → RT60=2.04s (target=2.20s)
+    Level: +0.9 dB  RT60@500: DV=2.04s VV=2.20s (0.93x)
+    HF ratio delta: -0.06  RT60@4k: 0.87x
+    Ringing: DV=9.7dB @10688Hz  VV=8.7dB  MSE=4138.0dB²
+    Stereo L/R: DV=-0.5dB lag=+6.1ms  VV=+0.1dB lag=-8.0ms
+
+    EDC:  0.5s=-5.6dB  2.0s=-7.8dB  5.0s=N/A
+    Deep: SpEnv=2.2dB  Density=0.43x (DV=75ms VV=175ms)  ModZCR=N/A  ModCent=3.05x  EDC=7.5dB
+    → PASS
+
+  --- Large Chamber ---
+    Calibrated: DV decay_time=1.60s → RT60=1.54s (target=1.52s)
+    Level: +3.4 dB  RT60@500: DV=1.54s VV=1.52s (1.01x)
+    HF ratio delta: +0.00  RT60@4k: 1.01x
+    Ringing: DV=11.3dB @9029Hz  VV=11.9dB  MSE=1691.6dB²
+    Stereo L/R: DV=+0.7dB lag=-4.4ms  VV=+0.2dB lag=+2.9ms
+
+    EDC:  0.5s=-3.0dB  2.0s=-0.5dB  5.0s=N/A
+    Deep: SpEnv=0.8dB  Density=1.00x (DV=100ms VV=100ms)  ModZCR=N/A  ModCent=N/A  EDC=3.0dB
+    → PASS
+
+  --- Large Wood Room ---
+    Calibrated: DV decay_time=1.36s → RT60=1.23s (target=1.27s)
+    Level: +4.1 dB  RT60@500: DV=1.23s VV=1.27s (0.97x)
+    HF ratio delta: -0.06  RT60@4k: 0.91x
+    Ringing: DV=9.2dB @7002Hz  VV=12.5dB  MSE=3233.6dB²
+    Stereo L/R: DV=+0.4dB lag=-6.2ms  VV=+0.1dB lag=-10.0ms
+
+    EDC:  0.5s=-4.6dB  2.0s=-7.7dB  5.0s=N/A
+    Deep: SpEnv=1.1dB  Density=1.50x (DV=75ms VV=50ms)  ModZCR=0.69x  ModCent=N/A  EDC=5.9dB
+    → PASS
+
+  --- Live Vox Chamber ---
+    Calibrated: DV decay_time=0.90s → RT60=0.93s (target=1.00s)
+    Level: +5.4 dB (adj +2.4)  RT60@500: DV=0.93s VV=1.00s (0.93x)
+    HF ratio delta: +0.02  RT60@4k: 0.95x
+    Ringing: DV=9.2dB @674Hz  VV=9.9dB  MSE=973.5dB²
+    Stereo L/R: DV=+0.5dB lag=-3.8ms  VV=+0.4dB lag=+5.9ms
+
+    EDC:  0.5s=-2.5dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=1.3dB  Density=N/A  ModZCR=1.81x  ModCent=N/A  EDC=2.8dB
+    → PASS
+
+  --- Medium Gate ---
+    Calibrated: DV decay_time=29.88s → RT60=0.03s (target=0.31s)
+    Level: +1.4 dB  RT60@500: DV=0.03s VV=0.31s (0.10x)
+    HF ratio delta: -0.96  RT60@4k: 0.00x
+    Ringing: DV=9.3dB @3645Hz  VV=12.6dB  MSE=18969.5dB²
+    Stereo L/R: DV=+0.3dB lag=-2.6ms  VV=+0.8dB lag=+6.1ms
+
+    EDC:  0.5s=N/A  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=2.5dB  Density=1.50x (DV=75ms VV=50ms)  ModZCR=1.09x  ModCent=N/A  EDC=5.1dB
+    → PASS
+
+  --- Rich Chamber ---
+    Calibrated: DV decay_time=2.53s → RT60=2.51s (target=2.34s)
+    Level: +2.4 dB  RT60@500: DV=2.50s VV=2.34s (1.07x)
+    HF ratio delta: -0.03  RT60@4k: 1.04x
+    Ringing: DV=10.1dB @11250Hz  VV=10.9dB  MSE=1525.3dB²
+    Stereo L/R: DV=+0.8dB lag=-3.8ms  VV=+0.1dB lag=+0.3ms
+
+    EDC:  0.5s=-1.3dB  2.0s=+2.1dB  5.0s=N/A
+    Deep: SpEnv=1.5dB  Density=1.00x (DV=100ms VV=100ms)  ModZCR=N/A  ModCent=1.29x  EDC=2.1dB
+    → PASS
+
+  --- Small Chamber1 ---
+    Calibrated: DV decay_time=0.90s → RT60=0.97s (target=0.99s)
+    Level: +4.3 dB (adj +2.3)  RT60@500: DV=0.97s VV=0.99s (0.97x)
+    HF ratio delta: +0.01  RT60@4k: 0.98x
+    Ringing: DV=9.7dB @926Hz  VV=9.8dB  MSE=1441.1dB²
+    Stereo L/R: DV=+0.1dB lag=-5.7ms  VV=+0.6dB lag=-1.4ms
+
+    EDC:  0.5s=-2.8dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=1.3dB  Density=1.00x (DV=75ms VV=75ms)  ModZCR=1.44x  ModCent=N/A  EDC=3.2dB
+    → PASS
+
+  --- Small Chamber2 ---
+    Calibrated: DV decay_time=0.90s → RT60=1.03s (target=1.07s)
+    Level: +2.5 dB  RT60@500: DV=1.03s VV=1.07s (0.96x)
+    HF ratio delta: -0.03  RT60@4k: 0.92x
+    Ringing: DV=9.4dB @926Hz  VV=8.3dB  MSE=2027.6dB²
+    Stereo L/R: DV=+0.1dB lag=-5.7ms  VV=+0.6dB lag=-8.6ms
+
+    EDC:  0.5s=-3.2dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=1.1dB  Density=0.50x (DV=75ms VV=150ms)  ModZCR=1.84x  ModCent=N/A  EDC=3.9dB
+    → PASS
+
+  --- Snare Plate ---
+    Calibrated: DV decay_time=2.06s → RT60=1.86s (target=1.91s)
+    Level: -2.4 dB  RT60@500: DV=1.87s VV=1.91s (0.97x)
+    HF ratio delta: -0.10  RT60@4k: 0.88x
+    Ringing: DV=12.0dB @5227Hz  VV=9.7dB  MSE=2714.9dB²
+    Stereo L/R: DV=-0.7dB lag=+5.1ms  VV=-0.0dB lag=-7.9ms
+
+    EDC:  0.5s=-2.9dB  2.0s=-3.0dB  5.0s=N/A
+    Deep: SpEnv=1.9dB  Density=N/A  ModZCR=N/A  ModCent=7.57x  EDC=3.9dB
+    → PASS
+
+  --- Thin Plate ---
+    Calibrated: DV decay_time=1.83s → RT60=1.40s (target=1.37s)
+    Level: +3.0 dB  RT60@500: DV=1.39s VV=1.37s (1.01x)
+    HF ratio delta: -0.05  RT60@4k: 0.97x
+    Ringing: DV=12.2dB @3967Hz  VV=9.0dB  MSE=2607.0dB²
+    Stereo L/R: DV=-0.6dB lag=+0.0ms  VV=+0.0dB lag=+7.7ms
+
+    EDC:  0.5s=-5.3dB  2.0s=-1.7dB  5.0s=N/A
+    Deep: SpEnv=2.0dB  Density=1.50x (DV=75ms VV=50ms)  ModZCR=1.30x  ModCent=0.96x  EDC=5.4dB
+    → PASS
+
+  --- Tiled Room ---
+    Calibrated: DV decay_time=0.67s → RT60=0.94s (target=0.87s)
+    Level: +4.4 dB  RT60@500: DV=0.94s VV=0.87s (1.08x)
+    HF ratio delta: -0.08  RT60@4k: 0.98x
+    Ringing: DV=11.5dB @10482Hz  VV=9.0dB  MSE=1049.3dB²
+    Stereo L/R: DV=+0.1dB lag=-5.6ms  VV=+0.0dB lag=-8.6ms
+
+    EDC:  0.5s=-2.0dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=0.7dB  Density=0.36x (DV=125ms VV=350ms)  ModZCR=0.86x  ModCent=N/A  EDC=2.7dB
+    → PASS
+
+======================================================================
+  Ambience → DV Ambient
+======================================================================
+
+  --- Ambience ---
+    Calibrated: DV decay_time=0.90s → RT60=0.93s (target=0.99s)
+    Level: -0.4 dB  RT60@500: DV=0.98s VV=0.99s (0.99x)
+    HF ratio delta: -0.12  RT60@4k: 0.87x
+    Ringing: DV=14.3dB @7318Hz  VV=7.0dB  MSE=1965.5dB²
+    Stereo L/R: DV=+0.2dB lag=+7.8ms  VV=-0.6dB lag=-8.8ms
+
+    EDC:  0.5s=-2.1dB  2.0s=-3.0dB  5.0s=N/A
+    Deep: SpEnv=2.2dB  Density=0.67x (DV=100ms VV=150ms)  ModZCR=0.98x  ModCent=N/A  EDC=2.8dB
+    → PASS
+
+  --- Ambience Plate ---
+    Calibrated: DV decay_time=1.36s → RT60=2.13s (target=2.17s)
+    Level: -1.1 dB  RT60@500: DV=2.12s VV=2.17s (0.98x)
+    HF ratio delta: -0.17  RT60@4k: 0.73x
+    Ringing: DV=12.4dB @11326Hz  VV=9.1dB  MSE=5385.5dB²
+    Stereo L/R: DV=-0.4dB lag=+0.0ms  VV=-0.3dB lag=+8.9ms
+
+    EDC:  0.5s=-3.2dB  2.0s=+0.7dB  5.0s=N/A
+    Deep: SpEnv=2.3dB  Density=1.33x (DV=100ms VV=75ms)  ModZCR=0.94x  ModCent=0.00x  EDC=3.8dB
+    → PASS
+
+  --- Ambience Tiled Room ---
+    Calibrated: DV decay_time=0.78s → RT60=0.95s (target=0.92s)
+    Level: +2.5 dB  RT60@500: DV=0.95s VV=0.92s (1.03x)
+    HF ratio delta: -0.03  RT60@4k: 0.99x
+    Ringing: DV=11.4dB @2555Hz  VV=7.3dB  MSE=1862.8dB²
+    Stereo L/R: DV=+0.5dB lag=-7.3ms  VV=-0.3dB lag=+6.9ms
+
+    EDC:  0.5s=+2.9dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=2.3dB  Density=0.38x (DV=125ms VV=325ms)  ModZCR=0.00x  ModCent=N/A  EDC=5.0dB
+    → PASS
+
+  --- Big Ambience Gate ---
+    Calibrated: DV decay_time=0.43s → RT60=0.43s (target=0.41s)
+    Level: -5.5 dB (adj -4.0)  RT60@500: DV=0.43s VV=0.41s (1.04x)
+    HF ratio delta: -0.06  RT60@4k: 0.98x
+    Ringing: DV=7.8dB @3533Hz  VV=12.2dB  MSE=2152.7dB²
+    Stereo L/R: DV=+0.4dB lag=-9.0ms  VV=-0.6dB lag=-8.0ms
+
+    EDC:  0.5s=N/A  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=5.2dB  Density=N/A  ModZCR=0.00x  ModCent=N/A  EDC=11.9dB
+    → PASS
+
+  --- Cross Stick Room ---
+    Calibrated: DV decay_time=0.55s → RT60=0.60s (target=0.57s)
+    Level: +0.1 dB  RT60@500: DV=0.61s VV=0.57s (1.07x)
+    HF ratio delta: -0.04  RT60@4k: 1.03x
+    Ringing: DV=9.8dB @475Hz  VV=11.2dB  MSE=3826.8dB²
+    Stereo L/R: DV=+0.6dB lag=+3.1ms  VV=-0.1dB lag=-4.2ms
+
+    EDC:  0.5s=+10.4dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=2.1dB  Density=1.33x (DV=100ms VV=75ms)  ModZCR=0.00x  ModCent=N/A  EDC=7.2dB
+    → PASS
+
+  --- Drum Air ---
+    Calibrated: DV decay_time=0.49s → RT60=0.50s (target=0.50s)
+    Level: +2.5 dB  RT60@500: DV=0.52s VV=0.50s (1.04x)
+    HF ratio delta: -0.11  RT60@4k: 0.93x
+    Ringing: DV=12.5dB @1271Hz  VV=13.5dB  MSE=3211.2dB²
+    Stereo L/R: DV=+0.4dB lag=-8.3ms  VV=-0.2dB lag=-6.3ms
+
+    EDC:  0.5s=+10.3dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=4.5dB  Density=0.75x (DV=75ms VV=100ms)  ModZCR=0.00x  ModCent=N/A  EDC=9.0dB
+    → PASS
+
+  --- Gated Snare ---
+    Level: -0.9 dB  RT60@500: DV=N/A VV=N/A (0.00x)
+    HF ratio delta: +0.00  RT60@4k: 0.00x
+    Ringing: DV=8.1dB @896Hz  VV=10.5dB  MSE=2191.3dB²
+    Stereo L/R: DV=+0.4dB lag=+5.6ms  VV=-0.8dB lag=+1.8ms
+
+    EDC:  0.5s=N/A  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=4.6dB  Density=N/A  ModZCR=0.00x  ModCent=N/A  EDC=19.1dB
+    → PASS
+
+  --- Large Ambience ---
+    Calibrated: DV decay_time=2.06s → RT60=2.10s (target=2.33s)
+    Level: +0.7 dB  RT60@500: DV=2.07s VV=2.33s (0.89x)
+    HF ratio delta: +0.04  RT60@4k: 0.93x
+    Ringing: DV=9.1dB @2186Hz  VV=7.4dB  MSE=1618.4dB²
+    Stereo L/R: DV=+0.3dB lag=+3.1ms  VV=-0.6dB lag=+9.0ms
+
+    EDC:  0.5s=+3.4dB  2.0s=+1.7dB  5.0s=N/A
+    Deep: SpEnv=4.1dB  Density=0.30x (DV=75ms VV=250ms)  ModZCR=0.17x  ModCent=N/A  EDC=4.2dB
+    → PASS
+
+  --- Large Gated Snare ---
+    Calibrated: DV decay_time=0.90s → RT60=0.90s (target=0.87s)
+    Level: -2.1 dB  RT60@500: DV=0.88s VV=0.87s (1.01x)
+    HF ratio delta: +0.02  RT60@4k: 1.04x
+    Ringing: DV=9.1dB @1980Hz  VV=8.1dB  MSE=1568.3dB²
+    Stereo L/R: DV=+0.5dB lag=+6.6ms  VV=-0.3dB lag=-7.4ms
+
+    EDC:  0.5s=+2.2dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=2.4dB  Density=1.00x (DV=100ms VV=100ms)  ModZCR=0.00x  ModCent=N/A  EDC=4.7dB
+    → PASS
+
+  --- Med Ambience ---
+    Calibrated: DV decay_time=1.83s → RT60=1.88s (target=1.89s)
+    Level: +0.9 dB  RT60@500: DV=1.87s VV=1.89s (0.99x)
+    HF ratio delta: -0.01  RT60@4k: 0.97x
+    Ringing: DV=10.6dB @504Hz  VV=6.9dB  MSE=2206.8dB²
+    Stereo L/R: DV=+0.4dB lag=+2.8ms  VV=-0.6dB lag=+5.1ms
+
+    EDC:  0.5s=+3.2dB  2.0s=+5.0dB  5.0s=N/A
+    Deep: SpEnv=3.2dB  Density=0.33x (DV=75ms VV=225ms)  ModZCR=0.22x  ModCent=N/A  EDC=5.3dB
+    → PASS
+
+  --- Short Vocal Ambience ---
+    Calibrated: DV decay_time=0.72s → RT60=0.69s (target=0.70s)
+    Level: +0.8 dB  RT60@500: DV=0.78s VV=0.70s (1.11x)
+    HF ratio delta: -0.08  RT60@4k: 1.02x
+    Ringing: DV=11.7dB @1623Hz  VV=12.3dB  MSE=6266.6dB²
+    Stereo L/R: DV=+0.3dB lag=+7.6ms  VV=-1.0dB lag=+9.4ms
+
+    EDC:  0.5s=+14.5dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=3.7dB  Density=N/A  ModZCR=0.00x  ModCent=N/A  EDC=14.5dB
+    → PASS
+
+  --- Small Ambience ---
+    Calibrated: DV decay_time=1.13s → RT60=1.13s (target=1.25s)
+    Level: +3.1 dB  RT60@500: DV=1.22s VV=1.25s (0.98x)
+    HF ratio delta: -0.11  RT60@4k: 0.86x
+    Ringing: DV=8.7dB @123Hz  VV=8.4dB  MSE=1402.8dB²
+    Stereo L/R: DV=+0.3dB lag=+3.3ms  VV=-0.5dB lag=-8.2ms
+
+    EDC:  0.5s=+1.7dB  2.0s=+1.6dB  5.0s=N/A
+    Deep: SpEnv=3.0dB  Density=0.60x (DV=75ms VV=125ms)  ModZCR=0.57x  ModCent=N/A  EDC=4.6dB
+    → PASS
+
+  --- Small Drum Room ---
+    Calibrated: DV decay_time=0.55s → RT60=0.52s (target=0.49s)
+    Level: -1.3 dB  RT60@500: DV=0.55s VV=0.49s (1.10x)
+    HF ratio delta: -0.02  RT60@4k: 1.08x
+    Ringing: DV=9.5dB @814Hz  VV=12.2dB  MSE=3802.4dB²
+    Stereo L/R: DV=+0.4dB lag=+5.8ms  VV=-0.3dB lag=+5.8ms
+
+    EDC:  0.5s=+10.6dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=4.7dB  Density=N/A  ModZCR=0.00x  ModCent=N/A  EDC=8.8dB
+    → PASS
+
+  --- Snare Ambience ---
+    Calibrated: DV decay_time=0.90s → RT60=1.00s (target=1.00s)
+    Level: -1.5 dB  RT60@500: DV=0.98s VV=1.00s (0.97x)
+    HF ratio delta: -0.08  RT60@4k: 0.89x
+    Ringing: DV=10.0dB @2801Hz  VV=7.3dB  MSE=1934.8dB²
+    Stereo L/R: DV=+0.3dB lag=+10.0ms  VV=-0.6dB lag=-8.6ms
+
+    EDC:  0.5s=-1.6dB  2.0s=-1.6dB  5.0s=N/A
+    Deep: SpEnv=2.2dB  Density=0.80x (DV=100ms VV=125ms)  ModZCR=1.09x  ModCent=N/A  EDC=1.6dB
+    → PASS
+
+  --- Tight Ambience Gate ---
+    Calibrated: DV decay_time=2.53s → RT60=0.10s (target=0.20s)
+    Level: +0.3 dB  RT60@500: DV=N/A VV=0.20s (0.00x)
+    HF ratio delta: -0.97  RT60@4k: 0.00x
+    Ringing: DV=12.0dB @9797Hz  VV=15.2dB  MSE=3202.7dB²
+    Stereo L/R: DV=-0.0dB lag=-5.9ms  VV=-0.2dB lag=+3.4ms
+
+    EDC:  0.5s=N/A  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=3.8dB  Density=N/A  ModZCR=0.00x  ModCent=N/A  EDC=4.9dB
+    → PASS
+
+  --- Trip Hop Snare ---
+    Calibrated: DV decay_time=1.13s → RT60=1.28s (target=1.20s)
+    Level: -2.9 dB  RT60@500: DV=1.25s VV=1.20s (1.05x)
+    HF ratio delta: +0.02  RT60@4k: 1.08x
+    Ringing: DV=9.4dB @521Hz  VV=9.7dB  MSE=2006.1dB²
+    Stereo L/R: DV=+0.3dB lag=+5.2ms  VV=-0.5dB lag=-2.8ms
+
+    EDC:  0.5s=+2.1dB  2.0s=+9.0dB  5.0s=N/A
+    Deep: SpEnv=2.4dB  Density=N/A  ModZCR=0.00x  ModCent=N/A  EDC=4.9dB
+    → PASS
+
+  --- Very Small Ambience ---
+    Calibrated: DV decay_time=0.72s → RT60=0.70s (target=0.72s)
+    Level: +4.4 dB (adj +1.4)  RT60@500: DV=0.69s VV=0.72s (0.96x)
+    HF ratio delta: +0.07  RT60@4k: 1.04x
+    Ringing: DV=9.0dB @2566Hz  VV=11.9dB  MSE=4268.1dB²
+    Stereo L/R: DV=+0.2dB lag=+4.1ms  VV=-0.4dB lag=+9.1ms
+
+    EDC:  0.5s=+10.2dB  2.0s=N/A  5.0s=N/A
+    Deep: SpEnv=2.6dB  Density=0.75x (DV=75ms VV=100ms)  ModZCR=1.45x  ModCent=N/A  EDC=10.2dB
+    → PASS
+
+====================================================================================================
+  SUMMARY: 53 presets
+====================================================================================================
+  Mode            Preset                           Level  RT@500   HF Δ  Ring   MSE  DV L/R  VV L/R Status
+  ------------------------------------------------------------------------------------------------------------
+  Concert Hall    Concert Wave                     -3.5dB   0.90x +0.03   11dB 4752    -0.1dB   -0.0dB   PASS
+  Concert Hall    Fat Snare Hall                   +2.3dB   1.01x +0.09    8dB 2028    +0.3dB   -0.0dB   PASS
+  Concert Hall    Homestar Blade Runner            +0.1dB   0.96x +0.25   10dB 7824    -0.0dB   +0.2dB   PASS
+  Concert Hall    Huge Synth Hall                  -2.1dB   0.94x +0.19    8dB 5677    +0.0dB   -0.1dB   PASS
+  Concert Hall    Long Synth Hall                  +1.0dB   1.06x +0.04    9dB 3965    -0.1dB   -0.1dB   PASS
+  Concert Hall    Pad Hall                         -2.1dB   0.99x +0.21    8dB 7644    +0.0dB   +0.1dB   PASS
+  Concert Hall    Small Vocal Hall                 +3.6dB   0.90x +0.06    9dB 2614    +0.0dB   +0.1dB   PASS
+  Concert Hall    Snare Hall                       +6.1dB   0.99x +0.02    9dB 2768    +0.1dB   +0.5dB   PASS
+  Concert Hall    Very Nice Hall                   -4.5dB   1.10x -0.09   10dB 4435    +0.0dB   +0.1dB   PASS
+  Concert Hall    Vocal Hall                       +2.7dB   0.98x +0.09    9dB 3894    +0.0dB   +0.0dB   PASS
+  Plate           Drum Plate                       +1.6dB   0.92x -0.09   11dB 4345    -0.4dB   +0.0dB   PASS
+  Plate           Fat Drums                        +0.5dB   1.02x +0.01   11dB 1872    -0.7dB   -0.0dB   PASS
+  Plate           Large Plate                      +3.7dB   1.08x +0.06   11dB 2033    -0.5dB   -0.0dB   PASS
+  Plate           Steel Plate                      -0.8dB   1.08x +0.07   12dB 2198    -0.6dB   +1.3dB   PASS
+  Plate           Tight Plate                      +0.4dB   0.91x -0.02   12dB 2947    -0.2dB   +2.1dB   PASS
+  Plate           Vocal Plate                      +1.2dB   0.97x +0.03   10dB 1592    -0.5dB   +2.4dB   PASS
+  Plate           Vox Plate                        +5.4dB   0.91x +0.04   13dB 2747    -0.4dB   +0.1dB   PASS
+  Room            Dark Vocal Room                  +0.2dB   1.07x -0.19   10dB 2549    -0.3dB   +0.3dB   PASS
+  Room            Exciting Snare room              +2.7dB   1.03x -0.07   10dB 2224    -0.1dB   +0.1dB   PASS
+  Room            Fat Snare Room                   +2.0dB   1.10x -0.09   10dB 1903    -0.1dB   +0.2dB   PASS
+  Room            Lively Snare Room                +1.4dB   0.99x -0.08    9dB 2149    -0.2dB   +0.3dB   PASS
+  Room            Long Dark 70s Snare Room         -0.2dB   1.05x -0.03   10dB 1527    -0.4dB   +0.1dB   PASS
+  Room            Short Dark Snare Room            +3.1dB   0.95x -0.07   11dB 2107    +0.3dB   +0.6dB   PASS
+  Chamber         A Plate                          +2.4dB   0.93x -0.13   11dB 4586    -0.4dB   -0.1dB   PASS
+  Chamber         Clear Chamber                    +3.1dB   0.99x -0.05   11dB 2010    +0.5dB   +0.2dB   PASS
+  Chamber         Fat Plate                        +0.9dB   0.93x -0.06   10dB 4138    -0.5dB   +0.1dB   PASS
+  Chamber         Large Chamber                    +3.4dB   1.01x +0.00   11dB 1692    +0.7dB   +0.2dB   PASS
+  Chamber         Large Wood Room                  +4.1dB   0.97x -0.06    9dB 3234    +0.4dB   +0.1dB   PASS
+  Chamber         Live Vox Chamber                 +5.4dB   0.93x +0.02    9dB  973    +0.5dB   +0.4dB   PASS
+  Chamber         Medium Gate                      +1.4dB   0.10x -0.96    9dB 18970    +0.3dB   +0.8dB   PASS
+  Chamber         Rich Chamber                     +2.4dB   1.07x -0.03   10dB 1525    +0.8dB   +0.1dB   PASS
+  Chamber         Small Chamber1                   +4.3dB   0.97x +0.01   10dB 1441    +0.1dB   +0.6dB   PASS
+  Chamber         Small Chamber2                   +2.5dB   0.96x -0.03    9dB 2028    +0.1dB   +0.6dB   PASS
+  Chamber         Snare Plate                      -2.4dB   0.97x -0.10   12dB 2715    -0.7dB   -0.0dB   PASS
+  Chamber         Thin Plate                       +3.0dB   1.01x -0.05   12dB 2607    -0.6dB   +0.0dB   PASS
+  Chamber         Tiled Room                       +4.4dB   1.08x -0.08   11dB 1049    +0.1dB   +0.0dB   PASS
+  Ambience        Ambience                         -0.4dB   0.99x -0.12   14dB 1965    +0.2dB   -0.6dB   PASS
+  Ambience        Ambience Plate                   -1.1dB   0.98x -0.17   12dB 5386    -0.4dB   -0.3dB   PASS
+  Ambience        Ambience Tiled Room              +2.5dB   1.03x -0.03   11dB 1863    +0.5dB   -0.3dB   PASS
+  Ambience        Big Ambience Gate                -5.5dB   1.04x -0.06    8dB 2153    +0.4dB   -0.6dB   PASS
+  Ambience        Cross Stick Room                 +0.1dB   1.07x -0.04   10dB 3827    +0.6dB   -0.1dB   PASS
+  Ambience        Drum Air                         +2.5dB   1.04x -0.11   13dB 3211    +0.4dB   -0.2dB   PASS
+  Ambience        Gated Snare                      -0.9dB   0.00x +0.00    8dB 2191    +0.4dB   -0.8dB   PASS
+  Ambience        Large Ambience                   +0.7dB   0.89x +0.04    9dB 1618    +0.3dB   -0.6dB   PASS
+  Ambience        Large Gated Snare                -2.1dB   1.01x +0.02    9dB 1568    +0.5dB   -0.3dB   PASS
+  Ambience        Med Ambience                     +0.9dB   0.99x -0.01   11dB 2207    +0.4dB   -0.6dB   PASS
+  Ambience        Short Vocal Ambience             +0.8dB   1.11x -0.08   12dB 6267    +0.3dB   -1.0dB   PASS
+  Ambience        Small Ambience                   +3.1dB   0.98x -0.11    9dB 1403    +0.3dB   -0.5dB   PASS
+  Ambience        Small Drum Room                  -1.3dB   1.10x -0.02   10dB 3802    +0.4dB   -0.3dB   PASS
+  Ambience        Snare Ambience                   -1.5dB   0.97x -0.08   10dB 1935    +0.3dB   -0.6dB   PASS
+  Ambience        Tight Ambience Gate              +0.3dB   0.00x -0.97   12dB 3203    -0.0dB   -0.2dB   PASS
+  Ambience        Trip Hop Snare                   -2.9dB   1.05x +0.02    9dB 2006    +0.3dB   -0.5dB   PASS
+  Ambience        Very Small Ambience              +4.4dB   0.96x +0.07    9dB 4268    +0.2dB   -0.4dB   PASS
+  ------------------------------------------------------------------------------------------
+  53/53 presets passed  (100%)
+
+  Per-mode pass rates:
+    Concert Hall   : 10/10 passed  (avg level: +0.4dB, L/R: DV=0.1dB/6.9ms  VV=0.1dB/4.7ms)
+    Plate          : 7/7 passed  (avg level: +1.7dB, L/R: DV=0.5dB/0.4ms  VV=0.9dB/5.8ms)
+    Room           : 6/6 passed  (avg level: +1.5dB, L/R: DV=0.2dB/7.8ms  VV=0.3dB/6.9ms)
+    Chamber        : 13/13 passed  (avg level: +2.7dB, L/R: DV=0.4dB/4.1ms  VV=0.3dB/5.5ms)
+    Ambience       : 17/17 passed  (avg level: -0.0dB, L/R: DV=0.4dB/5.6ms  VV=0.5dB/6.7ms)
+
+  Per-mode deep metrics (algorithm character):
+    Mode             SpEnv  Density  ModZCR  ModCent    EDC   Deep
+    --------------------------------------------------------------
+    Plate             2.0dB    0.63x   0.71x    2.28x   4.3dB   PASS
+    Hall              1.7dB    0.69x   0.26x    1.01x   5.6dB   PASS
+    Chamber           1.3dB    0.98x   1.28x    2.11x   3.5dB   PASS
+    Room              2.3dB    0.15x   0.38x    1.08x   3.4dB   FAIL
+      → Dens
+    Ambient           3.3dB    0.69x   0.28x      N/A   7.4dB   PASS
+
+    4/5 modes pass deep metrics
+
+======================================================================
+  FACTORY PRESET EXPORT (C++)
+======================================================================
+
+// clang-format off
+//
+// Translated from VintageVerb factory presets.
+// Effective value = raw param * algorithm scale factor
+// Algorithm trebleMultScale: Plate=0.65, Hall=0.50, Chamber=0.90, Room=0.45, Ambient=0.80
+// Algorithm bassMultScale:   Plate=1.0, Hall=1.0,  Chamber=1.0, Room=0.85, Ambient=1.0
+// Algorithm erLevelScale:    Plate=0.90, Hall=0.90,  Chamber=1.20, Room=1.40,  Ambient=0.0
+// Algorithm lateGainScale:   Plate=0.20, Hall=0.22, Chamber=0.38, Room=0.38, Ambient=0.35
+// Algorithm decayTimeScale:  Plate=0.94, Hall=0.79,  Chamber=0.99, Room=1.28,  Ambient=0.99
+//
+inline const std::vector<FactoryPreset>& getFactoryPresets(){
+    static const std::vector<FactoryPreset> presets = {
+        //                                              algo  decay  pre    size   damp  bass   xover   diff  modD   modR  erLv  erSz  mix   loCut  hiCut   width  gHold  gRel
+        // -- Halls --
+        { "Concert Wave",                       "Halls",       1, 5.79f, 24.1f, 1.000f, 1.00f, 1.00f, 4000.0f, 0.48f, 0.350f, 3.78f, 0.30f, 0.80f, 0.3f, 20.0f, 12263.4f, 1.0f, 0.0f, 50.0f },
+        { "Fat Snare Hall",                     "Halls",       1, 1.13f, 11.0f, 0.568f, 1.00f, 1.25f, 401.0f, 1.00f, 1.000f, 0.40f, 0.23f, 0.45f, 0.3f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f },
+        { "Homestar Blade Runner",              "Halls",       1, 9.51f, 31.1f, 1.000f, 1.00f, 1.50f, 528.0f, 0.70f, 0.356f, 3.99f, 0.36f, 0.80f, 0.3f, 20.0f, 6004.0f, 1.0f, 0.0f, 50.0f },
+        { "Huge Synth Hall",                    "Halls",       1, 5.79f, 115.1f, 0.812f, 1.00f, 1.50f, 528.0f, 0.80f, 0.808f, 2.25f, 0.30f, 0.65f, 0.3f, 45.8f, 6004.0f, 1.0f, 0.0f, 50.0f },
+        { "Long Synth Hall",                    "Halls",       1, 2.99f, 8.0f, 1.000f, 1.00f, 2.00f, 700.0f, 1.00f, 0.492f, 1.13f, 0.35f, 0.80f, 0.3f, 20.0f, 8314.1f, 1.0f, 0.0f, 50.0f },
+        { "Pad Hall",                           "Halls",       1, 9.51f, 115.1f, 1.000f, 1.00f, 1.50f, 363.0f, 1.00f, 0.380f, 2.53f, 0.43f, 0.80f, 0.3f, 27.9f, 6674.1f, 1.0f, 0.0f, 50.0f },
+        { "Small Vocal Hall",                   "Halls",       1, 1.36f, 23.1f, 0.504f, 1.00f, 1.40f, 432.0f, 1.00f, 1.000f, 0.46f, 0.51f, 0.40f, 0.3f, 87.5f, 4003.6f, 1.0f, 0.0f, 50.0f },
+        { "Snare Hall",                         "Halls",       1, 0.90f, 11.0f, 0.500f, 1.00f, 1.25f, 401.0f, 1.00f, 1.000f, 0.40f, 0.18f, 0.40f, 0.3f, 20.0f, 6004.0f, 1.0f, 0.0f, 50.0f },
+        { "Very Nice Hall",                     "Halls",       1, 11.38f, 42.3f, 0.716f, 0.75f, 1.98f, 385.0f, 0.64f, 0.508f, 1.64f, 0.29f, 0.57f, 0.3f, 117.3f, 10443.8f, 1.0f, 0.0f, 50.0f },
+        { "Vocal Hall",                         "Halls",       1, 2.99f, 8.0f, 1.000f, 1.00f, 2.00f, 700.0f, 1.00f, 0.230f, 2.25f, 0.55f, 0.80f, 0.3f, 45.8f, 7004.1f, 1.0f, 0.0f, 50.0f },
+        // -- Plates --
+        { "A Plate",                            "Plates",      0, 2.06f, 0.0f, 0.600f, 1.00f, 0.60f, 511.0f, 1.00f, 0.312f, 0.50f, 0.60f, 0.48f, 0.3f, 20.0f, 8514.1f, 1.0f, 0.0f, 50.0f },
+        { "Ambience Plate",                     "Plates",      0, 1.36f, 15.5f, 0.168f, 0.60f, 1.88f, 1042.0f, 1.00f, 0.748f, 1.64f, 0.38f, 0.13f, 0.3f, 33.8f, 8370.4f, 1.0f, 0.0f, 50.0f },
+        { "Drum Plate",                         "Plates",      0, 1.60f, 0.0f, 0.800f, 1.00f, 1.50f, 4000.0f, 1.00f, 0.192f, 1.20f, 0.60f, 0.64f, 0.3f, 20.0f, 4803.8f, 1.0f, 0.0f, 50.0f },
+        { "Fat Drums",                          "Plates",      0, 2.06f, 10.0f, 0.700f, 1.00f, 1.50f, 1449.0f, 1.00f, 0.192f, 1.80f, 0.31f, 0.56f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f },
+        { "Fat Plate",                          "Plates",      0, 2.06f, 2.0f, 0.950f, 1.00f, 1.00f, 1178.0f, 1.00f, 0.312f, 0.50f, 0.34f, 0.76f, 0.3f, 20.0f, 9282.0f, 1.0f, 0.0f, 50.0f },
+        { "Large Plate",                        "Plates",      0, 2.99f, 10.0f, 0.750f, 1.00f, 0.80f, 200.0f, 1.00f, 0.192f, 1.01f, 0.60f, 0.60f, 0.3f, 20.0f, 14102.8f, 1.0f, 0.0f, 50.0f },
+        { "Snare Plate",                        "Plates",      0, 2.06f, 60.1f, 0.500f, 1.00f, 0.60f, 200.0f, 1.00f, 0.312f, 0.50f, 0.39f, 0.40f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f },
+        { "Steel Plate",                        "Plates",      0, 3.92f, 15.0f, 0.472f, 1.00f, 1.48f, 416.0f, 1.00f, 0.192f, 1.01f, 0.60f, 0.38f, 0.3f, 200.7f, 20000.0f, 1.0f, 0.0f, 50.0f },
+        { "Thin Plate",                         "Plates",      0, 1.83f, 0.0f, 0.450f, 1.00f, 0.60f, 511.0f, 1.00f, 0.312f, 0.50f, 0.60f, 0.36f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f },
+        { "Tight Plate",                        "Plates",      0, 0.90f, 10.0f, 0.350f, 1.00f, 1.50f, 1275.0f, 1.00f, 0.192f, 1.20f, 0.55f, 0.28f, 0.3f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f },
+        { "Vocal Plate",                        "Plates",      0, 1.13f, 20.1f, 0.440f, 1.00f, 1.00f, 4000.0f, 1.00f, 0.192f, 1.80f, 0.50f, 0.35f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f },
+        { "Vox Plate",                          "Plates",      0, 1.60f, 0.0f, 0.672f, 1.00f, 1.20f, 416.0f, 1.00f, 0.192f, 1.01f, 0.53f, 0.54f, 0.3f, 20.0f, 12003.4f, 1.0f, 0.0f, 50.0f },
+        // -- Rooms --
+        { "Dark Vocal Room",                    "Rooms",       3, 2.06f, 9.0f, 0.500f, 0.70f, 1.00f, 401.0f, 0.80f, 0.000f, 0.80f, 0.51f, 0.40f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f },
+        { "Exciting Snare room",                "Rooms",       3, 0.37f, 17.0f, 0.324f, 1.00f, 1.40f, 584.0f, 1.00f, 0.144f, 0.78f, 0.60f, 0.26f, 0.3f, 20.0f, 3603.4f, 1.0f, 0.0f, 50.0f },
+        { "Fat Snare Room",                     "Rooms",       3, 0.90f, 9.0f, 0.388f, 1.00f, 1.25f, 626.0f, 1.00f, 0.308f, 1.50f, 0.54f, 0.31f, 0.3f, 20.0f, 4503.7f, 1.0f, 0.0f, 50.0f },
+        { "Lively Snare Room",                  "Rooms",       3, 0.67f, 11.0f, 0.504f, 1.00f, 1.25f, 700.0f, 1.00f, 0.188f, 1.50f, 0.60f, 0.40f, 0.3f, 20.0f, 7004.1f, 1.0f, 0.0f, 50.0f },
+        { "Long Dark 70s Snare Room",           "Rooms",       3, 1.60f, 17.0f, 1.000f, 1.00f, 1.40f, 584.0f, 1.00f, 0.188f, 1.50f, 0.37f, 0.80f, 0.3f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f },
+        { "Short Dark Snare Room",              "Rooms",       3, 0.43f, 5.0f, 0.368f, 1.00f, 1.25f, 700.0f, 1.00f, 0.188f, 1.50f, 0.52f, 0.29f, 0.3f, 20.0f, 3483.3f, 1.0f, 0.0f, 50.0f },
+        // -- Chambers --
+        { "Clear Chamber",                      "Chambers",    2, 1.83f, 0.0f, 1.000f, 1.00f, 1.50f, 332.0f, 1.00f, 0.192f, 1.40f, 0.60f, 0.80f, 0.3f, 20.0f, 12003.4f, 1.0f, 0.0f, 50.0f },
+        { "Large Chamber",                      "Chambers",    2, 1.60f, 10.0f, 1.000f, 1.00f, 0.95f, 488.0f, 1.00f, 0.304f, 0.74f, 0.42f, 0.80f, 0.3f, 20.0f, 6404.1f, 1.0f, 0.0f, 50.0f },
+        { "Large Wood Room",                    "Chambers",    2, 1.36f, 0.0f, 0.600f, 1.00f, 0.80f, 825.0f, 1.00f, 0.312f, 0.50f, 0.53f, 0.48f, 0.3f, 20.0f, 8514.1f, 1.0f, 0.0f, 50.0f },
+        { "Live Vox Chamber",                   "Chambers",    2, 0.90f, 0.0f, 0.700f, 1.00f, 1.50f, 250.0f, 0.80f, 0.360f, 0.32f, 0.50f, 0.56f, 0.3f, 325.9f, 15002.4f, 1.0f, 0.0f, 50.0f },
+        { "Medium Gate",                        "Chambers",    2, 29.88f, 0.0f, 0.140f, 1.00f, 1.50f, 332.0f, 1.00f, 0.192f, 1.32f, 0.36f, 0.11f, 0.3f, 20.0f, 8004.1f, 1.0f, 106.0f, 19.5f },
+        { "Rich Chamber",                       "Chambers",    2, 2.53f, 25.1f, 0.700f, 1.00f, 1.25f, 203.0f, 1.00f, 0.160f, 1.30f, 0.47f, 0.56f, 0.3f, 20.0f, 5804.0f, 1.0f, 0.0f, 50.0f },
+        { "Small Chamber1",                     "Chambers",    2, 0.90f, 0.0f, 0.500f, 1.00f, 1.50f, 250.0f, 1.00f, 0.192f, 1.20f, 0.47f, 0.40f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f },
+        { "Small Chamber2",                     "Chambers",    2, 0.90f, 0.0f, 0.500f, 1.00f, 1.50f, 332.0f, 1.00f, 0.192f, 1.20f, 0.43f, 0.40f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f },
+        { "Tiled Room",                         "Chambers",    2, 0.67f, 4.0f, 0.107f, 1.00f, 1.25f, 2850.0f, 0.50f, 0.144f, 0.78f, 0.60f, 0.09f, 0.3f, 20.0f, 10003.9f, 1.0f, 0.0f, 50.0f },
+        // -- Ambience --
+        { "Ambience",                           "Ambience",    4, 0.90f, 0.0f, 0.200f, 0.97f, 2.00f, 200.0f, 1.00f, 0.360f, 0.32f, 0.00f, 0.00f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f },
+        { "Ambience Tiled Room",                "Ambience",    4, 0.78f, 4.0f, 0.107f, 0.97f, 1.25f, 2850.0f, 0.50f, 0.144f, 0.78f, 0.00f, 0.00f, 0.3f, 20.0f, 10003.9f, 1.0f, 0.0f, 50.0f },
+        { "Big Ambience Gate",                  "Ambience",    4, 0.43f, 11.0f, 1.000f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 1.53f, 0.00f, 0.00f, 0.3f, 20.0f, 2596.4f, 1.0f, 450.0f, 5.0f },
+        { "Cross Stick Room",                   "Ambience",    4, 0.55f, 17.0f, 0.100f, 0.97f, 1.40f, 432.0f, 1.00f, 0.664f, 3.00f, 0.00f, 0.00f, 0.3f, 20.0f, 5003.8f, 1.0f, 0.0f, 50.0f },
+        { "Drum Air",                           "Ambience",    4, 0.49f, 9.0f, 0.100f, 0.97f, 1.00f, 700.0f, 1.00f, 1.000f, 0.40f, 0.00f, 0.00f, 0.3f, 20.0f, 2002.5f, 1.0f, 0.0f, 50.0f },
+        { "Gated Snare",                        "Ambience",    4, 2.00f, 9.0f, 0.720f, 0.83f, 1.00f, 700.0f, 0.82f, 0.524f, 0.40f, 0.00f, 0.00f, 0.3f, 20.0f, 3003.1f, 1.0f, 338.0f, 8.7f },
+        { "Large Ambience",                     "Ambience",    4, 2.06f, 0.0f, 0.600f, 0.97f, 1.25f, 332.0f, 1.00f, 1.000f, 1.50f, 0.00f, 0.00f, 0.3f, 20.0f, 2903.1f, 1.0f, 0.0f, 50.0f },
+        { "Large Gated Snare",                  "Ambience",    4, 0.90f, 11.0f, 0.404f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 1.88f, 0.00f, 0.00f, 0.3f, 20.0f, 5003.8f, 1.0f, 0.0f, 50.0f },
+        { "Med Ambience",                       "Ambience",    4, 1.83f, 0.0f, 0.500f, 0.83f, 1.25f, 332.0f, 1.00f, 1.000f, 1.50f, 0.00f, 0.00f, 0.3f, 20.0f, 3603.4f, 1.0f, 0.0f, 50.0f },
+        { "Short Vocal Ambience",               "Ambience",    4, 0.72f, 23.1f, 0.150f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 0.80f, 0.00f, 0.00f, 0.3f, 20.0f, 3003.1f, 1.0f, 0.0f, 50.0f },
+        { "Small Ambience",                     "Ambience",    4, 1.13f, 0.0f, 0.220f, 0.83f, 1.25f, 332.0f, 1.00f, 1.000f, 1.50f, 0.00f, 0.00f, 0.3f, 20.0f, 4403.7f, 1.0f, 0.0f, 50.0f },
+        { "Small Drum Room",                    "Ambience",    4, 0.55f, 11.0f, 0.300f, 0.97f, 1.00f, 700.0f, 1.00f, 1.000f, 0.40f, 0.00f, 0.00f, 0.3f, 20.0f, 2002.5f, 1.0f, 0.0f, 50.0f },
+        { "Snare Ambience",                     "Ambience",    4, 0.90f, 0.0f, 0.340f, 0.97f, 2.00f, 200.0f, 1.00f, 0.360f, 0.32f, 0.00f, 0.00f, 0.3f, 20.0f, 15002.4f, 1.0f, 0.0f, 50.0f },
+        { "Tight Ambience Gate",                "Ambience",    4, 2.53f, 11.0f, 0.352f, 0.97f, 1.00f, 401.0f, 1.00f, 1.000f, 0.89f, 0.00f, 0.00f, 0.3f, 20.0f, 2596.4f, 1.0f, 190.8f, 5.0f },
+        { "Trip Hop Snare",                     "Ambience",    4, 1.13f, 17.0f, 0.636f, 0.97f, 1.40f, 432.0f, 1.00f, 1.000f, 0.40f, 0.00f, 0.00f, 0.3f, 20.0f, 5003.8f, 1.0f, 0.0f, 50.0f },
+        { "Very Small Ambience",                "Ambience",    4, 0.72f, 0.0f, 0.100f, 0.83f, 1.25f, 332.0f, 1.00f, 1.000f, 0.50f, 0.00f, 0.00f, 0.3f, 20.0f, 4403.7f, 1.0f, 0.0f, 50.0f },
+    };
+    return presets;
+}
+// clang-format on
+
+Done.

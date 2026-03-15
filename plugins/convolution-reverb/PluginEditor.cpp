@@ -357,6 +357,24 @@ ConvolutionReverbEditor::ConvolutionReverbEditor(ConvolutionReverbProcessor& p)
     addAndMakeVisible (presetBox_);
     refreshPresetList();
 
+    // Restore preset selection from saved state
+    {
+        auto savedName = audioProcessor.getValueTreeState().state.getProperty ("presetName", "").toString();
+        if (savedName.isNotEmpty() && userPresetManager_)
+        {
+            auto userPresets = userPresetManager_->loadUserPresets();
+            for (size_t i = 0; i < userPresets.size(); ++i)
+            {
+                if (userPresets[i].name == savedName)
+                {
+                    presetBox_.setSelectedId (static_cast<int> (1001 + i), juce::dontSendNotification);
+                    break;
+                }
+            }
+        }
+        updateDeleteButtonVisibility();
+    }
+
     // Save preset button
     savePresetButton_.setButtonText ("Save");
     savePresetButton_.onClick = [this] { saveUserPreset(); };
@@ -1386,6 +1404,7 @@ void ConvolutionReverbEditor::loadUserPreset (const juce::String& name)
 
     // Restore APVTS parameters
     audioProcessor.getValueTreeState().replaceState (state);
+    audioProcessor.getValueTreeState().state.setProperty ("presetName", name, nullptr);
 
     // Restore IR path (same as setStateInformation)
     juce::String irPath = state.getProperty ("irPath", "");

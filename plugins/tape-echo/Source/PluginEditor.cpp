@@ -121,6 +121,36 @@ TapeEchoEditor::TapeEchoEditor(TapeEchoProcessor& p)
     addAndMakeVisible (presetBox_);
     refreshPresetList();
 
+    // Restore preset selection from saved state
+    {
+        auto savedName = processor.getAPVTS().state.getProperty ("presetName", "").toString();
+        if (savedName.isNotEmpty())
+        {
+            const auto& presets = TapeEchoPresets::getFactoryPresets();
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                if (juce::String (presets[i].name) == savedName)
+                {
+                    presetBox_.setSelectedId (static_cast<int> (i) + 2, juce::dontSendNotification);
+                    break;
+                }
+            }
+            if (presetBox_.getSelectedId() == 0 && userPresetManager_)
+            {
+                auto userPresets = userPresetManager_->loadUserPresets();
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    if (userPresets[i].name == savedName)
+                    {
+                        presetBox_.setSelectedId (static_cast<int> (1001 + i), juce::dontSendNotification);
+                        break;
+                    }
+                }
+            }
+        }
+        updateDeleteButtonVisibility();
+    }
+
     // Save preset button
     savePresetButton_.setButtonText ("Save");
     savePresetButton_.onClick = [this] { saveUserPreset(); };
@@ -423,7 +453,11 @@ void TapeEchoEditor::loadPreset (int index)
 {
     const auto& presets = TapeEchoPresets::getFactoryPresets();
     if (index >= 0 && index < static_cast<int> (presets.size()))
+    {
         presets[static_cast<size_t> (index)].applyTo (processor.getAPVTS());
+        processor.getAPVTS().state.setProperty ("presetName",
+            juce::String (presets[static_cast<size_t> (index)].name), nullptr);
+    }
 }
 
 void TapeEchoEditor::refreshPresetList()
@@ -532,7 +566,10 @@ void TapeEchoEditor::loadUserPreset (const juce::String& name)
 
     auto state = userPresetManager_->loadUserPreset (name);
     if (state.isValid())
+    {
         processor.getAPVTS().replaceState (state);
+        processor.getAPVTS().state.setProperty ("presetName", name, nullptr);
+    }
 }
 
 void TapeEchoEditor::deleteUserPreset (const juce::String& name)

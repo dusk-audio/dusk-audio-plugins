@@ -3675,9 +3675,39 @@ void MultiQEditor::updatePresetSelector()
         }
     }
 
-    // Set current selection
-    if (numFactoryPresets > 0)
+    // Restore preset selection from saved state
+    auto savedName = processor.parameters.state.getProperty("presetName", "").toString();
+    if (savedName.isNotEmpty())
+    {
+        // Try factory presets first
+        bool found = false;
+        for (int i = 0; i < numFactoryPresets; ++i)
+        {
+            if (processor.getProgramName(i) == savedName)
+            {
+                presetSelector->setSelectedId(i + 1, juce::dontSendNotification);
+                found = true;
+                break;
+            }
+        }
+        // Try user presets
+        if (!found && userPresetManager)
+        {
+            auto userPresets2 = userPresetManager->loadUserPresets();
+            for (size_t i = 0; i < userPresets2.size(); ++i)
+            {
+                if (userPresets2[i].name == savedName)
+                {
+                    presetSelector->setSelectedId(static_cast<int>(1001 + i), juce::dontSendNotification);
+                    break;
+                }
+            }
+        }
+    }
+    else if (numFactoryPresets > 0)
+    {
         presetSelector->setSelectedId(processor.getCurrentProgram() + 1, juce::dontSendNotification);
+    }
 }
 
 void MultiQEditor::refreshUserPresets()
@@ -3719,6 +3749,7 @@ void MultiQEditor::onPresetSelected()
         // Factory preset selected
         int presetIndex = selectedId - 1;  // Convert to 0-based
         processor.setCurrentProgram(presetIndex);
+        processor.parameters.state.setProperty("presetName", processor.getProgramName(presetIndex), nullptr);
     }
 }
 
@@ -3793,6 +3824,7 @@ void MultiQEditor::loadUserPreset(const juce::String& name)
     if (state.isValid())
     {
         processor.parameters.replaceState(state);
+        processor.parameters.state.setProperty("presetName", name, nullptr);
     }
 }
 

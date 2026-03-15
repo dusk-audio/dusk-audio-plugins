@@ -37,6 +37,36 @@ TapeMachineAudioProcessorEditor::TapeMachineAudioProcessorEditor(TapeMachineAudi
     addAndMakeVisible(presetSelector);
     refreshPresetList();
 
+    // Restore preset selection from saved state
+    {
+        auto savedName = audioProcessor.getAPVTS().state.getProperty("presetName", "").toString();
+        if (savedName.isNotEmpty())
+        {
+            const auto& presets = TapeMachinePresets::getFactoryPresets();
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                if (presets[i].name == savedName)
+                {
+                    presetSelector.setSelectedId(static_cast<int>(i) + 2, juce::dontSendNotification);
+                    break;
+                }
+            }
+            if (presetSelector.getSelectedId() == 0 && userPresetManager_)
+            {
+                auto userPresets = userPresetManager_->loadUserPresets();
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    if (userPresets[i].name == savedName)
+                    {
+                        presetSelector.setSelectedId(static_cast<int>(1001 + i), juce::dontSendNotification);
+                        break;
+                    }
+                }
+            }
+        }
+        updateDeleteButtonVisibility();
+    }
+
     // Save preset button
     savePresetButton_.setButtonText("Save");
     savePresetButton_.onClick = [this] { saveUserPreset(); };
@@ -646,7 +676,11 @@ void TapeMachineAudioProcessorEditor::loadPreset(int index)
 {
     const auto& presets = TapeMachinePresets::getFactoryPresets();
     if (index >= 0 && index < static_cast<int>(presets.size()))
+    {
         TapeMachinePresets::applyPreset(presets[static_cast<size_t>(index)], audioProcessor.getAPVTS());
+        audioProcessor.getAPVTS().state.setProperty("presetName",
+            presets[static_cast<size_t>(index)].name, nullptr);
+    }
 }
 
 void TapeMachineAudioProcessorEditor::refreshPresetList()
@@ -751,7 +785,10 @@ void TapeMachineAudioProcessorEditor::loadUserPreset(const juce::String& name)
 
     auto state = userPresetManager_->loadUserPreset(name);
     if (state.isValid())
+    {
         audioProcessor.getAPVTS().replaceState(state);
+        audioProcessor.getAPVTS().state.setProperty("presetName", name, nullptr);
+    }
 }
 
 void TapeMachineAudioProcessorEditor::deleteUserPreset(const juce::String& name)

@@ -46,7 +46,7 @@ juce_add_plugin(MultiComp
     # ICON_BIG ...                              # ICON_* arguments specify a path to an image file to use as an icon for the Standalone
     # ICON_SMALL ...
     COMPANY_NAME "Dusk Audio"
-    BUNDLE_ID "com.LunaCoAudio.MultiComp"
+    BUNDLE_ID "com.DuskAudio.MultiComp"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE

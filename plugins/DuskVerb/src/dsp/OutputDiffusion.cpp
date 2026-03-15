@@ -52,6 +52,8 @@ void OutputDiffusion::process (float* left, float* right, int numSamples)
 
 void OutputDiffusion::setDiffusion (float amount)
 {
-    // Maps 0.0-1.0 to coefficient 0.0-0.5
-    diffusionCoeff_ = std::clamp (amount, 0.0f, 1.0f) * 0.5f;
+    // Maps 0.0-1.0 to coefficient 0.0-0.3
+    // 4 stages at g=0.3 gives smoother frequency response than 2 stages at g=0.5,
+    // with reduced density for cleaner tail character
+    diffusionCoeff_ = std::clamp (amount, 0.0f, 1.0f) * 0.3f;
 }

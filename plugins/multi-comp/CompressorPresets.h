@@ -20,7 +20,7 @@ struct Preset
 {
     juce::String name;
     juce::String category;
-    int mode;                    // 0-6: Opto, FET, VCA, Bus, StudioFET, StudioVCA, Digital
+    int mode;                    // 0-7: Opto, FET, VCA, Bus, StudioFET, StudioVCA, Digital, Multiband
 
     float threshold = -20.0f;    // dB
     float ratio = 4.0f;
@@ -473,8 +473,8 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
                 p->setValueNotifyingHost(params.getParameterRange("studio_vca_attack").convertTo0to1(preset.attack));
             if (auto* p = params.getParameter("studio_vca_release"))
                 p->setValueNotifyingHost(params.getParameterRange("studio_vca_release").convertTo0to1(preset.release));
-            if (auto* p = params.getParameter("studio_vca_makeup"))
-                p->setValueNotifyingHost(params.getParameterRange("studio_vca_makeup").convertTo0to1(preset.makeup));
+            if (auto* p = params.getParameter("studio_vca_output"))
+                p->setValueNotifyingHost(params.getParameterRange("studio_vca_output").convertTo0to1(preset.makeup));
             break;
 
         case 6: // Digital
@@ -486,8 +486,8 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
                 p->setValueNotifyingHost(params.getParameterRange("digital_attack").convertTo0to1(preset.attack));
             if (auto* p = params.getParameter("digital_release"))
                 p->setValueNotifyingHost(params.getParameterRange("digital_release").convertTo0to1(preset.release));
-            if (auto* p = params.getParameter("digital_makeup"))
-                p->setValueNotifyingHost(params.getParameterRange("digital_makeup").convertTo0to1(preset.makeup));
+            if (auto* p = params.getParameter("digital_output"))
+                p->setValueNotifyingHost(params.getParameterRange("digital_output").convertTo0to1(preset.makeup));
             break;
     }
 }

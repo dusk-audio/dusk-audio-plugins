@@ -100,9 +100,6 @@ namespace Constants {
     constexpr float T4B_PROG_DEP_DISCHARGE_RATE = 0.12f;  // Program dependency decay (~8s)
     constexpr float T4B_PROG_DEP_RELEASE_SCALE = 5.0f;    // Max release time multiplier (60ms → 300ms)
     constexpr float T4B_PROG_DEP_PHOSPHOR_SCALE = 3.0f;   // Max phosphor extension (1.5s → 6s under sustained compression)
-    constexpr float COMPRESS_EMPHASIS_FREQ = 1000.0f;      // R37 emphasis corner Hz
-    constexpr float COMPRESS_HF_EMPHASIS = 0.3f;           // Sidechain HF emphasis (Compress mode)
-    constexpr float LIMIT_SC_GAIN_BOOST = 1.5f;            // Limit mode sidechain gain
     constexpr float SC_DRIVER_SATURATION = 0.8f;           // 6AQ5 saturation
     constexpr float SC_DRIVER_OUTPUT_SCALE = 1.0f;         // 6AQ5 output scaling
     constexpr float T4B_EL_PANEL_ATTACK_FREQ = 150.0f;    // EL panel attack (~1.1ms)
@@ -124,7 +121,6 @@ namespace Constants {
     // Classic VCA constants
     constexpr float VCA_RMS_TIME_CONSTANT = 0.003f; // 3ms RMS averaging
     constexpr float VCA_RELEASE_RATE = 120.0f; // dB per second
-    constexpr float VCA_CONTROL_VOLTAGE_SCALE = -0.006f; // -6mV/dB
     constexpr float VCA_MAX_REDUCTION_DB = 60.0f;
 
     // Bus Compressor constants
@@ -1105,7 +1101,8 @@ public:
             det.accumulatedCharge = 0.0f;
             det.smoothedConductance = 0.0f;
             det.t4bGain = 1.0f;
-            det.emphasisFilterState = 0.0f;
+            det.shelfX1 = 0.0f;
+            det.shelfY1 = 0.0f;
             det.t4bDcState = 0.0f;
         }
 
@@ -1115,7 +1112,19 @@ public:
         attackCoeff = std::exp(-1.0f / (Constants::T4B_ATTACK_TIME * sr));
         fastReleaseCoeff = std::exp(-1.0f / (Constants::T4B_FAST_RELEASE_TIME * sr));
         phosphorDecayCoeff = std::exp(-1.0f / (Constants::T4B_PHOSPHOR_BASE_DECAY * sr));
-        emphasisCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::COMPRESS_EMPHASIS_FREQ / sr);
+        // R37 high-shelf at 1kHz, +3dB (makes sidechain more HF-sensitive)
+        {
+            float wc = 2.0f * 3.14159f * 1000.0f / sr;
+            float A = std::pow(10.0f, 3.0f / 20.0f); // +3dB
+            float alpha = std::tan(wc / 2.0f);
+            float sqrtA = std::sqrt(A);
+            // 1st-order high shelf: bilinear transform of H(s) = A*(s + w0/sqrtA) / (s + w0*sqrtA)
+            // DC gain = 1, HF gain = A (+3dB)
+            float norm = 1.0f / (1.0f + alpha * sqrtA);
+            shelfB0 = (A + sqrtA * alpha) * norm;
+            shelfB1 = (sqrtA * alpha - A) * norm;
+            shelfA1 = (alpha * sqrtA - 1.0f) * norm;
+        }
         phosphorAttackCoeff = std::pow(phosphorDecayCoeff, Constants::T4B_PHOSPHOR_ATTACK_RATIO);
         condAttackCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_ATTACK_FREQ / sr);
         condReleaseCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_RELEASE_FREQ / sr);
@@ -1157,7 +1166,19 @@ public:
         attackCoeff = std::exp(-1.0f / (Constants::T4B_ATTACK_TIME * sr));
         fastReleaseCoeff = std::exp(-1.0f / (Constants::T4B_FAST_RELEASE_TIME * sr));
         phosphorDecayCoeff = std::exp(-1.0f / (Constants::T4B_PHOSPHOR_BASE_DECAY * sr));
-        emphasisCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::COMPRESS_EMPHASIS_FREQ / sr);
+        // R37 high-shelf at 1kHz, +3dB (makes sidechain more HF-sensitive)
+        {
+            float wc = 2.0f * 3.14159f * 1000.0f / sr;
+            float A = std::pow(10.0f, 3.0f / 20.0f); // +3dB
+            float alpha = std::tan(wc / 2.0f);
+            float sqrtA = std::sqrt(A);
+            // 1st-order high shelf: bilinear transform of H(s) = A*(s + w0/sqrtA) / (s + w0*sqrtA)
+            // DC gain = 1, HF gain = A (+3dB)
+            float norm = 1.0f / (1.0f + alpha * sqrtA);
+            shelfB0 = (A + sqrtA * alpha) * norm;
+            shelfB1 = (sqrtA * alpha - A) * norm;
+            shelfA1 = (alpha * sqrtA - 1.0f) * norm;
+        }
         phosphorAttackCoeff = std::pow(phosphorDecayCoeff, Constants::T4B_PHOSPHOR_ATTACK_RATIO);
         condAttackCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_ATTACK_FREQ / sr);
         condReleaseCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * Constants::T4B_CONDUCTANCE_RELEASE_FREQ / sr);
@@ -1215,38 +1236,37 @@ public:
             compressed = compressed + k2 * h2;
         }
 
-        // Stage 3: Sidechain signal selection
-        // Feedback topology: sidechain taps compressed output (one-sample delay)
+        // Stage 3+4: Sidechain signal selection + frequency shaping
         float scSignal;
         if (useExternalSidechain)
-            scSignal = sidechainSignal;
-        else
-            scSignal = compressed;
-
-        // Stage 4: Sidechain frequency shaping (compress vs limit)
-        // Compress mode: R37 emphasis makes sidechain more HF-sensitive →
-        // output has warmer, bass-heavy character (real LA-2A behavior).
-        // Limit mode: flat/full-range sidechain (no filter)
-        if (!limitMode)
         {
-            // R37 emphasis: HPF in sidechain makes compressor more sensitive to HF
-            // More HF compression → output sounds warmer/bass-heavy (real LA-2A behavior)
-            det.emphasisFilterState += emphasisCoeff * (scSignal - det.emphasisFilterState);
-            float hfEmphasis = scSignal - det.emphasisFilterState;
-            scSignal = scSignal + hfEmphasis * Constants::COMPRESS_HF_EMPHASIS;
+            scSignal = sidechainSignal;
+        }
+        else if (!limitMode)
+        {
+            // Compress: pure feedback — sidechain taps compressed output
+            scSignal = compressed;
+            // Apply R37 shelf filter
+            float shelfOut = shelfB0 * scSignal + shelfB1 * det.shelfX1 - shelfA1 * det.shelfY1;
+            det.shelfX1 = scSignal;
+            det.shelfY1 = shelfOut;
+            scSignal = shelfOut;
+        }
+        else
+        {
+            // Limit: partially feed-forward tap — blend input + output for tighter ratio
+            scSignal = input * 0.5f + compressed * 0.5f;
         }
 
         // Stage 5: Peak Reduction = sidechain amplifier gain
         // This is the primary compression control — NOT a threshold
-        // Limit mode drives the sidechain harder for tighter ratio
         // Cubic taper: PR=0 → gain=0 (no compression), PR=100 → gain=MAX
         // Models the real LA-2A pot where low settings barely reach the T4B
         float prNorm = peakReduction * 0.01f;
         float peakReductionGain = prNorm * prNorm * prNorm * Constants::PEAK_REDUCTION_MAX_SC_GAIN;
-        float modeGainBoost = limitMode ? Constants::LIMIT_SC_GAIN_BOOST : 1.0f;
 
         // Stage 5b: 6AQ5 sidechain driver tube — soft-clips before the EL panel
-        float scDrive = std::abs(scSignal * peakReductionGain * modeGainBoost);
+        float scDrive = std::abs(scSignal * peakReductionGain);
 
         float effectiveDrive = std::max(0.0f, scDrive - Constants::SC_DRIVER_THRESHOLD);
 
@@ -1312,7 +1332,8 @@ private:
         float accumulatedCharge = 0.0f;    // Long-term charge for program dependency (0-1)
         float smoothedConductance = 0.0f; // Bandwidth-limited CdS conductance
         float t4bGain = 1.0f;             // Current gain from T4B cell (IS the envelope)
-        float emphasisFilterState = 0.0f;  // Compress mode sidechain LP filter state
+        float shelfX1 = 0.0f;  // R37 shelf filter
+        float shelfY1 = 0.0f;
         float scLevelSmoothed = 0.0f;     // Symmetric envelope smoother (removes 2f ripple)
         float t4bDcState = 0.0f;          // DC blocker for T4B even-harmonic distortion
     };
@@ -1473,7 +1494,7 @@ private:
     float attackCoeff = 0.0f;
     float fastReleaseCoeff = 0.0f;
     float phosphorDecayCoeff = 0.0f;
-    float emphasisCoeff = 0.0f;
+    float shelfB0 = 1.0f, shelfB1 = 0.0f, shelfA1 = 0.0f;
     float phosphorAttackCoeff = 0.0f;
     float condAttackCoeff = 0.0f;            // Asymmetric conductance smoothing: fast attack
     float condReleaseCoeff = 0.0f;           // Asymmetric conductance smoothing: slow release
@@ -1501,7 +1522,6 @@ public:
             detector.envelope = 1.0f;
             detector.prevOutput = 0.0f;
             detector.previousLevel = 0.0f;
-            detector.previousGR = 0.0f;
             detector.modulationPhase = 0.0f;
             detector.dcState = 0.0f;
             detector.prevSq = 0.0f;
@@ -1511,6 +1531,13 @@ public:
             detector.voltageSag = 0.0f;
             detector.sagCounter = 0;
             detector.hfChokeState = 0.0f;
+            detector.tiltState = 0.0f;
+        }
+
+        // 1176 sidechain tilt: ~3dB/octave via 1st-order HPF at 800Hz blended with original
+        {
+            float sr = static_cast<float>(sampleRate);
+            tiltCoeff = 1.0f - std::exp(-2.0f * 3.14159f * 800.0f / sr);
         }
 
         // Hardware emulation components (FET compressor style)
@@ -1537,6 +1564,8 @@ public:
         if (newSampleRate <= 0.0 || newSampleRate == sampleRate)
             return;
         sampleRate = newSampleRate;
+        float sr = static_cast<float>(sampleRate);
+        tiltCoeff = 1.0f - std::exp(-2.0f * 3.14159f * 800.0f / sr);
         int numCh = static_cast<int>(detectors.size());
         inputTransformer.prepare(sampleRate, numCh);
         inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getFETCompressor().inputTransformer);
@@ -1629,22 +1658,19 @@ public:
             saturated = x + k2 * h2 + k3 * h3;
         }
 
-        // ─── HF choke in feedback path (refinement #4) ───
+        // ─── HF choke for sidechain detection (FET junction capacitance) ───
         // As GR increases, the FET's junction capacitance rises, creating a
-        // low-pass effect in the feedback loop. Corner slides from 20kHz → 15kHz.
-        if (ratioIndex == 4)
+        // low-pass effect that reduces HF sensitivity in the sidechain.
+        // This only affects detection — the audio path stays unfiltered.
+        float chokedSignal = saturated;
         {
             float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
             float grNorm = juce::jlimit(0.0f, 1.0f, grDb / 20.0f);
-
-            // Corner frequency: 20kHz at 0dB GR, 15kHz at 20dB GR
-            float cornerHz = 20000.0f - grNorm * 5000.0f;
+            float cornerHz = 20000.0f - grNorm * 2000.0f;
             float w = 6.2831853f * cornerHz / sr;
             float lpCoeff = 1.0f - std::exp(-w);
-
-            // 1st-order one-pole LPF on the saturated signal (feedback path only)
             detector.hfChokeState += lpCoeff * (saturated - detector.hfChokeState);
-            saturated = detector.hfChokeState;
+            chokedSignal = detector.hfChokeState;
         }
 
         // ─── Feedback detection ───
@@ -1656,7 +1682,7 @@ public:
         else if (ratioIndex == 4)
         {
             // ABI: feedback detection with peak-hold capacitor and saturation ceiling.
-            float instantLevel = std::abs(saturated);
+            float instantLevel = std::abs(chokedSignal);
 
             // Saturation ceiling: soft-clip detection at ~1.5x threshold
             float detCeiling = threshold * 1.5f;
@@ -1674,8 +1700,13 @@ public:
         }
         else
         {
-            detectionLevel = std::abs(saturated);
+            detectionLevel = std::abs(chokedSignal);
         }
+
+        // 1176 sidechain tilt: 3dB/octave HF emphasis
+        detector.tiltState += tiltCoeff * (detectionLevel - detector.tiltState);
+        float hfContent = detectionLevel - detector.tiltState;
+        detectionLevel = std::max(detectionLevel + hfContent * 0.35f, 0.0f);
 
         // ─── Gain reduction calculation ───
         float reduction = 0.0f;
@@ -1835,12 +1866,6 @@ public:
 
         detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
 
-        // Envelope hysteresis
-        float currentGR = 1.0f - detector.envelope;
-        currentGR = 0.85f * currentGR + 0.15f * detector.previousGR;
-        detector.previousGR = currentGR;
-        detector.envelope = 1.0f - currentGR;
-
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
 
@@ -1906,7 +1931,6 @@ private:
         float envelope = 1.0f;
         float prevOutput = 0.0f;
         float previousLevel = 0.0f; // For program-dependent behavior
-        float previousGR = 0.0f;    // For envelope hysteresis
         float modulationPhase = 0.0f;
         float modulationRate = 4.5f;
         float dcState = 0.0f;         // Highpass state for H2 DC blocker
@@ -1918,11 +1942,13 @@ private:
         float voltageSag = 0.0f;     // PSU sag envelope (0 = no sag, 1 = full sag)
         int sagCounter = 0;          // Samples sustained above 15dB GR
         float hfChokeState = 0.0f;   // 1-pole LPF state for HF choke in feedback
+        float tiltState = 0.0f;      // 1176 sidechain tilt filter state
     };
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;  // Set by prepare() from DAW
     float hardwareGainCompensation = 1.0f;
+    float tiltCoeff = 0.0f;
 
     // Hardware emulation components (FET compressor style)
     HardwareEmulation::TransformerEmulation inputTransformer;
@@ -2001,7 +2027,6 @@ public:
             detector.envelope = 1.0f;
             detector.rmsBuffer = 0.0f;
             detector.previousReduction = 0.0f;
-            detector.controlVoltage = 0.0f;
             detector.signalEnvelope = 0.0f;
             detector.envelopeRate = 0.0f;
             detector.previousInput = 0.0f;
@@ -2040,17 +2065,14 @@ public:
         detector.envelopeRate = detector.envelopeRate * 0.95f + signalDelta * 0.05f;
         detector.previousInput = detectionLevel;
 
-        // VCA True RMS detection with ADAPTIVE window (5-15ms)
-        // Transient material (drums): shorter window (5ms) for punch
-        // Sustained material (vocals, bass): longer window (15ms) for smoothness
-
-        // Detect transients: rapid level changes indicate percussive content
-        float transientFactor = juce::jlimit(0.0f, 1.0f, detector.envelopeRate * 10.0f);
-
-        // Adaptive RMS window: 5ms (transient) to 15ms (sustained)
-        float adaptiveRmsTime = 0.015f - (transientFactor * 0.010f); // 15ms to 5ms
-
-        const float rmsAlpha = std::exp(-1.0f / (juce::jmax(Constants::EPSILON, adaptiveRmsTime * static_cast<float>(sampleRate))));
+        // dbx 160: Level-dependent RMS time constant
+        // Real dbx 202XT VCA junction impedance decreases with level
+        // Small-signal: ~35ms; loud signals: ~5ms
+        float levelDb = juce::Decibels::gainToDecibels(juce::jmax(detectionLevel, 0.0001f));
+        float levelAboveRef = juce::jlimit(0.0f, 30.0f, levelDb + 20.0f); // 0-30dB above -20dBFS
+        float levelFactor = levelAboveRef / 30.0f; // 0 = quiet, 1 = loud
+        float rmsTimeMs = 0.005f + 0.030f * std::exp(-3.0f * levelFactor);
+        const float rmsAlpha = std::exp(-1.0f / (juce::jmax(0.0001f, rmsTimeMs) * static_cast<float>(sampleRate)));
         detector.rmsBuffer = detector.rmsBuffer * rmsAlpha + detectionLevel * detectionLevel * (1.0f - rmsAlpha);
         float rmsLevel = std::sqrt(detector.rmsBuffer);
         
@@ -2156,10 +2178,6 @@ public:
         float blendFactor = juce::jlimit(0.0f, 1.0f, (userReleaseTime - 0.01f) / 0.5f); // 10ms-510ms transition
         releaseTime = programReleaseTime * (1.0f - blendFactor) + userReleaseTime * blendFactor;
         
-        // Classic VCA control voltage generation (-6mV/dB logarithmic curve)
-        // This is key to the VCA sound - logarithmic VCA response
-        detector.controlVoltage = reduction * Constants::VCA_CONTROL_VOLTAGE_SCALE; // -6mV/dB characteristic
-        
         // VCA feed-forward envelope following with complete stability
         // Feed-forward design is inherently stable even at infinite compression ratios
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
@@ -2238,8 +2256,7 @@ public:
         float processed = compressed;
         float absLevel = std::abs(processed);
         
-        // Calculate actual signal level in dB for harmonic generation
-        float levelDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, absLevel));
+        float harmonicLevelDb = juce::Decibels::gainToDecibels(juce::jmax(0.0001f, absLevel));
         
         // VCA harmonic distortion - cleaner than tube/FET types but not silent
         if (absLevel > 0.01f)  // Process non-silence
@@ -2262,7 +2279,7 @@ public:
 
             // Compression-dependent harmonics ADD to circuit base
             // Manual spec: 0.75% 2nd, 0.5% 3rd at infinite compression at +4dBm
-            if (levelDb > -30.0f && reduction > 2.0f)
+            if (harmonicLevelDb > -30.0f && reduction > 2.0f)
             {
                 float compressionFactor = juce::jmin(1.0f, reduction / 30.0f);
 
@@ -2324,7 +2341,6 @@ private:
         float envelope = 1.0f;
         float rmsBuffer = 0.0f;         // True RMS detection buffer
         float previousReduction = 0.0f; // For program-dependent behavior
-        float controlVoltage = 0.0f;    // VCA control voltage (-6mV/dB)
         float signalEnvelope = 0.0f;    // Signal envelope for program-dependent timing
         float envelopeRate = 0.0f;      // Rate of envelope change
         float previousInput = 0.0f;     // Previous input for envelope tracking
@@ -2357,8 +2373,6 @@ public:
         detectors.clear();
         detectors.resize(numChannels);
 
-        // Initialize sidechain filters with actual block size
-        juce::dsp::ProcessSpec spec{sampleRate, static_cast<juce::uint32>(blockSize), static_cast<juce::uint32>(1)};
         for (int ch = 0; ch < numChannels; ++ch)
         {
             auto& detector = detectors[ch];
@@ -2367,22 +2381,9 @@ public:
             detector.previousLevel = 0.0f;
             detector.hpState = 0.0f;
             detector.prevInput = 0.0f;
-
-            // Create the filter chain
-            detector.sidechainFilter = std::make_unique<juce::dsp::ProcessorChain<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Filter<float>>>();
-
-            // Bus Compressor sidechain filter
-            // Highpass at 60Hz to prevent pumping from low frequencies
-            detector.sidechainFilter->get<0>().coefficients =
-                juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 60.0f, 0.707f);
-            // No lowpass in original Bus - full bandwidth
-            detector.sidechainFilter->get<1>().coefficients =
-                juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 20000.0f, 0.707f);
-
-            // Then prepare and set bypass states
-            detector.sidechainFilter->prepare(spec);
-            detector.sidechainFilter->setBypassed<0>(false);
-            detector.sidechainFilter->setBypassed<1>(false);
+            detector.hpState2 = 0.0f;
+            detector.prevInput2 = 0.0f;
+            detector.prevCompressed = 0.0f;
         }
 
         // Hardware emulation components (VCA bus compressor style)
@@ -2412,18 +2413,6 @@ public:
             return;
         sampleRate = newSampleRate;
 
-        // Update sidechain filter coefficients
-        for (auto& detector : detectors)
-        {
-            if (detector.sidechainFilter)
-            {
-                detector.sidechainFilter->get<0>().coefficients =
-                    juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 60.0f, 0.707f);
-                detector.sidechainFilter->get<1>().coefficients =
-                    juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 20000.0f, 0.707f);
-            }
-        }
-
         // Update transformer and convolution filter coefficients
         inputTransformer.prepare(sampleRate, static_cast<int>(detectors.size()));
         inputTransformer.setProfile(HardwareEmulation::HardwareProfiles::getConsoleBus().inputTransformer);
@@ -2451,7 +2440,7 @@ public:
         float transformedInput = inputTransformer.processSample(input, channel);
 
         // Bus Compressor quad VCA topology
-        // Uses parallel detection path with feed-forward design
+        // Uses parallel detection path with feedback design (sidechain taps compressed output)
 
         // Determine detection signal: use external sidechain if active, otherwise internal filter
         float detectionLevel;
@@ -2462,14 +2451,20 @@ public:
         }
         else
         {
-            // 60Hz 1st-order Butterworth HPF for sidechain (prevents LF pumping)
-            float sidechainInput = transformedInput;
+            // Feedback topology: detect from previous sample's compressed output
+            float sidechainInput = detector.prevCompressed;
+            // 60Hz 2nd-order (12dB/oct) Butterworth HPF for sidechain (prevents LF pumping)
             {
                 float sr = static_cast<float>(sampleRate);
                 float alpha = 1.0f / (1.0f + 6.2831853f * 60.0f / sr);
-                detector.hpState = alpha * (detector.hpState + transformedInput - detector.prevInput);
-                detector.prevInput = transformedInput;
-                sidechainInput = detector.hpState;
+                // First pole
+                detector.hpState = alpha * (detector.hpState + sidechainInput - detector.prevInput);
+                detector.prevInput = sidechainInput;
+                // Second pole (12dB/oct total)
+                float firstPoleOut = detector.hpState;
+                detector.hpState2 = alpha * (detector.hpState2 + firstPoleOut - detector.prevInput2);
+                detector.prevInput2 = firstPoleOut;
+                sidechainInput = detector.hpState2;
             }
             detectionLevel = std::abs(sidechainInput);
         }
@@ -2541,19 +2536,13 @@ public:
             detector.envelope = targetGain + (detector.envelope - targetGain) * releaseCoeff;
         }
         
-        // Envelope hysteresis: blend with previous gain reduction for Bus memory effect
-        // Bus circuitry has capacitance that creates slight "memory" in the envelope
-        float currentGR = 1.0f - detector.envelope;
-        currentGR = 0.9f * currentGR + 0.1f * detector.previousGR; // 10% memory for Bus smoothness
-        detector.previousGR = currentGR;
-        detector.envelope = 1.0f - currentGR;
-
         // NaN/Inf safety check
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
 
         // Apply the gain reduction envelope to the input signal
         float compressed = transformedInput * detector.envelope;
+        detector.prevCompressed = compressed;  // Store for feedback sidechain
 
         // Bus Compressor Output Stage - Subtle console saturation
         // Spec from compressor_specs.json: < 0.3% THD
@@ -2611,10 +2600,11 @@ private:
         float envelope = 1.0f;
         float rms = 0.0f;
         float previousLevel = 0.0f; // For auto-release tracking
-        float hpState = 0.0f;       // Simple highpass filter state
-        float prevInput = 0.0f;     // Previous input for filter
-        float previousGR = 0.0f;    // For envelope hysteresis
-        std::unique_ptr<juce::dsp::ProcessorChain<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Filter<float>>> sidechainFilter;
+        float hpState = 0.0f;       // Simple highpass filter state (1st pole)
+        float prevInput = 0.0f;     // Previous input for filter (1st pole)
+        float hpState2 = 0.0f;      // Second pole state (12dB/oct total)
+        float prevInput2 = 0.0f;    // Previous input for second pole
+        float prevCompressed = 0.0f; // Feedback topology: previous compressed output
     };
 
     std::vector<Detector> detectors;
@@ -2694,13 +2684,28 @@ public:
         {
             detector.envelope = 1.0f;
             detector.previousLevel = 0.0f;
-            detector.previousGR = 0.0f;
             detector.modulationPhase = 0.0f;
             detector.dcState = 0.0f;
+            detector.prevSq = 0.0f;
             detector.peakHold = 0.0f;
             detector.transientCounter = 0;
             detector.releaseMemory = 0.0f;
+            detector.tiltState = 0.0f;
+            detector.hfChokeState = 0.0f;
         }
+
+        // 1176 sidechain tilt: ~3dB/octave via 1st-order HPF at 800Hz blended with original
+        {
+            float sr = static_cast<float>(sampleRate);
+            tiltCoeff = 1.0f - std::exp(-2.0f * 3.14159f * 800.0f / sr);
+        }
+
+        // Studio FET transformer emulation (WA76/MC77 style)
+        auto studioFETProfile = HardwareEmulation::HardwareProfiles::getStudioFET();
+        inputTransformer.prepare(sampleRate, numChannels);
+        inputTransformer.setProfile(studioFETProfile.inputTransformer);
+        outputTransformer.prepare(sampleRate, numChannels);
+        outputTransformer.setProfile(studioFETProfile.outputTransformer);
     }
 
     float process(float input, int channel, float inputGain, float outputGain,
@@ -2712,9 +2717,12 @@ public:
         auto& detector = detectors[static_cast<size_t>(channel)];
         float sr = static_cast<float>(sampleRate);
 
+        // Hardware emulation: Input transformer (WA76/MC77 style)
+        float transformedInput = inputTransformer.processSample(input, channel);
+
         // Apply input gain (drives signal into fixed threshold)
         float inputGainLin = juce::Decibels::decibelsToGain(inputGain);
-        float gained = input * inputGainLin;
+        float gained = transformedInput * inputGainLin;
 
         // Fixed threshold at -10dBFS (FET spec)
         constexpr float thresholdDb = Constants::STUDIO_FET_THRESHOLD_DB;
@@ -2737,6 +2745,20 @@ public:
         // Apply previous envelope to get compressed signal for feedback detection
         float compressed = gained * detector.envelope;
 
+        // HF choke in feedback path: FET junction capacitance LPF (all modes)
+        // As GR increases, FET's junction capacitance rises, creating a low-pass
+        // effect. Corner slides from 20kHz → 18kHz. Applied before detector reads level.
+        float feedbackSignal = compressed;
+        {
+            float grDb = -juce::Decibels::gainToDecibels(detector.envelope + 0.001f);
+            float grNorm = juce::jlimit(0.0f, 1.0f, grDb / 20.0f);
+            float cornerHz = 20000.0f - grNorm * 2000.0f;
+            float w = 6.2831853f * cornerHz / sr;
+            float lpCoeff = 1.0f - std::exp(-w);
+            detector.hfChokeState += lpCoeff * (compressed - detector.hfChokeState);
+            feedbackSignal = detector.hfChokeState;
+        }
+
         float detectionLevel;
         if (useExternalSidechain)
         {
@@ -2747,7 +2769,7 @@ public:
         {
             // ABI: feedback detection with peak-hold capacitor and saturation ceiling
             // (matches Vintage FET fix — prevents over-detection on transients)
-            float instantLevel = std::abs(compressed);
+            float instantLevel = std::abs(feedbackSignal);
 
             // Saturation ceiling: soft-clip detection at ~1.5x threshold
             float detCeiling = threshold * 1.5f;
@@ -2766,8 +2788,13 @@ public:
         else
         {
             // Feedback detection from compressed output (1176 topology)
-            detectionLevel = std::abs(compressed);
+            detectionLevel = std::abs(feedbackSignal);
         }
+
+        // 1176 sidechain tilt: 3dB/octave HF emphasis
+        detector.tiltState += tiltCoeff * (detectionLevel - detector.tiltState);
+        float hfContent = detectionLevel - detector.tiltState;
+        detectionLevel = std::max(detectionLevel + hfContent * 0.35f, 0.0f);
 
         // Calculate gain reduction
         float reduction = 0.0f;
@@ -2895,12 +2922,6 @@ public:
         float maxEnvelope = isAllButtons ? 1.12f : 1.0f;
         detector.envelope = juce::jlimit(0.001f, maxEnvelope, detector.envelope);
 
-        // Envelope hysteresis
-        float currentGR = 1.0f - detector.envelope;
-        currentGR = 0.85f * currentGR + 0.15f * detector.previousGR;
-        detector.previousGR = currentGR;
-        detector.envelope = 1.0f - currentGR;
-
         if (std::isnan(detector.envelope) || std::isinf(detector.envelope))
             detector.envelope = 1.0f;
 
@@ -2929,11 +2950,20 @@ public:
 
             float x = output;
             float sq = x * x;
-            detector.dcState = detector.dcState * 0.9999f + sq * 0.0001f;
-            float h2 = sq - detector.dcState;
+
+            // DC-blocked square term: first-order highpass at ~10Hz (matches Vintage FET)
+            float alpha = 1.0f / (1.0f + 6.2831853f * 10.0f / sr);
+            float dcFiltered = alpha * (detector.dcState + sq - detector.prevSq);
+            detector.dcState = dcFiltered;
+            detector.prevSq = sq;
+            float h2 = dcFiltered;
+
             float h3 = x * x * x;
             output = x + k2 * h2 + k3 * h3;
         }
+
+        // Hardware emulation: Output transformer (WA76/MC77 style)
+        output = outputTransformer.processSample(output, channel);
 
         // Apply output gain
         float finalOutput = output * juce::Decibels::decibelsToGain(outputGain);
@@ -2952,24 +2982,41 @@ private:
     {
         float envelope = 1.0f;
         float previousLevel = 0.0f;
-        float previousGR = 0.0f;
         // ABI control loop instability
         float modulationPhase = 0.0f;
         float modulationRate = 4.5f;
-        float dcState = 0.0f;         // DC blocker for FET square-law saturation
+        float dcState = 0.0f;         // Highpass state for H2 DC blocker
+        float prevSq = 0.0f;         // Previous x² for H2 DC blocker
         float peakHold = 0.0f;        // Peak-hold envelope for ABI detection
         int transientCounter = 0;     // ABI: counts samples since last transient onset
         float releaseMemory = 0.0f;   // Capacitor discharge accumulator (release lengthening)
+        float tiltState = 0.0f;      // 1176 sidechain tilt filter state
+        float hfChokeState = 0.0f;   // HF choke: FET junction capacitance LPF
     };
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;
+    float tiltCoeff = 0.0f;
+
+    // Hardware emulation components (Studio FET transformer style)
+    HardwareEmulation::TransformerEmulation inputTransformer;
+    HardwareEmulation::TransformerEmulation outputTransformer;
 
 public:
     void updateSampleRate(double newSampleRate)
     {
         if (newSampleRate > 0.0 && newSampleRate != sampleRate)
+        {
             sampleRate = newSampleRate;
+            float sr = static_cast<float>(sampleRate);
+            tiltCoeff = 1.0f - std::exp(-2.0f * 3.14159f * 800.0f / sr);
+            int numCh = static_cast<int>(detectors.size());
+            auto studioFETProfile = HardwareEmulation::HardwareProfiles::getStudioFET();
+            inputTransformer.prepare(sampleRate, numCh);
+            inputTransformer.setProfile(studioFETProfile.inputTransformer);
+            outputTransformer.prepare(sampleRate, numCh);
+            outputTransformer.setProfile(studioFETProfile.outputTransformer);
+        }
     }
 };
 
@@ -2986,7 +3033,16 @@ public:
             detector.envelope = 1.0f;
             detector.rms = 0.0f;
             detector.previousGR = 0.0f;
+            detector.previousLevel = 0.0f;
+            detector.smoothedEnvelope = 1.0f;
         }
+
+        // Studio VCA transformer emulation (API 2500 / Neve 33609 style)
+        auto studioVCAProfile = HardwareEmulation::HardwareProfiles::getStudioVCA();
+        inputTransformer.prepare(sampleRate, numChannels);
+        inputTransformer.setProfile(studioVCAProfile.inputTransformer);
+        outputTransformer.prepare(sampleRate, numChannels);
+        outputTransformer.setProfile(studioVCAProfile.outputTransformer);
     }
 
     float process(float input, int channel, float thresholdDb, float ratio,
@@ -2996,6 +3052,9 @@ public:
             return input;
 
         auto& detector = detectors[static_cast<size_t>(channel)];
+
+        // Hardware emulation: Input transformer (API 2500 / Neve 33609 style)
+        float transformedInput = inputTransformer.processSample(input, channel);
 
         // Studio VCA uses RMS detection
         float squared = sidechainInput * sidechainInput;
@@ -3034,6 +3093,17 @@ public:
         float attackTime = juce::jlimit(0.0003f, 0.075f, attackMs / 1000.0f);
         float releaseTime = juce::jlimit(0.1f, 4.0f, releaseMs / 1000.0f);
 
+        // Program-dependent auto-release
+        float signalDelta = std::abs(detectionLevel - detector.previousLevel);
+        detector.previousLevel = detectionLevel;
+        float transientness = juce::jlimit(0.0f, 1.0f, signalDelta * 15.0f);
+        // Transients: 50% faster release; sustained compression: 30% slower
+        float releaseScale = 1.0f - transientness * 0.5f;
+        float compressionDepth = juce::jlimit(0.0f, 1.0f, (1.0f - detector.envelope) * 5.0f);
+        releaseScale *= (1.0f + compressionDepth * 0.3f * (1.0f - transientness));
+
+        releaseTime *= releaseScale;
+
         float targetGain = juce::Decibels::decibelsToGain(-reduction);
         float attackCoeff = std::exp(-1.0f / (attackTime * static_cast<float>(sampleRate)));
         float releaseCoeff = std::exp(-1.0f / (releaseTime * static_cast<float>(sampleRate)));
@@ -3045,8 +3115,12 @@ public:
 
         detector.envelope = juce::jlimit(0.001f, 1.0f, detector.envelope);
 
+        // 2ms envelope smoothing to prevent zipper noise
+        float smoothCoeff = std::exp(-1.0f / (0.002f * static_cast<float>(sampleRate)));
+        detector.smoothedEnvelope = smoothCoeff * detector.smoothedEnvelope + (1.0f - smoothCoeff) * detector.envelope;
+
         // Apply compression
-        float compressed = input * detector.envelope;
+        float compressed = transformedInput * detector.smoothedEnvelope;
 
         // Studio VCA is very clean - minimal harmonics
         float absLevel = std::abs(compressed);
@@ -3058,8 +3132,11 @@ public:
             compressed = (compressed > 0.0f ? 1.0f : -1.0f) * softClip;
         }
 
+        // Hardware emulation: Output transformer (API 2500 / Neve 33609 style)
+        float output = outputTransformer.processSample(compressed, channel);
+
         // Apply output gain
-        float output = compressed * juce::Decibels::decibelsToGain(outputGain);
+        output *= juce::Decibels::decibelsToGain(outputGain);
         return juce::jlimit(-Constants::OUTPUT_HARD_LIMIT, Constants::OUTPUT_HARD_LIMIT, output);
     }
 
@@ -3076,16 +3153,27 @@ private:
         float envelope = 1.0f;
         float rms = 0.0f;
         float previousGR = 0.0f;
+        float previousLevel = 0.0f;
+        float smoothedEnvelope = 1.0f;
     };
 
     std::vector<Detector> detectors;
     double sampleRate = 0.0;
+    HardwareEmulation::TransformerEmulation inputTransformer;
+    HardwareEmulation::TransformerEmulation outputTransformer;
 
 public:
     void updateSampleRate(double newSampleRate)
     {
         if (newSampleRate > 0.0 && newSampleRate != sampleRate)
+        {
             sampleRate = newSampleRate;
+            auto studioVCAProfile = HardwareEmulation::HardwareProfiles::getStudioVCA();
+            inputTransformer.prepare(sampleRate, static_cast<int>(detectors.size()));
+            inputTransformer.setProfile(studioVCAProfile.inputTransformer);
+            outputTransformer.prepare(sampleRate, static_cast<int>(detectors.size()));
+            outputTransformer.setProfile(studioVCAProfile.outputTransformer);
+        }
     }
 };
 
@@ -3379,6 +3467,15 @@ public:
         // Recalculate lookahead for new rate (buffer was preallocated for 4x max OS)
         int newMax = static_cast<int>(std::ceil((LookaheadBuffer::MAX_LOOKAHEAD_MS / 1000.0) * sampleRate));
         maxLookaheadSamples = juce::jmin(newMax, lookaheadBuffer.getNumSamples());
+
+        // Reset write positions to avoid stale/out-of-range indices after OS change
+        for (auto& wp : lookaheadWritePos)
+        {
+            if (maxLookaheadSamples > 0)
+                wp = wp % maxLookaheadSamples;
+            else
+                wp = 0;
+        }
     }
 };
 
@@ -3797,6 +3894,8 @@ private:
             if (hasExternalSidechain && sidechainBuffer != nullptr && sidechainBuffer->getNumChannels() > 0)
                 scData = sidechainBuffer->getReadPointer(juce::jmin(ch, sidechainBuffer->getNumChannels() - 1));
 
+            float makeupGain = juce::Decibels::decibelsToGain(makeupDb);
+
             for (int i = 0; i < numSamples; ++i)
             {
                 float input = data[i];
@@ -3807,12 +3906,23 @@ private:
                 // Convert to dB
                 float inputDb = juce::Decibels::gainToDecibels(juce::jmax(absInput, 0.00001f));
 
-                // Calculate gain reduction
+                // Calculate gain reduction with 6dB soft knee
                 float reductionDb = 0.0f;
-                if (inputDb > thresholdDb)
+                constexpr float kneeDb = 6.0f;
+                float kneeStart = thresholdDb - kneeDb / 2.0f;
+                if (inputDb > kneeStart)
                 {
-                    float overDb = inputDb - thresholdDb;
-                    reductionDb = overDb * (1.0f - 1.0f / ratio);
+                    if (inputDb < thresholdDb + kneeDb / 2.0f)
+                    {
+                        // Soft knee region
+                        float x = inputDb - kneeStart;
+                        reductionDb = (1.0f - 1.0f / ratio) * (x * x) / (2.0f * kneeDb);
+                    }
+                    else
+                    {
+                        float overDb = inputDb - thresholdDb;
+                        reductionDb = overDb * (1.0f - 1.0f / ratio);
+                    }
                 }
 
                 // Convert to gain
@@ -3829,7 +3939,6 @@ private:
                 if (envelope < 1e-7f) envelope = 1e-8f;  // Denormal flush
 
                 // Apply compression and makeup gain
-                float makeupGain = juce::Decibels::decibelsToGain(makeupDb);
                 data[i] = input * envelope * makeupGain;
 
                 // Track GR for metering
@@ -4176,7 +4285,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
     const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
     const juce::String bandLabels[] = {"Low", "Low-Mid", "High-Mid", "High"};
 
-    for (int band = 0; band < 4; ++band)
+    for (int band = 0; band < kNumMultibandBands; ++band)
     {
         const juce::String& name = bandNames[band];
         const juce::String& label = bandLabels[band];
@@ -5158,10 +5267,8 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             float leftLevel = std::abs(leftSCFiltered[i]);
             float rightLevel = std::abs(rightSCFiltered[i]);
 
-            // Bus mode: average L+R (SSL G-Bus behavior); other modes: max(L,R)
-            float linkedLevel = (mode == CompressorMode::Bus)
-                ? (leftLevel + rightLevel) * 0.5f
-                : juce::jmax(leftLevel, rightLevel);
+            // max(L,R) for all modes (original SSL 4000 behavior)
+            float linkedLevel = juce::jmax(leftLevel, rightLevel);
 
             // Blend independent and linked based on stereoLinkAmount
             leftSC[i] = leftLevel * (1.0f - stereoLinkAmount) + linkedLevel * stereoLinkAmount;
@@ -5273,11 +5380,14 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         multibandCompressor->updateCrossoverFrequencies(xover1, xover2, xover3);
 
         // Read per-band parameters
+        constexpr int kBands = MultibandCompressor::NUM_BANDS;
+        static_assert(kBands == kNumMultibandBands,
+                      "Band-count constants must match across parameter and DSP paths.");
         const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
-        std::array<float, 4> thresholds, ratios, attacks, releases, makeups;
-        std::array<bool, 4> bypasses, solos;
+        std::array<float, kBands> thresholds, ratios, attacks, releases, makeups;
+        std::array<bool, kBands> bypasses, solos;
 
-        for (int band = 0; band < 4; ++band)
+        for (int band = 0; band < kBands; ++band)
         {
             const juce::String& name = bandNames[band];
             auto* thresh = parameters.getRawParameterValue("mb_" + name + "_threshold");
@@ -5303,7 +5413,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                                           &filteredSidechain, hasExternalSidechain);
 
         // Update per-band GR meters for UI
-        for (int band = 0; band < kNumMultibandBands; ++band)
+        for (int band = 0; band < kBands; ++band)
         {
             bandGainReduction[band].store(multibandCompressor->getBandGainReduction(band),
                                           std::memory_order_relaxed);
@@ -5747,6 +5857,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 float autoGainDb = -avgGrDb;
                 if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
                     autoGainDb -= cachedParams[0];  // Compensate for input gain knob
+                // Opto: tube harmonics add energy proportional to GR that autogain doesn't track
+                if (mode == CompressorMode::Opto)
+                    autoGainDb -= std::min(1.5f, std::abs(avgGrDb) * 0.25f);
                 autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
                 smoothedAutoMakeupGain.setCurrentAndTargetValue(
                     juce::Decibels::decibelsToGain(autoGainDb));
@@ -5763,6 +5876,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             // When user turns input down, auto-gain should restore the original level
             if (mode == CompressorMode::FET || mode == CompressorMode::StudioFET)
                 autoGainDb -= cachedParams[0];  // cachedParams[0] = fet_input parameter
+
+            // Opto: tube harmonics add energy proportional to GR that autogain doesn't track
+            if (mode == CompressorMode::Opto)
+                autoGainDb -= std::min(1.5f, std::abs(smoothedGrDb) * 0.25f);
 
             autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
             targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
