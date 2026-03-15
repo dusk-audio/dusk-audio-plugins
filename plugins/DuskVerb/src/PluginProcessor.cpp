@@ -69,7 +69,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "width", 1 }, "Width",
-        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+        juce::NormalisableRange<float> (0.0f, 1.5f), 1.0f));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "freeze", 1 }, "Freeze", false));
@@ -302,7 +302,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
         float diffVal = diffusionSmooth_.skip (blockSize);
         engine_.setDiffusion       (diffVal);
-        engine_.setOutputDiffusion (diffVal * 0.6f);
+        engine_.setOutputDiffusion (diffVal * 0.85f);
 
         engine_.setModDepth        (modDepthSmooth_.skip (blockSize));
         engine_.setModRate         (modRateSmooth_.skip (blockSize));
@@ -359,7 +359,13 @@ std::unique_ptr<juce::XmlElement> DuskVerbProcessor::getStateXML()
 void DuskVerbProcessor::setStateXML (const juce::XmlElement& xml)
 {
     if (xml.hasTagName (parameters.state.getType()))
+    {
         parameters.replaceState (juce::ValueTree::fromXml (xml));
+
+        // Restore per-preset gain trim from saved state
+        float trim = static_cast<float> (parameters.state.getProperty ("gainTrim", 0.0f));
+        engine_.setGainTrim (trim);
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

@@ -32,7 +32,7 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     modeSelector->addItem("Vintage Opto", 1);
     modeSelector->addItem("Vintage FET", 2);
     modeSelector->addItem("Classic VCA", 3);
-    modeSelector->addItem("Bus Compressor", 4);
+    modeSelector->addItem("Vintage VCA (Bus)", 4);
     modeSelector->addItem("Studio FET", 5);
     modeSelector->addItem("Studio VCA", 6);
     modeSelector->addItem("Digital", 7);
@@ -64,6 +64,36 @@ EnhancedCompressorEditor::EnhancedCompressorEditor(UniversalCompressor& p)
     };
     addAndMakeVisible(presetBox_);
     refreshPresetList();
+
+    // Restore preset selection from saved state
+    {
+        auto savedName = processor.getParameters().state.getProperty("presetName", "").toString();
+        if (savedName.isNotEmpty())
+        {
+            const auto& presets = CompressorPresets::getFactoryPresets();
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                if (presets[i].name == savedName)
+                {
+                    presetBox_.setSelectedId(static_cast<int>(i) + 2, juce::dontSendNotification);
+                    break;
+                }
+            }
+            if (presetBox_.getSelectedId() == 0 && userPresetManager_)
+            {
+                auto userPresets = userPresetManager_->loadUserPresets();
+                for (size_t i = 0; i < userPresets.size(); ++i)
+                {
+                    if (userPresets[i].name == savedName)
+                    {
+                        presetBox_.setSelectedId(static_cast<int>(1001 + i), juce::dontSendNotification);
+                        break;
+                    }
+                }
+            }
+        }
+        updateDeleteButtonVisibility();
+    }
 
     // Save preset button
     savePresetButton_.setButtonText("Save");
@@ -1786,7 +1816,11 @@ void EnhancedCompressorEditor::loadPreset(int index)
 {
     const auto& presets = CompressorPresets::getFactoryPresets();
     if (index >= 0 && index < static_cast<int>(presets.size()))
+    {
         CompressorPresets::applyPreset(processor.getParameters(), presets[static_cast<size_t>(index)]);
+        processor.getParameters().state.setProperty("presetName",
+            presets[static_cast<size_t>(index)].name, nullptr);
+    }
 }
 
 void EnhancedCompressorEditor::refreshPresetList()
@@ -1891,7 +1925,10 @@ void EnhancedCompressorEditor::loadUserPreset(const juce::String& name)
 
     auto state = userPresetManager_->loadUserPreset(name);
     if (state.isValid())
+    {
         processor.getParameters().replaceState(state);
+        processor.getParameters().state.setProperty("presetName", name, nullptr);
+    }
 }
 
 void EnhancedCompressorEditor::deleteUserPreset(const juce::String& name)

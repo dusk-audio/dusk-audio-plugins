@@ -191,13 +191,17 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP3_[i].mask = apBufSize - 1;
     }
 
-    // Reset feedback lowpass and shelf biquad state
-    std::memset (fbLPZ1_, 0, sizeof (fbLPZ1_));
-    std::memset (fbLPZ2_, 0, sizeof (fbLPZ2_));
-    std::memset (fbLPZ3_, 0, sizeof (fbLPZ3_));
-    std::memset (fbLPZ4_, 0, sizeof (fbLPZ4_));
-    std::memset (fbShelfZ1_, 0, sizeof (fbShelfZ1_));
-    std::memset (fbShelfZ2_, 0, sizeof (fbShelfZ2_));
+    // Anti-alias LP coefficient: ~17kHz at any sample rate
+    // At 44.1kHz: -3dB at 17kHz, -0.3dB at 12kHz (preserves air)
+    // After 50 iterations: -15dB at 17kHz (kills aliasing), -15dB at 20kHz
+    float antiAliasHz = std::min (17000.0f, static_cast<float> (sampleRate) * 0.45f);
+    antiAliasCoeff_ = std::exp (-kTwoPi * antiAliasHz / static_cast<float> (sampleRate));
+    std::memset (antiAliasState_, 0, sizeof (antiAliasState_));
+
+    // DC blocker coefficient and state reset
+    dcCoeff_ = 1.0f - (kTwoPi * 5.0f / static_cast<float> (sampleRate));
+    std::memset (dcX1_, 0, sizeof (dcX1_));
+    std::memset (dcY1_, 0, sizeof (dcY1_));
 
     // Randomize LFO starting phases so successive IR captures see different
     // modulation state (like VV's stochastic modulation). The evenly-spaced
@@ -378,15 +382,6 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             // When frozen, bypass damping (unity feedback) to sustain tail indefinitely
             float filtered = frozen_ ? feedback[ch] : dampFilter_[ch].process (feedback[ch]);
 
-            // Feedback shelf: cumulative HF cut per recirculation (in-loop darkening)
-            if (fbShelfEnabled_ && ! frozen_)
-            {
-                float in = filtered;
-                filtered = fbShelfB0_[ch] * in + fbShelfZ1_[ch];
-                fbShelfZ1_[ch] = fbShelfB1_[ch] * in - fbShelfA1_[ch] * filtered + fbShelfZ2_[ch];
-                fbShelfZ2_[ch] = fbShelfB2_[ch] * in - fbShelfA2_[ch] * filtered;
-            }
-
             // Structural HF damping: gentle air-absorption LP (per-algorithm)
             if (structHFEnabled_ && ! frozen_)
             {
@@ -404,27 +399,18 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 filtered = hp;
             }
 
-            // Feedback lowpass: Butterworth LP applied after damping.
-            // 2nd-order (12 dB/oct) or 4th-order L-R (24 dB/oct) per algorithm.
-            // Direct Form II Transposed for numerical stability.
-            if (fbLPEnabled_ && ! frozen_)
-            {
-                // Section 1 (always active) — per-channel coefficients
-                float in1 = filtered;
-                float out1 = fbLP_b0_[ch] * in1 + fbLPZ1_[ch];
-                fbLPZ1_[ch] = fbLP_b1_[ch] * in1 - fbLP_a1_[ch] * out1 + fbLPZ2_[ch];
-                fbLPZ2_[ch] = fbLP_b2_[ch] * in1 - fbLP_a2_[ch] * out1;
-                filtered = out1;
+            // Anti-alias LP: gentle first-order LP accumulates across iterations
+            // to suppress modulation-induced aliasing without killing first-pass air.
+            antiAliasState_[ch] = (1.0f - antiAliasCoeff_) * filtered
+                                + antiAliasCoeff_ * antiAliasState_[ch];
+            filtered = antiAliasState_[ch];
 
-                // Section 2 (per-channel coefficients, only when 4th-order enabled)
-                if (fbLP4thOrder_)
-                {
-                    float in2 = out1;
-                    float out2 = fbLP_b0_[ch] * in2 + fbLPZ3_[ch];
-                    fbLPZ3_[ch] = fbLP_b1_[ch] * in2 - fbLP_a1_[ch] * out2 + fbLPZ4_[ch];
-                    fbLPZ4_[ch] = fbLP_b2_[ch] * in2 - fbLP_a2_[ch] * out2;
-                    filtered = out2;
-                }
+            // DC blocker: first-order highpass (~5Hz) prevents DC accumulation in feedback loop
+            {
+                float dcOut = filtered - dcX1_[ch] + dcCoeff_ * dcY1_[ch];
+                dcX1_[ch] = filtered;
+                dcY1_[ch] = dcOut;
+                filtered = dcOut;
             }
 
             // Inject stereo input into delay lines.
@@ -458,8 +444,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // sizeCompensation_ = sqrt(sizeScale) normalizes steady-state energy
         // across sizes — shorter delays at small sizes pack more recirculations
         // per unit time, producing higher energy density without compensation.
-        outputL[i] = std::clamp (outL * kOutputScale * kOutputGain * kOutputBoost * sizeCompensation_, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (outR * kOutputScale * kOutputGain * kOutputBoost * sizeCompensation_, -kSafetyClip, kSafetyClip);
+        // Soft-clip output: fastTanh knee at ~±1.0, scaled by kSafetyClip for headroom.
+        // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
+        float rawL = outL * kOutputLevel * sizeCompensation_;
+        float rawR = outR * kOutputLevel * sizeCompensation_;
+        outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip;
+        outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip;
     }
 }
 
@@ -585,17 +575,6 @@ void FDNReverb::setInlineDiffusion (float coeff)
     inlineDiffCoeff3_ = 0.0f;
 }
 
-void FDNReverb::setFeedbackLP4thOrder (bool enable)
-{
-    fbLP4thOrder_ = enable;
-    // Reset section 2 state when disabling to prevent stale state
-    if (! enable)
-    {
-        std::memset (fbLPZ3_, 0, sizeof (fbLPZ3_));
-        std::memset (fbLPZ4_, 0, sizeof (fbLPZ4_));
-    }
-}
-
 void FDNReverb::setHadamardPerturbation (float amount)
 {
     if (amount <= 0.0f)
@@ -638,15 +617,75 @@ void FDNReverb::setHadamardPerturbation (float amount)
         }
     }
 
-    // Row-normalize to preserve approximate energy conservation (||row|| = 1)
-    for (int i = 0; i < N; ++i)
+    // Project to nearest orthogonal matrix via iterative polar decomposition
+    // (Newton's method): M_{k+1} = 0.5 * (M_k + M_k^{-T}).
+    // This guarantees a unitary mixing matrix, preventing energy drift in
+    // freeze mode. Row normalization alone doesn't ensure column orthogonality.
+    // For a 16x16 nearly-orthogonal matrix, 4 iterations suffice for convergence.
+    constexpr int kPolarIters = 4;
+
+    for (int iter = 0; iter < kPolarIters; ++iter)
     {
-        float sumSq = 0.0f;
-        for (int j = 0; j < N; ++j)
-            sumSq += perturbMatrix_[i][j] * perturbMatrix_[i][j];
-        float scale = 1.0f / std::sqrt (sumSq);
-        for (int j = 0; j < N; ++j)
-            perturbMatrix_[i][j] *= scale;
+        // Copy current matrix M
+        float M[N][N];
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                M[i][j] = perturbMatrix_[i][j];
+
+        // Compute M^{-1} via Gauss-Jordan elimination on [M | I]
+        float aug[N][2 * N];
+        for (int i = 0; i < N; ++i)
+        {
+            for (int j = 0; j < N; ++j)
+            {
+                aug[i][j] = M[i][j];
+                aug[i][j + N] = (i == j) ? 1.0f : 0.0f;
+            }
+        }
+
+        for (int col = 0; col < N; ++col)
+        {
+            // Partial pivoting for numerical stability
+            int pivotRow = col;
+            float pivotVal = std::fabs (aug[col][col]);
+            for (int row = col + 1; row < N; ++row)
+            {
+                float val = std::fabs (aug[row][col]);
+                if (val > pivotVal)
+                {
+                    pivotVal = val;
+                    pivotRow = row;
+                }
+            }
+            if (pivotRow != col)
+            {
+                for (int k = 0; k < 2 * N; ++k)
+                    std::swap (aug[col][k], aug[pivotRow][k]);
+            }
+
+            float diag = aug[col][col];
+            if (std::fabs (diag) < 1e-12f)
+                break; // Singular — bail out (shouldn't happen for perturbed Hadamard)
+
+            float invDiag = 1.0f / diag;
+            for (int k = 0; k < 2 * N; ++k)
+                aug[col][k] *= invDiag;
+
+            for (int row = 0; row < N; ++row)
+            {
+                if (row == col)
+                    continue;
+                float factor = aug[row][col];
+                for (int k = 0; k < 2 * N; ++k)
+                    aug[row][k] -= factor * aug[col][k];
+            }
+        }
+
+        // M^{-1} is now in aug[i][j+N]. We need M^{-T} (transpose of inverse).
+        // Compute M_{k+1} = 0.5 * (M + M^{-T})
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                perturbMatrix_[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
     }
 }
 
@@ -761,137 +800,12 @@ void FDNReverb::clearBuffers()
         inlineAP2_[i].clear();
         inlineAP3_[i].clear();
         dampFilter_[i].reset();
-        fbLPZ1_[i] = 0.0f;
-        fbLPZ2_[i] = 0.0f;
-        fbLPZ3_[i] = 0.0f;
-        fbLPZ4_[i] = 0.0f;
-        fbShelfZ1_[i] = 0.0f;
-        fbShelfZ2_[i] = 0.0f;
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
+        antiAliasState_[i] = 0.0f;
+        dcX1_[i] = 0.0f;
+        dcY1_[i] = 0.0f;
     }
-}
-
-void FDNReverb::setPerChannelLP (float strength, float exponent)
-{
-    perChannelLPStrength_ = strength;
-    perChannelLPExponent_ = exponent;
-}
-
-void FDNReverb::setPerChannelShelf (float strength)
-{
-    perChannelShelfStrength_ = strength;
-}
-
-void FDNReverb::setFeedbackLP (float hz)
-{
-    float sr = static_cast<float> (sampleRate_);
-
-    if (hz <= 0.0f || hz >= sr * 0.5f)
-    {
-        fbLPEnabled_ = false;
-        for (int ch = 0; ch < N; ++ch)
-        {
-            fbLP_b0_[ch] = 1.0f;
-            fbLP_b1_[ch] = fbLP_b2_[ch] = fbLP_a1_[ch] = fbLP_a2_[ch] = 0.0f;
-        }
-        return;
-    }
-
-    // Find max delay length for per-channel ratio computation
-    float maxDelay = 1.0f;
-    if (perChannelLPStrength_ > 0.0f)
-    {
-        for (int ch = 0; ch < N; ++ch)
-            maxDelay = std::max (maxDelay, delayLength_[ch]);
-    }
-
-    // Compute per-channel Butterworth lowpass coefficients (12 dB/oct).
-    for (int ch = 0; ch < N; ++ch)
-    {
-        float channelHz = hz;
-        if (perChannelLPStrength_ > 0.0f && maxDelay > 0.0f)
-        {
-            float ratio = delayLength_[ch] / maxDelay; // ~0.5 to 1.0
-            float scaledRatio = std::pow (ratio, perChannelLPExponent_);
-            // lerp(1.0, scaledRatio, strength): at strength=0 all get hz, at strength=1 short channels get lower hz
-            channelHz = hz * (1.0f - perChannelLPStrength_ * (1.0f - scaledRatio));
-        }
-
-        // Clamp to valid range
-        channelHz = std::min (channelHz, sr * 0.499f);
-        channelHz = std::max (channelHz, 20.0f);
-
-        float omega = kTwoPi * channelHz / sr;
-        float sn = std::sin (omega);
-        float cs = std::cos (omega);
-        float alpha = sn / 1.4142135623730951f; // sqrt(2) for Butterworth Q
-
-        float a0 = 1.0f + alpha;
-        fbLP_b0_[ch] = ((1.0f - cs) * 0.5f) / a0;
-        fbLP_b1_[ch] = (1.0f - cs) / a0;
-        fbLP_b2_[ch] = ((1.0f - cs) * 0.5f) / a0;
-        fbLP_a1_[ch] = (-2.0f * cs) / a0;
-        fbLP_a2_[ch] = (1.0f - alpha) / a0;
-    }
-
-    fbLPEnabled_ = true;
-}
-
-void FDNReverb::setFeedbackShelf (float freqHz, float gainDB, float Q)
-{
-    if (std::abs (gainDB) < 0.01f || freqHz <= 0.0f)
-    {
-        fbShelfEnabled_ = false;
-        for (int ch = 0; ch < N; ++ch)
-        {
-            fbShelfB0_[ch] = 1.0f;
-            fbShelfB1_[ch] = fbShelfB2_[ch] = fbShelfA1_[ch] = fbShelfA2_[ch] = 0.0f;
-        }
-        return;
-    }
-
-    // Find max delay length for per-channel ratio computation
-    float maxDelay = 1.0f;
-    if (perChannelShelfStrength_ > 0.0f)
-    {
-        for (int ch = 0; ch < N; ++ch)
-            maxDelay = std::max (maxDelay, delayLength_[ch]);
-    }
-
-    float sr = static_cast<float> (sampleRate_);
-
-    // Compute per-channel RBJ high shelf coefficients.
-    for (int ch = 0; ch < N; ++ch)
-    {
-        float channelGainDB = gainDB;
-        if (perChannelShelfStrength_ > 0.0f && maxDelay > 0.0f)
-        {
-            float ratio = delayLength_[ch] / maxDelay; // ~0.5 to 1.0
-            // Shorter channels (lower ratio) get more shelf cut (more negative dB)
-            channelGainDB = gainDB * (1.0f + perChannelShelfStrength_ * (1.0f - ratio));
-        }
-
-        float A = std::pow (10.0f, channelGainDB / 40.0f);
-        float omega = kTwoPi * freqHz / sr;
-        float sn = std::sin (omega);
-        float cs = std::cos (omega);
-        float alpha = sn / (2.0f * Q);
-        float sqA = 2.0f * std::sqrt (A) * alpha;
-
-        float a0 = (A + 1.0f) - (A - 1.0f) * cs + sqA;
-        fbShelfB0_[ch] = (A * ((A + 1.0f) + (A - 1.0f) * cs + sqA)) / a0;
-        fbShelfB1_[ch] = (-2.0f * A * ((A - 1.0f) + (A + 1.0f) * cs)) / a0;
-        fbShelfB2_[ch] = (A * ((A + 1.0f) + (A - 1.0f) * cs - sqA)) / a0;
-        fbShelfA1_[ch] = (2.0f * ((A - 1.0f) - (A + 1.0f) * cs)) / a0;
-        fbShelfA2_[ch] = ((A + 1.0f) - (A - 1.0f) * cs - sqA) / a0;
-    }
-
-    fbShelfEnabled_ = true;
-
-    // Reset state to prevent transient from old coefficients
-    std::memset (fbShelfZ1_, 0, sizeof (fbShelfZ1_));
-    std::memset (fbShelfZ2_, 0, sizeof (fbShelfZ2_));
 }
 
 // ---------------------------------------------------------------------------

@@ -3512,6 +3512,7 @@ void MultiQ::setCurrentProgram(int index)
     {
         // "Init" preset - reset to default flat EQ
         currentPresetIndex = 0;
+        parameters.state.setProperty("presetName", "Init", nullptr);
 
         // Reset all bands to default
         for (int i = 1; i <= 8; ++i)
@@ -3544,6 +3545,8 @@ void MultiQ::setCurrentProgram(int index)
     {
         currentPresetIndex = index;
         MultiQPresets::applyPreset(parameters, factoryPresets[static_cast<size_t>(presetIndex)]);
+        parameters.state.setProperty("presetName",
+            factoryPresets[static_cast<size_t>(presetIndex)].name, nullptr);
     }
 }
 
