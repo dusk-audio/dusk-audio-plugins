@@ -643,28 +643,120 @@ private:
         return static_cast<float>(numMag / (denMag + 1e-10));
     }
 
-    float calculateHPFGain(float freq, float cutoff, float slope) const
+    // Butterworth Q value for each second-order section of a cascaded filter
+    // Q_k = 1 / (2 * sin(pi * (2k+1) / (2*N))) where N = total order, k = stage index
+    static float getButterworthQ(int stageIndex, int totalOrder)
     {
-        if (freq >= cutoff) return 1.0f;
-
-        float ratio = freq / cutoff;
-        if (ratio >= 1.0f) return 1.0f;
-
-        float octavesBelow = std::log2(1.0f / ratio);
-        float attenuationDb = octavesBelow * slope;
-        return std::pow(10.0f, -attenuationDb / 20.0f);
+        float angle = juce::MathConstants<float>::pi * (2.0f * stageIndex + 1.0f) / (2.0f * totalOrder);
+        return 1.0f / (2.0f * std::sin(angle));
     }
 
+    // Exact cascaded Butterworth HPF magnitude using biquad coefficient evaluation
+    float calculateHPFGain(float freq, float cutoff, float slope) const
+    {
+        double sr = currentSampleRate.load(std::memory_order_acquire);
+        if (sr <= 0) sr = 44100.0;
+
+        int order = static_cast<int>(slope / 6.0f);
+        if (order < 1) order = 1;
+        if (order > 16) order = 16;
+
+        bool hasFirstOrder = (order % 2 != 0);
+        int numSecondOrder = order / 2;
+
+        double totalMag = 1.0;
+
+        // First-order HPF stage if odd order
+        if (hasFirstOrder)
+        {
+            float w0 = juce::MathConstants<float>::twoPi * cutoff / static_cast<float>(sr);
+            float cosw0 = std::cos(w0);
+            float sinw0 = std::sin(w0);
+            // True first-order HPF: single zero at DC (z=1)
+            float b0 = (1.0f + cosw0) / 2.0f;
+            float b1 = -b0;
+            float a0 = 1.0f + sinw0;
+            totalMag *= calculateBiquadMagnitude(freq, sr,
+                b0 / a0, b1 / a0, 0.0f, 1.0f, -cosw0 / a0, 0.0f);
+        }
+
+        // Cascaded second-order Butterworth HPF stages
+        for (int i = 0; i < numSecondOrder; ++i)
+        {
+            float stageQ = getButterworthQ(i, order);
+
+            // RBJ cookbook second-order HPF coefficients
+            float w0 = juce::MathConstants<float>::twoPi * cutoff / static_cast<float>(sr);
+            float cosw0 = std::cos(w0);
+            float sinw0 = std::sin(w0);
+            float alpha = sinw0 / (2.0f * stageQ);
+
+            float b0 = (1.0f + cosw0) / 2.0f;
+            float b1 = -(1.0f + cosw0);
+            float b2 = (1.0f + cosw0) / 2.0f;
+            float a0 = 1.0f + alpha;
+            float a1 = -2.0f * cosw0;
+            float a2 = 1.0f - alpha;
+
+            totalMag *= calculateBiquadMagnitude(freq, sr,
+                b0 / a0, b1 / a0, b2 / a0, 1.0f, a1 / a0, a2 / a0);
+        }
+
+        return static_cast<float>(totalMag);
+    }
+
+    // Exact cascaded Butterworth LPF magnitude using biquad coefficient evaluation
     float calculateLPFGain(float freq, float cutoff, float slope) const
     {
-        if (freq <= cutoff) return 1.0f;
+        double sr = currentSampleRate.load(std::memory_order_acquire);
+        if (sr <= 0) sr = 44100.0;
 
-        float ratio = freq / cutoff;
-        if (ratio <= 1.0f) return 1.0f;
+        int order = static_cast<int>(slope / 6.0f);
+        if (order < 1) order = 1;
+        if (order > 16) order = 16;
 
-        float octavesAbove = std::log2(ratio);
-        float attenuationDb = octavesAbove * slope;
-        return std::pow(10.0f, -attenuationDb / 20.0f);
+        bool hasFirstOrder = (order % 2 != 0);
+        int numSecondOrder = order / 2;
+
+        double totalMag = 1.0;
+
+        // First-order LPF stage if odd order
+        if (hasFirstOrder)
+        {
+            float w0 = juce::MathConstants<float>::twoPi * cutoff / static_cast<float>(sr);
+            float cosw0 = std::cos(w0);
+            float sinw0 = std::sin(w0);
+            // True first-order LPF: single zero at Nyquist (z=-1)
+            float b0 = (1.0f - cosw0) / 2.0f;
+            float b1 = b0;
+            float a0 = 1.0f + sinw0;
+            totalMag *= calculateBiquadMagnitude(freq, sr,
+                b0 / a0, b1 / a0, 0.0f, 1.0f, -cosw0 / a0, 0.0f);
+        }
+
+        // Cascaded second-order Butterworth LPF stages
+        for (int i = 0; i < numSecondOrder; ++i)
+        {
+            float stageQ = getButterworthQ(i, order);
+
+            // RBJ cookbook second-order LPF coefficients
+            float w0 = juce::MathConstants<float>::twoPi * cutoff / static_cast<float>(sr);
+            float cosw0 = std::cos(w0);
+            float sinw0 = std::sin(w0);
+            float alpha = sinw0 / (2.0f * stageQ);
+
+            float b0 = (1.0f - cosw0) / 2.0f;
+            float b1 = 1.0f - cosw0;
+            float b2 = (1.0f - cosw0) / 2.0f;
+            float a0 = 1.0f + alpha;
+            float a1 = -2.0f * cosw0;
+            float a2 = 1.0f - alpha;
+
+            totalMag *= calculateBiquadMagnitude(freq, sr,
+                b0 / a0, b1 / a0, b2 / a0, 1.0f, a1 / a0, a2 / a0);
+        }
+
+        return static_cast<float>(totalMag);
     }
 
     // Calculates exact shelf filter magnitude response using RBJ cookbook biquad coefficients

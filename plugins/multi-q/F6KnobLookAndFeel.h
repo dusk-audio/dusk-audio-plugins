@@ -56,8 +56,10 @@ public:
                          juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
-        // ===== LAYER 3: Value arc (orange) =====
-        if (isEnabled && sliderPos > 0.001f)
+        // ===== LAYER 3: Value arc (colored) =====
+        bool isBipolarCheck = slider.getMinimum() < 0 && slider.getMaximum() > 0;
+        bool shouldDrawArc = isEnabled && (isBipolarCheck ? std::abs(sliderPos - 0.5f) > 0.001f : sliderPos > 0.001f);
+        if (shouldDrawArc)
         {
             juce::Path valueArc;
 

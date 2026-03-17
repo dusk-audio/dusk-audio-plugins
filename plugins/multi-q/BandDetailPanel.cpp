@@ -8,6 +8,7 @@ static F6KnobLookAndFeel f6KnobLookAndFeel;
 BandDetailPanel::BandDetailPanel(MultiQ& p)
     : processor(p)
 {
+    setWantsKeyboardFocus(true);
     setupKnobs();
     setupMatchControls();
     updateAttachments();
@@ -40,6 +41,7 @@ BandDetailPanel::~BandDetailPanel()
     if (releaseKnob) releaseKnob->setLookAndFeel(nullptr);
     if (rangeKnob) rangeKnob->setLookAndFeel(nullptr);
     if (ratioKnob) ratioKnob->setLookAndFeel(nullptr);
+    if (panKnob) panKnob->setLookAndFeel(nullptr);
 }
 
 void BandDetailPanel::setupBandButtons()
@@ -74,8 +76,10 @@ void BandDetailPanel::setupKnobs()
     freqKnob->setTooltip("Frequency: Center frequency of this band (20 Hz - 20 kHz)");
     setupRotaryKnob(gainKnob);
     gainKnob->setTooltip("Gain: Boost or cut at this frequency (-24 to +24 dB)");
+    gainKnob->setDoubleClickReturnValue(true, 0.0);
     setupRotaryKnob(qKnob);
     qKnob->setTooltip("Q: Bandwidth/resonance - higher values = narrower bandwidth (0.1 - 100)");
+    qKnob->setDoubleClickReturnValue(true, 0.707);
 
     // Slope selector for HPF/LPF
     slopeSelector = std::make_unique<juce::ComboBox>();
@@ -103,14 +107,19 @@ void BandDetailPanel::setupKnobs()
 
     setupDynKnob(thresholdKnob);
     thresholdKnob->setTooltip("Threshold: Level where dynamic gain reduction starts (-60 to +12 dB)");
+    thresholdKnob->setDoubleClickReturnValue(true, 0.0);
     setupDynKnob(attackKnob);
     attackKnob->setTooltip("Attack: How fast gain reduction responds to level increases (0.1 - 500 ms)");
+    attackKnob->setDoubleClickReturnValue(true, 10.0);
     setupDynKnob(releaseKnob);
     releaseKnob->setTooltip("Release: How fast gain returns after level drops (10 - 5000 ms)");
+    releaseKnob->setDoubleClickReturnValue(true, 100.0);
     setupDynKnob(rangeKnob);
     rangeKnob->setTooltip("Range: Maximum amount of dynamic gain reduction (0 - 24 dB)");
+    rangeKnob->setDoubleClickReturnValue(true, 12.0);
     setupDynKnob(ratioKnob);
     ratioKnob->setTooltip("Ratio: Compression ratio (1:1 = no compression, 20:1 = heavy limiting)");
+    ratioKnob->setDoubleClickReturnValue(true, 4.0);
 
     // Toggle buttons
     dynButton = std::make_unique<juce::TextButton>("DYN");
@@ -137,6 +146,38 @@ void BandDetailPanel::setupKnobs()
             processor.setSoloedBand(-1);  // No solo
     };
     addAndMakeVisible(soloButton.get());
+
+    // Invert button (flips EQ gain boost↔cut)
+    invertButton = std::make_unique<juce::TextButton>("INV");
+    invertButton->setClickingTogglesState(true);
+    invertButton->setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF353535));
+    invertButton->setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFFcc6622));
+    invertButton->setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
+    invertButton->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    invertButton->setTooltip("Invert EQ gain (boost becomes cut)");
+    invertButton->onClick = [this]() { repaint(); };
+    addAndMakeVisible(invertButton.get());
+
+    // Phase Invert button (flips polarity of band effect)
+    phaseInvertButton = std::make_unique<juce::TextButton>(juce::String::charToString(0x00D8));
+    phaseInvertButton->setClickingTogglesState(true);
+    phaseInvertButton->setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF353535));
+    phaseInvertButton->setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFFcc2266));
+    phaseInvertButton->setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
+    phaseInvertButton->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+    phaseInvertButton->setTooltip("Flip polarity of this band's effect (phase invert)");
+    addAndMakeVisible(phaseInvertButton.get());
+
+    // Pan knob (stereo placement of band EQ effect)
+    panKnob = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
+                                              juce::Slider::NoTextBox);
+    panKnob->setLookAndFeel(&f6KnobLookAndFeel);
+    panKnob->setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xFF66aadd));
+    panKnob->setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xFF404040));
+    panKnob->setTooltip("Pan band's EQ effect (L/R placement)");
+    panKnob->setDoubleClickReturnValue(true, 0.0);
+    panKnob->onValueChange = [this]() { repaint(); };
+    addAndMakeVisible(panKnob.get());
 }
 
 void BandDetailPanel::setupMatchControls()
@@ -326,8 +367,16 @@ void BandDetailPanel::setMatchMode(bool isMatch)
 
     matchMode = isMatch;
 
-    // Toggle visibility of dynamics vs match controls
+    // In match mode, hide ALL non-match controls (EQ + dynamics + pan)
     bool showDyn = !matchMode;
+    bool showEQ = !matchMode;
+    freqKnob->setVisible(showEQ);
+    qKnob->setVisible(showEQ);
+    gainKnob->setVisible(showEQ);
+    slopeSelector->setVisible(showEQ);
+    invertButton->setVisible(showEQ);
+    phaseInvertButton->setVisible(showEQ);
+    panKnob->setVisible(showEQ);
     thresholdKnob->setVisible(showDyn);
     attackKnob->setVisible(showDyn);
     releaseKnob->setVisible(showDyn);
@@ -402,6 +451,9 @@ void BandDetailPanel::updateAttachments()
     gainAttachment.reset();
     qAttachment.reset();
     slopeAttachment.reset();
+    invertAttachment.reset();
+    phaseInvertAttachment.reset();
+    panAttachment.reset();
     dynEnableAttachment.reset();
     threshAttachment.reset();
     attackAttachment.reset();
@@ -435,6 +487,14 @@ void BandDetailPanel::updateAttachments()
             processor.parameters, ParamIDs::bandGain(bandNum), *gainKnob);
     }
 
+    // Invert, phase invert, and pan attachments
+    invertAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.parameters, ParamIDs::bandInvert(bandNum), *invertButton);
+    phaseInvertAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.parameters, ParamIDs::bandPhaseInvert(bandNum), *phaseInvertButton);
+    panAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.parameters, ParamIDs::bandPan(bandNum), *panKnob);
+
     // Dynamics attachments
     dynEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor.parameters, ParamIDs::bandDynEnabled(bandNum), *dynButton);
@@ -457,11 +517,20 @@ void BandDetailPanel::updateAttachments()
 
 void BandDetailPanel::updateControlsForBandType()
 {
+    if (matchMode)
+        return;  // All EQ controls are hidden in match mode — don't re-show them
+
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
+    bool hasGain = (selectedBand >= 1 && selectedBand <= 6);  // Bands 2-7
 
     slopeSelector->setVisible(isFilter);
     gainKnob->setVisible(!isFilter);
+
+    // Invert only makes sense for bands with gain (2-7), hide in match mode
+    invertButton->setVisible(hasGain && !matchMode);
+    phaseInvertButton->setVisible(!matchMode);
+    panKnob->setVisible(!matchMode);
 
     // Ensure the visible control is on top (z-order) and force repaint
     if (isFilter)
@@ -482,10 +551,15 @@ void BandDetailPanel::updateDynamicsOpacity()
     float alpha = dynEnabled ? 1.0f : 0.3f;  // 30% opacity when disabled (more obvious disabled state)
 
     thresholdKnob->setAlpha(alpha);
+    thresholdKnob->setEnabled(dynEnabled);
     attackKnob->setAlpha(alpha);
+    attackKnob->setEnabled(dynEnabled);
     releaseKnob->setAlpha(alpha);
+    releaseKnob->setEnabled(dynEnabled);
     rangeKnob->setAlpha(alpha);
+    rangeKnob->setEnabled(dynEnabled);
     ratioKnob->setAlpha(alpha);
+    ratioKnob->setEnabled(dynEnabled);
 }
 
 juce::Colour BandDetailPanel::getBandColor(int bandIndex) const
@@ -540,25 +614,15 @@ void BandDetailPanel::parameterChanged(const juce::String& parameterID, float /*
 
 juce::Rectangle<int> BandDetailPanel::getBandButtonBounds() const
 {
-    // Returns bounds of the band indicator box (must match paint() centering calculation)
     int knobSize = 75;
-    int knobSpacing = 10;
     int bandIndicatorSize = 65;
     int knobY = 26;
-    int btnWidth = 48;
+    int margin = 10;
 
-    // EQ section: 3 knobs (FREQ, Q, GAIN) - always use knobSize for consistent layout
-    int eqColumnsWidth = (knobSize + knobSpacing) * 3;
-    int totalContentWidth = bandIndicatorSize + 10
-                          + eqColumnsWidth + 10
-                          + 12
-                          + (knobSize + knobSpacing) * 5 + 6
-                          + btnWidth;
-
-    int startX = (getWidth() - totalContentWidth) / 2;
+    int bandBoxX = margin + 4;
     int bandBoxY = knobY + (knobSize - bandIndicatorSize) / 2;
 
-    return juce::Rectangle<int>(startX, bandBoxY, bandIndicatorSize, bandIndicatorSize);
+    return juce::Rectangle<int>(bandBoxX, bandBoxY, bandIndicatorSize, bandIndicatorSize);
 }
 
 void BandDetailPanel::mouseDown(const juce::MouseEvent& e)
@@ -585,40 +649,114 @@ void BandDetailPanel::mouseExit(const juce::MouseEvent&)
     // No hover effects needed anymore
 }
 
+bool BandDetailPanel::keyPressed(const juce::KeyPress& key)
+{
+    if (!hasKeyboardFocus(true))
+        return false;
+
+    int band = selectedBand.load();
+
+    if (key == juce::KeyPress('d') || key == juce::KeyPress('D'))
+    {
+        if (dynButton && dynButton->isVisible())
+            dynButton->setToggleState(!dynButton->getToggleState(), juce::sendNotification);
+        return true;
+    }
+
+    if (key == juce::KeyPress('s') || key == juce::KeyPress('S'))
+    {
+        if (soloButton && soloButton->isVisible())
+            soloButton->setToggleState(!soloButton->getToggleState(), juce::sendNotification);
+        return true;
+    }
+
+    if (key == juce::KeyPress::leftKey)
+    {
+        int newBand = (band > 0) ? band - 1 : MultiQ::NUM_BANDS - 1;
+        if (onBandSelected)
+            onBandSelected(newBand);
+        return true;
+    }
+
+    if (key == juce::KeyPress::rightKey)
+    {
+        int newBand = (band < MultiQ::NUM_BANDS - 1) ? band + 1 : 0;
+        if (onBandSelected)
+            onBandSelected(newBand);
+        return true;
+    }
+
+    if (key.getTextCharacter() >= '1' && key.getTextCharacter() <= '8')
+    {
+        int newBand = key.getTextCharacter() - '1';
+        if (onBandSelected)
+            onBandSelected(newBand);
+        return true;
+    }
+
+    return false;
+}
+
 void BandDetailPanel::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    // Dark background for entire panel
     g.setColour(juce::Colour(0xFF1a1a1c));
     g.fillRect(bounds);
 
-    // Top border line
     g.setColour(juce::Colour(0xFF3a3a3a));
     g.drawHorizontalLine(0, 0.0f, bounds.getWidth());
 
-    // ===== CONTROLS AREA =====
     int knobSize = 75;
     int knobSpacing = 10;
-    int bandIndicatorSize = 65;  // Larger for better visibility
-    int knobY = 26;  // More room for section headers
+    int bandIndicatorSize = 65;
+    int knobY = 26;
     int btnWidth = 48;
-
-    // EQ section: 3 knobs (FREQ, Q, GAIN) - always use knobSize for consistent layout
-    int eqColumnsWidth = (knobSize + knobSpacing) * 3;
-    int totalContentWidth = bandIndicatorSize + 10  // Band indicator + gap
-                          + eqColumnsWidth + 10  // EQ section + separator gap
-                          + 12  // Divider space
-                          + (knobSize + knobSpacing) * 5 + 6  // 5 dynamics knobs + button gap
-                          + btnWidth;  // Buttons
-
-    // Center the content
-    int startX = (getWidth() - totalContentWidth) / 2;
+    int margin = 10;
+    int invBtnW = 28;
+    int invBtnGap = 3;
 
     bool dynEnabled = isDynamicsEnabled();
 
-    // ===== BAND INDICATOR BOX (left of FREQ) - only show if a band is selected =====
-    int bandBoxX = startX;
+    int eqKnobsWidth = (knobSize + knobSpacing) * 3;
+    int invPhaseWidth = invBtnW * 2 + invBtnGap;
+    int eqInnerWidth = eqKnobsWidth + 10 + invPhaseWidth;
+    int eqSectionWidth = bandIndicatorSize + 10 + eqInnerWidth + 10;
+
+    int dynKnobsWidth = (knobSize + knobSpacing) * 5 - knobSpacing;
+    int dynSectionWidth = dynKnobsWidth + 10 + btnWidth + 10;
+
+    int panSectionWidth = knobSize + 20;
+
+    int leftX = margin;
+    int rightX = getWidth() - margin - dynSectionWidth;
+    int panCenterX = (leftX + eqSectionWidth + rightX) / 2;
+    int panSectionX = panCenterX - panSectionWidth / 2;
+
+    // Section divider positions (midpoints between content edges)
+    int divider1X = (leftX + eqSectionWidth + panSectionX) / 2;
+    int divider2X = (panSectionX + panSectionWidth + rightX) / 2;
+
+    float sectionTop = 4.0f;
+    float sectionH = bounds.getHeight() - 8.0f;
+
+    if (matchMode)
+    {
+        // Match mode: single full-width section
+        juce::Rectangle<float> matchSection(static_cast<float>(margin), sectionTop,
+                                             static_cast<float>(getWidth() - margin * 2), sectionH);
+        g.setColour(juce::Colour(0xFF1e2825));
+        g.fillRoundedRectangle(matchSection, 4.0f);
+
+        g.setColour(juce::Colour(0xFF44aa88));
+        g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
+        g.drawText("MATCH EQ", margin + 10, 6, 60, 10, juce::Justification::centredLeft);
+        return;
+    }
+
+    // ===== BAND INDICATOR =====
+    int startX = leftX;
+    int bandBoxX = startX + 4;
     int bandBoxY = knobY + (knobSize - bandIndicatorSize) / 2;
     juce::Rectangle<float> bandBox(static_cast<float>(bandBoxX), static_cast<float>(bandBoxY),
                                     static_cast<float>(bandIndicatorSize), static_cast<float>(bandIndicatorSize));
@@ -629,28 +767,22 @@ void BandDetailPanel::paint(juce::Graphics& g)
         int bandIdx = rawBand;
         juce::Colour bandColor = getBandColor(bandIdx);
 
-        // Check if band is enabled
         bool bandEnabled = true;
         if (auto* param = processor.parameters.getRawParameterValue(ParamIDs::bandEnabled(bandIdx + 1)))
             bandEnabled = param->load() > 0.5f;
 
-        // Make color more subtle (darker) for better contrast with white text
-        // If disabled, desaturate and darken significantly - just a hint of color
         juce::Colour subtleBandColor;
         if (bandEnabled)
             subtleBandColor = bandColor.darker(0.5f);
         else
-            subtleBandColor = bandColor.withSaturation(0.15f).darker(0.7f);  // Very desaturated, dark
+            subtleBandColor = bandColor.withSaturation(0.15f).darker(0.7f);
 
-        // Draw band indicator box with subtle color
         g.setColour(subtleBandColor);
         g.fillRoundedRectangle(bandBox, 8.0f);
 
-        // Draw subtle border in original band color for accent
         g.setColour(bandEnabled ? bandColor.withAlpha(0.6f) : bandColor.withSaturation(0.2f).withAlpha(0.3f));
         g.drawRoundedRectangle(bandBox.reduced(1.0f), 7.0f, 2.0f);
 
-        // Draw band number centered in box (shifted up if showing GR)
         g.setColour(bandEnabled ? juce::Colours::white : juce::Colour(0xFF606060));
         g.setFont(juce::FontOptions(32.0f, juce::Font::bold));
 
@@ -659,20 +791,15 @@ void BandDetailPanel::paint(juce::Graphics& g)
 
         if (showGR)
         {
-            // Shift band number up to make room for GR display
             auto numberRect = bandBox.toNearestInt().withTrimmedBottom(18);
             g.drawText(juce::String(bandIdx + 1), numberRect, juce::Justification::centred);
 
-            // Draw GR value below the band number (orange when active)
-            juce::Colour grColor = juce::Colour(0xFFff6644);  // Orange-red for GR
+            juce::Colour grColor = juce::Colour(0xFFff6644);
             g.setColour(grColor);
             g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-
             auto grRect = bandBox.toNearestInt().withTrimmedTop(38);
-            juce::String grText = juce::String(gainReduction, 1) + " dB";
-            g.drawText(grText, grRect, juce::Justification::centred);
+            g.drawText(juce::String(gainReduction, 1) + " dB", grRect, juce::Justification::centred);
 
-            // Add subtle glow to border based on GR amount (more GR = more glow)
             float glowIntensity = juce::jlimit(0.0f, 1.0f, std::abs(gainReduction) / 12.0f);
             if (glowIntensity > 0.05f)
             {
@@ -687,152 +814,178 @@ void BandDetailPanel::paint(juce::Graphics& g)
     }
     else
     {
-        // No band selected — draw neutral empty indicator
         g.setColour(juce::Colour(0xFF2a2a2c));
         g.fillRoundedRectangle(bandBox, 8.0f);
         g.setColour(juce::Colour(0xFF3a3a3c));
         g.drawRoundedRectangle(bandBox.reduced(1.0f), 7.0f, 1.0f);
     }
 
-    int currentX = startX + bandIndicatorSize + 10;  // Start after band indicator
+    int eqBgX = startX + bandIndicatorSize + 6;
+    int gap = 3;
 
     // ===== EQ SECTION BACKGROUND =====
-    int eqSectionWidth = eqColumnsWidth + 6;  // Match column widths + padding
-    juce::Rectangle<float> eqSection(static_cast<float>(currentX - 4), 4.0f,
-                                      static_cast<float>(eqSectionWidth), bounds.getHeight() - 8.0f);
+    juce::Rectangle<float> eqSection(static_cast<float>(eqBgX), sectionTop,
+                                      static_cast<float>(divider1X - eqBgX - gap), sectionH);
     g.setColour(juce::Colour(0xFF222225));
     g.fillRoundedRectangle(eqSection, 4.0f);
 
-    // "EQ" section header
     g.setColour(juce::Colour(0xFF707070));
     g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
     g.drawText("EQ", static_cast<int>(eqSection.getX()) + 6, 6, 20, 10, juce::Justification::centredLeft);
 
-    int eqEndX = currentX + eqSectionWidth + 4;
+    // ===== PAN SECTION BACKGROUND =====
+    juce::Rectangle<float> panSection(static_cast<float>(divider1X + gap), sectionTop,
+                                       static_cast<float>(divider2X - divider1X - gap * 2), sectionH);
+    g.setColour(juce::Colour(0xFF1e2228));
+    g.fillRoundedRectangle(panSection, 4.0f);
 
-    // ===== VERTICAL DIVIDER (professional double-line) =====
-    int dividerX = eqEndX + 4;
-    g.setColour(juce::Colour(0xFF151515));  // Shadow
-    g.fillRect(dividerX, knobY - 12, 1, knobSize + 24);
-    g.setColour(juce::Colour(0xFF454548));  // Highlight
-    g.fillRect(dividerX + 2, knobY - 12, 1, knobSize + 24);
-
-    // ===== RIGHT SECTION BACKGROUND (dynamics or match) =====
-    int rightStartX = dividerX + 10;
-    int rightSectionWidth = (knobSize + knobSpacing) * 5 + 60;  // 5 knobs + buttons
-    juce::Colour rightBgColor;
-    if (matchMode)
-        rightBgColor = juce::Colour(0xFF1e2825);  // Teal tint for match section
-    else
-        rightBgColor = dynEnabled ? juce::Colour(0xFF28231e) : juce::Colour(0xFF1e1e20);
-    juce::Rectangle<float> rightSection(static_cast<float>(rightStartX - 4), 4.0f,
-                                         static_cast<float>(rightSectionWidth), bounds.getHeight() - 8.0f);
+    // ===== DYNAMICS SECTION BACKGROUND =====
+    juce::Colour rightBgColor = dynEnabled ? juce::Colour(0xFF28231e) : juce::Colour(0xFF1e1e20);
+    juce::Rectangle<float> rightSection(static_cast<float>(divider2X + gap), sectionTop,
+                                         static_cast<float>(getWidth() - margin - divider2X - gap), sectionH);
     g.setColour(rightBgColor);
     g.fillRoundedRectangle(rightSection, 4.0f);
-
-    // Note: Section label is drawn in paintOverChildren()
 }
 
 void BandDetailPanel::paintOverChildren(juce::Graphics& g)
 {
-    // Draw knob labels and values ON TOP of the slider components
-    // This is called after all child components have painted
-
     int knobSize = 75;
     int knobSpacing = 10;
     int bandIndicatorSize = 65;
     int knobY = 26;
     int btnWidth = 48;
+    int margin = 10;
+    int invBtnW = 28;
+    int invBtnGap = 3;
 
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
     bool dynEnabled = isDynamicsEnabled();
 
-    // EQ section: 3 knobs (FREQ, Q, GAIN) - always use knobSize for consistent layout
-    int eqColumnsWidth = (knobSize + knobSpacing) * 3;
-    int totalContentWidth = bandIndicatorSize + 10  // Band indicator + gap
-                          + eqColumnsWidth + 10  // EQ section + separator gap
-                          + 12  // Divider space
-                          + (knobSize + knobSpacing) * 5 + 6  // 5 dynamics knobs + button gap
-                          + btnWidth;  // Buttons
+    // Match mode: no knob labels to draw
+    if (matchMode)
+        return;
 
-    // Center the content
-    int startX = (getWidth() - totalContentWidth) / 2;
+    int eqKnobsWidth = (knobSize + knobSpacing) * 3;
+    int invPhaseWidth = invBtnW * 2 + invBtnGap;
+    int eqInnerWidth = eqKnobsWidth + 10 + invPhaseWidth;
+    int eqSectionTotalWidth = bandIndicatorSize + 10 + eqInnerWidth + 10;
 
-    // Format values for display WITH UNITS
+    int dynKnobsWidth = (knobSize + knobSpacing) * 5 - knobSpacing;
+    int dynSectionWidth = dynKnobsWidth + 10 + btnWidth + 10;
+    int panSectionWidth = knobSize + 20;
+
+    int leftX = margin;
+    int rightX = getWidth() - margin - dynSectionWidth;
+    (void)leftX; (void)rightX; (void)eqSectionTotalWidth; (void)panSectionWidth;
+
     auto formatFreq = [](double val) {
         if (val >= 10000.0) return juce::String(val / 1000.0, 1) + " kHz";
         if (val >= 1000.0) return juce::String(val / 1000.0, 2) + " kHz";
         return juce::String(static_cast<int>(val)) + " Hz";
     };
-
     auto formatGain = [](double val) {
         juce::String sign = val >= 0 ? "+" : "";
         return sign + juce::String(val, 1) + " dB";
     };
-
     auto formatQ = [](double val) { return juce::String(val, 2); };
-
     auto formatMs = [](double val) {
         if (val >= 1000.0) return juce::String(val / 1000.0, 1) + " s";
         return juce::String(static_cast<int>(val)) + " ms";
     };
-
     auto formatDb = [](double val) { return juce::String(static_cast<int>(val)) + " dB"; };
 
-    int currentX = startX + bandIndicatorSize + 10;  // Start after band indicator
+    // ===== EQ SECTION LABELS =====
+    int eqStartX = leftX + bandIndicatorSize + 10 + 4;
+    int currentX = eqStartX;
 
-    // FREQ
     drawKnobWithLabel(g, freqKnob.get(), "FREQ",
                       formatFreq(freqKnob->getValue()),
                       {currentX, knobY, knobSize, knobSize + 20}, false);
     currentX += knobSize + knobSpacing;
 
-    // Q
     drawKnobWithLabel(g, qKnob.get(), "Q",
                       formatQ(qKnob->getValue()),
                       {currentX, knobY, knobSize, knobSize + 20}, false);
     currentX += knobSize + knobSpacing;
 
-    // Third column: GAIN knob (for parametric/shelf) or SLOPE label (for filters)
     if (!isFilter)
     {
-        // GAIN knob - same position and size as FREQ and Q
-        drawKnobWithLabel(g, gainKnob.get(), "GAIN",
-                          formatGain(gainKnob->getValue()),
-                          {currentX, knobY, knobSize, knobSize + 20}, false);
+        bool invActive = false;
+        int rawBand2 = selectedBand.load();
+        if (rawBand2 >= 0 && rawBand2 < 8)
+        {
+            if (auto* p = processor.parameters.getRawParameterValue(ParamIDs::bandInvert(rawBand2 + 1)))
+                invActive = p->load() > 0.5f;
+        }
+
+        if (invActive)
+        {
+            double gain = gainKnob->getValue();
+            double invGain = -gain;
+            juce::String invStr = (invGain >= 0 ? "+" : "") + juce::String(invGain, 1) + " dB";
+
+            g.setColour(juce::Colour(0xFFcc6622));
+            g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+            g.drawText("GAIN (INV)", currentX - 10, knobY - 16, knobSize + 20, 14, juce::Justification::centred);
+
+            float cx = currentX + knobSize / 2.0f;
+            float cy = knobY + knobSize / 2.0f;
+            g.drawText(invStr, juce::Rectangle<int>(static_cast<int>(cx - 35), static_cast<int>(cy - 7), 70, 14),
+                       juce::Justification::centred);
+        }
+        else
+        {
+            drawKnobWithLabel(g, gainKnob.get(), "GAIN",
+                              formatGain(gainKnob->getValue()),
+                              {currentX, knobY, knobSize, knobSize + 20}, false);
+        }
     }
     else
     {
-        // Draw SLOPE label for filter bands - centered over the knobSize column
         g.setColour(juce::Colour(0xFFb0b0b0));
         g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-        g.drawText("SLOPE", currentX, knobY - 14, knobSize, 14,
+        g.drawText("SLOPE", currentX, knobY - 14, knobSize, 14, juce::Justification::centred);
+    }
+
+    // ===== PAN SECTION LABEL =====
+    if (panKnob->isVisible())
+    {
+        g.setColour(juce::Colour(0xFFb0b0b0));
+        g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        auto pb = panKnob->getBounds();
+        g.drawText("PAN", pb.getX() - 10, knobY - 16, pb.getWidth() + 20, 14, juce::Justification::centred);
+
+        double panVal = panKnob->getValue();
+        juce::String panStr;
+        int panPct = static_cast<int>(std::round(std::abs(panVal) * 100.0));
+        if (panPct == 0)
+            panStr = "C";
+        else if (panVal < 0)
+            panStr = juce::String(panPct) + "L";
+        else
+            panStr = juce::String(panPct) + "R";
+
+        g.setColour(juce::Colour(0xFFe8e0d8));
+        g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        float cx = pb.getCentreX();
+        float cy = pb.getCentreY();
+        g.drawText(panStr, juce::Rectangle<int>(static_cast<int>(cx - 25), static_cast<int>(cy - 7), 50, 14),
                    juce::Justification::centred);
     }
-    currentX += knobSize + knobSpacing + 10;
 
-    // Skip separator space
-    currentX += 12;
-
-    // ===== RIGHT SECTION LABELS (dynamics or match) =====
-    int eqSectionWidth = eqColumnsWidth + 6;
-    int eqEndX = (startX + bandIndicatorSize + 10) + eqSectionWidth + 4;
-    int dividerX = eqEndX + 4;
-    int rightStartX = dividerX + 10;
-    int rightKnobsWidth = (knobSize + knobSpacing) * 5;
+    // ===== DYNAMICS SECTION LABELS =====
+    int dynStartX = rightX + 6;
+    currentX = dynStartX;
 
     if (matchMode)
     {
-
-        // "MATCH EQ" section label
         g.setColour(juce::Colour(0xFF44aa88));
         g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
-        g.drawText("MATCH EQ", rightStartX, 6, 60, 10, juce::Justification::centredLeft);
+        g.drawText("MATCH EQ", rightX + 6, 6, 60, 10, juce::Justification::centredLeft);
     }
     else
     {
-        // THRESHOLD - draw manually with offset to avoid overlapping DYNAMICS header
         {
             float alpha = dynEnabled ? 1.0f : 0.3f;
             g.setColour(juce::Colour(0xFFb0b0b0).withAlpha(alpha));
@@ -840,44 +993,39 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
             g.drawText("THRESH", currentX + 5, knobY - 14, knobSize, 14, juce::Justification::centred);
 
             g.setColour(juce::Colour(0xFFe8e0d8).withAlpha(alpha));
-            g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-            float centreX = currentX + knobSize / 2.0f;
-            float centreY = knobY + knobSize / 2.0f;
-            juce::Rectangle<int> valueRect(static_cast<int>(centreX - 35), static_cast<int>(centreY - 7), 70, 14);
-            g.drawText(formatDb(thresholdKnob->getValue()), valueRect, juce::Justification::centred);
+            float cx = currentX + knobSize / 2.0f;
+            float cy = knobY + knobSize / 2.0f;
+            g.drawText(formatDb(thresholdKnob->getValue()),
+                       juce::Rectangle<int>(static_cast<int>(cx - 35), static_cast<int>(cy - 7), 70, 14),
+                       juce::Justification::centred);
         }
         currentX += knobSize + knobSpacing;
 
-        // ATTACK
         drawKnobWithLabel(g, attackKnob.get(), "ATTACK",
                           formatMs(attackKnob->getValue()),
                           {currentX, knobY, knobSize, knobSize + 20}, !dynEnabled);
         currentX += knobSize + knobSpacing;
 
-        // RELEASE
         drawKnobWithLabel(g, releaseKnob.get(), "RELEASE",
                           formatMs(releaseKnob->getValue()),
                           {currentX, knobY, knobSize, knobSize + 20}, !dynEnabled);
         currentX += knobSize + knobSpacing;
 
-        // RANGE
         drawKnobWithLabel(g, rangeKnob.get(), "RANGE",
                           formatDb(rangeKnob->getValue()),
                           {currentX, knobY, knobSize, knobSize + 20}, !dynEnabled);
         currentX += knobSize + knobSpacing;
 
-        // RATIO
         {
             juce::String ratioStr = juce::String(ratioKnob->getValue(), 1) + ":1";
             drawKnobWithLabel(g, ratioKnob.get(), "RATIO", ratioStr,
                               {currentX, knobY, knobSize, knobSize + 20}, !dynEnabled);
         }
 
-        // "DYNAMICS" section label below knobs
         g.setColour(dynEnabled ? juce::Colour(0xFFff8844) : juce::Colour(0xFF505050));
         g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
         int labelY = knobY + knobSize + 4;
-        g.drawText("DYNAMICS", rightStartX, labelY, rightKnobsWidth, 14, juce::Justification::centred);
+        g.drawText("DYNAMICS", dynStartX, labelY, dynKnobsWidth, 14, juce::Justification::centred);
     }
 }
 
@@ -916,119 +1064,131 @@ void BandDetailPanel::drawKnobWithLabel(juce::Graphics& g, juce::Slider* knob,
 
 void BandDetailPanel::resized()
 {
-    // ===== CONTROLS AREA (no selector row - just knobs) =====
     int knobSize = 75;
-    int knobSpacing = 10;         // Match paint() constants
-    int bandIndicatorSize = 65;   // Larger for better visibility
-    int knobY = 26;  // More room for section headers
+    int knobSpacing = 10;
+    int bandIndicatorSize = 65;
+    int knobY = 26;
     int btnWidth = 48;
-    int slopeSelectorWidth = 95;  // Wider to show full "12 dB/oct" text
+    int margin = 10;
+    int slopeSelectorWidth = 95;
+    int invBtnW = 28;
+    int invBtnH = 22;
+    int invBtnGap = 3;
 
-    // EQ section: 3 knobs (FREQ, Q, GAIN) - always use knobSize for consistent layout
-    // Slope selector overlays the GAIN column when in filter mode
-    int eqColumnsWidth = (knobSize + knobSpacing) * 3;
-    int totalContentWidth = bandIndicatorSize + 10  // Band indicator + gap
-                          + eqColumnsWidth + 10  // EQ section + separator gap
-                          + 12  // Divider space
-                          + (knobSize + knobSpacing) * 5 + 6  // 5 dynamics knobs + button gap
-                          + btnWidth;  // Buttons
+    // Section layout math (must match paint)
+    int eqKnobsWidth = (knobSize + knobSpacing) * 3;
+    int invPhaseWidth = invBtnW * 2 + invBtnGap;
+    int eqInnerWidth = eqKnobsWidth + 10 + invPhaseWidth;
+    int eqSectionTotalWidth = bandIndicatorSize + 10 + eqInnerWidth + 10;
 
-    // Center the content
-    int startX = (getWidth() - totalContentWidth) / 2;
+    int dynKnobsWidth = (knobSize + knobSpacing) * 5 - knobSpacing;
+    int dynSectionWidth = dynKnobsWidth + 10 + btnWidth + 10;
+    int panSectionWidth = knobSize + 20;
 
-    // Band indicator takes space on the left (drawn in paint, no component)
-    int currentX = startX + bandIndicatorSize + 10;  // Match paint() layout
+    int leftX = margin;
+    int rightX = getWidth() - margin - dynSectionWidth;
+    int panCenterX = (leftX + eqSectionTotalWidth + rightX) / 2;
+    int panXPos = panCenterX - panSectionWidth / 2;
 
-    // FREQ knob
+    if (matchMode)
+    {
+        // Full-width match layout — no EQ, no pan, no band indicator
+        int matchX = margin + 10;
+        int matchW = getWidth() - margin * 2 - 20;
+        int btnHeight = 28;
+        int rowGap = 6;
+        int row1Y = knobY;
+        int row2Y = row1Y + btnHeight + rowGap;
+        // Row 1: Learn buttons + status + Apply slider + Smoothing slider
+        int learnBtnWidth = 130;
+        int learnGap = 8;
+        int statusWidth = 80;
+        learnCurrentButton.setBounds(matchX, row1Y, learnBtnWidth, btnHeight);
+        learnReferenceButton.setBounds(matchX + learnBtnWidth + learnGap, row1Y, learnBtnWidth, btnHeight);
+        learningStatusLabel.setBounds(matchX + (learnBtnWidth + learnGap) * 2, row1Y, statusWidth, btnHeight);
+
+        // Sliders fill remaining space on row 1
+        int slidersStartX = matchX + (learnBtnWidth + learnGap) * 2 + statusWidth + 10;
+        int slidersW = matchX + matchW - slidersStartX;
+        int sliderW = (slidersW - 10) / 2;
+        matchApplySlider->setBounds(slidersStartX, row1Y, sliderW, btnHeight);
+        matchSmoothingSlider->setBounds(slidersStartX + sliderW + 10, row1Y, sliderW, btnHeight);
+
+        // Row 2: Match + Limit+ + Limit- + Clear
+        int matchBtnWidth = 90;
+        int limitBtnWidth = 80;
+        int clearBtnWidth = 80;
+        int btnGap = 8;
+        matchComputeButton.setBounds(matchX, row2Y, matchBtnWidth, btnHeight);
+        limitBoostButton.setBounds(matchX + matchBtnWidth + btnGap, row2Y, limitBtnWidth, btnHeight);
+        limitCutButton.setBounds(matchX + matchBtnWidth + limitBtnWidth + btnGap * 2, row2Y, limitBtnWidth, btnHeight);
+        matchClearButton.setBounds(matchX + matchBtnWidth + limitBtnWidth * 2 + btnGap * 3, row2Y, clearBtnWidth, btnHeight);
+
+        return;
+    }
+
+    // ===== EQ SECTION (left-justified) =====
+    int eqStartX = leftX + bandIndicatorSize + 10 + 4;
+    int currentX = eqStartX;
+
     freqKnob->setBounds(currentX, knobY, knobSize, knobSize);
     currentX += knobSize + knobSpacing;
 
-    // Q knob
     qKnob->setBounds(currentX, knobY, knobSize, knobSize);
     currentX += knobSize + knobSpacing;
 
-    // GAIN knob and SLOPE selector share the same column
-    // Position both, then control visibility based on band type
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
 
-    // GAIN knob - positioned at the third column
     gainKnob->setBounds(currentX, knobY, knobSize, knobSize);
     gainKnob->setVisible(!isFilter);
 
-    // SLOPE selector - positioned over the same column, centered vertically
     int selectorHeight = 26;
     int selectorY = knobY + (knobSize - selectorHeight) / 2;
-    int selectorX = currentX + (knobSize - slopeSelectorWidth) / 2;  // Center the wider dropdown
+    int selectorX = currentX + (knobSize - slopeSelectorWidth) / 2;
     slopeSelector->setBounds(selectorX, selectorY, slopeSelectorWidth, selectorHeight);
     slopeSelector->setVisible(isFilter);
 
-    // Ensure the visible control is on top
     if (isFilter)
         slopeSelector->toFront(false);
     else
         gainKnob->toFront(false);
 
-    currentX += knobSize + knobSpacing + 10;
+    currentX += knobSize + knobSpacing;
 
-    // Skip separator space
-    currentX += 12;
-
-    if (matchMode)
+    // INV + Phase buttons after the 3 EQ knobs
     {
-        // Three-row layout for match controls, anchored at top of knob area
-        int btnHeight = 28;
-        int rowGap = 4;
-        int row1Y = knobY;
-        int row2Y = row1Y + btnHeight + rowGap;
-        int row3Y = row2Y + btnHeight + rowGap;
-
-        // Row 1: Learn buttons + status
-        int learnBtnWidth = 120;
-        int learnGap = 8;
-        int statusWidth = 80;
-        learnCurrentButton.setBounds(currentX, row1Y, learnBtnWidth, btnHeight);
-        learnReferenceButton.setBounds(currentX + learnBtnWidth + learnGap, row1Y, learnBtnWidth, btnHeight);
-        learningStatusLabel.setBounds(currentX + (learnBtnWidth + learnGap) * 2, row1Y, statusWidth, btnHeight);
-
-        // Row 2: Apply slider + Smoothing slider
-        int totalWidth = (knobSize + knobSpacing) * 5 + btnWidth;
-        int sliderWidth = (totalWidth - 16) / 2;  // Split evenly with gap
-        matchApplySlider->setBounds(currentX, row2Y, sliderWidth, btnHeight);
-        matchSmoothingSlider->setBounds(currentX + sliderWidth + 16, row2Y, sliderWidth, btnHeight);
-
-        // Row 3: Match + Limit+ + Limit- + Clear
-        int matchBtnWidth = 70;
-        int limitBtnWidth = 60;
-        int clearBtnWidth = 60;
-        int btnGap = 6;
-        matchComputeButton.setBounds(currentX, row3Y, matchBtnWidth, btnHeight);
-        limitBoostButton.setBounds(currentX + matchBtnWidth + btnGap, row3Y, limitBtnWidth, btnHeight);
-        limitCutButton.setBounds(currentX + matchBtnWidth + limitBtnWidth + btnGap * 2, row3Y, limitBtnWidth, btnHeight);
-        matchClearButton.setBounds(currentX + matchBtnWidth + limitBtnWidth * 2 + btnGap * 3, row3Y, clearBtnWidth, btnHeight);
+        int btnStartX = currentX + 10;
+        int fxBtnY = knobY + (knobSize - invBtnH) / 2;
+        invertButton->setBounds(btnStartX, fxBtnY, invBtnW, invBtnH);
+        phaseInvertButton->setBounds(btnStartX + invBtnW + invBtnGap, fxBtnY, invBtnW, invBtnH);
     }
-    else
-    {
-        // Dynamics knobs + buttons
-        thresholdKnob->setBounds(currentX, knobY, knobSize, knobSize);
-        currentX += knobSize + knobSpacing;
 
-        attackKnob->setBounds(currentX, knobY, knobSize, knobSize);
-        currentX += knobSize + knobSpacing;
+    // ===== PAN SECTION (center) =====
+    int panKnobX = panXPos + (panSectionWidth - knobSize) / 2;
+    panKnob->setBounds(panKnobX, knobY, knobSize, knobSize);
 
-        releaseKnob->setBounds(currentX, knobY, knobSize, knobSize);
-        currentX += knobSize + knobSpacing;
+    // ===== DYNAMICS SECTION (right-justified) =====
+    currentX = rightX + 6;
 
-        rangeKnob->setBounds(currentX, knobY, knobSize, knobSize);
-        currentX += knobSize + knobSpacing;
+    thresholdKnob->setBounds(currentX, knobY, knobSize, knobSize);
+    currentX += knobSize + knobSpacing;
 
-        ratioKnob->setBounds(currentX, knobY, knobSize, knobSize);
-        currentX += knobSize + knobSpacing + 6;
+    attackKnob->setBounds(currentX, knobY, knobSize, knobSize);
+    currentX += knobSize + knobSpacing;
 
-        int btnHeight = 22;
-        int btnY = knobY + (knobSize - btnHeight * 2 - 4) / 2;
+    releaseKnob->setBounds(currentX, knobY, knobSize, knobSize);
+    currentX += knobSize + knobSpacing;
 
-        dynButton->setBounds(currentX, btnY, btnWidth, btnHeight);
-        soloButton->setBounds(currentX, btnY + btnHeight + 4, btnWidth, btnHeight);
-    }
+    rangeKnob->setBounds(currentX, knobY, knobSize, knobSize);
+    currentX += knobSize + knobSpacing;
+
+    ratioKnob->setBounds(currentX, knobY, knobSize, knobSize);
+    currentX += knobSize + knobSpacing + 6;
+
+    int btnHeight = 22;
+    int btnY = knobY + (knobSize - btnHeight * 2 - 4) / 2;
+
+    dynButton->setBounds(currentX, btnY, btnWidth, btnHeight);
+    soloButton->setBounds(currentX, btnY + btnHeight + 4, btnWidth, btnHeight);
 }
