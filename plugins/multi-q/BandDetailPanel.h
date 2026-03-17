@@ -6,7 +6,7 @@
 class MultiQ;
 
 /**
-    BandDetailPanel - Waves F6 style bottom section
+    BandDetailPanel - Single-band detail section
 
     Layout (145px total height):
     - Band selector row at top (8 colored pill buttons, 32px height)
@@ -34,6 +34,7 @@ public:
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseMove(const juce::MouseEvent& e) override;
     void mouseExit(const juce::MouseEvent& e) override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
     // Selection management
     void setSelectedBand(int bandIndex);
@@ -72,12 +73,20 @@ private:
     // Toggle buttons
     std::unique_ptr<juce::TextButton> dynButton;
     std::unique_ptr<juce::TextButton> soloButton;
+    std::unique_ptr<juce::TextButton> invertButton;
+    std::unique_ptr<juce::TextButton> phaseInvertButton;
+    std::unique_ptr<juce::Slider> panKnob;
 
     // Parameter attachments (recreated when band changes)
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freqAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> qAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> slopeAttachment;
+
+    // Invert, phase invert, pan attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> invertAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> phaseInvertAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachment;
 
     // Dynamics attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> dynEnableAttachment;
