@@ -122,6 +122,11 @@ MultiQ::MultiQ()
 
         // Per-band channel routing
         bandRoutingParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandChannelRouting(i + 1));
+
+        // Per-band invert, phase invert, pan
+        bandInvertParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandInvert(i + 1));
+        bandPhaseInvertParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandPhaseInvert(i + 1));
+        bandPanParams[static_cast<size_t>(i)] = parameters.getRawParameterValue(ParamIDs::bandPan(i + 1));
     }
     dynDetectionModeParam = parameters.getRawParameterValue(ParamIDs::dynDetectionMode);
 
@@ -287,6 +292,7 @@ void MultiQ::parameterChanged(const juce::String& parameterID, float newValue)
 void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     baseSampleRate = sampleRate;
+    rmsWindowSamples = static_cast<int>(0.5 * sampleRate);
 
     oversamplingMode = static_cast<int>(safeGetParam(hqEnabledParam, 0.0f));
 
@@ -369,6 +375,10 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         f.snapToTarget();
     for (auto& f : svfDynGainFilters)
         f.snapToTarget();
+
+    // Initialize per-band smoothing state
+    prevBandPhaseInvertGain.fill(1.0f);
+    prevBandPanVal.fill(0.0f);
 
     // Prepare British EQ processor
     britishEQ.prepare(currentSampleRate, samplesPerBlock * osFactor, 2);
@@ -651,9 +661,15 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         previousEQType = eqType;
     }
 
-    // Update filters if needed (for Digital or Match mode with optional dynamics)
-    if ((eqType == EQType::Digital || eqType == EQType::Match) && filtersNeedUpdate.exchange(false))
-        updateAllFilters();
+    // Update filters if needed (for Digital or Match mode)
+    // Always update SVF/biquad coefficients for UI curve display.
+    // In non-LP mode, also consume the flag. In LP mode, leave it for the FIR rebuild path.
+    {
+        bool lpActive = linearPhaseModeEnabled && (eqType == EQType::Digital);
+        bool needsUpdate = lpActive ? filtersNeedUpdate.load() : filtersNeedUpdate.exchange(false);
+        if ((eqType == EQType::Digital || eqType == EQType::Match) && needsUpdate)
+            updateAllFilters();
+    }
 
     // Update British EQ parameters if needed
     if (eqType == EQType::British)
@@ -872,6 +888,14 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                                               numChannels, chunkSize);
             britishEQ.process(tempView);
 
+            // NaN guard after British EQ
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* d = scratchBuffer.getWritePointer(ch);
+                for (int s = 0; s < chunkSize; ++s)
+                    if (!safeIsFinite(d[s])) d[s] = 0.0f;
+            }
+
             for (int ch = 0; ch < numChannels; ++ch)
                 std::memcpy(processBlock.getChannelPointer(static_cast<size_t>(ch)) + offset,
                            scratchBuffer.getReadPointer(ch),
@@ -880,9 +904,6 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     }
     else if (eqType == EQType::Tube)
     {
-        // Tube mode: vintage tube EQ processing
-        // Use pre-allocated scratch buffer (no heap allocation in audio thread)
-        // Process in chunks to handle blocks larger than scratchBuffer
         int numChannels = static_cast<int>(processBlock.getNumChannels());
         int totalSamples = static_cast<int>(processBlock.getNumSamples());
         int scratchSize = scratchBuffer.getNumSamples();
@@ -899,6 +920,14 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             juce::AudioBuffer<float> tempView(scratchBuffer.getArrayOfWritePointers(),
                                               numChannels, chunkSize);
             tubeEQ.process(tempView);
+
+            // NaN guard after Tube EQ
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* d = scratchBuffer.getWritePointer(ch);
+                for (int s = 0; s < chunkSize; ++s)
+                    if (!safeIsFinite(d[s])) d[s] = 0.0f;
+            }
 
             for (int ch = 0; ch < numChannels; ++ch)
                 std::memcpy(processBlock.getChannelPointer(static_cast<size_t>(ch)) + offset,
@@ -933,15 +962,17 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         }
 
         // Apply solo mode: if any band is soloed, only that band is processed
-        // Delta solo: all bands stay active, we capture before/after the target band
+        // HPF (band 0) and LPF (band 7) remain active when soloing a parametric band
         int currentSolo = soloedBand.load();
         bool deltaSoloActive = (currentSolo >= 0 && currentSolo < NUM_BANDS && deltaSoloMode.load());
         if (currentSolo >= 0 && currentSolo < NUM_BANDS && !deltaSoloActive)
         {
+            bool soloIsParametric = (currentSolo >= 1 && currentSolo <= 6);
             for (int i = 0; i < NUM_BANDS; ++i)
             {
-                if (i != currentSolo)
-                    bandEnabled[static_cast<size_t>(i)] = false;
+                if (i == currentSolo) continue;
+                if (soloIsParametric && (i == 0 || i == 7)) continue;
+                bandEnabled[static_cast<size_t>(i)] = false;
             }
         }
 
@@ -962,7 +993,10 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             {
                 lpFreqs[static_cast<size_t>(i)] = safeGetParam(bandFreqParams[static_cast<size_t>(i)],
                     DefaultBandConfigs[static_cast<size_t>(i)].defaultFreq);
-                lpGains[static_cast<size_t>(i)] = safeGetParam(bandGainParams[static_cast<size_t>(i)], 0.0f);
+                float g = safeGetParam(bandGainParams[static_cast<size_t>(i)], 0.0f);
+                if (safeGetParam(bandInvertParams[static_cast<size_t>(i)], 0.0f) > 0.5f)
+                    g = -g;
+                lpGains[static_cast<size_t>(i)] = g;
                 lpQs[static_cast<size_t>(i)] = safeGetParam(bandQParams[static_cast<size_t>(i)], 0.71f);
             }
             lpSlopes[0] = static_cast<int>(safeGetParam(bandSlopeParams[0], 0.0f));
@@ -1020,6 +1054,22 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             {
                 if (bandDynEnabled[static_cast<size_t>(band)])
                     updateDynGainFilter(band, dynamicEQ.getCurrentDynamicGain(band));
+            }
+
+            // Read per-band phase invert and pan target values once per block
+            std::array<float, NUM_BANDS> targetPhaseInvertGain{};
+            std::array<float, NUM_BANDS> targetPanVal{};
+            std::array<float, NUM_BANDS> phaseInvertGainInc{};
+            std::array<float, NUM_BANDS> panValInc{};
+            float invNumSamples = (numSamples > 0) ? 1.0f / static_cast<float>(numSamples) : 1.0f;
+            for (int b = 0; b < NUM_BANDS; ++b)
+            {
+                auto idx = static_cast<size_t>(b);
+                targetPhaseInvertGain[idx] = (safeGetParam(bandPhaseInvertParams[idx], 0.0f) > 0.5f) ? -1.0f : 1.0f;
+                targetPanVal[idx] = safeGetParam(bandPanParams[idx], 0.0f);
+                // Linear ramp increments per sample
+                phaseInvertGainInc[idx] = (targetPhaseInvertGain[idx] - prevBandPhaseInvertGain[idx]) * invNumSamples;
+                panValInc[idx] = (targetPanVal[idx] - prevBandPanVal[idx]) * invNumSamples;
             }
 
             // Read per-band saturation params once per block
@@ -1092,7 +1142,36 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                     float prevL = sampleL, prevR = sampleR;
                     applyFn();
 
-                    // Blend between dry (pre-filter) and wet (post-filter)
+                    // Phase Invert: smoothly ramp polarity of band's contribution
+                    {
+                        auto idx = static_cast<size_t>(bandIdx);
+                        float phaseGain = prevBandPhaseInvertGain[idx] + phaseInvertGainInc[idx] * static_cast<float>(i);
+                        // phaseGain ramps between +1 (normal) and -1 (inverted)
+                        // Apply as blend: output = dry + phaseGain * (wet - dry)
+                        float deltaL = sampleL - prevL;
+                        float deltaR = sampleR - prevR;
+                        sampleL = prevL + phaseGain * deltaL;
+                        sampleR = prevR + phaseGain * deltaR;
+                    }
+
+                    // Pan: smoothly ramped stereo placement of band's EQ effect
+                    {
+                        float pan = prevBandPanVal[static_cast<size_t>(bandIdx)] + panValInc[static_cast<size_t>(bandIdx)] * static_cast<float>(i);
+                        if (std::abs(pan) > 0.001f)
+                        {
+                            float deltaL = sampleL - prevL;
+                            float deltaR = sampleR - prevR;
+
+                            // Linear pan law: -1 = full L, 0 = center, +1 = full R
+                            float leftGain = std::min(1.0f, 1.0f - pan);
+                            float rightGain = std::min(1.0f, 1.0f + pan);
+
+                            sampleL = prevL + deltaL * leftGain;
+                            sampleR = prevR + deltaR * rightGain;
+                        }
+                    }
+
+                    // Blend between dry (pre-filter) and wet (post-filter) for smooth enable/disable
                     if (enableGain < 0.999f)
                     {
                         sampleL = prevL + enableGain * (sampleL - prevL);
@@ -1216,9 +1295,21 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                     sampleR = deltaAfterR - deltaBeforeR;
                 }
 
+                // Per-sample NaN guard (bitwise, immune to -ffast-math)
+                if (!safeIsFinite(sampleL)) sampleL = 0.0f;
+                if (!safeIsFinite(sampleR)) sampleR = 0.0f;
+
                 procL[i] = sampleL;
                 if (isStereo)
                     procR[i] = sampleR;
+            }
+
+            // Update smoothing state for next block
+            for (int b = 0; b < NUM_BANDS; ++b)
+            {
+                auto idx = static_cast<size_t>(b);
+                prevBandPhaseInvertGain[idx] = targetPhaseInvertGain[idx];
+                prevBandPanVal[idx] = targetPanVal[idx];
             }
         }  // end IIR else
     }  // end Digital mode else
@@ -1253,6 +1344,15 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         buffer.applyGain(masterGain);
     }
 
+    // NaN/Inf sanitization before auto-gain and metering (bitwise, immune to -ffast-math)
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        float* data = buffer.getWritePointer(ch);
+        int n = buffer.getNumSamples();
+        for (int s = 0; s < n; ++s)
+            if (!safeIsFinite(data[s])) data[s] = 0.0f;
+    }
+
     // Auto-gain compensation: measure output RMS and apply inverse gain
     // (Bypass already checked above - if bypassed, we would have returned)
     if (autoGainEnabled)
@@ -1270,7 +1370,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         rmsSampleCount += outN;
 
         // Update auto-gain compensation when we have enough samples (~100ms window)
-        if (rmsSampleCount >= RMS_WINDOW_SAMPLES)
+        if (rmsSampleCount >= rmsWindowSamples)
         {
             float inputRms = std::sqrt(inputRmsSum / static_cast<float>(rmsSampleCount));
             float outputRms = std::sqrt(outputRmsSum / static_cast<float>(rmsSampleCount));
@@ -1425,6 +1525,18 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         pushSamplesToAnalyzer(analyzerMonoBuffer.data(), n, false);
     }
 
+    // Final NaN/Inf sanitization using bitwise check (immune to -ffast-math)
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        float* data = buffer.getWritePointer(ch);
+        int n = buffer.getNumSamples();
+        for (int i = 0; i < n; ++i)
+        {
+            if (!safeIsFinite(data[i]))
+                data[i] = 0.0f;
+        }
+    }
+
     // Output level metering (peak absolute value per channel, single-pass)
     auto outRangeL = juce::FloatVectorOperations::findMinAndMax(buffer.getReadPointer(0), buffer.getNumSamples());
     float outL = std::max(std::abs(outRangeL.getStart()), std::abs(outRangeL.getEnd()));
@@ -1461,6 +1573,11 @@ void MultiQ::updateAllFilters()
 void MultiQ::computeBandCoeffs(int bandIndex, BiquadCoeffs& c) const
 {
     float gain = safeGetParam(bandGainParams[static_cast<size_t>(bandIndex)], 0.0f);
+
+    // Invert: flip gain direction (boost↔cut)
+    if (safeGetParam(bandInvertParams[static_cast<size_t>(bandIndex)], 0.0f) > 0.5f)
+        gain = -gain;
+
     computeBandCoeffsWithGain(bandIndex, gain, c);
 }
 
@@ -1869,6 +1986,11 @@ void MultiQ::computeSVFTiltShelf(SVFCoeffs& c, double sr, double freq, float gai
 void MultiQ::computeBandSVFCoeffs(int bandIndex, SVFCoeffs& c) const
 {
     float gain = safeGetParam(bandGainParams[static_cast<size_t>(bandIndex)], 0.0f);
+
+    // Invert: flip gain direction (boost↔cut)
+    if (safeGetParam(bandInvertParams[static_cast<size_t>(bandIndex)], 0.0f) > 0.5f)
+        gain = -gain;
+
     computeBandSVFCoeffsWithGain(bandIndex, gain, c);
 }
 
@@ -1961,8 +2083,8 @@ void MultiQ::updateHPFCoefficients(double sampleRate)
         case FilterSlope::Slope96dB: stages = 8; secondOrderStages = 8; break;
     }
 
-    hpfFilter.activeStages = stages;
-
+    // Compute all stage coefficients BEFORE publishing activeStages
+    // to prevent the audio thread from reading uninitialized stages
     int soStageIdx = 0;
     for (int stage = 0; stage < stages; ++stage)
     {
@@ -1977,15 +2099,13 @@ void MultiQ::updateHPFCoefficients(double sampleRate)
             ++soStageIdx;
         }
 
-        // Apply to filter in-place (no allocation)
         c.applyToFilter(hpfFilter.stagesL[static_cast<size_t>(stage)]);
         c.applyToFilter(hpfFilter.stagesR[static_cast<size_t>(stage)]);
-
-        // Store for UI curve display (write to inactive double buffer)
         uiWriteBuffer().hpfCoeffs[static_cast<size_t>(stage)] = c;
     }
 
-    // Store stage count in write buffer (published together with coefficients by caller)
+    // Publish stage count AFTER all coefficients are written
+    hpfFilter.activeStages.store(stages, std::memory_order_release);
     uiWriteBuffer().hpfStages = stages;
 }
 
@@ -2015,8 +2135,6 @@ void MultiQ::updateLPFCoefficients(double sampleRate)
         case FilterSlope::Slope96dB: stages = 8; secondOrderStages = 8; break;
     }
 
-    lpfFilter.activeStages = stages;
-
     int soStageIdx = 0;
     for (int stage = 0; stage < stages; ++stage)
     {
@@ -2036,7 +2154,8 @@ void MultiQ::updateLPFCoefficients(double sampleRate)
         uiWriteBuffer().lpfCoeffs[static_cast<size_t>(stage)] = c;
     }
 
-    // Store stage count in write buffer (published together with coefficients by caller)
+    // Publish stage count AFTER all coefficients are written
+    lpfFilter.activeStages.store(stages, std::memory_order_release);
     uiWriteBuffer().lpfStages = stages;
 }
 
@@ -2088,6 +2207,37 @@ float MultiQ::getFrequencyResponseMagnitude(float frequencyHz) const
         {
             response *= buf.bandCoeffs[static_cast<size_t>(band - 1)].getMagnitudeForFrequency(frequencyHz, sr);
         }
+    }
+
+    return static_cast<float>(juce::Decibels::gainToDecibels(response, -100.0));
+}
+
+float MultiQ::getPerBandMagnitude(int bandIndex, float frequencyHz) const
+{
+    const auto& buf = uiReadBuffer();
+    double sr = currentSampleRate;
+    double response = 1.0;
+
+    bool enabled = (bandIndex >= 0 && bandIndex < NUM_BANDS) ?
+        safeGetParam(bandEnabledParams[static_cast<size_t>(bandIndex)], 0.0f) > 0.5f : false;
+    if (!enabled)
+        return 0.0f;
+
+    if (bandIndex == 0)  // HPF
+    {
+        int stages = buf.hpfStages;
+        for (int s = 0; s < stages; ++s)
+            response *= buf.hpfCoeffs[static_cast<size_t>(s)].getMagnitudeForFrequency(frequencyHz, sr);
+    }
+    else if (bandIndex == 7)  // LPF
+    {
+        int stages = buf.lpfStages;
+        for (int s = 0; s < stages; ++s)
+            response *= buf.lpfCoeffs[static_cast<size_t>(s)].getMagnitudeForFrequency(frequencyHz, sr);
+    }
+    else  // Parametric bands 1-6
+    {
+        response *= buf.bandCoeffs[static_cast<size_t>(bandIndex - 1)].getMagnitudeForFrequency(frequencyHz, sr);
     }
 
     return static_cast<float>(juce::Decibels::gainToDecibels(response, -100.0));
@@ -2895,6 +3045,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
                 1  // Default 12 dB/oct
             ));
         }
+
+        // Invert: flips EQ gain (boost↔cut) — bands 2-7 only (parametric/shelf)
+        params.push_back(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID(ParamIDs::bandInvert(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Invert",
+            false
+        ));
+
+        // Phase Invert: flips polarity of band's contribution
+        params.push_back(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID(ParamIDs::bandPhaseInvert(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Phase Invert",
+            false
+        ));
+
+        // Pan: stereo placement of band's EQ effect (-1.0 = L, 0 = center, +1.0 = R)
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID(ParamIDs::bandPan(bandNum), 1),
+            "Band " + juce::String(bandNum) + " Pan",
+            juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f),
+            0.0f
+        ));
     }
 
     // Global parameters
@@ -3525,6 +3697,14 @@ void MultiQ::setCurrentProgram(int index)
 
             if (auto* p = parameters.getParameter(ParamIDs::bandQ(i)))
                 p->setValueNotifyingHost(parameters.getParameterRange(ParamIDs::bandQ(i)).convertTo0to1(0.71f));
+
+            // Reset per-band FX params
+            if (auto* p = parameters.getParameter(ParamIDs::bandInvert(i)))
+                p->setValueNotifyingHost(0.0f);
+            if (auto* p = parameters.getParameter(ParamIDs::bandPhaseInvert(i)))
+                p->setValueNotifyingHost(0.0f);
+            if (auto* p = parameters.getParameter(ParamIDs::bandPan(i)))
+                p->setValueNotifyingHost(parameters.getParameterRange(ParamIDs::bandPan(i)).convertTo0to1(0.0f));
         }
 
         // Reset global settings

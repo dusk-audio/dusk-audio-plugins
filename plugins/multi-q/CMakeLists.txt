@@ -123,7 +123,7 @@ else()
     # GCC/Clang optimization and warning flags
     target_compile_options(MultiQ PRIVATE -Wall -Wextra -Wpedantic)
     if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
-        target_compile_options(MultiQ PRIVATE -O3 -ffast-math)
+        target_compile_options(MultiQ PRIVATE -O3 -ffast-math -fno-finite-math-only)
     endif()
 endif()
 
@@ -171,4 +171,67 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     )
 
     add_dependencies(MultiQMatchTest MultiQ_All)
+endif()
+
+# --- DSP Coefficient Test (standalone, no JUCE dependency) ---
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQDSPTest
+        tests/test_multiq_dsp.cpp
+    )
+    target_compile_features(MultiQDSPTest PRIVATE cxx_std_17)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(MultiQDSPTest PRIVATE m)
+    endif()
+endif()
+
+# --- Mode & Integration Tests (standalone, no JUCE dependency) ---
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQModesTest
+        tests/test_multiq_modes.cpp
+    )
+    target_compile_features(MultiQModesTest PRIVATE cxx_std_17)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(MultiQModesTest PRIVATE m)
+    endif()
+endif()
+
+# --- Integration Test (JUCE-linked, processes audio through plugin) ---
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQIntegrationTest
+        tests/test_multiq_integration.cpp
+    )
+
+    target_include_directories(MultiQIntegrationTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode
+    )
+
+    target_compile_definitions(MultiQIntegrationTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_STANDALONE_APPLICATION=1
+    )
+
+    target_compile_features(MultiQIntegrationTest PRIVATE cxx_std_17)
+
+    target_link_libraries(MultiQIntegrationTest
+        PRIVATE
+            MultiQ
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+
+    add_dependencies(MultiQIntegrationTest MultiQ_All)
 endif()

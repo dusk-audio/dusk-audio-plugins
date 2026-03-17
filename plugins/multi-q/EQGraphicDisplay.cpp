@@ -549,6 +549,9 @@ void EQGraphicDisplay::drawPianoOverlay(juce::Graphics& g)
 void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
 {
     auto displayBounds = getDisplayBounds();
+    if (displayBounds.getWidth() < 10.0f || displayBounds.getHeight() < 10.0f)
+        return;
+
     juce::Colour curveColor = (bandIndex >= 0 && bandIndex < 8) ? DefaultBandConfigs[bandIndex].color : juce::Colours::white;
 
     juce::Path curvePath;
@@ -561,114 +564,7 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
         float freq = getFrequencyAtX(x);
 
-        float response = 0.0f;
-        float bandFreq = getBandFrequency(bandIndex);
-        float gain = getBandGain(bandIndex);
-        float q = processor.getEffectiveQ(bandIndex + 1);  // 1-indexed
-
-        static const float slopeValues[] = { 6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f, 72.0f, 96.0f };
-
-        if (bandIndex == 0)  // HPF
-        {
-            float ratio = freq / bandFreq;
-            if (ratio < 1.0f)
-            {
-                auto slopeParam = processor.parameters.getRawParameterValue(ParamIDs::bandSlope(1));
-                int slopeIndex = slopeParam ? static_cast<int>(slopeParam->load()) : 1;
-                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
-                response = slopeDB * std::log2(ratio);
-            }
-        }
-        else if (bandIndex == 7)  // LPF
-        {
-            float ratio = bandFreq / freq;
-            if (ratio < 1.0f)
-            {
-                auto slopeParam = processor.parameters.getRawParameterValue(ParamIDs::bandSlope(8));
-                int slopeIndex = slopeParam ? static_cast<int>(slopeParam->load()) : 1;
-                float slopeDB = (slopeIndex >= 0 && slopeIndex < 8) ? slopeValues[slopeIndex] : 12.0f;
-                response = slopeDB * std::log2(ratio);
-            }
-        }
-        else if (bandIndex == 1)  // Band 2: shape-aware
-        {
-            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(2));
-            int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
-
-            if (shape == 1)  // Peaking
-            {
-                float logRatio = std::log2(freq / bandFreq);
-                float bandwidth = 1.0f / q;
-                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
-                response = gain * envelope;
-            }
-            else if (shape == 2)  // High-Pass (12 dB/oct)
-            {
-                float ratio = freq / bandFreq;
-                if (ratio < 1.0f)
-                    response = 12.0f * std::log2(ratio);
-            }
-            else  // Low Shelf (default)
-            {
-                float ratio = freq / bandFreq;
-                if (ratio < 0.5f)
-                    response = gain;
-                else if (ratio < 2.0f)
-                {
-                    float transition = (std::log2(ratio) + 1.0f) / 2.0f;
-                    response = gain * (1.0f - transition);
-                }
-            }
-        }
-        else if (bandIndex == 6)  // Band 7: shape-aware
-        {
-            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(7));
-            int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
-
-            if (shape == 1)  // Peaking
-            {
-                float logRatio = std::log2(freq / bandFreq);
-                float bandwidth = 1.0f / q;
-                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
-                response = gain * envelope;
-            }
-            else if (shape == 2)  // Low-Pass (12 dB/oct)
-            {
-                float ratio = bandFreq / freq;
-                if (ratio < 1.0f)
-                    response = 12.0f * std::log2(ratio);
-            }
-            else  // High Shelf (default)
-            {
-                float ratio = freq / bandFreq;
-                if (ratio > 2.0f)
-                    response = gain;
-                else if (ratio > 0.5f)
-                {
-                    float transition = (std::log2(ratio) + 1.0f) / 2.0f;
-                    response = gain * transition;
-                }
-            }
-        }
-        else  // Parametric bands 3-6 (shape-aware)
-        {
-            auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
-            int shape = shapeParam ? static_cast<int>(shapeParam->load()) : 0;
-
-            if (shape == 3)  // Tilt Shelf
-            {
-                float tiltRatio = freq / bandFreq;
-                float tiltTransition = 2.0f / juce::MathConstants<float>::pi * std::atan(std::log2(tiltRatio) * 2.0f);
-                response = gain * tiltTransition;
-            }
-            else
-            {
-                float logRatio = std::log2(freq / bandFreq);
-                float bandwidth = 1.0f / q;
-                float envelope = std::exp(-logRatio * logRatio / (bandwidth * bandwidth * 0.5f));
-                response = gain * envelope;
-            }
-        }
+        float response = processor.getPerBandMagnitude(bandIndex, freq);
 
         float y = getYForDB(response);
 
@@ -716,6 +612,54 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
 
         g.setGradientFill(fillGradient);
         g.fillPath(fillPath);
+    }
+
+    float dynGainDB = smoothedDynamicGains[static_cast<size_t>(bandIndex)];
+    bool hasDynReduction = processor.isInDynamicMode()
+                        && processor.isDynamicsEnabled(bandIndex)
+                        && std::abs(dynGainDB) > 0.3f;
+
+    if (hasDynReduction)
+    {
+        juce::Path dynCurvePath;
+        juce::Path grRegion;
+
+        for (int px = 0; px < numPoints; ++px)
+        {
+            float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
+            float freq = getFrequencyAtX(x);
+            float staticResp = processor.getPerBandMagnitude(bandIndex, freq);
+            float staticY = getYForDB(staticResp);
+            float dynY = getYForDB(staticResp + dynGainDB);
+
+            if (px == 0)
+            {
+                dynCurvePath.startNewSubPath(x, dynY);
+                grRegion.startNewSubPath(x, staticY);
+            }
+            else
+            {
+                dynCurvePath.lineTo(x, dynY);
+                grRegion.lineTo(x, staticY);
+            }
+        }
+
+        for (int px = numPoints - 1; px >= 0; --px)
+        {
+            float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
+            float freq = getFrequencyAtX(x);
+            float dynY = getYForDB(processor.getPerBandMagnitude(bandIndex, freq) + dynGainDB);
+            grRegion.lineTo(x, dynY);
+        }
+        grRegion.closeSubPath();
+
+        float grAlpha = juce::jmin(std::abs(dynGainDB) / 12.0f, 1.0f) * 0.25f;
+        g.setColour(juce::Colour(0xFFffaa44).withAlpha(grAlpha));
+        g.fillPath(grRegion);
+
+        g.setColour(juce::Colour(0xFFffaa44).withAlpha(0.4f));
+        g.strokePath(dynCurvePath, juce::PathStrokeType(1.2f,
+                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
     float glowAlpha = isSelected ? 0.3f : (isHovered ? 0.2f : 0.12f);
@@ -1315,7 +1259,7 @@ void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)
 
 void EQGraphicDisplay::mouseDrag(const juce::MouseEvent& e)
 {
-    if (!isDragging || selectedBand < 0)
+    if (!isDragging || selectedBand < 0 || selectedBand >= 8)
         return;
 
     auto point = e.position;
@@ -1323,6 +1267,13 @@ void EQGraphicDisplay::mouseDrag(const juce::MouseEvent& e)
 
     float deltaX = point.x - dragStartPoint.x;
     float deltaY = point.y - dragStartPoint.y;
+
+    // Fine control: Cmd (Mac) / Ctrl (Win/Linux) reduces sensitivity by 10x
+    if (e.mods.isCommandDown())
+    {
+        deltaX *= 0.1f;
+        deltaY *= 0.1f;
+    }
 
     switch (currentDragMode)
     {
