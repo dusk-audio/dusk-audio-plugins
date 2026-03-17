@@ -8,6 +8,17 @@
 #include <mutex>
 #include <vector>
 
+template<typename T>
+struct DoubleBuffer
+{
+    std::array<T, 2> buffers{};
+    std::atomic<int> readIndex{0};
+
+    T& writeBuffer() { return buffers[1 - readIndex.load(std::memory_order_relaxed)]; }
+    void publish() { readIndex.fetch_xor(1, std::memory_order_release); }
+    const T& readBuffer() const { return buffers[readIndex.load(std::memory_order_acquire)]; }
+};
+
 //==============================================================================
 /**
     EQMatchProcessor — Logic Pro Match EQ style spectrum matching.
@@ -103,6 +114,11 @@ public:
         {
             std::lock_guard<std::mutex> lock(spectrumMutex);
             currentSpectrum.reset();
+            // Reset double-buffer under mutex to avoid racing with UI reads
+            currentSpectrumBuf.writeBuffer().reset();
+            currentSpectrumBuf.publish();
+            currentSpectrumBuf.writeBuffer().reset();
+            currentSpectrumBuf.publish();
         }
         learningInputPos = 0;
         samplesSinceLastFrame = -(FFT_SIZE - HOP_SIZE);  // Require full window before first frame
@@ -114,6 +130,11 @@ public:
         {
             std::lock_guard<std::mutex> lock(spectrumMutex);
             referenceSpectrum.reset();
+            // Reset double-buffer under mutex to avoid racing with UI reads
+            referenceSpectrumBuf.writeBuffer().reset();
+            referenceSpectrumBuf.publish();
+            referenceSpectrumBuf.writeBuffer().reset();
+            referenceSpectrumBuf.publish();
         }
         learningInputPos = 0;
         samplesSinceLastFrame = -(FFT_SIZE - HOP_SIZE);  // Require full window before first frame
@@ -184,14 +205,12 @@ public:
 
     void getCurrentSpectrumDB(std::array<float, NUM_BINS>& outDB) const
     {
-        std::lock_guard<std::mutex> lock(spectrumMutex);
-        currentSpectrum.getAverageMagnitudeDB(outDB);
+        currentSpectrumBuf.readBuffer().getAverageMagnitudeDB(outDB);
     }
 
     void getReferenceSpectrumDB(std::array<float, NUM_BINS>& outDB) const
     {
-        std::lock_guard<std::mutex> lock(spectrumMutex);
-        referenceSpectrum.getAverageMagnitudeDB(outDB);
+        referenceSpectrumBuf.readBuffer().getAverageMagnitudeDB(outDB);
     }
 
     // --- Correction computation (call from UI thread after learning stops) ---
@@ -384,6 +403,8 @@ private:
 
     LearnedSpectrum currentSpectrum;
     LearnedSpectrum referenceSpectrum;
+    DoubleBuffer<LearnedSpectrum> currentSpectrumBuf;
+    DoubleBuffer<LearnedSpectrum> referenceSpectrumBuf;
 
     // Learning FFT
     juce::dsp::FFT learningFFT{FFT_ORDER};
@@ -433,12 +454,26 @@ private:
         // Forward FFT (in-place, interleaved complex output)
         learningFFT.performRealOnlyForwardTransform(learningFFTBuffer.data());
 
-        // Accumulate into the target spectrum (locked to synchronize with UI reads)
+        // Accumulate into the target spectrum (mutex for legacy + double buffer for lock-free UI reads)
         {
             std::lock_guard<std::mutex> lock(spectrumMutex);
             LearnedSpectrum& spectrum = (target == LearningTarget::Current)
                                          ? currentSpectrum : referenceSpectrum;
             spectrum.addFrame(learningFFTBuffer.data(), FFT_SIZE);
+        }
+
+        // Publish full spectrum snapshot to double buffer for lock-free UI reads.
+        // Copy the complete accumulated spectrum (not just addFrame) so the read
+        // buffer always reflects all frames, not just alternating ones.
+        if (target == LearningTarget::Current)
+        {
+            currentSpectrumBuf.writeBuffer() = currentSpectrum;
+            currentSpectrumBuf.publish();
+        }
+        else
+        {
+            referenceSpectrumBuf.writeBuffer() = referenceSpectrum;
+            referenceSpectrumBuf.publish();
         }
     }
 

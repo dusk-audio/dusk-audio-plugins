@@ -109,6 +109,26 @@ public:
         // Prepare phase shift
         phaseShiftL.prepare(spec);
         phaseShiftR.prepare(spec);
+
+        // Pre-allocate coefficients for all filters (off audio thread)
+        // so that updateFilters() can modify them in-place without heap allocations
+        initFilterCoefficients(lfFilterL);
+        initFilterCoefficients(lfFilterR);
+        initFilterCoefficients(lmFilterL);
+        initFilterCoefficients(lmFilterR);
+        initFilterCoefficients(hmFilterL);
+        initFilterCoefficients(hmFilterR);
+        initFilterCoefficients(hfFilterL);
+        initFilterCoefficients(hfFilterR);
+        initFilterCoefficients(hpfStage1L);
+        initFilterCoefficients(hpfStage1R);
+        initFilterCoefficients(hpfStage2L);
+        initFilterCoefficients(hpfStage2R);
+        initFilterCoefficients(lpfL);
+        initFilterCoefficients(lpfR);
+        initFilterCoefficients(phaseShiftL);
+        initFilterCoefficients(phaseShiftR);
+
         updatePhaseShift();
 
         // Console saturation
@@ -141,9 +161,7 @@ public:
 
     /** Sample-rate update. Called from processBlock when rate changes.
         Resets filter state, updates the cached rate, and refreshes rate-dependent
-        components (saturation, phase shift coefficients). Note: updatePhaseShift()
-        allocates a Coefficients object; this is acceptable since sample rate changes
-        are infrequent (typically only at session start). Caller must call
+        components (saturation, phase shift coefficients). Caller must call
         setParameters() or otherwise trigger updateFilters() so that filter coefficients
         are recalculated for the new rate. */
     void updateSampleRate(double newRate)
@@ -188,7 +206,7 @@ public:
                 float sample = channelData[i];
 
                 // NaN/Inf protection - skip processing if input is invalid
-                if (!std::isfinite(sample))
+                if (!safeIsFinite(sample))
                 {
                     channelData[i] = 0.0f;
                     continue;
@@ -227,7 +245,7 @@ public:
                 }
 
                 // NaN/Inf protection - zero output if processing produced invalid result
-                if (!std::isfinite(sample))
+                if (!safeIsFinite(sample))
                     sample = 0.0f;
 
                 channelData[i] = sample;
@@ -279,8 +297,7 @@ private:
     void updatePhaseShift()
     {
         // All-pass filter for transformer phase rotation at ~200Hz
-        // Creates a new Coefficients instance and swaps via refcounted Ptr
-        // so the audio thread always sees a consistent object.
+        // Writes coefficients in-place (no heap allocation)
         float freq = 200.0f;
         double sr = currentSampleRate.load(std::memory_order_acquire);
         float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sr);
@@ -291,64 +308,85 @@ private:
         float b0 = a1;
         float b1 = 1.0f;
 
-        auto newCoeffs = juce::dsp::IIR::Coefficients<float>::Ptr(
-            new juce::dsp::IIR::Coefficients<float>(b0, b1, 0.0f, 1.0f, a1, 0.0f));
-        phaseShiftL.coefficients = newCoeffs;
-        phaseShiftR.coefficients = newCoeffs;
+        setFilterCoeffs(phaseShiftL, b0, b1, 0.0f, a1, 0.0f);
+        setFilterCoeffs(phaseShiftR, b0, b1, 0.0f, a1, 0.0f);
     }
 
     void updateHPF(double sr)
     {
         float freq = params.hpfFreq;
+        float fsr = static_cast<float>(sr);
 
-        // Stage 1: 1st-order highpass
-        auto coeffs1st = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass(sr, freq);
-        if (coeffs1st)
+        // Stage 1: 1st-order highpass via bilinear transform (in-place, no allocation)
+        // H(s) = s / (s + w_c)  =>  bilinear  =>  biquad with b2=0, a2=0
         {
-            hpfStage1L.coefficients = coeffs1st;
-            hpfStage1R.coefficients = coeffs1st;
+            float K = std::tan(juce::MathConstants<float>::pi * freq / fsr);
+            float norm = 1.0f / (1.0f + K);
+            float b0 = norm;
+            float b1 = -norm;
+            float a1 = (K - 1.0f) * norm;
+            setFilterCoeffs(hpfStage1L, b0, b1, 0.0f, a1, 0.0f);
+            setFilterCoeffs(hpfStage1R, b0, b1, 0.0f, a1, 0.0f);
         }
 
-        // Stage 2: 2nd-order highpass with console Q
-        const float consoleHPFQ = 0.54f;
-        auto coeffs2nd = juce::dsp::IIR::Coefficients<float>::makeHighPass(sr, freq, consoleHPFQ);
-        if (coeffs2nd)
+        // Stage 2: 2nd-order highpass with console Q (in-place, no allocation)
+        // Q = 1.0 for biquad section of 3rd-order Butterworth HPF (1st + 2nd order cascade)
         {
-            hpfStage2L.coefficients = coeffs2nd;
-            hpfStage2R.coefficients = coeffs2nd;
+            const float consoleHPFQ = 1.0f;
+            float w0 = juce::MathConstants<float>::twoPi * freq / fsr;
+            float cosw0 = std::cos(w0);
+            float sinw0 = std::sin(w0);
+            float alpha = sinw0 / (2.0f * consoleHPFQ);
+
+            float a0 = 1.0f + alpha;
+            float b0 = ((1.0f + cosw0) / 2.0f) / a0;
+            float b1 = (-(1.0f + cosw0)) / a0;
+            float b2 = ((1.0f + cosw0) / 2.0f) / a0;
+            float a1 = (-2.0f * cosw0) / a0;
+            float a2 = (1.0f - alpha) / a0;
+            setFilterCoeffs(hpfStage2L, b0, b1, b2, a1, a2);
+            setFilterCoeffs(hpfStage2R, b0, b1, b2, a1, a2);
         }
     }
 
     void updateLPF(double sr)
     {
         float freq = params.lpfFreq;
+        float fsr = static_cast<float>(sr);
 
         float processFreq = freq;
         if (freq > sr * 0.3f)
             processFreq = britishPreWarpFrequency(freq, sr);
 
         float q = params.isBlackMode ? 0.8f : 0.707f;
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sr, processFreq, q);
-        if (coeffs)
-        {
-            lpfL.coefficients = coeffs;
-            lpfR.coefficients = coeffs;
-        }
+
+        // 2nd-order lowpass (in-place, no allocation)
+        float w0 = juce::MathConstants<float>::twoPi * processFreq / fsr;
+        float cosw0 = std::cos(w0);
+        float sinw0 = std::sin(w0);
+        float alpha = sinw0 / (2.0f * q);
+
+        float a0 = 1.0f + alpha;
+        float b0 = ((1.0f - cosw0) / 2.0f) / a0;
+        float b1 = (1.0f - cosw0) / a0;
+        float b2 = ((1.0f - cosw0) / 2.0f) / a0;
+        float a1 = (-2.0f * cosw0) / a0;
+        float a2 = (1.0f - alpha) / a0;
+        setFilterCoeffs(lpfL, b0, b1, b2, a1, a2);
+        setFilterCoeffs(lpfR, b0, b1, b2, a1, a2);
     }
 
     void updateLFBand(double sr)
     {
         if (params.isBlackMode && params.lfBell)
         {
-            auto coeffs = makeConsolePeak(sr, params.lfFreq, 0.7f, params.lfGain, params.isBlackMode);
-            lfFilterL.coefficients = coeffs;
-            lfFilterR.coefficients = coeffs;
+            applyConsolePeakCoeffs(lfFilterL, sr, params.lfFreq, 0.7f, params.lfGain, params.isBlackMode);
+            applyConsolePeakCoeffs(lfFilterR, sr, params.lfFreq, 0.7f, params.lfGain, params.isBlackMode);
         }
         else
         {
-            auto coeffs = makeConsoleShelf(sr, params.lfFreq, 0.7f, params.lfGain, false, params.isBlackMode);
-            lfFilterL.coefficients = coeffs;
-            lfFilterR.coefficients = coeffs;
+            applyConsoleShelfCoeffs(lfFilterL, sr, params.lfFreq, 0.7f, params.lfGain, false, params.isBlackMode);
+            applyConsoleShelfCoeffs(lfFilterR, sr, params.lfFreq, 0.7f, params.lfGain, false, params.isBlackMode);
         }
     }
 
@@ -358,9 +396,8 @@ private:
         if (params.isBlackMode)
             q = calculateDynamicQ(params.lmGain, q);
 
-        auto coeffs = makeConsolePeak(sr, params.lmFreq, q, params.lmGain, params.isBlackMode);
-        lmFilterL.coefficients = coeffs;
-        lmFilterR.coefficients = coeffs;
+        applyConsolePeakCoeffs(lmFilterL, sr, params.lmFreq, q, params.lmGain, params.isBlackMode);
+        applyConsolePeakCoeffs(lmFilterR, sr, params.lmFreq, q, params.lmGain, params.isBlackMode);
     }
 
     void updateHMBand(double sr)
@@ -382,9 +419,8 @@ private:
         if (freq > 3000.0f)
             processFreq = britishPreWarpFrequency(freq, sr);
 
-        auto coeffs = makeConsolePeak(sr, processFreq, q, params.hmGain, params.isBlackMode);
-        hmFilterL.coefficients = coeffs;
-        hmFilterR.coefficients = coeffs;
+        applyConsolePeakCoeffs(hmFilterL, sr, processFreq, q, params.hmGain, params.isBlackMode);
+        applyConsolePeakCoeffs(hmFilterR, sr, processFreq, q, params.hmGain, params.isBlackMode);
     }
 
     void updateHFBand(double sr)
@@ -393,15 +429,13 @@ private:
 
         if (params.isBlackMode && params.hfBell)
         {
-            auto coeffs = makeConsolePeak(sr, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
-            hfFilterL.coefficients = coeffs;
-            hfFilterR.coefficients = coeffs;
+            applyConsolePeakCoeffs(hfFilterL, sr, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
+            applyConsolePeakCoeffs(hfFilterR, sr, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
         }
         else
         {
-            auto coeffs = makeConsoleShelf(sr, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
-            hfFilterL.coefficients = coeffs;
-            hfFilterR.coefficients = coeffs;
+            applyConsoleShelfCoeffs(hfFilterL, sr, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
+            applyConsoleShelfCoeffs(hfFilterR, sr, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
         }
     }
 
@@ -413,7 +447,25 @@ private:
         return juce::jlimit(0.5f, 8.0f, dynamicQ);
     }
 
-    juce::dsp::IIR::Coefficients<float>::Ptr makeConsoleShelf(
+    // Create initial passthrough coefficients for a filter (called from prepare(), off audio thread)
+    static void initFilterCoefficients(juce::dsp::IIR::Filter<float>& filter)
+    {
+        filter.coefficients = new juce::dsp::IIR::Coefficients<float>(
+            1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f);
+    }
+
+    // Assign biquad coefficients in-place (no heap allocation)
+    static void setFilterCoeffs(juce::dsp::IIR::Filter<float>& filter,
+                                float b0, float b1, float b2, float a1, float a2)
+    {
+        if (filter.coefficients == nullptr)
+            return;
+        auto* c = filter.coefficients->coefficients.getRawDataPointer();
+        c[0] = b0; c[1] = b1; c[2] = b2; c[3] = 1.0f; c[4] = a1; c[5] = a2;
+    }
+
+    // Console shelf filter — writes coefficients in-place (no allocation)
+    void applyConsoleShelfCoeffs(juce::dsp::IIR::Filter<float>& filter,
         double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
     {
         float A = std::pow(10.0f, gainDB / 40.0f);
@@ -452,11 +504,11 @@ private:
 
         b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
 
-        return juce::dsp::IIR::Coefficients<float>::Ptr(
-            new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
+        setFilterCoeffs(filter, b0, b1, b2, a1, a2);
     }
 
-    juce::dsp::IIR::Coefficients<float>::Ptr makeConsolePeak(
+    // Console peak filter — writes coefficients in-place (no allocation)
+    void applyConsolePeakCoeffs(juce::dsp::IIR::Filter<float>& filter,
         double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
     {
         float A = std::pow(10.0f, gainDB / 40.0f);
@@ -487,8 +539,7 @@ private:
 
         b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
 
-        return juce::dsp::IIR::Coefficients<float>::Ptr(
-            new juce::dsp::IIR::Coefficients<float>(b0, b1, b2, 1.0f, a1, a2));
+        setFilterCoeffs(filter, b0, b1, b2, a1, a2);
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BritishEQProcessor)

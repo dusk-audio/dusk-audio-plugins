@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include "SafeFloat.h"
 
 class ConsoleSaturation
 {
@@ -79,7 +80,7 @@ public:
         juce::ScopedNoDenormals noDenormals;
 
         // NaN/Inf protection - return silence (0.0f) if input is invalid
-        if (!std::isfinite(input))
+        if (!safeIsFinite(input))
             return 0.0f;
 
         if (drive < 0.001f)
@@ -112,7 +113,7 @@ public:
         float effectiveDrive = drive * (1.0f - hfReduction);
 
         // Stage 1: Input transformer saturation
-        // Console uses Marinair (E-Series) or Carnhill (G-Series) transformers
+        // Console transformer saturation (vintage iron-core characteristics)
         // Apply component tolerance for per-instance variation
         float transformed = processInputTransformer(limited, effectiveDrive * transformerTolerance);
 
@@ -142,7 +143,7 @@ public:
         float result = input * (1.0f - wetMix) + output * wetMix;
 
         // NaN/Inf protection - return clean input if saturation produced invalid output
-        if (!std::isfinite(result))
+        if (!safeIsFinite(result))
             return input;
 
         return result;
@@ -206,7 +207,7 @@ private:
     }
 
     // Input transformer saturation
-    // Models Marinair/Carnhill transformer behavior
+    // Models vintage iron-core transformer behavior
     // Predominantly even-order harmonics (2nd, 4th)
     // The console is very clean at normal levels (-18dB), only saturates when driven hot
     float processInputTransformer(float input, float drive)
@@ -249,14 +250,10 @@ private:
         // Add console-specific harmonic coloration
         // Console transformers are very linear until driven moderately hard
         //
-        // DESIGN DECISION: Threshold difference dominates harmonic behavior
-        // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
-        // G-Series (0.05 threshold): Subtle harmonics across entire drive range
-        //
-        // At low-to-moderate drive (0.1-0.5), G-Series produces MORE total harmonic
-        // content due to much lower threshold, despite smaller coefficients.
-        // E-Series delivers stronger saturation punch when driven hard (>0.6).
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
+        // Threshold sets character voicing
+        // E-Series (0.05): Warmer — harmonics engage early (lower threshold = more color)
+        // G-Series (0.6): Cleaner — harmonics only when driven hard (higher threshold)
+        float threshold = (consoleType == ConsoleType::ESeries) ? 0.05f : 0.6f;
 
         if (abs_x > threshold)
         {
@@ -267,13 +264,13 @@ private:
             if (consoleType == ConsoleType::ESeries)
             {
                 // E-Series (Brown): 2nd harmonic DOMINANT (E-Series signature)
-                // High threshold (0.6) + strong coefficients = clean low-end, saturated highs
+                // Low threshold (0.05) + strong coefficients = warm, rich harmonics across drive range
                 saturated += saturated * saturated * (0.12f * saturationAmount);
             }
             else
             {
                 // G-Series (Black): 3rd harmonic DOMINANT (G-Series signature)
-                // Low threshold (0.05) + subtle coefficients = gentle coloration throughout
+                // High threshold (0.6) + subtle coefficients = clean at low drive, colored when pushed
                 saturated += saturated * saturated * (0.025f * saturationAmount);  // 2nd harmonic (subtle)
                 saturated += saturated * saturated * saturated * (0.050f * saturationAmount);  // 3rd harmonic DOMINANT
             }
@@ -351,14 +348,12 @@ private:
 
         // Console-specific harmonic shaping - console op-amps are very linear until driven hard
         //
-        // DESIGN DECISION: Threshold difference dominates harmonic behavior
-        // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
-        // G-Series (0.05 threshold): Subtle harmonics across entire drive range
-        //
-        // At low-to-moderate drive (0.1-0.5), G-Series produces MORE total harmonic
-        // content due to much lower threshold, despite smaller coefficients.
-        // E-Series delivers stronger saturation punch when driven hard (>0.6).
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
+        // DESIGN DECISION: Threshold sets character voicing
+        // E-Series (0.05 threshold): Warmer — harmonics engage early, matching real
+        //   NE5534 op-amp behavior in E-Series circuits (richer at moderate drive)
+        // G-Series (0.6 threshold): Cleaner — harmonics only when driven hard, matching
+        //   real G-Series design philosophy (pristine at normal levels)
+        float threshold = (consoleType == ConsoleType::ESeries) ? 0.05f : 0.6f;
 
         if (std::abs(driven) > threshold)
         {
@@ -369,13 +364,13 @@ private:
             if (consoleType == ConsoleType::ESeries)
             {
                 // E-Series: 2nd harmonic DOMINANT (E-Series signature)
-                // High threshold (0.6) + strong coefficients = clean low-end, saturated highs
+                // Low threshold (0.05) + strong coefficients = warm, rich harmonics across drive range
                 output += output * output * std::copysign(0.10f * saturationAmount, output);
             }
             else
             {
                 // G-Series: 3rd harmonic DOMINANT over 2nd (G-Series signature)
-                // Low threshold (0.05) + subtle coefficients = gentle coloration throughout
+                // High threshold (0.6) + subtle coefficients = clean at low drive, colored when pushed
                 output += output * output * std::copysign(0.022f * saturationAmount, output);  // 2nd harmonic (subtle)
                 output += output * output * output * (0.040f * saturationAmount);  // 3rd harmonic DOMINANT
             }

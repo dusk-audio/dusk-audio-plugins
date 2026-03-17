@@ -18,6 +18,8 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstring>
+#include "SafeFloat.h"
 #include <random>
 
 // Helper for LC filter pre-warping (clamp omega to avoid tan() blowup near Nyquist)
@@ -36,6 +38,7 @@ public:
     void prepare(double sampleRate, uint32_t characterSeed = 0)
     {
         this->sampleRate = sampleRate;
+        computeDecayCoefficients(sampleRate);
         reset();
 
         // Random variation of ±5% on Q and ±2% on saturation threshold
@@ -64,6 +67,7 @@ public:
     void updateSampleRate(double newRate)
     {
         sampleRate = newRate;
+        computeDecayCoefficients(newRate);
         reset();
     }
 
@@ -126,12 +130,11 @@ public:
     /** Process inductor non-linearity: B-H curve saturation + hysteresis. */
     float processNonlinearity(float input, float driveLevel)
     {
-        if (!std::isfinite(input))
+        if (!safeIsFinite(input))
             return 0.0f;
 
-        // Track RMS level for program-dependent behavior
-        const float rmsCoeff = 0.9995f;  // ~50ms integration
-        rmsLevel = rmsLevel * rmsCoeff + input * input * (1.0f - rmsCoeff);
+        // Track RMS level for program-dependent behavior (45ms time constant)
+        rmsLevel = rmsLevel * rmsDecay + input * input * (1.0f - rmsDecay);
         float rmsValue = std::sqrt(rmsLevel);
 
         // Adjust saturation threshold based on program level
@@ -164,12 +167,12 @@ public:
         float deltaInput = saturatedInput - prevInput;
         float hysteresisCoeff = 0.08f * driveLevel;
 
-        // Core flux integration with decay
-        coreFlux = coreFlux * 0.97f + deltaInput * hysteresisCoeff;
+        // Core flux integration with decay (0.75ms time constant)
+        coreFlux = coreFlux * fluxDecay + deltaInput * hysteresisCoeff;
         coreFlux = std::clamp(coreFlux, -0.15f, 0.15f);
 
-        // Hysteresis adds slight asymmetry based on flux direction
-        hysteresisState = hysteresisState * 0.92f + coreFlux * 0.08f;
+        // Hysteresis adds slight asymmetry based on flux direction (0.28ms time constant)
+        hysteresisState = hysteresisState * hystDecay + coreFlux * (1.0f - hystDecay);
         float output = saturatedInput + hysteresisState * 0.5f;
 
         prevInput = input;
@@ -181,12 +184,24 @@ public:
     float getRmsLevel() const { return std::sqrt(rmsLevel); }
 
 private:
+    void computeDecayCoefficients(double sr)
+    {
+        rmsDecay = std::exp(-1.0f / (0.045f * static_cast<float>(sr)));       // 45ms RMS integration
+        fluxDecay = std::exp(-1.0f / (0.00075f * static_cast<float>(sr)));    // 0.75ms core flux
+        hystDecay = std::exp(-1.0f / (0.00028f * static_cast<float>(sr)));    // 0.28ms hysteresis
+    }
+
     double sampleRate = 44100.0;
     float prevInput = 0.0f;
     float prevOutput = 0.0f;
     float hysteresisState = 0.0f;
     float coreFlux = 0.0f;
     float rmsLevel = 0.0f;
+
+    // Sample-rate-dependent decay coefficients
+    float rmsDecay = 0.9995f;
+    float fluxDecay = 0.97f;
+    float hystDecay = 0.92f;
 
     // Component tolerance variation (vintage unit character)
     float componentQVariation = 1.0f;
@@ -206,6 +221,7 @@ public:
         // Slew rate limiting coefficient
         maxSlewRate = static_cast<float>(150000.0 / sampleRate);  // ~150V/ms typical
 
+        computeDecayCoefficients(sampleRate);
         reset();
     }
 
@@ -223,6 +239,7 @@ public:
     {
         sampleRate = newRate;
         maxSlewRate = static_cast<float>(150000.0 / newRate);
+        computeDecayCoefficients(newRate);
         reset();
     }
 
@@ -249,7 +266,7 @@ public:
         float effectiveGrid = drivenSignal + gridBias;
 
         float gridCurrentAmount = std::max(0.0f, effectiveGrid + 1.5f) * 0.15f;
-        gridCurrent = gridCurrent * 0.9f + gridCurrentAmount * 0.1f;
+        gridCurrent = gridCurrent * gridDecay + gridCurrentAmount * (1.0f - gridDecay);
 
         float compressionFactor = 1.0f / (1.0f + gridCurrent * drive * 2.0f);
 
@@ -337,10 +354,16 @@ public:
     }
 
 private:
+    void computeDecayCoefficients(double sr)
+    {
+        gridDecay = std::exp(-1.0f / (0.00021f * static_cast<float>(sr)));  // 0.21ms grid current
+    }
+
     static constexpr int maxChannels = 8;
     double sampleRate = 44100.0;
     float drive = 0.3f;
     float maxSlewRate = 0.003f;
+    float gridDecay = 0.9f;  // Sample-rate-dependent grid current decay
 
     // Per-channel state (indexed by channel)
     std::array<float, maxChannels> prevSamples{};
@@ -350,170 +373,199 @@ private:
     std::array<AnalogEmulation::DCBlocker, maxChannels> dcBlockers;
 };
 
-/** Passive LC Network model for boost/cut interaction.
-    Shared LC topology creates characteristic boost peak + shelf cut interaction. */
-class PassiveLCNetwork
+/** Vintage passive EQ style LF section with dual-biquad boost/cut interaction.
+    Peak filter for boost + low shelf for attenuation, with inductor nonlinearity
+    applied between stages for authentic passive LC network behavior. */
+class PultecLFSection
 {
 public:
+    // Tunable interaction constants (named for easy adjustment)
+    static constexpr float kPeakGainScale = 1.4f;
+    static constexpr float kPeakInteraction = 0.08f;
+    static constexpr float kBaseQ = 0.55f;
+    static constexpr float kQInteraction = 0.015f;
+    static constexpr float kDipFreqBase = 0.55f;
+    static constexpr float kDipFreqRange = 0.15f;
+    static constexpr float kDipGainScale = 1.6f;
+    static constexpr float kDipInteraction = 0.06f;
+    static constexpr float kDipBaseQ = 0.5f;
+    static constexpr float kDipQScale = 0.03f;
+
     void prepare(double sampleRate, uint32_t characterSeed = 0)
     {
-        this->sampleRate = sampleRate;
+        currentSampleRate = sampleRate;
         inductor.prepare(sampleRate, characterSeed);
         reset();
     }
 
     void reset()
     {
-        inductor.reset();
-        for (int i = 0; i < maxChannels; ++i)
+        for (auto& ch : channels)
         {
-            interactionStateHP[i] = 0.0f;
-            interactionStateLP[i] = 0.0f;
-            lfShelfState[i] = 0.0f;
+            ch.peakZ1 = ch.peakZ2 = 0.0f;
+            ch.dipZ1 = ch.dipZ2 = 0.0f;
         }
     }
 
     /** Lightweight sample-rate update (no allocation). Safe for audio thread. */
     void updateSampleRate(double newRate)
     {
-        sampleRate = newRate;
+        currentSampleRate = newRate;
         inductor.updateSampleRate(newRate);
         reset();
     }
 
-    /** Process LF section with boost/cut interaction. */
-    float processLFSection(float input, float boostGain, float attenGain, float frequency,
-                           float& boostState1, float& boostState2, float& attenState, int channel)
+    void updateCoefficients(float boostGain, float attenGain, float frequency,
+                            double sampleRate)
     {
-        if (boostGain < 0.01f && attenGain < 0.01f)
-            return input;
+        cachedBoost = boostGain;
+        cachedAtten = attenGain;
+        cachedFreq = frequency;
 
-        if (!std::isfinite(input))
-            input = 0.0f;
-
-        // Clamp frequency to safe range
-        float maxFreq = static_cast<float>(sampleRate) * 0.1f;
+        float maxFreq = static_cast<float>(sampleRate) * 0.45f;
         frequency = std::clamp(frequency, 10.0f, maxFreq);
 
-        // Broad Q from inductor model
-        float baseQ = 0.55f;
-        float effectiveQ = inductor.getFrequencyDependentQ(frequency, baseQ);
-        effectiveQ = std::max(effectiveQ, 0.2f);
+        const float twoPi = juce::MathConstants<float>::twoPi;
 
-        // Frequency relationships: cut shelf at 0.7x, interaction at 1.5x
-        float boostFreq = frequency;
-        float cutShelfFreq = frequency * 0.7f;
-        float interactionFreq = frequency * 1.5f;
-
-        float output = input;
-
-        // === LC Tank Resonant Boost ===
+        // ---- Peak filter (resonant boost) ----
         if (boostGain > 0.01f)
         {
-            float omega = juce::MathConstants<float>::twoPi * boostFreq / static_cast<float>(sampleRate);
-            omega = std::min(omega, 0.45f);
-            float sinOmega = std::sin(omega);
+            float peakGainDB = boostGain * kPeakGainScale + attenGain * boostGain * kPeakInteraction;
+            float effectiveQ = inductor.getFrequencyDependentQ(frequency, kBaseQ);
+            effectiveQ *= (1.0f + attenGain * kQInteraction);
+            effectiveQ = std::max(effectiveQ, 0.2f);
 
-            // State variable filter for resonant boost
-            float alpha = sinOmega / (2.0f * effectiveQ);
-            alpha = std::clamp(alpha, 0.01f, 0.95f);
+            float A = std::pow(10.0f, peakGainDB / 40.0f);
+            float w0 = twoPi * frequency / static_cast<float>(sampleRate);
+            float cosw0 = std::cos(w0);
+            float sinw0 = std::sin(w0);
+            float alpha = sinw0 / (2.0f * effectiveQ);
 
-            // SVF implementation
-            float invQ = 1.0f / effectiveQ;
-            float hp = input - boostState1 * invQ - boostState2;
-            float bp = hp * alpha + boostState1;
-            float lp = bp * alpha + boostState2;
+            float b0 = 1.0f + alpha * A;
+            float b1 = -2.0f * cosw0;
+            float b2 = 1.0f - alpha * A;
+            float a0 = 1.0f + alpha / A;
+            float a1 = -2.0f * cosw0;
+            float a2 = 1.0f - alpha / A;
 
-            // State update with limiting
-            boostState1 = std::clamp(bp, -8.0f, 8.0f);
-            boostState2 = std::clamp(lp, -8.0f, 8.0f);
-
-            // Boost amount: 0-10 maps to 0-14 dB
-            float boostDB = boostGain * 1.4f;
-            float boostLinear = juce::Decibels::decibelsToGain(boostDB) - 1.0f;
-
-            // Resonant boost from bandpass response
-            output = input + bp * boostLinear;
-
-            // Apply inductor saturation (adds harmonics and compression)
-            output = inductor.processNonlinearity(output, boostGain * 0.3f);
+            peakB0 = b0/a0; peakB1 = b1/a0; peakB2 = b2/a0;
+            peakA1 = a1/a0; peakA2 = a2/a0;
+        }
+        else
+        {
+            peakB0 = 1.0f; peakB1 = 0.0f; peakB2 = 0.0f;
+            peakA1 = 0.0f; peakA2 = 0.0f;
         }
 
-        // === Low Shelf Attenuation ===
+        // ---- Dip shelf (attenuation with interaction) ----
         if (attenGain > 0.01f)
         {
-            // One-pole low shelf for attenuation
-            float wc = juce::MathConstants<float>::twoPi * cutShelfFreq / static_cast<float>(sampleRate);
-            wc = std::min(wc, 0.35f);
-            float g = std::tan(wc * 0.5f);
-            float G = g / (1.0f + g);
-            G = std::clamp(G, 0.01f, 0.99f);
+            float dipFreqRatio = kDipFreqBase + kDipFreqRange * (1.0f - attenGain / 10.0f);
+            float dipFreq = frequency * dipFreqRatio;
+            dipFreq = std::clamp(dipFreq, 10.0f, maxFreq);
 
-            // LP content extraction
-            attenState = attenState + G * (output - attenState);
-            attenState = std::clamp(attenState, -8.0f, 8.0f);
+            float dipGainDB = -(attenGain * kDipGainScale + boostGain * attenGain * kDipInteraction);
+            float dipQ = kDipBaseQ + attenGain * kDipQScale;
 
-            // Attenuation amount: 0-10 maps to 0-16 dB cut
-            float attenDB = attenGain * 1.6f;
-            float attenFactor = juce::Decibels::decibelsToGain(-attenDB);
+            float A = std::pow(10.0f, dipGainDB / 40.0f);
+            float w0 = twoPi * dipFreq / static_cast<float>(sampleRate);
+            float cosw0 = std::cos(w0);
+            float sinw0 = std::sin(w0);
+            float alpha = sinw0 / (2.0f * dipQ);
+            float sqrtA = std::sqrt(A);
 
-            // Apply attenuation to low frequencies only
-            output = output - attenState * (1.0f - attenFactor);
+            float b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * sqrtA * alpha);
+            float b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0);
+            float b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * sqrtA * alpha);
+            float a0 = (A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * sqrtA * alpha;
+            float a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw0);
+            float a2 = (A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * sqrtA * alpha;
+
+            dipB0 = b0/a0; dipB1 = b1/a0; dipB2 = b2/a0;
+            dipA1 = a1/a0; dipA2 = a2/a0;
         }
-
-        // Boost/cut interaction (shared LC network)
-        if (boostGain > 0.01f && attenGain > 0.01f)
+        else
         {
-            float interactionStrength = std::min(boostGain, attenGain) * 0.15f;
-
-            // The interaction creates an additional resonant bump above the boost freq
-            float omega = juce::MathConstants<float>::twoPi * interactionFreq / static_cast<float>(sampleRate);
-            omega = std::min(omega, 0.4f);
-
-            // Clamp channel index to valid range for safety
-            int ch = std::clamp(channel, 0, maxChannels - 1);
-
-            // Simple one-pole HP to extract interaction frequency content
-            float intAlpha = 0.02f;
-            // Use per-channel state for proper stereo processing
-            interactionStateHP[ch] = interactionStateHP[ch] * (1.0f - intAlpha) + input * intAlpha;
-            interactionStateLP[ch] = interactionStateLP[ch] * 0.99f + (input - interactionStateHP[ch]) * 0.01f;
-
-            // Add subtle resonant enhancement
-            float interactionBoost = interactionStateLP[ch] * interactionStrength * std::sin(omega);
-            interactionBoost = std::clamp(interactionBoost, -0.3f, 0.3f);
-            output += interactionBoost;
-
-            // Also add the characteristic "scooped" low-mid response
-            // This is where the cut extends into the boost region
-            float scoopFreq = frequency * 0.5f;
-            float scoopOmega = juce::MathConstants<float>::twoPi * scoopFreq / static_cast<float>(sampleRate);
-            scoopOmega = std::min(scoopOmega, 0.3f);
-
-            lfShelfState[ch] = lfShelfState[ch] * 0.995f + input * 0.005f;
-            float scoopAmount = interactionStrength * 0.5f;
-            output -= lfShelfState[ch] * scoopAmount * std::sin(scoopOmega);
+            dipB0 = 1.0f; dipB1 = 0.0f; dipB2 = 0.0f;
+            dipA1 = 0.0f; dipA2 = 0.0f;
         }
-
-        if (!std::isfinite(output))
-            output = input;
-
-        return output;
     }
+
+    float processSample(float input, int channel)
+    {
+        int ch = std::clamp(channel, 0, maxChannels - 1);
+        auto& s = channels[ch];
+
+        // Peak filter (Direct Form II Transposed)
+        float peakOut = peakB0 * input + s.peakZ1;
+        s.peakZ1 = peakB1 * input - peakA1 * peakOut + s.peakZ2;
+        s.peakZ2 = peakB2 * input - peakA2 * peakOut;
+
+        // Inductor nonlinearity between stages (subtle saturation)
+        float interStage = (cachedBoost > 0.01f)
+            ? inductor.processNonlinearity(peakOut, cachedBoost * 0.3f)
+            : peakOut;
+
+        // Dip shelf filter
+        float dipOut = dipB0 * interStage + s.dipZ1;
+        s.dipZ1 = dipB1 * interStage - dipA1 * dipOut + s.dipZ2;
+        s.dipZ2 = dipB2 * interStage - dipA2 * dipOut;
+
+        // State clamping for safety
+        auto clampState = [](float& v) { v = std::clamp(v, -8.0f, 8.0f); };
+        clampState(s.peakZ1); clampState(s.peakZ2);
+        clampState(s.dipZ1); clampState(s.dipZ2);
+
+        return safeIsFinite(dipOut) ? dipOut : input;
+    }
+
+    float getMagnitudeDB(float freqHz, double sampleRate) const
+    {
+        double omega = juce::MathConstants<double>::twoPi * freqHz / sampleRate;
+        double cosw = std::cos(omega);
+        double sinw = std::sin(omega);
+        double cos2w = std::cos(2.0 * omega);
+        double sin2w = std::sin(2.0 * omega);
+
+        auto biquadMag = [&](float b0, float b1, float b2, float a1, float a2) -> double
+        {
+            double numR = b0 + b1 * cosw + b2 * cos2w;
+            double numI = -(b1 * sinw + b2 * sin2w);
+            double denR = 1.0 + a1 * cosw + a2 * cos2w;
+            double denI = -(a1 * sinw + a2 * sin2w);
+            double numMag2 = numR * numR + numI * numI;
+            double denMag2 = denR * denR + denI * denI;
+            return (denMag2 > 1e-20) ? std::sqrt(numMag2 / denMag2) : 1.0;
+        };
+
+        double peakMag = biquadMag(peakB0, peakB1, peakB2, peakA1, peakA2);
+        double dipMag = biquadMag(dipB0, dipB1, dipB2, dipA1, dipA2);
+        double combined = peakMag * dipMag;
+        return static_cast<float>(20.0 * std::log10(combined + 1e-10));
+    }
+
+    InductorModel& getInductor() { return inductor; }
 
     // Get inductor RMS level for program-dependent metering
     float getInductorRmsLevel() const { return inductor.getRmsLevel(); }
 
 private:
-    double sampleRate = 44100.0;
-    InductorModel inductor;
-
     static constexpr int maxChannels = 8;
 
-    // Boost/cut interaction state (per-channel)
-    float interactionStateHP[maxChannels] = {};
-    float interactionStateLP[maxChannels] = {};
-    float lfShelfState[maxChannels] = {};
+    float peakB0 = 1.0f, peakB1 = 0.0f, peakB2 = 0.0f;
+    float peakA1 = 0.0f, peakA2 = 0.0f;
+    float dipB0 = 1.0f, dipB1 = 0.0f, dipB2 = 0.0f;
+    float dipA1 = 0.0f, dipA2 = 0.0f;
+
+    struct ChannelState {
+        float peakZ1 = 0.0f, peakZ2 = 0.0f;
+        float dipZ1 = 0.0f, dipZ2 = 0.0f;
+    };
+    ChannelState channels[maxChannels] = {};
+
+    InductorModel inductor;
+    double currentSampleRate = 44100.0;
+    float cachedBoost = 0.0f, cachedAtten = 0.0f, cachedFreq = 60.0f;
 };
 
 class TubeEQProcessor
@@ -571,14 +623,6 @@ public:
         spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
         spec.numChannels = 1;
 
-        // Prepare LF boost filters (resonant peak)
-        lfBoostFilterL.prepare(spec);
-        lfBoostFilterR.prepare(spec);
-
-        // Prepare LF atten filters (shelf)
-        lfAttenFilterL.prepare(spec);
-        lfAttenFilterR.prepare(spec);
-
         // Prepare HF boost filters (resonant peak with bandwidth)
         hfBoostFilterL.prepare(spec);
         hfBoostFilterR.prepare(spec);
@@ -599,9 +643,8 @@ public:
         // Use deterministic seed based on sample rate for reproducible vintage character
         characterSeed = static_cast<uint32_t>(sampleRate * 1000.0);
         tubeStage.prepare(sampleRate, numChannels);
-        lfNetwork.prepare(sampleRate, characterSeed);
+        pultecLF.prepare(sampleRate, characterSeed);
         hfInductor.prepare(sampleRate, characterSeed + 1);  // Offset for variation between inductors
-        lfQInductor.prepare(sampleRate, characterSeed);
         hfQInductor.prepare(sampleRate, characterSeed + 1);
 
         // Prepare transformers
@@ -616,10 +659,6 @@ public:
 
         // Create initial passthrough coefficients for all IIR filters (off audio thread)
         // so that updateFilters() can modify them in-place without heap allocations
-        initFilterCoefficients(lfBoostFilterL);
-        initFilterCoefficients(lfBoostFilterR);
-        initFilterCoefficients(lfAttenFilterL);
-        initFilterCoefficients(lfAttenFilterR);
         initFilterCoefficients(hfBoostFilterL);
         initFilterCoefficients(hfBoostFilterR);
         initFilterCoefficients(hfAttenFilterL);
@@ -636,10 +675,6 @@ public:
 
     void reset()
     {
-        lfBoostFilterL.reset();
-        lfBoostFilterR.reset();
-        lfAttenFilterL.reset();
-        lfAttenFilterR.reset();
         hfBoostFilterL.reset();
         hfBoostFilterR.reset();
         hfAttenFilterL.reset();
@@ -651,18 +686,10 @@ public:
         midHighPeakFilterL.reset();
         midHighPeakFilterR.reset();
         tubeStage.reset();
-        lfNetwork.reset();
+        pultecLF.reset();
         hfInductor.reset();
         inputTransformer.reset();
         outputTransformer.reset();
-
-        // Reset LC network states
-        for (int i = 0; i < maxProcessChannels; ++i)
-        {
-            lfBoostState1[i] = 0.0f;
-            lfBoostState2[i] = 0.0f;
-            lfAttenStateLC[i] = 0.0f;
-        }
     }
 
     /** Lightweight sample-rate update (no allocation). Safe for audio thread.
@@ -674,9 +701,8 @@ public:
 
         // Lightweight rate updates (no allocation, safe for audio thread)
         tubeStage.updateSampleRate(newRate);
-        lfNetwork.updateSampleRate(newRate);
+        pultecLF.updateSampleRate(newRate);
         hfInductor.updateSampleRate(newRate);
-        lfQInductor.updateSampleRate(newRate);
         hfQInductor.updateSampleRate(newRate);
         // Transformers deferred to next full prepare() (TransformerEmulation::prepare may allocate)
 
@@ -738,7 +764,7 @@ public:
                 float sample = channelData[i];
 
                 // NaN/Inf protection - skip processing if input is invalid
-                if (!std::isfinite(sample))
+                if (!safeIsFinite(sample))
                 {
                     channelData[i] = 0.0f;
                     continue;
@@ -747,45 +773,17 @@ public:
                 // Input transformer coloration
                 sample = inputTransformer.processSample(sample, ch);
 
-                // === Passive LC Network: LF Section with true boost/cut interaction ===
-                int chIdx = std::clamp(ch, 0, maxProcessChannels - 1);
-                sample = lfNetwork.processLFSection(
-                    sample,
-                    params.lfBoostGain,
-                    params.lfAttenGain,
-                    params.lfBoostFreq,
-                    lfBoostState1[chIdx],
-                    lfBoostState2[chIdx],
-                    lfAttenStateLC[chIdx],
-                    chIdx  // Pass channel index for per-channel interaction state
-                );
-
-                // Also apply the standard filter for more accurate response
-                if (params.lfBoostGain > 0.01f)
-                {
-                    float filtered = isLeft ? lfBoostFilterL.processSample(sample)
-                                            : lfBoostFilterR.processSample(sample);
-                    // Blend LC network with standard filter
-                    sample = sample * 0.4f + filtered * 0.6f;
-                }
-
-                if (params.lfAttenGain > 0.01f)
-                {
-                    sample = isLeft ? lfAttenFilterL.processSample(sample)
-                                    : lfAttenFilterR.processSample(sample);
-                }
+                // === LF Section: dual-biquad boost/cut interaction ===
+                sample = pultecLF.processSample(sample, ch);
 
                 // === HF Section with inductor characteristics ===
                 if (params.hfBoostGain > 0.01f)
                 {
                     // Apply inductor nonlinearity before HF boost
-                    float hfSample = hfInductor.processNonlinearity(sample, params.hfBoostGain * 0.2f);
+                    sample = hfInductor.processNonlinearity(sample, params.hfBoostGain * 0.2f);
 
-                    float filtered = isLeft ? hfBoostFilterL.processSample(hfSample)
-                                            : hfBoostFilterR.processSample(hfSample);
-
-                    // Blend for natural sound
-                    sample = sample * 0.3f + filtered * 0.7f;
+                    sample = isLeft ? hfBoostFilterL.processSample(sample)
+                                    : hfBoostFilterR.processSample(sample);
                 }
 
                 // HF Attenuation (shelf)
@@ -830,7 +828,7 @@ public:
                 sample = outputTransformer.processSample(sample, ch);
 
                 // NaN/Inf protection - zero output if processing produced invalid result
-                if (!std::isfinite(sample))
+                if (!safeIsFinite(sample))
                     sample = 0.0f;
 
                 channelData[i] = sample;
@@ -845,6 +843,12 @@ public:
         }
     }
 
+    /** Get LF section magnitude at a frequency (for curve display). */
+    float getPultecLFMagnitudeDB(float frequencyHz) const
+    {
+        return pultecLF.getMagnitudeDB(frequencyHz, currentSampleRate);
+    }
+
     // Get frequency response magnitude at a specific frequency (for curve display)
     float getFrequencyResponseMagnitude(float frequencyHz) const
     {
@@ -853,14 +857,11 @@ public:
         // data race) — torn reads just cause a brief visual glitch in the curve
         // display, self-correcting on the next repaint frame.
         Parameters localParams;
-        juce::dsp::IIR::Coefficients<float>::Ptr localLfBoost, localLfAtten;
         juce::dsp::IIR::Coefficients<float>::Ptr localHfBoost, localHfAtten;
         juce::dsp::IIR::Coefficients<float>::Ptr localMidLowPeak, localMidDip, localMidHighPeak;
         {
             juce::SpinLock::ScopedLockType lock(paramLock);
             localParams = params;
-            localLfBoost = lfBoostFilterL.coefficients;
-            localLfAtten = lfAttenFilterL.coefficients;
             localHfBoost = hfBoostFilterL.coefficients;
             localHfAtten = hfAttenFilterL.coefficients;
             localMidLowPeak = midLowPeakFilterL.coefficients;
@@ -876,43 +877,10 @@ public:
         // Calculate contribution from each filter
         double omega = juce::MathConstants<double>::twoPi * frequencyHz / currentSampleRate;
 
-        // LF Boost contribution
-        if (localParams.lfBoostGain > 0.01f && localLfBoost != nullptr)
+        // LF Section (dual-biquad: combined boost + atten interaction)
+        if (localParams.lfBoostGain > 0.01f || localParams.lfAttenGain > 0.01f)
         {
-            std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
-            auto& coeffs = *localLfBoost;
-
-            std::complex<double> num = static_cast<double>(coeffs.coefficients[0]) + static_cast<double>(coeffs.coefficients[1]) / z + static_cast<double>(coeffs.coefficients[2]) / (z * z);
-            std::complex<double> den = static_cast<double>(coeffs.coefficients[3]) + static_cast<double>(coeffs.coefficients[4]) / z + static_cast<double>(coeffs.coefficients[5]) / (z * z);
-
-            float filterMag = static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
-            magnitudeDB += filterMag;
-
-            // Add interaction effect when both boost and atten are engaged
-            if (localParams.lfAttenGain > 0.01f)
-            {
-                // The "Tube EQ trick" creates a bump above the cut frequency
-                float interactionFreq = localParams.lfBoostFreq * 1.5f;
-                if (frequencyHz > localParams.lfBoostFreq && frequencyHz < interactionFreq * 1.5f)
-                {
-                    float interactionAmount = localParams.lfBoostGain * localParams.lfAttenGain * 0.02f;
-                    float relativePos = (frequencyHz - localParams.lfBoostFreq) / (interactionFreq - localParams.lfBoostFreq);
-                    magnitudeDB += interactionAmount * std::sin(relativePos * juce::MathConstants<float>::pi);
-                }
-            }
-        }
-
-        // LF Atten contribution
-        if (localParams.lfAttenGain > 0.01f && localLfAtten != nullptr)
-        {
-            std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
-            auto& coeffs = *localLfAtten;
-
-            std::complex<double> num = static_cast<double>(coeffs.coefficients[0]) + static_cast<double>(coeffs.coefficients[1]) / z + static_cast<double>(coeffs.coefficients[2]) / (z * z);
-            std::complex<double> den = static_cast<double>(coeffs.coefficients[3]) + static_cast<double>(coeffs.coefficients[4]) / z + static_cast<double>(coeffs.coefficients[5]) / (z * z);
-
-            float filterMag = static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
-            magnitudeDB += filterMag;
+            magnitudeDB += pultecLF.getMagnitudeDB(frequencyHz, currentSampleRate);
         }
 
         // HF Boost contribution
@@ -996,12 +964,6 @@ private:
     int numChannels = 2;
     uint32_t characterSeed = 0;
 
-    // LF Boost: Resonant peak filter
-    juce::dsp::IIR::Filter<float> lfBoostFilterL, lfBoostFilterR;
-
-    // LF Atten: Low shelf cut
-    juce::dsp::IIR::Filter<float> lfAttenFilterL, lfAttenFilterR;
-
     // HF Boost: Resonant peak with bandwidth
     juce::dsp::IIR::Filter<float> hfBoostFilterL, hfBoostFilterR;
 
@@ -1015,20 +977,13 @@ private:
 
     // Enhanced analog stages
     TubeEQTubeStage tubeStage;
-    PassiveLCNetwork lfNetwork;
+    PultecLFSection pultecLF;
     InductorModel hfInductor;
 
-    // Persistent inductor models for Q computation (avoids mt19937 allocation on audio thread)
-    InductorModel lfQInductor;
+    // Persistent inductor model for HF Q computation (avoids mt19937 allocation on audio thread)
     InductorModel hfQInductor;
 
-    // LC network state variables for boost/cut interaction (per-channel, up to 8)
-    // boostState has 2 floats per channel (state1, state2 for the state variable filter)
-    // attenStateLC has 1 float per channel (for the one-pole shelf in LC network)
     static constexpr int maxProcessChannels = 8;
-    float lfBoostState1[maxProcessChannels] = {};
-    float lfBoostState2[maxProcessChannels] = {};
-    float lfAttenStateLC[maxProcessChannels] = {};
 
     // Transformers
     AnalogEmulation::TransformerEmulation inputTransformer;
@@ -1063,37 +1018,14 @@ private:
 
     void updateFilters()
     {
-        updateLFBoost();
-        updateLFAtten();
+        // LF Section: dual-biquad with boost/cut interaction
+        pultecLF.updateCoefficients(params.lfBoostGain, params.lfAttenGain,
+                                     params.lfBoostFreq, currentSampleRate);
         updateHFBoost();
         updateHFAtten();
         updateMidLowPeak();
         updateMidDip();
         updateMidHighPeak();
-    }
-
-    void updateLFBoost()
-    {
-        // LF resonant peak with broad Q
-        float freq = tubeEQPreWarpFrequency(params.lfBoostFreq, currentSampleRate);
-        float gainDB = params.lfBoostGain * 1.4f;  // 0-10 maps to ~0-14 dB
-
-        float baseQ = 0.5f;
-        float effectiveQ = lfQInductor.getFrequencyDependentQ(params.lfBoostFreq, baseQ);
-
-        setTubeEQPeakCoeffs(lfBoostFilterL, currentSampleRate, freq, effectiveQ, gainDB);
-        setTubeEQPeakCoeffs(lfBoostFilterR, currentSampleRate, freq, effectiveQ, gainDB);
-    }
-
-    void updateLFAtten()
-    {
-        // LF shelf cut (interacts with boost)
-        float freq = tubeEQPreWarpFrequency(params.lfBoostFreq, currentSampleRate);
-        float gainDB = -params.lfAttenGain * 1.6f;  // 0-10 maps to ~0-16 dB cut
-
-        // The attenuation is a shelf, not a peak
-        setLowShelfCoeffs(lfAttenFilterL, currentSampleRate, freq, 0.7f, gainDB);
-        setLowShelfCoeffs(lfAttenFilterR, currentSampleRate, freq, 0.7f, gainDB);
     }
 
     void updateHFBoost()

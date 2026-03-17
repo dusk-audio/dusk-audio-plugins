@@ -55,7 +55,7 @@ private:
     // Graphic display
     std::unique_ptr<EQGraphicDisplay> graphicDisplay;
 
-    // Band detail panel (Waves F6 style - band selector + single-row controls)
+    // Band detail panel (band selector + single-row controls)
     std::unique_ptr<BandDetailPanel> bandDetailPanel;
 
     // British mode curve display (4K-EQ style)

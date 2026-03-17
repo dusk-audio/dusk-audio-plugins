@@ -13,6 +13,7 @@
 #include "EQMatchProcessor.h"
 #include "../shared/AnalogEmulation/WaveshaperCurves.h"
 #include "MultiQPresets.h"
+#include "SafeFloat.h"
 
 // Biquad coefficient storage with magnitude evaluation (no heap allocation)
 struct BiquadCoeffs
@@ -104,7 +105,7 @@ struct CytomicSVF
     float processSample(float x)
     {
         // Sanitize input to prevent NaN/Inf from entering or passing through the filter
-        if (!std::isfinite(x))
+        if (!safeIsFinite(x))
             x = 0.0f;
 
         // Per-sample coefficient interpolation (skip when converged)
@@ -140,7 +141,7 @@ struct CytomicSVF
         ic2eq = 2.0f * v2 - ic2eq;
 
         // Sanitize state variables to prevent NaN/Inf propagation (permanent corruption)
-        if (!std::isfinite(ic1eq) || !std::isfinite(ic2eq))
+        if (!safeIsFinite(ic1eq) || !safeIsFinite(ic2eq))
         {
             ic1eq = 0.0f;
             ic2eq = 0.0f;
@@ -297,6 +298,9 @@ public:
     // Get frequency response magnitude at a specific frequency (for curve display)
     float getFrequencyResponseMagnitude(float frequencyHz) const;
 
+    // Get per-band frequency response magnitude in dB (for individual band curve display)
+    float getPerBandMagnitude(int bandIndex, float frequencyHz) const;
+
     // Get frequency response including dynamic gain (for dynamic curve overlay)
     float getFrequencyResponseWithDynamics(float frequencyHz) const;
 
@@ -443,17 +447,31 @@ private:
 
         float processSampleL(float sample)
         {
-            int stages = activeStages.load(std::memory_order_relaxed);
+            int stages = activeStages.load(std::memory_order_acquire);
             for (int i = 0; i < stages; ++i)
+            {
                 sample = stagesL[static_cast<size_t>(i)].processSample(sample);
+                if (!safeIsFinite(sample))
+                {
+                    stagesL[static_cast<size_t>(i)].reset();
+                    sample = 0.0f;
+                }
+            }
             return sample;
         }
 
         float processSampleR(float sample)
         {
-            int stages = activeStages.load(std::memory_order_relaxed);
+            int stages = activeStages.load(std::memory_order_acquire);
             for (int i = 0; i < stages; ++i)
+            {
                 sample = stagesR[static_cast<size_t>(i)].processSample(sample);
+                if (!safeIsFinite(sample))
+                {
+                    stagesR[static_cast<size_t>(i)].reset();
+                    sample = 0.0f;
+                }
+            }
             return sample;
         }
     };
@@ -609,6 +627,11 @@ private:
     std::array<std::atomic<float>*, NUM_BANDS> bandDynRatioParams{};
     std::array<std::atomic<float>*, NUM_BANDS> bandShapeParams{};  // Shape for parametric bands (Peaking/Notch/BandPass)
     std::array<std::atomic<float>*, NUM_BANDS> bandRoutingParams{};  // Per-band channel routing
+    std::array<std::atomic<float>*, NUM_BANDS> bandInvertParams{};       // Invert gain (boost↔cut)
+    std::array<std::atomic<float>*, NUM_BANDS> bandPhaseInvertParams{};  // Flip polarity of band effect
+    std::array<std::atomic<float>*, NUM_BANDS> bandPanParams{};          // Stereo pan of band effect
+    std::array<float, NUM_BANDS> prevBandPhaseInvertGain{};  // Smoothed phase invert: +1 or -1
+    std::array<float, NUM_BANDS> prevBandPanVal{};           // Smoothed pan value
     std::atomic<float>* dynDetectionModeParam = nullptr;
 
     // Per-band saturation parameters (bands 2-7 only, indices 1-6)
@@ -645,7 +668,7 @@ private:
     float inputRmsSum = 0.0f;
     float outputRmsSum = 0.0f;
     int rmsSampleCount = 0;
-    static constexpr int RMS_WINDOW_SAMPLES = 22050;  // ~500ms at 44.1kHz (mastering-appropriate)
+    int rmsWindowSamples = 22050;  // ~500ms at 44.1kHz (mastering-appropriate, updated in prepareToPlay)
 
     // Non-allocating coefficient computation (Audio EQ Cookbook with pre-warping)
     // These compute directly into BiquadCoeffs without any heap allocation,
