@@ -793,7 +793,7 @@ void MultiQEditor::paint(juce::Graphics& g)
     }
     else
     {
-        // ===== DIGITAL MODE PAINT (Waves F6 style layout) =====
+        // ===== DIGITAL MODE PAINT =====
         // Constants matching resized() layout
         int detailPanelHeight = 125;  // Controls area with 75px knobs + section headers
         int toolbarHeight = 88;  // Header (50) + toolbar (38)
@@ -2069,7 +2069,7 @@ void MultiQEditor::updateEQModeVisibility()
     gainLabel.setVisible(false);
     qLabel.setVisible(false);
 
-    // BandDetailPanel (Waves F6 style) - only in Digital mode
+    // BandDetailPanel - only in Digital mode
     bandDetailPanel->setVisible(isDigitalMode);
 
     // NOTE: A/B buttons, preset selectors, bypass, oversampling, and display scale

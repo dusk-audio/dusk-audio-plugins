@@ -13,6 +13,12 @@ public:
     static constexpr int NUM_BANDS = 8;
     static constexpr int MAX_LOOKAHEAD_SAMPLES = 512;  // ~11ms at 44.1kHz
 
+    struct AudioDelayLine
+    {
+        std::vector<float> buffer;
+        int writeIndex = 0;
+    };
+
     struct BandParameters
     {
         float threshold = -20.0f;    // dB (-48 to 0) - lower = more sensitive
@@ -68,6 +74,17 @@ public:
             }
         }
 
+        audioDelayLines.resize(static_cast<size_t>(numChannels));
+        for (auto& ch : audioDelayLines)
+        {
+            ch.resize(NUM_BANDS);
+            for (auto& dl : ch)
+            {
+                dl.buffer.assign(MAX_LOOKAHEAD_SAMPLES + 1, 0.0f);
+                dl.writeIndex = 0;
+            }
+        }
+
         for (auto& meter : dynamicGainMeters)
             meter.store(0.0f, std::memory_order_relaxed);
 
@@ -101,13 +118,46 @@ public:
 
     int getLookaheadSamples() const { return lookaheadSamples.load(std::memory_order_acquire); }
 
+    float processAudioDelay(int bandIndex, int channel, float audioSample)
+    {
+        int la = lookaheadSamples.load(std::memory_order_acquire);
+        if (la <= 0)
+            return audioSample;
+
+        if (channel < 0 || bandIndex < 0 ||
+            channel >= static_cast<int>(audioDelayLines.size()) ||
+            bandIndex >= static_cast<int>(audioDelayLines[0].size()))
+            return audioSample;
+
+        auto& dl = audioDelayLines[static_cast<size_t>(channel)][static_cast<size_t>(bandIndex)];
+        int bufSize = static_cast<int>(dl.buffer.size());
+        if (bufSize <= 0) return audioSample;
+
+        la = std::min(la, bufSize - 1);
+        int readIndex = (dl.writeIndex + bufSize - la) % bufSize;
+        float delayed = dl.buffer[static_cast<size_t>(readIndex)];
+        dl.buffer[static_cast<size_t>(dl.writeIndex)] = audioSample;
+        dl.writeIndex = (dl.writeIndex + 1) % bufSize;
+        return delayed;
+    }
+
+    void resetDelayLines()
+    {
+        for (auto& ch : audioDelayLines)
+            for (auto& dl : ch)
+            {
+                std::fill(dl.buffer.begin(), dl.buffer.end(), 0.0f);
+                dl.writeIndex = 0;
+            }
+    }
+
     void reset()
     {
         for (auto& ch : channelStates)
         {
             for (auto& band : ch.bands)
             {
-                band.envelope = 0.0f;
+                band.envelope = -96.0f;
                 band.currentGainDb = 0.0f;
                 band.smoothedGainDb = 0.0f;
             }
@@ -118,6 +168,8 @@ public:
             for (auto& band : ch)
                 band.reset();
         }
+
+        resetDelayLines();
 
         for (auto& meter : dynamicGainMeters)
             meter.store(0.0f, std::memory_order_relaxed);
@@ -228,13 +280,9 @@ public:
         state.smoothedGainDb = smoothCoeff * state.smoothedGainDb +
                                (1.0f - smoothCoeff) * state.currentGainDb;
 
-        float currentMeter = dynamicGainMeters[static_cast<size_t>(bandIndex)]
-                                 .load(std::memory_order_relaxed);
-        if (std::abs(state.smoothedGainDb) > std::abs(currentMeter) || channel == 0)
-        {
-            dynamicGainMeters[static_cast<size_t>(bandIndex)]
-                .store(state.smoothedGainDb, std::memory_order_relaxed);
-        }
+        // Always update meter to track current gain (decays naturally with envelope)
+        dynamicGainMeters[static_cast<size_t>(bandIndex)]
+            .store(state.smoothedGainDb, std::memory_order_relaxed);
 
         return state.smoothedGainDb;
     }
@@ -400,7 +448,7 @@ private:
 
     struct BandState
     {
-        float envelope = 0.0f;        // Current envelope level (dB)
+        float envelope = -96.0f;      // Current envelope level (dB), starts at silence
         float currentGainDb = 0.0f;   // Current dynamic gain (dB)
         float smoothedGainDb = 0.0f;  // Smoothed gain for output
     };
@@ -445,6 +493,7 @@ private:
         float peakValue = 0.0f;
     };
     std::vector<std::vector<LookaheadBuffer>> lookaheadBuffers;
+    std::vector<std::vector<AudioDelayLine>> audioDelayLines; // [channel][band]
 
     GlobalSettings globalSettings;
     std::atomic<int> lookaheadSamples{0};
