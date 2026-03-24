@@ -415,15 +415,16 @@ float TubeEQCurveDisplay::calculateLFCombinedResponse(float freq) const
     };
 
     // PultecLFSection constants
+    // Must match PultecLFSection constants in TubeEQProcessor.h
     constexpr float kPeakGainScale = 1.4f;
     constexpr float kPeakInteraction = 0.08f;
     constexpr float kBaseQ = 0.55f;
     constexpr float kQInteraction = 0.015f;
-    constexpr float kDipFreqBase = 0.55f;
-    constexpr float kDipFreqRange = 0.15f;
-    constexpr float kDipGainScale = 1.6f;
+    constexpr float kDipFreqBase = 1.0f;          // Same freq as boost (Pultec Trick)
+    constexpr float kDipFreqRange = 0.0f;          // No gain-dependent shift
+    constexpr float kDipGainScale = 1.75f;         // ~17.5 dB max (hardware match)
     constexpr float kDipInteraction = 0.06f;
-    constexpr float kDipBaseQ = 0.5f;
+    constexpr float kDipBaseQ = 0.65f;             // Broader shelf for Pultec Trick
     constexpr float kDipQScale = 0.03f;
 
     double peakMag = 1.0;
@@ -490,11 +491,11 @@ float TubeEQCurveDisplay::calculateHFBoostResponse(float freq) const
         return 0.0f;
 
     float fc = cachedParams.hfBoostFreq;
-    float gain = cachedParams.hfBoostGain * 1.6f;  // 0-10 maps to ~0-16 dB
+    float gain = cachedParams.hfBoostGain * 1.8f;  // 0-10 maps to ~0-18 dB (hardware match)
 
     // Bandwidth control: Sharp (high Q) to Broad (low Q)
     // bandwidth 0 = sharp (narrow), 1 = broad (wide)
-    float q = juce::jmap(cachedParams.hfBoostBandwidth, 0.0f, 1.0f, 2.5f, 0.5f);
+    float q = juce::jmap(cachedParams.hfBoostBandwidth, 0.0f, 1.0f, 2.0f, 0.3f);
     float bandwidth = 1.0f / q;
 
     // Peak filter response
@@ -508,7 +509,7 @@ float TubeEQCurveDisplay::calculateHFAttenResponse(float freq) const
         return 0.0f;
 
     float fc = cachedParams.hfAttenFreq;
-    float gain = -cachedParams.hfAttenGain * 2.0f;  // 0-10 maps to ~0-20 dB cut
+    float gain = -cachedParams.hfAttenGain * 1.6f;  // 0-10 maps to ~0-16 dB cut (hardware match)
 
     // High shelf attenuation
     float logRatio = std::log10(freq / fc);

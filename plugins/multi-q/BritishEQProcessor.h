@@ -455,13 +455,15 @@ private:
     }
 
     // Assign biquad coefficients in-place (no heap allocation)
+    // JUCE IIR::Coefficients stores 5 elements: {b0/a0, b1/a0, b2/a0, a1/a0, a2/a0}
+    // (a0 is divided out during construction, not stored as a separate element)
     static void setFilterCoeffs(juce::dsp::IIR::Filter<float>& filter,
                                 float b0, float b1, float b2, float a1, float a2)
     {
         if (filter.coefficients == nullptr)
             return;
         auto* c = filter.coefficients->coefficients.getRawDataPointer();
-        c[0] = b0; c[1] = b1; c[2] = b2; c[3] = 1.0f; c[4] = a1; c[5] = a2;
+        c[0] = b0; c[1] = b1; c[2] = b2; c[3] = a1; c[4] = a2;
     }
 
     // Console shelf filter — writes coefficients in-place (no allocation)

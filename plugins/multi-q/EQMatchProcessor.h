@@ -394,6 +394,145 @@ public:
 
     double getSampleRate() const { return sampleRate; }
 
+    /** Serialize learned spectra and correction data to XML for state persistence. */
+    void serialize(juce::XmlElement& parent) const
+    {
+        auto* matchEl = parent.createNewChildElement("MatchEQ");
+
+        // Copy spectrum data under lock, then encode outside lock
+        LearnedSpectrum curCopy, refCopy;
+        {
+            std::lock_guard<std::mutex> lock(spectrumMutex);
+            curCopy = currentSpectrum;
+            refCopy = referenceSpectrum;
+        }
+
+        // Serialize current spectrum
+        if (curCopy.valid)
+        {
+            auto* curEl = matchEl->createNewChildElement("CurrentSpectrum");
+            curEl->setAttribute("frameCount", curCopy.frameCount);
+            juce::MemoryBlock block(curCopy.powerSum.data(),
+                                    curCopy.powerSum.size() * sizeof(double));
+            curEl->setAttribute("data", block.toBase64Encoding());
+        }
+
+        // Serialize reference spectrum
+        if (refCopy.valid)
+        {
+            auto* refEl = matchEl->createNewChildElement("ReferenceSpectrum");
+            refEl->setAttribute("frameCount", refCopy.frameCount);
+            juce::MemoryBlock block(refCopy.powerSum.data(),
+                                    refCopy.powerSum.size() * sizeof(double));
+            refEl->setAttribute("data", block.toBase64Encoding());
+        }
+
+        // Serialize correction curve and FIR
+        if (correctionValid)
+        {
+            auto* corrEl = matchEl->createNewChildElement("Correction");
+
+            {
+                std::lock_guard<std::mutex> lock(correctionMutex);
+                juce::MemoryBlock curveBlock(correctionCurveDB.data(),
+                                             correctionCurveDB.size() * sizeof(float));
+                corrEl->setAttribute("curveDB", curveBlock.toBase64Encoding());
+
+                juce::MemoryBlock firBlock(correctionFIR.data(),
+                                           correctionFIR.size() * sizeof(float));
+                corrEl->setAttribute("fir", firBlock.toBase64Encoding());
+            }
+        }
+    }
+
+    /** Deserialize learned spectra and correction data from XML. */
+    bool deserialize(const juce::XmlElement& parent)
+    {
+        auto* matchEl = parent.getChildByName("MatchEQ");
+        if (matchEl == nullptr)
+            return false;
+
+        // Reset all state before selective hydration to avoid stale data
+        {
+            std::lock_guard<std::mutex> lock(spectrumMutex);
+            currentSpectrum.reset();
+            referenceSpectrum.reset();
+            currentSpectrumBuf.writeBuffer().reset();
+            currentSpectrumBuf.publish();
+            currentSpectrumBuf.writeBuffer().reset();
+            currentSpectrumBuf.publish();
+            referenceSpectrumBuf.writeBuffer().reset();
+            referenceSpectrumBuf.publish();
+            referenceSpectrumBuf.writeBuffer().reset();
+            referenceSpectrumBuf.publish();
+        }
+        {
+            std::lock_guard<std::mutex> lock(correctionMutex);
+            correctionValid = false;
+            correctionCurveDB.fill(0.0f);
+            if (correctionFIR.size() < static_cast<size_t>(FIR_LENGTH))
+                correctionFIR.resize(static_cast<size_t>(FIR_LENGTH), 0.0f);
+            std::fill(correctionFIR.begin(), correctionFIR.end(), 0.0f);
+        }
+
+        // Deserialize current spectrum
+        if (auto* curEl = matchEl->getChildByName("CurrentSpectrum"))
+        {
+            juce::MemoryBlock block;
+            if (block.fromBase64Encoding(curEl->getStringAttribute("data"))
+                && block.getSize() == currentSpectrum.powerSum.size() * sizeof(double))
+            {
+                std::lock_guard<std::mutex> lock(spectrumMutex);
+                std::memcpy(currentSpectrum.powerSum.data(), block.getData(), block.getSize());
+                currentSpectrum.frameCount = curEl->getIntAttribute("frameCount", 0);
+                currentSpectrum.valid = currentSpectrum.frameCount >= 3;
+                // Publish to double buffer for UI
+                currentSpectrumBuf.writeBuffer() = currentSpectrum;
+                currentSpectrumBuf.publish();
+            }
+        }
+
+        // Deserialize reference spectrum
+        if (auto* refEl = matchEl->getChildByName("ReferenceSpectrum"))
+        {
+            juce::MemoryBlock block;
+            if (block.fromBase64Encoding(refEl->getStringAttribute("data"))
+                && block.getSize() == referenceSpectrum.powerSum.size() * sizeof(double))
+            {
+                std::lock_guard<std::mutex> lock(spectrumMutex);
+                std::memcpy(referenceSpectrum.powerSum.data(), block.getData(), block.getSize());
+                referenceSpectrum.frameCount = refEl->getIntAttribute("frameCount", 0);
+                referenceSpectrum.valid = referenceSpectrum.frameCount >= 3;
+                // Publish to double buffer for UI
+                referenceSpectrumBuf.writeBuffer() = referenceSpectrum;
+                referenceSpectrumBuf.publish();
+            }
+        }
+
+        // Deserialize correction
+        if (auto* corrEl = matchEl->getChildByName("Correction"))
+        {
+            juce::MemoryBlock curveBlock, firBlock;
+            bool curveOk = curveBlock.fromBase64Encoding(corrEl->getStringAttribute("curveDB"))
+                           && curveBlock.getSize() == correctionCurveDB.size() * sizeof(float);
+            bool firOk = firBlock.fromBase64Encoding(corrEl->getStringAttribute("fir"))
+                         && firBlock.getSize() == static_cast<size_t>(FIR_LENGTH) * sizeof(float);
+
+            if (curveOk && firOk)
+            {
+                std::lock_guard<std::mutex> lock(correctionMutex);
+                std::memcpy(correctionCurveDB.data(), curveBlock.getData(), curveBlock.getSize());
+
+                if (correctionFIR.size() < static_cast<size_t>(FIR_LENGTH))
+                    correctionFIR.resize(static_cast<size_t>(FIR_LENGTH), 0.0f);
+                std::memcpy(correctionFIR.data(), firBlock.getData(), firBlock.getSize());
+                correctionValid = true;
+            }
+        }
+
+        return true;
+    }
+
 private:
     double sampleRate = 44100.0;
 

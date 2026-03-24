@@ -174,7 +174,10 @@ MultiQEditor::MultiQEditor(MultiQ& p)
 
     // Cross-mode transfer button (transfers British/Tube curve to Digital mode bands)
     transferToDigitalButton.setTooltip("Transfer current EQ curve to Digital mode bands");
-    transferToDigitalButton.onClick = [this]() { processor.transferCurrentEQToDigital(); };
+    transferToDigitalButton.onClick = [this]()
+    {
+        processor.transferCurrentEQToDigital();
+    };
     addAndMakeVisible(transferToDigitalButton);
 
     // Factory preset selector (Digital mode)
@@ -489,6 +492,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     processor.parameters.addParameterListener(ParamIDs::analyzerEnabled, this);
     processor.parameters.addParameterListener(ParamIDs::eqType, this);
     processor.parameters.addParameterListener(ParamIDs::britishMode, this);  // For Brown/Black badge update
+    processor.parameters.addParameterListener(ParamIDs::linearPhaseEnabled, this);
 
     // Check initial EQ mode and update visibility
     auto* eqTypeParam = processor.parameters.getRawParameterValue(ParamIDs::eqType);
@@ -501,7 +505,13 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         isTubeEQMode = (eqTypeIndex == static_cast<int>(EQType::Tube));
     }
     if (bandDetailPanel)
+    {
         bandDetailPanel->setMatchMode(isMatchMode);
+        // Initialize linear phase mode state
+        auto* lpParam = processor.parameters.getRawParameterValue(ParamIDs::linearPhaseEnabled);
+        if (lpParam)
+            bandDetailPanel->setLinearPhaseMode(lpParam->load() > 0.5f);
+    }
     updateEQModeVisibility();
 
     // Initialize resizable UI using shared helper (handles size persistence)
@@ -527,6 +537,7 @@ MultiQEditor::~MultiQEditor()
     processor.parameters.removeParameterListener(ParamIDs::analyzerEnabled, this);
     processor.parameters.removeParameterListener(ParamIDs::eqType, this);
     processor.parameters.removeParameterListener(ParamIDs::britishMode, this);
+    processor.parameters.removeParameterListener(ParamIDs::linearPhaseEnabled, this);
 
     // Clear LookAndFeel references from child components before member LnF objects are destroyed.
     // (Declaration order already ensures safe destruction, but explicit cleanup is defensive.)
@@ -963,6 +974,93 @@ void MultiQEditor::drawClipIndicator(juce::Graphics& g, juce::Rectangle<int> bou
         g.setColour(juce::Colour(0xFF2a2a2c));
         g.fillRoundedRectangle(bounds.toFloat(), 2.0f);
     }
+
+    // Keyboard shortcut overlay (drawn last, on top of everything)
+    if (showShortcutOverlay)
+        paintShortcutOverlay(g);
+}
+
+void MultiQEditor::paintShortcutOverlay(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+
+    // Semi-transparent background
+    g.setColour(juce::Colour(0xE0101018));
+    g.fillRect(bounds);
+
+    // Center panel
+    float panelW = 440.0f, panelH = 340.0f;
+    auto panel = juce::Rectangle<float>(
+        (bounds.getWidth() - panelW) * 0.5f,
+        (bounds.getHeight() - panelH) * 0.5f,
+        panelW, panelH);
+
+    g.setColour(juce::Colour(0xF0181820));
+    g.fillRoundedRectangle(panel, 8.0f);
+    g.setColour(juce::Colour(0x60ffffff));
+    g.drawRoundedRectangle(panel, 8.0f, 1.0f);
+
+    auto inner = panel.reduced(24, 16);
+
+    // Title
+    g.setColour(juce::Colour(0xFFdddddd));
+    g.setFont(juce::Font(juce::FontOptions(16.0f).withStyle("Bold")));
+    g.drawText("Keyboard Shortcuts", inner.removeFromTop(28.0f), juce::Justification::centred);
+    inner.removeFromTop(8.0f);
+
+    // Two-column layout
+    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    auto leftCol = inner.removeFromLeft(inner.getWidth() * 0.5f);
+    auto rightCol = inner;
+
+    struct Shortcut { const char* key; const char* desc; };
+
+    Shortcut leftShortcuts[] = {
+        {"1-8", "Select band"},
+        {"Shift+1-8", "Toggle band on/off"},
+        {"Tab / Shift+Tab", "Next / previous band"},
+        {"B", "Toggle bypass"},
+        {"H", "Toggle analyzer"},
+        {"L", "Toggle linear phase"},
+        {"Q", "Cycle Q-coupling"},
+        {"M", "Cycle processing mode"},
+        {"F", "Freeze spectrum"},
+    };
+
+    Shortcut rightShortcuts[] = {
+        {"D", "Toggle dynamics"},
+        {"S", "Toggle solo"},
+        {"Dbl-click band", "Reset to default"},
+        {"Dbl-click empty", "Create band here"},
+        {"Scroll wheel", "Adjust Q"},
+        {"Cmd+Z / Cmd+Shift+Z", "Undo / Redo"},
+        {"Cmd+0", "Reset window size"},
+        {"?", "Show/hide this overlay"},
+    };
+
+    float lineH = 18.0f;
+    for (auto& s : leftShortcuts)
+    {
+        auto line = leftCol.removeFromTop(lineH);
+        g.setColour(juce::Colour(0xFF88ccff));
+        g.drawText(s.key, line.removeFromLeft(130.0f), juce::Justification::centredRight);
+        g.setColour(juce::Colour(0xFFaaaaaa));
+        g.drawText(s.desc, line.translated(8.0f, 0.0f), juce::Justification::centredLeft);
+    }
+
+    for (auto& s : rightShortcuts)
+    {
+        auto line = rightCol.removeFromTop(lineH);
+        g.setColour(juce::Colour(0xFF88ccff));
+        g.drawText(s.key, line.removeFromLeft(140.0f), juce::Justification::centredRight);
+        g.setColour(juce::Colour(0xFFaaaaaa));
+        g.drawText(s.desc, line.translated(8.0f, 0.0f), juce::Justification::centredLeft);
+    }
+
+    // Footer
+    g.setColour(juce::Colour(0xFF666666));
+    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.drawText("Press any key to dismiss", panel.removeFromBottom(24.0f), juce::Justification::centred);
 }
 
 void MultiQEditor::resized()
@@ -1170,19 +1268,16 @@ void MultiQEditor::resized()
         // ===== MASTER SECTION =====
         britishMasterLabel.setBounds(masterStart, labelY, sectionWidth, 20);
 
-        // BYPASS button (top of master section)
-        centerButtonInSection(*britishBypassButton, masterStart, masterEnd, row1Y, 80);
-
-        // AUTO GAIN button (below bypass)
-        centerButtonInSection(*britishAutoGainButton, masterStart, masterEnd, row1Y + 40, 80);
-
-        // Saturation/Drive (row 2)
-        centerKnobInSection(*britishSaturationSlider, masterStart, masterEnd, row2Y);
+        // Saturation/Drive (row 1 — vertically centered with other sections)
+        centerKnobInSection(*britishSaturationSlider, masterStart, masterEnd, row1Y);
         positionLabelBelowKnob(britishSatKnobLabel, *britishSaturationSlider);
 
-        // Output gain (row 3)
-        centerKnobInSection(*britishOutputGainSlider, masterStart, masterEnd, row3Y);
+        // Output gain (row 2)
+        centerKnobInSection(*britishOutputGainSlider, masterStart, masterEnd, row2Y);
         positionLabelBelowKnob(britishOutputKnobLabel, *britishOutputGainSlider);
+
+        // AUTO GAIN button (below output knob)
+        centerButtonInSection(*britishAutoGainButton, masterStart, masterEnd, row2Y + rowVisualHeight + 8, 80);
     }
     else
     {
@@ -1347,9 +1442,18 @@ void MultiQEditor::parameterChanged(const juce::String& parameterID, float newVa
                 if (currentHeight < minHeight)
                     safeThis->setSize(safeThis->getWidth(), minHeight);
 
+                safeThis->updatePresetSelector();
                 safeThis->resized();
                 safeThis->repaint();
             }
+        });
+    }
+    else if (parameterID == ParamIDs::linearPhaseEnabled)
+    {
+        const bool lpEnabled = newValue > 0.5f;
+        juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MultiQEditor>(this), lpEnabled]() {
+            if (safeThis != nullptr && safeThis->bandDetailPanel != nullptr)
+                safeThis->bandDetailPanel->setLinearPhaseMode(lpEnabled);
         });
     }
     else if (parameterID == ParamIDs::britishMode)
@@ -1395,6 +1499,22 @@ void MultiQEditor::mouseDown(const juce::MouseEvent& e)
 
 bool MultiQEditor::keyPressed(const juce::KeyPress& key)
 {
+    // Dismiss shortcut overlay on any key (except '?' itself)
+    if (showShortcutOverlay && !key.isKeyCode('/'))
+    {
+        showShortcutOverlay = false;
+        repaint();
+        return true;
+    }
+
+    // ? (Shift+/) - Toggle keyboard shortcut help overlay
+    if (key.isKeyCode('/') && key.getModifiers().isShiftDown())
+    {
+        showShortcutOverlay = !showShortcutOverlay;
+        repaint();
+        return true;
+    }
+
     // Undo/Redo shortcuts work in all modes
     if (key == juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0))
     {
@@ -2136,8 +2256,10 @@ void MultiQEditor::updateEQModeVisibility()
     britishOutputGainSlider->setVisible(isBritishMode);
 
     // British mode header/master controls
-    britishBypassButton->setVisible(isBritishMode);
+    britishBypassButton->setVisible(false);  // Bypass button removed from British mode UI
     britishAutoGainButton->setVisible(isBritishMode);
+    if (tubeAutoGainButton)
+        tubeAutoGainButton->setVisible(isTubeEQMode);
 
     // NOTE: British A/B, preset selector, curve collapse button visibility
     // is handled by layoutUnifiedToolbar() - DO NOT set visibility here!
@@ -2899,6 +3021,17 @@ void MultiQEditor::setupTubeEQControls()
     setupTubeEQKnob(tubeEQTubeDriveSlider, "tube_drive");
     tubeEQTubeDriveSlider->setTooltip("Tube drive: saturation and harmonic warmth");
 
+    // Auto Gain button (same parameter and processing as British mode's autogain)
+    tubeAutoGainButton = std::make_unique<juce::ToggleButton>("AUTO GAIN");
+    tubeAutoGainButton->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff404040));
+    tubeAutoGainButton->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffe0e0e0));
+    tubeAutoGainButton->setClickingTogglesState(true);
+    tubeAutoGainButton->setTooltip("Auto Gain Compensation: Automatically adjusts output to maintain consistent loudness");
+    tubeAutoGainButton->setVisible(false);
+    addAndMakeVisible(tubeAutoGainButton.get());
+    tubeAutoGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.parameters, ParamIDs::autoGainEnabled, *tubeAutoGainButton);
+
     // Mid Section controls
     // Mid Enabled button (IN button) - bypasses the Mid Dip/Peak section only
     tubeEQMidEnabledButton = std::make_unique<juce::ToggleButton>("IN");
@@ -3230,6 +3363,11 @@ void MultiQEditor::layoutTubeEQControls()
     tubeEQTubeDriveSlider->setBounds(rightCenterX, driveY, rightKnobSize, rightKnobSize);
     tubeEQTubeKnobLabel.setBounds(rightCenterX - 15, driveY + rightKnobSize + 2, rightKnobSize + 30, labelHeight);
     tubeEQTubeKnobLabel.setText("TUBE DRIVE", juce::dontSendNotification);
+
+    // AUTO GAIN button (below TUBE DRIVE knob, matching British mode layout)
+    int autoGainY = driveY + rightKnobSize + labelHeight + rightSpacing;
+    if (tubeAutoGainButton)
+        tubeAutoGainButton->setBounds(rightCenterX - 10, autoGainY, rightKnobSize + 20, 24);
 
     // Hide unused labels (section labels are drawn in paint())
     tubeEQMasterLabel.setVisible(false);
@@ -3646,16 +3784,33 @@ void MultiQEditor::updatePresetSelector()
     if (!presetSelector)
         return;
 
-    presetSelector->clear();
+    presetSelector->clear(juce::dontSendNotification);
 
-    // Add factory presets (IDs 1 to numFactoryPresets)
-    int numFactoryPresets = processor.getNumPrograms();
-    for (int i = 0; i < numFactoryPresets; ++i)
+    // Get current EQ type to filter presets
+    auto* eqTypeParam = processor.parameters.getRawParameterValue(ParamIDs::eqType);
+    int currentEqType = eqTypeParam ? static_cast<int>(eqTypeParam->load()) : 0;
+
+    // Always add Init (ID 1) — it's mode-agnostic
+    presetSelector->addItem("Init", 1);
+
+    // Add factory presets filtered by current EQ type, grouped by category
+    const auto& presets = processor.getFactoryPresets();
+    juce::String lastCategory;
+    for (size_t i = 0; i < presets.size(); ++i)
     {
-        juce::String name = processor.getProgramName(i);
-        if (name.isEmpty())
-            name = "Preset " + juce::String(i);
-        presetSelector->addItem(name, i + 1);  // ComboBox uses 1-based IDs
+        if (presets[i].eqType != currentEqType)
+            continue;
+
+        // Add category heading when category changes
+        if (presets[i].category != lastCategory)
+        {
+            presetSelector->addSeparator();
+            presetSelector->addSectionHeading(presets[i].category);
+            lastCategory = presets[i].category;
+        }
+
+        // ID = i + 2 (1 is Init, factory presets start at 2)
+        presetSelector->addItem(presets[i].name, static_cast<int>(i + 2));
     }
 
     // Add user presets (IDs starting at 1001)
@@ -3669,7 +3824,6 @@ void MultiQEditor::updatePresetSelector()
 
             for (size_t i = 0; i < userPresets.size(); ++i)
             {
-                // User preset IDs start at 1001
                 presetSelector->addItem(userPresets[i].name, static_cast<int>(1001 + i));
             }
         }
@@ -3679,18 +3833,24 @@ void MultiQEditor::updatePresetSelector()
     auto savedName = processor.parameters.state.getProperty("presetName", "").toString();
     if (savedName.isNotEmpty())
     {
-        // Try factory presets first
         bool found = false;
-        for (int i = 0; i < numFactoryPresets; ++i)
+        if (savedName == "Init")
         {
-            if (processor.getProgramName(i) == savedName)
+            presetSelector->setSelectedId(1, juce::dontSendNotification);
+            found = true;
+        }
+        if (!found)
+        {
+            for (size_t i = 0; i < presets.size(); ++i)
             {
-                presetSelector->setSelectedId(i + 1, juce::dontSendNotification);
-                found = true;
-                break;
+                if (presets[i].name == savedName)
+                {
+                    presetSelector->setSelectedId(static_cast<int>(i + 2), juce::dontSendNotification);
+                    found = true;
+                    break;
+                }
             }
         }
-        // Try user presets
         if (!found && userPresetManager)
         {
             auto userPresets2 = userPresetManager->loadUserPresets();
@@ -3704,15 +3864,12 @@ void MultiQEditor::updatePresetSelector()
                 }
             }
         }
-        // Fallback if saved preset no longer exists
-        if (!found && numFactoryPresets > 0)
-        {
-            presetSelector->setSelectedId(processor.getCurrentProgram() + 1, juce::dontSendNotification);
-        }
+        if (!found)
+            presetSelector->setSelectedId(1, juce::dontSendNotification);
     }
-    else if (numFactoryPresets > 0)
+    else
     {
-        presetSelector->setSelectedId(processor.getCurrentProgram() + 1, juce::dontSendNotification);
+        presetSelector->setSelectedId(1, juce::dontSendNotification);
     }
 }
 
@@ -3733,6 +3890,11 @@ void MultiQEditor::onPresetSelected()
     if (!presetSelector)
         return;
 
+    // Do not load a preset while a cross-mode transfer is in progress;
+    // the transfer sets band params explicitly and must not be overwritten.
+    if (processor.transferInProgress.load())
+        return;
+
     int selectedId = presetSelector->getSelectedId();
     if (selectedId <= 0)
         return;
@@ -3750,12 +3912,24 @@ void MultiQEditor::onPresetSelected()
             }
         }
     }
+    else if (selectedId == 1)
+    {
+        // Init preset — use dedicated reset, not setCurrentProgram(0),
+        // because setCurrentProgram(0) is also called by the AU host for
+        // bookkeeping and must not reset parameters from there.
+        processor.resetToInit();
+    }
     else
     {
-        // Factory preset selected
-        int presetIndex = selectedId - 1;  // Convert to 0-based
-        processor.setCurrentProgram(presetIndex);
-        processor.parameters.state.setProperty("presetName", processor.getProgramName(presetIndex), nullptr);
+        // Factory preset: ID = factoryPresets index + 2
+        int factoryIndex = selectedId - 2;
+        const auto& presets = processor.getFactoryPresets();
+        if (factoryIndex >= 0 && factoryIndex < static_cast<int>(presets.size()))
+        {
+            // setCurrentProgram expects: 0=Init, 1..N=factory presets (1-based)
+            processor.setCurrentProgram(factoryIndex + 1);
+            processor.parameters.state.setProperty("presetName", presets[static_cast<size_t>(factoryIndex)].name, nullptr);
+        }
     }
 }
 

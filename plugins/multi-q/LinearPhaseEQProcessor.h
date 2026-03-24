@@ -148,9 +148,15 @@ public:
         backgroundCV.notify_one();
     }
 
-    /** Process a single channel of audio using overlap-add FFT convolution */
+    /** Process a single channel of audio using overlap-add FFT convolution.
+        Applies any pending IR swap from the background rebuild thread first. */
     void processChannel(int channel, float* channelData, int numSamples)
     {
+        // Apply pending IR/state swap before processing. This is needed when
+        // processChannel is called directly (e.g. per-channel instances in MultiQ)
+        // rather than via processStereo.
+        checkAndApplySwap();
+
         auto* state = activeState.get();
         if (!state || !state->fft || channel < 0 || channel >= MAX_CHANNELS)
             return;
@@ -201,52 +207,8 @@ public:
     void processStereo(juce::AudioBuffer<float>& buffer)
     {
         juce::ScopedNoDenormals noDenormals;
-
-        // Atomically check if state+IR or just IR needs swapping
-        int swap = swapReady.load(std::memory_order_acquire);
-        if (swap != SwapNone)
-        {
-            // Swap ProcessorState FIRST if filter length changed
-            if (swap == SwapStateAndIR)
-            {
-                std::swap(activeState, readyState);
-                for (auto& fade : crossfadeState)
-                {
-                    fade.remaining = 0;
-                    fade.delay = 0;
-                }
-                if (activeState)
-                    currentFilterLength.store(activeState->filterLength, std::memory_order_relaxed);
-            }
-
-            // Swap IR buffer
-            auto* state = activeState.get();
-            if (state)
-            {
-                // Snapshot per-channel crossfade buffers before swapping IR
-                int fadeLen = juce::jmin(state->hopSize, static_cast<int>(crossfadeState[0].buffer.size()));
-                for (int c = 0; c < MAX_CHANNELS; ++c)
-                {
-                    auto& ch = state->channels[static_cast<size_t>(c)];
-                    auto& fade = crossfadeState[static_cast<size_t>(c)];
-                    fade.length = fadeLen;
-                    fade.remaining = 0;
-                    fade.delay = state->hopSize;
-                    for (int i = 0; i < fadeLen; ++i)
-                    {
-                        int idx = (ch.delayReadPos + state->hopSize + i) % (state->fftSize * 2);
-                        fade.buffer[static_cast<size_t>(i)] = ch.latencyDelay[static_cast<size_t>(idx)];
-                    }
-                }
-            }
-
-            auto* readyIR = irReadyPtr.load(std::memory_order_acquire);
-            auto* activeIR = irActivePtr.load(std::memory_order_acquire);
-            irActivePtr.store(readyIR, std::memory_order_release);
-            irReadyPtr.store(activeIR, std::memory_order_release);
-            swapReady.store(SwapNone, std::memory_order_release);
-        }
-
+        // IR swap is handled inside processChannel (checkAndApplySwap).
+        // For stereo, the first channel's call does the swap; subsequent calls are no-ops.
         int numChannels = juce::jmin(buffer.getNumChannels(), MAX_CHANNELS);
         for (int channel = 0; channel < numChannels; ++channel)
             processChannel(channel, buffer.getWritePointer(channel), buffer.getNumSamples());
@@ -318,6 +280,69 @@ private:
                 ch.reset(filterLength);
         }
     };
+
+    /** Apply any pending IR/state swap from the background thread.
+        Must be called from the audio thread only. Safe to call multiple times per block
+        (subsequent calls are no-ops once swapReady is cleared). */
+    void checkAndApplySwap()
+    {
+        int swap = swapReady.load(std::memory_order_acquire);
+        if (swap == SwapNone)
+            return;
+
+        // Swap ProcessorState FIRST if filter length changed
+        if (swap == SwapStateAndIR)
+        {
+            std::swap(activeState, readyState);
+            // Clear any in-progress crossfade — new state has no audio history (zeroed buffers)
+            // so snapshotting latencyDelay would read zeros and produce a fade-in artifact.
+            for (auto& fade : crossfadeState)
+            {
+                fade.remaining = 0;
+                fade.delay = 0;
+            }
+            if (activeState)
+                currentFilterLength.store(activeState->filterLength, std::memory_order_relaxed);
+
+            // Swap IR pointers and clear the flag, then return.
+            // No crossfade snapshot: the new state's latencyDelay is zeroed,
+            // so any crossfade would fade in from silence rather than from the
+            // previous output — a harder glitch than a clean cut.
+            auto* readyIR = irReadyPtr.load(std::memory_order_acquire);
+            auto* activeIR = irActivePtr.load(std::memory_order_acquire);
+            irActivePtr.store(readyIR, std::memory_order_release);
+            irReadyPtr.store(activeIR, std::memory_order_release);
+            swapReady.store(SwapNone, std::memory_order_release);
+            return;
+        }
+
+        // SwapIROnly path: state buffers contain valid audio history — snapshot them
+        // for a smooth crossfade between old and new IR.
+        auto* state = activeState.get();
+        if (state)
+        {
+            int fadeLen = juce::jmin(state->hopSize, static_cast<int>(crossfadeState[0].buffer.size()));
+            for (int c = 0; c < MAX_CHANNELS; ++c)
+            {
+                auto& ch = state->channels[static_cast<size_t>(c)];
+                auto& fade = crossfadeState[static_cast<size_t>(c)];
+                fade.length = fadeLen;
+                fade.remaining = 0;
+                fade.delay = state->hopSize;
+                for (int i = 0; i < fadeLen; ++i)
+                {
+                    int idx = (ch.delayReadPos + state->hopSize + i) % (state->fftSize * 2);
+                    fade.buffer[static_cast<size_t>(i)] = ch.latencyDelay[static_cast<size_t>(idx)];
+                }
+            }
+        }
+
+        auto* readyIR = irReadyPtr.load(std::memory_order_acquire);
+        auto* activeIR = irActivePtr.load(std::memory_order_acquire);
+        irActivePtr.store(readyIR, std::memory_order_release);
+        irReadyPtr.store(activeIR, std::memory_order_release);
+        swapReady.store(SwapNone, std::memory_order_release);
+    }
 
     /** Initialize an IR buffer with a flat (unity gain) response
         This is needed so audio passes through until the proper IR is built
