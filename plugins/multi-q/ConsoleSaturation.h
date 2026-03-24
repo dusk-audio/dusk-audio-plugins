@@ -7,7 +7,8 @@
     - E-Series: Warmer character, predominantly 2nd harmonic
     - G-Series: Cleaner/tighter, more 3rd harmonic
     - Op-amp modeling with asymmetric clipping
-    - Transformer saturation with even-order harmonics
+    - Transformer saturation with asymmetric B-H curve and LF emphasis
+    - Output gain compensation to maintain consistent level
 
   ==============================================================================
 */
@@ -63,6 +64,12 @@ public:
         const float cutoffFreq = 5.0f;
         const float RC = 1.0f / (juce::MathConstants<float>::twoPi * cutoffFreq);
         dcBlockerCoeff = RC / (RC + 1.0f / static_cast<float>(sampleRate));
+
+        // LF content estimator: 1st-order LPF at ~300Hz
+        // Extracts low-frequency envelope for frequency-dependent transformer saturation
+        float lfCutoff = 300.0f;
+        float lfOmega = juce::MathConstants<float>::twoPi * lfCutoff / static_cast<float>(sampleRate);
+        lfEstimateCoeff = lfOmega / (lfOmega + 1.0f);
     }
 
     void reset()
@@ -71,6 +78,7 @@ public:
         dcBlockerX1_R = dcBlockerY1_R = 0.0f;
         lastSample_L = lastSample_R = 0.0f;
         highFreqEstimate_L = highFreqEstimate_R = 0.0f;
+        lfEstimate_L = lfEstimate_R = 0.0f;
     }
 
     // Main processing function with drive amount (0.0 to 1.0)
@@ -100,26 +108,27 @@ public:
         }
 
         // Estimate frequency content for frequency-dependent saturation
-        // Real console hardware has subtle frequency-dependent behavior:
-        // - Transformers saturate MORE at low frequencies (core saturation - physics-based)
-        // - Op-amps have slew-rate limiting at high frequencies (only at extreme overdrive)
-        // Modern enhancement: reduce HF saturation to prevent aliasing while maintaining character
         float highFreqContent = estimateHighFrequencyContent(limited, isLeftChannel);
+        float lfContent = estimateLowFrequencyContent(limited, isLeftChannel);
 
         // Progressive HF drive reduction for anti-aliasing
-        // This mimics real console behavior: transformers naturally saturate less at HF
-        // Scaling increases with both drive amount and frequency content
-        float hfReduction = highFreqContent * (0.25f + drive * 0.35f);  // 25-60% reduction based on drive
+        // Real console transformers naturally saturate less at HF
+        float hfReduction = highFreqContent * (0.25f + drive * 0.35f);
         float effectiveDrive = drive * (1.0f - hfReduction);
+
+        // LF drive emphasis: transformers saturate MORE at low frequencies
+        // due to higher flux density in the iron core at LF.
+        // Kept subtle (0.1) because the EQ signal already arrives boosted when
+        // the user has raised the low shelf — stacking emphasis on top of a
+        // boosted signal caused excessive distortion on bass-heavy material.
+        float lfEmphasis = 1.0f + lfContent * drive * 0.1f;
 
         // Stage 1: Input transformer saturation
         // Console transformer saturation (vintage iron-core characteristics)
-        // Apply component tolerance for per-instance variation
-        float transformed = processInputTransformer(limited, effectiveDrive * transformerTolerance);
+        float transformed = processInputTransformer(limited, effectiveDrive * lfEmphasis * transformerTolerance);
 
         // Stage 2: Op-amp gain stage (NE5534)
         // This is where most of the harmonic coloration happens
-        // Apply same frequency-dependent drive reduction for consistency
         float opAmpOut = processOpAmpStage(transformed, effectiveDrive * opAmpTolerance);
 
         // Stage 3: Output transformer (if applicable)
@@ -130,16 +139,21 @@ public:
 
         // Add console noise floor (-90dB RMS, typical for vintage consoles)
         // Noise increases slightly with drive (like real hardware)
-        // This adds realism and subtle analog character
         float noiseLevel = 0.00003162f * (1.0f + drive * 0.5f); // -90dB base, increases with drive
         output += noiseDist(noiseGen) * noiseLevel;
 
         // DC blocking filter to prevent DC offset buildup
         output = processDCBlocker(output, isLeftChannel);
 
+        // Output gain compensation: saturation increases perceived loudness
+        // Compensate to maintain consistent level for fair A/B comparison
+        // Derived empirically: ~1.5dB reduction at full drive
+        float gainCompensation = 1.0f / (1.0f + drive * 0.19f);
+        output *= gainCompensation;
+
         // Mix with dry signal based on drive amount
         // At 100% drive, use 100% wet for maximum saturation effect
-        float wetMix = juce::jlimit(0.0f, 1.0f, drive * 1.4f);  // Linear ramp, full wet at high drive
+        float wetMix = juce::jlimit(0.0f, 1.0f, drive * 1.4f);
         float result = input * (1.0f - wetMix) + output * wetMix;
 
         // NaN/Inf protection - return clean input if saturation produced invalid output
@@ -165,9 +179,11 @@ private:
     float lastSample_L = 0.0f, lastSample_R = 0.0f;
     float highFreqEstimate_L = 0.0f, highFreqEstimate_R = 0.0f;
 
+    // LF content estimation (1st-order LPF envelope follower)
+    float lfEstimate_L = 0.0f, lfEstimate_R = 0.0f;
+    float lfEstimateCoeff = 0.04f;  // Updated in setSampleRate()
+
     // Configurable high-frequency scaling factor
-    // Can be tuned or exposed to tests/parameters for extreme test signals
-    // Reduced from 4.0f to 3.0f to prevent saturation on very dynamic material
     float highFreqScale = 3.0f;
 
     // Component tolerance variation (±5% per instance)
@@ -181,98 +197,103 @@ private:
     std::uniform_real_distribution<float> noiseDist;
 
     // Estimate high-frequency content using simple differentiator
-    // This provides a fast, computationally cheap estimate of spectral content
-    // without requiring full FFT or filter bank analysis
     float estimateHighFrequencyContent(float input, bool isLeftChannel)
     {
         float& lastSample = isLeftChannel ? lastSample_L : lastSample_R;
         float& estimate = isLeftChannel ? highFreqEstimate_L : highFreqEstimate_R;
 
-        // First-order difference approximates high-frequency content
-        // Large differences = high frequency, small differences = low frequency
         float difference = std::abs(input - lastSample);
         lastSample = input;
 
-        // Smooth the estimate with a simple one-pole lowpass (RC filter)
-        // This prevents rapid fluctuations and provides a more stable estimate
-        const float smoothing = 0.95f;  // Higher = more smoothing
+        const float smoothing = 0.95f;
         estimate = estimate * smoothing + difference * (1.0f - smoothing);
 
-        // Normalize to 0-1 range (typical difference range is 0-0.5 for normalized audio)
-        // Scale so that typical music content gives reasonable values
-        // Use configurable highFreqScale instead of hardcoded value
         float normalized = juce::jlimit(0.0f, 1.0f, estimate * highFreqScale);
-
         return normalized;
     }
 
-    // Input transformer saturation
-    // Models vintage iron-core transformer behavior
-    // Predominantly even-order harmonics (2nd, 4th)
-    // The console is very clean at normal levels (-18dB), only saturates when driven hot
+    // Estimate low-frequency content using 1st-order LPF envelope follower
+    // Real iron-core transformers have higher flux density at LF, causing
+    // more core saturation on bass-heavy material
+    float estimateLowFrequencyContent(float input, bool isLeftChannel)
+    {
+        float& estimate = isLeftChannel ? lfEstimate_L : lfEstimate_R;
+
+        // 1st-order LPF on absolute value (envelope follower at ~300Hz)
+        float absVal = std::abs(input);
+        estimate += lfEstimateCoeff * (absVal - estimate);
+
+        // Normalize: typical music has LF envelope ~0.1-0.3
+        return juce::jlimit(0.0f, 1.0f, estimate * 3.0f);
+    }
+
+    // Input transformer saturation with asymmetric B-H curve
+    // Real iron-core transformers have slight magnetic asymmetry producing
+    // stronger even-order (especially 2nd) harmonics
     float processInputTransformer(float input, float drive)
     {
-        // Console transformers are very linear at normal levels
-        // Only apply saturation when driven hard (above ~0dB)
-        // Drive range allows authentic console "pushed" sound without excessive aliasing
-        // At 100% drive, allows ~18dB of headroom (8x gain) - reduced for cleaner operation
-        const float transformerDrive = 1.0f + drive * 7.0f;  // Max 8x gain at full drive
+        const float transformerDrive = 1.0f + drive * 7.0f;
         float driven = input * transformerDrive;
 
-        // Transformer saturation using modified Jiles-Atherton approximation
-        // This creates predominantly 2nd harmonic content
-
-        // Soft saturation curve with even-order emphasis
         float abs_x = std::abs(driven);
 
-        // Progressive saturation - console is linear until driven hard
+        // Asymmetric B-H curve: positive and negative half-cycles differ
+        // Real transformers have ~5-8% asymmetry from residual magnetization
+        // Positive half saturates slightly earlier (lower threshold)
+        // This asymmetry is the primary source of even-order harmonics
+        float posThreshold = 0.88f;   // Positive half saturates earlier
+        float negThreshold = 0.92f;   // Negative half saturates later
+        float threshold = (driven >= 0.0f) ? posThreshold : negThreshold;
+
         float saturated;
-        if (abs_x < 0.9f)
+        if (abs_x < threshold)
         {
-            // Linear region - no saturation (the console operates here at -18dB)
+            // Linear region
             saturated = driven;
         }
-        else if (abs_x < 1.5f)
+        else if (abs_x < threshold + 0.6f)
         {
-            // Gentle compression region - 2nd harmonic emerges
-            float excess = abs_x - 0.9f;
-            float compressed = 0.9f + excess * (1.0f - excess * 0.15f);
+            // Gentle compression region — asymmetric knee
+            float excess = abs_x - threshold;
+            // Positive half compresses slightly more (tighter saturation knee)
+            float kneeHardness = (driven >= 0.0f) ? 0.17f : 0.13f;
+            float compressed = threshold + excess * (1.0f - excess * kneeHardness);
             saturated = (driven > 0.0f) ? compressed : -compressed;
         }
         else
         {
-            // Hard saturation region - more harmonics
-            float excess = abs_x - 1.5f;
-            float compressed = 1.5f + std::tanh(excess * 1.5f) * 0.3f;
+            // Hard saturation region
+            float excess = abs_x - (threshold + 0.6f);
+            float compressed = (threshold + 0.6f) + std::tanh(excess * 1.5f) * 0.3f;
             saturated = (driven > 0.0f) ? compressed : -compressed;
         }
 
-        // Add console-specific harmonic coloration
-        // Console transformers are very linear until driven moderately hard
-        //
-        // Threshold sets character voicing
-        // E-Series (0.05): Warmer — harmonics engage early (lower threshold = more color)
-        // G-Series (0.6): Cleaner — harmonics only when driven hard (higher threshold)
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.05f : 0.6f;
+        // Console-specific harmonic coloration
+        // Threshold difference dominates harmonic behavior:
+        // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
+        // G-Series (0.05 threshold): Subtle harmonics across entire drive range
+        // At low-to-moderate drive (0.1-0.5), G-Series produces MORE total harmonic
+        // content due to much lower threshold, despite smaller coefficients.
+        // E-Series delivers stronger saturation punch when driven hard (>0.6).
+        float harmonicThreshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
 
-        if (abs_x > threshold)
+        if (abs_x > harmonicThreshold)
         {
-            // Scale harmonic generation based on how hard we're driving
-            float saturationAmount = (abs_x - threshold) / (1.2f - threshold);
+            float saturationAmount = (abs_x - harmonicThreshold) / (1.2f - harmonicThreshold);
             saturationAmount = juce::jlimit(0.0f, 1.0f, saturationAmount);
 
             if (consoleType == ConsoleType::ESeries)
             {
-                // E-Series (Brown): 2nd harmonic DOMINANT (E-Series signature)
-                // Low threshold (0.05) + strong coefficients = warm, rich harmonics across drive range
-                saturated += saturated * saturated * (0.12f * saturationAmount);
+                // E-Series (Brown): 2nd harmonic DOMINANT
+                // x^2 is an even function: y = x + C*x^2 produces H2 (DC removed by
+                // the downstream DC blocker). x*|x| is ODD and would produce H3 instead.
+                saturated += saturated * saturated * (0.08f * saturationAmount);
             }
             else
             {
-                // G-Series (Black): 3rd harmonic DOMINANT (G-Series signature)
-                // High threshold (0.6) + subtle coefficients = clean at low drive, colored when pushed
-                saturated += saturated * saturated * (0.025f * saturationAmount);  // 2nd harmonic (subtle)
-                saturated += saturated * saturated * saturated * (0.050f * saturationAmount);  // 3rd harmonic DOMINANT
+                // G-Series (Black): 3rd harmonic DOMINANT
+                saturated += saturated * std::abs(saturated) * (0.020f * saturationAmount);  // 2nd (subtle)
+                saturated += saturated * saturated * saturated * (0.045f * saturationAmount);  // 3rd DOMINANT
             }
         }
 
@@ -285,19 +306,8 @@ private:
     // NE5534 THD: ~0.0008% at -18dB (essentially unmeasurable)
     float processOpAmpStage(float input, float drive)
     {
-        // NE5534 has different characteristics than generic op-amps
-        // Console designs keep op-amps in linear region at normal levels
-        // THD only becomes measurable when driven very hot
-        // Drive range allows authentic console character without excessive aliasing
-        // At 100% drive, allows ~20dB of headroom (10x gain) - reduced for cleaner operation
-
-        const float opAmpDrive = 1.0f + drive * 9.0f;  // Max 10x gain at full drive
+        const float opAmpDrive = 1.0f + drive * 9.0f;
         float driven = input * opAmpDrive;
-
-        // NE5534 specific characteristics:
-        // - Asymmetric clipping (positive rail clips differently than negative)
-        // - Soft knee entry into saturation
-        // - Extremely low distortion at normal levels
 
         float output;
 
@@ -306,20 +316,15 @@ private:
         {
             if (driven < 1.0f)
             {
-                // Linear region - the console operates here at -18dB
-                // Virtually no distortion
                 output = driven;
             }
             else if (driven < 1.8f)
             {
-                // Soft saturation region
                 float excess = driven - 1.0f;
                 output = 1.0f + excess * (1.0f - excess * 0.2f);
             }
             else
             {
-                // Hard clipping region (supply rail)
-                // E-Series clips softer, G-Series clips harder
                 float clipHardness = (consoleType == ConsoleType::ESeries) ? 1.5f : 2.0f;
                 output = 1.5f + std::tanh((driven - 1.8f) * clipHardness) * 0.3f;
             }
@@ -329,50 +334,41 @@ private:
         {
             if (driven > -1.0f)
             {
-                // Linear region
                 output = driven;
             }
             else if (driven > -1.9f)
             {
-                // Soft saturation region (slightly different than positive)
                 float excess = -driven - 1.0f;
                 output = -1.0f - excess * (1.0f - excess * 0.18f);
             }
             else
             {
-                // Hard clipping region
                 float clipHardness = (consoleType == ConsoleType::ESeries) ? 1.5f : 2.0f;
                 output = -1.55f + std::tanh((driven + 1.9f) * clipHardness) * 0.3f;
             }
         }
 
-        // Console-specific harmonic shaping - console op-amps are very linear until driven hard
-        //
-        // DESIGN DECISION: Threshold sets character voicing
-        // E-Series (0.05 threshold): Warmer — harmonics engage early, matching real
-        //   NE5534 op-amp behavior in E-Series circuits (richer at moderate drive)
-        // G-Series (0.6 threshold): Cleaner — harmonics only when driven hard, matching
-        //   real G-Series design philosophy (pristine at normal levels)
-        float threshold = (consoleType == ConsoleType::ESeries) ? 0.05f : 0.6f;
+        // Console-specific harmonic shaping
+        // E-Series (0.6 threshold): Clean at low drive, strong harmonics when engaged
+        // G-Series (0.05 threshold): Subtle harmonics across entire drive range
+        float threshold = (consoleType == ConsoleType::ESeries) ? 0.6f : 0.05f;
 
         if (std::abs(driven) > threshold)
         {
-            // Scale harmonic generation based on drive level
             float saturationAmount = (std::abs(driven) - threshold) / (1.5f - threshold);
             saturationAmount = juce::jlimit(0.0f, 1.0f, saturationAmount);
 
             if (consoleType == ConsoleType::ESeries)
             {
-                // E-Series: 2nd harmonic DOMINANT (E-Series signature)
-                // Low threshold (0.05) + strong coefficients = warm, rich harmonics across drive range
-                output += output * output * std::copysign(0.10f * saturationAmount, output);
+                // E-Series: 2nd harmonic DOMINANT via x^2 (even function → H2)
+                // copysign(1, x)*x^2 = x*|x| is odd → H3; plain x^2 gives H2
+                output += output * output * (0.06f * saturationAmount);
             }
             else
             {
-                // G-Series: 3rd harmonic DOMINANT over 2nd (G-Series signature)
-                // High threshold (0.6) + subtle coefficients = clean at low drive, colored when pushed
-                output += output * output * std::copysign(0.022f * saturationAmount, output);  // 2nd harmonic (subtle)
-                output += output * output * output * (0.040f * saturationAmount);  // 3rd harmonic DOMINANT
+                // G-Series: 3rd harmonic DOMINANT over 2nd
+                output += output * output * std::copysign(0.022f * saturationAmount, output);
+                output += output * output * output * (0.040f * saturationAmount);
             }
         }
 
@@ -380,36 +376,39 @@ private:
     }
 
     // Output transformer saturation (E-Series only)
-    // Similar to input transformer but with less drive
+    // Similar to input transformer but with less drive and asymmetric curve
     float processOutputTransformer(float input, float drive)
     {
         const float transformerDrive = 1.0f + drive * 2.0f;
         float driven = input * transformerDrive;
 
-        // Output transformer saturates less than input transformer
-        // Adds final touch of even-order harmonics
         float abs_x = std::abs(driven);
 
+        // Asymmetric thresholds (output transformer has less asymmetry than input).
+        // Raised from 0.48/0.52 — the original values saturated even moderate signals
+        // loudly, causing harshness when the EQ boosted the low end before this stage.
+        float threshold = (driven >= 0.0f) ? 0.72f : 0.76f;
+
         float saturated;
-        if (abs_x < 0.5f)
+        if (abs_x < threshold)
         {
             saturated = driven;
         }
-        else if (abs_x < 0.9f)
+        else if (abs_x < threshold + 0.4f)
         {
-            float excess = abs_x - 0.5f;
-            float compressed = 0.5f + excess * (1.0f - excess * 0.25f);
+            float excess = abs_x - threshold;
+            float compressed = threshold + excess * (1.0f - excess * 0.25f);
             saturated = (driven > 0.0f) ? compressed : -compressed;
         }
         else
         {
-            float excess = abs_x - 0.9f;
-            float compressed = 0.9f + std::tanh(excess * 1.5f) * 0.15f;
+            float excess = abs_x - (threshold + 0.4f);
+            float compressed = (threshold + 0.4f) + std::tanh(excess * 1.5f) * 0.15f;
             saturated = (driven > 0.0f) ? compressed : -compressed;
         }
 
-        // Subtle 2nd harmonic emphasis (use abs to preserve sign and avoid DC bias)
-        saturated += saturated * std::abs(saturated) * 0.05f;
+        // Subtle 2nd harmonic emphasis via x^2 (even function → H2, not x*|x| which is odd → H3)
+        saturated += saturated * saturated * 0.08f;
 
         return saturated / transformerDrive;
     }

@@ -43,6 +43,9 @@ public:
     // Match mode — replaces dynamics section with match controls
     void setMatchMode(bool isMatch);
 
+    // Linear phase mode — dims controls that don't work in LP mode
+    void setLinearPhaseMode(bool isLinearPhase);
+
     // Callbacks
     std::function<void(int)> onBandSelected;
     std::function<void(int, bool)> onBandEnableChanged;
@@ -95,6 +98,9 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> rangeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
+
+    // Linear phase mode state
+    bool linearPhaseMode = false;
 
     // Match mode state and controls (Logic Pro Match EQ style)
     bool matchMode = false;
