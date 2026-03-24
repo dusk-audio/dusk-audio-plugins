@@ -238,6 +238,10 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishAutoGainAttachment;
     bool britishCurveCollapsed = false;  // Track collapse state for British mode
 
+    // Tube mode autogain button
+    std::unique_ptr<juce::ToggleButton> tubeAutoGainButton;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeAutoGainAttachment;
+
     // British mode header controls (A/B, Presets - like 4K-EQ)
     juce::TextButton britishAbButton;
     juce::ComboBox britishPresetSelector;
@@ -395,6 +399,10 @@ private:
     void setupDynamicControls();
     void layoutDynamicControls();
     void updateDynamicAttachments();  // Rebind attachments when selected band changes
+
+    // Keyboard shortcut help overlay
+    bool showShortcutOverlay = false;
+    void paintShortcutOverlay(juce::Graphics& g);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQEditor)
 };

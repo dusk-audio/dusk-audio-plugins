@@ -99,6 +99,12 @@ private:
     float minFrequency = 20.0f;
     float maxFrequency = 20000.0f;
 
+    // Vertical offset (dB) applied to FFT spectrum for display alignment.
+    // FFT outputs absolute dBFS, but EQ display shows relative gain (0 dB = unity).
+    // Offset shifts the spectrum up so typical signal levels (-18 to -12 dBFS)
+    // appear centered in the EQ curve display range, matching commercial EQ analyzers.
+    float spectrumDisplayOffsetDB = 24.0f;
+
     std::atomic<uint32_t> fillColorARGB{0x40888888};
     std::atomic<uint32_t> lineColorARGB{0xFFAAAAAA};
 

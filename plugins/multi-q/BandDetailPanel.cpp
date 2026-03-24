@@ -246,8 +246,9 @@ void BandDetailPanel::setupMatchControls()
     matchComputeButton.onClick = [this]() {
         if (processor.computeMatchCorrection())
         {
-            // Transfer correction curve to parametric bands and switch to Digital mode
-            processor.transferCurrentEQToDigital();
+            // Correction FIR computed and loaded — stay in Match mode.
+            // The user can hear the match correction applied via convolution.
+            // Use "Transfer to Digital" button to convert to parametric bands.
             matchComputeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffcc8844));
             matchComputeButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
             if (auto* parent = getParentComponent())
@@ -412,6 +413,43 @@ void BandDetailPanel::setMatchMode(bool isMatch)
     }
 
     resized();
+    repaint();
+}
+
+void BandDetailPanel::setLinearPhaseMode(bool isLinearPhase)
+{
+    if (linearPhaseMode == isLinearPhase)
+        return;
+
+    linearPhaseMode = isLinearPhase;
+
+    // In linear phase mode, dynamics/saturation/routing/invert/pan don't function
+    // because LP bypasses the IIR processing path entirely.
+    // Dim these controls to communicate this to the user.
+    float alpha = linearPhaseMode ? 0.35f : 1.0f;
+
+    dynButton->setAlpha(alpha);
+    dynButton->setEnabled(!linearPhaseMode);
+    thresholdKnob->setAlpha(alpha);
+    thresholdKnob->setEnabled(!linearPhaseMode);
+    attackKnob->setAlpha(alpha);
+    attackKnob->setEnabled(!linearPhaseMode);
+    releaseKnob->setAlpha(alpha);
+    releaseKnob->setEnabled(!linearPhaseMode);
+    rangeKnob->setAlpha(alpha);
+    rangeKnob->setEnabled(!linearPhaseMode);
+    ratioKnob->setAlpha(alpha);
+    ratioKnob->setEnabled(!linearPhaseMode);
+
+    invertButton->setAlpha(alpha);
+    invertButton->setEnabled(!linearPhaseMode);
+    phaseInvertButton->setAlpha(alpha);
+    phaseInvertButton->setEnabled(!linearPhaseMode);
+    panKnob->setAlpha(alpha);
+    panKnob->setEnabled(!linearPhaseMode);
+    soloButton->setAlpha(alpha);
+    soloButton->setEnabled(!linearPhaseMode);
+
     repaint();
 }
 

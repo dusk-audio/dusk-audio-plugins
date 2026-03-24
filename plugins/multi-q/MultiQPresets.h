@@ -45,8 +45,12 @@ struct TubePreset
     float outputGain = 0.0f;
     float tubeDrive = 0.3f;
     bool midEnabled = false;
+    float midLowFreq = 500.0f;
+    float midLowPeak = 0.0f;
     float midDipFreq = 1000.0f;
     float midDip = 0.0f;
+    float midHighFreq = 3000.0f;
+    float midHighPeak = 0.0f;
 };
 
 struct BandDynamics
@@ -66,6 +70,7 @@ struct BandPreset
     float gain = 0.0f;        // dB
     float q = 0.71f;          // Q factor
     int slope = 2;            // Filter slope (0-5 for 6-48 dB/oct)
+    int shape = 0;            // Filter shape (0=default shelf/peak, 1=alt shape, 2=alt shape)
 };
 
 struct Preset
@@ -110,7 +115,10 @@ inline const juce::StringArray Categories = {
     "Mix Bus",
     "Mastering",
     "Surgical",
-    "Creative"
+    "Creative",
+    "British",
+    "Tube",
+    "Dynamic"
 };
 
 // Factory Presets
@@ -134,7 +142,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 10000.0f, 1.0f, 0.71f, 0 };    // Brilliance
         p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };    // High shelf (flat)
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 2; // Light
         presets.push_back(p);
     }
@@ -171,7 +179,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 1.0f, 0.71f, 0 };     // Air
         p.bands[6] = { true, 10000.0f, 0.0f, 0.71f, 0 };    // Flat
         p.bands[7] = { true, 15000.0f, 0.0f, 0.71f, 2 };    // LPF gentle
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -189,7 +197,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -243,7 +251,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 5000.0f, 1.0f, 1.0f, 0 };      // Beater
         p.bands[6] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { true, 12000.0f, 0.0f, 0.71f, 2 };    // LPF
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -278,7 +286,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 10000.0f, 2.5f, 0.71f, 0 };    // Air
         p.bands[6] = { true, 14000.0f, 1.0f, 0.71f, 0 };    // Sparkle
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -296,7 +304,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 3500.0f, 2.5f, 1.5f, 0 };       // Click/attack
         p.bands[6] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[7] = { true, 10000.0f, 0.0f, 0.71f, 2 };     // LPF
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -331,7 +339,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 2.0f, 0.5f, 0 };       // Brightness shelf
         p.bands[6] = { true, 12000.0f, 2.5f, 0.5f, 0 };      // Air shelf
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -404,7 +412,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 2.5f, 0.71f, 0 };     // Shimmer
         p.bands[6] = { true, 12000.0f, 1.5f, 0.71f, 0 };    // Air
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -439,7 +447,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 1.0f, 0.71f, 0 };      // Shimmer
         p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -476,7 +484,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 12000.0f, 1.5f, 0.71f, 0 };    // High shelf air
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 2; // Light
         presets.push_back(p);
     }
@@ -495,7 +503,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 6000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 10000.0f, 2.0f, 0.71f, 0 };    // High shelf boost
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -513,7 +521,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[6] = { true, 10000.0f, 1.5f, 0.5f, 0 };      // HF shelf boost
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 2; // Light
         presets.push_back(p);
     }
@@ -532,7 +540,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 3500.0f, 1.0f, 0.8f, 0 };       // Upper mid
         p.bands[6] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -569,7 +577,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 14000.0f, 0.8f, 0.71f, 0 };    // High shelf air
         p.bands[7] = { true, 20000.0f, 0.0f, 0.71f, 1 };    // LPF gentle
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 1; // Proportional
         presets.push_back(p);
     }
@@ -588,7 +596,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };    // Flat
         p.bands[7] = { true, 19500.0f, 0.0f, 0.71f, 2 };    // LPF near Nyquist
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
     }
 
@@ -606,7 +614,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[6] = { true, 15000.0f, 1.5f, 0.4f, 0 };      // Air shelf
         p.bands[7] = { true, 20000.0f, 0.0f, 0.71f, 1 };     // LPF gentle
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 1; // Proportional
         presets.push_back(p);
     }
@@ -625,7 +633,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[5] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { true, 20000.0f, 0.0f, 0.71f, 1 };     // LPF gentle
-        p.hqEnabled = true;
+        p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 1; // Proportional
         presets.push_back(p);
     }
@@ -732,7 +740,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Console Vocal Chain";
-        p.category = "Vocals";
+        p.category = "British";
         p.eqType = 2;
         p.hasBritish = true;
         p.british.hpfFreq = 80.0f; p.british.hpfEnabled = true;
@@ -750,7 +758,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Rock Drums";
-        p.category = "Drums";
+        p.category = "British";
         p.eqType = 2;
         p.hasBritish = true;
         p.british.hpfFreq = 60.0f; p.british.hpfEnabled = true;
@@ -766,7 +774,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Mix Bus Glue";
-        p.category = "Mix Bus";
+        p.category = "British";
         p.eqType = 2;
         p.hasBritish = true;
         p.british.lfGain = 1.0f; p.british.lfFreq = 80.0f; p.british.lfBell = false;
@@ -781,7 +789,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Console Warmth";
-        p.category = "Creative";
+        p.category = "British";
         p.eqType = 2;
         p.hasBritish = true;
         p.british.lfGain = 0.5f; p.british.lfFreq = 100.0f;
@@ -795,7 +803,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Broadcast Voice (British)";
-        p.category = "Vocals";
+        p.category = "British";
         p.eqType = 2;
         p.hasBritish = true;
         p.british.hpfFreq = 120.0f; p.british.hpfEnabled = true;
@@ -812,7 +820,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Vintage Bass Trick";
-        p.category = "Bass";
+        p.category = "Tube";
         p.eqType = 3;
         p.hasTube = true;
         p.tube.lfBoostGain = 6.0f;
@@ -826,7 +834,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Vintage Air";
-        p.category = "Mastering";
+        p.category = "Tube";
         p.eqType = 3;
         p.hasTube = true;
         p.tube.hfBoostGain = 4.0f;
@@ -840,7 +848,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Warm Vocal (Tube)";
-        p.category = "Vocals";
+        p.category = "Tube";
         p.eqType = 3;
         p.hasTube = true;
         p.tube.lfBoostGain = 2.0f;
@@ -856,7 +864,7 @@ inline std::vector<Preset> getFactoryPresets()
     {
         Preset p;
         p.name = "Gentle Master (Tube)";
-        p.category = "Mastering";
+        p.category = "Tube";
         p.eqType = 3;
         p.hasTube = true;
         p.tube.lfBoostGain = 2.0f;
@@ -983,6 +991,412 @@ inline std::vector<Preset> getFactoryPresets()
         presets.push_back(p);
     }
 
+    // ==================== BRITISH (Neve-Style Console EQ) ====================
+
+    // British: Vocal Channel (E-Series warmth)
+    {
+        Preset p;
+        p.name = "Vocal Channel";
+        p.category = "British";
+        p.eqType = 2;  // British
+        p.hasBritish = true;
+        p.british.hpfFreq = 80.0f;
+        p.british.hpfEnabled = true;
+        p.british.lfGain = 2.0f;
+        p.british.lfFreq = 220.0f;
+        p.british.lmGain = -2.0f;
+        p.british.lmFreq = 400.0f;
+        p.british.lmQ = 1.2f;
+        p.british.hmGain = 3.0f;
+        p.british.hmFreq = 3500.0f;
+        p.british.hmQ = 0.8f;
+        p.british.hfGain = 4.0f;
+        p.british.hfFreq = 12000.0f;
+        p.british.mode = 0;  // Brown (E-Series)
+        p.british.saturation = 0.2f;
+        presets.push_back(p);
+    }
+
+    // British: Drum Bus Punch (G-Series clean)
+    {
+        Preset p;
+        p.name = "Drum Bus Punch";
+        p.category = "British";
+        p.eqType = 2;
+        p.hasBritish = true;
+        p.british.lfGain = 3.0f;
+        p.british.lfFreq = 60.0f;
+        p.british.lfBell = true;
+        p.british.lmGain = -1.5f;
+        p.british.lmFreq = 350.0f;
+        p.british.lmQ = 0.8f;
+        p.british.hmGain = 2.5f;
+        p.british.hmFreq = 4000.0f;
+        p.british.hmQ = 0.6f;
+        p.british.hfGain = 2.0f;
+        p.british.hfFreq = 10000.0f;
+        p.british.mode = 1;  // Black (G-Series)
+        p.british.saturation = 0.15f;
+        presets.push_back(p);
+    }
+
+    // British: Bass Guitar (E-Series with warmth)
+    {
+        Preset p;
+        p.name = "Bass Guitar";
+        p.category = "British";
+        p.eqType = 2;
+        p.hasBritish = true;
+        p.british.lfGain = 4.0f;
+        p.british.lfFreq = 100.0f;
+        p.british.lmGain = -3.0f;
+        p.british.lmFreq = 250.0f;
+        p.british.lmQ = 1.5f;
+        p.british.hmGain = 2.0f;
+        p.british.hmFreq = 1500.0f;
+        p.british.hmQ = 0.7f;
+        p.british.lpfFreq = 8000.0f;
+        p.british.lpfEnabled = true;
+        p.british.mode = 0;
+        p.british.saturation = 0.3f;
+        presets.push_back(p);
+    }
+
+    // British: Mix Bus Glue (renamed to avoid duplicate with Digital preset)
+    {
+        Preset p;
+        p.name = "Mix Bus Glue (British)";
+        p.category = "British";
+        p.eqType = 2;
+        p.hasBritish = true;
+        p.british.lfGain = 1.5f;
+        p.british.lfFreq = 60.0f;
+        p.british.hmGain = 1.0f;
+        p.british.hmFreq = 3000.0f;
+        p.british.hmQ = 0.5f;
+        p.british.hfGain = 1.5f;
+        p.british.hfFreq = 16000.0f;
+        p.british.mode = 1;  // G-Series for cleaner bus
+        p.british.saturation = 0.1f;
+        presets.push_back(p);
+    }
+
+    // British: Acoustic Guitar
+    {
+        Preset p;
+        p.name = "Acoustic Guitar";
+        p.category = "British";
+        p.eqType = 2;
+        p.hasBritish = true;
+        p.british.hpfFreq = 80.0f;
+        p.british.hpfEnabled = true;
+        p.british.lmGain = -2.5f;
+        p.british.lmFreq = 200.0f;
+        p.british.lmQ = 1.0f;
+        p.british.hmGain = 3.0f;
+        p.british.hmFreq = 5000.0f;
+        p.british.hmQ = 0.7f;
+        p.british.hfGain = 3.5f;
+        p.british.hfFreq = 12000.0f;
+        p.british.mode = 0;
+        p.british.saturation = 0.15f;
+        presets.push_back(p);
+    }
+
+    // British: Overhead Mics
+    {
+        Preset p;
+        p.name = "Overhead Mics";
+        p.category = "British";
+        p.eqType = 2;
+        p.hasBritish = true;
+        p.british.hpfFreq = 200.0f;
+        p.british.hpfEnabled = true;
+        p.british.lfGain = -1.0f;
+        p.british.lfFreq = 300.0f;
+        p.british.hmGain = 2.0f;
+        p.british.hmFreq = 6000.0f;
+        p.british.hmQ = 0.5f;
+        p.british.hfGain = 4.0f;
+        p.british.hfFreq = 12000.0f;
+        p.british.mode = 0;
+        p.british.saturation = 0.1f;
+        presets.push_back(p);
+    }
+
+    // British: Console Color (saturation focus)
+    {
+        Preset p;
+        p.name = "Console Color";
+        p.category = "British";
+        p.eqType = 2;
+        p.hasBritish = true;
+        p.british.lfGain = 0.5f;
+        p.british.lfFreq = 100.0f;
+        p.british.hfGain = 0.5f;
+        p.british.hfFreq = 10000.0f;
+        p.british.mode = 0;
+        p.british.saturation = 0.5f;
+        p.british.inputGain = 3.0f;
+        presets.push_back(p);
+    }
+
+    // British: Electric Guitar (mid-forward)
+    {
+        Preset p;
+        p.name = "Electric Guitar";
+        p.category = "British";
+        p.eqType = 2;
+        p.hasBritish = true;
+        p.british.hpfFreq = 100.0f;
+        p.british.hpfEnabled = true;
+        p.british.lfGain = 1.0f;
+        p.british.lfFreq = 200.0f;
+        p.british.hmGain = 3.0f;
+        p.british.hmFreq = 2000.0f;
+        p.british.hmQ = 0.6f;
+        p.british.hfGain = -1.0f;
+        p.british.hfFreq = 8000.0f;
+        p.british.lpfFreq = 12000.0f;
+        p.british.lpfEnabled = true;
+        p.british.mode = 0;
+        p.british.saturation = 0.25f;
+        presets.push_back(p);
+    }
+
+    // ==================== TUBE (Pultec-Style EQ) ====================
+
+    // Tube: Vintage Warmth (classic Pultec trick)
+    {
+        Preset p;
+        p.name = "Vintage Warmth";
+        p.category = "Tube";
+        p.eqType = 3;  // Tube
+        p.hasTube = true;
+        p.tube.lfBoostGain = 4.0f;
+        p.tube.lfBoostFreq = 60.0f;
+        p.tube.lfAttenGain = 3.0f;   // Pultec trick: boost + atten
+        p.tube.hfBoostGain = 3.0f;
+        p.tube.hfBoostFreq = 10000.0f;
+        p.tube.hfBoostBandwidth = 0.6f;
+        p.tube.tubeDrive = 0.35f;
+        presets.push_back(p);
+    }
+
+    // Tube: HF Air (silky top end)
+    {
+        Preset p;
+        p.name = "HF Air";
+        p.category = "Tube";
+        p.eqType = 3;
+        p.hasTube = true;
+        p.tube.hfBoostGain = 5.0f;
+        p.tube.hfBoostFreq = 12000.0f;
+        p.tube.hfBoostBandwidth = 0.8f;
+        p.tube.hfAttenGain = 1.0f;
+        p.tube.hfAttenFreq = 16000.0f;
+        p.tube.tubeDrive = 0.2f;
+        presets.push_back(p);
+    }
+
+    // Tube: Radio EQ (lo-fi vintage)
+    {
+        Preset p;
+        p.name = "Radio EQ";
+        p.category = "Tube";
+        p.eqType = 3;
+        p.hasTube = true;
+        p.tube.lfBoostGain = 2.0f;
+        p.tube.lfBoostFreq = 100.0f;
+        p.tube.lfAttenGain = 5.0f;
+        p.tube.hfBoostGain = 3.0f;
+        p.tube.hfBoostFreq = 4000.0f;
+        p.tube.hfBoostBandwidth = 0.3f;
+        p.tube.hfAttenGain = 6.0f;
+        p.tube.hfAttenFreq = 5000.0f;
+        p.tube.tubeDrive = 0.6f;
+        presets.push_back(p);
+    }
+
+    // Tube: Bass Thickener (low-end warmth)
+    {
+        Preset p;
+        p.name = "Bass Thickener";
+        p.category = "Tube";
+        p.eqType = 3;
+        p.hasTube = true;
+        p.tube.lfBoostGain = 6.0f;
+        p.tube.lfBoostFreq = 60.0f;
+        p.tube.lfAttenGain = 2.0f;
+        p.tube.hfAttenGain = 3.0f;
+        p.tube.hfAttenFreq = 8000.0f;
+        p.tube.tubeDrive = 0.4f;
+        presets.push_back(p);
+    }
+
+    // Tube: Mastering Sheen
+    {
+        Preset p;
+        p.name = "Mastering Sheen";
+        p.category = "Tube";
+        p.eqType = 3;
+        p.hasTube = true;
+        p.tube.lfBoostGain = 1.5f;
+        p.tube.lfBoostFreq = 60.0f;
+        p.tube.lfAttenGain = 1.0f;
+        p.tube.hfBoostGain = 2.0f;
+        p.tube.hfBoostFreq = 16000.0f;
+        p.tube.hfBoostBandwidth = 0.7f;
+        p.tube.tubeDrive = 0.15f;
+        presets.push_back(p);
+    }
+
+    // Tube: Mid Scoop (guitar/keys presence dip)
+    {
+        Preset p;
+        p.name = "Mid Scoop";
+        p.category = "Tube";
+        p.eqType = 3;
+        p.hasTube = true;
+        p.tube.lfBoostGain = 3.0f;
+        p.tube.lfBoostFreq = 100.0f;
+        p.tube.hfBoostGain = 4.0f;
+        p.tube.hfBoostFreq = 8000.0f;
+        p.tube.hfBoostBandwidth = 0.5f;
+        p.tube.midEnabled = true;
+        p.tube.midDipFreq = 800.0f;
+        p.tube.midDip = 4.0f;
+        p.tube.tubeDrive = 0.3f;
+        presets.push_back(p);
+    }
+
+    // ==================== DYNAMIC EQ ====================
+
+    // Dynamic: De-Esser (sibilance control)
+    {
+        Preset p;
+        p.name = "De-Esser";
+        p.category = "Dynamic";
+        p.eqType = 0;  // Digital
+        p.hasPerBandDynamics = true;
+        p.bands[0] = { false, 20.0f, 0.0f, 0.71f, 2 };
+        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { true, 1000.0f, 0.0f, 0.71f, 0 };
+        p.bands[3] = { true, 3000.0f, 0.0f, 0.71f, 0 };
+        p.bands[4] = { true, 6000.0f, 0.0f, 2.0f, 0 };  // De-ess target
+        p.bands[5] = { true, 10000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { true, 14000.0f, 0.0f, 0.71f, 0 };
+        p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
+        // Dynamic on band 5 (6kHz sibilance)
+        p.bandDynamics[4] = { true, -24.0f, 1.0f, 50.0f, 8.0f, 6.0f };
+        presets.push_back(p);
+    }
+
+    // Dynamic: Low Cut Tightener (dynamic HPF)
+    {
+        Preset p;
+        p.name = "Dynamic Low Cut";
+        p.category = "Dynamic";
+        p.eqType = 0;
+        p.hasPerBandDynamics = true;
+        p.bands[0] = { true, 60.0f, 0.0f, 0.71f, 2 };   // HPF at 60Hz
+        p.bands[1] = { true, 100.0f, 0.0f, 1.0f, 0 };    // Dynamic low shelf
+        p.bands[2] = { true, 250.0f, 0.0f, 0.71f, 0 };
+        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };
+        p.bands[4] = { true, 3000.0f, 0.0f, 0.71f, 0 };
+        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };
+        p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
+        // Dynamic cut on band 2 (low shelf - tighten lows when loud)
+        p.bandDynamics[1] = { true, -18.0f, 5.0f, 80.0f, 6.0f, 4.0f };
+        presets.push_back(p);
+    }
+
+    // Dynamic: Presence Ducker (reduces harshness on loud parts)
+    {
+        Preset p;
+        p.name = "Presence Ducker";
+        p.category = "Dynamic";
+        p.eqType = 0;
+        p.hasPerBandDynamics = true;
+        p.bands[0] = { false, 20.0f, 0.0f, 0.71f, 2 };
+        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { true, 500.0f, 0.0f, 0.71f, 0 };
+        p.bands[3] = { true, 1500.0f, 0.0f, 0.71f, 0 };
+        p.bands[4] = { true, 3000.0f, 2.0f, 1.5f, 0 };   // Static boost at 3kHz
+        p.bands[5] = { true, 5000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { true, 10000.0f, 0.0f, 0.71f, 0 };
+        p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
+        // Dynamic cut on band 5 (presence — duck when too harsh)
+        p.bandDynamics[4] = { true, -15.0f, 3.0f, 80.0f, 6.0f, 3.0f };
+        presets.push_back(p);
+    }
+
+    // Dynamic: Dynamic Resonance Tamer (control ringing frequencies)
+    {
+        Preset p;
+        p.name = "Dynamic Resonance Tamer";
+        p.category = "Dynamic";
+        p.eqType = 0;
+        p.hasPerBandDynamics = true;
+        p.bands[0] = { false, 20.0f, 0.0f, 0.71f, 2 };
+        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { true, 400.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target
+        p.bands[3] = { true, 800.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target
+        p.bands[4] = { true, 2000.0f, 0.0f, 4.0f, 0 };  // Narrow — resonance target
+        p.bands[5] = { true, 5000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { true, 10000.0f, 0.0f, 0.71f, 0 };
+        p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
+        // Dynamic narrow cuts on resonant bands
+        p.bandDynamics[2] = { true, -20.0f, 2.0f, 60.0f, 10.0f, 8.0f };
+        p.bandDynamics[3] = { true, -20.0f, 2.0f, 60.0f, 10.0f, 8.0f };
+        p.bandDynamics[4] = { true, -20.0f, 2.0f, 60.0f, 10.0f, 8.0f };
+        presets.push_back(p);
+    }
+
+    // Dynamic: Multiband Compress (gentle broadband dynamic EQ)
+    {
+        Preset p;
+        p.name = "Multiband Compress";
+        p.category = "Dynamic";
+        p.eqType = 0;
+        p.hasPerBandDynamics = true;
+        p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 2 };    // HPF
+        p.bands[1] = { true, 100.0f, 0.0f, 0.5f, 0 };     // Low band
+        p.bands[2] = { true, 400.0f, 0.0f, 0.5f, 0 };     // Low-mid
+        p.bands[3] = { true, 1000.0f, 0.0f, 0.5f, 0 };    // Mid
+        p.bands[4] = { true, 3000.0f, 0.0f, 0.5f, 0 };    // Hi-mid
+        p.bands[5] = { true, 8000.0f, 0.0f, 0.5f, 0 };    // High
+        p.bands[6] = { true, 14000.0f, 0.0f, 0.71f, 0 };  // Air
+        p.bands[7] = { true, 18000.0f, 0.0f, 0.71f, 2 };  // LPF
+        // Gentle dynamics on all main bands
+        p.bandDynamics[1] = { true, -18.0f, 10.0f, 100.0f, 6.0f, 2.0f };
+        p.bandDynamics[2] = { true, -18.0f, 8.0f, 80.0f, 6.0f, 2.0f };
+        p.bandDynamics[3] = { true, -18.0f, 5.0f, 60.0f, 6.0f, 2.0f };
+        p.bandDynamics[4] = { true, -18.0f, 3.0f, 50.0f, 6.0f, 2.0f };
+        p.bandDynamics[5] = { true, -20.0f, 2.0f, 40.0f, 6.0f, 2.0f };
+        presets.push_back(p);
+    }
+
+    // Creative: M/S Stereo Width (static M/S EQ — boosts side channel for width)
+    {
+        Preset p;
+        p.name = "M/S Stereo Width";
+        p.category = "Creative";
+        p.eqType = 0;
+        p.hasPerBandDynamics = false;
+        p.processingMode = 4;  // Side processing
+        p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 3 };    // HPF (mono bass)
+        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { true, 800.0f, 0.0f, 0.71f, 0 };
+        p.bands[3] = { true, 2000.0f, 2.0f, 0.71f, 0 };   // Boost sides at 2kHz
+        p.bands[4] = { true, 5000.0f, 3.0f, 0.71f, 0 };   // Boost sides at 5kHz
+        p.bands[5] = { true, 10000.0f, 2.0f, 0.71f, 0 };  // Boost sides at 10kHz
+        p.bands[6] = { true, 14000.0f, 0.0f, 0.71f, 0 };
+        p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
+        presets.push_back(p);
+    }
+
     return presets;
 }
 
@@ -1000,6 +1414,18 @@ inline std::vector<Preset> getPresetsByCategory(const juce::String& category)
 
 inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset& preset)
 {
+    // Helper: find the nearest choice index for a given Hz value in a choice table
+    auto nearestChoiceIdx = [](float hzValue, std::initializer_list<float> choices) -> int {
+        int best = 0, i = 0;
+        float bestDist = std::numeric_limits<float>::max();
+        for (float c : choices) {
+            float d = std::abs(hzValue - c);
+            if (d < bestDist) { bestDist = d; best = i; }
+            ++i;
+        }
+        return best;
+    };
+
     if (auto* p = params.getParameter(ParamIDs::eqType))
         p->setValueNotifyingHost(params.getParameterRange(ParamIDs::eqType).convertTo0to1(static_cast<float>(preset.eqType)));
 
@@ -1022,6 +1448,13 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
 
         if (auto* p = params.getParameter(ParamIDs::bandSlope(bandNum)))
             p->setValueNotifyingHost(params.getParameterRange(ParamIDs::bandSlope(bandNum)).convertTo0to1(static_cast<float>(band.slope)));
+
+        if (auto* p = params.getParameter(ParamIDs::bandShape(bandNum)))
+        {
+            int numChoices = p->getNumSteps();
+            if (numChoices > 1)
+                p->setValueNotifyingHost(static_cast<float>(band.shape) / static_cast<float>(numChoices - 1));
+        }
     }
 
     // Global settings
@@ -1066,6 +1499,10 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
             p->setValueNotifyingHost(0.0f);
         if (auto* p = params.getParameter(ParamIDs::bandPan(i)))
             p->setValueNotifyingHost(params.getParameterRange(ParamIDs::bandPan(i)).convertTo0to1(0.0f));
+        if (auto* p = params.getParameter(ParamIDs::bandSatType(i)))
+            p->setValueNotifyingHost(0.0f);  // 0 = Off
+        if (auto* p = params.getParameter(ParamIDs::bandSatDrive(i)))
+            p->setValueNotifyingHost(params.getParameterRange(ParamIDs::bandSatDrive(i)).convertTo0to1(0.3f));
     }
 
     // Apply British-specific parameters
@@ -1120,20 +1557,26 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
         const auto& t = preset.tube;
         if (auto* p = params.getParameter(ParamIDs::pultecLfBoostGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.lfBoostGain));
+        // pultecLfBoostFreq is a choice param (indices 0-3 for 20/30/60/100 Hz)
         if (auto* p = params.getParameter(ParamIDs::pultecLfBoostFreq))
-            p->setValueNotifyingHost(p->convertTo0to1(t.lfBoostFreq));
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
+                nearestChoiceIdx(t.lfBoostFreq, {20.0f, 30.0f, 60.0f, 100.0f}))));
         if (auto* p = params.getParameter(ParamIDs::pultecLfAttenGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.lfAttenGain));
         if (auto* p = params.getParameter(ParamIDs::pultecHfBoostGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.hfBoostGain));
+        // pultecHfBoostFreq is a choice param (indices 0-6 for 3/4/5/8/10/12/16 kHz)
         if (auto* p = params.getParameter(ParamIDs::pultecHfBoostFreq))
-            p->setValueNotifyingHost(p->convertTo0to1(t.hfBoostFreq));
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
+                nearestChoiceIdx(t.hfBoostFreq, {3000.0f, 4000.0f, 5000.0f, 8000.0f, 10000.0f, 12000.0f, 16000.0f}))));
         if (auto* p = params.getParameter(ParamIDs::pultecHfBoostBandwidth))
             p->setValueNotifyingHost(p->convertTo0to1(t.hfBoostBandwidth));
         if (auto* p = params.getParameter(ParamIDs::pultecHfAttenGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.hfAttenGain));
+        // pultecHfAttenFreq is a choice param (indices 0-2 for 5/10/20 kHz)
         if (auto* p = params.getParameter(ParamIDs::pultecHfAttenFreq))
-            p->setValueNotifyingHost(p->convertTo0to1(t.hfAttenFreq));
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
+                nearestChoiceIdx(t.hfAttenFreq, {5000.0f, 10000.0f, 20000.0f}))));
         if (auto* p = params.getParameter(ParamIDs::pultecInputGain))
             p->setValueNotifyingHost(p->convertTo0to1(t.inputGain));
         if (auto* p = params.getParameter(ParamIDs::pultecOutputGain))
@@ -1142,10 +1585,24 @@ inline void applyPreset(juce::AudioProcessorValueTreeState& params, const Preset
             p->setValueNotifyingHost(p->convertTo0to1(t.tubeDrive));
         if (auto* p = params.getParameter(ParamIDs::pultecMidEnabled))
             p->setValueNotifyingHost(t.midEnabled ? 1.0f : 0.0f);
+        // pultecMidDipFreq is a choice param (indices 0-6 for 200/300/500/700/1000/1500/2000 Hz)
         if (auto* p = params.getParameter(ParamIDs::pultecMidDipFreq))
-            p->setValueNotifyingHost(p->convertTo0to1(t.midDipFreq));
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
+                nearestChoiceIdx(t.midDipFreq, {200.0f, 300.0f, 500.0f, 700.0f, 1000.0f, 1500.0f, 2000.0f}))));
         if (auto* p = params.getParameter(ParamIDs::pultecMidDip))
             p->setValueNotifyingHost(p->convertTo0to1(t.midDip));
+        // pultecMidLowFreq is a choice param (indices 0-4 for 200/300/500/700/1000 Hz)
+        if (auto* p = params.getParameter(ParamIDs::pultecMidLowFreq))
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
+                nearestChoiceIdx(t.midLowFreq, {200.0f, 300.0f, 500.0f, 700.0f, 1000.0f}))));
+        if (auto* p = params.getParameter(ParamIDs::pultecMidLowPeak))
+            p->setValueNotifyingHost(p->convertTo0to1(t.midLowPeak));
+        // pultecMidHighFreq is a choice param (indices 0-4 for 1500/2000/3000/4000/5000 Hz)
+        if (auto* p = params.getParameter(ParamIDs::pultecMidHighFreq))
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(
+                nearestChoiceIdx(t.midHighFreq, {1500.0f, 2000.0f, 3000.0f, 4000.0f, 5000.0f}))));
+        if (auto* p = params.getParameter(ParamIDs::pultecMidHighPeak))
+            p->setValueNotifyingHost(p->convertTo0to1(t.midHighPeak));
     }
 
     // Apply per-band dynamics

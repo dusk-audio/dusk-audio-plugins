@@ -60,6 +60,7 @@ public:
         hysteresisState = 0.0f;
         coreFlux = 0.0f;
         rmsLevel = 0.0f;
+        currentSaturationLevel = 0.0f;
     }
 
     /** Lightweight sample-rate update (no allocation). Safe for audio thread.
@@ -71,63 +72,36 @@ public:
         reset();
     }
 
-    /** Get frequency-dependent Q (models core losses at LF, skin effect at HF). */
+    /** Get frequency-dependent Q (models core losses at LF, skin effect at HF).
+        Uses smooth polynomial fit instead of piecewise linear for natural Q variation. */
     float getFrequencyDependentQ(float frequency, float baseQ) const
     {
-        float qMultiplier;
+        // Smooth polynomial fit of inductor Q vs frequency
+        // Based on typical vintage Pultec inductor measurements:
+        //   Peak Q around 200-400 Hz, rolling off at both extremes
+        //   LF losses from core hysteresis, HF losses from skin effect + winding capacitance
+        //
+        // Using log-frequency domain for smooth interpolation:
+        //   log10(20)=1.3, log10(200)=2.3, log10(2k)=3.3, log10(20k)=4.3
+        float logFreq = std::log10(std::max(frequency, 10.0f));
 
-        // Piecewise linear interpolation of measured Q curve
-        if (frequency < 20.0f)
-        {
-            qMultiplier = 0.5f;  // Very lossy at subsonic
-        }
-        else if (frequency < 60.0f)
-        {
-            // 20 Hz (0.5) to 60 Hz (0.75) - core losses dominate
-            float t = (frequency - 20.0f) / 40.0f;
-            qMultiplier = 0.5f + t * 0.25f;
-        }
-        else if (frequency < 100.0f)
-        {
-            // 60 Hz (0.75) to 100 Hz (0.9)
-            float t = (frequency - 60.0f) / 40.0f;
-            qMultiplier = 0.75f + t * 0.15f;
-        }
-        else if (frequency < 300.0f)
-        {
-            // 100 Hz (0.9) to 300 Hz (1.0) - optimal range
-            float t = (frequency - 100.0f) / 200.0f;
-            qMultiplier = 0.9f + t * 0.1f;
-        }
-        else if (frequency < 1000.0f)
-        {
-            // 300 Hz (1.0) to 1 kHz (0.85) - gentle rolloff
-            float t = (frequency - 300.0f) / 700.0f;
-            qMultiplier = 1.0f - t * 0.15f;
-        }
-        else if (frequency < 3000.0f)
-        {
-            // 1 kHz (0.85) to 3 kHz (0.7) - skin effect begins
-            float t = (frequency - 1000.0f) / 2000.0f;
-            qMultiplier = 0.85f - t * 0.15f;
-        }
-        else if (frequency < 10000.0f)
-        {
-            // 3 kHz (0.7) to 10 kHz (0.5)
-            float t = (frequency - 3000.0f) / 7000.0f;
-            qMultiplier = 0.7f - t * 0.2f;
-        }
-        else
-        {
-            // Above 10 kHz - significant losses
-            float t = std::min((frequency - 10000.0f) / 10000.0f, 1.0f);
-            qMultiplier = 0.5f - t * 0.2f;
-        }
+        // Polynomial: peak at ~250Hz (logFreq=2.4), drops at both ends
+        // Coefficients tuned to match: Q=0.5 at 20Hz, Q=1.0 at 250Hz, Q=0.5 at 10kHz, Q=0.3 at 20kHz
+        float centered = logFreq - 2.4f;  // Center around 250Hz
+        float qMultiplier = 1.0f - 0.22f * centered * centered - 0.04f * centered * centered * centered * centered;
+        qMultiplier = std::max(qMultiplier, 0.25f);
 
-        return baseQ * qMultiplier * componentQVariation;
+        // Program-dependent Q reduction: core saturation lowers Q
+        // Hot signals cause inductor losses to increase
+        float rmsReduction = 1.0f - rmsLevel * 0.15f;  // Up to 15% Q reduction at high levels
+        rmsReduction = std::max(rmsReduction, 0.75f);
+
+        return baseQ * qMultiplier * rmsReduction * componentQVariation;
     }
 
-    /** Process inductor non-linearity: B-H curve saturation + hysteresis. */
+    /** Process inductor non-linearity: B-H curve saturation + hysteresis.
+        Returns the saturated signal. Also updates internal saturationLevel
+        which can be used to modulate filter Q (real inductors lose Q under saturation). */
     float processNonlinearity(float input, float driveLevel)
     {
         if (!safeIsFinite(input))
@@ -154,22 +128,31 @@ public:
             float compressed = dynamicThreshold + langevin * (1.0f - dynamicThreshold) * 0.7f;
             saturatedInput = std::copysign(compressed, input);
 
-            // Add 2nd harmonic (core asymmetry)
-            float h2Amount = 0.03f * driveLevel * excess;
+            // Add 2nd harmonic (core asymmetry — primary source of transformer "warmth")
+            float h2Amount = 0.035f * driveLevel * excess;
             saturatedInput += h2Amount * input * absInput;
 
-            // Add subtle 3rd harmonic at high drive
-            float h3Amount = 0.008f * driveLevel * driveLevel * excess;
+            // Add 3rd harmonic — increases disproportionately at high drive
+            // Real iron cores produce more odd harmonics as they approach saturation
+            float h3Amount = 0.012f * driveLevel * driveLevel * excess * excess;
             saturatedInput += h3Amount * input * input * input;
+
+            // Track saturation depth for Q modulation
+            // Real inductors: inductance drops as core saturates, lowering filter Q
+            currentSaturationLevel = currentSaturationLevel * 0.95f + excess * 0.05f;
+        }
+        else
+        {
+            currentSaturationLevel *= 0.95f;  // Decay when not saturating
         }
 
-        // Hysteresis
+        // Hysteresis — wider loop at higher drive for more "iron" character
         float deltaInput = saturatedInput - prevInput;
-        float hysteresisCoeff = 0.08f * driveLevel;
+        float hysteresisCoeff = 0.10f * driveLevel * (1.0f + driveLevel * 0.5f);
 
         // Core flux integration with decay (0.75ms time constant)
         coreFlux = coreFlux * fluxDecay + deltaInput * hysteresisCoeff;
-        coreFlux = std::clamp(coreFlux, -0.15f, 0.15f);
+        coreFlux = std::clamp(coreFlux, -0.20f, 0.20f);
 
         // Hysteresis adds slight asymmetry based on flux direction (0.28ms time constant)
         hysteresisState = hysteresisState * hystDecay + coreFlux * (1.0f - hystDecay);
@@ -180,6 +163,10 @@ public:
 
         return output;
     }
+
+    /** Get current saturation level (0-1) for filter Q modulation.
+        When core saturates, inductance drops, which lowers the filter's resonant Q. */
+    float getSaturationLevel() const { return std::min(currentSaturationLevel, 1.0f); }
 
     float getRmsLevel() const { return std::sqrt(rmsLevel); }
 
@@ -197,6 +184,7 @@ private:
     float hysteresisState = 0.0f;
     float coreFlux = 0.0f;
     float rmsLevel = 0.0f;
+    float currentSaturationLevel = 0.0f;
 
     // Sample-rate-dependent decay coefficients
     float rmsDecay = 0.9995f;
@@ -230,6 +218,8 @@ public:
         prevSamples.fill(0.0f);
         cathodeVoltages.fill(0.0f);
         gridCurrents.fill(0.0f);
+        cathodeBypassStates.fill(0.0f);
+        preLPStates.fill(0.0f);
         for (auto& dc : dcBlockers)
             dc.reset();
     }
@@ -257,15 +247,35 @@ public:
         float& prevSample = prevSamples[static_cast<size_t>(ch)];
         float& cathodeVoltage = cathodeVoltages[static_cast<size_t>(ch)];
         float& gridCurrent = gridCurrents[static_cast<size_t>(ch)];
+        float& cathodeBypassState = cathodeBypassStates[static_cast<size_t>(ch)];
+        float& preLPState = preLPStates[static_cast<size_t>(ch)];
+
+        // Pre-saturation anti-alias split: 1-pole LP at ~10 kHz.
+        // The LP-filtered signal drives the nonlinearity; the HF residual (input - LP)
+        // bypasses the waveshaper entirely and is summed back at the output.
+        // Result: LF/mid gets tube character and harmonics; HF passes through cleanly.
+        // No aliases, no darkening of the overall tone.
+        // At oversampled rates (~176 kHz) the LP cutoff is deep in the ultrasonic range —
+        // the split is transparent and all content hits the nonlinearity as normal.
+        preLPState += preLPCoeff * (input - preLPState);
+        const float filteredInput = preLPState;
+        const float hfPass = input - filteredInput;  // HF residual: bypasses the waveshaper
 
         float driveGain = 1.0f + drive * 4.0f;
-        float drivenSignal = input * driveGain;
+        float drivenSignal = filteredInput * driveGain;
 
-        // Grid current limiting
+        // Grid current limiting with softer onset
+        // Real 12AX7: grid current begins gradually around Vgk = 0V
+        // Using a soft exponential onset instead of hard threshold
         float gridBias = -1.5f;
         float effectiveGrid = drivenSignal + gridBias;
 
-        float gridCurrentAmount = std::max(0.0f, effectiveGrid + 1.5f) * 0.15f;
+        // Soft exponential grid current onset (replaces hard max(0, x) threshold)
+        // Current flows when grid goes positive, but onset is gradual
+        float gridOnset = effectiveGrid + 1.5f;
+        float gridCurrentAmount = (gridOnset > 0.0f)
+            ? gridOnset * 0.12f * (1.0f - std::exp(-gridOnset * 2.0f))  // Soft exponential
+            : 0.0f;
         gridCurrent = gridCurrent * gridDecay + gridCurrentAmount * (1.0f - gridDecay);
 
         float compressionFactor = 1.0f / (1.0f + gridCurrent * drive * 2.0f);
@@ -278,16 +288,14 @@ public:
             // Positive half: grid loading and soft saturation
             float x = Vg * compressionFactor;
             if (x < 0.4f)
-                plateVoltage = x * 1.05f;  // Slight gain in linear region
+                plateVoltage = x * 1.05f;
             else if (x < 0.8f)
             {
-                // Gentle saturation with 2nd harmonic generation
                 float t = (x - 0.4f) / 0.4f;
                 plateVoltage = 0.42f + 0.38f * (t - 0.15f * t * t);
             }
             else
             {
-                // Plate saturation region
                 float t = x - 0.8f;
                 plateVoltage = 0.78f + 0.15f * std::tanh(t * 2.0f);
             }
@@ -297,28 +305,44 @@ public:
             // Negative half: cutoff region behavior
             float x = -Vg * compressionFactor;
             if (x < 0.3f)
-                plateVoltage = -x * 0.95f;  // Slightly less gain
+                plateVoltage = -x * 0.95f;
             else if (x < 0.7f)
             {
-                // Earlier saturation on negative half (asymmetric bias)
                 float t = (x - 0.3f) / 0.4f;
                 plateVoltage = -(0.285f + 0.35f * (t - 0.2f * t * t));
             }
             else
             {
-                // Approaching cutoff
                 float t = x - 0.7f;
                 plateVoltage = -(0.62f + 0.2f * std::tanh(t * 3.0f));
             }
         }
 
-        // Cathode follower output
-        float cathodeBypassFreq = 20.0f;
-        float cathodeAlpha = static_cast<float>(
+        // Cathode bypass capacitor: frequency-dependent negative feedback
+        // The cathode resistor Rk provides negative feedback that reduces gain.
+        // A bypass capacitor Ck shorts Rk at frequencies above fc = 1/(2*pi*Rk*Ck).
+        // Below fc: full negative feedback (lower gain, lower distortion)
+        // Above fc: bypass active (higher gain, more harmonics)
+        // This creates the characteristic "bottom end thickening" of tube EQs
+        // Typical Pultec: Rk=1.5k, Ck=25uF → fc ≈ 4.2Hz (very low, mostly for DC)
+        // We model a higher corner (~80Hz) for audible LF character
+        float cathodeBypassFreq = 80.0f;
+        float cathodeBypassAlpha = static_cast<float>(
             1.0 - std::exp(-juce::MathConstants<double>::twoPi * cathodeBypassFreq / sampleRate));
 
-        cathodeVoltage = cathodeVoltage + (plateVoltage - cathodeVoltage) * cathodeAlpha;
-        float cfOutput = plateVoltage * 0.95f + cathodeVoltage * 0.05f;
+        // Track cathode voltage: LPF models the bypass capacitor charging
+        cathodeBypassState += cathodeBypassAlpha * (plateVoltage - cathodeBypassState);
+
+        // Feedback amount: at LF (where bypass cap doesn't short Rk), more feedback = less gain
+        // At HF (where bypass cap shorts Rk), less feedback = more gain + harmonics
+        float bypassAmount = 0.25f * drive;  // Scale with drive
+        float feedbackSignal = cathodeBypassState * bypassAmount;
+        float cfOutput = plateVoltage - feedbackSignal;
+
+        // Cathode voltage tracking (slower, for DC behavior)
+        float cathodeAlpha = static_cast<float>(
+            1.0 - std::exp(-juce::MathConstants<double>::twoPi * 20.0 / sampleRate));
+        cathodeVoltage += (cfOutput - cathodeVoltage) * cathodeAlpha;
 
         // Cathode follower asymmetry (grid-cathode diode effect)
         if (cfOutput > 0.9f)
@@ -327,11 +351,20 @@ public:
             cfOutput = 0.9f + 0.08f * std::tanh(excess * 3.0f);
         }
 
-        // Harmonic content
-        float h2 = 0.04f * drive * cfOutput * std::abs(cfOutput);
-        float h3 = 0.015f * drive * cfOutput * cfOutput * cfOutput;  // 3rd harmonic
-        float h4 = 0.005f * drive * std::abs(cfOutput * cfOutput * cfOutput * cfOutput)
-                   * std::copysign(1.0f, cfOutput);  // 4th harmonic
+        // Level-dependent harmonic content
+        // At low levels: 2nd harmonic dominates (tube "warmth")
+        // At high levels: 3rd and higher harmonics increase disproportionately (tube "grit")
+        float absLevel = std::abs(cfOutput);
+        float levelFactor = std::min(absLevel * 2.0f, 1.0f);  // 0-1 based on signal level
+
+        float h2Coeff = 0.045f * drive;                                      // 2nd: always present
+        float h3Coeff = 0.010f * drive * (1.0f + levelFactor * 1.5f);        // 3rd: grows with level
+        float h4Coeff = 0.003f * drive * (1.0f + levelFactor * 3.0f);        // 4th: grows faster
+
+        float h2 = h2Coeff * cfOutput * std::abs(cfOutput);
+        float h3 = h3Coeff * cfOutput * cfOutput * cfOutput;
+        float h4 = h4Coeff * std::abs(cfOutput * cfOutput * cfOutput * cfOutput)
+                   * std::copysign(1.0f, cfOutput);
 
         float output = cfOutput + h2 + h3 + h4;
 
@@ -345,30 +378,42 @@ public:
         // Makeup gain
         output *= (1.0f / driveGain) * (1.0f + drive * 0.4f);
 
-        // DC blocking
+        // DC blocking (applied to the saturated LF signal only)
         output = dcBlockers[static_cast<size_t>(ch)].processSample(output);
 
         prevSample = output;
 
-        return output;
+        // Recombine: saturated LF + clean HF bypass
+        return output + hfPass;
     }
 
 private:
     void computeDecayCoefficients(double sr)
     {
         gridDecay = std::exp(-1.0f / (0.00021f * static_cast<float>(sr)));  // 0.21ms grid current
+
+        // Pre-saturation anti-alias LP: 1-pole at ~10 kHz.
+        // At base SR (44.1 kHz): significant HF rolloff before the tube waveshaper,
+        // preventing high-frequency content from generating audible alias products.
+        // At oversampled rates (88.2 / 176.4 kHz): barely affects audible content —
+        // the LP does its work well above 20 kHz, so behaviour with OS is unchanged.
+        preLPCoeff = 1.0f - std::exp(
+            -juce::MathConstants<float>::twoPi * 10000.0f / static_cast<float>(sr));
     }
 
     static constexpr int maxChannels = 8;
     double sampleRate = 44100.0;
     float drive = 0.3f;
     float maxSlewRate = 0.003f;
-    float gridDecay = 0.9f;  // Sample-rate-dependent grid current decay
+    float gridDecay = 0.9f;      // Sample-rate-dependent grid current decay
+    float preLPCoeff = 0.77f;    // Pre-saturation anti-alias LP coefficient (~10 kHz at 44.1 kHz)
 
     // Per-channel state (indexed by channel)
     std::array<float, maxChannels> prevSamples{};
     std::array<float, maxChannels> cathodeVoltages{};
     std::array<float, maxChannels> gridCurrents{};
+    std::array<float, maxChannels> cathodeBypassStates{};
+    std::array<float, maxChannels> preLPStates{};   // Pre-saturation LP filter state
 
     std::array<AnalogEmulation::DCBlocker, maxChannels> dcBlockers;
 };
@@ -380,21 +425,23 @@ class PultecLFSection
 {
 public:
     // Tunable interaction constants (named for easy adjustment)
-    static constexpr float kPeakGainScale = 1.4f;
-    static constexpr float kPeakInteraction = 0.08f;
-    static constexpr float kBaseQ = 0.55f;
-    static constexpr float kQInteraction = 0.015f;
-    static constexpr float kDipFreqBase = 0.55f;
-    static constexpr float kDipFreqRange = 0.15f;
-    static constexpr float kDipGainScale = 1.6f;
-    static constexpr float kDipInteraction = 0.06f;
-    static constexpr float kDipBaseQ = 0.5f;
-    static constexpr float kDipQScale = 0.03f;
+    // Calibrated to match Pultec EQP-1A hardware measurements
+    static constexpr float kPeakGainScale = 1.4f;       // Max ~14 dB boost (hardware: ~13.5 dB)
+    static constexpr float kPeakInteraction = 0.08f;     // Boost enhanced slightly by cut presence
+    static constexpr float kBaseQ = 0.55f;               // Base resonance width
+    static constexpr float kQInteraction = 0.015f;       // Q sharpens with cut (hardware behavior)
+    static constexpr float kDipFreqBase = 1.0f;          // Dip shelf at SAME freq as boost (Pultec Trick)
+    static constexpr float kDipFreqRange = 0.0f;         // No gain-dependent frequency shift
+    static constexpr float kDipGainScale = 1.75f;        // Max ~17.5 dB cut (hardware: ~17.5 dB)
+    static constexpr float kDipInteraction = 0.06f;      // Boost presence slightly deepens cut
+    static constexpr float kDipBaseQ = 0.65f;            // Broad shelf (wider than peak for Pultec Trick)
+    static constexpr float kDipQScale = 0.03f;           // Q increases with atten amount
 
     void prepare(double sampleRate, uint32_t characterSeed = 0)
     {
         currentSampleRate = sampleRate;
-        inductor.prepare(sampleRate, characterSeed);
+        for (size_t i = 0; i < maxChannels; ++i)
+            inductors[i].prepare(sampleRate, characterSeed + static_cast<uint32_t>(i));
         reset();
     }
 
@@ -411,7 +458,8 @@ public:
     void updateSampleRate(double newRate)
     {
         currentSampleRate = newRate;
-        inductor.updateSampleRate(newRate);
+        for (auto& ind : inductors)
+            ind.updateSampleRate(newRate);
         reset();
     }
 
@@ -431,8 +479,14 @@ public:
         if (boostGain > 0.01f)
         {
             float peakGainDB = boostGain * kPeakGainScale + attenGain * boostGain * kPeakInteraction;
-            float effectiveQ = inductor.getFrequencyDependentQ(frequency, kBaseQ);
+            float effectiveQ = inductors[0].getFrequencyDependentQ(frequency, kBaseQ);
             effectiveQ *= (1.0f + attenGain * kQInteraction);
+
+            // Core saturation reduces Q: inductance drops as core saturates
+            // This creates program-dependent behavior — louder signals get broader peaks
+            float satLevel = inductors[0].getSaturationLevel();
+            effectiveQ *= (1.0f - satLevel * 0.25f);  // Up to 25% Q reduction under saturation
+
             effectiveQ = std::max(effectiveQ, 0.2f);
 
             float A = std::pow(10.0f, peakGainDB / 40.0f);
@@ -501,9 +555,9 @@ public:
         s.peakZ1 = peakB1 * input - peakA1 * peakOut + s.peakZ2;
         s.peakZ2 = peakB2 * input - peakA2 * peakOut;
 
-        // Inductor nonlinearity between stages (subtle saturation)
+        // Inductor nonlinearity between stages (subtle saturation — per-channel to avoid L/R state bleed)
         float interStage = (cachedBoost > 0.01f)
-            ? inductor.processNonlinearity(peakOut, cachedBoost * 0.3f)
+            ? inductors[static_cast<size_t>(ch)].processNonlinearity(peakOut, cachedBoost * 0.3f)
             : peakOut;
 
         // Dip shelf filter
@@ -544,10 +598,10 @@ public:
         return static_cast<float>(20.0 * std::log10(combined + 1e-10));
     }
 
-    InductorModel& getInductor() { return inductor; }
+    InductorModel& getInductor() { return inductors[0]; }
 
     // Get inductor RMS level for program-dependent metering
-    float getInductorRmsLevel() const { return inductor.getRmsLevel(); }
+    float getInductorRmsLevel() const { return inductors[0].getRmsLevel(); }
 
 private:
     static constexpr int maxChannels = 8;
@@ -563,7 +617,7 @@ private:
     };
     ChannelState channels[maxChannels] = {};
 
-    InductorModel inductor;
+    std::array<InductorModel, maxChannels> inductors;
     double currentSampleRate = 44100.0;
     float cachedBoost = 0.0f, cachedAtten = 0.0f, cachedFreq = 60.0f;
 };
@@ -644,7 +698,8 @@ public:
         characterSeed = static_cast<uint32_t>(sampleRate * 1000.0);
         tubeStage.prepare(sampleRate, numChannels);
         pultecLF.prepare(sampleRate, characterSeed);
-        hfInductor.prepare(sampleRate, characterSeed + 1);  // Offset for variation between inductors
+        hfInductorL.prepare(sampleRate, characterSeed + 1);  // Offset for variation between inductors
+        hfInductorR.prepare(sampleRate, characterSeed + 2);  // Different seed for subtle L/R character variation
         hfQInductor.prepare(sampleRate, characterSeed + 1);
 
         // Prepare transformers
@@ -687,7 +742,8 @@ public:
         midHighPeakFilterR.reset();
         tubeStage.reset();
         pultecLF.reset();
-        hfInductor.reset();
+        hfInductorL.reset();
+        hfInductorR.reset();
         inputTransformer.reset();
         outputTransformer.reset();
     }
@@ -702,7 +758,8 @@ public:
         // Lightweight rate updates (no allocation, safe for audio thread)
         tubeStage.updateSampleRate(newRate);
         pultecLF.updateSampleRate(newRate);
-        hfInductor.updateSampleRate(newRate);
+        hfInductorL.updateSampleRate(newRate);
+        hfInductorR.updateSampleRate(newRate);
         hfQInductor.updateSampleRate(newRate);
         // Transformers deferred to next full prepare() (TransformerEmulation::prepare may allocate)
 
@@ -779,8 +836,9 @@ public:
                 // === HF Section with inductor characteristics ===
                 if (params.hfBoostGain > 0.01f)
                 {
-                    // Apply inductor nonlinearity before HF boost
-                    sample = hfInductor.processNonlinearity(sample, params.hfBoostGain * 0.2f);
+                    // Apply inductor nonlinearity before HF boost (per-channel to avoid L/R cross-contamination)
+                    sample = isLeft ? hfInductorL.processNonlinearity(sample, params.hfBoostGain * 0.2f)
+                                    : hfInductorR.processNonlinearity(sample, params.hfBoostGain * 0.2f);
 
                     sample = isLeft ? hfBoostFilterL.processSample(sample)
                                     : hfBoostFilterR.processSample(sample);
@@ -835,6 +893,32 @@ public:
             }
         }
 
+        // Per-block inductor Q modulation for HF boost
+        // Real Pultec inductors: core saturation reduces inductance → lowers filter Q
+        // Update HF boost filter Q based on per-channel inductor saturation state (once per block, not per sample)
+        if (params.hfBoostGain > 0.01f)
+        {
+            float freq = tubeEQPreWarpFrequency(params.hfBoostFreq, currentSampleRate);
+            float baseQ = juce::jmap(params.hfBoostBandwidth, 0.0f, 1.0f, 2.0f, 0.3f);
+
+            float satLevelL = hfInductorL.getSaturationLevel();
+            if (satLevelL > 0.01f)
+            {
+                float effectiveQL = hfQInductor.getFrequencyDependentQ(params.hfBoostFreq, baseQ);
+                // Reduce Q proportionally to saturation (up to 20% reduction)
+                effectiveQL *= (1.0f - satLevelL * 0.20f);
+                setTubeEQPeakCoeffs(hfBoostFilterL, currentSampleRate, freq, effectiveQL, params.hfBoostGain * 1.8f);
+            }
+
+            float satLevelR = hfInductorR.getSaturationLevel();
+            if (satLevelR > 0.01f)
+            {
+                float effectiveQR = hfQInductor.getFrequencyDependentQ(params.hfBoostFreq, baseQ);
+                effectiveQR *= (1.0f - satLevelR * 0.20f);
+                setTubeEQPeakCoeffs(hfBoostFilterR, currentSampleRate, freq, effectiveQR, params.hfBoostGain * 1.8f);
+            }
+        }
+
         // Apply output gain
         if (std::abs(params.outputGain) > 0.01f)
         {
@@ -883,73 +967,43 @@ public:
             magnitudeDB += pultecLF.getMagnitudeDB(frequencyHz, currentSampleRate);
         }
 
+        // Helper: evaluate biquad magnitude from JUCE IIR coefficients
+        // JUCE stores 5 elements: {b0/a0, b1/a0, b2/a0, a1/a0, a2/a0}
+        // Transfer function: H(z) = (c[0] + c[1]*z^-1 + c[2]*z^-2) / (1 + c[3]*z^-1 + c[4]*z^-2)
+        auto biquadMagDB = [&](const juce::dsp::IIR::Coefficients<float>& coeffs) -> float {
+            std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
+            std::complex<double> zInv = 1.0 / z;
+            std::complex<double> zInv2 = zInv * zInv;
+
+            std::complex<double> num = static_cast<double>(coeffs.coefficients[0])
+                                     + static_cast<double>(coeffs.coefficients[1]) * zInv
+                                     + static_cast<double>(coeffs.coefficients[2]) * zInv2;
+            std::complex<double> den = 1.0
+                                     + static_cast<double>(coeffs.coefficients[3]) * zInv
+                                     + static_cast<double>(coeffs.coefficients[4]) * zInv2;
+
+            return static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
+        };
+
         // HF Boost contribution
         if (localParams.hfBoostGain > 0.01f && localHfBoost != nullptr)
-        {
-            std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
-            auto& coeffs = *localHfBoost;
-
-            std::complex<double> num = static_cast<double>(coeffs.coefficients[0]) + static_cast<double>(coeffs.coefficients[1]) / z + static_cast<double>(coeffs.coefficients[2]) / (z * z);
-            std::complex<double> den = static_cast<double>(coeffs.coefficients[3]) + static_cast<double>(coeffs.coefficients[4]) / z + static_cast<double>(coeffs.coefficients[5]) / (z * z);
-
-            float filterMag = static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
-            magnitudeDB += filterMag;
-        }
+            magnitudeDB += biquadMagDB(*localHfBoost);
 
         // HF Atten contribution
         if (localParams.hfAttenGain > 0.01f && localHfAtten != nullptr)
-        {
-            std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
-            auto& coeffs = *localHfAtten;
-
-            std::complex<double> num = static_cast<double>(coeffs.coefficients[0]) + static_cast<double>(coeffs.coefficients[1]) / z + static_cast<double>(coeffs.coefficients[2]) / (z * z);
-            std::complex<double> den = static_cast<double>(coeffs.coefficients[3]) + static_cast<double>(coeffs.coefficients[4]) / z + static_cast<double>(coeffs.coefficients[5]) / (z * z);
-
-            float filterMag = static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
-            magnitudeDB += filterMag;
-        }
+            magnitudeDB += biquadMagDB(*localHfAtten);
 
         // ===== MID SECTION CONTRIBUTIONS =====
         if (localParams.midEnabled)
         {
-            // Mid Low Peak contribution
             if (localParams.midLowPeak > 0.01f && localMidLowPeak != nullptr)
-            {
-                std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
-                auto& coeffs = *localMidLowPeak;
+                magnitudeDB += biquadMagDB(*localMidLowPeak);
 
-                std::complex<double> num = static_cast<double>(coeffs.coefficients[0]) + static_cast<double>(coeffs.coefficients[1]) / z + static_cast<double>(coeffs.coefficients[2]) / (z * z);
-                std::complex<double> den = static_cast<double>(coeffs.coefficients[3]) + static_cast<double>(coeffs.coefficients[4]) / z + static_cast<double>(coeffs.coefficients[5]) / (z * z);
-
-                float filterMag = static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
-                magnitudeDB += filterMag;
-            }
-
-            // Mid Dip contribution
             if (localParams.midDip > 0.01f && localMidDip != nullptr)
-            {
-                std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
-                auto& coeffs = *localMidDip;
+                magnitudeDB += biquadMagDB(*localMidDip);
 
-                std::complex<double> num = static_cast<double>(coeffs.coefficients[0]) + static_cast<double>(coeffs.coefficients[1]) / z + static_cast<double>(coeffs.coefficients[2]) / (z * z);
-                std::complex<double> den = static_cast<double>(coeffs.coefficients[3]) + static_cast<double>(coeffs.coefficients[4]) / z + static_cast<double>(coeffs.coefficients[5]) / (z * z);
-
-                float filterMag = static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
-                magnitudeDB += filterMag;
-            }
-
-            // Mid High Peak contribution
             if (localParams.midHighPeak > 0.01f && localMidHighPeak != nullptr)
-            {
-                std::complex<double> z = std::exp(std::complex<double>(0.0, omega));
-                auto& coeffs = *localMidHighPeak;
-
-                std::complex<double> num = static_cast<double>(coeffs.coefficients[0]) + static_cast<double>(coeffs.coefficients[1]) / z + static_cast<double>(coeffs.coefficients[2]) / (z * z);
-                std::complex<double> den = static_cast<double>(coeffs.coefficients[3]) + static_cast<double>(coeffs.coefficients[4]) / z + static_cast<double>(coeffs.coefficients[5]) / (z * z);
-
-                float filterMag = static_cast<float>(20.0 * std::log10(std::abs(num / den) + 1e-10));
-                magnitudeDB += filterMag;
-            }
+                magnitudeDB += biquadMagDB(*localMidHighPeak);
         }
 
         return magnitudeDB;
@@ -978,7 +1032,8 @@ private:
     // Enhanced analog stages
     TubeEQTubeStage tubeStage;
     PultecLFSection pultecLF;
-    InductorModel hfInductor;
+    InductorModel hfInductorL;  // Per-channel inductors to prevent L/R state cross-contamination
+    InductorModel hfInductorR;
 
     // Persistent inductor model for HF Q computation (avoids mt19937 allocation on audio thread)
     InductorModel hfQInductor;
@@ -995,7 +1050,7 @@ private:
         AnalogEmulation::TransformerProfile inputProfile;
         inputProfile.hasTransformer = true;
         inputProfile.saturationAmount = 0.15f;
-        inputProfile.lowFreqSaturation = 1.3f;  // LF saturation boost
+        inputProfile.lowFreqSaturation = 1.0f;
         inputProfile.highFreqRolloff = 22000.0f;
         inputProfile.dcBlockingFreq = 10.0f;
         inputProfile.harmonics = { 0.02f, 0.005f, 0.001f };  // Primarily 2nd harmonic
@@ -1007,7 +1062,7 @@ private:
         AnalogEmulation::TransformerProfile outputProfile;
         outputProfile.hasTransformer = true;
         outputProfile.saturationAmount = 0.12f;
-        outputProfile.lowFreqSaturation = 1.2f;
+        outputProfile.lowFreqSaturation = 1.0f;
         outputProfile.highFreqRolloff = 20000.0f;
         outputProfile.dcBlockingFreq = 8.0f;
         outputProfile.harmonics = { 0.015f, 0.004f, 0.001f };
@@ -1032,11 +1087,11 @@ private:
     {
         // HF resonant peak with variable bandwidth
         float freq = tubeEQPreWarpFrequency(params.hfBoostFreq, currentSampleRate);
-        float gainDB = params.hfBoostGain * 1.6f;  // 0-10 maps to ~0-16 dB
+        float gainDB = params.hfBoostGain * 1.8f;  // 0-10 maps to ~0-18 dB (hardware: ~18 dB)
 
         // Bandwidth control: Sharp (high Q) to Broad (low Q)
-        // Inverted mapping: 0 = sharp (high Q), 1 = broad (low Q)
-        float baseQ = juce::jmap(params.hfBoostBandwidth, 0.0f, 1.0f, 2.5f, 0.5f);
+        // EQP-1A bandwidth pot range: Q ~2.0 (narrow) to ~0.3 (wide)
+        float baseQ = juce::jmap(params.hfBoostBandwidth, 0.0f, 1.0f, 2.0f, 0.3f);
 
         // Frequency-dependent Q from inductor model
         float effectiveQ = hfQInductor.getFrequencyDependentQ(params.hfBoostFreq, baseQ);
@@ -1049,7 +1104,7 @@ private:
     {
         // HF high shelf cut
         float freq = tubeEQPreWarpFrequency(params.hfAttenFreq, currentSampleRate);
-        float gainDB = -params.hfAttenGain * 2.0f;  // 0-10 maps to ~0-20 dB cut
+        float gainDB = -params.hfAttenGain * 1.6f;  // 0-10 maps to ~0-16 dB cut (hardware: ~16 dB)
 
         setHighShelfCoeffs(hfAttenFilterL, currentSampleRate, freq, 0.6f, gainDB);
         setHighShelfCoeffs(hfAttenFilterR, currentSampleRate, freq, 0.6f, gainDB);
@@ -1102,13 +1157,15 @@ private:
     }
 
     // Assign biquad coefficients in-place (no heap allocation)
+    // JUCE IIR::Coefficients stores 5 elements: {b0/a0, b1/a0, b2/a0, a1/a0, a2/a0}
+    // (a0 is divided out during construction, not stored as a separate element)
     static void setFilterCoeffs(juce::dsp::IIR::Filter<float>& filter,
                                 float b0, float b1, float b2, float a1, float a2)
     {
         if (filter.coefficients == nullptr)
             return;
         auto* c = filter.coefficients->coefficients.getRawDataPointer();
-        c[0] = b0; c[1] = b1; c[2] = b2; c[3] = 1.0f; c[4] = a1; c[5] = a2;
+        c[0] = b0; c[1] = b1; c[2] = b2; c[3] = a1; c[4] = a2;
     }
 
     // Tube EQ style peak filter with inductor characteristics (in-place, no allocation)

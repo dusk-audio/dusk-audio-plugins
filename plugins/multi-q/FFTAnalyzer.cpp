@@ -421,8 +421,13 @@ float FFTAnalyzer::getYForDB(float dB) const
     if (range == 0.0f)
         return bounds.getCentreY();
 
+    // Apply display offset: shifts FFT spectrum (absolute dBFS) up to align
+    // with the EQ curve display (relative dB). Without this, a -18 dBFS signal
+    // would appear at -18 dB on the EQ scale (near the bottom of a ±24 dB display).
+    float offsetDB = dB + spectrumDisplayOffsetDB;
+
     // Linear mapping in dB space
-    float normalized = (dB - minDisplayDB) / range;
+    float normalized = (offsetDB - minDisplayDB) / range;
     normalized = juce::jlimit(0.0f, 1.0f, normalized);
 
     // Invert for screen coordinates (top = max, bottom = min)
@@ -435,7 +440,8 @@ float FFTAnalyzer::getDBAtY(float y) const
     float normalized = (bounds.getBottom() - y) / bounds.getHeight();
     normalized = juce::jlimit(0.0f, 1.0f, normalized);
 
-    return minDisplayDB + normalized * (maxDisplayDB - minDisplayDB);
+    // Reverse the display offset applied in getYForDB
+    return minDisplayDB + normalized * (maxDisplayDB - minDisplayDB) - spectrumDisplayOffsetDB;
 }
 
 //==============================================================================
