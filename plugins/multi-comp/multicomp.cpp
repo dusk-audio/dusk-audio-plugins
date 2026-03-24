@@ -201,6 +201,19 @@ public:
                 state.dcBlockerState = 0.0f;
                 state.dcBlockerPrev = 0.0f;
             }
+
+            // Cache max oversampler latency and allocate compensation delay buffer.
+            // This keeps reported latency constant when switching OS modes mid-playback.
+            maxOversamplerLatency = oversampler4x
+                ? static_cast<int>(std::lround(oversampler4x->getLatencyInSamples()))
+                : 0;
+            if (maxOversamplerLatency > 0)
+            {
+                // +1 so a delay of exactly maxOversamplerLatency is reachable
+                osCompDelayBuffer.setSize(numChannels, maxOversamplerLatency + 1, false, true, true);
+                osCompDelayWritePos = 0;
+            }
+            updateCompDelay();
         }
     }
 
@@ -209,6 +222,7 @@ public:
         // 0 = Off, 1 = 2x, 2 = 4x
         oversamplingOff = (factor == 0);
         use4x = (factor == 2);
+        updateCompDelay();
     }
 
     bool isUsing4x() const { return use4x; }
@@ -248,11 +262,20 @@ public:
     {
         // Only downsample if we actually upsampled
         if (!didUpsample)
+        {
+            // No oversampler ran (either OS off, or safety bailout from processUp
+            // due to oversized/incompatible block). Apply full max latency as
+            // compensation since the oversampler contributed 0 latency this block.
+            applyCompensationDelay(block, maxOversamplerLatency);
             return;
+        }
 
         auto* oversampler = use4x ? oversampler4x.get() : oversampler2x.get();
         if (oversampler)
             oversampler->processSamplesDown(block);
+
+        // Apply mode-specific compensation delay (max - current oversampler latency)
+        applyCompensationDelay(block, osCompDelaySamples);
     }
     
     // Pre-processing passthrough
@@ -318,10 +341,16 @@ public:
     
     int getLatency() const
     {
-        if (oversamplingOff)
-            return 0;
-        auto* oversampler = use4x ? oversampler4x.get() : oversampler2x.get();
-        return oversampler ? static_cast<int>(std::lround(oversampler->getLatencyInSamples())) : 0;
+        // Always return max (4x) latency so DAW PDC stays constant when switching modes mid-playback.
+        // A compensation delay line fills the gap for Off/2x modes.
+        return getMaxLatency();
+    }
+
+    int getMaxLatency() const
+    {
+        return oversampler4x
+            ? static_cast<int>(std::lround(oversampler4x->getLatencyInSamples()))
+            : 0;
     }
 
     bool isOversamplingEnabled() const { return oversampler2x != nullptr || oversampler4x != nullptr; }
@@ -336,6 +365,55 @@ private:
         float dcBlockerPrev = 0.0f;
     };
 
+    void updateCompDelay()
+    {
+        int currentLatency = 0;
+        if (!oversamplingOff)
+        {
+            auto* oversampler = use4x ? oversampler4x.get() : oversampler2x.get();
+            if (oversampler)
+                currentLatency = static_cast<int>(std::lround(oversampler->getLatencyInSamples()));
+        }
+        // Only update the delay amount — never clear the ring buffer.
+        // The ring runs continuously at maxOversamplerLatency size so that
+        // switching from 4x (delay=0) to Off/2x reads valid history, not silence.
+        osCompDelaySamples = juce::jlimit(0, maxOversamplerLatency, maxOversamplerLatency - currentLatency);
+    }
+
+    void applyCompensationDelay(juce::dsp::AudioBlock<float>& block, int delaySamples)
+    {
+        // Ring must hold maxOversamplerLatency + 1 slots so that a delay equal
+        // to maxOversamplerLatency reads a genuinely old sample, not the one
+        // just written at writePos.
+        const int ringSize = maxOversamplerLatency + 1;
+        if (maxOversamplerLatency <= 0 || osCompDelayBuffer.getNumSamples() < ringSize)
+            return;
+
+        delaySamples = juce::jlimit(0, ringSize - 1, delaySamples);
+
+        int numSamp = static_cast<int>(block.getNumSamples());
+        int numCh = juce::jmin(static_cast<int>(block.getNumChannels()),
+                               osCompDelayBuffer.getNumChannels());
+
+        for (int i = 0; i < numSamp; ++i)
+        {
+            // Always write into the ring at the write head
+            for (int ch = 0; ch < numCh; ++ch)
+                osCompDelayBuffer.setSample(ch, osCompDelayWritePos, block.getSample(ch, i));
+
+            if (delaySamples > 0)
+            {
+                // Read from (writePos - delaySamples), wrapped into the ring
+                int readPos = (osCompDelayWritePos - delaySamples + ringSize) % ringSize;
+                for (int ch = 0; ch < numCh; ++ch)
+                    block.setSample(ch, i, osCompDelayBuffer.getSample(ch, readPos));
+            }
+            // delaySamples == 0: pass through unchanged (4x mode, no compensation needed)
+
+            osCompDelayWritePos = (osCompDelayWritePos + 1) % ringSize;
+        }
+    }
+
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
     std::vector<ChannelState> channelStates;
@@ -345,6 +423,12 @@ private:
     bool oversamplingOff = false;  // No oversampling (1x)
     bool use4x = false;       // Use 4x oversampling instead of 2x
     bool didUpsample = false; // Track if processUp actually performed upsampling
+
+    // Constant-latency compensation: always report 4x latency, delay Off/2x to match
+    int maxOversamplerLatency = 0;
+    juce::AudioBuffer<float> osCompDelayBuffer;
+    int osCompDelayWritePos = 0;
+    int osCompDelaySamples = 0;
 };
 
 // Sidechain highpass filter - prevents pumping from low frequencies
