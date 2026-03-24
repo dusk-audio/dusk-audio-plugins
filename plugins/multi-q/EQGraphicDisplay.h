@@ -109,14 +109,23 @@ private:
     };
     DragMode currentDragMode = DragMode::None;
 
-    static constexpr float CONTROL_POINT_RADIUS = 12.0f;
+    static constexpr float BASE_CONTROL_POINT_RADIUS = 12.0f;
     static constexpr float BASE_HIT_RADIUS = 16.0f;
+    static constexpr float REFERENCE_WIDTH = 900.0f;
 
+    float getUIScale() const
+    {
+        return static_cast<float>(getDisplayBounds().getWidth()) / REFERENCE_WIDTH;
+    }
+
+    float getControlPointRadius() const
+    {
+        return juce::jmax(8.0f, BASE_CONTROL_POINT_RADIUS * getUIScale());
+    }
 
     float getHitRadius() const
     {
-        float w = static_cast<float>(getDisplayBounds().getWidth());
-        return juce::jmax(12.0f, BASE_HIT_RADIUS * (w / 900.0f));
+        return juce::jmax(12.0f, BASE_HIT_RADIUS * getUIScale());
     }
 
     float getXForFrequency(float freq) const;
@@ -164,6 +173,10 @@ private:
     std::array<float, kNumBands> lastBandGains{};
     std::array<float, kNumBands> lastBandQs{};
     std::array<bool, kNumBands> lastBandEnabled{};
+
+    // Pre-allocated buffers for dynamic gain visualization (avoid per-frame heap allocation)
+    std::vector<juce::Point<float>> dynStaticPoints;
+    std::vector<juce::Point<float>> dynDynamicPoints;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EQGraphicDisplay)
 };

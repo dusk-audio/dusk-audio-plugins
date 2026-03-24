@@ -48,14 +48,20 @@ struct BiquadCoeffs
         coeffs[3] = 1.0f; coeffs[4] = 0.0f; coeffs[5] = 0.0f;
     }
 
-    /** Copy these coefficients into a JUCE IIR filter's pre-allocated Coefficients (no heap allocation) */
+    /** Copy these coefficients into a JUCE IIR filter's pre-allocated Coefficients.
+        JUCE normalizes by a0 and stores only 5 elements for a biquad: {b0, b1, b2, a1, a2}
+        (a0 is divided out during Coefficients construction, not stored).
+        Our format is {b0/a0, b1/a0, b2/a0, 1, a1/a0, a2/a0} — skip index 3 (a0). */
     void applyToFilter(juce::dsp::IIR::Filter<float>& filter) const
     {
         if (filter.coefficients == nullptr)
             return;
         auto* raw = filter.coefficients->getRawCoefficients();
-        for (int i = 0; i < 6; ++i)
-            raw[i] = coeffs[i];
+        raw[0] = coeffs[0];  // b0/a0
+        raw[1] = coeffs[1];  // b1/a0
+        raw[2] = coeffs[2];  // b2/a0
+        raw[3] = coeffs[4];  // a1/a0 (skip coeffs[3] which is a0=1)
+        raw[4] = coeffs[5];  // a2/a0
     }
 };
 
@@ -231,7 +237,8 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override;
+
     int getLatencySamples() const;
 
     int getNumPrograms() override;
@@ -239,6 +246,9 @@ public:
     void setCurrentProgram(int index) override;
     const juce::String getProgramName(int index) override;
     void changeProgramName(int, const juce::String&) override {}
+
+public:
+    const std::vector<MultiQPresets::Preset>& getFactoryPresets() const { return factoryPresets; }
 
 private:
     int currentPresetIndex = 0;
@@ -252,6 +262,10 @@ public:
     // Undo/Redo system
     juce::UndoManager undoManager;
     juce::UndoManager& getUndoManager() { return undoManager; }
+
+    // Guard: set during transferCurrentEQToDigital() to prevent the preset selector
+    // from loading "Init" (which would reset all band gains) via the async UI update chain.
+    std::atomic<bool> transferInProgress{false};
 
     // Public parameter access for GUI
     juce::AudioProcessorValueTreeState parameters;
@@ -300,6 +314,9 @@ public:
 
     // Get per-band frequency response magnitude in dB (for individual band curve display)
     float getPerBandMagnitude(int bandIndex, float frequencyHz) const;
+
+    // Compute per-band magnitude on-the-fly from current parameters (not from double buffer)
+    float computePerBandMagnitudeFresh(int bandIndex, float frequencyHz) const;
 
     // Get frequency response including dynamic gain (for dynamic curve overlay)
     float getFrequencyResponseWithDynamics(float frequencyHz) const;
@@ -350,6 +367,12 @@ public:
     // Cross-mode band transfer
     // Transfers the current British/Tube EQ curve to Digital mode parameters
     void transferCurrentEQToDigital();
+
+    // Reset all parameters to default flat EQ (Init preset).
+    // Called ONLY from the plugin's own UI (Init preset selection).
+    // setCurrentProgram(0) does NOT call this — that would let Logic Pro's
+    // host-driven program changes silently wipe user settings.
+    void resetToInit();
 
     // Match EQ — Logic Pro Match EQ style (Welch's method + FIR convolution)
     void startLearnCurrent()
@@ -450,11 +473,12 @@ private:
             int stages = activeStages.load(std::memory_order_acquire);
             for (int i = 0; i < stages; ++i)
             {
+                float prev = sample;
                 sample = stagesL[static_cast<size_t>(i)].processSample(sample);
                 if (!safeIsFinite(sample))
                 {
                     stagesL[static_cast<size_t>(i)].reset();
-                    sample = 0.0f;
+                    sample = prev;  // Use input as fallback instead of 0
                 }
             }
             return sample;
@@ -465,11 +489,12 @@ private:
             int stages = activeStages.load(std::memory_order_acquire);
             for (int i = 0; i < stages; ++i)
             {
+                float prev = sample;
                 sample = stagesR[static_cast<size_t>(i)].processSample(sample);
                 if (!safeIsFinite(sample))
                 {
                     stagesR[static_cast<size_t>(i)].reset();
-                    sample = 0.0f;
+                    sample = prev;
                 }
             }
             return sample;
@@ -510,6 +535,12 @@ private:
     juce::SmoothedValue<float> bypassSmoothed{0.0f};
     juce::AudioBuffer<float> dryBuffer;  // Copy of input for bypass crossfade
 
+    // Bypass delay line: maintains time-alignment during bypass so DAW PDC stays consistent.
+    // Without this, toggling bypass triggers DAW PDC recalculation → audible click/gap.
+    juce::AudioBuffer<float> bypassDelayBuffer;
+    int bypassDelayWritePos = 0;
+    int bypassDelayLength = 0;  // Updated when latency changes
+
     // Per-band enable/disable crossfade (~3ms)
     std::array<juce::SmoothedValue<float>, NUM_BANDS> bandEnableSmoothed;
 
@@ -523,6 +554,12 @@ private:
     juce::SmoothedValue<float> osCrossfade{1.0f};  // 1.0 = fully new mode
     juce::AudioBuffer<float> prevOsBuffer;  // Saved output from previous OS mode
     bool osChanging = false;
+
+    // Oversampling latency compensation: always report max (4x) latency so DAW PDC stays aligned
+    int maxOversamplerLatency = 0;  // Cached 4x oversampler latency (set in prepareToPlay)
+    juce::AudioBuffer<float> osCompDelayBuffer;  // Compensation delay for Off/2x modes
+    int osCompDelayWritePos = 0;
+    int osCompDelaySamples = 0;  // Current compensation: maxLatency - currentModeLatency
 
     // Parameter pointers
     std::array<std::atomic<float>*, NUM_BANDS> bandEnabledParams{};
@@ -668,7 +705,7 @@ private:
     float inputRmsSum = 0.0f;
     float outputRmsSum = 0.0f;
     int rmsSampleCount = 0;
-    int rmsWindowSamples = 22050;  // ~500ms at 44.1kHz (mastering-appropriate, updated in prepareToPlay)
+    int rmsWindowSamples = 6615;  // ~150ms at 44.1kHz (responsive auto-gain, updated in prepareToPlay)
 
     // Non-allocating coefficient computation (Audio EQ Cookbook with pre-warping)
     // These compute directly into BiquadCoeffs without any heap allocation,
@@ -707,7 +744,8 @@ private:
 
     // Compute band coefficients into BiquadCoeffs based on band index and current parameters
     void computeBandCoeffs(int bandIndex, BiquadCoeffs& c) const;
-    void computeBandCoeffsWithGain(int bandIndex, float overrideGainDB, BiquadCoeffs& c) const;
+    void computeBandCoeffsAtRate(int bandIndex, BiquadCoeffs& c, double sr) const;
+    void computeBandCoeffsWithGain(int bandIndex, float overrideGainDB, BiquadCoeffs& c, double sr) const;
 
     // Filter update methods (use non-allocating coefficient computation)
 
@@ -822,4 +860,5 @@ private:
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQ)
+    JUCE_DECLARE_WEAK_REFERENCEABLE(MultiQ)
 };

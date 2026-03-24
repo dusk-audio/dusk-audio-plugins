@@ -1,6 +1,25 @@
 #include "EQGraphicDisplay.h"
 #include "MultiQ.h"
 
+namespace
+{
+    // Convert frequency to musical note name with cents deviation
+    juce::String frequencyToNoteName(float freq)
+    {
+        if (freq <= 0.0f) return "";
+        static const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        float midiNote = 12.0f * std::log2(freq / 440.0f) + 69.0f;
+        int roundedNote = juce::roundToInt(midiNote);
+        int cents = juce::roundToInt((midiNote - static_cast<float>(roundedNote)) * 100.0f);
+        int noteIndex = ((roundedNote % 12) + 12) % 12;
+        int octave = (roundedNote / 12) - 1;
+        juce::String result = juce::String(noteNames[noteIndex]) + juce::String(octave);
+        if (cents != 0)
+            result += " " + juce::String(cents > 0 ? "+" : "") + juce::String(cents) + "c";
+        return result;
+    }
+}
+
 EQGraphicDisplay::EQGraphicDisplay(MultiQ& proc)
     : processor(proc)
 {
@@ -147,8 +166,12 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
     {
         auto dynBounds = getDisplayBounds();
         juce::Path dynPath;
-        std::vector<juce::Point<float>> staticPoints, dynPointsVec;
         int dynPoints = juce::jmax(100, static_cast<int>(dynBounds.getWidth() * 0.5f));
+
+        dynStaticPoints.clear();
+        dynDynamicPoints.clear();
+        dynStaticPoints.reserve(static_cast<size_t>(dynPoints));
+        dynDynamicPoints.reserve(static_cast<size_t>(dynPoints));
 
         for (int px = 0; px < dynPoints; ++px)
         {
@@ -161,8 +184,8 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
             float staticY = getYForDB(staticResp);
             float dynY = getYForDB(dynResp);
 
-            staticPoints.push_back({x, staticY});
-            dynPointsVec.push_back({x, dynY});
+            dynStaticPoints.push_back({x, staticY});
+            dynDynamicPoints.push_back({x, dynY});
 
             if (px == 0)
                 dynPath.startNewSubPath(x, dynY);
@@ -171,14 +194,14 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         }
 
         // Shaded fill between static (combined) curve and dynamic curve
-        if (!staticPoints.empty())
+        if (!dynStaticPoints.empty())
         {
             juce::Path fillRegion;
-            fillRegion.startNewSubPath(dynPointsVec[0]);
-            for (size_t i = 1; i < dynPointsVec.size(); ++i)
-                fillRegion.lineTo(dynPointsVec[i]);
-            for (int i = static_cast<int>(staticPoints.size()) - 1; i >= 0; --i)
-                fillRegion.lineTo(staticPoints[static_cast<size_t>(i)]);
+            fillRegion.startNewSubPath(dynDynamicPoints[0]);
+            for (size_t i = 1; i < dynDynamicPoints.size(); ++i)
+                fillRegion.lineTo(dynDynamicPoints[i]);
+            for (int i = static_cast<int>(dynStaticPoints.size()) - 1; i >= 0; --i)
+                fillRegion.lineTo(dynStaticPoints[static_cast<size_t>(i)]);
             fillRegion.closeSubPath();
 
             g.setColour(juce::Colour(0x22ffaa44));
@@ -239,7 +262,7 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
 
             auto font = juce::FontOptions(11.0f, juce::Font::bold);
             g.setFont(font);
-            float textWidth = g.getCurrentFont().getStringWidth(modeText) + 12.0f;
+            float textWidth = static_cast<float>(juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), modeText)) + 12.0f;
             float textHeight = 18.0f;
             float badgeX = displayBounds.getRight() - textWidth - 6.0f;
             float badgeY = displayBounds.getY() + 6.0f;
@@ -263,7 +286,7 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         juce::String frozenText = "FROZEN (F)";
         auto font = juce::FontOptions(11.0f, juce::Font::bold);
         g.setFont(font);
-        float textWidth = g.getCurrentFont().getStringWidth(frozenText) + 12.0f;
+        float textWidth = static_cast<float>(juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), frozenText)) + 12.0f;
         float textHeight = 18.0f;
         float badgeX = displayBounds.getX() + 6.0f;
         float badgeY = displayBounds.getY() + 6.0f;
@@ -305,12 +328,14 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         float hoverDB = getDBAtY(hoverPosition.y);
         float eqResponse = processor.getFrequencyResponseMagnitude(hoverFreq);
 
-        // Format frequency
+        // Format frequency with note name
         juce::String freqText;
         if (hoverFreq >= 1000.0f)
             freqText = juce::String(hoverFreq / 1000.0f, 2) + " kHz";
         else
             freqText = juce::String(static_cast<int>(hoverFreq)) + " Hz";
+
+        juce::String noteText = frequencyToNoteName(hoverFreq);
 
         // Format cursor dB and EQ response
         juce::String dbText = juce::String(hoverDB >= 0 ? "+" : "") + juce::String(hoverDB, 1) + " dB";
@@ -318,9 +343,10 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
 
         auto font = juce::FontOptions(10.0f).withStyle("Bold");
         g.setFont(font);
-        float textW = juce::jmax(g.getCurrentFont().getStringWidth(freqText),
-                                  g.getCurrentFont().getStringWidth(eqText)) + 14.0f;
-        float textH = 42.0f;
+        float textW = juce::jmax(static_cast<float>(juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), freqText)),
+                                 juce::jmax(static_cast<float>(juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), noteText)),
+                                            static_cast<float>(juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), eqText)))) + 14.0f;
+        float textH = 56.0f;  // Taller to fit 4 lines
 
         // Position tooltip near cursor, flip if near edges
         float tooltipX = hoverPosition.x + 14.0f;
@@ -339,17 +365,76 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
         g.drawRoundedRectangle(tooltipRect, 4.0f, 0.75f);
 
         // Text lines
+        auto inner = tooltipRect.reduced(6, 3);
         g.setColour(juce::Colour(0xFFdddddd));
-        g.drawText(freqText, tooltipRect.reduced(6, 2).removeFromTop(14.0f), juce::Justification::centredLeft);
+        g.drawText(freqText, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xFFccaa77));
+        g.drawText(noteText, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
         g.setColour(juce::Colour(0xFFaaaaaa));
-        g.drawText(dbText, tooltipRect.reduced(6, 2).translated(0, 12.0f).removeFromTop(14.0f), juce::Justification::centredLeft);
+        g.drawText(dbText, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
         g.setColour(juce::Colour(0xFF88ccff));
-        g.drawText(eqText, tooltipRect.reduced(6, 2).translated(0, 24.0f).removeFromTop(14.0f), juce::Justification::centredLeft);
+        g.drawText(eqText, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
 
         // Crosshair lines (subtle)
         g.setColour(juce::Colour(0x20ffffff));
         g.drawVerticalLine(static_cast<int>(hoverPosition.x), displayBounds.getY(), displayBounds.getBottom());
         g.drawHorizontalLine(static_cast<int>(hoverPosition.y), displayBounds.getX(), displayBounds.getRight());
+    }
+
+    // Drag tooltip: show live freq/gain/Q values while dragging a control point
+    if (isDragging && selectedBand >= 0 && selectedBand < 8)
+    {
+        auto displayBounds = getDisplayBounds();
+        float freq = getBandFrequency(selectedBand);
+        float gain = (selectedBand > 0 && selectedBand < 7) ? getBandGain(selectedBand) : 0.0f;
+        float q = getBandQ(selectedBand);
+
+        juce::String freqStr;
+        if (freq >= 1000.0f)
+            freqStr = juce::String(freq / 1000.0f, 2) + " kHz";
+        else
+            freqStr = juce::String(static_cast<int>(freq)) + " Hz";
+
+        juce::String noteStr = frequencyToNoteName(freq);
+        juce::String gainStr = juce::String(gain >= 0 ? "+" : "") + juce::String(gain, 1) + " dB";
+        juce::String qStr = "Q: " + juce::String(q, 2);
+
+        auto font = juce::FontOptions(10.0f).withStyle("Bold");
+        g.setFont(font);
+
+        int numLines = (selectedBand > 0 && selectedBand < 7) ? 4 : 3;  // HPF/LPF have no gain
+        float ttW = juce::jmax(static_cast<float>(juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), freqStr)),
+                               static_cast<float>(juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), noteStr))) + 14.0f;
+        float ttH = static_cast<float>(numLines) * 13.0f + 6.0f;
+
+        // Position near control point
+        float cpX = getXForFrequency(freq);
+        float cpY = (selectedBand > 0 && selectedBand < 7)
+                      ? getYForDB(gain) : static_cast<float>(displayBounds.getCentreY());
+        float ttX = cpX + 18.0f;
+        float ttY = cpY - ttH - 6.0f;
+        if (ttX + ttW > displayBounds.getRight()) ttX = cpX - ttW - 6.0f;
+        if (ttY < displayBounds.getY()) ttY = cpY + 18.0f;
+
+        juce::Rectangle<float> ttRect(ttX, ttY, ttW, ttH);
+
+        g.setColour(juce::Colour(0xEE101014));
+        g.fillRoundedRectangle(ttRect, 4.0f);
+        g.setColour(juce::Colour(0x60ffffff));
+        g.drawRoundedRectangle(ttRect, 4.0f, 0.75f);
+
+        auto inner = ttRect.reduced(6, 3);
+        g.setColour(juce::Colour(0xFFdddddd));
+        g.drawText(freqStr, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xFFccaa77));
+        g.drawText(noteStr, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
+        if (selectedBand > 0 && selectedBand < 7)
+        {
+            g.setColour(juce::Colour(0xFF88ccff));
+            g.drawText(gainStr, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
+        }
+        g.setColour(juce::Colour(0xFFaaaaaa));
+        g.drawText(qStr, inner.removeFromTop(13.0f), juce::Justification::centredLeft);
     }
 
     // Subtle outer border
@@ -552,6 +637,7 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
     if (displayBounds.getWidth() < 10.0f || displayBounds.getHeight() < 10.0f)
         return;
 
+
     juce::Colour curveColor = (bandIndex >= 0 && bandIndex < 8) ? DefaultBandConfigs[bandIndex].color : juce::Colours::white;
 
     juce::Path curvePath;
@@ -559,12 +645,14 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
 
     int numPoints = juce::jmax(100, static_cast<int>(displayBounds.getWidth() * 0.75f));
 
+    float maxResponse = -200.0f;
     for (int px = 0; px < numPoints; ++px)
     {
         float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
         float freq = getFrequencyAtX(x);
 
-        float response = processor.getPerBandMagnitude(bandIndex, freq);
+        float response = processor.computePerBandMagnitudeFresh(bandIndex, freq);
+        if (std::abs(response) > std::abs(maxResponse)) maxResponse = response;
 
         float y = getYForDB(response);
 
@@ -614,6 +702,10 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         g.fillPath(fillPath);
     }
 
+    // Draw band curve line (colored stroke for visibility)
+    g.setColour(curveColor.withAlpha(isSelected ? 0.9f : 0.5f));
+    g.strokePath(curvePath, juce::PathStrokeType(isSelected ? 2.0f : 1.0f));
+
     float dynGainDB = smoothedDynamicGains[static_cast<size_t>(bandIndex)];
     bool hasDynReduction = processor.isInDynamicMode()
                         && processor.isDynamicsEnabled(bandIndex)
@@ -628,7 +720,7 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         {
             float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
             float freq = getFrequencyAtX(x);
-            float staticResp = processor.getPerBandMagnitude(bandIndex, freq);
+            float staticResp = processor.computePerBandMagnitudeFresh(bandIndex, freq);
             float staticY = getYForDB(staticResp);
             float dynY = getYForDB(staticResp + dynGainDB);
 
@@ -648,7 +740,7 @@ void EQGraphicDisplay::drawBandCurve(juce::Graphics& g, int bandIndex)
         {
             float x = displayBounds.getX() + static_cast<float>(px) * displayBounds.getWidth() / static_cast<float>(numPoints);
             float freq = getFrequencyAtX(x);
-            float dynY = getYForDB(processor.getPerBandMagnitude(bandIndex, freq) + dynGainDB);
+            float dynY = getYForDB(processor.computePerBandMagnitudeFresh(bandIndex, freq) + dynGainDB);
             grRegion.lineTo(x, dynY);
         }
         grRegion.closeSubPath();
@@ -767,7 +859,7 @@ void EQGraphicDisplay::drawInactiveBandIndicator(juce::Graphics& g, int bandInde
     auto point = getControlPointPosition(bandIndex);
     juce::Colour color = (bandIndex >= 0 && bandIndex < 8) ? DefaultBandConfigs[bandIndex].color : juce::Colours::grey;
 
-    float radius = CONTROL_POINT_RADIUS * 0.7f;
+    float radius = getControlPointRadius() * 0.7f;
     float ringThickness = 1.5f;
     float innerRadius = radius - ringThickness;
 
@@ -800,7 +892,7 @@ void EQGraphicDisplay::drawBandControlPoint(juce::Graphics& g, int bandIndex)
     bool isFlat = (bandIndex > 0 && bandIndex < 7) && std::abs(gain) < 0.5f;  // Within 0.5dB of 0
     bool hasGain = !isFlat;
 
-    float baseRadius = CONTROL_POINT_RADIUS;
+    float baseRadius = getControlPointRadius();
     float flatScale = isFlat ? 0.85f : 1.0f;  // Flat nodes are slightly smaller
     float scale = (isSelected ? 1.25f : (isHovered ? 1.15f : 1.0f)) * flatScale;
     float radius = baseRadius * scale;
@@ -1376,7 +1468,58 @@ void EQGraphicDisplay::mouseDoubleClick(const juce::MouseEvent& e)
         if (hitBand > 0 && hitBand < 7)
             setBandGain(hitBand, 0.0f);
         setBandQ(hitBand, 0.71f);
+
+        // Reset band shape to default (0 = shelf for bands 2/7, peaking for bands 3-6)
+        if (auto* shapeParam = processor.parameters.getParameter(ParamIDs::bandShape(hitBand + 1)))
+        {
+            int numChoices = shapeParam->getNumSteps();
+            if (numChoices > 1)
+                shapeParam->setValueNotifyingHost(0.0f);
+        }
+
         repaint();
+    }
+    else
+    {
+        // Double-click on empty area: spectrum grab — enable nearest disabled band
+        // and move it to the clicked frequency
+        auto displayBounds = getDisplayBounds();
+        if (displayBounds.contains(e.position))
+        {
+            float clickFreq = getFrequencyAtX(e.position.x);
+            float clickGain = getDBAtY(e.position.y);
+
+            // Find nearest disabled parametric band (bands 2-7, indices 1-6)
+            int bestBand = -1;
+            float bestDist = std::numeric_limits<float>::max();
+            for (int i = 1; i <= 6; ++i)
+            {
+                if (!isBandEnabled(i))
+                {
+                    // Prefer bands closer to the clicked frequency
+                    float bandFreq = getBandFrequency(i);
+                    float dist = std::abs(std::log2(clickFreq) - std::log2(bandFreq));
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        bestBand = i;
+                    }
+                }
+            }
+
+            if (bestBand >= 0)
+            {
+                setBandEnabled(bestBand, true);
+                setBandFrequency(bestBand, clickFreq);
+                if (bestBand > 0 && bestBand < 7)
+                    setBandGain(bestBand, juce::jlimit(-24.0f, 24.0f, clickGain));
+                setBandQ(bestBand, 0.71f);
+                selectedBand = bestBand;
+                if (onBandSelected)
+                    onBandSelected(bestBand);
+                repaint();
+            }
+        }
     }
 }
 

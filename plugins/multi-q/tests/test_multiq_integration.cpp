@@ -391,6 +391,117 @@ static void testINVLinearPhase(MultiQ& plugin)
           std::abs(boostDelta + cutDelta) < 3.0f);
 }
 
+// ===== TEST: State Save/Restore Round-Trip =====
+static void testStateRoundTrip(MultiQ& plugin)
+{
+    std::cout << "\n--- Test: State Save/Restore Round-Trip ---\n";
+    resetPlugin(plugin);
+
+    // Set a variety of non-default parameter values across all features
+    setParam(plugin, ParamIDs::masterGain, -3.5f);
+    setParam(plugin, ParamIDs::bypass, 0.0f);
+
+    // Band 1 (HPF): enable with specific settings
+    setParam(plugin, ParamIDs::bandEnabled(1), 1.0f);
+    setParam(plugin, ParamIDs::bandFreq(1), 80.0f);
+    setParam(plugin, ParamIDs::bandQ(1), 1.2f);
+    setParam(plugin, ParamIDs::bandSlope(1), 3.0f);  // 24dB/oct
+
+    // Band 3: parametric with gain, custom Q, invert, phase invert, pan
+    setParam(plugin, ParamIDs::bandFreq(3), 2500.0f);
+    setParam(plugin, ParamIDs::bandGain(3), -4.5f);
+    setParam(plugin, ParamIDs::bandQ(3), 2.0f);
+    setParam(plugin, ParamIDs::bandInvert(3), 1.0f);
+    setParam(plugin, ParamIDs::bandPhaseInvert(3), 1.0f);
+    setParam(plugin, ParamIDs::bandPan(3), 0.6f);
+
+    // Band 5: different settings
+    setParam(plugin, ParamIDs::bandFreq(5), 8000.0f);
+    setParam(plugin, ParamIDs::bandGain(5), 3.0f);
+    setParam(plugin, ParamIDs::bandEnabled(5), 0.0f);  // Disabled
+
+    // Band 8 (LPF): enable
+    setParam(plugin, ParamIDs::bandEnabled(8), 1.0f);
+    setParam(plugin, ParamIDs::bandFreq(8), 16000.0f);
+
+    // Save state
+    juce::MemoryBlock stateData;
+    plugin.getStateInformation(stateData);
+    check("State saved (non-empty)", stateData.getSize() > 0);
+
+    // Create a fresh plugin instance and load state
+    auto plugin2 = std::make_unique<MultiQ>();
+    auto layouts = plugin2->getBusesLayout();
+    layouts.getMainInputChannelSet() = juce::AudioChannelSet::stereo();
+    layouts.getMainOutputChannelSet() = juce::AudioChannelSet::stereo();
+    plugin2->setBusesLayout(layouts);
+    plugin2->setPlayConfigDetails(2, 2, 44100.0, 512);
+    plugin2->prepareToPlay(44100.0, 512);
+
+    plugin2->setStateInformation(stateData.getData(), static_cast<int>(stateData.getSize()));
+
+    // Helper to read parameter value
+    auto getParam = [](MultiQ& p, const juce::String& paramID) -> float {
+        auto* param = p.parameters.getParameter(paramID);
+        if (!param) return -999.0f;
+        return p.parameters.getParameterRange(paramID).convertFrom0to1(param->getValue());
+    };
+
+    // Verify restored values match
+    checkDb("RT: masterGain", getParam(*plugin2, ParamIDs::masterGain), -3.5f, 0.1f);
+
+    checkDb("RT: band1 enabled", getParam(*plugin2, ParamIDs::bandEnabled(1)), 1.0f, 0.01f);
+    checkDb("RT: band1 freq", getParam(*plugin2, ParamIDs::bandFreq(1)), 80.0f, 1.0f);
+    checkDb("RT: band1 Q", getParam(*plugin2, ParamIDs::bandQ(1)), 1.2f, 0.05f);
+
+    checkDb("RT: band3 freq", getParam(*plugin2, ParamIDs::bandFreq(3)), 2500.0f, 10.0f);
+    checkDb("RT: band3 gain", getParam(*plugin2, ParamIDs::bandGain(3)), -4.5f, 0.1f);
+    checkDb("RT: band3 Q", getParam(*plugin2, ParamIDs::bandQ(3)), 2.0f, 0.05f);
+    checkDb("RT: band3 invert", getParam(*plugin2, ParamIDs::bandInvert(3)), 1.0f, 0.01f);
+    checkDb("RT: band3 phaseInvert", getParam(*plugin2, ParamIDs::bandPhaseInvert(3)), 1.0f, 0.01f);
+    checkDb("RT: band3 pan", getParam(*plugin2, ParamIDs::bandPan(3)), 0.6f, 0.05f);
+
+    checkDb("RT: band5 enabled (off)", getParam(*plugin2, ParamIDs::bandEnabled(5)), 0.0f, 0.01f);
+    checkDb("RT: band5 freq", getParam(*plugin2, ParamIDs::bandFreq(5)), 8000.0f, 50.0f);
+    checkDb("RT: band5 gain", getParam(*plugin2, ParamIDs::bandGain(5)), 3.0f, 0.1f);
+
+    checkDb("RT: band8 enabled", getParam(*plugin2, ParamIDs::bandEnabled(8)), 1.0f, 0.01f);
+    checkDb("RT: band8 freq", getParam(*plugin2, ParamIDs::bandFreq(8)), 16000.0f, 100.0f);
+
+    // Verify the restored plugin produces the same output as the original
+    resetPlugin(plugin);
+    setParam(plugin, ParamIDs::masterGain, -3.5f);
+    setParam(plugin, ParamIDs::bandEnabled(1), 1.0f);
+    setParam(plugin, ParamIDs::bandFreq(1), 80.0f);
+    setParam(plugin, ParamIDs::bandQ(1), 1.2f);
+    setParam(plugin, ParamIDs::bandSlope(1), 3.0f);
+    setParam(plugin, ParamIDs::bandFreq(3), 2500.0f);
+    setParam(plugin, ParamIDs::bandGain(3), -4.5f);
+    setParam(plugin, ParamIDs::bandQ(3), 2.0f);
+    setParam(plugin, ParamIDs::bandInvert(3), 1.0f);
+    setParam(plugin, ParamIDs::bandPhaseInvert(3), 1.0f);
+    setParam(plugin, ParamIDs::bandPan(3), 0.6f);
+    setParam(plugin, ParamIDs::bandFreq(5), 8000.0f);
+    setParam(plugin, ParamIDs::bandGain(5), 3.0f);
+    setParam(plugin, ParamIDs::bandEnabled(5), 0.0f);
+    setParam(plugin, ParamIDs::bandEnabled(8), 1.0f);
+    setParam(plugin, ParamIDs::bandFreq(8), 16000.0f);
+    settleParams(plugin, 512, 40);
+
+    resetPlugin(*plugin2);
+    plugin2->setStateInformation(stateData.getData(), static_cast<int>(stateData.getSize()));
+    settleParams(*plugin2, 512, 40);
+
+    auto buf1 = generateSine(1000.0f, 44100.0, 44100);
+    auto buf2 = generateSine(1000.0f, 44100.0, 44100);
+    processWithPlugin(plugin, buf1);
+    processWithPlugin(*plugin2, buf2);
+
+    float rms1 = measureRMSdB(buf1, 0, 22050);
+    float rms2 = measureRMSdB(buf2, 0, 22050);
+    checkDb("RT: restored output matches original", rms1 - rms2, 0.0f, 0.5f);
+}
+
 // ===== MAIN =====
 
 class TestApp : public juce::JUCEApplicationBase
@@ -435,6 +546,7 @@ public:
         testINV(*plugin);
         testPhaseInvert(*plugin);
         testPan(*plugin);
+        testStateRoundTrip(*plugin);
         // LP+INV test skipped: FIR generation requires background thread + message loop
         // The LP+INV fix was verified manually and via pluginval automation tests
         // testINVLinearPhase(*plugin);
