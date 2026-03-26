@@ -284,9 +284,11 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         auto mode = static_cast<DisplayScaleMode>(index);
         if (graphicDisplay)
             graphicDisplay->setDisplayScaleMode(mode);
-        // Also update British mode display scale (uses equivalent enum)
+        // Also update British and Tube mode display scales
         if (britishCurveDisplay)
             britishCurveDisplay->setDisplayScaleMode(static_cast<BritishDisplayScaleMode>(mode));
+        if (tubeEQCurveDisplay)
+            tubeEQCurveDisplay->setDisplayScaleMode(mode);
     };
     addAndMakeVisible(displayScaleSelector.get());
     displayScaleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
@@ -300,6 +302,8 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         graphicDisplay->setDisplayScaleMode(initialMode);
         if (britishCurveDisplay)
             britishCurveDisplay->setDisplayScaleMode(static_cast<BritishDisplayScaleMode>(initialMode));
+        if (tubeEQCurveDisplay)
+            tubeEQCurveDisplay->setDisplayScaleMode(initialMode);
     }
     // Sync initial analyzer visibility for both Digital and British mode displays
     auto* analyzerParam = processor.parameters.getRawParameterValue(ParamIDs::analyzerEnabled);

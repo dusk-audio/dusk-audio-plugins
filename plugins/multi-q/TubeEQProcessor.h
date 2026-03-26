@@ -128,13 +128,13 @@ public:
             float compressed = dynamicThreshold + langevin * (1.0f - dynamicThreshold) * 0.7f;
             saturatedInput = std::copysign(compressed, input);
 
-            // Add 2nd harmonic (core asymmetry — primary source of transformer "warmth")
-            float h2Amount = 0.035f * driveLevel * excess;
+            // Freed/UTC inductors operate 10-15dB below input in the passive EQ network.
+            // Core saturation is subtle at normal levels, only significant at extreme LF boost.
+            // H3 dominant (symmetric core), with small H2 from residual asymmetry.
+            float h2Amount = 0.012f * driveLevel * excess;
             saturatedInput += h2Amount * input * absInput;
 
-            // Add 3rd harmonic — increases disproportionately at high drive
-            // Real iron cores produce more odd harmonics as they approach saturation
-            float h3Amount = 0.012f * driveLevel * driveLevel * excess * excess;
+            float h3Amount = 0.018f * driveLevel * driveLevel * excess;
             saturatedInput += h3Amount * input * input * input;
 
             // Track saturation depth for Q modulation
@@ -148,11 +148,11 @@ public:
 
         // Hysteresis — wider loop at higher drive for more "iron" character
         float deltaInput = saturatedInput - prevInput;
-        float hysteresisCoeff = 0.10f * driveLevel * (1.0f + driveLevel * 0.5f);
+        float hysteresisCoeff = 0.08f * driveLevel;
 
         // Core flux integration with decay (0.75ms time constant)
         coreFlux = coreFlux * fluxDecay + deltaInput * hysteresisCoeff;
-        coreFlux = std::clamp(coreFlux, -0.20f, 0.20f);
+        coreFlux = std::clamp(coreFlux, -0.15f, 0.15f);
 
         // Hysteresis adds slight asymmetry based on flux direction (0.28ms time constant)
         hysteresisState = hysteresisState * hystDecay + coreFlux * (1.0f - hystDecay);
@@ -261,7 +261,11 @@ public:
         const float filteredInput = preLPState;
         const float hfPass = input - filteredInput;  // HF residual: bypasses the waveshaper
 
-        float driveGain = 1.0f + drive * 4.0f;
+        // Use a power curve so the knob gives a more gradual onset at low settings.
+        // Real Pultec cathode follower is very clean at its fixed bias point —
+        // distortion only becomes audible when driven significantly.
+        // drive 0.0→1.0 maps to driveGain 1.0→5.0 with quadratic taper.
+        float driveGain = 1.0f + drive * drive * 4.0f;
         float drivenSignal = filteredInput * driveGain;
 
         // Grid current limiting with softer onset
@@ -270,12 +274,8 @@ public:
         float gridBias = -1.5f;
         float effectiveGrid = drivenSignal + gridBias;
 
-        // Soft exponential grid current onset (replaces hard max(0, x) threshold)
-        // Current flows when grid goes positive, but onset is gradual
-        float gridOnset = effectiveGrid + 1.5f;
-        float gridCurrentAmount = (gridOnset > 0.0f)
-            ? gridOnset * 0.12f * (1.0f - std::exp(-gridOnset * 2.0f))  // Soft exponential
-            : 0.0f;
+        // Grid current onset — current flows when grid goes positive
+        float gridCurrentAmount = std::max(0.0f, effectiveGrid + 1.5f) * 0.15f;
         gridCurrent = gridCurrent * gridDecay + gridCurrentAmount * (1.0f - gridDecay);
 
         float compressionFactor = 1.0f / (1.0f + gridCurrent * drive * 2.0f);
@@ -324,9 +324,10 @@ public:
         // Below fc: full negative feedback (lower gain, lower distortion)
         // Above fc: bypass active (higher gain, more harmonics)
         // This creates the characteristic "bottom end thickening" of tube EQs
-        // Typical Pultec: Rk=1.5k, Ck=25uF → fc ≈ 4.2Hz (very low, mostly for DC)
-        // We model a higher corner (~80Hz) for audible LF character
-        float cathodeBypassFreq = 80.0f;
+        // Real Pultec: Rk=1.5k, Ck=25uF → fc ≈ 4.2Hz (sub-audio)
+        // At this frequency the bypass cap has no audible frequency-dependent effect —
+        // it's fully bypassed across the entire audio band.
+        float cathodeBypassFreq = 4.2f;
         float cathodeBypassAlpha = static_cast<float>(
             1.0 - std::exp(-juce::MathConstants<double>::twoPi * cathodeBypassFreq / sampleRate));
 
@@ -335,9 +336,7 @@ public:
 
         // Feedback amount: at LF (where bypass cap doesn't short Rk), more feedback = less gain
         // At HF (where bypass cap shorts Rk), less feedback = more gain + harmonics
-        float bypassAmount = 0.25f * drive;  // Scale with drive
-        float feedbackSignal = cathodeBypassState * bypassAmount;
-        float cfOutput = plateVoltage - feedbackSignal;
+        float cfOutput = plateVoltage * 0.95f + cathodeVoltage * 0.05f;
 
         // Cathode voltage tracking (slower, for DC behavior)
         float cathodeAlpha = static_cast<float>(
@@ -354,16 +353,13 @@ public:
         // Level-dependent harmonic content
         // At low levels: 2nd harmonic dominates (tube "warmth")
         // At high levels: 3rd and higher harmonics increase disproportionately (tube "grit")
-        float absLevel = std::abs(cfOutput);
-        float levelFactor = std::min(absLevel * 2.0f, 1.0f);  // 0-1 based on signal level
-
-        float h2Coeff = 0.045f * drive;                                      // 2nd: always present
-        float h3Coeff = 0.010f * drive * (1.0f + levelFactor * 1.5f);        // 3rd: grows with level
-        float h4Coeff = 0.003f * drive * (1.0f + levelFactor * 3.0f);        // 4th: grows faster
-
-        float h2 = h2Coeff * cfOutput * std::abs(cfOutput);
-        float h3 = h3Coeff * cfOutput * cfOutput * cfOutput;
-        float h4 = h4Coeff * std::abs(cfOutput * cfOutput * cfOutput * cfOutput)
+        // Pultec 12AX7 cathode follower: NOT a gain stage, just impedance buffer.
+        // Very clean at nominal levels. H2 at -60 to -55dB (0.1-0.2% THD).
+        // H2 dominant (cathode follower topology), H3 significantly lower.
+        // Distortion only becomes significant above +15 dBu.
+        float h2 = 0.02f * drive * cfOutput * std::abs(cfOutput);
+        float h3 = 0.005f * drive * cfOutput * cfOutput * cfOutput;
+        float h4 = 0.002f * drive * std::abs(cfOutput * cfOutput * cfOutput * cfOutput)
                    * std::copysign(1.0f, cfOutput);
 
         float output = cfOutput + h2 + h3 + h4;
@@ -1046,26 +1042,31 @@ private:
 
     void setupTransformerProfiles()
     {
-        // Input transformer profile
+        // Input transformer profile (Chicago/UTC/Freed style)
+        // Pultec transformers have symmetric B-H curves → odd harmonics (H3, H5)
+        // This is distinct from Neve (asymmetric → H2). The combination of
+        // even-order tube harmonics + odd-order transformer harmonics creates
+        // the signature Pultec character.
         AnalogEmulation::TransformerProfile inputProfile;
         inputProfile.hasTransformer = true;
         inputProfile.saturationAmount = 0.15f;
-        inputProfile.lowFreqSaturation = 1.0f;
+        inputProfile.lowFreqSaturation = 1.3f;  // LF saturation boost (core flux physics)
         inputProfile.highFreqRolloff = 22000.0f;
         inputProfile.dcBlockingFreq = 10.0f;
-        inputProfile.harmonics = { 0.02f, 0.005f, 0.001f };  // Primarily 2nd harmonic
+        inputProfile.harmonics = { 0.005f, 0.015f, 0.002f };  // H3 dominant (symmetric core)
 
         inputTransformer.setProfile(inputProfile);
         inputTransformer.setEnabled(true);
 
-        // Output transformer - slightly more color
+        // Output transformer — slightly more color, same odd-harmonic character
+        // Output transformer saturates at lower levels (~+18-20 dBu at 60 Hz)
         AnalogEmulation::TransformerProfile outputProfile;
         outputProfile.hasTransformer = true;
         outputProfile.saturationAmount = 0.12f;
-        outputProfile.lowFreqSaturation = 1.0f;
+        outputProfile.lowFreqSaturation = 1.2f;
         outputProfile.highFreqRolloff = 20000.0f;
         outputProfile.dcBlockingFreq = 8.0f;
-        outputProfile.harmonics = { 0.015f, 0.004f, 0.001f };
+        outputProfile.harmonics = { 0.004f, 0.012f, 0.001f };  // H3 dominant
 
         outputTransformer.setProfile(outputProfile);
         outputTransformer.setEnabled(true);

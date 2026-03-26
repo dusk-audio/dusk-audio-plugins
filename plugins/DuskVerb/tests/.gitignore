@@ -1,0 +1,9 @@
+# Generated test output
+output/
+*.png
+*.csv
+
+# IR captures (large binary files)
+valhalla_comparison/irs/*.wav
+valhalla_comparison/output/
+valhalla_comparison/test_signals/
