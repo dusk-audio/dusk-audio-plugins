@@ -87,21 +87,16 @@ private:
     std::unique_ptr<juce::Slider> masterGainSlider;
     std::unique_ptr<juce::ToggleButton> bypassButton;
     std::unique_ptr<juce::ToggleButton> hqButton;
-    std::unique_ptr<juce::ToggleButton> linearPhaseButton;
     std::unique_ptr<juce::ToggleButton> autoGainButton;
-    std::unique_ptr<juce::ComboBox> linearPhaseQualitySelector;
     std::unique_ptr<juce::ComboBox> processingModeSelector;
     std::unique_ptr<juce::ComboBox> qCoupleModeSelector;
 
     juce::Label masterGainLabel;
-    juce::Label linearPhaseLabel;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> linearPhaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> linearPhaseQualityAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> processingModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> qCoupleModeAttachment;
 

@@ -151,13 +151,16 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
     }
     g.drawImageAt(backgroundCache, 0, 0);
 
-    for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
-    {
-        if (isBandEnabled(i))
-            drawBandCurve(g, i);
-    }
-
     drawCombinedCurve(g);
+
+    if (!processor.isMatchMode())
+    {
+        for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
+        {
+            if (isBandEnabled(i))
+                drawBandCurve(g, i);
+        }
+    }
 
     if (processor.isMatchMode())
         drawMatchOverlays(g);
@@ -250,7 +253,8 @@ void EQGraphicDisplay::paint(juce::Graphics& g)
                    static_cast<int>(thresholdY - 14), 55, 14, juce::Justification::centredRight);
     }
 
-    drawControlPoints(g);
+    if (!processor.isMatchMode())
+        drawControlPoints(g);
 
     {
         auto displayBounds = getDisplayBounds();
@@ -1664,7 +1668,19 @@ juce::Point<float> EQGraphicDisplay::getStaticControlPointPosition(int bandIndex
     if (bandIndex == 0 || bandIndex == 7)
         gain = 0.0f;
 
-    if (bandIndex >= 2 && bandIndex <= 5)
+    if (bandIndex == 1)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(2));
+        if (shapeParam && static_cast<int>(shapeParam->load()) != 1)
+            gain = 0.0f;
+    }
+    else if (bandIndex == 6)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(7));
+        if (shapeParam && static_cast<int>(shapeParam->load()) != 1)
+            gain = 0.0f;
+    }
+    else if (bandIndex >= 2 && bandIndex <= 5)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
         if (shapeParam && static_cast<int>(shapeParam->load()) != 0)
@@ -1683,7 +1699,21 @@ juce::Point<float> EQGraphicDisplay::getControlPointPosition(int bandIndex) cons
     if (bandIndex == 0 || bandIndex == 7)
         gain = 0.0f;
 
-    if (bandIndex >= 2 && bandIndex <= 5)
+    // For non-peaking shapes, node sits at 0 dB (gain has no visual meaning)
+    // Bands 1 and 6 use shape index 1 for peaking; bands 2-5 use shape index 0
+    if (bandIndex == 1)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(2));
+        if (shapeParam && static_cast<int>(shapeParam->load()) != 1)
+            gain = 0.0f;
+    }
+    else if (bandIndex == 6)
+    {
+        auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(7));
+        if (shapeParam && static_cast<int>(shapeParam->load()) != 1)
+            gain = 0.0f;
+    }
+    else if (bandIndex >= 2 && bandIndex <= 5)
     {
         auto* shapeParam = processor.parameters.getRawParameterValue(ParamIDs::bandShape(bandIndex + 1));
         if (shapeParam && static_cast<int>(shapeParam->load()) != 0)

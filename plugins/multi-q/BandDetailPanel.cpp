@@ -137,7 +137,7 @@ void BandDetailPanel::setupKnobs()
     soloButton->setColour(juce::TextButton::buttonOnColourId, juce::Colours::yellow);
     soloButton->setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
     soloButton->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-    soloButton->setTooltip("Solo this band (mute all other bands) (Shortcut: S)");
+    soloButton->setTooltip("Solo this EQ band (mute all other bands) (Shortcut: S)");
     soloButton->onClick = [this]() {
         int band = selectedBand.load();
         if (soloButton->getToggleState())
@@ -264,6 +264,7 @@ void BandDetailPanel::setupMatchControls()
     matchClearButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff999999));
     matchClearButton.onClick = [this]() {
         processor.clearMatchEQ();
+        if (onMatchCleared) onMatchCleared();
         learnCurrentButton.setButtonText("Learn Current");
         learnCurrentButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a3a4a));
         learnCurrentButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff88aacc));
@@ -384,7 +385,7 @@ void BandDetailPanel::setMatchMode(bool isMatch)
     rangeKnob->setVisible(showDyn);
     ratioKnob->setVisible(showDyn);
     dynButton->setVisible(showDyn);
-    soloButton->setVisible(showDyn);
+    soloButton->setVisible(showEQ);
 
     learnCurrentButton.setVisible(matchMode);
     learnReferenceButton.setVisible(matchMode);
@@ -413,43 +414,6 @@ void BandDetailPanel::setMatchMode(bool isMatch)
     }
 
     resized();
-    repaint();
-}
-
-void BandDetailPanel::setLinearPhaseMode(bool isLinearPhase)
-{
-    if (linearPhaseMode == isLinearPhase)
-        return;
-
-    linearPhaseMode = isLinearPhase;
-
-    // In linear phase mode, dynamics/saturation/routing/invert/pan don't function
-    // because LP bypasses the IIR processing path entirely.
-    // Dim these controls to communicate this to the user.
-    float alpha = linearPhaseMode ? 0.35f : 1.0f;
-
-    dynButton->setAlpha(alpha);
-    dynButton->setEnabled(!linearPhaseMode);
-    thresholdKnob->setAlpha(alpha);
-    thresholdKnob->setEnabled(!linearPhaseMode);
-    attackKnob->setAlpha(alpha);
-    attackKnob->setEnabled(!linearPhaseMode);
-    releaseKnob->setAlpha(alpha);
-    releaseKnob->setEnabled(!linearPhaseMode);
-    rangeKnob->setAlpha(alpha);
-    rangeKnob->setEnabled(!linearPhaseMode);
-    ratioKnob->setAlpha(alpha);
-    ratioKnob->setEnabled(!linearPhaseMode);
-
-    invertButton->setAlpha(alpha);
-    invertButton->setEnabled(!linearPhaseMode);
-    phaseInvertButton->setAlpha(alpha);
-    phaseInvertButton->setEnabled(!linearPhaseMode);
-    panKnob->setAlpha(alpha);
-    panKnob->setEnabled(!linearPhaseMode);
-    soloButton->setAlpha(alpha);
-    soloButton->setEnabled(!linearPhaseMode);
-
     repaint();
 }
 
@@ -1194,12 +1158,14 @@ void BandDetailPanel::resized()
 
     currentX += knobSize + knobSpacing;
 
-    // INV + Phase buttons after the 3 EQ knobs
+    // INV + Phase + SOLO buttons after the 3 EQ knobs
     {
         int btnStartX = currentX + 10;
-        int fxBtnY = knobY + (knobSize - invBtnH) / 2;
+        int fxBtnY = knobY + (knobSize - invBtnH * 2 - 4) / 2;
         invertButton->setBounds(btnStartX, fxBtnY, invBtnW, invBtnH);
         phaseInvertButton->setBounds(btnStartX + invBtnW + invBtnGap, fxBtnY, invBtnW, invBtnH);
+        // SOLO: spans same width as INV+gap+PHASE, below them — clearly EQ section
+        soloButton->setBounds(btnStartX, fxBtnY + invBtnH + 4, invBtnW * 2 + invBtnGap, invBtnH);
     }
 
     // ===== PAN SECTION (center) =====
@@ -1228,5 +1194,4 @@ void BandDetailPanel::resized()
     int btnY = knobY + (knobSize - btnHeight * 2 - 4) / 2;
 
     dynButton->setBounds(currentX, btnY, btnWidth, btnHeight);
-    soloButton->setBounds(currentX, btnY + btnHeight + 4, btnWidth, btnHeight);
 }

@@ -38,8 +38,6 @@ MultiQ::MultiQ()
     masterGainParam = parameters.getRawParameterValue(ParamIDs::masterGain);
     bypassParam = parameters.getRawParameterValue(ParamIDs::bypass);
     hqEnabledParam = parameters.getRawParameterValue(ParamIDs::hqEnabled);
-    linearPhaseEnabledParam = parameters.getRawParameterValue(ParamIDs::linearPhaseEnabled);
-    linearPhaseLengthParam = parameters.getRawParameterValue(ParamIDs::linearPhaseLength);
     processingModeParam = parameters.getRawParameterValue(ParamIDs::processingMode);
     qCoupleModeParam = parameters.getRawParameterValue(ParamIDs::qCoupleMode);
 
@@ -144,8 +142,6 @@ MultiQ::MultiQ()
 
     // Add global parameter listeners
     parameters.addParameterListener(ParamIDs::hqEnabled, this);
-    parameters.addParameterListener(ParamIDs::linearPhaseEnabled, this);
-    parameters.addParameterListener(ParamIDs::linearPhaseLength, this);
     parameters.addParameterListener(ParamIDs::qCoupleMode, this);
     parameters.addParameterListener(ParamIDs::limiterEnabled, this);
     parameters.addParameterListener(ParamIDs::analyzerResolution, this);
@@ -186,8 +182,6 @@ MultiQ::~MultiQ()
     for (int i = 1; i <= 6; ++i)
         parameters.removeParameterListener(ParamIDs::bandShape(i + 1), this);
     parameters.removeParameterListener(ParamIDs::hqEnabled, this);
-    parameters.removeParameterListener(ParamIDs::linearPhaseEnabled, this);
-    parameters.removeParameterListener(ParamIDs::linearPhaseLength, this);
     parameters.removeParameterListener(ParamIDs::qCoupleMode, this);
     parameters.removeParameterListener(ParamIDs::limiterEnabled, this);
     parameters.removeParameterListener(ParamIDs::analyzerResolution, this);
@@ -231,49 +225,6 @@ void MultiQ::parameterChanged(const juce::String& parameterID, float newValue)
         setLatencySamples(getLatencySamples());
     }
 
-    // Linear phase mode change
-    if (parameterID == ParamIDs::linearPhaseEnabled)
-    {
-        linearPhaseModeEnabled = newValue > 0.5f;
-        linearPhaseParamsChanged.store(true);
-        setLatencySamples(getLatencySamples());
-    }
-
-    // Linear phase filter length change - apply at runtime
-    if (parameterID == ParamIDs::linearPhaseLength)
-    {
-        int lengthChoice = static_cast<int>(safeGetParam(linearPhaseLengthParam, 1.0f));
-        LinearPhaseEQProcessor::FilterLength filterLength;
-        int filterLengthSamples;
-        switch (lengthChoice)
-        {
-            case 0:
-                filterLength = LinearPhaseEQProcessor::Short;
-                filterLengthSamples = 4096;
-                break;
-            case 2:
-                filterLength = LinearPhaseEQProcessor::Long;
-                filterLengthSamples = 16384;
-                break;
-            default:
-                filterLength = LinearPhaseEQProcessor::Medium;
-                filterLengthSamples = 8192;
-                break;
-        }
-        for (auto& proc : linearPhaseEQ)
-        {
-            proc.setFilterLength(filterLength);
-        }
-
-        bool linearPhaseEnabled = safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f;
-        if (linearPhaseEnabled)
-        {
-            int newLatency = filterLengthSamples / 2;
-            setLatencySamples(newLatency);
-        }
-
-        linearPhaseParamsChanged.store(true);
-    }
 
     // Analyzer resolution change — defer allocation to processBlock
     if (parameterID == ParamIDs::analyzerResolution)
@@ -337,6 +288,13 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     scratchBuffer.setSize(2, maxOversampledBlockSize, false, false, true);
 
     int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
+
+    // British/Tube modes always require ≥2x oversampling for -100dB harmonic alias rejection.
+    // They contain nonlinear stages (ConsoleSaturation, InductorModel, TubeStage) that generate
+    // H2/H3 harmonics — without oversampling these fold back into the audible band.
+    auto currentEqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
+    if ((currentEqType == EQType::British || currentEqType == EQType::Tube) && osFactor < 2)
+        osFactor = 2;
 
     currentSampleRate = sampleRate * osFactor;
 
@@ -407,26 +365,6 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     dynamicEQ.prepare(currentSampleRate, 2);
     dynamicParamsChanged.store(true);
 
-    // Prepare Linear Phase EQ processors (one per channel)
-    // Note: Linear phase uses base sample rate (no oversampling - already FIR based)
-    linearPhaseModeEnabled = safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f;
-    int lengthChoice = static_cast<int>(safeGetParam(linearPhaseLengthParam, 1.0f));
-    LinearPhaseEQProcessor::FilterLength filterLength;
-    switch (lengthChoice)
-    {
-        case 0: filterLength = LinearPhaseEQProcessor::Short; break;
-        case 2: filterLength = LinearPhaseEQProcessor::Long; break;
-        default: filterLength = LinearPhaseEQProcessor::Medium; break;
-    }
-
-    for (auto& proc : linearPhaseEQ)
-    {
-        proc.setFilterLength(filterLength);
-        proc.prepare(baseSampleRate, samplesPerBlock);
-        proc.reset();
-    }
-    linearPhaseParamsChanged.store(true);
-
     // Pre-allocate FFT objects for all 3 resolutions (avoids RT allocation in processBlock)
     {
         static constexpr int orders[NUM_FFT_SIZES] = { FFT_ORDER_LOW, FFT_ORDER_MEDIUM, FFT_ORDER_HIGH };
@@ -468,6 +406,10 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
         eqMatchProcessor.reset();
     eqMatchProcessor.prepare(sampleRate, samplesPerBlock);
     matchConvolutionActive.store(false);
+    matchConvWetGain.reset(sampleRate, 0.01);  // 10 ms crossfade for clear
+    matchConvWetGain.setCurrentAndTargetValue(0.0f);
+    pendingMatchFadeOut.store(false);
+    matchDryBuffer.setSize(2, samplesPerBlock, false, false, true);
 
     // Reset analyzers (post-EQ and pre-EQ)
     analyzerFifo.reset();
@@ -493,10 +435,13 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     bypassSmoothed.setCurrentAndTargetValue(safeGetParam(bypassParam, 0.0f) > 0.5f ? 1.0f : 0.0f);
     dryBuffer.setSize(2, samplesPerBlock, false, false, true);
 
-    // Bypass delay: max possible latency = linear phase long (16384/2) + limiter (~48)
-    static constexpr int MAX_BYPASS_DELAY = 8240;
-    bypassDelayBuffer.setSize(2, MAX_BYPASS_DELAY, false, true, true);
+    // Bypass delay: sized to max possible latency (4x oversampler + max limiter lookahead).
+    // Must not use getLatencySamples() here — limiter may be off at prepare time but enabled
+    // later, and bypassDelayBuffer is never resized after this point.
+    const int MAX_BYPASS_DELAY = maxOversamplerLatency + outputLimiter.getMaxLookaheadSamples() + 1;
+    bypassDelayBuffer.setSize(2, juce::jmax(1, MAX_BYPASS_DELAY), false, true, true);
     bypassDelayWritePos = 0;
+    bypassDelayFillCount = 0;
     bypassDelayLength = getLatencySamples();
 
     for (int i = 0; i < NUM_BANDS; ++i)
@@ -517,11 +462,12 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     osChanging = false;
     prevOsBuffer.setSize(2, samplesPerBlock, false, false, true);
 
-    // Compute initial compensation delay for current OS mode
+    // Compute initial compensation delay using the effective osFactor (which may be ≥2 for
+    // British/Tube even when user sets HQ=Off, to satisfy the -100dB aliasing requirement).
     int currentOsLatency = 0;
-    if (oversamplingMode == 2 && oversampler4x)
+    if (osFactor == 4 && oversampler4x)
         currentOsLatency = static_cast<int>(std::lround(oversampler4x->getLatencyInSamples()));
-    else if (oversamplingMode == 1 && oversampler2x)
+    else if (osFactor >= 2 && oversampler2x)
         currentOsLatency = static_cast<int>(std::lround(oversampler2x->getLatencyInSamples()));
     osCompDelaySamples = maxOversamplerLatency - currentOsLatency;
 
@@ -567,8 +513,16 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     // Handle pending Match EQ operations (deferred from UI thread)
     if (pendingMatchClear.exchange(false))
     {
-        eqMatchProcessor.clearAll();
-        matchConvolutionActive.store(false, std::memory_order_release);
+        if (matchConvolutionActive.load(std::memory_order_acquire))
+        {
+            // Start a 10ms fade-out; the actual clear runs after fade completes (see below)
+            matchConvWetGain.setTargetValue(0.0f);
+            pendingMatchFadeOut.store(true, std::memory_order_release);
+        }
+        else
+        {
+            eqMatchProcessor.clearAll();
+        }
         // Cancel any queued learn requests so they don't restart learning this cycle
         pendingStartLearnCurrent.store(false, std::memory_order_relaxed);
         pendingStartLearnReference.store(false, std::memory_order_relaxed);
@@ -606,36 +560,51 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     bool bypassed = safeGetParam(bypassParam, 0.0f) > 0.5f;
     bypassSmoothed.setTargetValue(bypassed ? 1.0f : 0.0f);
 
-    // If fully bypassed and not transitioning, pass audio through delay line only
-    if (bypassed && !bypassSmoothed.isSmoothing())
+    // Always run the bypass delay line and store the latency-compensated dry signal in dryBuffer.
+    // This ensures the bypass crossfade blends time-aligned signals — critical for LP mode where
+    // the wet path is delayed by 4096+ samples. Without this, blending undelayed dry with
+    // LP-delayed wet produces an audible echo/repeat artifact.
     {
-        bypassSmoothed.skip(buffer.getNumSamples());
-
-        // Apply delay to maintain time-alignment with processing latency
         int delay = juce::jmin(bypassDelayLength, bypassDelayBuffer.getNumSamples());
+        int numSamples = buffer.getNumSamples();
+        int numCh = juce::jmin(buffer.getNumChannels(), bypassDelayBuffer.getNumChannels());
         if (delay > 0)
         {
-            int numSamples = buffer.getNumSamples();
-            int numCh = juce::jmin(buffer.getNumChannels(), bypassDelayBuffer.getNumChannels());
             for (int i = 0; i < numSamples; ++i)
             {
+                // Use the delayed signal only once the buffer has filled (bypassDelayFillCount >= delay).
+                // Before that, fall back to the current undelayed input so dryBuffer never holds zeros.
+                // Zeros would cause a level dip during bypass crossfades on a freshly-cleared buffer
+                // (e.g., immediately after enabling LP mode while Logic re-aligns its PDC).
+                bool primed = (bypassDelayFillCount + i >= delay);
                 for (int ch = 0; ch < numCh; ++ch)
                 {
                     float input = buffer.getSample(ch, i);
                     float delayed = bypassDelayBuffer.getSample(ch, bypassDelayWritePos);
                     bypassDelayBuffer.setSample(ch, bypassDelayWritePos, input);
-                    buffer.setSample(ch, i, delayed);
+                    dryBuffer.setSample(ch, i, primed ? delayed : input);
                 }
                 bypassDelayWritePos = (bypassDelayWritePos + 1) % delay;
             }
+            bypassDelayFillCount = juce::jmin(bypassDelayFillCount + numSamples, delay);
         }
-        return;
+        else
+        {
+            int safeSamples = juce::jmin(numSamples, dryBuffer.getNumSamples());
+            for (int ch = 0; ch < numCh; ++ch)
+                dryBuffer.copyFrom(ch, 0, buffer, ch, 0, safeSamples);
+        }
     }
 
-    // Save dry input for bypass crossfade (before any processing modifies the buffer)
-    int safeSamples = juce::jmin(buffer.getNumSamples(), dryBuffer.getNumSamples());
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-        dryBuffer.copyFrom(ch, 0, buffer, ch, 0, safeSamples);
+    // If fully bypassed and not transitioning, output the latency-aligned dry signal and return
+    if (bypassed && !bypassSmoothed.isSmoothing())
+    {
+        bypassSmoothed.skip(buffer.getNumSamples());
+        int safeSamples = juce::jmin(buffer.getNumSamples(), dryBuffer.getNumSamples());
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            buffer.copyFrom(ch, 0, dryBuffer, ch, 0, safeSamples);
+        return;
+    }
 
     // Check if oversampling mode changed - handle without calling prepareToPlay() for real-time safety
     int newOsMode = static_cast<int>(safeGetParam(hqEnabledParam, 0.0f));
@@ -649,6 +618,13 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
         oversamplingMode = newOsMode;
         int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
+        // British/Tube always need ≥2x to avoid aliasing from nonlinear stages.
+        // Must match the effectiveOsMode enforcement in processBlock.
+        {
+            auto curEqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
+            if ((curEqType == EQType::British || curEqType == EQType::Tube) && osFactor < 2)
+                osFactor = 2;
+        }
         // Update sample rate for filter coefficient calculations
         currentSampleRate = baseSampleRate * osFactor;
         double newSR = currentSampleRate;
@@ -683,12 +659,12 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         // Force filter coefficient update at new sample rate
         filtersNeedUpdate.store(true);
 
-        // Update compensation delay: difference between max (4x) and current mode latency.
+        // Update compensation delay using the effective osFactor (which may be ≥2 for British/Tube).
         // This keeps total latency constant so the DAW's PDC stays aligned.
         int currentOsLatency = 0;
-        if (oversamplingMode == 2 && oversampler4x)
+        if (osFactor == 4 && oversampler4x)
             currentOsLatency = static_cast<int>(std::lround(oversampler4x->getLatencyInSamples()));
-        else if (oversamplingMode == 1 && oversampler2x)
+        else if (osFactor >= 2 && oversampler2x)
             currentOsLatency = static_cast<int>(std::lround(oversampler2x->getLatencyInSamples()));
         osCompDelaySamples = maxOversamplerLatency - currentOsLatency;
         osCompDelayWritePos = 0;
@@ -709,6 +685,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             {
                 bypassDelayLength = correctLatency;
                 bypassDelayWritePos = 0;
+                bypassDelayFillCount = 0;
                 bypassDelayBuffer.clear();
             }
         }
@@ -725,6 +702,30 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         eqTypeChanging = true;
         eqTypeCrossfade.setCurrentAndTargetValue(0.0f);
         eqTypeCrossfade.setTargetValue(1.0f);
+
+        // When OS=off, switching between Digital (no min-2x enforcement) and British/Tube
+        // (enforced min 2x) changes the effective oversampling factor. Update sample rate
+        // and compensation delay to match so the DAW PDC stays correct.
+        if (oversamplingMode == 0)
+        {
+            auto prevIsNL = (previousEQType == EQType::British || previousEQType == EQType::Tube);
+            auto newIsNL  = (eqType == EQType::British || eqType == EQType::Tube);
+            if (prevIsNL != newIsNL)
+            {
+                int osFactor = newIsNL ? 2 : 1;
+                currentSampleRate = baseSampleRate.load() * osFactor;
+                double newSR = currentSampleRate;
+                britishEQ.updateSampleRate(newSR);
+                tubeEQ.updateSampleRate(newSR);
+                int currentOsLatency = 0;
+                if (osFactor >= 2 && oversampler2x)
+                    currentOsLatency = static_cast<int>(std::lround(oversampler2x->getLatencyInSamples()));
+                osCompDelaySamples = maxOversamplerLatency - currentOsLatency;
+                osCompDelayWritePos = 0;
+                osCompDelayBuffer.clear();
+            }
+        }
+
         previousEQType = eqType;
 
         // Force filter rebuild on mode change. This ensures that when switching to Digital
@@ -739,8 +740,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     // Always update SVF/biquad coefficients for UI curve display.
     // In non-LP mode, also consume the flag. In LP mode, leave it for the FIR rebuild path.
     {
-        bool lpActive = linearPhaseModeEnabled && (eqType == EQType::Digital);
-        bool needsUpdate = lpActive ? filtersNeedUpdate.load() : filtersNeedUpdate.exchange(false);
+        bool needsUpdate = filtersNeedUpdate.exchange(false);
         if ((eqType == EQType::Digital || eqType == EQType::Match) && needsUpdate)
             updateAllFilters();
     }
@@ -886,22 +886,19 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     auto procMode = static_cast<ProcessingMode>(
         static_cast<int>(safeGetParam(processingModeParam, 0.0f)));
 
-    // Check linear phase early so we can skip oversampling (linear phase processes raw buffer)
-    bool useLinearPhaseEarly = (eqType == EQType::Digital)
-        && safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f;
+    // Effective OS mode: British/Tube enforce minimum 2x for -100dB alias rejection.
+    // This matches the osFactor enforced in prepareToPlay for correct filter initialization.
+    int effectiveOsMode = oversamplingMode;
+    if ((eqType == EQType::British || eqType == EQType::Tube) && effectiveOsMode < 1)
+        effectiveOsMode = 1;
 
-    // Oversampling upsample (skip when linear phase is active — it processes the raw buffer
-    // directly and skips processSamplesDown, so calling processSamplesUp would corrupt state)
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::AudioBlock<float> processBlock = block;
 
-    if (!useLinearPhaseEarly)
-    {
-        if (oversamplingMode == 2 && oversampler4x)
-            processBlock = oversampler4x->processSamplesUp(block);
-        else if (oversamplingMode == 1 && oversampler2x)
-            processBlock = oversampler2x->processSamplesUp(block);
-    }
+    if (effectiveOsMode == 2 && oversampler4x)
+        processBlock = oversampler4x->processSamplesUp(block);
+    else if (effectiveOsMode >= 1 && oversampler2x)
+        processBlock = oversampler2x->processSamplesUp(block);
 
     int numSamples = static_cast<int>(processBlock.getNumSamples());
     const bool isStereo = processBlock.getNumChannels() > 1;
@@ -930,9 +927,6 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     // Global M/S encode for British/Tube EQ modes (they don't have per-band routing)
     // Digital mode uses per-band routing instead
     bool useMS = (procMode == ProcessingMode::Mid || procMode == ProcessingMode::Side);
-
-    // Linear phase flag (already read early for oversampling gate)
-    bool useLinearPhase = useLinearPhaseEarly;
 
     if (isStereo && useMS && eqType != EQType::Digital)
     {
@@ -1024,14 +1018,13 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
             bandDynEnabled[static_cast<size_t>(i)] = safeGetParam(bandDynEnabledParams[static_cast<size_t>(i)], 0.0f) > 0.5f;
         }
 
-        // Match mode: disable dynamics and always bypass parametric bands 2-7.
-        // When FIR correction is active, it handles the curve. When no correction has
-        // been computed yet, the output should be flat — never inherit Digital EQ gains.
+        // Match mode: disable dynamics and bypass ALL Digital EQ bands (including HPF/LPF).
+        // The FIR correction handles the full correction curve; Digital EQ settings
+        // must not bleed through — output should be flat when no correction is computed.
         if (eqType == EQType::Match)
         {
             bandDynEnabled.fill(false);
-            for (int i = 1; i < 7; ++i)
-                bandEnabled[static_cast<size_t>(i)] = false;
+            bandEnabled.fill(false);
         }
 
         // Apply solo mode: if any band is soloed, only that band is processed
@@ -1053,54 +1046,6 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         for (int i = 0; i < NUM_BANDS; ++i)
             bandEnableSmoothed[static_cast<size_t>(i)].setTargetValue(bandEnabled[static_cast<size_t>(i)] ? 1.0f : 0.0f);
 
-        if (useLinearPhase)
-        {
-            // Linear Phase mode: Use FIR-based processing (no per-band dynamics)
-            // Note: Linear phase mode doesn't support oversampling or per-band dynamics
-
-            // Gather EQ parameters for the linear phase processor
-            std::array<float, NUM_BANDS> lpFreqs{}, lpGains{}, lpQs{};
-            std::array<int, 2> lpSlopes{};
-
-            for (int i = 0; i < NUM_BANDS; ++i)
-            {
-                lpFreqs[static_cast<size_t>(i)] = safeGetParam(bandFreqParams[static_cast<size_t>(i)],
-                    DefaultBandConfigs[static_cast<size_t>(i)].defaultFreq);
-                float g = safeGetParam(bandGainParams[static_cast<size_t>(i)], 0.0f);
-                if (safeGetParam(bandInvertParams[static_cast<size_t>(i)], 0.0f) > 0.5f)
-                    g = -g;
-                lpGains[static_cast<size_t>(i)] = g;
-                lpQs[static_cast<size_t>(i)] = safeGetParam(bandQParams[static_cast<size_t>(i)], 0.71f);
-            }
-            lpSlopes[0] = static_cast<int>(safeGetParam(bandSlopeParams[0], 0.0f));
-            lpSlopes[1] = static_cast<int>(safeGetParam(bandSlopeParams[1], 0.0f));
-
-            float lpMasterGain = safeGetParam(masterGainParam, 0.0f);
-
-            // Update the impulse response only if parameters changed (dirty flag check)
-            // The IR rebuild happens on a background thread, so this is safe to call
-            // but we avoid unnecessary work by only updating when needed
-            bool lpChanged = linearPhaseParamsChanged.exchange(false);
-            bool filtersChanged = filtersNeedUpdate.exchange(false);
-            if (lpChanged || filtersChanged)
-            {
-                for (auto& proc : linearPhaseEQ)
-                {
-                    proc.updateImpulseResponse(bandEnabled, lpFreqs, lpGains, lpQs, lpSlopes, lpMasterGain);
-                }
-            }
-
-            // Process through linear phase EQ (works on original buffer, not oversampled)
-            // Linear phase already handles its own zero-padding internally
-            linearPhaseEQ[0].processChannel(0, buffer.getWritePointer(0), buffer.getNumSamples());
-            if (buffer.getNumChannels() > 1)
-                linearPhaseEQ[1].processChannel(0, buffer.getWritePointer(1), buffer.getNumSamples());
-
-            // Skip the normal IIR processing and M/S decode (linear phase processes raw L/R)
-            // Master gain is included in the linear phase impulse response
-            // Skip to analyzer and metering
-        }
-        else
         {
             // Standard IIR mode with optional per-band dynamics
             // Update dynamic processor parameters for all bands
@@ -1463,24 +1408,20 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                 prevBandPhaseInvertGain[idx] = targetPhaseInvertGain[idx];
                 prevBandPanVal[idx] = targetPanVal[idx];
             }
-        }  // end IIR else
+        }  // end IIR block
     }  // end Digital mode else
 
-    // Skip M/S decode, oversampling, and master gain for linear phase mode
-    // (Linear phase processes raw L/R buffer directly and includes master gain in the IR)
-    if (!useLinearPhase)
-    {
-        // M/S decode for British/Tube EQ modes (Digital mode handles M/S per-band)
+    // M/S decode for British/Tube EQ modes (Digital mode handles M/S per-band)
         if (isStereo && useMS && eqType != EQType::Digital)
         {
             for (int i = 0; i < numSamples; ++i)
                 decodeMS(procL[i], procR[i]);
         }
 
-        // Oversampling downsample
-        if (oversamplingMode == 2 && oversampler4x)
+        // Oversampling downsample (use effectiveOsMode to match the upsample decision above)
+        if (effectiveOsMode == 2 && oversampler4x)
             oversampler4x->processSamplesDown(block);
-        else if (oversamplingMode == 1 && oversampler2x)
+        else if (effectiveOsMode >= 1 && oversampler2x)
             oversampler2x->processSamplesDown(block);
 
         // Oversampling latency compensation delay — keeps total latency constant
@@ -1505,15 +1446,54 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         // Match EQ convolution (FIR correction filter, after downsample, before master gain)
         if (eqType == EQType::Match && matchConvolutionActive.load(std::memory_order_acquire))
         {
-            juce::dsp::AudioBlock<float> matchBlock(buffer);
-            juce::dsp::ProcessContextReplacing<float> ctx(matchBlock);
-            matchConvolution.process(ctx);
+            // Snap to full wet immediately when correction is first applied
+            if (matchConvWetGain.getCurrentValue() < 0.5f && !matchConvWetGain.isSmoothing())
+                matchConvWetGain.setCurrentAndTargetValue(1.0f);
+
+            if (matchConvWetGain.isSmoothing())
+            {
+                // Crossfade: copy dry signal into pre-allocated buffer without reallocating.
+                // matchDryBuffer is sized to maxBlockSize in prepareToPlay; copyFrom is always
+                // safe because partial blocks are always ≤ maxBlockSize.
+                const int nSamples  = buffer.getNumSamples();
+                const int nChannels = juce::jmin(buffer.getNumChannels(), matchDryBuffer.getNumChannels());
+                for (int ch = 0; ch < nChannels; ++ch)
+                    matchDryBuffer.copyFrom(ch, 0, buffer, ch, 0, nSamples);
+
+                juce::dsp::AudioBlock<float> matchBlock(buffer);
+                juce::dsp::ProcessContextReplacing<float> ctx(matchBlock);
+                matchConvolution.process(ctx);
+                for (int s = 0; s < nSamples; ++s)
+                {
+                    const float wet = matchConvWetGain.getNextValue();
+                    const float dryWet = 1.0f - wet;
+                    for (int ch = 0; ch < nChannels; ++ch)
+                    {
+                        const float dryS = matchDryBuffer.getSample(ch, s);
+                        buffer.setSample(ch, s, dryS * dryWet + buffer.getSample(ch, s) * wet);
+                    }
+                }
+
+                // Fade-out complete — safe to deactivate and clear
+                if (pendingMatchFadeOut.load(std::memory_order_relaxed) && !matchConvWetGain.isSmoothing())
+                {
+                    eqMatchProcessor.clearAll();
+                    matchConvolutionActive.store(false, std::memory_order_release);
+                    pendingMatchFadeOut.store(false, std::memory_order_release);
+                }
+            }
+            else
+            {
+                // Steady state — direct in-place convolution, no dry copy needed
+                juce::dsp::AudioBlock<float> matchBlock(buffer);
+                juce::dsp::ProcessContextReplacing<float> ctx(matchBlock);
+                matchConvolution.process(ctx);
+            }
         }
 
         // Apply master gain
         float masterGain = juce::Decibels::decibelsToGain(safeGetParam(masterGainParam, 0.0f));
         buffer.applyGain(masterGain);
-    }
 
     // NaN/Inf sanitization before auto-gain and metering (bitwise, immune to -ffast-math)
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -2374,6 +2354,12 @@ float MultiQ::getEffectiveQ(int bandNum) const
 
 float MultiQ::getFrequencyResponseMagnitude(float frequencyHz) const
 {
+    // Match mode bypasses all Digital EQ bands — return flat (0 dB) so the combined
+    // curve shows a straight line and never bleeds through the Digital EQ settings.
+    auto currentEqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
+    if (currentEqType == EQType::Match)
+        return 0.0f;
+
     // When filters haven't been refreshed by the audio thread yet (e.g. immediately
     // after a transfer or parameter change with no audio playing), compute directly
     // from current parameter values to give accurate display without needing processBlock.
@@ -3025,22 +3011,12 @@ bool MultiQ::computeMatchCorrection()
     float maxBoostDB = limitBoost ? 6.0f : 0.0f;    // 0 = use hard limit only (±15 dB)
     float maxCutDB = limitCut ? -6.0f : 0.0f;        // Limit buttons tighten to ±6 dB
 
-    DBG("MultiQ::computeMatchCorrection - apply=" + juce::String(applyAmount, 2)
-        + " smooth=" + juce::String(smoothingSemitones, 1)
-        + " limitBoost=" + juce::String(limitBoost ? 1 : 0)
-        + " limitCut=" + juce::String(limitCut ? 1 : 0)
-        + " baseSampleRate=" + juce::String(baseSampleRate.load()));
-
     bool success = eqMatchProcessor.computeCorrection(
         smoothingSemitones, applyAmount, maxBoostDB, maxCutDB, true /* minimum phase */);
-
-    DBG("  computeCorrection returned: " + juce::String(success ? "true" : "false"));
 
     if (success)
     {
         juce::AudioBuffer<float> ir = eqMatchProcessor.getCorrectionIR();
-        DBG("  IR samples: " + juce::String(ir.getNumSamples())
-            + " peak: " + juce::String(ir.getNumSamples() > 0 ? ir.getMagnitude(0, ir.getNumSamples()) : 0.0f, 6));
         if (ir.getNumSamples() > 0)
         {
             matchConvolution.loadImpulseResponse(
@@ -3061,11 +3037,9 @@ bool MultiQ::computeMatchCorrection()
                         static_cast<float>(static_cast<int>(EQType::Match))
                         / static_cast<float>(numChoices - 1));
             }
-            DBG("  Match correction APPLIED successfully, convolution active");
             return true;
         }
     }
-    DBG("  Match correction FAILED");
     return false;
 }
 
@@ -3430,20 +3404,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiQ::createParameterLayou
         "Oversampling",
         juce::StringArray{"Off", "2x", "4x"},
         0  // Default: Off
-    ));
-
-    // Linear Phase mode (FIR-based, introduces latency)
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID(ParamIDs::linearPhaseEnabled, 1),
-        "Linear Phase Mode",
-        false  // Default to off (zero latency IIR mode)
-    ));
-
-    params.push_back(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID(ParamIDs::linearPhaseLength, 1),
-        "Linear Phase Quality",
-        juce::StringArray{"Low Latency (46ms)", "Balanced (93ms)", "High Quality (186ms)"},
-        1  // Balanced by default
     ));
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
@@ -4006,8 +3966,6 @@ void MultiQ::setStateInformation(const void* data, int sizeInBytes)
         britishParamsChanged.store(true);
         tubeEQParamsChanged.store(true);
         dynamicParamsChanged.store(true);
-        linearPhaseParamsChanged.store(true);
-
         // Restore Match EQ learned spectra and correction data
         if (eqMatchProcessor.deserialize(*xmlState))
         {
@@ -4117,14 +4075,6 @@ const juce::String MultiQ::getProgramName(int index)
 
 int MultiQ::getLatencySamples() const
 {
-    // Report latency for linear phase mode
-    // Linear phase EQ introduces latency of filterLength / 2 samples
-    if (linearPhaseModeEnabled && linearPhaseEnabledParam &&
-        safeGetParam(linearPhaseEnabledParam, 0.0f) > 0.5f)
-    {
-        return linearPhaseEQ[0].getLatencyInSamples() + outputLimiter.getLatencySamples();
-    }
-
     // Always report max oversampler latency (4x) so DAW PDC stays constant
     // when switching oversampling modes mid-playback. A compensation delay line
     // fills the gap for Off/2x modes.
@@ -4140,14 +4090,6 @@ double MultiQ::getTailLengthSeconds() const
     // Limiter release tail (~100ms)
     if (outputLimiter.isEnabled())
         tail = std::max(tail, 0.15);
-
-    // Linear phase FIR convolution tail
-    if (linearPhaseModeEnabled.load(std::memory_order_relaxed))
-    {
-        double sr = baseSampleRate.load(std::memory_order_relaxed);
-        if (sr > 0.0)
-            tail = std::max(tail, static_cast<double>(linearPhaseEQ[0].getFilterLength()) / sr);
-    }
 
     // Oversampling anti-alias filter ringing (~10ms worst case for 4x)
     int osMode = oversamplingMode.load(std::memory_order_relaxed);

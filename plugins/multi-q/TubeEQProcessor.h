@@ -196,30 +196,55 @@ private:
     float componentSatVariation = 1.0f;
 };
 
-/** Tube stage model: triode gain stage + cathode follower output. */
+/*
+  Tube stage model: polynomial waveshaper calibrated to Pultec EQP-1A character.
+
+  Architecture (per sample):
+    1. Anti-alias LP at ~10 kHz  — HF residual bypasses waveshaper entirely
+    2. LF split at ~300 Hz       — isolates sub-bass for transformer H3 boost
+    3. Polynomial waveshaper     — y = x + b·x² + c·x³ + d·x⁴  (all from same x)
+                                   x = filteredInput · drive · DRIVE_SCALE
+    4. LF transformer H3         — extra H3 on the LF split component only
+    5. DC blocking               — removes DC from even-order (x², x⁴) terms
+    6. Gain compensation         — preserves unity gain at low drive
+
+  Harmonic profile at nominal (drive=0.5, input amplitude A=0.5):
+    H2 ≈ 0.375%   (12AX7/12AU7 push-pull warmth — dominant, ~82% of THD)
+    H3 ≈ 0.065%   (general tube character — ~14% of THD)
+    H4 ≈ 0.015%   (secondary tube — ~3% of THD)
+    H5 ≈ 0%       (negligible)
+  Total THD ≈ 0.38%, matching a nominal Pultec EQP-1A at 0 VU.
+
+  Drive-dependent scaling (natural from polynomial):
+    H2 ∝ drive¹·A    — grows linearly ("syrupy tube warmth" at low drive)
+    H3 ∝ drive²·A²   — grows quadratically (transformer H3 rises faster at high drive)
+    H4 ∝ drive³·A³   — grows cubically
+
+  Frequency-dependent H3 (transformer modeling):
+    The LF split at ~300 Hz ensures transformer H3 is dominant in the sub-bass.
+    At 8 kHz the LF state is ~0, so no extra H3 is generated at HF.
+    At 80 Hz the LF state ≈ input, producing the characteristic low-end "growl".
+
+  Real Pultec EQP-1A: passive LC network + 12AX7/12AU7 tube makeup amp + Peerless
+  transformers. H2-dominant from tubes (push-pull topology cancels odd harmonics but
+  reinforces even ones). Peerless iron adds H3 in the low end from core saturation.
+*/
 class TubeEQTubeStage
 {
 public:
-    void prepare(double sampleRate, int numChannels)
+    void prepare(double sampleRate, int /*numChannels*/)
     {
         this->sampleRate = sampleRate;
         for (auto& dc : dcBlockers)
             dc.prepare(sampleRate, 8.0f);
-
-        // Slew rate limiting coefficient
-        maxSlewRate = static_cast<float>(150000.0 / sampleRate);  // ~150V/ms typical
-
-        computeDecayCoefficients(sampleRate);
+        computeCoefficients(sampleRate);
         reset();
     }
 
     void reset()
     {
-        prevSamples.fill(0.0f);
-        cathodeVoltages.fill(0.0f);
-        gridCurrents.fill(0.0f);
-        cathodeBypassStates.fill(0.0f);
         preLPStates.fill(0.0f);
+        lfStates.fill(0.0f);
         for (auto& dc : dcBlockers)
             dc.reset();
     }
@@ -228,8 +253,7 @@ public:
     void updateSampleRate(double newRate)
     {
         sampleRate = newRate;
-        maxSlewRate = static_cast<float>(150000.0 / newRate);
-        computeDecayCoefficients(newRate);
+        computeCoefficients(newRate);
         reset();
     }
 
@@ -243,174 +267,93 @@ public:
         if (drive < 0.01f)
             return input;
 
-        int ch = std::clamp(channel, 0, maxChannels - 1);
-        float& prevSample = prevSamples[static_cast<size_t>(ch)];
-        float& cathodeVoltage = cathodeVoltages[static_cast<size_t>(ch)];
-        float& gridCurrent = gridCurrents[static_cast<size_t>(ch)];
-        float& cathodeBypassState = cathodeBypassStates[static_cast<size_t>(ch)];
-        float& preLPState = preLPStates[static_cast<size_t>(ch)];
+        if (!safeIsFinite(input))
+            return 0.0f;
 
-        // Pre-saturation anti-alias split: 1-pole LP at ~10 kHz.
-        // The LP-filtered signal drives the nonlinearity; the HF residual (input - LP)
-        // bypasses the waveshaper entirely and is summed back at the output.
-        // Result: LF/mid gets tube character and harmonics; HF passes through cleanly.
-        // No aliases, no darkening of the overall tone.
-        // At oversampled rates (~176 kHz) the LP cutoff is deep in the ultrasonic range —
-        // the split is transparent and all content hits the nonlinearity as normal.
+        int ch = std::clamp(channel, 0, maxChannels - 1);
+        float& preLPState = preLPStates[static_cast<size_t>(ch)];
+        float& lfState    = lfStates[static_cast<size_t>(ch)];
+
+        // ── 1. Anti-alias pre-LP at ~10 kHz ─────────────────────────────────────
+        // HF residual bypasses the waveshaper and is recombined at the output.
+        // Prevents high-frequency content from generating alias products.
+        // At oversampled rates the LP is transparent (cutoff remains at 10 kHz
+        // regardless of sample rate, so it moves above 20 kHz at ≥88 kHz SR).
         preLPState += preLPCoeff * (input - preLPState);
         const float filteredInput = preLPState;
-        const float hfPass = input - filteredInput;  // HF residual: bypasses the waveshaper
+        const float hfPass = input - filteredInput;
 
-        // Use a power curve so the knob gives a more gradual onset at low settings.
-        // Real Pultec cathode follower is very clean at its fixed bias point —
-        // distortion only becomes audible when driven significantly.
-        // drive 0.0→1.0 maps to driveGain 1.0→5.0 with quadratic taper.
-        float driveGain = 1.0f + drive * drive * 4.0f;
-        float drivenSignal = filteredInput * driveGain;
+        // ── 2. LF split at ~300 Hz (transformer core saturation model) ──────────
+        // Only sub-bass content reaches lfState significantly; mid/HF is ~0.
+        lfState += lfCoeff * (filteredInput - lfState);
 
-        // Grid current limiting with softer onset
-        // Real 12AX7: grid current begins gradually around Vgk = 0V
-        // Using a soft exponential onset instead of hard threshold
-        float gridBias = -1.5f;
-        float effectiveGrid = drivenSignal + gridBias;
+        // ── 3. Polynomial waveshaper ─────────────────────────────────────────────
+        // All harmonic terms computed from the same xd — no cascading inflation.
+        // Dividing distortion by driveAmount normalises gain while preserving
+        // harmonic scaling: H2 ∝ drive¹·A, H3 ∝ drive²·A², H4 ∝ drive³·A³.
+        const float DRIVE_SCALE = 2.0f;
+        const float driveAmount = drive * DRIVE_SCALE;
+        const float xd  = filteredInput * driveAmount;
+        const float xd2 = xd * xd;
+        const float xd3 = xd2 * xd;
+        const float xd4 = xd2 * xd2;
 
-        // Grid current onset — current flows when grid goes positive
-        float gridCurrentAmount = std::max(0.0f, effectiveGrid + 1.5f) * 0.15f;
-        gridCurrent = gridCurrent * gridDecay + gridCurrentAmount * (1.0f - gridDecay);
+        // Calibrated at nominal (drive=0.5, A=0.5, driveAmount=1.0):
+        //   H2 ≈ 0.375%  — 12AX7/12AU7 push-pull warmth (dominant, ~82% of THD)
+        //   H3 ≈ 0.065%  — general tube character (~14% of THD)
+        //   H4 ≈ 0.015%  — secondary tube harmonic (~3% of THD)
+        const float b = 0.015f;    // H2 — x² is EVEN → true 2nd harmonic + DC
+        const float c = 0.0104f;  // H3 — x³ is ODD  → true 3rd harmonic
+        const float d = 0.0096f;  // H4 — x⁴ is EVEN → true 4th harmonic + DC
 
-        float compressionFactor = 1.0f / (1.0f + gridCurrent * drive * 2.0f);
+        // ── 4. LF transformer H3 (Peerless iron core saturation) ────────────────
+        // Extra H3 applied only to the LF component. At 8 kHz, lfState ≈ 0 —
+        // no extra H3 is generated at high frequencies, preventing aliasing.
+        // At 80 Hz, lfState ≈ filteredInput → pronounced "growl" in the sub-bass.
+        // H3 from transformer grows as driveAmount² (faster than tube H2) — at
+        // heavy drive the transformer H3 rises disproportionately, matching the
+        // behaviour of a Pultec driven hard on a drum bus.
+        const float xd_lf = lfState * driveAmount;
+        const float transformerH3 = 0.025f * xd_lf * xd_lf * xd_lf;  // LF-only H3
 
-        // Triode transfer curve (asymmetric)
-        float Vg = drivenSignal;
-        float plateVoltage;
-        if (Vg >= 0.0f)
-        {
-            // Positive half: grid loading and soft saturation
-            float x = Vg * compressionFactor;
-            if (x < 0.4f)
-                plateVoltage = x * 1.05f;
-            else if (x < 0.8f)
-            {
-                float t = (x - 0.4f) / 0.4f;
-                plateVoltage = 0.42f + 0.38f * (t - 0.15f * t * t);
-            }
-            else
-            {
-                float t = x - 0.8f;
-                plateVoltage = 0.78f + 0.15f * std::tanh(t * 2.0f);
-            }
-        }
-        else
-        {
-            // Negative half: cutoff region behavior
-            float x = -Vg * compressionFactor;
-            if (x < 0.3f)
-                plateVoltage = -x * 0.95f;
-            else if (x < 0.7f)
-            {
-                float t = (x - 0.3f) / 0.4f;
-                plateVoltage = -(0.285f + 0.35f * (t - 0.2f * t * t));
-            }
-            else
-            {
-                float t = x - 0.7f;
-                plateVoltage = -(0.62f + 0.2f * std::tanh(t * 3.0f));
-            }
-        }
+        float distortion = b*xd2 + c*xd3 + d*xd4 + transformerH3;
+        float y = filteredInput + distortion / driveAmount;
 
-        // Cathode bypass capacitor: frequency-dependent negative feedback
-        // The cathode resistor Rk provides negative feedback that reduces gain.
-        // A bypass capacitor Ck shorts Rk at frequencies above fc = 1/(2*pi*Rk*Ck).
-        // Below fc: full negative feedback (lower gain, lower distortion)
-        // Above fc: bypass active (higher gain, more harmonics)
-        // This creates the characteristic "bottom end thickening" of tube EQs
-        // Real Pultec: Rk=1.5k, Ck=25uF → fc ≈ 4.2Hz (sub-audio)
-        // At this frequency the bypass cap has no audible frequency-dependent effect —
-        // it's fully bypassed across the entire audio band.
-        float cathodeBypassFreq = 4.2f;
-        float cathodeBypassAlpha = static_cast<float>(
-            1.0 - std::exp(-juce::MathConstants<double>::twoPi * cathodeBypassFreq / sampleRate));
+        // ── 5. DC blocking ───────────────────────────────────────────────────────
+        // Even-order terms (x², x⁴) introduce DC; the DC blocker removes it.
+        y = dcBlockers[static_cast<size_t>(ch)].processSample(y);
 
-        // Track cathode voltage: LPF models the bypass capacitor charging
-        cathodeBypassState += cathodeBypassAlpha * (plateVoltage - cathodeBypassState);
-
-        // Feedback amount: at LF (where bypass cap doesn't short Rk), more feedback = less gain
-        // At HF (where bypass cap shorts Rk), less feedback = more gain + harmonics
-        float cfOutput = plateVoltage * 0.95f + cathodeVoltage * 0.05f;
-
-        // Cathode voltage tracking (slower, for DC behavior)
-        float cathodeAlpha = static_cast<float>(
-            1.0 - std::exp(-juce::MathConstants<double>::twoPi * 20.0 / sampleRate));
-        cathodeVoltage += (cfOutput - cathodeVoltage) * cathodeAlpha;
-
-        // Cathode follower asymmetry (grid-cathode diode effect)
-        if (cfOutput > 0.9f)
-        {
-            float excess = cfOutput - 0.9f;
-            cfOutput = 0.9f + 0.08f * std::tanh(excess * 3.0f);
-        }
-
-        // Level-dependent harmonic content
-        // At low levels: 2nd harmonic dominates (tube "warmth")
-        // At high levels: 3rd and higher harmonics increase disproportionately (tube "grit")
-        // Pultec 12AX7 cathode follower: NOT a gain stage, just impedance buffer.
-        // Very clean at nominal levels. H2 at -60 to -55dB (0.1-0.2% THD).
-        // H2 dominant (cathode follower topology), H3 significantly lower.
-        // Distortion only becomes significant above +15 dBu.
-        float h2 = 0.02f * drive * cfOutput * std::abs(cfOutput);
-        float h3 = 0.005f * drive * cfOutput * cfOutput * cfOutput;
-        float h4 = 0.002f * drive * std::abs(cfOutput * cfOutput * cfOutput * cfOutput)
-                   * std::copysign(1.0f, cfOutput);
-
-        float output = cfOutput + h2 + h3 + h4;
-
-        // Slew rate limiting
-        float deltaV = output - prevSample;
-        if (std::abs(deltaV) > maxSlewRate)
-        {
-            output = prevSample + std::copysign(maxSlewRate, deltaV);
-        }
-
-        // Makeup gain
-        output *= (1.0f / driveGain) * (1.0f + drive * 0.4f);
-
-        // DC blocking (applied to the saturated LF signal only)
-        output = dcBlockers[static_cast<size_t>(ch)].processSample(output);
-
-        prevSample = output;
-
-        // Recombine: saturated LF + clean HF bypass
-        return output + hfPass;
+        // ── 6. Recombine: saturated LF/mid + clean HF bypass ────────────────────
+        // No gain compensation needed: y = filteredInput + distortion/driveAmount
+        // is inherently ~unity-gain at the fundamental.
+        const float result = y + hfPass;
+        return safeIsFinite(result) ? result : input;
     }
 
 private:
-    void computeDecayCoefficients(double sr)
+    void computeCoefficients(double sr)
     {
-        gridDecay = std::exp(-1.0f / (0.00021f * static_cast<float>(sr)));  // 0.21ms grid current
-
-        // Pre-saturation anti-alias LP: 1-pole at ~10 kHz.
-        // At base SR (44.1 kHz): significant HF rolloff before the tube waveshaper,
-        // preventing high-frequency content from generating audible alias products.
-        // At oversampled rates (88.2 / 176.4 kHz): barely affects audible content —
-        // the LP does its work well above 20 kHz, so behaviour with OS is unchanged.
+        // Anti-alias LP at 10 kHz — fixed frequency, not scaled with SR.
+        // At 44.1 kHz this provides ~-2 dB at 8 kHz, keeping most audio content
+        // going through the waveshaper. At ≥88.2 kHz it is transparent.
         preLPCoeff = 1.0f - std::exp(
             -juce::MathConstants<float>::twoPi * 10000.0f / static_cast<float>(sr));
+
+        // Transformer LF split at ~300 Hz.
+        // Below 300 Hz: lfState tracks filteredInput (full amplitude → strong transformer H3).
+        // Above 300 Hz: lfState ≈ 0 (no transformer H3 generated at mid/HF).
+        lfCoeff = 1.0f - std::exp(
+            -juce::MathConstants<float>::twoPi * 300.0f / static_cast<float>(sr));
     }
 
     static constexpr int maxChannels = 8;
     double sampleRate = 44100.0;
     float drive = 0.3f;
-    float maxSlewRate = 0.003f;
-    float gridDecay = 0.9f;      // Sample-rate-dependent grid current decay
-    float preLPCoeff = 0.77f;    // Pre-saturation anti-alias LP coefficient (~10 kHz at 44.1 kHz)
+    float preLPCoeff = 0.77f;  // Anti-alias LP (~10 kHz at 44.1 kHz)
+    float lfCoeff    = 0.04f;  // Transformer LF split (~300 Hz at 44.1 kHz)
 
-    // Per-channel state (indexed by channel)
-    std::array<float, maxChannels> prevSamples{};
-    std::array<float, maxChannels> cathodeVoltages{};
-    std::array<float, maxChannels> gridCurrents{};
-    std::array<float, maxChannels> cathodeBypassStates{};
-    std::array<float, maxChannels> preLPStates{};   // Pre-saturation LP filter state
-
+    std::array<float, maxChannels> preLPStates{};
+    std::array<float, maxChannels> lfStates{};
     std::array<AnalogEmulation::DCBlocker, maxChannels> dcBlockers;
 };
 

@@ -8,7 +8,6 @@
 #include "BritishEQProcessor.h"
 #include "TubeEQProcessor.h"
 #include "DynamicEQProcessor.h"
-#include "LinearPhaseEQProcessor.h"
 #include "OutputLimiter.h"
 #include "EQMatchProcessor.h"
 #include "../shared/AnalogEmulation/WaveshaperCurves.h"
@@ -417,9 +416,29 @@ public:
             || pendingStartLearnReference.load(std::memory_order_acquire);
     }
     int getMatchLearningFrameCount() const { return eqMatchProcessor.getLearningFrameCount(); }
-    bool hasMatchCurrentSpectrum() const { return eqMatchProcessor.hasCurrentSpectrum(); }
-    bool hasMatchReferenceSpectrum() const { return eqMatchProcessor.hasReferenceSpectrum(); }
-    bool hasMatchCorrectionCurve() const { return eqMatchProcessor.hasCorrectionCurve(); }
+    // All three return false immediately when a clear is pending so the graph
+    // goes fully blank before the audio thread processes the deferred clear.
+    bool hasMatchCurrentSpectrum() const
+    {
+        if (pendingMatchClear.load(std::memory_order_acquire) ||
+            pendingMatchFadeOut.load(std::memory_order_acquire))
+            return false;
+        return eqMatchProcessor.hasCurrentSpectrum();
+    }
+    bool hasMatchReferenceSpectrum() const
+    {
+        if (pendingMatchClear.load(std::memory_order_acquire) ||
+            pendingMatchFadeOut.load(std::memory_order_acquire))
+            return false;
+        return eqMatchProcessor.hasReferenceSpectrum();
+    }
+    bool hasMatchCorrectionCurve() const
+    {
+        if (pendingMatchClear.load(std::memory_order_acquire) ||
+            pendingMatchFadeOut.load(std::memory_order_acquire))
+            return false;
+        return eqMatchProcessor.hasCorrectionCurve();
+    }
     bool isMatchConvolutionActive() const { return matchConvolutionActive.load(std::memory_order_acquire); }
 
     bool isMatchMode() const
@@ -539,7 +558,8 @@ private:
     // Without this, toggling bypass triggers DAW PDC recalculation → audible click/gap.
     juce::AudioBuffer<float> bypassDelayBuffer;
     int bypassDelayWritePos = 0;
-    int bypassDelayLength = 0;  // Updated when latency changes
+    int bypassDelayLength = 0;   // Updated when latency changes
+    int bypassDelayFillCount = 0; // Samples written since last clear; gates delayed-read path
 
     // Per-band enable/disable crossfade (~3ms)
     std::array<juce::SmoothedValue<float>, NUM_BANDS> bandEnableSmoothed;
@@ -571,8 +591,6 @@ private:
     std::atomic<float>* masterGainParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
     std::atomic<float>* hqEnabledParam = nullptr;
-    std::atomic<float>* linearPhaseEnabledParam = nullptr;
-    std::atomic<float>* linearPhaseLengthParam = nullptr;
     std::atomic<float>* processingModeParam = nullptr;
     std::atomic<float>* qCoupleModeParam = nullptr;
 
@@ -650,10 +668,6 @@ private:
     DynamicEQProcessor dynamicEQ;
     std::atomic<bool> dynamicParamsChanged{true};
 
-    // Linear Phase EQ processor (one per channel for stereo)
-    std::array<LinearPhaseEQProcessor, 2> linearPhaseEQ;
-    std::atomic<bool> linearPhaseModeEnabled{false};
-    std::atomic<bool> linearPhaseParamsChanged{true};
 
     // Dynamic mode per-band parameters
     std::array<std::atomic<float>*, NUM_BANDS> bandDynEnabledParams{};
@@ -687,6 +701,9 @@ private:
     // Match EQ convolution engine (applies the correction FIR)
     juce::dsp::Convolution matchConvolution;
     std::atomic<bool> matchConvolutionActive{false};  // True when FIR is loaded and active
+    juce::SmoothedValue<float> matchConvWetGain { 1.0f };  // Fades 1→0 on clear (audio thread only)
+    std::atomic<bool> pendingMatchFadeOut { false };       // Set by audio thread to complete clear after fade
+    juce::AudioBuffer<float> matchDryBuffer;               // Pre-allocated dry copy for crossfade blend
 
     // Thread-safe pending operations (UI -> audio thread)
     std::atomic<bool> pendingMatchClear{false};

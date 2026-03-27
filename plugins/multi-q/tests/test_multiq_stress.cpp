@@ -41,7 +41,6 @@ static void resetPlugin(MultiQ& plugin, double sampleRate = 44100.0, int blockSi
     }
     setParam(plugin, ParamIDs::masterGain, 0.0f);
     setParam(plugin, ParamIDs::bypass, 0.0f);
-    setParam(plugin, ParamIDs::linearPhaseEnabled, 0.0f);
     setParam(plugin, ParamIDs::hqEnabled, 0.0f);
     setParam(plugin, ParamIDs::autoGainEnabled, 0.0f);
     setParam(plugin, ParamIDs::limiterEnabled, 0.0f);
