@@ -133,10 +133,6 @@ set_target_properties(MultiQ PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# Test target for LinearPhaseEQProcessor
-# Disabled for now - use the standalone test_linear_phase.cpp instead
-# The JUCE-based test requires complex linking that's better handled by the plugin itself
-
 # --- Match EQ Test (standalone, no plugin wrapper) ---
 if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     add_executable(MultiQMatchTest
@@ -312,45 +308,6 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
     )
 
     add_dependencies(MultiQOversamplingTest MultiQ_All)
-endif()
-
-# --- Linear Phase Test (JUCE-linked, verifies linear phase accuracy and IR symmetry) ---
-if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
-    add_executable(MultiQLinearPhaseTest
-        tests/test_multiq_linear_phase.cpp
-    )
-
-    target_include_directories(MultiQLinearPhaseTest PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode
-    )
-
-    target_compile_definitions(MultiQLinearPhaseTest PRIVATE
-        JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
-        JUCE_STANDALONE_APPLICATION=1
-    )
-
-    target_compile_features(MultiQLinearPhaseTest PRIVATE cxx_std_17)
-
-    target_link_libraries(MultiQLinearPhaseTest
-        PRIVATE
-            MultiQ
-            juce::juce_core
-            juce::juce_audio_basics
-            juce::juce_audio_formats
-            juce::juce_audio_processors
-            juce::juce_audio_utils
-            juce::juce_data_structures
-            juce::juce_dsp
-            juce::juce_events
-            juce::juce_graphics
-            juce::juce_gui_basics
-            juce::juce_gui_extra
-    )
-
-    add_dependencies(MultiQLinearPhaseTest MultiQ_All)
 endif()
 
 # --- Stress Test (JUCE-linked, rapid parameter changes and NaN/Inf safety) ---

@@ -13,6 +13,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
 
     bandDetailPanel = std::make_unique<BandDetailPanel>(processor);
     bandDetailPanel->onBandSelected = [this](int band) { onBandSelected(band); };
+    bandDetailPanel->onMatchCleared = [this]() { if (graphicDisplay) graphicDisplay->repaint(); };
     addAndMakeVisible(bandDetailPanel.get());
 
     // Create British mode curve display (4K-EQ style)
@@ -127,20 +128,6 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     hqButton->setVisible(false);  // Replaced by oversamplingSelector
     addAndMakeVisible(hqButton.get());
     // Note: hqEnabled is now a Choice parameter, not Bool - no ButtonAttachment
-
-    // Linear Phase controls (Digital mode only)
-    linearPhaseButton = std::make_unique<juce::ToggleButton>("Linear Phase");
-    linearPhaseButton->setTooltip("Enable linear phase FIR filtering (introduces latency, disables dynamics)");
-    addAndMakeVisible(linearPhaseButton.get());
-    linearPhaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        processor.parameters, ParamIDs::linearPhaseEnabled, *linearPhaseButton);
-
-    linearPhaseQualitySelector = std::make_unique<juce::ComboBox>();
-    linearPhaseQualitySelector->addItemList({"LP: Low Latency", "LP: Balanced", "LP: High Quality"}, 1);
-    linearPhaseQualitySelector->setTooltip("Linear phase filter quality (affects latency: ~46ms / ~93ms / ~186ms at 44.1kHz)");
-    addAndMakeVisible(linearPhaseQualitySelector.get());
-    linearPhaseQualityAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        processor.parameters, ParamIDs::linearPhaseLength, *linearPhaseQualitySelector);
 
     // Auto-gain compensation button (maintains consistent loudness for A/B comparison)
     autoGainButton = std::make_unique<juce::ToggleButton>("Auto Gain");
@@ -496,7 +483,6 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     processor.parameters.addParameterListener(ParamIDs::analyzerEnabled, this);
     processor.parameters.addParameterListener(ParamIDs::eqType, this);
     processor.parameters.addParameterListener(ParamIDs::britishMode, this);  // For Brown/Black badge update
-    processor.parameters.addParameterListener(ParamIDs::linearPhaseEnabled, this);
 
     // Check initial EQ mode and update visibility
     auto* eqTypeParam = processor.parameters.getRawParameterValue(ParamIDs::eqType);
@@ -509,13 +495,7 @@ MultiQEditor::MultiQEditor(MultiQ& p)
         isTubeEQMode = (eqTypeIndex == static_cast<int>(EQType::Tube));
     }
     if (bandDetailPanel)
-    {
         bandDetailPanel->setMatchMode(isMatchMode);
-        // Initialize linear phase mode state
-        auto* lpParam = processor.parameters.getRawParameterValue(ParamIDs::linearPhaseEnabled);
-        if (lpParam)
-            bandDetailPanel->setLinearPhaseMode(lpParam->load() > 0.5f);
-    }
     updateEQModeVisibility();
 
     // Initialize resizable UI using shared helper (handles size persistence)
@@ -541,7 +521,6 @@ MultiQEditor::~MultiQEditor()
     processor.parameters.removeParameterListener(ParamIDs::analyzerEnabled, this);
     processor.parameters.removeParameterListener(ParamIDs::eqType, this);
     processor.parameters.removeParameterListener(ParamIDs::britishMode, this);
-    processor.parameters.removeParameterListener(ParamIDs::linearPhaseEnabled, this);
 
     // Clear LookAndFeel references from child components before member LnF objects are destroyed.
     // (Declaration order already ensures safe destruction, but explicit cleanup is defensive.)
@@ -666,7 +645,7 @@ void MultiQEditor::paint(juce::Graphics& g)
         const int smallKnobSize = 90;        // Row 3 knobs
         const int bottomMargin = 35;         // Must match layoutTubeEQControls
         const int rightPanelWidth = 125;
-        const int meterReserve = 40;     // Must match layoutTubeEQControls
+        const int meterReserve = 55;     // Must match layoutTubeEQControls
 
         int row1Height = knobSize + labelHeight;
         int row2Height = labelHeight + knobSize + 10;  // Frequency row with separators
@@ -1109,7 +1088,7 @@ void MultiQEditor::resized()
             int meterWidth = LEDMeterStyle::standardWidth;
             int meterHeight = getHeight() - meterY - LEDMeterStyle::valueHeight - LEDMeterStyle::labelSpacing - 6;
             inputMeter->setBounds(4, meterY, meterWidth, meterHeight);
-            outputMeter->setBounds(getWidth() - meterWidth - 4, meterY, meterWidth, meterHeight);
+            outputMeter->setBounds(getWidth() - meterWidth - 14, meterY, meterWidth, meterHeight);
             inputClipBounds = {};
             outputClipBounds = {};
         }
@@ -1452,14 +1431,6 @@ void MultiQEditor::parameterChanged(const juce::String& parameterID, float newVa
             }
         });
     }
-    else if (parameterID == ParamIDs::linearPhaseEnabled)
-    {
-        const bool lpEnabled = newValue > 0.5f;
-        juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MultiQEditor>(this), lpEnabled]() {
-            if (safeThis != nullptr && safeThis->bandDetailPanel != nullptr)
-                safeThis->bandDetailPanel->setLinearPhaseMode(lpEnabled);
-        });
-    }
     else if (parameterID == ParamIDs::britishMode)
     {
         // Brown/Black mode changed - update button text and color
@@ -1551,18 +1522,6 @@ bool MultiQEditor::keyPressed(const juce::KeyPress& key)
     if (key.isKeyCode('H'))
     {
         auto* param = processor.parameters.getParameter(ParamIDs::analyzerEnabled);
-        if (param)
-        {
-            float currentValue = param->getValue();
-            param->setValueNotifyingHost(currentValue > 0.5f ? 0.0f : 1.0f);
-        }
-        return true;
-    }
-
-    // L: Toggle linear phase
-    if (key.isKeyCode('L'))
-    {
-        auto* param = processor.parameters.getParameter(ParamIDs::linearPhaseEnabled);
         if (param)
         {
             float currentValue = param->getValue();
@@ -2176,10 +2135,6 @@ void MultiQEditor::updateEQModeVisibility()
     // Determine if we're in Digital-style mode (Digital, Match, or Dynamic - same 8-band UI)
     bool isDigitalMode = !isBritishMode && !isTubeEQMode;  // Includes Match mode
 
-    // Linear phase controls - only visible in Digital mode
-    linearPhaseButton->setVisible(isDigitalMode);
-    linearPhaseQualitySelector->setVisible(isDigitalMode);
-
     // Band enable buttons - visible in Digital mode (compact toolbar selector)
     for (auto& btn : bandEnableButtons)
         btn->setVisible(isDigitalMode);
@@ -2437,8 +2392,6 @@ void MultiQEditor::layoutUnifiedToolbar()
         presetSelector->setVisible(false);
         processingModeSelector->setVisible(false);
         autoGainButton->setVisible(false);
-        linearPhaseButton->setVisible(false);
-        linearPhaseQualitySelector->setVisible(false);
         savePresetButton.setVisible(false);
         undoButton.setVisible(false);
         redoButton.setVisible(false);
@@ -2505,12 +2458,6 @@ void MultiQEditor::layoutUnifiedToolbar()
 
         autoGainButton->setBounds(rightSectionEnd - 160, toolbarY, 72, controlHeight);
         autoGainButton->setVisible(true);
-
-        linearPhaseButton->setBounds(rightSectionEnd - 245, toolbarY, 82, controlHeight);
-        linearPhaseButton->setVisible(true);
-
-        linearPhaseQualitySelector->setBounds(rightSectionEnd - 380, toolbarY, 130, controlHeight);
-        linearPhaseQualitySelector->setVisible(true);
     }
     else
     {
@@ -2534,12 +2481,6 @@ void MultiQEditor::layoutUnifiedToolbar()
 
         autoGainButton->setBounds(rightSectionEnd - 160, toolbarY, 72, controlHeight);
         autoGainButton->setVisible(true);
-
-        linearPhaseButton->setBounds(rightSectionEnd - 245, toolbarY, 82, controlHeight);
-        linearPhaseButton->setVisible(true);
-
-        linearPhaseQualitySelector->setBounds(rightSectionEnd - 380, toolbarY, 130, controlHeight);
-        linearPhaseQualitySelector->setVisible(true);
     }
 }
 
@@ -3183,7 +3124,7 @@ void MultiQEditor::layoutTubeEQControls()
     const int comboHeight = 32;         // Height for combo boxes
     const int bottomMargin = 35;        // Margin at bottom for footer
     const int rightPanelWidth = 125;    // Right side panel for INPUT/OUTPUT/DRIVE
-    const int meterReserve = 40;        // Space for output meter at right edge
+    const int meterReserve = 55;        // Space for output meter at right edge
 
     // Margins - leave space for meters and right panel
     int mainX = 30;

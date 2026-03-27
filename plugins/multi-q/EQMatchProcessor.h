@@ -5,7 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
-#include <mutex>
+// juce::SpinLock used instead of std::mutex for real-time safety
 #include <vector>
 
 template<typename T>
@@ -112,7 +112,7 @@ public:
     void startLearningCurrent()
     {
         {
-            std::lock_guard<std::mutex> lock(spectrumMutex);
+            juce::SpinLock::ScopedLockType lock(spectrumMutex);
             currentSpectrum.reset();
             // Reset double-buffer under mutex to avoid racing with UI reads
             currentSpectrumBuf.writeBuffer().reset();
@@ -128,7 +128,7 @@ public:
     void startLearningReference()
     {
         {
-            std::lock_guard<std::mutex> lock(spectrumMutex);
+            juce::SpinLock::ScopedLockType lock(spectrumMutex);
             referenceSpectrum.reset();
             // Reset double-buffer under mutex to avoid racing with UI reads
             referenceSpectrumBuf.writeBuffer().reset();
@@ -219,22 +219,14 @@ public:
                            float limitBoostDB, float limitCutDB,
                            bool minimumPhase)
     {
-        DBG("EQMatchProcessor::computeCorrection - current valid=" + juce::String(currentSpectrum.valid ? 1 : 0)
-            + " frames=" + juce::String(currentSpectrum.frameCount)
-            + ", ref valid=" + juce::String(referenceSpectrum.valid ? 1 : 0)
-            + " frames=" + juce::String(referenceSpectrum.frameCount));
-
         if (!currentSpectrum.valid || !referenceSpectrum.valid)
-        {
-            DBG("  FAILED: spectra not valid");
             return false;
-        }
 
         std::array<float, NUM_BINS> currentDB{};
         std::array<float, NUM_BINS> referenceDB{};
 
         {
-            std::lock_guard<std::mutex> lock(spectrumMutex);
+            juce::SpinLock::ScopedLockType lock(spectrumMutex);
             currentSpectrum.getAverageMagnitudeDB(currentDB);
             referenceSpectrum.getAverageMagnitudeDB(referenceDB);
         }
@@ -271,18 +263,6 @@ public:
         // Apply smoothing
         if (smoothingSemitones > 0.0f)
             applyFractionalOctaveSmoothing(diffCurve, smoothingSemitones);
-
-        // Log curve stats for diagnostics
-        {
-            float minDB = 999.0f, maxDB = -999.0f;
-            for (int k = 0; k < NUM_BINS; ++k)
-            {
-                minDB = std::min(minDB, diffCurve[static_cast<size_t>(k)]);
-                maxDB = std::max(maxDB, diffCurve[static_cast<size_t>(k)]);
-            }
-            DBG("  Correction curve: min=" + juce::String(minDB, 1) + " max=" + juce::String(maxDB, 1)
-                + " dcOffset=" + juce::String(dcOffset, 1) + " apply=" + juce::String(applyAmount, 2));
-        }
 
         // Scale by apply amount (-1.0 to +1.0)
         for (int k = 0; k < NUM_BINS; ++k)
@@ -321,7 +301,7 @@ public:
 
         // Store correction curve for display
         {
-            std::lock_guard<std::mutex> lock(correctionMutex);
+            juce::SpinLock::ScopedLockType lock(correctionMutex);
             correctionCurveDB = diffCurve;
         }
 
@@ -333,21 +313,13 @@ public:
 
         // Validate the FIR — check for NaN/Inf and log stats
         {
-            std::lock_guard<std::mutex> lock(correctionMutex);
-            float peak = 0.0f;
-            bool hasNaN = false;
+            juce::SpinLock::ScopedLockType lock(correctionMutex);
             for (int i = 0; i < FIR_LENGTH; ++i)
             {
                 float v = correctionFIR[static_cast<size_t>(i)];
                 if (std::isnan(v) || std::isinf(v))
-                {
                     correctionFIR[static_cast<size_t>(i)] = 0.0f;
-                    hasNaN = true;
-                }
-                peak = std::max(peak, std::abs(v));
             }
-            DBG("  FIR generated: peak=" + juce::String(peak, 6) + " hasNaN=" + juce::String(hasNaN ? 1 : 0)
-                + " phase=" + juce::String(minimumPhase ? "minimum" : "linear"));
         }
 
         correctionValid = true;
@@ -361,7 +333,7 @@ public:
             return {};
 
         juce::AudioBuffer<float> ir(1, FIR_LENGTH);
-        std::lock_guard<std::mutex> lock(correctionMutex);
+        juce::SpinLock::ScopedLockType lock(correctionMutex);
         std::copy(correctionFIR.begin(),
                   correctionFIR.begin() + FIR_LENGTH,
                   ir.getWritePointer(0));
@@ -371,7 +343,7 @@ public:
     /** Get the smoothed correction curve in dB for UI display. */
     void getCorrectionCurveDB(std::array<float, NUM_BINS>& outDB) const
     {
-        std::lock_guard<std::mutex> lock(correctionMutex);
+        juce::SpinLock::ScopedLockType lock(correctionMutex);
         outDB = correctionCurveDB;
     }
 
@@ -381,12 +353,12 @@ public:
     {
         stopLearning();
         {
-            std::lock_guard<std::mutex> lock(spectrumMutex);
+            juce::SpinLock::ScopedLockType lock(spectrumMutex);
             currentSpectrum.reset();
             referenceSpectrum.reset();
         }
         {
-            std::lock_guard<std::mutex> lock(correctionMutex);
+            juce::SpinLock::ScopedLockType lock(correctionMutex);
             correctionValid = false;
             correctionCurveDB.fill(0.0f);
         }
@@ -402,7 +374,7 @@ public:
         // Copy spectrum data under lock, then encode outside lock
         LearnedSpectrum curCopy, refCopy;
         {
-            std::lock_guard<std::mutex> lock(spectrumMutex);
+            juce::SpinLock::ScopedLockType lock(spectrumMutex);
             curCopy = currentSpectrum;
             refCopy = referenceSpectrum;
         }
@@ -433,7 +405,7 @@ public:
             auto* corrEl = matchEl->createNewChildElement("Correction");
 
             {
-                std::lock_guard<std::mutex> lock(correctionMutex);
+                juce::SpinLock::ScopedLockType lock(correctionMutex);
                 juce::MemoryBlock curveBlock(correctionCurveDB.data(),
                                              correctionCurveDB.size() * sizeof(float));
                 corrEl->setAttribute("curveDB", curveBlock.toBase64Encoding());
@@ -454,7 +426,7 @@ public:
 
         // Reset all state before selective hydration to avoid stale data
         {
-            std::lock_guard<std::mutex> lock(spectrumMutex);
+            juce::SpinLock::ScopedLockType lock(spectrumMutex);
             currentSpectrum.reset();
             referenceSpectrum.reset();
             currentSpectrumBuf.writeBuffer().reset();
@@ -467,7 +439,7 @@ public:
             referenceSpectrumBuf.publish();
         }
         {
-            std::lock_guard<std::mutex> lock(correctionMutex);
+            juce::SpinLock::ScopedLockType lock(correctionMutex);
             correctionValid = false;
             correctionCurveDB.fill(0.0f);
             if (correctionFIR.size() < static_cast<size_t>(FIR_LENGTH))
@@ -482,7 +454,7 @@ public:
             if (block.fromBase64Encoding(curEl->getStringAttribute("data"))
                 && block.getSize() == currentSpectrum.powerSum.size() * sizeof(double))
             {
-                std::lock_guard<std::mutex> lock(spectrumMutex);
+                juce::SpinLock::ScopedLockType lock(spectrumMutex);
                 std::memcpy(currentSpectrum.powerSum.data(), block.getData(), block.getSize());
                 currentSpectrum.frameCount = curEl->getIntAttribute("frameCount", 0);
                 currentSpectrum.valid = currentSpectrum.frameCount >= 3;
@@ -499,7 +471,7 @@ public:
             if (block.fromBase64Encoding(refEl->getStringAttribute("data"))
                 && block.getSize() == referenceSpectrum.powerSum.size() * sizeof(double))
             {
-                std::lock_guard<std::mutex> lock(spectrumMutex);
+                juce::SpinLock::ScopedLockType lock(spectrumMutex);
                 std::memcpy(referenceSpectrum.powerSum.data(), block.getData(), block.getSize());
                 referenceSpectrum.frameCount = refEl->getIntAttribute("frameCount", 0);
                 referenceSpectrum.valid = referenceSpectrum.frameCount >= 3;
@@ -520,7 +492,7 @@ public:
 
             if (curveOk && firOk)
             {
-                std::lock_guard<std::mutex> lock(correctionMutex);
+                juce::SpinLock::ScopedLockType lock(correctionMutex);
                 std::memcpy(correctionCurveDB.data(), curveBlock.getData(), curveBlock.getSize());
 
                 if (correctionFIR.size() < static_cast<size_t>(FIR_LENGTH))
@@ -560,8 +532,8 @@ private:
     std::vector<float> correctionFIR;
     bool correctionValid = false;
 
-    mutable std::mutex spectrumMutex;     // Protects learned spectra
-    mutable std::mutex correctionMutex;   // Protects correction curve and FIR
+    mutable juce::SpinLock spectrumMutex;     // Protects learned spectra (SpinLock = RT-safe)
+    mutable juce::SpinLock correctionMutex;   // Protects correction curve and FIR (SpinLock = RT-safe)
 
     int getCurrentFrameCount() const
     {
@@ -595,7 +567,7 @@ private:
 
         // Accumulate into the target spectrum (mutex for legacy + double buffer for lock-free UI reads)
         {
-            std::lock_guard<std::mutex> lock(spectrumMutex);
+            juce::SpinLock::ScopedLockType lock(spectrumMutex);
             LearnedSpectrum& spectrum = (target == LearningTarget::Current)
                                          ? currentSpectrum : referenceSpectrum;
             spectrum.addFrame(learningFFTBuffer.data(), FFT_SIZE);
@@ -697,7 +669,7 @@ private:
         // Truncate to FIR_LENGTH and window
         int startOffset = (GEN_FFT_SIZE - FIR_LENGTH) / 2;
         {
-            std::lock_guard<std::mutex> lock(correctionMutex);
+            juce::SpinLock::ScopedLockType lock(correctionMutex);
             for (int i = 0; i < FIR_LENGTH; ++i)
             {
                 int srcIdx = startOffset + i;
@@ -776,7 +748,7 @@ private:
         // so we must NOT use a symmetric window that zeros out the beginning.
         // Instead, apply a half-Hann fade-out only to the tail to prevent truncation artifacts.
         {
-            std::lock_guard<std::mutex> lock(correctionMutex);
+            juce::SpinLock::ScopedLockType lock(correctionMutex);
             for (int i = 0; i < FIR_LENGTH; ++i)
                 correctionFIR[static_cast<size_t>(i)] = (i < GEN_FFT_SIZE) ? buf[static_cast<size_t>(i)] : 0.0f;
 

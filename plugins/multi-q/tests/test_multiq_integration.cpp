@@ -125,7 +125,6 @@ static void resetPlugin(MultiQ& plugin, double sampleRate = 44100.0, int blockSi
     }
     setParam(plugin, ParamIDs::masterGain, 0.0f);
     setParam(plugin, ParamIDs::bypass, 0.0f);
-    setParam(plugin, ParamIDs::linearPhaseEnabled, 0.0f);
     setParam(plugin, ParamIDs::hqEnabled, 0.0f);
     setParam(plugin, ParamIDs::autoGainEnabled, 0.0f);
     setParam(plugin, ParamIDs::limiterEnabled, 0.0f);
@@ -329,66 +328,6 @@ static void testPan(MultiQ& plugin)
 
     checkDb("Pan right: L is near dry level", rightL, dryRMS, 1.0f);
     check("Pan right: R has EQ boost", rightR > dryRMS + 2.0f);
-}
-
-// ===== TEST: INV + Linear Phase =====
-static void testINVLinearPhase(MultiQ& plugin)
-{
-    std::cout << "\n--- Test: INV + Linear Phase ---\n";
-    resetPlugin(plugin);
-
-    double sr = 44100.0;
-    int numSamples = static_cast<int>(sr * 2);  // 2 seconds for LP settling
-    int skip = 16384;  // LP FIR latency
-
-    // Enable linear phase + band 4: +6dB at 1kHz
-    setParam(plugin, ParamIDs::linearPhaseEnabled, 1.0f);
-    setParam(plugin, ParamIDs::bandFreq(4), 1000.0f);
-    setParam(plugin, ParamIDs::bandGain(4), 6.0f);
-    setParam(plugin, ParamIDs::bandQ(4), 1.0f);
-
-    // LP FIR generation happens on a background thread — process many blocks to trigger it
-    // and give the thread time to complete
-    settleParams(plugin, 512, 200);
-    juce::Thread::sleep(500);  // Allow background FIR generation to complete
-    settleParams(plugin, 512, 50);
-
-    auto buf1 = generateSine(1000.0f, sr, numSamples);
-    processWithPlugin(plugin, buf1);
-    float boostRMS = measureRMSdB(buf1, 0, skip);
-
-    // With INV
-    resetPlugin(plugin);
-    setParam(plugin, ParamIDs::linearPhaseEnabled, 1.0f);
-    setParam(plugin, ParamIDs::bandFreq(4), 1000.0f);
-    setParam(plugin, ParamIDs::bandGain(4), 6.0f);
-    setParam(plugin, ParamIDs::bandQ(4), 1.0f);
-    setParam(plugin, ParamIDs::bandInvert(4), 1.0f);
-    settleParams(plugin, 512, 200);
-    juce::Thread::sleep(500);
-    settleParams(plugin, 512, 50);
-
-    auto buf2 = generateSine(1000.0f, sr, numSamples);
-    processWithPlugin(plugin, buf2);
-    float cutRMS = measureRMSdB(buf2, 0, skip);
-
-    // Flat reference
-    resetPlugin(plugin);
-    setParam(plugin, ParamIDs::linearPhaseEnabled, 1.0f);
-    settleParams(plugin, 512, 200);
-    juce::Thread::sleep(500);
-    settleParams(plugin, 512, 50);
-    auto bufFlat = generateSine(1000.0f, sr, numSamples);
-    processWithPlugin(plugin, bufFlat);
-    float flatRMS = measureRMSdB(bufFlat, 0, skip);
-
-    float boostDelta = boostRMS - flatRMS;
-    float cutDelta = cutRMS - flatRMS;
-
-    checkDb("LP+INV: boost produces positive gain", boostDelta, 6.0f, 2.0f);
-    checkDb("LP+INV: inverted produces negative gain", cutDelta, -6.0f, 2.0f);
-    check("LP+INV: boost and cut are opposite",
-          std::abs(boostDelta + cutDelta) < 3.0f);
 }
 
 // ===== TEST: State Save/Restore Round-Trip =====

@@ -225,8 +225,6 @@ namespace ParamIDs
     const juce::String masterGain = "master_gain";
     const juce::String bypass = "bypass";
     const juce::String hqEnabled = "hq_enabled";
-    const juce::String linearPhaseEnabled = "linear_phase_enabled";
-    const juce::String linearPhaseLength = "linear_phase_length";  // 0=Short, 1=Medium, 2=Long
     const juce::String processingMode = "processing_mode";
     const juce::String qCoupleMode = "q_couple_mode";
     const juce::String eqType = "eq_type";
