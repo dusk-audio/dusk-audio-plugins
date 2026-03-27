@@ -148,6 +148,9 @@ public:
     /** Get lookahead in samples (for latency reporting). */
     int getLatencySamples() const { return enabled.load(std::memory_order_acquire) ? lookaheadSamples.load(std::memory_order_relaxed) : 0; }
 
+    /** Get maximum possible lookahead regardless of enable state (for buffer sizing). */
+    int getMaxLookaheadSamples() const { return lookaheadSamples.load(std::memory_order_relaxed); }
+
 private:
     void reset()
     {
