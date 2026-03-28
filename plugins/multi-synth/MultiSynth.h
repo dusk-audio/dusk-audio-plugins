@@ -229,6 +229,12 @@ namespace ParamIDs
     // Cosmos-specific
     static const juce::String COSMOS_CHORUS_MODE = "cosmosChorus";
 
+    // Oracle poly-mod (Prophet-5 style: 2 sources x 2 destinations)
+    static const juce::String POLYMOD_FENV_OSCA = "pmFenvOscA";   // Filter Env → Osc A freq
+    static const juce::String POLYMOD_FENV_FILT = "pmFenvFilt";   // Filter Env → Filter cutoff
+    static const juce::String POLYMOD_OSCB_OSCA = "pmOscBOscA";   // Osc B → Osc A freq
+    static const juce::String POLYMOD_OSCB_PWM  = "pmOscBPWM";    // Osc B → Osc A pulse width
+
     // Master
     static const juce::String MASTER_VOL = "masterVol";
     static const juce::String MASTER_PAN = "masterPan";
