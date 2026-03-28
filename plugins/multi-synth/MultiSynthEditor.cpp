@@ -349,7 +349,7 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupKnob(reverbPDSlider, reverbPDLbl, ParamIDs::REVERB_PREDELAY, "PreD");
 
     // === Master ===
-    setupKnob(masterTuneSlider, masterTuneLbl, ParamIDs::MASTER_TUNE, "Tune");
+    setupKnob(masterTuneSlider, masterTuneLbl, ParamIDs::MASTER_TUNE, "Tun");
     setupKnob(masterVolSlider, masterVolLbl, ParamIDs::MASTER_VOL, "Vol");
     setupKnob(masterPanSlider, masterPanLbl, ParamIDs::MASTER_PAN, "Pan");
     setupKnob(stereoWidthSlider, stereoWidthLbl, ParamIDs::STEREO_WIDTH, "Width");
@@ -920,59 +920,65 @@ void MultiSynthEditor::resized()
         int x0 = sections.oscillators.getX() + pad;
         int y0 = sections.oscillators.getY() + titH + pad;
         int step1 = ctrlStep(osc1LevelSlider, K);
+        bool isFaderMode = (osc1LevelSlider.getSliderStyle() == juce::Slider::LinearVertical);
 
-        // OSC 1: wave combo, then controls
-        osc1WaveBox.setBounds(x0, y0, scaled(100), cH);
+        // OSC 1: wave combo on the left, controls to the right
+        osc1WaveBox.setBounds(x0, y0, scaled(90), cH);
+        int oscCtrlX = x0 + scaled(95); // Controls start after wave combo
         int ky = y0 + cH + scaled(4) + L;
-        placeControl(osc1LevelSlider,  x0,            ky, K);
+        placeControl(osc1LevelSlider,  oscCtrlX,            ky, K);
         placeLabel(osc1LevelLbl, osc1LevelSlider);
-        placeControl(osc1DetuneSlider, x0 + step1,    ky, K);
+        placeControl(osc1DetuneSlider, oscCtrlX + step1,    ky, K);
         placeLabel(osc1DetuneLbl, osc1DetuneSlider);
-        placeControl(osc1PWSlider,     x0 + step1 * 2, ky, K);
+        placeControl(osc1PWSlider,     oscCtrlX + step1 * 2, ky, K);
         placeLabel(osc1PWLbl, osc1PWSlider);
 
-        // OSC 2: wave combo, then controls
-        int ctrlH = (osc1LevelSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
+        // OSC 2: wave combo on the left, controls to the right
+        int ctrlH = isFaderMode ? faderH : K;
         int y2 = ky + ctrlH + scaled(8);
-        osc2WaveBox.setBounds(x0, y2, scaled(100), cH);
+        osc2WaveBox.setBounds(x0, y2, scaled(90), cH);
         int ky2 = y2 + cH + scaled(4) + L;
-        placeControl(osc2LevelSlider,  x0,            ky2, K);
+        placeControl(osc2LevelSlider,  oscCtrlX,            ky2, K);
         placeLabel(osc2LevelLbl, osc2LevelSlider);
-        placeControl(osc2DetuneSlider, x0 + step1,    ky2, K);
+        placeControl(osc2DetuneSlider, oscCtrlX + step1,    ky2, K);
         placeLabel(osc2DetuneLbl, osc2DetuneSlider);
-        placeControl(osc2SemiSlider,   x0 + step1 * 2, ky2, K);
+        placeControl(osc2SemiSlider,   oscCtrlX + step1 * 2, ky2, K);
         placeLabel(osc2SemiLbl, osc2SemiSlider);
 
-        // Mode-specific bottom row (always small knobs)
-        int ctrlH2 = (osc2LevelSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
+        // Mode-specific bottom row — arranged as a tight row of small knobs
+        int ctrlH2 = isFaderMode ? faderH : K;
         int y3 = ky2 + ctrlH2 + scaled(6);
-        int mKw = S + scaled(6);
+        int mKw = S + scaled(4); // Tighter spacing for small knobs
 
-        subWaveBox.setBounds(x0, y3, scaled(80), cH);
-        subLevelSlider.setBounds(x0 + scaled(75), y3 + L, S, S);
+        // Sub/Osc3 wave + level (leftmost)
+        subWaveBox.setBounds(x0, y3, scaled(70), cH);
+        subLevelSlider.setBounds(x0 + scaled(72), y3 + L, S, S);
         placeLabel(subLevelLbl, subLevelSlider);
-        osc3WaveBox.setBounds(x0, y3, scaled(80), cH);
-        osc3LevelSlider.setBounds(x0 + scaled(75), y3 + L, S, S);
+        osc3WaveBox.setBounds(x0, y3, scaled(70), cH);
+        osc3LevelSlider.setBounds(x0 + scaled(72), y3 + L, S, S);
         placeLabel(osc3LevelLbl, osc3LevelSlider);
-        noiseLevelSlider.setBounds(x0 + mKw * 2 + scaled(30), y3 + L, S, S);
-        placeLabel(noiseLevelLbl, noiseLevelSlider);
-        crossModSlider.setBounds(x0 + mKw * 3 + scaled(30), y3 + L, S, S);
-        placeLabel(crossModLbl, crossModSlider);
-        ringModSlider.setBounds(x0 + mKw * 3 + scaled(30), y3 + L, S, S);
-        placeLabel(ringModLbl, ringModSlider);
-        fmAmountSlider.setBounds(x0 + mKw * 4 + scaled(30), y3 + L, S, S);
-        placeLabel(fmAmountLbl, fmAmountSlider);
-        hardSyncButton.setBounds(x0 + mKw * 5 + scaled(30), y3 + L + scaled(12), scaled(50), tH);
 
-        // Oracle poly-mod knobs (positioned after noise, replacing crossMod)
-        int pmX = x0 + mKw * 2 + scaled(30);
-        pmFEnvOscASlider.setBounds(pmX,            y3 + L, S, S);
+        // Noise + mode-specific knobs (starting after sub/osc3)
+        int modX = x0 + scaled(135);
+        noiseLevelSlider.setBounds(modX, y3 + L, S, S);
+        placeLabel(noiseLevelLbl, noiseLevelSlider);
+        // crossMod and ringMod share same position (only one visible at a time)
+        crossModSlider.setBounds(modX + mKw, y3 + L, S, S);
+        placeLabel(crossModLbl, crossModSlider);
+        ringModSlider.setBounds(modX + mKw, y3 + L, S, S);
+        placeLabel(ringModLbl, ringModSlider);
+        fmAmountSlider.setBounds(modX + mKw * 2, y3 + L, S, S);
+        placeLabel(fmAmountLbl, fmAmountSlider);
+        hardSyncButton.setBounds(modX + mKw * 3, y3 + L + scaled(12), scaled(50), tH);
+
+        // Oracle poly-mod knobs (replace crossMod area when in Oracle mode)
+        pmFEnvOscASlider.setBounds(modX,            y3 + L, S, S);
         placeLabel(pmFEnvOscALbl, pmFEnvOscASlider);
-        pmFEnvFiltSlider.setBounds(pmX + mKw,      y3 + L, S, S);
+        pmFEnvFiltSlider.setBounds(modX + mKw,      y3 + L, S, S);
         placeLabel(pmFEnvFiltLbl, pmFEnvFiltSlider);
-        pmOscBOscASlider.setBounds(pmX + mKw * 2,  y3 + L, S, S);
+        pmOscBOscASlider.setBounds(modX + mKw * 2,  y3 + L, S, S);
         placeLabel(pmOscBOscALbl, pmOscBOscASlider);
-        pmOscBPWMSlider.setBounds(pmX + mKw * 3,   y3 + L, S, S);
+        pmOscBPWMSlider.setBounds(modX + mKw * 3,   y3 + L, S, S);
         placeLabel(pmOscBPWMLbl, pmOscBPWMSlider);
     }
 
@@ -1051,8 +1057,8 @@ void MultiSynthEditor::resized()
 
         // Master knobs in 2x2 grid (Tune/Vol on top, Pan/Width below)
         int my = y0 + scopeH + scaled(6) + L;
-        int knobSz = juce::jmin(S, (sw - scaled(8)) / 2); // 2 knobs per row
-        int knobGap = scaled(8);
+        int knobSz = juce::jmin(scaled(45), (sw - scaled(12)) / 2); // Compact knobs, 2 per row
+        int knobGap = scaled(12);
 
         masterTuneSlider.setBounds(x0, my, knobSz, knobSz);
         placeLabel(masterTuneLbl, masterTuneSlider);
