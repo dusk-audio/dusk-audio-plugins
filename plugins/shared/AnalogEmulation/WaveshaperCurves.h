@@ -49,6 +49,10 @@ public:
     // Input should be normalized (-2 to +2 range for full curve access)
     float process(float input, CurveType curve) const
     {
+        // NaN/Inf guard — clamp won't catch NaN (NaN comparisons are always false)
+        if (!std::isfinite(input))
+            return 0.0f;
+
         // Map input to table index
         float normalized = (input + TABLE_RANGE / 2.0f) / TABLE_RANGE;
         normalized = std::clamp(normalized, 0.0f, 0.9999f);
