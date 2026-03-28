@@ -98,7 +98,7 @@ private:
 
     // === Layout Constants (1x scale, multiply by sf) ===
     static constexpr int kDefaultWidth  = 1000;
-    static constexpr int kDefaultHeight = 700;
+    static constexpr int kDefaultHeight = 800;
     static constexpr int kMargin        = 8;
     static constexpr int kSectionGap    = 6;
     static constexpr int kSectionPad    = 8;
@@ -224,7 +224,7 @@ private:
     void setSliderAsFader(DuskSlider& s);
     void layoutSharedLowerStrip(); // arp, scope, meters — shared across modes
 
-    // Knob labels (one per slider, attached above via attachToComponent)
+    // Knob labels (one per slider, explicitly positioned in resized())
     juce::Label osc1LevelLbl, osc1DetuneLbl, osc1PWLbl;
     juce::Label osc2LevelLbl, osc2DetuneLbl, osc2SemiLbl;
     juce::Label osc3LevelLbl, subLevelLbl, noiseLevelLbl;
