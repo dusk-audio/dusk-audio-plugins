@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstring>
 #include "SafeFloat.h"
+#include "ADAASaturation.h"
 #include <random>
 
 // Helper for LC filter pre-warping (clamp omega to avoid tan() blowup near Nyquist)
@@ -243,8 +244,8 @@ public:
 
     void reset()
     {
-        preLPStates.fill(0.0f);
         lfStates.fill(0.0f);
+        prevXd.fill(0.0f);
         for (auto& dc : dcBlockers)
             dc.reset();
     }
@@ -268,34 +269,23 @@ public:
             return 0.0f;
 
         int ch = std::clamp(channel, 0, maxChannels - 1);
-        float& preLPState = preLPStates[static_cast<size_t>(ch)];
         float& lfState    = lfStates[static_cast<size_t>(ch)];
 
-        // ── 1. Anti-alias pre-LP at ~10 kHz ─────────────────────────────────────
-        // HF residual bypasses the waveshaper and is recombined at the output.
-        // Prevents high-frequency content from generating alias products.
-        // At oversampled rates the LP is transparent (cutoff remains at 10 kHz
-        // regardless of sample rate, so it moves above 20 kHz at ≥88 kHz SR).
-        preLPState += preLPCoeff * (input - preLPState);
-        const float filteredInput = preLPState;
-        const float hfPass = input - filteredInput;
-
-        // ── 2. LF split at ~300 Hz (transformer core saturation model) ──────────
+        // ── 1. LF split at ~300 Hz (transformer core saturation model) ──────────
         // Only sub-bass content reaches lfState significantly; mid/HF is ~0.
-        lfState += lfCoeff * (filteredInput - lfState);
+        lfState += lfCoeff * (input - lfState);
 
-        // ── 3. Polynomial waveshaper ─────────────────────────────────────────────
-        // All harmonic terms computed from the same xd — no cascading inflation.
+        // ── 2. Polynomial waveshaper (ADAA) ──────────────────────────────────────
+        // First-order antiderivative antialiasing eliminates alias products from
+        // the polynomial distortion — no pre-LP needed. Full-bandwidth signal
+        // passes through the waveshaper with alias-free processing.
         // Dividing distortion by driveAmount normalises gain while preserving
         // harmonic scaling: H2 ∝ drive¹·A, H3 ∝ drive²·A², H4 ∝ drive³·A³.
         const float DRIVE_SCALE = 2.0f;
         const float driveAmount = drive * DRIVE_SCALE;
-        const float xd_raw = filteredInput * driveAmount;
+        const float xd_raw = input * driveAmount;
         // Soft-clip to prevent polynomial explosion at hot levels
         const float xd  = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);
-        const float xd2 = xd * xd;
-        const float xd3 = xd2 * xd;
-        const float xd4 = xd2 * xd2;
 
         // Calibrated at nominal (drive=0.5, A=0.5, driveAmount=1.0):
         //   H2 ≈ 0.375%  — 12AX7/12AU7 push-pull warmth (dominant, ~82% of THD)
@@ -305,10 +295,17 @@ public:
         const float c = 0.0104f;  // H3 — x³ is ODD  → true 3rd harmonic
         const float d = 0.0096f;  // H4 — x⁴ is EVEN → true 4th harmonic + DC
 
-        // ── 4. LF transformer H3 (Peerless iron core saturation) ────────────────
+        float& prevXdVal = prevXd[static_cast<size_t>(ch)];
+        float distortion = ADAASaturation::process(
+            xd, prevXdVal,
+            [b,c,d](float v) { return ADAASaturation::polyWaveshaper(v, b, c, d, 0.0f); },
+            [b,c,d](float v) { return ADAASaturation::polyAntideriv(v, b, c, d, 0.0f); });
+        prevXdVal = xd;
+
+        // ── 3. LF transformer H3 (Peerless iron core saturation) ────────────────
         // Extra H3 applied only to the LF component. At 8 kHz, lfState ≈ 0 —
         // no extra H3 is generated at high frequencies, preventing aliasing.
-        // At 80 Hz, lfState ≈ filteredInput → pronounced "growl" in the sub-bass.
+        // At 80 Hz, lfState ≈ input → pronounced "growl" in the sub-bass.
         // H3 from transformer grows as driveAmount² (faster than tube H2) — at
         // heavy drive the transformer H3 rises disproportionately, matching the
         // behaviour of a Pultec driven hard on a drum bus.
@@ -316,32 +313,21 @@ public:
         const float xd_lf = xd_lf_raw / std::sqrt(1.0f + xd_lf_raw * xd_lf_raw * 0.25f);
         const float transformerH3 = 0.025f * xd_lf * xd_lf * xd_lf;  // LF-only H3
 
-        float distortion = b*xd2 + c*xd3 + d*xd4 + transformerH3;
-        float y = filteredInput + distortion / driveAmount;
+        distortion += transformerH3;
+        float y = input + distortion / driveAmount;
 
-        // ── 5. DC blocking ───────────────────────────────────────────────────────
+        // ── 4. DC blocking ───────────────────────────────────────────────────────
         // Even-order terms (x², x⁴) introduce DC; the DC blocker removes it.
         y = dcBlockers[static_cast<size_t>(ch)].processSample(y);
 
-        // ── 6. Recombine: saturated LF/mid + clean HF bypass ────────────────────
-        // No gain compensation needed: y = filteredInput + distortion/driveAmount
-        // is inherently ~unity-gain at the fundamental.
-        const float result = y + hfPass;
-        return safeIsFinite(result) ? result : input;
+        return safeIsFinite(y) ? y : input;
     }
 
 private:
     void computeCoefficients(double sr)
     {
-        // Anti-alias LP — scales with sample rate but clamps to 10 kHz.
-        // At 44.1 kHz: cutoff ≈ 9.7 kHz (0.22 * 44100). At ≥88.2 kHz the cutoff
-        // rises above 10 kHz, keeping the filter transparent at oversampled rates.
-        const float preLPFreq = std::min(10000.0f, static_cast<float>(sr) * 0.22f);
-        preLPCoeff = 1.0f - std::exp(
-            -juce::MathConstants<float>::twoPi * preLPFreq / static_cast<float>(sr));
-
         // Transformer LF split at ~300 Hz.
-        // Below 300 Hz: lfState tracks filteredInput (full amplitude → strong transformer H3).
+        // Below 300 Hz: lfState tracks input (full amplitude → strong transformer H3).
         // Above 300 Hz: lfState ≈ 0 (no transformer H3 generated at mid/HF).
         lfCoeff = 1.0f - std::exp(
             -juce::MathConstants<float>::twoPi * 300.0f / static_cast<float>(sr));
@@ -350,10 +336,9 @@ private:
     static constexpr int maxChannels = 8;
     double sampleRate = 44100.0;
     float drive = 0.3f;
-    float preLPCoeff = 0.77f;  // Anti-alias LP (~10 kHz at 44.1 kHz)
+    std::array<float, maxChannels> prevXd{};  // ADAA previous-sample state
     float lfCoeff    = 0.04f;  // Transformer LF split (~300 Hz at 44.1 kHz)
 
-    std::array<float, maxChannels> preLPStates{};
     std::array<float, maxChannels> lfStates{};
     std::array<AnalogEmulation::DCBlocker, maxChannels> dcBlockers;
 };
@@ -998,7 +983,7 @@ private:
         inputProfile.hasTransformer = true;
         inputProfile.saturationAmount = 0.15f;
         inputProfile.lowFreqSaturation = 1.3f;  // LF saturation boost (core flux physics)
-        inputProfile.highFreqRolloff = 22000.0f;
+        inputProfile.highFreqRolloff = 1e7f;  // Disabled — avoids OS-dependent HF loss; ADAA handles aliasing
         inputProfile.dcBlockingFreq = 10.0f;
         inputProfile.harmonics = { 0.005f, 0.015f, 0.002f };  // H3 dominant (symmetric core)
 
@@ -1011,7 +996,7 @@ private:
         outputProfile.hasTransformer = true;
         outputProfile.saturationAmount = 0.12f;
         outputProfile.lowFreqSaturation = 1.2f;
-        outputProfile.highFreqRolloff = 20000.0f;
+        outputProfile.highFreqRolloff = 1e7f;  // Disabled — avoids OS-dependent HF loss; ADAA handles aliasing
         outputProfile.dcBlockingFreq = 8.0f;
         outputProfile.harmonics = { 0.004f, 0.012f, 0.001f };  // H3 dominant
 
