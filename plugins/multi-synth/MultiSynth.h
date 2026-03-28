@@ -45,6 +45,10 @@ public:
     std::atomic<int> arpCurrentStep { 0 };
     std::atomic<int> arpTotalSteps { 0 };
 
+    // MIDI activity display (written in processBlock, read by editor)
+    std::atomic<float> displayPitchBend { 0.0f };
+    std::atomic<float> displayModWheel { 0.0f };
+
     // Current mode for UI
     MultiSynthDSP::SynthMode getCurrentMode() const;
 
@@ -225,6 +229,9 @@ namespace ParamIDs
     static inline juce::String modSlotDest(int i) { return "modDst" + juce::String(i); }
     static inline juce::String modSlotAmount(int i) { return "modAmt" + juce::String(i); }
 
+    // S&H
+    static const juce::String SH_RATE = "shRate";
+
     // Master
     // Cosmos-specific
     static const juce::String COSMOS_CHORUS_MODE = "cosmosChorus";
@@ -236,6 +243,7 @@ namespace ParamIDs
     static const juce::String POLYMOD_OSCB_PWM  = "pmOscBPWM";    // Osc B → Osc A pulse width
 
     // Master
+    static const juce::String MASTER_TUNE = "masterTune";
     static const juce::String MASTER_VOL = "masterVol";
     static const juce::String MASTER_PAN = "masterPan";
     static const juce::String OVERSAMPLING = "oversampling";

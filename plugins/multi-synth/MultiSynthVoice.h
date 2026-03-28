@@ -50,6 +50,9 @@ struct VoiceParameters
     // Noise
     float noiseLevel = 0.0f;
 
+    // S&H rate (Hz)
+    float shRate = 5.0f;
+
     // Filter
     float filterCutoff = 8000.0f;
     float filterResonance = 0.3f;
@@ -232,7 +235,7 @@ public:
         float osc2Sample = osc2.processSample();
         float osc3Sample = 0.0f;
         float subSample = 0.0f;
-        float noiseSample = noiseOsc.processSample() * params.noiseLevel;
+        float noiseSample = pinkNoise.processSample() * params.noiseLevel;
 
         // Mode-specific oscillator processing
         switch (params.mode)
@@ -380,7 +383,8 @@ public:
 
     // Update modulation state for this voice
     void updateModState(ModulationState& state, const ModMatrix& matrix,
-                        float modWheel, float aftertouch, float pitchBend)
+                        float modWheel, float aftertouch, float pitchBend,
+                        const VoiceParameters& params)
     {
         // Set per-voice source values
         state.setSourceValue(ModSource::LFO1, lfo1.processSample());
@@ -395,7 +399,7 @@ public:
         state.setSourceValue(ModSource::PitchBend, pitchBend);
 
         // S&H output (fed from noise, rate from internal clock)
-        sampleAndHold.setRate(5.0f);
+        sampleAndHold.setRate(params.shRate);
         float shNoise = rng.nextFloat() * 2.0f - 1.0f;
         state.setSourceValue(ModSource::SampleAndHold, sampleAndHold.process(shNoise));
 
@@ -438,6 +442,7 @@ private:
     Oscillator osc1, osc2, osc3;
     SubOscillator subOsc;
     Oscillator noiseOsc;
+    PinkNoiseGenerator pinkNoise;
     SampleAndHold sampleAndHold;
     SynthFilter filter;
     ADSREnvelope ampEnv, filtEnv;
@@ -530,7 +535,7 @@ public:
 
             // Update modulation
             ModulationState modState;
-            voice.updateModState(modState, modMatrix, modWheel, aftertouch, pitchBend);
+            voice.updateModState(modState, modMatrix, modWheel, aftertouch, pitchBend, params);
 
             float panMod = modState.getDestValue(ModDest::Pan);
 
