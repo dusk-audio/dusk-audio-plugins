@@ -245,6 +245,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         juce::ParameterID(ParamIDs::ARP_FIXED_VEL, 1), "Arp Fixed Vel", 1, 127, 100));
 
+    // Arp step mutes (16 steps)
+    for (int i = 0; i < 16; ++i)
+        params.push_back(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID(ParamIDs::arpStep(i), 1),
+            "Arp Step " + juce::String(i + 1), true));
+
     // Oracle poly-mod (Prophet-5 style)
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::POLYMOD_FENV_OSCA, 1), "PM FEnv→OscA",
@@ -494,6 +500,8 @@ void MultiSynthProcessor::updateVoiceParameters()
     arpeggiator.setVelocityMode(static_cast<MultiSynthDSP::ArpVelocityMode>(
         static_cast<int>(*apvts.getRawParameterValue(ParamIDs::ARP_VEL_MODE))));
     arpeggiator.setFixedVelocity(static_cast<int>(*apvts.getRawParameterValue(ParamIDs::ARP_FIXED_VEL)));
+    for (int i = 0; i < 16; ++i)
+        arpeggiator.setStepMute(i, *apvts.getRawParameterValue(ParamIDs::arpStep(i)) > 0.5f);
 
     // Effects
     effects.drive.setEnabled(*apvts.getRawParameterValue(ParamIDs::DRIVE_ON) > 0.5f);
