@@ -154,7 +154,9 @@ private:
 
     // === Character / Unison ===
     DuskSlider portaSlider, analogSlider, vintageSlider, velSensSlider;
+    juce::ComboBox velCurveBox;
     juce::ToggleButton legatoButton;
+    juce::ComboBox glideModeBox;
     DuskSlider unisonVoicesSlider, unisonDetuneSlider, unisonSpreadSlider;
 
     // === Cosmos-specific ===
@@ -179,7 +181,7 @@ private:
     DuskSlider reverbSizeSlider, reverbDecaySlider, reverbDampSlider, reverbMixSlider, reverbPDSlider;
 
     // === Master ===
-    DuskSlider masterTuneSlider, masterVolSlider, masterPanSlider;
+    DuskSlider masterTuneSlider, masterVolSlider, masterPanSlider, stereoWidthSlider;
     LEDMeter outputMeterL, outputMeterR;
 
     // === Oscilloscope ===
@@ -238,7 +240,7 @@ private:
     juce::Label chorusRateLbl, chorusDepthLbl, chorusMixLbl;
     juce::Label delayTimeLbl, delayFBLbl, delayMixLbl;
     juce::Label reverbSizeLbl, reverbDecayLbl, reverbDampLbl, reverbMixLbl, reverbPDLbl;
-    juce::Label masterTuneLbl, masterVolLbl, masterPanLbl;
+    juce::Label masterTuneLbl, masterVolLbl, masterPanLbl, stereoWidthLbl;
     juce::Label pmFEnvOscALbl, pmFEnvFiltLbl, pmOscBOscALbl, pmOscBPWMLbl;
 
     // Section bounds cache (set in resized, used in paint)

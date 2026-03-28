@@ -191,6 +191,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
         juce::NormalisableRange<float>(0.0f, 2.0f, 0.001f, 0.3f), 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID(ParamIDs::LEGATO, 1), "Legato", false));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::GLIDE_MODE, 1), "Glide Mode",
+        juce::StringArray("Time", "Rate"), 0));
 
     // Analog & vintage
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -204,6 +207,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::VEL_SENS, 1), "Velocity Sens",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.7f));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID(ParamIDs::VEL_CURVE, 1), "Vel Curve",
+        juce::StringArray("Linear", "Soft", "Hard", "Fixed"), 0));
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         juce::ParameterID(ParamIDs::PITCH_BEND_RANGE, 1), "PB Range", 1, 24, 2));
 
@@ -357,6 +363,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::MASTER_PAN, 1), "Master Pan",
         juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::STEREO_WIDTH, 1), "Stereo Width",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::OVERSAMPLING, 1), "Oversampling",
         juce::StringArray("1x", "2x", "4x"), 0));
@@ -455,10 +464,12 @@ void MultiSynthProcessor::updateVoiceParameters()
     // Portamento
     voiceParams.portamentoTime = *apvts.getRawParameterValue(ParamIDs::PORTA_TIME);
     voiceParams.legatoMode = *apvts.getRawParameterValue(ParamIDs::LEGATO) > 0.5f;
+    voiceParams.glideMode = static_cast<int>(*apvts.getRawParameterValue(ParamIDs::GLIDE_MODE));
 
     // Analog
     voiceParams.analogAmount = *apvts.getRawParameterValue(ParamIDs::ANALOG_AMT);
     voiceParams.velocitySensitivity = *apvts.getRawParameterValue(ParamIDs::VEL_SENS);
+    voiceParams.velocityCurve = static_cast<int>(*apvts.getRawParameterValue(ParamIDs::VEL_CURVE));
 
     // Unison
     unisonEngine.setVoiceCount(static_cast<int>(*apvts.getRawParameterValue(ParamIDs::UNISON_VOICES)));
@@ -692,6 +703,13 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         float panAngle = (masterPan + 1.0f) * 0.25f * juce::MathConstants<float>::pi;
         sampleL *= masterGain * std::cos(panAngle);
         sampleR *= masterGain * std::sin(panAngle);
+
+        // Stereo width control (mid-side: 0=mono, 0.5=normal, 1.0=wide)
+        float width = *apvts.getRawParameterValue(ParamIDs::STEREO_WIDTH);
+        float mid = (sampleL + sampleR) * 0.5f;
+        float side = (sampleL - sampleR) * 0.5f;
+        sampleL = mid + side * width;
+        sampleR = mid - side * width;
 
         // Safety limiter: soft-knee that's transparent below 0.7 (-3dB),
         // gently compresses 0.7-1.0, hard limits at 1.0
