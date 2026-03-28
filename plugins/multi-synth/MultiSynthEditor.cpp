@@ -907,11 +907,11 @@ void MultiSynthEditor::resized()
                ? faderStep : (knobSz + scaled(kKnobSpacing));
     };
 
-    // Explicit label placement — width matches spacing to prevent overlap
+    // Explicit label placement — width adapts to prevent overlap
     auto placeLabel = [&](juce::Label& lbl, DuskSlider& slider) {
         auto sb = slider.getBounds();
         bool isFader = (slider.getSliderStyle() == juce::Slider::LinearVertical);
-        int lblW = isFader ? scaled(50) : scaled(60); // Narrower for faders
+        int lblW = isFader ? juce::jmin(scaled(50), faderStep - scaled(2)) : scaled(60);
         lbl.setBounds(sb.getCentreX() - lblW / 2, sb.getY() - L, lblW, L);
     };
 
@@ -980,7 +980,9 @@ void MultiSynthEditor::resized()
     {
         int x0 = sections.filter.getX() + pad;
         int y0 = sections.filter.getY() + titH + pad + L;
-        int fStep = ctrlStep(filterCutoffSlider, K);
+        // Filter only has 2 controls per row — use wider spacing to fill the section
+        bool filtIsFader = (filterCutoffSlider.getSliderStyle() == juce::Slider::LinearVertical);
+        int fStep = filtIsFader ? faderStep : (K + scaled(kKnobSpacing));
 
         placeControl(filterCutoffSlider, x0,           y0, K);
         placeLabel(filterCutoffLbl, filterCutoffSlider);
@@ -994,17 +996,23 @@ void MultiSynthEditor::resized()
         placeControl(filterEnvAmtSlider, x0 + fStep,   y2, K);
         placeLabel(filterEnvAmtLbl, filterEnvAmtSlider);
 
-        // Filter response mini-display below filter knobs
+        // Filter response mini-display — fit within section bounds
         int ctrlH2 = (filterHPSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
         int frY = y2 + ctrlH2 + scaled(4);
-        filterResponseDisplay.setBounds(x0, frY, sections.filter.getWidth() - pad * 2, scaled(35));
+        int frH = juce::jmax(scaled(20), sections.filter.getBottom() - frY - pad);
+        if (frH > scaled(8)) // Only show if there's enough space
+            filterResponseDisplay.setBounds(x0, frY, sections.filter.getWidth() - pad * 2, frH);
+        else
+            filterResponseDisplay.setBounds(0, 0, 0, 0); // Hide if no space
     }
 
     // === ENVELOPES LAYOUT (2 groups of 4 ADSR) ===
     {
         int x0 = sections.envelopes.getX() + pad;
         int y0 = sections.envelopes.getY() + titH + scaled(18) + L;
-        int eStep = ctrlStep(ampASlider, S);
+        // Envelope faders need tighter spacing (labels are just A/D/S/R = short)
+        bool envIsFader = (ampASlider.getSliderStyle() == juce::Slider::LinearVertical);
+        int eStep = envIsFader ? (faderW + scaled(8)) : (S + scaled(kKnobSpacing));
         int halfW = sections.envelopes.getWidth() / 2 - pad;
 
         // Amp ADSR
