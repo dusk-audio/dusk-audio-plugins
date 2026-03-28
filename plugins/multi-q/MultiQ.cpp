@@ -1,4 +1,5 @@
 #include "MultiQ.h"
+#include "AnalogMatchedBiquad.h"
 #include "MultiQEditor.h"
 
 MultiQ::MultiQ()
@@ -246,7 +247,7 @@ void MultiQ::parameterChanged(const juce::String& parameterID, float newValue)
 void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     baseSampleRate = sampleRate;
-    rmsWindowSamples = static_cast<int>(0.15 * sampleRate);  // ~150ms for responsive auto-gain
+    rmsWindowSamples = static_cast<int>(2.0 * sampleRate);  // 2s window: averages across drum grooves, immune to transients
 
     oversamplingMode = static_cast<int>(safeGetParam(hqEnabledParam, 0.0f));
 
@@ -422,8 +423,8 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Mono mix scratch buffer for block-based analyzer feed
     analyzerMonoBuffer.resize(static_cast<size_t>(samplesPerBlock * osFactor), 0.0f);
 
-    // Use ~200ms smoothing with 500ms RMS window for mastering-appropriate behavior
-    autoGainCompensation.reset(sampleRate, 0.2);
+    // 2s ramp: gain can't follow individual transients, only long-term loudness shifts
+    autoGainCompensation.reset(sampleRate, 2.0);
     autoGainCompensation.setCurrentAndTargetValue(1.0f);
     inputRmsSum = 0.0f;
     outputRmsSum = 0.0f;
@@ -462,8 +463,8 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
     osChanging = false;
     prevOsBuffer.setSize(2, samplesPerBlock, false, false, true);
 
-    // Compute initial compensation delay using the effective osFactor (which may be ≥2 for
-    // British/Tube even when user sets HQ=Off, to satisfy the -100dB aliasing requirement).
+    // Compute initial compensation delay using the effective osFactor.
+    // This keeps total latency constant so the DAW's PDC stays aligned.
     int currentOsLatency = 0;
     if (osFactor == 4 && oversampler4x)
         currentOsLatency = static_cast<int>(std::lround(oversampler4x->getLatencyInSamples()));
@@ -619,7 +620,6 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         oversamplingMode = newOsMode;
         int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
         // British/Tube always need ≥2x to avoid aliasing from nonlinear stages.
-        // Must match the effectiveOsMode enforcement in processBlock.
         {
             auto curEqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
             if ((curEqType == EQType::British || curEqType == EQType::Tube) && osFactor < 2)
@@ -631,6 +631,14 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         // Reset oversampler states to avoid artifacts on mode switch
         if (oversampler2x) oversampler2x->reset();
         if (oversampler4x) oversampler4x->reset();
+        // Reset autogain accumulators: the transition block has mismatched input/output
+        // (input measured pre-switch, output measured post-switch through new AA filter),
+        // which would produce a spurious targetGain for the current window.
+        inputRmsSum = 0.0f;
+        outputRmsSum = 0.0f;
+        inputPeakMax = 0.0f;
+        outputPeakMax = 0.0f;
+        rmsSampleCount = 0;
         // Reset all filters
         hpfFilter.reset();
         for (auto& filter : svfFilters)
@@ -658,9 +666,13 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
         // Force filter coefficient update at new sample rate
         filtersNeedUpdate.store(true);
+        // Mark all bands dirty so updateAllFilters() recomputes coefficients at new sample rate.
+        // Without this, stale coefficients designed at the old rate are evaluated at the new rate,
+        // producing a spurious curve in the EQ display when switching oversampling modes.
+        for (auto& dirty : bandDirty)
+            dirty.store(true, std::memory_order_relaxed);
 
-        // Update compensation delay using the effective osFactor (which may be ≥2 for British/Tube).
-        // This keeps total latency constant so the DAW's PDC stays aligned.
+        // Update compensation delay using the effective osFactor.
         int currentOsLatency = 0;
         if (osFactor == 4 && oversampler4x)
             currentOsLatency = static_cast<int>(std::lround(oversampler4x->getLatencyInSamples()));
@@ -703,28 +715,9 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         eqTypeCrossfade.setCurrentAndTargetValue(0.0f);
         eqTypeCrossfade.setTargetValue(1.0f);
 
-        // When OS=off, switching between Digital (no min-2x enforcement) and British/Tube
-        // (enforced min 2x) changes the effective oversampling factor. Update sample rate
-        // and compensation delay to match so the DAW PDC stays correct.
-        if (oversamplingMode == 0)
-        {
-            auto prevIsNL = (previousEQType == EQType::British || previousEQType == EQType::Tube);
-            auto newIsNL  = (eqType == EQType::British || eqType == EQType::Tube);
-            if (prevIsNL != newIsNL)
-            {
-                int osFactor = newIsNL ? 2 : 1;
-                currentSampleRate = baseSampleRate.load() * osFactor;
-                double newSR = currentSampleRate;
-                britishEQ.updateSampleRate(newSR);
-                tubeEQ.updateSampleRate(newSR);
-                int currentOsLatency = 0;
-                if (osFactor >= 2 && oversampler2x)
-                    currentOsLatency = static_cast<int>(std::lround(oversampler2x->getLatencyInSamples()));
-                osCompDelaySamples = maxOversamplerLatency - currentOsLatency;
-                osCompDelayWritePos = 0;
-                osCompDelayBuffer.clear();
-            }
-        }
+        // Note: previously this block enforced minimum 2x OS for British/Tube when OS=Off.
+        // Now Off is removed — minimum is always 2x — so no EQ-type-driven sample-rate
+        // adjustment is needed here.
 
         previousEQType = eqType;
 
@@ -855,9 +848,14 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         juce::FloatVectorOperations::copy(analyzerMonoBuffer.data(), readL, safeN);
         juce::FloatVectorOperations::add(analyzerMonoBuffer.data(), readR, safeN);
         juce::FloatVectorOperations::multiply(analyzerMonoBuffer.data(), 0.5f, safeN);
-        // Sum of squares using dot product with itself
+        // Sum of squares and peak tracking
         for (int i = 0; i < safeN; ++i)
-            inputRmsSum += analyzerMonoBuffer[static_cast<size_t>(i)] * analyzerMonoBuffer[static_cast<size_t>(i)];
+        {
+            float s = analyzerMonoBuffer[static_cast<size_t>(i)];
+            inputRmsSum += s * s;
+            float abss = std::abs(s);
+            if (abss > inputPeakMax) inputPeakMax = abss;
+        }
     }
     float inLdB = inL > 1e-3f ? juce::Decibels::gainToDecibels(inL) : -60.0f;
     float inRdB = inR > 1e-3f ? juce::Decibels::gainToDecibels(inR) : -60.0f;
@@ -886,11 +884,9 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     auto procMode = static_cast<ProcessingMode>(
         static_cast<int>(safeGetParam(processingModeParam, 0.0f)));
 
-    // Effective OS mode: British/Tube enforce minimum 2x for -100dB alias rejection.
-    // This matches the osFactor enforced in prepareToPlay for correct filter initialization.
+    // ADAA in ConsoleSaturation and TubeEQProcessor handles aliasing at OS=Off,
+    // so no minimum OS enforcement is needed for British/Tube modes.
     int effectiveOsMode = oversamplingMode;
-    if ((eqType == EQType::British || eqType == EQType::Tube) && effectiveOsMode < 1)
-        effectiveOsMode = 1;
 
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::AudioBlock<float> processBlock = block;
@@ -1516,28 +1512,50 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         juce::FloatVectorOperations::add(analyzerMonoBuffer.data(), readR, outN);
         juce::FloatVectorOperations::multiply(analyzerMonoBuffer.data(), 0.5f, outN);
         for (int i = 0; i < outN; ++i)
-            outputRmsSum += analyzerMonoBuffer[static_cast<size_t>(i)] * analyzerMonoBuffer[static_cast<size_t>(i)];
+        {
+            float s = analyzerMonoBuffer[static_cast<size_t>(i)];
+            outputRmsSum += s * s;
+            float abss = std::abs(s);
+            if (abss > outputPeakMax) outputPeakMax = abss;
+        }
 
         rmsSampleCount += outN;
 
-        // Update auto-gain compensation when we have enough samples (~100ms window)
+        // Update auto-gain compensation when we have enough samples
         if (rmsSampleCount >= rmsWindowSamples)
         {
             float inputRms = std::sqrt(inputRmsSum / static_cast<float>(rmsSampleCount));
             float outputRms = std::sqrt(outputRmsSum / static_cast<float>(rmsSampleCount));
 
             // Calculate compensation gain (ratio of input to output RMS)
-            // Limit to reasonable range to prevent extreme corrections
             if (outputRms > 1e-6f && inputRms > 1e-6f)
             {
                 float targetGain = inputRms / outputRms;
-                targetGain = juce::jlimit(0.1f, 10.0f, targetGain);  // ±20dB max
-                autoGainCompensation.setTargetValue(targetGain);
+
+                // Peak-safe cap: never push output peaks above input peak level.
+                // RMS-only correction can over-boost transient signals (e.g. HPF on drums
+                // removes low-end RMS but peaks are broadband — RMS-derived gain then
+                // pushes peaks above the original ceiling).
+                if (outputPeakMax > 1e-6f && inputPeakMax > 1e-6f)
+                {
+                    float peakSafeCap = inputPeakMax / outputPeakMax;
+                    targetGain = std::min(targetGain, peakSafeCap);
+                }
+
+                targetGain = juce::jlimit(0.5f, 2.0f, targetGain);  // ±6dB max
+
+                // Dead zone: ignore corrections < 1% (~0.09 dB).
+                // The oversampling AA filter has a tiny steady-state RMS effect
+                // that should not trigger autogain — only real EQ changes should.
+                if (std::abs(targetGain - 1.0f) > 0.01f)
+                    autoGainCompensation.setTargetValue(targetGain);
             }
 
             // Reset accumulators
             inputRmsSum = 0.0f;
             outputRmsSum = 0.0f;
+            inputPeakMax = 0.0f;
+            outputPeakMax = 0.0f;
             rmsSampleCount = 0;
         }
 
@@ -1566,6 +1584,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
         autoGainCompensation.setCurrentAndTargetValue(1.0f);
         inputRmsSum = 0.0f;
         outputRmsSum = 0.0f;
+        inputPeakMax = 0.0f;
+        outputPeakMax = 0.0f;
         rmsSampleCount = 0;
     }
 
@@ -1793,14 +1813,12 @@ void MultiQ::updateBandFilter(int bandIndex)
     if (bandIndex < 1 || bandIndex > 6)
         return;
 
-    // SVF coefficients for audio processing (per-sample interpolation)
-    SVFCoeffs svfC;
-    computeBandSVFCoeffs(bandIndex, svfC);
-    svfFilters[static_cast<size_t>(bandIndex - 1)].setTarget(svfC);
-
-    // Biquad coefficients for UI curve display (written to inactive double buffer)
+    // AnalogMatchedBiquad coefficients — used for both audio path and UI display.
+    // StereoBiquad (DF2T) gives identical response at all OS rates; the old SVF path
+    // produced topology-dependent frequency warping that differed across OS modes.
     BiquadCoeffs c;
     computeBandCoeffs(bandIndex, c);
+    svfFilters[static_cast<size_t>(bandIndex - 1)].setCoeffs(c);
     uiWriteBuffer().bandCoeffs[static_cast<size_t>(bandIndex - 1)] = c;
 }
 
@@ -1860,11 +1878,13 @@ void MultiQ::updateDynGainFilter(int bandIndex, float dynGainDb)
     svfDynGainFilters[static_cast<size_t>(bandIndex - 1)].setTarget(svfC);
 }
 
-// Non-allocating coefficient computation using Audio EQ Cookbook with pre-warping
-// These write directly into BiquadCoeffs without any heap allocation.
+// Non-allocating coefficient computation — delegates to AnalogMatchedBiquad.
+// All functions pre-warp the bandwidth (not just f0), giving cramping-free
+// response at all sample rates without requiring oversampling.
 
 double MultiQ::preWarpFrequency(double freq, double sampleRate)
 {
+    // Kept for any remaining callers; AnalogMatchedBiquad handles warping internally.
     double w0 = 2.0 * juce::MathConstants<double>::pi * freq;
     double T = 1.0 / sampleRate;
     return (2.0 / T) * std::tan(w0 * T / 2.0) / (2.0 * juce::MathConstants<double>::pi);
@@ -1872,159 +1892,47 @@ double MultiQ::preWarpFrequency(double freq, double sampleRate)
 
 void MultiQ::computePeakingCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB, float q)
 {
-    double af = juce::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
-    double A = std::pow(10.0, gainDB / 40.0);
-    double w0 = 2.0 * juce::MathConstants<double>::pi * af / sr;
-    double cosw0 = std::cos(w0);
-    double alpha = std::sin(w0) / (2.0 * q);
-
-    double b0 = 1.0 + alpha * A;
-    double b1 = -2.0 * cosw0;
-    double b2 = 1.0 - alpha * A;
-    double a0 = 1.0 + alpha / A;
-    double a1 = -2.0 * cosw0;
-    double a2 = 1.0 - alpha / A;
-
-    c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
-    c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
+    AnalogMatchedBiquad::computePeaking(c, freq, sr, static_cast<double>(gainDB), static_cast<double>(q));
 }
 
 void MultiQ::computeLowShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB, float q)
 {
-    double af = juce::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
-    double A = std::sqrt(juce::Decibels::decibelsToGain(gainDB));
-    double w0 = 2.0 * juce::MathConstants<double>::pi * af / sr;
-    double cosw0 = std::cos(w0);
-    double beta = std::sin(w0) * std::sqrt(A) / q;
-
-    double b0 = A * ((A + 1.0) - (A - 1.0) * cosw0 + beta);
-    double b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosw0);
-    double b2 = A * ((A + 1.0) - (A - 1.0) * cosw0 - beta);
-    double a0 = (A + 1.0) + (A - 1.0) * cosw0 + beta;
-    double a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosw0);
-    double a2 = (A + 1.0) + (A - 1.0) * cosw0 - beta;
-
-    c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
-    c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
+    AnalogMatchedBiquad::computeLowShelf(c, freq, sr, static_cast<double>(gainDB), static_cast<double>(q));
 }
 
 void MultiQ::computeHighShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB, float q)
 {
-    double af = juce::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
-    double A = std::sqrt(juce::Decibels::decibelsToGain(gainDB));
-    double w0 = 2.0 * juce::MathConstants<double>::pi * af / sr;
-    double cosw0 = std::cos(w0);
-    double beta = std::sin(w0) * std::sqrt(A) / q;
-
-    double b0 = A * ((A + 1.0) + (A - 1.0) * cosw0 + beta);
-    double b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosw0);
-    double b2 = A * ((A + 1.0) + (A - 1.0) * cosw0 - beta);
-    double a0 = (A + 1.0) - (A - 1.0) * cosw0 + beta;
-    double a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosw0);
-    double a2 = (A + 1.0) - (A - 1.0) * cosw0 - beta;
-
-    c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
-    c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
+    AnalogMatchedBiquad::computeHighShelf(c, freq, sr, static_cast<double>(gainDB), static_cast<double>(q));
 }
 
 void MultiQ::computeNotchCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 {
-    double af = juce::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
-    double w0 = 2.0 * juce::MathConstants<double>::pi * af / sr;
-    double cosw0 = std::cos(w0);
-    double alpha = std::sin(w0) / (2.0 * q);
-
-    double b0 = 1.0;
-    double b1 = -2.0 * cosw0;
-    double b2 = 1.0;
-    double a0 = 1.0 + alpha;
-    double a1 = -2.0 * cosw0;
-    double a2 = 1.0 - alpha;
-
-    c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
-    c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
+    AnalogMatchedBiquad::computeNotch(c, freq, sr, static_cast<double>(q));
 }
 
 void MultiQ::computeBandPassCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 {
-    double af = juce::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
-    double w0 = 2.0 * juce::MathConstants<double>::pi * af / sr;
-    double cosw0 = std::cos(w0);
-    double sinw0 = std::sin(w0);
-    double alpha = sinw0 / (2.0 * q);
-
-    double b0 = q * alpha;
-    double b1 = 0.0;
-    double b2 = -q * alpha;
-    double a0 = 1.0 + alpha;
-    double a1 = -2.0 * cosw0;
-    double a2 = 1.0 - alpha;
-
-    c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
-    c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
+    AnalogMatchedBiquad::computeBandPass(c, freq, sr, static_cast<double>(q));
 }
 
 void MultiQ::computeHighPassCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 {
-    double af = juce::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
-    double w0 = 2.0 * juce::MathConstants<double>::pi * af / sr;
-    double cosw0 = std::cos(w0);
-    double alpha = std::sin(w0) / (2.0 * q);
-
-    double b0 = (1.0 + cosw0) / 2.0;
-    double b1 = -(1.0 + cosw0);
-    double b2 = (1.0 + cosw0) / 2.0;
-    double a0 = 1.0 + alpha;
-    double a1 = -2.0 * cosw0;
-    double a2 = 1.0 - alpha;
-
-    c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
-    c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
+    AnalogMatchedBiquad::computeHighPass(c, freq, sr, static_cast<double>(q));
 }
 
 void MultiQ::computeLowPassCoeffs(BiquadCoeffs& c, double sr, double freq, float q)
 {
-    double af = juce::jlimit(20.0, sr * 0.45, preWarpFrequency(freq, sr));
-    double w0 = 2.0 * juce::MathConstants<double>::pi * af / sr;
-    double cosw0 = std::cos(w0);
-    double alpha = std::sin(w0) / (2.0 * q);
-
-    double b0 = (1.0 - cosw0) / 2.0;
-    double b1 = 1.0 - cosw0;
-    double b2 = (1.0 - cosw0) / 2.0;
-    double a0 = 1.0 + alpha;
-    double a1 = -2.0 * cosw0;
-    double a2 = 1.0 - alpha;
-
-    c.coeffs[0] = float(b0/a0); c.coeffs[1] = float(b1/a0); c.coeffs[2] = float(b2/a0);
-    c.coeffs[3] = 1.0f;         c.coeffs[4] = float(a1/a0); c.coeffs[5] = float(a2/a0);
+    AnalogMatchedBiquad::computeLowPass(c, freq, sr, static_cast<double>(q));
 }
 
 void MultiQ::computeFirstOrderHighPassCoeffs(BiquadCoeffs& c, double sr, double freq)
 {
-    // JUCE-compatible: n = tan(pi * f / sr), H(z) = (1 - z^-1) / ((n+1) + (n-1)*z^-1)
-    double n = std::tan(juce::MathConstants<double>::pi * freq / sr);
-    double a0 = n + 1.0;
-
-    c.coeffs[0] = float(1.0 / a0);
-    c.coeffs[1] = float(-1.0 / a0);
-    c.coeffs[2] = 0.0f;
-    c.coeffs[3] = 1.0f;
-    c.coeffs[4] = float((n - 1.0) / a0);
-    c.coeffs[5] = 0.0f;
+    AnalogMatchedBiquad::computeFirstOrderHighPass(c, freq, sr);
 }
 
 void MultiQ::computeFirstOrderLowPassCoeffs(BiquadCoeffs& c, double sr, double freq)
 {
-    double n = std::tan(juce::MathConstants<double>::pi * freq / sr);
-    double a0 = n + 1.0;
-
-    c.coeffs[0] = float(n / a0);
-    c.coeffs[1] = float(n / a0);
-    c.coeffs[2] = 0.0f;
-    c.coeffs[3] = 1.0f;
-    c.coeffs[4] = float((n - 1.0) / a0);
-    c.coeffs[5] = 0.0f;
+    AnalogMatchedBiquad::computeFirstOrderLowPass(c, freq, sr);
 }
 
 void MultiQ::computeTiltShelfCoeffs(BiquadCoeffs& c, double sr, double freq, float gainDB)
@@ -2062,9 +1970,15 @@ void MultiQ::computeTiltShelfCoeffs(BiquadCoeffs& c, double sr, double freq, flo
 
 void MultiQ::computeSVFPeaking(SVFCoeffs& c, double sr, double freq, float gainDB, float q)
 {
-    double A = std::pow(10.0, gainDB / 40.0);  // sqrt of linear gain
-    double g = std::tan(juce::MathConstants<double>::pi * freq / sr);
-    double k = 1.0 / (q * A);
+    freq = std::max(1.0, std::min(freq, sr * 0.4998));
+    double A   = std::pow(10.0, gainDB / 40.0);
+    double g   = std::tan(juce::MathConstants<double>::pi * freq / sr);
+    // Pre-warp the bandwidth (fc/Q Hz) independently of the centre frequency.
+    // This matches the AnalogMatchedBiquad approach: kbw = tan(π·bw/sr),
+    // so the Q/bandwidth shape is consistent at all OS rates.
+    double bw  = freq / std::max(0.01, static_cast<double>(q));
+    double kbw = std::tan(juce::MathConstants<double>::pi * std::min(bw, sr * 0.4998) / sr);
+    double k   = std::max(0.001, kbw / (g * A));
 
     c.a1 = static_cast<float>(1.0 / (1.0 + g * (g + k)));
     c.a2 = static_cast<float>(g * c.a1);
@@ -2104,8 +2018,11 @@ void MultiQ::computeSVFHighShelf(SVFCoeffs& c, double sr, double freq, float gai
 
 void MultiQ::computeSVFNotch(SVFCoeffs& c, double sr, double freq, float q)
 {
-    double g = std::tan(juce::MathConstants<double>::pi * freq / sr);
-    double k = 1.0 / q;
+    freq = std::max(1.0, std::min(freq, sr * 0.4998));
+    double g   = std::tan(juce::MathConstants<double>::pi * freq / sr);
+    double bw  = freq / std::max(0.01, static_cast<double>(q));
+    double kbw = std::tan(juce::MathConstants<double>::pi * std::min(bw, sr * 0.4998) / sr);
+    double k   = std::max(0.001, kbw / g);
 
     c.a1 = static_cast<float>(1.0 / (1.0 + g * (g + k)));
     c.a2 = static_cast<float>(g * c.a1);
@@ -2117,8 +2034,11 @@ void MultiQ::computeSVFNotch(SVFCoeffs& c, double sr, double freq, float q)
 
 void MultiQ::computeSVFBandPass(SVFCoeffs& c, double sr, double freq, float q)
 {
-    double g = std::tan(juce::MathConstants<double>::pi * freq / sr);
-    double k = 1.0 / q;
+    freq = std::max(1.0, std::min(freq, sr * 0.4998));
+    double g   = std::tan(juce::MathConstants<double>::pi * freq / sr);
+    double bw  = freq / std::max(0.01, static_cast<double>(q));
+    double kbw = std::tan(juce::MathConstants<double>::pi * std::min(bw, sr * 0.4998) / sr);
+    double k   = std::max(0.001, kbw / g);
 
     c.a1 = static_cast<float>(1.0 / (1.0 + g * (g + k)));
     c.a2 = static_cast<float>(g * c.a1);
@@ -2360,53 +2280,17 @@ float MultiQ::getFrequencyResponseMagnitude(float frequencyHz) const
     if (currentEqType == EQType::Match)
         return 0.0f;
 
-    // When filters haven't been refreshed by the audio thread yet (e.g. immediately
-    // after a transfer or parameter change with no audio playing), compute directly
-    // from current parameter values to give accurate display without needing processBlock.
-    if (filtersNeedUpdate.load(std::memory_order_relaxed))
-    {
-        double freshResponse = 1.0;
-        for (int band = 0; band < NUM_BANDS; ++band)
-        {
-            float freshDB = computePerBandMagnitudeFresh(band, frequencyHz);
-            freshResponse *= juce::Decibels::decibelsToGain(static_cast<double>(freshDB));
-        }
-        return static_cast<float>(juce::Decibels::gainToDecibels(freshResponse, -100.0));
-    }
-
-    // Evaluate the actual IIR transfer function at the given frequency using stored coefficients.
-    // This produces an exact match with the DSP processing (no Gaussian approximations).
-    // Read from the active double buffer (acquire ensures we see all audio thread writes).
-
-    const auto& buf = uiReadBuffer();
-    double response = 1.0;
-    double sr = currentSampleRate;
-
+    // Always compute from current parameter values at baseSampleRate so the display is
+    // stable regardless of oversampling mode. Using UICoeffBuffer at currentSampleRate
+    // (oversampled rate) caused the curve shape to visibly shift when OS mode changed,
+    // which is confusing — oversampling is a quality setting, not a tonal change.
+    double freshResponse = 1.0;
     for (int band = 0; band < NUM_BANDS; ++band)
     {
-        bool enabled = safeGetParam(bandEnabledParams[static_cast<size_t>(band)], 0.0f) > 0.5f;
-        if (!enabled)
-            continue;
-
-        if (band == 0)  // HPF: cascaded stages
-        {
-            int stages = buf.hpfStages;
-            for (int s = 0; s < stages; ++s)
-                response *= buf.hpfCoeffs[static_cast<size_t>(s)].getMagnitudeForFrequency(frequencyHz, sr);
-        }
-        else if (band == 7)  // LPF: cascaded stages
-        {
-            int stages = buf.lpfStages;
-            for (int s = 0; s < stages; ++s)
-                response *= buf.lpfCoeffs[static_cast<size_t>(s)].getMagnitudeForFrequency(frequencyHz, sr);
-        }
-        else  // Bands 2-7: single biquad each
-        {
-            response *= buf.bandCoeffs[static_cast<size_t>(band - 1)].getMagnitudeForFrequency(frequencyHz, sr);
-        }
+        float freshDB = computePerBandMagnitudeFresh(band, frequencyHz);
+        freshResponse *= juce::Decibels::decibelsToGain(static_cast<double>(freshDB));
     }
-
-    return static_cast<float>(juce::Decibels::gainToDecibels(response, -100.0));
+    return static_cast<float>(juce::Decibels::gainToDecibels(freshResponse, -100.0));
 }
 
 float MultiQ::getPerBandMagnitude(int bandIndex, float frequencyHz) const

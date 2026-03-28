@@ -315,35 +315,25 @@ private:
     void updateHPF(double sr)
     {
         float freq = params.hpfFreq;
-        float fsr = static_cast<float>(sr);
 
-        // Stage 1: 1st-order highpass via bilinear transform (in-place, no allocation)
-        // H(s) = s / (s + w_c)  =>  bilinear  =>  biquad with b2=0, a2=0
+        // Stage 1: 1st-order highpass, pre-warped at fc
         {
-            float K = std::tan(juce::MathConstants<float>::pi * freq / fsr);
-            float norm = 1.0f / (1.0f + K);
-            float b0 = norm;
-            float b1 = -norm;
-            float a1 = (K - 1.0f) * norm;
-            setFilterCoeffs(hpfStage1L, b0, b1, 0.0f, a1, 0.0f);
-            setFilterCoeffs(hpfStage1R, b0, b1, 0.0f, a1, 0.0f);
+            double k    = std::tan(juce::MathConstants<double>::pi * freq / sr);
+            double norm = 1.0 / (1.0 + k);
+            setFilterCoeffs(hpfStage1L, (float)norm, (float)-norm, 0.0f, (float)((k-1.0)*norm), 0.0f);
+            setFilterCoeffs(hpfStage1R, (float)norm, (float)-norm, 0.0f, (float)((k-1.0)*norm), 0.0f);
         }
 
-        // Stage 2: 2nd-order highpass with console Q (in-place, no allocation)
-        // Q = 1.0 for biquad section of 3rd-order Butterworth HPF (1st + 2nd order cascade)
+        // Stage 2: 2nd-order highpass, pre-warped at fc (Q=1.0 for 3rd-order Butterworth cascade)
         {
-            const float consoleHPFQ = 1.0f;
-            float w0 = juce::MathConstants<float>::twoPi * freq / fsr;
-            float cosw0 = std::cos(w0);
-            float sinw0 = std::sin(w0);
-            float alpha = sinw0 / (2.0f * consoleHPFQ);
-
-            float a0 = 1.0f + alpha;
-            float b0 = ((1.0f + cosw0) / 2.0f) / a0;
-            float b1 = (-(1.0f + cosw0)) / a0;
-            float b2 = ((1.0f + cosw0) / 2.0f) / a0;
-            float a1 = (-2.0f * cosw0) / a0;
-            float a2 = (1.0f - alpha) / a0;
+            const double consoleHPFQ = 1.0;
+            double k    = std::tan(juce::MathConstants<double>::pi * freq / sr);
+            double norm = 1.0 / (k*k + k/consoleHPFQ + 1.0);
+            float b0 = (float)norm;
+            float b1 = (float)(-2.0 * norm);
+            float b2 = b0;
+            float a1 = (float)(2.0 * (k*k - 1.0) * norm);
+            float a2 = (float)((k*k - k/consoleHPFQ + 1.0) * norm);
             setFilterCoeffs(hpfStage2L, b0, b1, b2, a1, a2);
             setFilterCoeffs(hpfStage2R, b0, b1, b2, a1, a2);
         }
@@ -351,27 +341,18 @@ private:
 
     void updateLPF(double sr)
     {
-        float freq = params.lpfFreq;
-        float fsr = static_cast<float>(sr);
+        double freq = std::max(1.0, std::min((double)params.lpfFreq, sr * 0.4998));
+        double q    = params.isBlackMode ? 0.8 : 0.707;
 
-        float processFreq = freq;
-        if (freq > sr * 0.3f)
-            processFreq = britishPreWarpFrequency(freq, sr);
-
-        float q = params.isBlackMode ? 0.8f : 0.707f;
-
-        // 2nd-order lowpass (in-place, no allocation)
-        float w0 = juce::MathConstants<float>::twoPi * processFreq / fsr;
-        float cosw0 = std::cos(w0);
-        float sinw0 = std::sin(w0);
-        float alpha = sinw0 / (2.0f * q);
-
-        float a0 = 1.0f + alpha;
-        float b0 = ((1.0f - cosw0) / 2.0f) / a0;
-        float b1 = (1.0f - cosw0) / a0;
-        float b2 = ((1.0f - cosw0) / 2.0f) / a0;
-        float a1 = (-2.0f * cosw0) / a0;
-        float a2 = (1.0f - alpha) / a0;
+        // 2nd-order lowpass, pre-warped at fc
+        double k    = std::tan(juce::MathConstants<double>::pi * freq / sr);
+        double k2   = k * k;
+        double norm = 1.0 / (k2 + k/q + 1.0);
+        float b0 = (float)(k2 * norm);
+        float b1 = (float)(2.0 * k2 * norm);
+        float b2 = b0;
+        float a1 = (float)(2.0 * (k2 - 1.0) * norm);
+        float a2 = (float)((k2 - k/q + 1.0) * norm);
         setFilterCoeffs(lpfL, b0, b1, b2, a1, a2);
         setFilterCoeffs(lpfR, b0, b1, b2, a1, a2);
     }
@@ -415,27 +396,23 @@ private:
                 freq = 7000.0f;
         }
 
-        float processFreq = freq;
-        if (freq > 3000.0f)
-            processFreq = britishPreWarpFrequency(freq, sr);
-
-        applyConsolePeakCoeffs(hmFilterL, sr, processFreq, q, params.hmGain, params.isBlackMode);
-        applyConsolePeakCoeffs(hmFilterR, sr, processFreq, q, params.hmGain, params.isBlackMode);
+        applyConsolePeakCoeffs(hmFilterL, sr, freq, q, params.hmGain, params.isBlackMode);
+        applyConsolePeakCoeffs(hmFilterR, sr, freq, q, params.hmGain, params.isBlackMode);
     }
 
     void updateHFBand(double sr)
     {
-        float warpedFreq = britishPreWarpFrequency(params.hfFreq, sr);
+        float freq = params.hfFreq;
 
         if (params.isBlackMode && params.hfBell)
         {
-            applyConsolePeakCoeffs(hfFilterL, sr, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
-            applyConsolePeakCoeffs(hfFilterR, sr, warpedFreq, 0.7f, params.hfGain, params.isBlackMode);
+            applyConsolePeakCoeffs(hfFilterL, sr, freq, 0.7f, params.hfGain, params.isBlackMode);
+            applyConsolePeakCoeffs(hfFilterR, sr, freq, 0.7f, params.hfGain, params.isBlackMode);
         }
         else
         {
-            applyConsoleShelfCoeffs(hfFilterL, sr, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
-            applyConsoleShelfCoeffs(hfFilterR, sr, warpedFreq, 0.7f, params.hfGain, true, params.isBlackMode);
+            applyConsoleShelfCoeffs(hfFilterL, sr, freq, 0.7f, params.hfGain, true, params.isBlackMode);
+            applyConsoleShelfCoeffs(hfFilterR, sr, freq, 0.7f, params.hfGain, true, params.isBlackMode);
         }
     }
 
@@ -466,82 +443,80 @@ private:
         c[0] = b0; c[1] = b1; c[2] = b2; c[3] = a1; c[4] = a2;
     }
 
-    // Console shelf filter — writes coefficients in-place (no allocation)
+    // Console shelf filter — writes coefficients in-place, cramping-free.
+    // Derives cosW/sinW from k=tan(π·fc/sr) so the turnover lands at exactly fc.
     void applyConsoleShelfCoeffs(juce::dsp::IIR::Filter<float>& filter,
         double sampleRate, float freq, float q, float gainDB, bool isHighShelf, bool isBlackMode) const
     {
-        float A = std::pow(10.0f, gainDB / 40.0f);
-        float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
-        float cosw0 = std::cos(w0);
-        float sinw0 = std::sin(w0);
+        double consoleQ = q;
+        if (isBlackMode) consoleQ *= 1.4;
+        else             consoleQ *= 0.65;
+        consoleQ = std::max(0.01, consoleQ);
 
-        float consoleQ = q;
-        if (isBlackMode)
-            consoleQ *= 1.4f;
-        else
-            consoleQ *= 0.65f;
+        double fc  = std::max(1.0, std::min((double)freq, sampleRate * 0.4998));
+        double A   = std::pow(10.0, (double)gainDB / 40.0);
+        double sqA = std::sqrt(A);
+        double k   = std::tan(juce::MathConstants<double>::pi * fc / sampleRate);
+        double k2  = k * k;
+        // Derive cosW and sinW from k (pre-warped) to avoid double-warping
+        double cosW  = (1.0 - k2) / (1.0 + k2);
+        double sinW  = 2.0 * k   / (1.0 + k2);
+        double alpha = sinW / 2.0 * std::sqrt((A + 1.0/A) * (1.0/consoleQ - 1.0) + 2.0);
 
-        float alpha = sinw0 / (2.0f * consoleQ);
-
-        float b0, b1, b2, a0, a1, a2;
-
+        double b0, b1, b2, a0, a1, a2;
         if (isHighShelf)
         {
-            b0 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
-            b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw0);
-            b2 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
-            a0 = (A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
-            a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosw0);
-            a2 = (A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
+            b0 =  A * ((A+1.0) + (A-1.0)*cosW + 2.0*sqA*alpha);
+            b1 = -2.0*A * ((A-1.0) + (A+1.0)*cosW);
+            b2 =  A * ((A+1.0) + (A-1.0)*cosW - 2.0*sqA*alpha);
+            a0 = (A+1.0) - (A-1.0)*cosW + 2.0*sqA*alpha;
+            a1 =  2.0 * ((A-1.0) - (A+1.0)*cosW);
+            a2 = (A+1.0) - (A-1.0)*cosW - 2.0*sqA*alpha;
         }
         else
         {
-            b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
-            b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0);
-            b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
-            a0 = (A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
-            a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw0);
-            a2 = (A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
+            b0 =  A * ((A+1.0) - (A-1.0)*cosW + 2.0*sqA*alpha);
+            b1 =  2.0*A * ((A-1.0) - (A+1.0)*cosW);
+            b2 =  A * ((A+1.0) - (A-1.0)*cosW - 2.0*sqA*alpha);
+            a0 = (A+1.0) + (A-1.0)*cosW + 2.0*sqA*alpha;
+            a1 = -2.0 * ((A-1.0) + (A+1.0)*cosW);
+            a2 = (A+1.0) + (A-1.0)*cosW - 2.0*sqA*alpha;
         }
 
-        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
-
-        setFilterCoeffs(filter, b0, b1, b2, a1, a2);
+        setFilterCoeffs(filter, (float)(b0/a0), (float)(b1/a0), (float)(b2/a0),
+                                (float)(a1/a0), (float)(a2/a0));
     }
 
-    // Console peak filter — writes coefficients in-place (no allocation)
+    // Console peak filter — writes coefficients in-place, cramping-free.
+    // Pre-warps the bandwidth (not just fc): kbw=tan(π·bw/sr), center via cos(2π·fc/sr).
     void applyConsolePeakCoeffs(juce::dsp::IIR::Filter<float>& filter,
         double sampleRate, float freq, float q, float gainDB, bool isBlackMode) const
     {
-        float A = std::pow(10.0f, gainDB / 40.0f);
-        float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
-        float cosw0 = std::cos(w0);
-        float sinw0 = std::sin(w0);
-
-        float consoleQ = q;
-
+        double consoleQ = q;
         if (isBlackMode && std::abs(gainDB) > 0.1f)
         {
-            float gainFactor = std::abs(gainDB) / 15.0f;
+            double gainFactor = std::abs((double)gainDB) / 15.0;
             if (gainDB > 0.0f)
-                consoleQ *= (1.0f + gainFactor * 1.2f);
+                consoleQ *= (1.0 + gainFactor * 1.2);
             else
-                consoleQ *= (1.0f + gainFactor * 0.6f);
+                consoleQ *= (1.0 + gainFactor * 0.6);
         }
+        consoleQ = std::max(0.1, std::min(consoleQ, 10.0));
 
-        consoleQ = juce::jlimit(0.1f, 10.0f, consoleQ);
-        float alpha = sinw0 / (2.0f * consoleQ);
+        double fc  = std::max(1.0, std::min((double)freq, sampleRate * 0.4998));
+        double bw  = fc / consoleQ;
+        double kbw = std::tan(juce::MathConstants<double>::pi * std::min(bw, sampleRate * 0.4998) / sampleRate);
+        double A   = std::pow(10.0, (double)gainDB / 40.0);
+        double cosW = std::cos(2.0 * juce::MathConstants<double>::pi * fc / sampleRate);
 
-        float b0 = 1.0f + alpha * A;
-        float b1 = -2.0f * cosw0;
-        float b2 = 1.0f - alpha * A;
-        float a0 = 1.0f + alpha / A;
-        float a1 = -2.0f * cosw0;
-        float a2 = 1.0f - alpha / A;
+        // A = 10^(gainDB/40) < 1 for cuts — no branch needed, formula handles both.
+        const double b0 = 1.0 + kbw * A,  b2 = 1.0 - kbw * A;
+        const double a0 = 1.0 + kbw / A,  a2 = 1.0 - kbw / A;
+        const double b1 = -2.0 * cosW;
+        const double a1 = -2.0 * cosW;
 
-        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
-
-        setFilterCoeffs(filter, b0, b1, b2, a1, a2);
+        setFilterCoeffs(filter, (float)(b0/a0), (float)(b1/a0), (float)(b2/a0),
+                                (float)(a1/a0), (float)(a2/a0));
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BritishEQProcessor)

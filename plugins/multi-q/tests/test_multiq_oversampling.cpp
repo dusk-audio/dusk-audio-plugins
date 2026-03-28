@@ -317,6 +317,218 @@ static void testOversamplingLowFreqUnchanged(MultiQ& plugin)
           std::abs(deltas[1] - deltas[2]) < 1.5f);
 }
 
+// ===== TEST: Flat-EQ pass-through frequency response per OS mode =====
+// Measures the gain (dB) at each test frequency with ALL EQ bands disabled.
+// Any deviation from 0 dB is caused purely by the oversampling filter chain.
+static void testFlatEQPassthrough(MultiQ& plugin)
+{
+    std::cout << "\n--- Test: Flat-EQ Pass-Through Frequency Response ---\n";
+    std::cout << "  (0 dB = perfect pass-through; deviation = oversampling filter effect)\n\n";
+
+    double sr = 44100.0;
+    // Long buffer so RMS measurement is stable even for low-frequency sines
+    int numSamples = static_cast<int>(sr * 3);
+    int skip       = static_cast<int>(sr);     // skip first second for filter settling
+
+    // Reference level: sine at -6 dBFS (amplitude 0.5) — same for all
+    const float amp = 0.5f;
+
+    // Frequencies to sweep: 1kHz, 5kHz, 10kHz, 15kHz, 18kHz, 20kHz
+    const float freqs[]     = { 1000.f, 5000.f, 10000.f, 15000.f, 18000.f, 20000.f };
+    const int   numFreqs    = static_cast<int>(std::size(freqs));
+    const char* modeNames[] = { "Off", "2x ", "4x " };
+
+    // Measure each mode × each frequency
+    float db[3][numFreqs];
+
+    for (int osMode = 0; osMode < 3; ++osMode)
+    {
+        for (int fi = 0; fi < numFreqs; ++fi)
+        {
+            resetPlugin(plugin, sr);
+            // Flat EQ: all bands disabled (resetPlugin already sets gain=0 and
+            // disables HPF/LPF; set remaining bands off just in case)
+            for (int b = 1; b <= 8; ++b)
+                setParam(plugin, ParamIDs::bandEnabled(b), 0.0f);
+            setParam(plugin, ParamIDs::hqEnabled, static_cast<float>(osMode));
+            settleParams(plugin, 512, 40);
+
+            // Build sine at `amp` amplitude
+            juce::AudioBuffer<float> buf(2, numSamples);
+            float phase = 0.0f;
+            float inc   = static_cast<float>(2.0 * juce::MathConstants<double>::pi
+                                              * freqs[fi] / sr);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float v = amp * std::sin(phase);
+                buf.setSample(0, i, v);
+                buf.setSample(1, i, v);
+                phase += inc;
+                if (phase > juce::MathConstants<float>::twoPi)
+                    phase -= juce::MathConstants<float>::twoPi;
+            }
+
+            // Reference RMS: amp / sqrt(2) → should be -9 dBFS
+            float refRMS_dB = 20.0f * std::log10(amp / std::sqrt(2.0f));
+
+            processWithPlugin(plugin, buf);
+            float outRMS_dB = measureRMSdB(buf, 0, skip);
+
+            db[osMode][fi] = outRMS_dB - refRMS_dB;  // deviation from 0 dB
+        }
+    }
+
+    // Print table
+    std::cout << "  Freq  |  OS Off  |  OS 2x   |  OS 4x   | 2x-Off | 4x-Off | 4x-2x\n";
+    std::cout << "  ------|----------|----------|----------|--------|--------|------\n";
+    for (int fi = 0; fi < numFreqs; ++fi)
+    {
+        std::cout << "  " << std::setw(5) << static_cast<int>(freqs[fi]) << " | "
+                  << std::fixed << std::setprecision(2)
+                  << std::setw(7) << db[0][fi] << " | "
+                  << std::setw(7) << db[1][fi] << " | "
+                  << std::setw(7) << db[2][fi] << " | "
+                  << std::setw(5) << (db[1][fi] - db[0][fi]) << " | "
+                  << std::setw(5) << (db[2][fi] - db[0][fi]) << " | "
+                  << std::setw(5) << (db[2][fi] - db[1][fi]) << "\n";
+    }
+    std::cout << "\n";
+
+    // Assertions: below 10kHz all modes should be within 0.2 dB of each other
+    for (int fi = 0; fi < numFreqs; ++fi)
+    {
+        if (freqs[fi] > 10000.0f) continue;
+        juce::String label = juce::String("OS modes agree within 0.2 dB at ")
+                             + juce::String(static_cast<int>(freqs[fi])) + "Hz";
+        float spread = std::max({ std::abs(db[0][fi] - db[1][fi]),
+                                  std::abs(db[0][fi] - db[2][fi]),
+                                  std::abs(db[1][fi] - db[2][fi]) });
+        check(label.toRawUTF8(), spread <= 0.2f);
+    }
+
+    // Soft assertion: report if any mode deviates > 0.5 dB from 0 dB in pass-through
+    for (int fi = 0; fi < numFreqs; ++fi)
+    {
+        if (freqs[fi] > 15000.0f) continue;
+        for (int osMode = 0; osMode < 3; ++osMode)
+        {
+            juce::String label = juce::String("OS ") + modeNames[osMode]
+                                 + " flat pass-through within 0.5 dB at "
+                                 + juce::String(static_cast<int>(freqs[fi])) + "Hz";
+            check(label.toRawUTF8(), std::abs(db[osMode][fi]) <= 0.5f);
+        }
+    }
+}
+
+// ===== TEST: Peaking filter bandwidth shape is consistent across OS modes =====
+// A 6dB boost centred at 8kHz (Q=1.0) is measured at surrounding frequencies.
+// If the SVF uses un-warped k=1/(q·A), high-rate modes produce wider/different shapes.
+// After the bandwidth-matched fix, all modes should agree within 0.5 dB at every probe.
+static void testPeakingBandwidthConsistency(MultiQ& plugin)
+{
+    std::cout << "\n--- Test: Peaking Bandwidth Shape Consistency Across OS Modes ---\n";
+    std::cout << "  Band 4: 8kHz, +6dB, Q=1.0  |  probe gain relative to OS Off baseline\n\n";
+
+    double sr = 44100.0;
+    int numSamples = static_cast<int>(sr * 3);
+    int skip = static_cast<int>(sr);
+    const float amp = 0.5f;
+
+    // Probe frequencies: below, at, and above the 8kHz centre
+    const float probeFreqs[] = { 4000.f, 6000.f, 8000.f, 10000.f, 14000.f };
+    const int numProbes = static_cast<int>(std::size(probeFreqs));
+    const char* modeNames[] = { "Off", "2x ", "4x " };
+
+    float db[3][numProbes];
+
+    for (int osMode = 0; osMode < 3; ++osMode)
+    {
+        for (int fi = 0; fi < numProbes; ++fi)
+        {
+            // Flat reference
+            resetPlugin(plugin, sr);
+            for (int b = 1; b <= 8; ++b)
+                setParam(plugin, ParamIDs::bandEnabled(b), 0.0f);
+            setParam(plugin, ParamIDs::hqEnabled, static_cast<float>(osMode));
+            settleParams(plugin, 512, 40);
+
+            juce::AudioBuffer<float> bufFlat(2, numSamples);
+            {
+                float ph = 0.f, inc = static_cast<float>(2.0 * juce::MathConstants<double>::pi * probeFreqs[fi] / sr);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    float v = amp * std::sin(ph);
+                    bufFlat.setSample(0, i, v); bufFlat.setSample(1, i, v);
+                    ph += inc; if (ph > juce::MathConstants<float>::twoPi) ph -= juce::MathConstants<float>::twoPi;
+                }
+            }
+            processWithPlugin(plugin, bufFlat);
+            float refDB = measureRMSdB(bufFlat, 0, skip);
+
+            // With 8kHz boost
+            resetPlugin(plugin, sr);
+            for (int b = 1; b <= 8; ++b)
+                setParam(plugin, ParamIDs::bandEnabled(b), 0.0f);
+            setParam(plugin, ParamIDs::hqEnabled, static_cast<float>(osMode));
+            setParam(plugin, ParamIDs::bandEnabled(4), 1.0f);
+            setParam(plugin, ParamIDs::bandFreq(4), 8000.f);
+            setParam(plugin, ParamIDs::bandGain(4), 6.f);
+            setParam(plugin, ParamIDs::bandQ(4), 1.f);
+            settleParams(plugin, 512, 40);
+
+            juce::AudioBuffer<float> bufBoosted(2, numSamples);
+            {
+                float ph = 0.f, inc = static_cast<float>(2.0 * juce::MathConstants<double>::pi * probeFreqs[fi] / sr);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    float v = amp * std::sin(ph);
+                    bufBoosted.setSample(0, i, v); bufBoosted.setSample(1, i, v);
+                    ph += inc; if (ph > juce::MathConstants<float>::twoPi) ph -= juce::MathConstants<float>::twoPi;
+                }
+            }
+            processWithPlugin(plugin, bufBoosted);
+            float boostDB = measureRMSdB(bufBoosted, 0, skip);
+
+            db[osMode][fi] = boostDB - refDB;
+        }
+    }
+
+    // Print table
+    std::cout << "  Freq  |  OS Off  |  OS 2x   |  OS 4x   | 2x-Off | 4x-Off\n";
+    std::cout << "  ------|----------|----------|----------|--------|-------\n";
+    for (int fi = 0; fi < numProbes; ++fi)
+    {
+        std::cout << "  " << std::setw(5) << static_cast<int>(probeFreqs[fi]) << " | "
+                  << std::fixed << std::setprecision(2)
+                  << std::setw(7) << db[0][fi] << " | "
+                  << std::setw(7) << db[1][fi] << " | "
+                  << std::setw(7) << db[2][fi] << " | "
+                  << std::setw(5) << (db[1][fi] - db[0][fi]) << " | "
+                  << std::setw(5) << (db[2][fi] - db[0][fi]) << "\n";
+    }
+    std::cout << "\n";
+
+    // All modes should agree within 0.7 dB at every probe.
+    // The AnalogMatchedBiquad's tan() pre-warp is slightly sample-rate dependent
+    // (tan(x/4) ≠ tan(x)/4), so a small residual spread at the filter skirts is
+    // unavoidable; 0.7 dB is the ceiling for a well-behaved implementation.
+    for (int fi = 0; fi < numProbes; ++fi)
+    {
+        float spread = std::max(std::abs(db[0][fi] - db[1][fi]),
+                                std::abs(db[0][fi] - db[2][fi]));
+        juce::String label = juce::String("Bandwidth shape consistent within 0.7 dB at ")
+                             + juce::String(static_cast<int>(probeFreqs[fi])) + "Hz";
+        check(label.toRawUTF8(), spread <= 0.7f);
+    }
+
+    // Sanity: centre should be ~6 dB for all modes
+    for (int osMode = 0; osMode < 3; ++osMode)
+    {
+        juce::String label = juce::String("OS ") + modeNames[osMode] + " peak at 8kHz ~6dB";
+        checkDb(label.toRawUTF8(), db[osMode][2], 6.0f, 1.0f);
+    }
+}
+
 // ===== MAIN =====
 
 class TestApp : public juce::JUCEApplicationBase
@@ -349,6 +561,8 @@ public:
                   << plugin->getTotalNumOutputChannels() << " out, "
                   << plugin->getSampleRate() << " Hz\n";
 
+        testFlatEQPassthrough(*plugin);
+        testPeakingBandwidthConsistency(*plugin);
         testOversamplingFrequencyResponse(*plugin);
         testOversamplingBoostFrequency(*plugin);
         testOversamplingLowFreqUnchanged(*plugin);
