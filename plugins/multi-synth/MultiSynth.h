@@ -74,8 +74,8 @@ private:
     // Juno-style chorus for Cosmos mode (I / II / Both)
     MultiSynthDSP::JunoChorusEffect junoChorus;
 
-    // Internal 2x sample rate for anti-cramping
-    double internalSampleRate = 88200.0;
+    // Internal sample rate for voice rendering (prepared at 4x for max oversampling)
+    double internalSampleRate = 176400.0;
 
     // Performance state
     float modWheelValue = 0.0f;
