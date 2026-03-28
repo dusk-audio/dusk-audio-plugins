@@ -39,6 +39,7 @@ juce_add_plugin(MultiSynth
 )
 
 set_plugin_version_defines(MultiSynth ${MULTISYNTH_VERSION})
+juce_generate_juce_header(MultiSynth)
 
 target_sources(MultiSynth PRIVATE
     MultiSynth.cpp
