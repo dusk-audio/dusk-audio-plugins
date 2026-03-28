@@ -191,6 +191,52 @@ struct StereoSVF
 };
 
 /**
+    Stereo Direct Form II Transposed biquad.
+
+    Used for the static EQ bands (svfFilters) instead of CytomicSVF.
+    The SVF topology produces a topology-dependent frequency response that varies
+    with sample rate (because `g = tan(π·fc/sr)` has different behaviour at large g
+    values near Nyquist). DF2T with AnalogMatchedBiquad coefficients uses
+    `cos(2π·fc/sr)` for exact digital centre placement and pre-warped bandwidth,
+    giving the same filter shape at every OS rate.
+
+    Parameter smoothing is handled by SmoothedValue upstream; no per-sample
+    interpolation is needed here. setSmoothCoeff/snapToTarget are no-ops kept
+    for API symmetry with StereoSVF.
+*/
+struct StereoBiquad
+{
+    BiquadCoeffs coeffs;
+    float s1L = 0.0f, s2L = 0.0f;
+    float s1R = 0.0f, s2R = 0.0f;
+
+    void setCoeffs(const BiquadCoeffs& c) { coeffs = c; }
+    void reset() { s1L = s2L = s1R = s2R = 0.0f; }
+    void snapToTarget() {}
+    void setSmoothCoeff(float) {}
+
+    float processSampleL(float x)
+    {
+        if (!safeIsFinite(x)) x = 0.0f;
+        float y = coeffs.coeffs[0] * x + s1L;
+        s1L = coeffs.coeffs[1] * x - coeffs.coeffs[4] * y + s2L;
+        s2L = coeffs.coeffs[2] * x - coeffs.coeffs[5] * y;
+        if (!safeIsFinite(y)) { s1L = s2L = 0.0f; return 0.0f; }
+        return y;
+    }
+
+    float processSampleR(float x)
+    {
+        if (!safeIsFinite(x)) x = 0.0f;
+        float y = coeffs.coeffs[0] * x + s1R;
+        s1R = coeffs.coeffs[1] * x - coeffs.coeffs[4] * y + s2R;
+        s2R = coeffs.coeffs[2] * x - coeffs.coeffs[5] * y;
+        if (!safeIsFinite(y)) { s1R = s2R = 0.0f; return 0.0f; }
+        return y;
+    }
+};
+
+/**
     Multi-Q: Professional 8-Band Parametric EQ with FFT Analyzer
 
     Features:
@@ -523,7 +569,7 @@ private:
     CascadedFilter hpfFilter;
 
     // Bands 2-7: Cytomic SVF filters (per-sample coefficient interpolation)
-    std::array<StereoSVF, 6> svfFilters;  // Indices 0-5 for bands 2-7
+    std::array<StereoBiquad, 6> svfFilters;  // Indices 0-5 for bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
 
     // Dynamic gain SVF filters (bands 2-7) - applies dynamic EQ gain independently of static gain
     std::array<StereoSVF, 6> svfDynGainFilters;  // Same indices as svfFilters
@@ -721,8 +767,10 @@ private:
     juce::SmoothedValue<float> autoGainCompensation{1.0f};  // Linear gain multiplier
     float inputRmsSum = 0.0f;
     float outputRmsSum = 0.0f;
+    float inputPeakMax = 0.0f;   // window max peak for peak-safe autogain
+    float outputPeakMax = 0.0f;
     int rmsSampleCount = 0;
-    int rmsWindowSamples = 6615;  // ~150ms at 44.1kHz (responsive auto-gain, updated in prepareToPlay)
+    int rmsWindowSamples = 88200;  // 2s at 44.1kHz — updated in prepareToPlay
 
     // Non-allocating coefficient computation (Audio EQ Cookbook with pre-warping)
     // These compute directly into BiquadCoeffs without any heap allocation,
