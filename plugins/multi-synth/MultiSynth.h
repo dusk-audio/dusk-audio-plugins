@@ -174,6 +174,7 @@ namespace ParamIDs
     // Portamento
     static const juce::String PORTA_TIME = "portaTime";
     static const juce::String LEGATO = "legato";
+    static const juce::String GLIDE_MODE = "glideMode"; // 0=time, 1=rate
 
     // Analog character
     static const juce::String ANALOG_AMT = "analogAmt";
@@ -181,6 +182,7 @@ namespace ParamIDs
 
     // Velocity
     static const juce::String VEL_SENS = "velSens";
+    static const juce::String VEL_CURVE = "velCurve"; // 0=linear, 1=soft, 2=hard, 3=fixed
     static const juce::String PITCH_BEND_RANGE = "pbRange";
 
     // Arpeggiator
@@ -246,5 +248,6 @@ namespace ParamIDs
     static const juce::String MASTER_TUNE = "masterTune";
     static const juce::String MASTER_VOL = "masterVol";
     static const juce::String MASTER_PAN = "masterPan";
+    static const juce::String STEREO_WIDTH = "stereoWidth";
     static const juce::String OVERSAMPLING = "oversampling";
 }
