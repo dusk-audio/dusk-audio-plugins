@@ -208,7 +208,7 @@ struct StereoBiquad
 {
     BiquadCoeffs coeffs;       // current (smoothed) coefficients
     BiquadCoeffs target;       // target coefficients set by setCoeffs()
-    float smoothCoeff = 0.99f; // per-sample: coeffs → target  (set via setSmoothCoeff)
+    float smoothCoeff = 0.02f; // per-sample: coeffs → target (~1ms at 44.1kHz, set via setSmoothCoeff)
     float s1L = 0.0f, s2L = 0.0f;
     float s1R = 0.0f, s2R = 0.0f;
 
