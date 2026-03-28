@@ -1055,6 +1055,18 @@ void MultiSynthEditor::layoutModular()
 }
 
 //==============================================================================
+void MultiSynthEditor::mouseDown(const juce::MouseEvent& e)
+{
+    // Click on title shows supporters overlay
+    auto titleBounds = juce::Rectangle<int>(scaled(8), 0, scaled(120), scaled(kTopBarH));
+    if (titleBounds.contains(e.getPosition()))
+    {
+        supportersOverlay.setVisible(true);
+        supportersOverlay.toFront(true);
+    }
+}
+
+//==============================================================================
 void MultiSynthEditor::timerCallback()
 {
     outputMeterL.setLevel(processor.outputLevelL.load(std::memory_order_relaxed));
