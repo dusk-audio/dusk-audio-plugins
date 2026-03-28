@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "MultiQ.h"
 #include "EQBand.h"  // For DisplayScaleMode
+#include "FFTAnalyzer.h"
 
 //==============================================================================
 /** Tube EQ Curve Display -- shows frequency response for Tube mode. */
@@ -19,6 +20,12 @@ public:
 
     // Display scale mode (matches Digital mode dropdown)
     void setDisplayScaleMode(DisplayScaleMode mode);
+
+    // FFT Analyzer controls
+    void setAnalyzerVisible(bool visible);
+    void setAnalyzerSmoothingMode(FFTAnalyzer::SmoothingMode mode);
+    void toggleSpectrumFreeze();
+    bool isSpectrumFrozen() const;
 
 private:
     MultiQ& audioProcessor;
@@ -73,11 +80,13 @@ private:
     void drawCombinedCurve(juce::Graphics& g, const juce::Rectangle<float>& area);
 
     // Filter response calculations (matching passive tube EQ characteristics)
-    float calculateLFBoostResponse(float freq) const;
-    float calculateLFAttenResponse(float freq) const;
+    float calculateLFCombinedResponse(float freq) const;
     float calculateHFBoostResponse(float freq) const;
     float calculateHFAttenResponse(float freq) const;
     float calculateCombinedResponse(float freq) const;
+
+    // FFT Analyzer component (child component, drawn behind EQ curves)
+    std::unique_ptr<FFTAnalyzer> analyzer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TubeEQCurveDisplay)
 };

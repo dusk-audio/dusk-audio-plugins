@@ -196,7 +196,7 @@ inline float getQCoupledValue(float baseQ, float gainDB, QCoupleMode mode)
             break;
         case QCoupleMode::Vintage:
         {
-            // Maihak W86 style: Q_eff = Q_base * (1 + k * |gain|^p)
+            // Vintage power curve: Q_eff = Q_base * (1 + k * |gain|^p)
             float k = 0.03f;
             float p = 1.5f;
             return baseQ * (1.0f + k * std::pow(absGain, p));
@@ -218,12 +218,13 @@ namespace ParamIDs
     inline juce::String bandSlope(int bandNum) { return "band" + juce::String(bandNum) + "_slope"; }
     inline juce::String bandShape(int bandNum) { return "band" + juce::String(bandNum) + "_shape"; }
     inline juce::String bandChannelRouting(int bandNum) { return "band" + juce::String(bandNum) + "_channel_routing"; }
+    inline juce::String bandInvert(int bandNum) { return "band" + juce::String(bandNum) + "_invert"; }
+    inline juce::String bandPhaseInvert(int bandNum) { return "band" + juce::String(bandNum) + "_phase_invert"; }
+    inline juce::String bandPan(int bandNum) { return "band" + juce::String(bandNum) + "_pan"; }
 
     const juce::String masterGain = "master_gain";
     const juce::String bypass = "bypass";
     const juce::String hqEnabled = "hq_enabled";
-    const juce::String linearPhaseEnabled = "linear_phase_enabled";
-    const juce::String linearPhaseLength = "linear_phase_length";  // 0=Short, 1=Medium, 2=Long
     const juce::String processingMode = "processing_mode";
     const juce::String qCoupleMode = "q_couple_mode";
     const juce::String eqType = "eq_type";

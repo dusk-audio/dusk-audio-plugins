@@ -55,7 +55,7 @@ private:
     // Graphic display
     std::unique_ptr<EQGraphicDisplay> graphicDisplay;
 
-    // Band detail panel (Waves F6 style - band selector + single-row controls)
+    // Band detail panel (band selector + single-row controls)
     std::unique_ptr<BandDetailPanel> bandDetailPanel;
 
     // British mode curve display (4K-EQ style)
@@ -87,21 +87,16 @@ private:
     std::unique_ptr<juce::Slider> masterGainSlider;
     std::unique_ptr<juce::ToggleButton> bypassButton;
     std::unique_ptr<juce::ToggleButton> hqButton;
-    std::unique_ptr<juce::ToggleButton> linearPhaseButton;
     std::unique_ptr<juce::ToggleButton> autoGainButton;
-    std::unique_ptr<juce::ComboBox> linearPhaseQualitySelector;
     std::unique_ptr<juce::ComboBox> processingModeSelector;
     std::unique_ptr<juce::ComboBox> qCoupleModeSelector;
 
     juce::Label masterGainLabel;
-    juce::Label linearPhaseLabel;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterGainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hqAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> linearPhaseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> autoGainAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> linearPhaseQualityAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> processingModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> qCoupleModeAttachment;
 
@@ -124,11 +119,6 @@ private:
     void refreshUserPresets();
     void loadUserPreset(const juce::String& name);
     void deleteUserPreset(const juce::String& name);
-
-    // Undo/Redo buttons
-    juce::TextButton undoButton;
-    juce::TextButton redoButton;
-    void updateUndoRedoButtons();
 
     // A/B comparison for Digital mode
     juce::TextButton digitalAbButton;
@@ -237,6 +227,10 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishBypassAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> britishAutoGainAttachment;
     bool britishCurveCollapsed = false;  // Track collapse state for British mode
+
+    // Tube mode autogain button
+    std::unique_ptr<juce::ToggleButton> tubeAutoGainButton;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tubeAutoGainAttachment;
 
     // British mode header controls (A/B, Presets - like 4K-EQ)
     juce::TextButton britishAbButton;
@@ -395,6 +389,10 @@ private:
     void setupDynamicControls();
     void layoutDynamicControls();
     void updateDynamicAttachments();  // Rebind attachments when selected band changes
+
+    // Keyboard shortcut help overlay
+    bool showShortcutOverlay = false;
+    void paintShortcutOverlay(juce::Graphics& g);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQEditor)
 };

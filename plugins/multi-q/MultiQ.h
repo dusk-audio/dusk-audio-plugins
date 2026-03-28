@@ -8,11 +8,11 @@
 #include "BritishEQProcessor.h"
 #include "TubeEQProcessor.h"
 #include "DynamicEQProcessor.h"
-#include "LinearPhaseEQProcessor.h"
 #include "OutputLimiter.h"
 #include "EQMatchProcessor.h"
 #include "../shared/AnalogEmulation/WaveshaperCurves.h"
 #include "MultiQPresets.h"
+#include "SafeFloat.h"
 
 // Biquad coefficient storage with magnitude evaluation (no heap allocation)
 struct BiquadCoeffs
@@ -47,14 +47,20 @@ struct BiquadCoeffs
         coeffs[3] = 1.0f; coeffs[4] = 0.0f; coeffs[5] = 0.0f;
     }
 
-    /** Copy these coefficients into a JUCE IIR filter's pre-allocated Coefficients (no heap allocation) */
+    /** Copy these coefficients into a JUCE IIR filter's pre-allocated Coefficients.
+        JUCE normalizes by a0 and stores only 5 elements for a biquad: {b0, b1, b2, a1, a2}
+        (a0 is divided out during Coefficients construction, not stored).
+        Our format is {b0/a0, b1/a0, b2/a0, 1, a1/a0, a2/a0} — skip index 3 (a0). */
     void applyToFilter(juce::dsp::IIR::Filter<float>& filter) const
     {
         if (filter.coefficients == nullptr)
             return;
         auto* raw = filter.coefficients->getRawCoefficients();
-        for (int i = 0; i < 6; ++i)
-            raw[i] = coeffs[i];
+        raw[0] = coeffs[0];  // b0/a0
+        raw[1] = coeffs[1];  // b1/a0
+        raw[2] = coeffs[2];  // b2/a0
+        raw[3] = coeffs[4];  // a1/a0 (skip coeffs[3] which is a0=1)
+        raw[4] = coeffs[5];  // a2/a0
     }
 };
 
@@ -104,7 +110,7 @@ struct CytomicSVF
     float processSample(float x)
     {
         // Sanitize input to prevent NaN/Inf from entering or passing through the filter
-        if (!std::isfinite(x))
+        if (!safeIsFinite(x))
             x = 0.0f;
 
         // Per-sample coefficient interpolation (skip when converged)
@@ -140,7 +146,7 @@ struct CytomicSVF
         ic2eq = 2.0f * v2 - ic2eq;
 
         // Sanitize state variables to prevent NaN/Inf propagation (permanent corruption)
-        if (!std::isfinite(ic1eq) || !std::isfinite(ic2eq))
+        if (!safeIsFinite(ic1eq) || !safeIsFinite(ic2eq))
         {
             ic1eq = 0.0f;
             ic2eq = 0.0f;
@@ -182,6 +188,57 @@ struct StereoSVF
 
     float processSampleL(float s) { return filterL.processSample(s); }
     float processSampleR(float s) { return filterR.processSample(s); }
+};
+
+/**
+    Stereo Direct Form II Transposed biquad.
+
+    Used for the static EQ bands (svfFilters) instead of CytomicSVF.
+    The SVF topology produces a topology-dependent frequency response that varies
+    with sample rate (because `g = tan(π·fc/sr)` has different behaviour at large g
+    values near Nyquist). DF2T with AnalogMatchedBiquad coefficients uses
+    `cos(2π·fc/sr)` for exact digital centre placement and pre-warped bandwidth,
+    giving the same filter shape at every OS rate.
+
+    Per-sample coefficient smoothing (first-order IIR ramp on each b/a coefficient)
+    prevents zipper noise during automation or knob drags — same approach as StereoSVF.
+    setSmoothCoeff sets the per-sample decay; snapToTarget jumps immediately.
+*/
+struct StereoBiquad
+{
+    BiquadCoeffs coeffs;       // current (smoothed) coefficients
+    BiquadCoeffs target;       // target coefficients set by setCoeffs()
+    float smoothCoeff = 0.02f; // per-sample: coeffs → target (~1ms at 44.1kHz, set via setSmoothCoeff)
+    float s1L = 0.0f, s2L = 0.0f;
+    float s1R = 0.0f, s2R = 0.0f;
+
+    void setCoeffs(const BiquadCoeffs& c) { target = c; }
+    void reset() { s1L = s2L = s1R = s2R = 0.0f; coeffs = target; }
+    void snapToTarget() { coeffs = target; }
+    void setSmoothCoeff(float c) { smoothCoeff = c; }
+
+    float processSampleL(float x)
+    {
+        if (!safeIsFinite(x)) x = 0.0f;
+        // Step coefficients toward target
+        for (int i = 0; i < 6; ++i)
+            coeffs.coeffs[i] += smoothCoeff * (target.coeffs[i] - coeffs.coeffs[i]);
+        float y = coeffs.coeffs[0] * x + s1L;
+        s1L = coeffs.coeffs[1] * x - coeffs.coeffs[4] * y + s2L;
+        s2L = coeffs.coeffs[2] * x - coeffs.coeffs[5] * y;
+        if (!safeIsFinite(y)) { s1L = s2L = 0.0f; return 0.0f; }
+        return y;
+    }
+
+    float processSampleR(float x)
+    {
+        if (!safeIsFinite(x)) x = 0.0f;
+        float y = coeffs.coeffs[0] * x + s1R;
+        s1R = coeffs.coeffs[1] * x - coeffs.coeffs[4] * y + s2R;
+        s2R = coeffs.coeffs[2] * x - coeffs.coeffs[5] * y;
+        if (!safeIsFinite(y)) { s1R = s2R = 0.0f; return 0.0f; }
+        return y;
+    }
 };
 
 /**
@@ -230,7 +287,8 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override;
+
     int getLatencySamples() const;
 
     int getNumPrograms() override;
@@ -238,6 +296,9 @@ public:
     void setCurrentProgram(int index) override;
     const juce::String getProgramName(int index) override;
     void changeProgramName(int, const juce::String&) override {}
+
+public:
+    const std::vector<MultiQPresets::Preset>& getFactoryPresets() const { return factoryPresets; }
 
 private:
     int currentPresetIndex = 0;
@@ -251,6 +312,10 @@ public:
     // Undo/Redo system
     juce::UndoManager undoManager;
     juce::UndoManager& getUndoManager() { return undoManager; }
+
+    // Guard: set during transferCurrentEQToDigital() to prevent the preset selector
+    // from loading "Init" (which would reset all band gains) via the async UI update chain.
+    std::atomic<bool> transferInProgress{false};
 
     // Public parameter access for GUI
     juce::AudioProcessorValueTreeState parameters;
@@ -296,6 +361,12 @@ public:
 
     // Get frequency response magnitude at a specific frequency (for curve display)
     float getFrequencyResponseMagnitude(float frequencyHz) const;
+
+    // Get per-band frequency response magnitude in dB (for individual band curve display)
+    float getPerBandMagnitude(int bandIndex, float frequencyHz) const;
+
+    // Compute per-band magnitude on-the-fly from current parameters (not from double buffer)
+    float computePerBandMagnitudeFresh(int bandIndex, float frequencyHz) const;
 
     // Get frequency response including dynamic gain (for dynamic curve overlay)
     float getFrequencyResponseWithDynamics(float frequencyHz) const;
@@ -347,6 +418,12 @@ public:
     // Transfers the current British/Tube EQ curve to Digital mode parameters
     void transferCurrentEQToDigital();
 
+    // Reset all parameters to default flat EQ (Init preset).
+    // Called ONLY from the plugin's own UI (Init preset selection).
+    // setCurrentProgram(0) does NOT call this — that would let Logic Pro's
+    // host-driven program changes silently wipe user settings.
+    void resetToInit();
+
     // Match EQ — Logic Pro Match EQ style (Welch's method + FIR convolution)
     void startLearnCurrent()
     {
@@ -390,9 +467,29 @@ public:
             || pendingStartLearnReference.load(std::memory_order_acquire);
     }
     int getMatchLearningFrameCount() const { return eqMatchProcessor.getLearningFrameCount(); }
-    bool hasMatchCurrentSpectrum() const { return eqMatchProcessor.hasCurrentSpectrum(); }
-    bool hasMatchReferenceSpectrum() const { return eqMatchProcessor.hasReferenceSpectrum(); }
-    bool hasMatchCorrectionCurve() const { return eqMatchProcessor.hasCorrectionCurve(); }
+    // All three return false immediately when a clear is pending so the graph
+    // goes fully blank before the audio thread processes the deferred clear.
+    bool hasMatchCurrentSpectrum() const
+    {
+        if (pendingMatchClear.load(std::memory_order_acquire) ||
+            pendingMatchFadeOut.load(std::memory_order_acquire))
+            return false;
+        return eqMatchProcessor.hasCurrentSpectrum();
+    }
+    bool hasMatchReferenceSpectrum() const
+    {
+        if (pendingMatchClear.load(std::memory_order_acquire) ||
+            pendingMatchFadeOut.load(std::memory_order_acquire))
+            return false;
+        return eqMatchProcessor.hasReferenceSpectrum();
+    }
+    bool hasMatchCorrectionCurve() const
+    {
+        if (pendingMatchClear.load(std::memory_order_acquire) ||
+            pendingMatchFadeOut.load(std::memory_order_acquire))
+            return false;
+        return eqMatchProcessor.hasCorrectionCurve();
+    }
     bool isMatchConvolutionActive() const { return matchConvolutionActive.load(std::memory_order_acquire); }
 
     bool isMatchMode() const
@@ -443,17 +540,33 @@ private:
 
         float processSampleL(float sample)
         {
-            int stages = activeStages.load(std::memory_order_relaxed);
+            int stages = activeStages.load(std::memory_order_acquire);
             for (int i = 0; i < stages; ++i)
+            {
+                float prev = sample;
                 sample = stagesL[static_cast<size_t>(i)].processSample(sample);
+                if (!safeIsFinite(sample))
+                {
+                    stagesL[static_cast<size_t>(i)].reset();
+                    sample = prev;  // Use input as fallback instead of 0
+                }
+            }
             return sample;
         }
 
         float processSampleR(float sample)
         {
-            int stages = activeStages.load(std::memory_order_relaxed);
+            int stages = activeStages.load(std::memory_order_acquire);
             for (int i = 0; i < stages; ++i)
+            {
+                float prev = sample;
                 sample = stagesR[static_cast<size_t>(i)].processSample(sample);
+                if (!safeIsFinite(sample))
+                {
+                    stagesR[static_cast<size_t>(i)].reset();
+                    sample = prev;
+                }
+            }
             return sample;
         }
     };
@@ -461,7 +574,7 @@ private:
     CascadedFilter hpfFilter;
 
     // Bands 2-7: Cytomic SVF filters (per-sample coefficient interpolation)
-    std::array<StereoSVF, 6> svfFilters;  // Indices 0-5 for bands 2-7
+    std::array<StereoBiquad, 6> svfFilters;  // Indices 0-5 for bands 2-7 (DF2T, AnalogMatchedBiquad coeffs)
 
     // Dynamic gain SVF filters (bands 2-7) - applies dynamic EQ gain independently of static gain
     std::array<StereoSVF, 6> svfDynGainFilters;  // Same indices as svfFilters
@@ -492,6 +605,13 @@ private:
     juce::SmoothedValue<float> bypassSmoothed{0.0f};
     juce::AudioBuffer<float> dryBuffer;  // Copy of input for bypass crossfade
 
+    // Bypass delay line: maintains time-alignment during bypass so DAW PDC stays consistent.
+    // Without this, toggling bypass triggers DAW PDC recalculation → audible click/gap.
+    juce::AudioBuffer<float> bypassDelayBuffer;
+    int bypassDelayWritePos = 0;
+    int bypassDelayLength = 0;   // Updated when latency changes
+    int bypassDelayFillCount = 0; // Samples written since last clear; gates delayed-read path
+
     // Per-band enable/disable crossfade (~3ms)
     std::array<juce::SmoothedValue<float>, NUM_BANDS> bandEnableSmoothed;
 
@@ -506,6 +626,12 @@ private:
     juce::AudioBuffer<float> prevOsBuffer;  // Saved output from previous OS mode
     bool osChanging = false;
 
+    // Oversampling latency compensation: always report max (4x) latency so DAW PDC stays aligned
+    int maxOversamplerLatency = 0;  // Cached 4x oversampler latency (set in prepareToPlay)
+    juce::AudioBuffer<float> osCompDelayBuffer;  // Compensation delay for Off/2x modes
+    int osCompDelayWritePos = 0;
+    int osCompDelaySamples = 0;  // Current compensation: maxLatency - currentModeLatency
+
     // Parameter pointers
     std::array<std::atomic<float>*, NUM_BANDS> bandEnabledParams{};
     std::array<std::atomic<float>*, NUM_BANDS> bandFreqParams{};
@@ -516,8 +642,6 @@ private:
     std::atomic<float>* masterGainParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
     std::atomic<float>* hqEnabledParam = nullptr;
-    std::atomic<float>* linearPhaseEnabledParam = nullptr;
-    std::atomic<float>* linearPhaseLengthParam = nullptr;
     std::atomic<float>* processingModeParam = nullptr;
     std::atomic<float>* qCoupleModeParam = nullptr;
 
@@ -595,10 +719,6 @@ private:
     DynamicEQProcessor dynamicEQ;
     std::atomic<bool> dynamicParamsChanged{true};
 
-    // Linear Phase EQ processor (one per channel for stereo)
-    std::array<LinearPhaseEQProcessor, 2> linearPhaseEQ;
-    std::atomic<bool> linearPhaseModeEnabled{false};
-    std::atomic<bool> linearPhaseParamsChanged{true};
 
     // Dynamic mode per-band parameters
     std::array<std::atomic<float>*, NUM_BANDS> bandDynEnabledParams{};
@@ -609,6 +729,11 @@ private:
     std::array<std::atomic<float>*, NUM_BANDS> bandDynRatioParams{};
     std::array<std::atomic<float>*, NUM_BANDS> bandShapeParams{};  // Shape for parametric bands (Peaking/Notch/BandPass)
     std::array<std::atomic<float>*, NUM_BANDS> bandRoutingParams{};  // Per-band channel routing
+    std::array<std::atomic<float>*, NUM_BANDS> bandInvertParams{};       // Invert gain (boost↔cut)
+    std::array<std::atomic<float>*, NUM_BANDS> bandPhaseInvertParams{};  // Flip polarity of band effect
+    std::array<std::atomic<float>*, NUM_BANDS> bandPanParams{};          // Stereo pan of band effect
+    std::array<float, NUM_BANDS> prevBandPhaseInvertGain{};  // Smoothed phase invert: +1 or -1
+    std::array<float, NUM_BANDS> prevBandPanVal{};           // Smoothed pan value
     std::atomic<float>* dynDetectionModeParam = nullptr;
 
     // Per-band saturation parameters (bands 2-7 only, indices 1-6)
@@ -627,6 +752,9 @@ private:
     // Match EQ convolution engine (applies the correction FIR)
     juce::dsp::Convolution matchConvolution;
     std::atomic<bool> matchConvolutionActive{false};  // True when FIR is loaded and active
+    juce::SmoothedValue<float> matchConvWetGain { 1.0f };  // Fades 1→0 on clear (audio thread only)
+    std::atomic<bool> pendingMatchFadeOut { false };       // Set by audio thread to complete clear after fade
+    juce::AudioBuffer<float> matchDryBuffer;               // Pre-allocated dry copy for crossfade blend
 
     // Thread-safe pending operations (UI -> audio thread)
     std::atomic<bool> pendingMatchClear{false};
@@ -644,8 +772,10 @@ private:
     juce::SmoothedValue<float> autoGainCompensation{1.0f};  // Linear gain multiplier
     float inputRmsSum = 0.0f;
     float outputRmsSum = 0.0f;
+    float inputPeakMax = 0.0f;   // window max peak for peak-safe autogain
+    float outputPeakMax = 0.0f;
     int rmsSampleCount = 0;
-    static constexpr int RMS_WINDOW_SAMPLES = 22050;  // ~500ms at 44.1kHz (mastering-appropriate)
+    int rmsWindowSamples = 88200;  // 2s at 44.1kHz — updated in prepareToPlay
 
     // Non-allocating coefficient computation (Audio EQ Cookbook with pre-warping)
     // These compute directly into BiquadCoeffs without any heap allocation,
@@ -684,7 +814,8 @@ private:
 
     // Compute band coefficients into BiquadCoeffs based on band index and current parameters
     void computeBandCoeffs(int bandIndex, BiquadCoeffs& c) const;
-    void computeBandCoeffsWithGain(int bandIndex, float overrideGainDB, BiquadCoeffs& c) const;
+    void computeBandCoeffsAtRate(int bandIndex, BiquadCoeffs& c, double sr) const;
+    void computeBandCoeffsWithGain(int bandIndex, float overrideGainDB, BiquadCoeffs& c, double sr) const;
 
     // Filter update methods (use non-allocating coefficient computation)
 
@@ -799,4 +930,5 @@ private:
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MultiQ)
+    JUCE_DECLARE_WEAK_REFERENCEABLE(MultiQ)
 };
