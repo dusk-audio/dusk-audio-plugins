@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
 #include <vector>
 #include <algorithm>
 #include <random>
@@ -101,6 +102,18 @@ public:
     void setFixedVelocity(int vel) { fixedVel = juce::jlimit(1, 127, vel); }
     void setAccentPattern(ArpAccentPattern p) { accentPattern = p; }
 
+    // Step mute pattern (16 steps, true = active, false = muted/rest)
+    void setStepMute(int step, bool active)
+    {
+        if (step >= 0 && step < 16)
+            stepPattern[static_cast<size_t>(step)] = active;
+    }
+
+    bool isStepActive(int step) const
+    {
+        return stepPattern[static_cast<size_t>(step % 16)];
+    }
+
     int getCurrentStep() const { return currentStep; }
     int getTotalSteps() const { return static_cast<int>(buildPattern().size()); }
 
@@ -191,13 +204,28 @@ public:
                 int patIdx = currentStep % static_cast<int>(pattern.size());
                 auto& note = pattern[static_cast<size_t>(patIdx)];
 
-                // Send note off for previous
-                if (lastPlayedNote >= 0 && lastPlayedNote != note.note)
-                    events.push_back({ i, lastPlayedNote, 0, false });
+                // Check step mute pattern
+                bool stepActive = stepPattern[static_cast<size_t>(currentStep % 16)];
 
-                int vel = getVelocity(note.velocity, currentStep);
-                events.push_back({ i, note.note, vel, true });
-                lastPlayedNote = note.note;
+                if (stepActive)
+                {
+                    // Send note off for previous
+                    if (lastPlayedNote >= 0 && lastPlayedNote != note.note)
+                        events.push_back({ i, lastPlayedNote, 0, false });
+
+                    int vel = getVelocity(note.velocity, currentStep);
+                    events.push_back({ i, note.note, vel, true });
+                    lastPlayedNote = note.note;
+                }
+                else
+                {
+                    // Muted step: send note-off only
+                    if (lastPlayedNote >= 0)
+                    {
+                        events.push_back({ i, lastPlayedNote, 0, false });
+                        lastPlayedNote = -1;
+                    }
+                }
             }
 
             // Note off at gate end
@@ -376,6 +404,9 @@ private:
     ArpVelocityMode velMode = ArpVelocityMode::AsPlayed;
     int fixedVel = 100;
     ArpAccentPattern accentPattern = ArpAccentPattern::Downbeat;
+
+    std::array<bool, 16> stepPattern {{ true, true, true, true, true, true, true, true,
+                                        true, true, true, true, true, true, true, true }};
 
     std::vector<NoteInfo> heldNotes;
     std::vector<NoteInfo> playedOrder;

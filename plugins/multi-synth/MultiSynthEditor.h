@@ -170,6 +170,7 @@ private:
     juce::ToggleButton arpOnButton, arpLatchButton;
     juce::ComboBox arpModeBox, arpRateBox, arpVelModeBox;
     DuskSlider arpOctaveSlider, arpGateSlider, arpSwingSlider;
+    juce::ToggleButton arpStepButtons[16];
 
     // === Effects ===
     juce::ToggleButton driveOnButton, chorusOnButton, delayOnButton, reverbOnButton;

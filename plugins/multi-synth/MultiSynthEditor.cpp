@@ -309,6 +309,14 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupToggle(arpLatchButton, ParamIDs::ARP_LATCH, "Latch");
     arpVelModeBox.addItemList({"As Played", "Fixed", "Accent"}, 1);
     addAndMakeVisible(arpVelModeBox); setupComboBox(arpVelModeBox, ParamIDs::ARP_VEL_MODE);
+    for (int i = 0; i < 16; ++i)
+    {
+        arpStepButtons[i].setButtonText(juce::String(i + 1));
+        addAndMakeVisible(arpStepButtons[i]);
+        buttonAttachments.push_back(
+            std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+                processor.getAPVTS(), ParamIDs::arpStep(i), arpStepButtons[i]));
+    }
 
     // === Effects ===
     setupToggle(driveOnButton, ParamIDs::DRIVE_ON, "On");
@@ -485,7 +493,7 @@ void MultiSynthEditor::updateModeVisibility()
     crossModSlider.setVisible(isCosmos || isOracle); crossModLbl.setVisible(isCosmos || isOracle);
     ringModSlider.setVisible(isMono || isModular); ringModLbl.setVisible(isMono || isModular);
     fmAmountSlider.setVisible(isModular); fmAmountLbl.setVisible(isModular);
-    hardSyncButton.setVisible(isModular);
+    hardSyncButton.setVisible(isModular || isMono);
 }
 
 //==============================================================================
@@ -569,21 +577,36 @@ void MultiSynthEditor::paintCosmos(juce::Graphics& g)
     // Jupiter-8 style: orange header strip across the top of Row 1
     int stripY = sections.oscillators.getY();
     int stripH = scaled(kSectionTitleH);
+    int stripX = sections.oscillators.getX();
+    int stripW = sections.scopeArea.getRight() - stripX;
     g.setColour(juce::Colour(0xFFE87030)); // Jupiter orange
-    g.fillRect(sections.oscillators.getX(), stripY,
-               sections.scopeArea.getRight() - sections.oscillators.getX(), stripH);
+    g.fillRect(stripX, stripY, stripW, stripH);
+
+    // Subtle inner shadow at top of each section panel (darker gradient on the strip)
+    {
+        juce::ColourGradient shadow(juce::Colour(0x30000000), static_cast<float>(stripX), static_cast<float>(stripY),
+                                     juce::Colours::transparentBlack, static_cast<float>(stripX), static_cast<float>(stripY + stripH / 3), false);
+        g.setGradientFill(shadow);
+        g.fillRect(stripX, stripY, stripW, stripH / 3);
+    }
+
     g.setColour(juce::Colour(0xFFFFFFFF));
     g.setFont(juce::Font(juce::FontOptions(10.0f * sf).withStyle("Bold")));
 
-    // Section names on the orange strip
-    auto drawStripLabel = [&](juce::Rectangle<int> sec, const juce::String& name) {
-        g.drawText(name, sec.getX() + scaled(4), stripY, sec.getWidth(), stripH,
-                   juce::Justification::centredLeft);
-    };
-    drawStripLabel(sections.oscillators, "LFO / OSC 1 / OSC 2");
-    drawStripLabel(sections.filter, "VCF");
-    drawStripLabel(sections.envelopes, "ENV-1 / ENV-2");
-    drawStripLabel(sections.scopeArea, "OUTPUT");
+    // Individual section labels on the orange strip (Jupiter-8 style separate names)
+    g.drawText("LFO", sections.oscillators.getX() + scaled(4), stripY, scaled(40), stripH, juce::Justification::centredLeft);
+    g.drawText("OSC 1", sections.oscillators.getX() + scaled(50), stripY, scaled(50), stripH, juce::Justification::centredLeft);
+    g.drawText("OSC 2", sections.oscillators.getX() + scaled(200), stripY, scaled(50), stripH, juce::Justification::centredLeft);
+    g.drawText("VCF", sections.filter.getX() + scaled(4), stripY, sections.filter.getWidth(), stripH, juce::Justification::centredLeft);
+    g.drawText("ENV-1", sections.envelopes.getX() + scaled(4), stripY, scaled(50), stripH, juce::Justification::centredLeft);
+    g.drawText("ENV-2", sections.envelopes.getX() + sections.envelopes.getWidth() / 2, stripY, scaled(50), stripH, juce::Justification::centredLeft);
+    g.drawText("OUTPUT", sections.scopeArea.getX() + scaled(4), stripY, sections.scopeArea.getWidth(), stripH, juce::Justification::centredLeft);
+
+    // Thin vertical separator lines between sections (Jupiter-8 panel divisions)
+    g.setColour(juce::Colour(0x40FFFFFF));
+    g.drawVerticalLine(sections.filter.getX(), static_cast<float>(stripY), static_cast<float>(stripY + stripH));
+    g.drawVerticalLine(sections.envelopes.getX(), static_cast<float>(stripY), static_cast<float>(stripY + stripH));
+    g.drawVerticalLine(sections.scopeArea.getX(), static_cast<float>(stripY), static_cast<float>(stripY + stripH));
 
     // Sections below the strip (no individual titles — the strip serves as header)
     ps(sections.oscillators.withTrimmedTop(stripH), "");
@@ -622,15 +645,31 @@ void MultiSynthEditor::paintOracle(juce::Graphics& g)
         }
     }
 
+    // Gold/amber pinstripe along inner edge of each wood cheek
+    g.setColour(juce::Colour(0x40AA8040));
+    g.drawVerticalLine(woodW, static_cast<float>(scaled(kTopBarH)), static_cast<float>(h));
+    g.drawVerticalLine(w - woodW - 1, static_cast<float>(scaled(kTopBarH)), static_cast<float>(h));
+
     auto ps = [&](juce::Rectangle<int> b, const juce::String& t) {
         currentLAF->paintSection(g, b, t, sf);
     };
-    ps(sections.oscillators, "POLY-MOD / OSC A / OSC B / MIXER");
-    ps(sections.filter, "FILTER");
-    ps(sections.envelopes, "FILTER ENV / AMP ENV");
-    ps(sections.scopeArea, "OUTPUT");
-    ps(sections.lfo, "LFO / GLIDE");
-    ps(sections.character, "UNISON / CHARACTER");
+
+    // Prophet-5 style: separate section labels with amber underline badge
+    auto psWithBadge = [&](juce::Rectangle<int> b, const juce::String& t) {
+        ps(b, t);
+        // Thin amber horizontal line below the section title (Prophet-5 badge)
+        int badgeY = b.getY() + scaled(kSectionTitleH) - 1;
+        g.setColour(juce::Colour(0x50AA8040));
+        g.drawHorizontalLine(badgeY, static_cast<float>(b.getX() + scaled(4)),
+                             static_cast<float>(b.getX() + scaled(4) + juce::Font(juce::FontOptions(10.0f * sf)).getStringWidthFloat(t) + scaled(8)));
+    };
+
+    psWithBadge(sections.oscillators, "POLY-MOD / OSC A / OSC B / MIXER");
+    psWithBadge(sections.filter, "FILTER");
+    psWithBadge(sections.envelopes, "FILTER ENV / AMP ENV");
+    psWithBadge(sections.scopeArea, "OUTPUT");
+    psWithBadge(sections.lfo, "LFO / GLIDE");
+    psWithBadge(sections.character, "UNISON / CHARACTER");
     ps(sections.arp, "ARPEGGIATOR");
     ps(sections.drive, "DRIVE"); ps(sections.chorus, "CHORUS");
     ps(sections.delay, "DELAY"); ps(sections.reverb, "REVERB");
@@ -642,20 +681,44 @@ void MultiSynthEditor::paintMono(juce::Graphics& g)
     auto ps = [&](juce::Rectangle<int> b, const juce::String& t) {
         currentLAF->paintSection(g, b, t, sf);
     };
-    ps(sections.oscillators, "VCO-1 / VCO-2 / MIXER");
-    ps(sections.filter, "VCF");
-    ps(sections.envelopes, "ENV");
-    ps(sections.scopeArea, "VCA / OUTPUT");
+
+    // SH-2 style colored indicator dots next to section titles
+    auto psWithDot = [&](juce::Rectangle<int> b, const juce::String& t, juce::Colour dotColour) {
+        ps(b, t);
+        // Tiny colored dot left of section title text (like SH-2 colored indicators)
+        int dotX = b.getX() + scaled(2);
+        int dotY = b.getY() + scaled(kSectionTitleH) / 2;
+        float dotR = 3.0f * sf;
+        g.setColour(dotColour);
+        g.fillEllipse(static_cast<float>(dotX) - dotR, static_cast<float>(dotY) - dotR, dotR * 2, dotR * 2);
+    };
+
+    psWithDot(sections.oscillators, "VCO-1 / VCO-2 / MIXER", juce::Colour(0xFFE04040)); // red
+    psWithDot(sections.filter, "VCF", juce::Colour(0xFFE0A020));                          // amber
+    psWithDot(sections.envelopes, "ENV", juce::Colour(0xFF40C040));                        // green
+    psWithDot(sections.scopeArea, "VCA / OUTPUT", juce::Colour(0xFF4080E0));               // blue
     ps(sections.lfo, "MODULATOR");
     ps(sections.character, "PORTAMENTO / CHARACTER");
     ps(sections.arp, "ARPEGGIO");
     ps(sections.drive, "DRIVE"); ps(sections.chorus, "CHORUS");
     ps(sections.delay, "DELAY"); ps(sections.reverb, "REVERB");
 
-    // SH-2 branding in bottom-right
+    // Section separator lines between VCO/VCF/ENV/VCA sections (thin white, SH-2 style)
+    g.setColour(currentLAF->colors.text.withAlpha(0.12f));
+    int sepTop = sections.oscillators.getY();
+    int sepBot = sections.oscillators.getBottom();
+    g.drawVerticalLine(sections.filter.getX() - 1, static_cast<float>(sepTop), static_cast<float>(sepBot));
+    g.drawVerticalLine(sections.envelopes.getX() - 1, static_cast<float>(sepTop), static_cast<float>(sepBot));
+    g.drawVerticalLine(sections.scopeArea.getX() - 1, static_cast<float>(sepTop), static_cast<float>(sepBot));
+
+    // SH-2 branding area in bottom-right with horizontal line above
+    int brandY = getHeight() - scaled(24);
+    g.setColour(currentLAF->colors.text.withAlpha(0.2f));
+    g.drawHorizontalLine(brandY, static_cast<float>(getWidth() - scaled(210)),
+                         static_cast<float>(getWidth() - scaled(80)));
     g.setFont(juce::Font(juce::FontOptions(14.0f * sf).withStyle("Bold")));
     g.setColour(currentLAF->colors.text.withAlpha(0.6f));
-    g.drawText("SYNTHESIZER", getWidth() - scaled(200), getHeight() - scaled(22),
+    g.drawText("SYNTHESIZER", getWidth() - scaled(200), brandY + scaled(2),
                scaled(110), scaled(18), juce::Justification::centredRight);
 }
 
@@ -675,7 +738,7 @@ void MultiSynthEditor::paintModular(juce::Graphics& g)
     ps(sections.drive, "DRIVE"); ps(sections.chorus, "CHORUS");
     ps(sections.delay, "DELAY"); ps(sections.reverb, "REVERB");
 
-    // Decorative patch point circles between sections
+    // Decorative patch point circles (ARP 2600 style — input and output per section)
     auto drawPatchPt = [&](int px, int py) {
         g.setColour(currentLAF->colors.sectionBorder.withAlpha(0.5f));
         g.drawEllipse(static_cast<float>(px - 5), static_cast<float>(py - 5), 10.0f, 10.0f, 1.5f);
@@ -683,10 +746,53 @@ void MultiSynthEditor::paintModular(juce::Graphics& g)
         g.fillEllipse(static_cast<float>(px - 3), static_cast<float>(py - 3), 6.0f, 6.0f);
     };
 
-    // Patch points between osc→filter and filter→envelope sections
-    int midY = sections.oscillators.getCentreY();
-    drawPatchPt(sections.oscillators.getRight() + scaled(3), midY);
-    drawPatchPt(sections.filter.getRight() + scaled(3), midY);
+    // Multiple patch points per section (input and output)
+    int midY = (sections.oscillators.getY() + sections.oscillators.getBottom()) / 2;
+    drawPatchPt(sections.oscillators.getRight() + scaled(3), midY - scaled(20)); // Osc out top
+    drawPatchPt(sections.oscillators.getRight() + scaled(3), midY + scaled(20)); // Osc out bottom
+    drawPatchPt(sections.filter.getX() - scaled(3), midY);                       // Filter in
+    drawPatchPt(sections.filter.getRight() + scaled(3), midY);                    // Filter out
+    drawPatchPt(sections.envelopes.getX() - scaled(3), sections.envelopes.getCentreY()); // Env in
+    drawPatchPt(sections.envelopes.getRight() + scaled(3), sections.envelopes.getCentreY()); // Env out
+
+    // Decorative dashed signal flow line: osc -> filter with arrow
+    float dashLen = 4.0f * sf;
+    g.setColour(currentLAF->colors.sectionBorder.withAlpha(0.2f));
+    float lineY = static_cast<float>(midY);
+    float lineStartX = static_cast<float>(sections.oscillators.getRight() + scaled(8));
+    float lineEndX = static_cast<float>(sections.filter.getX() - scaled(2));
+    for (float x = lineStartX; x < lineEndX - dashLen; x += dashLen * 2)
+        g.drawLine(x, lineY, juce::jmin(x + dashLen, lineEndX), lineY, 1.0f);
+
+    // Arrow head indicating signal direction (osc -> filter)
+    {
+        juce::Path arrow;
+        float arrowX = lineEndX - 2.0f;
+        arrow.addTriangle(arrowX - 5.0f * sf, lineY - 3.0f * sf,
+                          arrowX - 5.0f * sf, lineY + 3.0f * sf,
+                          arrowX, lineY);
+        g.setColour(currentLAF->colors.sectionBorder.withAlpha(0.3f));
+        g.fillPath(arrow);
+    }
+
+    // Decorative dashed signal flow line: filter -> envelope with arrow
+    float lineY2 = static_cast<float>(midY);
+    float line2StartX = static_cast<float>(sections.filter.getRight() + scaled(8));
+    float line2EndX = static_cast<float>(sections.envelopes.getX() - scaled(2));
+    g.setColour(currentLAF->colors.sectionBorder.withAlpha(0.2f));
+    for (float x = line2StartX; x < line2EndX - dashLen; x += dashLen * 2)
+        g.drawLine(x, lineY2, juce::jmin(x + dashLen, line2EndX), lineY2, 1.0f);
+
+    // Arrow head (filter -> envelope)
+    {
+        juce::Path arrow;
+        float arrowX = line2EndX - 2.0f;
+        arrow.addTriangle(arrowX - 5.0f * sf, lineY2 - 3.0f * sf,
+                          arrowX - 5.0f * sf, lineY2 + 3.0f * sf,
+                          arrowX, lineY2);
+        g.setColour(currentLAF->colors.sectionBorder.withAlpha(0.3f));
+        g.fillPath(arrow);
+    }
 }
 
 //==============================================================================
@@ -1030,6 +1136,12 @@ void MultiSynthEditor::resized()
         placeLabel(arpSwingLbl, arpSwingSlider);
         arpLatchButton.setBounds(x0 + ckw * 3, ky + scaled(12), scaled(50), tH);
         arpVelModeBox.setBounds(x0 + ckw * 3, ky + scaled(36), scaled(80), cH);
+
+        // Arp step mute buttons (16 small toggles in a row)
+        int stepY = sections.arp.getBottom() - scaled(22);
+        int stepBtnW = (sections.arp.getWidth() - pad * 2) / 16;
+        for (int i = 0; i < 16; ++i)
+            arpStepButtons[i].setBounds(sections.arp.getX() + pad + i * stepBtnW, stepY, stepBtnW, scaled(18));
     }
 
     // === EFFECTS STRIP ===
@@ -1102,19 +1214,42 @@ void MultiSynthEditor::refreshPresetList()
 {
     presetBox.clear(juce::dontSendNotification);
 
-    // Factory presets
     auto& factory = MultiSynthProcessor::getFactoryPresetNames();
     factoryPresetCount = factory.size();
-    for (int i = 0; i < factory.size(); ++i)
+
+    // Add factory presets with mode group headers
+    // Cosmos: 0-4, Oracle: 5-9, Mono: 10-14, Modular: 15-19, New: 20-35, Init: 36-39
+    presetBox.addSectionHeading("Cosmos");
+    for (int i = 0; i <= 4; ++i)
         presetBox.addItem(factory[i], i + 1);
 
-    // Separator
+    presetBox.addSectionHeading("Oracle");
+    for (int i = 5; i <= 9; ++i)
+        presetBox.addItem(factory[i], i + 1);
+
+    presetBox.addSectionHeading("Mono");
+    for (int i = 10; i <= 14; ++i)
+        presetBox.addItem(factory[i], i + 1);
+
+    presetBox.addSectionHeading("Modular");
+    for (int i = 15; i <= 19; ++i)
+        presetBox.addItem(factory[i], i + 1);
+
+    presetBox.addSectionHeading("Multi-Mode");
+    for (int i = 20; i <= 35; ++i)
+        presetBox.addItem(factory[i], i + 1);
+
+    presetBox.addSectionHeading("Init");
+    for (int i = 36; i < factory.size(); ++i)
+        presetBox.addItem(factory[i], i + 1);
+
+    // User presets
     if (userPresetManager)
     {
         auto userPresets = userPresetManager->loadUserPresets();
         if (!userPresets.empty())
         {
-            presetBox.addSeparator();
+            presetBox.addSectionHeading("User Presets");
             for (int i = 0; i < static_cast<int>(userPresets.size()); ++i)
                 presetBox.addItem(userPresets[static_cast<size_t>(i)].name,
                                   factoryPresetCount + i + 1);
