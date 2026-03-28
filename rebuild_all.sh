@@ -182,6 +182,8 @@ get_plugin_target() {
         tape-echo) echo "TapeEcho_All" ;;
         chord-analyzer) echo "ChordAnalyzer_All" ;;
         spectrum-analyzer) echo "SpectrumAnalyzer_All" ;;
+        DuskVerb) echo "DuskVerb_All" ;;
+        multi-synth) echo "MultiSynth_All" ;;
         *) echo "" ;;
     esac
 }
