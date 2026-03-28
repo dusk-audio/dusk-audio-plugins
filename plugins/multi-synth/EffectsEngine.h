@@ -254,9 +254,11 @@ public:
 
         if (numActive > 0)
         {
-            float g = (numActive == 2) ? 0.35f : 0.5f; // Reduce gain when both active
-            left = dryL + wetL * g;
-            right = dryR + wetR * g;
+            // Juno-style blend: ~50/50 dry/wet, not additive boost
+            // Total output should be unity gain (dry*0.5 + wet*0.5)
+            float wetGain = (numActive == 2) ? 0.35f : 0.5f;
+            left  = dryL * 0.7f + wetL * wetGain;
+            right = dryR * 0.7f + wetR * wetGain;
         }
     }
 
