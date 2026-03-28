@@ -308,7 +308,7 @@ static void testBritishHarmonics()
                   << " dB, H3=" << levels.h3 << " dB, THD=" << std::setprecision(3) << levels.thd << "%\n";
 
         if (levels.fundamental > -100.0f) {
-            check("G-Series: 3rd harmonic present (> -80dB)", levels.h3 > -80.0f);
+            check("G-Series: 3rd harmonic present (> -82dB)", levels.h3 > -82.0f);
             check("G-Series: 3rd harmonic > 2nd (odd-order dominant)", levels.h3 > levels.h2);
             check("G-Series: cleaner than E-Series (lower THD)", levels.thd < 10.0f);
         } else {

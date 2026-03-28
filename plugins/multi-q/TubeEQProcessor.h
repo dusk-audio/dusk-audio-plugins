@@ -264,9 +264,6 @@ public:
 
     float processSample(float input, int channel)
     {
-        if (drive < 0.01f)
-            return input;
-
         if (!safeIsFinite(input))
             return 0.0f;
 
@@ -287,13 +284,23 @@ public:
         // Only sub-bass content reaches lfState significantly; mid/HF is ~0.
         lfState += lfCoeff * (filteredInput - lfState);
 
+        // Near-zero drive: advance DC blocker state to prevent clicks on
+        // bypass→active transition, but output dry signal.
+        if (drive < 0.01f)
+        {
+            dcBlockers[static_cast<size_t>(ch)].processSample(input);
+            return input;
+        }
+
         // ── 3. Polynomial waveshaper ─────────────────────────────────────────────
         // All harmonic terms computed from the same xd — no cascading inflation.
         // Dividing distortion by driveAmount normalises gain while preserving
         // harmonic scaling: H2 ∝ drive¹·A, H3 ∝ drive²·A², H4 ∝ drive³·A³.
         const float DRIVE_SCALE = 2.0f;
         const float driveAmount = drive * DRIVE_SCALE;
-        const float xd  = filteredInput * driveAmount;
+        const float xd_raw = filteredInput * driveAmount;
+        // Soft-clip to prevent polynomial explosion at hot levels
+        const float xd  = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);
         const float xd2 = xd * xd;
         const float xd3 = xd2 * xd;
         const float xd4 = xd2 * xd2;
@@ -313,7 +320,8 @@ public:
         // H3 from transformer grows as driveAmount² (faster than tube H2) — at
         // heavy drive the transformer H3 rises disproportionately, matching the
         // behaviour of a Pultec driven hard on a drum bus.
-        const float xd_lf = lfState * driveAmount;
+        const float xd_lf_raw = lfState * driveAmount;
+        const float xd_lf = xd_lf_raw / std::sqrt(1.0f + xd_lf_raw * xd_lf_raw * 0.25f);
         const float transformerH3 = 0.025f * xd_lf * xd_lf * xd_lf;  // LF-only H3
 
         float distortion = b*xd2 + c*xd3 + d*xd4 + transformerH3;
@@ -333,11 +341,12 @@ public:
 private:
     void computeCoefficients(double sr)
     {
-        // Anti-alias LP at 10 kHz — fixed frequency, not scaled with SR.
-        // At 44.1 kHz this provides ~-2 dB at 8 kHz, keeping most audio content
-        // going through the waveshaper. At ≥88.2 kHz it is transparent.
+        // Anti-alias LP — scales with sample rate but clamps to 10 kHz.
+        // At 44.1 kHz: cutoff ≈ 9.7 kHz (0.22 * 44100). At ≥88.2 kHz the cutoff
+        // rises above 10 kHz, keeping the filter transparent at oversampled rates.
+        const float preLPFreq = std::min(10000.0f, static_cast<float>(sr) * 0.22f);
         preLPCoeff = 1.0f - std::exp(
-            -juce::MathConstants<float>::twoPi * 10000.0f / static_cast<float>(sr));
+            -juce::MathConstants<float>::twoPi * preLPFreq / static_cast<float>(sr));
 
         // Transformer LF split at ~300 Hz.
         // Below 300 Hz: lfState tracks filteredInput (full amplitude → strong transformer H3).
@@ -412,8 +421,6 @@ public:
         float maxFreq = static_cast<float>(sampleRate) * 0.45f;
         frequency = std::clamp(frequency, 10.0f, maxFreq);
 
-        const float twoPi = juce::MathConstants<float>::twoPi;
-
         // ---- Peak filter (resonant boost) ----
         if (boostGain > 0.01f)
         {
@@ -428,21 +435,21 @@ public:
 
             effectiveQ = std::max(effectiveQ, 0.2f);
 
-            float A = std::pow(10.0f, peakGainDB / 40.0f);
-            float w0 = twoPi * frequency / static_cast<float>(sampleRate);
-            float cosw0 = std::cos(w0);
-            float sinw0 = std::sin(w0);
-            float alpha = sinw0 / (2.0f * effectiveQ);
+            // Bandwidth-matched peaking: kbw=tan(π·bw/sr), center via cos(2π·fc/sr).
+            // Avoids Q/bandwidth cramping near Nyquist (same formula as setTubeEQPeakCoeffs).
+            double fc  = std::max(1.0, std::min((double)frequency, sampleRate * 0.4998));
+            double bw  = fc / std::max(0.01, (double)effectiveQ);
+            double kbw = std::tan(juce::MathConstants<double>::pi * std::min(bw, sampleRate * 0.4998) / sampleRate);
+            double A   = std::pow(10.0, (double)peakGainDB / 40.0);
+            double cosW = std::cos(2.0 * juce::MathConstants<double>::pi * fc / sampleRate);
 
-            float b0 = 1.0f + alpha * A;
-            float b1 = -2.0f * cosw0;
-            float b2 = 1.0f - alpha * A;
-            float a0 = 1.0f + alpha / A;
-            float a1 = -2.0f * cosw0;
-            float a2 = 1.0f - alpha / A;
+            double pb0 = 1.0 + kbw * A,  pb2 = 1.0 - kbw * A;
+            double pa0 = 1.0 + kbw / A,  pa2 = 1.0 - kbw / A;
+            double pb1 = -2.0 * cosW;
+            double pa1 = -2.0 * cosW;
 
-            peakB0 = b0/a0; peakB1 = b1/a0; peakB2 = b2/a0;
-            peakA1 = a1/a0; peakA2 = a2/a0;
+            peakB0 = (float)(pb0/pa0); peakB1 = (float)(pb1/pa0); peakB2 = (float)(pb2/pa0);
+            peakA1 = (float)(pa1/pa0); peakA2 = (float)(pa2/pa0);
         }
         else
         {
@@ -460,22 +467,27 @@ public:
             float dipGainDB = -(attenGain * kDipGainScale + boostGain * attenGain * kDipInteraction);
             float dipQ = kDipBaseQ + attenGain * kDipQScale;
 
-            float A = std::pow(10.0f, dipGainDB / 40.0f);
-            float w0 = twoPi * dipFreq / static_cast<float>(sampleRate);
-            float cosw0 = std::cos(w0);
-            float sinw0 = std::sin(w0);
-            float alpha = sinw0 / (2.0f * dipQ);
-            float sqrtA = std::sqrt(A);
+            // Pre-warped low-shelf: k=tan(π·fc/sr) places turnover at exactly dipFreq.
+            // Derives cosW/sinW from k to avoid double-warping (same as setLowShelfCoeffs).
+            double dfc  = std::max(1.0, std::min((double)dipFreq, sampleRate * 0.4998));
+            double dA   = std::pow(10.0, (double)dipGainDB / 40.0);
+            double dk   = std::tan(juce::MathConstants<double>::pi * dfc / sampleRate);
+            double dk2  = dk * dk;
+            double dsqA = std::sqrt(dA);
+            double dcq  = std::max(0.01, (double)dipQ);
+            double dcosW = (1.0 - dk2) / (1.0 + dk2);
+            double dsinW = 2.0 * dk / (1.0 + dk2);
+            double dalpha = dsinW / 2.0 * std::sqrt((dA + 1.0/dA) * (1.0/dcq - 1.0) + 2.0);
 
-            float b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * sqrtA * alpha);
-            float b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0);
-            float b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * sqrtA * alpha);
-            float a0 = (A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * sqrtA * alpha;
-            float a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw0);
-            float a2 = (A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * sqrtA * alpha;
+            double db0 = dA * ((dA+1.0) - (dA-1.0)*dcosW + 2.0*dsqA*dalpha);
+            double db1 = 2.0*dA * ((dA-1.0) - (dA+1.0)*dcosW);
+            double db2 = dA * ((dA+1.0) - (dA-1.0)*dcosW - 2.0*dsqA*dalpha);
+            double da0 = (dA+1.0) + (dA-1.0)*dcosW + 2.0*dsqA*dalpha;
+            double da1 = -2.0 * ((dA-1.0) + (dA+1.0)*dcosW);
+            double da2 = (dA+1.0) + (dA-1.0)*dcosW - 2.0*dsqA*dalpha;
 
-            dipB0 = b0/a0; dipB1 = b1/a0; dipB2 = b2/a0;
-            dipA1 = a1/a0; dipA2 = a2/a0;
+            dipB0 = (float)(db0/da0); dipB1 = (float)(db1/da0); dipB2 = (float)(db2/da0);
+            dipA1 = (float)(da1/da0); dipA2 = (float)(da2/da0);
         }
         else
         {
@@ -578,7 +590,7 @@ public:
         float hfBoostBandwidth = 0.5f; // Sharp to Broad (Q control)
 
         // High Frequency Attenuation (shelf)
-        float hfAttenGain = 0.0f;      // 0-10 (maps to 0-20 dB cut)
+        float hfAttenGain = 0.0f;      // 0-10 (maps to 0-16 dB cut)
         float hfAttenFreq = 10000.0f;  // 5k, 10k, 20k Hz (3 positions)
 
         // Mid Dip/Peak Section
@@ -837,8 +849,8 @@ public:
         // Update HF boost filter Q based on per-channel inductor saturation state (once per block, not per sample)
         if (params.hfBoostGain > 0.01f)
         {
-            float freq = tubeEQPreWarpFrequency(params.hfBoostFreq, currentSampleRate);
             float baseQ = juce::jmap(params.hfBoostBandwidth, 0.0f, 1.0f, 2.0f, 0.3f);
+            float freq = params.hfBoostFreq;
 
             float satLevelL = hfInductorL.getSaturationLevel();
             if (satLevelL > 0.01f)
@@ -1030,7 +1042,7 @@ private:
     void updateHFBoost()
     {
         // HF resonant peak with variable bandwidth
-        float freq = tubeEQPreWarpFrequency(params.hfBoostFreq, currentSampleRate);
+        float freq = params.hfBoostFreq;
         float gainDB = params.hfBoostGain * 1.8f;  // 0-10 maps to ~0-18 dB (hardware: ~18 dB)
 
         // Bandwidth control: Sharp (high Q) to Broad (low Q)
@@ -1047,7 +1059,7 @@ private:
     void updateHFAtten()
     {
         // HF high shelf cut
-        float freq = tubeEQPreWarpFrequency(params.hfAttenFreq, currentSampleRate);
+        float freq = params.hfAttenFreq;
         float gainDB = -params.hfAttenGain * 1.6f;  // 0-10 maps to ~0-16 dB cut (hardware: ~16 dB)
 
         setHighShelfCoeffs(hfAttenFilterL, currentSampleRate, freq, 0.6f, gainDB);
@@ -1057,7 +1069,7 @@ private:
     void updateMidLowPeak()
     {
         // Mid Low Peak: Resonant boost in low-mid range
-        float freq = tubeEQPreWarpFrequency(params.midLowFreq, currentSampleRate);
+        float freq = params.midLowFreq;
         float gainDB = params.midLowPeak * 1.2f;  // 0-10 maps to ~0-12 dB
 
         // Moderate Q for musical character
@@ -1070,7 +1082,7 @@ private:
     void updateMidDip()
     {
         // Mid Dip: Cut in mid range
-        float freq = tubeEQPreWarpFrequency(params.midDipFreq, currentSampleRate);
+        float freq = params.midDipFreq;
         float gainDB = -params.midDip * 1.0f;  // 0-10 maps to ~0-10 dB cut
 
         // Broader Q for natural sounding cut
@@ -1083,7 +1095,7 @@ private:
     void updateMidHighPeak()
     {
         // Mid High Peak: Resonant boost in upper-mid range
-        float freq = tubeEQPreWarpFrequency(params.midHighFreq, currentSampleRate);
+        float freq = params.midHighFreq;
         float gainDB = params.midHighPeak * 1.2f;  // 0-10 maps to ~0-12 dB
 
         // Moderate Q for presence
@@ -1112,68 +1124,75 @@ private:
         c[0] = b0; c[1] = b1; c[2] = b2; c[3] = a1; c[4] = a2;
     }
 
-    // Tube EQ style peak filter with inductor characteristics (in-place, no allocation)
+    // Tube EQ peak filter with inductor characteristics — cramping-free.
+    // Pre-warps bandwidth: kbw=tan(π·bw/sr), center via cos(2π·fc/sr).
+    // Preserves q*0.85 inductor broadening character.
     void setTubeEQPeakCoeffs(juce::dsp::IIR::Filter<float>& filter,
                              double sampleRate, float freq, float q, float gainDB) const
     {
-        float A = std::pow(10.0f, gainDB / 40.0f);
-        float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
-        float cosw0 = std::cos(w0);
-        float sinw0 = std::sin(w0);
-
         // Inductor-style Q modification - broader, more musical
-        float tubeEQQ = q * 0.85f;
-        float alpha = sinw0 / (2.0f * tubeEQQ);
+        double tubeEQQ = std::max(0.01, (double)q * 0.85);
+        double fc  = std::max(1.0, std::min((double)freq, sampleRate * 0.4998));
+        double bw  = fc / tubeEQQ;
+        double kbw = std::tan(juce::MathConstants<double>::pi * std::min(bw, sampleRate * 0.4998) / sampleRate);
+        double A   = std::pow(10.0, (double)gainDB / 40.0);
+        double cosW = std::cos(2.0 * juce::MathConstants<double>::pi * fc / sampleRate);
 
-        float b0 = 1.0f + alpha * A;
-        float b1 = -2.0f * cosw0;
-        float b2 = 1.0f - alpha * A;
-        float a0 = 1.0f + alpha / A;
-        float a1 = -2.0f * cosw0;
-        float a2 = 1.0f - alpha / A;
-
-        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
-        setFilterCoeffs(filter, b0, b1, b2, a1, a2);
+        // A = 10^(gainDB/40) < 1 for cuts — no branch needed, formula handles both.
+        const double b0 = 1.0 + kbw * A,  b2 = 1.0 - kbw * A;
+        const double a0 = 1.0 + kbw / A,  a2 = 1.0 - kbw / A;
+        const double b1 = -2.0 * cosW;
+        const double a1 = -2.0 * cosW;
+        setFilterCoeffs(filter, (float)(b0/a0), (float)(b1/a0), (float)(b2/a0),
+                                (float)(a1/a0), (float)(a2/a0));
     }
 
+    // Low shelf — cramping-free, derives cosW/sinW from k=tan(π·fc/sr).
     void setLowShelfCoeffs(juce::dsp::IIR::Filter<float>& filter,
                            double sampleRate, float freq, float q, float gainDB) const
     {
-        float A = std::pow(10.0f, gainDB / 40.0f);
-        float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
-        float cosw0 = std::cos(w0);
-        float sinw0 = std::sin(w0);
-        float alpha = sinw0 / (2.0f * q);
+        double fc  = std::max(1.0, std::min((double)freq, sampleRate * 0.4998));
+        double cq  = std::max(0.01, (double)q);
+        double A   = std::pow(10.0, (double)gainDB / 40.0);
+        double sqA = std::sqrt(A);
+        double k   = std::tan(juce::MathConstants<double>::pi * fc / sampleRate);
+        double k2  = k * k;
+        double cosW  = (1.0 - k2) / (1.0 + k2);
+        double sinW  = 2.0 * k   / (1.0 + k2);
+        double alpha = sinW / 2.0 * std::sqrt((A + 1.0/A) * (1.0/cq - 1.0) + 2.0);
 
-        float b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
-        float b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0);
-        float b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
-        float a0 = (A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
-        float a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw0);
-        float a2 = (A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
-
-        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
-        setFilterCoeffs(filter, b0, b1, b2, a1, a2);
+        double b0 =  A * ((A+1.0) - (A-1.0)*cosW + 2.0*sqA*alpha);
+        double b1 =  2.0*A * ((A-1.0) - (A+1.0)*cosW);
+        double b2 =  A * ((A+1.0) - (A-1.0)*cosW - 2.0*sqA*alpha);
+        double a0 = (A+1.0) + (A-1.0)*cosW + 2.0*sqA*alpha;
+        double a1 = -2.0 * ((A-1.0) + (A+1.0)*cosW);
+        double a2 = (A+1.0) + (A-1.0)*cosW - 2.0*sqA*alpha;
+        setFilterCoeffs(filter, (float)(b0/a0), (float)(b1/a0), (float)(b2/a0),
+                                (float)(a1/a0), (float)(a2/a0));
     }
 
+    // High shelf — cramping-free, derives cosW/sinW from k=tan(π·fc/sr).
     void setHighShelfCoeffs(juce::dsp::IIR::Filter<float>& filter,
                             double sampleRate, float freq, float q, float gainDB) const
     {
-        float A = std::pow(10.0f, gainDB / 40.0f);
-        float w0 = juce::MathConstants<float>::twoPi * freq / static_cast<float>(sampleRate);
-        float cosw0 = std::cos(w0);
-        float sinw0 = std::sin(w0);
-        float alpha = sinw0 / (2.0f * q);
+        double fc  = std::max(1.0, std::min((double)freq, sampleRate * 0.4998));
+        double cq  = std::max(0.01, (double)q);
+        double A   = std::pow(10.0, (double)gainDB / 40.0);
+        double sqA = std::sqrt(A);
+        double k   = std::tan(juce::MathConstants<double>::pi * fc / sampleRate);
+        double k2  = k * k;
+        double cosW  = (1.0 - k2) / (1.0 + k2);
+        double sinW  = 2.0 * k   / (1.0 + k2);
+        double alpha = sinW / 2.0 * std::sqrt((A + 1.0/A) * (1.0/cq - 1.0) + 2.0);
 
-        float b0 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha);
-        float b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw0);
-        float b2 = A * ((A + 1.0f) + (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha);
-        float a0 = (A + 1.0f) - (A - 1.0f) * cosw0 + 2.0f * std::sqrt(A) * alpha;
-        float a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosw0);
-        float a2 = (A + 1.0f) - (A - 1.0f) * cosw0 - 2.0f * std::sqrt(A) * alpha;
-
-        b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
-        setFilterCoeffs(filter, b0, b1, b2, a1, a2);
+        double b0 =  A * ((A+1.0) + (A-1.0)*cosW + 2.0*sqA*alpha);
+        double b1 = -2.0*A * ((A-1.0) + (A+1.0)*cosW);
+        double b2 =  A * ((A+1.0) + (A-1.0)*cosW - 2.0*sqA*alpha);
+        double a0 = (A+1.0) - (A-1.0)*cosW + 2.0*sqA*alpha;
+        double a1 =  2.0 * ((A-1.0) - (A+1.0)*cosW);
+        double a2 = (A+1.0) - (A-1.0)*cosW - 2.0*sqA*alpha;
+        setFilterCoeffs(filter, (float)(b0/a0), (float)(b1/a0), (float)(b2/a0),
+                                (float)(a1/a0), (float)(a2/a0));
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TubeEQProcessor)

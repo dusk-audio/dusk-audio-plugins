@@ -38,9 +38,9 @@
 
 #include <JuceHeader.h>
 #include <cmath>
-#include <cstdint>
 #include <random>
 #include "SafeFloat.h"
+#include "ADAASaturation.h"
 
 class ConsoleSaturation
 {
@@ -54,7 +54,7 @@ public:
     explicit ConsoleSaturation(unsigned int seed = 0)
     {
         unsigned int actualSeed = (seed != 0) ? seed
-            : static_cast<unsigned int>(reinterpret_cast<std::uintptr_t>(this) ^ instanceCounter++);
+            : std::random_device{}();
         noiseGen  = std::mt19937(actualSeed);
         noiseDist = std::uniform_real_distribution<float>(-1.0f, 1.0f);
     }
@@ -102,6 +102,7 @@ public:
         lpEmphState_L = lpEmphState_R = 0.0f;
         deEmphX1_L    = deEmphX1_R    = 0.0f;
         deEmphY1_L    = deEmphY1_R    = 0.0f;
+        prevXdL       = prevXdR       = 0.0f;
     }
 
     // Main processing: drive in [0, 1]
@@ -110,10 +111,18 @@ public:
         juce::ScopedNoDenormals noDenormals;
 
         if (!safeIsFinite(input)) return 0.0f;
-        if (drive < 0.001f)       return input;
 
         // ── 1. Pre-emphasis (+1.5 dB HF shelf) ───────────────────────────────
         float x = applyPreEmphasis(input, isLeft);
+
+        // Near-zero drive: advance de-emphasis and DC blocker state to prevent
+        // clicks on bypass→active transition, but output dry signal.
+        if (drive < 0.001f)
+        {
+            applyDeEmphasis(input, isLeft);
+            processDCBlocker(input, isLeft);
+            return input;
+        }
 
         // ── 3. Polynomial waveshaper ──────────────────────────────────────────
         // x_driven = x * (drive * DRIVE_SCALE)
@@ -123,14 +132,6 @@ public:
         const float driveAmount = drive * DRIVE_SCALE;
         const float xd_raw = x * driveAmount;
         const float xd = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);
-
-        // All harmonic terms computed from same xd — NO cascading.
-        // The division by driveAmount after normalises back to input gain while
-        // preserving harmonic content (H_n scales as driveAmount^{n-1}).
-        const float xd2 = xd * xd;
-        const float xd3 = xd2 * xd;
-        const float xd4 = xd2 * xd2;
-        const float xd5 = xd4 * xd;
 
         float b, c, d, e;
         if (consoleType == ConsoleType::ESeries)
@@ -154,8 +155,15 @@ public:
             e = 0.0103f;
         }
 
-        // y = x_driven + harmonic terms (distortion only; divide by driveAmount to normalise)
-        float distortion = b*xd2 + c*xd3 + d*xd4 + e*xd5;
+        // y = x_driven + harmonic terms (distortion only; divide by driveAmount to normalise).
+        // ADAA: apply first-order antiderivative antialiasing to the polynomial distortion
+        // terms (alias-free equivalent of ~2x oversampling for smooth polynomial waveshapers).
+        float& prevXd = isLeft ? prevXdL : prevXdR;
+        float distortion = ADAASaturation::process(
+            xd, prevXd,
+            [b,c,d,e](float v) { return ADAASaturation::polyWaveshaper(v, b, c, d, e); },
+            [b,c,d,e](float v) { return ADAASaturation::polyAntideriv(v, b, c, d, e); });
+        prevXd = xd;
         float y = x + distortion / driveAmount;
 
         // ── 4. De-emphasis (exact IIR inverse of pre-emphasis) ───────────────
@@ -180,8 +188,6 @@ public:
     }
 
 private:
-    static inline std::atomic<unsigned int> instanceCounter{0};
-
     ConsoleType consoleType = ConsoleType::ESeries;
     double sampleRate = 44100.0;
 
@@ -199,6 +205,9 @@ private:
     float deEmphB0 = 0.886f, deEmphB1 = 0.284f, deEmphA1 = 0.398f;
     float deEmphX1_L = 0.0f, deEmphY1_L = 0.0f;
     float deEmphX1_R = 0.0f, deEmphY1_R = 0.0f;
+
+    // ── ADAA state (previous xd value per channel) ───────────────────────────
+    float prevXdL = 0.0f, prevXdR = 0.0f;
 
     // ── Noise ─────────────────────────────────────────────────────────────────
     std::mt19937 noiseGen;
