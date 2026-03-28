@@ -514,8 +514,9 @@ static void testPeakingBandwidthConsistency(MultiQ& plugin)
     // unavoidable; 0.7 dB is the ceiling for a well-behaved implementation.
     for (int fi = 0; fi < numProbes; ++fi)
     {
-        float spread = std::max(std::abs(db[0][fi] - db[1][fi]),
-                                std::abs(db[0][fi] - db[2][fi]));
+        float spread = std::max({ std::abs(db[0][fi] - db[1][fi]),
+                                  std::abs(db[0][fi] - db[2][fi]),
+                                  std::abs(db[1][fi] - db[2][fi]) });
         juce::String label = juce::String("Bandwidth shape consistent within 0.7 dB at ")
                              + juce::String(static_cast<int>(probeFreqs[fi])) + "Hz";
         check(label.toRawUTF8(), spread <= 0.7f);

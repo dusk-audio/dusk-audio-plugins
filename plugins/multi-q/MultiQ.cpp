@@ -290,13 +290,8 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
 
-    // British/Tube modes always require ≥2x oversampling for -100dB harmonic alias rejection.
-    // They contain nonlinear stages (ConsoleSaturation, InductorModel, TubeStage) that generate
-    // H2/H3 harmonics — without oversampling these fold back into the audible band.
-    auto currentEqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
-    if ((currentEqType == EQType::British || currentEqType == EQType::Tube) && osFactor < 2)
-        osFactor = 2;
-
+    // ADAA in ConsoleSaturation and TubeEQProcessor handles aliasing when OS=Off,
+    // so no minimum OS enforcement is needed here. osFactor is used as-is.
     currentSampleRate = sampleRate * osFactor;
 
     // Prepare filter spec
@@ -619,12 +614,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
         oversamplingMode = newOsMode;
         int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
-        // British/Tube always need ≥2x to avoid aliasing from nonlinear stages.
-        {
-            auto curEqType = static_cast<EQType>(static_cast<int>(safeGetParam(eqTypeParam, 0.0f)));
-            if ((curEqType == EQType::British || curEqType == EQType::Tube) && osFactor < 2)
-                osFactor = 2;
-        }
+        // ADAA handles aliasing for British/Tube at OS=Off — no minimum enforcement needed.
         // Update sample rate for filter coefficient calculations
         currentSampleRate = baseSampleRate * osFactor;
         double newSR = currentSampleRate;

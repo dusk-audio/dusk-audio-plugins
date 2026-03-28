@@ -115,15 +115,6 @@ public:
         // ── 1. Pre-emphasis (+1.5 dB HF shelf) ───────────────────────────────
         float x = applyPreEmphasis(input, isLeft);
 
-        // Near-zero drive: advance de-emphasis and DC blocker state to prevent
-        // clicks on bypass→active transition, but output dry signal.
-        if (drive < 0.001f)
-        {
-            applyDeEmphasis(input, isLeft);
-            processDCBlocker(input, isLeft);
-            return input;
-        }
-
         // ── 3. Polynomial waveshaper ──────────────────────────────────────────
         // x_driven = x * (drive * DRIVE_SCALE)
         // DRIVE_SCALE = 4.0 calibrated to 0 VU = -18 dBFS (A=0.126) nominal.
