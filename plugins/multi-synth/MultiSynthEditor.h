@@ -7,6 +7,7 @@
 #include "../shared/DuskLookAndFeel.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/SupportersOverlay.h"
+#include "../shared/UserPresetManager.h"
 #include "../shared/ScalableEditorHelper.h"
 
 //==============================================================================
@@ -96,8 +97,18 @@ private:
     juce::ComboBox modeSelector;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeSelectorAttachment;
     juce::ComboBox presetBox;
+    juce::TextButton savePresetButton { "Save" };
+    juce::TextButton deletePresetButton { "Del" };
     juce::ComboBox oversamplingBox;
     juce::TextButton modMatrixButton { "MOD" };
+
+    // Preset management
+    std::unique_ptr<UserPresetManager> userPresetManager;
+    void refreshPresetList();
+    void saveUserPreset();
+    void loadUserPreset(const juce::String& name);
+    void deleteUserPreset();
+    int factoryPresetCount = 0;
 
     // === Oscillators ===
     juce::ComboBox osc1WaveBox, osc2WaveBox, osc3WaveBox, subWaveBox;
@@ -127,6 +138,9 @@ private:
 
     // === Cosmos-specific ===
     juce::ComboBox cosmosChorusBox; // Off, I, II, I+II
+
+    // === Oracle poly-mod ===
+    DuskSlider pmFEnvOscASlider, pmFEnvFiltSlider, pmOscBOscASlider, pmOscBPWMSlider;
 
     // === Arpeggiator ===
     juce::ToggleButton arpOnButton, arpLatchButton;
@@ -201,6 +215,7 @@ private:
     juce::Label delayTimeLbl, delayFBLbl, delayMixLbl;
     juce::Label reverbSizeLbl, reverbDecayLbl, reverbDampLbl, reverbMixLbl, reverbPDLbl;
     juce::Label masterVolLbl, masterPanLbl;
+    juce::Label pmFEnvOscALbl, pmFEnvFiltLbl, pmOscBOscALbl, pmOscBPWMLbl;
 
     // Section bounds cache (set in resized, used in paint)
     struct SectionBounds {
