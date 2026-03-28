@@ -149,6 +149,7 @@ private:
 
     // === LFOs ===
     DuskSlider lfo1RateSlider, lfo1FadeSlider, lfo2RateSlider, lfo2FadeSlider;
+    DuskSlider shRateSlider;
     juce::ComboBox lfo1ShapeBox, lfo2ShapeBox;
     juce::ToggleButton lfo1SyncButton, lfo2SyncButton;
 
@@ -232,7 +233,7 @@ private:
     juce::Label filterCutoffLbl, filterResLbl, filterHPLbl, filterEnvAmtLbl;
     juce::Label ampALbl, ampDLbl, ampSLbl, ampRLbl;
     juce::Label filtALbl, filtDLbl, filtSLbl, filtRLbl;
-    juce::Label lfo1RateLbl, lfo1FadeLbl, lfo2RateLbl, lfo2FadeLbl;
+    juce::Label lfo1RateLbl, lfo1FadeLbl, lfo2RateLbl, lfo2FadeLbl, shRateLbl;
     juce::Label portaLbl, analogLbl, vintageLbl, velSensLbl;
     juce::Label unisonVoicesLbl, unisonDetuneLbl, unisonSpreadLbl;
     juce::Label arpOctaveLbl, arpGateLbl, arpSwingLbl;

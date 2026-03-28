@@ -458,6 +458,13 @@ public:
         sr = static_cast<float>(sampleRate);
         reverb.setSampleRate(sampleRate);
         reverb.reset();
+
+        // Pre-delay buffer: up to 200ms
+        int maxPreDelay = static_cast<int>(sr * 0.2f) + 1;
+        preDelayBufL.resize(static_cast<size_t>(maxPreDelay), 0.0f);
+        preDelayBufR.resize(static_cast<size_t>(maxPreDelay), 0.0f);
+        preDelaySize = maxPreDelay;
+        preDelayPos = 0;
     }
 
     void setEnabled(bool on) { enabled = on; }
@@ -465,13 +472,29 @@ public:
     void setDecay(float d) { decay = juce::jlimit(0.1f, 20.0f, d); updateParams(); }
     void setDamping(float d) { damping = juce::jlimit(0.0f, 1.0f, d); updateParams(); }
     void setMix(float m) { mix = juce::jlimit(0.0f, 1.0f, m); updateParams(); }
-    void setPreDelay(float /*ms*/) { /* pre-delay not supported by juce::Reverb */ }
+    void setPreDelay(float ms) { preDelayMs = juce::jlimit(0.0f, 200.0f, ms); }
 
     void process(float& left, float& right)
     {
         if (!enabled) return;
 
         float dryL = left, dryR = right;
+
+        // Pre-delay: circular buffer delays input before feeding reverb
+        if (preDelayMs > 0.1f)
+        {
+            int pdSamples = static_cast<int>(preDelayMs * sr / 1000.0f);
+            pdSamples = juce::jlimit(0, preDelaySize - 1, pdSamples);
+
+            preDelayBufL[static_cast<size_t>(preDelayPos)] = left;
+            preDelayBufR[static_cast<size_t>(preDelayPos)] = right;
+
+            int readPos = (preDelayPos - pdSamples + preDelaySize) % preDelaySize;
+            left = preDelayBufL[static_cast<size_t>(readPos)];
+            right = preDelayBufR[static_cast<size_t>(readPos)];
+
+            preDelayPos = (preDelayPos + 1) % preDelaySize;
+        }
 
         reverb.processStereo(&left, &right, 1);
 
@@ -480,7 +503,13 @@ public:
         right = dryR * (1.0f - mix) + right * mix;
     }
 
-    void reset() { reverb.reset(); }
+    void reset()
+    {
+        reverb.reset();
+        std::fill(preDelayBufL.begin(), preDelayBufL.end(), 0.0f);
+        std::fill(preDelayBufR.begin(), preDelayBufR.end(), 0.0f);
+        preDelayPos = 0;
+    }
 
 private:
     void updateParams()
@@ -502,8 +531,14 @@ private:
     float decay = 2.0f;
     float damping = 0.3f;
     float mix = 0.2f;
+    float preDelayMs = 0.0f;
 
     juce::Reverb reverb;
+
+    // Pre-delay circular buffer
+    std::vector<float> preDelayBufL, preDelayBufR;
+    int preDelaySize = 1;
+    int preDelayPos = 0;
 };
 
 //==============================================================================
