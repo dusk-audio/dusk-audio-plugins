@@ -377,7 +377,7 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     // Initialize
     scaleHelper.initialize(this, &processor,
                            kDefaultWidth, kDefaultHeight,
-                           750, 525, 1500, 1050, true);
+                           750, 600, 1500, 1200, true);
     setSize(scaleHelper.getStoredWidth(), scaleHelper.getStoredHeight());
     startTimerHz(30);
     updateModeVisibility();
@@ -411,7 +411,6 @@ void MultiSynthEditor::setupKnob(DuskSlider& slider, juce::Label& label,
     label.setJustificationType(juce::Justification::centred);
     label.setFont(juce::Font(juce::FontOptions(11.0f)));
     label.setColour(juce::Label::textColourId, juce::Colour(0xFFD0D0D0));
-    label.attachToComponent(&slider, false); // places label ABOVE the slider
     addAndMakeVisible(label);
 }
 
@@ -700,7 +699,7 @@ void MultiSynthEditor::resized()
     int titH = scaled(kSectionTitleH);
     int K = scaled(kKnobSize);    // 70px primary knob
     int S = scaled(kSmallKnob);   // 55px secondary knob
-    int L = scaled(kLabelH);      // 18px label above knob (attachToComponent handles this)
+    int L = scaled(kLabelH);      // 18px label height above knob
     int cH = scaled(kComboH);
     int tH = scaled(kToggleH);
     int topBar = scaled(kTopBarH);
@@ -739,7 +738,7 @@ void MultiSynthEditor::resized()
 
     // === TOP BAR ===
     modeSelector.setBounds(scaled(130), scaled(8), scaled(110), cH);
-    presetBox.setBounds(scaled(248), scaled(8), scaled(160), cH);
+    presetBox.setBounds(scaled(248), scaled(8), scaled(170), cH);
     savePresetButton.setBounds(scaled(414), scaled(8), scaled(40), cH);
     deletePresetButton.setBounds(scaled(458), scaled(8), scaled(35), cH);
     oversamplingBox.setBounds(w - scaled(200), scaled(8), scaled(50), cH);
@@ -747,8 +746,8 @@ void MultiSynthEditor::resized()
 
     // === SECTION BOUNDS (adjust for fader height when applicable) ===
     int row1Y = topBar + gap;
-    int oscW = static_cast<int>(w * 0.46f);
-    int outW = static_cast<int>(w * 0.18f);
+    int oscW = static_cast<int>(w * 0.44f);
+    int outW = static_cast<int>(w * 0.22f);
     int midW = w - oscW - outW - 4 * m;
 
     // Heights adapt: fader controls are taller than knobs
@@ -801,6 +800,13 @@ void MultiSynthEditor::resized()
                ? faderStep : (knobSz + scaled(kKnobSpacing));
     };
 
+    // Explicit label placement — fixed 60px width so text is never truncated
+    auto placeLabel = [&](juce::Label& lbl, DuskSlider& slider) {
+        auto sb = slider.getBounds();
+        int lblW = scaled(60);
+        lbl.setBounds(sb.getCentreX() - lblW / 2, sb.getY() - L, lblW, L);
+    };
+
     // === OSCILLATORS LAYOUT ===
     {
         int x0 = sections.oscillators.getX() + pad;
@@ -808,42 +814,58 @@ void MultiSynthEditor::resized()
         int step1 = ctrlStep(osc1LevelSlider, K);
 
         // OSC 1: wave combo, then controls
-        osc1WaveBox.setBounds(x0, y0, scaled(90), cH);
+        osc1WaveBox.setBounds(x0, y0, scaled(100), cH);
         int ky = y0 + cH + scaled(4) + L;
         placeControl(osc1LevelSlider,  x0,            ky, K);
+        placeLabel(osc1LevelLbl, osc1LevelSlider);
         placeControl(osc1DetuneSlider, x0 + step1,    ky, K);
+        placeLabel(osc1DetuneLbl, osc1DetuneSlider);
         placeControl(osc1PWSlider,     x0 + step1 * 2, ky, K);
+        placeLabel(osc1PWLbl, osc1PWSlider);
 
         // OSC 2: wave combo, then controls
         int ctrlH = (osc1LevelSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
         int y2 = ky + ctrlH + scaled(8);
-        osc2WaveBox.setBounds(x0, y2, scaled(90), cH);
+        osc2WaveBox.setBounds(x0, y2, scaled(100), cH);
         int ky2 = y2 + cH + scaled(4) + L;
         placeControl(osc2LevelSlider,  x0,            ky2, K);
+        placeLabel(osc2LevelLbl, osc2LevelSlider);
         placeControl(osc2DetuneSlider, x0 + step1,    ky2, K);
+        placeLabel(osc2DetuneLbl, osc2DetuneSlider);
         placeControl(osc2SemiSlider,   x0 + step1 * 2, ky2, K);
+        placeLabel(osc2SemiLbl, osc2SemiSlider);
 
         // Mode-specific bottom row (always small knobs)
         int ctrlH2 = (osc2LevelSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
         int y3 = ky2 + ctrlH2 + scaled(6);
         int mKw = S + scaled(6);
 
-        subWaveBox.setBounds(x0, y3, scaled(70), cH);
+        subWaveBox.setBounds(x0, y3, scaled(80), cH);
         subLevelSlider.setBounds(x0 + scaled(75), y3 + L, S, S);
-        osc3WaveBox.setBounds(x0, y3, scaled(70), cH);
+        placeLabel(subLevelLbl, subLevelSlider);
+        osc3WaveBox.setBounds(x0, y3, scaled(80), cH);
         osc3LevelSlider.setBounds(x0 + scaled(75), y3 + L, S, S);
+        placeLabel(osc3LevelLbl, osc3LevelSlider);
         noiseLevelSlider.setBounds(x0 + mKw * 2 + scaled(30), y3 + L, S, S);
+        placeLabel(noiseLevelLbl, noiseLevelSlider);
         crossModSlider.setBounds(x0 + mKw * 3 + scaled(30), y3 + L, S, S);
+        placeLabel(crossModLbl, crossModSlider);
         ringModSlider.setBounds(x0 + mKw * 3 + scaled(30), y3 + L, S, S);
+        placeLabel(ringModLbl, ringModSlider);
         fmAmountSlider.setBounds(x0 + mKw * 4 + scaled(30), y3 + L, S, S);
+        placeLabel(fmAmountLbl, fmAmountSlider);
         hardSyncButton.setBounds(x0 + mKw * 5 + scaled(30), y3 + L + scaled(12), scaled(50), tH);
 
         // Oracle poly-mod knobs (positioned after noise, replacing crossMod)
         int pmX = x0 + mKw * 2 + scaled(30);
         pmFEnvOscASlider.setBounds(pmX,            y3 + L, S, S);
+        placeLabel(pmFEnvOscALbl, pmFEnvOscASlider);
         pmFEnvFiltSlider.setBounds(pmX + mKw,      y3 + L, S, S);
+        placeLabel(pmFEnvFiltLbl, pmFEnvFiltSlider);
         pmOscBOscASlider.setBounds(pmX + mKw * 2,  y3 + L, S, S);
+        placeLabel(pmOscBOscALbl, pmOscBOscASlider);
         pmOscBPWMSlider.setBounds(pmX + mKw * 3,   y3 + L, S, S);
+        placeLabel(pmOscBPWMLbl, pmOscBPWMSlider);
     }
 
     // === FILTER LAYOUT ===
@@ -853,12 +875,16 @@ void MultiSynthEditor::resized()
         int fStep = ctrlStep(filterCutoffSlider, K);
 
         placeControl(filterCutoffSlider, x0,           y0, K);
+        placeLabel(filterCutoffLbl, filterCutoffSlider);
         placeControl(filterResSlider,    x0 + fStep,   y0, K);
+        placeLabel(filterResLbl, filterResSlider);
 
         int ctrlH1 = (filterCutoffSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
         int y2 = y0 + ctrlH1 + scaled(6) + L;
         placeControl(filterHPSlider,     x0,           y2, K);
+        placeLabel(filterHPLbl, filterHPSlider);
         placeControl(filterEnvAmtSlider, x0 + fStep,   y2, K);
+        placeLabel(filterEnvAmtLbl, filterEnvAmtSlider);
 
         // Filter response mini-display below filter knobs
         int ctrlH2 = (filterHPSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
@@ -875,18 +901,26 @@ void MultiSynthEditor::resized()
 
         // Amp ADSR
         placeControl(ampASlider, x0,             y0, S);
+        placeLabel(ampALbl, ampASlider);
         placeControl(ampDSlider, x0 + eStep,     y0, S);
+        placeLabel(ampDLbl, ampDSlider);
         placeControl(ampSSlider, x0 + eStep * 2, y0, S);
+        placeLabel(ampSLbl, ampSSlider);
         placeControl(ampRSlider, x0 + eStep * 3, y0, S);
+        placeLabel(ampRLbl, ampRSlider);
         int envCtrlH = (ampASlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : S;
         ampCurveBox.setBounds(x0, y0 + envCtrlH + scaled(4), scaled(100), cH);
 
         // Filter ADSR
         int fx = x0 + halfW + scaled(8);
         placeControl(filtASlider, fx,             y0, S);
+        placeLabel(filtALbl, filtASlider);
         placeControl(filtDSlider, fx + eStep,     y0, S);
+        placeLabel(filtDLbl, filtDSlider);
         placeControl(filtSSlider, fx + eStep * 2, y0, S);
+        placeLabel(filtSLbl, filtSSlider);
         placeControl(filtRSlider, fx + eStep * 3, y0, S);
+        placeLabel(filtRLbl, filtRSlider);
         filtCurveBox.setBounds(fx, y0 + envCtrlH + scaled(4), scaled(100), cH);
     }
 
@@ -902,9 +936,13 @@ void MultiSynthEditor::resized()
         int my = y0 + scopeH + scaled(10) + L;
         int volPanW = juce::jmin(K, (sw - scaled(8) * 3) / 4);
         masterTuneSlider.setBounds(x0, my, volPanW, volPanW);
+        placeLabel(masterTuneLbl, masterTuneSlider);
         masterVolSlider.setBounds(x0 + (volPanW + scaled(8)), my, volPanW, volPanW);
+        placeLabel(masterVolLbl, masterVolSlider);
         masterPanSlider.setBounds(x0 + (volPanW + scaled(8)) * 2, my, volPanW, volPanW);
+        placeLabel(masterPanLbl, masterPanSlider);
         stereoWidthSlider.setBounds(x0 + (volPanW + scaled(8)) * 3, my, volPanW, volPanW);
+        placeLabel(stereoWidthLbl, stereoWidthSlider);
 
         int meterY = my + volPanW + scaled(12);
         int meterH = sections.scopeArea.getBottom() - meterY - pad;
@@ -924,14 +962,18 @@ void MultiSynthEditor::resized()
         lfo1ShapeBox.setBounds(x0, y0, scaled(70), cH);
         lfo1SyncButton.setBounds(x0 + scaled(75), y0, scaled(45), cH);
         lfo1RateSlider.setBounds(x0 + scaled(130), y0 + cH - K + L, K, K);
+        placeLabel(lfo1RateLbl, lfo1RateSlider);
         lfo1FadeSlider.setBounds(x0 + scaled(130) + kw, y0 + cH - K + L, K, K);
+        placeLabel(lfo1FadeLbl, lfo1FadeSlider);
 
         // LFO2 row
         int y2 = y0 + knobWithLabel + scaled(8);
         lfo2ShapeBox.setBounds(x0, y2, scaled(70), cH);
         lfo2SyncButton.setBounds(x0 + scaled(75), y2, scaled(45), cH);
         lfo2RateSlider.setBounds(x0 + scaled(130), y2 + cH - K + L, K, K);
+        placeLabel(lfo2RateLbl, lfo2RateSlider);
         lfo2FadeSlider.setBounds(x0 + scaled(130) + kw, y2 + cH - K + L, K, K);
+        placeLabel(lfo2FadeLbl, lfo2FadeSlider);
     }
 
     // === CHARACTER / UNISON ===
@@ -941,17 +983,24 @@ void MultiSynthEditor::resized()
         int ckw = S + scaled(8);
 
         portaSlider.setBounds(x0, y0, S, S);
+        placeLabel(portaLbl, portaSlider);
         analogSlider.setBounds(x0 + ckw, y0, S, S);
+        placeLabel(analogLbl, analogSlider);
         vintageSlider.setBounds(x0 + ckw * 2, y0, S, S);
+        placeLabel(vintageLbl, vintageSlider);
         velSensSlider.setBounds(x0 + ckw * 3, y0, S, S);
-        velCurveBox.setBounds(x0 + ckw * 3, y0 + S + scaled(2), S, cH);
+        placeLabel(velSensLbl, velSensSlider);
+        velCurveBox.setBounds(x0 + ckw * 3, y0 + S + scaled(2), scaled(70), cH);
         legatoButton.setBounds(x0 + ckw * 4, y0 + scaled(12), scaled(55), tH);
-        glideModeBox.setBounds(x0 + ckw * 4, y0 + scaled(12) + tH + scaled(4), scaled(55), cH);
+        glideModeBox.setBounds(x0 + ckw * 4, y0 + scaled(12) + tH + scaled(4), scaled(65), cH);
 
         int y2 = y0 + S + scaled(14) + L;
         unisonVoicesSlider.setBounds(x0, y2, S, S);
+        placeLabel(unisonVoicesLbl, unisonVoicesSlider);
         unisonDetuneSlider.setBounds(x0 + ckw, y2, S, S);
+        placeLabel(unisonDetuneLbl, unisonDetuneSlider);
         unisonSpreadSlider.setBounds(x0 + ckw * 2, y2, S, S);
+        placeLabel(unisonSpreadLbl, unisonSpreadSlider);
 
         // Cosmos chorus selector (visible only in Cosmos mode)
         cosmosChorusBox.setBounds(x0 + ckw * 3 + scaled(8), y2, scaled(70), cH);
@@ -964,20 +1013,23 @@ void MultiSynthEditor::resized()
         int ckw = S + scaled(8);
 
         arpOnButton.setBounds(x0, y0, scaled(35), tH);
-        arpModeBox.setBounds(x0 + scaled(40), y0, scaled(75), cH);
-        arpRateBox.setBounds(x0 + scaled(120), y0, scaled(55), cH);
+        arpModeBox.setBounds(x0 + scaled(40), y0, scaled(85), cH);
+        arpRateBox.setBounds(x0 + scaled(130), y0, scaled(65), cH);
 
         int ky = y0 + cH + scaled(8) + L;
         arpOctaveSlider.setBounds(x0, ky, S, S);
+        placeLabel(arpOctaveLbl, arpOctaveSlider);
         arpGateSlider.setBounds(x0 + ckw, ky, S, S);
+        placeLabel(arpGateLbl, arpGateSlider);
         arpSwingSlider.setBounds(x0 + ckw * 2, ky, S, S);
+        placeLabel(arpSwingLbl, arpSwingSlider);
         arpLatchButton.setBounds(x0 + ckw * 3, ky + scaled(12), scaled(50), tH);
         arpVelModeBox.setBounds(x0 + ckw * 3, ky + scaled(36), scaled(80), cH);
     }
 
     // === EFFECTS STRIP ===
     auto layoutFX = [&](juce::Rectangle<int> bounds, juce::ToggleButton& onBtn,
-                        std::initializer_list<DuskSlider*> knobs,
+                        std::initializer_list<std::pair<DuskSlider*, juce::Label*>> knobsAndLabels,
                         std::initializer_list<juce::Component*> extras)
     {
         int fx = bounds.getX() + pad;
@@ -994,22 +1046,25 @@ void MultiSynthEditor::resized()
         int ky = fy + tH + scaled(6) + L;
         int fkw = S + scaled(6);
         int i = 0;
-        for (auto* k : knobs)
+        for (auto& [k, lbl] : knobsAndLabels)
         {
             k->setBounds(fx + i * fkw, ky, S, S);
+            placeLabel(*lbl, *k);
             i++;
         }
     };
 
     layoutFX(sections.drive, driveOnButton,
-             {&driveAmtSlider, &driveMixSlider}, {&driveTypeBox});
+             {{&driveAmtSlider, &driveAmtLbl}, {&driveMixSlider, &driveMixLbl}}, {&driveTypeBox});
     layoutFX(sections.chorus, chorusOnButton,
-             {&chorusRateSlider, &chorusDepthSlider, &chorusMixSlider}, {});
+             {{&chorusRateSlider, &chorusRateLbl}, {&chorusDepthSlider, &chorusDepthLbl}, {&chorusMixSlider, &chorusMixLbl}}, {});
     layoutFX(sections.delay, delayOnButton,
-             {&delayTimeSlider, &delayFBSlider, &delayMixSlider},
+             {{&delayTimeSlider, &delayTimeLbl}, {&delayFBSlider, &delayFBLbl}, {&delayMixSlider, &delayMixLbl}},
              {&delaySyncButton, &delayPPButton, &delayTapeButton});
     layoutFX(sections.reverb, reverbOnButton,
-             {&reverbSizeSlider, &reverbDecaySlider, &reverbDampSlider, &reverbMixSlider}, {});
+             {{&reverbSizeSlider, &reverbSizeLbl}, {&reverbDecaySlider, &reverbDecayLbl},
+              {&reverbDampSlider, &reverbDampLbl}, {&reverbMixSlider, &reverbMixLbl},
+              {&reverbPDSlider, &reverbPDLbl}}, {});
 
     // Overlays
     modMatrixOverlay.setBounds(getLocalBounds());
