@@ -90,12 +90,14 @@ struct VoiceParameters
     // Portamento
     float portamentoTime = 0.0f;  // seconds
     bool legatoMode = false;
+    int glideMode = 0;            // 0=constant-time, 1=constant-rate
 
     // Analog character
     float analogAmount = 0.0f;    // 0-1, adds per-voice imperfections
 
     // Velocity sensitivity
     float velocitySensitivity = 0.7f;
+    int velocityCurve = 0; // 0=linear, 1=soft(log), 2=hard(exp), 3=fixed
 };
 
 // A single synth voice that renders one note with all oscillators & filter
@@ -123,6 +125,7 @@ public:
         driftTarget = (rng.nextFloat() - 0.5f) * 2.0f;
         driftSmooth = 0.0f;
         filterTrackingOffset = (rng.nextFloat() - 0.5f) * 0.04f;
+        voicePanOffset = (rng.nextFloat() - 0.5f) * 0.3f; // +/-0.15 random pan spread
         portaFreq.reset(sampleRate, 0.1);
     }
 
@@ -137,7 +140,18 @@ public:
 
         if (params.portamentoTime > 0.0f && lastFreq > 0.0f)
         {
-            portaFreq.reset(sr, static_cast<double>(params.portamentoTime));
+            if (params.glideMode == 0)
+            {
+                // Constant time: always takes the same duration regardless of interval
+                portaFreq.reset(sr, static_cast<double>(params.portamentoTime));
+            }
+            else
+            {
+                // Constant rate: time proportional to interval size (in octaves)
+                float interval = std::abs(std::log2(targetFreq / lastFreq));
+                float rateTime = params.portamentoTime * interval;
+                portaFreq.reset(sr, static_cast<double>(juce::jmax(0.001f, rateTime)));
+            }
             portaFreq.setTargetValue(targetFreq);
         }
         else
@@ -146,8 +160,16 @@ public:
         }
         lastFreq = targetFreq;
 
-        // Velocity scaling
-        float velScale = 1.0f - params.velocitySensitivity * (1.0f - velocity);
+        // Velocity scaling with curve
+        float mappedVel = velocity;
+        switch (params.velocityCurve)
+        {
+            case 0: break; // Linear — use velocity as-is
+            case 1: mappedVel = std::sqrt(velocity); break; // Soft — more output at low velocity
+            case 2: mappedVel = velocity * velocity; break; // Hard — less output at low velocity
+            case 3: mappedVel = 1.0f; break; // Fixed — ignore velocity
+        }
+        float velScale = 1.0f - params.velocitySensitivity * (1.0f - mappedVel);
         velocityGain = velScale;
 
         // Random per-note value for mod matrix
@@ -175,6 +197,7 @@ public:
     bool isReleasing() const { return ampEnv.getStage() == ADSREnvelope::Stage::Release; }
     int getCurrentNote() const { return currentNote; }
     float getCurrentLevel() const { return ampEnv.getCurrentValue() * velocityGain; }
+    float getVoicePanOffset() const { return voicePanOffset; }
 
     void setSteal() { stealing = true; ampEnv.noteOff(); }
 
@@ -438,6 +461,7 @@ private:
     int driftCounter = 0;           // Samples until next target change
     float driftSmooth = 0.0f;       // Smoothed drift output
     float filterTrackingOffset = 0.0f; // Per-voice filter cutoff variation
+    float voicePanOffset = 0.0f;       // Random pan per voice, set in prepare()
 
     Oscillator osc1, osc2, osc3;
     SubOscillator subOsc;
@@ -537,7 +561,7 @@ public:
             ModulationState modState;
             voice.updateModState(modState, modMatrix, modWheel, aftertouch, pitchBend, params);
 
-            float panMod = modState.getDestValue(ModDest::Pan);
+            float panMod = modState.getDestValue(ModDest::Pan) + voice.getVoicePanOffset() * params.analogAmount;
 
             if (unisonCount <= 1)
             {
