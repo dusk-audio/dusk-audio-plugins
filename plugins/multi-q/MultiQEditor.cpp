@@ -181,25 +181,6 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     savePresetButton.onClick = [this]() { saveUserPreset(); };
     addAndMakeVisible(savePresetButton);
 
-    // Undo/Redo buttons
-    undoButton.setButtonText("↶");  // Unicode undo arrow
-    undoButton.setTooltip("Undo (Cmd/Ctrl+Z)");
-    undoButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a4a5a));
-    undoButton.onClick = [this]() {
-        processor.getUndoManager().undo();
-        updateUndoRedoButtons();
-    };
-    addAndMakeVisible(undoButton);
-
-    redoButton.setButtonText("↷");  // Unicode redo arrow
-    redoButton.setTooltip("Redo (Cmd/Ctrl+Shift+Z)");
-    redoButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4a4a5a));
-    redoButton.onClick = [this]() {
-        processor.getUndoManager().redo();
-        updateUndoRedoButtons();
-    };
-    addAndMakeVisible(redoButton);
-
     // Digital mode A/B comparison button
     digitalAbButton.setButtonText("A");
     digitalAbButton.setTooltip("A/B Comparison: Click to switch between two settings");
@@ -588,17 +569,16 @@ void MultiQEditor::paint(juce::Graphics& g)
     g.fillRect(0, 49, bounds.getWidth(), 1);
 
     // Plugin title (clickable - shows supporters panel)
-    // Position after EQ type selector (which is at x=15, width=80)
-    titleClickArea = juce::Rectangle<int>(100, 8, 150, 35);
+    titleClickArea = juce::Rectangle<int>(15, 8, 150, 35);
     g.setFont(juce::Font(juce::FontOptions(22.0f).withStyle("Bold")));
     g.setColour(juce::Colour(0xffe8e8e8));
-    g.drawText("Multi-Q", 100, 8, 150, 26, juce::Justification::left);
+    g.drawText("Multi-Q", 15, 8, 150, 26, juce::Justification::left);
 
     // Mode-specific subtitle
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.setColour(juce::Colour(0xff808080));
     juce::String subtitle = isTubeEQMode ? "Tube EQ" : (isBritishMode ? "Console EQ" : (isMatchMode ? "Match EQ" : "Universal EQ"));
-    g.drawText(subtitle, 100, 32, 120, 14, juce::Justification::left);
+    g.drawText(subtitle, 15, 32, 120, 14, juce::Justification::left);
 
     // Dusk Audio branding (right side)
     g.setColour(juce::Colour(0xff606060));
@@ -1016,7 +996,6 @@ void MultiQEditor::paintShortcutOverlay(juce::Graphics& g)
         {"Dbl-click band", "Reset to default"},
         {"Dbl-click empty", "Create band here"},
         {"Scroll wheel", "Adjust Q"},
-        {"Cmd+Z / Cmd+Shift+Z", "Undo / Redo"},
         {"Cmd+0", "Reset window size"},
         {"?", "Show/hide this overlay"},
     };
@@ -1379,8 +1358,6 @@ void MultiQEditor::timerCallback()
     if (masterParam)
         graphicDisplay->setMasterGain(masterParam->load());
 
-    // Update undo/redo button states
-    updateUndoRedoButtons();
 }
 
 void MultiQEditor::parameterChanged(const juce::String& parameterID, float newValue)
@@ -1487,20 +1464,6 @@ bool MultiQEditor::keyPressed(const juce::KeyPress& key)
     {
         showShortcutOverlay = !showShortcutOverlay;
         repaint();
-        return true;
-    }
-
-    // Undo/Redo shortcuts work in all modes
-    if (key == juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0))
-    {
-        processor.getUndoManager().undo();
-        updateUndoRedoButtons();
-        return true;
-    }
-    if (key == juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
-    {
-        processor.getUndoManager().redo();
-        updateUndoRedoButtons();
         return true;
     }
 
@@ -2355,9 +2318,9 @@ void MultiQEditor::layoutUnifiedToolbar()
     // - Toolbar: 50-88px (controls positioned here)
     //
     // Shared control positions (SAME in ALL modes):
-    // - x=15: EQ Type selector (in header, y=12)
-    // - x=15: A/B button (left-aligned below EQ type selector)
-    // - x=48: Preset selector (right next to A/B button)
+    // - x=15:  A/B button
+    // - x=48:  Mode selector (Digital/British/Tube/Match)
+    // - x=138: Preset selector
     // - Right-aligned: BYPASS, Oversampling, Display Scale
 
     constexpr int toolbarY = 56;         // Vertically centered in toolbar row
@@ -2366,8 +2329,8 @@ void MultiQEditor::layoutUnifiedToolbar()
     constexpr int ovsOffset = 210;       // getWidth() - 210 (wider for "Oversample: Off")
     constexpr int scaleOffset = 320;     // getWidth() - 320 (wider dropdown)
 
-    // EQ Type selector (in header, same position for all modes)
-    eqTypeSelector->setBounds(15, 12, 80, 26);
+    // Mode selector — always in toolbar row, left of preset
+    eqTypeSelector->setBounds(48, toolbarY, 85, controlHeight);
 
     // ===== RIGHT-ALIGNED SHARED CONTROLS (ALWAYS VISIBLE IN ALL MODES) =====
 
@@ -2393,8 +2356,6 @@ void MultiQEditor::layoutUnifiedToolbar()
         processingModeSelector->setVisible(false);
         autoGainButton->setVisible(false);
         savePresetButton.setVisible(false);
-        undoButton.setVisible(false);
-        redoButton.setVisible(false);
         transferToDigitalButton.setVisible(false);
 
         // British controls
@@ -2413,43 +2374,39 @@ void MultiQEditor::layoutUnifiedToolbar()
 
     if (isTubeEQMode)
     {
-        // Tube mode: A/B, Preset selectors, and Hide Graph button
+        // Tube mode: A/B | Mode | Preset | Collapse | Transfer
         tubeAbButton.setBounds(15, toolbarY, 28, controlHeight);
         tubeAbButton.setVisible(true);
-        tubePresetSelector.setBounds(48, toolbarY, 150, controlHeight);
+        tubePresetSelector.setBounds(138, toolbarY, 150, controlHeight);
         tubePresetSelector.setVisible(true);
-        tubeEQCurveCollapseButton.setBounds(203, toolbarY, 85, controlHeight);
+        tubeEQCurveCollapseButton.setBounds(293, toolbarY, 85, controlHeight);
         tubeEQCurveCollapseButton.setVisible(true);
-        transferToDigitalButton.setBounds(293, toolbarY, 130, controlHeight);
+        transferToDigitalButton.setBounds(383, toolbarY, 130, controlHeight);
         transferToDigitalButton.setVisible(true);
     }
     else if (isBritishMode)
     {
-        // British mode: A/B, Preset, and Hide Graph button (left-aligned below EQ type selector)
+        // British mode: A/B | Mode | Preset | Collapse | Transfer
         britishAbButton.setBounds(15, toolbarY, 28, controlHeight);
         britishAbButton.setVisible(true);
-        britishPresetSelector.setBounds(48, toolbarY, 150, controlHeight);
+        britishPresetSelector.setBounds(138, toolbarY, 150, controlHeight);
         britishPresetSelector.setVisible(true);
-        britishCurveCollapseButton.setBounds(203, toolbarY, 85, controlHeight);
+        britishCurveCollapseButton.setBounds(293, toolbarY, 85, controlHeight);
         britishCurveCollapseButton.setVisible(true);
-        transferToDigitalButton.setBounds(293, toolbarY, 130, controlHeight);
+        transferToDigitalButton.setBounds(383, toolbarY, 130, controlHeight);
         transferToDigitalButton.setVisible(true);
 
-        // British-specific: Brown/Black mode toggle with text and color
+        // British-specific: Brown/Black mode toggle
         britishModeButton->setBounds(getWidth() - 400, toolbarY, 70, controlHeight);
         britishModeButton->setVisible(true);
     }
     else if (isMatchMode)
     {
-        // Match mode: A/B + Transfer→Digital + Undo/Redo, plus right-section controls
+        // Match mode: A/B | Mode | Transfer, plus right-section controls
         digitalAbButton.setBounds(15, toolbarY, 28, controlHeight);
         digitalAbButton.setVisible(true);
-        transferToDigitalButton.setBounds(48, toolbarY, 130, controlHeight);
+        transferToDigitalButton.setBounds(138, toolbarY, 130, controlHeight);
         transferToDigitalButton.setVisible(true);
-        undoButton.setBounds(183, toolbarY, 28, controlHeight);
-        undoButton.setVisible(true);
-        redoButton.setBounds(216, toolbarY, 28, controlHeight);
-        redoButton.setVisible(true);
 
         int rightSectionEnd = getWidth() - scaleOffset - 5;
 
@@ -2461,17 +2418,13 @@ void MultiQEditor::layoutUnifiedToolbar()
     }
     else
     {
-        // Digital mode: A/B, Preset, Save, Undo, Redo (left-aligned below EQ type selector)
+        // Digital mode: A/B | Mode | Preset | Save
         digitalAbButton.setBounds(15, toolbarY, 28, controlHeight);
         digitalAbButton.setVisible(true);
-        presetSelector->setBounds(48, toolbarY, 150, controlHeight);
+        presetSelector->setBounds(138, toolbarY, 150, controlHeight);
         presetSelector->setVisible(true);
-        savePresetButton.setBounds(203, toolbarY, 45, controlHeight);
+        savePresetButton.setBounds(293, toolbarY, 45, controlHeight);
         savePresetButton.setVisible(true);
-        undoButton.setBounds(253, toolbarY, 28, controlHeight);
-        undoButton.setVisible(true);
-        redoButton.setBounds(286, toolbarY, 28, controlHeight);
-        redoButton.setVisible(true);
 
         // Digital-specific right section (before shared right controls)
         int rightSectionEnd = getWidth() - scaleOffset - 5;
@@ -3963,17 +3916,6 @@ void MultiQEditor::deleteUserPreset(const juce::String& name)
 }
 
 // Undo/Redo System
-
-void MultiQEditor::updateUndoRedoButtons()
-{
-    auto& undoManager = processor.getUndoManager();
-    undoButton.setEnabled(undoManager.canUndo());
-    redoButton.setEnabled(undoManager.canRedo());
-
-    // Update button appearance based on enabled state
-    undoButton.setAlpha(undoManager.canUndo() ? 1.0f : 0.4f);
-    redoButton.setAlpha(undoManager.canRedo() ? 1.0f : 0.4f);
-}
 
 // Digital Mode A/B Comparison
 
