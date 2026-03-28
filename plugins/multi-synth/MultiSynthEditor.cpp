@@ -575,19 +575,53 @@ void MultiSynthEditor::resized()
     int knobWithLabel = L + K;
     int sKnobWithLabel = L + S;
 
+    // === SET SLIDER STYLES BEFORE LAYOUT (so placeControl knows the style) ===
+    {
+        auto mode = processor.getCurrentMode();
+        bool useFaders = (mode == MultiSynthDSP::SynthMode::Cosmos || mode == MultiSynthDSP::SynthMode::Mono);
+        bool envAsFaders = (mode != MultiSynthDSP::SynthMode::Oracle);
+        auto setStyle = [](DuskSlider& s, bool asFader) {
+            s.setSliderStyle(asFader ? juce::Slider::LinearVertical : juce::Slider::RotaryVerticalDrag);
+        };
+        setStyle(filterCutoffSlider, useFaders);
+        setStyle(filterResSlider, useFaders);
+        setStyle(filterHPSlider, useFaders);
+        setStyle(filterEnvAmtSlider, useFaders);
+        setStyle(osc1LevelSlider, useFaders);
+        setStyle(osc1DetuneSlider, useFaders);
+        setStyle(osc1PWSlider, useFaders);
+        setStyle(osc2LevelSlider, useFaders);
+        setStyle(osc2DetuneSlider, useFaders);
+        setStyle(osc2SemiSlider, useFaders);
+        setStyle(ampASlider, envAsFaders);
+        setStyle(ampDSlider, envAsFaders);
+        setStyle(ampSSlider, envAsFaders);
+        setStyle(ampRSlider, envAsFaders);
+        setStyle(filtASlider, envAsFaders);
+        setStyle(filtDSlider, envAsFaders);
+        setStyle(filtSSlider, envAsFaders);
+        setStyle(filtRSlider, envAsFaders);
+    }
+
     // === TOP BAR ===
     modeSelector.setBounds(scaled(130), scaled(8), scaled(110), cH);
     presetBox.setBounds(scaled(248), scaled(8), scaled(180), cH);
     oversamplingBox.setBounds(w - scaled(200), scaled(8), scaled(50), cH);
     modMatrixButton.setBounds(w - scaled(140), scaled(8), scaled(55), cH);
 
-    // === SECTION BOUNDS ===
+    // === SECTION BOUNDS (adjust for fader height when applicable) ===
     int row1Y = topBar + gap;
     int oscW = static_cast<int>(w * 0.46f);
     int outW = static_cast<int>(w * 0.18f);
     int midW = w - oscW - outW - 4 * m;
-    int filtH = titH + pad + knobWithLabel * 2 + scaled(8);
-    int envH = titH + pad + sKnobWithLabel + cH + scaled(12);
+
+    // Heights adapt: fader controls are taller than knobs
+    bool hasFaders = (osc1LevelSlider.getSliderStyle() == juce::Slider::LinearVertical);
+    int ctrlWithLabel = hasFaders ? (L + scaled(90)) : knobWithLabel; // fader=90px, knob=70px
+    int sCtrlWithLabel = (ampASlider.getSliderStyle() == juce::Slider::LinearVertical)
+                         ? (L + scaled(90)) : sKnobWithLabel;
+    int filtH = titH + pad + ctrlWithLabel * 2 + scaled(8);
+    int envH = titH + pad + sCtrlWithLabel + cH + scaled(12);
     int row1H = filtH + gap + envH;
 
     sections.oscillators = { m, row1Y, oscW, row1H };
@@ -610,29 +644,52 @@ void MultiSynthEditor::resized()
     sections.delay  = { m * 3 + fxW * 2, row3Y, fxW, row3H };
     sections.reverb = { m * 4 + fxW * 3, row3Y, fxW, row3H };
 
+    // === FADER vs KNOB BOUNDS ===
+    // When a slider is LinearVertical, it needs tall+narrow bounds (width~25, height~100)
+    // When RotaryVerticalDrag, it needs square bounds (KxK)
+    int faderW = scaled(22);   // narrow fader width
+    int faderH = scaled(90);   // tall fader height
+    int faderStep = faderW + scaled(12); // horizontal spacing between faders
+
+    // Smart placement: use correct bounds based on current slider style
+    auto placeControl = [&](DuskSlider& s, int x, int y, int knobSz) {
+        if (s.getSliderStyle() == juce::Slider::LinearVertical)
+            s.setBounds(x, y, faderW, faderH);
+        else
+            s.setBounds(x, y, knobSz, knobSz);
+    };
+
+    // Column width depends on whether controls are faders or knobs
+    auto ctrlStep = [&](DuskSlider& s, int knobSz) -> int {
+        return (s.getSliderStyle() == juce::Slider::LinearVertical)
+               ? faderStep : (knobSz + scaled(kKnobSpacing));
+    };
+
     // === OSCILLATORS LAYOUT ===
     {
         int x0 = sections.oscillators.getX() + pad;
         int y0 = sections.oscillators.getY() + titH + pad;
-        int kw = K + scaled(kKnobSpacing);
+        int step1 = ctrlStep(osc1LevelSlider, K);
 
-        // OSC 1: wave combo, then 3 knobs below
+        // OSC 1: wave combo, then controls
         osc1WaveBox.setBounds(x0, y0, scaled(90), cH);
-        int ky = y0 + cH + scaled(4) + L; // L = space for attachToComponent label
-        osc1LevelSlider.setBounds(x0, ky, K, K);
-        osc1DetuneSlider.setBounds(x0 + kw, ky, K, K);
-        osc1PWSlider.setBounds(x0 + kw * 2, ky, K, K);
+        int ky = y0 + cH + scaled(4) + L;
+        placeControl(osc1LevelSlider,  x0,            ky, K);
+        placeControl(osc1DetuneSlider, x0 + step1,    ky, K);
+        placeControl(osc1PWSlider,     x0 + step1 * 2, ky, K);
 
-        // OSC 2: wave combo, then 3 knobs
-        int y2 = ky + K + scaled(10);
+        // OSC 2: wave combo, then controls
+        int ctrlH = (osc1LevelSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
+        int y2 = ky + ctrlH + scaled(8);
         osc2WaveBox.setBounds(x0, y2, scaled(90), cH);
         int ky2 = y2 + cH + scaled(4) + L;
-        osc2LevelSlider.setBounds(x0, ky2, K, K);
-        osc2DetuneSlider.setBounds(x0 + kw, ky2, K, K);
-        osc2SemiSlider.setBounds(x0 + kw * 2, ky2, K, K);
+        placeControl(osc2LevelSlider,  x0,            ky2, K);
+        placeControl(osc2DetuneSlider, x0 + step1,    ky2, K);
+        placeControl(osc2SemiSlider,   x0 + step1 * 2, ky2, K);
 
-        // Mode-specific bottom row (smaller knobs)
-        int y3 = ky2 + K + scaled(10);
+        // Mode-specific bottom row (always small knobs)
+        int ctrlH2 = (osc2LevelSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
+        int y3 = ky2 + ctrlH2 + scaled(6);
         int mKw = S + scaled(6);
 
         subWaveBox.setBounds(x0, y3, scaled(70), cH);
@@ -646,40 +703,43 @@ void MultiSynthEditor::resized()
         hardSyncButton.setBounds(x0 + mKw * 5 + scaled(30), y3 + L + scaled(12), scaled(50), tH);
     }
 
-    // === FILTER LAYOUT (2x2 grid) ===
+    // === FILTER LAYOUT ===
     {
         int x0 = sections.filter.getX() + pad;
         int y0 = sections.filter.getY() + titH + pad + L;
-        int kw = K + scaled(8);
+        int fStep = ctrlStep(filterCutoffSlider, K);
 
-        filterCutoffSlider.setBounds(x0, y0, K, K);
-        filterResSlider.setBounds(x0 + kw, y0, K, K);
-        int y2 = y0 + K + scaled(8) + L;
-        filterHPSlider.setBounds(x0, y2, K, K);
-        filterEnvAmtSlider.setBounds(x0 + kw, y2, K, K);
+        placeControl(filterCutoffSlider, x0,           y0, K);
+        placeControl(filterResSlider,    x0 + fStep,   y0, K);
+
+        int ctrlH1 = (filterCutoffSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
+        int y2 = y0 + ctrlH1 + scaled(6) + L;
+        placeControl(filterHPSlider,     x0,           y2, K);
+        placeControl(filterEnvAmtSlider, x0 + fStep,   y2, K);
     }
 
-    // === ENVELOPES LAYOUT (2 groups of 4 small knobs) ===
+    // === ENVELOPES LAYOUT (2 groups of 4 ADSR) ===
     {
         int x0 = sections.envelopes.getX() + pad;
-        int y0 = sections.envelopes.getY() + titH + scaled(18) + L; // extra space for AMP/FILT sub-labels
-        int ekw = S + scaled(4);
+        int y0 = sections.envelopes.getY() + titH + scaled(18) + L;
+        int eStep = ctrlStep(ampASlider, S);
         int halfW = sections.envelopes.getWidth() / 2 - pad;
 
         // Amp ADSR
-        ampASlider.setBounds(x0, y0, S, S);
-        ampDSlider.setBounds(x0 + ekw, y0, S, S);
-        ampSSlider.setBounds(x0 + ekw * 2, y0, S, S);
-        ampRSlider.setBounds(x0 + ekw * 3, y0, S, S);
-        ampCurveBox.setBounds(x0, y0 + S + scaled(4), scaled(100), cH);
+        placeControl(ampASlider, x0,             y0, S);
+        placeControl(ampDSlider, x0 + eStep,     y0, S);
+        placeControl(ampSSlider, x0 + eStep * 2, y0, S);
+        placeControl(ampRSlider, x0 + eStep * 3, y0, S);
+        int envCtrlH = (ampASlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : S;
+        ampCurveBox.setBounds(x0, y0 + envCtrlH + scaled(4), scaled(100), cH);
 
         // Filter ADSR
         int fx = x0 + halfW + scaled(8);
-        filtASlider.setBounds(fx, y0, S, S);
-        filtDSlider.setBounds(fx + ekw, y0, S, S);
-        filtSSlider.setBounds(fx + ekw * 2, y0, S, S);
-        filtRSlider.setBounds(fx + ekw * 3, y0, S, S);
-        filtCurveBox.setBounds(fx, y0 + S + scaled(4), scaled(100), cH);
+        placeControl(filtASlider, fx,             y0, S);
+        placeControl(filtDSlider, fx + eStep,     y0, S);
+        placeControl(filtSSlider, fx + eStep * 2, y0, S);
+        placeControl(filtRSlider, fx + eStep * 3, y0, S);
+        filtCurveBox.setBounds(fx, y0 + envCtrlH + scaled(4), scaled(100), cH);
     }
 
     // === SCOPE + OUTPUT ===
@@ -800,43 +860,7 @@ void MultiSynthEditor::resized()
     modMatrixOverlay.setBounds(getLocalBounds());
     supportersOverlay.setBounds(getLocalBounds());
 
-    // === PER-MODE SLIDER STYLES ===
-    // Cosmos and Mono use faders for most params; Oracle and Modular use knobs
-    auto mode = processor.getCurrentMode();
-    bool useFaders = (mode == MultiSynthDSP::SynthMode::Cosmos || mode == MultiSynthDSP::SynthMode::Mono);
-
-    // Envelope sliders: faders in Cosmos/Mono/Modular, knobs in Oracle
-    bool envAsFaders = (mode != MultiSynthDSP::SynthMode::Oracle);
-    auto setStyle = [](DuskSlider& s, bool asFader) {
-        s.setSliderStyle(asFader ? juce::Slider::LinearVertical : juce::Slider::RotaryVerticalDrag);
-    };
-
-    // Filter params: faders in Cosmos/Mono, knobs in Oracle/Modular
-    setStyle(filterCutoffSlider, useFaders);
-    setStyle(filterResSlider, useFaders);
-    setStyle(filterHPSlider, useFaders);
-    setStyle(filterEnvAmtSlider, useFaders);
-
-    // Osc level/detune/PW: faders in Cosmos/Mono, knobs in Oracle/Modular
-    setStyle(osc1LevelSlider, useFaders);
-    setStyle(osc1DetuneSlider, useFaders);
-    setStyle(osc1PWSlider, useFaders);
-    setStyle(osc2LevelSlider, useFaders);
-    setStyle(osc2DetuneSlider, useFaders);
-    setStyle(osc2SemiSlider, useFaders);
-
-    // Envelopes: faders in Cosmos/Mono/Modular, knobs in Oracle
-    setStyle(ampASlider, envAsFaders);
-    setStyle(ampDSlider, envAsFaders);
-    setStyle(ampSSlider, envAsFaders);
-    setStyle(ampRSlider, envAsFaders);
-    setStyle(filtASlider, envAsFaders);
-    setStyle(filtDSlider, envAsFaders);
-    setStyle(filtSSlider, envAsFaders);
-    setStyle(filtRSlider, envAsFaders);
-
-    // Master, LFO, character, arp, effects: always knobs
-    // (already set to RotaryVerticalDrag by default in setupSlider)
+    // (slider styles already set at the top of resized)
 }
 
 //==============================================================================
