@@ -248,6 +248,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
         juce::ParameterID(ParamIDs::POLYMOD_OSCB_PWM, 1), "PM OscB→PW",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f));
 
+    // S&H rate
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::SH_RATE, 1), "S&H Rate",
+        juce::NormalisableRange<float>(0.1f, 50.0f, 0.01f, 0.3f), 5.0f));
+
     // Cosmos-specific: Juno chorus mode
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::COSMOS_CHORUS_MODE, 1), "Cosmos Chorus",
@@ -344,6 +349,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
 
     // Master
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::MASTER_TUNE, 1), "Master Tune",
+        juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID(ParamIDs::MASTER_VOL, 1), "Master Volume",
         juce::NormalisableRange<float>(-60.0f, 6.0f, 0.1f), 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -411,6 +419,7 @@ void MultiSynthProcessor::updateVoiceParameters()
     voiceParams.subWave = subWaveIdx == 0 ? MultiSynthDSP::Waveform::Square : MultiSynthDSP::Waveform::Sine;
 
     voiceParams.noiseLevel = *apvts.getRawParameterValue(ParamIDs::NOISE_LEVEL);
+    voiceParams.shRate = *apvts.getRawParameterValue(ParamIDs::SH_RATE);
 
     // Filter
     voiceParams.filterCutoff = *apvts.getRawParameterValue(ParamIDs::FILTER_CUTOFF);
@@ -614,6 +623,14 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         arpTotalSteps.store(arpeggiator.getTotalSteps(), std::memory_order_relaxed);
     }
 
+    // MIDI activity display for editor
+    displayPitchBend.store(pitchBendValue, std::memory_order_relaxed);
+    displayModWheel.store(modWheelValue, std::memory_order_relaxed);
+
+    // Master tune: convert cents to semitones and add to pitch bend
+    float masterTune = *apvts.getRawParameterValue(ParamIDs::MASTER_TUNE);
+    float effectivePitchBend = pitchBendValue + masterTune / 100.0f;
+
     // Render audio
     auto* outputL = buffer.getWritePointer(0);
     auto* outputR = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
@@ -635,7 +652,7 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         {
             float osL = 0.0f, osR = 0.0f;
             voiceAllocator.renderSample(voiceParams, modMatrix, unisonEngine,
-                                        modWheelValue, aftertouchValue, pitchBendValue,
+                                        modWheelValue, aftertouchValue, effectivePitchBend,
                                         osL, osR);
             sampleL += osL;
             sampleR += osR;
