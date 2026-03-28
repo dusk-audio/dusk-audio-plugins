@@ -284,7 +284,13 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupKnob(analogSlider, analogLbl, ParamIDs::ANALOG_AMT, "Analog");
     setupKnob(vintageSlider, vintageLbl, ParamIDs::VINTAGE, "Vintage");
     setupKnob(velSensSlider, velSensLbl, ParamIDs::VEL_SENS, "Vel");
+    velCurveBox.addItemList({"Linear", "Soft", "Hard", "Fixed"}, 1);
+    addAndMakeVisible(velCurveBox);
+    setupComboBox(velCurveBox, ParamIDs::VEL_CURVE);
     setupToggle(legatoButton, ParamIDs::LEGATO, "Legato");
+    glideModeBox.addItemList({"Time", "Rate"}, 1);
+    addAndMakeVisible(glideModeBox);
+    setupComboBox(glideModeBox, ParamIDs::GLIDE_MODE);
     setupKnob(unisonVoicesSlider, unisonVoicesLbl, ParamIDs::UNISON_VOICES, "Voices");
     setupKnob(unisonDetuneSlider, unisonDetuneLbl, ParamIDs::UNISON_DETUNE, "Detune");
     setupKnob(unisonSpreadSlider, unisonSpreadLbl, ParamIDs::UNISON_SPREAD, "Spread");
@@ -337,6 +343,7 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupKnob(masterTuneSlider, masterTuneLbl, ParamIDs::MASTER_TUNE, "Tune");
     setupKnob(masterVolSlider, masterVolLbl, ParamIDs::MASTER_VOL, "Vol");
     setupKnob(masterPanSlider, masterPanLbl, ParamIDs::MASTER_PAN, "Pan");
+    setupKnob(stereoWidthSlider, stereoWidthLbl, ParamIDs::STEREO_WIDTH, "Width");
     addAndMakeVisible(outputMeterL);
     addAndMakeVisible(outputMeterR);
 
@@ -893,10 +900,11 @@ void MultiSynthEditor::resized()
         waveformDisplay.setBounds(x0, y0, sw, scopeH);
 
         int my = y0 + scopeH + scaled(10) + L;
-        int volPanW = juce::jmin(K, (sw - scaled(8) * 2) / 3);
+        int volPanW = juce::jmin(K, (sw - scaled(8) * 3) / 4);
         masterTuneSlider.setBounds(x0, my, volPanW, volPanW);
-        masterVolSlider.setBounds(x0 + volPanW + scaled(8), my, volPanW, volPanW);
+        masterVolSlider.setBounds(x0 + (volPanW + scaled(8)), my, volPanW, volPanW);
         masterPanSlider.setBounds(x0 + (volPanW + scaled(8)) * 2, my, volPanW, volPanW);
+        stereoWidthSlider.setBounds(x0 + (volPanW + scaled(8)) * 3, my, volPanW, volPanW);
 
         int meterY = my + volPanW + scaled(12);
         int meterH = sections.scopeArea.getBottom() - meterY - pad;
@@ -936,7 +944,9 @@ void MultiSynthEditor::resized()
         analogSlider.setBounds(x0 + ckw, y0, S, S);
         vintageSlider.setBounds(x0 + ckw * 2, y0, S, S);
         velSensSlider.setBounds(x0 + ckw * 3, y0, S, S);
+        velCurveBox.setBounds(x0 + ckw * 3, y0 + S + scaled(2), S, cH);
         legatoButton.setBounds(x0 + ckw * 4, y0 + scaled(12), scaled(55), tH);
+        glideModeBox.setBounds(x0 + ckw * 4, y0 + scaled(12) + tH + scaled(4), scaled(55), cH);
 
         int y2 = y0 + S + scaled(14) + L;
         unisonVoicesSlider.setBounds(x0, y2, S, S);
