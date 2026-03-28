@@ -133,14 +133,24 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     modeSelectorAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.getAPVTS(), ParamIDs::MODE, modeSelector);
 
-    auto& presets = MultiSynthProcessor::getFactoryPresetNames();
-    for (int i = 0; i < presets.size(); ++i)
-        presetBox.addItem(presets[i], i + 1);
-    presetBox.onChange = [this] {
-        int idx = presetBox.getSelectedId() - 1;
-        if (idx >= 0) processor.setCurrentProgram(idx);
-    };
+    // Preset system
+    userPresetManager = std::make_unique<UserPresetManager>("Multi-Synth");
     addAndMakeVisible(presetBox);
+    refreshPresetList();
+    presetBox.onChange = [this] {
+        int id = presetBox.getSelectedId();
+        if (id <= 0) return;
+        if (id <= factoryPresetCount)
+            processor.setCurrentProgram(id - 1);
+        else
+            loadUserPreset(presetBox.getText());
+    };
+
+    savePresetButton.onClick = [this] { saveUserPreset(); };
+    addAndMakeVisible(savePresetButton);
+    deletePresetButton.onClick = [this] { deleteUserPreset(); };
+    addAndMakeVisible(deletePresetButton);
+
     oversamplingBox.addItemList({"1x", "2x", "4x"}, 1);
     addAndMakeVisible(oversamplingBox);
     setupComboBox(oversamplingBox, ParamIDs::OVERSAMPLING);
@@ -172,6 +182,12 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupKnob(ringModSlider, ringModLbl, ParamIDs::RING_MOD, "Ring");
     setupKnob(fmAmountSlider, fmAmountLbl, ParamIDs::FM_AMOUNT, "FM");
     setupToggle(hardSyncButton, ParamIDs::HARD_SYNC, "Sync");
+
+    // === Oracle poly-mod knobs ===
+    setupKnob(pmFEnvOscASlider, pmFEnvOscALbl, ParamIDs::POLYMOD_FENV_OSCA, "FE→A");
+    setupKnob(pmFEnvFiltSlider, pmFEnvFiltLbl, ParamIDs::POLYMOD_FENV_FILT, "FE→F");
+    setupKnob(pmOscBOscASlider, pmOscBOscALbl, ParamIDs::POLYMOD_OSCB_OSCA, "OB→A");
+    setupKnob(pmOscBPWMSlider,  pmOscBPWMLbl,  ParamIDs::POLYMOD_OSCB_PWM,  "OB→PW");
 
     // === Cosmos Chorus ===
     cosmosChorusBox.addItemList({"Off", "I", "II", "I+II"}, 1);
@@ -397,6 +413,12 @@ void MultiSynthEditor::updateModeVisibility()
     osc3WaveBox.setVisible(isModular); osc3LevelSlider.setVisible(isModular); osc3LevelLbl.setVisible(isModular);
     subWaveBox.setVisible(isCosmos || isMono); subLevelSlider.setVisible(isCosmos || isMono); subLevelLbl.setVisible(isCosmos || isMono);
     cosmosChorusBox.setVisible(isCosmos);
+
+    // Oracle poly-mod knobs
+    pmFEnvOscASlider.setVisible(isOracle); pmFEnvOscALbl.setVisible(isOracle);
+    pmFEnvFiltSlider.setVisible(isOracle); pmFEnvFiltLbl.setVisible(isOracle);
+    pmOscBOscASlider.setVisible(isOracle); pmOscBOscALbl.setVisible(isOracle);
+    pmOscBPWMSlider.setVisible(isOracle);  pmOscBPWMLbl.setVisible(isOracle);
     filterHPSlider.setVisible(isCosmos); filterHPLbl.setVisible(isCosmos);
     crossModSlider.setVisible(isCosmos || isOracle); crossModLbl.setVisible(isCosmos || isOracle);
     ringModSlider.setVisible(isMono || isModular); ringModLbl.setVisible(isMono || isModular);
@@ -640,7 +662,9 @@ void MultiSynthEditor::resized()
 
     // === TOP BAR ===
     modeSelector.setBounds(scaled(130), scaled(8), scaled(110), cH);
-    presetBox.setBounds(scaled(248), scaled(8), scaled(180), cH);
+    presetBox.setBounds(scaled(248), scaled(8), scaled(160), cH);
+    savePresetButton.setBounds(scaled(414), scaled(8), scaled(40), cH);
+    deletePresetButton.setBounds(scaled(458), scaled(8), scaled(35), cH);
     oversamplingBox.setBounds(w - scaled(200), scaled(8), scaled(50), cH);
     modMatrixButton.setBounds(w - scaled(140), scaled(8), scaled(55), cH);
 
@@ -736,6 +760,13 @@ void MultiSynthEditor::resized()
         ringModSlider.setBounds(x0 + mKw * 3 + scaled(30), y3 + L, S, S);
         fmAmountSlider.setBounds(x0 + mKw * 4 + scaled(30), y3 + L, S, S);
         hardSyncButton.setBounds(x0 + mKw * 5 + scaled(30), y3 + L + scaled(12), scaled(50), tH);
+
+        // Oracle poly-mod knobs (positioned after noise, replacing crossMod)
+        int pmX = x0 + mKw * 2 + scaled(30);
+        pmFEnvOscASlider.setBounds(pmX,            y3 + L, S, S);
+        pmFEnvFiltSlider.setBounds(pmX + mKw,      y3 + L, S, S);
+        pmOscBOscASlider.setBounds(pmX + mKw * 2,  y3 + L, S, S);
+        pmOscBPWMSlider.setBounds(pmX + mKw * 3,   y3 + L, S, S);
     }
 
     // === FILTER LAYOUT ===
@@ -916,6 +947,82 @@ void MultiSynthEditor::setSliderAsFader(DuskSlider& s)
 }
 
 void MultiSynthEditor::layoutSharedLowerStrip() {}
+
+//==============================================================================
+// Preset management
+
+void MultiSynthEditor::refreshPresetList()
+{
+    presetBox.clear(juce::dontSendNotification);
+
+    // Factory presets
+    auto& factory = MultiSynthProcessor::getFactoryPresetNames();
+    factoryPresetCount = factory.size();
+    for (int i = 0; i < factory.size(); ++i)
+        presetBox.addItem(factory[i], i + 1);
+
+    // Separator
+    if (userPresetManager)
+    {
+        auto userPresets = userPresetManager->loadUserPresets();
+        if (!userPresets.empty())
+        {
+            presetBox.addSeparator();
+            for (int i = 0; i < static_cast<int>(userPresets.size()); ++i)
+                presetBox.addItem(userPresets[static_cast<size_t>(i)].name,
+                                  factoryPresetCount + i + 1);
+        }
+    }
+}
+
+void MultiSynthEditor::saveUserPreset()
+{
+    if (!userPresetManager) return;
+
+    auto callback = [safeThis = juce::Component::SafePointer(this)](const juce::String& name)
+    {
+        if (!safeThis || name.isEmpty()) return;
+        auto state = safeThis->processor.getAPVTS().copyState();
+        if (safeThis->userPresetManager->saveUserPreset(name, state))
+            safeThis->refreshPresetList();
+    };
+
+    // Show a simple alert window to get the name
+    auto* aw = new juce::AlertWindow("Save Preset", "Enter a name for the preset:",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->addTextEditor("name", "", "Preset name:");
+    aw->addButton("Save", 1);
+    aw->addButton("Cancel", 0);
+
+    aw->enterModalState(true, juce::ModalCallbackFunction::create(
+        [aw, callback](int result) {
+            if (result == 1)
+                callback(aw->getTextEditorContents("name"));
+            delete aw;
+        }), false);
+}
+
+void MultiSynthEditor::loadUserPreset(const juce::String& name)
+{
+    if (!userPresetManager) return;
+    auto state = userPresetManager->loadUserPreset(name);
+    if (state.isValid())
+        processor.getAPVTS().replaceState(state);
+}
+
+void MultiSynthEditor::deleteUserPreset()
+{
+    if (!userPresetManager) return;
+    auto name = presetBox.getText();
+    if (name.isEmpty()) return;
+
+    // Only delete user presets (IDs above factoryPresetCount)
+    int id = presetBox.getSelectedId();
+    if (id <= factoryPresetCount) return; // Can't delete factory presets
+
+    userPresetManager->deleteUserPreset(name);
+    refreshPresetList();
+}
 
 // Per-mode layout refinements — called after the shared layout positions all controls.
 // These adjust section titles in paint() via the section names used there,
