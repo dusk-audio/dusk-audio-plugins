@@ -30,7 +30,7 @@ inline float polyBlep(float t, float dt)
     if (t > 1.0f - dt)
     {
         float n = (t - 1.0f) / dt;
-        return n * n + n + n + 1.0f;
+        return n * n + n + n - 1.0f;
     }
     return 0.0f;
 }

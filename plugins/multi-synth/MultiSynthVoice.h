@@ -324,7 +324,7 @@ public:
         // Filter — clamp cutoff to avoid pushing above Nyquist
         float cutoffMod = modState.getDestValue(ModDest::FilterCutoff);
         float resMod = modState.getDestValue(ModDest::FilterResonance);
-        float envModTotal = juce::jlimit(-4.0f, 4.0f, (filtVal * params.filterEnvAmount + cutoffMod) * 4.0f);
+        float envModTotal = juce::jlimit(-2.0f, 2.0f, (filtVal * params.filterEnvAmount + cutoffMod) * 2.0f);
         float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
         envCutoff = juce::jlimit(20.0f, static_cast<float>(sr) * 0.45f, envCutoff);
         float envRes = juce::jlimit(0.0f, 1.0f, params.filterResonance + resMod);
@@ -481,7 +481,7 @@ public:
         int unisonCount = unison.getVoiceCount();
 
         // Gain compensation: prevent volume explosion from stacking voices
-        float voiceGain = 1.0f / std::sqrt(static_cast<float>(maxVoices));
+        float voiceGain = 1.0f / (1.0f + std::log2(static_cast<float>(maxVoices)));
 
         for (int v = 0; v < maxVoices; ++v)
         {

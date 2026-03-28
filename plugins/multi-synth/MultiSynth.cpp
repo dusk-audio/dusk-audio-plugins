@@ -615,7 +615,7 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
         // Voice output attenuation — keep voices at healthy level so
         // effects chain + limiter have headroom
-        static constexpr float kVoiceGain = 0.18f;
+        static constexpr float kVoiceGain = 0.7f;
         sampleL *= kVoiceGain;
         sampleR *= kVoiceGain;
 
@@ -653,10 +653,10 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         auto softLimit = [](float x) -> float {
             if (std::isnan(x) || std::isinf(x)) return 0.0f;
             float ax = std::abs(x);
-            if (ax <= 0.7f) return x;
-            // Soft knee: map 0.7..inf -> 0.7..1.0 using tanh
-            float over = (ax - 0.7f) * 3.33f; // normalize overshoot
-            float limited = 0.7f + 0.3f * std::tanh(over);
+            if (ax <= 0.9f) return x;
+            // Soft knee: map 0.9..inf -> 0.9..1.0 using tanh
+            float over = (ax - 0.9f) * 10.0f;
+            float limited = 0.9f + 0.1f * std::tanh(over);
             return (x >= 0.0f) ? limited : -limited;
         };
         sampleL = softLimit(sampleL);
@@ -725,12 +725,13 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
     };
 
     // Reset to defaults first
+    setParam(ParamIDs::MASTER_VOL, -6.0f); // Healthy headroom with new gain staging
     setParam(ParamIDs::OSC1_WAVE, 0); // Saw
     setParam(ParamIDs::OSC2_WAVE, 0);
     setParam(ParamIDs::OSC1_DETUNE, 0);
     setParam(ParamIDs::OSC2_DETUNE, 7);
-    setParam(ParamIDs::OSC1_LEVEL, 1.0f);
-    setParam(ParamIDs::OSC2_LEVEL, 0.8f);
+    setParam(ParamIDs::OSC1_LEVEL, 0.8f);  // Slightly below max
+    setParam(ParamIDs::OSC2_LEVEL, 0.6f);
     setParam(ParamIDs::NOISE_LEVEL, 0);
     setParam(ParamIDs::FILTER_CUTOFF, 8000);
     setParam(ParamIDs::FILTER_RESONANCE, 0.3f);

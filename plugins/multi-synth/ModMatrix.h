@@ -366,7 +366,7 @@ private:
     float rate = 1.0f;
     float phase = 0.0f;
     float fadeInTime = 0.0f;
-    float fadeInPhase = 1.0f; // Start faded in
+    float fadeInPhase = 1.0f; // 1.0 = fully faded in (no fade). retrigger() resets to 0.0
     bool oneShot = false;
     bool tempoSync = false;
     bool completed = false;
