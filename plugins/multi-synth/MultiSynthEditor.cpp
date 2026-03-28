@@ -334,6 +334,7 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupKnob(reverbPDSlider, reverbPDLbl, ParamIDs::REVERB_PREDELAY, "PreD");
 
     // === Master ===
+    setupKnob(masterTuneSlider, masterTuneLbl, ParamIDs::MASTER_TUNE, "Tune");
     setupKnob(masterVolSlider, masterVolLbl, ParamIDs::MASTER_VOL, "Vol");
     setupKnob(masterPanSlider, masterPanLbl, ParamIDs::MASTER_PAN, "Pan");
     addAndMakeVisible(outputMeterL);
@@ -502,6 +503,21 @@ void MultiSynthEditor::paint(juce::Graphics& g)
     g.setFont(juce::Font(juce::FontOptions(18.0f * sf).withStyle("Bold")));
     g.setColour(currentLAF->colors.text);
     g.drawText("Multi-Synth", scaled(8), 0, scaled(120), topBar, juce::Justification::centredLeft);
+
+    // MIDI activity indicators (pitch bend / mod wheel)
+    {
+        float pb = processor.displayPitchBend.load(std::memory_order_relaxed);
+        float mw = processor.displayModWheel.load(std::memory_order_relaxed);
+        if (std::abs(pb) > 0.01f || mw > 0.01f)
+        {
+            g.setFont(juce::Font(juce::FontOptions(10.0f * sf)));
+            g.setColour(currentLAF->colors.accent.withAlpha(0.7f));
+            juce::String info;
+            if (std::abs(pb) > 0.01f) info += "PB:" + juce::String(pb, 1) + " ";
+            if (mw > 0.01f) info += "MW:" + juce::String(static_cast<int>(mw * 100)) + "%";
+            g.drawText(info, w / 2 - scaled(60), 0, scaled(120), topBar, juce::Justification::centred);
+        }
+    }
 
     // Dispatch to per-mode painting
     switch (processor.getCurrentMode())
@@ -877,9 +893,10 @@ void MultiSynthEditor::resized()
         waveformDisplay.setBounds(x0, y0, sw, scopeH);
 
         int my = y0 + scopeH + scaled(10) + L;
-        int volPanW = juce::jmin(K, (sw - scaled(8)) / 2);
-        masterVolSlider.setBounds(x0, my, volPanW, volPanW);
-        masterPanSlider.setBounds(x0 + volPanW + scaled(8), my, volPanW, volPanW);
+        int volPanW = juce::jmin(K, (sw - scaled(8) * 2) / 3);
+        masterTuneSlider.setBounds(x0, my, volPanW, volPanW);
+        masterVolSlider.setBounds(x0 + volPanW + scaled(8), my, volPanW, volPanW);
+        masterPanSlider.setBounds(x0 + (volPanW + scaled(8)) * 2, my, volPanW, volPanW);
 
         int meterY = my + volPanW + scaled(12);
         int meterH = sections.scopeArea.getBottom() - meterY - pad;
@@ -1131,12 +1148,28 @@ void MultiSynthEditor::timerCallback()
     outputMeterL.setLevel(processor.outputLevelL.load(std::memory_order_relaxed));
     outputMeterR.setLevel(processor.outputLevelR.load(std::memory_order_relaxed));
 
-    // Oscilloscope
+    // Oscilloscope — read ring buffer then trigger on rising zero-crossing
     int wp = processor.scopeWritePos.load(std::memory_order_relaxed);
     float tempBuf[MultiSynthProcessor::kScopeSize];
     for (int i = 0; i < MultiSynthProcessor::kScopeSize; ++i)
         tempBuf[i] = processor.scopeBuffer[(wp + i) % MultiSynthProcessor::kScopeSize];
-    waveformDisplay.updateBuffer(tempBuf, MultiSynthProcessor::kScopeSize);
+
+    // Find first rising zero-crossing for stable display
+    int triggerPoint = 0;
+    int searchLen = MultiSynthProcessor::kScopeSize / 2; // Search first half
+    for (int i = 1; i < searchLen; ++i)
+    {
+        if (tempBuf[i - 1] <= 0.0f && tempBuf[i] > 0.0f)
+        {
+            triggerPoint = i;
+            break;
+        }
+    }
+
+    // Display from trigger point, up to remaining samples
+    int displayLen = MultiSynthProcessor::kScopeSize - triggerPoint;
+    displayLen = juce::jmin(displayLen, MultiSynthProcessor::kScopeSize / 2);
+    waveformDisplay.updateBuffer(tempBuf + triggerPoint, displayLen);
     waveformDisplay.repaint();
 
     // Update filter response display
@@ -1145,6 +1178,9 @@ void MultiSynthEditor::timerCallback()
     filterResponseDisplay.setParameters(fc, fr, 44100.0f);
     filterResponseDisplay.setAccentColor(currentLAF ? currentLAF->colors.accent : juce::Colour(0xFF6070DD));
     filterResponseDisplay.setBackgroundColor(currentLAF ? currentLAF->colors.sectionBackground : juce::Colour(0xFF1A1C2E));
+
+    // Repaint top bar for MIDI activity indicators
+    repaint(0, 0, getWidth(), scaled(kTopBarH));
 
     updateModeVisibility();
 }

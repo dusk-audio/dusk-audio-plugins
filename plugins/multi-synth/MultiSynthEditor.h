@@ -179,7 +179,7 @@ private:
     DuskSlider reverbSizeSlider, reverbDecaySlider, reverbDampSlider, reverbMixSlider, reverbPDSlider;
 
     // === Master ===
-    DuskSlider masterVolSlider, masterPanSlider;
+    DuskSlider masterTuneSlider, masterVolSlider, masterPanSlider;
     LEDMeter outputMeterL, outputMeterR;
 
     // === Oscilloscope ===
@@ -238,7 +238,7 @@ private:
     juce::Label chorusRateLbl, chorusDepthLbl, chorusMixLbl;
     juce::Label delayTimeLbl, delayFBLbl, delayMixLbl;
     juce::Label reverbSizeLbl, reverbDecayLbl, reverbDampLbl, reverbMixLbl, reverbPDLbl;
-    juce::Label masterVolLbl, masterPanLbl;
+    juce::Label masterTuneLbl, masterVolLbl, masterPanLbl;
     juce::Label pmFEnvOscALbl, pmFEnvFiltLbl, pmOscBOscALbl, pmOscBPWMLbl;
 
     // Section bounds cache (set in resized, used in paint)
