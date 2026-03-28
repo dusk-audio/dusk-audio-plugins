@@ -359,10 +359,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
 //==============================================================================
 void MultiSynthProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Voices and filters run at 2x sample rate (mandatory anti-cramping).
-    // This pushes Nyquist from ~22kHz to ~44kHz, eliminating filter cramping
-    // across the entire audible band.
-    internalSampleRate = sampleRate * 2.0;
+    // Prepare voices at 4x (maximum oversampling rate) so all filter states
+    // are valid regardless of the user's oversampling setting (1x/2x/4x).
+    internalSampleRate = sampleRate * 4.0;
     voiceAllocator.prepare(internalSampleRate);
     arpeggiator.prepare(sampleRate); // Arp runs at native rate (tempo-synced)
     effects.prepare(sampleRate, samplesPerBlock); // Effects at native rate
@@ -619,15 +618,20 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     auto* outputL = buffer.getWritePointer(0);
     auto* outputR = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
 
+    // Read user-configurable oversampling: 0=1x, 1=2x, 2=4x
+    int osIdx = static_cast<int>(*apvts.getRawParameterValue(ParamIDs::OVERSAMPLING));
+    int osFactor = (osIdx == 0) ? 1 : (osIdx == 1) ? 2 : 4;
+    float osDiv = 1.0f / static_cast<float>(osFactor);
+
     float peakL = 0.0f, peakR = 0.0f;
 
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
-        // Render voices at 2x internal sample rate (anti-cramping).
-        // Process 2 internal samples per output sample, average to downsample.
+        // Render voices at oversampled rate (anti-cramping).
+        // Process osFactor internal samples per output sample, average to downsample.
         float sampleL = 0.0f, sampleR = 0.0f;
 
-        for (int os = 0; os < 2; ++os)
+        for (int os = 0; os < osFactor; ++os)
         {
             float osL = 0.0f, osR = 0.0f;
             voiceAllocator.renderSample(voiceParams, modMatrix, unisonEngine,
@@ -636,8 +640,8 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             sampleL += osL;
             sampleR += osR;
         }
-        sampleL *= 0.5f; // Average the 2 oversampled samples
-        sampleR *= 0.5f;
+        sampleL *= osDiv;
+        sampleR *= osDiv;
 
         static constexpr float kVoiceGain = 0.7f;
         sampleL *= kVoiceGain;
@@ -766,6 +770,10 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
     setParam(ParamIDs::AMP_RELEASE, 0.3f);
     setParam(ParamIDs::CROSS_MOD, 0);
     setParam(ParamIDs::RING_MOD, 0);
+    setParam(ParamIDs::POLYMOD_FENV_OSCA, 0);
+    setParam(ParamIDs::POLYMOD_FENV_FILT, 0);
+    setParam(ParamIDs::POLYMOD_OSCB_OSCA, 0);
+    setParam(ParamIDs::POLYMOD_OSCB_PWM, 0);
     setParam(ParamIDs::ARP_ON, 0);
     setParam(ParamIDs::DRIVE_ON, 0);
     setParam(ParamIDs::CHORUS_ON, 0);
@@ -854,7 +862,7 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             setParam(ParamIDs::REVERB_MIX, 0.2f);
             break;
 
-        case 5: // Brass Section
+        case 5: // Brass Section — punchy poly brass
             setParam(ParamIDs::MODE, 1); // Oracle
             setParam(ParamIDs::FILTER_CUTOFF, 2000);
             setParam(ParamIDs::FILTER_RESONANCE, 0.4f);
@@ -865,6 +873,7 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             setParam(ParamIDs::AMP_ATTACK, 0.01f);
             setParam(ParamIDs::AMP_DECAY, 0.3f);
             setParam(ParamIDs::AMP_SUSTAIN, 0.7f);
+            setParam(ParamIDs::POLYMOD_FENV_FILT, 0.3f);
             break;
 
         case 6: // Wooden Keys
@@ -877,9 +886,12 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             setParam(ParamIDs::AMP_RELEASE, 0.3f);
             break;
 
-        case 7: // Poly Mod Bells
+        case 7: // Poly Mod Bells — metallic FM bell tones
             setParam(ParamIDs::MODE, 1);
-            setParam(ParamIDs::CROSS_MOD, 0.6f);
+            setParam(ParamIDs::OSC2_WAVE, 2); // Triangle
+            setParam(ParamIDs::OSC2_SEMI, 7); // Fifth interval
+            setParam(ParamIDs::POLYMOD_OSCB_OSCA, 0.5f);
+            setParam(ParamIDs::POLYMOD_FENV_OSCA, 0.4f);
             setParam(ParamIDs::FILTER_CUTOFF, 5000);
             setParam(ParamIDs::AMP_ATTACK, 0.005f);
             setParam(ParamIDs::AMP_DECAY, 1.0f);
@@ -890,7 +902,7 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             setParam(ParamIDs::REVERB_DECAY, 3.0f);
             break;
 
-        case 8: // Dark Prophet
+        case 8: // Dark Prophet — moody filter sweep
             setParam(ParamIDs::MODE, 1);
             setParam(ParamIDs::FILTER_CUTOFF, 1200);
             setParam(ParamIDs::FILTER_RESONANCE, 0.5f);
@@ -899,9 +911,10 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             setParam(ParamIDs::AMP_SUSTAIN, 0.85f);
             setParam(ParamIDs::AMP_RELEASE, 1.5f);
             setParam(ParamIDs::VINTAGE, 0.3f);
+            setParam(ParamIDs::POLYMOD_FENV_FILT, 0.2f);
             break;
 
-        case 9: // Stab Machine
+        case 9: // Stab Machine — attack transient pitch sweep
             setParam(ParamIDs::MODE, 1);
             setParam(ParamIDs::FILTER_CUTOFF, 4000);
             setParam(ParamIDs::FILTER_ENV_AMT, 0.6f);
@@ -909,6 +922,7 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             setParam(ParamIDs::AMP_DECAY, 0.15f);
             setParam(ParamIDs::AMP_SUSTAIN, 0.0f);
             setParam(ParamIDs::AMP_RELEASE, 0.1f);
+            setParam(ParamIDs::POLYMOD_FENV_OSCA, 0.3f);
             break;
 
         case 10: // Pulsing Darkness
