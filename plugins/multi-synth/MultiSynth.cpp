@@ -11,7 +11,12 @@ static const juce::StringArray kFactoryPresetNames = {
     "Pulsing Darkness", "Acid Squelch", "Screaming Lead", "Sub Thunder", "Sync Sweep",
     // Modular (15-19)
     "Upside Down", "Sci-Fi Computer", "Horror Drone", "Voltage Ghost", "Retro Sequence",
-    // Init (20-23)
+    // New presets (20-35)
+    "Midnight Drive", "Starfield", "Prophet Brass", "Glass Bells",
+    "Acid Machine", "Thunder Sub", "Voltage Seq", "Alien Transmission",
+    "Warm Keys", "Analog Strings", "Wobble Bass", "Tape Lead",
+    "Drone Machine", "Arp Factory", "Fat Fifth", "Noise Sweep",
+    // Init (36-39)
     "Init Cosmos", "Init Oracle", "Init Mono", "Init Modular"
 };
 
@@ -537,6 +542,34 @@ void MultiSynthProcessor::updateVoiceParameters()
     if (isModular)
         effects.springReverb.setMix(0.15f);
 
+    // LFOs — read params and apply tempo sync
+    {
+        float lfo1Rate = *apvts.getRawParameterValue(ParamIDs::LFO1_RATE);
+        auto lfo1Shape = static_cast<MultiSynthDSP::LFOShape>(
+            static_cast<int>(*apvts.getRawParameterValue(ParamIDs::LFO1_SHAPE)));
+        float lfo1Fade = *apvts.getRawParameterValue(ParamIDs::LFO1_FADE);
+        bool lfo1Sync = *apvts.getRawParameterValue(ParamIDs::LFO1_SYNC) > 0.5f;
+
+        float lfo2Rate = *apvts.getRawParameterValue(ParamIDs::LFO2_RATE);
+        auto lfo2Shape = static_cast<MultiSynthDSP::LFOShape>(
+            static_cast<int>(*apvts.getRawParameterValue(ParamIDs::LFO2_SHAPE)));
+        float lfo2Fade = *apvts.getRawParameterValue(ParamIDs::LFO2_FADE);
+        bool lfo2Sync = *apvts.getRawParameterValue(ParamIDs::LFO2_SYNC) > 0.5f;
+
+        // When sync is enabled, scale the rate relative to host tempo
+        // At 120 BPM the rate is unchanged; at 60 BPM it halves, at 240 BPM it doubles
+        if (lfo1Sync && currentBPM > 0.0)
+            lfo1Rate *= static_cast<float>(currentBPM / 120.0);
+        if (lfo2Sync && currentBPM > 0.0)
+            lfo2Rate *= static_cast<float>(currentBPM / 120.0);
+
+        for (int v = 0; v < voiceAllocator.getMaxVoices(); ++v)
+        {
+            voiceAllocator.getVoice(v)->setLFO1Params(lfo1Shape, lfo1Rate, lfo1Fade, false, false);
+            voiceAllocator.getVoice(v)->setLFO2Params(lfo2Shape, lfo2Rate, lfo2Fade, false, false);
+        }
+    }
+
     // Mod matrix
     for (int i = 0; i < MultiSynthDSP::kNumModSlots; ++i)
     {
@@ -601,15 +634,15 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         }
         else if (msg.isControllerOfType(1)) // Mod wheel
         {
-            modWheelValue = msg.getControllerValue() / 127.0f;
+            modWheelValue = static_cast<float>(msg.getControllerValue()) / 127.0f;
         }
         else if (msg.isChannelPressure())
         {
-            aftertouchValue = msg.getChannelPressureValue() / 127.0f;
+            aftertouchValue = static_cast<float>(msg.getChannelPressureValue()) / 127.0f;
         }
         else if (msg.isPitchWheel())
         {
-            pitchBendValue = (msg.getPitchWheelValue() - 8192) / 8192.0f
+            pitchBendValue = static_cast<float>(msg.getPitchWheelValue() - 8192) / 8192.0f
                              * static_cast<float>(pitchBendRange);
         }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff())
@@ -626,7 +659,7 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         for (auto& evt : arpEvents)
         {
             if (evt.isNoteOn)
-                voiceAllocator.noteOn(evt.noteNumber, evt.velocity / 127.0f, voiceParams);
+                voiceAllocator.noteOn(evt.noteNumber, static_cast<float>(evt.velocity) / 127.0f, voiceParams);
             else
                 voiceAllocator.noteOff(evt.noteNumber);
         }
@@ -780,11 +813,8 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
 {
     // Helper to set parameters
     auto setParam = [this](const juce::String& id, float value) {
-        if (auto* p = apvts.getRawParameterValue(id))
-        {
-            if (auto* param = apvts.getParameter(id))
-                param->setValueNotifyingHost(param->convertTo0to1(value));
-        }
+        if (auto* param = apvts.getParameter(id))
+            param->setValueNotifyingHost(param->convertTo0to1(value));
     };
 
     // Reset to defaults first
@@ -1107,11 +1137,268 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             setParam(ParamIDs::DELAY_TAPE, 1);
             break;
 
-        // Init presets (20-23)
-        case 20: setParam(ParamIDs::MODE, 0); setParam(ParamIDs::COSMOS_CHORUS_MODE, 3); break; // Init Cosmos (chorus I+II on)
-        case 21: setParam(ParamIDs::MODE, 1); break; // Init Oracle
-        case 22: setParam(ParamIDs::MODE, 2); break; // Init Mono
-        case 23: setParam(ParamIDs::MODE, 3); break; // Init Modular
+        case 20: // Midnight Drive — Cosmos dark pad with drive + delay
+            setParam(ParamIDs::MODE, 0);
+            setParam(ParamIDs::FILTER_CUTOFF, 1800);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.35f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.25f);
+            setParam(ParamIDs::AMP_ATTACK, 0.5f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.85f);
+            setParam(ParamIDs::AMP_RELEASE, 2.0f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 2); // Chorus II
+            setParam(ParamIDs::DRIVE_ON, 1);
+            setParam(ParamIDs::DRIVE_AMT, 0.3f);
+            setParam(ParamIDs::DELAY_ON, 1);
+            setParam(ParamIDs::DELAY_TAPE, 1);
+            setParam(ParamIDs::DELAY_MIX, 0.25f);
+            setParam(ParamIDs::STEREO_WIDTH, 0.7f);
+            break;
+
+        case 21: // Starfield — Cosmos bright arp with wide stereo
+            setParam(ParamIDs::MODE, 0);
+            setParam(ParamIDs::FILTER_CUTOFF, 7000);
+            setParam(ParamIDs::AMP_ATTACK, 0.003f);
+            setParam(ParamIDs::AMP_DECAY, 0.2f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.3f);
+            setParam(ParamIDs::AMP_RELEASE, 0.5f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 3); // I+II
+            setParam(ParamIDs::ARP_ON, 1);
+            setParam(ParamIDs::ARP_MODE, 4); // Random
+            setParam(ParamIDs::ARP_RATE, 4); // 1/16
+            setParam(ParamIDs::ARP_OCTAVE, 3);
+            setParam(ParamIDs::ARP_GATE, 0.4f);
+            setParam(ParamIDs::DELAY_ON, 1);
+            setParam(ParamIDs::DELAY_MIX, 0.3f);
+            setParam(ParamIDs::REVERB_ON, 1);
+            setParam(ParamIDs::REVERB_MIX, 0.25f);
+            setParam(ParamIDs::STEREO_WIDTH, 0.8f);
+            break;
+
+        case 22: // Prophet Brass — Oracle poly-mod brass
+            setParam(ParamIDs::MODE, 1);
+            setParam(ParamIDs::FILTER_CUTOFF, 1500);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.3f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.6f);
+            setParam(ParamIDs::FILT_ATTACK, 0.03f);
+            setParam(ParamIDs::FILT_DECAY, 0.25f);
+            setParam(ParamIDs::FILT_SUSTAIN, 0.35f);
+            setParam(ParamIDs::AMP_ATTACK, 0.01f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.75f);
+            setParam(ParamIDs::POLYMOD_FENV_FILT, 0.4f);
+            setParam(ParamIDs::POLYMOD_FENV_OSCA, 0.15f);
+            setParam(ParamIDs::VEL_CURVE, 2); // Hard velocity
+            break;
+
+        case 23: // Glass Bells — Oracle FM bells via poly-mod
+            setParam(ParamIDs::MODE, 1);
+            setParam(ParamIDs::OSC2_WAVE, 2); // Triangle
+            setParam(ParamIDs::OSC2_SEMI, 19); // High interval
+            setParam(ParamIDs::FILTER_CUTOFF, 6000);
+            setParam(ParamIDs::AMP_ATTACK, 0.001f);
+            setParam(ParamIDs::AMP_DECAY, 1.5f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.0f);
+            setParam(ParamIDs::AMP_RELEASE, 2.0f);
+            setParam(ParamIDs::POLYMOD_OSCB_OSCA, 0.6f);
+            setParam(ParamIDs::POLYMOD_FENV_OSCA, 0.3f);
+            setParam(ParamIDs::REVERB_ON, 1);
+            setParam(ParamIDs::REVERB_DECAY, 4.0f);
+            setParam(ParamIDs::REVERB_MIX, 0.35f);
+            break;
+
+        case 24: // Acid Machine — Mono classic acid with glide
+            setParam(ParamIDs::MODE, 2);
+            setParam(ParamIDs::OSC1_WAVE, 0); // Saw
+            setParam(ParamIDs::FILTER_CUTOFF, 350);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.9f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.95f);
+            setParam(ParamIDs::FILT_ATTACK, 0.001f);
+            setParam(ParamIDs::FILT_DECAY, 0.12f);
+            setParam(ParamIDs::FILT_SUSTAIN, 0.0f);
+            setParam(ParamIDs::AMP_DECAY, 0.2f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.0f);
+            setParam(ParamIDs::PORTA_TIME, 0.06f);
+            setParam(ParamIDs::GLIDE_MODE, 1); // Rate mode
+            setParam(ParamIDs::ARP_ON, 1);
+            setParam(ParamIDs::ARP_RATE, 3); // 1/8
+            setParam(ParamIDs::ARP_GATE, 0.6f);
+            break;
+
+        case 25: // Thunder Sub — Mono ultra-deep sub bass
+            setParam(ParamIDs::MODE, 2);
+            setParam(ParamIDs::OSC1_WAVE, 3); // Sine
+            setParam(ParamIDs::OSC2_WAVE, 3); // Sine
+            setParam(ParamIDs::OSC2_SEMI, -12); // Octave down
+            setParam(ParamIDs::FILTER_CUTOFF, 200);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.15f);
+            setParam(ParamIDs::SUB_LEVEL, 1.0f);
+            setParam(ParamIDs::SUB_WAVE, 1); // Sine sub
+            setParam(ParamIDs::AMP_ATTACK, 0.01f);
+            setParam(ParamIDs::AMP_SUSTAIN, 1.0f);
+            setParam(ParamIDs::VEL_CURVE, 1); // Soft velocity
+            break;
+
+        case 26: // Voltage Seq — Modular sequenced with S&H
+            setParam(ParamIDs::MODE, 3);
+            setParam(ParamIDs::FILTER_CUTOFF, 2000);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.5f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.4f);
+            setParam(ParamIDs::SH_RATE, 8.0f);
+            setParam(ParamIDs::ARP_ON, 1);
+            setParam(ParamIDs::ARP_RATE, 3); // 1/8
+            setParam(ParamIDs::ARP_MODE, 0); // Up
+            setParam(ParamIDs::ARP_OCTAVE, 2);
+            setParam(ParamIDs::DELAY_ON, 1);
+            setParam(ParamIDs::DELAY_MIX, 0.2f);
+            break;
+
+        case 27: // Alien Transmission — Modular FM + ring mod
+            setParam(ParamIDs::MODE, 3);
+            setParam(ParamIDs::FM_AMOUNT, 0.7f);
+            setParam(ParamIDs::RING_MOD, 0.4f);
+            setParam(ParamIDs::HARD_SYNC, 1);
+            setParam(ParamIDs::OSC2_SEMI, 7);
+            setParam(ParamIDs::FILTER_CUTOFF, 4000);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.4f);
+            setParam(ParamIDs::AMP_ATTACK, 0.3f);
+            setParam(ParamIDs::AMP_RELEASE, 2.0f);
+            setParam(ParamIDs::NOISE_LEVEL, 0.1f);
+            setParam(ParamIDs::REVERB_ON, 1);
+            setParam(ParamIDs::REVERB_DECAY, 5.0f);
+            setParam(ParamIDs::REVERB_MIX, 0.4f);
+            setParam(ParamIDs::VINTAGE, 0.4f);
+            break;
+
+        case 28: // Warm Keys — Cosmos electric piano style
+            setParam(ParamIDs::MODE, 0);
+            setParam(ParamIDs::OSC1_WAVE, 2); // Triangle
+            setParam(ParamIDs::OSC2_WAVE, 3); // Sine
+            setParam(ParamIDs::FILTER_CUTOFF, 4000);
+            setParam(ParamIDs::AMP_ATTACK, 0.005f);
+            setParam(ParamIDs::AMP_DECAY, 0.8f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.3f);
+            setParam(ParamIDs::AMP_RELEASE, 0.5f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 1); // Chorus I
+            setParam(ParamIDs::VEL_CURVE, 2); // Hard velocity
+            break;
+
+        case 29: // Analog Strings — Oracle slow attack strings
+            setParam(ParamIDs::MODE, 1);
+            setParam(ParamIDs::FILTER_CUTOFF, 3000);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.15f);
+            setParam(ParamIDs::AMP_ATTACK, 0.8f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.9f);
+            setParam(ParamIDs::AMP_RELEASE, 1.5f);
+            setParam(ParamIDs::UNISON_VOICES, 4);
+            setParam(ParamIDs::UNISON_DETUNE, 12);
+            setParam(ParamIDs::STEREO_WIDTH, 0.7f);
+            setParam(ParamIDs::CHORUS_ON, 1);
+            setParam(ParamIDs::CHORUS_MIX, 0.3f);
+            break;
+
+        case 30: // Wobble Bass — Mono LFO filter wobble
+            setParam(ParamIDs::MODE, 2);
+            setParam(ParamIDs::FILTER_CUTOFF, 600);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.6f);
+            setParam(ParamIDs::SUB_LEVEL, 0.8f);
+            setParam(ParamIDs::LFO1_RATE, 4.0f);
+            setParam(ParamIDs::LFO1_SHAPE, 0); // Sine
+            // Use mod matrix: LFO1 -> Filter Cutoff
+            setParam(ParamIDs::modSlotSource(0), 1); // LFO1
+            setParam(ParamIDs::modSlotDest(0), 5);   // Filter Cutoff
+            setParam(ParamIDs::modSlotAmount(0), 0.6f);
+            break;
+
+        case 31: // Tape Lead — Mono vintage lead with tape delay
+            setParam(ParamIDs::MODE, 2);
+            setParam(ParamIDs::FILTER_CUTOFF, 5000);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.25f);
+            setParam(ParamIDs::AMP_ATTACK, 0.005f);
+            setParam(ParamIDs::PORTA_TIME, 0.12f);
+            setParam(ParamIDs::GLIDE_MODE, 1); // Rate
+            setParam(ParamIDs::DRIVE_ON, 1);
+            setParam(ParamIDs::DRIVE_AMT, 0.25f);
+            setParam(ParamIDs::DELAY_ON, 1);
+            setParam(ParamIDs::DELAY_TAPE, 1);
+            setParam(ParamIDs::DELAY_MIX, 0.25f);
+            setParam(ParamIDs::DELAY_FEEDBACK, 0.4f);
+            break;
+
+        case 32: // Drone Machine — Modular evolving drone
+            setParam(ParamIDs::MODE, 3);
+            setParam(ParamIDs::FM_AMOUNT, 0.3f);
+            setParam(ParamIDs::OSC3_LEVEL, 0.6f);
+            setParam(ParamIDs::OSC3_WAVE, 3); // Sine
+            setParam(ParamIDs::FILTER_CUTOFF, 1200);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.55f);
+            setParam(ParamIDs::AMP_ATTACK, 3.0f);
+            setParam(ParamIDs::AMP_SUSTAIN, 1.0f);
+            setParam(ParamIDs::AMP_RELEASE, 5.0f);
+            setParam(ParamIDs::LFO1_RATE, 0.1f);
+            setParam(ParamIDs::modSlotSource(0), 1); // LFO1
+            setParam(ParamIDs::modSlotDest(0), 5);   // Filter Cutoff
+            setParam(ParamIDs::modSlotAmount(0), 0.4f);
+            setParam(ParamIDs::REVERB_ON, 1);
+            setParam(ParamIDs::REVERB_DECAY, 12.0f);
+            setParam(ParamIDs::REVERB_MIX, 0.5f);
+            setParam(ParamIDs::VINTAGE, 0.6f);
+            break;
+
+        case 33: // Arp Factory — Cosmos complex arp
+            setParam(ParamIDs::MODE, 0);
+            setParam(ParamIDs::FILTER_CUTOFF, 4500);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.3f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.4f);
+            setParam(ParamIDs::FILT_DECAY, 0.2f);
+            setParam(ParamIDs::AMP_ATTACK, 0.003f);
+            setParam(ParamIDs::AMP_DECAY, 0.15f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.4f);
+            setParam(ParamIDs::AMP_RELEASE, 0.3f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 3);
+            setParam(ParamIDs::ARP_ON, 1);
+            setParam(ParamIDs::ARP_MODE, 2); // Up/Down
+            setParam(ParamIDs::ARP_RATE, 4); // 1/16
+            setParam(ParamIDs::ARP_OCTAVE, 3);
+            setParam(ParamIDs::ARP_GATE, 0.5f);
+            setParam(ParamIDs::ARP_SWING, 0.3f);
+            setParam(ParamIDs::DELAY_ON, 1);
+            setParam(ParamIDs::DELAY_MIX, 0.2f);
+            break;
+
+        case 34: // Fat Fifth — Oracle stacked fifth
+            setParam(ParamIDs::MODE, 1);
+            setParam(ParamIDs::OSC2_SEMI, 7); // Fifth
+            setParam(ParamIDs::FILTER_CUTOFF, 3500);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.2f);
+            setParam(ParamIDs::AMP_ATTACK, 0.01f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.8f);
+            setParam(ParamIDs::UNISON_VOICES, 3);
+            setParam(ParamIDs::UNISON_DETUNE, 8);
+            setParam(ParamIDs::STEREO_WIDTH, 0.65f);
+            break;
+
+        case 35: // Noise Sweep — Modular filtered noise
+            setParam(ParamIDs::MODE, 3);
+            setParam(ParamIDs::OSC1_LEVEL, 0.0f);
+            setParam(ParamIDs::OSC2_LEVEL, 0.0f);
+            setParam(ParamIDs::NOISE_LEVEL, 1.0f);
+            setParam(ParamIDs::FILTER_CUTOFF, 500);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.7f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.8f);
+            setParam(ParamIDs::FILT_ATTACK, 0.5f);
+            setParam(ParamIDs::FILT_DECAY, 2.0f);
+            setParam(ParamIDs::FILT_SUSTAIN, 0.1f);
+            setParam(ParamIDs::AMP_ATTACK, 0.3f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.7f);
+            setParam(ParamIDs::AMP_RELEASE, 3.0f);
+            setParam(ParamIDs::REVERB_ON, 1);
+            setParam(ParamIDs::REVERB_MIX, 0.4f);
+            break;
+
+        // Init presets (36-39)
+        case 36: setParam(ParamIDs::MODE, 0); setParam(ParamIDs::COSMOS_CHORUS_MODE, 3); break; // Init Cosmos (chorus I+II on)
+        case 37: setParam(ParamIDs::MODE, 1); break; // Init Oracle
+        case 38: setParam(ParamIDs::MODE, 2); break; // Init Mono
+        case 39: setParam(ParamIDs::MODE, 3); break; // Init Modular
     }
 }
 
