@@ -284,14 +284,6 @@ public:
         // Only sub-bass content reaches lfState significantly; mid/HF is ~0.
         lfState += lfCoeff * (filteredInput - lfState);
 
-        // Near-zero drive: advance DC blocker state to prevent clicks on
-        // bypass→active transition, but output dry signal.
-        if (drive < 0.01f)
-        {
-            dcBlockers[static_cast<size_t>(ch)].processSample(input);
-            return input;
-        }
-
         // ── 3. Polynomial waveshaper ─────────────────────────────────────────────
         // All harmonic terms computed from the same xd — no cascading inflation.
         // Dividing distortion by driveAmount normalises gain while preserving
