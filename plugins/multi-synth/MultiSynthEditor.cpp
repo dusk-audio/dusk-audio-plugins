@@ -889,9 +889,9 @@ void MultiSynthEditor::resized()
     // === FADER vs KNOB BOUNDS ===
     // When a slider is LinearVertical, it needs tall+narrow bounds (width~25, height~100)
     // When RotaryVerticalDrag, it needs square bounds (KxK)
-    int faderW = scaled(22);   // narrow fader width
-    int faderH = scaled(90);   // tall fader height
-    int faderStep = faderW + scaled(12); // horizontal spacing between faders
+    int faderW = scaled(24);   // narrow fader width
+    int faderH = scaled(85);   // tall fader height
+    int faderStep = scaled(55); // spacing between faders — must be >= label width to prevent overlap
 
     // Smart placement: use correct bounds based on current slider style
     auto placeControl = [&](DuskSlider& s, int x, int y, int knobSz) {
@@ -907,10 +907,11 @@ void MultiSynthEditor::resized()
                ? faderStep : (knobSz + scaled(kKnobSpacing));
     };
 
-    // Explicit label placement — fixed 60px width so text is never truncated
+    // Explicit label placement — width matches spacing to prevent overlap
     auto placeLabel = [&](juce::Label& lbl, DuskSlider& slider) {
         auto sb = slider.getBounds();
-        int lblW = scaled(60);
+        bool isFader = (slider.getSliderStyle() == juce::Slider::LinearVertical);
+        int lblW = isFader ? scaled(50) : scaled(60); // Narrower for faders
         lbl.setBounds(sb.getCentreX() - lblW / 2, sb.getY() - L, lblW, L);
     };
 
