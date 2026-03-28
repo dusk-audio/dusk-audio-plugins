@@ -1045,24 +1045,29 @@ void MultiSynthEditor::resized()
         int x0 = sections.scopeArea.getX() + pad;
         int y0 = sections.scopeArea.getY() + titH;
         int sw = sections.scopeArea.getWidth() - pad * 2;
-        int scopeH = scaled(120);
+        int scopeH = scaled(100);
 
         waveformDisplay.setBounds(x0, y0, sw, scopeH);
 
-        int my = y0 + scopeH + scaled(10) + L;
-        int volPanW = juce::jmin(K, (sw - scaled(8) * 3) / 4);
-        masterTuneSlider.setBounds(x0, my, volPanW, volPanW);
+        // Master knobs in 2x2 grid (Tune/Vol on top, Pan/Width below)
+        int my = y0 + scopeH + scaled(6) + L;
+        int knobSz = juce::jmin(S, (sw - scaled(8)) / 2); // 2 knobs per row
+        int knobGap = scaled(8);
+
+        masterTuneSlider.setBounds(x0, my, knobSz, knobSz);
         placeLabel(masterTuneLbl, masterTuneSlider);
-        masterVolSlider.setBounds(x0 + (volPanW + scaled(8)), my, volPanW, volPanW);
+        masterVolSlider.setBounds(x0 + knobSz + knobGap, my, knobSz, knobSz);
         placeLabel(masterVolLbl, masterVolSlider);
-        masterPanSlider.setBounds(x0 + (volPanW + scaled(8)) * 2, my, volPanW, volPanW);
+
+        int my2 = my + knobSz + scaled(4) + L;
+        masterPanSlider.setBounds(x0, my2, knobSz, knobSz);
         placeLabel(masterPanLbl, masterPanSlider);
-        stereoWidthSlider.setBounds(x0 + (volPanW + scaled(8)) * 3, my, volPanW, volPanW);
+        stereoWidthSlider.setBounds(x0 + knobSz + knobGap, my2, knobSz, knobSz);
         placeLabel(stereoWidthLbl, stereoWidthSlider);
 
-        int meterY = my + volPanW + scaled(12);
-        int meterH = sections.scopeArea.getBottom() - meterY - pad;
-        if (meterH < scaled(30)) meterH = scaled(30);
+        // Meters — compact, side by side below knobs
+        int meterY = my2 + knobSz + scaled(8);
+        int meterH = juce::jlimit(scaled(30), scaled(60), sections.scopeArea.getBottom() - meterY - pad);
         int meterX = x0 + (sw - scaled(kMeterW) * 2 - scaled(4)) / 2;
         outputMeterL.setBounds(meterX, meterY, scaled(kMeterW), meterH);
         outputMeterR.setBounds(meterX + scaled(kMeterW) + scaled(4), meterY, scaled(kMeterW), meterH);
