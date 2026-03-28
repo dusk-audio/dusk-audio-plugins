@@ -308,6 +308,10 @@ public:
                 subOsc.setWaveform(params.subWave);
                 subSample = subOsc.processSample() * params.subLevel;
 
+                // Hard sync: osc1 resets osc2 (also available in Mono, not just Modular)
+                if (params.hardSync && osc1.didCross())
+                    osc2.hardSync();
+
                 // Ring modulation (artistic addition, not on real SH-2)
                 if (params.ringMod > 0.0f)
                 {

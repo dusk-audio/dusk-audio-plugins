@@ -195,6 +195,7 @@ namespace ParamIDs
     static const juce::String ARP_LATCH = "arpLatch";
     static const juce::String ARP_VEL_MODE = "arpVelMode";
     static const juce::String ARP_FIXED_VEL = "arpFixedVel";
+    static inline juce::String arpStep(int i) { return "arpStep" + juce::String(i); }
 
     // Effects - Drive
     static const juce::String DRIVE_ON = "driveOn";
