@@ -234,6 +234,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         juce::ParameterID(ParamIDs::ARP_FIXED_VEL, 1), "Arp Fixed Vel", 1, 127, 100));
 
+    // Oracle poly-mod (Prophet-5 style)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::POLYMOD_FENV_OSCA, 1), "PM FEnv→OscA",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::POLYMOD_FENV_FILT, 1), "PM FEnv→Filt",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::POLYMOD_OSCB_OSCA, 1), "PM OscB→OscA",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID(ParamIDs::POLYMOD_OSCB_PWM, 1), "PM OscB→PW",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f));
+
     // Cosmos-specific: Juno chorus mode
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::COSMOS_CHORUS_MODE, 1), "Cosmos Chorus",
@@ -422,6 +436,10 @@ void MultiSynthProcessor::updateVoiceParameters()
 
     // Mode-specific
     voiceParams.crossMod = *apvts.getRawParameterValue(ParamIDs::CROSS_MOD);
+    voiceParams.polyModFEnvOscA = *apvts.getRawParameterValue(ParamIDs::POLYMOD_FENV_OSCA);
+    voiceParams.polyModFEnvFilt = *apvts.getRawParameterValue(ParamIDs::POLYMOD_FENV_FILT);
+    voiceParams.polyModOscBOscA = *apvts.getRawParameterValue(ParamIDs::POLYMOD_OSCB_OSCA);
+    voiceParams.polyModOscBPWM = *apvts.getRawParameterValue(ParamIDs::POLYMOD_OSCB_PWM);
     voiceParams.ringMod = *apvts.getRawParameterValue(ParamIDs::RING_MOD);
     voiceParams.hardSync = *apvts.getRawParameterValue(ParamIDs::HARD_SYNC) > 0.5f;
     voiceParams.fmAmount = *apvts.getRawParameterValue(ParamIDs::FM_AMOUNT);

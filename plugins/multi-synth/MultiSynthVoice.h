@@ -73,10 +73,16 @@ struct VoiceParameters
     EnvelopeCurve filtCurve = EnvelopeCurve::Exponential;
 
     // Mode-specific
-    float crossMod = 0.0f;        // Cosmos: cross-mod, Oracle: poly-mod amount
+    float crossMod = 0.0f;        // Cosmos: cross-mod
     float ringMod = 0.0f;         // Mono/Modular: ring mod amount
     bool hardSync = false;         // Modular: hard sync osc2 to osc1
     float fmAmount = 0.0f;        // Modular: FM between oscillators
+
+    // Oracle poly-mod (Prophet-5)
+    float polyModFEnvOscA = 0.0f;  // Filter Env → Osc A frequency
+    float polyModFEnvFilt = 0.0f;  // Filter Env → Filter cutoff
+    float polyModOscBOscA = 0.0f;  // Osc B → Osc A frequency
+    float polyModOscBPWM = 0.0f;   // Osc B → Osc A pulse width
 
     // Portamento
     float portamentoTime = 0.0f;  // seconds
@@ -240,12 +246,21 @@ public:
 
             case SynthMode::Oracle:
             {
-                // Prophet-5 poly-mod: filter env and osc2 modulate osc1 freq and filter cutoff
-                if (params.crossMod > 0.0f)
-                {
-                    float polyMod = (filtVal * 0.5f + osc2Sample * 0.5f) * params.crossMod;
-                    osc1.applyFM(polyMod * 0.02f);
-                }
+                // Prophet-5 poly-mod: 4 independent modulation paths
+                // Source 1: Filter Envelope
+                if (params.polyModFEnvOscA > 0.0f)
+                    osc1.applyFM(filtVal * params.polyModFEnvOscA * 0.03f);
+
+                // Source 2: Oscillator B output
+                if (params.polyModOscBOscA > 0.0f)
+                    osc1.applyFM(osc2Sample * params.polyModOscBOscA * 0.03f);
+
+                // Osc B → Osc A pulse width
+                if (params.polyModOscBPWM > 0.0f)
+                    osc1.setPulseWidth(params.osc1PulseWidth + osc2Sample * params.polyModOscBPWM * 0.3f);
+
+                // Filter Env → Filter cutoff is applied in the filter section below
+                // (params.polyModFEnvFilt is read during cutoff calculation)
                 break;
             }
 
@@ -324,7 +339,11 @@ public:
         // Filter — clamp cutoff to avoid pushing above Nyquist
         float cutoffMod = modState.getDestValue(ModDest::FilterCutoff);
         float resMod = modState.getDestValue(ModDest::FilterResonance);
-        float envModTotal = juce::jlimit(-2.0f, 2.0f, (filtVal * params.filterEnvAmount + cutoffMod) * 2.0f);
+        // Oracle poly-mod: filter env → filter cutoff (additional to normal env amount)
+        float polyModFiltExtra = (params.mode == SynthMode::Oracle)
+            ? filtVal * params.polyModFEnvFilt * 2.0f : 0.0f;
+        float envModTotal = juce::jlimit(-2.0f, 2.0f,
+            (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f);
         float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
         envCutoff = juce::jlimit(20.0f, static_cast<float>(sr) * 0.45f, envCutoff);
         float envRes = juce::jlimit(0.0f, 1.0f, params.filterResonance + resMod);
