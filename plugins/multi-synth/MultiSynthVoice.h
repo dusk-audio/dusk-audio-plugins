@@ -114,8 +114,11 @@ public:
         lfo1.prepare(sampleRate);
         lfo2.prepare(sampleRate);
 
-        // Per-voice analog drift
-        analogDrift = (rng.nextFloat() - 0.5f) * 2.0f;
+        // Per-voice analog drift (slow random walk)
+        driftCounter = rng.nextInt(200) + 100;  // 100-300 samples until first change
+        driftTarget = (rng.nextFloat() - 0.5f) * 2.0f;
+        driftSmooth = 0.0f;
+        filterTrackingOffset = (rng.nextFloat() - 0.5f) * 0.04f;
         portaFreq.reset(sampleRate, 0.1);
     }
 
@@ -194,9 +197,16 @@ public:
         // Get base frequency with portamento
         float baseFreq = portaFreq.getNextValue();
 
-        // Apply analog drift
-        float drift = analogDrift * params.analogAmount * 0.5f;
-        baseFreq *= (1.0f + drift * 0.001f);
+        // Slow random walk for analog drift
+        driftCounter--;
+        if (driftCounter <= 0)
+        {
+            driftTarget = (rng.nextFloat() - 0.5f) * 2.0f;
+            driftCounter = 200 + rng.nextInt(300);  // Change every 200-500 samples
+        }
+        driftSmooth += (driftTarget - driftSmooth) * 0.001f;  // Very slow smoothing
+        float drift = driftSmooth * params.analogAmount;
+        baseFreq *= (1.0f + drift * 0.002f);  // ±~3.5 cents at max
 
         // Mod matrix: pitch modulation
         float pitchMod1 = modState.getDestValue(ModDest::Osc1Pitch);
@@ -345,6 +355,7 @@ public:
         float envModTotal = juce::jlimit(-2.0f, 2.0f,
             (filtVal * params.filterEnvAmount + cutoffMod + polyModFiltExtra) * 2.0f);
         float envCutoff = params.filterCutoff * std::pow(2.0f, envModTotal);
+        envCutoff *= (1.0f + filterTrackingOffset * params.analogAmount);
         envCutoff = juce::jlimit(20.0f, static_cast<float>(sr) * 0.45f, envCutoff);
         float envRes = juce::jlimit(0.0f, 1.0f, params.filterResonance + resMod);
 
@@ -413,7 +424,11 @@ private:
     bool active = false;
     bool stealing = false;
     float lastFreq = 0.0f;
-    float analogDrift = 0.0f;
+    float driftValue = 0.0f;       // Current drift amount (-1 to +1)
+    float driftTarget = 0.0f;      // Target drift value
+    int driftCounter = 0;           // Samples until next target change
+    float driftSmooth = 0.0f;       // Smoothed drift output
+    float filterTrackingOffset = 0.0f; // Per-voice filter cutoff variation
 
     Oscillator osc1, osc2, osc3;
     SubOscillator subOsc;

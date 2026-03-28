@@ -59,6 +59,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void timerCallback() override;
+    void mouseDown(const juce::MouseEvent& e) override;
 
 private:
     MultiSynthProcessor& processor;
