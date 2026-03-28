@@ -74,9 +74,8 @@ private:
     // Juno-style chorus for Cosmos mode (I / II / Both)
     MultiSynthDSP::JunoChorusEffect junoChorus;
 
-    // Oversampling
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
-    int currentOversamplingFactor = 1;
+    // Internal 2x sample rate for anti-cramping
+    double internalSampleRate = 88200.0;
 
     // Performance state
     float modWheelValue = 0.0f;

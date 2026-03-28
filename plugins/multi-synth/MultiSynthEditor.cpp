@@ -12,31 +12,53 @@ void WaveformDisplay::updateBuffer(const float* data, int size)
 void WaveformDisplay::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat().reduced(2.0f);
-    g.setColour(bg);
+    g.setColour(bg.darker(0.3f));
     g.fillRoundedRectangle(bounds, 4.0f);
-    if (numSamples < 2) return;
 
-    juce::Path wavePath;
-    float w = bounds.getWidth(), cx = bounds.getX(), cy = bounds.getCentreY();
+    // Grid lines
+    g.setColour(accent.withAlpha(0.08f));
+    float cy = bounds.getCentreY();
+    float qh = bounds.getHeight() * 0.25f;
+    g.drawHorizontalLine(static_cast<int>(cy - qh), bounds.getX(), bounds.getRight());
+    g.drawHorizontalLine(static_cast<int>(cy + qh), bounds.getX(), bounds.getRight());
+    g.setColour(accent.withAlpha(0.15f));
+    g.drawHorizontalLine(static_cast<int>(cy), bounds.getX(), bounds.getRight());
 
-    wavePath.startNewSubPath(cx, cy);
-    for (int i = 0; i < numSamples; ++i)
+    // Vertical grid (4 divisions)
+    for (int i = 1; i < 4; ++i)
     {
-        float x = cx + (static_cast<float>(i) / static_cast<float>(numSamples - 1)) * w;
-        float y = cy - samples[static_cast<size_t>(i)] * bounds.getHeight() * 0.45f;
-        wavePath.lineTo(x, y);
+        float gx = bounds.getX() + bounds.getWidth() * static_cast<float>(i) / 4.0f;
+        g.setColour(accent.withAlpha(0.06f));
+        g.drawVerticalLine(static_cast<int>(gx), bounds.getY(), bounds.getBottom());
     }
 
-    juce::Path fillPath(wavePath);
-    fillPath.lineTo(cx + w, cy);
-    fillPath.lineTo(cx, cy);
-    fillPath.closeSubPath();
-    g.setColour(accent.withAlpha(0.15f));
-    g.fillPath(fillPath);
-    g.setColour(accent);
-    g.strokePath(wavePath, juce::PathStrokeType(1.5f));
+    if (numSamples < 2) return;
+
+    // Waveform path — use only ~200 points for smooth rendering
+    int step = juce::jmax(1, numSamples / 200);
+    juce::Path wavePath;
+    float w = bounds.getWidth(), cx2 = bounds.getX();
+
+    bool started = false;
+    for (int i = 0; i < numSamples; i += step)
+    {
+        float x = cx2 + (static_cast<float>(i) / static_cast<float>(numSamples - 1)) * w;
+        float y = cy - samples[static_cast<size_t>(i)] * bounds.getHeight() * 0.42f;
+        if (!started) { wavePath.startNewSubPath(x, y); started = true; }
+        else wavePath.lineTo(x, y);
+    }
+
+    // Glow effect (wider, transparent stroke behind)
+    g.setColour(accent.withAlpha(0.12f));
+    g.strokePath(wavePath, juce::PathStrokeType(4.0f));
+
+    // Main waveform stroke
+    g.setColour(accent.withAlpha(0.8f));
+    g.strokePath(wavePath, juce::PathStrokeType(2.0f));
+
+    // Border
     g.setColour(accent.withAlpha(0.2f));
-    g.drawHorizontalLine(static_cast<int>(cy), cx, cx + w);
+    g.drawRoundedRectangle(bounds, 4.0f, 0.5f);
 }
 
 //==============================================================================
