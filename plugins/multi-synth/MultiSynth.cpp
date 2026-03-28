@@ -329,7 +329,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
             juce::ParameterID(ParamIDs::modSlotSource(i), 1),
             "Mod " + juce::String(i + 1) + " Source",
             juce::StringArray("None", "LFO 1", "LFO 2", "Env 2", "Mod Wheel",
-                              "Aftertouch", "Velocity", "Key Track", "Random", "Pitch Bend"), 0));
+                              "Aftertouch", "Velocity", "Key Track", "Random", "Pitch Bend", "S&H"), 0));
         params.push_back(std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID(ParamIDs::modSlotDest(i), 1),
             "Mod " + juce::String(i + 1) + " Dest",
@@ -928,26 +928,33 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
         case 10: // Pulsing Darkness
             setParam(ParamIDs::MODE, 2); // Mono
             setParam(ParamIDs::OSC1_WAVE, 4); // Pulse
-            setParam(ParamIDs::FILTER_CUTOFF, 800);
-            setParam(ParamIDs::FILTER_RESONANCE, 0.5f);
-            setParam(ParamIDs::FILTER_ENV_AMT, 0.6f);
-            setParam(ParamIDs::SUB_LEVEL, 0.8f);
+            setParam(ParamIDs::OSC2_WAVE, 0); // Saw
+            setParam(ParamIDs::OSC2_SEMI, -12); // Octave down for thickness
+            setParam(ParamIDs::FILTER_CUTOFF, 600); // Darker
+            setParam(ParamIDs::FILTER_RESONANCE, 0.55f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.5f);
+            setParam(ParamIDs::SUB_LEVEL, 0.9f); // Heavy sub
+            setParam(ParamIDs::FILT_ATTACK, 0.001f);
+            setParam(ParamIDs::FILT_DECAY, 0.15f);
+            setParam(ParamIDs::FILT_SUSTAIN, 0.05f);
             setParam(ParamIDs::ARP_ON, 1);
             setParam(ParamIDs::ARP_RATE, 3); // 1/8
-            setParam(ParamIDs::ARP_GATE, 0.7f);
-            setParam(ParamIDs::VINTAGE, 0.2f);
+            setParam(ParamIDs::VINTAGE, 0.3f);
             break;
 
         case 11: // Acid Squelch
             setParam(ParamIDs::MODE, 2);
-            setParam(ParamIDs::FILTER_CUTOFF, 500);
-            setParam(ParamIDs::FILTER_RESONANCE, 0.8f);
-            setParam(ParamIDs::FILTER_ENV_AMT, 0.9f);
+            setParam(ParamIDs::FILTER_CUTOFF, 400); // Lower for more squelch
+            setParam(ParamIDs::FILTER_RESONANCE, 0.85f); // More resonance
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.95f); // Full env sweep
             setParam(ParamIDs::FILT_ATTACK, 0.001f);
-            setParam(ParamIDs::FILT_DECAY, 0.2f);
-            setParam(ParamIDs::FILT_SUSTAIN, 0.1f);
-            setParam(ParamIDs::SUB_LEVEL, 0.6f);
-            setParam(ParamIDs::PORTA_TIME, 0.05f);
+            setParam(ParamIDs::FILT_DECAY, 0.15f);
+            setParam(ParamIDs::FILT_SUSTAIN, 0.0f);
+            setParam(ParamIDs::SUB_LEVEL, 0.7f);
+            setParam(ParamIDs::PORTA_TIME, 0.08f); // Snappy glide
+            setParam(ParamIDs::AMP_DECAY, 0.3f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.0f);
+            setParam(ParamIDs::AMP_RELEASE, 0.15f);
             break;
 
         case 12: // Screaming Lead
@@ -973,64 +980,84 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
 
         case 14: // Sync Sweep
             setParam(ParamIDs::MODE, 2);
-            setParam(ParamIDs::OSC2_SEMI, 7);
-            setParam(ParamIDs::FILTER_CUTOFF, 5000);
+            setParam(ParamIDs::OSC2_SEMI, 7); // Fifth interval
+            setParam(ParamIDs::FILTER_CUTOFF, 800);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.6f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.7f);
             setParam(ParamIDs::FILT_ATTACK, 0.01f);
-            setParam(ParamIDs::FILT_DECAY, 0.5f);
-            setParam(ParamIDs::FILTER_ENV_AMT, 0.8f);
+            setParam(ParamIDs::FILT_DECAY, 0.4f);
+            setParam(ParamIDs::RING_MOD, 0.3f); // Subtle metallic character
             setParam(ParamIDs::DELAY_ON, 1);
+            setParam(ParamIDs::DELAY_MIX, 0.2f);
             break;
 
         case 15: // Upside Down
             setParam(ParamIDs::MODE, 3); // Modular
-            setParam(ParamIDs::FM_AMOUNT, 0.3f);
-            setParam(ParamIDs::FILTER_CUTOFF, 2000);
-            setParam(ParamIDs::FILTER_RESONANCE, 0.6f);
-            setParam(ParamIDs::AMP_ATTACK, 1.0f);
-            setParam(ParamIDs::AMP_SUSTAIN, 0.8f);
-            setParam(ParamIDs::AMP_RELEASE, 3.0f);
-            setParam(ParamIDs::NOISE_LEVEL, 0.05f);
+            setParam(ParamIDs::FM_AMOUNT, 0.4f);
+            setParam(ParamIDs::OSC3_WAVE, 3); // Sine for pure FM carrier
+            setParam(ParamIDs::OSC3_LEVEL, 0.4f);
+            setParam(ParamIDs::FILTER_CUTOFF, 1500);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.5f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.3f);
+            setParam(ParamIDs::AMP_ATTACK, 1.5f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.9f);
+            setParam(ParamIDs::AMP_RELEASE, 4.0f);
+            setParam(ParamIDs::NOISE_LEVEL, 0.08f);
             setParam(ParamIDs::REVERB_ON, 1);
-            setParam(ParamIDs::REVERB_DECAY, 5.0f);
+            setParam(ParamIDs::REVERB_DECAY, 6.0f);
             setParam(ParamIDs::REVERB_MIX, 0.4f);
             setParam(ParamIDs::VINTAGE, 0.5f);
             break;
 
         case 16: // Sci-Fi Computer
             setParam(ParamIDs::MODE, 3);
-            setParam(ParamIDs::FM_AMOUNT, 0.5f);
-            setParam(ParamIDs::FILTER_CUTOFF, 4000);
+            setParam(ParamIDs::FM_AMOUNT, 0.6f);
+            setParam(ParamIDs::HARD_SYNC, 1);
+            setParam(ParamIDs::OSC2_SEMI, 19); // Dissonant interval
+            setParam(ParamIDs::FILTER_CUTOFF, 3000);
             setParam(ParamIDs::AMP_ATTACK, 0.001f);
-            setParam(ParamIDs::AMP_DECAY, 0.1f);
+            setParam(ParamIDs::AMP_DECAY, 0.08f);
             setParam(ParamIDs::AMP_SUSTAIN, 0.0f);
             setParam(ParamIDs::ARP_ON, 1);
             setParam(ParamIDs::ARP_RATE, 4); // 1/16
             setParam(ParamIDs::ARP_MODE, 4); // Random
+            setParam(ParamIDs::ARP_GATE, 0.2f); // Short staccato
             break;
 
         case 17: // Horror Drone
             setParam(ParamIDs::MODE, 3);
-            setParam(ParamIDs::RING_MOD, 0.5f);
-            setParam(ParamIDs::OSC2_SEMI, -5); // Dissonant
-            setParam(ParamIDs::FILTER_CUTOFF, 1000);
-            setParam(ParamIDs::FILTER_RESONANCE, 0.7f);
-            setParam(ParamIDs::AMP_ATTACK, 2.0f);
+            setParam(ParamIDs::RING_MOD, 0.6f);
+            setParam(ParamIDs::FM_AMOUNT, 0.2f);
+            setParam(ParamIDs::OSC2_SEMI, -5); // Tritone-ish dissonance
+            setParam(ParamIDs::OSC3_WAVE, 0); // Saw
+            setParam(ParamIDs::OSC3_LEVEL, 0.5f);
+            setParam(ParamIDs::FILTER_CUTOFF, 800);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.65f);
+            setParam(ParamIDs::AMP_ATTACK, 3.0f);
             setParam(ParamIDs::AMP_SUSTAIN, 1.0f);
-            setParam(ParamIDs::AMP_RELEASE, 4.0f);
+            setParam(ParamIDs::AMP_RELEASE, 5.0f);
             setParam(ParamIDs::REVERB_ON, 1);
-            setParam(ParamIDs::REVERB_DECAY, 8.0f);
+            setParam(ParamIDs::REVERB_DECAY, 10.0f);
             setParam(ParamIDs::REVERB_MIX, 0.5f);
-            setParam(ParamIDs::VINTAGE, 0.6f);
+            setParam(ParamIDs::VINTAGE, 0.7f);
             break;
 
         case 18: // Voltage Ghost
             setParam(ParamIDs::MODE, 3);
-            setParam(ParamIDs::FM_AMOUNT, 0.7f);
+            setParam(ParamIDs::FM_AMOUNT, 0.8f);
             setParam(ParamIDs::HARD_SYNC, 1);
-            setParam(ParamIDs::FILTER_CUTOFF, 3000);
-            setParam(ParamIDs::AMP_ATTACK, 0.5f);
-            setParam(ParamIDs::AMP_RELEASE, 2.0f);
-            setParam(ParamIDs::VINTAGE, 0.4f);
+            setParam(ParamIDs::OSC2_SEMI, 12); // Octave up
+            setParam(ParamIDs::FILTER_CUTOFF, 2500);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.4f);
+            setParam(ParamIDs::FILT_ATTACK, 0.5f);
+            setParam(ParamIDs::FILT_DECAY, 2.0f);
+            setParam(ParamIDs::FILT_SUSTAIN, 0.2f);
+            setParam(ParamIDs::AMP_ATTACK, 0.8f);
+            setParam(ParamIDs::AMP_RELEASE, 3.0f);
+            setParam(ParamIDs::VINTAGE, 0.5f);
+            setParam(ParamIDs::DELAY_ON, 1);
+            setParam(ParamIDs::DELAY_TAPE, 1);
+            setParam(ParamIDs::DELAY_MIX, 0.3f);
             break;
 
         case 19: // Retro Sequence

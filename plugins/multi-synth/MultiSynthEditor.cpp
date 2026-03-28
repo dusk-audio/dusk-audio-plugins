@@ -62,6 +62,57 @@ void WaveformDisplay::paint(juce::Graphics& g)
 }
 
 //==============================================================================
+// FilterResponseDisplay
+void FilterResponseDisplay::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+    g.setColour(bg.darker(0.3f));
+    g.fillRoundedRectangle(bounds, 3.0f);
+
+    // Draw approximate lowpass response curve
+    juce::Path curve;
+    float w = bounds.getWidth();
+    float h = bounds.getHeight();
+    float x0 = bounds.getX();
+    float y0 = bounds.getY();
+
+    // Normalize cutoff to 0-1 range (log scale, 20Hz-20kHz)
+    float cutoffNorm = std::log2(juce::jlimit(20.0f, 20000.0f, cutoff) / 20.0f) / std::log2(1000.0f);
+    cutoffNorm = juce::jlimit(0.0f, 1.0f, cutoffNorm);
+
+    bool started = false;
+    for (int i = 0; i <= static_cast<int>(w); ++i)
+    {
+        float xNorm = static_cast<float>(i) / w;
+        // Simple lowpass approximation: flat below cutoff, rolls off above
+        float freqNorm = xNorm; // 0=low, 1=high (log scale)
+        float response = 1.0f;
+        if (freqNorm > cutoffNorm)
+        {
+            float rolloff = (freqNorm - cutoffNorm) / (1.0f - cutoffNorm + 0.01f);
+            response = std::exp(-rolloff * 4.0f); // ~24dB/oct approximation
+        }
+        // Resonance peak near cutoff
+        float distToCutoff = std::abs(freqNorm - cutoffNorm);
+        if (distToCutoff < 0.15f)
+            response += res * 0.8f * (1.0f - distToCutoff / 0.15f);
+
+        response = juce::jlimit(0.0f, 1.5f, response);
+        float y = y0 + h - response * h * 0.6f - h * 0.05f;
+
+        if (!started) { curve.startNewSubPath(x0 + static_cast<float>(i), y); started = true; }
+        else curve.lineTo(x0 + static_cast<float>(i), y);
+    }
+
+    g.setColour(accent.withAlpha(0.5f));
+    g.strokePath(curve, juce::PathStrokeType(1.5f));
+
+    // Border
+    g.setColour(accent.withAlpha(0.15f));
+    g.drawRoundedRectangle(bounds, 3.0f, 0.5f);
+}
+
+//==============================================================================
 // ModMatrixOverlay
 ModMatrixOverlay::ModMatrixOverlay()
 {
@@ -291,8 +342,11 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     // === Oscilloscope ===
     addAndMakeVisible(waveformDisplay);
 
+    // === Filter Response ===
+    addAndMakeVisible(filterResponseDisplay);
+
     // === Mod Matrix Overlay ===
-    juce::StringArray srcNames = {"None","LFO1","LFO2","Env2","ModWhl","AftT","Vel","Key","Rand","PBend"};
+    juce::StringArray srcNames = {"None","LFO1","LFO2","Env2","ModWhl","AftT","Vel","Key","Rand","PBend","S&H"};
     juce::StringArray dstNames = {"None","O1Pit","O2Pit","O1PW","O2PW","FltCut","FltRes","Amp","Pan","L1Rt","L2Rt","FXMix","UniDt"};
     for (int i = 0; i < 8; ++i)
     {
@@ -782,6 +836,11 @@ void MultiSynthEditor::resized()
         int y2 = y0 + ctrlH1 + scaled(6) + L;
         placeControl(filterHPSlider,     x0,           y2, K);
         placeControl(filterEnvAmtSlider, x0 + fStep,   y2, K);
+
+        // Filter response mini-display below filter knobs
+        int ctrlH2 = (filterHPSlider.getSliderStyle() == juce::Slider::LinearVertical) ? faderH : K;
+        int frY = y2 + ctrlH2 + scaled(4);
+        filterResponseDisplay.setBounds(x0, frY, sections.filter.getWidth() - pad * 2, scaled(35));
     }
 
     // === ENVELOPES LAYOUT (2 groups of 4 ADSR) ===
@@ -1079,6 +1138,13 @@ void MultiSynthEditor::timerCallback()
         tempBuf[i] = processor.scopeBuffer[(wp + i) % MultiSynthProcessor::kScopeSize];
     waveformDisplay.updateBuffer(tempBuf, MultiSynthProcessor::kScopeSize);
     waveformDisplay.repaint();
+
+    // Update filter response display
+    float fc = *processor.getAPVTS().getRawParameterValue(ParamIDs::FILTER_CUTOFF);
+    float fr = *processor.getAPVTS().getRawParameterValue(ParamIDs::FILTER_RESONANCE);
+    filterResponseDisplay.setParameters(fc, fr, 44100.0f);
+    filterResponseDisplay.setAccentColor(currentLAF ? currentLAF->colors.accent : juce::Colour(0xFF6070DD));
+    filterResponseDisplay.setBackgroundColor(currentLAF ? currentLAF->colors.sectionBackground : juce::Colour(0xFF1A1C2E));
 
     updateModeVisibility();
 }

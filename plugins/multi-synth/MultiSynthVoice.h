@@ -113,6 +113,7 @@ public:
         filtEnv.prepare(sampleRate);
         lfo1.prepare(sampleRate);
         lfo2.prepare(sampleRate);
+        sampleAndHold.prepare(sampleRate);
 
         // Per-voice analog drift (slow random walk)
         driftCounter = rng.nextInt(200) + 100;  // 100-300 samples until first change
@@ -393,6 +394,11 @@ public:
         state.setSourceValue(ModSource::Random, randomPerNote);
         state.setSourceValue(ModSource::PitchBend, pitchBend);
 
+        // S&H output (fed from noise, rate from internal clock)
+        sampleAndHold.setRate(5.0f);
+        float shNoise = rng.nextFloat() * 2.0f - 1.0f;
+        state.setSourceValue(ModSource::SampleAndHold, sampleAndHold.process(shNoise));
+
         // Process the matrix
         matrix.process(state);
     }
@@ -424,7 +430,6 @@ private:
     bool active = false;
     bool stealing = false;
     float lastFreq = 0.0f;
-    float driftValue = 0.0f;       // Current drift amount (-1 to +1)
     float driftTarget = 0.0f;      // Target drift value
     int driftCounter = 0;           // Samples until next target change
     float driftSmooth = 0.0f;       // Smoothed drift output
@@ -433,6 +438,7 @@ private:
     Oscillator osc1, osc2, osc3;
     SubOscillator subOsc;
     Oscillator noiseOsc;
+    SampleAndHold sampleAndHold;
     SynthFilter filter;
     ADSREnvelope ampEnv, filtEnv;
     LFO lfo1, lfo2;
