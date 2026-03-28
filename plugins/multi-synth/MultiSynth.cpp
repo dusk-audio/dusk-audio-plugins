@@ -760,80 +760,80 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
 
     switch (index)
     {
-        case 0: // Neon Nights - lush poly pad with slow chorus
+        case 0: // Neon Nights - lush poly pad with Juno chorus I+II
             setParam(ParamIDs::MODE, 0); // Cosmos
             setParam(ParamIDs::OSC1_WAVE, 0); // Saw
             setParam(ParamIDs::OSC2_WAVE, 4); // Pulse
-            setParam(ParamIDs::OSC2_DETUNE, 12);
-            setParam(ParamIDs::FILTER_CUTOFF, 3000);
-            setParam(ParamIDs::FILTER_RESONANCE, 0.2f);
-            setParam(ParamIDs::AMP_ATTACK, 0.3f);
-            setParam(ParamIDs::AMP_DECAY, 0.5f);
-            setParam(ParamIDs::AMP_SUSTAIN, 0.9f);
-            setParam(ParamIDs::AMP_RELEASE, 1.5f);
-            setParam(ParamIDs::UNISON_VOICES, 4);
-            setParam(ParamIDs::UNISON_DETUNE, 15);
-            setParam(ParamIDs::ANALOG_AMT, 0.4f);
+            setParam(ParamIDs::OSC2_DETUNE, 8);
+            setParam(ParamIDs::FILTER_CUTOFF, 2500);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.15f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.3f);
+            setParam(ParamIDs::AMP_ATTACK, 0.4f);
+            setParam(ParamIDs::AMP_DECAY, 0.6f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.85f);
+            setParam(ParamIDs::AMP_RELEASE, 1.8f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 3); // I+II
+            setParam(ParamIDs::ANALOG_AMT, 0.3f);
             setParam(ParamIDs::REVERB_ON, 1);
-            setParam(ParamIDs::REVERB_SIZE, 0.7f);
-            setParam(ParamIDs::REVERB_MIX, 0.3f);
+            setParam(ParamIDs::REVERB_SIZE, 0.6f);
+            setParam(ParamIDs::REVERB_MIX, 0.2f);
             break;
 
-        case 1: // Glass Highway
+        case 1: // Glass Highway — bright arp with Chorus I + delay
             setParam(ParamIDs::MODE, 0);
-            setParam(ParamIDs::OSC1_WAVE, 0);
-            setParam(ParamIDs::OSC2_WAVE, 0);
-            setParam(ParamIDs::FILTER_CUTOFF, 6000);
-            setParam(ParamIDs::FILTER_RESONANCE, 0.4f);
-            setParam(ParamIDs::AMP_ATTACK, 0.01f);
-            setParam(ParamIDs::AMP_DECAY, 0.3f);
-            setParam(ParamIDs::AMP_SUSTAIN, 0.6f);
-            setParam(ParamIDs::AMP_RELEASE, 0.8f);
+            setParam(ParamIDs::FILTER_CUTOFF, 5000);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.35f);
+            setParam(ParamIDs::AMP_ATTACK, 0.005f);
+            setParam(ParamIDs::AMP_DECAY, 0.25f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.5f);
+            setParam(ParamIDs::AMP_RELEASE, 0.6f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 1); // Chorus I
             setParam(ParamIDs::ARP_ON, 1);
             setParam(ParamIDs::ARP_RATE, 3); // 1/8
             setParam(ParamIDs::ARP_GATE, 0.6f);
             setParam(ParamIDs::DELAY_ON, 1);
-            setParam(ParamIDs::DELAY_MIX, 0.25f);
+            setParam(ParamIDs::DELAY_MIX, 0.2f);
             break;
 
-        case 2: // Velvet Fog
+        case 2: // Velvet Fog — dark filtered pad with Chorus II
             setParam(ParamIDs::MODE, 0);
-            setParam(ParamIDs::FILTER_CUTOFF, 1500);
-            setParam(ParamIDs::FILTER_RESONANCE, 0.3f);
-            setParam(ParamIDs::FILTER_ENV_AMT, 0.2f);
-            setParam(ParamIDs::AMP_ATTACK, 0.8f);
+            setParam(ParamIDs::FILTER_CUTOFF, 1200);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.25f);
+            setParam(ParamIDs::FILTER_ENV_AMT, 0.15f);
+            setParam(ParamIDs::AMP_ATTACK, 1.0f);
             setParam(ParamIDs::AMP_SUSTAIN, 0.9f);
-            setParam(ParamIDs::AMP_RELEASE, 2.0f);
-            setParam(ParamIDs::UNISON_VOICES, 3);
-            setParam(ParamIDs::VINTAGE, 0.4f);
+            setParam(ParamIDs::AMP_RELEASE, 2.5f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 2); // Chorus II
+            setParam(ParamIDs::VINTAGE, 0.5f);
             break;
 
-        case 3: // Sunset Strip
+        case 3: // Sunset Strip — wide detuned pad with Chorus I+II
             setParam(ParamIDs::MODE, 0);
-            setParam(ParamIDs::OSC2_DETUNE, 20);
-            setParam(ParamIDs::FILTER_CUTOFF, 4000);
-            setParam(ParamIDs::AMP_ATTACK, 0.2f);
-            setParam(ParamIDs::AMP_SUSTAIN, 0.85f);
-            setParam(ParamIDs::AMP_RELEASE, 1.2f);
-            setParam(ParamIDs::UNISON_VOICES, 6);
-            setParam(ParamIDs::UNISON_DETUNE, 25);
-            setParam(ParamIDs::CHORUS_ON, 1);
+            setParam(ParamIDs::OSC2_DETUNE, 15);
+            setParam(ParamIDs::FILTER_CUTOFF, 3500);
+            setParam(ParamIDs::AMP_ATTACK, 0.25f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.8f);
+            setParam(ParamIDs::AMP_RELEASE, 1.5f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 3); // I+II
+            setParam(ParamIDs::ANALOG_AMT, 0.35f);
             break;
 
         case 4: // Crystal Rain
             setParam(ParamIDs::MODE, 0);
-            setParam(ParamIDs::FILTER_CUTOFF, 8000);
-            setParam(ParamIDs::AMP_ATTACK, 0.005f);
-            setParam(ParamIDs::AMP_DECAY, 0.15f);
-            setParam(ParamIDs::AMP_SUSTAIN, 0.3f);
-            setParam(ParamIDs::AMP_RELEASE, 0.4f);
+            setParam(ParamIDs::FILTER_CUTOFF, 6000);
+            setParam(ParamIDs::FILTER_RESONANCE, 0.2f);
+            setParam(ParamIDs::AMP_ATTACK, 0.003f);
+            setParam(ParamIDs::AMP_DECAY, 0.12f);
+            setParam(ParamIDs::AMP_SUSTAIN, 0.2f);
+            setParam(ParamIDs::AMP_RELEASE, 0.35f);
+            setParam(ParamIDs::COSMOS_CHORUS_MODE, 3); // I+II
             setParam(ParamIDs::ARP_ON, 1);
             setParam(ParamIDs::ARP_RATE, 4); // 1/16
             setParam(ParamIDs::ARP_GATE, 0.3f);
             setParam(ParamIDs::DELAY_ON, 1);
-            setParam(ParamIDs::DELAY_MIX, 0.3f);
+            setParam(ParamIDs::DELAY_MIX, 0.25f);
             setParam(ParamIDs::REVERB_ON, 1);
-            setParam(ParamIDs::REVERB_MIX, 0.25f);
+            setParam(ParamIDs::REVERB_MIX, 0.2f);
             break;
 
         case 5: // Brass Section
@@ -1013,7 +1013,7 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
             break;
 
         // Init presets (20-23)
-        case 20: setParam(ParamIDs::MODE, 0); break; // Init Cosmos
+        case 20: setParam(ParamIDs::MODE, 0); setParam(ParamIDs::COSMOS_CHORUS_MODE, 3); break; // Init Cosmos (chorus I+II on)
         case 21: setParam(ParamIDs::MODE, 1); break; // Init Oracle
         case 22: setParam(ParamIDs::MODE, 2); break; // Init Mono
         case 23: setParam(ParamIDs::MODE, 3); break; // Init Modular
