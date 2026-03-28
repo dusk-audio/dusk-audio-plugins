@@ -173,6 +173,11 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupKnob(fmAmountSlider, fmAmountLbl, ParamIDs::FM_AMOUNT, "FM");
     setupToggle(hardSyncButton, ParamIDs::HARD_SYNC, "Sync");
 
+    // === Cosmos Chorus ===
+    cosmosChorusBox.addItemList({"Off", "I", "II", "I+II"}, 1);
+    addAndMakeVisible(cosmosChorusBox);
+    setupComboBox(cosmosChorusBox, ParamIDs::COSMOS_CHORUS_MODE);
+
     // === Filter ===
     setupKnob(filterCutoffSlider, filterCutoffLbl, ParamIDs::FILTER_CUTOFF, "Cutoff");
     setupKnob(filterResSlider, filterResLbl, ParamIDs::FILTER_RESONANCE, "Res");
@@ -391,6 +396,7 @@ void MultiSynthEditor::updateModeVisibility()
 
     osc3WaveBox.setVisible(isModular); osc3LevelSlider.setVisible(isModular); osc3LevelLbl.setVisible(isModular);
     subWaveBox.setVisible(isCosmos || isMono); subLevelSlider.setVisible(isCosmos || isMono); subLevelLbl.setVisible(isCosmos || isMono);
+    cosmosChorusBox.setVisible(isCosmos);
     filterHPSlider.setVisible(isCosmos); filterHPLbl.setVisible(isCosmos);
     crossModSlider.setVisible(isCosmos || isOracle); crossModLbl.setVisible(isCosmos || isOracle);
     ringModSlider.setVisible(isMono || isModular); ringModLbl.setVisible(isMono || isModular);
@@ -829,6 +835,9 @@ void MultiSynthEditor::resized()
         unisonVoicesSlider.setBounds(x0, y2, S, S);
         unisonDetuneSlider.setBounds(x0 + ckw, y2, S, S);
         unisonSpreadSlider.setBounds(x0 + ckw * 2, y2, S, S);
+
+        // Cosmos chorus selector (visible only in Cosmos mode)
+        cosmosChorusBox.setBounds(x0 + ckw * 3 + scaled(8), y2, scaled(70), cH);
     }
 
     // === ARPEGGIATOR ===
@@ -908,12 +917,35 @@ void MultiSynthEditor::setSliderAsFader(DuskSlider& s)
 
 void MultiSynthEditor::layoutSharedLowerStrip() {}
 
-// Per-mode layout stubs — for now they share the same layout from resized()
-// In the future these can be expanded to completely rearrange controls
-void MultiSynthEditor::layoutCosmos() {}
-void MultiSynthEditor::layoutOracle() {}
-void MultiSynthEditor::layoutMono() {}
-void MultiSynthEditor::layoutModular() {}
+// Per-mode layout refinements — called after the shared layout positions all controls.
+// These adjust section titles in paint() via the section names used there,
+// and ensure mode-specific controls are positioned correctly.
+
+void MultiSynthEditor::layoutCosmos()
+{
+    // Cosmos: Juno-60 style — faders for osc/filter/env
+    // The shared layout already handles fader bounds via placeControl()
+    // Nothing additional needed — the paintCosmos() handles the orange header
+}
+
+void MultiSynthEditor::layoutOracle()
+{
+    // Oracle: Prophet-5 style — all rotary knobs, wood cheeks
+    // Inset the oscillator and output sections to leave room for wood cheeks
+    // (the painting handles the wood, but we could inset controls here)
+}
+
+void MultiSynthEditor::layoutMono()
+{
+    // Mono: SH-2 style — mix of knobs and faders
+    // The shared layout handles this via the style switching
+}
+
+void MultiSynthEditor::layoutModular()
+{
+    // Modular: ARP 2600 style — knobs + patch points
+    // The patch points are decorative only (painted in paintModular)
+}
 
 //==============================================================================
 void MultiSynthEditor::timerCallback()

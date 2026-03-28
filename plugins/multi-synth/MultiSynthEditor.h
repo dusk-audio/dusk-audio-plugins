@@ -125,6 +125,9 @@ private:
     juce::ToggleButton legatoButton;
     DuskSlider unisonVoicesSlider, unisonDetuneSlider, unisonSpreadSlider;
 
+    // === Cosmos-specific ===
+    juce::ComboBox cosmosChorusBox; // Off, I, II, I+II
+
     // === Arpeggiator ===
     juce::ToggleButton arpOnButton, arpLatchButton;
     juce::ComboBox arpModeBox, arpRateBox, arpVelModeBox;
