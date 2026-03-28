@@ -56,6 +56,8 @@ public:
     void prepare(double sampleRate)
     {
         sr = static_cast<float>(sampleRate);
+        // DC blocker coefficient: ~5Hz cutoff
+        dcCoeff = 1.0f - (juce::MathConstants<float>::twoPi * 5.0f / sr);
         reset();
     }
 
@@ -77,14 +79,14 @@ public:
         float in = input * drive - fb;
 
         // Input saturation (strength varies per filter model)
-        in = std::tanh(in * saturationStrength) / saturationStrength;
+        in = std::tanh(in * saturationStrength) / std::tanh(saturationStrength);
 
         // 4 cascaded one-pole lowpass sections
         for (int i = 0; i < 4; ++i)
         {
             float y = s[i] + g * (in - s[i]);
             // Per-stage saturation: gentler for Cosmos, harder for Mono
-            s[i] = std::tanh(y * stageNonlinearity) / stageNonlinearity;
+            s[i] = std::tanh(y * stageNonlinearity) / std::tanh(stageNonlinearity);
             in = s[i];
         }
 
@@ -96,12 +98,19 @@ public:
         // Resonance bass compensation: mix back some input to offset bass loss
         float output = s[3] + input * bassComp * res;
 
-        return output;
+        // DC blocker (first-order HPF at ~5Hz)
+        float dcOut = output - dcState + dcCoeff * dcPrev;
+        dcPrev = dcOut;
+        dcState = output;
+
+        return dcOut;
     }
 
     void reset()
     {
         for (auto& state : s) state = 0.0f;
+        dcState = 0.0f;
+        dcPrev = 0.0f;
     }
 
     // Tuning knobs for different filter characters
@@ -117,6 +126,9 @@ protected:
     float feedback = 0.0f;
     float drive = 1.0f;
     float s[4] = {};
+    float dcCoeff = 0.999f;
+    float dcState = 0.0f;
+    float dcPrev = 0.0f;
 };
 
 //==============================================================================
