@@ -278,6 +278,7 @@ MultiSynthEditor::MultiSynthEditor(MultiSynthProcessor& p)
     setupKnob(lfo2RateSlider, lfo2RateLbl, ParamIDs::LFO2_RATE, "Rate");
     setupKnob(lfo2FadeSlider, lfo2FadeLbl, ParamIDs::LFO2_FADE, "Fade");
     setupToggle(lfo2SyncButton, ParamIDs::LFO2_SYNC, "Sync");
+    setupKnob(shRateSlider, shRateLbl, ParamIDs::SH_RATE, "S&H");
 
     // === Character / Unison ===
     setupKnob(portaSlider, portaLbl, ParamIDs::PORTA_TIME, "Porta");
@@ -974,6 +975,10 @@ void MultiSynthEditor::resized()
         placeLabel(lfo2RateLbl, lfo2RateSlider);
         lfo2FadeSlider.setBounds(x0 + scaled(130) + kw, y2 + cH - K + L, K, K);
         placeLabel(lfo2FadeLbl, lfo2FadeSlider);
+
+        // S&H Rate knob (after LFO2 controls)
+        shRateSlider.setBounds(x0 + scaled(130) + kw * 2, y2 + cH - S + L, S, S);
+        placeLabel(shRateLbl, shRateSlider);
     }
 
     // === CHARACTER / UNISON ===
@@ -1060,7 +1065,7 @@ void MultiSynthEditor::resized()
              {{&chorusRateSlider, &chorusRateLbl}, {&chorusDepthSlider, &chorusDepthLbl}, {&chorusMixSlider, &chorusMixLbl}}, {});
     layoutFX(sections.delay, delayOnButton,
              {{&delayTimeSlider, &delayTimeLbl}, {&delayFBSlider, &delayFBLbl}, {&delayMixSlider, &delayMixLbl}},
-             {&delaySyncButton, &delayPPButton, &delayTapeButton});
+             {&delaySyncButton, &delayPPButton, &delayTapeButton, &delayDivBox});
     layoutFX(sections.reverb, reverbOnButton,
              {{&reverbSizeSlider, &reverbSizeLbl}, {&reverbDecaySlider, &reverbDecayLbl},
               {&reverbDampSlider, &reverbDampLbl}, {&reverbMixSlider, &reverbMixLbl},
@@ -1071,6 +1076,7 @@ void MultiSynthEditor::resized()
     supportersOverlay.setBounds(getLocalBounds());
 
     // (slider styles already set at the top of resized)
+    juce::ignoreUnused(placeLabel, placeControl, ctrlStep);
 }
 
 //==============================================================================
