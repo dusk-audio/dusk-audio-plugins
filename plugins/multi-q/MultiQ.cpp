@@ -290,8 +290,8 @@ void MultiQ::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
 
-    // ADAA in ConsoleSaturation and TubeEQProcessor handles aliasing when OS=Off,
-    // so no minimum OS enforcement is needed here. osFactor is used as-is.
+    // ADAA in ConsoleSaturation (British) and TubeEQTubeStage (Tube) handles
+    // aliasing at all OS modes, so no minimum OS enforcement is needed here.
     currentSampleRate = sampleRate * osFactor;
 
     // Prepare filter spec
@@ -614,7 +614,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
         oversamplingMode = newOsMode;
         int osFactor = (oversamplingMode == 2) ? 4 : (oversamplingMode == 1) ? 2 : 1;
-        // ADAA handles aliasing for British/Tube at OS=Off — no minimum enforcement needed.
+        // ADAA in ConsoleSaturation and TubeEQTubeStage handles aliasing — no minimum enforcement needed.
         // Update sample rate for filter coefficient calculations
         currentSampleRate = baseSampleRate * osFactor;
         double newSR = currentSampleRate;
@@ -874,8 +874,8 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
     auto procMode = static_cast<ProcessingMode>(
         static_cast<int>(safeGetParam(processingModeParam, 0.0f)));
 
-    // ADAA in ConsoleSaturation and TubeEQProcessor handles aliasing at OS=Off,
-    // so no minimum OS enforcement is needed for British/Tube modes.
+    // ADAA in ConsoleSaturation (British) and TubeEQTubeStage (Tube) handles
+    // aliasing at all OS modes — no minimum enforcement needed.
     int effectiveOsMode = oversamplingMode;
 
     juce::dsp::AudioBlock<float> block(buffer);
