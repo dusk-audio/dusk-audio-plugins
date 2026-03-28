@@ -200,24 +200,29 @@ struct StereoSVF
     `cos(2π·fc/sr)` for exact digital centre placement and pre-warped bandwidth,
     giving the same filter shape at every OS rate.
 
-    Parameter smoothing is handled by SmoothedValue upstream; no per-sample
-    interpolation is needed here. setSmoothCoeff/snapToTarget are no-ops kept
-    for API symmetry with StereoSVF.
+    Per-sample coefficient smoothing (first-order IIR ramp on each b/a coefficient)
+    prevents zipper noise during automation or knob drags — same approach as StereoSVF.
+    setSmoothCoeff sets the per-sample decay; snapToTarget jumps immediately.
 */
 struct StereoBiquad
 {
-    BiquadCoeffs coeffs;
+    BiquadCoeffs coeffs;       // current (smoothed) coefficients
+    BiquadCoeffs target;       // target coefficients set by setCoeffs()
+    float smoothCoeff = 0.99f; // per-sample: coeffs → target  (set via setSmoothCoeff)
     float s1L = 0.0f, s2L = 0.0f;
     float s1R = 0.0f, s2R = 0.0f;
 
-    void setCoeffs(const BiquadCoeffs& c) { coeffs = c; }
-    void reset() { s1L = s2L = s1R = s2R = 0.0f; }
-    void snapToTarget() {}
-    void setSmoothCoeff(float) {}
+    void setCoeffs(const BiquadCoeffs& c) { target = c; }
+    void reset() { s1L = s2L = s1R = s2R = 0.0f; coeffs = target; }
+    void snapToTarget() { coeffs = target; }
+    void setSmoothCoeff(float c) { smoothCoeff = c; }
 
     float processSampleL(float x)
     {
         if (!safeIsFinite(x)) x = 0.0f;
+        // Step coefficients toward target
+        for (int i = 0; i < 6; ++i)
+            coeffs.coeffs[i] += smoothCoeff * (target.coeffs[i] - coeffs.coeffs[i]);
         float y = coeffs.coeffs[0] * x + s1L;
         s1L = coeffs.coeffs[1] * x - coeffs.coeffs[4] * y + s2L;
         s2L = coeffs.coeffs[2] * x - coeffs.coeffs[5] * y;
