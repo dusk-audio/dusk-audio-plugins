@@ -19,6 +19,7 @@ enum class ModSource
     KeyTracking,
     Random,     // Per-note random value
     PitchBend,
+    SampleAndHold, // S&H output (Modular mode)
     NumSources
 };
 
