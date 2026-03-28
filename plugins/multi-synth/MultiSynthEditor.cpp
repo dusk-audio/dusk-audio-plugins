@@ -355,7 +355,14 @@ void MultiSynthEditor::applyCurrentLookAndFeel()
     if (!currentLAF) return;
     setLookAndFeel(currentLAF);
     for (auto* child : getChildren())
+    {
         child->setLookAndFeel(currentLAF);
+        // Update label colors to match mode
+        if (auto* label = dynamic_cast<juce::Label*>(child))
+            label->setColour(juce::Label::textColourId, currentLAF->colors.text);
+    }
+    // Force relayout since fader/knob styles may have changed
+    resized();
 }
 
 void MultiSynthEditor::updateModeVisibility()
