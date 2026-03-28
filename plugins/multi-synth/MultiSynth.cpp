@@ -368,7 +368,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID(ParamIDs::OVERSAMPLING, 1), "Oversampling",
-        juce::StringArray("1x", "2x", "4x"), 0));
+        juce::StringArray("1x", "2x", "4x"), 1));
 
     return { params.begin(), params.end() };
 }
@@ -818,6 +818,7 @@ void MultiSynthProcessor::applyFactoryPreset(int index)
     setParam(ParamIDs::PORTA_TIME, 0);
     setParam(ParamIDs::ANALOG_AMT, 0.2f);
     setParam(ParamIDs::VINTAGE, 0);
+    setParam(ParamIDs::OVERSAMPLING, 1); // Default 2x oversampling
 
     switch (index)
     {
