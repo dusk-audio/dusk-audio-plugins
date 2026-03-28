@@ -28,6 +28,26 @@ private:
 };
 
 //==============================================================================
+// Filter frequency response mini-display
+class FilterResponseDisplay : public juce::Component
+{
+public:
+    void setParameters(float cutoffHz, float resonance, float sampleRate)
+    {
+        cutoff = cutoffHz;
+        res = resonance;
+        sr = sampleRate;
+        repaint();
+    }
+    void setAccentColor(juce::Colour c) { accent = c; }
+    void setBackgroundColor(juce::Colour c) { bg = c; }
+    void paint(juce::Graphics& g) override;
+private:
+    float cutoff = 8000.0f, res = 0.3f, sr = 44100.0f;
+    juce::Colour accent { 0xFF6070DD }, bg { 0xFF1A1C2E };
+};
+
+//==============================================================================
 // Mod Matrix Overlay (popup panel)
 class ModMatrixOverlay : public juce::Component
 {
@@ -164,6 +184,9 @@ private:
 
     // === Oscilloscope ===
     WaveformDisplay waveformDisplay;
+
+    // === Filter Response ===
+    FilterResponseDisplay filterResponseDisplay;
 
     // === Mod Matrix Overlay ===
     ModMatrixOverlay modMatrixOverlay;
