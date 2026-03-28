@@ -345,20 +345,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout MultiSynthProcessor::createP
 //==============================================================================
 void MultiSynthProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    voiceAllocator.prepare(sampleRate);
-    arpeggiator.prepare(sampleRate);
-    effects.prepare(sampleRate, samplesPerBlock);
+    // Voices and filters run at 2x sample rate (mandatory anti-cramping).
+    // This pushes Nyquist from ~22kHz to ~44kHz, eliminating filter cramping
+    // across the entire audible band.
+    internalSampleRate = sampleRate * 2.0;
+    voiceAllocator.prepare(internalSampleRate);
+    arpeggiator.prepare(sampleRate); // Arp runs at native rate (tempo-synced)
+    effects.prepare(sampleRate, samplesPerBlock); // Effects at native rate
     junoChorus.prepare(sampleRate, samplesPerBlock);
-
-    // Setup oversampling (2x default)
-    oversampling = std::make_unique<juce::dsp::Oversampling<float>>(
-        2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false);
-    oversampling->initProcessing(static_cast<size_t>(samplesPerBlock));
 }
 
 void MultiSynthProcessor::releaseResources()
 {
-    oversampling.reset();
 }
 
 //==============================================================================
@@ -607,14 +605,22 @@ void MultiSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
+        // Render voices at 2x internal sample rate (anti-cramping).
+        // Process 2 internal samples per output sample, average to downsample.
         float sampleL = 0.0f, sampleR = 0.0f;
 
-        voiceAllocator.renderSample(voiceParams, modMatrix, unisonEngine,
-                                    modWheelValue, aftertouchValue, pitchBendValue,
-                                    sampleL, sampleR);
+        for (int os = 0; os < 2; ++os)
+        {
+            float osL = 0.0f, osR = 0.0f;
+            voiceAllocator.renderSample(voiceParams, modMatrix, unisonEngine,
+                                        modWheelValue, aftertouchValue, pitchBendValue,
+                                        osL, osR);
+            sampleL += osL;
+            sampleR += osR;
+        }
+        sampleL *= 0.5f; // Average the 2 oversampled samples
+        sampleR *= 0.5f;
 
-        // Voice output attenuation — keep voices at healthy level so
-        // effects chain + limiter have headroom
         static constexpr float kVoiceGain = 0.7f;
         sampleL *= kVoiceGain;
         sampleR *= kVoiceGain;
