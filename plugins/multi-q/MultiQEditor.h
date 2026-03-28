@@ -120,11 +120,6 @@ private:
     void loadUserPreset(const juce::String& name);
     void deleteUserPreset(const juce::String& name);
 
-    // Undo/Redo buttons
-    juce::TextButton undoButton;
-    juce::TextButton redoButton;
-    void updateUndoRedoButtons();
-
     // A/B comparison for Digital mode
     juce::TextButton digitalAbButton;
     juce::ValueTree digitalStateA, digitalStateB;
