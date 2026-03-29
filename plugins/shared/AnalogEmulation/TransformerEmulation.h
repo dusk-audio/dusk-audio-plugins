@@ -44,6 +44,20 @@ public:
         }
     }
 
+    /** Lightweight sample-rate update — recomputes coefficients without changing
+        channel count. Safe for audio thread (no allocation). */
+    void updateSampleRate(double newSampleRate)
+    {
+        sampleRate = newSampleRate;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            dcBlocker[ch].prepare(newSampleRate, profile.dcBlockingFreq);
+            hfEstimator[ch].prepare(newSampleRate);
+        }
+        updateHFRolloff(profile.highFreqRolloff);
+        reset();
+    }
+
     void setProfile(const TransformerProfile& newProfile)
     {
         profile = newProfile;
