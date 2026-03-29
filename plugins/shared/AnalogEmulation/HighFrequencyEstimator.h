@@ -28,6 +28,9 @@ public:
 
     float processSample(float input)
     {
+        if (!std::isfinite(input))
+            return std::clamp(smoothedHF * 2.0f, 0.0f, 1.0f);
+
         float diff = input - previousSample;
         previousSample = input;
 

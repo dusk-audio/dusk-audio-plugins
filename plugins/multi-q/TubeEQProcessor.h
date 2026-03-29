@@ -198,37 +198,29 @@ private:
 };
 
 /*
-  Tube stage model: polynomial waveshaper calibrated to Pultec EQP-1A character.
+  Tube stage model: polynomial waveshaper calibrated to vintage tube EQ character.
 
   Architecture (per sample):
-    1. Anti-alias LP at ~10 kHz  — HF residual bypasses waveshaper entirely
-    2. LF split at ~300 Hz       — isolates sub-bass for transformer H3 boost
-    3. Polynomial waveshaper     — y = x + b·x² + c·x³ + d·x⁴  (all from same x)
-                                   x = filteredInput · drive · DRIVE_SCALE
-    4. LF transformer H3         — extra H3 on the LF split component only
-    5. DC blocking               — removes DC from even-order (x², x⁴) terms
-    6. Gain compensation         — preserves unity gain at low drive
+    1. LF split at ~300 Hz       — isolates sub-bass for transformer H3 boost
+    2. Polynomial waveshaper     — y = x + b·x² + c·x³ + d·x⁴  (all from same x)
+       (ADAA antialiasing)         x = input · drive · DRIVE_SCALE
+    3. LF transformer H3         — extra H3 on the LF split component only
+    4. DC blocking               — removes DC from even-order (x², x⁴) terms
 
-  Harmonic profile at nominal (drive=0.5, input amplitude A=0.5):
-    H2 ≈ 0.375%   (12AX7/12AU7 push-pull warmth — dominant, ~82% of THD)
-    H3 ≈ 0.065%   (general tube character — ~14% of THD)
-    H4 ≈ 0.015%   (secondary tube — ~3% of THD)
-    H5 ≈ 0%       (negligible)
-  Total THD ≈ 0.38%, matching a nominal Pultec EQP-1A at 0 VU.
+  Harmonic profile calibrated to EQP-1A spec (0.15% THD at 1kHz into 600Ω):
+    H2 ≈ 0.10-0.12%  — dominant, rises progressively with input level
+                        (tube asymmetry + transformer coloration)
+    H3 ≈ 0.01-0.03%  — secondary, relatively constant with level
+    H4+: negligible   (<0.005%)
 
   Drive-dependent scaling (natural from polynomial):
-    H2 ∝ drive¹·A    — grows linearly ("syrupy tube warmth" at low drive)
-    H3 ∝ drive²·A²   — grows quadratically (transformer H3 rises faster at high drive)
-    H4 ∝ drive³·A³   — grows cubically
+    H2 ∝ drive¹·A    — grows linearly ("warmth" at low drive)
+    H3 ∝ drive²·A²   — grows quadratically
 
   Frequency-dependent H3 (transformer modeling):
     The LF split at ~300 Hz ensures transformer H3 is dominant in the sub-bass.
     At 8 kHz the LF state is ~0, so no extra H3 is generated at HF.
     At 80 Hz the LF state ≈ input, producing the characteristic low-end "growl".
-
-  Real Pultec EQP-1A: passive LC network + 12AX7/12AU7 tube makeup amp + Peerless
-  transformers. H2-dominant from tubes (push-pull topology cancels odd harmonics but
-  reinforces even ones). Peerless iron adds H3 in the low end from core saturation.
 */
 class TubeEQTubeStage
 {
@@ -287,13 +279,14 @@ public:
         // Soft-clip to prevent polynomial explosion at hot levels
         const float xd  = xd_raw / std::sqrt(1.0f + xd_raw * xd_raw * 0.25f);
 
-        // Calibrated at nominal (drive=0.5, A=0.5, driveAmount=1.0):
-        //   H2 ≈ 0.375%  — 12AX7/12AU7 push-pull warmth (dominant, ~82% of THD)
-        //   H3 ≈ 0.065%  — general tube character (~14% of THD)
-        //   H4 ≈ 0.015%  — secondary tube harmonic (~3% of THD)
-        const float b = 0.015f;    // H2 — x² is EVEN → true 2nd harmonic + DC
-        const float c = 0.0104f;  // H3 — x³ is ODD  → true 3rd harmonic
-        const float d = 0.0096f;  // H4 — x⁴ is EVEN → true 4th harmonic + DC
+        // Pultec EQP-1A spec: 0.15% THD at 1kHz into 600Ω.
+        // H2 ≈ 0.10-0.12% — dominant, rises progressively with input level
+        //   (12AX7/12AU7 tubes + three signal-path transformers)
+        // H3 ≈ 0.01-0.03% — present but secondary, relatively constant
+        // H4+: negligible (<0.005%)
+        const float b = 0.015f;    // H2 — dominant (tube + transformer asymmetry)
+        const float c = 0.002f;    // H3 — secondary (push-pull cancellation)
+        const float d = 0.0005f;   // H4 — negligible
 
         float& prevXdVal = prevXd[static_cast<size_t>(ch)];
         float distortion = ADAASaturation::process(
@@ -677,8 +670,7 @@ public:
     }
 
     /** Lightweight sample-rate update (no allocation). Safe for audio thread.
-        Resets filter state and marks parameters dirty for coefficient recalculation.
-        NOTE: Transformer sample rates are deferred to the next full prepare(). */
+        Resets filter state and marks parameters dirty for coefficient recalculation. */
     void updateSampleRate(double newRate)
     {
         currentSampleRate = newRate;
@@ -689,7 +681,8 @@ public:
         hfInductorL.updateSampleRate(newRate);
         hfInductorR.updateSampleRate(newRate);
         hfQInductor.updateSampleRate(newRate);
-        // Transformers deferred to next full prepare() (TransformerEmulation::prepare may allocate)
+        inputTransformer.updateSampleRate(newRate);
+        outputTransformer.updateSampleRate(newRate);
 
         parametersNeedUpdate.store(true, std::memory_order_release);
         reset();
