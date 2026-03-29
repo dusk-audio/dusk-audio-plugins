@@ -74,7 +74,7 @@ private:
     float rightSigns_[8];
 
     // Multi-point output tapping (Dattorro-inspired)
-    static constexpr int kMaxMultiTaps = 24;
+    static constexpr int kMaxMultiTaps = 96;
     FDNOutputTap multiTapsL_[kMaxMultiTaps] {};
     FDNOutputTap multiTapsR_[kMaxMultiTaps] {};
     int numMultiTapsL_ = 0;
