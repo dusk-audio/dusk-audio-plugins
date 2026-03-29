@@ -35,6 +35,7 @@ private:
     static constexpr uint32_t lfAttenColor = 0xff4080a0;    // Darker blue (low cut)
     static constexpr uint32_t hfBoostColor = 0xff80c0e0;    // Light blue (high boost)
     static constexpr uint32_t hfAttenColor = 0xff5090b0;    // Muted blue (high cut)
+    static constexpr uint32_t midColor = 0xffc09060;        // Warm amber (mid section)
     static constexpr uint32_t combinedColor = 0xffe0e0e0;   // Light gray/white
     static constexpr uint32_t gridColor = 0xff404040;       // Dark gray grid
     static constexpr uint32_t backgroundColor = 0xff2a2a2a; // Dark gray background
@@ -63,6 +64,15 @@ private:
         float hfAttenGain = 0.0f;
         float hfAttenFreq = 10000.0f;
 
+        // Mid Dip/Peak Section
+        bool midEnabled = false;
+        float midLowFreq = 300.0f;
+        float midLowPeak = 0.0f;
+        float midDipFreq = 700.0f;
+        float midDip = 0.0f;
+        float midHighFreq = 3000.0f;
+        float midHighPeak = 0.0f;
+
         // Global
         float tubeDrive = 0.3f;
     } cachedParams;
@@ -83,6 +93,7 @@ private:
     float calculateLFCombinedResponse(float freq) const;
     float calculateHFBoostResponse(float freq) const;
     float calculateHFAttenResponse(float freq) const;
+    float calculateMidResponse(float freq) const;
     float calculateCombinedResponse(float freq) const;
 
     // FFT Analyzer component (child component, drawn behind EQ curves)
