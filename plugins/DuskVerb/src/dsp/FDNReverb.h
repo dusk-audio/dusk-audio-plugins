@@ -5,6 +5,16 @@
 #include <random>
 #include <vector>
 
+// Multi-point output tap: reads from a fractional position within a delay line.
+// Inspired by Dattorro's 7-tap output topology — reading from delay interiors
+// instead of just endpoints produces naturally denser, smoother tails.
+struct FDNOutputTap
+{
+    int channelIndex;      // 0-15: which FDN delay line
+    float positionFrac;    // 0.0-1.0: fractional position within delay (1.0 = full length)
+    float sign;            // ±1.0 for stereo decorrelation
+};
+
 class FDNReverb
 {
 public:
@@ -29,6 +39,9 @@ public:
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
     void setInlineDiffusion (float coeff);
+    void setUseShortInlineAP (bool use);
+    void setMultiPointOutput (const FDNOutputTap* left, int numL,
+                              const FDNOutputTap* right, int numR);
     void setModDepthFloor (float floor);
     void setNoiseModDepth (float samples);
     void setHadamardPerturbation (float amount);
@@ -59,6 +72,14 @@ private:
     int rightTaps_[8];
     float leftSigns_[8];
     float rightSigns_[8];
+
+    // Multi-point output tapping (Dattorro-inspired)
+    static constexpr int kMaxMultiTaps = 24;
+    FDNOutputTap multiTapsL_[kMaxMultiTaps] {};
+    FDNOutputTap multiTapsR_[kMaxMultiTaps] {};
+    int numMultiTapsL_ = 0;
+    int numMultiTapsR_ = 0;
+    bool useMultiPointOutput_ = false;
 
     float lateGainScale_ = 1.0f;
     float sizeCompensation_ = 1.0f; // sqrt(sizeScale) — normalizes output level across sizes
@@ -117,10 +138,20 @@ private:
         293, 307, 311, 313, 317, 331, 337, 347
     };
 
+    // Short inline allpass delays (7-47 samples at 44.1kHz) for Hall.
+    // Much shorter = nearly flat group delay → avoids spectral centroid shift.
+    // Combined with multi-point output tapping for maximum density.
+    static constexpr int kInlineAPDelaysShort[N] = {
+        7, 11, 13, 17, 19, 23, 29, 31,
+        37, 41, 43, 47, 7, 11, 13, 17
+    };
+
     DelayLine delayLines_[N];
     InlineAllpass inlineAP_[N];
     InlineAllpass inlineAP2_[N];
     InlineAllpass inlineAP3_[N];
+    InlineAllpass inlineAPShort_[N];
+    bool useShortInlineAP_ = false;
     float inlineDiffCoeff_ = 0.0f;
     float inlineDiffCoeff2_ = 0.0f;
     float inlineDiffCoeff3_ = 0.0f;

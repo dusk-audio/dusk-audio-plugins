@@ -41,6 +41,7 @@ public:
     void setFreeze (bool frozen);
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
+    void setHallScale (bool enable);   // Switch to hall-scale delay lengths (2x room)
     void clearBuffers();
 
 private:
@@ -69,8 +70,8 @@ private:
     static constexpr int kRightAP2Base  = 1307;   // ~29.6ms static allpass
     static constexpr int kRightDel2Base = 1559;   // ~35.3ms delay
 
-    // Worst-case base delay for buffer allocation
-    static constexpr int kMaxBaseDelay = 2203;
+    // Worst-case base delay for buffer allocation (hall-scale is larger)
+    static constexpr int kMaxBaseDelay = 4507;
 
     // -----------------------------------------------------------------------
     // Circular delay line with power-of-2 masking.
@@ -130,6 +131,19 @@ private:
     static constexpr int kLeftDensityAPBase[kNumDensityAPs] = { 137, 199, 281 };
     // Right tank density AP delays (at 44100 Hz)
     static constexpr int kRightDensityAPBase[kNumDensityAPs] = { 149, 211, 263 };
+
+    // Hall-scale delays: ~2x room for 1-12s RT60 (all prime, coprime to room delays)
+    // Total loop: left=12161 (275.8ms), right=12559 (284.8ms)
+    static constexpr int kLeftAP1BaseHall  = 709;    // ~16.1ms
+    static constexpr int kLeftDel1BaseHall = 4507;   // ~102.2ms
+    static constexpr int kLeftAP2BaseHall  = 1871;   // ~42.4ms
+    static constexpr int kLeftDel2BaseHall = 3769;   // ~85.4ms
+    static constexpr int kRightAP1BaseHall  = 953;   // ~21.6ms
+    static constexpr int kRightDel1BaseHall = 4219;  // ~95.7ms
+    static constexpr int kRightAP2BaseHall  = 2749;  // ~62.3ms
+    static constexpr int kRightDel2BaseHall = 3299;  // ~74.8ms
+    static constexpr int kLeftDensityAPBaseHall[kNumDensityAPs]  = { 307, 421, 577 };
+    static constexpr int kRightDensityAPBaseHall[kNumDensityAPs] = { 337, 461, 541 };
 
     // -----------------------------------------------------------------------
     // Each cross-coupled feedback loop.
