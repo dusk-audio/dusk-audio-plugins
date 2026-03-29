@@ -240,11 +240,11 @@ static void testDigitalFrequencyResponse()
 }
 
 // ==============================================================================
-// TEST 2: British Mode (SSL) Harmonic Character
+// TEST 2: British Mode Harmonic Character (models SSL 4000 E/G)
 // ==============================================================================
 static void testBritishHarmonics()
 {
-    std::cout << "\n=== British Mode (SSL) Harmonic Character ===\n";
+    std::cout << "\n=== British Mode Harmonic Character (SSL 4000 E/G model) ===\n";
 
     const double sampleRate = 44100.0;
     const int blockSize = 512;
@@ -253,7 +253,7 @@ static void testBritishHarmonics()
     const int measureLength = blockSize * 10;
     const float testFreq = 1000.0f;
 
-    // Test E-Series (Brown) — SSL 4000 E: odd-harmonic dominant (H3 > H2)
+    // Test E-Series (Brown, models SSL 4000E) — even-harmonic dominant (H2 > H3)
     {
         auto proc = std::make_unique<MultiQ>();
         proc->setRateAndBufferSizeDetails(sampleRate, blockSize);
@@ -275,10 +275,9 @@ static void testBritishHarmonics()
         std::cout << "  E-Series: H2=" << std::fixed << std::setprecision(1) << levels.h2
                   << " dB, H3=" << levels.h3 << " dB, THD=" << std::setprecision(3) << levels.thd << "%\n";
 
-        // SSL 4000 is transformerless → symmetric clipping → odd harmonics dominant
         if (levels.fundamental > -100.0f) {
-            check("E-Series: 3rd harmonic present (> -80dB)", levels.h3 > -80.0f);
-            check("E-Series: 3rd harmonic > 2nd (odd-order dominant, SSL character)", levels.h3 > levels.h2);
+            check("E-Series: 2nd harmonic present (> -80dB)", levels.h2 > -80.0f);
+            check("E-Series: 2nd harmonic > 3rd (even-order dominant)", levels.h2 > levels.h3);
             check("E-Series: THD measurable (> 0.01%)", levels.thd > 0.01f);
             check("E-Series: THD reasonable (< 10%)", levels.thd < 10.0f);
         } else {
@@ -286,7 +285,7 @@ static void testBritishHarmonics()
         }
     }
 
-    // Test G-Series (Black) — SSL 4000 G: also odd-harmonic dominant, but cleaner
+    // Test G-Series (Black, models SSL 4000G) — odd-harmonic dominant (H3 > H2), cleaner overall
     {
         auto proc = std::make_unique<MultiQ>();
         proc->setRateAndBufferSizeDetails(sampleRate, blockSize);

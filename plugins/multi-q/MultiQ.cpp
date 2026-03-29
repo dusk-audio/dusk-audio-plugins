@@ -711,6 +711,11 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
         previousEQType = eqType;
 
+        // Reset sub-processor state to prevent stale filter/ADAA state from the
+        // previous mode bleeding into the new mode during the crossfade.
+        britishEQ.reset();
+        tubeEQ.reset();
+
         // Force filter rebuild on mode change. This ensures that when switching to Digital
         // (e.g. after transferCurrentEQToDigital()), the very first Digital-mode block
         // rebuilds the IIR filters with the newly transferred band parameters.

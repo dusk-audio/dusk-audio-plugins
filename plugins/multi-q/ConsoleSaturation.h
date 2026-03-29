@@ -3,33 +3,28 @@
 
     ConsoleSaturation.h
 
-    SSL 4000 console channel saturation using a polynomial waveshaper.
+    British large-format console channel saturation using a polynomial waveshaper.
 
     Architecture (per sample):
-      1. Slew-rate limiting        — HF transient intermodulation (TL072 13 V/µs)
-      2. Pre-emphasis filter       — gentle +1.5 dB HF shelf before waveshaper
+      1. Pre-emphasis filter       — gentle +1.5 dB HF shelf before waveshaper
                                      forces HF to saturate more (analog "sheen")
-      3. Polynomial waveshaper     — y = x + b·x² + c·x³ + d·x⁴ + e·x⁵
+      2. Polynomial waveshaper     — y = x + b·x² + c·x³ + d·x⁴ + e·x⁵
                                      x = pre-emph · drive · DRIVE_SCALE
                                      all terms from same x (no cascading)
-      4. De-emphasis filter        — exact inverse of pre-emphasis
-      5. DC blocking               — removes DC from even-order (x², x⁴) terms
-      6. Noise floor               — console self-noise at -94 dB (SSL spec)
-      7. Dry/wet mix               — drive controls wet amount
+      3. De-emphasis filter        — exact inverse of pre-emphasis
+      4. DC blocking               — removes DC from even-order (x², x⁴) terms
+      5. Noise floor               — console self-noise at -94 dB
+      6. Dry/wet mix               — drive controls wet amount
 
-    Polynomial harmonic content at nominal SSL levels (drive = 0.5, input ≈ 0.5):
-      E-Series:  H3 ≈ 0.065%,  H2 ≈ 0.025%,  H5 ≈ 0.008%,  H4 < 0.005%
-      G-Series:  ~50% of E-Series levels (cleaner VCA, better component spec)
+    Harmonic content at nominal levels (drive = 0.5, input ≈ 0.5):
+      E-Series:  H2 dominant (JFET asymmetry + transformer), H3 secondary,
+                 H4/H5 negligible. Even-harmonic warmth.
+      G-Series:  H3 dominant (symmetric push-pull VCA), H2 secondary,
+                 ~60% of E-Series THD. Cleaner, more polished.
 
     Drive-dependent scaling (natural from polynomial):
-      H2 ∝ drive¹ · A        — grows slowly, "VCA warmth" at low drive
-      H3 ∝ drive² · A²       — grows faster, "transistor bite" when pushed
-      H5 ∝ drive⁴ · A⁴       — spikes sharply at hard clip
-      At heavy clip (drive ≈ 1, input ≈ 1): H3 ≈ 85% of total THD.
-
-    Real SSL 4000: transformerless per-channel, Class-AB IC topology.
-    Odd-harmonic dominant (H3 > H2) at nominal, even harmonics from
-    JFET input-stage asymmetry and VCA log-antilog nonlinearity.
+      H2 ∝ drive¹ · A        — grows linearly, "warmth" at low drive
+      H3 ∝ drive² · A²       — grows faster, "bite" when pushed
 
   ==============================================================================
 */
@@ -47,8 +42,8 @@ class ConsoleSaturation
 public:
     enum class ConsoleType
     {
-        ESeries,    // SSL 4000 E-Series (Brown knobs) — grittier, dbx 202C VCA
-        GSeries     // SSL 4000 G-Series (Black knobs) — smoother, dbx 2150 VCA
+        ESeries,    // E-Series (Brown) — grittier, H2-dominant, asymmetric JFET character
+        GSeries     // G-Series (Black) — smoother, H3-dominant, symmetric VCA character
     };
 
     explicit ConsoleSaturation(unsigned int seed = 0)
@@ -97,12 +92,26 @@ public:
 
     void reset()
     {
-        dcBlockerX1_L = dcBlockerY1_L = 0.0f;
-        dcBlockerX1_R = dcBlockerY1_R = 0.0f;
-        lpEmphState_L = lpEmphState_R = 0.0f;
-        deEmphX1_L    = deEmphX1_R    = 0.0f;
-        deEmphY1_L    = deEmphY1_R    = 0.0f;
-        prevXdL       = prevXdR       = 0.0f;
+        resetChannel(true);
+        resetChannel(false);
+    }
+
+    void resetChannel(bool isLeft)
+    {
+        if (isLeft)
+        {
+            dcBlockerX1_L = dcBlockerY1_L = 0.0f;
+            lpEmphState_L = 0.0f;
+            deEmphX1_L = deEmphY1_L = 0.0f;
+            prevXdL = 0.0f;
+        }
+        else
+        {
+            dcBlockerX1_R = dcBlockerY1_R = 0.0f;
+            lpEmphState_R = 0.0f;
+            deEmphX1_R = deEmphY1_R = 0.0f;
+            prevXdR = 0.0f;
+        }
     }
 
     // Main processing: drive in [0, 1]
@@ -127,23 +136,23 @@ public:
         float b, c, d, e;
         if (consoleType == ConsoleType::ESeries)
         {
-            // Calibrated to E-Series at nominal (drive=0.5, input amp A=0.5):
-            //   H2 ≈ 0.025%   (JFET input asymmetry + VCA log-antilog)
-            //   H3 ≈ 0.065%   (symmetric transistor clipping — dominant)
-            //   H4 ≈ 0.0016%  (negligible, < 0.005% spec)
-            //   H5 ≈ 0.008%   (spikes at hard clip, ≈85% of THD at drive=1)
-            b = 0.001f;    // H2 even
-            c = 0.0104f;   // H3 odd  — dominant
+            // E-Series (models SSL 4000E): asymmetric JFET input + Jensen transformer
+            // → even-order (H2) dominant, warm/gritty character.
+            // Distortion limited to H2 and H3 with negligible higher harmonics.
+            b = 0.012f;    // H2 even — dominant (JFET square-law + transformer asymmetry)
+            c = 0.004f;    // H3 odd  — present but secondary
             d = 0.001f;    // H4 even — negligible
-            e = 0.0205f;   // H5 odd  — spikes at hard push
+            e = 0.001f;    // H5 odd  — negligible
         }
         else
         {
-            // G-Series: ≈50% of E-Series distortion (better components, cleaner VCA)
-            b = 0.0005f;
-            c = 0.0052f;
-            d = 0.0005f;
-            e = 0.0103f;
+            // G-Series (models SSL 4000G): refined dbx 2150 VCA, more symmetric clipping
+            // → odd-order (H3) dominant, smoother/polished character.
+            // Cleaner overall with ~60% of E-Series THD.
+            b = 0.003f;    // H2 even — present but secondary
+            c = 0.008f;    // H3 odd  — dominant (symmetric push-pull)
+            d = 0.0005f;   // H4 even — negligible
+            e = 0.001f;    // H5 odd  — negligible
         }
 
         // y = x_driven + harmonic terms (distortion only; divide by driveAmount to normalise).
@@ -165,7 +174,7 @@ public:
         y = processDCBlocker(y, isLeft);
 
         // ── 6. Console noise floor ────────────────────────────────────────────
-        // SSL -94 dB noise floor, slightly higher with drive engaged
+        // Console -94 dB noise floor, slightly higher with drive engaged
         float noiseLevel = 0.00002f * (1.0f + drive * 0.3f);
         y += noiseDist(noiseGen) * noiseLevel;
 
@@ -175,7 +184,13 @@ public:
         float wetMix = juce::jlimit(0.0f, 1.0f, drive * 1.4f);
         float result = input * (1.0f - wetMix) + y * wetMix;
 
-        return safeIsFinite(result) ? result : input;
+        if (!safeIsFinite(result))
+        {
+            // Reset affected channel's state to prevent persistent NaN corruption
+            resetChannel(isLeft);
+            return 0.0f;
+        }
+        return result;
     }
 
 private:

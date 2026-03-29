@@ -27,6 +27,12 @@ public:
 
     float processSample(float input)
     {
+        if (!std::isfinite(input))
+        {
+            x1 = 0.0f;
+            y1 = 0.0f;
+            return 0.0f;
+        }
         // y[n] = x[n] - x[n-1] + R * y[n-1]
         float output = input - x1 + coefficient * y1;
         x1 = input;
