@@ -137,6 +137,9 @@ void TubeEQCurveDisplay::timerCallback()
     static const float lfFreqValues[] = { 20.0f, 30.0f, 60.0f, 100.0f };
     static const float hfBoostFreqValues[] = { 3000.0f, 4000.0f, 5000.0f, 8000.0f, 10000.0f, 12000.0f, 16000.0f };
     static const float hfAttenFreqValues[] = { 5000.0f, 10000.0f, 20000.0f };
+    static const float midLowFreqValues[] = { 200.0f, 300.0f, 500.0f, 700.0f, 1000.0f };
+    static const float midDipFreqValues[] = { 200.0f, 300.0f, 500.0f, 700.0f, 1000.0f, 1500.0f, 2000.0f };
+    static const float midHighFreqValues[] = { 1500.0f, 2000.0f, 3000.0f, 4000.0f, 5000.0f };
 
     // Read Tube EQ mode parameters (freq params are indices, convert to Hz)
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecLfBoostGain))
@@ -167,6 +170,31 @@ void TubeEQCurveDisplay::timerCallback()
     if (auto* p = params.getRawParameterValue(ParamIDs::pultecTubeDrive))
         newParams.tubeDrive = p->load();
 
+    // Mid Dip/Peak section
+    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidEnabled))
+        newParams.midEnabled = p->load() > 0.5f;
+    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidLowFreq))
+    {
+        int idx = juce::jlimit(0, 4, static_cast<int>(p->load()));
+        newParams.midLowFreq = midLowFreqValues[idx];
+    }
+    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidLowPeak))
+        newParams.midLowPeak = p->load();
+    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidDipFreq))
+    {
+        int idx = juce::jlimit(0, 6, static_cast<int>(p->load()));
+        newParams.midDipFreq = midDipFreqValues[idx];
+    }
+    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidDip))
+        newParams.midDip = p->load();
+    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidHighFreq))
+    {
+        int idx = juce::jlimit(0, 4, static_cast<int>(p->load()));
+        newParams.midHighFreq = midHighFreqValues[idx];
+    }
+    if (auto* p = params.getRawParameterValue(ParamIDs::pultecMidHighPeak))
+        newParams.midHighPeak = p->load();
+
     // Compare using epsilon for floating point values
     auto floatsDiffer = [](float a, float b) {
         return std::abs(a - b) > 0.001f;
@@ -180,7 +208,14 @@ void TubeEQCurveDisplay::timerCallback()
                    floatsDiffer(newParams.hfBoostBandwidth, cachedParams.hfBoostBandwidth) ||
                    floatsDiffer(newParams.hfAttenGain, cachedParams.hfAttenGain) ||
                    floatsDiffer(newParams.hfAttenFreq, cachedParams.hfAttenFreq) ||
-                   floatsDiffer(newParams.tubeDrive, cachedParams.tubeDrive);
+                   floatsDiffer(newParams.tubeDrive, cachedParams.tubeDrive) ||
+                   (newParams.midEnabled != cachedParams.midEnabled) ||
+                   floatsDiffer(newParams.midLowFreq, cachedParams.midLowFreq) ||
+                   floatsDiffer(newParams.midLowPeak, cachedParams.midLowPeak) ||
+                   floatsDiffer(newParams.midDipFreq, cachedParams.midDipFreq) ||
+                   floatsDiffer(newParams.midDip, cachedParams.midDip) ||
+                   floatsDiffer(newParams.midHighFreq, cachedParams.midHighFreq) ||
+                   floatsDiffer(newParams.midHighPeak, cachedParams.midHighPeak);
 
     if (changed || needsRepaint)
     {
@@ -521,6 +556,70 @@ float TubeEQCurveDisplay::calculateHFAttenResponse(float freq) const
     return gain * normalized;
 }
 
+float TubeEQCurveDisplay::calculateMidResponse(float freq) const
+{
+    if (!cachedParams.midEnabled)
+        return 0.0f;
+
+    if (cachedParams.midLowPeak < 0.01f && cachedParams.midDip < 0.01f && cachedParams.midHighPeak < 0.01f)
+        return 0.0f;
+
+    double sampleRate = audioProcessor.getSampleRate();
+    if (sampleRate <= 0.0) sampleRate = 44100.0;
+
+    double omega = juce::MathConstants<double>::twoPi * freq / sampleRate;
+    double cosw = std::cos(omega);
+    double sinw = std::sin(omega);
+    double cos2w = std::cos(2.0 * omega);
+    double sin2w = std::sin(2.0 * omega);
+
+    auto biquadMag = [&](double b0, double b1, double b2, double a1, double a2) -> double
+    {
+        double numR = b0 + b1 * cosw + b2 * cos2w;
+        double numI = -(b1 * sinw + b2 * sin2w);
+        double denR = 1.0 + a1 * cosw + a2 * cos2w;
+        double denI = -(a1 * sinw + a2 * sin2w);
+        double numMag2 = numR * numR + numI * numI;
+        double denMag2 = denR * denR + denI * denI;
+        return (denMag2 > 1e-20) ? std::sqrt(numMag2 / denMag2) : 1.0;
+    };
+
+    // Analog-matched peaking filter magnitude (must match setTubeEQPeakCoeffs in TubeEQProcessor.h)
+    auto peakMag = [&](float fc, float q, float gainDB) -> double
+    {
+        double tubeQ = std::max(0.01, (double)q * 0.85);
+        double fcD = std::max(1.0, std::min((double)fc, sampleRate * 0.4998));
+        double bw = fcD / tubeQ;
+        double kbw = std::tan(juce::MathConstants<double>::pi * std::min(bw, sampleRate * 0.4998) / sampleRate);
+        double A = std::pow(10.0, (double)gainDB / 40.0);
+        double cosW = std::cos(2.0 * juce::MathConstants<double>::pi * fcD / sampleRate);
+
+        double b0 = (1.0 + kbw * A) / (1.0 + kbw / A);
+        double b1 = (-2.0 * cosW) / (1.0 + kbw / A);
+        double b2 = (1.0 - kbw * A) / (1.0 + kbw / A);
+        double a1 = (-2.0 * cosW) / (1.0 + kbw / A);
+        double a2 = (1.0 - kbw / A) / (1.0 + kbw / A);
+
+        return biquadMag(b0, b1, b2, a1, a2);
+    };
+
+    double combined = 1.0;
+
+    // Mid Low Peak: Q=1.2, gain = midLowPeak * 1.2 dB
+    if (cachedParams.midLowPeak > 0.01f)
+        combined *= peakMag(cachedParams.midLowFreq, 1.2f, cachedParams.midLowPeak * 1.2f);
+
+    // Mid Dip: Q=0.8, gain = -midDip * 1.0 dB
+    if (cachedParams.midDip > 0.01f)
+        combined *= peakMag(cachedParams.midDipFreq, 0.8f, -cachedParams.midDip * 1.0f);
+
+    // Mid High Peak: Q=1.4, gain = midHighPeak * 1.2 dB
+    if (cachedParams.midHighPeak > 0.01f)
+        combined *= peakMag(cachedParams.midHighFreq, 1.4f, cachedParams.midHighPeak * 1.2f);
+
+    return static_cast<float>(20.0 * std::log10(combined + 1e-10));
+}
+
 float TubeEQCurveDisplay::calculateCombinedResponse(float freq) const
 {
     float response = 0.0f;
@@ -531,6 +630,9 @@ float TubeEQCurveDisplay::calculateCombinedResponse(float freq) const
     // HF sections
     response += calculateHFBoostResponse(freq);
     response += calculateHFAttenResponse(freq);
+
+    // Mid Dip/Peak section
+    response += calculateMidResponse(freq);
 
     return response;
 }
