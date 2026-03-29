@@ -5,8 +5,9 @@ ChordAnalyzerEditor::ChordAnalyzerEditor(ChordAnalyzerProcessor& p)
     : AudioProcessorEditor(&p),
       audioProcessor(p)
 {
-    setSize(800, 520);  // Slightly taller for better spacing
     setLookAndFeel(&lookAndFeel);
+    resizeHelper.initialize(this, &audioProcessor, 800, 520, 600, 400, 1200, 780, false);
+    setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     setupChordDisplay();
     setupKeySelection();
@@ -21,6 +22,7 @@ ChordAnalyzerEditor::ChordAnalyzerEditor(ChordAnalyzerProcessor& p)
 
 ChordAnalyzerEditor::~ChordAnalyzerEditor()
 {
+    resizeHelper.saveSize();
     setLookAndFeel(nullptr);
 }
 
@@ -291,6 +293,8 @@ void ChordAnalyzerEditor::resized()
     // Supporters overlay
     if (supportersOverlay)
         supportersOverlay->setBounds(getLocalBounds());
+
+    resizeHelper.updateResizer();
 }
 
 //==============================================================================

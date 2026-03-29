@@ -27,6 +27,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | Multi-Q | `multi-q` | `plugins/multi-q/` | Universal EQ (Digital/British/Tube) |
 | Convolution Reverb | `convolution-reverb` | `plugins/convolution-reverb/` | IR-based reverb |
 | DuskVerb | `duskverb` | `plugins/DuskVerb/` | Algorithmic reverb (Hadamard FDN) |
+| Chord Analyzer | `chord-analyzer` | `plugins/chord-analyzer/` | MIDI chord detection + theory |
 | GrooveMind | `groovemind` | `plugins/groovemind/` | ML drum generator (future) |
 
 ## Version Management & Releasing
@@ -60,6 +61,7 @@ Professional audio VST3/LV2/AU plugins built with JUCE. Published as "Dusk Audio
 | TapeMachine | `TAPEMACHINE_DEFAULT_VERSION` |
 | Multi-Q | `MULTIQ_DEFAULT_VERSION` |
 | DuskVerb | `DUSKVERB_DEFAULT_VERSION` |
+| Chord Analyzer | `CHORDANALYZER_DEFAULT_VERSION` |
 | Others | `<NAME>_DEFAULT_VERSION` |
 
 **Website**: `~/projects/dusk-audio.github.io/_data/plugins.yml` - updated automatically by `/release-plugin`
@@ -104,6 +106,7 @@ JUCE automatically installs the `.component` to `~/Library/Audio/Plug-Ins/Compon
 | `multiq` | Multi-Q |
 | `convolution` | Convolution Reverb |
 | `duskverb` | DuskVerb |
+| `chord` | Chord Analyzer |
 
 **Validation**: `./tests/run_plugin_tests.sh --plugin "<Name>" --skip-audio`
 

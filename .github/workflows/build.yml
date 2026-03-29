@@ -12,6 +12,7 @@ on:
       - 'convolution-reverb-v*' # Convolution Reverb only
       - 'groovemind-v*'         # GrooveMind only
       - 'duskverb-v*'           # DuskVerb only
+      - 'chord-analyzer-v*'    # Chord Analyzer only
   workflow_dispatch:
     inputs:
       plugin:
@@ -29,6 +30,7 @@ on:
           - 'convolution-reverb'
           - 'groovemind'
           - 'duskverb'
+          - 'chord-analyzer'
 
 env:
   BUILD_TYPE: Release
@@ -95,6 +97,10 @@ jobs:
               TARGET="DuskVerb_All"
               NAME="DuskVerb"
               RELEASE_NAME="duskverb"
+            elif [[ "$TAG" == chord-analyzer-v* ]]; then
+              TARGET="ChordAnalyzer_All"
+              NAME="Chord Analyzer"
+              RELEASE_NAME="chord-analyzer"
             fi
           elif [[ -n "$MANUAL_PLUGIN" ]]; then
             case "$MANUAL_PLUGIN" in
@@ -106,6 +112,7 @@ jobs:
               convolution-reverb) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
               duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
+              chord-analyzer) TARGET="ChordAnalyzer_All"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
             esac
           fi
 
