@@ -5,6 +5,53 @@
 #include <cmath>
 #include <cstring>
 
+// ---------------------------------------------------------------------------
+// Multi-point output tap tables for Hall and Plate algorithms.
+// Each tap reads from a fractional position within one of the 16 FDN delay lines.
+// Positions are spread across different fractions with alternating signs to avoid
+// comb filtering and maximize decorrelation — inspired by Dattorro's 7-tap output.
+// ---------------------------------------------------------------------------
+
+// Hall: 24 taps per channel for maximum density on long-decay presets.
+// Three reads per delay line at well-separated fractional positions, plus
+// cross-reads from the opposite channel's assigned lines. More taps = more
+// overlapping echo paths = smoother wash, critical for RT60 > 5s presets.
+static constexpr FDNOutputTap kHallMultiTapsL[] = {
+    // Primary: three positions each from 8 left-assigned channels
+    { 0, 0.23f, +1.0f}, { 0, 0.54f, -1.0f}, { 0, 0.81f, +1.0f},
+    { 3, 0.19f, -1.0f}, { 3, 0.47f, +1.0f}, { 3, 0.76f, -1.0f},
+    { 5, 0.27f, +1.0f}, { 5, 0.61f, -1.0f},
+    { 7, 0.35f, +1.0f}, { 7, 0.69f, -1.0f},
+    { 8, 0.31f, +1.0f}, { 8, 0.72f, -1.0f},
+    {10, 0.22f, +1.0f}, {10, 0.58f, -1.0f},
+    {12, 0.41f, +1.0f}, {12, 0.78f, -1.0f},
+    // Cross-reads from right-assigned channels
+    { 2, 0.43f, +1.0f}, { 4, 0.33f, -1.0f},
+    { 9, 0.57f, +1.0f}, {11, 0.39f, -1.0f},
+    {13, 0.25f, +1.0f}, {14, 0.66f, -1.0f},
+    { 6, 0.51f, +1.0f}, {15, 0.37f, -1.0f},
+};
+
+static constexpr FDNOutputTap kHallMultiTapsR[] = {
+    // Primary: three positions each from 8 right-assigned channels
+    { 1, 0.26f, +1.0f}, { 1, 0.57f, -1.0f}, { 1, 0.84f, +1.0f},
+    { 2, 0.21f, -1.0f}, { 2, 0.49f, +1.0f}, { 2, 0.79f, -1.0f},
+    { 4, 0.29f, +1.0f}, { 4, 0.63f, -1.0f},
+    { 6, 0.37f, +1.0f}, { 6, 0.71f, -1.0f},
+    { 9, 0.33f, +1.0f}, { 9, 0.74f, -1.0f},
+    {11, 0.24f, +1.0f}, {11, 0.60f, -1.0f},
+    {13, 0.43f, +1.0f}, {13, 0.80f, -1.0f},
+    // Cross-reads from left-assigned channels
+    { 0, 0.45f, +1.0f}, { 3, 0.35f, -1.0f},
+    { 8, 0.59f, +1.0f}, {10, 0.41f, -1.0f},
+    {12, 0.27f, +1.0f}, {15, 0.68f, -1.0f},
+    { 5, 0.53f, +1.0f}, { 7, 0.31f, -1.0f},
+};
+
+// Plate: uses standard endpoint taps (not multi-point).
+// Plate's original peak ratio is already close to Valhalla (median ~1.0x).
+// Multi-point tapping over-smooths Plate's short delay lines to 0.1x.
+
 void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 {
     maxBlockSize_ = maxBlockSize;
@@ -346,7 +393,6 @@ void DuskVerbEngine::applyAlgorithm (int index)
 {
     config_ = &getAlgorithmConfig (index);
     useDattorroTank_ = config_->useDattorroTank;
-
     // Clear buffers to prevent noise burst from old delay structure
     fdn_.clearBuffers();
     dattorroTank_.clearBuffers();
@@ -400,6 +446,20 @@ void DuskVerbEngine::applyAlgorithm (int index)
     fdn_.setDualSlope (config_->dualSlopeRatio, config_->dualSlopeFastCount,
                        config_->dualSlopeFastGain);
     fdn_.setStereoCoupling (config_->stereoCoupling);
+
+    // Hall: short inline allpasses (7-47 samples, coeff=0.20) multiply echo
+    // density inside the feedback loop with minimal spectral shift, PLUS
+    // multi-point output tapping (24 taps) smooths the output further.
+    // This dual approach targets the long-decay outliers (Pad Hall, Very Nice Hall).
+    bool isHall = (config_ == &kHall);
+    fdn_.setUseShortInlineAP (isHall);
+
+    // Multi-point output for Hall only — Plate's original endpoint taps already
+    // match Valhalla (median 1.0x), multi-point over-smooths Plate to 0.1x.
+    if (isHall)
+        fdn_.setMultiPointOutput (kHallMultiTapsL, 24, kHallMultiTapsR, 24);
+    else
+        fdn_.setMultiPointOutput (nullptr, 0, nullptr, 0);
 
     // Output EQ (low shelf at 250Hz + mid parametric + high shelf)
     lowShelfEnabled_ = (config_->outputLowShelfDB != 0.0f);

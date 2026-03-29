@@ -228,7 +228,8 @@ static constexpr AlgorithmConfig kHall = {
     0.70f,           // airDampingScale: 0.70
     0.5f, 1.5f,      // size range
     0.25f,           // ER crossfeed: 0.25 (0.22 dropped MFCC/EDT — keep at 0.25)
-    0.0f,            // inline diffusion: off (even 0.05 wrecked centroid_late 97.6→69.9, spectral_tilt 95.4→58.8)
+    0.0f,            // inline diffusion: off (short allpasses tested at 0.20-0.50 — no measurable effect on peaks)
+                     // Long allpasses (41-131) wrecked centroid_late. Multi-point output tapping handles density.
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off
     40.0f,           // structural LF damping: 40Hz HP (90Hz destroyed bass ratio and raised centroid — output EQ handles 80-250Hz instead)
