@@ -191,6 +191,17 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP3_[i].mask = apBufSize - 1;
     }
 
+    // Short inline allpass cascade for Hall
+    for (int i = 0; i < N; ++i)
+    {
+        int apDelay = static_cast<int> (std::ceil (
+            static_cast<float> (kInlineAPDelaysShort[i]) * rateRatio));
+        int apBufSize = DspUtils::nextPowerOf2 (apDelay + 1);
+        inlineAPShort_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
+        inlineAPShort_[i].writePos = 0;
+        inlineAPShort_[i].mask = apBufSize - 1;
+    }
+
     // Anti-alias LP coefficient: ~17kHz at any sample rate
     // At 44.1kHz: -3dB at 17kHz, -0.3dB at 12kHz (preserves air)
     // After 50 iterations: -15dB at 17kHz (kills aliasing), -15dB at 20kHz
@@ -275,10 +286,18 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // causing the frozen tail to spectrally evolve rather than truly sustaining.
         if (inlineDiffCoeff_ > 0.0f && ! frozen_)
         {
-            for (int ch = 0; ch < N; ++ch)
-                delayOut[ch] = inlineAP_[ch].process (delayOut[ch], inlineDiffCoeff_);
+            if (useShortInlineAP_)
+            {
+                for (int ch = 0; ch < N; ++ch)
+                    delayOut[ch] = inlineAPShort_[ch].process (delayOut[ch], inlineDiffCoeff_);
+            }
+            else
+            {
+                for (int ch = 0; ch < N; ++ch)
+                    delayOut[ch] = inlineAP_[ch].process (delayOut[ch], inlineDiffCoeff_);
+            }
         }
-        if (inlineDiffCoeff2_ > 0.0f && ! frozen_)
+        if (! useShortInlineAP_ && inlineDiffCoeff2_ > 0.0f && ! frozen_)
         {
             for (int ch = 0; ch < N; ++ch)
                 delayOut[ch] = inlineAP2_[ch].process (delayOut[ch], inlineDiffCoeff2_);
@@ -430,14 +449,58 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             dl.writePos = (dl.writePos + 1) & dl.mask;
         }
 
-        // --- 4) Tap decorrelated stereo outputs with signed summation ---
-        // Per-channel outputTapGain_ enables dual-slope: fast channels are boosted
-        // to create a loud initial burst, slow channels at unity form the quiet tail.
+        // --- 4) Tap decorrelated stereo outputs ---
         float outL = 0.0f, outR = 0.0f;
-        for (int t = 0; t < kNumOutputTaps; ++t)
+
+        if (useMultiPointOutput_)
         {
-            outL += delayOut[leftTaps_[t]] * leftSigns_[t] * outputTapGain_[leftTaps_[t]] * outputGainScale_[leftTaps_[t]];
-            outR += delayOut[rightTaps_[t]] * rightSigns_[t] * outputTapGain_[rightTaps_[t]] * outputGainScale_[rightTaps_[t]];
+            // Multi-point output: read from fractional positions within delay lines.
+            // Each tap reads at positionFrac * delayLength, producing multiple virtual
+            // output paths from the same delay structure — Dattorro-inspired density.
+            for (int t = 0; t < numMultiTapsL_; ++t)
+            {
+                const auto& tap = multiTapsL_[t];
+                const auto& dl  = delayLines_[tap.channelIndex];
+                float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
+                int   iDelay    = static_cast<int> (readDelay);
+                float frac      = readDelay - static_cast<float> (iDelay);
+                int   i0        = (dl.writePos - 1 - iDelay) & dl.mask;
+                int   i1        = (i0 - 1) & dl.mask;
+                float sample    = dl.buffer[static_cast<size_t> (i0)]
+                                + frac * (dl.buffer[static_cast<size_t> (i1)]
+                                        - dl.buffer[static_cast<size_t> (i0)]);
+                outL += sample * tap.sign;
+            }
+            for (int t = 0; t < numMultiTapsR_; ++t)
+            {
+                const auto& tap = multiTapsR_[t];
+                const auto& dl  = delayLines_[tap.channelIndex];
+                float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
+                int   iDelay    = static_cast<int> (readDelay);
+                float frac      = readDelay - static_cast<float> (iDelay);
+                int   i0        = (dl.writePos - 1 - iDelay) & dl.mask;
+                int   i1        = (i0 - 1) & dl.mask;
+                float sample    = dl.buffer[static_cast<size_t> (i0)]
+                                + frac * (dl.buffer[static_cast<size_t> (i1)]
+                                        - dl.buffer[static_cast<size_t> (i0)]);
+                outR += sample * tap.sign;
+            }
+            // Normalize by 1/N — arithmetic mean of tap reads.
+            // Blends fractional positions into a smooth average, reducing discrete
+            // peak prominence. Hall improved from 5.1x to 3.1x with 24 taps at 1/N.
+            outL /= static_cast<float> (numMultiTapsL_);
+            outR /= static_cast<float> (numMultiTapsR_);
+        }
+        else
+        {
+            // Standard 8-tap endpoint output with signed summation.
+            // Per-channel outputTapGain_ enables dual-slope: fast channels are boosted
+            // to create a loud initial burst, slow channels at unity form the quiet tail.
+            for (int t = 0; t < kNumOutputTaps; ++t)
+            {
+                outL += delayOut[leftTaps_[t]] * leftSigns_[t] * outputTapGain_[leftTaps_[t]] * outputGainScale_[leftTaps_[t]];
+                outR += delayOut[rightTaps_[t]] * rightSigns_[t] * outputTapGain_[rightTaps_[t]] * outputGainScale_[rightTaps_[t]];
+            }
         }
 
         // Linear output: 1/sqrt(8) normalization + 6dB level match.
@@ -573,6 +636,48 @@ void FDNReverb::setInlineDiffusion (float coeff)
     // ringing for longer-delay modes (Hall, Plate). Density is instead
     // improved via 3-stage output diffusion (post-FDN, no feedback impact).
     inlineDiffCoeff3_ = 0.0f;
+}
+
+void FDNReverb::setUseShortInlineAP (bool use)
+{
+    useShortInlineAP_ = use;
+}
+
+void FDNReverb::setMultiPointOutput (const FDNOutputTap* left, int numL,
+                                     const FDNOutputTap* right, int numR)
+{
+    if (left == nullptr || numL <= 0 || right == nullptr || numR <= 0)
+    {
+        useMultiPointOutput_ = false;
+        numMultiTapsL_ = 0;
+        numMultiTapsR_ = 0;
+        return;
+    }
+    numMultiTapsL_ = std::min (numL, static_cast<int> (kMaxMultiTaps));
+    numMultiTapsR_ = std::min (numR, static_cast<int> (kMaxMultiTaps));
+    for (int i = 0; i < numMultiTapsL_; ++i)
+    {
+        if (left[i].channelIndex < 0 || left[i].channelIndex >= N)
+        {
+            useMultiPointOutput_ = false;
+            numMultiTapsL_ = 0;
+            numMultiTapsR_ = 0;
+            return;
+        }
+        multiTapsL_[i] = left[i];
+    }
+    for (int i = 0; i < numMultiTapsR_; ++i)
+    {
+        if (right[i].channelIndex < 0 || right[i].channelIndex >= N)
+        {
+            useMultiPointOutput_ = false;
+            numMultiTapsL_ = 0;
+            numMultiTapsR_ = 0;
+            return;
+        }
+        multiTapsR_[i] = right[i];
+    }
+    useMultiPointOutput_ = true;
 }
 
 void FDNReverb::setHadamardPerturbation (float amount)
@@ -799,6 +904,7 @@ void FDNReverb::clearBuffers()
         inlineAP_[i].clear();
         inlineAP2_[i].clear();
         inlineAP3_[i].clear();
+        inlineAPShort_[i].clear();
         dampFilter_[i].reset();
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
@@ -901,8 +1007,11 @@ void FDNReverb::updateDecayCoefficients()
         if (inlineDiffCoeff_ > 0.0f)
         {
             float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-            effectiveLength += static_cast<float> (kInlineAPDelays[i]) * rateRatio;
-            if (inlineDiffCoeff2_ > 0.0f)
+            if (useShortInlineAP_)
+                effectiveLength += static_cast<float> (kInlineAPDelaysShort[i]) * rateRatio;
+            else
+                effectiveLength += static_cast<float> (kInlineAPDelays[i]) * rateRatio;
+            if (! useShortInlineAP_ && inlineDiffCoeff2_ > 0.0f)
                 effectiveLength += static_cast<float> (kInlineAPDelays2[i]) * rateRatio;
             if (inlineDiffCoeff3_ > 0.0f)
                 effectiveLength += static_cast<float> (kInlineAPDelays3[i]) * rateRatio;
