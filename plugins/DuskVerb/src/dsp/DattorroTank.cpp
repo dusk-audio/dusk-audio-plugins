@@ -72,6 +72,44 @@ DattorroTank::DattorroTank()
 
 // -----------------------------------------------------------------------
 
+void DattorroTank::setHallScale (bool enable)
+{
+    if (enable)
+    {
+        leftTank_.ap1BaseDelay     = kLeftAP1BaseHall;
+        leftTank_.delay1BaseDelay  = kLeftDel1BaseHall;
+        leftTank_.ap2BaseDelay     = kLeftAP2BaseHall;
+        leftTank_.delay2BaseDelay  = kLeftDel2BaseHall;
+        rightTank_.ap1BaseDelay    = kRightAP1BaseHall;
+        rightTank_.delay1BaseDelay = kRightDel1BaseHall;
+        rightTank_.ap2BaseDelay    = kRightAP2BaseHall;
+        rightTank_.delay2BaseDelay = kRightDel2BaseHall;
+        for (int i = 0; i < kNumDensityAPs; ++i)
+        {
+            leftTank_.densityAPBase[i]  = kLeftDensityAPBaseHall[i];
+            rightTank_.densityAPBase[i] = kRightDensityAPBaseHall[i];
+        }
+    }
+    else
+    {
+        leftTank_.ap1BaseDelay     = kLeftAP1Base;
+        leftTank_.delay1BaseDelay  = kLeftDel1Base;
+        leftTank_.ap2BaseDelay     = kLeftAP2Base;
+        leftTank_.delay2BaseDelay  = kLeftDel2Base;
+        rightTank_.ap1BaseDelay    = kRightAP1Base;
+        rightTank_.delay1BaseDelay = kRightDel1Base;
+        rightTank_.ap2BaseDelay    = kRightAP2Base;
+        rightTank_.delay2BaseDelay = kRightDel2Base;
+        for (int i = 0; i < kNumDensityAPs; ++i)
+        {
+            leftTank_.densityAPBase[i]  = kLeftDensityAPBase[i];
+            rightTank_.densityAPBase[i] = kRightDensityAPBase[i];
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+
 void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
