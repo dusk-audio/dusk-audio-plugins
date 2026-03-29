@@ -6,6 +6,7 @@
 #include "ChordAnalyzerLookAndFeel.h"
 #include "TheoryTooltips.h"
 #include "../../shared/SupportersOverlay.h"
+#include "../../shared/ScalableEditorHelper.h"
 
 //==============================================================================
 class ChordAnalyzerEditor : public juce::AudioProcessorEditor,
@@ -24,6 +25,7 @@ public:
 private:
     ChordAnalyzerProcessor& audioProcessor;
     ChordAnalyzerLookAndFeel lookAndFeel;
+    ScalableEditorHelper resizeHelper;
 
     //==========================================================================
     // Supporters overlay
