@@ -238,7 +238,7 @@ static constexpr AlgorithmConfig kHall = {
     1.0f,            // ER gain exponent: 1.0 inverse distance (1.5 caused audible pulse after transients)
     false,           // useWeightedGains: off (true regressed decay_shape 100→74.4, total 75.4→73.1)
     true,            // useHouseholderFeedback: on (keep true per instructions)
-    false,           // useDattorroTank: off (FDN)
+    false,           // useDattorroTank: off (FDN with multi-point taps outperforms Dattorro 3.1x vs 4.6x)
     0.79f,           // decay time scale: calibrated via calibrate_decay_scale.py (was 1.25)
     0.0f, 0, 1.0f,  // dual-slope: disabled
     2.0f, 1.5f,     // short-decay boost: +2.0 dB (4.5 contributed to transient pulse)

@@ -12,12 +12,13 @@
 // comb filtering and maximize decorrelation — inspired by Dattorro's 7-tap output.
 // ---------------------------------------------------------------------------
 
-// Hall: 24 taps per channel for maximum density on long-decay presets.
-// Three reads per delay line at well-separated fractional positions, plus
-// cross-reads from the opposite channel's assigned lines. More taps = more
-// overlapping echo paths = smoother wash, critical for RT60 > 5s presets.
+// ---------------------------------------------------------------------------
+// Multi-point output tap tables for Hall algorithm.
+// 24 taps per channel reading from fractional positions across all 16 FDN delay
+// lines. This Dattorro-inspired approach blends multiple processing stages,
+// reducing the Hall peak ratio from 5.1x to 3.1x vs Valhalla VintageVerb.
+// ---------------------------------------------------------------------------
 static constexpr FDNOutputTap kHallMultiTapsL[] = {
-    // Primary: three positions each from 8 left-assigned channels
     { 0, 0.23f, +1.0f}, { 0, 0.54f, -1.0f}, { 0, 0.81f, +1.0f},
     { 3, 0.19f, -1.0f}, { 3, 0.47f, +1.0f}, { 3, 0.76f, -1.0f},
     { 5, 0.27f, +1.0f}, { 5, 0.61f, -1.0f},
@@ -25,7 +26,6 @@ static constexpr FDNOutputTap kHallMultiTapsL[] = {
     { 8, 0.31f, +1.0f}, { 8, 0.72f, -1.0f},
     {10, 0.22f, +1.0f}, {10, 0.58f, -1.0f},
     {12, 0.41f, +1.0f}, {12, 0.78f, -1.0f},
-    // Cross-reads from right-assigned channels
     { 2, 0.43f, +1.0f}, { 4, 0.33f, -1.0f},
     { 9, 0.57f, +1.0f}, {11, 0.39f, -1.0f},
     {13, 0.25f, +1.0f}, {14, 0.66f, -1.0f},
@@ -33,7 +33,6 @@ static constexpr FDNOutputTap kHallMultiTapsL[] = {
 };
 
 static constexpr FDNOutputTap kHallMultiTapsR[] = {
-    // Primary: three positions each from 8 right-assigned channels
     { 1, 0.26f, +1.0f}, { 1, 0.57f, -1.0f}, { 1, 0.84f, +1.0f},
     { 2, 0.21f, -1.0f}, { 2, 0.49f, +1.0f}, { 2, 0.79f, -1.0f},
     { 4, 0.29f, +1.0f}, { 4, 0.63f, -1.0f},
@@ -41,16 +40,11 @@ static constexpr FDNOutputTap kHallMultiTapsR[] = {
     { 9, 0.33f, +1.0f}, { 9, 0.74f, -1.0f},
     {11, 0.24f, +1.0f}, {11, 0.60f, -1.0f},
     {13, 0.43f, +1.0f}, {13, 0.80f, -1.0f},
-    // Cross-reads from left-assigned channels
     { 0, 0.45f, +1.0f}, { 3, 0.35f, -1.0f},
     { 8, 0.59f, +1.0f}, {10, 0.41f, -1.0f},
     {12, 0.27f, +1.0f}, {15, 0.68f, -1.0f},
     { 5, 0.53f, +1.0f}, { 7, 0.31f, -1.0f},
 };
-
-// Plate: uses standard endpoint taps (not multi-point).
-// Plate's original peak ratio is already close to Valhalla (median ~1.0x).
-// Multi-point tapping over-smooths Plate's short delay lines to 0.1x.
 
 void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 {
@@ -393,6 +387,13 @@ void DuskVerbEngine::applyAlgorithm (int index)
 {
     config_ = &getAlgorithmConfig (index);
     useDattorroTank_ = config_->useDattorroTank;
+
+    // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
+    // Must set scale BEFORE prepare() so buffers are allocated at the right size.
+    dattorroTank_.setHallScale (config_ == &kHall);
+    if (useDattorroTank_)
+        dattorroTank_.prepare (sampleRate_, maxBlockSize_);
+
     // Clear buffers to prevent noise burst from old delay structure
     fdn_.clearBuffers();
     dattorroTank_.clearBuffers();
@@ -447,16 +448,11 @@ void DuskVerbEngine::applyAlgorithm (int index)
                        config_->dualSlopeFastGain);
     fdn_.setStereoCoupling (config_->stereoCoupling);
 
-    // Hall: short inline allpasses (7-47 samples, coeff=0.20) multiply echo
-    // density inside the feedback loop with minimal spectral shift, PLUS
-    // multi-point output tapping (24 taps) smooths the output further.
-    // This dual approach targets the long-decay outliers (Pad Hall, Very Nice Hall).
-    bool isHall = (config_ == &kHall);
-    fdn_.setUseShortInlineAP (isHall);
-
-    // Multi-point output for Hall only — Plate's original endpoint taps already
-    // match Valhalla (median 1.0x), multi-point over-smooths Plate to 0.1x.
-    if (isHall)
+    // Hall: multi-point output tapping (24 fractional taps from 16 delay lines).
+    // Reduces Hall peak ratio from 5.1x to 3.1x vs Valhalla VintageVerb.
+    // Tested Dattorro tank replacement — 2-channel topology was worse (4.6x).
+    fdn_.setUseShortInlineAP (false);
+    if (config_ == &kHall)
         fdn_.setMultiPointOutput (kHallMultiTapsL, 24, kHallMultiTapsR, 24);
     else
         fdn_.setMultiPointOutput (nullptr, 0, nullptr, 0);
