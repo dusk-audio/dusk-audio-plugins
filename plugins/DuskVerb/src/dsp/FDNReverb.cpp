@@ -457,6 +457,7 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             // Multi-point output: read from fractional positions within delay lines.
             // Each tap reads at positionFrac * delayLength, producing multiple virtual
             // output paths from the same delay structure — Dattorro-inspired density.
+            // Standard multi-point fractional tap reading
             for (int t = 0; t < numMultiTapsL_; ++t)
             {
                 const auto& tap = multiTapsL_[t];
@@ -486,8 +487,6 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 outR += sample * tap.sign;
             }
             // Normalize by 1/N — arithmetic mean of tap reads.
-            // Blends fractional positions into a smooth average, reducing discrete
-            // peak prominence. Hall improved from 5.1x to 3.1x with 24 taps at 1/N.
             outL /= static_cast<float> (numMultiTapsL_);
             outR /= static_cast<float> (numMultiTapsR_);
         }

@@ -67,6 +67,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     diffuser_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize);
     dattorroTank_.prepare (sampleRate, maxBlockSize);
+    quadTank_.prepare (sampleRate, maxBlockSize);
     outputDiffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
 
@@ -208,8 +209,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         std::memset (scratchR_.data(), 0, static_cast<size_t> (numSamples) * sizeof (float));
     }
 
-    // Late reverb: route to Dattorro tank (Room) or Hadamard FDN (all other modes)
-    if (useDattorroTank_)
+    // Late reverb: route to QuadTank (Hall), Dattorro tank (Room), or FDN (others)
+    if (useQuadTank_)
+        quadTank_.process (scratchL_.data(), scratchR_.data(),
+                           scratchL_.data(), scratchR_.data(), numSamples);
+    else if (useDattorroTank_)
         dattorroTank_.process (scratchL_.data(), scratchR_.data(),
                                scratchL_.data(), scratchR_.data(), numSamples);
     else
@@ -400,6 +404,9 @@ void DuskVerbEngine::applyAlgorithm (int index)
 {
     config_ = &getAlgorithmConfig (index);
     useDattorroTank_ = config_->useDattorroTank;
+    // QuadTank available but FDN with 96-tap multi-point output produces
+    // fewer peaks (2.9x vs 3.8x) due to more averaging paths (96 vs 14 taps).
+    useQuadTank_ = false;
 
     // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
     // Must set scale BEFORE prepare() so buffers are allocated at the right size.
@@ -410,6 +417,7 @@ void DuskVerbEngine::applyAlgorithm (int index)
     // Clear buffers to prevent noise burst from old delay structure
     fdn_.clearBuffers();
     dattorroTank_.clearBuffers();
+    quadTank_.clearBuffers();
 
     // Push structural config to FDN (always configure it, even if inactive,
     // so switching away from Dattorro mode produces correct FDN output)
@@ -483,9 +491,11 @@ void DuskVerbEngine::applyAlgorithm (int index)
     if (!midEQEnabled_)
         midEQFilter_.reset();
 
-    // DattorroTank size range
+    // Tank size range and gain
     dattorroTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
     dattorroTank_.setLateGainScale (config_->lateGainScale);
+    quadTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
+    quadTank_.setLateGainScale (config_->lateGainScale);
 
     // Re-apply current parameter values with new scaling
     setDecayTime (decayTime_);
@@ -504,6 +514,7 @@ void DuskVerbEngine::setDecayTime (float seconds)
     float scaledDecay = seconds * config_->decayTimeScale;
     fdn_.setDecayTime (scaledDecay);
     dattorroTank_.setDecayTime (scaledDecay);
+    quadTank_.setDecayTime (scaledDecay);
 
     // Decay-dependent output compensation: boost at short decay times to match
     // reference reverb's higher energy density at low feedback coefficients.
@@ -525,6 +536,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     lastBassMult_ = mult;
     fdn_.setBassMultiply (mult * config_->bassMultScale);
     dattorroTank_.setBassMultiply (mult * config_->bassMultScale);
+    quadTank_.setBassMultiply (mult * config_->bassMultScale);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
@@ -539,6 +551,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
                        + config_->trebleMultScaleMax * trebleCurve;
     fdn_.setTrebleMultiply (scaledTreble);
     dattorroTank_.setTrebleMultiply (scaledTreble);
+    quadTank_.setTrebleMultiply (scaledTreble);
     // Re-compute structural HF damping with raw treble (not scaled by trebleMultScale).
     // Raw treble gives better differentiation: Concert Wave (raw=1.0) gets minimal
     // structural damping, while dark presets (raw=0.3) get significant damping.
@@ -549,6 +562,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
 {
     fdn_.setCrossoverFreq (hz);
     dattorroTank_.setCrossoverFreq (hz);
+    quadTank_.setCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setModDepth (float depth)
@@ -556,6 +570,7 @@ void DuskVerbEngine::setModDepth (float depth)
     lastModDepth_ = depth;
     fdn_.setModDepth (depth * config_->modDepthScale);
     dattorroTank_.setModDepth (depth * config_->modDepthScale);
+    quadTank_.setModDepth (depth * config_->modDepthScale);
 }
 
 void DuskVerbEngine::setModRate (float hz)
@@ -563,12 +578,14 @@ void DuskVerbEngine::setModRate (float hz)
     lastModRate_ = hz;
     fdn_.setModRate (hz * config_->modRateScale);
     dattorroTank_.setModRate (hz * config_->modRateScale);
+    quadTank_.setModRate (hz * config_->modRateScale);
 }
 
 void DuskVerbEngine::setSize (float size)
 {
     fdn_.setSize (size);
     dattorroTank_.setSize (size);
+    quadTank_.setSize (size);
 }
 
 void DuskVerbEngine::setPreDelay (float milliseconds)
@@ -630,6 +647,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
         frozen_ = frozen;
         fdn_.setFreeze (frozen);
         dattorroTank_.setFreeze (frozen);
+        quadTank_.setFreeze (frozen);
     }
 }
 
