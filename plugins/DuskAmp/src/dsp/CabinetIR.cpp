@@ -13,7 +13,7 @@ void CabinetIR::prepare (double sampleRate, int maxBlockSize)
 
     convolution_.prepare (currentSpec_);
 
-    dryBuffer_.setSize (2, maxBlockSize, false, true, true);
+    dryBuffer_.setSize (1, maxBlockSize, false, true, true);
 
     filtersDirty_ = true;
 }
