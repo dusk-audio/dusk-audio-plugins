@@ -61,7 +61,9 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
         // DSP mode: upsample -> preamp -> tone stack -> power amp -> downsample
         oversamplingBuffer_.copyFrom (0, 0, monoBuffer_.data(), numSamples);
 
-        juce::dsp::AudioBlock<float> inputBlock (oversamplingBuffer_);
+        // AudioBlock must wrap only the active numSamples, not the full pre-allocated buffer
+        juce::dsp::AudioBlock<float> inputBlock (oversamplingBuffer_.getArrayOfWritePointers(),
+                                                  1, static_cast<size_t> (numSamples));
         auto oversampledBlock = oversampling_.processSamplesUp (inputBlock);
 
         int oversampledNumSamples = static_cast<int> (oversampledBlock.getNumSamples());
@@ -111,8 +113,11 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
     }
 
     // 5. Cabinet IR (runs at base rate, it's convolution)
+    //    Create a sub-buffer view of only the active numSamples to avoid
+    //    processing stale data from the pre-allocated cabBuffer_
     cabBuffer_.copyFrom (0, 0, monoBuffer_.data(), numSamples);
-    cabinet_.process (cabBuffer_);
+    juce::AudioBuffer<float> cabView (cabBuffer_.getArrayOfWritePointers(), 1, numSamples);
+    cabinet_.process (cabView);
     std::copy (cabBuffer_.getReadPointer (0),
                cabBuffer_.getReadPointer (0) + numSamples,
                monoBuffer_.data());
