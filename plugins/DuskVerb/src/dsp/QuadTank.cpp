@@ -268,7 +268,7 @@ void QuadTank::setModDepth (float depth)
     lastModDepthRaw_ = depth;
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     modDepthSamples_ = depth * 16.0f * rateRatio;
-    noiseModDepth_ = depth * 64.0f * rateRatio;  // 64 samples peak jitter for temporal smearing (was 12)
+    noiseModDepth_ = depth * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
 }
 
 void QuadTank::setModRate (float hz)
