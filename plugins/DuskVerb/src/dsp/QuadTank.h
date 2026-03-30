@@ -47,7 +47,7 @@ private:
     static constexpr double kBaseSampleRate = 44100.0;
     static constexpr float kSafetyClip = 4.0f;
     static constexpr int kNumTanks = 4;
-    static constexpr int kNumOutputTaps = 14;
+    static constexpr int kNumOutputTaps = 48;
     static constexpr int kNumDensityAPs = 3;
 
     // -----------------------------------------------------------------------
@@ -159,40 +159,45 @@ private:
         float sign;
     };
 
-    // Left output: reads from tanks 1,2,3 (cross-read) + tank 0
+    // Left output: 12 taps per tank (4×del1 + 4×del2 + 4×AP2), 48 total.
+    // Dense fractional reads maximize averaging for peak suppression.
     static constexpr OutputTap kLeftOutputTaps[kNumOutputTaps] = {
-        { 1, 0.120f,  1.0f },   // tank1 delay1 early
-        { 1, 0.680f,  1.0f },   // tank1 delay1 late
-        { 9, 0.480f, -1.0f },   // tank1 AP2
-        { 2, 0.450f,  1.0f },   // tank2 delay1 mid
-        { 6, 0.540f, -1.0f },   // tank2 delay2 mid
-        {10, 0.210f, -1.0f },   // tank2 AP2
-        { 7, 0.310f, -1.0f },   // tank3 delay2 early
-        { 3, 0.380f,  1.0f },   // tank3 delay1 mid
-        {11, 0.550f, -1.0f },   // tank3 AP2
-        { 0, 0.250f,  1.0f },   // tank0 delay1 early
-        { 0, 0.720f, -1.0f },   // tank0 delay1 late
-        { 4, 0.430f,  1.0f },   // tank0 delay2 mid
-        { 5, 0.620f, -1.0f },   // tank1 delay2 mid
-        { 8, 0.350f,  1.0f },   // tank0 AP2
+        // Tank 0: 12 taps
+        { 0, 0.13f,  1.0f },  { 0, 0.38f, -1.0f },  { 0, 0.62f,  1.0f },  { 0, 0.87f, -1.0f },
+        { 4, 0.18f, -1.0f },  { 4, 0.43f,  1.0f },  { 4, 0.68f, -1.0f },  { 4, 0.93f,  1.0f },
+        { 8, 0.15f,  1.0f },  { 8, 0.40f, -1.0f },  { 8, 0.65f,  1.0f },  { 8, 0.90f, -1.0f },
+        // Tank 1: 12 taps
+        { 1, 0.11f,  1.0f },  { 1, 0.36f, -1.0f },  { 1, 0.61f,  1.0f },  { 1, 0.86f, -1.0f },
+        { 5, 0.16f, -1.0f },  { 5, 0.41f,  1.0f },  { 5, 0.66f, -1.0f },  { 5, 0.91f,  1.0f },
+        { 9, 0.13f,  1.0f },  { 9, 0.38f, -1.0f },  { 9, 0.63f,  1.0f },  { 9, 0.88f, -1.0f },
+        // Tank 2: 12 taps
+        { 2, 0.15f,  1.0f },  { 2, 0.40f, -1.0f },  { 2, 0.65f,  1.0f },  { 2, 0.90f, -1.0f },
+        { 6, 0.20f, -1.0f },  { 6, 0.45f,  1.0f },  { 6, 0.70f, -1.0f },  { 6, 0.95f,  1.0f },
+        {10, 0.17f,  1.0f },  {10, 0.42f, -1.0f },  {10, 0.67f,  1.0f },  {10, 0.92f, -1.0f },
+        // Tank 3: 12 taps
+        { 3, 0.09f,  1.0f },  { 3, 0.34f, -1.0f },  { 3, 0.59f,  1.0f },  { 3, 0.84f, -1.0f },
+        { 7, 0.14f, -1.0f },  { 7, 0.39f,  1.0f },  { 7, 0.64f, -1.0f },  { 7, 0.89f,  1.0f },
+        {11, 0.11f,  1.0f },  {11, 0.36f, -1.0f },  {11, 0.61f,  1.0f },  {11, 0.86f, -1.0f },
     };
 
-    // Right output: reads from tanks 0,2,3 (cross-read) + tank 1
+    // Right output: offset positions for L/R decorrelation
     static constexpr OutputTap kRightOutputTaps[kNumOutputTaps] = {
-        { 0, 0.140f,  1.0f },   // tank0 delay1 early
-        { 0, 0.710f,  1.0f },   // tank0 delay1 late
-        { 8, 0.520f, -1.0f },   // tank0 AP2
-        { 3, 0.410f,  1.0f },   // tank3 delay1 mid
-        { 7, 0.580f, -1.0f },   // tank3 delay2 mid
-        {11, 0.240f, -1.0f },   // tank3 AP2
-        { 6, 0.350f, -1.0f },   // tank2 delay2 early
-        { 2, 0.420f,  1.0f },   // tank2 delay1 mid
-        {10, 0.610f, -1.0f },   // tank2 AP2
-        { 1, 0.280f,  1.0f },   // tank1 delay1 early
-        { 1, 0.750f, -1.0f },   // tank1 delay1 late
-        { 5, 0.470f,  1.0f },   // tank1 delay2 mid
-        { 4, 0.660f, -1.0f },   // tank0 delay2 mid
-        { 9, 0.390f,  1.0f },   // tank1 AP2
+        // Tank 0: 12 taps (offset from L by ~0.12)
+        { 0, 0.25f,  1.0f },  { 0, 0.50f, -1.0f },  { 0, 0.75f,  1.0f },  { 0, 0.95f, -1.0f },
+        { 4, 0.30f, -1.0f },  { 4, 0.55f,  1.0f },  { 4, 0.80f, -1.0f },  { 4, 0.10f,  1.0f },
+        { 8, 0.27f,  1.0f },  { 8, 0.52f, -1.0f },  { 8, 0.77f,  1.0f },  { 8, 0.08f, -1.0f },
+        // Tank 1: 12 taps
+        { 1, 0.23f,  1.0f },  { 1, 0.48f, -1.0f },  { 1, 0.73f,  1.0f },  { 1, 0.93f, -1.0f },
+        { 5, 0.28f, -1.0f },  { 5, 0.53f,  1.0f },  { 5, 0.78f, -1.0f },  { 5, 0.08f,  1.0f },
+        { 9, 0.25f,  1.0f },  { 9, 0.50f, -1.0f },  { 9, 0.75f,  1.0f },  { 9, 0.06f, -1.0f },
+        // Tank 2: 12 taps
+        { 2, 0.27f,  1.0f },  { 2, 0.52f, -1.0f },  { 2, 0.77f,  1.0f },  { 2, 0.07f, -1.0f },
+        { 6, 0.32f, -1.0f },  { 6, 0.57f,  1.0f },  { 6, 0.82f, -1.0f },  { 6, 0.12f,  1.0f },
+        {10, 0.29f,  1.0f },  {10, 0.54f, -1.0f },  {10, 0.79f,  1.0f },  {10, 0.09f, -1.0f },
+        // Tank 3: 12 taps
+        { 3, 0.21f,  1.0f },  { 3, 0.46f, -1.0f },  { 3, 0.71f,  1.0f },  { 3, 0.91f, -1.0f },
+        { 7, 0.26f, -1.0f },  { 7, 0.51f,  1.0f },  { 7, 0.76f, -1.0f },  { 7, 0.06f,  1.0f },
+        {11, 0.23f,  1.0f },  {11, 0.48f, -1.0f },  {11, 0.73f,  1.0f },  {11, 0.03f, -1.0f },
     };
 
     // -----------------------------------------------------------------------
