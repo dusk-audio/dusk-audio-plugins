@@ -42,6 +42,7 @@ public:
     void setUseShortInlineAP (bool use);
     void setMultiPointOutput (const FDNOutputTap* left, int numL,
                               const FDNOutputTap* right, int numR);
+    void setMultiPointDensity (int tapsPerChannel);  // Generate taps dynamically
     void setModDepthFloor (float floor);
     void setNoiseModDepth (float samples);
     void setHadamardPerturbation (float amount);
@@ -74,7 +75,7 @@ private:
     float rightSigns_[8];
 
     // Multi-point output tapping (Dattorro-inspired)
-    static constexpr int kMaxMultiTaps = 96;
+    static constexpr int kMaxMultiTaps = 256;
     FDNOutputTap multiTapsL_[kMaxMultiTaps] {};
     FDNOutputTap multiTapsR_[kMaxMultiTaps] {};
     int numMultiTapsL_ = 0;
