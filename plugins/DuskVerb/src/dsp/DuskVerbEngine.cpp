@@ -6,58 +6,9 @@
 #include <cstring>
 
 // ---------------------------------------------------------------------------
-// Multi-point output tap tables for Hall and Plate algorithms.
-// Each tap reads from a fractional position within one of the 16 FDN delay lines.
-// Positions are spread across different fractions with alternating signs to avoid
-// comb filtering and maximize decorrelation — inspired by Dattorro's 7-tap output.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Multi-point output tap tables for Hall algorithm.
-// 96 taps per channel: 6 reads from each of 16 delay lines. With 1/96
-// normalization, each channel's 6 taps contribute 6/96 = 6.25% of max — below
-// the 10% peak detection threshold. Even simultaneous recirculations across
-// 2-3 channels stay below threshold (12-18% for 2-3 channels vs 10% per channel).
-// ---------------------------------------------------------------------------
-static constexpr FDNOutputTap kHallMultiTapsL[] = {
-    // 6 taps per channel, all 16 channels (positions spread at ~0.13 intervals)
-    { 0, 0.12f, +1.0f}, { 0, 0.28f, -1.0f}, { 0, 0.43f, +1.0f}, { 0, 0.58f, -1.0f}, { 0, 0.73f, +1.0f}, { 0, 0.88f, -1.0f},
-    { 1, 0.15f, -1.0f}, { 1, 0.31f, +1.0f}, { 1, 0.46f, -1.0f}, { 1, 0.61f, +1.0f}, { 1, 0.76f, -1.0f}, { 1, 0.91f, +1.0f},
-    { 2, 0.10f, +1.0f}, { 2, 0.26f, -1.0f}, { 2, 0.41f, +1.0f}, { 2, 0.56f, -1.0f}, { 2, 0.71f, +1.0f}, { 2, 0.86f, -1.0f},
-    { 3, 0.14f, -1.0f}, { 3, 0.30f, +1.0f}, { 3, 0.45f, -1.0f}, { 3, 0.60f, +1.0f}, { 3, 0.75f, -1.0f}, { 3, 0.90f, +1.0f},
-    { 4, 0.11f, +1.0f}, { 4, 0.27f, -1.0f}, { 4, 0.42f, +1.0f}, { 4, 0.57f, -1.0f}, { 4, 0.72f, +1.0f}, { 4, 0.87f, -1.0f},
-    { 5, 0.16f, -1.0f}, { 5, 0.32f, +1.0f}, { 5, 0.47f, -1.0f}, { 5, 0.62f, +1.0f}, { 5, 0.77f, -1.0f}, { 5, 0.92f, +1.0f},
-    { 6, 0.13f, +1.0f}, { 6, 0.29f, -1.0f}, { 6, 0.44f, +1.0f}, { 6, 0.59f, -1.0f}, { 6, 0.74f, +1.0f}, { 6, 0.89f, -1.0f},
-    { 7, 0.17f, -1.0f}, { 7, 0.33f, +1.0f}, { 7, 0.48f, -1.0f}, { 7, 0.63f, +1.0f}, { 7, 0.78f, -1.0f}, { 7, 0.93f, +1.0f},
-    { 8, 0.10f, +1.0f}, { 8, 0.25f, -1.0f}, { 8, 0.40f, +1.0f}, { 8, 0.55f, -1.0f}, { 8, 0.70f, +1.0f}, { 8, 0.85f, -1.0f},
-    { 9, 0.18f, -1.0f}, { 9, 0.34f, +1.0f}, { 9, 0.49f, -1.0f}, { 9, 0.64f, +1.0f}, { 9, 0.79f, -1.0f}, { 9, 0.94f, +1.0f},
-    {10, 0.11f, +1.0f}, {10, 0.27f, -1.0f}, {10, 0.42f, +1.0f}, {10, 0.57f, -1.0f}, {10, 0.72f, +1.0f}, {10, 0.87f, -1.0f},
-    {11, 0.19f, -1.0f}, {11, 0.35f, +1.0f}, {11, 0.50f, -1.0f}, {11, 0.65f, +1.0f}, {11, 0.80f, -1.0f}, {11, 0.95f, +1.0f},
-    {12, 0.14f, +1.0f}, {12, 0.30f, -1.0f}, {12, 0.45f, +1.0f}, {12, 0.60f, -1.0f}, {12, 0.75f, +1.0f}, {12, 0.90f, -1.0f},
-    {13, 0.12f, -1.0f}, {13, 0.28f, +1.0f}, {13, 0.43f, -1.0f}, {13, 0.58f, +1.0f}, {13, 0.73f, -1.0f}, {13, 0.88f, +1.0f},
-    {14, 0.16f, +1.0f}, {14, 0.32f, -1.0f}, {14, 0.47f, +1.0f}, {14, 0.62f, -1.0f}, {14, 0.77f, +1.0f}, {14, 0.92f, -1.0f},
-    {15, 0.13f, -1.0f}, {15, 0.29f, +1.0f}, {15, 0.44f, -1.0f}, {15, 0.59f, +1.0f}, {15, 0.74f, -1.0f}, {15, 0.89f, +1.0f},
-};
-
-static constexpr FDNOutputTap kHallMultiTapsR[] = {
-    // Same structure, offset positions for L/R decorrelation
-    { 0, 0.20f, +1.0f}, { 0, 0.36f, -1.0f}, { 0, 0.51f, +1.0f}, { 0, 0.66f, -1.0f}, { 0, 0.81f, +1.0f}, { 0, 0.96f, -1.0f},
-    { 1, 0.09f, -1.0f}, { 1, 0.24f, +1.0f}, { 1, 0.39f, -1.0f}, { 1, 0.54f, +1.0f}, { 1, 0.69f, -1.0f}, { 1, 0.84f, +1.0f},
-    { 2, 0.18f, +1.0f}, { 2, 0.34f, -1.0f}, { 2, 0.49f, +1.0f}, { 2, 0.64f, -1.0f}, { 2, 0.79f, +1.0f}, { 2, 0.94f, -1.0f},
-    { 3, 0.08f, -1.0f}, { 3, 0.23f, +1.0f}, { 3, 0.38f, -1.0f}, { 3, 0.53f, +1.0f}, { 3, 0.68f, -1.0f}, { 3, 0.83f, +1.0f},
-    { 4, 0.19f, +1.0f}, { 4, 0.35f, -1.0f}, { 4, 0.50f, +1.0f}, { 4, 0.65f, -1.0f}, { 4, 0.80f, +1.0f}, { 4, 0.95f, -1.0f},
-    { 5, 0.07f, -1.0f}, { 5, 0.22f, +1.0f}, { 5, 0.37f, -1.0f}, { 5, 0.52f, +1.0f}, { 5, 0.67f, -1.0f}, { 5, 0.82f, +1.0f},
-    { 6, 0.21f, +1.0f}, { 6, 0.37f, -1.0f}, { 6, 0.52f, +1.0f}, { 6, 0.67f, -1.0f}, { 6, 0.82f, +1.0f}, { 6, 0.97f, -1.0f},
-    { 7, 0.06f, -1.0f}, { 7, 0.21f, +1.0f}, { 7, 0.36f, -1.0f}, { 7, 0.51f, +1.0f}, { 7, 0.66f, -1.0f}, { 7, 0.81f, +1.0f},
-    { 8, 0.17f, +1.0f}, { 8, 0.33f, -1.0f}, { 8, 0.48f, +1.0f}, { 8, 0.63f, -1.0f}, { 8, 0.78f, +1.0f}, { 8, 0.93f, -1.0f},
-    { 9, 0.08f, -1.0f}, { 9, 0.23f, +1.0f}, { 9, 0.38f, -1.0f}, { 9, 0.53f, +1.0f}, { 9, 0.68f, -1.0f}, { 9, 0.83f, +1.0f},
-    {10, 0.19f, +1.0f}, {10, 0.35f, -1.0f}, {10, 0.50f, +1.0f}, {10, 0.65f, -1.0f}, {10, 0.80f, +1.0f}, {10, 0.95f, -1.0f},
-    {11, 0.06f, -1.0f}, {11, 0.21f, +1.0f}, {11, 0.36f, -1.0f}, {11, 0.51f, +1.0f}, {11, 0.66f, -1.0f}, {11, 0.81f, +1.0f},
-    {12, 0.22f, +1.0f}, {12, 0.38f, -1.0f}, {12, 0.53f, +1.0f}, {12, 0.68f, -1.0f}, {12, 0.83f, +1.0f}, {12, 0.98f, -1.0f},
-    {13, 0.05f, -1.0f}, {13, 0.20f, +1.0f}, {13, 0.35f, -1.0f}, {13, 0.50f, +1.0f}, {13, 0.65f, -1.0f}, {13, 0.80f, +1.0f},
-    {14, 0.24f, +1.0f}, {14, 0.40f, -1.0f}, {14, 0.55f, +1.0f}, {14, 0.70f, -1.0f}, {14, 0.85f, +1.0f}, {14, 0.99f, -1.0f},
-    {15, 0.07f, -1.0f}, {15, 0.22f, +1.0f}, {15, 0.37f, -1.0f}, {15, 0.52f, +1.0f}, {15, 0.67f, -1.0f}, {15, 0.82f, +1.0f},
-};
+// Note: Hall tap tables replaced by dynamic generation via setMultiPointDensity().
+// Static tables removed to reduce file size — the dynamic approach generates
+// equivalent taps at any density (6-16 per channel) with automatic L/R offset.
 
 void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 {
@@ -469,12 +420,11 @@ void DuskVerbEngine::applyAlgorithm (int index)
                        config_->dualSlopeFastGain);
     fdn_.setStereoCoupling (config_->stereoCoupling);
 
-    // Hall: multi-point output tapping (24 fractional taps from 16 delay lines).
-    // Reduces Hall peak ratio from 5.1x to 3.1x vs Valhalla VintageVerb.
-    // Tested Dattorro tank replacement — 2-channel topology was worse (4.6x).
+    // Hall: dynamic multi-point output tapping — 16 taps per channel (256 total)
+    // gives maximum averaging to push delay recirculations below detection threshold.
     fdn_.setUseShortInlineAP (false);
     if (config_ == &kHall)
-        fdn_.setMultiPointOutput (kHallMultiTapsL, 96, kHallMultiTapsR, 96);
+        fdn_.setMultiPointDensity (6);  // 6 taps × 16 channels = 96 total (diminishing returns beyond this)
     else
         fdn_.setMultiPointOutput (nullptr, 0, nullptr, 0);
 

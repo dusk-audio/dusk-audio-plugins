@@ -679,6 +679,41 @@ void FDNReverb::setMultiPointOutput (const FDNOutputTap* left, int numL,
     useMultiPointOutput_ = true;
 }
 
+void FDNReverb::setMultiPointDensity (int tapsPerChannel)
+{
+    int totalTaps = tapsPerChannel * N;
+    if (totalTaps <= 0 || totalTaps > kMaxMultiTaps)
+    {
+        useMultiPointOutput_ = false;
+        numMultiTapsL_ = 0;
+        numMultiTapsR_ = 0;
+        return;
+    }
+
+    numMultiTapsL_ = totalTaps;
+    numMultiTapsR_ = totalTaps;
+
+    // Generate evenly-spaced fractional positions with alternating signs.
+    // L and R use offset positions for stereo decorrelation.
+    for (int ch = 0; ch < N; ++ch)
+    {
+        for (int t = 0; t < tapsPerChannel; ++t)
+        {
+            int idx = ch * tapsPerChannel + t;
+            float posL = 0.05f + 0.90f * (static_cast<float> (t) + 0.5f)
+                                        / static_cast<float> (tapsPerChannel);
+            float posR = 0.05f + 0.90f * (static_cast<float> (t) + 0.3f)
+                                        / static_cast<float> (tapsPerChannel);
+            float signL = (t % 2 == 0) ? 1.0f : -1.0f;
+            float signR = (t % 2 == 1) ? 1.0f : -1.0f;  // opposite pattern
+
+            multiTapsL_[idx] = { ch, posL, signL };
+            multiTapsR_[idx] = { ch, posR, signR };
+        }
+    }
+    useMultiPointOutput_ = true;
+}
+
 void FDNReverb::setHadamardPerturbation (float amount)
 {
     if (amount <= 0.0f)
