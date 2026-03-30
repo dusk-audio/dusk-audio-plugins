@@ -355,9 +355,8 @@ void DuskVerbEngine::applyAlgorithm (int index)
 {
     config_ = &getAlgorithmConfig (index);
     useDattorroTank_ = config_->useDattorroTank;
-    // QuadTank available but FDN with 96-tap multi-point output produces
-    // fewer peaks (2.9x vs 3.8x) due to more averaging paths (96 vs 14 taps).
-    useQuadTank_ = false;
+    // QuadTank for Hall: 4 cross-coupled allpass tanks with 28 output taps
+    useQuadTank_ = (config_ == &kHall);
 
     // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
     // Must set scale BEFORE prepare() so buffers are allocated at the right size.
