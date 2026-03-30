@@ -101,3 +101,8 @@ endif()
 if(BUILD_MULTI_SYNTH)
     add_subdirectory(plugins/multi-synth)
 endif()
+
+option(BUILD_DUSKAMP "Build DuskAmp plugin" ON)
+if(BUILD_DUSKAMP)
+    add_subdirectory(plugins/DuskAmp)
+endif()
