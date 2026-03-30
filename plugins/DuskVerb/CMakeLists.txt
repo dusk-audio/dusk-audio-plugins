@@ -70,6 +70,7 @@ target_sources(DuskVerb
         src/PluginEditor.cpp
         src/dsp/FDNReverb.cpp
         src/dsp/DattorroTank.cpp
+        src/dsp/QuadTank.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
@@ -135,6 +136,7 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
         src/test/IRGenerator.cpp
         src/dsp/FDNReverb.cpp
         src/dsp/DattorroTank.cpp
+        src/dsp/QuadTank.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
