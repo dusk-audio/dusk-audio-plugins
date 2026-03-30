@@ -6,6 +6,7 @@
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
 #include "OutputDiffusion.h"
+#include "QuadTank.h"
 
 #include <cmath>
 #include <vector>
@@ -69,6 +70,8 @@ private:
     OutputDiffusion outputDiffuser_;
     EarlyReflections er_;
     bool useDattorroTank_ = false;
+    bool useQuadTank_ = false;
+    QuadTank quadTank_;
 
     const AlgorithmConfig* config_ = &kHall;
 
