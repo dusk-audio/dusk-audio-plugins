@@ -199,8 +199,10 @@ void QuadTank::process (const float* inputL, const float* inputR,
         for (int t = 0; t < kNumOutputTaps; ++t)
             outR += readOutputTap (kRightOutputTaps[t]) * kRightOutputTaps[t].sign;
 
-        // Normalize: 1/14 average of 14 taps
-        constexpr float kOutputScale = 1.0f / static_cast<float> (kNumOutputTaps);
+        // Normalize by 1/sqrt(N) to match FDN/DattorroTank energy scaling.
+        // With alternating signs, correlated taps partially cancel — 1/N would
+        // over-attenuate. 1/sqrt(48) ≈ 0.144, close to DattorroTank's 1/7 ≈ 0.143.
+        constexpr float kOutputScale = 0.14433757f;  // 1/sqrt(48)
 
         outputL[i] = std::clamp (outL * kOutputScale, -kSafetyClip, kSafetyClip);
         outputR[i] = std::clamp (outR * kOutputScale, -kSafetyClip, kSafetyClip);
