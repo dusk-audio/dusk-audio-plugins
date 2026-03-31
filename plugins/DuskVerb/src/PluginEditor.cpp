@@ -879,11 +879,8 @@ void DuskVerbEditor::loadPreset (int index)
     if (index >= 0 && index < static_cast<int> (presets.size()))
     {
         presets[static_cast<size_t> (index)].applyTo (processorRef.parameters);
-        processorRef.setGainTrim (presets[static_cast<size_t> (index)].gainTrim);
         processorRef.parameters.state.setProperty ("presetName",
             juce::String (presets[static_cast<size_t> (index)].name), nullptr);
-        processorRef.parameters.state.setProperty ("gainTrim",
-            presets[static_cast<size_t> (index)].gainTrim, nullptr);
     }
 }
 
