@@ -157,6 +157,11 @@ struct AlgorithmConfig
                               // Hall/Plate/Chamber/Room: false (VV is clean).
                               // Could be true for "dirty" or "vintage" modes.
 
+    float lateFeedForwardLevel;  // Mix level of pre-diffusion late reverb into output (0.0-1.0).
+                                  // Bypasses output diffuser to put late energy into 20-50ms window.
+                                  // 0.0 = all late reverb through diffuser (current behavior).
+                                  // 0.3-0.5 = blend pre-diffusion signal for earlier late onset.
+
     // Custom ER tap table (mono-panned).
     // When numCustomERTaps > 0, EarlyReflections uses this fixed table instead of
     // computing taps from the exponential formula. Each tap goes to L or R only.
@@ -253,6 +258,7 @@ static constexpr AlgorithmConfig kPlate = {
     0.0f, -2.5f, 3000.0f, // output EQ: -2.5dB high shelf at 3kHz (tame 3-6kHz brightness)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
     0, nullptr,  // custom ER: disabled
 };
 
@@ -306,6 +312,7 @@ static constexpr AlgorithmConfig kHall = {
     0.0f,            // output mid EQ: bypassed
     0.7f,            // output mid EQ: Q (bypassed)
     false,           // enableSaturation: off (clean linear output, matching VV)
+    0.20f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
     0, nullptr,  // custom ER: disabled
 };
 
@@ -353,6 +360,7 @@ static constexpr AlgorithmConfig kChamber = {
     0.0f, -2.0f, 5000.0f, // output EQ: -2dB high shelf at 5kHz (tame 6.3-10kHz brightness)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
     0, nullptr,  // custom ER: disabled
 };
 
@@ -401,6 +409,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.0f, -3.0f, 4000.0f, // output EQ: -3dB high shelf at 4kHz (tame 4-8kHz brightness)
     2200.0f, -2.0f, 1.2f, // output mid EQ: -2dB notch at 2.2kHz (suppress measured 2215Hz ringing)
     false,           // enableSaturation: off (clean linear output, matching VV)
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
     0, nullptr,  // custom ER: disabled
 };
 
@@ -448,6 +457,7 @@ static constexpr AlgorithmConfig kAmbient = {
     0.0f, -4.0f, 4000.0f, // output EQ: -4dB high shelf at 4kHz (tame brightness above 5kHz)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
     0, nullptr,  // custom ER: disabled
 };
 
