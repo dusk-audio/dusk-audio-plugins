@@ -292,6 +292,20 @@ void QuadTank::setSize (float size)
 void QuadTank::setFreeze (bool frozen) { frozen_ = frozen; }
 void QuadTank::setLateGainScale (float scale) { lateGainScale_ = scale; }
 
+void QuadTank::setHighCrossoverFreq (float hz)
+{
+    highCrossoverFreq_ = std::max (hz, 100.0f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void QuadTank::setAirDampingScale (float scale)
+{
+    airDampingScale_ = std::max (scale, 0.1f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
 void QuadTank::setSizeRange (float min, float max)
 {
     sizeRangeMin_ = min;
@@ -344,7 +358,8 @@ void QuadTank::updateDelayLengths()
 void QuadTank::updateDecayCoefficients()
 {
     float sr = static_cast<float> (sampleRate_);
-    float crossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
+    float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
+    float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
     for (int t = 0; t < kNumTanks; ++t)
     {
@@ -359,9 +374,10 @@ void QuadTank::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         float gLow  = std::pow (gBase, 1.0f / bassMultiply_);
-        float gHigh = std::pow (gBase, 1.0f / trebleMultiply_);
+        float gMid  = gBase;  // mid band decays at natural rate
+        float gHigh = std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_));
 
-        tank.damping.setCoefficients (gLow, gHigh, crossoverCoeff);
+        tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
     }
 }
 
