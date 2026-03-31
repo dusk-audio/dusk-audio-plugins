@@ -26,6 +26,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     scratchR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     erOutL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     erOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    preDiffL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    preDiffR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
     // Pre-delay: max 250ms at current sample rate
     int maxDelaySamples = static_cast<int> (std::ceil (0.250 * sampleRate));
@@ -233,6 +235,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
 
     // Anti-alias filtering is handled inside the FDN feedback loop (first-order LP at ~17kHz).
 
+    // Save pre-diffusion late reverb for feed-forward path
+    if (lateFeedForwardLevel_ > 0.001f)
+    {
+        std::memcpy (preDiffL_.data(), scratchL_.data(), static_cast<size_t> (numSamples) * sizeof (float));
+        std::memcpy (preDiffR_.data(), scratchR_.data(), static_cast<size_t> (numSamples) * sizeof (float));
+    }
+
     outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
 
     // Add un-diffused ER back into the signal AFTER output diffusion.
@@ -242,6 +251,17 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         auto si = static_cast<size_t> (i);
         scratchL_[si] += erOutL_[si];
         scratchR_[si] += erOutR_[si];
+    }
+
+    // Late feed-forward: add pre-diffusion late reverb for earlier onset
+    if (lateFeedForwardLevel_ > 0.001f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            scratchL_[si] += preDiffL_[si] * lateFeedForwardLevel_;
+            scratchR_[si] += preDiffR_[si] * lateFeedForwardLevel_;
+        }
     }
 
     // Apply output EQ + width, then dry/wet mix.
@@ -374,6 +394,7 @@ void DuskVerbEngine::applyAlgorithm (int index)
     // QuadTank for Hall: 4 cross-coupled allpass tanks with 28 output taps
     useQuadTank_ = (config_ == &kHall);
     enableSaturation_ = config_->enableSaturation;
+    lateFeedForwardLevel_ = config_->lateFeedForwardLevel;
 
     // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
     // Must set scale BEFORE prepare() so buffers are allocated at the right size.
