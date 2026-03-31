@@ -34,6 +34,8 @@ public:
     void setBassMultiply (float mult);
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
+    void setHighCrossoverFreq (float hz);
+    void setAirDampingScale (float scale);
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -129,7 +131,7 @@ private:
         Allpass densityAP[3];
         int densityAPBase[3] = {};
 
-        TwoBandDamping damping;
+        ThreeBandDamping damping;
 
         Allpass ap2;
         int ap2BaseDelay = 0;
@@ -215,6 +217,8 @@ private:
     float bassMultiply_ = 1.0f;
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
+    float highCrossoverFreq_ = 4000.0f;
+    float airDampingScale_ = 0.70f;
     float modDepthSamples_ = 8.0f;
     float lastModDepthRaw_ = 0.5f;
     float modRateHz_ = 1.0f;
@@ -227,7 +231,7 @@ private:
 
     float decayDiff1_ = 0.70f;
     float decayDiff2_ = 0.50f;
-    float densityDiffCoeff_ = 0.25f;
+    float densityDiffCoeff_ = 0.10f;  // Reduced from 0.25 to slow density buildup (100ms→~250ms)
     float noiseModDepth_ = 2.0f;
 
     void updateDelayLengths();
