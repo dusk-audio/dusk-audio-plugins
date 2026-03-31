@@ -188,27 +188,23 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         scratchR_[si] = dcOutR;
     }
 
-    // Mix ER into late reverb BEFORE output diffusion so the allpass network
-    // smears discrete ER taps into a smooth buildup (prevents slapback artifacts).
-    // Then apply per-algorithm output gain to compensate for internal gain differences.
+    // Scale late reverb and ER SEPARATELY. ERs bypass the output diffuser
+    // to preserve their sharp transient peaks (matching VV's onset timing).
+    // The output diffuser's ~29ms group delay was smearing ER energy from 20ms to 48ms.
     for (int i = 0; i < numSamples; ++i)
     {
         auto si = static_cast<size_t> (i);
         float er = erLevelSmoother_.next();
         float lateGain = lateGainScale_ * decayGainComp_;
         float outGain = outputGainSmoother_.next();
-        float mixL = (scratchL_[si] * lateGain + erOutL_[si] * er) * outGain;
-        float mixR = (scratchR_[si] * lateGain + erOutR_[si] * er) * outGain;
-        if (enableSaturation_)
-        {
-            scratchL_[si] = DspUtils::fastTanh (mixL / 16.0f) * 16.0f;
-            scratchR_[si] = DspUtils::fastTanh (mixR / 16.0f) * 16.0f;
-        }
-        else
-        {
-            scratchL_[si] = mixL;
-            scratchR_[si] = mixR;
-        }
+
+        // Late reverb only → goes through output diffuser
+        scratchL_[si] = scratchL_[si] * lateGain * outGain;
+        scratchR_[si] = scratchR_[si] * lateGain * outGain;
+
+        // ER scaled separately → stored for post-diffusion addition
+        erOutL_[si] = erOutL_[si] * er * outGain;
+        erOutR_[si] = erOutR_[si] * er * outGain;
     }
 
     // Output EQ: low shelf at 250Hz + mid parametric + high shelf
@@ -238,6 +234,15 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // Anti-alias filtering is handled inside the FDN feedback loop (first-order LP at ~17kHz).
 
     outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
+
+    // Add un-diffused ER back into the signal AFTER output diffusion.
+    // This preserves ER transient peaks while late reverb gets the full allpass smearing.
+    for (int i = 0; i < numSamples; ++i)
+    {
+        auto si = static_cast<size_t> (i);
+        scratchL_[si] += erOutL_[si];
+        scratchR_[si] += erOutR_[si];
+    }
 
     // Apply output EQ + width, then dry/wet mix.
     // All output-stage parameters are smoothed per-sample to prevent zipper noise.
@@ -456,6 +461,8 @@ void DuskVerbEngine::applyAlgorithm (int index)
     dattorroTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
     dattorroTank_.setLateGainScale (config_->lateGainScale);
     quadTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
+    quadTank_.setHighCrossoverFreq (config_->highCrossoverHz);
+    quadTank_.setAirDampingScale (config_->airDampingScale);
     quadTank_.setLateGainScale (config_->lateGainScale);
 
     // Re-apply current parameter values with new scaling

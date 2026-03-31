@@ -228,7 +228,7 @@ static constexpr AlgorithmConfig kHall = {
     20000.0f,        // bandwidth: full spectrum input
     0.90f, 0.85f,    // ER: level=0.90, timeScale=0.85 (0.95 made C50 worse at 42.1)
     0.22f,           // late gain: 0.22
-    1.0f, 1.0f,      // mod: modDepthScale=1.0 (was 2.0; reduced to improve MFCC while retaining LFO character)
+    0.75f, 13.0f,    // mod: modDepthScale=0.75 (DV 33% too deep), modRateScale=13.0 (Hilbert: VV=5.4Hz vs DV=0.4Hz)
     0.50f, 1.50f, 1.0f, // damping: trebleMultScale=0.50
     4000.0f,         // high crossover: 4kHz (3kHz regressed — pushed too much into air band, kurtosis diverged)
     0.70f,           // airDampingScale: 0.70

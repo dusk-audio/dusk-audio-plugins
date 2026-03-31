@@ -1288,6 +1288,7 @@ def _get_factory_preset_values(name):
             "width": float(vals[14]),
             "gate_hold": float(vals[15]),
             "gate_release": float(vals[16]),
+            "gain_trim": float(vals[17]) if len(vals) > 17 else 0.0,
         }
     except (IndexError, ValueError):
         return None

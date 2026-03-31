@@ -89,6 +89,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "gate_release", 1 }, "Gate Release",
         juce::NormalisableRange<float> (1.0f, 500.0f, 0.0f, 1.0f), 50.0f));
 
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "gain_trim", 1 }, "Gain Trim",
+        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f));
+
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bypass", 1 }, "Bypass", false));
 
@@ -122,6 +126,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     busModeParam_ = parameters.getRawParameterValue ("bus_mode");
     gateHoldParam_ = parameters.getRawParameterValue ("gate_hold");
     gateReleaseParam_ = parameters.getRawParameterValue ("gate_release");
+    gainTrimParam_ = parameters.getRawParameterValue ("gain_trim");
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 }
 
@@ -283,6 +288,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     // Gate: discrete parameters, no smoothing needed
     engine_.setGateParams (gateHoldParam_->load(), gateReleaseParam_->load());
+
+    // Gain trim: per-preset level correction (dB)
+    engine_.setGainTrim (gainTrimParam_->load());
 
     // Sub-block processing for smooth parameter transitions
     int samplesRemaining = numSamples;

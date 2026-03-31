@@ -79,6 +79,7 @@ private:
     std::atomic<float>* busModeParam_ = nullptr;
     std::atomic<float>* gateHoldParam_ = nullptr;
     std::atomic<float>* gateReleaseParam_ = nullptr;
+    std::atomic<float>* gainTrimParam_ = nullptr;
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
     juce::SmoothedValue<float> decaySmooth_;
