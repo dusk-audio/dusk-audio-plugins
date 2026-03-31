@@ -152,6 +152,11 @@ struct AlgorithmConfig
     float outputMidEQDB;      // Mid parametric EQ gain (dB). Negative = cut.
     float outputMidEQQ;       // Mid parametric EQ Q factor. Higher = narrower. 0.7 = gentle, 2.0 = surgical.
 
+    bool enableSaturation;    // true = fastTanh soft clipper on output mix (adds warmth/harmonics).
+                              // false = clean linear mix (transparent, matches VV's 0.01% THD).
+                              // Hall/Plate/Chamber/Room: false (VV is clean).
+                              // Could be true for "dirty" or "vintage" modes.
+
     // Custom ER tap table (mono-panned).
     // When numCustomERTaps > 0, EarlyReflections uses this fixed table instead of
     // computing taps from the exponential formula. Each tap goes to L or R only.
@@ -202,6 +207,7 @@ static constexpr AlgorithmConfig kPlate = {
     0.20f,           // stereo coupling: 0.20
     0.0f, -2.5f, 3000.0f, // output EQ: -2.5dB high shelf at 3kHz (tame 3-6kHz brightness)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
+    false,           // enableSaturation: off (clean linear output, matching VV)
     0, nullptr,  // custom ER: disabled
 };
 
@@ -246,14 +252,15 @@ static constexpr AlgorithmConfig kHall = {
     20000.0f,        // ER air absorption ceiling: 20kHz (earliest taps: no filtering)
     18000.0f,        // ER air absorption floor: 18kHz
     0.55f,           // ER decorrelation: strong allpass decorrelation (IACC 0.747→target 0.321)
-    1.9f,            // output gain: 1.9 (was 2.4; -2dB for output level calibration)
+    1.2f,            // output gain: 1.2 (was 1.9; reduced to compensate for hi_cut 3k→8k + shelf boosts)
     -1.0f,           // stereo coupling: -1.0 = full 16×16 Hadamard (was 0.15 split 8+8)
-    -1.5f,           // output low shelf: -1.5dB at 250Hz
-    -3.5f,           // output high shelf: -3.5dB at 4kHz (was -5dB@1.1kHz; 1.1kHz killed mid-range on dark presets)
-    4000.0f,         // output high shelf freq: 4kHz (was 1.1kHz)
+    0.0f,            // output low shelf: 0dB at 250Hz (neutral — sweeper shows DV already +2-4dB hotter in low end)
+    +4.0f,           // output high shelf: +4.0dB at 5kHz (fills 5-8kHz hole left by QuadTank treble damping)
+    5000.0f,         // output high shelf freq: 5kHz
     0.0f,            // output mid EQ: bypassed
     0.0f,            // output mid EQ: bypassed
     0.7f,            // output mid EQ: Q (bypassed)
+    false,           // enableSaturation: off (clean linear output, matching VV)
     0, nullptr,  // custom ER: disabled
 };
 
@@ -300,6 +307,7 @@ static constexpr AlgorithmConfig kChamber = {
     0.15f,           // stereo coupling: moderate (wider stereo for IACC match)
     0.0f, -2.0f, 5000.0f, // output EQ: -2dB high shelf at 5kHz (tame 6.3-10kHz brightness)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
+    false,           // enableSaturation: off (clean linear output, matching VV)
     0, nullptr,  // custom ER: disabled
 };
 
@@ -347,6 +355,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.20f,            // stereo coupling: moderate (rooms have natural coupling from walls)
     0.0f, -3.0f, 4000.0f, // output EQ: -3dB high shelf at 4kHz (tame 4-8kHz brightness)
     2200.0f, -2.0f, 1.2f, // output mid EQ: -2dB notch at 2.2kHz (suppress measured 2215Hz ringing)
+    false,           // enableSaturation: off (clean linear output, matching VV)
     0, nullptr,  // custom ER: disabled
 };
 
@@ -393,6 +402,7 @@ static constexpr AlgorithmConfig kAmbient = {
     0.05f,           // stereo coupling: minimal (0.0 didn't help width enough)
     0.0f, -4.0f, 4000.0f, // output EQ: -4dB high shelf at 4kHz (tame brightness above 5kHz)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
+    false,           // enableSaturation: off (clean linear output, matching VV)
     0, nullptr,  // custom ER: disabled
 };
 

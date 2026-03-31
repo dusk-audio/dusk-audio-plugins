@@ -1092,6 +1092,160 @@ def edc_shape_match(ir_a, ir_b, sr, sample_interval_ms=100):
 
 
 # ---------------------------------------------------------------------------
+# 20. True Peak / Crest Factor of early IR (first 50ms)
+# ---------------------------------------------------------------------------
+def measure_true_peak(ir_a, ir_b, sr, window_ms=50):
+    """Measure absolute peak and crest factor of the first 50ms.
+
+    True peak captures transient energy that RMS misses — if DV peaks
+    quieter than VV in the onset, it will sound less "full" and less punchy.
+
+    Returns:
+        dict with dv_peak_db, vv_peak_db, peak_delta_db,
+        dv_crest_db, vv_crest_db, crest_delta_db
+    """
+    n = min(int(window_ms / 1000 * sr), len(ir_a), len(ir_b))
+    a, b = ir_a[:n].astype(np.float64), ir_b[:n].astype(np.float64)
+
+    dv_peak = float(np.max(np.abs(a)))
+    vv_peak = float(np.max(np.abs(b)))
+    dv_rms = float(np.sqrt(np.mean(a ** 2)))
+    vv_rms = float(np.sqrt(np.mean(b ** 2)))
+
+    dv_peak_db = 20 * np.log10(max(dv_peak, 1e-10))
+    vv_peak_db = 20 * np.log10(max(vv_peak, 1e-10))
+    dv_crest = 20 * np.log10(max(dv_peak, 1e-10) / max(dv_rms, 1e-10))
+    vv_crest = 20 * np.log10(max(vv_peak, 1e-10) / max(vv_rms, 1e-10))
+
+    return {
+        "dv_peak_db": float(dv_peak_db),
+        "vv_peak_db": float(vv_peak_db),
+        "peak_delta_db": float(dv_peak_db - vv_peak_db),
+        "dv_crest_db": float(dv_crest),
+        "vv_crest_db": float(vv_crest),
+        "crest_delta_db": float(dv_crest - vv_crest),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 21. T20 vs T60 ratio (dual-slope detection)
+# ---------------------------------------------------------------------------
+def measure_t20_t60_ratio(ir, sr):
+    """Measure T20 and T60 to detect dual-slope decay.
+
+    T20: extrapolated RT60 from the -5 to -25 dB slope (early decay).
+    T60: extrapolated RT60 from the -5 to -35 dB slope (full decay).
+
+    If T60/T20 > 1.0, the late tail decays slower than the early portion
+    (dual-slope / concave EDC). This is characteristic of VV's reverb.
+    If T60/T20 ≈ 1.0, the decay is a clean single exponential (DV's FDN).
+
+    Returns:
+        dict with t20, t60, ratio (T60/T20), or None values if unmeasurable
+    """
+    # T20: fit -5 to -25 dB, extrapolate to 60 dB
+    t20 = _schroeder_rt60(ir, sr, fit_range_db=(-5, -25))
+    # T60: fit -5 to -35 dB (standard), extrapolate to 60 dB
+    t60 = _schroeder_rt60(ir, sr, fit_range_db=(-5, -35))
+
+    ratio = None
+    if t20 is not None and t60 is not None and t20 > 0:
+        ratio = t60 / t20
+
+    return {"t20": t20, "t60": t60, "t20_t60_ratio": ratio}
+
+
+def compare_t20_t60(ir_a, ir_b, sr):
+    """Compare T20/T60 ratios between two IRs.
+
+    Returns:
+        dict with dv/vv t20, t60, ratios, and the delta between ratios
+    """
+    dv = measure_t20_t60_ratio(ir_a, sr)
+    vv = measure_t20_t60_ratio(ir_b, sr)
+
+    ratio_delta = None
+    if dv["t20_t60_ratio"] is not None and vv["t20_t60_ratio"] is not None:
+        ratio_delta = dv["t20_t60_ratio"] - vv["t20_t60_ratio"]
+
+    return {
+        "dv_t20": dv["t20"], "dv_t60": dv["t60"], "dv_t20_t60_ratio": dv["t20_t60_ratio"],
+        "vv_t20": vv["t20"], "vv_t60": vv["t60"], "vv_t20_t60_ratio": vv["t20_t60_ratio"],
+        "t20_t60_ratio_delta": ratio_delta,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 22. THD (Total Harmonic Distortion) via 1kHz sine
+# ---------------------------------------------------------------------------
+def measure_thd(plugin_output_l, sr, fundamental_hz=1000.0, n_harmonics=6):
+    """Measure THD from plugin output when driven with a 1kHz sine.
+
+    The caller is responsible for processing a 1kHz sine through the plugin
+    and passing the output here. This function extracts the harmonic content.
+
+    Args:
+        plugin_output_l: left channel output from the plugin
+        sr: sample rate
+        fundamental_hz: frequency of the test tone
+        n_harmonics: number of harmonics to measure (H2..H7)
+
+    Returns:
+        dict with thd_pct, harmonic_levels_db (list), fundamental_db
+    """
+    # Use a window in the middle of the signal (skip transients)
+    n = len(plugin_output_l)
+    start = min(int(0.5 * sr), n // 4)  # skip first 0.5s
+    end = min(start + int(2.0 * sr), n)  # analyze 2s
+    segment = plugin_output_l[start:end].astype(np.float64)
+
+    if len(segment) < int(0.1 * sr):
+        return {"thd_pct": None, "harmonic_levels_db": [], "fundamental_db": None}
+
+    # FFT
+    N = len(segment)
+    window = np.hanning(N)
+    spectrum = np.abs(np.fft.rfft(segment * window)) * 2.0 / N
+    freqs = np.fft.rfftfreq(N, 1.0 / sr)
+
+    # Frequency resolution
+    df = freqs[1] - freqs[0]
+    bin_width = max(1, int(50.0 / df))  # ±50 Hz search window
+
+    def _peak_power(target_hz):
+        center_bin = int(target_hz / df)
+        lo = max(0, center_bin - bin_width)
+        hi = min(len(spectrum), center_bin + bin_width + 1)
+        if lo >= hi:
+            return 1e-20
+        return float(np.max(spectrum[lo:hi]) ** 2)
+
+    fund_power = _peak_power(fundamental_hz)
+    fund_db = 10 * np.log10(max(fund_power, 1e-20))
+
+    harmonic_powers = []
+    harmonic_dbs = []
+    for h in range(2, 2 + n_harmonics):
+        h_freq = fundamental_hz * h
+        if h_freq > sr / 2:
+            break
+        p = _peak_power(h_freq)
+        harmonic_powers.append(p)
+        harmonic_dbs.append(float(10 * np.log10(max(p, 1e-20)) - fund_db))
+
+    if fund_power > 1e-20 and harmonic_powers:
+        thd = float(np.sqrt(sum(harmonic_powers)) / np.sqrt(fund_power) * 100.0)
+    else:
+        thd = None
+
+    return {
+        "thd_pct": thd,
+        "harmonic_levels_db": harmonic_dbs,  # relative to fundamental
+        "fundamental_db": float(fund_db),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Comprehensive analysis: run all metrics on one IR
 # ---------------------------------------------------------------------------
 def analyze_ir(ir_left, ir_right, sr):

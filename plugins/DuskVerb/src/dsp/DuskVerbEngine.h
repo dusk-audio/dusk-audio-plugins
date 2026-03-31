@@ -151,6 +151,7 @@ private:
 
     Biquad loCutFilter_;
     Biquad hiCutFilter_;
+    Biquad hiCutFilter2_;  // Second cascade stage: 4-pole (24 dB/oct) total for vintage anti-aliasing
     float loCutHz_ = 20.0f;
     float hiCutHz_ = 20000.0f;
     void updateLoCutCoeffs();
@@ -170,6 +171,9 @@ private:
 
     // Freeze mode
     bool frozen_ = false;
+
+    // Saturation: when false, bypass fastTanh for clean linear output
+    bool enableSaturation_ = false;
 
     // Gate envelope: truncates reverb tail (gated reverb effect)
     bool gateEnabled_ = false;
