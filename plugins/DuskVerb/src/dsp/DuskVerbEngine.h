@@ -79,6 +79,8 @@ private:
     std::vector<float> scratchR_;
     std::vector<float> erOutL_;
     std::vector<float> erOutR_;
+    std::vector<float> preDiffL_;
+    std::vector<float> preDiffR_;
 
     std::vector<float> preDelayBufL_;
     std::vector<float> preDelayBufR_;
@@ -174,6 +176,9 @@ private:
 
     // Saturation: when false, bypass fastTanh for clean linear output
     bool enableSaturation_ = false;
+
+    // Late feed-forward: pre-diffusion late reverb blended into output
+    float lateFeedForwardLevel_ = 0.0f;
 
     // Gate envelope: truncates reverb tail (gated reverb effect)
     bool gateEnabled_ = false;
