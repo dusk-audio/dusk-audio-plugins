@@ -164,6 +164,51 @@ struct AlgorithmConfig
     const CustomERTap* customERTaps = nullptr;
 };
 
+// VV-extracted early reflection tap tables (from Hilbert/IR analysis)
+static constexpr CustomERTap kHallERTaps[] = {
+    { 39.35f, 0.020f, 0 }, { 32.77f, 0.017f, 1 }, { 32.35f, 0.013f, 0 },
+    { 26.77f, 0.011f, 1 }, { 38.77f, 0.011f, 1 }, { 27.35f, 0.009f, 0 },
+    { 22.77f, 0.008f, 1 }, { 34.06f, 0.006f, 0 }, { 20.35f, 0.006f, 0 },
+    { 36.77f, 0.007f, 1 }, { 16.77f, 0.005f, 1 }, { 41.35f, 0.004f, 0 },
+    { 28.77f, 0.005f, 1 }, { 39.06f, 0.005f, 0 }, { 46.06f, 0.012f, 0 },
+    { 51.35f, 0.012f, 0 }, { 42.77f, 0.010f, 1 }, { 48.31f, 0.010f, 1 },
+    { 53.06f, 0.011f, 0 }, { 58.31f, 0.011f, 1 }, { 55.40f, 0.009f, 0 },
+    { 60.31f, 0.010f, 1 }, { 62.40f, 0.009f, 0 }, { 64.31f, 0.008f, 1 },
+};
+
+static constexpr CustomERTap kPlateERTaps[] = {
+    { 28.19f, 0.025f, 0 }, { 21.60f, 0.019f, 1 }, { 28.10f, 0.022f, 0 },
+    { 21.52f, 0.017f, 1 }, { 21.19f, 0.010f, 0 }, { 27.60f, 0.010f, 1 },
+    { 31.60f, 0.010f, 1 }, { 16.19f, 0.007f, 0 }, { 33.19f, 0.006f, 0 },
+    { 15.60f, 0.007f, 1 }, { 23.19f, 0.004f, 0 }, { 27.52f, 0.009f, 1 },
+    { 31.52f, 0.009f, 1 }, { 35.19f, 0.013f, 0 }, { 40.19f, 0.013f, 0 },
+    { 48.44f, 0.008f, 1 }, { 42.19f, 0.007f, 0 }, { 47.19f, 0.006f, 0 },
+    { 52.19f, 0.006f, 0 }, { 15.52f, 0.006f, 1 }, { 9.19f, 0.002f, 0 },
+    { 11.60f, 0.004f, 1 }, { 25.60f, 0.005f, 1 }, { 39.12f, 0.007f, 0 },
+};
+
+static constexpr CustomERTap kRoomERTaps[] = {
+    { 28.00f, 0.011f, 0 }, { 25.17f, 0.010f, 1 }, { 39.00f, 0.007f, 0 },
+    { 34.62f, 0.007f, 0 }, { 21.38f, 0.006f, 0 }, { 30.85f, 0.006f, 1 },
+    { 19.48f, 0.005f, 1 }, { 17.00f, 0.004f, 0 }, { 32.38f, 0.004f, 0 },
+    { 27.44f, 0.004f, 1 }, { 16.06f, 0.004f, 1 }, { 38.48f, 0.003f, 0 },
+    { 10.38f, 0.002f, 0 }, { 23.62f, 0.003f, 0 }, { 28.58f, 0.003f, 1 },
+    { 49.92f, 0.008f, 0 }, { 46.48f, 0.006f, 1 }, { 59.04f, 0.006f, 0 },
+    { 44.23f, 0.005f, 0 }, { 52.42f, 0.005f, 0 }, { 68.12f, 0.007f, 0 },
+    { 68.75f, 0.007f, 1 }, { 74.44f, 0.011f, 1 }, { 65.31f, 0.005f, 1 },
+};
+
+static constexpr CustomERTap kChamberERTaps[] = {
+    { 32.46f, 0.003f, 1 }, { 32.54f, 0.003f, 1 }, { 37.33f, 0.002f, 0 },
+    { 26.62f, 0.002f, 0 }, { 35.54f, 0.002f, 1 }, { 30.08f, 0.002f, 0 },
+    { 33.92f, 0.002f, 0 }, { 34.21f, 0.002f, 1 }, { 29.71f, 0.001f, 1 },
+    { 31.60f, 0.001f, 0 }, { 36.67f, 0.001f, 0 }, { 46.23f, 0.004f, 0 },
+    { 42.67f, 0.003f, 0 }, { 49.62f, 0.003f, 1 }, { 53.42f, 0.003f, 0 },
+    { 54.90f, 0.003f, 1 }, { 56.92f, 0.003f, 0 }, { 61.17f, 0.003f, 1 },
+    { 64.04f, 0.005f, 0 }, { 64.90f, 0.003f, 1 }, { 67.62f, 0.003f, 0 },
+    { 71.38f, 0.004f, 0 }, { 73.23f, 0.003f, 0 }, { 77.92f, 0.004f, 1 },
+};
+
 // ---------------------------------------------------------------------------
 // Plate: Classic metal plate reverb character.
 // Tight delay clustering (15-40ms), maximum diffusion, no ERs, bright.
@@ -208,7 +253,7 @@ static constexpr AlgorithmConfig kPlate = {
     0.0f, -2.5f, 3000.0f, // output EQ: -2.5dB high shelf at 3kHz (tame 3-6kHz brightness)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0, nullptr,  // custom ER: disabled
+    24, kPlateERTaps,  // custom ER: VV-extracted 24 taps
 };
 
 // ---------------------------------------------------------------------------
@@ -261,7 +306,7 @@ static constexpr AlgorithmConfig kHall = {
     0.0f,            // output mid EQ: bypassed
     0.7f,            // output mid EQ: Q (bypassed)
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0, nullptr,  // custom ER: disabled
+    24, kHallERTaps,   // custom ER: VV-extracted 24 taps
 };
 
 // ---------------------------------------------------------------------------
@@ -308,7 +353,7 @@ static constexpr AlgorithmConfig kChamber = {
     0.0f, -2.0f, 5000.0f, // output EQ: -2dB high shelf at 5kHz (tame 6.3-10kHz brightness)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0, nullptr,  // custom ER: disabled
+    24, kChamberERTaps, // custom ER: VV-extracted 24 taps
 };
 
 // ---------------------------------------------------------------------------
@@ -356,7 +401,7 @@ static constexpr AlgorithmConfig kRoom = {
     0.0f, -3.0f, 4000.0f, // output EQ: -3dB high shelf at 4kHz (tame 4-8kHz brightness)
     2200.0f, -2.0f, 1.2f, // output mid EQ: -2dB notch at 2.2kHz (suppress measured 2215Hz ringing)
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0, nullptr,  // custom ER: disabled
+    24, kRoomERTaps,   // custom ER: VV-extracted 24 taps
 };
 
 // ---------------------------------------------------------------------------
