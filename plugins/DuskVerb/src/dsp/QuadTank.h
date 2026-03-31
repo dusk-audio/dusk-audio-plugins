@@ -45,7 +45,7 @@ public:
 private:
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr double kBaseSampleRate = 44100.0;
-    static constexpr float kSafetyClip = 4.0f;
+    static constexpr float kSafetyClip = 32.0f;  // Raised from 4.0 to avoid THD from hard clipping at hot inputs
     static constexpr int kNumTanks = 4;
     static constexpr int kNumOutputTaps = 48;
     static constexpr int kNumDensityAPs = 3;

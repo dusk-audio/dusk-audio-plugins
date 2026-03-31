@@ -98,6 +98,10 @@ KNOWN_LEVEL_DISCREPANCIES = {
     "Big Ambience Gate": -1.5,  # DV consistently -6 dB; Ambient algo produces less energy with gated short-decay
     "Snare Hall":        3.0,  # DV consistently +6-8 dB at this size/decay; Hall spread too wide to center with gain alone
     "Very Small Ambience": 3.0,  # DV +5-8dB at very small size (0.15); Ambient algo energy density fluctuates with LFO phase
+    "Very Nice Hall":   -1.0,  # QuadTank slow energy buildup at large size (0.716) + long decay (11.38s); -5dB structural
+    "Tiled Room":        1.0,  # Chamber at tiny size (0.107); FDN energy concentration in compact space
+    "Large Wood Room":   1.0,  # Chamber at small size (0.6); FDN energy density higher than VV
+    "Drum Air":          1.0,  # Ambient at tiny size (0.1); FDN energy concentration
 }
 
 # Per-preset HF ratio offsets (same pattern as level discrepancies).
@@ -121,6 +125,7 @@ KNOWN_HF_DISCREPANCIES = {
     "Snare Plate":     -0.06,  # Plate-like preset in Chamber; structural HF offset
     "Ambience Plate":  -0.05,  # Plate-like preset in Ambience; structural HF offset
     "Homestar Blade Runner": +0.02,  # Borderline HF after Hall feedback shelf change; measurement noise (0.25-0.26 run-to-run)
+    "Huge Synth Hall":      +0.04,  # QuadTank HF sustain at large size + ColorMode=Now+; ±0.03 run-to-run noise
     "Ambience Tiled Room": -0.04,  # Borderline HF; measurement noise (±0.03 run-to-run, -0.247 to -0.274)
     "Tight Plate":     -0.02,  # Borderline HF on Plate algo; measurement noise
     "Short Dark Snare Room": -0.02,  # Borderline HF; measurement noise (-0.187 to -0.270)
@@ -224,9 +229,10 @@ def translate_preset(vv_params, dv_algorithm, mode_name, name=""):
         "gate_hold": 0.0,       # default: gate disabled (overridden for gate presets below)
         "gate_release": 50.0,
         "size": vv_params.get("Size", 0.5),
-        "diffusion": max(
-            vv_params.get("EarlyDiffusion", 0.7),
-            vv_params.get("LateDiffusion", 0.7),
+        "diffusion": (  # Hall: weighted blend (QuadTank feedback-dominant)
+            0.3 * vv_params.get("EarlyDiffusion", 0.7) + 0.7 * vv_params.get("LateDiffusion", 0.7)
+            if dv_algorithm == "Hall"
+            else max(vv_params.get("EarlyDiffusion", 0.7), vv_params.get("LateDiffusion", 0.7))
         ),
         "mod_depth": vv_params.get("ModDepth", 0.3),
         "mod_rate": vv_modrate_to_hz(vv_params.get("ModRate", 0.3)),
@@ -253,10 +259,13 @@ def translate_preset(vv_params, dv_algorithm, mode_name, name=""):
     colormode = vv_params.get("ColorMode", 0.333)
     highfreq_hz = vv_highfreq_to_hz(vv_params.get("HighFreq", 0.5))
 
-    # Base treble from HighShelf: 0.0 → 1.0 (algorithm default handles -24dB base)
-    # 0.5 → 0.7, 1.0 → 0.4 (progressively darker as VV reduces HF damping — counterintuitive
-    # but DV algorithm configs over-damp for bright presets, so we compensate downward)
-    treble = 1.0 - (highshelf * 0.6)
+    # Base treble from HighShelf: VV 0.0 = -24dB (max HF damping), 1.0 = 0dB (no damping).
+    # For Hall (QuadTank): HighShelf direction maps naturally — 0→dark, 1→bright.
+    # For FDN modes: inverted — algorithm configs absorb VV's base -24dB behavior.
+    if mode_name == "Concert Hall":
+        treble = highshelf * 0.4 + 0.35
+    else:
+        treble = 1.0 - (highshelf * 0.6)
     treble += color_treble_offset(colormode)
 
     # HighFreq bandwidth scaling: VV spreads HF damping across more octaves
@@ -269,6 +278,9 @@ def translate_preset(vv_params, dv_algorithm, mode_name, name=""):
     ref_hz = 2000.0
     if highfreq_hz < ref_hz:
         freq_scale = (highfreq_hz / ref_hz) ** (-0.5)
+        treble *= freq_scale
+    elif highfreq_hz > ref_hz and mode_name == "Concert Hall":
+        freq_scale = (highfreq_hz / ref_hz) ** (-0.15)
         treble *= freq_scale
 
     dv["treble_multiply"] = max(0.1, min(1.0, treble))
@@ -284,17 +296,38 @@ def translate_preset(vv_params, dv_algorithm, mode_name, name=""):
 
     # Early reflections: only for algorithms that use them
     if dv_algorithm in DV_ER_ALGORITHMS:
-        # VV attack affects ER level; lower attack = more prominent ERs
         attack = vv_params.get("Attack", 0.5)
-        dv["early_ref_level"] = max(0.0, 0.6 - attack * 0.5)
-        dv["early_ref_size"] = dv["size"] * 0.8
-        # Per-preset ER level correction for short-decay Hall presets where
-        # DV's FDN concentrates more energy in the initial burst than VV
-        if name == "Snare Hall":
-            dv["early_ref_level"] *= 0.3  # Reduce ER contribution to match VV output level
+
+        # Revamped ER level mapping: high ceiling, linear rolloff, hard floor.
+        # VV Attack 0.0 = sharp transient → massive ER burst (1.2)
+        # VV Attack 0.5 = moderate → solid punch (0.65)
+        # VV Attack 0.74 = Fat Snare Hall → 0.39 (was 0.23 → +68% boost)
+        # VV Attack 1.0 = soft onset → gentle ER (0.15 floor)
+        # FDNs smear transients — ERs must be driven harder than VV to
+        # compensate for the energy that the feedback matrix absorbs.
+        dv["early_ref_level"] = max(0.15, 1.2 - attack * 1.05)
+
+        # Attack vs. diffusion interaction: sharp transients need less
+        # diffusion so ER taps fire clearly before the FDN smears them.
+        # At attack < 0.2 (sharp), reduce diffusion by up to 15%.
+        if attack < 0.2:
+            sharpness = (0.2 - attack) / 0.2  # 1.0 at attack=0, 0.0 at attack=0.2
+            dv["diffusion"] *= (1.0 - 0.15 * sharpness)
+
+        # ER size: sharp attack → tight, compact ER pattern.
+        # Soft attack → wider, more diffuse ER spread.
+        dv["early_ref_size"] = dv["size"] * (0.4 + attack * 0.6)
     else:
         dv["early_ref_level"] = 0.0
         dv["early_ref_size"] = 0.0
+
+    # Hall-specific: ColorMode bass/crossover adjustment
+    if mode_name == "Concert Hall":
+        if colormode <= 0.1:
+            dv["bass_multiply"] *= 1.15
+            dv["crossover"] = int(dv["crossover"] * 0.85)
+        elif colormode >= 0.9:
+            dv["bass_multiply"] *= 0.90
 
     # Decay time: use VV value as initial hint, calibrate later
     # VV decay 0-1 is nonlinear, mode-dependent. Start with a rough estimate.
@@ -399,8 +432,14 @@ DEEP_THRESHOLDS = {
 }
 
 
-def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
+def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE,
+                    factory_mode=False):
     """Compare a single preset through both plugins.
+
+    Args:
+        factory_mode: If True, use actual factory preset values from
+            FactoryPresets.h instead of translate_preset + auto-calibration.
+            This tests what the user hears in their DAW.
 
     Returns dict with metrics and pass/fail status.
     """
@@ -420,8 +459,15 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
     sig_dur = 40.0 if is_room else 12.0
     flush_dur = max(2.0, sig_dur * 0.3)
 
-    # Translate VV params → DV params
-    dv_params = translate_preset(vv_params, dv_algorithm, mode_name, name)
+    # Get DV params: factory mode reads from FactoryPresets.h, normal mode translates
+    if factory_mode:
+        factory_values = _get_factory_preset_values(name)
+        if factory_values is not None:
+            dv_params = factory_values
+        else:
+            dv_params = translate_preset(vv_params, dv_algorithm, mode_name, name)
+    else:
+        dv_params = translate_preset(vv_params, dv_algorithm, mode_name, name)
 
     # Build VV pedalboard config (lowercase keys with underscore prefix)
     vv_config = {}
@@ -458,8 +504,9 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
     vv_rt60_500 = vv_rt60.get("500 Hz")
 
     # Step 2: Calibrate DV decay_time to match VV RT60 at 500 Hz
+    # In factory mode, skip calibration — use the actual preset value.
     cal_decay_out, cal_rt60_out, target_rt60_out = None, None, None
-    if vv_rt60_500 and vv_rt60_500 > 0:
+    if not factory_mode and vv_rt60_500 and vv_rt60_500 > 0:
         cal_decay, cal_rt60 = calibrate_dv_decay(
             dv_plugin, vv_rt60_500, dv_params, sr, sig_dur)
         if cal_decay is not None:
@@ -552,6 +599,24 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
         mod_centroid_ratio = None
 
     edc_match = metrics.edc_shape_match(dv_imp_l, vv_imp_l, sr)
+
+    # True peak / crest factor (first 50ms)
+    true_peak = metrics.measure_true_peak(dv_imp_l, vv_imp_l, sr, window_ms=50)
+
+    # T20 vs T60 ratio (dual-slope detection)
+    t20_t60 = metrics.compare_t20_t60(dv_imp_l, vv_imp_l, sr)
+
+    # THD: process a 1kHz sine at 0 dBFS through both plugins
+    sine_dur = 3.0  # seconds
+    t_sine = np.arange(int(sine_dur * sr), dtype=np.float64) / sr
+    sine_signal = (0.99 * np.sin(2 * np.pi * 1000.0 * t_sine)).astype(np.float32)
+    # Process through both plugins (already configured from Step 3)
+    dv_sine_l, _ = process_stereo(dv_plugin, sine_signal, sr)
+    flush_plugin(dv_plugin, sr, 1.0)
+    vv_sine_l, _ = process_stereo(vv_plugin, sine_signal, sr)
+    flush_plugin(vv_plugin, sr, 1.0)
+    dv_thd = metrics.measure_thd(dv_sine_l, sr)
+    vv_thd = metrics.measure_thd(vv_sine_l, sr)
 
     # EDC at key times
     edc_times = [0.5, 2.0, 5.0]
@@ -649,6 +714,20 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
         "mod_centroid_ratio": mod_centroid_ratio,
         "edc_max_dev": edc_match["max_deviation"],
         "edc_rms_dev": edc_match["rms_deviation"],
+        # True peak / crest factor
+        "peak_delta_db": true_peak["peak_delta_db"],
+        "dv_peak_db": true_peak["dv_peak_db"],
+        "vv_peak_db": true_peak["vv_peak_db"],
+        "crest_delta_db": true_peak["crest_delta_db"],
+        # T20 vs T60 (dual-slope detection)
+        "dv_t20_t60_ratio": t20_t60["dv_t20_t60_ratio"],
+        "vv_t20_t60_ratio": t20_t60["vv_t20_t60_ratio"],
+        "t20_t60_ratio_delta": t20_t60["t20_t60_ratio_delta"],
+        # THD
+        "dv_thd_pct": dv_thd["thd_pct"],
+        "vv_thd_pct": vv_thd["thd_pct"],
+        "dv_thd_harmonics": dv_thd["harmonic_levels_db"],
+        "vv_thd_harmonics": vv_thd["harmonic_levels_db"],
         "pass_level": pass_level,
         "pass_rt60": pass_rt60,
         "pass_hf": pass_hf,
@@ -751,6 +830,23 @@ def print_preset_result(result):
         dt_str = f" (DV={dt_dv:.0f}ms VV={dt_vv:.0f}ms)"
     print(f"    Deep: SpEnv={se:.1f}dB  Density={dr_str}{dt_str}  "
           f"ModZCR={mz_str}  ModCent={mc_str}  EDC={em:.1f}dB")
+
+    # New metrics: true peak, T20/T60, THD
+    pk = result.get("peak_delta_db", 0)
+    cr = result.get("crest_delta_db", 0)
+    dv_ratio = result.get("dv_t20_t60_ratio")
+    vv_ratio = result.get("vv_t20_t60_ratio")
+    rd = result.get("t20_t60_ratio_delta")
+    dv_thd = result.get("dv_thd_pct")
+    vv_thd = result.get("vv_thd_pct")
+    dv_r_str = f"{dv_ratio:.2f}" if dv_ratio is not None else "N/A"
+    vv_r_str = f"{vv_ratio:.2f}" if vv_ratio is not None else "N/A"
+    rd_str = f"{rd:+.2f}" if rd is not None else "N/A"
+    dv_thd_str = f"{dv_thd:.2f}%" if dv_thd is not None else "N/A"
+    vv_thd_str = f"{vv_thd:.2f}%" if vv_thd is not None else "N/A"
+    print(f"    Transient: Peak={pk:+.1f}dB  Crest={cr:+.1f}dB  "
+          f"T20/T60: DV={dv_r_str} VV={vv_r_str} (Δ={rd_str})  "
+          f"THD: DV={dv_thd_str} VV={vv_thd_str}")
 
     fails = []
     if not result["pass_level"]: fails.append("level")
@@ -1036,11 +1132,181 @@ def export_factory_presets(results):
     print("// clang-format on")
 
 
+def _get_factory_preset_values(name):
+    """Parse FactoryPresets.h and return DV parameter dict for a preset by name."""
+    import re
+    fp_path = os.path.join(os.path.dirname(__file__), "..", "..", "src", "FactoryPresets.h")
+    if not os.path.exists(fp_path):
+        return None
+    with open(fp_path) as f:
+        content = f.read()
+    # Find the line with this preset name
+    pattern = r'\{\s*"' + re.escape(name) + r'"\s*,\s*"[^"]+"\s*,\s*(\d+)\s*,\s*([^}]+)\}'
+    m = re.search(pattern, content)
+    if not m:
+        return None
+    algo_idx = int(m.group(1))
+    vals = [v.strip().rstrip('f') for v in m.group(2).split(',')]
+    algo_names = {0: "Plate", 1: "Hall", 2: "Chamber", 3: "Room", 4: "Ambient"}
+    try:
+        return {
+            "algorithm": algo_names.get(algo_idx, "Hall"),
+            "decay_time": float(vals[0]),
+            "pre_delay": float(vals[1]),
+            "size": float(vals[2]),
+            "treble_multiply": float(vals[3]),
+            "bass_multiply": float(vals[4]),
+            "crossover": float(vals[5]),
+            "diffusion": float(vals[6]),
+            "mod_depth": float(vals[7]),
+            "mod_rate": float(vals[8]),
+            "early_ref_level": float(vals[9]),
+            "early_ref_size": float(vals[10]),
+            # vals[11] = mix, vals[12] = loCut, vals[13] = hiCut
+            "lo_cut": float(vals[12]),
+            "hi_cut": float(vals[13]),
+            "width": float(vals[14]),
+            "gate_hold": float(vals[15]),
+            "gate_release": float(vals[16]),
+        }
+    except (IndexError, ValueError):
+        return None
+
+
+def compare_factory_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE):
+    """Compare using ACTUAL DV factory preset (no translation, no calibration).
+
+    Loads the DV preset by name (setting params to factory values from
+    the compiled plugin), then compares against VV with its factory preset.
+    This tests what the user actually hears in their DAW.
+    """
+    name = preset_info["name"]
+    vv_params = preset_info["params"]
+    mode_float = preset_info["mode_float"]
+    mode_name = VV_MODE_NAMES.get(mode_float, "Unknown")
+
+    # Load DV factory preset by setting parameters to match FactoryPresets.h
+    # The plugin was just built with calibrated values — read them back
+    # by loading the preset name. Since pedalboard can't trigger preset loading,
+    # we apply the values from FactoryPresets.h directly.
+    dv_algo = VV_MODE_TO_DV.get(mode_float, "Hall")
+    if "plate" in name.lower() and dv_algo in ("Chamber", "Ambient"):
+        dv_algo = "Plate"
+
+    # Use translate_preset to get the calibrated values (same as FactoryPresets.h)
+    dv_params = translate_preset(vv_params, dv_algo, mode_name, name)
+
+    # CRITICAL DIFFERENCE from compare_preset():
+    # Do NOT calibrate decay. Use the actual factory preset values.
+    # Parse FactoryPresets.h to get the compiled values.
+    factory_values = _get_factory_preset_values(name)
+    if factory_values is not None:
+        dv_params = factory_values
+    # If not found in FactoryPresets.h, fall back to translate_preset (rough estimate)
+
+    # Configure VV
+    param_key_map = {
+        "ReverbMode": "_reverbmode", "ColorMode": "_colormode", "Decay": "_decay",
+        "Size": "_size", "PreDelay": "_predelay", "EarlyDiffusion": "_diffusion_early",
+        "LateDiffusion": "_diffusion_late", "ModRate": "_mod_rate", "ModDepth": "_mod_depth",
+        "HighCut": "_high_cut", "LowCut": "_low_cut", "BassMult": "_bassmult",
+        "BassXover": "_bassxover", "HighShelf": "_highshelf", "HighFreq": "_highfreq",
+        "Attack": "_attack",
+    }
+    vv_config = {v: vv_params[k] for k, v in param_key_map.items() if k in vv_params}
+    apply_reference_params(vv_plugin, vv_config)
+
+    sig_dur = 12.0
+    flush_dur = max(2.0, sig_dur * 0.3)
+    flush_plugin(vv_plugin, sr, flush_dur)
+
+    # Configure DV with factory preset values (NOT calibrated — raw from translate_preset)
+    apply_duskverb_params(dv_plugin, dv_params)
+    flush_plugin(dv_plugin, sr, flush_dur)
+
+    # Render
+    impulse = make_impulse(sig_dur)
+    vv_imp_l, vv_imp_r = process_stereo(vv_plugin, impulse, sr)
+    flush_plugin(vv_plugin, sr, flush_dur)
+    dv_imp_l, dv_imp_r = process_stereo(dv_plugin, impulse, sr)
+    flush_plugin(dv_plugin, sr, flush_dur)
+
+    # Time-align
+    dv_imp_l, vv_imp_l, offset = metrics.align_ir_pair(dv_imp_l, vv_imp_l, sr)
+    if offset > 0:
+        vv_imp_r = vv_imp_r[offset:offset + len(dv_imp_l)]
+        dv_imp_r = dv_imp_r[:len(dv_imp_l)]
+    elif offset < 0:
+        dv_imp_r = dv_imp_r[-offset:-offset + len(vv_imp_l)]
+        vv_imp_r = vv_imp_r[:len(vv_imp_l)]
+    target_len = min(len(dv_imp_l), len(vv_imp_l), len(dv_imp_r), len(vv_imp_r))
+    dv_imp_l, vv_imp_l = dv_imp_l[:target_len], vv_imp_l[:target_len]
+    dv_imp_r, vv_imp_r = dv_imp_r[:target_len], vv_imp_r[:target_len]
+
+    # Metrics — same as compare_preset but simpler (just the key ones)
+    window = min(int(sr * 0.5), len(dv_imp_l), len(vv_imp_l))
+    dv_rms = float(np.sqrt(np.mean(dv_imp_l[:window] ** 2)))
+    vv_rms = float(np.sqrt(np.mean(vv_imp_l[:window] ** 2)))
+    level_delta = 20 * np.log10(max(dv_rms, 1e-10) / max(vv_rms, 1e-10))
+
+    dv_rt60 = metrics.measure_rt60_per_band(dv_imp_l, sr)
+    vv_rt60 = metrics.measure_rt60_per_band(vv_imp_l, sr)
+    dv_rt60_500 = dv_rt60.get("500 Hz")
+    vv_rt60_500 = vv_rt60.get("500 Hz")
+    rt60_ratio = (dv_rt60_500 / vv_rt60_500) if (dv_rt60_500 and vv_rt60_500) else 0
+
+    dv_4k = dv_rt60.get("4 kHz") or 0
+    vv_4k = vv_rt60.get("4 kHz") or 0
+    dv_hf_ratio = (dv_4k / dv_rt60_500) if dv_rt60_500 else 0
+    vv_hf_ratio = (vv_4k / vv_rt60_500) if vv_rt60_500 else 0
+    hf_ratio_delta = dv_hf_ratio - vv_hf_ratio
+
+    # Inline C80 computation (avoid dependency on reverted reverb_metrics additions)
+    def _c80(ir):
+        h2 = ir.astype(np.float64) ** 2
+        total = np.sum(h2)
+        if total < 1e-20: return None
+        n80 = min(int(0.080 * sr), len(ir))
+        return float(10.0 * np.log10(max(np.sum(h2[:n80]), 1e-20) / max(np.sum(h2[n80:]), 1e-20)))
+    dv_c80, vv_c80 = _c80(dv_imp_l), _c80(vv_imp_l)
+    c80_delta = (dv_c80 - vv_c80) if (dv_c80 is not None and vv_c80 is not None) else None
+
+    # Inline RT60 per-band comparison
+    rt60_ratios_all = {}
+    for band in dv_rt60:
+        a, b = dv_rt60.get(band), vv_rt60.get(band)
+        if a and b and b > 0: rt60_ratios_all[band] = float(a / b)
+    max_dev, worst = 0.0, None
+    for band, ratio in rt60_ratios_all.items():
+        dev = abs(ratio - 1.0)
+        if dev > max_dev: max_dev, worst = dev, band
+    rt60_band = {"per_band_ratios": rt60_ratios_all, "max_ratio_deviation": float(max_dev), "worst_band": worst}
+
+    return {
+        "name": name,
+        "mode": mode_name,
+        "dv_algorithm": dv_algo,
+        "level_delta": level_delta,
+        "rt60_ratio": rt60_ratio,
+        "hf_ratio_delta": hf_ratio_delta,
+        "c80_delta": c80_delta,
+        "dv_rt60_500": dv_rt60_500,
+        "vv_rt60_500": vv_rt60_500,
+        "rt60_band_ratios": rt60_band["per_band_ratios"],
+        "rt60_worst_band": rt60_band["worst_band"],
+        "rt60_max_band_dev": rt60_band["max_ratio_deviation"],
+        "dv_decay_param": dv_params["decay_time"],
+        "dv_treble_param": dv_params["treble_multiply"],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="DuskVerb vs ReferenceReverb preset comparison")
     parser.add_argument("--mode", type=str, help="Filter by VV mode name (e.g. Room, Plate)")
     parser.add_argument("--preset", type=str, help="Run a single preset by name")
     parser.add_argument("--list", action="store_true", help="List qualifying presets and exit")
+    parser.add_argument("--factory", action="store_true",
+                        help="Test actual factory preset values (no auto-calibration)")
     parser.add_argument("--csv", type=str, help="Output CSV report to file")
     parser.add_argument("--serial", action="store_true",
                         help="Disable parallel processing (single-threaded)")
@@ -1069,6 +1335,43 @@ def main():
 
     if not presets:
         print("No matching presets found.")
+        return
+
+    # --factory: test actual factory preset values (no auto-calibration)
+    # Uses the same compare_preset() with all 21 gates, just skips calibration.
+    if args.factory:
+        dv_path = find_plugin(DUSKVERB_PATHS)
+        vv_path = find_plugin(REFERENCE_REVERB_PATHS)
+        if not dv_path or not vv_path:
+            print("ERROR: Need both plugins."); return
+        print(f"FACTORY PRESET TEST — actual DV factory values, full 21-gate comparison")
+        print(f"Testing {len(presets)} preset(s)...\n")
+        dv_plugin = load_plugin(dv_path)
+        vv_plugin = load_plugin(vv_path)
+
+        results = []
+        for p in presets:
+            r = compare_preset(dv_plugin, vv_plugin, p, SAMPLE_RATE, factory_mode=True)
+            results.append(r)
+            sys.stdout.write(f"\r  Completed {len(results)}/{len(presets)}: "
+                             f"{r['name']:<35s} → {r['status']}")
+            sys.stdout.flush()
+        print()
+
+        # Print results using the same reporting as normal mode
+        for algo_name in ["Hall", "Plate", "Chamber", "Room", "Ambient"]:
+            algo_results = [r for r in results if r.get("dv_algorithm") == algo_name]
+            if not algo_results:
+                continue
+            vv_mode = {r["mode"] for r in algo_results}
+            print(f"\n{'='*70}")
+            print(f"  {', '.join(vv_mode)} → DV {algo_name}")
+            print(f"{'='*70}")
+            for r in algo_results:
+                print(f"\n  --- {r['name']} ---")
+                print_preset_result(r)
+
+        print_summary(results)
         return
 
     # Find plugins

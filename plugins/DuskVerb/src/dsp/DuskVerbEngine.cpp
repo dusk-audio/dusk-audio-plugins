@@ -66,6 +66,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     // Output EQ
     loCutFilter_.reset();
     hiCutFilter_.reset();
+    hiCutFilter2_.reset();
     updateLoCutCoeffs();
     updateHiCutCoeffs();
 
@@ -196,8 +197,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         float er = erLevelSmoother_.next();
         float lateGain = lateGainScale_ * decayGainComp_;
         float outGain = outputGainSmoother_.next();
-        scratchL_[si] = DspUtils::fastTanh ((scratchL_[si] * lateGain + erOutL_[si] * er) * outGain / 16.0f) * 16.0f;
-        scratchR_[si] = DspUtils::fastTanh ((scratchR_[si] * lateGain + erOutR_[si] * er) * outGain / 16.0f) * 16.0f;
+        float mixL = (scratchL_[si] * lateGain + erOutL_[si] * er) * outGain;
+        float mixR = (scratchR_[si] * lateGain + erOutR_[si] * er) * outGain;
+        if (enableSaturation_)
+        {
+            scratchL_[si] = DspUtils::fastTanh (mixL / 16.0f) * 16.0f;
+            scratchR_[si] = DspUtils::fastTanh (mixR / 16.0f) * 16.0f;
+        }
+        else
+        {
+            scratchL_[si] = mixL;
+            scratchR_[si] = mixR;
+        }
     }
 
     // Output EQ: low shelf at 250Hz + mid parametric + high shelf
@@ -266,8 +277,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             // Output EQ: lo cut (highpass) then hi cut (lowpass) on wet signal
             wetL = loCutFilter_.processL (wetL);
             wetR = loCutFilter_.processR (wetR);
-            wetL = hiCutFilter_.processL (wetL);
-            wetR = hiCutFilter_.processR (wetR);
+            wetL = hiCutFilter2_.processL (hiCutFilter_.processL (wetL));
+            wetR = hiCutFilter2_.processR (hiCutFilter_.processR (wetR));
 
             // Stereo width: mid/side encoding
             float mid  = (wetL + wetR) * 0.5f;
@@ -357,6 +368,7 @@ void DuskVerbEngine::applyAlgorithm (int index)
     useDattorroTank_ = config_->useDattorroTank;
     // QuadTank for Hall: 4 cross-coupled allpass tanks with 28 output taps
     useQuadTank_ = (config_ == &kHall);
+    enableSaturation_ = config_->enableSaturation;
 
     // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
     // Must set scale BEFORE prepare() so buffers are allocated at the right size.
@@ -636,21 +648,33 @@ void DuskVerbEngine::updateLoCutCoeffs()
     loCutFilter_.a2 = (1.0f - alpha) / a0;
 }
 
-// Second-order Butterworth lowpass coefficients (12 dB/oct)
+// Cascaded 4th-order Butterworth lowpass (24 dB/oct).
+// Two second-order stages with staggered Q values for maximally flat passband.
+// Butterworth 4th-order pole angles: Q1 = 1/(2*cos(pi/8)) ≈ 0.541, Q2 = 1/(2*cos(3*pi/8)) ≈ 1.307
 void DuskVerbEngine::updateHiCutCoeffs()
 {
     float sr = static_cast<float> (sampleRate_);
     float omega = 6.283185307179586f * hiCutHz_ / sr;
     float sn = std::sin (omega);
     float cs = std::cos (omega);
-    float alpha = sn / 1.4142135623730951f; // sqrt(2) for Butterworth Q
 
-    float a0 = 1.0f + alpha;
-    hiCutFilter_.b0 = ((1.0f - cs) * 0.5f) / a0;
-    hiCutFilter_.b1 = (1.0f - cs) / a0;
-    hiCutFilter_.b2 = ((1.0f - cs) * 0.5f) / a0;
-    hiCutFilter_.a1 = (-2.0f * cs) / a0;
-    hiCutFilter_.a2 = (1.0f - alpha) / a0;
+    // Stage 1: Q = 0.5412 (wider, handles the gentle rolloff shoulder)
+    float alpha1 = sn / (2.0f * 0.5412f);
+    float a0_1 = 1.0f + alpha1;
+    hiCutFilter_.b0 = ((1.0f - cs) * 0.5f) / a0_1;
+    hiCutFilter_.b1 = (1.0f - cs) / a0_1;
+    hiCutFilter_.b2 = ((1.0f - cs) * 0.5f) / a0_1;
+    hiCutFilter_.a1 = (-2.0f * cs) / a0_1;
+    hiCutFilter_.a2 = (1.0f - alpha1) / a0_1;
+
+    // Stage 2: Q = 1.3066 (narrower, adds the steep skirt)
+    float alpha2 = sn / (2.0f * 1.3066f);
+    float a0_2 = 1.0f + alpha2;
+    hiCutFilter2_.b0 = ((1.0f - cs) * 0.5f) / a0_2;
+    hiCutFilter2_.b1 = (1.0f - cs) / a0_2;
+    hiCutFilter2_.b2 = ((1.0f - cs) * 0.5f) / a0_2;
+    hiCutFilter2_.a1 = (-2.0f * cs) / a0_2;
+    hiCutFilter2_.a2 = (1.0f - alpha2) / a0_2;
 }
 
 // Shelf biquad coefficients: Audio EQ Cookbook (Robert Bristow-Johnson), Q=0.707.
