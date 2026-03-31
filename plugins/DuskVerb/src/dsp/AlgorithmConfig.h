@@ -178,8 +178,8 @@ static constexpr AlgorithmConfig kPlate = {
     0.65f, 0.65f,   // input diffusion: 0.65
     0.50f,           // output diffusion scale (was 0.75; reduced for cleaner tail density)
     20000.0f,        // bandwidth: full spectrum input (no HF attenuation before FDN)
-    0.90f, 0.70f,    // ER: level=0.90, timeScale=0.70
-    0.20f,           // late gain: 0.20 (was 0.30; reduced for output level calibration)
+    0.45f, 0.70f,    // ER: level=0.45 (was 0.90; halved post-ER-bypass to fix +9dB peak excess), timeScale=0.70
+    0.30f,           // late gain: 0.30 (was 0.20; increased to fill RMS gap from ER reduction)
     0.10f, 1.0f,     // mod: 0.10 (was 0.25; reduce spectral smearing for MFCC 36→51)
     0.65f, 1.00f, 1.0f, // damping: trebleMultScale=0.65
     20000.0f,        // high crossover: 20kHz (two-band — Plate trebleMult>1.0 needs uniform bright boost across all HF)
@@ -226,14 +226,14 @@ static constexpr AlgorithmConfig kHall = {
     0.55f, 0.45f,    // input diffusion: 0.55/0.45 (was 0.75/0.625 — reduced for sparser early onset)
     0.35f,           // output diffusion scale (was 0.50; reduced for cleaner tail density)
     20000.0f,        // bandwidth: full spectrum input
-    0.90f, 0.85f,    // ER: level=0.90, timeScale=0.85 (0.95 made C50 worse at 42.1)
-    0.22f,           // late gain: 0.22
+    0.65f, 0.85f,    // ER: level=0.65 (was 0.90; reduced post-ER-bypass for crest balance), timeScale=0.85
+    0.28f,           // late gain: 0.28 (was 0.22; increased to boost late RMS for crest improvement)
     0.75f, 13.0f,    // mod: modDepthScale=0.75 (DV 33% too deep), modRateScale=13.0 (Hilbert: VV=5.4Hz vs DV=0.4Hz)
     0.50f, 1.50f, 1.0f, // damping: trebleMultScale=0.50
     4000.0f,         // high crossover: 4kHz (3kHz regressed — pushed too much into air band, kurtosis diverged)
     0.70f,           // airDampingScale: 0.70
     0.5f, 1.5f,      // size range
-    0.25f,           // ER crossfeed: 0.25 (0.22 dropped MFCC/EDT — keep at 0.25)
+    0.10f,           // ER crossfeed: 0.10 (was 0.25; reduced to limit QuadTank bleed into early onset for crest)
     0.0f,            // inline diffusion: off (short allpasses tested at 0.20-0.50 — no measurable effect on peaks)
                      // Long allpasses (41-131) wrecked centroid_late. Multi-point output tapping handles density.
     1.0f,            // mod depth floor: 1.0 = uniform modulation
@@ -278,8 +278,8 @@ static constexpr AlgorithmConfig kChamber = {
     0.75f, 0.625f,   // input diffusion: Dattorro split
     0.65f,           // output diffusion scale (was 1.0; reduced for cleaner tail density)
     16000.0f,        // bandwidth: 16kHz
-    1.2f, 0.55f,     // ER: level=1.2 (R7: boost ER for C50 recovery), tight timing
-    0.38f,           // late gain: 0.38 (R7: reduce late for C50 — was 0.42)
+    0.55f, 0.55f,    // ER: level=0.55 (was 1.20; cut for +5.6dB peak excess), tight timing
+    0.42f,           // late gain: 0.42 (was 0.38; increased to fill RMS gap from ER reduction)
     0.05f, 1.0f,     // mod: 0.05 (was 0.4; reducing modulation was the single biggest MFCC/spectral_eq win)
     0.90f, 0.90f, 1.0f, // damping: trebleMultScale=0.90 (R5 revert: 1.0 crashed T30/decay_shape/MFCC)
     20000.0f,        // high crossover: 20kHz (effectively two-band — mid and air bands unified)
@@ -326,8 +326,8 @@ static constexpr AlgorithmConfig kRoom = {
     0.75f, 0.70f,    // input diffusion: moderate-high
     0.65f,           // output diffusion scale (was 1.0; reduced for cleaner tail density)
     18000.0f,        // bandwidth: wide input (structural HF damping handles per-loop rolloff)
-    1.4f, 0.45f,     // ER: boosted level + tighter timing for C50
-    0.38f,           // late gain: 0.38 (was 0.55; reduced for output level calibration)
+    0.80f, 0.45f,    // ER: level=0.80 (was 1.40; reduced for -6dB crest deficit), tighter timing
+    0.42f,           // late gain: 0.42 (was 0.38; increased to fill RMS gap from ER reduction)
     1.3f, 1.0f,      // mod: wider stereo (modDepthScale=1.3, modRateScale=1.0)
     0.45f, 0.75f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.75 (bright, was 0.95), bassMultScale=0.85
     6000.0f,         // high crossover: 6kHz (three-band: bass/mid/air — independent air band control)

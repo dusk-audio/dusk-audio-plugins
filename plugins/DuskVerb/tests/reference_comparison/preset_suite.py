@@ -305,7 +305,7 @@ def translate_preset(vv_params, dv_algorithm, mode_name, name=""):
         # VV Attack 1.0 = soft onset → gentle ER (0.15 floor)
         # FDNs smear transients — ERs must be driven harder than VV to
         # compensate for the energy that the feedback matrix absorbs.
-        dv["early_ref_level"] = max(0.15, 1.2 - attack * 1.05)
+        dv["early_ref_level"] = max(0.15, 0.75 - attack * 0.60)
 
         # Attack vs. diffusion interaction: sharp transients need less
         # diffusion so ER taps fire clearly before the FDN smears them.
