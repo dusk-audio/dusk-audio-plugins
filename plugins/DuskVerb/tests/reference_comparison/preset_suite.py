@@ -410,11 +410,21 @@ def calibrate_dv_decay(dv_plugin, target_rt60, dv_params, sr,
 # Metrics comparison
 # ---------------------------------------------------------------------------
 PASS_THRESHOLDS = {
-    "level_delta":    5.0,    # ±5 dB
-    "rt60_ratio":     (0.70, 1.40),  # 0.70x – 1.40x
-    "hf_ratio_delta": 0.25,  # ±0.25 (RT60 HF/LF ratio)
-    "ringing":        15.0,  # < 15 dB max prominence
-    "spectral_mse":   None,  # Disabled — MSE between different architectures is inherently high
+    # TIGHT thresholds — if you can hear the difference, it MUST fail.
+    "level_delta":          2.0,          # ±2 dB
+    "rt60_ratio":           (0.90, 1.10), # 0.90x – 1.10x at 500 Hz (±10%)
+    "hf_ratio_delta":       0.10,         # ±0.10
+    "ringing":              12.0,         # < 12 dB
+    "spectral_mse":         5000.0,       # Enabled, tight
+    "c80_delta":            2.0,          # ±2 dB (JND is ~1 dB)
+    "ts_delta":             0.020,        # ±20 ms (JND is ~10 ms)
+    "br_delta":             0.15,         # ±0.15
+    "er_to_tail_delta":     3.0,          # ±3 dB (ER algorithms only)
+    "edc_max_dev":          6.0,          # Per-preset max EDC shape deviation
+    "peak_delta":           2.0,          # ±2 dB (true peak first 50ms)
+    "crest_delta":          1.5,          # ±1.5 dB (crest factor first 50ms)
+    "t20_t60_ratio_delta":  0.08,         # ±0.08 (dual-slope detection)
+    "rt60_max_band_dev":    0.20,         # Max per-band RT60 deviation from 1.0 (±20%)
 }
 
 # Per-mode deep metric thresholds (algorithm character matching).
@@ -662,24 +672,106 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE,
     dv_lr_lag = lr_xcorr_lag(dv_imp_l, dv_imp_r, xcorr_window, max_lag_samples)
     vv_lr_lag = lr_xcorr_lag(vv_imp_l, vv_imp_r, xcorr_window, max_lag_samples)
 
-    # Pass/fail
+    # Pass/fail — ALL metrics gated. No hiding.
     is_gate = dv_params.get("gate_hold", 0) > 0
     r500 = rt60_ratios.get("500 Hz", 0)
     level_discrepancy = KNOWN_LEVEL_DISCREPANCIES.get(name, 0.0)
     hf_discrepancy = KNOWN_HF_DISCREPANCIES.get(name, 0.0)
     ring_discrepancy = KNOWN_RINGING_DISCREPANCIES.get(name, 0.0)
     pass_level = abs(level_delta - level_discrepancy) <= PASS_THRESHOLDS["level_delta"]
-    # Gate presets: RT60 and HF ratio are not meaningful (both tails are truncated by gate)
-    if is_gate:
-        pass_rt60 = True
-        pass_hf = True
-    else:
-        pass_rt60 = (PASS_THRESHOLDS["rt60_ratio"][0] <= r500 <= PASS_THRESHOLDS["rt60_ratio"][1]) if r500 else False
-        pass_hf = abs(hf_ratio_delta - hf_discrepancy) <= PASS_THRESHOLDS["hf_ratio_delta"]
     pass_ring = (dv_ring["max_peak_prominence_db"] - ring_discrepancy) < PASS_THRESHOLDS["ringing"]
     mse_thresh = PASS_THRESHOLDS["spectral_mse"]
     pass_mse = avg_mse < mse_thresh if mse_thresh is not None else True
-    all_pass = pass_level and pass_rt60 and pass_hf and pass_ring and pass_mse
+
+    # Gate presets: skip decay/clarity metrics (truncated tails make them meaningless)
+    if is_gate:
+        pass_rt60 = True; pass_hf = True; pass_c80 = True; pass_ts = True
+        pass_br = True; pass_edc = True; pass_er_tail = True
+        pass_peak = True; pass_crest = True; pass_t20_t60 = True; pass_rt60_bands = True
+    else:
+        pass_rt60 = (PASS_THRESHOLDS["rt60_ratio"][0] <= r500 <= PASS_THRESHOLDS["rt60_ratio"][1]) if r500 else False
+        pass_hf = abs(hf_ratio_delta - hf_discrepancy) <= PASS_THRESHOLDS["hf_ratio_delta"]
+
+        # C80, Ts, BR — from true_peak and t20_t60 results
+        c80_val = true_peak.get("peak_delta_db", 0) if hasattr(true_peak, 'get') else 0  # placeholder
+        # Compute inline since these weren't stored yet
+        dv_h2 = dv_imp_l.astype(np.float64) ** 2
+        vv_h2 = vv_imp_l.astype(np.float64) ** 2
+        dv_total, vv_total = np.sum(dv_h2), np.sum(vv_h2)
+        n80 = min(int(0.080 * sr), len(dv_imp_l))
+        n50 = min(int(0.050 * sr), len(dv_imp_l))
+        dv_c80 = 10*np.log10(max(np.sum(dv_h2[:n80]),1e-20)/max(np.sum(dv_h2[n80:]),1e-20))
+        vv_c80 = 10*np.log10(max(np.sum(vv_h2[:n80]),1e-20)/max(np.sum(vv_h2[n80:]),1e-20))
+        c80_delta = float(dv_c80 - vv_c80)
+        pass_c80 = abs(c80_delta) <= PASS_THRESHOLDS["c80_delta"]
+
+        t_arr = np.arange(len(dv_imp_l), dtype=np.float64) / sr
+        dv_ts = float(np.sum(t_arr * dv_h2) / max(dv_total, 1e-20))
+        vv_ts = float(np.sum(t_arr[:len(vv_h2)] * vv_h2) / max(vv_total, 1e-20))
+        ts_delta = dv_ts - vv_ts
+        pass_ts = abs(ts_delta) <= PASS_THRESHOLDS["ts_delta"]
+
+        # Bass ratio
+        dv_br_vals = [dv_rt60.get("125 Hz"), dv_rt60.get("250 Hz"), dv_rt60.get("500 Hz"), dv_rt60.get("1 kHz")]
+        vv_br_vals = [vv_rt60.get("125 Hz"), vv_rt60.get("250 Hz"), vv_rt60.get("500 Hz"), vv_rt60.get("1 kHz")]
+        if all(v and v > 0 for v in dv_br_vals) and all(v and v > 0 for v in vv_br_vals):
+            dv_br = (dv_br_vals[0] + dv_br_vals[1]) / (dv_br_vals[2] + dv_br_vals[3])
+            vv_br = (vv_br_vals[0] + vv_br_vals[1]) / (vv_br_vals[2] + vv_br_vals[3])
+            br_delta = dv_br - vv_br
+            pass_br = abs(br_delta) <= PASS_THRESHOLDS["br_delta"]
+        else:
+            pass_br = True; br_delta = 0
+
+        # ER-to-tail
+        has_er = dv_algorithm in DV_ER_ALGORITHMS
+        if has_er:
+            dv_er = metrics.analyze_early_reflections(dv_imp_l, sr)
+            vv_er = metrics.analyze_early_reflections(vv_imp_l, sr)
+            er_tail_delta = dv_er["er_to_tail_db"] - vv_er["er_to_tail_db"]
+            pass_er_tail = abs(er_tail_delta) <= PASS_THRESHOLDS["er_to_tail_delta"]
+        else:
+            pass_er_tail = True; er_tail_delta = 0
+
+        # EDC shape
+        pass_edc = edc_match["max_deviation"] <= PASS_THRESHOLDS["edc_max_dev"]
+
+        # True peak and crest factor (first 50ms)
+        dv_peak = float(np.max(np.abs(dv_imp_l[:n50])))
+        vv_peak = float(np.max(np.abs(vv_imp_l[:n50])))
+        peak_delta = 20*np.log10(max(dv_peak,1e-10)) - 20*np.log10(max(vv_peak,1e-10))
+        pass_peak = abs(peak_delta) <= PASS_THRESHOLDS["peak_delta"]
+
+        dv_rms50 = float(np.sqrt(np.mean(dv_imp_l[:n50].astype(np.float64)**2)))
+        vv_rms50 = float(np.sqrt(np.mean(vv_imp_l[:n50].astype(np.float64)**2)))
+        dv_crest = 20*np.log10(max(dv_peak,1e-10)/max(dv_rms50,1e-10))
+        vv_crest = 20*np.log10(max(vv_peak,1e-10)/max(vv_rms50,1e-10))
+        crest_delta = dv_crest - vv_crest
+        pass_crest = abs(crest_delta) <= PASS_THRESHOLDS["crest_delta"]
+
+        # T20/T60 ratio
+        dv_t20_t60 = t20_t60.get("dv_t20_t60_ratio") if isinstance(t20_t60, dict) else None
+        vv_t20_t60 = t20_t60.get("vv_t20_t60_ratio") if isinstance(t20_t60, dict) else None
+        if dv_t20_t60 is not None and vv_t20_t60 is not None:
+            t20_t60_delta = dv_t20_t60 - vv_t20_t60
+            pass_t20_t60 = abs(t20_t60_delta) <= PASS_THRESHOLDS["t20_t60_ratio_delta"]
+        else:
+            pass_t20_t60 = True
+
+        # RT60 per-band (all 7 octave bands)
+        max_band_dev = 0.0
+        worst_band = None
+        for band in dv_rt60:
+            dv_val, vv_val = dv_rt60.get(band), vv_rt60.get(band)
+            if dv_val and vv_val and vv_val > 0:
+                dev = abs(dv_val / vv_val - 1.0)
+                if dev > max_band_dev:
+                    max_band_dev = dev
+                    worst_band = band
+        pass_rt60_bands = max_band_dev <= PASS_THRESHOLDS["rt60_max_band_dev"]
+
+    all_pass = (pass_level and pass_rt60 and pass_hf and pass_ring and pass_mse
+                and pass_c80 and pass_ts and pass_br and pass_edc and pass_er_tail
+                and pass_peak and pass_crest and pass_t20_t60 and pass_rt60_bands)
 
     return {
         "name": name,
@@ -728,11 +820,30 @@ def compare_preset(dv_plugin, vv_plugin, preset_info, sr=SAMPLE_RATE,
         "vv_thd_pct": vv_thd["thd_pct"],
         "dv_thd_harmonics": dv_thd["harmonic_levels_db"],
         "vv_thd_harmonics": vv_thd["harmonic_levels_db"],
+        # New gated metrics
+        "c80_delta": c80_delta if not is_gate else None,
+        "ts_delta": ts_delta if not is_gate else None,
+        "br_delta": br_delta if not is_gate else None,
+        "er_tail_delta": er_tail_delta if not is_gate else None,
+        "peak_delta": peak_delta if not is_gate else None,
+        "crest_delta": crest_delta if not is_gate else None,
+        "rt60_max_band_dev": max_band_dev if not is_gate else 0,
+        "rt60_worst_band": worst_band if not is_gate else None,
+        # All pass/fail flags
         "pass_level": pass_level,
         "pass_rt60": pass_rt60,
         "pass_hf": pass_hf,
         "pass_ring": pass_ring,
         "pass_mse": pass_mse,
+        "pass_c80": pass_c80,
+        "pass_ts": pass_ts,
+        "pass_br": pass_br,
+        "pass_edc": pass_edc,
+        "pass_er_tail": pass_er_tail,
+        "pass_peak": pass_peak,
+        "pass_crest": pass_crest,
+        "pass_t20_t60": pass_t20_t60,
+        "pass_rt60_bands": pass_rt60_bands,
         "status": "PASS" if all_pass else "FAIL",
         "dv_params": dv_params,
         "vv_params": vv_params,
@@ -854,6 +965,15 @@ def print_preset_result(result):
     if not result["pass_hf"]: fails.append("hf")
     if not result["pass_ring"]: fails.append("ring")
     if not result["pass_mse"]: fails.append("mse")
+    if not result.get("pass_c80", True): fails.append("c80")
+    if not result.get("pass_ts", True): fails.append("ts")
+    if not result.get("pass_br", True): fails.append("br")
+    if not result.get("pass_edc", True): fails.append("edc")
+    if not result.get("pass_er_tail", True): fails.append("er_tail")
+    if not result.get("pass_peak", True): fails.append("peak")
+    if not result.get("pass_crest", True): fails.append("crest")
+    if not result.get("pass_t20_t60", True): fails.append("t20_t60")
+    if not result.get("pass_rt60_bands", True): fails.append("rt60_bands")
     fail_str = f" ({', '.join(fails)})" if fails else ""
     print(f"    → {result['status']}{fail_str}")
 
