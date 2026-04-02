@@ -59,8 +59,14 @@ public:
     /** Set peak hold time in seconds (default 1.5s) */
     void setPeakHoldTime(float seconds) { peakHoldTimeSeconds = seconds; updateBallisticsCoefficients(); }
 
+    /** Reset the clip indicator (called on click) */
+    void resetClip();
+
     /** Paint the LED meter */
     void paint(juce::Graphics& g) override;
+
+    /** Click to reset clip indicator */
+    void mouseDown(const juce::MouseEvent&) override { resetClip(); }
 
 private:
     Orientation orientation;
@@ -96,6 +102,15 @@ private:
     float peakLevelR = -60.0f;
     int peakHoldCounterL = 0;
     int peakHoldCounterR = 0;
+
+    // Clip indicator (stays lit when signal exceeds 0dBFS)
+    bool clipActive = false;
+    bool clipActiveL = false;
+    bool clipActiveR = false;
+    int clipHoldCounter = 0;      // mono
+    int clipHoldCounterL = 0;     // stereo L
+    int clipHoldCounterR = 0;     // stereo R
+    int clipHoldFrames = 0;       // calculated from refresh rate (~3s)
 
     // LED color structure
     struct LEDColors {

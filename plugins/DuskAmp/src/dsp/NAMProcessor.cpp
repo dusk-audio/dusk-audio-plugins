@@ -33,6 +33,7 @@ NAMProcessor::~NAMProcessor()
 {
 #if DUSKAMP_NAM_SUPPORT
     pendingReady_.store(false);
+    pendingClear_.store(false);
     pendingModel_.reset();
     activeModel_.reset();
     retiredModel_.reset();
@@ -56,6 +57,15 @@ void NAMProcessor::process(float* buffer, int numSamples)
     jassert(numSamples <= maxBlockSize_);
 
 #if DUSKAMP_NAM_SUPPORT
+    // Handle pending clear (set by clearModel() on message thread)
+    if (pendingClear_.load(std::memory_order_acquire))
+    {
+        retiredModel_ = std::move(activeModel_);
+        pendingModel_.reset();
+        pendingReady_.store(false, std::memory_order_relaxed);
+        pendingClear_.store(false, std::memory_order_release);
+    }
+
     // Swap in pending model if ready (atomic flag — no data race)
     if (pendingReady_.load(std::memory_order_acquire))
     {
@@ -158,10 +168,9 @@ bool NAMProcessor::loadModel(const juce::File& file)
 void NAMProcessor::clearModel()
 {
 #if DUSKAMP_NAM_SUPPORT
-    pendingReady_.store(false, std::memory_order_release);
-    pendingModel_.reset();
-    // Don't reset activeModel_ directly — the audio thread may be using it.
-    // It will be retired on next loadModel or prepare.
+    // Signal the audio thread to safely clear pendingModel_ and activeModel_.
+    // Don't touch pendingModel_ directly here — the audio thread may be moving it.
+    pendingClear_.store(true, std::memory_order_release);
 #endif
     modelName_.clear();
     modelFile_ = juce::File();

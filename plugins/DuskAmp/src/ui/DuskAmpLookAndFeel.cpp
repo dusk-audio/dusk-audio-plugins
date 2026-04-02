@@ -40,7 +40,7 @@ void DuskAmpLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     if (isDragging)
     {
         float glowRadius = radius;
-        g.setColour (juce::Colour (kAccent).withAlpha (0.12f));
+        g.setColour (juce::Colour (currentAccent_).withAlpha (0.12f));
         g.fillEllipse (centre.x - glowRadius, centre.y - glowRadius,
                        glowRadius * 2.0f, glowRadius * 2.0f);
     }
@@ -76,7 +76,7 @@ void DuskAmpLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
         filledArc.addCentredArc (centre.x, centre.y, arcRadius, arcRadius,
                                  0.0f, rotaryStartAngle, angle, true);
 
-        auto accentCol = juce::Colour (kAccent);
+        auto accentCol = juce::Colour (currentAccent_);
         juce::ColourGradient arcGradient (
             accentCol.darker (0.3f),
             centre.x + arcRadius * std::sin (rotaryStartAngle),
@@ -122,7 +122,7 @@ void DuskAmpLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (4.0f);
     bool on = button.getToggleState();
-    auto accent = juce::Colour (kAccent);
+    auto accent = juce::Colour (currentAccent_);
     float cornerSize = bounds.getHeight() * 0.5f;
 
     if (on)

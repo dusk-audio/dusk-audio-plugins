@@ -20,6 +20,7 @@ public:
     void reset()
     {
         gateEnvelope_ = 0.0f;
+        gateGain_ = 1.0f;
         gateOpen_ = false;
     }
 
@@ -65,13 +66,16 @@ public:
             else if (gateEnvelope_ < gateThresholdLinear_ * 0.5f)
                 gateOpen_ = false;
 
-            if (! gateOpen_)
-            {
-                // Smooth fade to zero using envelope as attenuation
-                float gateGain = gateEnvelope_ / std::max (gateThresholdLinear_, 1e-10f);
-                gateGain = std::min (gateGain, 1.0f);
-                sample *= gateGain;
-            }
+            // Smooth gain ramp to avoid clicks at gate open/close
+            float targetGain = gateOpen_ ? 1.0f : 0.0f;
+            if (gateGain_ < targetGain)
+                gateGain_ += (1.0f - gateGain_) * (1.0f - gateAttackCoeff_);
+            else
+                gateGain_ *= gateReleaseCoeff_;
+
+            if (gateGain_ < 1e-6f) gateGain_ = 0.0f;
+
+            sample *= gateGain_;
 
             buffer[i] = sample;
         }
@@ -84,6 +88,7 @@ private:
     float prevGateThreshDB_ = -999.0f;
     float gateRelease_ = 50.0f;
     float gateEnvelope_ = 0.0f;
+    float gateGain_ = 1.0f;
     float gateAttackCoeff_ = 0.0f;
     float gateReleaseCoeff_ = 0.0f;
     double sampleRate_ = 44100.0;

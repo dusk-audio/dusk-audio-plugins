@@ -23,7 +23,7 @@ public:
     bool acceptsMidi() const override  { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 1.0; }
+    double getTailLengthSeconds() const override { return 3.0; }
 
     int getNumPrograms() override                              { return 1; }
     int getCurrentProgram() override                           { return 0; }
@@ -62,6 +62,7 @@ public:
     float getInputLevelR() const  { return inputLevelR_.load (std::memory_order_relaxed); }
     float getOutputLevelL() const { return outputLevelL_.load (std::memory_order_relaxed); }
     float getOutputLevelR() const { return outputLevelR_.load (std::memory_order_relaxed); }
+    float getSagLevel() const     { return sagLevel_.load (std::memory_order_relaxed); }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -77,11 +78,10 @@ private:
 
     // Discrete / choice parameter pointers
     std::atomic<float>* ampModeParam_       = nullptr;
-    std::atomic<float>* preampChannelParam_ = nullptr;
-    std::atomic<float>* toneTypeParam_      = nullptr;
+    std::atomic<float>* ampModelParam_      = nullptr;
     std::atomic<float>* oversamplingParam_  = nullptr;
     std::atomic<float>* cabEnabledParam_    = nullptr;
-    std::atomic<float>* brightParam_        = nullptr;
+    std::atomic<float>* powerAmpEnabledParam_ = nullptr;
     std::atomic<float>* delayEnabledParam_  = nullptr;
     std::atomic<float>* reverbEnabledParam_ = nullptr;
 
@@ -89,33 +89,39 @@ private:
     std::atomic<float>* inputGainParam_     = nullptr;
     std::atomic<float>* gateThresholdParam_ = nullptr;
     std::atomic<float>* gateReleaseParam_   = nullptr;
-    std::atomic<float>* preampGainParam_    = nullptr;
+    std::atomic<float>* driveParam_         = nullptr;
     std::atomic<float>* bassParam_          = nullptr;
     std::atomic<float>* midParam_           = nullptr;
     std::atomic<float>* trebleParam_        = nullptr;
-    std::atomic<float>* powerDriveParam_    = nullptr;
     std::atomic<float>* presenceParam_      = nullptr;
     std::atomic<float>* resonanceParam_     = nullptr;
-    std::atomic<float>* sagParam_           = nullptr;
     std::atomic<float>* cabMixParam_        = nullptr;
     std::atomic<float>* cabHiCutParam_      = nullptr;
     std::atomic<float>* cabLoCutParam_      = nullptr;
+    std::atomic<float>* cabAutoGainParam_   = nullptr;
     std::atomic<float>* delayTimeParam_     = nullptr;
     std::atomic<float>* delayFeedbackParam_ = nullptr;
     std::atomic<float>* delayMixParam_      = nullptr;
     std::atomic<float>* reverbMixParam_     = nullptr;
     std::atomic<float>* reverbDecayParam_   = nullptr;
+    std::atomic<float>* namInputLevelParam_  = nullptr;
+    std::atomic<float>* namOutputLevelParam_ = nullptr;
     std::atomic<float>* outputLevelParam_   = nullptr;
 
     juce::AudioParameterBool* bypassParam_  = nullptr;
 
+    // Bypass latency compensation: delay the dry signal to match processing latency
+    std::vector<float> bypassDelayL_, bypassDelayR_;
+    int bypassDelayWritePos_ = 0;
+    int bypassDelaySamples_ = 0;
+
     // Cached discrete values
     int cachedAmpMode_       = 0;
-    int cachedPreampChannel_ = 1;
-    int cachedToneType_      = 1;
+    int cachedAmpModel_      = 0;
     int cachedOversampling_  = 0;
     bool cachedCabEnabled_   = true;
-    bool cachedBright_       = false;
+    bool cachedCabAutoGain_  = false;
+    bool cachedPowerAmpEnabled_ = true;
     bool cachedDelayEnabled_ = false;
     bool cachedReverbEnabled_= false;
 
@@ -123,14 +129,12 @@ private:
     juce::SmoothedValue<float> inputGainSmooth_;
     juce::SmoothedValue<float> gateThresholdSmooth_;
     juce::SmoothedValue<float> gateReleaseSmooth_;
-    juce::SmoothedValue<float> preampGainSmooth_;
+    juce::SmoothedValue<float> driveSmooth_;
     juce::SmoothedValue<float> bassSmooth_;
     juce::SmoothedValue<float> midSmooth_;
     juce::SmoothedValue<float> trebleSmooth_;
-    juce::SmoothedValue<float> powerDriveSmooth_;
     juce::SmoothedValue<float> presenceSmooth_;
     juce::SmoothedValue<float> resonanceSmooth_;
-    juce::SmoothedValue<float> sagSmooth_;
     juce::SmoothedValue<float> cabMixSmooth_;
     juce::SmoothedValue<float> cabHiCutSmooth_;
     juce::SmoothedValue<float> cabLoCutSmooth_;
@@ -139,6 +143,8 @@ private:
     juce::SmoothedValue<float> delayMixSmooth_;
     juce::SmoothedValue<float> reverbMixSmooth_;
     juce::SmoothedValue<float> reverbDecaySmooth_;
+    juce::SmoothedValue<float> namInputLevelSmooth_;
+    juce::SmoothedValue<float> namOutputLevelSmooth_;
     juce::SmoothedValue<float> outputLevelSmooth_;
 
     static constexpr int kSmoothingBlockSize = 32;
@@ -148,6 +154,7 @@ private:
     std::atomic<float> inputLevelR_  { -100.0f };
     std::atomic<float> outputLevelL_ { -100.0f };
     std::atomic<float> outputLevelR_ { -100.0f };
+    std::atomic<float> sagLevel_     { 1.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DuskAmpProcessor)
 };

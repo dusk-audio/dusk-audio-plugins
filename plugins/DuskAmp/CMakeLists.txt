@@ -164,9 +164,17 @@ endif()
 # Set version compile definitions (from git tag or CI)
 set_plugin_version_defines(DuskAmp ${DUSKAMP_VERSION})
 
+# Built-in cabinet IRs (embedded as binary data)
+juce_add_binary_data(DuskAmpCabIRs SOURCES
+    resources/cabs/round_1x12_jensen.wav
+    resources/cabs/chime_2x12_blue.wav
+    resources/cabs/punch_4x12_greenback.wav
+)
+
 # Link libraries
 target_link_libraries(DuskAmp
     PRIVATE
+        DuskAmpCabIRs
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC
