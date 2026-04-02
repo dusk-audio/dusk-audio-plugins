@@ -48,7 +48,7 @@ Zero-latency IR-based reverb:
 - Waveform display
 - Size, pre-delay, damping, width, mix controls
 
-### Multi-Q - IN DEVELOPMENT
+### Multi-Q - RELEASED
 Universal EQ with multiple modes:
 - **Digital Mode**: Clean 8-band parametric with color-coded bands
 - **British Mode**: Classic console EQ with two console voicings
