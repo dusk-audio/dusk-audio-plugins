@@ -1,5 +1,4 @@
 #include "DuskAmpEngine.h"
-#include "BinaryData.h"
 #include <cmath>
 #include <algorithm>
 
@@ -261,28 +260,8 @@ void DuskAmpEngine::setAmpModel (int model)
             break;
     }
 
-    // Auto-load matched factory cabinet IR (unless user loaded a custom IR)
-    if (cabinet_.isFactoryIR() || ! cabinet_.isLoaded())
-    {
-        switch (clamped)
-        {
-            case 0:
-                cabinet_.loadIRFromBinaryData (BinaryData::round_1x12_jensen_wav,
-                                                BinaryData::round_1x12_jensen_wavSize,
-                                                "1x12 Jensen C12N");
-                break;
-            case 1:
-                cabinet_.loadIRFromBinaryData (BinaryData::chime_2x12_blue_wav,
-                                                BinaryData::chime_2x12_blue_wavSize,
-                                                "2x12 Blue Alnico");
-                break;
-            case 2:
-                cabinet_.loadIRFromBinaryData (BinaryData::punch_4x12_greenback_wav,
-                                                BinaryData::punch_4x12_greenback_wavSize,
-                                                "4x12 Greenback");
-                break;
-        }
-    }
+    // TODO: Load matched factory cabinet IR from BinaryData when IR files are added
+    // For now, leave cabinet unchanged — user loads IR manually
 }
 
 // --- Input ---

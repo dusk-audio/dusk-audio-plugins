@@ -54,6 +54,8 @@ void PreampDSP::prepare (double sampleRate)
     // Pre-compute Koren LUTs for all 3 models (expensive, but only at prepare time)
     precomputeAllKorenLUTs();
 
+    updateInputHPF();
+    updateMillerDynamicCoeff();
     setAmpModel (currentModel_);
     reset();
 }
@@ -64,10 +66,13 @@ void PreampDSP::reset()
     {
         stages_[i].reset();
         interStageDC_[i].reset();
-        couplingCapState_[i] = 0.0f;
+        couplingCaps_[i].hpfState = 0.0f;
+        couplingCaps_[i].biasShift = 0.0f;
         cathodeShelfState_[i] = 0.0f;
+        millerDynamicState_[i] = 0.0f;
     }
 
+    inputHPF_.reset();
     brightFilter_.reset();
     trebleBleedState_ = 0.0f;
 }
@@ -151,9 +156,15 @@ void PreampDSP::setAmpModel (AmpModel model)
 
 void PreampDSP::process (float* buffer, int numSamples)
 {
+    // Drive-dependent Miller effect: as gain increases, HF rolloff intensifies
+    float millerDriveScale = 0.05f + drive_ * 0.25f;
+
     for (int i = 0; i < numSamples; ++i)
     {
         float sample = buffer[i];
+
+        // Tight 2nd-order Butterworth HPF at ~80Hz — kill sub-lows before cascading gain
+        sample = inputHPF_.process (sample);
 
         // Bright cap: resonant peak from capacitor across volume pot
         if (brightActive_)
@@ -170,18 +181,42 @@ void PreampDSP::process (float* buffer, int numSamples)
         // Process through each active tube stage
         for (int stage = 0; stage < numActiveStages_; ++stage)
         {
+            auto& cap = couplingCaps_[stage];
+
             // Coupling cap HPF (per-stage, per-model frequency)
-            couplingCapState_[stage] += (sample - couplingCapState_[stage]) * (1.0f - couplingCapCoeff_[stage]);
-            sample = sample - couplingCapState_[stage];
+            cap.hpfState += (sample - cap.hpfState) * (1.0f - couplingCapCoeff_[stage]);
+            sample = sample - cap.hpfState;
+
+            // Grid-to-cathode diode: when grid voltage goes positive,
+            // current flows through coupling cap, charging it negatively
+            if (sample > 0.0f)
+            {
+                cap.biasShift += sample * kBiasShiftChargeRate;
+                if (cap.biasShift > kMaxBiasShift)
+                    cap.biasShift = kMaxBiasShift;
+            }
+
+            // Grid-leak resistor slowly discharges the bias shift
+            cap.biasShift *= gridLeakDischargeCoeff_[stage];
+            if (std::abs (cap.biasShift) < 1e-15f) cap.biasShift = 0.0f;
+
+            // Apply bias shift (shifts operating point negative — blocking distortion)
+            sample -= cap.biasShift;
 
             // Tube stage
             sample = stages_[stage].processSample (sample, 0);
 
+            // Dynamic Miller capacitance (drive-dependent HF rolloff)
+            float hfContent = sample - millerDynamicState_[stage];
+            millerDynamicState_[stage] += hfContent * millerDynamicCoeff_;
+            if (std::abs (millerDynamicState_[stage]) < 1e-15f) millerDynamicState_[stage] = 0.0f;
+            sample -= hfContent * millerDriveScale;
+
             // Cathode bypass shelf: attenuate LF relative to HF
             float lf = cathodeShelfState_[stage];
             cathodeShelfState_[stage] += (sample - lf) * cathodeShelfCoeff_[stage];
-            float hfContent = sample - lf;
-            sample = lf * cathodeShelfAttenuation_[stage] + hfContent;
+            float hfCathode = sample - lf;
+            sample = lf * cathodeShelfAttenuation_[stage] + hfCathode;
 
             // DC block
             sample = interStageDC_[stage].processSample (sample);
@@ -261,12 +296,15 @@ void PreampDSP::updateBiasFromSag()
 
 void PreampDSP::updateCouplingCapCoeffs()
 {
+    float fs = static_cast<float> (sampleRate_);
+
     for (int i = 0; i < kMaxStages; ++i)
     {
         const auto& cfg = stageConfigs_[i];
         if (cfg.couplingCapF <= 0.0f || cfg.gridLeakR <= 0.0f)
         {
             couplingCapCoeff_[i] = 0.995f;
+            gridLeakDischargeCoeff_[i] = 0.999f;
             continue;
         }
 
@@ -274,6 +312,13 @@ void PreampDSP::updateCouplingCapCoeffs()
         float fc = 1.0f / (2.0f * kPi * cfg.couplingCapF * cfg.gridLeakR);
         fc = std::max (fc, 1.0f);
         couplingCapCoeff_[i] = std::exp (-2.0f * kPi * fc / static_cast<float> (sampleRate_));
+
+        // Grid-leak discharge: time constant = C * R_gridleak
+        // Typical grid-leak R is 1M-10M, giving tau = 22-470ms with typical coupling caps
+        // The schematic grid-leak R gives a natural discharge time
+        float tauMs = cfg.couplingCapF * cfg.gridLeakR * 1000.0f;
+        tauMs = std::clamp (tauMs, 10.0f, 500.0f); // Reasonable range
+        gridLeakDischargeCoeff_[i] = std::exp (-1000.0f / (tauMs * fs));
     }
 }
 
@@ -313,6 +358,32 @@ void PreampDSP::updateTrebleBleed()
     float fc = 2000.0f;
     float w = 2.0f * kPi * fc / static_cast<float> (sampleRate_);
     trebleBleedCoeff_ = w / (w + 1.0f);
+}
+
+void PreampDSP::updateInputHPF()
+{
+    // 2nd-order Butterworth HPF at ~80Hz (Q = 1/sqrt(2))
+    float fc = 80.0f;
+    float fs = static_cast<float> (sampleRate_);
+    float w0 = 2.0f * kPi * fc / fs;
+    float cosw0 = std::cos (w0);
+    float sinw0 = std::sin (w0);
+    float alpha = sinw0 / (2.0f * 0.7071f);
+
+    float a0 = 1.0f + alpha;
+    inputHPF_.b0 = ((1.0f + cosw0) * 0.5f) / a0;
+    inputHPF_.b1 = -(1.0f + cosw0) / a0;
+    inputHPF_.b2 = inputHPF_.b0;
+    inputHPF_.a1 = (-2.0f * cosw0) / a0;
+    inputHPF_.a2 = (1.0f - alpha) / a0;
+}
+
+void PreampDSP::updateMillerDynamicCoeff()
+{
+    // Dynamic Miller cap LPF: ~6kHz — rolls off harsh HF at high gain
+    float fc = 6000.0f;
+    float w = 2.0f * kPi * fc / static_cast<float> (sampleRate_);
+    millerDynamicCoeff_ = w / (w + 1.0f);
 }
 
 void PreampDSP::updateCathodeBypassCoeffs()

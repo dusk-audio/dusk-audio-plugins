@@ -17,6 +17,8 @@ void PowerAmp::prepare (double sampleRate)
     updatePresenceCoeff();
     updateResonanceCoeff();
     updateCurrentDrawCoeff();
+    updateSagCoeffs();
+    updateSpeakerCoeffs();
     reset();
 }
 
@@ -26,6 +28,10 @@ void PowerAmp::reset()
     nfbPresenceHP_.reset();
     nfbResonanceLPState_ = 0.0f;
     currentDrawEnvelope_ = 0.0f;
+    sagFastEnv_ = 0.0f;
+    sagSlowEnv_ = 0.0f;
+    speakerLFState_ = 0.0f;
+    speakerHFState_ = 0.0f;
     transformer_.reset();
     otResonance_.reset();
     dcBlocker_.reset();
@@ -83,7 +89,8 @@ void PowerAmp::setAmpModel (AmpModel model)
         case AmpModel::Chime:
         {
             // 4x EL84, tube rectifier — NO negative feedback
-            curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::EL84;
+            // EL84 is a smaller pentode; use Pentode curve (closest match)
+            curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Pentode;
             driveRange_ = 2.5f;
             nfbAmount_ = 0.0f;          // NO NFB — the AC30 signature
             presenceMaxDB_ = 6.0f;
@@ -144,59 +151,84 @@ void PowerAmp::process (float* buffer, int numSamples)
         currentDrawEnvelope_ += (absInput - currentDrawEnvelope_) * currentDrawCoeff_;
         if (currentDrawEnvelope_ < 1e-15f) currentDrawEnvelope_ = 0.0f;
 
-        // 1. Subtract negative feedback from input (1-sample delay)
-        //    Scale NFB by inverse of drive gain to keep loop gain < 1.
-        //    In real amps, NFB is taken from the output transformer secondary
-        //    (post-attenuation), so it naturally scales down at higher output.
-        float effectiveNFB = prevNFBOutput_ / std::max (1.0f, driveGain_);
-        float inputToTubes = sample - effectiveNFB;
-
-        // 2. Apply drive gain, modulated by power supply sag
-        float driven = inputToTubes * driveGain_ * sagMultiplier_;
-
-        // 3. Push-pull power tube waveshaper
-        //    In Class AB, one tube handles positive half, another handles negative.
-        //    They clip at slightly different thresholds, generating even harmonics
-        //    that make power amp distortion sound "musical."
-        //    Asymmetry is in INPUT scaling only (not output) to avoid DC offset.
-        float saturated;
-        if (driven >= 0.0f)
-            saturated = waveshaper.process (driven * 1.05f, curveType_);
+        // === Multi-stage sag envelope ===
+        // Fast attack (~10ms), dual release: fast (~50ms) + slow bloom (~500ms)
+        if (absInput > sagFastEnv_)
+            sagFastEnv_ = sagAttackCoeff_ * sagFastEnv_ + (1.0f - sagAttackCoeff_) * absInput;
         else
-            saturated = waveshaper.process (driven * 0.95f, curveType_);
+            sagFastEnv_ = sagReleaseFastCoeff_ * sagFastEnv_;
+        if (sagFastEnv_ < 1e-15f) sagFastEnv_ = 0.0f;
 
-        // 4. Compute negative feedback signal
+        if (sagFastEnv_ > sagSlowEnv_)
+            sagSlowEnv_ = sagAttackCoeff_ * sagSlowEnv_ + (1.0f - sagAttackCoeff_) * sagFastEnv_;
+        else
+            sagSlowEnv_ = sagReleaseSlowCoeff_ * sagSlowEnv_;
+        if (sagSlowEnv_ < 1e-15f) sagSlowEnv_ = 0.0f;
+
+        // Combined sag: fast + slow bloom, weighted
+        float sagEnv = sagFastEnv_ * 0.6f + sagSlowEnv_ * 0.4f;
+        float sagFactor = 1.0f - std::min (sagEnv, 1.0f) * 0.15f;
+
+        // === 1. Reactive NFB: subtract frequency-shaped previous output from input ===
+        float effectiveNFB = prevNFBOutput_ / std::max (1.0f, driveGain_);
+
+        // Reactive speaker impedance: impedance rises at resonance (~80Hz) and HF (~4kHz)
+        // Higher impedance = less effective NFB (more coloration)
+        speakerLFState_ += (absInput - speakerLFState_) * speakerLFCoeff_;
+        if (std::abs (speakerLFState_) < 1e-15f) speakerLFState_ = 0.0f;
+        float hfNfbAbs = std::abs (effectiveNFB);
+        speakerHFState_ += (hfNfbAbs - speakerHFState_) * speakerHFCoeff_;
+        if (std::abs (speakerHFState_) < 1e-15f) speakerHFState_ = 0.0f;
+        float impedanceFactor = 1.0f + speakerLFState_ * 0.15f + speakerHFState_ * 0.1f;
+
+        float inputToTubes = sample - effectiveNFB / impedanceFactor;
+
+        // === 2. Apply drive gain, modulated by power supply sag ===
+        float driven = inputToTubes * driveGain_ * sagMultiplier_ * sagFactor;
+
+        // === 3. Phase Inverter (triode stage, clips more symmetrically) ===
+        float piDriven = driven * 0.8f;
+        float piSaturated = waveshaper.process (piDriven,
+                                                 AnalogEmulation::WaveshaperCurves::CurveType::Triode);
+
+        // === 4. Push-Pull Class AB power tubes ===
+        // Split into push and pull halves from PI output
+        float pushInput =  piSaturated + crossoverBias_;
+        float pullInput = -piSaturated + crossoverBias_;
+
+        // Clamp negative portions (tube cutoff in class B region)
+        if (pushInput < 0.0f) pushInput = 0.0f;
+        if (pullInput < 0.0f) pullInput = 0.0f;
+
+        // Each half through power tube waveshaper
+        float pushOut = waveshaper.process (pushInput, curveType_);
+        float pullOut = waveshaper.process (pullInput, curveType_);
+
+        // Sum push-pull (push positive, pull inverted back)
+        float saturated = pushOut - pullOut;
+
+        // === 5. Compute negative feedback signal ===
         if (nfbAmount_ > 0.001f)
         {
             float nfbSignal = saturated * nfbAmount_;
 
             // Presence: 2nd-order resonant HPF in feedback path.
-            // Removing HF from NFB = more HF in output. The resonant peak
-            // at presenceFreq_ creates the characteristic "bite" of cranked amps.
             float nfbHPOut = nfbPresenceHP_.process (nfbSignal);
-
-            // Subtract HF content from feedback proportional to presence knob
             nfbSignal -= nfbHPOut * presenceAmount_;
 
-            // Resonance: LPF in feedback path — removing LF from NFB = more LF in output
+            // Resonance: LPF in feedback path
             nfbResonanceLPState_ += (nfbSignal - nfbResonanceLPState_) * nfbResonanceLPCoeff_;
             if (std::abs (nfbResonanceLPState_) < 1e-15f) nfbResonanceLPState_ = 0.0f;
-
-            // Subtract LF content from feedback proportional to resonance knob
             nfbSignal -= nfbResonanceLPState_ * resonanceAmount_;
 
             prevNFBOutput_ = nfbSignal;
         }
         else
         {
-            // No NFB (AC30 mode) — but still apply presence/resonance as feedforward
-            // since the AC30's "Cut" control acts on the output directly
+            // No NFB (AC30 mode) — presence/resonance as feedforward
             float preBoosted = saturated;
 
             float hpOut = nfbPresenceHP_.process (preBoosted);
-
-            // For no-NFB amps, presence acts as a cut control (reduces HF)
-            // Invert: more "presence" knob = less HF cut = brighter
             saturated -= hpOut * (1.0f - presenceAmount_) * 0.3f;
 
             nfbResonanceLPState_ += (preBoosted - nfbResonanceLPState_) * nfbResonanceLPCoeff_;
@@ -206,13 +238,13 @@ void PowerAmp::process (float* buffer, int numSamples)
             prevNFBOutput_ = 0.0f;
         }
 
-        // 5. Output transformer
+        // === 6. Output transformer ===
         saturated = transformer_.processSample (saturated, 0);
 
-        // 5b. Output transformer resonant peak (leakage inductance)
+        // 6b. Output transformer resonant peak (leakage inductance)
         saturated = otResonance_.process (saturated);
 
-        // 6. DC block
+        // === 7. DC block ===
         saturated = dcBlocker_.processSample (saturated);
 
         buffer[i] = saturated;
@@ -280,4 +312,31 @@ void PowerAmp::updateOTResonance()
     otResonance_.b2 = (1.0f - alpha * A) * invA0;
     otResonance_.a1 = (-2.0f * cosw0) * invA0;
     otResonance_.a2 = (1.0f - alpha / A) * invA0;
+}
+
+void PowerAmp::updateSagCoeffs()
+{
+    float fs = static_cast<float> (sampleRate_);
+    if (fs <= 0.0f) return;
+
+    // Attack: ~10ms
+    sagAttackCoeff_ = std::exp (-1000.0f / (10.0f * fs));
+    // Fast release: ~50ms (power supply cap initial discharge)
+    sagReleaseFastCoeff_ = std::exp (-1000.0f / (50.0f * fs));
+    // Slow release: ~500ms (filter cap slow recovery / bloom)
+    sagReleaseSlowCoeff_ = std::exp (-1000.0f / (500.0f * fs));
+}
+
+void PowerAmp::updateSpeakerCoeffs()
+{
+    float fs = static_cast<float> (sampleRate_);
+    if (fs <= 0.0f) return;
+
+    // Speaker LF resonance tracking: ~80Hz
+    float wLF = 2.0f * kPi * 80.0f / fs;
+    speakerLFCoeff_ = wLF / (wLF + 1.0f);
+
+    // Speaker HF impedance rise: ~4kHz
+    float wHF = 2.0f * kPi * 4000.0f / fs;
+    speakerHFCoeff_ = wHF / (wHF + 1.0f);
 }

@@ -52,14 +52,7 @@ void ToneStack::prepare (double sampleRate)
     coeffsDirty_ = true;
     recomputeCoefficients();
     // On prepare, snap coefficients immediately (no smoothing)
-    filter_.b0 = targetCoeffs_.b0;
-    filter_.b1 = targetCoeffs_.b1;
-    filter_.b2 = targetCoeffs_.b2;
-    filter_.b3 = targetCoeffs_.b3;
-    filter_.a1 = targetCoeffs_.a1;
-    filter_.a2 = targetCoeffs_.a2;
-    filter_.a3 = targetCoeffs_.a3;
-    smoothBlocksRemaining_ = 0;
+    filter_.snapToTarget();
     reset();
 }
 
@@ -108,20 +101,9 @@ void ToneStack::process (float* buffer, int numSamples)
         coeffsDirty_ = false;
     }
 
-    // Smooth coefficient interpolation: lerp filter coefficients toward target
-    // over kSmoothBlocks blocks to prevent clicks from abrupt coefficient jumps
-    if (smoothBlocksRemaining_ > 0)
-    {
-        float alpha = 1.0f / static_cast<float> (smoothBlocksRemaining_);
-        filter_.b0 += (targetCoeffs_.b0 - filter_.b0) * alpha;
-        filter_.b1 += (targetCoeffs_.b1 - filter_.b1) * alpha;
-        filter_.b2 += (targetCoeffs_.b2 - filter_.b2) * alpha;
-        filter_.b3 += (targetCoeffs_.b3 - filter_.b3) * alpha;
-        filter_.a1 += (targetCoeffs_.a1 - filter_.a1) * alpha;
-        filter_.a2 += (targetCoeffs_.a2 - filter_.a2) * alpha;
-        filter_.a3 += (targetCoeffs_.a3 - filter_.a3) * alpha;
-        --smoothBlocksRemaining_;
-    }
+    // Per-sample coefficient interpolation: smoothly move from current to target
+    // coefficients across the block length to prevent zipper noise during automation
+    float invNumSamples = (numSamples > 1) ? 1.0f / static_cast<float> (numSamples) : 1.0f;
 
     // Models without a mid pot (Round AB763, Chime AC30) use a peaking
     // EQ overlay so the mid knob still does something useful.
@@ -131,15 +113,22 @@ void ToneStack::process (float* buffer, int numSamples)
     {
         for (int i = 0; i < numSamples; ++i)
         {
-            float sample = filter_.process (buffer[i]);
+            float interpFrac = static_cast<float> (i) * invNumSamples;
+            float sample = filter_.process (buffer[i], interpFrac);
             buffer[i] = midOverlay_.process (sample);
         }
     }
     else
     {
         for (int i = 0; i < numSamples; ++i)
-            buffer[i] = filter_.process (buffer[i]);
+        {
+            float interpFrac = static_cast<float> (i) * invNumSamples;
+            buffer[i] = filter_.process (buffer[i], interpFrac);
+        }
     }
+
+    // After block: snap current coefficients to target (interpolation complete)
+    filter_.snapToTarget();
 }
 
 // =========================================================================
@@ -237,34 +226,28 @@ void ToneStack::computeTMBCoefficients (const Components& comp,
     // Normalize and convert back to float for the per-sample filter
     if (std::abs (A0) < 1e-12)
     {
-        targetCoeffs_.b0 = 1.0f;
-        targetCoeffs_.b1 = targetCoeffs_.b2 = targetCoeffs_.b3 = 0.0f;
-        targetCoeffs_.a1 = targetCoeffs_.a2 = targetCoeffs_.a3 = 0.0f;
-        smoothBlocksRemaining_ = kSmoothBlocks;
+        filter_.setTarget (1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
         return;
     }
 
     double invA0 = 1.0 / A0;
-    targetCoeffs_.b0 = static_cast<float> (B0 * invA0);
-    targetCoeffs_.b1 = static_cast<float> (B1 * invA0);
-    targetCoeffs_.b2 = static_cast<float> (B2 * invA0);
-    targetCoeffs_.b3 = static_cast<float> (B3 * invA0);
-    targetCoeffs_.a1 = static_cast<float> (A1 * invA0);
-    targetCoeffs_.a2 = static_cast<float> (A2 * invA0);
-    targetCoeffs_.a3 = static_cast<float> (A3 * invA0);
+    float nb0 = static_cast<float> (B0 * invA0);
+    float nb1 = static_cast<float> (B1 * invA0);
+    float nb2 = static_cast<float> (B2 * invA0);
+    float nb3 = static_cast<float> (B3 * invA0);
+    float na1 = static_cast<float> (A1 * invA0);
+    float na2 = static_cast<float> (A2 * invA0);
+    float na3 = static_cast<float> (A3 * invA0);
 
     // Safety clamp: if any feedback coefficient is unreasonably large,
     // the filter is near-unstable at this knob position — fall back to passthrough
-    if (std::abs (targetCoeffs_.a1) > 100.0f ||
-        std::abs (targetCoeffs_.a2) > 100.0f ||
-        std::abs (targetCoeffs_.a3) > 100.0f)
+    if (std::abs (na1) > 100.0f || std::abs (na2) > 100.0f || std::abs (na3) > 100.0f)
     {
-        targetCoeffs_.b0 = 1.0f;
-        targetCoeffs_.b1 = targetCoeffs_.b2 = targetCoeffs_.b3 = 0.0f;
-        targetCoeffs_.a1 = targetCoeffs_.a2 = targetCoeffs_.a3 = 0.0f;
+        filter_.setTarget (1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        return;
     }
 
-    smoothBlocksRemaining_ = kSmoothBlocks;
+    filter_.setTarget (nb0, nb1, nb2, nb3, na1, na2, na3);
 }
 
 void ToneStack::computeChimeMidOverlay (float mid)

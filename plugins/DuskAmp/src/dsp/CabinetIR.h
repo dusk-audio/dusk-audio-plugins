@@ -43,6 +43,12 @@ private:
     juce::String loadedFileName_;
     juce::File loadedFile_;
 
+    // --- IR crossfade for glitch-free IR switching ---
+    static constexpr int kIRCrossfadeSamples = 64;
+    int irCrossfadeSamplesRemaining_ = 0;
+    bool irSwitchPending_ = false;
+    juce::AudioBuffer<float> prevIROutput_;  // Stores previous IR output during crossfade
+
     // Autogain: normalize IR loudness so different IRs play at similar levels
     bool autoGainEnabled_ = false;
     float autoGainDB_ = 0.0f;       // computed correction (for UI display)

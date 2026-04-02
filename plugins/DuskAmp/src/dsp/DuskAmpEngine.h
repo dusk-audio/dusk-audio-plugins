@@ -141,7 +141,7 @@ private:
     int currentAmpModel_ = -1;  // -1 = uninitialized, forces first setAmpModel to run
 
     // Crossfade state for glitch-free mode/oversampling switching
-    static constexpr int kCrossfadeSamples = 128;
+    static constexpr int kCrossfadeSamples = 1024;
     float crossfadeGain_ = 1.0f;
     int crossfadeSamplesRemaining_ = 0;
     int crossfadeDirection_ = 0; // -1 = fading out, +1 = fading in
