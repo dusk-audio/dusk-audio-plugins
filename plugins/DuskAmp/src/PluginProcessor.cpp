@@ -8,10 +8,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // Amp Mode
+    // Amp Mode (DSP / NAM)
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { DuskAmpParams::AMP_MODE, 1 }, "Amp Mode",
         juce::StringArray { "DSP", "NAM" }, 0));
+
+    // Amp Model (Round / Chime / Punch)
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { DuskAmpParams::AMP_MODEL, 1 }, "Amp Model",
+        juce::StringArray { "Blackface", "British Combo", "Plexi" }, 0));
 
     // Input
     layout.add (std::make_unique<juce::AudioParameterFloat> (
@@ -26,23 +31,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::ParameterID { DuskAmpParams::GATE_RELEASE, 1 }, "Gate Release",
         juce::NormalisableRange<float> (5.0f, 500.0f, 0.0f, 0.5f), 50.0f));
 
-    // Preamp
+    // Drive (single knob replaces preamp gain + power drive)
     layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { DuskAmpParams::PREAMP_GAIN, 1 }, "Preamp Gain",
+        juce::ParameterID { DuskAmpParams::DRIVE, 1 }, "Drive",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { DuskAmpParams::PREAMP_CHANNEL, 1 }, "Channel",
-        juce::StringArray { "Clean", "Crunch", "Lead" }, 1));
-
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { DuskAmpParams::PREAMP_BRIGHT, 1 }, "Bright", false));
-
     // Tone Stack
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { DuskAmpParams::TONE_TYPE, 1 }, "Tone Stack",
-        juce::StringArray { "American", "British", "AC" }, 1));
-
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::BASS, 1 }, "Bass",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
@@ -57,10 +51,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
 
     // Power Amp
     layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { DuskAmpParams::POWER_DRIVE, 1 }, "Power Drive",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.3f));
-
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::PRESENCE, 1 }, "Presence",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
@@ -68,9 +58,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::ParameterID { DuskAmpParams::RESONANCE, 1 }, "Resonance",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { DuskAmpParams::SAG, 1 }, "Sag",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.3f));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { DuskAmpParams::POWER_AMP_ENABLED, 1 }, "Power Amp", true));
 
     // Cabinet
     layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -87,6 +76,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::CAB_LOCUT, 1 }, "Cab Lo Cut",
         juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), 60.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { DuskAmpParams::CAB_AUTOGAIN, 1 }, "Cab Auto Gain", false));
 
     // Effects - Delay
     layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -116,6 +108,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::ParameterID { DuskAmpParams::REVERB_DECAY, 1 }, "Reverb Decay",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
+    // NAM levels (only active in NAM mode)
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { DuskAmpParams::NAM_INPUT_LEVEL, 1 }, "NAM Input",
+        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.0f, 1.0f), 0.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { DuskAmpParams::NAM_OUTPUT_LEVEL, 1 }, "NAM Output",
+        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.0f, 1.0f), 0.0f));
+
     // Output
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::OUTPUT_LEVEL, 1 }, "Output Level",
@@ -124,7 +125,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
     // Global
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { DuskAmpParams::OVERSAMPLING, 1 }, "Oversampling",
-        juce::StringArray { "2x", "4x" }, 0));
+        juce::StringArray { "2x", "4x", "8x" }, 0));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { DuskAmpParams::BYPASS, 1 }, "Bypass", false));
@@ -140,11 +141,10 @@ DuskAmpProcessor::DuskAmpProcessor()
 {
     // Discrete / choice params
     ampModeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_MODE);
-    preampChannelParam_ = parameters.getRawParameterValue (DuskAmpParams::PREAMP_CHANNEL);
-    toneTypeParam_      = parameters.getRawParameterValue (DuskAmpParams::TONE_TYPE);
+    ampModelParam_      = parameters.getRawParameterValue (DuskAmpParams::AMP_MODEL);
     oversamplingParam_  = parameters.getRawParameterValue (DuskAmpParams::OVERSAMPLING);
     cabEnabledParam_    = parameters.getRawParameterValue (DuskAmpParams::CAB_ENABLED);
-    brightParam_        = parameters.getRawParameterValue (DuskAmpParams::PREAMP_BRIGHT);
+    powerAmpEnabledParam_ = parameters.getRawParameterValue (DuskAmpParams::POWER_AMP_ENABLED);
     delayEnabledParam_  = parameters.getRawParameterValue (DuskAmpParams::DELAY_ENABLED);
     reverbEnabledParam_ = parameters.getRawParameterValue (DuskAmpParams::REVERB_ENABLED);
 
@@ -152,22 +152,23 @@ DuskAmpProcessor::DuskAmpProcessor()
     inputGainParam_     = parameters.getRawParameterValue (DuskAmpParams::INPUT_GAIN);
     gateThresholdParam_ = parameters.getRawParameterValue (DuskAmpParams::GATE_THRESHOLD);
     gateReleaseParam_   = parameters.getRawParameterValue (DuskAmpParams::GATE_RELEASE);
-    preampGainParam_    = parameters.getRawParameterValue (DuskAmpParams::PREAMP_GAIN);
+    driveParam_         = parameters.getRawParameterValue (DuskAmpParams::DRIVE);
     bassParam_          = parameters.getRawParameterValue (DuskAmpParams::BASS);
     midParam_           = parameters.getRawParameterValue (DuskAmpParams::MID);
     trebleParam_        = parameters.getRawParameterValue (DuskAmpParams::TREBLE);
-    powerDriveParam_    = parameters.getRawParameterValue (DuskAmpParams::POWER_DRIVE);
     presenceParam_      = parameters.getRawParameterValue (DuskAmpParams::PRESENCE);
     resonanceParam_     = parameters.getRawParameterValue (DuskAmpParams::RESONANCE);
-    sagParam_           = parameters.getRawParameterValue (DuskAmpParams::SAG);
     cabMixParam_        = parameters.getRawParameterValue (DuskAmpParams::CAB_MIX);
     cabHiCutParam_      = parameters.getRawParameterValue (DuskAmpParams::CAB_HICUT);
     cabLoCutParam_      = parameters.getRawParameterValue (DuskAmpParams::CAB_LOCUT);
+    cabAutoGainParam_   = parameters.getRawParameterValue (DuskAmpParams::CAB_AUTOGAIN);
     delayTimeParam_     = parameters.getRawParameterValue (DuskAmpParams::DELAY_TIME);
     delayFeedbackParam_ = parameters.getRawParameterValue (DuskAmpParams::DELAY_FEEDBACK);
     delayMixParam_      = parameters.getRawParameterValue (DuskAmpParams::DELAY_MIX);
     reverbMixParam_     = parameters.getRawParameterValue (DuskAmpParams::REVERB_MIX);
     reverbDecayParam_   = parameters.getRawParameterValue (DuskAmpParams::REVERB_DECAY);
+    namInputLevelParam_ = parameters.getRawParameterValue (DuskAmpParams::NAM_INPUT_LEVEL);
+    namOutputLevelParam_= parameters.getRawParameterValue (DuskAmpParams::NAM_OUTPUT_LEVEL);
     outputLevelParam_   = parameters.getRawParameterValue (DuskAmpParams::OUTPUT_LEVEL);
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter (DuskAmpParams::BYPASS));
@@ -175,12 +176,11 @@ DuskAmpProcessor::DuskAmpProcessor()
 
 bool DuskAmpProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
+    auto inputSet  = layouts.getMainInputChannelSet();
     auto outputSet = layouts.getMainOutputChannelSet();
 
     if (outputSet != juce::AudioChannelSet::stereo())
         return false;
-
-    auto inputSet = layouts.getMainInputChannelSet();
 
     return inputSet == juce::AudioChannelSet::mono()
         || inputSet == juce::AudioChannelSet::stereo();
@@ -191,22 +191,28 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine_.prepare (sampleRate, samplesPerBlock);
     setLatencySamples (engine_.getLatencyInSamples());
 
+    // Bypass latency compensation: allocate delay buffer for max possible latency.
+    // Always size for 8x oversampling so switching oversampling at runtime is safe.
+    int maxLatency = engine_.getMaxLatencyInSamples() + 64;
+    bypassDelayL_.resize (static_cast<size_t> (maxLatency), 0.0f);
+    bypassDelayR_.resize (static_cast<size_t> (maxLatency), 0.0f);
+    bypassDelayWritePos_ = 0;
+    bypassDelaySamples_ = engine_.getLatencyInSamples();
+
     // Initialize discrete params from saved state
     cachedAmpMode_       = static_cast<int> (ampModeParam_->load());
-    cachedPreampChannel_ = static_cast<int> (preampChannelParam_->load());
-    cachedToneType_      = static_cast<int> (toneTypeParam_->load());
+    cachedAmpModel_      = static_cast<int> (ampModelParam_->load());
     cachedOversampling_  = static_cast<int> (oversamplingParam_->load());
     cachedCabEnabled_    = cabEnabledParam_->load() >= 0.5f;
-    cachedBright_        = brightParam_->load() >= 0.5f;
+    cachedPowerAmpEnabled_ = powerAmpEnabledParam_->load() >= 0.5f;
     cachedDelayEnabled_  = delayEnabledParam_->load() >= 0.5f;
     cachedReverbEnabled_ = reverbEnabledParam_->load() >= 0.5f;
 
     engine_.setAmpMode (static_cast<DuskAmpEngine::AmpMode> (cachedAmpMode_));
-    engine_.setPreampChannel (cachedPreampChannel_);
-    engine_.setToneStackType (cachedToneType_);
-    engine_.setOversamplingFactor (cachedOversampling_ >= 1 ? 4 : 2);
+    engine_.setAmpModel (cachedAmpModel_);
+    engine_.setOversamplingFactor (cachedOversampling_ >= 2 ? 8 : cachedOversampling_ >= 1 ? 4 : 2);
     engine_.setCabinetEnabled (cachedCabEnabled_);
-    engine_.setPreampBright (cachedBright_);
+    engine_.setPowerAmpEnabled (cachedPowerAmpEnabled_);
     engine_.setDelayEnabled (cachedDelayEnabled_);
     engine_.setReverbEnabled (cachedReverbEnabled_);
 
@@ -215,14 +221,12 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     inputGainSmooth_    .reset (sampleRate, rampSamples / sampleRate);
     gateThresholdSmooth_.reset (sampleRate, rampSamples / sampleRate);
     gateReleaseSmooth_  .reset (sampleRate, rampSamples / sampleRate);
-    preampGainSmooth_   .reset (sampleRate, rampSamples / sampleRate);
+    driveSmooth_        .reset (sampleRate, rampSamples / sampleRate);
     bassSmooth_         .reset (sampleRate, rampSamples / sampleRate);
     midSmooth_          .reset (sampleRate, rampSamples / sampleRate);
     trebleSmooth_       .reset (sampleRate, rampSamples / sampleRate);
-    powerDriveSmooth_   .reset (sampleRate, rampSamples / sampleRate);
     presenceSmooth_     .reset (sampleRate, rampSamples / sampleRate);
     resonanceSmooth_    .reset (sampleRate, rampSamples / sampleRate);
-    sagSmooth_          .reset (sampleRate, rampSamples / sampleRate);
     cabMixSmooth_       .reset (sampleRate, rampSamples / sampleRate);
     cabHiCutSmooth_     .reset (sampleRate, rampSamples / sampleRate);
     cabLoCutSmooth_     .reset (sampleRate, rampSamples / sampleRate);
@@ -231,19 +235,19 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     delayMixSmooth_     .reset (sampleRate, rampSamples / sampleRate);
     reverbMixSmooth_    .reset (sampleRate, rampSamples / sampleRate);
     reverbDecaySmooth_  .reset (sampleRate, rampSamples / sampleRate);
+    namInputLevelSmooth_.reset (sampleRate, rampSamples / sampleRate);
+    namOutputLevelSmooth_.reset (sampleRate, rampSamples / sampleRate);
     outputLevelSmooth_  .reset (sampleRate, rampSamples / sampleRate);
 
     inputGainSmooth_    .setCurrentAndTargetValue (inputGainParam_->load());
     gateThresholdSmooth_.setCurrentAndTargetValue (gateThresholdParam_->load());
     gateReleaseSmooth_  .setCurrentAndTargetValue (gateReleaseParam_->load());
-    preampGainSmooth_   .setCurrentAndTargetValue (preampGainParam_->load());
+    driveSmooth_        .setCurrentAndTargetValue (driveParam_->load());
     bassSmooth_         .setCurrentAndTargetValue (bassParam_->load());
     midSmooth_          .setCurrentAndTargetValue (midParam_->load());
     trebleSmooth_       .setCurrentAndTargetValue (trebleParam_->load());
-    powerDriveSmooth_   .setCurrentAndTargetValue (powerDriveParam_->load());
     presenceSmooth_     .setCurrentAndTargetValue (presenceParam_->load());
     resonanceSmooth_    .setCurrentAndTargetValue (resonanceParam_->load());
-    sagSmooth_          .setCurrentAndTargetValue (sagParam_->load());
     cabMixSmooth_       .setCurrentAndTargetValue (cabMixParam_->load());
     cabHiCutSmooth_     .setCurrentAndTargetValue (cabHiCutParam_->load());
     cabLoCutSmooth_     .setCurrentAndTargetValue (cabLoCutParam_->load());
@@ -252,6 +256,8 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     delayMixSmooth_     .setCurrentAndTargetValue (delayMixParam_->load());
     reverbMixSmooth_    .setCurrentAndTargetValue (reverbMixParam_->load());
     reverbDecaySmooth_  .setCurrentAndTargetValue (reverbDecayParam_->load());
+    namInputLevelSmooth_.setCurrentAndTargetValue (namInputLevelParam_->load());
+    namOutputLevelSmooth_.setCurrentAndTargetValue (namOutputLevelParam_->load());
     outputLevelSmooth_  .setCurrentAndTargetValue (outputLevelParam_->load());
 }
 
@@ -268,36 +274,63 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     int numSamples = buffer.getNumSamples();
 
-    // Clear any unused output channels
+    // Clear unused output channels
     for (int ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
         buffer.clear (ch, 0, numSamples);
 
-    // Bypass: pass audio through unprocessed
+    // Bypass: pass input through with latency compensation
+    // (host has already compensated for our reported latency, so we must delay
+    // the bypassed signal to maintain phase coherence with parallel tracks)
     if (bypassParam_ != nullptr && bypassParam_->get())
-        return;
-
-    // Handle mono input: duplicate channel 0 to channel 1
-    if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
     {
-        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
+        if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
+            buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
+
+        if (bypassDelaySamples_ > 0 && ! bypassDelayL_.empty())
+        {
+            int delaySize = static_cast<int> (bypassDelayL_.size());
+            float* left  = buffer.getWritePointer (0);
+            float* right = totalNumOutputChannels > 1 ? buffer.getWritePointer (1) : left;
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                // Write current sample
+                bypassDelayL_[static_cast<size_t> (bypassDelayWritePos_)] = left[i];
+                bypassDelayR_[static_cast<size_t> (bypassDelayWritePos_)] = right[i];
+
+                // Read delayed sample
+                int readPos = bypassDelayWritePos_ - bypassDelaySamples_;
+                if (readPos < 0) readPos += delaySize;
+
+                left[i]  = bypassDelayL_[static_cast<size_t> (readPos)];
+                right[i] = bypassDelayR_[static_cast<size_t> (readPos)];
+
+                bypassDelayWritePos_ = (bypassDelayWritePos_ + 1) % delaySize;
+            }
+        }
+        return;
     }
+
+    // Measure input level from channel 0 BEFORE any processing touches it.
+    // Use getReadPointer to avoid any aliasing issues.
+    {
+        const float* rawInput = buffer.getReadPointer (0);
+        float pk = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+            pk = std::max (pk, std::abs (rawInput[i]));
+        // Gate at -60dB — the LED meter's minimum display threshold.
+        // Anything below this is interface noise, not real signal.
+        float lvl = pk > 1.0e-3f ? juce::Decibels::gainToDecibels (pk) : -100.0f;
+        inputLevelL_.store (lvl, std::memory_order_relaxed);
+        inputLevelR_.store (lvl, std::memory_order_relaxed);
+    }
+
+    // Duplicate mono input to channel 1 so engine gets stereo
+    if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
+        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
 
     float* left  = buffer.getWritePointer (0);
-    float* right = buffer.getWritePointer (1);
-
-    // Measure input levels
-    {
-        float peakL = 0.0f, peakR = 0.0f;
-        for (int i = 0; i < numSamples; ++i)
-        {
-            peakL = std::max (peakL, std::abs (left[i]));
-            peakR = std::max (peakR, std::abs (right[i]));
-        }
-        inputLevelL_.store (peakL > 0.0f ? juce::Decibels::gainToDecibels (peakL) : -100.0f,
-                            std::memory_order_relaxed);
-        inputLevelR_.store (peakR > 0.0f ? juce::Decibels::gainToDecibels (peakR) : -100.0f,
-                            std::memory_order_relaxed);
-    }
+    float* right = buffer.getWritePointer (std::min (1, totalNumOutputChannels - 1));
 
     // Check discrete params for changes
     int ampMode = static_cast<int> (ampModeParam_->load());
@@ -307,26 +340,20 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         engine_.setAmpMode (static_cast<DuskAmpEngine::AmpMode> (ampMode));
     }
 
-    int preampChannel = static_cast<int> (preampChannelParam_->load());
-    if (preampChannel != cachedPreampChannel_)
+    int ampModel = static_cast<int> (ampModelParam_->load());
+    if (ampModel != cachedAmpModel_)
     {
-        cachedPreampChannel_ = preampChannel;
-        engine_.setPreampChannel (preampChannel);
-    }
-
-    int toneType = static_cast<int> (toneTypeParam_->load());
-    if (toneType != cachedToneType_)
-    {
-        cachedToneType_ = toneType;
-        engine_.setToneStackType (toneType);
+        cachedAmpModel_ = ampModel;
+        engine_.setAmpModel (ampModel);
     }
 
     int oversampling = static_cast<int> (oversamplingParam_->load());
     if (oversampling != cachedOversampling_)
     {
         cachedOversampling_ = oversampling;
-        engine_.setOversamplingFactor (oversampling >= 1 ? 4 : 2);
+        engine_.setOversamplingFactor (oversampling >= 2 ? 8 : oversampling >= 1 ? 4 : 2);
         setLatencySamples (engine_.getLatencyInSamples());
+        bypassDelaySamples_ = engine_.getLatencyInSamples();
     }
 
     bool cabEnabled = cabEnabledParam_->load() >= 0.5f;
@@ -336,11 +363,18 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         engine_.setCabinetEnabled (cabEnabled);
     }
 
-    bool bright = brightParam_->load() >= 0.5f;
-    if (bright != cachedBright_)
+    bool cabAutoGain = cabAutoGainParam_->load() >= 0.5f;
+    if (cabAutoGain != cachedCabAutoGain_)
     {
-        cachedBright_ = bright;
-        engine_.setPreampBright (bright);
+        cachedCabAutoGain_ = cabAutoGain;
+        engine_.setCabinetAutoGain (cabAutoGain);
+    }
+
+    bool powerAmpEnabled = powerAmpEnabledParam_->load() >= 0.5f;
+    if (powerAmpEnabled != cachedPowerAmpEnabled_)
+    {
+        cachedPowerAmpEnabled_ = powerAmpEnabled;
+        engine_.setPowerAmpEnabled (powerAmpEnabled);
     }
 
     bool delayEnabled = delayEnabledParam_->load() >= 0.5f;
@@ -357,18 +391,16 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         engine_.setReverbEnabled (reverbEnabled);
     }
 
-    // Set smoothing targets from current parameter values
+    // Set smoothing targets
     inputGainSmooth_    .setTargetValue (inputGainParam_->load());
     gateThresholdSmooth_.setTargetValue (gateThresholdParam_->load());
     gateReleaseSmooth_  .setTargetValue (gateReleaseParam_->load());
-    preampGainSmooth_   .setTargetValue (preampGainParam_->load());
+    driveSmooth_        .setTargetValue (driveParam_->load());
     bassSmooth_         .setTargetValue (bassParam_->load());
     midSmooth_          .setTargetValue (midParam_->load());
     trebleSmooth_       .setTargetValue (trebleParam_->load());
-    powerDriveSmooth_   .setTargetValue (powerDriveParam_->load());
     presenceSmooth_     .setTargetValue (presenceParam_->load());
     resonanceSmooth_    .setTargetValue (resonanceParam_->load());
-    sagSmooth_          .setTargetValue (sagParam_->load());
     cabMixSmooth_       .setTargetValue (cabMixParam_->load());
     cabHiCutSmooth_     .setTargetValue (cabHiCutParam_->load());
     cabLoCutSmooth_     .setTargetValue (cabLoCutParam_->load());
@@ -377,6 +409,8 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     delayMixSmooth_     .setTargetValue (delayMixParam_->load());
     reverbMixSmooth_    .setTargetValue (reverbMixParam_->load());
     reverbDecaySmooth_  .setTargetValue (reverbDecayParam_->load());
+    namInputLevelSmooth_.setTargetValue (namInputLevelParam_->load());
+    namOutputLevelSmooth_.setTargetValue (namOutputLevelParam_->load());
     outputLevelSmooth_  .setTargetValue (outputLevelParam_->load());
 
     // Sub-block processing for smooth parameter transitions
@@ -387,18 +421,15 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         int blockSize = std::min (samplesRemaining, kSmoothingBlockSize);
 
-        // Advance smoothed values and apply to engine
         engine_.setInputGain     (inputGainSmooth_.skip (blockSize));
         engine_.setGateThreshold (gateThresholdSmooth_.skip (blockSize));
         engine_.setGateRelease   (gateReleaseSmooth_.skip (blockSize));
-        engine_.setPreampGain    (preampGainSmooth_.skip (blockSize));
+        engine_.setDrive          (driveSmooth_.skip (blockSize));
         engine_.setBass           (bassSmooth_.skip (blockSize));
         engine_.setMid            (midSmooth_.skip (blockSize));
         engine_.setTreble         (trebleSmooth_.skip (blockSize));
-        engine_.setPowerDrive     (powerDriveSmooth_.skip (blockSize));
         engine_.setPresence       (presenceSmooth_.skip (blockSize));
         engine_.setResonance      (resonanceSmooth_.skip (blockSize));
-        engine_.setSag            (sagSmooth_.skip (blockSize));
         engine_.setCabinetMix     (cabMixSmooth_.skip (blockSize));
         engine_.setCabinetHiCut   (cabHiCutSmooth_.skip (blockSize));
         engine_.setCabinetLoCut   (cabLoCutSmooth_.skip (blockSize));
@@ -407,6 +438,14 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         engine_.setDelayMix       (delayMixSmooth_.skip (blockSize));
         engine_.setReverbMix      (reverbMixSmooth_.skip (blockSize));
         engine_.setReverbDecay    (reverbDecaySmooth_.skip (blockSize));
+
+#if DUSKAMP_NAM_SUPPORT
+        engine_.setNAMInputLevel  (namInputLevelSmooth_.skip (blockSize));
+        engine_.setNAMOutputLevel (namOutputLevelSmooth_.skip (blockSize));
+#else
+        namInputLevelSmooth_.skip (blockSize);
+        namOutputLevelSmooth_.skip (blockSize);
+#endif
         engine_.setOutputLevel    (outputLevelSmooth_.skip (blockSize));
 
         engine_.process (left + offset, right + offset, blockSize);
@@ -415,7 +454,10 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         samplesRemaining -= blockSize;
     }
 
-    // Measure output levels
+    // Update sag level for UI indicator
+    sagLevel_.store (engine_.getSagLevel(), std::memory_order_relaxed);
+
+    // Measure output levels (with noise floor gate at -90dB)
     {
         float peakL = 0.0f, peakR = 0.0f;
         for (int i = 0; i < numSamples; ++i)
@@ -423,9 +465,10 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             peakL = std::max (peakL, std::abs (left[i]));
             peakR = std::max (peakR, std::abs (right[i]));
         }
-        outputLevelL_.store (peakL > 0.0f ? juce::Decibels::gainToDecibels (peakL) : -100.0f,
+        constexpr float kNoiseFloor = 1e-7f;  // -140dB (effectively no gate on output)
+        outputLevelL_.store (peakL > kNoiseFloor ? juce::Decibels::gainToDecibels (peakL) : -100.0f,
                              std::memory_order_relaxed);
-        outputLevelR_.store (peakR > 0.0f ? juce::Decibels::gainToDecibels (peakR) : -100.0f,
+        outputLevelR_.store (peakR > kNoiseFloor ? juce::Decibels::gainToDecibels (peakR) : -100.0f,
                              std::memory_order_relaxed);
     }
 }
@@ -458,7 +501,6 @@ void DuskAmpProcessor::loadNAMModel (const juce::File& file)
 void DuskAmpProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
-    // Store file paths as properties
     state.setProperty ("cabIRPath", cabIRPath_, nullptr);
     state.setProperty ("namModelPath", namModelPath_, nullptr);
     if (auto xml = state.createXml())
@@ -485,7 +527,6 @@ void DuskAmpProcessor::setStateXML (const juce::XmlElement& xml)
     {
         parameters.replaceState (juce::ValueTree::fromXml (xml));
 
-        // Restore cab IR path from saved state
         cabIRPath_ = parameters.state.getProperty ("cabIRPath", "").toString();
         if (cabIRPath_.isNotEmpty())
         {
@@ -494,13 +535,13 @@ void DuskAmpProcessor::setStateXML (const juce::XmlElement& xml)
                 engine_.getCabinetIR().loadIR (cabFile);
         }
 
-        // Restore NAM model path from saved state
         namModelPath_ = parameters.state.getProperty ("namModelPath", "").toString();
         if (namModelPath_.isNotEmpty())
         {
             juce::File namFile (namModelPath_);
-            if (namFile.existsAsFile())
-                loadNAMModel (namFile);
+            // loadNAMModel calls NAMProcessor::loadModel which sets lastError_
+            // on failure (including "file not found"), so the editor shows feedback
+            loadNAMModel (namFile);
         }
     }
 }

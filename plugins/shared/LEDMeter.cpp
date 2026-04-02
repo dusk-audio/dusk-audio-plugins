@@ -39,6 +39,9 @@ void LEDMeter::updateBallisticsCoefficients()
 
     // Calculate peak hold in UI frames
     peakHoldSamples = static_cast<int>(peakHoldTimeSeconds * refreshRateHz);
+
+    // Clip hold: 3 seconds
+    clipHoldFrames = static_cast<int>(3.0f * refreshRateHz);
 }
 
 float LEDMeter::applyBallistics(float current, float display)
@@ -81,6 +84,17 @@ void LEDMeter::updatePeakHold(float current, float display, float& peak, int& co
     }
 }
 
+void LEDMeter::resetClip()
+{
+    clipActive = false;
+    clipActiveL = false;
+    clipActiveR = false;
+    clipHoldCounter = 0;
+    clipHoldCounterL = 0;
+    clipHoldCounterR = 0;
+    repaint();
+}
+
 void LEDMeter::setLevel(float newLevel)
 {
     // Clamp to reasonable dB range
@@ -92,6 +106,19 @@ void LEDMeter::setLevel(float newLevel)
     // Peak hold logic
     updatePeakHold(currentLevel, displayLevel, peakLevel, peakHoldCounter);
 
+    // Clip detection: signal at or above 0dBFS
+    if (newLevel >= 0.0f)
+    {
+        clipActive = true;
+        clipHoldCounter = clipHoldFrames;
+    }
+    else if (clipHoldCounter > 0)
+    {
+        --clipHoldCounter;
+        if (clipHoldCounter == 0)
+            clipActive = false;
+    }
+
     // For stereo mode, use the same level for both channels when setLevel is called
     if (stereoMode)
     {
@@ -99,6 +126,8 @@ void LEDMeter::setLevel(float newLevel)
         displayLevelL = displayLevelR = displayLevel;
         peakLevelL = peakLevelR = peakLevel;
         peakHoldCounterL = peakHoldCounterR = peakHoldCounter;
+        clipActiveL = clipActiveR = clipActive;
+        clipHoldCounterL = clipHoldCounterR = clipHoldCounter;
     }
 
     // Always repaint for smooth animation
@@ -123,6 +152,25 @@ void LEDMeter::setStereoLevels(float leftLevel, float rightLevel)
     currentLevel = std::max(currentLevelL, currentLevelR);
     displayLevel = std::max(displayLevelL, displayLevelR);
     peakLevel = std::max(peakLevelL, peakLevelR);
+
+    // Clip detection per channel
+    auto updateClipChannel = [this](float level, bool& active, int& counter)
+    {
+        if (level >= 0.0f)
+        {
+            active = true;
+            counter = clipHoldFrames;
+        }
+        else if (counter > 0)
+        {
+            --counter;
+            if (counter == 0)
+                active = false;
+        }
+    };
+    updateClipChannel(leftLevel, clipActiveL, clipHoldCounterL);
+    updateClipChannel(rightLevel, clipActiveR, clipHoldCounterR);
+    clipActive = clipActiveL || clipActiveR;
 
     // Auto-detect stereo mode based on level difference (unless forced)
     if (!stereoModeForced)
@@ -322,6 +370,19 @@ void LEDMeter::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xFF2a2a2a));
     g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
 
+    // Clip indicator: bright red bar at the top of the meter
+    auto drawClipIndicator = [&](juce::Rectangle<float> area, bool active)
+    {
+        if (!active) return;
+        float clipH = 4.0f;
+        auto clipBar = area.removeFromTop(clipH).reduced(3.0f, 0.0f);
+        // Bright red glow
+        g.setColour(juce::Colour(0xFFff2020).withAlpha(0.5f));
+        g.fillRoundedRectangle(clipBar.expanded(1.0f), 2.0f);
+        g.setColour(juce::Colour(0xFFff4040));
+        g.fillRoundedRectangle(clipBar, 2.0f);
+    };
+
     if (orientation == Vertical)
     {
         if (stereoMode)
@@ -390,4 +451,20 @@ void LEDMeter::paint(juce::Graphics& g)
             paintHorizontalRow(g, bounds, displayLevel, peakLevel);
         }
     }
+
+    // Draw clip indicators on top of the meter
+    if (orientation == Vertical)
+    {
+        if (stereoMode)
+        {
+            float columnWidth = (bounds.getWidth() - 2.0f) / 2.0f;
+            drawClipIndicator(bounds.withWidth(columnWidth), clipActiveL);
+            drawClipIndicator(bounds.withLeft(bounds.getX() + columnWidth + 2.0f).withWidth(columnWidth), clipActiveR);
+        }
+        else
+        {
+            drawClipIndicator(bounds, clipActive);
+        }
+    }
+    // (horizontal clip indicator omitted — DuskAmp uses vertical meters)
 }

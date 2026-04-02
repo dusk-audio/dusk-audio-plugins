@@ -40,6 +40,7 @@ private:
     std::unique_ptr<nam::DSP> activeModel_;
     std::unique_ptr<nam::DSP> retiredModel_;  // deferred delete
     std::atomic<bool> pendingReady_ { false };
+    std::atomic<bool> pendingClear_ { false };
 #endif
 
     float inputGain_ = 1.0f;

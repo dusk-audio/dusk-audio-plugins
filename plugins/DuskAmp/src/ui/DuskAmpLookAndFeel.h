@@ -36,4 +36,42 @@ public:
     // Amp-specific
     static constexpr juce::uint32 kLED          = 0xff44ff44;  // Green LED
     static constexpr juce::uint32 kLEDOff       = 0xff224422;  // LED off state
+
+    // Per-model accent colors (DSP mode)
+    static constexpr juce::uint32 kAccentRound  = 0xffda8a2e;  // Warm amber (Fender)
+    static constexpr juce::uint32 kAccentChime  = 0xff4a9ed6;  // Cool blue (Vox AC30)
+    static constexpr juce::uint32 kAccentPunch  = 0xffc84040;  // Hot red (Marshall)
+    static constexpr juce::uint32 kAccentNAM    = 0xff8866cc;  // Purple (NAM mode)
+
+    // Per-model background tint
+    static constexpr juce::uint32 kBgRound      = 0xff1a1810;  // Warm dark tint
+    static constexpr juce::uint32 kBgChime      = 0xff141a1e;  // Cool dark tint
+    static constexpr juce::uint32 kBgPunch      = 0xff1e1414;  // Red dark tint
+    static constexpr juce::uint32 kBgNAM        = 0xff181418;  // Purple dark tint
+
+    void setAmpModelTheme (int model, bool isNAMMode)
+    {
+        if (isNAMMode)
+        {
+            currentAccent_ = kAccentNAM;
+            currentBackground_ = kBgNAM;
+        }
+        else
+        {
+            switch (model)
+            {
+                case 0: currentAccent_ = kAccentRound; currentBackground_ = kBgRound; break;
+                case 1: currentAccent_ = kAccentChime; currentBackground_ = kBgChime; break;
+                case 2: currentAccent_ = kAccentPunch; currentBackground_ = kBgPunch; break;
+                default: currentAccent_ = kAccent; currentBackground_ = kBackground; break;
+            }
+        }
+    }
+
+    juce::uint32 getCurrentAccent() const { return currentAccent_; }
+    juce::uint32 getCurrentBackground() const { return currentBackground_; }
+
+private:
+    juce::uint32 currentAccent_ = kAccent;
+    juce::uint32 currentBackground_ = kBackground;
 };
