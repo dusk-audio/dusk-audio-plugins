@@ -44,6 +44,29 @@ private:
     // Per-model stage configs (set by setAmpModel)
     StageConfig stageConfigs_[kMaxStages] = {};
 
+    // --- Tight input HPF (2nd-order Butterworth, ~80Hz) ---
+    // Kills sub-lows before they cause IMD in cascading gain stages
+    struct ButterworthHP
+    {
+        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
+        float a1 = 0.0f, a2 = 0.0f;
+        float z1 = 0.0f, z2 = 0.0f;
+
+        float process (float x)
+        {
+            float out = b0 * x + z1;
+            z1 = b1 * x - a1 * out + z2;
+            z2 = b2 * x - a2 * out;
+            if (std::abs (z1) < 1e-15f) z1 = 0.0f;
+            if (std::abs (z2) < 1e-15f) z2 = 0.0f;
+            return out;
+        }
+
+        void reset() { z1 = z2 = 0.0f; }
+    };
+
+    ButterworthHP inputHPF_;
+
     // Bright cap (peaking EQ biquad — models resonant peak of cap across volume pot)
     bool brightActive_ = true;
     float brightFreq_ = 1500.0f;
@@ -75,9 +98,28 @@ private:
     float trebleBleedMix_ = 0.0f;       // proportional to drive
     float trebleBleedMaxDB_ = 3.0f;     // per-model max boost
 
-    // Per-stage coupling cap HPF
-    float couplingCapState_[kMaxStages] = {};
+    // --- Bias-shifting coupling cap with grid-leak model ---
+    // When the grid goes positive, current flows through the coupling cap,
+    // charging it and shifting the bias point negatively (blocking distortion).
+    // The cap slowly discharges through a high-impedance grid-leak resistor.
+    struct CouplingCapState
+    {
+        float hpfState = 0.0f;     // One-pole HPF state
+        float biasShift = 0.0f;    // Accumulated negative bias from grid current
+    };
+
+    CouplingCapState couplingCaps_[kMaxStages] = {};
     float couplingCapCoeff_[kMaxStages] = {};
+    float gridLeakDischargeCoeff_[kMaxStages] = {};  // Per-stage discharge rate
+
+    static constexpr float kBiasShiftChargeRate = 0.005f;   // How fast coupling cap charges
+    static constexpr float kMaxBiasShift = 0.8f;            // Max negative bias shift
+
+    // --- Dynamic Miller capacitance scaling ---
+    // TubeEmulation has static millerCapEffect; we add drive-dependent extra HF rolloff
+    // to remove digital fizziness at high gain settings
+    float millerDynamicState_[kMaxStages] = {};
+    float millerDynamicCoeff_ = 0.0f;  // One-pole LPF coefficient (~6kHz)
 
     // Per-stage cathode bypass (one-pole high-shelf)
     float cathodeShelfState_[kMaxStages] = {};
@@ -94,8 +136,10 @@ private:
 
     void updateGainStaging();
     void updateBiasFromSag();
+    void updateInputHPF();
     void updateCouplingCapCoeffs();
     void updateBrightCoeff();
     void updateTrebleBleed();
     void updateCathodeBypassCoeffs();
+    void updateMillerDynamicCoeff();
 };

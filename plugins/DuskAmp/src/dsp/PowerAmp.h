@@ -35,9 +35,25 @@ private:
     float presenceMaxDB_ = 4.0f;
     float resonanceMaxDB_ = 4.0f;
 
+    // Push-pull class AB crossover bias
+    float crossoverBias_ = 0.05f;  // Small conduction overlap for class AB
+
+    // Multi-stage sag envelope (dual release: fast cap discharge + slow bloom)
+    float sagFastEnv_ = 0.0f;
+    float sagSlowEnv_ = 0.0f;
+    float sagAttackCoeff_ = 0.0f;
+    float sagReleaseFastCoeff_ = 0.0f;   // ~50ms fast cap discharge
+    float sagReleaseSlowCoeff_ = 0.0f;   // ~500ms slow recovery (bloom)
+
     // Negative Feedback Loop
     float nfbAmount_ = 0.25f;           // 0.0 = no NFB (AC30), 0.25 = moderate (Fender), 0.40 = strong (Marshall)
     float prevNFBOutput_ = 0.0f;        // z^-1 for 1-sample delay in feedback loop
+
+    // Reactive speaker impedance model in NFB path
+    float speakerLFState_ = 0.0f;       // ~80Hz resonance tracking
+    float speakerHFState_ = 0.0f;       // ~4kHz impedance rise tracking
+    float speakerLFCoeff_ = 0.0f;
+    float speakerHFCoeff_ = 0.0f;
 
     // Presence: 2nd-order resonant HPF biquad in feedback path
     // Removing HF from NFB = more HF in output. Resonant peak adds "bite."
@@ -109,4 +125,6 @@ private:
     void updateDriveGain();
     void updateCurrentDrawCoeff();
     void updateOTResonance();
+    void updateSagCoeffs();
+    void updateSpeakerCoeffs();
 };

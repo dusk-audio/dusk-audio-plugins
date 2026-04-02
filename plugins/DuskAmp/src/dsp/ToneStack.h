@@ -38,19 +38,47 @@ private:
         bool  hasMidPot;  // Vox AC30 has no mid pot
     };
 
-    // 3rd-order Direct Form II Transposed filter
+    // 3rd-order Direct Form II Transposed filter with per-sample coefficient smoothing
     struct ThirdOrderFilter
     {
+        // Current (processing) coefficients
         float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f, b3 = 0.0f;
         float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;  // a0 normalized to 1.0
+
+        // Target coefficients
+        float tb0 = 0.0f, tb1 = 0.0f, tb2 = 0.0f, tb3 = 0.0f;
+        float ta1 = 0.0f, ta2 = 0.0f, ta3 = 0.0f;
+
         float z1 = 0.0f, z2 = 0.0f, z3 = 0.0f;
 
-        float process (float x)
+        void setTarget (float nb0, float nb1, float nb2, float nb3,
+                         float na1, float na2, float na3)
         {
-            float out = b0 * x + z1;
-            z1 = b1 * x - a1 * out + z2;
-            z2 = b2 * x - a2 * out + z3;
-            z3 = b3 * x - a3 * out;
+            tb0 = nb0; tb1 = nb1; tb2 = nb2; tb3 = nb3;
+            ta1 = na1; ta2 = na2; ta3 = na3;
+        }
+
+        void snapToTarget()
+        {
+            b0 = tb0; b1 = tb1; b2 = tb2; b3 = tb3;
+            a1 = ta1; a2 = ta2; a3 = ta3;
+        }
+
+        float process (float x, float interpFrac)
+        {
+            // Linearly interpolate coefficients toward target
+            float cb0 = b0 + (tb0 - b0) * interpFrac;
+            float cb1 = b1 + (tb1 - b1) * interpFrac;
+            float cb2 = b2 + (tb2 - b2) * interpFrac;
+            float cb3 = b3 + (tb3 - b3) * interpFrac;
+            float ca1 = a1 + (ta1 - a1) * interpFrac;
+            float ca2 = a2 + (ta2 - a2) * interpFrac;
+            float ca3 = a3 + (ta3 - a3) * interpFrac;
+
+            float out = cb0 * x + z1;
+            z1 = cb1 * x - ca1 * out + z2;
+            z2 = cb2 * x - ca2 * out + z3;
+            z3 = cb3 * x - ca3 * out;
             return out;
         }
 
@@ -82,18 +110,6 @@ private:
     ThirdOrderFilter filter_;
     Biquad midOverlay_;          // Only used for Chime model (which has no mid pot)
     bool coeffsDirty_ = true;
-
-    // Coefficient smoothing: interpolate over kSmoothBlocks blocks to prevent clicks
-    static constexpr int kSmoothBlocks = 4;
-    int smoothBlocksRemaining_ = 0;
-
-    // Target coefficients (smoothing interpolates filter_ toward these)
-    struct TargetCoeffs
-    {
-        float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f, b3 = 0.0f;
-        float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
-    };
-    TargetCoeffs targetCoeffs_;
 
     static const Components kRoundComponents;
     static const Components kChimeComponents;

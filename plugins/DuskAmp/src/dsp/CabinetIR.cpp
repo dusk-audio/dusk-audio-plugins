@@ -15,6 +15,10 @@ void CabinetIR::prepare (double sampleRate, int maxBlockSize)
     convolution_.prepare (currentSpec_);
 
     dryBuffer_.setSize (kMaxChannels, maxBlockSize, false, true, true);
+    prevIROutput_.setSize (kMaxChannels, maxBlockSize, false, true, true);
+
+    irCrossfadeSamplesRemaining_ = 0;
+    irSwitchPending_ = false;
 
     filtersDirty_ = true;
 }
@@ -82,6 +86,39 @@ void CabinetIR::process (juce::AudioBuffer<float>& buffer)
         }
     }
 
+    // IR crossfade: blend from previous IR output to new IR output
+    if (irSwitchPending_)
+    {
+        irCrossfadeSamplesRemaining_ = kIRCrossfadeSamples;
+        irSwitchPending_ = false;
+    }
+
+    if (irCrossfadeSamplesRemaining_ > 0)
+    {
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* data = buffer.getWritePointer (ch);
+            const float* prevData = prevIROutput_.getReadPointer (std::min (ch, prevIROutput_.getNumChannels() - 1));
+            int remaining = irCrossfadeSamplesRemaining_;
+
+            for (int i = 0; i < numSamples && remaining > 0; ++i)
+            {
+                float fadeIn  = 1.0f - static_cast<float> (remaining)
+                                        / static_cast<float> (kIRCrossfadeSamples);
+                float fadeOut = 1.0f - fadeIn;
+
+                data[i] = data[i] * fadeIn + prevData[i] * fadeOut;
+                if (ch == numChannels - 1)
+                    --remaining;
+            }
+        }
+        irCrossfadeSamplesRemaining_ -= std::min (irCrossfadeSamplesRemaining_, numSamples);
+    }
+
+    // Store current output for potential future IR crossfade
+    for (int ch = 0; ch < numChannels; ++ch)
+        prevIROutput_.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
     // Apply autogain normalization (before dry/wet mix so it only affects wet)
     if (autoGainEnabled_ && autoGainLinear_ != 1.0f)
     {
@@ -121,6 +158,8 @@ void CabinetIR::reset()
         loCutFilterOld_[ch].reset();
     }
     filterCrossfadeRemaining_ = 0;
+    irCrossfadeSamplesRemaining_ = 0;
+    irSwitchPending_ = false;
     filtersDirty_ = true;
 }
 
@@ -128,6 +167,10 @@ void CabinetIR::loadIR (const juce::File& file)
 {
     if (! file.existsAsFile())
         return;
+
+    // If already loaded, trigger crossfade on next process() call
+    if (irLoaded_)
+        irSwitchPending_ = true;
 
     convolution_.loadImpulseResponse (file,
                                        juce::dsp::Convolution::Stereo::no,
@@ -144,6 +187,10 @@ void CabinetIR::loadIR (const juce::File& file)
 
 void CabinetIR::loadIRFromBinaryData (const void* data, size_t sizeInBytes, const juce::String& name)
 {
+    // If already loaded, trigger crossfade on next process() call
+    if (irLoaded_)
+        irSwitchPending_ = true;
+
     convolution_.loadImpulseResponse (data, sizeInBytes,
                                        juce::dsp::Convolution::Stereo::no,
                                        juce::dsp::Convolution::Trim::yes,
