@@ -102,11 +102,16 @@ target_sources(DuskAmp
         src/PluginEditor.cpp
         src/ui/DuskAmpLookAndFeel.cpp
         src/dsp/DuskAmpEngine.cpp
-        src/dsp/PreampDSP.cpp
+        src/dsp/GainStage.cpp
+        src/dsp/PreampChain.cpp
         src/dsp/ToneStack.cpp
         src/dsp/PowerAmp.cpp
+        src/dsp/ProceduralCab.cpp
         src/dsp/CabinetIR.cpp
         src/dsp/PostFX.cpp
+        src/dsp/wdf/MarshallPlexiWDF.cpp
+        src/dsp/wdf/FenderDeluxeWDF.cpp
+        src/dsp/wdf/VoxAC30WDF.cpp
         ../shared/LEDMeter.cpp
         ${NAM_SOURCES}
 )
@@ -129,6 +134,7 @@ target_include_directories(DuskAmp
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+        ${CMAKE_SOURCE_DIR}/external/chowdsp_wdf/include
 )
 
 if(NAM_ENABLED)
@@ -197,3 +203,63 @@ set_target_properties(DuskAmp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# Test executable: full NAM integration test
+add_executable(DuskAmpNAMTest EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/test_nam_full.cpp
+)
+target_link_libraries(DuskAmpNAMTest PRIVATE
+    DuskAmp
+    juce::juce_audio_utils
+    juce::juce_dsp
+)
+target_include_directories(DuskAmpNAMTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+)
+if(NAM_ENABLED)
+    target_include_directories(DuskAmpNAMTest PRIVATE ${EIGEN_DIR} ${JSON_DIR} ${NAM_DIR})
+    target_compile_definitions(DuskAmpNAMTest PRIVATE DUSKAMP_NAM_SUPPORT=1 EIGEN_MPL2_ONLY)
+else()
+    target_compile_definitions(DuskAmpNAMTest PRIVATE DUSKAMP_NAM_SUPPORT=0)
+endif()
+
+# Test executable: gain staging calibration (DSP vs NAM A/B)
+add_executable(DuskAmpCalibration EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/test_gain_calibration.cpp
+)
+target_link_libraries(DuskAmpCalibration PRIVATE
+    DuskAmp
+    juce::juce_audio_utils
+    juce::juce_dsp
+)
+target_include_directories(DuskAmpCalibration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+)
+if(NAM_ENABLED)
+    target_include_directories(DuskAmpCalibration PRIVATE ${EIGEN_DIR} ${JSON_DIR} ${NAM_DIR})
+    target_compile_definitions(DuskAmpCalibration PRIVATE DUSKAMP_NAM_SUPPORT=1 EIGEN_MPL2_ONLY)
+else()
+    target_compile_definitions(DuskAmpCalibration PRIVATE DUSKAMP_NAM_SUPPORT=0)
+endif()
+
+# Test executable: WDF model validation
+add_executable(DuskAmpWDFValidate EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/test_wdf_validate.cpp
+)
+target_link_libraries(DuskAmpWDFValidate PRIVATE
+    DuskAmp
+    juce::juce_audio_utils
+    juce::juce_dsp
+)
+target_include_directories(DuskAmpWDFValidate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+)
+if(NAM_ENABLED)
+    target_include_directories(DuskAmpWDFValidate PRIVATE ${EIGEN_DIR} ${JSON_DIR} ${NAM_DIR})
+    target_compile_definitions(DuskAmpWDFValidate PRIVATE DUSKAMP_NAM_SUPPORT=1 EIGEN_MPL2_ONLY)
+else()
+    target_compile_definitions(DuskAmpWDFValidate PRIVATE DUSKAMP_NAM_SUPPORT=0)
+endif()

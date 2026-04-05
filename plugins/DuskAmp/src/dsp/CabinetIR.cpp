@@ -44,10 +44,12 @@ void CabinetIR::process (juce::AudioBuffer<float>& buffer)
     juce::dsp::ProcessContextReplacing<float> context (block);
     convolution_.process (context);
 
-    // Apply post-cab EQ (hi-cut and lo-cut) — mono processing
+    // Apply normalization gain (if enabled) and post-cab EQ
     float* data = buffer.getWritePointer (0);
+    float gain = normalize_ ? normGain_ : 1.0f;
     for (int i = 0; i < numSamples; ++i)
     {
+        data[i] *= gain;
         data[i] = hiCutFilter_.process (data[i]);
         data[i] = loCutFilter_.process (data[i]);
     }
@@ -82,6 +84,41 @@ void CabinetIR::loadIR (const juce::File& file)
     if (! file.existsAsFile())
         return;
 
+    // Compute normalization gain from IR file before loading into convolution.
+    // This measures the RMS energy of the IR and scales so all IRs produce
+    // similar output loudness, regardless of mic distance/type/level.
+    normGain_ = 1.0f;
+    {
+        juce::AudioFormatManager formatManager;
+        formatManager.registerBasicFormats();
+
+        std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
+        if (reader != nullptr)
+        {
+            auto numSamples = static_cast<int> (std::min (reader->lengthInSamples, (juce::int64) 48000));
+            juce::AudioBuffer<float> irBuf (1, numSamples);
+            reader->read (&irBuf, 0, numSamples, 0, true, false);
+
+            // Measure RMS energy
+            float rms = 0.0f;
+            const float* data = irBuf.getReadPointer (0);
+            for (int i = 0; i < numSamples; ++i)
+                rms += data[i] * data[i];
+            rms = std::sqrt (rms / static_cast<float> (numSamples));
+
+            // Target RMS ~0.01 (typical for normalized cab IRs)
+            constexpr float targetRMS = 0.01f;
+            if (rms > 1e-6f)
+                normGain_ = targetRMS / rms;
+
+            // Clamp to reasonable range (don't over-amplify quiet IRs)
+            normGain_ = std::clamp (normGain_, 0.1f, 10.0f);
+        }
+    }
+
+    // Reset convolution state before loading new IR to ensure clean swap.
+    convolution_.reset();
+
     convolution_.loadImpulseResponse (file,
                                        juce::dsp::Convolution::Stereo::no,
                                        juce::dsp::Convolution::Trim::yes,
@@ -90,6 +127,11 @@ void CabinetIR::loadIR (const juce::File& file)
     loadedFile_ = file;
     loadedFileName_ = file.getFileNameWithoutExtension();
     irLoaded_ = true;
+}
+
+void CabinetIR::setNormalize (bool on)
+{
+    normalize_ = on;
 }
 
 void CabinetIR::setEnabled (bool on)

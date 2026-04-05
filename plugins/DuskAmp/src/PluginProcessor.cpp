@@ -13,6 +13,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::ParameterID { DuskAmpParams::AMP_MODE, 1 }, "Amp Mode",
         juce::StringArray { "DSP", "NAM" }, 0));
 
+    // Amp Type (3 circuit-simulated models)
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { DuskAmpParams::AMP_TYPE, 2 }, "Amp Type",
+        juce::StringArray { "American Clean", "Class A Chime", "British Crunch" }, 0));
+
     // Input
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::INPUT_GAIN, 1 }, "Input Gain",
@@ -31,18 +36,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::ParameterID { DuskAmpParams::PREAMP_GAIN, 1 }, "Preamp Gain",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { DuskAmpParams::PREAMP_CHANNEL, 1 }, "Channel",
-        juce::StringArray { "Clean", "Crunch", "Lead" }, 1));
-
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { DuskAmpParams::PREAMP_BRIGHT, 1 }, "Bright", false));
 
     // Tone Stack
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { DuskAmpParams::TONE_TYPE, 1 }, "Tone Stack",
-        juce::StringArray { "American", "British", "AC" }, 1));
-
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::BASS, 1 }, "Bass",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
@@ -53,6 +50,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::TREBLE, 1 }, "Treble",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { DuskAmpParams::TONE_CUT, 1 }, "Tone Cut",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
     // Power Amp
@@ -87,6 +88,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::CAB_LOCUT, 1 }, "Cab Lo Cut",
         juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), 60.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { DuskAmpParams::CAB_MIC_POS, 1 }, "Mic Position",
+        juce::NormalisableRange<float> (0.0f, 1.0f), 0.6f));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { DuskAmpParams::CAB_NORMALIZE, 1 }, "IR Normalize", true));
 
     // Effects - Delay
     layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -140,10 +148,10 @@ DuskAmpProcessor::DuskAmpProcessor()
 {
     // Discrete / choice params
     ampModeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_MODE);
-    preampChannelParam_ = parameters.getRawParameterValue (DuskAmpParams::PREAMP_CHANNEL);
-    toneTypeParam_      = parameters.getRawParameterValue (DuskAmpParams::TONE_TYPE);
+    ampTypeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_TYPE);
     oversamplingParam_  = parameters.getRawParameterValue (DuskAmpParams::OVERSAMPLING);
     cabEnabledParam_    = parameters.getRawParameterValue (DuskAmpParams::CAB_ENABLED);
+    cabNormalizeParam_  = parameters.getRawParameterValue (DuskAmpParams::CAB_NORMALIZE);
     brightParam_        = parameters.getRawParameterValue (DuskAmpParams::PREAMP_BRIGHT);
     delayEnabledParam_  = parameters.getRawParameterValue (DuskAmpParams::DELAY_ENABLED);
     reverbEnabledParam_ = parameters.getRawParameterValue (DuskAmpParams::REVERB_ENABLED);
@@ -156,6 +164,7 @@ DuskAmpProcessor::DuskAmpProcessor()
     bassParam_          = parameters.getRawParameterValue (DuskAmpParams::BASS);
     midParam_           = parameters.getRawParameterValue (DuskAmpParams::MID);
     trebleParam_        = parameters.getRawParameterValue (DuskAmpParams::TREBLE);
+    toneCutParam_       = parameters.getRawParameterValue (DuskAmpParams::TONE_CUT);
     powerDriveParam_    = parameters.getRawParameterValue (DuskAmpParams::POWER_DRIVE);
     presenceParam_      = parameters.getRawParameterValue (DuskAmpParams::PRESENCE);
     resonanceParam_     = parameters.getRawParameterValue (DuskAmpParams::RESONANCE);
@@ -163,6 +172,7 @@ DuskAmpProcessor::DuskAmpProcessor()
     cabMixParam_        = parameters.getRawParameterValue (DuskAmpParams::CAB_MIX);
     cabHiCutParam_      = parameters.getRawParameterValue (DuskAmpParams::CAB_HICUT);
     cabLoCutParam_      = parameters.getRawParameterValue (DuskAmpParams::CAB_LOCUT);
+    cabMicPosParam_     = parameters.getRawParameterValue (DuskAmpParams::CAB_MIC_POS);
     delayTimeParam_     = parameters.getRawParameterValue (DuskAmpParams::DELAY_TIME);
     delayFeedbackParam_ = parameters.getRawParameterValue (DuskAmpParams::DELAY_FEEDBACK);
     delayMixParam_      = parameters.getRawParameterValue (DuskAmpParams::DELAY_MIX);
@@ -193,19 +203,19 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     // Initialize discrete params from saved state
     cachedAmpMode_       = static_cast<int> (ampModeParam_->load());
-    cachedPreampChannel_ = static_cast<int> (preampChannelParam_->load());
-    cachedToneType_      = static_cast<int> (toneTypeParam_->load());
+    cachedAmpType_       = static_cast<int> (ampTypeParam_->load());
     cachedOversampling_  = static_cast<int> (oversamplingParam_->load());
     cachedCabEnabled_    = cabEnabledParam_->load() >= 0.5f;
+    cachedCabNormalize_  = cabNormalizeParam_->load() >= 0.5f;
     cachedBright_        = brightParam_->load() >= 0.5f;
     cachedDelayEnabled_  = delayEnabledParam_->load() >= 0.5f;
     cachedReverbEnabled_ = reverbEnabledParam_->load() >= 0.5f;
 
     engine_.setAmpMode (static_cast<DuskAmpEngine::AmpMode> (cachedAmpMode_));
-    engine_.setPreampChannel (cachedPreampChannel_);
-    engine_.setToneStackType (cachedToneType_);
+    engine_.setAmpType (cachedAmpType_);
     engine_.setOversamplingFactor (cachedOversampling_ >= 1 ? 4 : 2);
     engine_.setCabinetEnabled (cachedCabEnabled_);
+    engine_.getCabinetIR().setNormalize (cachedCabNormalize_);
     engine_.setPreampBright (cachedBright_);
     engine_.setDelayEnabled (cachedDelayEnabled_);
     engine_.setReverbEnabled (cachedReverbEnabled_);
@@ -219,6 +229,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     bassSmooth_         .reset (sampleRate, rampSamples / sampleRate);
     midSmooth_          .reset (sampleRate, rampSamples / sampleRate);
     trebleSmooth_       .reset (sampleRate, rampSamples / sampleRate);
+    toneCutSmooth_      .reset (sampleRate, rampSamples / sampleRate);
     powerDriveSmooth_   .reset (sampleRate, rampSamples / sampleRate);
     presenceSmooth_     .reset (sampleRate, rampSamples / sampleRate);
     resonanceSmooth_    .reset (sampleRate, rampSamples / sampleRate);
@@ -226,6 +237,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cabMixSmooth_       .reset (sampleRate, rampSamples / sampleRate);
     cabHiCutSmooth_     .reset (sampleRate, rampSamples / sampleRate);
     cabLoCutSmooth_     .reset (sampleRate, rampSamples / sampleRate);
+    cabMicPosSmooth_    .reset (sampleRate, rampSamples / sampleRate);
     delayTimeSmooth_    .reset (sampleRate, rampSamples / sampleRate);
     delayFeedbackSmooth_.reset (sampleRate, rampSamples / sampleRate);
     delayMixSmooth_     .reset (sampleRate, rampSamples / sampleRate);
@@ -240,6 +252,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     bassSmooth_         .setCurrentAndTargetValue (bassParam_->load());
     midSmooth_          .setCurrentAndTargetValue (midParam_->load());
     trebleSmooth_       .setCurrentAndTargetValue (trebleParam_->load());
+    toneCutSmooth_      .setCurrentAndTargetValue (toneCutParam_->load());
     powerDriveSmooth_   .setCurrentAndTargetValue (powerDriveParam_->load());
     presenceSmooth_     .setCurrentAndTargetValue (presenceParam_->load());
     resonanceSmooth_    .setCurrentAndTargetValue (resonanceParam_->load());
@@ -247,6 +260,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cabMixSmooth_       .setCurrentAndTargetValue (cabMixParam_->load());
     cabHiCutSmooth_     .setCurrentAndTargetValue (cabHiCutParam_->load());
     cabLoCutSmooth_     .setCurrentAndTargetValue (cabLoCutParam_->load());
+    cabMicPosSmooth_    .setCurrentAndTargetValue (cabMicPosParam_->load());
     delayTimeSmooth_    .setCurrentAndTargetValue (delayTimeParam_->load());
     delayFeedbackSmooth_.setCurrentAndTargetValue (delayFeedbackParam_->load());
     delayMixSmooth_     .setCurrentAndTargetValue (delayMixParam_->load());
@@ -307,18 +321,11 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         engine_.setAmpMode (static_cast<DuskAmpEngine::AmpMode> (ampMode));
     }
 
-    int preampChannel = static_cast<int> (preampChannelParam_->load());
-    if (preampChannel != cachedPreampChannel_)
+    int ampType = static_cast<int> (ampTypeParam_->load());
+    if (ampType != cachedAmpType_)
     {
-        cachedPreampChannel_ = preampChannel;
-        engine_.setPreampChannel (preampChannel);
-    }
-
-    int toneType = static_cast<int> (toneTypeParam_->load());
-    if (toneType != cachedToneType_)
-    {
-        cachedToneType_ = toneType;
-        engine_.setToneStackType (toneType);
+        cachedAmpType_ = ampType;
+        engine_.setAmpType (ampType);
     }
 
     int oversampling = static_cast<int> (oversamplingParam_->load());
@@ -334,6 +341,13 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         cachedCabEnabled_ = cabEnabled;
         engine_.setCabinetEnabled (cabEnabled);
+    }
+
+    bool cabNormalize = cabNormalizeParam_->load() >= 0.5f;
+    if (cabNormalize != cachedCabNormalize_)
+    {
+        cachedCabNormalize_ = cabNormalize;
+        engine_.getCabinetIR().setNormalize (cabNormalize);
     }
 
     bool bright = brightParam_->load() >= 0.5f;
@@ -365,6 +379,7 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     bassSmooth_         .setTargetValue (bassParam_->load());
     midSmooth_          .setTargetValue (midParam_->load());
     trebleSmooth_       .setTargetValue (trebleParam_->load());
+    toneCutSmooth_      .setTargetValue (toneCutParam_->load());
     powerDriveSmooth_   .setTargetValue (powerDriveParam_->load());
     presenceSmooth_     .setTargetValue (presenceParam_->load());
     resonanceSmooth_    .setTargetValue (resonanceParam_->load());
@@ -372,6 +387,7 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     cabMixSmooth_       .setTargetValue (cabMixParam_->load());
     cabHiCutSmooth_     .setTargetValue (cabHiCutParam_->load());
     cabLoCutSmooth_     .setTargetValue (cabLoCutParam_->load());
+    cabMicPosSmooth_    .setTargetValue (cabMicPosParam_->load());
     delayTimeSmooth_    .setTargetValue (delayTimeParam_->load());
     delayFeedbackSmooth_.setTargetValue (delayFeedbackParam_->load());
     delayMixSmooth_     .setTargetValue (delayMixParam_->load());
@@ -379,40 +395,85 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     reverbDecaySmooth_  .setTargetValue (reverbDecayParam_->load());
     outputLevelSmooth_  .setTargetValue (outputLevelParam_->load());
 
-    // Sub-block processing for smooth parameter transitions
-    int samplesRemaining = numSamples;
-    int offset = 0;
+    // NAM mode fast path: process the FULL buffer in one engine call.
+    // NAM neural network inference has significant per-call overhead (matrix setup,
+    // state management). Processing 32-sample sub-blocks fragments the inference into
+    // 32 separate calls (at 1024 buffer), which is ~8x slower than one 1024-sample call.
+    // NAM models have their own internal state and don't need 32-sample parameter smoothing.
+    bool namMode = (cachedAmpMode_ == 1);
 
-    while (samplesRemaining > 0)
+    if (namMode)
     {
-        int blockSize = std::min (samplesRemaining, kSmoothingBlockSize);
+        // NAM fast path: full buffer in one engine call.
+        // Set params that NAM path actually uses (input, output, EQ, cab, effects).
+        // Skip DSP-only params (preamp gain, power amp, noise gate).
+        engine_.setInputGain          (inputGainSmooth_.skip (numSamples));
+        engine_.setOutputLevel        (outputLevelSmooth_.skip (numSamples));
+        engine_.setBass               (bassSmooth_.skip (numSamples));
+        engine_.setMid                (midSmooth_.skip (numSamples));
+        engine_.setTreble             (trebleSmooth_.skip (numSamples));
+        engine_.setToneCut            (toneCutSmooth_.skip (numSamples));
+        engine_.setCabinetMix         (cabMixSmooth_.skip (numSamples));
+        engine_.setCabinetHiCut       (cabHiCutSmooth_.skip (numSamples));
+        engine_.setCabinetLoCut       (cabLoCutSmooth_.skip (numSamples));
+        engine_.setCabinetMicPosition (cabMicPosSmooth_.skip (numSamples));
+        engine_.setDelayTime          (delayTimeSmooth_.skip (numSamples));
+        engine_.setDelayFeedback      (delayFeedbackSmooth_.skip (numSamples));
+        engine_.setDelayMix           (delayMixSmooth_.skip (numSamples));
+        engine_.setReverbMix          (reverbMixSmooth_.skip (numSamples));
+        engine_.setReverbDecay        (reverbDecaySmooth_.skip (numSamples));
 
-        // Advance smoothed values and apply to engine
-        engine_.setInputGain     (inputGainSmooth_.skip (blockSize));
-        engine_.setGateThreshold (gateThresholdSmooth_.skip (blockSize));
-        engine_.setGateRelease   (gateReleaseSmooth_.skip (blockSize));
-        engine_.setPreampGain    (preampGainSmooth_.skip (blockSize));
-        engine_.setBass           (bassSmooth_.skip (blockSize));
-        engine_.setMid            (midSmooth_.skip (blockSize));
-        engine_.setTreble         (trebleSmooth_.skip (blockSize));
-        engine_.setPowerDrive     (powerDriveSmooth_.skip (blockSize));
-        engine_.setPresence       (presenceSmooth_.skip (blockSize));
-        engine_.setResonance      (resonanceSmooth_.skip (blockSize));
-        engine_.setSag            (sagSmooth_.skip (blockSize));
-        engine_.setCabinetMix     (cabMixSmooth_.skip (blockSize));
-        engine_.setCabinetHiCut   (cabHiCutSmooth_.skip (blockSize));
-        engine_.setCabinetLoCut   (cabLoCutSmooth_.skip (blockSize));
-        engine_.setDelayTime      (delayTimeSmooth_.skip (blockSize));
-        engine_.setDelayFeedback  (delayFeedbackSmooth_.skip (blockSize));
-        engine_.setDelayMix       (delayMixSmooth_.skip (blockSize));
-        engine_.setReverbMix      (reverbMixSmooth_.skip (blockSize));
-        engine_.setReverbDecay    (reverbDecaySmooth_.skip (blockSize));
-        engine_.setOutputLevel    (outputLevelSmooth_.skip (blockSize));
+        // Advance DSP-only smoothers without calling setters (keeps them in sync)
+        gateThresholdSmooth_.skip (numSamples);
+        gateReleaseSmooth_.skip (numSamples);
+        preampGainSmooth_.skip (numSamples);
+        powerDriveSmooth_.skip (numSamples);
+        presenceSmooth_.skip (numSamples);
+        resonanceSmooth_.skip (numSamples);
+        sagSmooth_.skip (numSamples);
 
-        engine_.process (left + offset, right + offset, blockSize);
+        // Single call — full buffer at once
+        engine_.process (left, right, numSamples);
+    }
+    else
+    {
+        // DSP mode: 32-sample sub-blocks for smooth parameter transitions
+        // (needed for analog-modeled preamp, tone stack, power amp stages)
+        int samplesRemaining = numSamples;
+        int offset = 0;
 
-        offset += blockSize;
-        samplesRemaining -= blockSize;
+        while (samplesRemaining > 0)
+        {
+            int blockSize = std::min (samplesRemaining, kSmoothingBlockSize);
+
+            engine_.setInputGain       (inputGainSmooth_.skip (blockSize));
+            engine_.setGateThreshold   (gateThresholdSmooth_.skip (blockSize));
+            engine_.setGateRelease     (gateReleaseSmooth_.skip (blockSize));
+            engine_.setPreampGain      (preampGainSmooth_.skip (blockSize));
+            engine_.setBass            (bassSmooth_.skip (blockSize));
+            engine_.setMid             (midSmooth_.skip (blockSize));
+            engine_.setTreble          (trebleSmooth_.skip (blockSize));
+            engine_.setToneCut         (toneCutSmooth_.skip (blockSize));
+            engine_.setPowerDrive      (powerDriveSmooth_.skip (blockSize));
+            engine_.setPresence        (presenceSmooth_.skip (blockSize));
+            engine_.setResonance       (resonanceSmooth_.skip (blockSize));
+            engine_.setSag             (sagSmooth_.skip (blockSize));
+            engine_.setCabinetMix      (cabMixSmooth_.skip (blockSize));
+            engine_.setCabinetHiCut    (cabHiCutSmooth_.skip (blockSize));
+            engine_.setCabinetLoCut    (cabLoCutSmooth_.skip (blockSize));
+            engine_.setCabinetMicPosition (cabMicPosSmooth_.skip (blockSize));
+            engine_.setDelayTime       (delayTimeSmooth_.skip (blockSize));
+            engine_.setDelayFeedback   (delayFeedbackSmooth_.skip (blockSize));
+            engine_.setDelayMix        (delayMixSmooth_.skip (blockSize));
+            engine_.setReverbMix       (reverbMixSmooth_.skip (blockSize));
+            engine_.setReverbDecay     (reverbDecaySmooth_.skip (blockSize));
+            engine_.setOutputLevel     (outputLevelSmooth_.skip (blockSize));
+
+            engine_.process (left + offset, right + offset, blockSize);
+
+            offset += blockSize;
+            samplesRemaining -= blockSize;
+        }
     }
 
     // Measure output levels

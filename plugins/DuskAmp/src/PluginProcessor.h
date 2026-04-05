@@ -77,10 +77,10 @@ private:
 
     // Discrete / choice parameter pointers
     std::atomic<float>* ampModeParam_       = nullptr;
-    std::atomic<float>* preampChannelParam_ = nullptr;
-    std::atomic<float>* toneTypeParam_      = nullptr;
+    std::atomic<float>* ampTypeParam_       = nullptr;
     std::atomic<float>* oversamplingParam_  = nullptr;
     std::atomic<float>* cabEnabledParam_    = nullptr;
+    std::atomic<float>* cabNormalizeParam_  = nullptr;
     std::atomic<float>* brightParam_        = nullptr;
     std::atomic<float>* delayEnabledParam_  = nullptr;
     std::atomic<float>* reverbEnabledParam_ = nullptr;
@@ -93,6 +93,7 @@ private:
     std::atomic<float>* bassParam_          = nullptr;
     std::atomic<float>* midParam_           = nullptr;
     std::atomic<float>* trebleParam_        = nullptr;
+    std::atomic<float>* toneCutParam_       = nullptr;
     std::atomic<float>* powerDriveParam_    = nullptr;
     std::atomic<float>* presenceParam_      = nullptr;
     std::atomic<float>* resonanceParam_     = nullptr;
@@ -100,6 +101,7 @@ private:
     std::atomic<float>* cabMixParam_        = nullptr;
     std::atomic<float>* cabHiCutParam_      = nullptr;
     std::atomic<float>* cabLoCutParam_      = nullptr;
+    std::atomic<float>* cabMicPosParam_     = nullptr;
     std::atomic<float>* delayTimeParam_     = nullptr;
     std::atomic<float>* delayFeedbackParam_ = nullptr;
     std::atomic<float>* delayMixParam_      = nullptr;
@@ -111,10 +113,10 @@ private:
 
     // Cached discrete values
     int cachedAmpMode_       = 0;
-    int cachedPreampChannel_ = 1;
-    int cachedToneType_      = 1;
+    int cachedAmpType_       = 1; // Default: Brit Crunch
     int cachedOversampling_  = 0;
     bool cachedCabEnabled_   = true;
+    bool cachedCabNormalize_ = true;
     bool cachedBright_       = false;
     bool cachedDelayEnabled_ = false;
     bool cachedReverbEnabled_= false;
@@ -127,6 +129,7 @@ private:
     juce::SmoothedValue<float> bassSmooth_;
     juce::SmoothedValue<float> midSmooth_;
     juce::SmoothedValue<float> trebleSmooth_;
+    juce::SmoothedValue<float> toneCutSmooth_;
     juce::SmoothedValue<float> powerDriveSmooth_;
     juce::SmoothedValue<float> presenceSmooth_;
     juce::SmoothedValue<float> resonanceSmooth_;
@@ -134,6 +137,7 @@ private:
     juce::SmoothedValue<float> cabMixSmooth_;
     juce::SmoothedValue<float> cabHiCutSmooth_;
     juce::SmoothedValue<float> cabLoCutSmooth_;
+    juce::SmoothedValue<float> cabMicPosSmooth_;
     juce::SmoothedValue<float> delayTimeSmooth_;
     juce::SmoothedValue<float> delayFeedbackSmooth_;
     juce::SmoothedValue<float> delayMixSmooth_;

@@ -1,4 +1,7 @@
 #include "DuskAmpEngine.h"
+#include "wdf/FenderDeluxeWDF.h"
+#include "wdf/VoxAC30WDF.h"
+#include "wdf/MarshallPlexiWDF.h"
 #include <cmath>
 #include <algorithm>
 
@@ -22,16 +25,25 @@ void DuskAmpEngine::prepare (double sampleRate, int maxBlockSize)
     double oversampledRate = oversampling_.getOversampledSampleRate();
 
     input_.prepare (sampleRate);
-    preamp_.prepare (oversampledRate);
-    powerAmp_.prepare (oversampledRate);
+
+    // Initialize WDF preamp at BASE rate (Koren solver doesn't need oversampling)
+    if (!preamp_)
+        createPreamp (currentAmpType_);
+    preamp_->prepare (sampleRate);
+
+    toneStack_.setType (static_cast<ToneStack::Type> (
+        static_cast<int> (AmpModels::getToneStackTopology (currentAmpType_))));
+
+    // All DSP runs at base rate (WDF doesn't need oversampling)
+    powerAmp_.prepare (sampleRate);
+    powerAmp_.setConfig (AmpModels::getPowerAmpConfig (currentAmpType_));
+
     cabinet_.prepare (sampleRate, maxBlockSize);
+    proceduralCab_.prepare (sampleRate);
+    proceduralCab_.setAmpType (currentAmpType_);
     postFx_.prepare (sampleRate, maxBlockSize);
 
-    // Tone stack rate depends on amp mode: oversampled in DSP, base rate in NAM
-    if (currentMode_ == AmpMode::NAM)
-        toneStack_.prepare (sampleRate);
-    else
-        toneStack_.prepare (oversampledRate);
+    toneStack_.prepare (sampleRate);
 
 #if DUSKAMP_NAM_SUPPORT
     nam_.prepare (sampleRate, maxBlockSize);
@@ -40,6 +52,63 @@ void DuskAmpEngine::prepare (double sampleRate, int maxBlockSize)
 
 void DuskAmpEngine::process (float* left, float* right, int numSamples)
 {
+#if DUSKAMP_NAM_SUPPORT
+    // =========================================================================
+    // NAM FAST PATH — matches the official NAM plugin's ProcessBlock exactly.
+    // Input gain → NAM inference → output gain → stereo broadcast.
+    // No tone stack, no cabinet, no post-FX, no crossfade, no noise gate.
+    // NAM models capture the full amp chain internally.
+    // =========================================================================
+    if (currentMode_ == AmpMode::NAM)
+    {
+        // 1. Sum stereo to mono
+        for (int i = 0; i < numSamples; ++i)
+            monoBuffer_[static_cast<size_t> (i)] = (left[i] + right[i]) * 0.5f;
+
+        // 2. Apply input gain (no noise gate — NAM handles dynamics)
+        for (int i = 0; i < numSamples; ++i)
+            monoBuffer_[static_cast<size_t> (i)] *= inputGainLinear_;
+
+        // 3. NAM inference — single call, full buffer
+        nam_.process (monoBuffer_.data(), numSamples);
+
+        // 4. Tone stack EQ (optional — user can shape tone after NAM)
+        toneStack_.process (monoBuffer_.data(), numSamples);
+
+        // 5. Cabinet simulation (optional — only if user has cab enabled)
+        if (cabinet_.isLoaded())
+        {
+            cabBuffer_.copyFrom (0, 0, monoBuffer_.data(), numSamples);
+            juce::AudioBuffer<float> cabView (cabBuffer_.getArrayOfWritePointers(), 1, numSamples);
+            cabinet_.process (cabView);
+            std::copy (cabBuffer_.getReadPointer (0),
+                       cabBuffer_.getReadPointer (0) + numSamples,
+                       monoBuffer_.data());
+        }
+        else if (proceduralCab_.isEnabled())
+        {
+            proceduralCab_.process (monoBuffer_.data(), numSamples);
+        }
+
+        // 6. Apply output gain and broadcast mono to stereo
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float out = monoBuffer_[static_cast<size_t> (i)] * outputGain_;
+            left[i]  = out;
+            right[i] = out;
+        }
+
+        // 7. Post FX: delay + reverb (stereo, only if enabled)
+        postFx_.process (left, right, numSamples);
+
+        return;
+    }
+#endif
+
+    // =========================================================================
+    // DSP MODE — full analog-modeled signal chain
+    // =========================================================================
+
     // 1. Sum stereo input to mono (guitar is mono anyway)
     for (int i = 0; i < numSamples; ++i)
         monoBuffer_[static_cast<size_t> (i)] = (left[i] + right[i]) * 0.5f;
@@ -55,39 +124,10 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
         modeSwitchPending_ = false;
     }
 
-    // 3. Mode-dependent amp processing
-    if (currentMode_ == AmpMode::DSP)
-    {
-        // DSP mode: upsample -> preamp -> tone stack -> power amp -> downsample
-        oversamplingBuffer_.copyFrom (0, 0, monoBuffer_.data(), numSamples);
-
-        // AudioBlock must wrap only the active numSamples, not the full pre-allocated buffer
-        juce::dsp::AudioBlock<float> inputBlock (oversamplingBuffer_.getArrayOfWritePointers(),
-                                                  1, static_cast<size_t> (numSamples));
-        auto oversampledBlock = oversampling_.processSamplesUp (inputBlock);
-
-        int oversampledNumSamples = static_cast<int> (oversampledBlock.getNumSamples());
-        float* oversampledData = oversampledBlock.getChannelPointer (0);
-
-        preamp_.process (oversampledData, oversampledNumSamples);
-        toneStack_.process (oversampledData, oversampledNumSamples);
-        powerAmp_.process (oversampledData, oversampledNumSamples);
-
-        oversampling_.processSamplesDown (inputBlock);
-
-        auto* downsampled = oversamplingBuffer_.getReadPointer (0);
-        std::copy (downsampled, downsampled + numSamples, monoBuffer_.data());
-    }
-#if DUSKAMP_NAM_SUPPORT
-    else if (currentMode_ == AmpMode::NAM)
-    {
-        // NAM mode: NAM processor at base rate (replaces preamp),
-        // then tone stack + power amp at base rate (no oversampling)
-        nam_.process (monoBuffer_.data(), numSamples);
-        toneStack_.process (monoBuffer_.data(), numSamples);
-        powerAmp_.process (monoBuffer_.data(), numSamples);
-    }
-#endif
+    // 3. WDF preamp → tone stack → power amp (all at base rate)
+    preamp_->process (monoBuffer_.data(), numSamples);
+    toneStack_.process (monoBuffer_.data(), numSamples);
+    powerAmp_.process (monoBuffer_.data(), numSamples);
 
     // 4. Apply crossfade gain if we're transitioning between modes
     if (crossfadeSamplesRemaining_ > 0)
@@ -102,25 +142,29 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
             crossfadeGain_ = std::clamp (crossfadeGain_, 0.0f, 1.0f);
             --crossfadeSamplesRemaining_;
 
-            // At the midpoint (gain reached 0), defer mode switch to next process() call
             if (crossfadeDirection_ == -1 && crossfadeGain_ <= 0.0f)
             {
-                modeSwitchPending_ = true;  // defer to next process() call
-                crossfadeDirection_ = 1; // start fading in
+                modeSwitchPending_ = true;
+                crossfadeDirection_ = 1;
                 crossfadeSamplesRemaining_ = kCrossfadeSamples / 2;
             }
         }
     }
 
-    // 5. Cabinet IR (runs at base rate, it's convolution)
-    //    Create a sub-buffer view of only the active numSamples to avoid
-    //    processing stale data from the pre-allocated cabBuffer_
-    cabBuffer_.copyFrom (0, 0, monoBuffer_.data(), numSamples);
-    juce::AudioBuffer<float> cabView (cabBuffer_.getArrayOfWritePointers(), 1, numSamples);
-    cabinet_.process (cabView);
-    std::copy (cabBuffer_.getReadPointer (0),
-               cabBuffer_.getReadPointer (0) + numSamples,
-               monoBuffer_.data());
+    // 5. Cabinet simulation (runs at base rate)
+    if (cabinet_.isLoaded())
+    {
+        cabBuffer_.copyFrom (0, 0, monoBuffer_.data(), numSamples);
+        juce::AudioBuffer<float> cabView (cabBuffer_.getArrayOfWritePointers(), 1, numSamples);
+        cabinet_.process (cabView);
+        std::copy (cabBuffer_.getReadPointer (0),
+                   cabBuffer_.getReadPointer (0) + numSamples,
+                   monoBuffer_.data());
+    }
+    else
+    {
+        proceduralCab_.process (monoBuffer_.data(), numSamples);
+    }
 
     // 6. Copy mono to stereo for post-FX
     for (int i = 0; i < numSamples; ++i)
@@ -143,10 +187,11 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
 void DuskAmpEngine::reset()
 {
     input_.reset();
-    preamp_.reset();
+    if (preamp_) preamp_->reset();
     toneStack_.reset();
     powerAmp_.reset();
     cabinet_.reset();
+    proceduralCab_.reset();
     postFx_.reset();
     oversampling_.reset();
 #if DUSKAMP_NAM_SUPPORT
@@ -172,20 +217,52 @@ bool DuskAmpEngine::isNAMModelLoaded() const
 
 void DuskAmpEngine::setAmpMode (AmpMode mode)
 {
-    if (mode != currentMode_ && crossfadeSamplesRemaining_ == 0)
-    {
-        targetMode_ = mode;
-        crossfadeSamplesRemaining_ = kCrossfadeSamples;
-        crossfadeDirection_ = -1;
-        crossfadeGain_ = 1.0f;
+    if (mode == currentMode_)
+        return;
 
-        // Pre-prepare tone stack for the target mode's sample rate
-        // (safe here — called from processBlock's discrete param section, not per-sample)
-        if (mode == AmpMode::NAM)
-            toneStack_.prepare (sampleRate_);
-        else
-            toneStack_.prepare (oversampling_.getOversampledSampleRate());
+    currentMode_ = mode;
+
+    // All modes run at base rate
+    toneStack_.prepare (sampleRate_);
+
+    toneStack_.reset();
+}
+
+void DuskAmpEngine::createPreamp (AmpType type)
+{
+    switch (type)
+    {
+        case AmpType::FenderDeluxe:  preamp_ = std::make_unique<FenderDeluxeWDF>(); break;
+        case AmpType::VoxAC30:       preamp_ = std::make_unique<VoxAC30WDF>(); break;
+        case AmpType::MarshallPlexi: preamp_ = std::make_unique<MarshallPlexiWDF>(); break;
+        default:                     preamp_ = std::make_unique<FenderDeluxeWDF>(); break;
     }
+}
+
+// --- Amp Type (unified control) ---
+
+void DuskAmpEngine::setAmpType (int type)
+{
+    auto newType = static_cast<AmpType> (std::clamp (type, 0, kNumAmpTypes - 1));
+    if (newType == currentAmpType_) return;
+    currentAmpType_ = newType;
+
+    // Create new WDF preamp for this amp model
+    createPreamp (newType);
+    preamp_->prepare (sampleRate_);
+
+    // Switch tone stack topology
+    auto topology = AmpModels::getToneStackTopology (newType);
+    toneStack_.setType (static_cast<ToneStack::Type> (static_cast<int> (topology)));
+
+    // Re-apply bright state to new preamp
+    preamp_->setBright (currentBright_);
+
+    // Switch power amp configuration
+    powerAmp_.setConfig (AmpModels::getPowerAmpConfig (newType));
+
+    // Update procedural cab for this amp type
+    proceduralCab_.setAmpType (newType);
 }
 
 // --- Input ---
@@ -193,6 +270,7 @@ void DuskAmpEngine::setAmpMode (AmpMode mode)
 void DuskAmpEngine::setInputGain (float dB)
 {
     input_.setInputGain (dB);
+    inputGainLinear_ = std::pow (10.0f, dB / 20.0f);
 }
 
 void DuskAmpEngine::setGateThreshold (float dB)
@@ -209,25 +287,16 @@ void DuskAmpEngine::setGateRelease (float ms)
 
 void DuskAmpEngine::setPreampGain (float gain01)
 {
-    preamp_.setGain (gain01);
-}
-
-void DuskAmpEngine::setPreampChannel (int channel)
-{
-    preamp_.setChannel (static_cast<PreampDSP::Channel> (std::clamp (channel, 0, 2)));
+    preamp_->setGain (gain01);
 }
 
 void DuskAmpEngine::setPreampBright (bool on)
 {
-    preamp_.setBright (on);
+    currentBright_ = on;
+    preamp_->setBright (on);
 }
 
 // --- Tone Stack ---
-
-void DuskAmpEngine::setToneStackType (int type)
-{
-    toneStack_.setType (static_cast<ToneStack::Type> (std::clamp (type, 0, 2)));
-}
 
 void DuskAmpEngine::setBass (float value01)
 {
@@ -242,6 +311,11 @@ void DuskAmpEngine::setMid (float value01)
 void DuskAmpEngine::setTreble (float value01)
 {
     toneStack_.setTreble (value01);
+}
+
+void DuskAmpEngine::setToneCut (float value01)
+{
+    toneStack_.setToneCut (value01);
 }
 
 // --- Power Amp ---
@@ -271,6 +345,7 @@ void DuskAmpEngine::setSag (float sag01)
 void DuskAmpEngine::setCabinetEnabled (bool on)
 {
     cabinet_.setEnabled (on);
+    proceduralCab_.setEnabled (on);
 }
 
 void DuskAmpEngine::setCabinetMix (float mix01)
@@ -286,6 +361,11 @@ void DuskAmpEngine::setCabinetHiCut (float hz)
 void DuskAmpEngine::setCabinetLoCut (float hz)
 {
     cabinet_.setLoCut (hz);
+}
+
+void DuskAmpEngine::setCabinetMicPosition (float pos01)
+{
+    proceduralCab_.setMicPosition (pos01);
 }
 
 // --- Post FX ---
@@ -354,15 +434,14 @@ void DuskAmpEngine::setOversamplingFactor (int factor)
 {
     oversampling_.setFactor (factor);
 
-    double oversampledRate = oversampling_.getOversampledSampleRate();
-    preamp_.prepare (oversampledRate);
-    powerAmp_.prepare (oversampledRate);
+    // At 4x, reduced aliasing means less intermodulation energy folds back into
+    // the audio band. Compensate with a small gain boost to match perceived level.
+    oversamplingGainComp_ = (factor >= 4) ? 1.12f : 1.0f; // ~1 dB
 
-    // Tone stack rate depends on current amp mode
-    if (currentMode_ == AmpMode::NAM)
-        toneStack_.prepare (sampleRate_);
-    else
-        toneStack_.prepare (oversampledRate);
+    // All DSP runs at base rate
+    preamp_->prepare (sampleRate_);
+    powerAmp_.prepare (sampleRate_);
+    toneStack_.prepare (sampleRate_);
 }
 
 int DuskAmpEngine::getLatencyInSamples() const

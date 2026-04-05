@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_dsp/juce_dsp.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 
 class CabinetIR
 {
@@ -15,8 +16,10 @@ public:
     void setMix (float mix01);
     void setHiCut (float hz);
     void setLoCut (float hz);
+    void setNormalize (bool on);
 
     bool isLoaded() const { return irLoaded_; }
+    bool isNormalized() const { return normalize_; }
     juce::String getLoadedFileName() const { return loadedFileName_; }
     juce::File getLoadedFile() const { return loadedFile_; }
 
@@ -27,7 +30,9 @@ private:
 
     bool enabled_ = true;
     bool irLoaded_ = false;
+    bool normalize_ = true;
     float mix_ = 1.0f;
+    float normGain_ = 1.0f; // Computed on IR load to normalize volume
     juce::String loadedFileName_;
     juce::File loadedFile_;
 

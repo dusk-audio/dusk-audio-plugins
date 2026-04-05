@@ -1,10 +1,13 @@
 #pragma once
 
 #include "InputSection.h"
-#include "PreampDSP.h"
+#include "AmpModels.h"
+#include "wdf/WDFPreamp.h"
 #include "ToneStack.h"
+#include <memory>
 #include "PowerAmp.h"
 #include "CabinetIR.h"
+#include "ProceduralCab.h"
 #include "PostFX.h"
 #include "Oversampling.h"  // from shared/
 
@@ -31,16 +34,19 @@ public:
     void setGateThreshold (float dB);
     void setGateRelease (float ms);
 
-    // Preamp (DSP mode)
+    // Amp Type (selects preamp chain, tone stack, power amp config)
+    void setAmpType (int type);
+    int getAmpType() const { return static_cast<int> (currentAmpType_); }
+
+    // Preamp
     void setPreampGain (float gain01);
-    void setPreampChannel (int channel); // 0=Clean, 1=Crunch, 2=Lead
     void setPreampBright (bool on);
 
     // Tone stack
-    void setToneStackType (int type); // 0=American, 1=British, 2=AC
     void setBass (float value01);
     void setMid (float value01);
     void setTreble (float value01);
+    void setToneCut (float value01);
 
     // Power amp
     void setPowerDrive (float drive01);
@@ -53,6 +59,7 @@ public:
     void setCabinetMix (float mix01);
     void setCabinetHiCut (float hz);
     void setCabinetLoCut (float hz);
+    void setCabinetMicPosition (float pos01);
 
     // Post FX
     void setDelayEnabled (bool on);
@@ -82,10 +89,11 @@ public:
 
 private:
     InputSection input_;
-    PreampDSP preamp_;
+    std::unique_ptr<WDFPreamp> preamp_;
     ToneStack toneStack_;
     PowerAmp powerAmp_;
     CabinetIR cabinet_;
+    ProceduralCab proceduralCab_;
     PostFX postFx_;
     DuskAudio::OversamplingManager oversampling_;
 
@@ -95,7 +103,12 @@ private:
 
     AmpMode currentMode_ = AmpMode::DSP;
     AmpMode targetMode_  = AmpMode::DSP;
+    AmpType currentAmpType_ = AmpType::FenderDeluxe;
+
+    void createPreamp (AmpType type);
+    bool currentBright_ = false;
     float outputGain_ = 1.0f;
+    float inputGainLinear_ = 1.0f; // Linear input gain for NAM fast path
 
     // Crossfade state for glitch-free mode switching
     static constexpr int kCrossfadeSamples = 128;
@@ -114,4 +127,8 @@ private:
     double sampleRate_ = 44100.0;
     int maxBlockSize_ = 512;
     float prevOutputDB_ = -999.0f;
+
+    // Oversampling gain compensation: 4x produces less in-band energy
+    // (reduced aliasing means less intermodulation in the bass/mids)
+    float oversamplingGainComp_ = 1.0f;
 };
