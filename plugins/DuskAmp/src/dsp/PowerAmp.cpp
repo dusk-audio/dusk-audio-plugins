@@ -1,5 +1,4 @@
 #include "PowerAmp.h"
-#include "AnalogEmulation/HardwareProfiles.h"
 #include <cmath>
 #include <algorithm>
 
@@ -8,109 +7,117 @@ static constexpr float kPi = 3.14159265358979323846f;
 void PowerAmp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
-
-    // Configure transformer for output transformer character
-    auto profile = AnalogEmulation::TransformerProfile::createActive (
-        0.75f,    // saturation threshold
-        0.12f,    // saturation amount
-        1.3f,     // low freq saturation
-        14000.0f, // HF rolloff (output transformer rolls off earlier)
-        15.0f,    // DC blocking freq
-        0.01f,    // h2
-        0.005f,   // h3
-        0.7f);    // even/odd ratio
-
-    transformer_.setProfile (profile);
-    transformer_.prepare (sampleRate, 1); // mono
-
     dcBlocker_.prepare (sampleRate, 10.0f);
-
     updatePresenceCoeff();
     updateResonanceCoeff();
     updateSagCoeffs();
+    updateOTRolloff();
     reset();
 }
 
 void PowerAmp::reset()
 {
     sagEnvelope_ = 0.0f;
+    nfbState_ = 0.0f;
     presenceState_ = 0.0f;
     resonanceState_ = 0.0f;
-    transformer_.reset();
+    otLpfState_ = 0.0f;
     dcBlocker_.reset();
+}
+
+void PowerAmp::setConfig (const AmpModels::PowerAmpConfig& config)
+{
+    config_ = config;
+    driveGain_ = 1.0f + drive_ * (config_.maxDriveGain - 1.0f);
+    updateSagCoeffs();
+    updateOTRolloff();
 }
 
 void PowerAmp::setDrive (float drive01)
 {
     drive_ = std::clamp (drive01, 0.0f, 1.0f);
-    // Map 0-1 to gain multiplier 1.0 to 4.0
-    driveGain_ = 1.0f + drive_ * 3.0f;
+    driveGain_ = 1.0f + drive_ * (config_.maxDriveGain - 1.0f);
 }
 
 void PowerAmp::setPresence (float value01)
 {
-    // Map 0-1 to 0dB to +6dB presence boost
-    presenceGain_ = std::clamp (value01, 0.0f, 1.0f) * 6.0f;
+    presenceAmount_ = std::clamp (value01, 0.0f, 1.0f);
     updatePresenceCoeff();
 }
 
 void PowerAmp::setResonance (float value01)
 {
-    // Map 0-1 to 0dB to +6dB resonance boost
-    resonanceGain_ = std::clamp (value01, 0.0f, 1.0f) * 6.0f;
+    resonanceAmount_ = std::clamp (value01, 0.0f, 1.0f);
     updateResonanceCoeff();
 }
 
 void PowerAmp::setSag (float sag01)
 {
     sagAmount_ = std::clamp (sag01, 0.0f, 1.0f);
-    updateSagCoeffs();
 }
 
 void PowerAmp::process (float* buffer, int numSamples)
 {
     auto& waveshaper = AnalogEmulation::getWaveshaperCurves();
+    const float nfbRatio = config_.nfbRatio;
+    const float classABias = config_.classABias;
+    const float otGain = config_.outputTransformerGain;
 
     for (int i = 0; i < numSamples; ++i)
     {
         float sample = buffer[i];
 
-        // 1. Sag: envelope follows abs(input), reduces available headroom
-        float absInput = std::abs (sample);
-
-        if (absInput > sagEnvelope_)
-            sagEnvelope_ = sagAttackCoeff_ * sagEnvelope_ + (1.0f - sagAttackCoeff_) * absInput;
-        else
-            sagEnvelope_ = sagReleaseCoeff_ * sagEnvelope_;
+        // 1. Sag envelope: track signal RMS, reduce effective B+ under load
+        float absIn = std::abs (sample) * driveGain_;
+        sagEnvelope_ += (absIn > sagEnvelope_ ? sagAttackCoeff_ : sagReleaseCoeff_)
+                        * (absIn - sagEnvelope_);
         if (sagEnvelope_ < 1e-15f) sagEnvelope_ = 0.0f;
 
-        // Sag reduces drive gain proportionally
-        float sagReduction = 1.0f - sagAmount_ * std::min (sagEnvelope_, 1.0f) * 0.3f;
+        // sagRatio: 1.0 = clean supply, drops toward 0 under heavy load
+        float sagRatio = 1.0f / (1.0f + sagEnvelope_ * sagAmount_ * config_.psuSagDepth * 4.0f);
 
-        // 2. Apply drive gain, reduced by sag
-        float driven = sample * driveGain_ * sagReduction;
+        // 2. Negative feedback: subtract filtered output from input
+        float feedback = 0.0f;
+        if (nfbRatio > 0.0f)
+        {
+            // Split NFB signal into bands for presence/resonance shaping.
+            // Presence: remove HF from feedback → HF passes through with more distortion.
+            float hpOut = nfbState_ - presenceState_;
+            presenceState_ += hpOut * presenceCoeff_;
+            if (std::abs (presenceState_) < 1e-15f) presenceState_ = 0.0f;
 
-        // 3. Pentode waveshaper (power tube saturation)
-        float saturated = waveshaper.process (driven, AnalogEmulation::WaveshaperCurves::CurveType::Pentode);
+            // Resonance: lowpass extracts LF content in feedback.
+            resonanceState_ += (nfbState_ - resonanceState_) * resonanceCoeff_;
+            if (std::abs (resonanceState_) < 1e-15f) resonanceState_ = 0.0f;
 
-        // 4. Presence + Resonance EQ (feedforward — filters track pre-boost signal)
-        float preBoosted = saturated;
+            // Base feedback + shaped HF/LF contributions
+            feedback = nfbState_ * nfbRatio;
+            feedback += hpOut * presenceAmount_ * nfbRatio * 0.3f;
+            feedback += resonanceState_ * resonanceAmount_ * nfbRatio * 0.3f;
+        }
 
-        float hpOut = preBoosted - presenceState_;
-        presenceState_ += hpOut * presenceCoeff_;
-        if (std::abs (presenceState_) < 1e-15f) presenceState_ = 0.0f;
+        // 3. Apply drive with NFB subtraction and sag compression
+        float driven = (sample - feedback) * driveGain_ * sagRatio;
 
-        resonanceState_ += (preBoosted - resonanceState_) * resonanceCoeff_;
-        if (std::abs (resonanceState_) < 1e-15f) resonanceState_ = 0.0f;
+        // 4. Class A bias offset (AC30: asymmetric clipping, more even harmonics)
+        if (classABias > 0.0f)
+            driven += classABias;
 
-        saturated += hpOut * (presenceGain_ / 6.0f) * 0.3f;
-        saturated += resonanceState_ * (resonanceGain_ / 6.0f) * 0.3f;
+        // 5. Power tube waveshaper
+        float saturated = waveshaper.process (driven, config_.powerTubeCurve);
 
-        // 6. Output transformer
-        saturated = transformer_.processSample (saturated, 0);
+        // 6. Output transformer: HF rolloff (inductance limiting)
+        otLpfState_ += otLpfCoeff_ * (saturated - otLpfState_);
+        saturated = otLpfState_;
 
         // 7. DC block
         saturated = dcBlocker_.processSample (saturated);
+
+        // 8. OT turns ratio gain
+        saturated *= otGain;
+
+        // Store pre-OT-gain signal for next sample's NFB
+        nfbState_ = saturated / otGain;
 
         buffer[i] = saturated;
     }
@@ -118,27 +125,36 @@ void PowerAmp::process (float* buffer, int numSamples)
 
 void PowerAmp::updatePresenceCoeff()
 {
-    // One-pole highpass coefficient for presence frequency
-    float w = 2.0f * kPi * presenceFreq_ / static_cast<float> (sampleRate_);
+    // Presence shelf corner: ~3.5kHz
+    float w = 2.0f * kPi * 3500.0f / static_cast<float> (sampleRate_);
     presenceCoeff_ = w / (w + 1.0f);
 }
 
 void PowerAmp::updateResonanceCoeff()
 {
-    // One-pole lowpass coefficient for resonance frequency
-    float w = 2.0f * kPi * resonanceFreq_ / static_cast<float> (sampleRate_);
+    // Resonance shelf corner: ~80Hz
+    float w = 2.0f * kPi * 80.0f / static_cast<float> (sampleRate_);
     resonanceCoeff_ = w / (w + 1.0f);
 }
 
 void PowerAmp::updateSagCoeffs()
 {
-    // Sag attack ~10ms, release ~100ms
-    float attackMs = 10.0f;
-    float releaseMs = 100.0f;
+    float fs = static_cast<float> (sampleRate_);
+    if (fs <= 0.0f) return;
 
-    if (sampleRate_ > 0.0)
-    {
-        sagAttackCoeff_ = std::exp (-1000.0f / (attackMs * static_cast<float> (sampleRate_)));
-        sagReleaseCoeff_ = std::exp (-1000.0f / (releaseMs * static_cast<float> (sampleRate_)));
-    }
+    // Attack: fast (~5-12ms depending on config)
+    float attackMs = std::max (config_.sagAttackMs, 1.0f);
+    sagAttackCoeff_ = 1.0f - std::exp (-1000.0f / (attackMs * fs));
+
+    // Release: slow (~30-120ms depending on config)
+    float releaseMs = std::max (config_.sagReleaseMs, 10.0f);
+    sagReleaseCoeff_ = 1.0f - std::exp (-1000.0f / (releaseMs * fs));
+}
+
+void PowerAmp::updateOTRolloff()
+{
+    // One-pole LPF at the transformer's HF rolloff frequency
+    float fc = config_.transformerHFRolloff;
+    float w = 2.0f * kPi * fc / static_cast<float> (sampleRate_);
+    otLpfCoeff_ = w / (w + 1.0f);
 }

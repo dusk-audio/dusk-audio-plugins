@@ -90,9 +90,9 @@ private:
 
     // -- AMP section --
     KnobWithLabel preampGain_;
-    // Channel selector
-    juce::ComboBox channelBox_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> channelAttachment_;
+    // Amp type selector (replaces separate channel + tone type selectors)
+    juce::ComboBox ampTypeBox_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ampTypeAttachment_;
     // Bright toggle
     juce::ToggleButton brightButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> brightAttachment_;
@@ -101,8 +101,7 @@ private:
     KnobWithLabel bass_;
     KnobWithLabel mid_;
     KnobWithLabel treble_;
-    juce::ComboBox toneTypeBox_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> toneTypeAttachment_;
+    KnobWithLabel toneCut_;
 
     // -- POWER AMP section --
     KnobWithLabel powerDrive_;
@@ -113,9 +112,12 @@ private:
     // -- CABINET section --
     juce::ToggleButton cabEnabled_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> cabEnabledAttachment_;
+    juce::ToggleButton cabNormalize_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> cabNormalizeAttachment_;
     KnobWithLabel cabMix_;
     KnobWithLabel cabHiCut_;
     KnobWithLabel cabLoCut_;
+    KnobWithLabel cabMicPos_;
     CabBrowser cabBrowser_;
 
     // -- EFFECTS section --
@@ -152,6 +154,8 @@ private:
     juce::Rectangle<int> centerTopBounds_, centerMidBounds_, centerBotBounds_;
     juce::Rectangle<int> cabGroupBounds_, fxGroupBounds_;
     bool layoutIsNamMode_ = false;
+    bool cabInCenter_ = false;  // NAM mode: cab is in center area, not bottom row
+    int layoutAmpType_ = -1;  // Track amp type for mid/toneCut visibility
 
     // Tooltip
     juce::TooltipWindow tooltipWindow_ { this, 500 };

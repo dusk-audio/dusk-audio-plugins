@@ -3,39 +3,39 @@
 #include <filesystem>
 
 #if DUSKAMP_NAM_SUPPORT
-// Force the linker to keep NAM architecture translation units.
-// Each .cpp has a static ConfigParserHelper that self-registers its
-// architecture (WaveNet, LSTM, ConvNet, Linear) at load time.
-// Without explicit references, the linker strips them as "unused".
 #include "NAM/wavenet.h"
 #include "NAM/lstm.h"
 #include "NAM/convnet.h"
-
-// Ensure NAM architecture parsers are registered.
 #include "NAM/model_config.h"
+#include "NAM/activations.h"
 
-static void ensureNAMParsersRegistered()
+static void ensureNAMInitialized()
 {
-    auto& registry = nam::ConfigParserRegistry::instance();
-    // Only register if not already present (idempotent)
-    if (!registry.has("WaveNet"))
-        registry.registerParser("WaveNet", nam::wavenet::create_config);
-    if (!registry.has("LSTM"))
-        registry.registerParser("LSTM", nam::lstm::create_config);
-    if (!registry.has("ConvNet"))
-        registry.registerParser("ConvNet", nam::convnet::create_config);
-    if (!registry.has("Linear"))
-        registry.registerParser("Linear", nam::linear::create_config);
+    static bool initialized = false;
+    if (!initialized)
+    {
+        auto& registry = nam::ConfigParserRegistry::instance();
+        if (!registry.has("WaveNet"))
+            registry.registerParser("WaveNet", nam::wavenet::create_config);
+        if (!registry.has("LSTM"))
+            registry.registerParser("LSTM", nam::lstm::create_config);
+        if (!registry.has("ConvNet"))
+            registry.registerParser("ConvNet", nam::convnet::create_config);
+        if (!registry.has("Linear"))
+            registry.registerParser("Linear", nam::linear::create_config);
+        // Critical: enable fast tanh approximation for WaveNet/LSTM performance.
+        nam::activations::Activation::enable_fast_tanh();
+        initialized = true;
+    }
 }
 #endif
 
 NAMProcessor::~NAMProcessor()
 {
 #if DUSKAMP_NAM_SUPPORT
-    pendingReady_.store(false);
-    pendingModel_.reset();
+    stagingReady_.store(false);
+    stagedModel_.reset();
     activeModel_.reset();
-    retiredModel_.reset();
 #endif
 }
 
@@ -47,23 +47,23 @@ void NAMProcessor::prepare(double sampleRate, int maxBlockSize)
     outputBuffer_.resize(static_cast<size_t>(maxBlockSize), 0.0);
 
 #if DUSKAMP_NAM_SUPPORT
-    retiredModel_.reset();
+    ensureNAMInitialized();
+    // If a model is already active, reset it for the new sample rate/block size.
+    // This matches the official NAM plugin's OnReset() behavior.
+    if (activeModel_)
+        activeModel_->ResetAndPrewarm(sampleRate, maxBlockSize);
 #endif
 }
 
 void NAMProcessor::process(float* buffer, int numSamples)
 {
-    jassert(numSamples <= maxBlockSize_);
-
 #if DUSKAMP_NAM_SUPPORT
-    // Swap in pending model if ready (atomic flag — no data race)
-    if (pendingReady_.load(std::memory_order_acquire))
+    // Swap in staged model if ready. This mirrors the official NAM plugin's
+    // _ApplyDSPStaging() which runs at the top of every ProcessBlock().
+    if (stagingReady_.load(std::memory_order_acquire))
     {
-        // Retire the old model (deferred delete — safe because we're
-        // between process calls on the audio thread)
-        retiredModel_ = std::move(activeModel_);
-        activeModel_ = std::move(pendingModel_);
-        pendingReady_.store(false, std::memory_order_release);
+        activeModel_ = std::move(stagedModel_);
+        stagingReady_.store(false, std::memory_order_release);
     }
 
     if (activeModel_ == nullptr)
@@ -73,12 +73,12 @@ void NAMProcessor::process(float* buffer, int numSamples)
     for (int i = 0; i < numSamples; ++i)
         inputBuffer_[static_cast<size_t>(i)] = static_cast<double>(buffer[i]) * static_cast<double>(inputGain_);
 
-    // NAM process() takes double** (pointer-to-pointer, single channel)
+    // NAM inference — single call with full buffer.
     double* inPtr = inputBuffer_.data();
     double* outPtr = outputBuffer_.data();
     activeModel_->process(&inPtr, &outPtr, numSamples);
 
-    // Output gain + optional loudness compensation, double → float
+    // Output gain + loudness compensation
     float loudnessComp = 1.0f;
     if (activeModel_->HasLoudness())
     {
@@ -92,7 +92,6 @@ void NAMProcessor::process(float* buffer, int numSamples)
         float val = static_cast<float>(outputBuffer_[static_cast<size_t>(i)]) * totalGain;
         buffer[i] = std::isfinite(val) ? val : 0.0f;
     }
-
 #else
     juce::ignoreUnused(buffer, numSamples);
 #endif
@@ -115,28 +114,31 @@ bool NAMProcessor::loadModel(const juce::File& file)
 
     try
     {
-        ensureNAMParsersRegistered();
+        ensureNAMInitialized();
 
-        lastError_ = "parsing...";
-        auto path = std::filesystem::path(file.getFullPathName().toStdString());
-        auto newModel = nam::get_dsp(path);
+        // Load model synchronously on message thread — this matches the official
+        // NAM plugin's _StageModel() which does get_dsp + Reset synchronously.
+        auto dspPath = std::filesystem::path(file.getFullPathName().toStdString());
+        auto newModel = nam::get_dsp(dspPath);
         if (newModel == nullptr)
         {
             lastError_ = "get_dsp returned null";
             return false;
         }
 
-        lastError_ = "prewarming...";
-        newModel->prewarm();
+        // Reset and prewarm with the host's actual sample rate and block size.
+        // This pre-allocates all internal buffers so no allocation happens
+        // during process().
+        newModel->ResetAndPrewarm(sampleRate_, maxBlockSize_);
 
-        pendingModel_ = std::move(newModel);
-        pendingReady_.store(true, std::memory_order_release);
+        // Stage for audio thread pickup
+        stagedModel_ = std::move(newModel);
+        stagingReady_.store(true, std::memory_order_release);
 
         modelName_ = file.getFileNameWithoutExtension();
         modelFile_ = file;
         modelLoaded_.store(true, std::memory_order_release);
-
-        lastError_ = ""; // success
+        lastError_ = "";
         return true;
     }
     catch (const std::exception& e)
@@ -151,6 +153,7 @@ bool NAMProcessor::loadModel(const juce::File& file)
     }
 #else
     juce::ignoreUnused(file);
+    lastError_ = "NAM not compiled";
     return false;
 #endif
 }
@@ -158,10 +161,8 @@ bool NAMProcessor::loadModel(const juce::File& file)
 void NAMProcessor::clearModel()
 {
 #if DUSKAMP_NAM_SUPPORT
-    pendingReady_.store(false, std::memory_order_release);
-    pendingModel_.reset();
-    // Don't reset activeModel_ directly — the audio thread may be using it.
-    // It will be retired on next loadModel or prepare.
+    stagingReady_.store(false, std::memory_order_release);
+    stagedModel_.reset();
 #endif
     modelName_.clear();
     modelFile_ = juce::File();

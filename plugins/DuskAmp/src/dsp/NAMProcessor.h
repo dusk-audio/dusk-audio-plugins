@@ -19,7 +19,8 @@ public:
     void process(float* buffer, int numSamples);
     void reset();
 
-    // Thread-safe model loading (call from message thread)
+    // Model loading — call from message thread only.
+    // Stages the model; it's swapped in on the next process() call.
     bool loadModel(const juce::File& file);
     void clearModel();
 
@@ -34,18 +35,19 @@ public:
 
 private:
 #if DUSKAMP_NAM_SUPPORT
-    // Model swap: message thread writes pendingModel_, sets pendingReady_ flag.
-    // Audio thread checks the flag and swaps.
-    std::unique_ptr<nam::DSP> pendingModel_;
+    // Staged model: written by message thread, consumed by audio thread.
+    // Protected by the atomic flag stagingReady_.
+    std::unique_ptr<nam::DSP> stagedModel_;
+    std::atomic<bool> stagingReady_ { false };
+
+    // Active model: owned exclusively by the audio thread.
     std::unique_ptr<nam::DSP> activeModel_;
-    std::unique_ptr<nam::DSP> retiredModel_;  // deferred delete
-    std::atomic<bool> pendingReady_ { false };
 #endif
 
     float inputGain_ = 1.0f;
     float outputGain_ = 1.0f;
-    double sampleRate_ = 44100.0;
-    int maxBlockSize_ = 512;
+    double sampleRate_ = 48000.0;
+    int maxBlockSize_ = 2048;
 
     juce::String modelName_;
     juce::File modelFile_;
