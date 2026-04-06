@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "FactoryPresets.h"
+#include "VVERTapData.h"
 
 // =============================================================================
 // KnobWithLabel
@@ -881,6 +882,10 @@ void DuskVerbEditor::loadPreset (int index)
         presets[static_cast<size_t> (index)].applyTo (processorRef.parameters);
         processorRef.parameters.state.setProperty ("presetName",
             juce::String (presets[static_cast<size_t> (index)].name), nullptr);
+
+        // Set preset_id to trigger per-preset ER tap loading in processBlock
+        if (auto* p = processorRef.parameters.getParameter ("preset_id"))
+            p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (index + 1)));
     }
 }
 
