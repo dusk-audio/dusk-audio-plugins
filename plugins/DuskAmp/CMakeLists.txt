@@ -102,8 +102,9 @@ target_sources(DuskAmp
         src/PluginEditor.cpp
         src/ui/DuskAmpLookAndFeel.cpp
         src/dsp/DuskAmpEngine.cpp
-        src/dsp/PreampDSP.cpp
-        src/dsp/ToneStack.cpp
+        src/dsp/StompBox.cpp
+        src/dsp/PreampModel.cpp
+        src/dsp/ToneStackModel.cpp
         src/dsp/PowerAmp.cpp
         src/dsp/CabinetIR.cpp
         src/dsp/PostFX.cpp
