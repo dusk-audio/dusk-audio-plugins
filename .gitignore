@@ -124,6 +124,17 @@ docs/_build/
 # GrooveMind training data directories
 groovemind-training/
 
+# Python / NumPy / calibration artifacts
+*.npz
+*.npy
+*.pkl
+*.pickle
+__pycache__/
+*.pyc
+
+# DuskVerb reference comparison (private repo, symlinked)
+plugins/DuskVerb/tests/reference_comparison
+
 # Stale build artifacts and test data
 *.zip
 tests/test_linear_phase
