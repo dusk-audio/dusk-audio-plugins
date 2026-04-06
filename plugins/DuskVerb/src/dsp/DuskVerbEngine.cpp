@@ -1,5 +1,8 @@
 #include "DuskVerbEngine.h"
 #include "DspUtils.h"
+#include "../VVERTapData.h"
+#include "../PresetCorrectionFilters.h"
+#include "../PresetTapPositions.h"
 
 #include <algorithm>
 #include <cmath>
@@ -19,6 +22,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     fdn_.prepare (sampleRate, maxBlockSize);
     dattorroTank_.prepare (sampleRate, maxBlockSize);
     quadTank_.prepare (sampleRate, maxBlockSize);
+    hybridQuadTank_.prepare (sampleRate, maxBlockSize);
     outputDiffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
 
@@ -28,6 +32,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     erOutR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     preDiffL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     preDiffR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    hybridL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    hybridR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
 
     // Pre-delay: max 250ms at current sample rate
     int maxDelaySamples = static_cast<int> (std::ceil (0.250 * sampleRate));
@@ -59,6 +65,14 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
                               / static_cast<float> (sampleRate));
     inputBwStateL_ = 0.0f;
     inputBwStateR_ = 0.0f;
+
+    // Late onset envelope: reset ramp on prepare
+    lateOnsetSamples_ = static_cast<int> (config_->lateOnsetMs * 0.001f
+                                          * static_cast<float> (sampleRate));
+    lateOnsetIncrement_ = (lateOnsetSamples_ > 0)
+                        ? (1.0f / static_cast<float> (lateOnsetSamples_))
+                        : 0.0f;
+    lateOnsetRamp_ = (lateOnsetSamples_ > 0) ? 0.0f : 1.0f;
 
     // DC blocker: R = 1 - (2*pi*fc/sr), fc ~5Hz
     dcCoeff_ = 1.0f - (6.283185307179586f * 5.0f / static_cast<float> (sampleRate));
@@ -153,6 +167,23 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
     }
 
+    // Input onset ramp: gradually feed energy into FDN to match VV's serial
+    // tank onset. Applied to FDN INPUT (not output) so:
+    // - ERs are unaffected (already captured above)
+    // - Steady-state level preserved (FDN reaches same equilibrium)
+    // - No tail energy loss (only initial transient is shaped)
+    if (lateOnsetRamp_ < 1.0f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            float onset = lateOnsetRamp_ * lateOnsetRamp_;  // Squared: concave ramp
+            scratchL_[si] *= onset;
+            scratchR_[si] *= onset;
+            lateOnsetRamp_ = std::min (1.0f, lateOnsetRamp_ + lateOnsetIncrement_);
+        }
+    }
+
     // Late reverb path: InputDiffusion → FDN → OutputDiffusion
     if (! frozen_)
         diffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
@@ -161,6 +192,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         // When frozen, mute input to FDN (keep existing tail circulating)
         std::memset (scratchL_.data(), 0, static_cast<size_t> (numSamples) * sizeof (float));
         std::memset (scratchR_.data(), 0, static_cast<size_t> (numSamples) * sizeof (float));
+    }
+
+    // Hybrid dual-engine: save input for secondary engine BEFORE primary processes it
+    if (hybridBlend_ > 0.001f && hybridConfig_ != nullptr)
+    {
+        std::memcpy (hybridL_.data(), scratchL_.data(), static_cast<size_t> (numSamples) * sizeof (float));
+        std::memcpy (hybridR_.data(), scratchR_.data(), static_cast<size_t> (numSamples) * sizeof (float));
     }
 
     // Late reverb: route to QuadTank (Hall), Dattorro tank (Room), or FDN (others)
@@ -173,6 +211,26 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     else
         fdn_.process (scratchL_.data(), scratchR_.data(),
                       scratchL_.data(), scratchR_.data(), numSamples);
+
+    // Hybrid: run secondary engine on saved input and blend with primary output
+    if (hybridBlend_ > 0.001f && hybridConfig_ != nullptr)
+    {
+        // Run DEDICATED secondary engine on the saved pre-primary input
+        // Uses hybridQuadTank_ (configured with secondary algo's params)
+        // to avoid conflicts with the primary QuadTank
+        hybridQuadTank_.process (hybridL_.data(), hybridR_.data(),
+                                 hybridL_.data(), hybridR_.data(), numSamples);
+
+        // Blend: primary * (1-blend) + secondary * blend
+        float a = 1.0f - hybridBlend_;
+        float b = hybridBlend_;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            scratchL_[si] = scratchL_[si] * a + hybridL_[si] * b;
+            scratchR_[si] = scratchR_[si] * a + hybridR_[si] * b;
+        }
+    }
 
     // DC blocker: apply before output diffusion so allpass filters don't accumulate DC
     for (int i = 0; i < numSamples; ++i)
@@ -233,7 +291,20 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
     }
 
-    // Anti-alias filtering is handled inside the FDN feedback loop (first-order LP at ~17kHz).
+    // Per-preset spectral correction filter: shapes DattorroTank output to match VV.
+    // Applied after output EQ, before output diffuser, to the late reverb only.
+    if (correctionFilterActive_)
+    {
+        for (int s = 0; s < kNumCorrectionStages; ++s)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                auto si = static_cast<size_t> (i);
+                scratchL_[si] = correctionFilter_[s].processL (scratchL_[si]);
+                scratchR_[si] = correctionFilter_[s].processR (scratchR_[si]);
+            }
+        }
+    }
 
     // Save pre-diffusion late reverb for feed-forward path
     if (lateFeedForwardLevel_ > 0.001f)
@@ -251,6 +322,48 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         auto si = static_cast<size_t> (i);
         scratchL_[si] += erOutL_[si];
         scratchR_[si] += erOutR_[si];
+    }
+
+    // RMS-tracking peak limiter: reduces FDN's inherent crest factor.
+    // Tracks 5ms RMS and limits instantaneous peaks to crestLimitRatio × RMS.
+    // This directly targets the peak/RMS ratio that the crest metric measures.
+    if (crestLimitRatio_ > 0.0f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            float sL = scratchL_[si];
+            float sR = scratchR_[si];
+
+            // Update RMS ring buffer
+            float sqL = sL * sL;
+            float sqR = sR * sR;
+            rmsSumL_ += sqL - rmsBufferL_[static_cast<size_t> (rmsIndex_)];
+            rmsSumR_ += sqR - rmsBufferR_[static_cast<size_t> (rmsIndex_)];
+            rmsBufferL_[static_cast<size_t> (rmsIndex_)] = sqL;
+            rmsBufferR_[static_cast<size_t> (rmsIndex_)] = sqR;
+            rmsIndex_ = (rmsIndex_ + 1) % rmsWindowSamples_;
+
+            // Compute RMS (max of L/R for stereo-linked limiting)
+            float rmsL = std::sqrt (std::max (0.0f, rmsSumL_ / static_cast<float> (rmsWindowSamples_)));
+            float rmsR = std::sqrt (std::max (0.0f, rmsSumR_ / static_cast<float> (rmsWindowSamples_)));
+            float rms = std::max (rmsL, rmsR);
+
+            // Limit peaks that exceed ratio × RMS
+            float limit = rms * crestLimitRatio_;
+            if (limit > 1e-10f)
+            {
+                float absL = std::abs (sL);
+                float absR = std::abs (sR);
+                float maxAbs = std::max (absL, absR);
+                if (maxAbs > limit)
+                {
+                    float gain = limit / maxAbs;
+                    scratchL_[si] = sL * gain;
+                    scratchR_[si] = sR * gain;
+                }
+            }
+        }
     }
 
     // Late feed-forward: add pre-diffusion late reverb for earlier onset
@@ -362,8 +475,28 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 wetR *= gateEnvelope_;
             }
 
-            left[i]  = left[i] * dry + wetL * wet * gainTrimLinear_;
-            right[i] = right[i] * dry + wetR * wet * gainTrimLinear_;
+            float finalWetL = wetL * wet * gainTrimLinear_;
+            float finalWetR = wetR * wet * gainTrimLinear_;
+
+            // Per-preset peak limiter on final wet signal (after gainTrim)
+            if (outputLimiterThreshold_ > 0.0f)
+            {
+                float pk = std::max (std::abs (finalWetL), std::abs (finalWetR));
+                if (pk > outputLimiterEnv_)
+                    outputLimiterEnv_ = pk;
+                else
+                    outputLimiterEnv_ = outputLimiterRelease_ * outputLimiterEnv_
+                                      + (1.0f - outputLimiterRelease_) * pk;
+                if (outputLimiterEnv_ > outputLimiterThreshold_)
+                {
+                    float g = outputLimiterThreshold_ / outputLimiterEnv_;
+                    finalWetL *= g;
+                    finalWetR *= g;
+                }
+            }
+
+            left[i]  = left[i] * dry + finalWetL;
+            right[i] = right[i] * dry + finalWetR;
         }
     }
 }
@@ -391,14 +524,65 @@ void DuskVerbEngine::applyAlgorithm (int index)
 {
     config_ = &getAlgorithmConfig (index);
     useDattorroTank_ = config_->useDattorroTank;
-    // QuadTank for Hall: 4 cross-coupled allpass tanks with 28 output taps
-    useQuadTank_ = (config_ == &kHall);
+    useQuadTank_ = config_->useQuadTank;
     enableSaturation_ = config_->enableSaturation;
     lateFeedForwardLevel_ = config_->lateFeedForwardLevel;
+    crestLimitRatio_ = config_->crestLimitRatio;
+    hybridBlend_ = config_->hybridBlend;
+    hybridConfig_ = (config_->hybridSecondaryAlgo >= 0)
+                   ? &getAlgorithmConfig (config_->hybridSecondaryAlgo)
+                   : nullptr;
+
+    // Configure dedicated hybrid QuadTank with secondary algorithm's params
+    if (hybridConfig_ != nullptr && hybridBlend_ > 0.001f)
+    {
+        hybridQuadTank_.setSizeRange (hybridConfig_->sizeRangeMin, hybridConfig_->sizeRangeMax);
+        hybridQuadTank_.setHighCrossoverFreq (hybridConfig_->highCrossoverHz);
+        hybridQuadTank_.setAirDampingScale (hybridConfig_->airDampingScale);
+        hybridQuadTank_.setLateGainScale (hybridConfig_->lateGainScale);
+        hybridQuadTank_.clearBuffers();
+    }
+    // Recompute RMS window size from current sample rate and reset tracker
+    rmsWindowSamples_ = std::max (1, static_cast<int> (std::round (
+        static_cast<float> (sampleRate_) * kRmsWindowMs / 1000.0f)));
+    rmsBufferL_.assign (static_cast<size_t> (rmsWindowSamples_), 0.0f);
+    rmsBufferR_.assign (static_cast<size_t> (rmsWindowSamples_), 0.0f);
+    rmsSumL_ = 0.0f;
+    rmsSumR_ = 0.0f;
+    rmsIndex_ = 0;
+
+    // Late onset envelope: ramp FDN output from 0→1 over lateOnsetMs
+    lateOnsetSamples_ = static_cast<int> (config_->lateOnsetMs * 0.001f
+                                          * static_cast<float> (sampleRate_));
+    lateOnsetIncrement_ = (lateOnsetSamples_ > 0)
+                        ? (1.0f / static_cast<float> (lateOnsetSamples_))
+                        : 0.0f;
+    lateOnsetRamp_ = (lateOnsetSamples_ > 0) ? 0.0f : 1.0f;
 
     // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
-    // Must set scale BEFORE prepare() so buffers are allocated at the right size.
+    // Must set scale and delayScale BEFORE prepare() so buffers are allocated correctly.
     dattorroTank_.setHallScale (config_ == &kHall);
+    dattorroTank_.setDelayScale (config_->dattorroDelayScale);
+
+    // Apply per-algorithm Dattorro output tap positions (late onset matching VV)
+    if (config_->dattorroLeftTaps && config_->dattorroRightTaps)
+    {
+        // Convert AlgorithmConfig::DattorroOutputTap to DattorroTank::OutputTap
+        DattorroTank::OutputTap lTaps[7], rTaps[7];
+        for (int i = 0; i < 7; ++i)
+        {
+            lTaps[i] = { config_->dattorroLeftTaps[i].buf,
+                         config_->dattorroLeftTaps[i].pos,
+                         config_->dattorroLeftTaps[i].sign,
+                         config_->dattorroLeftTaps[i].gain };
+            rTaps[i] = { config_->dattorroRightTaps[i].buf,
+                         config_->dattorroRightTaps[i].pos,
+                         config_->dattorroRightTaps[i].sign,
+                         config_->dattorroRightTaps[i].gain };
+        }
+        dattorroTank_.setOutputTaps (lTaps, rTaps);
+    }
+
     if (useDattorroTank_)
         dattorroTank_.prepare (sampleRate_, maxBlockSize_);
 
@@ -481,6 +665,11 @@ void DuskVerbEngine::applyAlgorithm (int index)
     // Tank size range and gain
     dattorroTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
     dattorroTank_.setLateGainScale (config_->lateGainScale);
+    dattorroTank_.setNoiseModDepth (config_->noiseModDepth);
+    dattorroTank_.setHighCrossoverFreq (config_->highCrossoverHz);
+    dattorroTank_.setAirDampingScale (config_->airDampingScale);
+    // softOnsetMs is set per-preset via runtime parameter (soft_onset), not hardcoded here.
+    // Peak limiter: now controlled per-preset via runtime parameter (limiter_thresh).
     quadTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
     quadTank_.setHighCrossoverFreq (config_->highCrossoverHz);
     quadTank_.setAirDampingScale (config_->airDampingScale);
@@ -504,6 +693,8 @@ void DuskVerbEngine::setDecayTime (float seconds)
     fdn_.setDecayTime (scaledDecay);
     dattorroTank_.setDecayTime (scaledDecay);
     quadTank_.setDecayTime (scaledDecay);
+    if (hybridConfig_ != nullptr)
+        hybridQuadTank_.setDecayTime (seconds * hybridConfig_->decayTimeScale);
 
     // Decay-dependent output compensation: boost at short decay times to match
     // reference reverb's higher energy density at low feedback coefficients.
@@ -526,6 +717,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     fdn_.setBassMultiply (mult * config_->bassMultScale);
     dattorroTank_.setBassMultiply (mult * config_->bassMultScale);
     quadTank_.setBassMultiply (mult * config_->bassMultScale);
+    if (hybridConfig_) hybridQuadTank_.setBassMultiply (mult * hybridConfig_->bassMultScale);
 }
 
 void DuskVerbEngine::setTrebleMultiply (float mult)
@@ -541,6 +733,12 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     fdn_.setTrebleMultiply (scaledTreble);
     dattorroTank_.setTrebleMultiply (scaledTreble);
     quadTank_.setTrebleMultiply (scaledTreble);
+    if (hybridConfig_)
+    {
+        float hTreble = hybridConfig_->trebleMultScale * (1.0f - trebleCurve)
+                      + hybridConfig_->trebleMultScaleMax * trebleCurve;
+        hybridQuadTank_.setTrebleMultiply (hTreble);
+    }
     // Re-compute structural HF damping with raw treble (not scaled by trebleMultScale).
     // Raw treble gives better differentiation: Concert Wave (raw=1.0) gets minimal
     // structural damping, while dark presets (raw=0.3) get significant damping.
@@ -552,6 +750,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     fdn_.setCrossoverFreq (hz);
     dattorroTank_.setCrossoverFreq (hz);
     quadTank_.setCrossoverFreq (hz);
+    if (hybridConfig_) hybridQuadTank_.setCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setModDepth (float depth)
@@ -560,6 +759,7 @@ void DuskVerbEngine::setModDepth (float depth)
     fdn_.setModDepth (depth * config_->modDepthScale);
     dattorroTank_.setModDepth (depth * config_->modDepthScale);
     quadTank_.setModDepth (depth * config_->modDepthScale);
+    if (hybridConfig_) hybridQuadTank_.setModDepth (depth * hybridConfig_->modDepthScale);
 }
 
 void DuskVerbEngine::setModRate (float hz)
@@ -568,6 +768,7 @@ void DuskVerbEngine::setModRate (float hz)
     fdn_.setModRate (hz * config_->modRateScale);
     dattorroTank_.setModRate (hz * config_->modRateScale);
     quadTank_.setModRate (hz * config_->modRateScale);
+    if (hybridConfig_) hybridQuadTank_.setModRate (hz * hybridConfig_->modRateScale);
 }
 
 void DuskVerbEngine::setSize (float size)
@@ -575,6 +776,7 @@ void DuskVerbEngine::setSize (float size)
     fdn_.setSize (size);
     dattorroTank_.setSize (size);
     quadTank_.setSize (size);
+    if (hybridConfig_) hybridQuadTank_.setSize (size);
 }
 
 void DuskVerbEngine::setPreDelay (float milliseconds)
@@ -594,8 +796,6 @@ void DuskVerbEngine::setOutputDiffusion (float amount)
     lastOutputDiffusion_ = amount;
     // Decay-linked limiting: reduce output diffusion at long decay times
     // to prevent allpass ringing (inspired by Dattorro's decay_diffusion_2 coupling)
-    // Gentler curve: full density up to 8s, floor at 0.5 (was 5s/0.4)
-    // Ambient/Pad users running 8-15s decays retain more output density
     float effectiveDecay = decayTime_ * config_->decayTimeScale;
     float decayFactor = std::clamp (8.0f / std::max (effectiveDecay, 0.2f), 0.65f, 1.0f);
     outputDiffuser_.setDiffusion (amount * decayFactor * config_->outputDiffScale);
@@ -604,7 +804,9 @@ void DuskVerbEngine::setOutputDiffusion (float amount)
 void DuskVerbEngine::setERLevel (float level)
 {
     lastERLevel_ = level;
-    erLevelSmoother_.setTarget (std::clamp (level * erLevelScale_, 0.0f, 1.0f));
+    // Allow ER level above 1.0 — Plate algorithm needs 2-3x ER gain to match
+    // VV's strong early onset relative to the DattorroTank's late reverb.
+    erLevelSmoother_.setTarget (std::max (0.0f, level * erLevelScale_));
 }
 
 void DuskVerbEngine::setERSize (float size)              { er_.setSize (size); }
@@ -657,6 +859,150 @@ void DuskVerbEngine::setGateParams (float holdMs, float releaseMs)
 void DuskVerbEngine::setGainTrim (float dB)
 {
     gainTrimLinear_ = std::pow (10.0f, dB / 20.0f);
+}
+
+void DuskVerbEngine::setInputOnset (float ms)
+{
+    float clamped = std::clamp (ms, 0.0f, 200.0f);
+    lateOnsetSamples_ = static_cast<int> (clamped * 0.001f * static_cast<float> (sampleRate_));
+    lateOnsetIncrement_ = (lateOnsetSamples_ > 0)
+                        ? (1.0f / static_cast<float> (lateOnsetSamples_))
+                        : 0.0f;
+    // Reset ramp on parameter change (triggers new onset shaping)
+    lateOnsetRamp_ = (lateOnsetSamples_ > 0) ? 0.0f : 1.0f;
+}
+
+void DuskVerbEngine::setDattorroDelayScale (float scale)
+{
+    dattorroTank_.setDelayScale (scale);
+}
+
+void DuskVerbEngine::setDattorroSoftOnsetMs (float ms)
+{
+    dattorroTank_.setSoftOnsetMs (ms);
+}
+
+void DuskVerbEngine::setLateFeedForwardLevel (float level)
+{
+    lateFeedForwardLevel_ = std::clamp (level, 0.0f, 1.0f);
+}
+
+void DuskVerbEngine::setDattorroLimiter (float thresholdDb, float releaseMs)
+{
+    if (thresholdDb <= -60.0f || thresholdDb >= 0.0f)
+    {
+        outputLimiterThreshold_ = 0.0f;  // Disabled
+        return;
+    }
+    outputLimiterThreshold_ = std::pow (10.0f, thresholdDb / 20.0f);
+    float releaseSamples = releaseMs * 0.001f * static_cast<float> (sampleRate_);
+    outputLimiterRelease_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+}
+
+void DuskVerbEngine::updateTapPositions (
+    float l0, float l1, float l2, float l3, float l4, float l5, float l6,
+    float r0, float r1, float r2, float r3, float r4, float r5, float r6)
+{
+    float defaultGains[14] = { 1,1,1,1,1,1,1, 1,1,1,1,1,1,1 };
+    updateTapPositionsAndGains (l0,l1,l2,l3,l4,l5,l6, r0,r1,r2,r3,r4,r5,r6,
+                                defaultGains[0],defaultGains[1],defaultGains[2],defaultGains[3],defaultGains[4],defaultGains[5],defaultGains[6],
+                                defaultGains[7],defaultGains[8],defaultGains[9],defaultGains[10],defaultGains[11],defaultGains[12],defaultGains[13]);
+}
+
+void DuskVerbEngine::updateTapPositionsAndGains (
+    float l0, float l1, float l2, float l3, float l4, float l5, float l6,
+    float r0, float r1, float r2, float r3, float r4, float r5, float r6,
+    float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
+    float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6)
+{
+    if (! config_->dattorroLeftTaps || ! config_->dattorroRightTaps)
+        return;
+
+    float lPos[7] = { l0, l1, l2, l3, l4, l5, l6 };
+    float rPos[7] = { r0, r1, r2, r3, r4, r5, r6 };
+    float lGain[7] = { gl0, gl1, gl2, gl3, gl4, gl5, gl6 };
+    float rGain[7] = { gr0, gr1, gr2, gr3, gr4, gr5, gr6 };
+
+    DattorroTank::OutputTap lTaps[7], rTaps[7];
+    for (int i = 0; i < 7; ++i)
+    {
+        lTaps[i] = { config_->dattorroLeftTaps[i].buf, lPos[i], config_->dattorroLeftTaps[i].sign, lGain[i] };
+        rTaps[i] = { config_->dattorroRightTaps[i].buf, rPos[i], config_->dattorroRightTaps[i].sign, rGain[i] };
+    }
+    dattorroTank_.setOutputTaps (lTaps, rTaps);
+}
+
+void DuskVerbEngine::loadPresetTapPositions (int presetIndex)
+{
+    if (presetIndex >= 0 && presetIndex < kNumPresetTapConfigs)
+    {
+        const auto& config = getPresetTapConfig (presetIndex);
+        // Convert PresetTapConfig taps to DattorroTank::OutputTap
+        DattorroTank::OutputTap lTaps[7], rTaps[7];
+        for (int i = 0; i < 7; ++i)
+        {
+            lTaps[i] = config.leftTaps[i];
+            rTaps[i] = config.rightTaps[i];
+        }
+        dattorroTank_.setOutputTaps (lTaps, rTaps);
+    }
+}
+
+void DuskVerbEngine::applyTapGains (
+    float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
+    float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6)
+{
+    float lGain[7] = { gl0, gl1, gl2, gl3, gl4, gl5, gl6 };
+    float rGain[7] = { gr0, gr1, gr2, gr3, gr4, gr5, gr6 };
+    dattorroTank_.applyTapGains (lGain, rGain);
+}
+
+void DuskVerbEngine::loadCorrectionFilter (int presetIndex)
+{
+    const auto& filter = getCorrectionFilter (presetIndex);
+    for (int s = 0; s < kNumCorrectionStages; ++s)
+    {
+        correctionFilter_[s].b0 = filter.stages[s].b0;
+        correctionFilter_[s].b1 = filter.stages[s].b1;
+        correctionFilter_[s].b2 = filter.stages[s].b2;
+        correctionFilter_[s].a1 = filter.stages[s].a1;
+        correctionFilter_[s].a2 = filter.stages[s].a2;
+        correctionFilter_[s].z1L = correctionFilter_[s].z2L = 0.0f;
+        correctionFilter_[s].z1R = correctionFilter_[s].z2R = 0.0f;
+    }
+    // Check if any stage is non-identity (b0 != 1 or others != 0)
+    correctionFilterActive_ = false;
+    for (int s = 0; s < kNumCorrectionStages; ++s)
+    {
+        if (filter.stages[s].b0 != 1.0f || filter.stages[s].b1 != 0.0f
+            || filter.stages[s].b2 != 0.0f || filter.stages[s].a1 != 0.0f
+            || filter.stages[s].a2 != 0.0f)
+        {
+            correctionFilterActive_ = true;
+            break;
+        }
+    }
+}
+
+void DuskVerbEngine::setCustomERTaps (const CustomERTap* taps, int numTaps)
+{
+    // Compute current pre-delay in ms for tap time adjustment.
+    // VV-extracted tap times are absolute (from IR start), but the ER engine
+    // receives already-pre-delayed input, so we subtract DV's pre-delay.
+    float preDelayMs = static_cast<float> (preDelaySamples_)
+                     / static_cast<float> (sampleRate_) * 1000.0f;
+
+    if (taps && numTaps > 0)
+        er_.setCustomTaps (taps, numTaps, preDelayMs);
+    else
+        er_.setCustomTaps (nullptr, 0);  // Revert to generated mode
+}
+
+void DuskVerbEngine::loadPresetERTaps (const char* presetName)
+{
+    int numTaps = 0;
+    const CustomERTap* taps = getPresetERTaps (presetName, numTaps);
+    setCustomERTaps (taps, numTaps);
 }
 
 // Second-order Butterworth highpass coefficients (12 dB/oct)
