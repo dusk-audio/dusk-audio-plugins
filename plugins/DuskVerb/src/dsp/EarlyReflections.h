@@ -31,7 +31,11 @@ public:
     // Load a custom mono-panned tap table from AlgorithmConfig.
     // When numTaps > 0, the custom table overrides the generated tap formula.
     // Pass numTaps=0 to revert to generated mode.
-    void setCustomTaps (const CustomERTap* taps, int numTaps);
+    // preDelayMs: DV's current pre-delay in ms. VV-extracted tap times are absolute
+    // (include VV's pre-delay), so we subtract DV's pre-delay to compensate since
+    // the ER engine receives already-pre-delayed input. Taps that would go negative
+    // are clamped to 1 sample.
+    void setCustomTaps (const CustomERTap* taps, int numTaps, float preDelayMs = 0.0f);
 
 private:
     static constexpr int kNumTaps = 24;

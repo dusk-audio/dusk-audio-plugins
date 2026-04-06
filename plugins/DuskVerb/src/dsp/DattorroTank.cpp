@@ -121,10 +121,11 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
     {
-        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
+        float maxScale = sizeRangeMax_ * delayScale_;
+        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
 
         tank.ap1Buffer.allocate (ap1Max);
         tank.delay1.allocate (del1Max + maxModExcursion);  // Extra headroom for noise jitter
@@ -211,7 +212,9 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                 tank.lfoPhase += kTwoPi;
 
             // --- Delay 1 (with per-sample noise jitter) ---
-            float jitter1 = nextDrift (tank.noiseState) * noiseModDepth_;
+            float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
+                                    ? independentNoiseModDepth_ : noiseModDepth_;
+            float jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -238,7 +241,7 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 (with per-sample noise jitter) ---
-            float jitter2 = nextDrift (tank.noiseState) * noiseModDepth_;
+            float jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -260,13 +263,16 @@ void DattorroTank::process (const float* inputL, const float* inputR,
 
         // ------------------------------------------------------------------
         // Output: sum 7 signed taps from both tanks per channel.
+        const OutputTap* lTaps = useCustomTaps_ ? customLeftTaps_ : kLeftOutputTaps;
+        const OutputTap* rTaps = useCustomTaps_ ? customRightTaps_ : kRightOutputTaps;
+
         float outL = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
-            outL += readOutputTap (kLeftOutputTaps[t]) * kLeftOutputTaps[t].sign;
+            outL += readOutputTap (lTaps[t]) * lTaps[t].sign * lTaps[t].gain;
 
         float outR = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
-            outR += readOutputTap (kRightOutputTaps[t]) * kRightOutputTaps[t].sign;
+            outR += readOutputTap (rTaps[t]) * rTaps[t].sign * rTaps[t].gain;
 
         // Normalize 7-tap sum. The tank has much higher internal energy than
         // the FDN (2 loops vs 16 channels with Hadamard ÷4 normalization),
@@ -274,8 +280,44 @@ void DattorroTank::process (const float* inputL, const float* inputR,
         // DuskVerbEngine applies lateGainScale_ externally — do NOT apply here.
         constexpr float kOutputScale = 0.14285714f;  // 1/7 — average of 7 taps
 
-        outputL[i] = std::clamp (outL * kOutputScale, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (outR * kOutputScale, -kSafetyClip, kSafetyClip);
+        float scaledL = outL * kOutputScale;
+        float scaledR = outR * kOutputScale;
+
+        // Soft output onset ramp: smooths the initial transient spike from early taps.
+        // Ramps from 0→1 linearly over softOnsetMs_ after reset/preset change.
+        if (softOnsetEnvL_ < 1.0f)
+        {
+            scaledL *= softOnsetEnvL_;
+            scaledR *= softOnsetEnvL_;
+            softOnsetEnvL_ = std::min (softOnsetEnvL_ + softOnsetCoeff_, 1.0f);
+        }
+
+        // Peak limiter: fast-attack / slow-release envelope follower with gain reduction.
+        // Reduces transient peaks while preserving RMS level (lowers crest factor).
+        // Attack: instant (0 samples). Release: ~50ms one-pole decay.
+        // When peak exceeds limiterThreshold_, gain is reduced to keep output at threshold.
+        if (limiterThreshold_ > 0.0f)
+        {
+            float peakLR = std::max (std::abs (scaledL), std::abs (scaledR));
+
+            // Envelope: instant attack, slow release
+            if (peakLR > limiterEnv_)
+                limiterEnv_ = peakLR;  // Instant attack
+            else
+                limiterEnv_ = limiterReleaseCoeff_ * limiterEnv_
+                            + (1.0f - limiterReleaseCoeff_) * peakLR;  // Slow release
+
+            // Gain reduction: when envelope > threshold, reduce gain
+            if (limiterEnv_ > limiterThreshold_)
+            {
+                float gain = limiterThreshold_ / limiterEnv_;
+                scaledL *= gain;
+                scaledR *= gain;
+            }
+        }
+
+        outputL[i] = std::clamp (scaledL, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (scaledR, -kSafetyClip, kSafetyClip);
     }
 }
 
@@ -351,6 +393,20 @@ void DattorroTank::setCrossoverFreq (float hz)
         updateDecayCoefficients();
 }
 
+void DattorroTank::setHighCrossoverFreq (float hz)
+{
+    highCrossoverFreq_ = hz;
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setAirDampingScale (float scale)
+{
+    airDampingScale_ = std::max (scale, 0.01f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
 void DattorroTank::setModDepth (float depth)
 {
     lastModDepthRaw_ = depth;
@@ -368,6 +424,21 @@ void DattorroTank::setModRate (float hz)
         updateLFORates();
 }
 
+void DattorroTank::setLimiter (float thresholdDb, float releaseMs)
+{
+    if (thresholdDb <= -60.0f || thresholdDb >= 0.0f)
+    {
+        limiterThreshold_ = 0.0f;  // Disabled
+        return;
+    }
+    limiterThreshold_ = std::pow (10.0f, thresholdDb / 20.0f);
+    if (prepared_)
+    {
+        float releaseSamples = releaseMs * 0.001f * static_cast<float> (sampleRate_);
+        limiterReleaseCoeff_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+    }
+}
+
 void DattorroTank::setSize (float size)
 {
     sizeParam_ = std::clamp (size, 0.0f, 1.0f);
@@ -375,6 +446,90 @@ void DattorroTank::setSize (float size)
     {
         updateDelayLengths();
         updateDecayCoefficients();
+    }
+}
+
+void DattorroTank::setSoftOnsetMs (float ms)
+{
+    float newMs = std::max (ms, 0.0f);
+    bool changed = (newMs > 0.0f) != (softOnsetMs_ > 0.0f)
+                || std::abs (newMs - softOnsetMs_) > 0.01f;
+    softOnsetMs_ = newMs;
+
+    if (prepared_ && softOnsetMs_ > 0.0f)
+    {
+        // Per-sample increment for linear ramp from 0→1 over softOnsetMs
+        float samples = softOnsetMs_ * 0.001f * static_cast<float> (sampleRate_);
+        softOnsetCoeff_ = 1.0f / std::max (samples, 1.0f);
+        // Only reset ramp when value actually changes (not on every processBlock call)
+        if (changed)
+            softOnsetEnvL_ = 0.0f;
+    }
+    else
+    {
+        softOnsetCoeff_ = 0.0f;  // Disabled
+        softOnsetEnvL_ = 1.0f;   // Full gain immediately
+    }
+}
+
+void DattorroTank::setDelayScale (float scale)
+{
+    delayScale_ = std::clamp (scale, 0.25f, 4.0f);
+    if (prepared_)
+    {
+        updateDelayLengths();
+        updateDecayCoefficients();
+    }
+}
+
+void DattorroTank::setNoiseModDepth (float samples)
+{
+    // Independent noise jitter, decoupled from LFO modDepth.
+    // When set (>= 0), this overrides the modDepth-coupled noise jitter.
+    // Critical for algorithms with low modDepth (e.g., Chamber=0.05) that
+    // still need aggressive jitter to suppress modal resonances.
+    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
+    independentNoiseModDepth_ = samples * rateRatio;
+}
+
+void DattorroTank::setOutputTaps (const OutputTap* left, const OutputTap* right)
+{
+    if (left && right)
+    {
+        for (int i = 0; i < kNumOutputTaps; ++i)
+        {
+            customLeftTaps_[i] = left[i];
+            customRightTaps_[i] = right[i];
+        }
+        useCustomTaps_ = true;
+    }
+    else
+    {
+        useCustomTaps_ = false;
+    }
+}
+
+void DattorroTank::applyTapGains (const float* leftGains, const float* rightGains)
+{
+    if (leftGains && rightGains)
+    {
+        // If custom taps aren't already active, initialize from defaults
+        // so buffer indices and positions are valid before applying gains.
+        if (! useCustomTaps_)
+        {
+            for (int i = 0; i < kNumOutputTaps; ++i)
+            {
+                customLeftTaps_[i] = kLeftOutputTaps[i];
+                customRightTaps_[i] = kRightOutputTaps[i];
+            }
+        }
+
+        for (int i = 0; i < kNumOutputTaps; ++i)
+        {
+            customLeftTaps_[i].gain = leftGains[i];
+            customRightTaps_[i].gain = rightGains[i];
+        }
+        useCustomTaps_ = true;
     }
 }
 
@@ -415,6 +570,9 @@ void DattorroTank::clearBuffers()
 
     clearTank (leftTank_);
     clearTank (rightTank_);
+    // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------
@@ -424,21 +582,22 @@ void DattorroTank::updateDelayLengths()
 {
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     float sizeScale = sizeRangeMin_ + (sizeRangeMax_ - sizeRangeMin_) * sizeParam_;
+    float totalScale = sizeScale * delayScale_;  // Combined size + per-algorithm delay scaling
 
     auto updateTank = [&] (Tank& tank)
     {
-        tank.ap1DelaySamples = static_cast<float> (tank.ap1BaseDelay) * rateRatio * sizeScale;
-        tank.delay1Samples   = static_cast<float> (tank.delay1BaseDelay) * rateRatio * sizeScale;
-        tank.delay2Samples   = static_cast<float> (tank.delay2BaseDelay) * rateRatio * sizeScale;
+        tank.ap1DelaySamples = static_cast<float> (tank.ap1BaseDelay) * rateRatio * totalScale;
+        tank.delay1Samples   = static_cast<float> (tank.delay1BaseDelay) * rateRatio * totalScale;
+        tank.delay2Samples   = static_cast<float> (tank.delay2BaseDelay) * rateRatio * totalScale;
 
         // AP2 delay (integer, used by Allpass::process)
         tank.ap2.delaySamples = std::max (1, static_cast<int> (
-            static_cast<float> (tank.ap2BaseDelay) * rateRatio * sizeScale));
+            static_cast<float> (tank.ap2BaseDelay) * rateRatio * totalScale));
 
-        // Density cascade allpass delays (integer, scaled by rate + size)
+        // Density cascade allpass delays (integer, scaled by rate + size + delayScale)
         for (int i = 0; i < kNumDensityAPs; ++i)
             tank.densityAP[i].delaySamples = std::max (1, static_cast<int> (
-                static_cast<float> (tank.densityAPBase[i]) * rateRatio * sizeScale));
+                static_cast<float> (tank.densityAPBase[i]) * rateRatio * totalScale));
     };
 
     updateTank (leftTank_);
@@ -448,13 +607,11 @@ void DattorroTank::updateDelayLengths()
 void DattorroTank::updateDecayCoefficients()
 {
     float sr = static_cast<float> (sampleRate_);
-    float crossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
+    float lowXoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
+    float highXoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
-    // In Dattorro topology, the decay gain is per-loop-pass (not per-delay-line).
-    // Total loop length determines the effective delay for RT60 calculation.
     auto updateTankDamping = [&] (Tank& tank)
     {
-        // Total loop length in samples (all elements including density cascade)
         float loopLength = tank.ap1DelaySamples
                          + tank.delay1Samples
                          + static_cast<float> (tank.ap2.delaySamples)
@@ -462,17 +619,15 @@ void DattorroTank::updateDecayCoefficients()
         for (int i = 0; i < kNumDensityAPs; ++i)
             loopLength += static_cast<float> (tank.densityAP[i].delaySamples);
 
-        // Per-loop-pass gain: 10^(-3 * loopLength / (RT60 * sampleRate))
-        // This gives -60dB attenuation after RT60 seconds.
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
+        gBase = std::clamp (gBase, 0.001f, 0.9995f);  // Prevent RT60 collapse (0) or infinite sustain (1)
+        float gLow = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
+        float gMid = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
+        // Air band: airDampingScale > 1 → air decays slower (brighter tail)
+        // airDampingScale = 1 → gAir == gMid → collapses to 2-band behavior
+        float gAir = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        // Bass sustain longer ("Bass Multiply")
-        float gLow = std::pow (gBase, 1.0f / bassMultiply_);
-
-        // Treble rolls off faster ("Treble Multiply")
-        float gHigh = std::pow (gBase, 1.0f / trebleMultiply_);
-
-        tank.damping.setCoefficients (gLow, gHigh, crossoverCoeff);
+        tank.damping.setCoefficients (gLow, gMid, gAir, lowXoverCoeff, highXoverCoeff);
     };
 
     updateTankDamping (leftTank_);

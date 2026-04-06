@@ -373,9 +373,10 @@ void QuadTank::updateDecayCoefficients()
             loopLength += static_cast<float> (tank.densityAP[i].delaySamples);
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
-        float gLow  = std::pow (gBase, 1.0f / bassMultiply_);
+        gBase = std::clamp (gBase, 0.001f, 0.9998f);  // Prevent RT60 collapse or infinite sustain (0.9998 = ~2x more sustain headroom vs 0.9995)
+        float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         float gMid  = gBase;  // mid band decays at natural rate
-        float gHigh = std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_));
+        float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
         tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
     }
