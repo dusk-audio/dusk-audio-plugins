@@ -96,6 +96,10 @@ struct AlgorithmConfig
                           // Hadamard FDN for late reverb. Better for Room: allpasses embedded
                           // in the feedback loop smear modal energy rather than concentrating it.
 
+    bool useQuadTank;     // true = use QuadTank (4 cross-coupled allpass loops, 48 taps) instead
+                          // of DattorroTank. Smoother onset, less peaky transients. Best for Hall.
+                          // When true, useDattorroTank is ignored.
+
     float decayTimeScale; // Multiplier for the user's decay time parameter.
                           // Allows per-algorithm scaling of the effective decay range.
                           // 1.0 = pass through (default, all algorithms currently use 1.0).
@@ -157,16 +161,111 @@ struct AlgorithmConfig
                               // Hall/Plate/Chamber/Room: false (VV is clean).
                               // Could be true for "dirty" or "vintage" modes.
 
+    float lateOnsetMs;           // Late reverb onset ramp time (ms). The FDN output is ramped from 0
+                                  // to full over this duration after each new impulse/note, matching
+                                  // VV's slower density buildup. 0 = no onset shaping (instant).
+
     float lateFeedForwardLevel;  // Mix level of pre-diffusion late reverb into output (0.0-1.0).
                                   // Bypasses output diffuser to put late energy into 20-50ms window.
                                   // 0.0 = all late reverb through diffuser (current behavior).
                                   // 0.3-0.5 = blend pre-diffusion signal for earlier late onset.
+
+    float crestLimitRatio;       // Peak/RMS limiter: maximum instantaneous peak as multiple of 5ms RMS.
+                                  // 0 = disabled. 3.0 = limit peaks to 3× RMS (~9.5dB crest).
+                                  // Reduces FDN's inherent peak correlation from Hadamard mixing.
+                                  // VV has ~9dB crest; FDN produces ~15dB. Setting 3.0-4.0 matches VV.
 
     // Custom ER tap table (mono-panned).
     // When numCustomERTaps > 0, EarlyReflections uses this fixed table instead of
     // computing taps from the exponential formula. Each tap goes to L or R only.
     int numCustomERTaps = 0;
     const CustomERTap* customERTaps = nullptr;
+
+    // DattorroTank output tap positions (per-algorithm).
+    // Format: {bufferIndex, positionFrac, sign} — 7 per channel.
+    // Buffer indices: 0=leftDelay1, 1=leftDelay2, 2=leftAP2,
+    //                 3=rightDelay1, 4=rightDelay2, 5=rightAP2
+    // nullptr = use DattorroTank's built-in defaults (early taps).
+    struct DattorroOutputTap { int buf; float pos; float sign; float gain = 1.0f; };
+    static constexpr int kDattorroTapsPerChannel = 7;
+    const DattorroOutputTap* dattorroLeftTaps = nullptr;
+    const DattorroOutputTap* dattorroRightTaps = nullptr;
+
+    float dattorroDelayScale = 1.0f;  // Multiplier for ALL DattorroTank base delays.
+                                       // Controls loop length independently of user's Size knob.
+                                       // Higher = longer loops = slower onset.
+                                       // Hall needs ~3-4x to match VV's 200ms energy peak.
+
+    float hybridBlend = 0.0f;       // Dual-engine blend: 0 = disabled (single engine).
+                                     // >0 = blend primary engine output with secondary engine.
+                                     // 0.35 = 65% primary + 35% secondary.
+    int hybridSecondaryAlgo = -1;    // Algorithm index for secondary engine (-1 = disabled).
+};
+
+// DattorroTank output tap positions — shifted late in the loop to match VV's
+// slow energy onset. VV shows zero energy in 0-20ms and gradual buildup through 200ms.
+// Buffer indices: 0=leftDelay1, 1=leftDelay2, 2=leftAP2, 3=rightDelay1, 4=rightDelay2, 5=rightAP2
+
+// Hall taps: very deep into delays (VV shows energy peak at 190-200ms)
+// Hall uses hallScale so Delay1≈102ms. Taps at 0.90+ = 92ms+ into delay.
+static constexpr AlgorithmConfig::DattorroOutputTap kHallDattorroLeftTaps[7] = {
+    { 3, 0.88f,  1.0f },  // right delay1, very deep (≈90ms into 102ms delay)
+    { 3, 0.97f,  1.0f },  // right delay1, near end
+    { 5, 0.85f, -1.0f },  // right AP2, deep
+    { 0, 0.92f,  1.0f },  // left delay1, very deep
+    { 1, 0.90f, -1.0f },  // left delay2, deep
+    { 2, 0.80f, -1.0f },  // left AP2, deep
+    { 4, 0.88f, -1.0f },  // right delay2, deep
+};
+static constexpr AlgorithmConfig::DattorroOutputTap kHallDattorroRightTaps[7] = {
+    { 0, 0.86f,  1.0f },  // left delay1, very deep
+    { 0, 0.96f,  1.0f },  // left delay1, near end
+    { 2, 0.83f, -1.0f },  // left AP2, deep
+    { 3, 0.90f,  1.0f },  // right delay1, very deep
+    { 4, 0.92f, -1.0f },  // right delay2, deep
+    { 5, 0.82f, -1.0f },  // right AP2, deep
+    { 1, 0.88f, -1.0f },  // left delay2, deep
+};
+
+// Plate taps: deep (Plate uses room-scale with size 0.3-0.8, so Delay1≈15-40ms)
+// Taps at 0.75-0.95 = 11-38ms into delay
+static constexpr AlgorithmConfig::DattorroOutputTap kPlateDattorroLeftTaps[7] = {
+    { 3, 0.78f,  1.0f },  // right delay1, deep
+    { 3, 0.94f,  1.0f },  // right delay1, very late
+    { 5, 0.75f, -1.0f },  // right AP2, deep
+    { 0, 0.82f,  1.0f },  // left delay1, deep
+    { 1, 0.85f, -1.0f },  // left delay2, deep
+    { 2, 0.70f, -1.0f },  // left AP2, deep
+    { 4, 0.80f, -1.0f },  // right delay2, deep
+};
+static constexpr AlgorithmConfig::DattorroOutputTap kPlateDattorroRightTaps[7] = {
+    { 0, 0.76f,  1.0f },  // left delay1, deep
+    { 0, 0.92f,  1.0f },  // left delay1, very late
+    { 2, 0.73f, -1.0f },  // left AP2, deep
+    { 3, 0.80f,  1.0f },  // right delay1, deep
+    { 4, 0.87f, -1.0f },  // right delay2, deep
+    { 5, 0.72f, -1.0f },  // right AP2, deep
+    { 1, 0.83f, -1.0f },  // left delay2, deep
+};
+
+// Room/Chamber/Ambient: mid-deep (balanced onset)
+static constexpr AlgorithmConfig::DattorroOutputTap kRoomDattorroLeftTaps[7] = {
+    { 3, 0.60f,  1.0f },  // right delay1
+    { 3, 0.85f,  1.0f },  // right delay1, late
+    { 5, 0.65f, -1.0f },  // right AP2
+    { 0, 0.70f,  1.0f },  // left delay1
+    { 1, 0.78f, -1.0f },  // left delay2
+    { 2, 0.58f, -1.0f },  // left AP2
+    { 4, 0.72f, -1.0f },  // right delay2
+};
+static constexpr AlgorithmConfig::DattorroOutputTap kRoomDattorroRightTaps[7] = {
+    { 0, 0.58f,  1.0f },  // left delay1
+    { 0, 0.83f,  1.0f },  // left delay1, late
+    { 2, 0.67f, -1.0f },  // left AP2
+    { 3, 0.65f,  1.0f },  // right delay1
+    { 4, 0.80f, -1.0f },  // right delay2
+    { 5, 0.62f, -1.0f },  // right AP2
+    { 1, 0.75f, -1.0f },  // left delay2
 };
 
 // VV-extracted early reflection tap tables (from Hilbert/IR analysis)
@@ -226,12 +325,12 @@ static constexpr AlgorithmConfig kPlate = {
     { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
     0.65f, 0.65f,   // input diffusion: 0.65
-    0.50f,           // output diffusion scale (was 0.75; reduced for cleaner tail density)
+    0.50f,           // output diffusion scale
     20000.0f,        // bandwidth: full spectrum input (no HF attenuation before FDN)
-    0.45f, 0.70f,    // ER: level=0.45 (was 0.90; halved post-ER-bypass to fix +9dB peak excess), timeScale=0.70
-    0.30f,           // late gain: 0.30 (was 0.20; increased to fill RMS gap from ER reduction)
+    10.00f, 0.70f,   // ER: level=10.0 (Plate needs very strong ERs to match VV onset energy)
+    2.95f,           // late gain: 2.95 (DattorroTank 1/7 output needs ~10x boost vs FDN)
     0.10f, 1.0f,     // mod: 0.10 (was 0.25; reduce spectral smearing for MFCC 36→51)
-    0.65f, 1.00f, 1.0f, // damping: trebleMultScale=0.65
+    0.65f, 1.05f, 1.0f, // damping: trebleMultScale=0.65, trebleMultScaleMax=1.05 (was 1.0; slight HF sustain boost for Vocal Plate 4kHz match)
     20000.0f,        // high crossover: 20kHz (two-band — Plate trebleMult>1.0 needs uniform bright boost across all HF)
     1.0f,            // airDampingScale: 1.0 (no extra air damping — Plate needs full brightness)
     0.5f, 1.5f,      // size range
@@ -240,26 +339,134 @@ static constexpr AlgorithmConfig kPlate = {
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off
     0.0f,            // structural LF damping: off
-    0.03f,           // noise mod: 0.03 (was 0.15; reduce delay jitter for MFCC 36→51)
+    1.5f,            // noise mod: 1.5 (plate ringing; jitter alone can't fix structural DattorroTank modes)
     0.12f,           // Hadamard perturbation: break symmetry
     1.0f,            // ER gain exponent: inverse distance (default)
     false,           // useWeightedGains: off
     true,            // useHouseholderFeedback: on (Householder 68.4 vs Hadamard 66)
-    false,           // useDattorroTank: off (FDN)
-    0.94f,           // decay time scale: calibrated via calibrate_decay_scale.py (was 1.20)
+    true,            // useDattorroTank: ON (with late tap positions matching VV onset)
+    false,           // useQuadTank: OFF for Plate
+    1.20f,           // decay time scale: increased to match VV decay length (was 0.92, DattorroTank decays ~30-50% faster)
     0.0f, 0, 1.0f,  // dual-slope: disabled
     2.0f, 0.9f,     // short-decay boost: +2 dB
     0.0f, 0.0f,     // gate: disabled
     18000.0f,        // ER air absorption ceiling: 18kHz
     2000.0f,         // ER air absorption floor: default
     0.0f,            // ER decorrelation: off
-    1.50f,           // output gain: 1.50 (was 1.40; +0.6dB to compensate for inline diffusion energy loss)
+    14.10f,          // output gain: 14.10 (recalibrated for delay_scale, was 16.95)
     0.20f,           // stereo coupling: 0.20
-    0.0f, -2.5f, 3000.0f, // output EQ: -2.5dB high shelf at 3kHz (tame 3-6kHz brightness)
+    0.0f, +2.5f, 3000.0f, // output EQ: +2.5dB high shelf at 3kHz (was +1.0; +1.5dB HF boost)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
+    30.0f,           // lateOnsetMs: 30ms ramp — separates ER onset from late reverb buildup
+    0.0f,            // lateFeedForwardLevel: 0 (feed-forward doesn't match VV's tap timing)
+    0.0f,            // crestLimitRatio: disabled
     0, nullptr,  // custom ER: disabled
+    kPlateDattorroLeftTaps, kPlateDattorroRightTaps,  // Dattorro taps: late onset
+};
+
+// ---------------------------------------------------------------------------
+// PlateCrisp: Plate without onset ramp — for presets where DV is too smooth
+// (negative crest). Steel Plate has crest -3.3dB because the 30ms ramp smooths
+// transients too much. PlateCrisp preserves the sharp DattorroTank onset.
+static constexpr AlgorithmConfig kPlateCrisp = {
+    "PlateCrisp",
+    { 661, 691, 719, 751, 787, 821, 853, 887,
+      929, 967, 1009, 1051, 1097, 1151, 1201, 1249 },
+    { 0, 1, 2, 6, 7, 13, 14, 15 },
+    { 3, 4, 5, 8, 9, 10, 11, 12 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.65f, 0.65f,
+    0.50f,
+    20000.0f,
+    10.00f, 0.70f,
+    2.95f,
+    0.10f, 1.0f,
+    0.65f, 1.05f, 1.0f,
+    20000.0f,
+    1.0f,
+    0.5f, 1.5f,
+    0.35f,
+    0.03f,
+    1.0f,
+    0.0f,
+    0.0f,
+    1.5f,
+    0.12f,
+    1.0f,
+    false,
+    true,            // useHouseholderFeedback
+    true,            // useDattorroTank
+    false,           // useQuadTank
+    1.20f,           // decay time scale
+    0.0f, 0, 1.0f,
+    2.0f, 0.9f,
+    0.0f, 0.0f,
+    18000.0f, 2000.0f, 0.0f,
+    14.10f, 0.20f,
+    0.0f, -1.5f, 3000.0f,
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,            // lateOnsetMs: 0 — NO ramp, preserves sharp onset for higher crest
+    0.0f,
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,
+    kPlateDattorroLeftTaps, kPlateDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// PlateQuad: Plate variant using QuadTank for presets where DattorroTank's
+// decay ratio is structurally too fast (Vocal Plate, Tight Plate).
+// QuadTank's 4 cross-coupled allpass loops sustain longer and produce
+// smoother onset, better matching VV's energy distribution for these presets.
+static constexpr AlgorithmConfig kPlateQuad = {
+    "PlateQuad",
+    { 661, 691, 719, 751, 787, 821, 853, 887,
+      929, 967, 1009, 1051, 1097, 1151, 1201, 1249 },
+    { 0, 1, 2, 6, 7, 13, 14, 15 },
+    { 3, 4, 5, 8, 9, 10, 11, 12 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.65f, 0.65f,    // input diffusion
+    0.50f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    10.00f, 0.70f,   // ER: same as Plate
+    2.95f,           // late gain: same as DattorroTank Plate (QuadTank has similar output level)
+    0.10f, 1.0f,     // mod
+    0.65f, 1.05f, 1.0f, // damping
+    20000.0f,        // high crossover
+    1.0f,            // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.35f,           // ER crossfeed
+    0.03f,           // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    0.0f,            // structural LF damping
+    1.5f,            // noise mod
+    0.12f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — key difference from kPlate
+    1.40f,           // decay time scale: higher than DattorroTank (QuadTank sustains differently)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 0.9f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    18000.0f,        // ER air absorption ceiling
+    2000.0f,         // ER air absorption floor
+    0.0f,            // ER decorrelation
+    14.10f,          // output gain: same as Plate initially
+    0.20f,           // stereo coupling
+    0.0f, +0.0f, 3000.0f, // output EQ (was -1.5; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,   // output mid EQ
+    false,           // enableSaturation
+    30.0f,           // lateOnsetMs
+    0.0f,            // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER: disabled
+    kPlateDattorroLeftTaps, kPlateDattorroRightTaps,  // taps (unused by QuadTank but required)
 };
 
 // ---------------------------------------------------------------------------
@@ -275,45 +482,405 @@ static constexpr AlgorithmConfig kHall = {
     { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },  // alternating signs for decorrelation
     { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
     0.55f, 0.45f,    // input diffusion: 0.55/0.45 (was 0.75/0.625 — reduced for sparser early onset)
-    0.35f,           // output diffusion scale (was 0.50; reduced for cleaner tail density)
+    0.35f,           // output diffusion scale
     20000.0f,        // bandwidth: full spectrum input
     0.65f, 0.85f,    // ER: level=0.65 (was 0.90; reduced post-ER-bypass for crest balance), timeScale=0.85
-    0.28f,           // late gain: 0.28 (was 0.22; increased to boost late RMS for crest improvement)
+    1.24f,           // late gain: 1.24 (DattorroTank Hall ~13dB quieter than FDN)
     0.75f, 13.0f,    // mod: modDepthScale=0.75 (DV 33% too deep), modRateScale=13.0 (Hilbert: VV=5.4Hz vs DV=0.4Hz)
     0.50f, 1.50f, 1.0f, // damping: trebleMultScale=0.50
     4000.0f,         // high crossover: 4kHz (3kHz regressed — pushed too much into air band, kurtosis diverged)
     0.70f,           // airDampingScale: 0.70
     0.5f, 1.5f,      // size range
-    0.10f,           // ER crossfeed: 0.10 (was 0.25; reduced to limit QuadTank bleed into early onset for crest)
+    0.10f,           // ER crossfeed: 0.10
     0.0f,            // inline diffusion: off (short allpasses tested at 0.20-0.50 — no measurable effect on peaks)
                      // Long allpasses (41-131) wrecked centroid_late. Multi-point output tapping handles density.
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off
     40.0f,           // structural LF damping: 40Hz HP (90Hz destroyed bass ratio and raised centroid — output EQ handles 80-250Hz instead)
-    0.10f,           // noise mod: 0.10 (was 0.35; reducing delay jitter improves MFCC consistency)
+    1.0f,            // noise mod: 1.0 (hall ringing)
     0.10f,           // Hadamard perturbation: 0.10 (0.05 wasn't enough — still audible repetition in tail)
     1.0f,            // ER gain exponent: 1.0 inverse distance (1.5 caused audible pulse after transients)
     false,           // useWeightedGains: off (true regressed decay_shape 100→74.4, total 75.4→73.1)
     true,            // useHouseholderFeedback: on (keep true per instructions)
-    false,           // useDattorroTank: off (FDN with multi-point taps outperforms Dattorro 3.1x vs 4.6x)
-    0.79f,           // decay time scale: calibrated via calibrate_decay_scale.py (was 1.25)
+    true,            // useDattorroTank: ON (with late tap positions matching VV onset)
+    false,           // useQuadTank: OFF for Hall (tested — regressed Huge Synth Hall, no net improvement)
+    0.79f,           // decay time scale: recalibrated for DattorroTank round 2
     0.0f, 0, 1.0f,  // dual-slope: disabled
     2.0f, 1.5f,     // short-decay boost: +2.0 dB (4.5 contributed to transient pulse)
     0.0f, 0.0f,     // gate: disabled
     20000.0f,        // ER air absorption ceiling: 20kHz (earliest taps: no filtering)
     18000.0f,        // ER air absorption floor: 18kHz
     0.55f,           // ER decorrelation: strong allpass decorrelation (IACC 0.747→target 0.321)
-    1.2f,            // output gain: 1.2 (was 1.9; reduced to compensate for hi_cut 3k→8k + shelf boosts)
+    8.53f,           // output gain: 8.53 (recalibrated for delay_scale, was 11.91)
     -1.0f,           // stereo coupling: -1.0 = full 16×16 Hadamard (was 0.15 split 8+8)
     0.0f,            // output low shelf: 0dB at 250Hz (neutral — sweeper shows DV already +2-4dB hotter in low end)
-    +4.0f,           // output high shelf: +4.0dB at 5kHz (fills 5-8kHz hole left by QuadTank treble damping)
+    +5.5f,           // output high shelf: +5.5dB at 5kHz (was +4.0; +1.5dB HF boost)
     5000.0f,         // output high shelf freq: 5kHz
     0.0f,            // output mid EQ: bypassed
     0.0f,            // output mid EQ: bypassed
     0.7f,            // output mid EQ: Q (bypassed)
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0.20f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
+    0.0f,            // lateOnsetMs: disabled
+    0.20f,           // lateFeedForwardLevel: blend pre-diffusion late reverb
+    0.0f,            // crestLimitRatio: disabled
     0, nullptr,  // custom ER: disabled
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,  // Dattorro taps: deepest onset
+};
+
+// ---------------------------------------------------------------------------
+// HallQuad: Hall variant using QuadTank for presets where DattorroTank
+// oscillates/rings (Huge Synth Hall, Pad Hall, Concert Wave, Homestar).
+// QuadTank's cross-coupled topology is more stable at extreme decay settings.
+static constexpr AlgorithmConfig kHallQuad = {
+    "HallQuad",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER
+    1.24f,           // late gain: same as Hall DattorroTank initially
+    0.75f, 13.0f,    // mod
+    0.50f, 1.50f, 1.0f, // damping
+    4000.0f,         // high crossover
+    0.70f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — key difference
+    0.79f,           // decay time scale: same as Hall initially
+    0.0f, 0, 1.0f,  // dual-slope
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f,        // ER air absorption ceiling
+    18000.0f,        // ER air absorption floor
+    0.55f,           // ER decorrelation
+    8.53f,           // output gain
+    -1.0f,           // stereo coupling
+    0.0f, +4.0f, 5000.0f, // output EQ: +4.0dB high shelf (was +2.5; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,   // output mid EQ
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.20f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled (HallQuadSmooth handles crest-limited presets)
+    0, nullptr,      // custom ER
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// HallQuadBright: Bright variant: higher HF sustain for dark presets
+static constexpr AlgorithmConfig kHallQuadBright = {
+    "HallQuadBright",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER
+    1.24f,           // late gain: same as Hall DattorroTank initially
+    0.75f, 13.0f,    // mod
+    0.70f, 1.50f, 1.0f, // damping: trebleMultScale 0.50→0.70
+    4000.0f,         // high crossover
+    0.85f,           // airDampingScale: 0.70→0.85
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — key difference
+    0.79f,           // decay time scale: same as Hall initially
+    0.0f, 0, 1.0f,  // dual-slope
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f,        // ER air absorption ceiling
+    18000.0f,        // ER air absorption floor
+    0.55f,           // ER decorrelation
+    8.53f,           // output gain
+    -1.0f,           // stereo coupling
+    0.0f, +4.0f, 5000.0f, // output EQ: +4.0dB high shelf (was +2.5; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,   // output mid EQ
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.20f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled (HallQuadSmooth handles crest-limited presets)
+    0, nullptr,      // custom ER
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// HallSlow: Hall variant with higher decay time scale for presets where
+// DattorroTank decays too fast (Fat Snare Hall, Small Vocal Hall, Snare Hall).
+static constexpr AlgorithmConfig kHallSlow = {
+    "HallSlow",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER
+    1.24f,           // late gain
+    0.75f, 13.0f,    // mod
+    0.50f, 1.50f, 1.0f, // damping
+    4000.0f,         // high crossover
+    0.70f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    true,            // useDattorroTank: ON (same topology, just slower decay)
+    false,           // useQuadTank: OFF
+    1.80f,           // decay time scale: 1.80 (was 1.50 — Small Vocal Hall still 0.63x at 1.50)
+    0.0f, 0, 1.0f,  // dual-slope
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f,        // ER air absorption ceiling
+    18000.0f,        // ER air absorption floor
+    0.55f,           // ER decorrelation
+    8.53f,           // output gain
+    -1.0f,           // stereo coupling
+    0.0f, +2.0f, 5000.0f, // output EQ
+    0.0f, 0.0f, 0.7f,   // output mid EQ
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.20f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// HallFDNDualSlopeBody: FDN with dual-slope for presets needing strong body.
+// Huge Synth Hall: 115ms pre-delay means body (50-200ms) is very quiet.
+// Dual-slope: 8 fast channels with high gain boost fill the body region,
+// then 8 slow channels provide the sustained tail.
+static constexpr AlgorithmConfig kHallFDNDualSlopeBody = {
+    "HallFDNDualSlopeBody",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER
+    0.22f,           // late gain: FDN native (no DattorroTank compensation)
+    0.75f, 13.0f,    // mod
+    0.50f, 1.50f, 1.0f, // damping
+    4000.0f,         // high crossover
+    0.70f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF — native FDN for dual-slope
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale: 1.50
+    0.08f, 8, 3.5f,  // DUAL-SLOPE: fast channels get 8% of RT60, 8 channels, 3.5x gain boost
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f, 18000.0f, 0.55f,
+    8.53f, -1.0f,
+    0.0f, +2.0f, 5000.0f,
+    0.0f, 0.0f, 0.7f,
+    false, 0.0f, 0.20f,
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// HallFDNSmooth: FDN with soft onset ramp for large hall presets where the
+// standard FDN's instant onset creates too-high crest factor vs VV.
+// Designed for Huge Synth Hall: long pre-delay + long decay + smooth buildup.
+static constexpr AlgorithmConfig kHallFDNSmooth = {
+    "HallFDNSmooth",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.65f, 0.55f,    // input diffusion: increased (0.65/0.55 vs 0.55/0.45) — more smearing
+    0.50f,           // output diffusion scale: increased (0.50 vs 0.35) — smoother peaks
+    20000.0f,        // bandwidth
+    0.30f, 0.85f,    // ER: further reduced erLevelScale (0.30 vs 0.65) — minimal ER spike
+    0.22f,           // late gain
+    0.75f, 13.0f,    // mod
+    0.50f, 1.50f, 1.0f, // damping
+    4000.0f,         // high crossover
+    0.70f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.05f,           // ER crossfeed: reduced (0.05 vs 0.10) — less ER→FDN bleed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank
+    false,           // useQuadTank
+    1.00f,           // decay time scale: 1.0 (no boost — preset controls decay directly)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f, 18000.0f, 0.55f,
+    8.53f, -1.0f,
+    0.0f, +2.0f, 5000.0f,
+    0.0f, 0.0f, 0.7f,
+    false,           // enableSaturation: off (soft clipper doesn't help FDN crest at these levels)
+    200.0f,          // lateOnsetMs: 200ms ramp — squared shape attenuates early FDN peaks
+                      // For 115ms pre-delay: ramp is at 0.33 (squared) at crest window start
+    0.10f,           // lateFeedForwardLevel: reduced (0.10 vs 0.20) — less pre-diffusion bleed
+    1.5f,            // crestLimitRatio: limit peaks to 1.5× RMS (~3.5dB crest)
+    0, nullptr,
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// HallQuadSustain: QuadTank with high decay scale for presets where all
+// topologies decay too fast (Small Vocal Hall passes on this config).
+static constexpr AlgorithmConfig kHallQuadSustain = {
+    "HallQuadSustain",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER
+    1.24f,           // late gain: DattorroTank-level (QuadTank needs same boost)
+    0.75f, 13.0f,    // mod
+    0.50f, 1.50f, 1.0f, // damping
+    4000.0f,         // high crossover
+    0.70f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    2.00f,           // decay time scale: 2.00 (QuadTank sustain for fast-decaying presets)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f, 18000.0f, 0.55f,
+    8.53f, -1.0f,
+    0.0f, +2.0f, 5000.0f,
+    0.0f, 0.0f, 0.7f,
+    false, 0.0f, 0.20f,
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// HallFDN: Hall variant using native 16-channel FDN for presets where both
+// DattorroTank and QuadTank produce wrong decay/crest character.
+// FDN has highest echo density and most controllable decay.
+static constexpr AlgorithmConfig kHallFDN = {
+    "HallFDN",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER
+    0.22f,           // late gain: 0.22 (FDN native — no DattorroTank 13dB compensation)
+    0.75f, 13.0f,    // mod
+    0.50f, 1.50f, 1.0f, // damping
+    4000.0f,         // high crossover
+    0.70f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF — native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale: 1.50 (FDN decays faster than VV, needs boost)
+    0.0f, 0, 1.0f,  // dual-slope
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f,        // ER air absorption ceiling
+    18000.0f,        // ER air absorption floor
+    0.55f,           // ER decorrelation
+    8.53f,           // output gain
+    -1.0f,           // stereo coupling
+    0.0f, +7.5f, 5000.0f, // output EQ: +7.5dB high shelf (was +4.5; +3.0dB centroid boost)
+    0.0f, 0.0f, 0.7f,   // output mid EQ
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.20f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
 };
 
 // ---------------------------------------------------------------------------
@@ -328,12 +895,12 @@ static constexpr AlgorithmConfig kChamber = {
     { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
     { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
     0.75f, 0.625f,   // input diffusion: Dattorro split
-    0.65f,           // output diffusion scale (was 1.0; reduced for cleaner tail density)
+    0.65f,           // output diffusion scale
     16000.0f,        // bandwidth: 16kHz
     0.55f, 0.55f,    // ER: level=0.55 (was 1.20; cut for +5.6dB peak excess), tight timing
-    0.42f,           // late gain: 0.42 (was 0.38; increased to fill RMS gap from ER reduction)
+    1.23f,           // late gain: 1.23 (DattorroTank Chamber ~9dB quieter)
     0.05f, 1.0f,     // mod: 0.05 (was 0.4; reducing modulation was the single biggest MFCC/spectral_eq win)
-    0.90f, 0.90f, 1.0f, // damping: trebleMultScale=0.90 (R5 revert: 1.0 crashed T30/decay_shape/MFCC)
+    0.85f, 1.00f, 1.0f, // damping: trebleMultScale=0.85 (was 0.90), trebleMultScaleMax=1.00 (was 0.90; 7/13 Chamber HF too dark)
     20000.0f,        // high crossover: 20kHz (effectively two-band — mid and air bands unified)
     1.0f,            // airDampingScale: 1.0 (no extra air damping)
     0.5f, 1.5f,      // size range
@@ -342,26 +909,30 @@ static constexpr AlgorithmConfig kChamber = {
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off
     0.0f,            // structural LF damping: off
-    0.05f,           // noise mod: 0.05 (was 0.5; reducing improved MFCC from 37→62)
+    1.2f,            // noise mod: 1.2 (chamber ringing)
     0.10f,           // Hadamard perturbation: break symmetry
     1.0f,            // ER gain exponent: inverse distance (default)
     false,           // useWeightedGains: off
     true,            // useHouseholderFeedback: on (Householder 65.0 vs Hadamard 63.4)
-    false,           // useDattorroTank: off (FDN)
-    0.99f,           // decay time scale: calibrated via calibrate_decay_scale.py (was 1.15)
+    true,            // useDattorroTank: ON (with late tap positions matching VV onset)
+    false,           // useQuadTank: OFF for Chamber
+    0.88f,           // decay time scale: recalibrated for DattorroTank (was 0.99 for FDN)
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled (Chamber has static lateGainScale tuning)
     0.0f, 0.0f,     // gate: disabled
     12000.0f,        // ER air absorption ceiling: default
     2000.0f,         // ER air absorption floor: default
     0.50f,           // ER decorrelation: strong (reduce early IACC from 0.617 toward 0.241)
-    0.65f,           // output gain: 0.65
+    3.99f,           // output gain: 3.99 (recalibrated for delay_scale, was 8.15)
     0.15f,           // stereo coupling: moderate (wider stereo for IACC match)
-    0.0f, -2.0f, 5000.0f, // output EQ: -2dB high shelf at 5kHz (tame 6.3-10kHz brightness)
+    0.0f, +3.0f, 5000.0f, // output EQ: +3.0dB high shelf at 5kHz (was +1.5; +1.5dB HF boost)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
+    0.0f,            // lateOnsetMs: disabled
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb
+    0.0f,            // crestLimitRatio: disabled
     0, nullptr,  // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // Dattorro taps: mid-deep onset
 };
 
 // ---------------------------------------------------------------------------
@@ -377,12 +948,12 @@ static constexpr AlgorithmConfig kRoom = {
     { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
     { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     0.75f, 0.70f,    // input diffusion: moderate-high
-    0.65f,           // output diffusion scale (was 1.0; reduced for cleaner tail density)
+    0.65f,           // output diffusion scale
     18000.0f,        // bandwidth: wide input (structural HF damping handles per-loop rolloff)
     0.80f, 0.45f,    // ER: level=0.80 (was 1.40; reduced for -6dB crest deficit), tighter timing
-    0.42f,           // late gain: 0.42 (was 0.38; increased to fill RMS gap from ER reduction)
+    0.63f,           // late gain: 0.63 (DattorroTank Room ~3dB quieter)
     1.3f, 1.0f,      // mod: wider stereo (modDepthScale=1.3, modRateScale=1.0)
-    0.45f, 0.75f, 0.85f, // damping: trebleMultScale=0.45 (dark), trebleMultScaleMax=0.75 (bright, was 0.95), bassMultScale=0.85
+    0.45f, 0.82f, 0.85f, // damping: trebleMultScale=0.45, trebleMultScaleMax=0.82 (was 0.75; 3 of 6 Room presets had HF too dark)
     6000.0f,         // high crossover: 6kHz (three-band: bass/mid/air — independent air band control)
     0.75f,           // airDampingScale: 0.75 (Room — faster air decay for natural room character)
     0.5f, 1.5f,      // size range
@@ -391,26 +962,81 @@ static constexpr AlgorithmConfig kRoom = {
     1.0f,            // mod depth floor: uniform
     0.0f,            // structural HF damping: off (14kHz tried, decay calibration compensated by raising feedback → worse ringing)
     40.0f,           // structural LF damping: 40Hz HP to gently tame bass RT60 inflation
-    1.0f,            // noise mod: 1.0 (stronger jitter for Exciting Snare room which has ModDepth=0.144 — barely any LFO smearing)
+    1.5f,            // noise mod: 1.5 (room ringing)
     0.20f,           // Hadamard perturbation: 0.20 (was 0.08→0.12; stronger to detune 11kHz mode in Exciting Snare)
     0.30f,           // ER gain exponent: gentle rolloff (more energy in later taps)
     false,           // useWeightedGains: off
     false,           // useHouseholderFeedback: off (Room — Householder regressed 75.8 vs Hadamard 77.1)
-    false,           // useDattorroTank: off (FDN)
-    1.28f,           // decay time scale: calibrated via calibrate_decay_scale.py (was 1.30)
+    true,            // useDattorroTank: ON (with late tap positions matching VV onset)
+    false,           // useQuadTank: OFF for Room
+    1.37f,           // decay time scale: recalibrated for DattorroTank
     0.0f, 0, 1.0f,   // dual-slope: disabled (standard 16-channel FDN for matched tail energy)
     0.0f, 0.0f,      // short-decay boost: disabled (Room uses lateGainScale calibration)
     0.0f, 0.0f,      // gate: disabled
     10000.0f,         // ER air absorption ceiling: darken earliest taps slightly (centroid_early 6207→5521)
     2000.0f,          // ER air absorption floor: default
     0.35f,            // ER decorrelation: moderate (improve L/R spectral variation for MFCC)
-    0.71f,            // output gain: 0.71 (-3dB; calibrated for output level)
+    2.06f,            // output gain: 2.06 (recalibrated for delay_scale, was 1.20)
     0.20f,            // stereo coupling: moderate (rooms have natural coupling from walls)
-    0.0f, -3.0f, 4000.0f, // output EQ: -3dB high shelf at 4kHz (tame 4-8kHz brightness)
+    0.0f, +2.0f, 4000.0f, // output EQ: +2.0dB high shelf at 4kHz (was +0.5; +1.5dB centroid boost)
     2200.0f, -2.0f, 1.2f, // output mid EQ: -2dB notch at 2.2kHz (suppress measured 2215Hz ringing)
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
+    0.0f,            // lateOnsetMs: disabled
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb
+    0.0f,            // crestLimitRatio: disabled
     0, nullptr,  // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // Dattorro taps: mid-deep onset
+};
+
+// ---------------------------------------------------------------------------
+// RoomBright: Bright variant: higher HF sustain for dark presets
+static constexpr AlgorithmConfig kRoomBright = {
+    "RoomBright",
+    { 1087, 1171, 1279, 1381, 1493, 1607, 1733, 1861,
+      2003, 2153, 2309, 2467, 2633, 2801, 2963, 3137 },
+    { 0, 1, 3, 7, 10, 11, 13, 14 },  // balanced partition (sum=16040, diff=2)
+    { 2, 4, 5, 6, 8, 9, 12, 15 },
+    { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.70f,    // input diffusion: moderate-high
+    0.65f,           // output diffusion scale
+    18000.0f,        // bandwidth: wide input (structural HF damping handles per-loop rolloff)
+    0.80f, 0.45f,    // ER: level=0.80 (was 1.40; reduced for -6dB crest deficit), tighter timing
+    0.63f,           // late gain: 0.63 (DattorroTank Room ~3dB quieter)
+    1.3f, 1.0f,      // mod: wider stereo (modDepthScale=1.3, modRateScale=1.0)
+    0.65f, 0.82f, 0.85f, // damping: trebleMultScale 0.45→0.65
+    6000.0f,         // high crossover: 6kHz (three-band: bass/mid/air — independent air band control)
+    0.90f,           // airDampingScale: 0.75→0.90
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed: light
+    0.0f,            // inline diffusion: off (0.20 crashed MFCC 56→17)
+    1.0f,            // mod depth floor: uniform
+    0.0f,            // structural HF damping: off (14kHz tried, decay calibration compensated by raising feedback → worse ringing)
+    40.0f,           // structural LF damping: 40Hz HP to gently tame bass RT60 inflation
+    1.5f,            // noise mod: 1.5 (room ringing)
+    0.20f,           // Hadamard perturbation: 0.20 (was 0.08→0.12; stronger to detune 11kHz mode in Exciting Snare)
+    0.30f,           // ER gain exponent: gentle rolloff (more energy in later taps)
+    false,           // useWeightedGains: off
+    false,           // useHouseholderFeedback: off (Room — Householder regressed 75.8 vs Hadamard 77.1)
+    true,            // useDattorroTank: ON (with late tap positions matching VV onset)
+    false,           // useQuadTank: OFF for Room
+    1.37f,           // decay time scale: recalibrated for DattorroTank
+    0.0f, 0, 1.0f,   // dual-slope: disabled (standard 16-channel FDN for matched tail energy)
+    0.0f, 0.0f,      // short-decay boost: disabled (Room uses lateGainScale calibration)
+    0.0f, 0.0f,      // gate: disabled
+    10000.0f,         // ER air absorption ceiling: darken earliest taps slightly (centroid_early 6207→5521)
+    2000.0f,          // ER air absorption floor: default
+    0.35f,            // ER decorrelation: moderate (improve L/R spectral variation for MFCC)
+    2.06f,            // output gain: 2.06 (recalibrated for delay_scale, was 1.20)
+    0.20f,            // stereo coupling: moderate (rooms have natural coupling from walls)
+    0.0f, +2.0f, 4000.0f, // output EQ: +2.0dB high shelf at 4kHz (was +0.5; +1.5dB centroid boost)
+    2200.0f, -2.0f, 1.2f, // output mid EQ: -2dB notch at 2.2kHz (suppress measured 2215Hz ringing)
+    false,           // enableSaturation: off (clean linear output, matching VV)
+    0.0f,            // lateOnsetMs: disabled
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,  // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // Dattorro taps: mid-deep onset
 };
 
 // ---------------------------------------------------------------------------
@@ -425,49 +1051,949 @@ static constexpr AlgorithmConfig kAmbient = {
     { 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
     { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
     0.80f, 0.80f,    // input diffusion: maximum
-    0.70f,           // output diffusion scale (was 1.0; reduced for cleaner tail density)
+    0.70f,           // output diffusion scale
     18000.0f,        // bandwidth: wide input (let full spectrum in for bright Ambient)
-    0.0f, 1.0f,      // ER: forced off
-    0.35f,           // late gain: 0.35 (was 0.55; reduced for output level calibration)
+    0.50f, 1.0f,     // ER: level=0.50 (was 0.0; enabled for custom ER taps — VV Ambient presets have early energy)
+    0.51f,           // late gain: 0.51 (DattorroTank Ambient ~3dB quieter)
     1.5f, 1.3f,      // mod: heavy depth and rate
-    0.80f, 1.0f, 1.0f, // damping: trebleMultScale=0.80 (brighter), trebleMultScaleMax=1.0, bassMultScale=1.0
-    20000.0f,        // high crossover: 20kHz (effectively two-band — mid and air bands unified)
-    1.0f,            // airDampingScale: 1.0 (no extra air damping)
+    0.80f, 1.50f, 1.0f, // damping: trebleMultScale=0.80, trebleMultScaleMax=1.50 (mid band identical to old 2-band)
+    5000.0f,         // high crossover: 5kHz (3-band: bass < 241Hz, mid 241-5k, air > 5k)
+    1.30f,           // airDampingScale: 1.30 (air > 5kHz decays slower — extra HF boost for Ambience match)
     0.5f, 1.5f,      // size range
     0.0f,            // ER crossfeed: off (no ERs)
     0.0f,            // inline diffusion: off (0.02 moved peak from 10kHz to 1kHz without reducing it)
     1.0f,            // mod depth floor: 1.0 = uniform modulation
     0.0f,            // structural HF damping: off (Ambient HF slightly fast; trebleMultScale=0.60 handles HF)
     0.0f,            // structural LF damping: off
-    0.1f,            // noise mod: 0.1 (minimal jitter to smooth LFO phase effects on ringing measurement)
+    1.0f,            // noise mod: 1.0 (ambient ringing)
     0.0f,            // Hadamard perturbation: off (Ambient uses Householder)
     1.0f,            // ER gain exponent: inverse distance (default)
     false,           // useWeightedGains: off
     true,            // useHouseholderFeedback: on (Householder 82.4 vs Hadamard 79.4; more stable across presets)
-    false,           // useDattorroTank: off (FDN)
-    0.99f,           // decay time scale: calibrated via calibrate_decay_scale.py (was 1.20)
+    true,            // useDattorroTank: ON (with late tap positions matching VV onset)
+    false,           // useQuadTank: OFF for Ambient
+    0.98f,           // decay time scale: recalibrated for DattorroTank (was 0.99 for FDN)
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled (Ambient already matched)
     0.0f, 0.0f,     // gate: disabled
     12000.0f,        // ER air absorption ceiling: default
     2000.0f,         // ER air absorption floor: default (no ERs in Ambient)
     0.0f,            // ER decorrelation: off
-    0.71f,           // output gain: 0.71 (-3dB; calibrated for output level)
+    1.24f,           // output gain: 1.24 (recalibrated for delay_scale, was 0.72)
     0.05f,           // stereo coupling: minimal (0.0 didn't help width enough)
-    0.0f, -4.0f, 4000.0f, // output EQ: -4dB high shelf at 4kHz (tame brightness above 5kHz)
+    0.0f, +1.5f, 4000.0f, // output EQ: +1.5dB high shelf at 4kHz (was -0.5; +2.0dB centroid boost)
     0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
     false,           // enableSaturation: off (clean linear output, matching VV)
-    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb for earlier onset
+    0.0f,            // lateOnsetMs: 0ms (Ambient onset already late — Ts=+32ms)
+    0.15f,           // lateFeedForwardLevel: blend pre-diffusion late reverb
+    0.0f,            // crestLimitRatio: disabled
     0, nullptr,  // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // Dattorro taps: mid-deep onset
 };
 
 // ---------------------------------------------------------------------------
-static constexpr int kNumAlgorithms = 5;
+// RoomFDN: Room variant using native 16-channel FDN for presets where
+// DattorroTank decays too fast (decay ratios 0.29-0.73x). FDN's direct
+// feedback control allows better matching of VV Room's sustain character.
+static constexpr AlgorithmConfig kRoomFDN = {
+    "RoomFDN",
+    { 1087, 1171, 1279, 1381, 1493, 1607, 1733, 1861,
+      2003, 2153, 2309, 2467, 2633, 2801, 2963, 3137 },  // same Room delay lengths
+    { 0, 1, 3, 7, 10, 11, 13, 14 },  // same balanced partition as Room
+    { 2, 4, 5, 6, 8, 9, 12, 15 },
+    { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.70f,    // input diffusion: same as Room
+    0.65f,           // output diffusion scale
+    18000.0f,        // bandwidth
+    0.80f, 0.45f,    // ER: same as Room
+    0.22f,           // late gain: FDN native (no DattorroTank compensation)
+    1.3f, 1.0f,      // mod: same as Room
+    0.45f, 0.82f, 0.85f, // damping: same as Room
+    6000.0f,         // high crossover: same as Room (three-band)
+    0.75f,           // airDampingScale: same as Room
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping: same as Room
+    1.5f,            // noise mod: same as Room
+    0.20f,           // Hadamard perturbation: same as Room
+    0.30f,           // ER gain exponent: same as Room
+    false,           // useWeightedGains
+    false,           // useHouseholderFeedback: off (same as Room — Hadamard better)
+    false,           // useDattorroTank: OFF — native FDN
+    false,           // useQuadTank: OFF
+    3.00f,           // decay time scale: 3.00 (1.80 gave same ratios as DattorroTank — FDN needs much more)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 1.5f,     // short-decay boost: same as Hall
+    0.0f, 0.0f,     // gate: disabled
+    10000.0f,        // ER air absorption ceiling: same as Room
+    2000.0f,         // ER air absorption floor
+    0.35f,           // ER decorrelation: same as Room
+    2.06f,           // output gain: same as Room initially (will recalibrate)
+    0.20f,           // stereo coupling: same as Room
+    0.0f, +1.5f, 4000.0f, // output EQ: +1.5dB high shelf (was -2.0; HF brightness boost)
+    2200.0f, -2.0f, 1.2f, // output mid EQ: same as Room
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel: same as Room
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // taps (unused by FDN but required)
+};
+
+// ---------------------------------------------------------------------------
+// RoomFDNBright: Bright variant: higher HF sustain for dark presets
+static constexpr AlgorithmConfig kRoomFDNBright = {
+    "RoomFDNBright",
+    { 1087, 1171, 1279, 1381, 1493, 1607, 1733, 1861,
+      2003, 2153, 2309, 2467, 2633, 2801, 2963, 3137 },  // same Room delay lengths
+    { 0, 1, 3, 7, 10, 11, 13, 14 },  // same balanced partition as Room
+    { 2, 4, 5, 6, 8, 9, 12, 15 },
+    { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.70f,    // input diffusion: same as Room
+    0.65f,           // output diffusion scale
+    18000.0f,        // bandwidth
+    0.80f, 0.45f,    // ER: same as Room
+    0.22f,           // late gain: FDN native (no DattorroTank compensation)
+    1.3f, 1.0f,      // mod: same as Room
+    0.65f, 0.82f, 0.85f, // damping: trebleMultScale 0.45→0.65
+    6000.0f,         // high crossover: same as Room (three-band)
+    0.90f,           // airDampingScale: 0.75→0.90
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping: same as Room
+    1.5f,            // noise mod: same as Room
+    0.20f,           // Hadamard perturbation: same as Room
+    0.30f,           // ER gain exponent: same as Room
+    false,           // useWeightedGains
+    false,           // useHouseholderFeedback: off (same as Room — Hadamard better)
+    false,           // useDattorroTank: OFF — native FDN
+    false,           // useQuadTank: OFF
+    3.00f,           // decay time scale: 3.00 (1.80 gave same ratios as DattorroTank — FDN needs much more)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 1.5f,     // short-decay boost: same as Hall
+    0.0f, 0.0f,     // gate: disabled
+    10000.0f,        // ER air absorption ceiling: same as Room
+    2000.0f,         // ER air absorption floor
+    0.35f,           // ER decorrelation: same as Room
+    2.06f,           // output gain: same as Room initially (will recalibrate)
+    0.20f,           // stereo coupling: same as Room
+    0.0f, +1.5f, 4000.0f, // output EQ: +1.5dB high shelf (was -2.0; HF brightness boost)
+    2200.0f, -2.0f, 1.2f, // output mid EQ: same as Room
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel: same as Room
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // taps (unused by FDN but required)
+};
+
+// ---------------------------------------------------------------------------
+// RoomQuad: Room variant using QuadTank for presets where both DattorroTank
+// and FDN decay too fast (Fat Snare Room 0.51x, Long Dark 70s 0.30x).
+// QuadTank's 4 cross-coupled allpass loops sustain longer, same pattern
+// that solved Hall decay issues (HallQuad, HallQuadSustain).
+static constexpr AlgorithmConfig kRoomQuad = {
+    "RoomQuad",
+    { 1087, 1171, 1279, 1381, 1493, 1607, 1733, 1861,
+      2003, 2153, 2309, 2467, 2633, 2801, 2963, 3137 },  // same Room delay lengths
+    { 0, 1, 3, 7, 10, 11, 13, 14 },
+    { 2, 4, 5, 6, 8, 9, 12, 15 },
+    { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.70f,    // input diffusion: same as Room
+    0.65f,           // output diffusion scale
+    18000.0f,        // bandwidth
+    0.80f, 0.45f,    // ER: same as Room
+    0.63f,           // late gain: same as Room (QuadTank has similar output level to DattorroTank)
+    1.3f, 1.0f,      // mod: same as Room
+    0.45f, 0.82f, 0.85f, // damping: same as Room
+    6000.0f,         // high crossover: same as Room
+    0.75f,           // airDampingScale: same as Room
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.5f,            // noise mod
+    0.20f,           // Hadamard perturbation
+    0.30f,           // ER gain exponent: same as Room
+    false,           // useWeightedGains
+    false,           // useHouseholderFeedback: off (same as Room)
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — key difference
+    2.50f,           // decay time scale: 2.50 (QuadTank + high scale for max sustain)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    10000.0f,        // ER air absorption ceiling: same as Room
+    2000.0f,         // ER air absorption floor
+    0.35f,           // ER decorrelation: same as Room
+    2.06f,           // output gain: same as Room initially
+    0.20f,           // stereo coupling: same as Room
+    0.0f, -2.0f, 4000.0f, // output EQ: same as Room
+    2200.0f, -2.0f, 1.2f, // output mid EQ: same as Room
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // taps (unused by QuadTank but required)
+};
+
+// ---------------------------------------------------------------------------
+// RoomQuadSustain: RoomQuad with much higher decay scale for presets where
+// even QuadTank at 2.50x decays too fast (Long Dark 70s 0.70x, Fat Snare 0.55x).
+// Same pattern as HallQuadSustain (2.00) — extreme sustain boost.
+static constexpr AlgorithmConfig kRoomQuadSustain = {
+    "RoomQuadSustain",
+    { 1087, 1171, 1279, 1381, 1493, 1607, 1733, 1861,
+      2003, 2153, 2309, 2467, 2633, 2801, 2963, 3137 },
+    { 0, 1, 3, 7, 10, 11, 13, 14 },
+    { 2, 4, 5, 6, 8, 9, 12, 15 },
+    { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.70f,
+    0.65f,
+    18000.0f,
+    0.80f, 0.45f,
+    0.63f,           // late gain
+    1.3f, 1.0f,
+    0.45f, 0.82f, 0.85f,
+    6000.0f,
+    0.75f,
+    0.5f, 1.5f,
+    0.10f,
+    0.0f,
+    1.0f,
+    0.0f,
+    40.0f,
+    1.5f,
+    0.20f,
+    0.30f,
+    false,           // useWeightedGains
+    false,           // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    4.00f,           // decay time scale: 4.00 (extreme sustain for hardest presets)
+    0.0f, 0, 1.0f,
+    2.0f, 1.5f,
+    0.0f, 0.0f,
+    10000.0f,
+    2000.0f,
+    0.35f,
+    2.06f,           // output gain
+    0.20f,
+    0.0f, -0.5f, 4000.0f, // output EQ: -0.5dB high shelf (was -2.0; +1.5dB centroid boost)
+    2200.0f, -2.0f, 1.2f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// ChamberQuad: Chamber variant using QuadTank for presets where DattorroTank
+// decays too fast (Small Chamber1 0.65x, Tiled Room 0.57x).
+// Same pattern as HallQuad — QuadTank sustains longer than DattorroTank.
+static constexpr AlgorithmConfig kChamberQuad = {
+    "ChamberQuad",
+    { 751, 797, 839, 887, 947, 997, 1061, 1123,
+      1187, 1259, 1327, 1409, 1493, 1583, 1669, 1777 },  // same Chamber delay lengths
+    { 0, 1, 2, 7, 8, 11, 14, 15 },
+    { 3, 4, 5, 6, 9, 10, 12, 13 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.625f,   // input diffusion: same as Chamber
+    0.65f,           // output diffusion scale
+    16000.0f,        // bandwidth
+    0.55f, 0.55f,    // ER: same as Chamber
+    1.23f,           // late gain: same as Chamber (QuadTank needs similar compensation)
+    0.05f, 1.0f,     // mod: same as Chamber
+    0.85f, 1.00f, 1.0f, // damping: same as Chamber
+    20000.0f,        // high crossover
+    1.0f,            // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.2f,            // ER crossfeed
+    0.20f,           // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    0.0f,            // structural LF damping
+    1.2f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback: same as Chamber
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — key difference
+    1.80f,           // decay time scale: 1.80 (QuadTank + higher scale for sustain)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f,        // ER air absorption ceiling: same as Chamber
+    2000.0f,         // ER air absorption floor
+    0.50f,           // ER decorrelation: same as Chamber
+    3.99f,           // output gain: same as Chamber
+    0.15f,           // stereo coupling: same as Chamber
+    0.0f, +4.5f, 5000.0f, // output EQ: +4.5dB high shelf (was +3.0; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // taps (unused by QuadTank but required)
+};
+
+// ---------------------------------------------------------------------------
+// ChamberQuadBright: Bright variant: higher HF sustain for dark presets
+static constexpr AlgorithmConfig kChamberQuadBright = {
+    "ChamberQuadBright",
+    { 751, 797, 839, 887, 947, 997, 1061, 1123,
+      1187, 1259, 1327, 1409, 1493, 1583, 1669, 1777 },  // same Chamber delay lengths
+    { 0, 1, 2, 7, 8, 11, 14, 15 },
+    { 3, 4, 5, 6, 9, 10, 12, 13 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.625f,   // input diffusion: same as Chamber
+    0.65f,           // output diffusion scale
+    16000.0f,        // bandwidth
+    0.55f, 0.55f,    // ER: same as Chamber
+    1.23f,           // late gain: same as Chamber (QuadTank needs similar compensation)
+    0.05f, 1.0f,     // mod: same as Chamber
+    1.05f, 1.00f, 1.0f, // damping: trebleMultScale 0.85→1.05
+    20000.0f,        // high crossover
+    1.15f,           // airDampingScale: 1.0→1.15
+    0.5f, 1.5f,      // size range
+    0.2f,            // ER crossfeed
+    0.20f,           // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    0.0f,            // structural LF damping
+    1.2f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback: same as Chamber
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — key difference
+    1.80f,           // decay time scale: 1.80 (QuadTank + higher scale for sustain)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f,        // ER air absorption ceiling: same as Chamber
+    2000.0f,         // ER air absorption floor
+    0.50f,           // ER decorrelation: same as Chamber
+    3.99f,           // output gain: same as Chamber
+    0.15f,           // stereo coupling: same as Chamber
+    0.0f, +4.5f, 5000.0f, // output EQ: +4.5dB high shelf (was +3.0; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,   // output mid EQ: bypassed
+    false,           // enableSaturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,      // custom ER: disabled
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,  // taps (unused by QuadTank but required)
+};
+
+// ---------------------------------------------------------------------------
+// AmbientFDN: Ambient variant using native 16-channel FDN instead of DattorroTank.
+// The 2-loop figure-of-eight creates too few modes for smooth ambient wash.
+// 16-channel Hadamard FDN has ~64× more modal density (16 cross-coupled delays
+// vs 2 loops). Should produce denser, smoother wash with better crest factor.
+static constexpr AlgorithmConfig kAmbientFDN = {
+    "AmbientFDN",
+    { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,
+      1949, 2111, 2269, 2437, 2609, 2789, 2969, 3169 },  // same Ambient delay lengths
+    { 0, 1, 2, 4, 11, 12, 13, 15 },
+    { 3, 5, 6, 7, 8, 9, 10, 14 },
+    { 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
+    0.80f, 0.80f,    // input diffusion: maximum
+    0.70f,           // output diffusion scale
+    18000.0f,        // bandwidth
+    0.50f, 1.0f,     // ER: same as Ambient
+    0.22f,           // late gain: FDN native (no DattorroTank compensation)
+    1.5f, 1.3f,      // mod: heavy depth and rate (same as Ambient)
+    0.80f, 1.50f, 1.0f, // damping: same as Ambient
+    5000.0f,         // high crossover
+    1.30f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.0f,            // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    0.0f,            // structural LF damping
+    1.0f,            // noise mod
+    0.0f,            // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback: on
+    false,           // useDattorroTank: OFF — native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale: 1.50 (FDN typically needs boost)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    12000.0f,
+    2000.0f,
+    0.0f,            // ER decorrelation: off
+    1.24f,           // output gain: same as Ambient initially
+    0.05f,           // stereo coupling
+    0.0f, +4.0f, 4000.0f, // output EQ: +4.0dB high shelf (was +2.5; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,           // lateFeedForwardLevel
+    3.0f,            // crestLimitRatio: 3.0x — stronger peak limiting for Drum Air crest stability
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// AmbientFDNBright: Bright variant: higher HF sustain for dark presets
+static constexpr AlgorithmConfig kAmbientFDNBright = {
+    "AmbientFDNBright",
+    { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,
+      1949, 2111, 2269, 2437, 2609, 2789, 2969, 3169 },  // same Ambient delay lengths
+    { 0, 1, 2, 4, 11, 12, 13, 15 },
+    { 3, 5, 6, 7, 8, 9, 10, 14 },
+    { 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
+    0.80f, 0.80f,    // input diffusion: maximum
+    0.70f,           // output diffusion scale
+    18000.0f,        // bandwidth
+    0.50f, 1.0f,     // ER: same as Ambient
+    0.22f,           // late gain: FDN native (no DattorroTank compensation)
+    1.5f, 1.3f,      // mod: heavy depth and rate (same as Ambient)
+    1.00f, 1.50f, 1.0f, // damping: trebleMultScale 0.80→1.00
+    5000.0f,         // high crossover
+    1.45f,           // airDampingScale: 1.30→1.45
+    0.5f, 1.5f,      // size range
+    0.0f,            // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    0.0f,            // structural LF damping
+    1.0f,            // noise mod
+    0.0f,            // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback: on
+    false,           // useDattorroTank: OFF — native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale: 1.50 (FDN typically needs boost)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    12000.0f,
+    2000.0f,
+    0.0f,            // ER decorrelation: off
+    1.24f,           // output gain: same as Ambient initially
+    0.05f,           // stereo coupling
+    0.0f, +4.0f, 4000.0f, // output EQ: +4.0dB high shelf (was +2.5; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,           // lateFeedForwardLevel
+    3.0f,            // crestLimitRatio: 3.0x — stronger peak limiting for Drum Air crest stability
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// AmbientQuad: Ambient variant using QuadTank (4 cross-coupled allpass loops).
+// QuadTank has 4 loops × 12 taps = higher modal density than DattorroTank's 2 loops.
+// Sustains longer (solved decay issues in Room/Chamber) and smoother onset.
+static constexpr AlgorithmConfig kAmbientQuad = {
+    "AmbientQuad",
+    { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,
+      1949, 2111, 2269, 2437, 2609, 2789, 2969, 3169 },
+    { 0, 1, 2, 4, 11, 12, 13, 15 },
+    { 3, 5, 6, 7, 8, 9, 10, 14 },
+    { 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
+    0.80f, 0.80f,
+    0.70f,
+    18000.0f,
+    0.50f, 1.0f,
+    0.51f,           // late gain: same as Ambient DattorroTank (QuadTank similar output)
+    1.5f, 1.3f,
+    0.80f, 1.50f, 1.0f,
+    5000.0f,
+    1.30f,
+    0.5f, 1.5f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    1.0f,
+    false,
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — 4 loops instead of 2
+    2.00f,           // decay time scale: 2.00 (QuadTank needs higher scale for Ambient sustain)
+    0.0f, 0, 1.0f,
+    0.0f, 0.0f,
+    0.0f, 0.0f,
+    12000.0f,
+    2000.0f,
+    0.0f,
+    1.24f,
+    0.05f,
+    0.0f, +3.0f, 4000.0f,  // output EQ: +3.0dB high shelf (was +1.5; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// AmbientQuadBright: Bright variant: higher HF sustain for dark presets
+static constexpr AlgorithmConfig kAmbientQuadBright = {
+    "AmbientQuadBright",
+    { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,
+      1949, 2111, 2269, 2437, 2609, 2789, 2969, 3169 },
+    { 0, 1, 2, 4, 11, 12, 13, 15 },
+    { 3, 5, 6, 7, 8, 9, 10, 14 },
+    { 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
+    0.80f, 0.80f,
+    0.70f,
+    18000.0f,
+    0.50f, 1.0f,
+    0.51f,           // late gain: same as Ambient DattorroTank (QuadTank similar output)
+    1.5f, 1.3f,
+    1.00f, 1.50f, 1.0f, // damping: trebleMultScale 0.80→1.00
+    5000.0f,
+    1.45f,           // airDampingScale: 1.30→1.45
+    0.5f, 1.5f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    1.0f,
+    false,
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON — 4 loops instead of 2
+    2.00f,           // decay time scale: 2.00 (QuadTank needs higher scale for Ambient sustain)
+    0.0f, 0, 1.0f,
+    0.0f, 0.0f,
+    0.0f, 0.0f,
+    12000.0f,
+    2000.0f,
+    0.0f,
+    1.24f,
+    0.05f,
+    0.0f, +3.0f, 4000.0f,  // output EQ: +3.0dB high shelf (was +1.5; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// ChamberQuadSustain: ChamberQuad with much higher decay scale for presets
+// where ChamberQuad (1.80) still decays too fast (Rich Chamber 0.30x,
+// Fat Plate 0.38x, Small Chamber2 0.42x, A Plate 0.47x, etc.)
+static constexpr AlgorithmConfig kChamberQuadSustain = {
+    "ChamberQuadSustain",
+    { 751, 797, 839, 887, 947, 997, 1061, 1123,
+      1187, 1259, 1327, 1409, 1493, 1583, 1669, 1777 },  // Chamber delay lengths
+    { 0, 1, 2, 7, 8, 11, 14, 15 },
+    { 3, 4, 5, 6, 9, 10, 12, 13 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.625f,
+    0.65f,
+    16000.0f,
+    0.55f, 0.55f,
+    1.23f,
+    0.05f, 1.0f,
+    0.85f, 1.00f, 1.0f,
+    20000.0f,
+    1.0f,
+    0.5f, 1.5f,
+    0.2f,
+    0.20f,
+    1.0f,
+    0.0f,
+    0.0f,
+    1.2f,
+    0.10f,
+    1.0f,
+    false,
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    3.50f,           // decay time scale: 3.50 (extreme sustain for 0.30-0.50x presets)
+    0.0f, 0, 1.0f,
+    0.0f, 0.0f,
+    0.0f, 0.0f,
+    12000.0f,
+    2000.0f,
+    0.50f,
+    3.99f,
+    0.15f,
+    0.0f, +3.5f, 5000.0f, // output EQ: +3.5dB high shelf (was +2.0; +1.5dB HF boost)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// ChamberQuadSustainHybrid: ChamberQuadSustain with hybrid dual-engine blending.
+// Primary: ChamberQuadSustain (good envelope 0.91 + decay 0.78)
+// Secondary: HallQuad index 6 (good centroid 1.06)
+// Blend 35%: centroid ~0.71*0.65 + 1.06*0.35 = 0.83
+// Designed for A Plate which no single topology can match on all metrics.
+static constexpr AlgorithmConfig kChamberQuadSustainHybrid = {
+    "ChamberQuadSustainHybrid",
+    { 751, 797, 839, 887, 947, 997, 1061, 1123,
+      1187, 1259, 1327, 1409, 1493, 1583, 1669, 1777 },
+    { 0, 1, 2, 7, 8, 11, 14, 15 },
+    { 3, 4, 5, 6, 9, 10, 12, 13 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.625f,
+    0.65f,
+    16000.0f,
+    0.55f, 0.55f,
+    1.23f,
+    0.05f, 1.0f,
+    0.85f, 1.00f, 1.0f,
+    20000.0f,
+    1.0f,
+    0.5f, 1.5f,
+    0.2f,
+    0.20f,
+    1.0f,
+    0.0f,
+    0.0f,
+    1.2f,
+    0.10f,
+    1.0f,
+    false,
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    3.50f,           // decay time scale
+    0.0f, 0, 1.0f,
+    0.0f, 0.0f,
+    0.0f, 0.0f,
+    12000.0f,
+    2000.0f,
+    0.50f,
+    3.99f,
+    0.15f,
+    0.0f, +10.0f, 5000.0f, // output EQ: +10.0dB high shelf (very aggressive — compensates for dark QuadTank)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+    1.0f,            // dattorroDelayScale
+    0.0f,            // hybridBlend: disabled (output shelf approach instead)
+    -1,              // hybridSecondaryAlgo: disabled
+};
+
+// ---------------------------------------------------------------------------
+// ChamberFDN: Hall-scale FDN with Chamber damping for presets where QuadTank
+// has poor envelope correlation (~0.73). Uses Hall delays (1801-5521) for sustain
+// but Chamber damping/ER for tonal character. FDN envelope ~0.97 on Hall.
+static constexpr AlgorithmConfig kChamberFDN = {
+    "ChamberFDN",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },  // Hall-scale delays for sustain
+    { 0, 3, 5, 7, 8, 10, 12, 15 },   // Hall tap partition (balanced)
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion: FDN-style
+    0.35f,           // output diffusion scale
+    16000.0f,        // bandwidth: Chamber-style (16kHz vs Hall's 20kHz)
+    0.55f, 0.55f,    // ER: Chamber-level
+    0.22f,           // late gain: FDN-native
+    0.05f, 1.0f,     // mod: Chamber-style (low modulation)
+    0.85f, 1.00f, 1.0f, // damping: Chamber trebleMultScale
+    20000.0f,        // high crossover
+    1.0f,            // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.10f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    0.0f,            // structural LF damping
+    1.2f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF — native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale: 1.50 (FDN standard)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    12000.0f, 2000.0f, 0.50f,
+    8.53f,           // output gain
+    0.15f,           // stereo coupling
+    0.0f, +1.5f, 5000.0f, // output EQ: +1.5dB high shelf (was -1.0; HF brightness boost)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled
+    0, nullptr,
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// AmbientQuadSustain: AmbientQuad with higher decay scale for decay-limited
+// Ambient presets (Cross Stick 0.62x, Drum Air 0.54x, etc.)
+static constexpr AlgorithmConfig kAmbientQuadSustain = {
+    "AmbientQuadSustain",
+    { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,
+      1949, 2111, 2269, 2437, 2609, 2789, 2969, 3169 },
+    { 0, 1, 2, 4, 11, 12, 13, 15 },
+    { 3, 5, 6, 7, 8, 9, 10, 14 },
+    { 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
+    0.80f, 0.80f,
+    0.70f,
+    18000.0f,
+    0.50f, 1.0f,
+    0.51f,
+    1.5f, 1.3f,
+    0.80f, 1.50f, 1.0f,
+    5000.0f,
+    1.30f,
+    0.5f, 1.5f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    1.0f,
+    false,
+    true,
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    3.00f,           // decay time scale: 3.00 (vs AmbientQuad's 2.00)
+    0.0f, 0, 1.0f,
+    0.0f, 0.0f,
+    0.0f, 0.0f,
+    12000.0f,
+    2000.0f,
+    0.0f,
+    1.24f,
+    0.05f,
+    0.0f, 0.0f, 4000.0f,  // output EQ: 0.0dB high shelf (was -1.5; +1.5dB HF brightness boost)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// RoomQuadSustainHigh: RoomQuadSustain with even higher decay scale (7.0x)
+// for Fat Snare Room which still decays too fast at 4.0x (0.57x ratio).
+static constexpr AlgorithmConfig kRoomQuadSustainHigh = {
+    "RoomQuadSustainHigh",
+    { 1087, 1171, 1279, 1381, 1493, 1607, 1733, 1861,
+      2003, 2153, 2309, 2467, 2633, 2801, 2963, 3137 },
+    { 0, 1, 3, 7, 10, 11, 13, 14 },
+    { 2, 4, 5, 6, 8, 9, 12, 15 },
+    { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.70f,
+    0.65f,
+    18000.0f,
+    0.80f, 0.45f,    // erLevelScale: original
+    0.63f,           // late gain: original
+    1.3f, 1.0f,
+    0.45f, 0.82f, 0.85f,
+    6000.0f,
+    0.75f,
+    0.5f, 1.5f,
+    0.10f,           // erCrossfeed: original
+    0.0f,
+    1.0f,
+    0.0f,
+    40.0f,
+    1.5f,
+    0.20f,
+    0.30f,
+    false,           // useWeightedGains
+    false,           // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    20.00f,          // decay time scale: 20.00 (extreme — QuadTank allpass loss needs large compensation)
+    0.0f, 0, 1.0f,
+    2.0f, 1.5f,
+    0.0f, 0.0f,
+    10000.0f,
+    2000.0f,
+    0.35f,
+    2.06f,           // output gain
+    0.20f,
+    0.0f, -2.0f, 4000.0f,
+    2200.0f, -2.0f, 1.2f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// AmbientQuadSustainHigh: AmbientQuadSustain with higher decay scale (4.50x)
+// for Cross Stick Room (0.68x), Drum Air (0.65x), Very Small Ambience (0.71x).
+static constexpr AlgorithmConfig kAmbientQuadSustainHigh = {
+    "AmbientQuadSustainHigh",
+    { 971, 1049, 1153, 1277, 1399, 1523, 1667, 1811,
+      1949, 2111, 2269, 2437, 2609, 2789, 2969, 3169 },
+    { 0, 1, 2, 4, 11, 12, 13, 15 },
+    { 3, 5, 6, 7, 8, 9, 10, 14 },
+    { 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f },
+    0.80f, 0.80f,
+    0.70f,
+    18000.0f,
+    0.50f, 1.0f,
+    0.51f,
+    1.5f, 1.3f,
+    0.80f, 1.50f, 1.0f,
+    5000.0f,
+    1.30f,
+    0.5f, 1.5f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    0.0f,
+    1.0f,
+    0.0f,
+    1.0f,
+    false,
+    true,
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    5.00f,           // decay time scale: 5.00 (moderate boost over AmbientQuadSustain's 3.00)
+    0.0f, 0, 1.0f,
+    0.0f, 0.0f,
+    0.0f, 0.0f,
+    12000.0f,
+    2000.0f,
+    0.0f,
+    1.24f,
+    0.05f,
+    0.0f, 0.0f, 4000.0f,  // output EQ: 0.0dB high shelf (was -1.5; +1.5dB HF brightness boost)
+    0.0f, 0.0f, 0.7f,
+    false,
+    0.0f,
+    0.15f,
+    0.0f,  // crestLimitRatio: disabled
+    0, nullptr,
+    kRoomDattorroLeftTaps, kRoomDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+// HallQuadSmooth: HallQuad with onset ramp + crest limiter for presets where
+// QuadTank's structural onset creates too-high crest factor vs VV (+5.7dB).
+// 100ms onset ramp reduces 100ms peak/RMS ratio by attenuating early energy.
+// Crest limiter at 1.5× RMS catches remaining instantaneous peaks.
+static constexpr AlgorithmConfig kHallQuadSmooth = {
+    "HallQuadSmooth",
+    { 1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+      3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.65f, 0.55f,    // input diffusion: increased (more smearing for smoother onset)
+    0.50f,           // output diffusion scale: increased (smoother peaks)
+    20000.0f,        // bandwidth
+    0.30f, 0.85f,    // ER: reduced erLevelScale (0.30 vs 0.65) to minimize ER spike
+    1.24f,           // late gain
+    0.75f, 13.0f,    // mod
+    0.50f, 1.50f, 1.0f, // damping
+    4000.0f,         // high crossover
+    0.70f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.05f,           // ER crossfeed: reduced to limit ER→QuadTank bleed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    40.0f,           // structural LF damping
+    1.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    0.79f,           // decay time scale: same as HallQuad
+    0.0f, 0, 1.0f,  // dual-slope
+    2.0f, 1.5f,     // short-decay boost
+    0.0f, 0.0f,     // gate
+    20000.0f,        // ER air absorption ceiling
+    18000.0f,        // ER air absorption floor
+    0.55f,           // ER decorrelation
+    8.53f,           // output gain
+    -1.0f,           // stereo coupling
+    0.0f, +2.0f, 5000.0f, // output EQ
+    0.0f, 0.0f, 0.7f,   // output mid EQ
+    false,           // enableSaturation
+    100.0f,          // lateOnsetMs: 100ms ramp attenuates early QuadTank peaks
+    0.10f,           // lateFeedForwardLevel: reduced (less pre-diffusion bleed)
+    1.5f,            // crestLimitRatio: limit peaks to 1.5× RMS
+    0, nullptr,      // custom ER
+    kHallDattorroLeftTaps, kHallDattorroRightTaps,
+};
+
+// ---------------------------------------------------------------------------
+static constexpr int kNumAlgorithms = 32;
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     static constexpr const AlgorithmConfig* kAlgorithms[kNumAlgorithms] = {
-        &kPlate, &kHall, &kChamber, &kRoom, &kAmbient
+        &kPlate, &kHall, &kChamber, &kRoom, &kAmbient, &kPlateQuad, &kHallQuad, &kHallSlow, &kHallFDN, &kHallFDNDualSlopeBody, &kHallQuadSustain, &kRoomFDN, &kRoomQuad, &kRoomQuadSustain, &kChamberQuad, &kAmbientFDN, &kAmbientQuad, &kChamberQuadSustain, &kAmbientQuadSustain, &kHallFDNSmooth, &kRoomQuadSustainHigh, &kAmbientQuadSustainHigh, &kHallQuadSmooth, &kChamberFDN, &kPlateCrisp, &kHallQuadBright, &kRoomBright, &kRoomFDNBright, &kChamberQuadBright, &kAmbientFDNBright, &kAmbientQuadBright, &kChamberQuadSustainHybrid
     };
     if (index < 0 || index >= kNumAlgorithms)
         index = 1; // Fall back to Hall

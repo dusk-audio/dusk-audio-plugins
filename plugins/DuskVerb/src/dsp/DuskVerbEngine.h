@@ -62,6 +62,24 @@ public:
     void setFreeze (bool frozen);
     void setGateParams (float holdMs, float releaseMs);
     void setGainTrim (float dB);
+    void setInputOnset (float ms);
+    void loadCorrectionFilter (int presetIndex);
+    void loadPresetTapPositions (int presetIndex);
+    void setDattorroDelayScale (float scale);
+    void setDattorroSoftOnsetMs (float ms);
+    void setLateFeedForwardLevel (float level);
+    void setDattorroLimiter (float thresholdDb, float releaseMs);
+    void updateTapPositions (float l0, float l1, float l2, float l3, float l4, float l5, float l6,
+                             float r0, float r1, float r2, float r3, float r4, float r5, float r6);
+    void updateTapPositionsAndGains (float l0, float l1, float l2, float l3, float l4, float l5, float l6,
+                                     float r0, float r1, float r2, float r3, float r4, float r5, float r6,
+                                     float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
+                                     float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6);
+    // Apply gains on top of existing tap positions (does not change positions)
+    void applyTapGains (float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
+                        float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6);
+    void setCustomERTaps (const CustomERTap* taps, int numTaps);
+    void loadPresetERTaps (const char* presetName);  // Looks up VV-extracted taps by name
 
 private:
     DiffusionStage diffuser_;
@@ -72,6 +90,7 @@ private:
     bool useDattorroTank_ = false;
     bool useQuadTank_ = false;
     QuadTank quadTank_;
+    QuadTank hybridQuadTank_;  // Dedicated secondary engine for hybrid dual-engine mode
 
     const AlgorithmConfig* config_ = &kHall;
 
@@ -79,6 +98,12 @@ private:
     std::vector<float> scratchR_;
     std::vector<float> erOutL_;
     std::vector<float> erOutR_;
+
+    // Hybrid dual-engine: secondary engine scratch buffers
+    std::vector<float> hybridL_;
+    std::vector<float> hybridR_;
+    float hybridBlend_ = 0.0f;
+    const AlgorithmConfig* hybridConfig_ = nullptr;
     std::vector<float> preDiffL_;
     std::vector<float> preDiffR_;
 
@@ -106,6 +131,11 @@ private:
 
     float decayTime_ = 2.5f; // Cached for decay-linked output diffusion
     float gainTrimLinear_ = 1.0f; // Per-preset level correction (linear multiplier from dB)
+
+    // Per-preset output peak limiter (applied after late gain, before output diffuser)
+    float outputLimiterThreshold_ = 0.0f; // 0 = disabled. Linear amplitude.
+    float outputLimiterRelease_ = 0.999f; // One-pole release (~30ms at 48kHz)
+    float outputLimiterEnv_ = 0.0f;       // Current peak envelope
 
     // Cached raw param values for re-application after algorithm switch
     float lastDiffusion_ = 0.75f;
@@ -177,8 +207,32 @@ private:
     // Saturation: when false, bypass fastTanh for clean linear output
     bool enableSaturation_ = false;
 
+    // RMS-tracking peak limiter: reduces crest factor by limiting instantaneous
+    // peaks relative to short-term RMS. Targets FDN's Hadamard peak correlation.
+    float crestLimitRatio_ = 0.0f;   // 0 = disabled, 1.5 = limit peaks to 1.5× RMS
+    static constexpr float kRmsWindowMs = 5.0f;
+    int rmsWindowSamples_ = 0;
+    std::vector<float> rmsBufferL_;
+    std::vector<float> rmsBufferR_;
+    float rmsSumL_ = 0.0f;
+    float rmsSumR_ = 0.0f;
+    int rmsIndex_ = 0;
+
     // Late feed-forward: pre-diffusion late reverb blended into output
     float lateFeedForwardLevel_ = 0.0f;
+
+    // Late reverb onset envelope: ramps FDN output from 0→1 to match VV's
+    // slower density buildup (parallel FDN inherently produces too much early energy)
+    float lateOnsetRamp_ = 1.0f;      // Current envelope value (0→1)
+    float lateOnsetIncrement_ = 0.0f; // Per-sample increment (1.0 / rampSamples)
+    int   lateOnsetSamples_ = 0;      // Total ramp duration in samples
+
+    // Per-preset spectral correction filter: 5-stage biquad cascade that shapes
+    // DattorroTank output to match VV's exact frequency response.
+    // Coefficients generated offline by generate_correction_filters.py.
+    static constexpr int kNumCorrectionStages = 8;
+    Biquad correctionFilter_[kNumCorrectionStages] {};
+    bool correctionFilterActive_ = false;
 
     // Gate envelope: truncates reverb tail (gated reverb effect)
     bool gateEnabled_ = false;

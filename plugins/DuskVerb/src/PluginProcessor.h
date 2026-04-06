@@ -43,6 +43,9 @@ public:
     // Per-preset level correction (called from editor on factory preset load)
     void setGainTrim (float dB) { engine_.setGainTrim (dB); }
 
+    // Per-preset custom early reflection taps (called from editor on factory preset load)
+    void setCustomERTaps (const CustomERTap* taps, int numTaps);
+
     juce::AudioProcessorValueTreeState parameters;
 
     // Level metering (audio thread writes, UI thread reads)
@@ -80,6 +83,15 @@ private:
     std::atomic<float>* gateHoldParam_ = nullptr;
     std::atomic<float>* gateReleaseParam_ = nullptr;
     std::atomic<float>* gainTrimParam_ = nullptr;
+    std::atomic<float>* inputOnsetParam_ = nullptr;
+    std::atomic<float>* delayScaleParam_ = nullptr;
+    std::atomic<float>* softOnsetParam_ = nullptr;
+    std::atomic<float>* lateFeedFwdParam_ = nullptr;
+    std::atomic<float>* limiterThreshParam_ = nullptr;
+    std::atomic<float>* tapPosParams_[14] = {};
+    std::atomic<float>* tapGainParams_[14] = {};
+    std::atomic<float>* presetIdParam_ = nullptr;
+    int lastPresetId_ = 0;
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
     juce::SmoothedValue<float> decaySmooth_;

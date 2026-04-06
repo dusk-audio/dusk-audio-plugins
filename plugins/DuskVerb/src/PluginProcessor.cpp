@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "FactoryPresets.h"
 
 #include <cstring>
 
@@ -9,7 +10,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "algorithm", 1 }, "Algorithm",
-        juce::StringArray { "Plate", "Hall", "Chamber", "Room", "Ambient" }, 1));
+        juce::StringArray { "Plate", "Hall", "Chamber", "Room", "Ambient", "PlateQuad", "HallQuad", "HallSlow", "HallFDN", "HallFDNDualSlopeBody", "HallQuadSustain", "RoomFDN", "RoomQuad", "RoomQuadSustain", "ChamberQuad", "AmbientFDN", "AmbientQuad", "ChamberQuadSustain", "AmbientQuadSustain", "HallFDNSmooth", "RoomQuadSustainHigh", "AmbientQuadSustainHigh", "HallQuadSmooth", "ChamberFDN", "PlateCrisp", "HallQuadBright", "RoomBright", "RoomFDNBright", "ChamberQuadBright", "AmbientFDNBright", "AmbientQuadBright", "ChamberQuadSustainHybrid" }, 1));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "decay", 1 }, "Decay Time",
@@ -91,7 +92,56 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "gain_trim", 1 }, "Gain Trim",
-        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f));
+        juce::NormalisableRange<float> (-48.0f, 48.0f, 0.1f), 0.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "input_onset", 1 }, "Input Onset",
+        juce::NormalisableRange<float> (0.0f, 200.0f, 0.1f), 0.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "delay_scale", 1 }, "Delay Scale",
+        juce::NormalisableRange<float> (0.25f, 4.0f, 0.01f), 1.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "soft_onset", 1 }, "Soft Onset",
+        juce::NormalisableRange<float> (0.0f, 20.0f, 0.1f), 0.0f));
+
+    // late_feed_fwd: -1 = use algorithm default (0.15). Range includes -1 as sentinel.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "late_feed_fwd", 1 }, "Late Feed Forward",
+        juce::NormalisableRange<float> (-1.0f, 1.0f, 0.01f), -1.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "limiter_thresh", 1 }, "Limiter Threshold",
+        juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), 0.0f));  // 0 = disabled
+
+    // Hidden tap position parameters: 7 left + 7 right = 14 tap position fractions (0-1)
+    // These control WHERE in the DattorroTank's delay buffers the output is read from.
+    // Adjustable at runtime via pedalboard for closed-loop temporal envelope optimization.
+    for (int i = 0; i < 14; ++i)
+    {
+        auto id = juce::String ("tap_pos_") + juce::String (i);
+        auto name = juce::String ("Tap Pos ") + juce::String (i);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.05f, 0.99f, 0.01f), 0.75f));
+    }
+
+    // Hidden tap gain parameters: 7 left + 7 right = 14 per-tap amplitude weights (0-2)
+    // Controls HOW MUCH energy each output tap contributes. Shapes onset envelope.
+    // < 1.0 attenuates early taps (slows onset), > 1.0 boosts (faster onset).
+    for (int i = 0; i < 14; ++i)
+    {
+        auto id = juce::String ("tap_gain_") + juce::String (i);
+        auto name = juce::String ("Tap Gain ") + juce::String (i);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.0f, 2.0f, 0.01f), 1.0f));
+    }
+
+    // Hidden preset ID for triggering per-preset ER tap loading (0 = none, 1-53 = preset index)
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "preset_id", 1 }, "Preset ID", 0, 53, 0));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bypass", 1 }, "Bypass", false));
@@ -127,6 +177,18 @@ DuskVerbProcessor::DuskVerbProcessor()
     gateHoldParam_ = parameters.getRawParameterValue ("gate_hold");
     gateReleaseParam_ = parameters.getRawParameterValue ("gate_release");
     gainTrimParam_ = parameters.getRawParameterValue ("gain_trim");
+    inputOnsetParam_ = parameters.getRawParameterValue ("input_onset");
+    delayScaleParam_ = parameters.getRawParameterValue ("delay_scale");
+    softOnsetParam_ = parameters.getRawParameterValue ("soft_onset");
+    lateFeedFwdParam_ = parameters.getRawParameterValue ("late_feed_fwd");
+    limiterThreshParam_ = parameters.getRawParameterValue ("limiter_thresh");
+    for (int i = 0; i < 14; ++i)
+        tapPosParams_[i] = parameters.getRawParameterValue (
+            juce::String ("tap_pos_") + juce::String (i));
+    for (int i = 0; i < 14; ++i)
+        tapGainParams_[i] = parameters.getRawParameterValue (
+            juce::String ("tap_gain_") + juce::String (i));
+    presetIdParam_ = parameters.getRawParameterValue ("preset_id");
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 }
 
@@ -292,6 +354,98 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Gain trim: per-preset level correction (dB)
     engine_.setGainTrim (gainTrimParam_->load());
 
+    // Input onset ramp: shapes FDN input to match VV's serial onset
+    engine_.setInputOnset (inputOnsetParam_->load());
+
+    // Runtime delay scale: controls DattorroTank loop length per-preset
+    engine_.setDattorroDelayScale (delayScaleParam_->load());
+
+    // Soft onset: output transient smoothing for DattorroTank (0 = disabled)
+    engine_.setDattorroSoftOnsetMs (softOnsetParam_->load());
+
+    // Late feed-forward level: override per-algorithm default when >= 0
+    {
+        float lff = lateFeedFwdParam_->load();
+        if (lff >= 0.0f)
+            engine_.setLateFeedForwardLevel (lff);
+    }
+
+    // Per-preset ER taps: load VV-extracted taps when preset_id changes.
+    // Must apply pre-delay first so tap timing is computed correctly
+    // (VV tap times are absolute; DV's pre-delay is subtracted).
+    {
+        int presetId = static_cast<int> (presetIdParam_->load());
+        if (presetId != lastPresetId_)
+        {
+            lastPresetId_ = presetId;
+
+            // Apply pre-delay immediately (skip smoothing) so the engine
+            // has the correct value when computing tap delay offsets.
+            engine_.setPreDelay (preDelayMs);
+            preDelaySmooth_.setCurrentAndTargetValue (preDelayMs);
+
+            if (presetId > 0 && presetId <= 53)
+            {
+                const auto& presets = getFactoryPresets();
+                int idx = presetId - 1;
+                if (idx < static_cast<int> (presets.size()))
+                {
+                    engine_.loadPresetERTaps (presets[static_cast<size_t> (idx)].name);
+                    engine_.loadPresetTapPositions (idx);
+                    engine_.loadCorrectionFilter (idx);
+                }
+            }
+            else
+            {
+                engine_.setCustomERTaps (nullptr, 0);  // Revert to generated
+                engine_.loadCorrectionFilter (-1);      // Disable correction
+            }
+        }
+    }
+
+    // Apply runtime tap gains on top of preset tap positions.
+    // Tap positions come from PresetTapPositions.h (loaded by loadPresetTapPositions).
+    // Tap gains come from runtime parameters (tunable via pedalboard).
+    // When preset_id == 0, tap_pos params also override positions.
+    {
+        int presetId = static_cast<int> (presetIdParam_->load());
+        if (presetId == 0)
+        {
+            // No preset — use runtime tap_pos and tap_gain params directly
+            engine_.updateTapPositionsAndGains (
+                tapPosParams_[0]->load(), tapPosParams_[1]->load(), tapPosParams_[2]->load(),
+                tapPosParams_[3]->load(), tapPosParams_[4]->load(), tapPosParams_[5]->load(),
+                tapPosParams_[6]->load(), tapPosParams_[7]->load(), tapPosParams_[8]->load(),
+                tapPosParams_[9]->load(), tapPosParams_[10]->load(), tapPosParams_[11]->load(),
+                tapPosParams_[12]->load(), tapPosParams_[13]->load(),
+                tapGainParams_[0]->load(), tapGainParams_[1]->load(), tapGainParams_[2]->load(),
+                tapGainParams_[3]->load(), tapGainParams_[4]->load(), tapGainParams_[5]->load(),
+                tapGainParams_[6]->load(), tapGainParams_[7]->load(), tapGainParams_[8]->load(),
+                tapGainParams_[9]->load(), tapGainParams_[10]->load(), tapGainParams_[11]->load(),
+                tapGainParams_[12]->load(), tapGainParams_[13]->load());
+        }
+        else
+        {
+            // Preset loaded — apply tap_gain params on top of preset's tap positions,
+            // but only if any gain differs from 1.0 (to avoid unnecessary processing).
+            bool anyGainChanged = false;
+            float gains[14];
+            for (int i = 0; i < 14; ++i)
+            {
+                gains[i] = tapGainParams_[i]->load();
+                if (std::abs (gains[i] - 1.0f) > 0.001f)
+                    anyGainChanged = true;
+            }
+            if (anyGainChanged)
+                engine_.applyTapGains (gains[0], gains[1], gains[2], gains[3], gains[4], gains[5], gains[6],
+                                       gains[7], gains[8], gains[9], gains[10], gains[11], gains[12], gains[13]);
+        }
+    }
+
+    // Per-preset peak limiter on DattorroTank output (0 dB = disabled).
+    // Must be set AFTER preset loading (which may call applyAlgorithmConfig).
+    engine_.setDattorroLimiter (limiterThreshParam_->load(), 2.0f);
+
     // Sub-block processing for smooth parameter transitions
     int samplesRemaining = numSamples;
     int offset = 0;
@@ -374,6 +528,11 @@ void DuskVerbProcessor::setStateXML (const juce::XmlElement& xml)
         float trim = static_cast<float> (parameters.state.getProperty ("gainTrim", 0.0f));
         engine_.setGainTrim (trim);
     }
+}
+
+void DuskVerbProcessor::setCustomERTaps (const CustomERTap* taps, int numTaps)
+{
+    engine_.setCustomERTaps (taps, numTaps);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

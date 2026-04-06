@@ -195,7 +195,7 @@ void EarlyReflections::setDecorrCoeff (float coeff)
     decorrCoeff_.store (std::clamp (coeff, 0.0f, 0.7f), std::memory_order_release);
 }
 
-void EarlyReflections::setCustomTaps (const CustomERTap* taps, int numTaps)
+void EarlyReflections::setCustomTaps (const CustomERTap* taps, int numTaps, float preDelayMs)
 {
     if (numTaps <= 0 || taps == nullptr)
     {
@@ -213,22 +213,17 @@ void EarlyReflections::setCustomTaps (const CustomERTap* taps, int numTaps)
 
     for (int i = 0; i < numCustomTaps_; ++i)
     {
+        // VV-extracted tap times are absolute (from IR start, including VV's pre-delay).
+        // Since the ER engine receives already-pre-delayed input, subtract DV's
+        // pre-delay to match absolute timing.
+        float adjustedDelayMs = taps[i].delayMs - preDelayMs;
         customTaps_[i].delaySamples = std::clamp (
-            static_cast<int> (taps[i].delayMs * 0.001f * sr),
+            static_cast<int> (adjustedDelayMs * 0.001f * sr),
             1, static_cast<int> (maxDelaySamples));
         customTaps_[i].gain = taps[i].amplitude;
         customTaps_[i].channel = (taps[i].channel == 0) ? 0 : 1;
         customTaps_[i].lpState = 0.0f;
     }
-
-    // Normalize so absolute gains sum to 1.0 (matching generated ER normalization).
-    // This ensures erLevelScale controls the final level identically in both modes.
-    float absSum = 0.0f;
-    for (int i = 0; i < numCustomTaps_; ++i)
-        absSum += std::abs (customTaps_[i].gain);
-    if (absSum > 0.0f)
-        for (int i = 0; i < numCustomTaps_; ++i)
-            customTaps_[i].gain /= absSum;
 
     useCustomTaps_ = true;
 

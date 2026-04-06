@@ -35,6 +35,8 @@ public:
     void setBassMultiply (float mult);
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
+    void setHighCrossoverFreq (float hz);
+    void setAirDampingScale (float scale);
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -42,6 +44,23 @@ public:
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
     void setHallScale (bool enable);   // Switch to hall-scale delay lengths (2x room)
+    // Output tap specification (moved to public for per-algorithm configuration)
+    struct OutputTap
+    {
+        int bufferIndex;     // Which delay buffer (0-5: L/R delay1/delay2/AP2)
+        float positionFrac;  // Fractional position (0.0-1.0) within the delay
+        float sign;          // ±1.0 for decorrelation
+        float gain;          // Per-tap amplitude (0.0-2.0). Shapes onset envelope.
+                             // < 1.0 attenuates (slows onset), > 1.0 boosts (faster onset).
+                             // Default 1.0 = equal weight (original behavior).
+    };
+
+    void setOutputTaps (const OutputTap* left, const OutputTap* right);
+    void applyTapGains (const float* leftGains, const float* rightGains);  // Update gain field only
+    void setNoiseModDepth (float samples);
+    void setDelayScale (float scale);  // Multiplies ALL base delays (controls loop length)
+    void setSoftOnsetMs (float ms);    // Output onset smoothing time (0 = off)
+    void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
     void clearBuffers();
 
 private:
@@ -71,7 +90,7 @@ private:
     static constexpr int kRightDel2Base = 1559;   // ~35.3ms delay
 
     // Worst-case base delay for buffer allocation (hall-scale is larger)
-    static constexpr int kMaxBaseDelay = 4507;
+    static constexpr int kMaxBaseDelay = 18028;  // 4507 * 4 (max delayScale=4.0)
 
     // -----------------------------------------------------------------------
     // Circular delay line with power-of-2 masking.
@@ -134,6 +153,8 @@ private:
 
     // Hall-scale delays: ~2x room for 1-12s RT60 (all prime, coprime to room delays)
     // Total loop: left=12161 (275.8ms), right=12559 (284.8ms)
+    // Per-algorithm temporal scaling is done via sizeRange in AlgorithmConfig,
+    // NOT by changing these base constants.
     static constexpr int kLeftAP1BaseHall  = 709;    // ~16.1ms
     static constexpr int kLeftDel1BaseHall = 4507;   // ~102.2ms
     static constexpr int kLeftAP2BaseHall  = 1871;   // ~42.4ms
@@ -163,8 +184,8 @@ private:
         Allpass densityAP[kNumDensityAPs];
         int densityAPBase[kNumDensityAPs] = {};
 
-        // Two-band damping
-        TwoBandDamping damping;
+        // Three-band damping (bass / mid / air with independent per-band decay)
+        ThreeBandDamping damping;
 
         // Static allpass (decay diffusion 2)
         Allpass ap2;
@@ -189,39 +210,29 @@ private:
     Tank rightTank_;
 
     // -----------------------------------------------------------------------
-    // Output taps: fractional positions within delay lines for stereo output.
-    // Each tap specifies which delay buffer to read from (encoded as an index),
-    // a fractional position within that buffer, and a sign (±1).
-    //
+    // Default output tap positions (early Dattorro-style, read from both tanks).
     // Tap indices: 0=leftDelay1, 1=leftDelay2, 2=leftAP2,
     //              3=rightDelay1, 4=rightDelay2, 5=rightAP2
-    struct OutputTap
-    {
-        int bufferIndex;     // Which delay buffer (0-5)
-        float positionFrac;  // Fractional position (0.0-1.0) within the delay
-        float sign;          // ±1.0 for decorrelation
-    };
-
     // 7 taps per channel, tapping from BOTH tanks for stereo decorrelation.
     // Positions are fractions of each delay's current length, so they scale with size.
     static constexpr OutputTap kLeftOutputTaps[kNumOutputTaps] = {
-        { 3, 0.120f,  1.0f },  // right delay1, early
-        { 3, 0.675f,  1.0f },  // right delay1, late
-        { 5, 0.480f, -1.0f },  // right AP2
-        { 0, 0.450f,  1.0f },  // left delay1, mid
-        { 1, 0.540f, -1.0f },  // left delay2, mid
-        { 2, 0.210f, -1.0f },  // left AP2
-        { 4, 0.310f, -1.0f },  // right delay2, early
+        { 3, 0.120f,  1.0f, 1.0f },  // right delay1, early
+        { 3, 0.675f,  1.0f, 1.0f },  // right delay1, late
+        { 5, 0.480f, -1.0f, 1.0f },  // right AP2
+        { 0, 0.450f,  1.0f, 1.0f },  // left delay1, mid
+        { 1, 0.540f, -1.0f, 1.0f },  // left delay2, mid
+        { 2, 0.210f, -1.0f, 1.0f },  // left AP2
+        { 4, 0.310f, -1.0f, 1.0f },  // right delay2, early
     };
 
     static constexpr OutputTap kRightOutputTaps[kNumOutputTaps] = {
-        { 0, 0.140f,  1.0f },  // left delay1, early
-        { 0, 0.710f,  1.0f },  // left delay1, late
-        { 2, 0.520f, -1.0f },  // left AP2
-        { 3, 0.410f,  1.0f },  // right delay1, mid
-        { 4, 0.580f, -1.0f },  // right delay2, mid
-        { 5, 0.240f, -1.0f },  // right AP2
-        { 1, 0.350f, -1.0f },  // left delay2, early
+        { 0, 0.140f,  1.0f, 1.0f },  // left delay1, early
+        { 0, 0.710f,  1.0f, 1.0f },  // left delay1, late
+        { 2, 0.520f, -1.0f, 1.0f },  // left AP2
+        { 3, 0.410f,  1.0f, 1.0f },  // right delay1, mid
+        { 4, 0.580f, -1.0f, 1.0f },  // right delay2, mid
+        { 5, 0.240f, -1.0f, 1.0f },  // right AP2
+        { 1, 0.350f, -1.0f, 1.0f },  // left delay2, early
     };
 
     // -----------------------------------------------------------------------
@@ -242,6 +253,8 @@ private:
     float bassMultiply_ = 1.0f;
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
+    float highCrossoverFreq_ = 20000.0f;  // Second crossover for 3-band damping (Hz)
+    float airDampingScale_ = 1.0f;        // Independent HF air band damping multiplier
     float modDepthSamples_ = 8.0f;  // Peak excursion in samples
     float lastModDepthRaw_ = 0.5f;  // Raw 0-1 depth before sample rate scaling
     float modRateHz_ = 1.0f;
@@ -249,17 +262,28 @@ private:
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
     float lateGainScale_ = 1.0f;
+    float delayScale_ = 1.0f;  // Global delay multiplier (set before prepare)
+    float softOnsetMs_ = 0.0f;    // Output onset ramp time (ms). Smooths early transient spike.
+    float softOnsetCoeff_ = 1.0f; // Per-sample increment for onset ramp
+    float softOnsetEnvL_ = 0.0f;  // Current ramp value
+
+    // Peak limiter: reduces transient peaks while preserving RMS (lowers crest factor).
+    float limiterThreshold_ = 0.0f;      // 0 = disabled. Linear amplitude threshold.
+    float limiterReleaseCoeff_ = 0.999f;  // One-pole release coefficient (~50ms at 48kHz)
+    float limiterEnv_ = 0.0f;             // Current peak envelope
+
     bool frozen_ = false;
     bool prepared_ = false;
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
     float decayDiff2_ = 0.50f;   // Static allpass feedback
-    float densityDiffCoeff_ = 0.25f; // Density cascade allpass coefficient (low to minimize spectral coloration)
+    float densityDiffCoeff_ = 0.18f;  // Density cascade feedback (higher = more echo density)
 
     // Per-sample noise modulation: random jitter on delay reads.
     // Complements the slow sinusoidal LFO with fast aperiodic mode blurring.
     float noiseModDepth_ = 2.0f;  // Peak jitter in samples (at 44100 Hz base)
+    float independentNoiseModDepth_ = -1.0f;  // Independent noise jitter (-1 = use modDepth-coupled value)
 
     void updateDelayLengths();
     void updateDecayCoefficients();
@@ -267,4 +291,9 @@ private:
 
     // Resolves an output tap to an actual sample offset for the current delay lengths.
     float readOutputTap (const OutputTap& tap) const;
+
+    // Per-algorithm configurable output taps (override static defaults)
+    OutputTap customLeftTaps_[kNumOutputTaps] {};
+    OutputTap customRightTaps_[kNumOutputTaps] {};
+    bool useCustomTaps_ = false;
 };
