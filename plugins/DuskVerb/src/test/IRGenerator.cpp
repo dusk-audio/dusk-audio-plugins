@@ -77,12 +77,9 @@ int main()
         return 1;
     }
 
-    std::unique_ptr<juce::OutputStream> outputStream (fileStream.release());
-    auto writer = wavFormat.createWriterFor (outputStream,
-        juce::AudioFormatWriterOptions{}
-            .withSampleRate (sampleRate)
-            .withNumChannels (2)
-            .withBitsPerSample (24));
+    auto* outputStream = fileStream.release();
+    std::unique_ptr<juce::AudioFormatWriter> writer (wavFormat.createWriterFor (outputStream,
+        sampleRate, 2, 24, {}, 0));
 
     if (writer != nullptr)
     {
