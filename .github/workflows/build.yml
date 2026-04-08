@@ -302,6 +302,176 @@ jobs:
           path: artifacts/linux/
           retention-days: 30
 
+  build-linux-arm64:
+    needs: setup
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    container:
+      image: ubuntu:22.04  # glibc 2.35 (Debian bookworm uses 2.36, so this is compatible)
+    steps:
+      - name: Install git and dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates software-properties-common
+
+      - name: Install GCC 11 toolchain
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update
+          apt-get install -y gcc-11 g++-11
+          # Set GCC 11 as default for all compiler symlinks
+          update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+          update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+          update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-11 100
+          update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-11 100
+          gcc --version
+          g++ --version
+
+      - name: Install modern CMake
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y wget
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          apt-get update
+          apt-get install -y cmake
+          cmake --version
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          path: JUCE
+          ref: 8.0.4  # Use JUCE 8.x for modern C++ features
+
+      - name: Install Linux dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            pkg-config \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev
+
+      - name: Configure CMake
+        run: |
+          if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
+            export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
+          fi
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DDUSK_COPY_AFTER_BUILD=OFF \
+            -DJUCE_PATH=$(pwd)/JUCE
+
+      - name: Build plugins
+        run: |
+          if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
+            export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
+          fi
+          TARGET="${{ needs.setup.outputs.plugin_target }}"
+          if [ -n "$TARGET" ]; then
+            echo "Building specific target: $TARGET"
+            cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(nproc)
+          else
+            echo "Building all plugins"
+            cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
+          fi
+
+      - name: Validate plugins
+        shell: bash
+        run: |
+          echo "=== Validating Linux ARM64 plugin builds ==="
+          found_vst3=0
+          found_lv2=0
+
+          while IFS= read -r -d '' vst3; do
+            if ! ls "$vst3/Contents/aarch64-linux/"*.so >/dev/null 2>&1; then
+              echo "⊘ Skipping (no binary): $vst3"
+              continue
+            fi
+            echo "✓ Found: $vst3"
+            found_vst3=1
+            echo "  ✓ Binary exists"
+          done < <(find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null)
+
+          while IFS= read -r -d '' lv2; do
+            if ! ls "$lv2/"*.so >/dev/null 2>&1; then
+              echo "⊘ Skipping (no binary): $lv2"
+              continue
+            fi
+            echo "✓ Found: $lv2"
+            found_lv2=1
+            if [ -f "$lv2/manifest.ttl" ]; then
+              echo "  ✓ Binary and manifest exist"
+            else
+              echo "  ⚠ Missing manifest.ttl"
+            fi
+          done < <(find build/lib build/bin build/plugins -name "*.lv2" -type d -print0 2>/dev/null)
+
+          if [ $found_vst3 -eq 0 ]; then
+            echo "✗ No VST3 plugins found!"
+            exit 1
+          fi
+
+          if [ $found_lv2 -eq 0 ]; then
+            echo "✗ No LV2 plugins found!"
+            exit 1
+          fi
+
+          echo "=== Validation passed ==="
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts/linux-arm64/VST3 artifacts/linux-arm64/LV2
+
+          find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
+            if ls "$vst3/Contents/aarch64-linux/"*.so >/dev/null 2>&1; then
+              cp -r "$vst3" artifacts/linux-arm64/VST3/
+            fi
+          done
+
+          find build/lib build/bin build/plugins -name "*.lv2" -type d -print0 2>/dev/null | while IFS= read -r -d '' lv2; do
+            if ls "$lv2/"*.so >/dev/null 2>&1; then
+              cp -r "$lv2" artifacts/linux-arm64/LV2/
+            fi
+          done
+
+          echo "=== Linux ARM64 Artifacts ==="
+          find artifacts/linux-arm64 -type f -name "*.so" | head -20
+
+      - name: Upload Linux ARM64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-linux-arm64
+          path: artifacts/linux-arm64/
+          retention-days: 30
+
   build-windows:
     needs: setup
     runs-on: windows-latest
@@ -630,7 +800,7 @@ jobs:
 
   # Create release when a tag is pushed
   release:
-    needs: [setup, build-linux, build-windows, build-macos]
+    needs: [setup, build-linux, build-linux-arm64, build-windows, build-macos]
     runs-on: ubuntu-latest
     if: needs.setup.outputs.is_release == 'true'
     permissions:
@@ -680,6 +850,18 @@ jobs:
           zip -r "../../${SLUG}-linux.zip" .
           cd ..
 
+          # Linux ARM64: Create zip with VST3/ and LV2/ folders at root
+          mkdir -p linux-arm64-release
+          if [ -d "plugins-linux-arm64/VST3" ]; then
+            cp -r plugins-linux-arm64/VST3 linux-arm64-release/
+          fi
+          if [ -d "plugins-linux-arm64/LV2" ]; then
+            cp -r plugins-linux-arm64/LV2 linux-arm64-release/
+          fi
+          cd linux-arm64-release
+          zip -r "../../${SLUG}-linux-arm64.zip" .
+          cd ..
+
           # Windows: Create zip with VST3/ folder at root
           mkdir -p windows-release
           if [ -d "plugins-windows/VST3" ]; then
@@ -707,6 +889,9 @@ jobs:
           echo ""
           echo "=== Linux archive contents ==="
           unzip -l "../${SLUG}-linux.zip" | head -30
+          echo ""
+          echo "=== Linux ARM64 archive contents ==="
+          unzip -l "../${SLUG}-linux-arm64.zip" | head -30
           echo ""
           echo "=== Windows archive contents ==="
           unzip -l "../${SLUG}-windows.zip" | head -30
@@ -742,7 +927,12 @@ jobs:
             echo ""
             echo "Each zip contains \`VST3/\` and \`LV2/\` (Linux) or \`AU/\` (macOS) folders."
             echo ""
-            echo "**Linux:**"
+            echo "**Linux (x86_64):**"
+            echo "- VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`"
+            echo "- LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`"
+            echo ""
+            echo "**Linux (ARM64 / Raspberry Pi):**"
+            echo "- Download the \`-linux-arm64.zip\` file"
             echo "- VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`"
             echo "- LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`"
             echo ""
