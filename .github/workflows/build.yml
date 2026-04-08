@@ -62,8 +62,13 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             IS_RELEASE="true"
             # Extract version from tag (e.g., "4k-eq-v1.0.5" -> "1.0.5")
-            VERSION=$(echo "$TAG" | sed 's/.*-v//')
-            echo "Extracted version from tag: $VERSION"
+            # Only extract if it's a plugin-specific tag, not a bare v* tag
+            RAW_VERSION=$(echo "$TAG" | sed 's/.*-v//')
+            # Validate it's a clean semver (digits and dots only)
+            if [[ "$RAW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              VERSION="$RAW_VERSION"
+            fi
+            echo "Extracted version from tag: ${VERSION:-<default>}"
 
             if [[ "$TAG" == 4k-eq-v* ]]; then
               TARGET="FourKEQ_All"
@@ -320,10 +325,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          # Ubuntu 22.04 ships GCC 11 natively — no PPA needed
           apt-get update
           apt-get install -y gcc-11 g++-11
-          # Set GCC 11 as default for all compiler symlinks
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
           update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
           update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-11 100
@@ -335,7 +339,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get install -y wget
+          apt-get install -y wget gpg
           wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
           apt-get update
