@@ -56,7 +56,7 @@ juce_add_plugin(DuskVerb
     LV2URI "https://dusk-audio.github.io/plugins/duskverb"
     PRODUCT_NAME "DuskVerb"
     DESCRIPTION "Algorithmic reverb with Hadamard FDN"
-    VST3_CAN_REPLACE_VST2 TRUE
+    VST3_CAN_REPLACE_VST2 FALSE
     VST3_AUTO_MANIFEST FALSE
 )
 
@@ -91,6 +91,8 @@ target_compile_definitions(DuskVerb
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
 )
 
 # Set version compile definitions (from git tag or CI)
