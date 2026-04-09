@@ -34,6 +34,8 @@ on:
 
 env:
   BUILD_TYPE: Release
+  # Disable unreleased plugins for all-plugin builds to reduce build time
+  UNRELEASED_PLUGIN_FLAGS: "-DBUILD_GROOVEMIND=OFF -DBUILD_SPECTRUM_ANALYZER=OFF -DBUILD_MULTI_SYNTH=OFF -DBUILD_DUSKAMP=OFF"
 
 jobs:
   # Determine which plugin(s) to build based on tag
@@ -210,10 +212,15 @@ jobs:
           if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
             export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
           fi
+          EXTRA_FLAGS=""
+          if [ -z "${{ needs.setup.outputs.plugin_target }}" ]; then
+            EXTRA_FLAGS="${{ env.UNRELEASED_PLUGIN_FLAGS }}"
+          fi
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DDUSK_COPY_AFTER_BUILD=OFF \
-            -DJUCE_PATH=$(pwd)/JUCE
+            -DJUCE_PATH=$(pwd)/JUCE \
+            $EXTRA_FLAGS
 
       - name: Build plugins
         run: |
@@ -387,10 +394,15 @@ jobs:
           if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
             export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
           fi
+          EXTRA_FLAGS=""
+          if [ -z "${{ needs.setup.outputs.plugin_target }}" ]; then
+            EXTRA_FLAGS="${{ env.UNRELEASED_PLUGIN_FLAGS }}"
+          fi
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DDUSK_COPY_AFTER_BUILD=OFF \
-            -DJUCE_PATH=$(pwd)/JUCE
+            -DJUCE_PATH=$(pwd)/JUCE \
+            $EXTRA_FLAGS
 
       - name: Build plugins
         run: |
@@ -501,12 +513,17 @@ jobs:
           if ("${{ needs.setup.outputs.plugin_version }}") {
             $env:PLUGIN_VERSION_OVERRIDE = "${{ needs.setup.outputs.plugin_version }}"
           }
+          $extraFlags = @()
+          if (-not "${{ needs.setup.outputs.plugin_target }}") {
+            $extraFlags = @("-DBUILD_GROOVEMIND=OFF", "-DBUILD_SPECTRUM_ANALYZER=OFF", "-DBUILD_MULTI_SYNTH=OFF", "-DBUILD_DUSKAMP=OFF")
+          }
           cmake -B build -G Ninja `
             -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DDUSK_COPY_AFTER_BUILD=OFF `
             -DBUILD_LV2=OFF `
-            -DJUCE_PATH=${{ github.workspace }}/JUCE
+            -DJUCE_PATH=${{ github.workspace }}/JUCE `
+            @extraFlags
 
       - name: Build plugins
         run: |
@@ -607,12 +624,17 @@ jobs:
           if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
             export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
           fi
+          EXTRA_FLAGS=""
+          if [ -z "${{ needs.setup.outputs.plugin_target }}" ]; then
+            EXTRA_FLAGS="${{ env.UNRELEASED_PLUGIN_FLAGS }}"
+          fi
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DDUSK_COPY_AFTER_BUILD=OFF \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" \
-            -DJUCE_PATH=${{ github.workspace }}/JUCE
+            -DJUCE_PATH=${{ github.workspace }}/JUCE \
+            $EXTRA_FLAGS
 
       - name: Build plugins
         run: |
