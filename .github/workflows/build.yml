@@ -131,7 +131,7 @@ jobs:
   build-linux:
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     container:
       image: ubuntu:20.04  # Use Ubuntu 20.04 for glibc 2.31 (widest compatibility)
     steps:
@@ -310,7 +310,7 @@ jobs:
   build-linux-arm64:
     needs: setup
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 60
     container:
       image: ubuntu:22.04  # glibc 2.35 (Debian bookworm uses 2.36, so this is compatible)
     steps:
@@ -479,7 +479,7 @@ jobs:
   build-windows:
     needs: setup
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -588,7 +588,7 @@ jobs:
   build-macos:
     needs: setup
     runs-on: macos-14  # ARM64 runner (M1)
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
