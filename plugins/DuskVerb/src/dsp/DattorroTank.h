@@ -61,6 +61,10 @@ public:
     void setDelayScale (float scale);  // Multiplies ALL base delays (controls loop length)
     void setSoftOnsetMs (float ms);    // Output onset smoothing time (0 = off)
     void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
+    void setDecayBoost (float boost);
+    void setCrossoverModDepth (float depth);
+    void setStructuralHFDamping (float hz);
+    void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
 private:
@@ -274,6 +278,18 @@ private:
 
     bool frozen_ = false;
     bool prepared_ = false;
+
+    float decayBoost_ = 1.0f;
+    float crossoverModDepth_ = 0.0f;
+    float baseLowCrossoverCoeff_ = 0.85f;
+    float structHFCoeff_ = 0.0f;
+    float structHFStateL_ = 0.0f;
+    float structHFStateR_ = 0.0f;
+    float terminalDecayThresholdDB_ = -40.0f;
+    float terminalDecayFactor_ = 1.0f;
+    float peakRMS_ = 0.0f;
+    float currentRMS_ = 0.0f;
+    bool terminalDecayActive_ = false;
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
