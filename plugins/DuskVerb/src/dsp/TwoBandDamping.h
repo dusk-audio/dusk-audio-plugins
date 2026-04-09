@@ -60,6 +60,9 @@ public:
         lpCoeff2_ = highCrossoverCoeff;
     }
 
+    void setLowCrossoverCoeff (float coeff) { lpCoeff1_ = coeff; }
+    void setHighCrossoverCoeff (float coeff) { lpCoeff2_ = coeff; }
+
     float process (float input)
     {
         // LP1: split into low band and mid+high

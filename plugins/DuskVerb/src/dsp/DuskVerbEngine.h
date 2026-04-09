@@ -7,6 +7,7 @@
 #include "FDNReverb.h"
 #include "OutputDiffusion.h"
 #include "QuadTank.h"
+#include "TailChorus.h"
 
 #include <cmath>
 #include <vector>
@@ -80,6 +81,26 @@ public:
                         float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6);
     void setCustomERTaps (const CustomERTap* taps, int numTaps);
     void loadPresetERTaps (const char* presetName);  // Looks up VV-extracted taps by name
+
+    // --- Optimizer-tunable overrides (runtime parameter → sub-component forwarding) ---
+    void setAirDampingOverride (float scale);
+    void setHighCrossoverOverride (float hz);
+    void setNoiseModOverride (float samples);
+    void setInlineDiffusionOverride (float coeff);
+    void setStereoCouplingOverride (float amount);
+    void setChorusDepthOverride (float depth);
+    void setChorusRateOverride (float hz);
+    void setOutputGainOverride (float gain);
+    void setERCrossfeedOverride (float amount);
+    void setDecayTimeScaleOverride (float scale);
+    void setDecayBoostOverride (float dB);
+    void setStructuralHFDampingOverride (float hz);
+    void setOutputLowShelfOverride (float dB);
+    void setOutputHighShelfOverride (float dB, float hz);
+    void setOutputMidEQOverride (float dB, float hz);
+    void setTerminalDecayOverride (float thresholdDb, float factor);
+    void setERairCeilingOverride (float hz);
+    void setERAirFloorOverride (float hz);
 
 private:
     DiffusionStage diffuser_;
@@ -217,6 +238,16 @@ private:
     float rmsSumL_ = 0.0f;
     float rmsSumR_ = 0.0f;
     int rmsIndex_ = 0;
+
+    // Tail chorus: stereo amplitude modulation on reverb tail
+    TailChorus tailChorus_;
+
+    // Terminal decay: when reverb tail drops below threshold, accelerate decay
+    float terminalThresholdDb_ = 0.0f; // 0 = disabled
+    float terminalFactor_ = 0.992f;
+
+    // Decay time scale override: runtime multiplier (0 = use config default)
+    float decayTimeScaleOverride_ = 0.0f;
 
     // Late feed-forward: pre-diffusion late reverb blended into output
     float lateFeedForwardLevel_ = 0.0f;

@@ -42,6 +42,10 @@ public:
     void setFreeze (bool frozen);
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
+    void setDecayBoost (float boost);
+    void setCrossoverModDepth (float depth);
+    void setStructuralHFDamping (float hz);
+    void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
 private:
@@ -228,6 +232,17 @@ private:
     float lateGainScale_ = 1.0f;
     bool frozen_ = false;
     bool prepared_ = false;
+
+    float decayBoost_ = 1.0f;
+    float crossoverModDepth_ = 0.0f;
+    float baseLowCrossoverCoeff_ = 0.85f;
+    float structHFCoeff_ = 0.0f;
+    float structHFState_[4] {};
+    float terminalDecayThresholdDB_ = -40.0f;
+    float terminalDecayFactor_ = 1.0f;
+    float peakRMS_ = 0.0f;
+    float currentRMS_ = 0.0f;
+    bool terminalDecayActive_ = false;
 
     float decayDiff1_ = 0.70f;
     float decayDiff2_ = 0.50f;

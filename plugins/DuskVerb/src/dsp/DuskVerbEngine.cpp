@@ -8,6 +8,11 @@
 #include <cmath>
 #include <cstring>
 
+// Forward declaration (defined below updateOutputEQCoeffs)
+static void computeShelfCoeffs (float& b0, float& b1, float& b2,
+                                 float& a1, float& a2,
+                                 float sr, float freqHz, float gainDB, bool isHighShelf);
+
 // ---------------------------------------------------------------------------
 // Note: Hall tap tables replaced by dynamic generation via setMultiPointDensity().
 // Static tables removed to reduce file size — the dynamic approach generates
@@ -25,6 +30,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     hybridQuadTank_.prepare (sampleRate, maxBlockSize);
     outputDiffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
+    tailChorus_.prepare (sampleRate, maxBlockSize);
 
     scratchL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     scratchR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -246,6 +252,25 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         dcX1R_ = scratchR_[si];
         dcY1R_ = dcOutR;
         scratchR_[si] = dcOutR;
+    }
+
+    // Tail chorus: stereo AM on late reverb (before scaling/diffusion)
+    tailChorus_.process (scratchL_.data(), scratchR_.data(), numSamples);
+
+    // Terminal decay: accelerate tail below threshold (perceptual tail shaping)
+    if (terminalThresholdDb_ < -0.1f)
+    {
+        float threshLin = std::pow (10.0f, terminalThresholdDb_ / 20.0f);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            float pk = std::max (std::abs (scratchL_[si]), std::abs (scratchR_[si]));
+            if (pk < threshLin)
+            {
+                scratchL_[si] *= terminalFactor_;
+                scratchR_[si] *= terminalFactor_;
+            }
+        }
     }
 
     // Scale late reverb and ER SEPARATELY. ERs bypass the output diffuser
@@ -689,7 +714,8 @@ void DuskVerbEngine::applyAlgorithm (int index)
 void DuskVerbEngine::setDecayTime (float seconds)
 {
     decayTime_ = seconds;
-    float scaledDecay = seconds * config_->decayTimeScale;
+    float dts = (decayTimeScaleOverride_ > 0.0f) ? decayTimeScaleOverride_ : config_->decayTimeScale;
+    float scaledDecay = seconds * dts;
     fdn_.setDecayTime (scaledDecay);
     dattorroTank_.setDecayTime (scaledDecay);
     quadTank_.setDecayTime (scaledDecay);
@@ -897,6 +923,144 @@ void DuskVerbEngine::setDattorroLimiter (float thresholdDb, float releaseMs)
     outputLimiterThreshold_ = std::pow (10.0f, thresholdDb / 20.0f);
     float releaseSamples = releaseMs * 0.001f * static_cast<float> (sampleRate_);
     outputLimiterRelease_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+}
+
+// --- Optimizer-tunable overrides ---
+
+void DuskVerbEngine::setAirDampingOverride (float scale)
+{
+    fdn_.setAirTrebleMultiply (scale);
+    dattorroTank_.setAirDampingScale (scale);
+    quadTank_.setAirDampingScale (scale);
+}
+
+void DuskVerbEngine::setHighCrossoverOverride (float hz)
+{
+    fdn_.setHighCrossoverFreq (hz);
+    dattorroTank_.setHighCrossoverFreq (hz);
+    quadTank_.setHighCrossoverFreq (hz);
+}
+
+void DuskVerbEngine::setNoiseModOverride (float samples)
+{
+    fdn_.setNoiseModDepth (samples);
+    dattorroTank_.setNoiseModDepth (samples);
+}
+
+void DuskVerbEngine::setInlineDiffusionOverride (float coeff)
+{
+    fdn_.setInlineDiffusion (coeff);
+}
+
+void DuskVerbEngine::setStereoCouplingOverride (float amount)
+{
+    fdn_.setStereoCoupling (amount);
+}
+
+void DuskVerbEngine::setChorusDepthOverride (float depth)
+{
+    tailChorus_.setDepth (depth);
+}
+
+void DuskVerbEngine::setChorusRateOverride (float hz)
+{
+    tailChorus_.setRate (hz);
+}
+
+void DuskVerbEngine::setOutputGainOverride (float gain)
+{
+    outputGainSmoother_.setTarget (gain);
+}
+
+void DuskVerbEngine::setERCrossfeedOverride (float amount)
+{
+    erCrossfeed_ = amount;
+}
+
+void DuskVerbEngine::setDecayTimeScaleOverride (float scale)
+{
+    decayTimeScaleOverride_ = scale;
+    // Re-apply decay with new scale
+    setDecayTime (decayTime_);
+}
+
+void DuskVerbEngine::setDecayBoostOverride (float boost)
+{
+    fdn_.setDecayBoost (boost);
+    dattorroTank_.setDecayBoost (boost);
+    quadTank_.setDecayBoost (boost);
+    if (hybridConfig_) hybridQuadTank_.setDecayBoost (boost);
+}
+
+void DuskVerbEngine::setStructuralHFDampingOverride (float hz)
+{
+    fdn_.setStructuralHFDamping (hz, lastTrebleMult_);
+}
+
+void DuskVerbEngine::setOutputLowShelfOverride (float dB)
+{
+    float sr = static_cast<float> (sampleRate_);
+    lowShelfEnabled_ = (dB != 0.0f);
+    if (lowShelfEnabled_)
+        computeShelfCoeffs (lowShelfFilter_.b0, lowShelfFilter_.b1, lowShelfFilter_.b2,
+                            lowShelfFilter_.a1, lowShelfFilter_.a2,
+                            sr, 250.0f, dB, false);
+    else
+        lowShelfFilter_.reset();
+}
+
+void DuskVerbEngine::setOutputHighShelfOverride (float dB, float hz)
+{
+    float sr = static_cast<float> (sampleRate_);
+    highShelfEnabled_ = (dB != 0.0f);
+    if (highShelfEnabled_)
+        computeShelfCoeffs (highShelfFilter_.b0, highShelfFilter_.b1, highShelfFilter_.b2,
+                            highShelfFilter_.a1, highShelfFilter_.a2,
+                            sr, hz, dB, true);
+    else
+        highShelfFilter_.reset();
+}
+
+void DuskVerbEngine::setOutputMidEQOverride (float dB, float hz)
+{
+    float sr = static_cast<float> (sampleRate_);
+    midEQEnabled_ = (dB != 0.0f);
+    if (midEQEnabled_)
+    {
+        float A = std::pow (10.0f, dB / 40.0f);
+        float omega = 6.283185307179586f * hz / sr;
+        float sn = std::sin (omega);
+        float cs = std::cos (omega);
+        float Q = 0.7f; // Default Q for override
+        float alpha = sn / (2.0f * Q);
+
+        float a0 = 1.0f + alpha / A;
+        midEQFilter_.b0 = (1.0f + alpha * A) / a0;
+        midEQFilter_.b1 = (-2.0f * cs) / a0;
+        midEQFilter_.b2 = (1.0f - alpha * A) / a0;
+        midEQFilter_.a1 = (-2.0f * cs) / a0;
+        midEQFilter_.a2 = (1.0f - alpha / A) / a0;
+    }
+    else
+    {
+        midEQFilter_.reset();
+    }
+}
+
+void DuskVerbEngine::setTerminalDecayOverride (float thresholdDb, float factor)
+{
+    terminalThresholdDb_ = thresholdDb;
+    terminalFactor_ = factor;
+}
+
+void DuskVerbEngine::setERairCeilingOverride (float hz)
+{
+    er_.setAirAbsorptionCeiling (hz);
+}
+
+void DuskVerbEngine::setERAirFloorOverride (float hz)
+{
+    er_.setAirAbsorptionFloor (hz);
 }
 
 void DuskVerbEngine::updateTapPositions (

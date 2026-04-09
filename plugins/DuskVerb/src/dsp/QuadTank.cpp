@@ -317,6 +317,34 @@ void QuadTank::setSizeRange (float min, float max)
     }
 }
 
+void QuadTank::setDecayBoost (float boost)
+{
+    decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void QuadTank::setCrossoverModDepth (float depth)
+{
+    crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+}
+
+void QuadTank::setStructuralHFDamping (float hz)
+{
+    if (hz <= 0.0f)
+    {
+        structHFCoeff_ = 0.0f;
+        return;
+    }
+    structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
+}
+
+void QuadTank::setTerminalDecay (float thresholdDB, float factor)
+{
+    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayFactor_ = std::clamp (factor, 0.9f, 1.0f);
+}
+
 void QuadTank::clearBuffers()
 {
     for (int t = 0; t < kNumTanks; ++t)
@@ -373,7 +401,7 @@ void QuadTank::updateDecayCoefficients()
             loopLength += static_cast<float> (tank.densityAP[i].delaySamples);
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
-        gBase = std::clamp (gBase, 0.001f, 0.9998f);  // Prevent RT60 collapse or infinite sustain (0.9998 = ~2x more sustain headroom vs 0.9995)
+        gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
         float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         float gMid  = gBase;  // mid band decays at natural rate
         float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);

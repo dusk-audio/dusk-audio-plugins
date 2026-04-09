@@ -930,6 +930,24 @@ void FDNReverb::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
+void FDNReverb::setCrossoverModDepth (float depth)
+{
+    crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+}
+
+void FDNReverb::setDecayBoost (float boost)
+{
+    decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void FDNReverb::setTerminalDecay (float thresholdDB, float factor)
+{
+    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayFactor_ = std::clamp (factor, 0.9f, 1.0f);
+}
+
 void FDNReverb::clearBuffers()
 {
     for (int i = 0; i < N; ++i)
@@ -1052,6 +1070,7 @@ void FDNReverb::updateDecayCoefficients()
         }
         float gBase = std::pow (10.0f, -3.0f * effectiveLength
                                        / (channelRT60 * static_cast<float> (sampleRate_)));
+        gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
 
         // Bass Multiply: g_low = g_base^(1/bassMultiply)
         // bassMultiply > 1.0 → lows sustain longer (g_low > g_base)
