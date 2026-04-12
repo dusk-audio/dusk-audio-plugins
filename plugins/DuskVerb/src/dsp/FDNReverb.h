@@ -69,7 +69,9 @@ private:
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
-    static constexpr int kMaxBaseDelay = 5521;
+    // Must be >= the largest value in any preset delay table.
+    // Currently: kPresetFatSnareHall reaches 6613.
+    static constexpr int kMaxBaseDelay = 6700;
 
     // Mutable delay and tap configuration (initialized to Hall defaults)
     int baseDelays_[N];
