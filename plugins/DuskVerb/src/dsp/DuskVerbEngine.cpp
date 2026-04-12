@@ -995,6 +995,9 @@ void DuskVerbEngine::setDecayBoostOverride (float boost)
 void DuskVerbEngine::setStructuralHFDampingOverride (float hz)
 {
     fdn_.setStructuralHFDamping (hz, lastTrebleMult_);
+    dattorroTank_.setStructuralHFDamping (hz);
+    quadTank_.setStructuralHFDamping (hz);
+    if (hybridConfig_) hybridQuadTank_.setStructuralHFDamping (hz);
 }
 
 void DuskVerbEngine::setOutputLowShelfOverride (float dB)
@@ -1051,6 +1054,10 @@ void DuskVerbEngine::setTerminalDecayOverride (float thresholdDb, float factor)
 {
     terminalThresholdDb_ = thresholdDb;
     terminalFactor_ = factor;
+    fdn_.setTerminalDecay (thresholdDb, factor);
+    dattorroTank_.setTerminalDecay (thresholdDb, factor);
+    quadTank_.setTerminalDecay (thresholdDb, factor);
+    if (hybridConfig_) hybridQuadTank_.setTerminalDecay (thresholdDb, factor);
 }
 
 void DuskVerbEngine::setERairCeilingOverride (float hz)
