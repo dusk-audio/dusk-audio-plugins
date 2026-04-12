@@ -2199,7 +2199,7 @@ static constexpr AlgorithmConfig kPresetSmallVocalHall = {
     0.55f, 0.45f,    // input diffusion
     0.35f,           // output diffusion scale
     20000.0f,        // bandwidth
-    0.65f, 0.85f,    // ER level, time scale
+    0.05f, 0.85f,    // ER level (drastically reduced from 0.65 — was drowning late tail)
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
     0.82f, 1.50f, 1.23f, // damping: treble=0.82, bass=1.23
@@ -2228,7 +2228,7 @@ static constexpr AlgorithmConfig kPresetSmallVocalHall = {
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    0.0f,            // lateOnsetMs
+    0.0f,            // lateOnsetMs (does not move decay_ratio for this preset)
     0.15f,           // lateFeedForwardLevel
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
@@ -2533,9 +2533,9 @@ static constexpr AlgorithmConfig kPresetFatDrums = {
     { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
     0.55f, 0.45f,    // input diffusion
-    0.35f,           // output diffusion scale
+    0.55f,           // output diffusion scale
     20000.0f,        // bandwidth
-    0.65f, 0.85f,    // ER level, time scale
+    0.65f, 0.65f,    // ER level, time scale
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
     0.77f, 1.50f, 1.08f, // damping: treble=0.77, bass=1.08
@@ -2677,9 +2677,9 @@ static constexpr AlgorithmConfig kPresetTightPlate = {
     { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
     0.55f, 0.45f,    // input diffusion
-    0.35f,           // output diffusion scale
+    0.55f,           // output diffusion scale
     20000.0f,        // bandwidth
-    0.65f, 0.85f,    // ER level, time scale
+    0.65f, 0.65f,    // ER level, time scale
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=1.7)
     0.85f, 1.50f, 1.35f, // damping: treble=0.85, bass=1.35
@@ -2773,7 +2773,7 @@ static constexpr AlgorithmConfig kPresetVoxPlate = {
     { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
     { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
     0.55f, 0.45f,    // input diffusion
-    0.35f,           // output diffusion scale
+    0.55f,           // output diffusion scale
     20000.0f,        // bandwidth
     0.65f, 0.85f,    // ER level, time scale
     0.22f,           // late gain (FDN native)
@@ -2806,7 +2806,7 @@ static constexpr AlgorithmConfig kPresetVoxPlate = {
     false,           // no saturation
     0.0f,            // lateOnsetMs
     0.15f,           // lateFeedForwardLevel
-    0.0f,            // crestLimitRatio
+    0.0f,            // crestLimitRatio: disabled (2.5x caused spectral regression)
     0, nullptr,      // custom ER
     nullptr, nullptr,
 };
@@ -2860,8 +2860,8 @@ static constexpr AlgorithmConfig kPresetDarkVocalRoom = {
 };
 
 // Preset "Exciting Snare room" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetExcitingSnareroom = {
-    "PresetExcitingSnareroom",
+static constexpr AlgorithmConfig kPresetExcitingSnareRoom = {
+    "PresetExcitingSnareRoom",
     {   102,   317,   331,   336,   346,   452,   938,  1082,
        1502,  1977,  2437,  3520,  3805,  4749,  5769,  6169 },
     { 0, 2, 5, 6, 8, 11, 12, 15 },
@@ -3284,7 +3284,7 @@ static constexpr AlgorithmConfig kPresetLargeChamber = {
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    0.0f,            // lateOnsetMs
+    80.0f,           // lateOnsetMs: 80ms ramp to reduce body energy (decay_ratio 0.67x→0.80x)
     0.15f,           // lateFeedForwardLevel
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
@@ -3380,7 +3380,7 @@ static constexpr AlgorithmConfig kPresetLiveVoxChamber = {
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    0.0f,            // lateOnsetMs
+    80.0f,           // lateOnsetMs: 80ms ramp to reduce body energy (decay_ratio 0.69x→0.80x)
     0.15f,           // lateFeedForwardLevel
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
@@ -3572,7 +3572,7 @@ static constexpr AlgorithmConfig kPresetSmallChamber2 = {
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    0.0f,            // lateOnsetMs
+    150.0f,          // lateOnsetMs: 150ms ramp to reduce body energy (decay_ratio 0.45x→0.80x)
     0.15f,           // lateFeedForwardLevel
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
@@ -3668,52 +3668,55 @@ static constexpr AlgorithmConfig kPresetThinPlate = {
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    0.0f,            // lateOnsetMs
+    60.0f,           // lateOnsetMs: 60ms ramp (decay_ratio 0.69x->0.80x)
     0.15f,           // lateFeedForwardLevel
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
     nullptr, nullptr,
 };
 
-// Preset "Tiled Room" — Chamber delays + Chamber-matched config
+// Preset "Tiled Room" — QuadTank with Chamber delays (proven 18/20 baseline)
+// QuadTank's 4 cross-coupled allpass loops give passable mod_depth, decay,
+// centroid, and tail_slope. The 4kHz band freq_decay remains a structural
+// limitation (~2.97x vs threshold 0.90).
 static constexpr AlgorithmConfig kPresetTiledRoom = {
     "PresetTiledRoom",
     { 751, 797, 839, 887, 947, 997, 1061, 1123,
-      1187, 1259, 1327, 1409, 1493, 1583, 1669, 1777 },
-    { 0, 3, 5, 7, 8, 10, 12, 15 },
-    { 1, 2, 4, 6, 9, 11, 13, 14 },
-    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
-    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
-    0.75f, 0.625f,   // input diffusion (Chamber values)
+      1187, 1259, 1327, 1409, 1493, 1583, 1669, 1777 },  // Chamber delay lengths
+    { 0, 1, 2, 7, 8, 11, 14, 15 },
+    { 3, 4, 5, 6, 9, 10, 12, 13 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.625f,   // input diffusion (Chamber)
     0.65f,           // output diffusion scale
-    16000.0f,        // bandwidth (Chamber)
-    0.55f, 0.55f,    // ER level, time scale (Chamber)
-    1.23f,           // late gain (Chamber DattorroTank compensation)
-    0.40f, 1.0f,     // mod (Chamber values)
-    0.85f, 1.00f, 1.0f, // damping: treble=0.85 (Chamber), bass=1.0
-    20000.0f,        // high crossover (Chamber)
-    1.0f,            // airDampingScale (Chamber)
+    16000.0f,        // bandwidth
+    0.55f, 0.55f,    // ER level, time scale
+    1.23f,           // late gain (QuadTank Chamber compensation)
+    0.05f, 1.0f,     // mod: 0.05 (low — best spectral match)
+    0.60f, 0.80f, 1.0f, // damping: trebleMultScale=0.60, max=0.80
+    6000.0f,         // high crossover: 6kHz
+    0.50f,           // airDampingScale: 0.50
     0.5f, 1.5f,      // size range
-    0.2f,            // ER crossfeed (Chamber)
-    0.20f,           // inline diffusion (Chamber)
+    0.2f,            // ER crossfeed
+    0.20f,           // inline diffusion
     1.0f,            // mod depth floor
     0.0f,            // structural HF damping
     0.0f,            // structural LF damping
-    5.0f,            // noise mod
+    1.2f,            // noise mod
     0.10f,           // Hadamard perturbation
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
-    false,           // useHouseholderFeedback (Chamber uses DattorroTank, not FDN)
-    true,            // useDattorroTank: ON (Chamber's engine)
-    false,           // useQuadTank: OFF
-    0.88f,           // decay time scale (Chamber's value)
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    0.50f,           // decay time scale: 0.50 (QuadTank sustains long)
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
     0.0f, 0.0f,     // gate: disabled
     12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
-    8.00f,           // output gain
-    -1.0f,           // stereo coupling (full 16x16 Hadamard)
-    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    3.99f,           // output gain
+    0.15f,           // stereo coupling
+    0.0f, +4.5f, 5000.0f, // output EQ: +4.5dB high shelf
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
     0.0f,            // lateOnsetMs
@@ -4564,7 +4567,7 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         &kPresetVocalPlate,
         &kPresetVoxPlate,
         &kPresetDarkVocalRoom,
-        &kPresetExcitingSnareroom,
+        &kPresetExcitingSnareRoom,
         &kPresetFatSnareRoom,
         &kPresetLivelySnareRoom,
         &kPresetLongDark70sSnareRoom,
