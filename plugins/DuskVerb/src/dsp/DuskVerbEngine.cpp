@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include "presets/PresetEngineRegistry.h"
 
 // Forward declaration (defined below updateOutputEQCoeffs)
 static void computeShelfCoeffs (float& b0, float& b1, float& b2,
@@ -28,9 +29,37 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     dattorroTank_.prepare (sampleRate, maxBlockSize);
     quadTank_.prepare (sampleRate, maxBlockSize);
     hybridQuadTank_.prepare (sampleRate, maxBlockSize);
+    tiledRoomReverb_.prepare (sampleRate, maxBlockSize);
     outputDiffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
     tailChorus_.prepare (sampleRate, maxBlockSize);
+
+    // Pre-build every registered per-preset engine ONCE on this (non-audio)
+    // thread so applyAlgorithm() can swap pointers without allocating.
+    // Without this, applyAlgorithm() would call registry.create() and
+    // engine->prepare() (both heap-allocating) on the audio thread during
+    // the algorithm crossfade — a real-time safety violation.
+    // LINKER FIX: directly populate the preset engine registry by calling
+    // the generated forceLinkPresetEngines() stub. This bypasses the
+    // unreliable static-init `PresetEngineRegistrar` mechanism, which
+    // failed because the per-preset .cpp files were being dropped by the
+    // linker (their .o files had no externally-referenced symbols when
+    // compiled into a static library, so dead-strip removed them along
+    // with their static initializers). The stub explicitly registers all
+    // 53 factories on the first call.
+    extern void forceLinkPresetEngines();
+    forceLinkPresetEngines();
+
+    if (prebuiltPresetEngines_.empty())
+    {
+        prebuiltPresetEngines_ = PresetEngineRegistry::instance().instantiateAll();
+    }
+    for (auto& kv : prebuiltPresetEngines_)
+    {
+        if (kv.second)
+            kv.second->prepare (sampleRate, maxBlockSize);
+    }
+    presetEngine_ = nullptr;  // applyAlgorithm() will set the active pointer
 
     scratchL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     scratchR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -49,6 +78,15 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     preDelayWritePos_ = 0;
     preDelayMask_ = bufSize - 1;
     preDelaySamples_ = 0;
+
+    // Pre-allocate RMS tracker buffers so applyAlgorithm() never allocates on the audio thread
+    rmsWindowSamples_ = std::max (1, static_cast<int> (std::round (
+        static_cast<float> (sampleRate) * kRmsWindowMs / 1000.0f)));
+    rmsBufferL_.assign (static_cast<size_t> (rmsWindowSamples_), 0.0f);
+    rmsBufferR_.assign (static_cast<size_t> (rmsWindowSamples_), 0.0f);
+    rmsSumL_ = 0.0f;
+    rmsSumR_ = 0.0f;
+    rmsIndex_ = 0;
 
     // Per-sample smoothers: 5ms time constant (~99% settled in 25ms)
     constexpr float kSmoothTimeMs = 5.0f;
@@ -117,6 +155,22 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     std::memcpy (scratchL_.data(), left,  static_cast<size_t> (numSamples) * sizeof (float));
     std::memcpy (scratchR_.data(), right, static_cast<size_t> (numSamples) * sizeof (float));
 
+    // Fix 1 (decay_ratio): re-trigger onset envelope on silence→signal transition.
+    // This ensures each new transient (note, snare hit) gets a fresh onset ramp
+    // rather than only firing once after algorithm switch.
+    if (useOnsetTable_ && onsetEnvelopePhase_ >= 1.0f)
+    {
+        float inputPeak = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float a = std::abs (left[i]) + std::abs (right[i]);
+            if (a > inputPeak) inputPeak = a;
+        }
+        if (inputPeak > 0.001f && onsetInputWasQuiet_)
+            onsetEnvelopePhase_ = 0.0f;  // re-trigger
+        onsetInputWasQuiet_ = (inputPeak < 0.0001f);
+    }
+
     // Pre-delay
     if (preDelaySamples_ > 0)
     {
@@ -178,8 +232,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // - ERs are unaffected (already captured above)
     // - Steady-state level preserved (FDN reaches same equilibrium)
     // - No tail energy loss (only initial transient is shaped)
+    // Note: onset envelope table is applied to the OUTPUT (after engine), not input.
+    // See "Fix 1 (decay_ratio)" block below the DC blocker.
     if (lateOnsetRamp_ < 1.0f)
     {
+        // Default squared linear ramp for presets without a custom onset table
         for (int i = 0; i < numSamples; ++i)
         {
             auto si = static_cast<size_t> (i);
@@ -207,8 +264,15 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         std::memcpy (hybridR_.data(), scratchR_.data(), static_cast<size_t> (numSamples) * sizeof (float));
     }
 
-    // Late reverb: route to QuadTank (Hall), Dattorro tank (Room), or FDN (others)
-    if (useQuadTank_)
+    // Late reverb: route to per-preset engine first (if registered),
+    // then legacy TiledRoomReverb, then one of the shared engines.
+    if (presetEngine_)
+        presetEngine_->process (scratchL_.data(), scratchR_.data(),
+                                scratchL_.data(), scratchR_.data(), numSamples);
+    else if (useCustomPresetEngine_)
+        tiledRoomReverb_.process (scratchL_.data(), scratchR_.data(),
+                                  scratchL_.data(), scratchR_.data(), numSamples);
+    else if (useQuadTank_)
         quadTank_.process (scratchL_.data(), scratchR_.data(),
                            scratchL_.data(), scratchR_.data(), numSamples);
     else if (useDattorroTank_)
@@ -254,24 +318,32 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         scratchR_[si] = dcOutR;
     }
 
-    // Tail chorus: stereo AM on late reverb (before scaling/diffusion)
-    tailChorus_.process (scratchL_.data(), scratchR_.data(), numSamples);
-
-    // Terminal decay: accelerate tail below threshold (perceptual tail shaping)
-    if (terminalThresholdDb_ < -0.1f)
+    // Fix 1 (decay_ratio): per-preset onset OUTPUT envelope.
+    // Applied to late reverb OUTPUT (not input) so it directly shapes the
+    // energy that the decay_ratio metric measures. The FDN input envelope
+    // doesn't work because feedback recirculation fills the FDN regardless.
+    if (useOnsetTable_ && onsetEnvelopePhase_ < 1.0f)
     {
-        float threshLin = std::pow (10.0f, terminalThresholdDb_ / 20.0f);
         for (int i = 0; i < numSamples; ++i)
         {
             auto si = static_cast<size_t> (i);
-            float pk = std::max (std::abs (scratchL_[si]), std::abs (scratchR_[si]));
-            if (pk < threshLin)
-            {
-                scratchL_[si] *= terminalFactor_;
-                scratchR_[si] *= terminalFactor_;
-            }
+            float idx = onsetEnvelopePhase_ * static_cast<float> (onsetEnvelopeTableSize_ - 1);
+            int i0 = static_cast<int> (idx);
+            int i1 = std::min (i0 + 1, onsetEnvelopeTableSize_ - 1);
+            float frac = idx - static_cast<float> (i0);
+            float env = onsetEnvelopeTable_[i0] * (1.0f - frac)
+                      + onsetEnvelopeTable_[i1] * frac;
+            scratchL_[si] *= env;
+            scratchR_[si] *= env;
+            onsetEnvelopePhase_ = std::min (1.0f, onsetEnvelopePhase_ + onsetEnvelopeInc_);
         }
     }
+
+    // Tail chorus: stereo AM on late reverb (before scaling/diffusion).
+    // NOTE: terminal decay is handled inside each reverb engine's feedback loop
+    // (DattorroTank and FDN track peak/RMS internally). No engine-level post-
+    // processing here — that would double-attenuate the already-decayed signal.
+    tailChorus_.process (scratchL_.data(), scratchR_.data(), numSamples);
 
     // Scale late reverb and ER SEPARATELY. ERs bypass the output diffuser
     // to preserve their sharp transient peaks (matching VV's onset timing).
@@ -339,6 +411,22 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     }
 
     outputDiffuser_.process (scratchL_.data(), scratchR_.data(), numSamples);
+
+    // Fix 4 (spectral): apply per-preset corrective EQ to ER path before add-back.
+    // The same 12-band peaking EQ that the wrapper applies to the late reverb is
+    // now also applied to the ER signal so the combined output is spectrally matched.
+    if (erCorrEQActive_)
+    {
+        for (int s = 0; s < erCorrEQBands_; ++s)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                auto si = static_cast<size_t> (i);
+                erOutL_[si] = erCorrEQ_[s].processL (erOutL_[si]);
+                erOutR_[si] = erCorrEQ_[s].processR (erOutR_[si]);
+            }
+        }
+    }
 
     // Add un-diffused ER back into the signal AFTER output diffusion.
     // This preserves ER transient peaks while late reverb gets the full allpass smearing.
@@ -550,6 +638,73 @@ void DuskVerbEngine::applyAlgorithm (int index)
     config_ = &getAlgorithmConfig (index);
     useDattorroTank_ = config_->useDattorroTank;
     useQuadTank_ = config_->useQuadTank;
+
+    // Per-preset engine lookup: every registered preset engine was already
+    // instantiated and prepared in DuskVerbEngine::prepare() (off the audio
+    // thread). Here we just look up the prebuilt instance and swap a raw
+    // pointer — no allocation, no engine prepare(), so this is real-time
+    // safe to call from process() during the algorithm crossfade.
+    presetEngine_ = nullptr;
+    {
+        auto it = prebuiltPresetEngines_.find (config_->name);
+        if (it != prebuiltPresetEngines_.end() && it->second)
+        {
+            presetEngine_ = it->second.get();
+            // Reset the engine's internal state (LFO phase, filter buffers,
+            // delay lines) so a switch always starts cleanly. clearBuffers()
+            // is required to be allocation-free per PresetEngineBase's
+            // contract.
+            presetEngine_->clearBuffers();
+            // Re-apply full cached runtime state to the engine so it picks up
+            // any parameter changes or overrides that were in effect before the
+            // algorithm switch. Missing setters would leave the engine at its
+            // preset defaults until the next parameter change.
+            presetEngine_->setDecayTime (decayTime_);
+            presetEngine_->setBassMultiply (lastBassMult_);
+            presetEngine_->setTrebleMultiply (lastTrebleMult_);
+            presetEngine_->setModDepth (lastModDepth_);
+            presetEngine_->setModRate (lastModRate_);
+            presetEngine_->setSize (lastSize_);
+            presetEngine_->setCrossoverFreq (lastCrossoverHz_);
+            presetEngine_->setDecayBoost (lastDecayBoost_);
+            presetEngine_->setFreeze (frozen_);
+            presetEngine_->setTerminalDecay (terminalThresholdDb_, terminalFactor_);
+        }
+    }
+
+    // Fix 4 (spectral): ER corrective EQ infrastructure.
+    // The coefficients are populated from the active preset engine but
+    // activation is controlled by a per-preset flag (not yet implemented).
+    // The late-reverb corrEQ is NOT suitable for ERs (different spectral
+    // profile), so this is disabled by default until per-preset ER-specific
+    // corrections are derived.
+    erCorrEQActive_ = false;
+    erCorrEQBands_ = 0;
+
+    // Fix 1 (decay_ratio): populate onset envelope table from preset engine.
+    useOnsetTable_ = false;
+    onsetEnvelopeTable_ = nullptr;
+    onsetEnvelopeTableSize_ = 0;
+    onsetEnvelopePhase_ = 0.0f;
+    onsetEnvelopeInc_ = 0.0f;
+    if (presetEngine_ != nullptr)
+    {
+        const float* table = presetEngine_->getOnsetEnvelopeTable();
+        int tableSize = presetEngine_->getOnsetEnvelopeTableSize();
+        float durationMs = presetEngine_->getOnsetDurationMs();
+        if (table != nullptr && tableSize > 1 && durationMs > 0.0f)
+        {
+            onsetEnvelopeTable_ = table;
+            onsetEnvelopeTableSize_ = tableSize;
+            onsetEnvelopePhase_ = 0.0f;
+            onsetEnvelopeInc_ = 1.0f / (durationMs * 0.001f
+                                        * static_cast<float> (sampleRate_));
+            useOnsetTable_ = true;
+        }
+    }
+
+    // Legacy flag kept for backwards compatibility with TiledRoomReverb.
+    useCustomPresetEngine_ = false;
     enableSaturation_ = config_->enableSaturation;
     lateFeedForwardLevel_ = config_->lateFeedForwardLevel;
     crestLimitRatio_ = config_->crestLimitRatio;
@@ -567,11 +722,9 @@ void DuskVerbEngine::applyAlgorithm (int index)
         hybridQuadTank_.setLateGainScale (hybridConfig_->lateGainScale);
         hybridQuadTank_.clearBuffers();
     }
-    // Recompute RMS window size from current sample rate and reset tracker
-    rmsWindowSamples_ = std::max (1, static_cast<int> (std::round (
-        static_cast<float> (sampleRate_) * kRmsWindowMs / 1000.0f)));
-    rmsBufferL_.assign (static_cast<size_t> (rmsWindowSamples_), 0.0f);
-    rmsBufferR_.assign (static_cast<size_t> (rmsWindowSamples_), 0.0f);
+    // Reset RMS tracker state (buffers already allocated in prepare())
+    std::fill (rmsBufferL_.begin(), rmsBufferL_.end(), 0.0f);
+    std::fill (rmsBufferR_.begin(), rmsBufferR_.end(), 0.0f);
     rmsSumL_ = 0.0f;
     rmsSumR_ = 0.0f;
     rmsIndex_ = 0;
@@ -646,7 +799,9 @@ void DuskVerbEngine::applyAlgorithm (int index)
 
     // Store scaling factors
     erLevelScale_ = config_->erLevelScale;
-    lateGainScale_ = config_->lateGainScale;
+    // When a per-preset engine is active, it applies lateGainScale_ internally
+    // in its own process() output path. DuskVerbEngine must NOT double-apply.
+    lateGainScale_ = presetEngine_ ? 1.0f : config_->lateGainScale;
     erCrossfeed_ = config_->erCrossfeed;
     outputGainSmoother_.setTarget (config_->outputGain);
 
@@ -693,6 +848,8 @@ void DuskVerbEngine::applyAlgorithm (int index)
     dattorroTank_.setNoiseModDepth (config_->noiseModDepth);
     dattorroTank_.setHighCrossoverFreq (config_->highCrossoverHz);
     dattorroTank_.setAirDampingScale (config_->airDampingScale);
+    tiledRoomReverb_.setHighCrossoverFreq (config_->highCrossoverHz);
+    tiledRoomReverb_.setAirDampingScale (config_->airDampingScale);
     // softOnsetMs is set per-preset via runtime parameter (soft_onset), not hardcoded here.
     // Peak limiter: now controlled per-preset via runtime parameter (limiter_thresh).
     quadTank_.setSizeRange (config_->sizeRangeMin, config_->sizeRangeMax);
@@ -709,6 +866,28 @@ void DuskVerbEngine::applyAlgorithm (int index)
     setERLevel (lastERLevel_);
     setDiffusion (lastDiffusion_);
     setOutputDiffusion (lastOutputDiffusion_);
+
+    // Re-apply cached runtime overrides that would otherwise be stomped by the
+    // config-baseline writes above. The preset engine already received decay /
+    // treble / bass / modDepth / modRate / freeze / terminalDecay in the
+    // lookup block earlier; the *non-preset* engines and the structural HF
+    // override still need replay here.
+    if (terminalThresholdDb_ != 0.0f || terminalFactor_ != 1.0f)
+    {
+        fdn_.setTerminalDecay (terminalThresholdDb_, terminalFactor_);
+        dattorroTank_.setTerminalDecay (terminalThresholdDb_, terminalFactor_);
+        quadTank_.setTerminalDecay (terminalThresholdDb_, terminalFactor_);
+        tiledRoomReverb_.setTerminalDecay (terminalThresholdDb_, terminalFactor_);
+        if (hybridConfig_) hybridQuadTank_.setTerminalDecay (terminalThresholdDb_, terminalFactor_);
+    }
+    if (structuralHFOverrideHz_ >= 0.0f)
+    {
+        fdn_.setStructuralHFDamping (structuralHFOverrideHz_, lastTrebleMult_);
+        dattorroTank_.setStructuralHFDamping (structuralHFOverrideHz_);
+        quadTank_.setStructuralHFDamping (structuralHFOverrideHz_);
+        if (presetEngine_) presetEngine_->setStructuralHFDamping (structuralHFOverrideHz_);
+        if (hybridConfig_) hybridQuadTank_.setStructuralHFDamping (structuralHFOverrideHz_);
+    }
 }
 
 void DuskVerbEngine::setDecayTime (float seconds)
@@ -719,6 +898,23 @@ void DuskVerbEngine::setDecayTime (float seconds)
     fdn_.setDecayTime (scaledDecay);
     dattorroTank_.setDecayTime (scaledDecay);
     quadTank_.setDecayTime (scaledDecay);
+    tiledRoomReverb_.setDecayTime (scaledDecay);
+    // Per-preset wrappers internally multiply their setDecayTime() input by
+    // their baked kBakedDecayTimeScale (= config_->decayTimeScale at the time
+    // the engine was generated). Forwarding `scaledDecay` here would cause
+    // double-scaling. Instead, normalize to wrapper input units:
+    //   - If no override is active, just forward `seconds` (the wrapper will
+    //     re-apply its baked scale and arrive at the same scaledDecay).
+    //   - If a runtime override is active, forward `seconds * (override / baked)`
+    //     so the wrapper's internal multiply lands on `seconds * override`.
+    if (presetEngine_)
+    {
+        const float presetSeconds =
+            (decayTimeScaleOverride_ > 0.0f && config_->decayTimeScale > 0.0f)
+                ? seconds * (decayTimeScaleOverride_ / config_->decayTimeScale)
+                : seconds;
+        presetEngine_->setDecayTime (presetSeconds);
+    }
     if (hybridConfig_ != nullptr)
         hybridQuadTank_.setDecayTime (seconds * hybridConfig_->decayTimeScale);
 
@@ -743,6 +939,8 @@ void DuskVerbEngine::setBassMultiply (float mult)
     fdn_.setBassMultiply (mult * config_->bassMultScale);
     dattorroTank_.setBassMultiply (mult * config_->bassMultScale);
     quadTank_.setBassMultiply (mult * config_->bassMultScale);
+    tiledRoomReverb_.setBassMultiply (mult * config_->bassMultScale);
+    if (presetEngine_) presetEngine_->setBassMultiply (mult);
     if (hybridConfig_) hybridQuadTank_.setBassMultiply (mult * hybridConfig_->bassMultScale);
 }
 
@@ -759,6 +957,8 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     fdn_.setTrebleMultiply (scaledTreble);
     dattorroTank_.setTrebleMultiply (scaledTreble);
     quadTank_.setTrebleMultiply (scaledTreble);
+    tiledRoomReverb_.setTrebleMultiply (scaledTreble);
+    if (presetEngine_) presetEngine_->setTrebleMultiply (mult);
     if (hybridConfig_)
     {
         float hTreble = hybridConfig_->trebleMultScale * (1.0f - trebleCurve)
@@ -773,9 +973,12 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
 
 void DuskVerbEngine::setCrossoverFreq (float hz)
 {
+    lastCrossoverHz_ = hz;
     fdn_.setCrossoverFreq (hz);
     dattorroTank_.setCrossoverFreq (hz);
     quadTank_.setCrossoverFreq (hz);
+    tiledRoomReverb_.setCrossoverFreq (hz);
+    if (presetEngine_) presetEngine_->setCrossoverFreq (hz);
     if (hybridConfig_) hybridQuadTank_.setCrossoverFreq (hz);
 }
 
@@ -785,6 +988,8 @@ void DuskVerbEngine::setModDepth (float depth)
     fdn_.setModDepth (depth * config_->modDepthScale);
     dattorroTank_.setModDepth (depth * config_->modDepthScale);
     quadTank_.setModDepth (depth * config_->modDepthScale);
+    tiledRoomReverb_.setModDepth (depth * config_->modDepthScale);
+    if (presetEngine_) presetEngine_->setModDepth (depth);
     if (hybridConfig_) hybridQuadTank_.setModDepth (depth * hybridConfig_->modDepthScale);
 }
 
@@ -794,14 +999,19 @@ void DuskVerbEngine::setModRate (float hz)
     fdn_.setModRate (hz * config_->modRateScale);
     dattorroTank_.setModRate (hz * config_->modRateScale);
     quadTank_.setModRate (hz * config_->modRateScale);
+    tiledRoomReverb_.setModRate (hz * config_->modRateScale);
+    if (presetEngine_) presetEngine_->setModRate (hz);
     if (hybridConfig_) hybridQuadTank_.setModRate (hz * hybridConfig_->modRateScale);
 }
 
 void DuskVerbEngine::setSize (float size)
 {
+    lastSize_ = size;
     fdn_.setSize (size);
     dattorroTank_.setSize (size);
     quadTank_.setSize (size);
+    tiledRoomReverb_.setSize (size);
+    if (presetEngine_) presetEngine_->setSize (size);
     if (hybridConfig_) hybridQuadTank_.setSize (size);
 }
 
@@ -865,6 +1075,8 @@ void DuskVerbEngine::setFreeze (bool frozen)
         fdn_.setFreeze (frozen);
         dattorroTank_.setFreeze (frozen);
         quadTank_.setFreeze (frozen);
+        tiledRoomReverb_.setFreeze (frozen);
+        if (presetEngine_) presetEngine_->setFreeze (frozen);
     }
 }
 
@@ -913,6 +1125,11 @@ void DuskVerbEngine::setLateFeedForwardLevel (float level)
     lateFeedForwardLevel_ = std::clamp (level, 0.0f, 1.0f);
 }
 
+void DuskVerbEngine::resetLateFeedForwardLevel()
+{
+    lateFeedForwardLevel_ = config_->lateFeedForwardLevel;
+}
+
 void DuskVerbEngine::setDattorroLimiter (float thresholdDb, float releaseMs)
 {
     if (thresholdDb <= -60.0f || thresholdDb >= 0.0f)
@@ -929,74 +1146,133 @@ void DuskVerbEngine::setDattorroLimiter (float thresholdDb, float releaseMs)
 
 void DuskVerbEngine::setAirDampingOverride (float scale)
 {
+    // Sentinel (<0): restore config default for shared engines. For preset
+    // engines, restore the baked value (not config_->...) so the per-preset
+    // calibrated air damping is recovered instead of the shared baseline.
+    bool isSentinel = (scale < 0.0f);
+    if (isSentinel && config_) scale = config_->airDampingScale;
     fdn_.setAirTrebleMultiply (scale);
     dattorroTank_.setAirDampingScale (scale);
     quadTank_.setAirDampingScale (scale);
+    tiledRoomReverb_.setAirDampingScale (scale);
+    if (presetEngine_)
+    {
+        if (isSentinel)
+            presetEngine_->resetAirDampingToDefault();
+        else
+            presetEngine_->setAirDampingScale (scale);
+    }
+    if (hybridConfig_) hybridQuadTank_.setAirDampingScale (scale);
 }
 
 void DuskVerbEngine::setHighCrossoverOverride (float hz)
 {
+    bool isSentinel = (hz < 0.0f);
+    if (isSentinel && config_) hz = config_->highCrossoverHz;
     fdn_.setHighCrossoverFreq (hz);
     dattorroTank_.setHighCrossoverFreq (hz);
     quadTank_.setHighCrossoverFreq (hz);
+    tiledRoomReverb_.setHighCrossoverFreq (hz);
+    if (presetEngine_)
+    {
+        if (isSentinel)
+            presetEngine_->resetHighCrossoverToDefault();
+        else
+            presetEngine_->setHighCrossoverFreq (hz);
+    }
+    if (hybridConfig_) hybridQuadTank_.setHighCrossoverFreq (hz);
 }
 
 void DuskVerbEngine::setNoiseModOverride (float samples)
 {
+    bool isSentinel = (samples < 0.0f);
+    if (isSentinel && config_) samples = config_->noiseModDepth;
     fdn_.setNoiseModDepth (samples);
     dattorroTank_.setNoiseModDepth (samples);
+    quadTank_.setNoiseModDepth (samples);
+    if (hybridConfig_) hybridQuadTank_.setNoiseModDepth (samples);
+    if (presetEngine_)
+    {
+        if (isSentinel)
+            presetEngine_->resetNoiseModToDefault();
+        else
+            presetEngine_->setNoiseModDepth (samples);
+    }
 }
 
 void DuskVerbEngine::setInlineDiffusionOverride (float coeff)
 {
+    if (coeff < 0.0f && config_) coeff = config_->inlineDiffusionCoeff;
     fdn_.setInlineDiffusion (coeff);
 }
 
 void DuskVerbEngine::setStereoCouplingOverride (float amount)
 {
+    // stereo_coupling sentinel is <= -1.5 (valid range includes -1..+1).
+    if (amount <= -1.5f && config_) amount = config_->stereoCoupling;
     fdn_.setStereoCoupling (amount);
 }
 
 void DuskVerbEngine::setChorusDepthOverride (float depth)
 {
+    if (depth < 0.0f) depth = 0.0f;  // Default: chorus off
     tailChorus_.setDepth (depth);
 }
 
 void DuskVerbEngine::setChorusRateOverride (float hz)
 {
+    if (hz < 0.0f) hz = 1.0f;  // Default rate
     tailChorus_.setRate (hz);
 }
 
 void DuskVerbEngine::setOutputGainOverride (float gain)
 {
+    if (gain < 0.0f && config_) gain = config_->outputGain;
     outputGainSmoother_.setTarget (gain);
 }
 
 void DuskVerbEngine::setERCrossfeedOverride (float amount)
 {
+    if (amount < 0.0f && config_) amount = config_->erCrossfeed;
     erCrossfeed_ = amount;
 }
 
 void DuskVerbEngine::setDecayTimeScaleOverride (float scale)
 {
     decayTimeScaleOverride_ = scale;
-    // Re-apply decay with new scale
+    // Re-apply decay with new scale (setDecayTime checks the sentinel)
     setDecayTime (decayTime_);
 }
 
 void DuskVerbEngine::setDecayBoostOverride (float boost)
 {
+    if (boost < 0.0f) boost = 1.0f;  // Default: no boost
+    lastDecayBoost_ = boost;
     fdn_.setDecayBoost (boost);
     dattorroTank_.setDecayBoost (boost);
     quadTank_.setDecayBoost (boost);
+    tiledRoomReverb_.setDecayBoost (boost);
+    if (presetEngine_) presetEngine_->setDecayBoost (boost);
     if (hybridConfig_) hybridQuadTank_.setDecayBoost (boost);
 }
 
 void DuskVerbEngine::setStructuralHFDampingOverride (float hz)
 {
+    // Negative hz means "revert to config default". We still cache -1.0f so
+    // applyAlgorithm() knows there is no override to replay.
+    if (hz < 0.0f && config_)
+    {
+        structuralHFOverrideHz_ = -1.0f;
+        hz = config_->structuralHFDampingHz;
+    }
+    else
+    {
+        structuralHFOverrideHz_ = hz;
+    }
     fdn_.setStructuralHFDamping (hz, lastTrebleMult_);
     dattorroTank_.setStructuralHFDamping (hz);
     quadTank_.setStructuralHFDamping (hz);
+    if (presetEngine_) presetEngine_->setStructuralHFDamping (hz);
     if (hybridConfig_) hybridQuadTank_.setStructuralHFDamping (hz);
 }
 
@@ -1052,21 +1328,34 @@ void DuskVerbEngine::setOutputMidEQOverride (float dB, float hz)
 
 void DuskVerbEngine::setTerminalDecayOverride (float thresholdDb, float factor)
 {
+    // Terminal decay is applied inside each reverb engine's feedback loop
+    // (not as post-processing) so it accelerates tail decay rather than just
+    // gating the output. Each engine tracks its own peak/RMS envelope.
+    // Sentinels: thresholdDb >= -0.1 OR factor <= 0.001 → restore config defaults.
+    if ((thresholdDb >= -0.1f || factor <= 0.001f) && config_)
+    {
+        thresholdDb = -40.0f;
+        factor = 1.0f;  // 1.0 disables extra decay
+    }
     terminalThresholdDb_ = thresholdDb;
     terminalFactor_ = factor;
     fdn_.setTerminalDecay (thresholdDb, factor);
     dattorroTank_.setTerminalDecay (thresholdDb, factor);
     quadTank_.setTerminalDecay (thresholdDb, factor);
+    tiledRoomReverb_.setTerminalDecay (thresholdDb, factor);
+    if (presetEngine_) presetEngine_->setTerminalDecay (thresholdDb, factor);
     if (hybridConfig_) hybridQuadTank_.setTerminalDecay (thresholdDb, factor);
 }
 
-void DuskVerbEngine::setERairCeilingOverride (float hz)
+void DuskVerbEngine::setERAirCeilingOverride (float hz)
 {
+    if (hz <= 0.0f && config_) hz = config_->erAirAbsorptionCeilingHz;
     er_.setAirAbsorptionCeiling (hz);
 }
 
 void DuskVerbEngine::setERAirFloorOverride (float hz)
 {
+    if (hz <= 0.0f && config_) hz = config_->erAirAbsorptionFloorHz;
     er_.setAirAbsorptionFloor (hz);
 }
 
