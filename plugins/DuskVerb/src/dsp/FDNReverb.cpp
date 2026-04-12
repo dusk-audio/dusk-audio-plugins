@@ -977,7 +977,7 @@ void FDNReverb::setDecayBoost (float boost)
 void FDNReverb::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = thresholdDB;
-    terminalDecayFactor_ = std::clamp (factor, 0.5f, 1.0f);
+    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
 void FDNReverb::clearBuffers()
