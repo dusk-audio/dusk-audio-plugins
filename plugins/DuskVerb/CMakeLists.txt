@@ -71,12 +71,19 @@ target_sources(DuskVerb
         src/dsp/FDNReverb.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/QuadTank.cpp
+        src/dsp/TiledRoomReverb.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
         src/dsp/EarlyReflections.cpp
+        src/dsp/presets/PresetEngineRegistry.cpp
         ../shared/LEDMeter.cpp
 )
+
+# Per-preset engine implementations (glob: one .cpp per factory preset)
+file(GLOB DUSKVERB_PRESET_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/presets/*.cpp")
+list(REMOVE_ITEM DUSKVERB_PRESET_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/presets/PresetEngineRegistry.cpp")
+target_sources(DuskVerb PRIVATE ${DUSKVERB_PRESET_SOURCES})
 
 # Set include directories
 target_include_directories(DuskVerb
@@ -137,6 +144,7 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
         src/dsp/FDNReverb.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/QuadTank.cpp
+        src/dsp/TiledRoomReverb.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
