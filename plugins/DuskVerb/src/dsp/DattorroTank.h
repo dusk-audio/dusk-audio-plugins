@@ -62,7 +62,6 @@ public:
     void setSoftOnsetMs (float ms);    // Output onset smoothing time (0 = off)
     void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
     void setDecayBoost (float boost);
-    void setCrossoverModDepth (float depth);
     void setStructuralHFDamping (float hz);
     void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
@@ -208,6 +207,11 @@ private:
         float lfoPhaseInc = 0.0f;
         uint32_t lfoPRNG = 0;        // Shared: LFO drift + noise jitter
         uint32_t noiseState = 0;      // Dedicated PRNG for per-sample delay jitter
+
+        // Per-tank terminal decay tracking (avoids L/R interleaving artifacts)
+        float currentRMS = 0.0f;
+        float peakRMS = 0.0f;
+        bool terminalDecayActive = false;
     };
 
     Tank leftTank_;
@@ -280,16 +284,12 @@ private:
     bool prepared_ = false;
 
     float decayBoost_ = 1.0f;
-    float crossoverModDepth_ = 0.0f;
     float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFStateL_ = 0.0f;
     float structHFStateR_ = 0.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
-    float peakRMS_ = 0.0f;
-    float currentRMS_ = 0.0f;
-    bool terminalDecayActive_ = false;
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback

@@ -43,7 +43,7 @@ public:
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
     void setDecayBoost (float boost);
-    void setCrossoverModDepth (float depth);
+    void setNoiseModDepth (float samples);
     void setStructuralHFDamping (float hz);
     void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
@@ -150,6 +150,11 @@ private:
         float lfoPhaseInc = 0.0f;
         uint32_t lfoPRNG = 0;
         uint32_t noiseState = 0;
+
+        // Per-tank terminal decay tracking
+        float currentRMS = 0.0f;
+        float peakRMS = 0.0f;
+        bool terminalDecayActive = false;
     };
 
     Tank tanks_[kNumTanks];
@@ -234,7 +239,6 @@ private:
     bool prepared_ = false;
 
     float decayBoost_ = 1.0f;
-    float crossoverModDepth_ = 0.0f;
     float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFState_[4] {};
@@ -248,6 +252,7 @@ private:
     float decayDiff2_ = 0.50f;
     float densityDiffCoeff_ = 0.10f;  // Reduced from 0.25 to slow density buildup (100ms→~250ms)
     float noiseModDepth_ = 2.0f;
+    float independentNoiseModDepth_ = -1.0f;  // -1 = use modDepth-coupled value
 
     void updateDelayLengths();
     void updateDecayCoefficients();

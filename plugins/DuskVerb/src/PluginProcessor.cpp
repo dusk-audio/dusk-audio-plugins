@@ -293,14 +293,46 @@ bool DuskVerbProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 
 void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    engine_.prepare (sampleRate, samplesPerBlock);
-    originalLatencySamples_ = 0;  // FDN reverb has zero inherent latency
-    setLatencySamples (originalLatencySamples_);
+    // Skip the full re-prepare if the sample rate is unchanged and the new
+    // block size fits in the previously-allocated buffers. Pedalboard (and
+    // some hosts) calls prepareToPlay redundantly before each process() call
+    // with the current input buffer size; without this guard the engine is
+    // destroyed and rebuilt every time, which makes LFO phase
+    // non-deterministic across calls.
+    //
+    // To handle hosts that escalate block sizes (pedalboard sends bs=512 on
+    // load, then bs=N to match each call's input length), we always prepare
+    // with at least kMinPreparedBlockSize so subsequent calls fit without
+    // forcing a re-prepare.
+    constexpr int kMinPreparedBlockSize = 65536;
+    int safeBlockSize = std::max (samplesPerBlock, kMinPreparedBlockSize);
+    bool needsReallocation = (preparedSampleRate_ != sampleRate || safeBlockSize > preparedBlockSize_);
 
-    // Initialize algorithm from saved state (edge-case: DAW restores state before first processBlock)
-    cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
-    engine_.setAlgorithm (cachedAlgorithm_);
+    if (needsReallocation)
+    {
+        preparedSampleRate_ = sampleRate;
+        preparedBlockSize_ = safeBlockSize;
 
+        engine_.prepare (sampleRate, safeBlockSize);
+        originalLatencySamples_ = 0;  // FDN reverb has zero inherent latency
+        setLatencySamples (originalLatencySamples_);
+
+        // Initialize algorithm from saved state (edge-case: DAW restores state before first processBlock)
+        cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
+        engine_.setAlgorithm (cachedAlgorithm_);
+    }
+
+    // Lightweight engine reset: re-apply algorithm to clear DSP state
+    // (delay lines, filters) even without reallocation. This prevents
+    // tail/LFO state from leaking between sessions.
+    if (! needsReallocation)
+    {
+        cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
+        engine_.setAlgorithm (cachedAlgorithm_);
+    }
+
+    // DSP reset: always runs so smoothers and state are reinitialized
+    // even when the host redundantly calls prepareToPlay().
     auto rampSamples = static_cast<double> (kSmoothingBlockSize);
 
     decaySmooth_    .reset (sampleRate, rampSamples / sampleRate);
@@ -349,8 +381,15 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     int numSamples = buffer.getNumSamples();
 
-    // Clear any unused output channels
-    for (int ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
+    // Handle mono input: duplicate channel 0 to channel 1 BEFORE bypass,
+    // so mono-in/stereo-out bypass still outputs audio on both channels.
+    if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
+    {
+        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
+    }
+
+    // Clear any further unused output channels (3+)
+    for (int ch = std::max (totalNumInputChannels, 2); ch < totalNumOutputChannels; ++ch)
         buffer.clear (ch, 0, numSamples);
 
     // Bypass: pass audio through unprocessed
@@ -363,12 +402,6 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Restore latency after bypass
     if (getLatencySamples() != originalLatencySamples_)
         setLatencySamples (originalLatencySamples_);
-
-    // Handle mono input: duplicate channel 0 to channel 1
-    if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
-    {
-        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
-    }
 
     float* left  = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
@@ -449,11 +482,13 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Soft onset: output transient smoothing for DattorroTank (0 = disabled)
     engine_.setDattorroSoftOnsetMs (softOnsetParam_->load());
 
-    // Late feed-forward level: override per-algorithm default when >= 0
+    // Late feed-forward level: -1 = use algorithm default, >= 0 = override
     {
         float lff = lateFeedFwdParam_->load();
         if (lff >= 0.0f)
             engine_.setLateFeedForwardLevel (lff);
+        else
+            engine_.resetLateFeedForwardLevel();
     }
 
     // Per-preset ER taps: load VV-extracted taps when preset_id changes.
@@ -512,19 +547,13 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            // Preset loaded — apply tap_gain params on top of preset's tap positions,
-            // but only if any gain differs from 1.0 (to avoid unnecessary processing).
-            bool anyGainChanged = false;
+            // Preset loaded — always apply tap_gain params on top of preset's
+            // tap positions so returning all gains to 1.0 updates the engine.
             float gains[14];
             for (int i = 0; i < 14; ++i)
-            {
                 gains[i] = tapGainParams_[i]->load();
-                if (std::abs (gains[i] - 1.0f) > 0.001f)
-                    anyGainChanged = true;
-            }
-            if (anyGainChanged)
-                engine_.applyTapGains (gains[0], gains[1], gains[2], gains[3], gains[4], gains[5], gains[6],
-                                       gains[7], gains[8], gains[9], gains[10], gains[11], gains[12], gains[13]);
+            engine_.applyTapGains (gains[0], gains[1], gains[2], gains[3], gains[4], gains[5], gains[6],
+                                   gains[7], gains[8], gains[9], gains[10], gains[11], gains[12], gains[13]);
         }
     }
 
@@ -533,45 +562,39 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     engine_.setDattorroLimiter (limiterThreshParam_->load(), 2.0f);
 
     // --- Optimizer-tunable overrides ---
+    // Always forward to the engine. Sentinel values (negative or param-specific)
+    // are handled inside each engine setter, which restores the config default so
+    // moving a control back to sentinel clears a previously latched override.
     {
-        float v;
-        v = airDampingParam_->load(); if (v >= 0.0f) engine_.setAirDampingOverride(v);
-        v = highCrossoverParam_->load(); if (v >= 0.0f) engine_.setHighCrossoverOverride(v);
-        v = noiseModParam_->load(); if (v >= 0.0f) engine_.setNoiseModOverride(v);
-        v = inlineDiffParam_->load(); if (v >= 0.0f) engine_.setInlineDiffusionOverride(v);
-        v = stereoCouplingParam_->load(); if (v > -1.5f) engine_.setStereoCouplingOverride(v);
-        v = chorusDepthParam_->load(); if (v >= 0.0f) engine_.setChorusDepthOverride(v);
-        v = chorusRateParam_->load(); if (v >= 0.0f) engine_.setChorusRateOverride(v);
-        v = outputGainParam_->load(); if (v >= 0.0f) engine_.setOutputGainOverride(v);
-        v = erCrossfeedParam_->load(); if (v >= 0.0f) engine_.setERCrossfeedOverride(v);
-        v = decayTimeScaleParam_->load(); if (v >= 0.0f) engine_.setDecayTimeScaleOverride(v);
-        v = decayBoostParam_->load(); if (v >= 0.0f) engine_.setDecayBoostOverride(v);
-        v = structHFDampParam_->load(); if (v >= 0.0f) engine_.setStructuralHFDampingOverride(v);
+        engine_.setAirDampingOverride (airDampingParam_->load());
+        engine_.setHighCrossoverOverride (highCrossoverParam_->load());
+        engine_.setNoiseModOverride (noiseModParam_->load());
+        engine_.setInlineDiffusionOverride (inlineDiffParam_->load());
+        engine_.setStereoCouplingOverride (stereoCouplingParam_->load());
+        engine_.setChorusDepthOverride (chorusDepthParam_->load());
+        engine_.setChorusRateOverride (chorusRateParam_->load());
+        engine_.setOutputGainOverride (outputGainParam_->load());
+        engine_.setERCrossfeedOverride (erCrossfeedParam_->load());
+        engine_.setDecayTimeScaleOverride (decayTimeScaleParam_->load());
+        engine_.setDecayBoostOverride (decayBoostParam_->load());
+        engine_.setStructuralHFDampingOverride (structHFDampParam_->load());
 
-        float oLowDB = outputLowShelfDBParam_->load();
-        if (oLowDB != 0.0f) engine_.setOutputLowShelfOverride(oLowDB);
+        // EQ overrides: 0 dB disables the filter inside the engine.
+        engine_.setOutputLowShelfOverride (outputLowShelfDBParam_->load());
 
         float oHighDB = outputHighShelfDBParam_->load();
         float oHighHz = outputHighShelfHzParam_->load();
-        if (oHighDB != 0.0f || oHighHz > 0.0f)
-            engine_.setOutputHighShelfOverride(oHighDB, oHighHz > 0.0f ? oHighHz : 5000.0f);
+        engine_.setOutputHighShelfOverride (oHighDB, oHighHz > 0.0f ? oHighHz : 5000.0f);
 
         float oMidDB = outputMidEQDBParam_->load();
         float oMidHz = outputMidEQHzParam_->load();
-        if (oMidDB != 0.0f || oMidHz > 0.0f)
-            engine_.setOutputMidEQOverride(oMidDB, oMidHz > 0.0f ? oMidHz : 1000.0f);
+        engine_.setOutputMidEQOverride (oMidDB, oMidHz > 0.0f ? oMidHz : 1000.0f);
 
-        float termThresh = terminalThresholdParam_->load();
-        float termFactor = terminalFactorParam_->load();
-        if (termThresh < -0.1f || termFactor > 0.001f)
-            engine_.setTerminalDecayOverride(
-                termThresh < -0.1f ? termThresh : -40.0f,
-                termFactor > 0.001f ? termFactor : 0.992f);
+        engine_.setTerminalDecayOverride (
+            terminalThresholdParam_->load(), terminalFactorParam_->load());
 
-        float erCeiling = erAirCeilingParam_->load();
-        float erFloor = erAirFloorParam_->load();
-        if (erCeiling > 0.0f) engine_.setERairCeilingOverride(erCeiling);
-        if (erFloor > 0.0f) engine_.setERAirFloorOverride(erFloor);
+        engine_.setERAirCeilingOverride (erAirCeilingParam_->load());
+        engine_.setERAirFloorOverride (erAirFloorParam_->load());
     }
 
     // Sub-block processing for smooth parameter transitions
@@ -652,9 +675,9 @@ void DuskVerbProcessor::setStateXML (const juce::XmlElement& xml)
     {
         parameters.replaceState (juce::ValueTree::fromXml (xml));
 
-        // Restore per-preset gain trim from saved state
-        float trim = static_cast<float> (parameters.state.getProperty ("gainTrim", 0.0f));
-        engine_.setGainTrim (trim);
+        // Restore per-preset gain trim from the restored APVTS parameter.
+        if (gainTrimParam_ != nullptr)
+            engine_.setGainTrim (gainTrimParam_->load());
     }
 }
 

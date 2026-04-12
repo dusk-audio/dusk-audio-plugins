@@ -62,6 +62,12 @@ private:
     std::atomic<float>* algorithmParam_ = nullptr;
     int cachedAlgorithm_ = 1; // Hall default
 
+    // Track sample rate / block size to make prepareToPlay idempotent
+    // (pedalboard calls it before every process() which would otherwise
+    // tear down and rebuild the engine on every call).
+    double preparedSampleRate_ = 0.0;
+    int preparedBlockSize_ = 0;
+
     std::atomic<float>* decayParam_     = nullptr;
     std::atomic<float>* preDelayParam_  = nullptr;
     std::atomic<float>* sizeParam_      = nullptr;

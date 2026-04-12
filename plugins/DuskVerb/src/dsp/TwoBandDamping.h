@@ -1,7 +1,7 @@
 #pragma once
 
 #include <algorithm>
-
+#include <cmath>
 // Two-band shelving damping filter for FDN feedback loops.
 // Uses a first-order lowpass at the crossover frequency to split the signal,
 // then applies independent gains below (g_low) and above (g_high) the crossover.
@@ -198,8 +198,11 @@ public:
         }
         lpCoeff_[0] = lowCoeff;
         lpCoeff_[3] = highCoeff;
+        // Derive inner crossovers as geometric interpolation (same as 3-band setCoefficients)
+        float midCoeff = std::sqrt (lowCoeff * highCoeff);
+        lpCoeff_[1] = std::sqrt (lowCoeff * midCoeff);
+        lpCoeff_[2] = std::sqrt (midCoeff * highCoeff);
     }
-
     float process (float input)
     {
         // LP1: split into band 0 (sub-bass) and remainder
@@ -232,15 +235,24 @@ public:
     {
         constexpr float eps = 1e-6f;
         lpCoeff_[0] = std::clamp (coeff, eps, 1.0f - eps);
+        recomputeInnerCrossovers();
     }
 
     void setHighCrossoverCoeff (float coeff)
     {
         constexpr float eps = 1e-6f;
         lpCoeff_[3] = std::clamp (coeff, eps, 1.0f - eps);
+        recomputeInnerCrossovers();
     }
 
 private:
+    void recomputeInnerCrossovers()
+    {
+        float midCoeff = std::sqrt (lpCoeff_[0] * lpCoeff_[3]);
+        lpCoeff_[1] = std::sqrt (lpCoeff_[0] * midCoeff);
+        lpCoeff_[2] = std::sqrt (midCoeff * lpCoeff_[3]);
+    }
+
     float g_[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
     float lpCoeff_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     float lpState_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };

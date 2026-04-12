@@ -300,6 +300,9 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 
             float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
             float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
+            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
+            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
+            // dropped 40dB below peak — the intended "tail has faded" condition.
             terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
                                  && (peakRMS_ > 1e-12f);
             if (terminalDecayActive_)

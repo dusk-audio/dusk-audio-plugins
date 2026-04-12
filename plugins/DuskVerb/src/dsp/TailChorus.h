@@ -44,6 +44,10 @@ public:
         for (int v = 0; v < kNumVoices; ++v)
             lfoPhase_[v] = static_cast<float> (v) / static_cast<float> (kNumVoices);
 
+        // Reset AM phase state so amplitude modulation starts from a clean state
+        amPhaseL_ = 0.0f;
+        amPhaseR_ = 0.33f; // 1/3 cycle offset from L for stereo decorrelation
+
         updateLFOIncrements();
         updateDelayParameters();
     }
@@ -67,8 +71,7 @@ public:
     // Process stereo audio in-place. Only modifies the signal when depth > 0.
     void process (float* left, float* right, int numSamples)
     {
-        if (depth_ < 1e-6f)
-            return;
+        const bool bypassed = depth_ < 1e-6f;
 
         // Blend factor: how much chorus signal is mixed in.
         // Scaled so depth=0.5 gives a moderate effect, depth=1.0 is full.
@@ -89,6 +92,24 @@ public:
             {
                 delayBufL_[v][wp] = inL;
                 delayBufR_[v][wp] = inR;
+            }
+
+            if (bypassed)
+            {
+                for (int v = 0; v < kNumVoices; ++v)
+                {
+                    lfoPhase_[v] += lfoIncrement_[v];
+                    if (lfoPhase_[v] >= 1.0f)
+                        lfoPhase_[v] -= 1.0f;
+                }
+
+                amPhaseL_ += amIncrementL_;
+                amPhaseR_ += amIncrementR_;
+                if (amPhaseL_ >= 1.0f) amPhaseL_ -= 1.0f;
+                if (amPhaseR_ >= 1.0f) amPhaseR_ -= 1.0f;
+
+                writePos_ = (writePos_ + 1) & bufferMask_;
+                continue;
             }
 
             // Accumulate modulated reads from each voice
@@ -161,6 +182,8 @@ public:
             lfoPhase_[v] = static_cast<float> (v) / static_cast<float> (kNumVoices);
         }
         writePos_ = 0;
+        amPhaseL_ = 0.0f;
+        amPhaseR_ = 0.33f; // 1/3 cycle offset from L (matches initial state)
     }
 
 private:
