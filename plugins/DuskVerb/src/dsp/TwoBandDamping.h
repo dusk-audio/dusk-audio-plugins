@@ -138,7 +138,9 @@ public:
             lpCoeff_[i] = lpCoeff[i];
     }
 
-    // ThreeBandDamping-compatible setter (maps to bands 0, 2, 4; bands 1, 3 interpolated)
+    // ThreeBandDamping-compatible setter (maps to bands 0, 2, 4; bands 1, 3 interpolated).
+    // Inner crossovers (1, 2) are derived as geometric interpolation between the
+    // outer pair when not explicitly set via setCrossovers().
     void setCoefficients (float gLow, float gMid, float gHigh,
                           float lowCrossoverCoeff, float highCrossoverCoeff)
     {
@@ -148,8 +150,12 @@ public:
         g_[3] = gMid + (gHigh - gMid) * bandBlend_[3];
         g_[4] = gHigh;
         lpCoeff_[0] = lowCrossoverCoeff;
-        // Inner crossovers stay at their configured values
         lpCoeff_[3] = highCrossoverCoeff;
+        // Derive inner crossovers as geometric interpolation between outer pair.
+        // sqrt(a*b) gives the geometric mean frequency between two LP coefficients.
+        float midCoeff = std::sqrt (lowCrossoverCoeff * highCrossoverCoeff);
+        lpCoeff_[1] = std::sqrt (lowCrossoverCoeff * midCoeff);
+        lpCoeff_[2] = std::sqrt (midCoeff * highCrossoverCoeff);
     }
 
     // Set per-band blend factors for ThreeBandDamping-compatible fallback.
@@ -168,6 +174,11 @@ public:
         for (int i = 0; i < 5; ++i)
             bandMult_[i] = mult[i];
         hasBandMultipliers_ = true;
+    }
+
+    void clearBandMultipliers()
+    {
+        hasBandMultipliers_ = false;
     }
 
     // Compute per-band gains from gBase using band multipliers.
