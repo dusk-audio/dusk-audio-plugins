@@ -1270,7 +1270,7 @@ void ShortVocalAmbiencePresetEngine::setStereoCoupling (float amount)
 
 void ShortVocalAmbiencePresetEngine::setNoiseModDepth (float samples)
 {
-    noiseModDepthParam_ = std::max (samples, 0.0f);
+    noiseModDepthParam_ = std::clamp (samples, 0.0f, 8.0f);
     if (prepared_)
         updateModDepth();
 }
@@ -1645,6 +1645,7 @@ public:
         }
         
         amPhaseInc_ = kAmBaseFreqHz / static_cast<float> (sampleRate);
+        amPhase_ = 0.0f;
         // PATCH_POINT_PREPARE_END
     }
 
