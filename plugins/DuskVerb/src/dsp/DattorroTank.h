@@ -269,6 +269,7 @@ private:
     float sizeParam_ = 0.5f;
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f;
     float lateGainScale_ = 1.0f;
     float delayScale_ = 1.0f;  // Global delay multiplier (set before prepare)
     float softOnsetMs_ = 0.0f;    // Output onset ramp time (ms). Smooths early transient spike.

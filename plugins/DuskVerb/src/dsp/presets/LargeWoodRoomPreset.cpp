@@ -337,6 +337,7 @@ private:
     float sizeParam_ = 0.5f;
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f;
     float lateGainScale_ = 1.0f;
     bool frozen_ = false;
     bool prepared_ = false;
@@ -426,6 +427,22 @@ LargeWoodRoomPresetEngine::LargeWoodRoomPresetEngine()
 void LargeWoodRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
+
+    // FiveBandDamping: set inner crossover coefficients and band multipliers.
+    {
+        float fbCrossHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
+        float fbMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
+        float coeffs[4];
+        for (int b = 0; b < 4; ++b)
+            coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
+                                  / static_cast<float> (sampleRate_));
+        for (int t = 0; t < kNumTanks; ++t)
+        {
+            tanks_[t].damping.setCrossovers (coeffs);
+            tanks_[t].damping.setBandMultipliers (fbMult);
+        }
+    }
+    sizeRangeAllocatedMax_ = std::max (sizeRangeMax_, 1.5f);
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
@@ -433,10 +450,10 @@ void LargeWoodRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
     {
         auto& tank = tanks_[t];
 
-        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
+        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
+        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
+        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
+        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
 
         tank.ap1Buffer.allocate (ap1Max);
         tank.delay1.allocate (del1Max + maxModExcursion);
@@ -445,7 +462,7 @@ void LargeWoodRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
 
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
-            int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeMax_)) + 4;
+            int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_)) + 4;
             tank.densityAP[i].allocate (dapMax);
         }
 
@@ -720,8 +737,15 @@ void LargeWoodRoomPresetEngine::setAirDampingScale (float scale)
 
 void LargeWoodRoomPresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
+    if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -832,6 +856,9 @@ void LargeWoodRoomPresetEngine::updateDecayCoefficients()
         float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
         tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
+
+            // FiveBandDamping: override 3-band gains with 5-band multipliers.
+            tank.damping.computeGainsFromBase (gBase, lowCrossoverCoeff, highCrossoverCoeff);
     }
 }
 

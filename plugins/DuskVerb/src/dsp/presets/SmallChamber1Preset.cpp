@@ -505,6 +505,21 @@ void SmallChamber1PresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
 {
     sampleRate_ = sampleRate;
 
+    // FiveBandDamping: set inner crossover coefficients and band multipliers.
+    {
+        float fbCrossHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
+        float fbMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
+        float coeffs[4];
+        for (int b = 0; b < 4; ++b)
+            coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
+                                  / static_cast<float> (sampleRate_));
+        for (int i = 0; i < N; ++i)
+        {
+            dampFilter_[i].setCrossovers (coeffs);
+            dampFilter_[i].setBandMultipliers (fbMult);
+        }
+    }
+
     updateDelayLengths();
 
     // Allocate buffers for worst-case delay across ALL algorithms.
@@ -523,21 +538,6 @@ void SmallChamber1PresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
         delayLines_[i].writePos = 0;
         delayLines_[i].mask = bufSize - 1;
         dampFilter_[i].reset();
-
-    // FiveBandDamping: set inner crossover coefficients and band multipliers.
-    {
-        float fbCrossHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
-        float fbMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
-        for (int i = 0; i < N; ++i)
-        {
-            float coeffs[4];
-            for (int b = 0; b < 4; ++b)
-                coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
-                                      / static_cast<float> (sampleRate_));
-            dampFilter_[i].setCrossovers (coeffs);
-            dampFilter_[i].setBandMultipliers (fbMult);
-        }
-    }
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
         antiAliasState_[i] = 0.0f;
@@ -1040,12 +1040,15 @@ void SmallChamber1PresetEngine::setLateGainScale (float scale)
 
 void SmallChamber1PresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    float newMax = std::max (max, sizeRangeMin_);
-    // After prepare(), cap at allocated buffer size to prevent overrun
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
     if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
         newMax = std::min (newMax, sizeRangeAllocatedMax_);
-    sizeRangeMax_ = newMax;
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
