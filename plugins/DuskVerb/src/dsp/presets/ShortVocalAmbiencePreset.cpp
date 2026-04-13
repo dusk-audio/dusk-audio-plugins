@@ -494,6 +494,21 @@ void ShortVocalAmbiencePresetEngine::prepare (double sampleRate, int /*maxBlockS
 {
     sampleRate_ = sampleRate;
 
+    // FiveBandDamping: set inner crossover coefficients and band multipliers.
+    {
+        float fbCrossHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
+        float fbMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
+        float coeffs[4];
+        for (int b = 0; b < 4; ++b)
+            coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
+                                  / static_cast<float> (sampleRate_));
+        for (int i = 0; i < N; ++i)
+        {
+            dampFilter_[i].setCrossovers (coeffs);
+            dampFilter_[i].setBandMultipliers (fbMult);
+        }
+    }
+
     updateDelayLengths();
 
     // Allocate buffers for worst-case delay across ALL algorithms.
@@ -512,21 +527,6 @@ void ShortVocalAmbiencePresetEngine::prepare (double sampleRate, int /*maxBlockS
         delayLines_[i].writePos = 0;
         delayLines_[i].mask = bufSize - 1;
         dampFilter_[i].reset();
-
-    // FiveBandDamping: set inner crossover coefficients and band multipliers.
-    {
-        float fbCrossHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
-        float fbMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
-        for (int i = 0; i < N; ++i)
-        {
-            float coeffs[4];
-            for (int b = 0; b < 4; ++b)
-                coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
-                                      / static_cast<float> (sampleRate_));
-            dampFilter_[i].setCrossovers (coeffs);
-            dampFilter_[i].setBandMultipliers (fbMult);
-        }
-    }
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
         antiAliasState_[i] = 0.0f;
@@ -1029,12 +1029,15 @@ void ShortVocalAmbiencePresetEngine::setLateGainScale (float scale)
 
 void ShortVocalAmbiencePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    float newMax = std::max (max, sizeRangeMin_);
-    // After prepare(), cap at allocated buffer size to prevent overrun
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
     if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
         newMax = std::min (newMax, sizeRangeAllocatedMax_);
-    sizeRangeMax_ = newMax;
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -1661,6 +1664,7 @@ public:
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
         
+        amPhase_ = 0.0f;
         amPhaseInc_ = kAmBaseFreqHz / static_cast<float> (sampleRate);
         // PATCH_POINT_PREPARE_END
     }
@@ -1675,7 +1679,7 @@ public:
         for (int i = 0; i < numSamples; ++i)
         {
             float env = std::abs (std::sin (amPhase_ * 6.283185307f));
-            float am = 1.0f + kAmDepth * (env - 0.6366f);  // DC-centered (mean of |sin| = 2/pi)
+            float am = std::max (0.0f, 1.0f + kAmDepth * (env - 0.6366f));  // DC-centered, clamped non-negative
             outputL[i] *= am;
             outputR[i] *= am;
             amPhase_ += amPhaseInc_;
