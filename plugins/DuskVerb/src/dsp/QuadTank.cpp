@@ -419,6 +419,7 @@ void QuadTank::clearBuffers()
         structHFState_[t] = 0.0f;
         tanks_[t].lfoPhase = 0.0f;
         tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

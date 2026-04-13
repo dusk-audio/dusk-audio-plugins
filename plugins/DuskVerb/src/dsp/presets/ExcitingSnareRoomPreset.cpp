@@ -1368,6 +1368,22 @@ public:
     const char* getPresetName() const override { return "Exciting Snare Room"; }
     const char* getBaseEngineType() const override { return "DattorroTank"; }
 
+    int getCorrEQBandCount() const override { return kCorrEqBandCount; }
+    bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
+                           float* a1, float* a2, int maxBands) const override
+    {
+        int n = std::min (kCorrEqBandCount, maxBands);
+        for (int i = 0; i < n; ++i)
+        {
+            b0[i] = corrB0_[i];
+            b1[i] = corrB1_[i];
+            b2[i] = corrB2_[i];
+            a1[i] = corrA1_[i];
+            a2[i] = corrA2_[i];
+        }
+        return true;
+    }
+
 private:
     ExcitingSnareRoomPresetEngine engine_;
     float lastTreble_ = 0.5f;
