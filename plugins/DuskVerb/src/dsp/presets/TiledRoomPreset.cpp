@@ -1005,12 +1005,15 @@ void TiledRoomPresetEngine::setLateGainScale (float scale)
 
 void TiledRoomPresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    float newMax = std::max (max, sizeRangeMin_);
-    // After prepare(), cap at allocated buffer size to prevent overrun
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
     if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
         newMax = std::min (newMax, sizeRangeAllocatedMax_);
-    sizeRangeMax_ = newMax;
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -1634,6 +1637,7 @@ public:
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
         
+        amPhase_ = 0.0f;
         amPhaseInc_ = kAmBaseFreqHz / static_cast<float> (sampleRate);
         // PATCH_POINT_PREPARE_END
     }
@@ -1648,7 +1652,7 @@ public:
         for (int i = 0; i < numSamples; ++i)
         {
             float env = std::abs (std::sin (amPhase_ * 6.283185307f));
-            float am = 1.0f + kAmDepth * (env - 0.6366f);  // DC-centered (mean of |sin| = 2/pi)
+            float am = std::max (0.0f, 1.0f + kAmDepth * (env - 0.6366f));  // DC-centered, clamped non-negative
             outputL[i] *= am;
             outputR[i] *= am;
             amPhase_ += amPhaseInc_;

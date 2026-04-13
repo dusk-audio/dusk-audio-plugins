@@ -997,12 +997,15 @@ void AmbienceTiledRoomPresetEngine::setLateGainScale (float scale)
 
 void AmbienceTiledRoomPresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    float newMax = std::max (max, sizeRangeMin_);
-    // After prepare(), cap at allocated buffer size to prevent overrun
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
     if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
         newMax = std::min (newMax, sizeRangeAllocatedMax_);
-    sizeRangeMax_ = newMax;
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();

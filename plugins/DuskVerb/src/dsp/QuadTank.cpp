@@ -63,6 +63,7 @@ QuadTank::QuadTank()
 void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
+    sizeRangeAllocatedMax_ = std::max (sizeRangeMax_, 1.5f);
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
@@ -70,10 +71,10 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
     {
         auto& tank = tanks_[t];
 
-        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
-        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * sizeRangeMax_)) + maxModExcursion;
+        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
+        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
+        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
+        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
 
         tank.ap1Buffer.allocate (ap1Max);
         tank.delay1.allocate (del1Max + maxModExcursion);
@@ -82,7 +83,7 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
 
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
-            int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeMax_)) + 4;
+            int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_)) + 4;
             tank.densityAP[i].allocate (dapMax);
         }
 
@@ -357,8 +358,15 @@ void QuadTank::setAirDampingScale (float scale)
 
 void QuadTank::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
+    if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();

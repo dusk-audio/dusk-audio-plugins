@@ -118,10 +118,13 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     // Modulation headroom beyond the max scaled delay (scale with sample rate)
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
+    // Track allocation ceiling for runtime setSizeRange() bounds checking
+    sizeRangeAllocatedMax_ = std::max (sizeRangeMax_, 1.5f);
+
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
     {
-        float maxScale = sizeRangeMax_ * delayScale_;
+        float maxScale = sizeRangeAllocatedMax_ * delayScale_;
         int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
@@ -177,6 +180,8 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.currentRMS = 0.0f;
     rightTank_.peakRMS = 0.0f;
     rightTank_.terminalDecayActive = false;
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------
@@ -580,8 +585,15 @@ void DattorroTank::setLateGainScale (float scale)
 
 void DattorroTank::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
+    if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -636,6 +648,9 @@ void DattorroTank::clearBuffers()
 
     clearTank (leftTank_, 1u);
     clearTank (rightTank_, 2u);
+    // Restore 90° L/R phase offset for stereo decorrelation
+    leftTank_.lfoPhase = 0.0f;
+    rightTank_.lfoPhase = 1.5707963f;  // pi/2
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;

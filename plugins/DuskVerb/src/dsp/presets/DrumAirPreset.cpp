@@ -353,6 +353,7 @@ private:
     float sizeParam_ = 0.5f;
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f;
     float lateGainScale_ = 1.0f;
     float delayScale_ = 1.0f;  // Global delay multiplier (set before prepare)
     float softOnsetMs_ = 0.0f;    // Output onset ramp time (ms). Smooths early transient spike.
@@ -510,15 +511,32 @@ void DrumAirPresetEngine::setHallScale (bool enable)
 void DrumAirPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
+
+    // FiveBandDamping: set inner crossover coefficients and band multipliers.
+    {
+        float fbCrossHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
+        float fbMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
+        float coeffs[4];
+        for (int b = 0; b < 4; ++b)
+            coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
+                                  / static_cast<float> (sampleRate_));
+        leftTank_.damping.setCrossovers (coeffs);
+        leftTank_.damping.setBandMultipliers (fbMult);
+        rightTank_.damping.setCrossovers (coeffs);
+        rightTank_.damping.setBandMultipliers (fbMult);
+    }
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
 
     // Modulation headroom beyond the max scaled delay (scale with sample rate)
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
+    // Track allocation ceiling for runtime setSizeRange() bounds checking
+    sizeRangeAllocatedMax_ = std::max (sizeRangeMax_, 1.5f);
+
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
     {
-        float maxScale = sizeRangeMax_ * delayScale_;
+        float maxScale = sizeRangeAllocatedMax_ * delayScale_;
         int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
@@ -574,6 +592,8 @@ void DrumAirPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.currentRMS = 0.0f;
     rightTank_.peakRMS = 0.0f;
     rightTank_.terminalDecayActive = false;
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------
@@ -977,8 +997,15 @@ void DrumAirPresetEngine::setLateGainScale (float scale)
 
 void DrumAirPresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
+    if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -1033,6 +1060,9 @@ void DrumAirPresetEngine::clearBuffers()
 
     clearTank (leftTank_, 1u);
     clearTank (rightTank_, 2u);
+    // Restore 90° L/R phase offset for stereo decorrelation
+    leftTank_.lfoPhase = 0.0f;
+    rightTank_.lfoPhase = 1.5707963f;  // pi/2
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
