@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.538586f;
+    constexpr float kVvDecayTimeScale    = 0.535333f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -74,7 +74,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 1.95828f, -1.23412f, -0.498654f, 0.524843f, -1.03293f, -1.8499f, -0.210257f, 0.678467f, -1.1031f, -0.249891f, 5.68016f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.776415f, -1.68477f, -0.622107f, -0.124274f, -0.808683f, 0.355644f, 0.912071f, 2.68567f, 1.38604f, 0.816897f, 5.75621f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -763,6 +763,7 @@ void SmallVocalHallPresetEngine::clearBuffers()
         structHFState_[t] = 0.0f;
         tanks_[t].lfoPhase = 0.0f;
         tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

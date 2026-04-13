@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.669893f;
+    constexpr float kVvDecayTimeScale    = 0.677173f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 8.23 dB
+    // Max correction magnitude for this preset: 5.88 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.0587006f, -8.23272f, -3.33206f, -2.70575f, -3.16132f, -3.19616f, -0.405261f, -0.413463f, -1.20022f, -4.23314f, -5.04294f, 3.27137f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 2.58811f, -3.85852f, -0.744021f, 0.898747f, 0.363682f, 0.290158f, 2.77592f, 2.57161f, 1.49411f, -1.90122f, -2.7254f, 5.87666f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -582,8 +582,6 @@ void CrossStickRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
     rightTank_.currentRMS = 0.0f;
     rightTank_.peakRMS = 0.0f;
     rightTank_.terminalDecayActive = false;
-    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
-    limiterEnv_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------
@@ -1237,7 +1235,6 @@ public:
         }
         
         amPhaseInc_ = kAmBaseFreqHz / static_cast<float> (sampleRate);
-        amPhase_ = 0.0f;
         // PATCH_POINT_PREPARE_END
     }
 

@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.781378f;
+    constexpr float kVvDecayTimeScale    = 0.696978f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 6.90 dB
+    // Max correction magnitude for this preset: 6.12 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 6.33905f, 6.90367f, 0.336162f, 0.631056f, -0.983247f, -0.332358f, -0.0352936f, -0.303093f, 0.248572f, 1.26401f, 1.76964f, -0.635501f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.51102f, 0.96383f, -0.276644f, 0.580224f, -0.917188f, -0.639563f, 0.408316f, 2.11422f, 2.31824f, -0.656881f, -5.02221f, -6.11662f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -164,7 +164,9 @@ private:
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
-    static constexpr int kMaxBaseDelay = 5521;
+    // Must be >= the largest value in any preset delay table.
+    // Currently: kPresetFatSnareHall reaches 6613.
+    static constexpr int kMaxBaseDelay = 6700;
 
     // Mutable delay and tap configuration (initialized to Hall defaults)
     int baseDelays_[N];
@@ -185,6 +187,7 @@ private:
     float sizeCompensation_ = 1.0f; // sqrt(sizeScale) — normalizes output level across sizes
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f; // Max size scale that prepare() allocated buffers for
 
     struct DelayLine
     {
@@ -200,10 +203,12 @@ private:
         std::vector<float> buffer;
         int writePos = 0;
         int mask = 0;
+        int delaySamples = 0;
 
         float process (float input, float g)
         {
-            float vd = buffer[static_cast<size_t> (writePos)];
+            int readIdx = (writePos - delaySamples) & mask;
+            float vd = buffer[static_cast<size_t> (readIdx)];
             float vn = input + g * vd;
             buffer[static_cast<size_t> (writePos)] = vn;
             writePos = (writePos + 1) & mask;
@@ -496,6 +501,7 @@ void LiveVoxChamberPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
     // Allocate buffers for worst-case delay across ALL algorithms.
     // kMaxBaseDelay covers the longest line in any algorithm config.
     float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
+    sizeRangeAllocatedMax_ = maxSizeScale;
     float maxDelay = static_cast<float> (kMaxBaseDelay)
                    * static_cast<float> (sampleRate / kBaseSampleRate) * maxSizeScale;
 
@@ -528,6 +534,7 @@ void LiveVoxChamberPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
         inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP_[i].writePos = 0;
         inlineAP_[i].mask = apBufSize - 1;
+        inlineAP_[i].delaySamples = apDelay;
     }
 
     // Second inline allpass cascade: longer primes for density multiplication
@@ -539,6 +546,7 @@ void LiveVoxChamberPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
         inlineAP2_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP2_[i].writePos = 0;
         inlineAP2_[i].mask = apBufSize - 1;
+        inlineAP2_[i].delaySamples = apDelay;
     }
 
     // Third inline allpass cascade: even longer primes for ~8x density per cycle
@@ -550,6 +558,7 @@ void LiveVoxChamberPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
         inlineAP3_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP3_[i].writePos = 0;
         inlineAP3_[i].mask = apBufSize - 1;
+        inlineAP3_[i].delaySamples = apDelay;
     }
 
     // Short inline allpass cascade for Hall
@@ -561,6 +570,7 @@ void LiveVoxChamberPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
         inlineAPShort_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAPShort_[i].writePos = 0;
         inlineAPShort_[i].mask = apBufSize - 1;
+        inlineAPShort_[i].delaySamples = apDelay;
     }
 
     // Anti-alias LP coefficient: ~17kHz at any sample rate
@@ -653,6 +663,9 @@ void LiveVoxChamberPresetEngine::process (const float* inputL, const float* inpu
 
             float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
             float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
+            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
+            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
+            // dropped 40dB below peak — the intended "tail has faded" condition.
             terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
                                  && (peakRMS_ > 1e-12f);
             if (terminalDecayActive_)
@@ -1005,8 +1018,9 @@ void LiveVoxChamberPresetEngine::setSizeRange (float min, float max)
 {
     sizeRangeMin_ = std::max (min, 0.0f);
     float newMax = std::max (max, sizeRangeMin_);
+    // After prepare(), cap at allocated buffer size to prevent overrun
     if (prepared_)
-        newMax = std::min (newMax, sizeRangeMax_);
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
     sizeRangeMax_ = newMax;
     if (prepared_)
     {
@@ -1333,7 +1347,7 @@ void LiveVoxChamberPresetEngine::setDecayBoost (float boost)
 void LiveVoxChamberPresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = thresholdDB;
-    terminalDecayFactor_ = std::clamp (factor, 0.5f, 1.0f);
+    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
 void LiveVoxChamberPresetEngine::clearBuffers()

@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.911556f;
+    constexpr float kVvDecayTimeScale    = 0.90777f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -74,7 +74,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.0704099f, 0.957781f, -1.50426f, -0.928205f, 1.42957f, 1.10451f, 2.4121f, 3.33249f, 2.81912f, 2.60246f, 3.57757f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.156976f, 0.794276f, -1.36517f, -0.48975f, 2.0572f, 2.04967f, 3.4839f, 4.52652f, 3.53254f, 2.27755f, 3.39671f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -768,17 +768,12 @@ void AmbiencePlatePresetEngine::clearBuffers()
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
     }
-    // Reinitialize modulation state to match prepare() so clearBuffers()
-    // produces the same deterministic state as a fresh prepare.
-    static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
-    static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
-    static constexpr float    kPhaseOffsets[kNumTanks] = { 0.0f, 1.5707963f, 3.1415927f, 4.7123890f };
     for (int t = 0; t < kNumTanks; ++t)
     {
         structHFState_[t] = 0.0f;
-        tanks_[t].lfoPhase  = kPhaseOffsets[t];
-        tanks_[t].lfoPRNG   = kLFOSeeds[t];
-        tanks_[t].noiseState = kNoiseSeeds[t];
+        tanks_[t].lfoPhase = 0.0f;
+        tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

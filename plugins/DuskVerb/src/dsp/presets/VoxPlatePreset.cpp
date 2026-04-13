@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.0069f;
+    constexpr float kVvDecayTimeScale    = 1.01552f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 4.18 dB
+    // Max correction magnitude for this preset: 4.63 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.532071f, -2.36038f, -1.87368f, -1.28468f, -2.73551f, -3.14711f, -2.76263f, -2.39781f, -1.90772f, -3.24302f, -3.62065f, 4.17713f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 1.02234f, -2.17317f, -1.54659f, -1.13818f, -2.8023f, -3.15908f, -2.81774f, -2.95328f, -3.04929f, -4.16171f, -4.63343f, 3.00433f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -754,6 +754,7 @@ void VoxPlatePresetEngine::clearBuffers()
         structHFState_[t] = 0.0f;
         tanks_[t].lfoPhase = 0.0f;
         tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

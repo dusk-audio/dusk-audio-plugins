@@ -92,6 +92,7 @@ private:
     float sizeCompensation_ = 1.0f; // sqrt(sizeScale) — normalizes output level across sizes
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f; // Max size scale that prepare() allocated buffers for
 
     struct DelayLine
     {
@@ -107,10 +108,12 @@ private:
         std::vector<float> buffer;
         int writePos = 0;
         int mask = 0;
+        int delaySamples = 0;
 
         float process (float input, float g)
         {
-            float vd = buffer[static_cast<size_t> (writePos)];
+            int readIdx = (writePos - delaySamples) & mask;
+            float vd = buffer[static_cast<size_t> (readIdx)];
             float vn = input + g * vd;
             buffer[static_cast<size_t> (writePos)] = vn;
             writePos = (writePos + 1) & mask;

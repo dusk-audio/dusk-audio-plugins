@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.929014f;
+    constexpr float kVvDecayTimeScale    = 0.733375f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 3.72 dB
+    // Max correction magnitude for this preset: 4.33 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 3.7241f, 0.626176f, -3.13167f, -0.828727f, -2.88336f, -0.385193f, -0.459706f, -1.13969f, -0.718777f, 0.0590146f, -2.77947f, 0.850545f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.03344f, -0.102176f, -2.16131f, -2.39242f, -0.979466f, 0.929042f, 1.70006f, 3.24081f, 1.21977f, -1.4769f, -4.32866f, -0.681163f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -663,10 +663,9 @@ void RichChamberPresetEngine::setCrossoverFreq (float hz)
 void RichChamberPresetEngine::setModDepth (float depth)
 {
     lastModDepthRaw_ = depth;
-    float clamped = std::min (depth, 2.0f);
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = clamped * 16.0f * rateRatio;
-    noiseModDepth_ = clamped * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
+    modDepthSamples_ = depth * 16.0f * rateRatio;
+    noiseModDepth_ = depth * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
 }
 
 void RichChamberPresetEngine::setNoiseModDepth (float samples)
@@ -674,7 +673,7 @@ void RichChamberPresetEngine::setNoiseModDepth (float samples)
     // Independent noise jitter, decoupled from LFO modDepth. When set (>= 0),
     // this overrides the modDepth-coupled noise jitter. Mirrors DattorroTank.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    independentNoiseModDepth_ = std::min (samples, 32.0f) * rateRatio;
+    independentNoiseModDepth_ = samples * rateRatio;
 }
 
 void RichChamberPresetEngine::setModRate (float hz)
@@ -769,15 +768,12 @@ void RichChamberPresetEngine::clearBuffers()
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
     }
-    static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
-    static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
-    static constexpr float    kPhaseOffsets[kNumTanks] = { 0.0f, 1.5707963f, 3.1415927f, 4.7123890f };
     for (int t = 0; t < kNumTanks; ++t)
     {
         structHFState_[t] = 0.0f;
-        tanks_[t].lfoPhase  = kPhaseOffsets[t];
-        tanks_[t].lfoPRNG   = kLFOSeeds[t];
-        tanks_[t].noiseState = kNoiseSeeds[t];
+        tanks_[t].lfoPhase = 0.0f;
+        tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

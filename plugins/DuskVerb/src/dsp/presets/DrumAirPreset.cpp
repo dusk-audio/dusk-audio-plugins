@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.62306f;
+    constexpr float kVvDecayTimeScale    = 0.633486f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 9.08 dB
+    // Max correction magnitude for this preset: 8.47 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.49841f, -9.07729f, -4.57185f, -4.9536f, -5.0595f, -2.96723f, -1.82972f, -1.76552f, -0.427669f, -5.67781f, -3.84405f, 7.44622f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.48109f, -8.46823f, -4.78632f, -5.58285f, -3.75043f, -1.61396f, -0.00914164f, -0.762956f, -1.59453f, -5.07932f, -3.05636f, 6.64183f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -1033,9 +1033,6 @@ void DrumAirPresetEngine::clearBuffers()
 
     clearTank (leftTank_, 1u);
     clearTank (rightTank_, 2u);
-    // Restore 90° stereo decorrelation from prepare()
-    leftTank_.lfoPhase = 0.0f;
-    rightTank_.lfoPhase = 1.5707963f;
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
