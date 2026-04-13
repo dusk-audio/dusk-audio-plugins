@@ -1039,8 +1039,13 @@ void VerySmallAmbiencePresetEngine::clearBuffers()
         tank.noiseState = seed * 2654435761u;
     };
 
-    clearTank (leftTank_, 1u);
-    clearTank (rightTank_, 2u);
+    clearTank (leftTank_, 0x12345678u);
+    clearTank (rightTank_, 0x87654321u);
+    // Restore 90° stereo decorrelation and prepare()-matching seeds
+    leftTank_.lfoPhase = 0.0f;
+    leftTank_.noiseState = 0xDEADBEEFu;
+    rightTank_.lfoPhase = 1.5707963f;
+    rightTank_.noiseState = 0xCAFEBABEu;
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;

@@ -565,6 +565,8 @@ void ShortDarkSnareRoomPresetEngine::prepare (double sampleRate, int /*maxBlockS
     rightTank_.currentRMS = 0.0f;
     rightTank_.peakRMS = 0.0f;
     rightTank_.terminalDecayActive = false;
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------

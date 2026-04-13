@@ -215,7 +215,7 @@ void TiledRoomReverb::setTrebleMultiply (float mult) { trebleMultiply_ = std::cl
 void TiledRoomReverb::setCrossoverFreq (float hz) { crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f); if (prepared_) updateDecayCoefficients(); }
 void TiledRoomReverb::setHighCrossoverFreq (float hz) { highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f); if (prepared_) updateDecayCoefficients(); }
 void TiledRoomReverb::setAirDampingScale (float scale) { airDampingScale_ = std::max (scale, 0.01f); if (prepared_) updateDecayCoefficients(); }
-void TiledRoomReverb::setModDepth (float depth) { lastModDepthRaw_ = depth; modDepthSamples_ = depth * 16.0f * static_cast<float> (sampleRate_ / kBaseSampleRate); }
+void TiledRoomReverb::setModDepth (float depth) { lastModDepthRaw_ = depth; float clamped = std::min (depth, 2.0f); modDepthSamples_ = clamped * 16.0f * static_cast<float> (sampleRate_ / kBaseSampleRate); }
 void TiledRoomReverb::setModRate (float hz) { modRateHz_ = hz; if (prepared_) updateLFORates(); }
 void TiledRoomReverb::setSize (float size) { sizeParam_ = std::clamp (size, 0.0f, 1.0f); if (prepared_) { updateDelayLengths(); updateDecayCoefficients(); } }
 void TiledRoomReverb::setFreeze (bool frozen) { frozen_ = frozen; }

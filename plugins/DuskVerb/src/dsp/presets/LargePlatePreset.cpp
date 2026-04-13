@@ -637,7 +637,7 @@ void LargePlatePresetEngine::setTrebleMultiply (float mult)
 
 void LargePlatePresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = hz;
+    crossoverFreq_ = std::max (hz, 1.0f);
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -692,8 +692,8 @@ void LargePlatePresetEngine::setAirDampingScale (float scale)
 
 void LargePlatePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    sizeRangeMin_ = std::max (min, 0.0f);
+    sizeRangeMax_ = std::max (max, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();

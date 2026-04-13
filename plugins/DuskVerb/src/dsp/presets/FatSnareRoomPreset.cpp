@@ -1506,9 +1506,6 @@ void FatSnareRoomPresetEngine::updateDecayCoefficients()
         float gHigh = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_, 0.01f));
 
         dampFilter_[i].setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
-
-            // FiveBandDamping: override 3-band gains with 5-band multipliers.
-            dampFilter_[i].computeGainsFromBase (gBase, lowCrossoverCoeff, highCrossoverCoeff);
     }
 }
 
