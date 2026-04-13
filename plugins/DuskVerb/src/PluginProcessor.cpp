@@ -10,7 +10,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "algorithm", 1 }, "Algorithm",
-        juce::StringArray { "Plate", "Hall", "Chamber", "Room", "Ambient", "PlateQuad", "HallQuad", "HallSlow", "HallFDN", "HallFDNDualSlopeBody", "HallQuadSustain", "RoomFDN", "RoomQuad", "RoomQuadSustain", "ChamberQuad", "AmbientFDN", "AmbientQuad", "ChamberQuadSustain", "AmbientQuadSustain", "HallFDNSmooth", "RoomQuadSustainHigh", "AmbientQuadSustainHigh", "HallQuadSmooth", "ChamberFDN", "PlateCrisp", "HallQuadBright", "RoomBright", "RoomFDNBright", "ChamberQuadBright", "AmbientFDNBright", "AmbientQuadBright", "ChamberQuadSustainHybrid" }, 1));
+        juce::StringArray { "Plate", "Hall", "Chamber", "Room", "Ambient", "PlateQuad", "HallQuad", "HallSlow", "HallFDN", "HallFDNDualSlopeBody", "HallQuadSustain", "RoomFDN", "RoomQuad", "RoomQuadSustain", "ChamberQuad", "AmbientFDN", "AmbientQuad", "ChamberQuadSustain", "AmbientQuadSustain", "HallFDNSmooth", "RoomQuadSustainHigh", "AmbientQuadSustainHigh", "HallQuadSmooth", "ChamberFDN", "PlateCrisp", "HallQuadBright", "RoomBright", "RoomFDNBright", "ChamberQuadBright", "AmbientFDNBright", "AmbientQuadBright", "ChamberQuadSustainHybrid", "PresetHomestarBladeRunner", "PresetPadHall", "PresetConcertWave", "PresetHugeSynthHall", "PresetSmallVocalHall", "PresetFatSnareHall", "PresetSnareHall", "PresetLongSynthHall", "PresetVeryNiceHall", "PresetVocalHall", "PresetDrumPlate", "PresetFatDrums", "PresetLargePlate", "PresetSteelPlate", "PresetTightPlate", "PresetVocalPlate", "PresetVoxPlate", "PresetDarkVocalRoom", "PresetExcitingSnareroom", "PresetFatSnareRoom", "PresetLivelySnareRoom", "PresetLongDark70sSnareRoom", "PresetShortDarkSnareRoom", "PresetAPlate", "PresetClearChamber", "PresetFatPlate", "PresetLargeChamber", "PresetLargeWoodRoom", "PresetLiveVoxChamber", "PresetMediumGate", "PresetRichChamber", "PresetSmallChamber1", "PresetSmallChamber2", "PresetSnarePlate", "PresetThinPlate", "PresetTiledRoom", "PresetAmbience", "PresetAmbiencePlate", "PresetAmbienceTiledRoom", "PresetBigAmbienceGate", "PresetCrossStickRoom", "PresetDrumAir", "PresetGatedSnare", "PresetLargeAmbience", "PresetLargeGatedSnare", "PresetMedAmbience", "PresetShortVocalAmbience", "PresetSmallAmbience", "PresetSmallDrumRoom", "PresetSnareAmbience", "PresetTightAmbienceGate", "PresetTripHopSnare", "PresetVerySmallAmbience" }, 1));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "decay", 1 }, "Decay Time",
@@ -143,6 +143,71 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     layout.add (std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { "preset_id", 1 }, "Preset ID", 0, 53, 0));
 
+    // --- Optimizer-tunable overrides ---
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "air_damping", 1 }, "Air Damping",
+        juce::NormalisableRange<float> (-1.0f, 2.0f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "high_crossover", 1 }, "High Crossover",
+        juce::NormalisableRange<float> (-1.0f, 20000.0f, 1.0f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "noise_mod", 1 }, "Noise Mod",
+        juce::NormalisableRange<float> (-1.0f, 20.0f, 0.1f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "inline_diffusion", 1 }, "Inline Diffusion",
+        juce::NormalisableRange<float> (-1.0f, 0.75f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "stereo_coupling", 1 }, "Stereo Coupling",
+        juce::NormalisableRange<float> (-2.0f, 0.75f, 0.01f), -2.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "chorus_depth", 1 }, "Chorus Depth",
+        juce::NormalisableRange<float> (-1.0f, 1.0f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "chorus_rate", 1 }, "Chorus Rate",
+        juce::NormalisableRange<float> (-1.0f, 5.0f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "output_gain", 1 }, "Output Gain",
+        juce::NormalisableRange<float> (-1.0f, 20.0f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_crossfeed", 1 }, "ER Crossfeed",
+        juce::NormalisableRange<float> (-1.0f, 1.0f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "decay_time_scale", 1 }, "Decay Time Scale",
+        juce::NormalisableRange<float> (-1.0f, 10.0f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "decay_boost", 1 }, "Decay Boost",
+        juce::NormalisableRange<float> (-1.0f, 2.0f, 0.01f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "structural_hf_damp", 1 }, "Structural HF Damp",
+        juce::NormalisableRange<float> (-1.0f, 20000.0f, 1.0f), -1.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "output_low_shelf_db", 1 }, "Output Low Shelf dB",
+        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "output_high_shelf_db", 1 }, "Output High Shelf dB",
+        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "output_high_shelf_hz", 1 }, "Output High Shelf Hz",
+        juce::NormalisableRange<float> (0.0f, 16000.0f, 1.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "output_mid_eq_db", 1 }, "Output Mid EQ dB",
+        juce::NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "output_mid_eq_hz", 1 }, "Output Mid EQ Hz",
+        juce::NormalisableRange<float> (0.0f, 10000.0f, 1.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "terminal_threshold", 1 }, "Terminal Threshold",
+        juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "terminal_factor", 1 }, "Terminal Factor",
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_air_ceiling", 1 }, "ER Air Ceiling Hz",
+        juce::NormalisableRange<float> (0.0f, 20000.0f, 1.0f), 0.0f));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "er_air_floor", 1 }, "ER Air Floor Hz",
+        juce::NormalisableRange<float> (0.0f, 20000.0f, 1.0f), 0.0f));
+
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bypass", 1 }, "Bypass", false));
 
@@ -189,6 +254,27 @@ DuskVerbProcessor::DuskVerbProcessor()
         tapGainParams_[i] = parameters.getRawParameterValue (
             juce::String ("tap_gain_") + juce::String (i));
     presetIdParam_ = parameters.getRawParameterValue ("preset_id");
+    airDampingParam_ = parameters.getRawParameterValue ("air_damping");
+    highCrossoverParam_ = parameters.getRawParameterValue ("high_crossover");
+    noiseModParam_ = parameters.getRawParameterValue ("noise_mod");
+    inlineDiffParam_ = parameters.getRawParameterValue ("inline_diffusion");
+    stereoCouplingParam_ = parameters.getRawParameterValue ("stereo_coupling");
+    chorusDepthParam_ = parameters.getRawParameterValue ("chorus_depth");
+    chorusRateParam_ = parameters.getRawParameterValue ("chorus_rate");
+    outputGainParam_ = parameters.getRawParameterValue ("output_gain");
+    erCrossfeedParam_ = parameters.getRawParameterValue ("er_crossfeed");
+    decayTimeScaleParam_ = parameters.getRawParameterValue ("decay_time_scale");
+    decayBoostParam_ = parameters.getRawParameterValue ("decay_boost");
+    structHFDampParam_ = parameters.getRawParameterValue ("structural_hf_damp");
+    outputLowShelfDBParam_ = parameters.getRawParameterValue ("output_low_shelf_db");
+    outputHighShelfDBParam_ = parameters.getRawParameterValue ("output_high_shelf_db");
+    outputHighShelfHzParam_ = parameters.getRawParameterValue ("output_high_shelf_hz");
+    outputMidEQDBParam_ = parameters.getRawParameterValue ("output_mid_eq_db");
+    outputMidEQHzParam_ = parameters.getRawParameterValue ("output_mid_eq_hz");
+    terminalThresholdParam_ = parameters.getRawParameterValue ("terminal_threshold");
+    terminalFactorParam_ = parameters.getRawParameterValue ("terminal_factor");
+    erAirCeilingParam_ = parameters.getRawParameterValue ("er_air_ceiling");
+    erAirFloorParam_ = parameters.getRawParameterValue ("er_air_floor");
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 }
 
@@ -207,14 +293,46 @@ bool DuskVerbProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 
 void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    engine_.prepare (sampleRate, samplesPerBlock);
-    originalLatencySamples_ = 0;  // FDN reverb has zero inherent latency
-    setLatencySamples (originalLatencySamples_);
+    // Skip the full re-prepare if the sample rate is unchanged and the new
+    // block size fits in the previously-allocated buffers. Pedalboard (and
+    // some hosts) calls prepareToPlay redundantly before each process() call
+    // with the current input buffer size; without this guard the engine is
+    // destroyed and rebuilt every time, which makes LFO phase
+    // non-deterministic across calls.
+    //
+    // To handle hosts that escalate block sizes (pedalboard sends bs=512 on
+    // load, then bs=N to match each call's input length), we always prepare
+    // with at least kMinPreparedBlockSize so subsequent calls fit without
+    // forcing a re-prepare.
+    constexpr int kMinPreparedBlockSize = 65536;
+    int safeBlockSize = std::max (samplesPerBlock, kMinPreparedBlockSize);
+    bool needsReallocation = (preparedSampleRate_ != sampleRate || safeBlockSize > preparedBlockSize_);
 
-    // Initialize algorithm from saved state (edge-case: DAW restores state before first processBlock)
-    cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
-    engine_.setAlgorithm (cachedAlgorithm_);
+    if (needsReallocation)
+    {
+        preparedSampleRate_ = sampleRate;
+        preparedBlockSize_ = safeBlockSize;
 
+        engine_.prepare (sampleRate, safeBlockSize);
+        originalLatencySamples_ = 0;  // FDN reverb has zero inherent latency
+        setLatencySamples (originalLatencySamples_);
+
+        // Initialize algorithm from saved state (edge-case: DAW restores state before first processBlock)
+        cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
+        engine_.setAlgorithm (cachedAlgorithm_);
+    }
+
+    // Lightweight engine reset: re-apply algorithm to clear DSP state
+    // (delay lines, filters) even without reallocation. This prevents
+    // tail/LFO state from leaking between sessions.
+    if (! needsReallocation)
+    {
+        cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
+        engine_.setAlgorithm (cachedAlgorithm_);
+    }
+
+    // DSP reset: always runs so smoothers and state are reinitialized
+    // even when the host redundantly calls prepareToPlay().
     auto rampSamples = static_cast<double> (kSmoothingBlockSize);
 
     decaySmooth_    .reset (sampleRate, rampSamples / sampleRate);
@@ -263,8 +381,15 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     int numSamples = buffer.getNumSamples();
 
-    // Clear any unused output channels
-    for (int ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
+    // Handle mono input: duplicate channel 0 to channel 1 BEFORE bypass,
+    // so mono-in/stereo-out bypass still outputs audio on both channels.
+    if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
+    {
+        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
+    }
+
+    // Clear any further unused output channels (3+)
+    for (int ch = std::max (totalNumInputChannels, 2); ch < totalNumOutputChannels; ++ch)
         buffer.clear (ch, 0, numSamples);
 
     // Bypass: pass audio through unprocessed
@@ -277,12 +402,6 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Restore latency after bypass
     if (getLatencySamples() != originalLatencySamples_)
         setLatencySamples (originalLatencySamples_);
-
-    // Handle mono input: duplicate channel 0 to channel 1
-    if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
-    {
-        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
-    }
 
     float* left  = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
@@ -363,21 +482,26 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Soft onset: output transient smoothing for DattorroTank (0 = disabled)
     engine_.setDattorroSoftOnsetMs (softOnsetParam_->load());
 
-    // Late feed-forward level: override per-algorithm default when >= 0
+    // Late feed-forward level: -1 = use algorithm default, >= 0 = override
     {
         float lff = lateFeedFwdParam_->load();
         if (lff >= 0.0f)
             engine_.setLateFeedForwardLevel (lff);
+        else
+            engine_.resetLateFeedForwardLevel();
     }
 
-    // Per-preset ER taps: load VV-extracted taps when preset_id changes.
+    // Per-preset ER taps: load VV-extracted taps when preset_id changes
+    // OR when the effective pre-delay changes (tap timing depends on it).
     // Must apply pre-delay first so tap timing is computed correctly
     // (VV tap times are absolute; DV's pre-delay is subtracted).
     {
         int presetId = static_cast<int> (presetIdParam_->load());
-        if (presetId != lastPresetId_)
+        bool preDelayChanged = std::abs (preDelayMs - lastPresetPreDelayMs_) > 0.001f;
+        if (presetId != lastPresetId_ || preDelayChanged)
         {
             lastPresetId_ = presetId;
+            lastPresetPreDelayMs_ = preDelayMs;
 
             // Apply pre-delay immediately (skip smoothing) so the engine
             // has the correct value when computing tap delay offsets.
@@ -426,25 +550,55 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            // Preset loaded — apply tap_gain params on top of preset's tap positions,
-            // but only if any gain differs from 1.0 (to avoid unnecessary processing).
-            bool anyGainChanged = false;
+            // Preset loaded — always apply tap_gain params on top of preset's
+            // tap positions so returning all gains to 1.0 updates the engine.
             float gains[14];
             for (int i = 0; i < 14; ++i)
-            {
                 gains[i] = tapGainParams_[i]->load();
-                if (std::abs (gains[i] - 1.0f) > 0.001f)
-                    anyGainChanged = true;
-            }
-            if (anyGainChanged)
-                engine_.applyTapGains (gains[0], gains[1], gains[2], gains[3], gains[4], gains[5], gains[6],
-                                       gains[7], gains[8], gains[9], gains[10], gains[11], gains[12], gains[13]);
+            engine_.applyTapGains (gains[0], gains[1], gains[2], gains[3], gains[4], gains[5], gains[6],
+                                   gains[7], gains[8], gains[9], gains[10], gains[11], gains[12], gains[13]);
         }
     }
 
     // Per-preset peak limiter on DattorroTank output (0 dB = disabled).
     // Must be set AFTER preset loading (which may call applyAlgorithmConfig).
     engine_.setDattorroLimiter (limiterThreshParam_->load(), 2.0f);
+
+    // --- Optimizer-tunable overrides ---
+    // Always forward to the engine. Sentinel values (negative or param-specific)
+    // are handled inside each engine setter, which restores the config default so
+    // moving a control back to sentinel clears a previously latched override.
+    {
+        engine_.setAirDampingOverride (airDampingParam_->load());
+        engine_.setHighCrossoverOverride (highCrossoverParam_->load());
+        engine_.setNoiseModOverride (noiseModParam_->load());
+        engine_.setInlineDiffusionOverride (inlineDiffParam_->load());
+        engine_.setStereoCouplingOverride (stereoCouplingParam_->load());
+        engine_.setChorusDepthOverride (chorusDepthParam_->load());
+        engine_.setChorusRateOverride (chorusRateParam_->load());
+        engine_.setOutputGainOverride (outputGainParam_->load());
+        engine_.setERCrossfeedOverride (erCrossfeedParam_->load());
+        engine_.setDecayTimeScaleOverride (decayTimeScaleParam_->load());
+        engine_.setDecayBoostOverride (decayBoostParam_->load());
+        engine_.setStructuralHFDampingOverride (structHFDampParam_->load());
+
+        // EQ overrides: 0 dB disables the filter inside the engine.
+        engine_.setOutputLowShelfOverride (outputLowShelfDBParam_->load());
+
+        float oHighDB = outputHighShelfDBParam_->load();
+        float oHighHz = outputHighShelfHzParam_->load();
+        engine_.setOutputHighShelfOverride (oHighDB, oHighHz > 0.0f ? oHighHz : 5000.0f);
+
+        float oMidDB = outputMidEQDBParam_->load();
+        float oMidHz = outputMidEQHzParam_->load();
+        engine_.setOutputMidEQOverride (oMidDB, oMidHz > 0.0f ? oMidHz : 1000.0f);
+
+        engine_.setTerminalDecayOverride (
+            terminalThresholdParam_->load(), terminalFactorParam_->load());
+
+        engine_.setERAirCeilingOverride (erAirCeilingParam_->load());
+        engine_.setERAirFloorOverride (erAirFloorParam_->load());
+    }
 
     // Sub-block processing for smooth parameter transitions
     int samplesRemaining = numSamples;
@@ -524,9 +678,9 @@ void DuskVerbProcessor::setStateXML (const juce::XmlElement& xml)
     {
         parameters.replaceState (juce::ValueTree::fromXml (xml));
 
-        // Restore per-preset gain trim from saved state
-        float trim = static_cast<float> (parameters.state.getProperty ("gainTrim", 0.0f));
-        engine_.setGainTrim (trim);
+        // Restore per-preset gain trim from the restored APVTS parameter.
+        if (gainTrimParam_ != nullptr)
+            engine_.setGainTrim (gainTrimParam_->load());
     }
 }
 
