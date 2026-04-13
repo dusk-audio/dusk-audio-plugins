@@ -1291,6 +1291,8 @@ void DuskVerbEngine::setOutputLowShelfOverride (float dB)
 void DuskVerbEngine::setOutputHighShelfOverride (float dB, float hz)
 {
     float sr = static_cast<float> (sampleRate_);
+    float nyquist = sr * 0.5f;
+    hz = std::clamp (hz, 1.0f, nyquist);
     highShelfEnabled_ = (dB != 0.0f);
     if (highShelfEnabled_)
         computeShelfCoeffs (highShelfFilter_.b0, highShelfFilter_.b1, highShelfFilter_.b2,
@@ -1303,6 +1305,8 @@ void DuskVerbEngine::setOutputHighShelfOverride (float dB, float hz)
 void DuskVerbEngine::setOutputMidEQOverride (float dB, float hz)
 {
     float sr = static_cast<float> (sampleRate_);
+    float nyquist = sr * 0.5f;
+    hz = std::clamp (hz, 1.0f, nyquist);
     midEQEnabled_ = (dB != 0.0f);
     if (midEQEnabled_)
     {

@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.858146f;
+    constexpr float kVvDecayTimeScale    = 0.855266f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -74,7 +74,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 1.3184f, -0.351331f, -3.1056f, -1.44762f, -1.21447f, -0.437864f, -0.728386f, 0.180815f, -0.0126637f, 0.534412f, 3.53667f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.0222667f, 0.169546f, -0.157829f, 0.909367f, 0.435936f, 0.156206f, -0.452776f, -0.264823f, -1.054f, -2.08474f, -1.63184f, 8.15596f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -639,7 +639,8 @@ void LargeAmbiencePresetEngine::setTrebleMultiply (float mult)
 
 void LargeAmbiencePresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = hz;
+    const float maxLow = std::max (20.0f, highCrossoverFreq_ - 1.0f);
+    crossoverFreq_ = std::clamp (hz, 20.0f, maxLow);
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -680,7 +681,8 @@ void LargeAmbiencePresetEngine::setLateGainScale (float scale) { lateGainScale_ 
 
 void LargeAmbiencePresetEngine::setHighCrossoverFreq (float hz)
 {
-    highCrossoverFreq_ = std::max (hz, 100.0f);
+    const float minHigh = std::max (100.0f, crossoverFreq_ + 1.0f);
+    highCrossoverFreq_ = std::max (hz, minHigh);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -731,7 +733,7 @@ void LargeAmbiencePresetEngine::setStructuralHFDamping (float hz)
 
 void LargeAmbiencePresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     // Accept the full [0.0, 1.0] range to match DattorroTank and the
     // wrapper's pass-through behavior. PluginProcessor already gates the
     // override path on factor>0.001, so an inadvertent factor=0 from the
@@ -853,6 +855,7 @@ public:
         // Bass/treble defaults must be set BEFORE prepare so decay coefficients
         // are computed with the correct damping baseline.
         engine_.setBassMultiply (kBakedBassMultScale);
+        float savedTreble = lastTreble_;
         engine_.setTrebleMultiply (kBakedTrebleMultScale);
         lastTreble_ = kBakedTrebleMultScale;
         engine_.setAirDampingScale (kBakedAirDampingScale * kVvAirDampingScale);
@@ -877,8 +880,6 @@ public:
         // Replay any cached runtime overrides after prepare so they survive
         // re-preparation (e.g. DAW sample rate change). Without this, overrides
         // set by the host or optimizer would be silently reset to baked defaults.
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
         if (overrideAirDamping_ >= 0.0f)
             setAirDampingScale (overrideAirDamping_);
         if (overrideHighCrossover_ >= 0.0f)
@@ -891,6 +892,11 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        {
+            engine_.setTrebleMultiply (savedTreble);
+            lastTreble_ = savedTreble;
+        }
 
         // Pre-compute per-preset tilt EQ coefficients at the actual host
         // sample rate. These are derived from the VV IR's frequency
@@ -1059,8 +1065,6 @@ public:
         // Cache the SCALED engine-facing value (Invariant 2) so any
         // structural HF damping replay uses the consistent value.
         lastTreble_ = scaled;
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
     }
 
     void setCrossoverFreq (float hz) override { engine_.setCrossoverFreq (hz); }

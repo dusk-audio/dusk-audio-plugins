@@ -247,6 +247,14 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     updateLFORates();
     updateDecayCoefficients();
 
+    // Terminal decay: sample-rate-invariant smoothing coefficients.
+    // At 44.1kHz these produce the same behavior as the original constants.
+    constexpr float kRmsTauMs     = 45.0f;   // RMS window ~45ms (was 0.9995/0.0005)
+    constexpr float kPeakTauMs    = 2270.0f;  // Peak decay ~2.27s (was 0.99999)
+    float sr = static_cast<float> (sampleRate);
+    rmsAlpha_      = std::exp (-1000.0f / (kRmsTauMs * sr));
+    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
+
     prepared_ = true;
 }
 
@@ -299,16 +307,16 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 sampleEnergy += delayOut[ch] * delayOut[ch];
             sampleEnergy *= (1.0f / static_cast<float> (N));
 
-            currentRMS_ = currentRMS_ * 0.9995f + sampleEnergy * 0.0005f;
+            currentRMS_ = rmsAlpha_ * currentRMS_ + (1.0f - rmsAlpha_) * sampleEnergy;
             if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
-            else peakRMS_ *= 0.99999f;
+            else peakRMS_ *= peakDecayAlpha_;
 
-            float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
-            float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
-            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
-            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
-            // dropped 40dB below peak — the intended "tail has faded" condition.
-            terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
+            // Compare ratio in linear domain (avoids per-sample log10).
+            // terminalDecayThresholdDB_ is stored NEGATIVE (e.g. -40.0f);
+            // terminalLinearThreshold_ = 10^4 for -40dB → activates when
+            // peak/RMS ratio exceeds threshold (tail has faded).
+            float ratio = peakRMS_ / std::max (currentRMS_, 1e-20f);
+            terminalDecayActive_ = (ratio > terminalLinearThreshold_)
                                  && (peakRMS_ > 1e-12f);
             if (terminalDecayActive_)
             {
@@ -991,8 +999,10 @@ void FDNReverb::setDecayBoost (float boost)
 
 void FDNReverb::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    // Precompute linear threshold to avoid per-sample log10
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void FDNReverb::clearBuffers()

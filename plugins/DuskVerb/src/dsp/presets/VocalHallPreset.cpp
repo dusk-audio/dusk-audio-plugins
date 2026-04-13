@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.890491f;
+    constexpr float kVvDecayTimeScale    = 0.89708f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -74,7 +74,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.53392f, -0.698181f, -0.28646f, 0.606623f, -1.87379f, -1.37701f, -1.92648f, -1.39857f, -1.24765f, -3.77892f, -4.46041f, 2.56323f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.34235f, -0.998241f, -0.908627f, -0.046947f, -0.300254f, 0.291501f, 0.110804f, 1.29252f, 2.17221f, 1.34501f, 0.130568f, 4.67376f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -918,7 +918,8 @@ void VocalHallPresetEngine::setTrebleMultiply (float mult)
 
 void VocalHallPresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f);
+    const float maxLow = std::max (200.0f, highCrossoverFreq_ - 1.0f);
+    crossoverFreq_ = std::clamp (hz, 200.0f, maxLow);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -1272,7 +1273,8 @@ void VocalHallPresetEngine::setModDepthFloor (float floor)
 
 void VocalHallPresetEngine::setHighCrossoverFreq (float hz)
 {
-    highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f);
+    const float minHigh = std::max (1000.0f, crossoverFreq_ + 1.0f);
+    highCrossoverFreq_ = std::clamp (hz, minHigh, 20000.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -1291,6 +1293,8 @@ void VocalHallPresetEngine::setStructuralHFDamping (float baseFreqHz, float treb
     {
         structHFEnabled_ = false;
         structHFCoeff_ = 0.0f;
+        for (int i = 0; i < N; ++i)
+            structHFState_[i] = 0.0f;
         return;
     }
     // Inverted treble scaling: dark presets (low treble) already have strong TwoBandDamping,
@@ -1310,6 +1314,8 @@ void VocalHallPresetEngine::setStructuralLFDamping (float hz)
     {
         structLFEnabled_ = false;
         structLFCoeff_ = 0.0f;
+        for (int i = 0; i < N; ++i)
+            structLFState_[i] = 0.0f;
         return;
     }
     structLFEnabled_ = true;
@@ -1330,7 +1336,7 @@ void VocalHallPresetEngine::setDecayBoost (float boost)
 
 void VocalHallPresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
@@ -1538,6 +1544,7 @@ public:
         // Bass/treble defaults must be set BEFORE prepare so decay coefficients
         // are computed with the correct damping baseline.
         engine_.setBassMultiply (kBakedBassMultScale);
+        float savedTreble = lastTreble_;
         engine_.setTrebleMultiply (kBakedTrebleMultScale);
         lastTreble_ = kBakedTrebleMultScale;
         engine_.setAirTrebleMultiply (kBakedAirDampingScale * kVvAirDampingScale);
@@ -1562,8 +1569,6 @@ public:
         // Replay any cached runtime overrides after prepare so they survive
         // re-preparation (e.g. DAW sample rate change). Without this, overrides
         // set by the host or optimizer would be silently reset to baked defaults.
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
         if (overrideAirDamping_ >= 0.0f)
             setAirDampingScale (overrideAirDamping_);
         if (overrideHighCrossover_ >= 0.0f)
@@ -1576,6 +1581,11 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        {
+            engine_.setTrebleMultiply (savedTreble);
+            lastTreble_ = savedTreble;
+        }
 
         // Pre-compute per-preset tilt EQ coefficients at the actual host
         // sample rate. These are derived from the VV IR's frequency
@@ -1744,8 +1754,6 @@ public:
         // Cache the SCALED engine-facing value (Invariant 2) so any
         // structural HF damping replay uses the consistent value.
         lastTreble_ = scaled;
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
     }
 
     void setCrossoverFreq (float hz) override { engine_.setCrossoverFreq (hz); }

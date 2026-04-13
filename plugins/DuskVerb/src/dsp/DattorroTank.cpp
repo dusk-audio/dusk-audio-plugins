@@ -141,7 +141,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
             int dapMax = static_cast<int> (std::ceil (
-                tank.densityAPBase[i] * rateRatio * sizeRangeMax_ * delayScale_)) + 4;
+                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * delayScale_)) + 4;
             tank.densityAP[i].allocate (dapMax);
         }
 
@@ -168,6 +168,10 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 
     // Re-apply mod depth scaled for the new sample rate
     setModDepth (lastModDepthRaw_);
+
+    // Recompute soft-onset coefficient for the new sample rate
+    if (softOnsetMs_ > 0.0f)
+        setSoftOnsetMs (softOnsetMs_);
 
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
@@ -622,7 +626,7 @@ void DattorroTank::setStructuralHFDamping (float hz)
 
 void DattorroTank::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 

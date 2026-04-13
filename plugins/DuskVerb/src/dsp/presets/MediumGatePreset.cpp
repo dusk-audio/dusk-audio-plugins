@@ -74,7 +74,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.645439f, -5.04934f, 0.65092f, -0.413401f, -0.638715f, -1.65962f, 0.0387393f, 1.30544f, 1.13411f, -1.26624f, -2.01035f, 5.26729f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.993038f, -2.68672f, 1.91703f, -2.06353f, -1.65086f, -1.12119f, -1.28471f, 0.644913f, 1.09728f, 0.850658f, 1.43929f, 8.50771f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -572,7 +572,7 @@ void MediumGatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
             int dapMax = static_cast<int> (std::ceil (
-                tank.densityAPBase[i] * rateRatio * sizeRangeMax_ * delayScale_)) + 4;
+                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * delayScale_)) + 4;
             tank.densityAP[i].allocate (dapMax);
         }
 
@@ -599,6 +599,8 @@ void MediumGatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 
     // Re-apply mod depth scaled for the new sample rate
     setModDepth (lastModDepthRaw_);
+    if (softOnsetMs_ > 0.0f)
+        setSoftOnsetMs (softOnsetMs_);
 
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
@@ -859,7 +861,8 @@ void MediumGatePresetEngine::setTrebleMultiply (float mult)
 
 void MediumGatePresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = hz;
+    const float maxLow = std::max (20.0f, highCrossoverFreq_ - 1.0f);
+    crossoverFreq_ = std::clamp (hz, 20.0f, maxLow);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -1053,7 +1056,7 @@ void MediumGatePresetEngine::setStructuralHFDamping (float hz)
 
 void MediumGatePresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
@@ -1184,6 +1187,7 @@ public:
         // Bass/treble defaults must be set BEFORE prepare so decay coefficients
         // are computed with the correct damping baseline.
         engine_.setBassMultiply (kBakedBassMultScale);
+        float savedTreble = lastTreble_;
         engine_.setTrebleMultiply (kBakedTrebleMultScale);
         lastTreble_ = kBakedTrebleMultScale;
         engine_.setAirDampingScale (kBakedAirDampingScale * kVvAirDampingScale);
@@ -1208,8 +1212,6 @@ public:
         // Replay any cached runtime overrides after prepare so they survive
         // re-preparation (e.g. DAW sample rate change). Without this, overrides
         // set by the host or optimizer would be silently reset to baked defaults.
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
         if (overrideAirDamping_ >= 0.0f)
             setAirDampingScale (overrideAirDamping_);
         if (overrideHighCrossover_ >= 0.0f)
@@ -1222,6 +1224,11 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        {
+            engine_.setTrebleMultiply (savedTreble);
+            lastTreble_ = savedTreble;
+        }
 
         // Pre-compute per-preset tilt EQ coefficients at the actual host
         // sample rate. These are derived from the VV IR's frequency
@@ -1390,8 +1397,6 @@ public:
         // Cache the SCALED engine-facing value (Invariant 2) so any
         // structural HF damping replay uses the consistent value.
         lastTreble_ = scaled;
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
     }
 
     void setCrossoverFreq (float hz) override { engine_.setCrossoverFreq (hz); }
