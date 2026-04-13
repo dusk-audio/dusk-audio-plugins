@@ -672,9 +672,10 @@ void LargeWoodRoomPresetEngine::setCrossoverFreq (float hz)
 void LargeWoodRoomPresetEngine::setModDepth (float depth)
 {
     lastModDepthRaw_ = depth;
+    float clamped = std::min (depth, 2.0f);
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = depth * 16.0f * rateRatio;
-    noiseModDepth_ = depth * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
+    modDepthSamples_ = clamped * 16.0f * rateRatio;
+    noiseModDepth_ = clamped * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
 }
 
 void LargeWoodRoomPresetEngine::setNoiseModDepth (float samples)
@@ -682,7 +683,7 @@ void LargeWoodRoomPresetEngine::setNoiseModDepth (float samples)
     // Independent noise jitter, decoupled from LFO modDepth. When set (>= 0),
     // this overrides the modDepth-coupled noise jitter. Mirrors DattorroTank.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    independentNoiseModDepth_ = samples * rateRatio;
+    independentNoiseModDepth_ = std::min (samples, 32.0f) * rateRatio;
 }
 
 void LargeWoodRoomPresetEngine::setModRate (float hz)
@@ -777,11 +778,15 @@ void LargeWoodRoomPresetEngine::clearBuffers()
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
     }
+    static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
+    static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
+    static constexpr float    kPhaseOffsets[kNumTanks] = { 0.0f, 1.5707963f, 3.1415927f, 4.7123890f };
     for (int t = 0; t < kNumTanks; ++t)
     {
         structHFState_[t] = 0.0f;
-        tanks_[t].lfoPhase = 0.0f;
-        tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].lfoPhase  = kPhaseOffsets[t];
+        tanks_[t].lfoPRNG   = kLFOSeeds[t];
+        tanks_[t].noiseState = kNoiseSeeds[t];
     }
 }
 
@@ -813,6 +818,11 @@ void LargeWoodRoomPresetEngine::updateDecayCoefficients()
     float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
+    // Compute 4-band crossover LP coefficients from baked Hz values
+    float xoverCoeff[4];
+    for (int i = 0; i < 4; ++i)
+        xoverCoeff[i] = std::exp (-kTwoPi * kFiveBandCrossoverHz[i] / sr);
+
     for (int t = 0; t < kNumTanks; ++t)
     {
         auto& tank = tanks_[t];
@@ -826,11 +836,11 @@ void LargeWoodRoomPresetEngine::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
-        float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
-        float gMid  = gBase;  // mid band decays at natural rate
-        float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
+        // Use 5-band per-frequency RT60 shaping from baked multipliers
+        tank.damping.setBandMultipliers (kFiveBandMult);
+        tank.damping.setCrossovers (xoverCoeff);
+        tank.damping.computeGainsFromBase (gBase, lowCrossoverCoeff, highCrossoverCoeff);
     }
 }
 

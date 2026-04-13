@@ -656,7 +656,7 @@ void APlatePresetEngine::setTrebleMultiply (float mult)
 
 void APlatePresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = hz;
+    crossoverFreq_ = std::max (hz, 1.0f);
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -711,8 +711,8 @@ void APlatePresetEngine::setAirDampingScale (float scale)
 
 void APlatePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    sizeRangeMin_ = std::max (min, 0.0f);
+    sizeRangeMax_ = std::max (max, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();

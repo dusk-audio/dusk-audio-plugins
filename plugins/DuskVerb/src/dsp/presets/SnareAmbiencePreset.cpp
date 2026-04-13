@@ -985,7 +985,10 @@ void SnareAmbiencePresetEngine::setLateGainScale (float scale)
 void SnareAmbiencePresetEngine::setSizeRange (float min, float max)
 {
     sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    float newMax = std::max (max, sizeRangeMin_);
+    if (prepared_)
+        newMax = std::min (newMax, sizeRangeMax_);
+    sizeRangeMax_ = newMax;
     if (prepared_)
     {
         updateDelayLengths();

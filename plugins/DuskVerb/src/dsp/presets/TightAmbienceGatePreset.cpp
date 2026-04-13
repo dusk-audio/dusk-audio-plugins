@@ -1024,6 +1024,9 @@ void TightAmbienceGatePresetEngine::clearBuffers()
 
     clearTank (leftTank_, 1u);
     clearTank (rightTank_, 2u);
+    // Restore 90° stereo decorrelation from prepare()
+    leftTank_.lfoPhase = 0.0f;
+    rightTank_.lfoPhase = 1.5707963f;
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;

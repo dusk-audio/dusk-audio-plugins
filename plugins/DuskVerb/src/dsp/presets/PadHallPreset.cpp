@@ -200,10 +200,12 @@ private:
         std::vector<float> buffer;
         int writePos = 0;
         int mask = 0;
+        int delaySamples = 0;
 
         float process (float input, float g)
         {
-            float vd = buffer[static_cast<size_t> (writePos)];
+            int readPos = (writePos - delaySamples) & mask;
+            float vd = buffer[static_cast<size_t> (readPos)];
             float vn = input + g * vd;
             buffer[static_cast<size_t> (writePos)] = vn;
             writePos = (writePos + 1) & mask;
@@ -528,6 +530,7 @@ void PadHallPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP_[i].writePos = 0;
         inlineAP_[i].mask = apBufSize - 1;
+        inlineAP_[i].delaySamples = apDelay;
     }
 
     // Second inline allpass cascade: longer primes for density multiplication
@@ -539,6 +542,7 @@ void PadHallPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP2_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP2_[i].writePos = 0;
         inlineAP2_[i].mask = apBufSize - 1;
+        inlineAP2_[i].delaySamples = apDelay;
     }
 
     // Third inline allpass cascade: even longer primes for ~8x density per cycle
@@ -550,6 +554,7 @@ void PadHallPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP3_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP3_[i].writePos = 0;
         inlineAP3_[i].mask = apBufSize - 1;
+        inlineAP3_[i].delaySamples = apDelay;
     }
 
     // Short inline allpass cascade for Hall
@@ -561,6 +566,7 @@ void PadHallPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAPShort_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAPShort_[i].writePos = 0;
         inlineAPShort_[i].mask = apBufSize - 1;
+        inlineAPShort_[i].delaySamples = apDelay;
     }
 
     // Anti-alias LP coefficient: ~17kHz at any sample rate
