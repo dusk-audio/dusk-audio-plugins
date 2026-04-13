@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.392979f;
+    constexpr float kVvDecayTimeScale    = 0.501289f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 12.00 dB
+    // Max correction magnitude for this preset: 11.10 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.00369086f, -6.11831f, -3.15517f, -3.65858f, -3.77965f, -4.56726f, -4.42444f, -4.08233f, -2.96189f, -4.15268f, 1.99072f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -4.43197f, -4.99972f, -3.27483f, -3.81401f, -2.8498f, -2.066f, -1.59299f, -2.9383f, -3.04828f, -4.54904f, 0.621328f, 11.1008f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -1264,18 +1264,14 @@ public:
         engine_.process (inputL, inputR, outputL, outputR, numSamples);
         
         // Harmonic AM: rectified-sine envelope modulation (Fix 3: mod_depth_delta)
-        // Bypass AM when frozen — frozen tails must not modulate.
-        if (! frozen_)
+        for (int i = 0; i < numSamples; ++i)
         {
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float env = std::abs (std::sin (amPhase_ * 6.283185307f));
-                float am = 1.0f + kAmDepth * (env - 0.6366f);  // DC-centered (mean of |sin| = 2/pi)
-                outputL[i] *= am;
-                outputR[i] *= am;
-                amPhase_ += amPhaseInc_;
-                if (amPhase_ >= 1.0f) amPhase_ -= 1.0f;
-            }
+            float env = std::abs (std::sin (amPhase_ * 6.283185307f));
+            float am = 1.0f + kAmDepth * (env - 0.6366f);  // DC-centered (mean of |sin| = 2/pi)
+            outputL[i] *= am;
+            outputR[i] *= am;
+            amPhase_ += amPhaseInc_;
+            if (amPhase_ >= 1.0f) amPhase_ -= 1.0f;
         }
         // ----- Per-preset tilt EQ + 12-band correction EQ + stereo width -----
         // 1. tilt shelves (broad VV character correction)

@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.903085f;
+    constexpr float kVvDecayTimeScale    = 0.907551f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 7.24 dB
+    // Max correction magnitude for this preset: 7.02 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.935621f, -1.72946f, -1.55098f, -2.01137f, -1.41333f, -2.03215f, -0.261468f, 0.0596568f, 0.946175f, -0.25849f, -0.875463f, 7.24423f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.08831f, -1.73056f, -1.60229f, -1.99192f, -1.27657f, -2.06951f, -0.547842f, 0.115217f, 0.608891f, -0.618221f, -1.03459f, 7.01826f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -749,15 +749,12 @@ void DrumPlatePresetEngine::clearBuffers()
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
     }
-    static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
-    static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
-    static constexpr float    kPhaseOffsets[kNumTanks] = { 0.0f, 1.5707963f, 3.1415927f, 4.7123890f };
     for (int t = 0; t < kNumTanks; ++t)
     {
         structHFState_[t] = 0.0f;
-        tanks_[t].lfoPhase  = kPhaseOffsets[t];
-        tanks_[t].lfoPRNG   = kLFOSeeds[t];
-        tanks_[t].noiseState = kNoiseSeeds[t];
+        tanks_[t].lfoPhase = 0.0f;
+        tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

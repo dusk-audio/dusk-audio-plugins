@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.734812f;
+    constexpr float kVvDecayTimeScale    = 0.751071f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 4.71 dB
+    // Max correction magnitude for this preset: 8.21 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.35562f, -0.399537f, -1.7693f, -2.32218f, -2.27108f, 0.449847f, 1.04047f, 0.840225f, -0.224141f, -3.35259f, -4.59421f, 4.71125f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.319689f, -0.510047f, -0.744784f, -1.49277f, -2.03272f, -1.88904f, -2.14328f, -1.56608f, -4.49838f, -7.75232f, -8.20881f, 1.70899f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -565,8 +565,6 @@ void ShortDarkSnareRoomPresetEngine::prepare (double sampleRate, int /*maxBlockS
     rightTank_.currentRMS = 0.0f;
     rightTank_.peakRMS = 0.0f;
     rightTank_.terminalDecayActive = false;
-    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
-    limiterEnv_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------

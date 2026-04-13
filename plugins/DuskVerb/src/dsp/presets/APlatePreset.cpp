@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.83804f;
+    constexpr float kVvDecayTimeScale    = 0.488041f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 8.96 dB
+    // Max correction magnitude for this preset: 3.13 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -5.32546f, -6.23333f, -6.86724f, -8.27181f, -8.95842f, -7.09892f, -5.42122f, -5.03205f, -2.2283f, 0.257561f, 1.67562f, -0.0827939f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.79007f, -2.60868f, 0.210635f, -1.9318f, -0.924355f, 0.0246675f, 1.0855f, 3.13233f, 2.85238f, 2.06607f, 0.216861f, -1.22836f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -656,7 +656,7 @@ void APlatePresetEngine::setTrebleMultiply (float mult)
 
 void APlatePresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = std::max (hz, 1.0f);
+    crossoverFreq_ = hz;
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -711,8 +711,8 @@ void APlatePresetEngine::setAirDampingScale (float scale)
 
 void APlatePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    sizeRangeMin_ = min;
+    sizeRangeMax_ = max;
     if (prepared_)
     {
         updateDelayLengths();
@@ -773,6 +773,7 @@ void APlatePresetEngine::clearBuffers()
         structHFState_[t] = 0.0f;
         tanks_[t].lfoPhase = 0.0f;
         tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.853717f;
+    constexpr float kVvDecayTimeScale    = 0.85172f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 4.06 dB
+    // Max correction magnitude for this preset: 3.87 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.566688f, -0.871469f, -2.37936f, -0.747422f, -1.09193f, -1.37429f, -0.247749f, 0.0429579f, 0.117862f, -2.62409f, -4.05648f, 2.56999f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.449921f, -0.872405f, -2.32835f, -0.656891f, -1.02313f, -1.11545f, -0.0547787f, 0.230717f, -0.0150537f, -2.46623f, -3.86772f, 2.66872f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -637,7 +637,7 @@ void LargePlatePresetEngine::setTrebleMultiply (float mult)
 
 void LargePlatePresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = std::max (hz, 1.0f);
+    crossoverFreq_ = hz;
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -692,8 +692,8 @@ void LargePlatePresetEngine::setAirDampingScale (float scale)
 
 void LargePlatePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    sizeRangeMin_ = min;
+    sizeRangeMax_ = max;
     if (prepared_)
     {
         updateDelayLengths();
@@ -754,6 +754,7 @@ void LargePlatePresetEngine::clearBuffers()
         structHFState_[t] = 0.0f;
         tanks_[t].lfoPhase = 0.0f;
         tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 
