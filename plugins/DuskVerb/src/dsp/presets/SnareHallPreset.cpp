@@ -1271,6 +1271,8 @@ void SnareHallPresetEngine::setStructuralHFDamping (float baseFreqHz, float treb
     {
         structHFEnabled_ = false;
         structHFCoeff_ = 0.0f;
+        for (int i = 0; i < N; ++i)
+            structHFState_[i] = 0.0f;
         return;
     }
     // Inverted treble scaling: dark presets (low treble) already have strong TwoBandDamping,
@@ -1290,6 +1292,8 @@ void SnareHallPresetEngine::setStructuralLFDamping (float hz)
     {
         structLFEnabled_ = false;
         structLFCoeff_ = 0.0f;
+        for (int i = 0; i < N; ++i)
+            structLFState_[i] = 0.0f;
         return;
     }
     structLFEnabled_ = true;

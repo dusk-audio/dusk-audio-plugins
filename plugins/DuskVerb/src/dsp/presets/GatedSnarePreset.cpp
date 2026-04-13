@@ -996,8 +996,8 @@ void GatedSnarePresetEngine::setLateGainScale (float scale)
 
 void GatedSnarePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    sizeRangeMin_ = std::max (min, 0.0f);
+    sizeRangeMax_ = std::max (max, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -1094,6 +1094,11 @@ void GatedSnarePresetEngine::updateDecayCoefficients()
     float lowXoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highXoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
+    // Compute 4-band crossover LP coefficients from baked Hz values
+    float xoverCoeff[4];
+    for (int i = 0; i < 4; ++i)
+        xoverCoeff[i] = std::exp (-kTwoPi * kFiveBandCrossoverHz[i] / sr);
+
     auto updateTankDamping = [&] (Tank& tank)
     {
         float loopLength = tank.ap1DelaySamples
@@ -1105,13 +1110,11 @@ void GatedSnarePresetEngine::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
-        float gLow = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
-        float gMid = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
-        // Air band: airDampingScale > 1 → air decays slower (brighter tail)
-        // airDampingScale = 1 → gAir == gMid → collapses to 2-band behavior
-        float gAir = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        tank.damping.setCoefficients (gLow, gMid, gAir, lowXoverCoeff, highXoverCoeff);
+        // Use 5-band per-frequency RT60 shaping from baked multipliers
+        tank.damping.setBandMultipliers (kFiveBandMult);
+        tank.damping.setCrossovers (xoverCoeff);
+        tank.damping.computeGainsFromBase (gBase, lowXoverCoeff, highXoverCoeff);
     };
 
     updateTankDamping (leftTank_);

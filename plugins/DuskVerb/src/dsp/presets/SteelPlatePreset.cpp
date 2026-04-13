@@ -1238,7 +1238,7 @@ void SteelPlatePresetEngine::setStereoCoupling (float amount)
 
 void SteelPlatePresetEngine::setNoiseModDepth (float samples)
 {
-    noiseModDepthParam_ = std::max (samples, 0.0f);
+    noiseModDepthParam_ = std::clamp (samples, 0.0f, 8.0f);
     if (prepared_)
         updateModDepth();
 }

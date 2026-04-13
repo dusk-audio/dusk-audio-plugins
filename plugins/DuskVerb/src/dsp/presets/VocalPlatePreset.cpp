@@ -985,7 +985,10 @@ void VocalPlatePresetEngine::setLateGainScale (float scale)
 void VocalPlatePresetEngine::setSizeRange (float min, float max)
 {
     sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    float newMax = std::max (max, sizeRangeMin_);
+    if (prepared_)
+        newMax = std::min (newMax, sizeRangeMax_);
+    sizeRangeMax_ = newMax;
     if (prepared_)
     {
         updateDelayLengths();
@@ -1311,7 +1314,7 @@ void VocalPlatePresetEngine::setDecayBoost (float boost)
 void VocalPlatePresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = thresholdDB;
-    terminalDecayFactor_ = std::clamp (factor, 0.5f, 1.0f);
+    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
 void VocalPlatePresetEngine::clearBuffers()

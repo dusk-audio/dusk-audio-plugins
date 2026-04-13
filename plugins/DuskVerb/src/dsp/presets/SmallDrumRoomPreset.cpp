@@ -1264,14 +1264,18 @@ public:
         engine_.process (inputL, inputR, outputL, outputR, numSamples);
         
         // Harmonic AM: rectified-sine envelope modulation (Fix 3: mod_depth_delta)
-        for (int i = 0; i < numSamples; ++i)
+        // Bypass AM when frozen — frozen tails must not modulate.
+        if (! frozen_)
         {
-            float env = std::abs (std::sin (amPhase_ * 6.283185307f));
-            float am = 1.0f + kAmDepth * (env - 0.6366f);  // DC-centered (mean of |sin| = 2/pi)
-            outputL[i] *= am;
-            outputR[i] *= am;
-            amPhase_ += amPhaseInc_;
-            if (amPhase_ >= 1.0f) amPhase_ -= 1.0f;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float env = std::abs (std::sin (amPhase_ * 6.283185307f));
+                float am = 1.0f + kAmDepth * (env - 0.6366f);  // DC-centered (mean of |sin| = 2/pi)
+                outputL[i] *= am;
+                outputR[i] *= am;
+                amPhase_ += amPhaseInc_;
+                if (amPhase_ >= 1.0f) amPhase_ -= 1.0f;
+            }
         }
         // ----- Per-preset tilt EQ + 12-band correction EQ + stereo width -----
         // 1. tilt shelves (broad VV character correction)

@@ -14,6 +14,7 @@
 #include "PresetEngineBase.h"
 #include "PresetEngineRegistry.h"
 #include <memory>
+#include <mutex>
 
 // Forward declarations for every per-preset factory function. The
 // definitions live in <PresetName>Preset.cpp inside each anonymous
@@ -81,9 +82,9 @@ std::unique_ptr<PresetEngineBase> createVerySmallAmbiencePreset();
 // populated regardless of static-init order or LTO behavior.
 void forceLinkPresetEngines()
 {
-    static bool registered = false;
-    if (registered) return;
-    registered = true;
+    static std::once_flag flag;
+    std::call_once (flag, []()
+    {
     auto& reg = PresetEngineRegistry::instance();
     reg.registerEngine ("PresetHomestarBladeRunner", &createHomestarBladeRunnerPreset);
     reg.registerEngine ("PresetPadHall", &createPadHallPreset);
@@ -138,4 +139,5 @@ void forceLinkPresetEngines()
     reg.registerEngine ("PresetTightAmbienceGate", &createTightAmbienceGatePreset);
     reg.registerEngine ("PresetTripHopSnare", &createTripHopSnarePreset);
     reg.registerEngine ("PresetVerySmallAmbience", &createVerySmallAmbiencePreset);
+    });
 }

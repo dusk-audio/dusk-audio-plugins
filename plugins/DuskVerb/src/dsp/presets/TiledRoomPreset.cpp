@@ -83,7 +83,7 @@ namespace {
     // 2f, 4f, 6f... — well above the 20Hz metric threshold.
     // -----------------------------------------------------------------
     constexpr float kAmBaseFreqHz = 30.0f;
-    constexpr float kAmDepth = 2.000f;
+    constexpr float kAmDepth = 1.57f;
 
 // ==========================================================================
 //  BEGIN PRIVATE COPY OF FDNReverb (FDNReverb.h)
@@ -1632,6 +1632,7 @@ public:
         {
             float env = std::abs (std::sin (amPhase_ * 6.283185307f));
             float am = 1.0f + kAmDepth * (env - 0.6366f);  // DC-centered (mean of |sin| = 2/pi)
+            am = std::max (am, 0.0f);
             outputL[i] *= am;
             outputR[i] *= am;
             amPhase_ += amPhaseInc_;

@@ -491,14 +491,17 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             engine_.resetLateFeedForwardLevel();
     }
 
-    // Per-preset ER taps: load VV-extracted taps when preset_id changes.
+    // Per-preset ER taps: load VV-extracted taps when preset_id changes
+    // OR when the effective pre-delay changes (tap timing depends on it).
     // Must apply pre-delay first so tap timing is computed correctly
     // (VV tap times are absolute; DV's pre-delay is subtracted).
     {
         int presetId = static_cast<int> (presetIdParam_->load());
-        if (presetId != lastPresetId_)
+        bool preDelayChanged = std::abs (preDelayMs - lastPresetPreDelayMs_) > 0.001f;
+        if (presetId != lastPresetId_ || preDelayChanged)
         {
             lastPresetId_ = presetId;
+            lastPresetPreDelayMs_ = preDelayMs;
 
             // Apply pre-delay immediately (skip smoothing) so the engine
             // has the correct value when computing tap delay offsets.
