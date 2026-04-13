@@ -24,6 +24,7 @@ public:
         Tape,           // Tape saturation (similar to opto tube but smoother)
         Triode,         // Generic triode tube saturation
         Pentode,        // Pentode tube saturation (more aggressive)
+        EL84,           // EL84 power tube (chimey breakup, between Triode and Pentode)
         Linear          // Bypass (no saturation)
     };
 
@@ -42,6 +43,7 @@ public:
         initializeTapeCurve();
         initializeTriodeCurve();
         initializePentodeCurve();
+        initializeEL84Curve();
         initializeLinearCurve();
     }
 
@@ -90,6 +92,7 @@ public:
             case CurveType::Tape:        return tapeCurve;
             case CurveType::Triode:      return triodeCurve;
             case CurveType::Pentode:     return pentodeCurve;
+            case CurveType::EL84:        return el84Curve;
             case CurveType::Linear:
             default:                     return linearCurve;
         }
@@ -104,6 +107,7 @@ private:
     std::array<float, TABLE_SIZE> tapeCurve;
     std::array<float, TABLE_SIZE> triodeCurve;
     std::array<float, TABLE_SIZE> pentodeCurve;
+    std::array<float, TABLE_SIZE> el84Curve;
     std::array<float, TABLE_SIZE> linearCurve;
 
     // Convert table index to input value (-2 to +2)
@@ -280,68 +284,95 @@ private:
         }
     }
 
-    // Triode tube saturation (asymmetric, 2nd harmonic dominant)
+    // Triode tube saturation — derived from Koren model for 6V6GT
+    // Parameters: mu=8.7, Kp=48, Kvb=12, Ex=1.35, Kg1=1460
+    // Fender Deluxe Reverb AB763: Vb=417V, Rp=8kΩ (OT reflected impedance)
     void initializeTriodeCurve()
     {
+        float mu = 8.7f, Kp = 48.0f, Kvb = 12.0f, Ex = 1.35f, Kg1 = 1460.0f;
+        float Vb = 417.0f, Rp = 8000.0f;
+        float Vgk_bias = -14.0f;
+        float Ip_q = 0.035f; // ~35mA quiescent
+        float Vp_q = Vb - Ip_q * Rp;
+
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
             float x = indexToInput(i);
+            float Vgk = Vgk_bias + x * 18.0f; // ±36V grid swing
 
-            if (x >= 0.0f)
-            {
-                float normalized = x / (1.0f + x * 0.4f);
-                triodeCurve[i] = normalized * (1.0f - normalized * 0.12f);
-            }
-            else
-            {
-                float absX = std::abs(x);
-                if (absX < 0.8f)
-                {
-                    triodeCurve[i] = x;
-                }
-                else if (absX < 1.5f)
-                {
-                    float excess = absX - 0.8f;
-                    float compressed = 0.8f + excess * (1.0f - excess * 0.5f);
-                    triodeCurve[i] = -compressed;
-                }
-                else
-                {
-                    float excess = absX - 1.5f;
-                    float clipped = 1.15f + std::tanh(excess * 2.0f) * 0.2f;
-                    triodeCurve[i] = -clipped;
-                }
-            }
+            float Vp = Vp_q;
+            float E1inner = Kp * (1.0f / mu + Vgk / std::sqrt(Kvb + Vp * Vp));
+            E1inner = std::clamp(E1inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(E1inner));
+            E1 = std::max(0.0f, E1);
+
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+
+            float Vout = Vb - Ip * Rp;
+            triodeCurve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
         }
     }
 
-    // Pentode tube saturation (odd harmonics, sharper knee)
+    // Pentode tube saturation — derived from Koren model for EL34
+    // Parameters: mu=11.5, Kp=60, Kvb=24.5, Ex=1.35, Kg1=650
+    // Marshall 1959 Plexi: Vb=490V, Rp=4kΩ (OT primary impedance)
     void initializePentodeCurve()
     {
+        float mu = 11.5f, Kp = 60.0f, Kvb = 24.5f, Ex = 1.35f, Kg1 = 650.0f;
+        float Vb = 490.0f, Rp = 4000.0f;
+        float Vgk_bias = -35.0f;
+        float Ip_q = 0.050f; // ~50mA quiescent
+        float Vp_q = Vb - Ip_q * Rp;
+
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
             float x = indexToInput(i);
-            float absX = std::abs(x);
-            float sign = (x >= 0.0f) ? 1.0f : -1.0f;
+            float Vgk = Vgk_bias + x * 40.0f; // ±80V grid swing (EL34 has wide range)
 
-            if (absX < 0.6f)
-            {
-                float h3 = x * x * x * 0.03f;
-                pentodeCurve[i] = x + h3;
-            }
-            else if (absX < 1.0f)
-            {
-                float excess = absX - 0.6f;
-                float compressed = 0.6f + excess * (1.0f - excess * 0.4f);
-                float h3 = (sign * compressed) * compressed * compressed * 0.05f;
-                pentodeCurve[i] = sign * compressed + h3;
-            }
-            else
-            {
-                float excess = absX - 1.0f;
-                float hard = 0.92f + std::tanh(excess * 3.0f) * 0.15f;
-                pentodeCurve[i] = sign * hard;
-            }
+            float Vp = Vp_q;
+            float E1inner = Kp * (1.0f / mu + Vgk / std::sqrt(Kvb + Vp * Vp));
+            E1inner = std::clamp(E1inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(E1inner));
+            E1 = std::max(0.0f, E1);
+
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+
+            float Vout = Vb - Ip * Rp;
+            pentodeCurve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
+        }
+    }
+
+    // EL84 power tube saturation — derived from Koren tube model
+    // Parameters: mu=19.1, Kp=84, Kvb=25.3, Ex=1.35, Kg1=820
+    // Vox AC30: Vb=320V, Rp=4kΩ (8kΩ effective, 2 pairs parallel → 4kΩ per pair)
+    void initializeEL84Curve()
+    {
+        float mu = 19.1f, Kp = 84.0f, Kvb = 25.3f, Ex = 1.35f, Kg1 = 820.0f;
+        float Vb = 320.0f, Rp = 4000.0f;
+
+        // Find quiescent operating point (Vgk = -8V typical for EL84)
+        float Vgk_bias = -8.0f;
+        float Ip_q = 0.035f; // ~35mA quiescent
+        float Vp_q = Vb - Ip_q * Rp;
+
+        for (int i = 0; i < TABLE_SIZE; ++i)
+        {
+            float x = indexToInput(i);
+            float Vgk = Vgk_bias + x * 10.0f; // ±20V grid swing
+
+            float Vp = Vp_q; // approximate (load line)
+            float E1inner = Kp * (1.0f / mu + Vgk / std::sqrt(Kvb + Vp * Vp));
+            E1inner = std::clamp(E1inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(E1inner));
+            E1 = std::max(0.0f, E1);
+
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+
+            float Vout = Vb - Ip * Rp;
+            el84Curve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
         }
     }
 

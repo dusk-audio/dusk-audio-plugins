@@ -1988,12 +1988,2620 @@ static constexpr AlgorithmConfig kHallQuadSmooth = {
 };
 
 // ---------------------------------------------------------------------------
-static constexpr int kNumAlgorithms = 32;
+static constexpr int kNumAlgorithms = 85;
+
+
+
+
+// === AUTO-GENERATED PRESET ALGORITHMS ===
+
+// Preset "Homestar Blade Runner" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetHomestarBladeRunner = {
+    "PresetHomestarBladeRunner",
+    {   102,   260,   312,   317,   331,   336,   346,   443,
+       1884,  2045,  2185,  2372,  2771,  2915,  4596,  5125 },
+    { 1, 3, 5, 6, 8, 10, 12, 15 },
+    { 0, 2, 4, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.5)
+    1.00f, 1.50f, 0.97f, // damping: treble=1.00, bass=0.97
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Pad Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetPadHall = {
+    "PresetPadHall",
+    {   124,   346,   668,  1715,  2040,  2175,  2372,  2708,
+       2877,  3195,  3522,  3896,  4596,  5236,  5554,  5933 },
+    { 0, 3, 4, 7, 8, 11, 12, 15 },
+    { 1, 2, 5, 6, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
+    0.99f, 1.50f, 0.99f, // damping: treble=0.99, bass=0.99
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Concert Wave" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetConcertWave = {
+    "PresetConcertWave",
+    {    90,   227,   307,   311,   312,   317,   331,   336,
+        346,  1848,  2183,  2399,  2606,  2784,  3876,  4970 },
+    { 3, 5, 6, 7, 8, 10, 12, 15 },
+    { 0, 1, 2, 4, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.4)
+    0.99f, 1.50f, 1.00f, // damping: treble=0.99, bass=1.00
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Huge Synth Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetHugeSynthHall = {
+    "PresetHugeSynthHall",
+    {   336,   346,   898,  1504,  1978,  2375,  2606,  2921,
+       3265,  3463,  3727,  4099,  4383,  5002,  5468,  6168 },
+    { 0, 3, 4, 7, 9, 10, 12, 15 },
+    { 1, 2, 5, 6, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
+    0.99f, 1.50f, 1.00f, // damping: treble=0.99, bass=1.00
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Small Vocal Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSmallVocalHall = {
+    "PresetSmallVocalHall",
+    {   336,   346,   568,   785,  1019,  1736,  2305,  2616,
+       2913,  3336,  3808,  4430,  5010,  5613,  6055,  6390 },
+    { 1, 3, 4, 7, 8, 11, 12, 15 },
+    { 0, 2, 5, 6, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.05f, 0.85f,    // ER level (drastically reduced from 0.65 — was drowning late tail)
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.82f, 1.50f, 1.23f, // damping: treble=0.82, bass=1.23
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs (does not move decay_ratio for this preset)
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Fat Snare Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetFatSnareHall = {
+    "PresetFatSnareHall",
+    {    93,   307,   311,   312,   317,   331,   336,   346,
+        786,  1809,  2747,  3791,  4060,  4969,  5948,  6613 },
+    { 1, 3, 5, 7, 8, 11, 12, 15 },
+    { 0, 2, 4, 6, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.1)
+    0.80f, 1.50f, 1.05f, // damping: treble=0.80, bass=1.05
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Snare Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSnareHall = {
+    "PresetSnareHall",
+    {   124,   280,   346,   413,   695,  1846,  1997,  2131,
+       2288,  2506,  2700,  2843,  3262,  4400,  4809,  5231 },
+    { 0, 1, 5, 7, 9, 11, 12, 15 },
+    { 2, 3, 4, 6, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-4.0)
+    0.99f, 1.50f, 1.08f, // damping: treble=0.99, bass=1.08
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Long Synth Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLongSynthHall = {
+    "PresetLongSynthHall",
+    {   101,   311,   312,   317,   331,   336,   346,  1893,
+       2046,  2183,  2395,  2596,  2756,  3898,  4596,  5034 },
+    { 0, 1, 2, 7, 9, 11, 12, 15 },
+    { 3, 4, 5, 6, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.89f, 1.50f, 0.98f, // damping: treble=0.89, bass=0.98
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Very Nice Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetVeryNiceHall = {
+    "PresetVeryNiceHall",
+    {   312,   317,   331,   336,   346,   475,   718,  2521,
+       2702,  3285,  3454,  3725,  3951,  4219,  4622,  6008 },
+    { 3, 4, 5, 6, 8, 10, 12, 15 },
+    { 0, 1, 2, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
+    0.99f, 1.50f, 1.05f, // damping: treble=0.99, bass=1.05
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Vocal Hall" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetVocalHall = {
+    "PresetVocalHall",
+    {    99,   336,   346,   441,   788,  1715,  2174,  2412,
+       2599,  2866,  3336,  3878,  4120,  4596,  5024,  6387 },
+    { 0, 1, 5, 6, 8, 10, 12, 15 },
+    { 2, 3, 4, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.5)
+    0.87f, 1.50f, 1.00f, // damping: treble=0.87, bass=1.00
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Drum Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetDrumPlate = {
+    "PresetDrumPlate",
+    {   125,   266,   346,   555,  1700,  2029,  2168,  2301,
+       2444,  2576,  2708,  2845,  3262,  3671,  3929,  5967 },
+    { 0, 1, 4, 6, 8, 10, 12, 15 },
+    { 2, 3, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.5)
+    0.90f, 1.50f, 1.06f, // damping: treble=0.90, bass=1.06
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Fat Drums" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetFatDrums = {
+    "PresetFatDrums",
+    {   317,   331,   336,   346,   659,  1146,  1820,  2038,
+       2380,  2599,  2732,  2937,  3210,  3524,  3877,  5011 },
+    { 1, 3, 4, 6, 8, 10, 12, 15 },
+    { 0, 2, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.55f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.65f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.77f, 1.50f, 1.08f, // damping: treble=0.77, bass=1.08
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Large Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLargePlate = {
+    "PresetLargePlate",
+    {   103,   235,   336,   346,  1507,  1847,  2030,  2282,
+       2423,  2567,  2704,  2845,  3265,  3442,  4999,  6260 },
+    { 0, 2, 4, 6, 8, 10, 12, 15 },
+    { 1, 3, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.84f, 1.50f, 1.04f, // damping: treble=0.84, bass=1.04
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Steel Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSteelPlate = {
+    "PresetSteelPlate",
+    {   333,   346,   467,   846,  1228,  1500,  1892,  2035,
+       2367,  2711,  2881,  3475,  3928,  4403,  5248,  6485 },
+    { 1, 2, 5, 7, 8, 10, 12, 15 },
+    { 0, 3, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.4)
+    0.99f, 1.50f, 0.99f, // damping: treble=0.99, bass=0.99
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Tight Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetTightPlate = {
+    "PresetTightPlate",
+    {   317,   331,   336,   346,   755,   935,  1077,  1690,
+       1977,  2436,  2581,  2714,  3524,  4077,  4577,  5772 },
+    { 2, 3, 5, 6, 8, 10, 12, 15 },
+    { 0, 1, 4, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.55f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.65f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=1.7)
+    0.85f, 1.50f, 1.35f, // damping: treble=0.85, bass=1.35
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Vocal Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetVocalPlate = {
+    "PresetVocalPlate",
+    {   124,   311,   312,   317,   331,   336,   346,   761,
+       1095,  1805,  1945,  2649,  2988,  3750,  4827,  5716 },
+    { 1, 3, 5, 6, 9, 10, 12, 15 },
+    { 0, 2, 4, 7, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-4.5)
+    0.89f, 1.50f, 0.94f, // damping: treble=0.89, bass=0.94
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Vox Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetVoxPlate = {
+    "PresetVoxPlate",
+    {   122,   317,   331,   336,   346,   662,   821,  1892,
+       2039,  2177,  2596,  2844,  3081,  4814,  5526,  5852 },
+    { 1, 3, 4, 7, 9, 11, 12, 15 },
+    { 0, 2, 5, 6, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.55f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.6)
+    0.83f, 1.50f, 1.18f, // damping: treble=0.83, bass=1.18
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio: disabled (2.5x caused spectral regression)
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Dark Vocal Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetDarkVocalRoom = {
+    "PresetDarkVocalRoom",
+    {   107,   263,   336,   346,   456,   588,  1094,  1243,
+       1422,  1677,  1891,  2567,  2771,  2986,  4659,  5349 },
+    { 0, 2, 5, 6, 9, 10, 12, 15 },
+    { 1, 3, 4, 7, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
+    0.90f, 1.50f, 0.97f, // damping: treble=0.90, bass=0.97
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Exciting Snare room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetExcitingSnareRoom = {
+    "PresetExcitingSnareRoom",
+    {   102,   317,   331,   336,   346,   452,   938,  1082,
+       1502,  1977,  2437,  3520,  3805,  4749,  5769,  6169 },
+    { 0, 2, 5, 6, 8, 11, 12, 15 },
+    { 1, 3, 4, 7, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=9.4)
+    0.88f, 1.50f, 0.79f, // damping: treble=0.88, bass=0.79
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Fat Snare Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetFatSnareRoom = {
+    "PresetFatSnareRoom",
+    {   307,   311,   312,   317,   331,   336,   346,   463,
+       1078,  1217,  1577,  2649,  3404,  3871,  4996,  5636 },
+    { 2, 4, 6, 7, 9, 10, 12, 15 },
+    { 0, 1, 3, 5, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=6.1)
+    0.86f, 1.50f, 1.02f, // damping: treble=0.86, bass=1.02
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Lively Snare Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLivelySnareRoom = {
+    "PresetLivelySnareRoom",
+    {   113,   312,   317,   331,   336,   346,  1111,  1250,
+       1451,  1910,  2581,  3664,  3999,  4823,  6038,  6451 },
+    { 0, 2, 4, 6, 8, 11, 12, 15 },
+    { 1, 3, 5, 7, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=10.1)
+    0.80f, 1.50f, 0.93f, // damping: treble=0.80, bass=0.93
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Long Dark 70s Snare Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLongDark70sSnareRoom = {
+    "PresetLongDark70sSnareRoom",
+    {   138,   307,   311,   312,   317,   331,   336,   346,
+        466,   733,   891,  1147,  1525,  1684,  1988,  2882 },
+    { 0, 2, 4, 6, 8, 10, 12, 15 },
+    { 1, 3, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
+    0.86f, 1.50f, 1.07f, // damping: treble=0.86, bass=1.07
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Short Dark Snare Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetShortDarkSnareRoom = {
+    "PresetShortDarkSnareRoom",
+    {   170,   307,   311,   312,   317,   331,   336,   346,
+       1046,  1565,  2640,  3749,  4808,  5697,  6034,  6599 },
+    { 0, 2, 4, 6, 8, 11, 12, 15 },
+    { 1, 3, 5, 7, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.4)
+    0.65f, 1.50f, 0.76f, // damping: treble=0.65, bass=0.76
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "A Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetAPlate = {
+    "PresetAPlate",
+    {   102,   244,   336,   346,   476,   680,   851,  1568,
+       1977,  2132,  2285,  2467,  2606,  2771,  2918,  5360 },
+    { 0, 1, 3, 5, 8, 10, 12, 15 },
+    { 2, 4, 6, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.4)
+    1.00f, 1.50f, 1.04f, // damping: treble=1.00, bass=1.04
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Clear Chamber" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetClearChamber = {
+    "PresetClearChamber",
+    {   126,   260,   346,   440,  1085,  2287,  2436,  2569,
+       2704,  3408,  3680,  3886,  4996,  5658,  6002,  6316 },
+    { 2, 3, 4, 6, 9, 11, 12, 15 },
+    { 0, 1, 5, 7, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.84f, 1.50f, 0.99f, // damping: treble=0.84, bass=0.99
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Fat Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetFatPlate = {
+    "PresetFatPlate",
+    {   124,   261,   317,   331,   336,   346,   440,  1888,
+       2061,  2225,  2560,  2735,  3004,  3194,  4991,  5767 },
+    { 3, 4, 5, 6, 8, 10, 12, 15 },
+    { 0, 1, 2, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.90f, 1.50f, 0.95f, // damping: treble=0.90, bass=0.95
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Large Chamber" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLargeChamber = {
+    "PresetLargeChamber",
+    {   130,   312,   317,   331,   336,   346,   477,  1263,
+       2194,  2436,  3458,  3642,  3974,  5209,  5683,  6092 },
+    { 0, 1, 3, 7, 9, 11, 12, 15 },
+    { 2, 4, 5, 6, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.1)
+    0.93f, 1.50f, 0.91f, // damping: treble=0.93, bass=0.91
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    80.0f,           // lateOnsetMs: 80ms ramp to reduce body energy (decay_ratio 0.67x→0.80x)
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Large Wood Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLargeWoodRoom = {
+    "PresetLargeWoodRoom",
+    {   101,   244,   331,   336,   346,   474,   672,   848,
+       1024,  1198,  1551,  1981,  2117,  2265,  2465,  2982 },
+    { 0, 2, 5, 6, 9, 10, 12, 15 },
+    { 1, 3, 4, 7, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.4)
+    1.00f, 1.50f, 1.13f, // damping: treble=1.00, bass=1.13
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Live Vox Chamber" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLiveVoxChamber = {
+    "PresetLiveVoxChamber",
+    {   217,   336,   346,   596,   954,  1441,  1823,  2037,
+       2179,  2776,  3194,  3372,  3933,  4595,  4952,  5231 },
+    { 1, 3, 4, 6, 9, 11, 12, 15 },
+    { 0, 2, 5, 7, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=1.9)
+    0.91f, 1.50f, 1.15f, // damping: treble=0.91, bass=1.15
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    80.0f,           // lateOnsetMs: 80ms ramp to reduce body energy (decay_ratio 0.69x→0.80x)
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Medium Gate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetMediumGate = {
+    "PresetMediumGate",
+    {   126,   270,   336,   346,   491,   648,   797,  1042,
+       1191,  2183,  2685,  2830,  3490,  3746,  4573,  5003 },
+    { 1, 4, 5, 7, 8, 10, 12, 15 },
+    { 0, 2, 3, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.2)
+    1.00f, 1.50f, 0.96f, // damping: treble=1.00, bass=0.96
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Rich Chamber" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetRichChamber = {
+    "PresetRichChamber",
+    {   261,   312,   317,   331,   336,   346,   711,  1067,
+       1469,  1738,  1876,  2455,  2595,  2775,  4643,  6069 },
+    { 0, 2, 4, 6, 8, 10, 12, 15 },
+    { 1, 3, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.5)
+    0.90f, 1.50f, 1.00f, // damping: treble=0.90, bass=1.00
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Small Chamber1" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSmallChamber1 = {
+    "PresetSmallChamber1",
+    {   141,   312,   317,   331,   336,   346,   477,   731,
+       1071,  1208,  1349,  1765,  2030,  2575,  3060,  3922 },
+    { 1, 3, 5, 6, 9, 10, 12, 15 },
+    { 0, 2, 4, 7, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=1.0)
+    0.96f, 1.50f, 1.31f, // damping: treble=0.96, bass=1.31
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Small Chamber2" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSmallChamber2 = {
+    "PresetSmallChamber2",
+    {   103,   331,   336,   346,   417,   567,   889,  1040,
+       1203,  1348,  1492,  1638,  1996,  2146,  3489,  4700 },
+    { 0, 2, 3, 6, 8, 10, 12, 15 },
+    { 1, 4, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-4.1)
+    0.83f, 1.50f, 1.00f, // damping: treble=0.83, bass=1.00
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    150.0f,          // lateOnsetMs: 150ms ramp to reduce body energy (decay_ratio 0.45x→0.80x)
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Snare Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSnarePlate = {
+    "PresetSnarePlate",
+    {    92,   232,   331,   336,   346,   427,   563,  1349,
+       1975,  2170,  2489,  2622,  3184,  3521,  4745,  6071 },
+    { 1, 3, 5, 6, 8, 10, 12, 15 },
+    { 0, 2, 4, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.98f, 1.50f, 1.00f, // damping: treble=0.98, bass=1.00
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Thin Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetThinPlate = {
+    "PresetThinPlate",
+    {   125,   336,   346,   544,   685,   820,  1007,  1538,
+       1699,  1845,  2223,  2414,  2563,  2970,  3887,  4240 },
+    { 0, 2, 4, 7, 8, 11, 12, 15 },
+    { 1, 3, 5, 6, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    1.00f, 1.50f, 0.75f, // damping: treble=1.00, bass=0.75
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    60.0f,           // lateOnsetMs: 60ms ramp (decay_ratio 0.69x->0.80x)
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Tiled Room" — QuadTank with Chamber delays (proven 18/20 baseline)
+// QuadTank's 4 cross-coupled allpass loops give passable mod_depth, decay,
+// centroid, and tail_slope. The 4kHz band freq_decay remains a structural
+// limitation (~2.97x vs threshold 0.90).
+static constexpr AlgorithmConfig kPresetTiledRoom = {
+    "PresetTiledRoom",
+    { 751, 797, 839, 887, 947, 997, 1061, 1123,
+      1187, 1259, 1327, 1409, 1493, 1583, 1669, 1777 },  // Chamber delay lengths
+    { 0, 1, 2, 7, 8, 11, 14, 15 },
+    { 3, 4, 5, 6, 9, 10, 12, 13 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f },
+    0.75f, 0.625f,   // input diffusion (Chamber)
+    0.65f,           // output diffusion scale
+    16000.0f,        // bandwidth
+    0.55f, 0.55f,    // ER level, time scale
+    1.23f,           // late gain (QuadTank Chamber compensation)
+    0.05f, 1.0f,     // mod: 0.05 (low — best spectral match)
+    0.60f, 0.80f, 1.0f, // damping: trebleMultScale=0.60, max=0.80
+    6000.0f,         // high crossover: 6kHz
+    0.50f,           // airDampingScale: 0.50
+    0.5f, 1.5f,      // size range
+    0.2f,            // ER crossfeed
+    0.20f,           // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping
+    0.0f,            // structural LF damping
+    1.2f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
+    0.50f,           // decay time scale: 0.50 (QuadTank sustains long)
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    3.99f,           // output gain
+    0.15f,           // stereo coupling
+    0.0f, +4.5f, 5000.0f, // output EQ: +4.5dB high shelf
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Ambience" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetAmbience = {
+    "PresetAmbience",
+    {   109,   292,   303,   307,   311,   312,   317,   331,
+        336,   346,   787,  1010,  1146,  1700,  2595,  2979 },
+    { 0, 2, 4, 6, 8, 11, 12, 15 },
+    { 1, 3, 5, 7, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=5.5)
+    1.00f, 1.50f, 1.22f, // damping: treble=1.00, bass=1.22
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Ambience Plate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetAmbiencePlate = {
+    "PresetAmbiencePlate",
+    {   100,   336,   346,   490,   933,  1086,  1223,  1523,
+       1684,  2114,  2847,  3146,  3530,  4067,  5519,  6590 },
+    { 0, 3, 4, 7, 8, 10, 12, 15 },
+    { 1, 2, 5, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
+    0.75f, 1.50f, 1.11f, // damping: treble=0.75, bass=1.11
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Ambience Tiled Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetAmbienceTiledRoom = {
+    "PresetAmbienceTiledRoom",
+    {    93,   244,   317,   331,   336,   346,   382,   820,
+       1030,  1199,  1849,  1996,  2129,  2572,  2705,  2845 },
+    { 2, 4, 5, 6, 9, 11, 12, 15 },
+    { 0, 1, 3, 7, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=1.1)
+    0.76f, 1.50f, 0.84f, // damping: treble=0.76, bass=0.84
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Big Ambience Gate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetBigAmbienceGate = {
+    "PresetBigAmbienceGate",
+    {   157,   311,   312,   317,   331,   336,   346,   876,
+       1009,  1813,  1957,  2134,  2561,  2703,  2933,  5665 },
+    { 0, 2, 4, 6, 8, 10, 11, 15 },
+    { 1, 3, 5, 7, 9, 12, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.9)
+    1.00f, 1.50f, 1.07f, // damping: treble=1.00, bass=1.07
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Cross Stick Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetCrossStickRoom = {
+    "PresetCrossStickRoom",
+    {   124,   307,   311,   312,   317,   331,   336,   346,
+        568,   792,   939,  1094,  1308,  1463,  2025,  2325 },
+    { 0, 2, 4, 6, 9, 10, 12, 15 },
+    { 1, 3, 5, 7, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=7.8)
+    0.89f, 1.50f, 0.79f, // damping: treble=0.89, bass=0.79
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Drum Air" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetDrumAir = {
+    "PresetDrumAir",
+    {   206,   311,   312,   317,   331,   336,   346,   369,
+        575,   939,  1302,  1457,  1593,  1824,  1971,  2182 },
+    { 1, 3, 5, 7, 8, 11, 12, 15 },
+    { 0, 2, 4, 6, 9, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.7)
+    0.81f, 1.50f, 0.65f, // damping: treble=0.81, bass=0.65
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Gated Snare" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetGatedSnare = {
+    "PresetGatedSnare",
+    {   133,   312,   317,   331,   336,   346,   375,   521,
+        808,  1010,  2472,  2708,  2889,  3523,  3929,  4721 },
+    { 0, 3, 5, 6, 9, 10, 12, 15 },
+    { 1, 2, 4, 7, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.8)
+    0.71f, 1.50f, 1.12f, // damping: treble=0.71, bass=1.12
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Large Ambience" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLargeAmbience = {
+    "PresetLargeAmbience",
+    {   120,   259,   346,   681,   815,  1112,  1250,  1748,
+       1894,  2379,  2676,  2934,  3149,  4000,  4588,  6036 },
+    { 1, 2, 4, 7, 8, 10, 12, 15 },
+    { 0, 3, 5, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.4)
+    0.88f, 1.50f, 0.90f, // damping: treble=0.88, bass=0.90
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Large Gated Snare" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetLargeGatedSnare = {
+    "PresetLargeGatedSnare",
+    {   104,   260,   336,   346,   478,   716,  1087,  1357,
+       1684,  1850,  2005,  2420,  2559,  2988,  3200,  4648 },
+    { 1, 3, 4, 6, 8, 10, 12, 15 },
+    { 0, 2, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=6.6)
+    0.94f, 1.50f, 0.98f, // damping: treble=0.94, bass=0.98
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Med Ambience" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetMedAmbience = {
+    "PresetMedAmbience",
+    {   123,   261,   346,   481,   662,  1072,  1552,  1700,
+       2063,  2373,  2856,  3808,  4496,  4972,  5446,  6327 },
+    { 0, 2, 5, 7, 9, 10, 12, 15 },
+    { 1, 3, 4, 6, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
+    0.87f, 1.50f, 0.93f, // damping: treble=0.87, bass=0.93
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Short Vocal Ambience" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetShortVocalAmbience = {
+    "PresetShortVocalAmbience",
+    {   127,   312,   317,   324,   331,   336,   346,   458,
+        686,  1468,  1602,  1763,  1920,  2438,  2574,  3337 },
+    { 2, 4, 6, 7, 8, 10, 12, 15 },
+    { 0, 1, 3, 5, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=9.8)
+    0.88f, 1.50f, 1.07f, // damping: treble=0.88, bass=1.07
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Small Ambience" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSmallAmbience = {
+    "PresetSmallAmbience",
+    {   107,   261,   317,   331,   336,   346,   413,   581,
+        871,  1191,  1331,  1465,  1612,  1881,  2032,  2809 },
+    { 1, 3, 5, 6, 8, 10, 12, 15 },
+    { 0, 2, 4, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=3.4)
+    1.00f, 1.50f, 1.14f, // damping: treble=1.00, bass=1.14
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Small Drum Room" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSmallDrumRoom = {
+    "PresetSmallDrumRoom",
+    {   209,   346,   400,   721,  1079,  1222,  1830,  1974,
+       2241,  2539,  2700,  2840,  3111,  3408,  3789,  4232 },
+    { 0, 3, 5, 7, 8, 10, 12, 15 },
+    { 1, 2, 4, 6, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.4)
+    1.00f, 1.50f, 1.00f, // damping: treble=1.00, bass=1.00
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Snare Ambience" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetSnareAmbience = {
+    "PresetSnareAmbience",
+    {    95,   317,   331,   336,   346,   439,   795,   936,
+       1089,  1222,  1451,  1661,  2007,  2550,  2683,  2979 },
+    { 0, 2, 5, 6, 9, 11, 12, 15 },
+    { 1, 3, 4, 7, 8, 10, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=5.8)
+    0.85f, 1.50f, 1.08f, // damping: treble=0.85, bass=1.08
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Tight Ambience Gate" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetTightAmbienceGate = {
+    "PresetTightAmbienceGate",
+    {   102,   262,   317,   331,   336,   346,   662,   890,
+       1377,  1893,  2051,  2188,  2379,  2844,  3249,  5216 },
+    { 0, 1, 3, 6, 8, 10, 12, 15 },
+    { 2, 4, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.8)
+    0.51f, 1.50f, 0.69f, // damping: treble=0.51, bass=0.69
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Trip Hop Snare" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetTripHopSnare = {
+    "PresetTripHopSnare",
+    {   141,   317,   331,   336,   346,  1525,  1845,  2453,
+       2597,  2752,  2907,  3324,  3533,  4046,  4412,  6432 },
+    { 2, 3, 4, 6, 8, 10, 12, 15 },
+    { 0, 1, 5, 7, 9, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-2.5)
+    0.84f, 1.50f, 1.02f, // damping: treble=0.84, bass=1.02
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// Preset "Very Small Ambience" (VV-derived FDN)
+static constexpr AlgorithmConfig kPresetVerySmallAmbience = {
+    "PresetVerySmallAmbience",
+    {   119,   292,   307,   311,   312,   317,   331,   336,
+        346,   759,   997,  1136,  1285,  1824,  2182,  2783 },
+    { 0, 1, 3, 6, 9, 10, 12, 15 },
+    { 2, 4, 5, 7, 8, 11, 13, 14 },
+    { 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f },
+    { -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f },
+    0.55f, 0.45f,    // input diffusion
+    0.35f,           // output diffusion scale
+    20000.0f,        // bandwidth
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain (FDN native)
+    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=9.0)
+    0.84f, 1.50f, 0.87f, // damping: treble=0.84, bass=0.87
+    4000.0f,         // high crossover
+    0.80f,           // airDampingScale
+    0.5f, 1.5f,      // size range
+    0.15f,           // ER crossfeed
+    0.0f,            // inline diffusion
+    1.0f,            // mod depth floor
+    0.0f,            // structural HF damping (runtime override)
+    0.0f,            // structural LF damping
+    8.0f,            // noise mod
+    0.10f,           // Hadamard perturbation
+    1.0f,            // ER gain exponent
+    false,           // useWeightedGains
+    true,            // useHouseholderFeedback
+    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useQuadTank: OFF
+    1.50f,           // decay time scale
+    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0.0f,     // short-decay boost: disabled
+    0.0f, 0.0f,     // gate: disabled
+    12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
+    8.00f,           // output gain
+    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    0.0f, 0.0f, 0.7f,
+    false,           // no saturation
+    0.0f,            // lateOnsetMs
+    0.15f,           // lateFeedForwardLevel
+    0.0f,            // crestLimitRatio
+    0, nullptr,      // custom ER
+    nullptr, nullptr,
+};
+
+// === END AUTO-GENERATED ===
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     static constexpr const AlgorithmConfig* kAlgorithms[kNumAlgorithms] = {
-        &kPlate, &kHall, &kChamber, &kRoom, &kAmbient, &kPlateQuad, &kHallQuad, &kHallSlow, &kHallFDN, &kHallFDNDualSlopeBody, &kHallQuadSustain, &kRoomFDN, &kRoomQuad, &kRoomQuadSustain, &kChamberQuad, &kAmbientFDN, &kAmbientQuad, &kChamberQuadSustain, &kAmbientQuadSustain, &kHallFDNSmooth, &kRoomQuadSustainHigh, &kAmbientQuadSustainHigh, &kHallQuadSmooth, &kChamberFDN, &kPlateCrisp, &kHallQuadBright, &kRoomBright, &kRoomFDNBright, &kChamberQuadBright, &kAmbientFDNBright, &kAmbientQuadBright, &kChamberQuadSustainHybrid
+        &kPlate, &kHall, &kChamber, &kRoom, &kAmbient, &kPlateQuad, &kHallQuad, &kHallSlow, &kHallFDN, &kHallFDNDualSlopeBody, &kHallQuadSustain, &kRoomFDN, &kRoomQuad, &kRoomQuadSustain, &kChamberQuad, &kAmbientFDN, &kAmbientQuad, &kChamberQuadSustain, &kAmbientQuadSustain, &kHallFDNSmooth, &kRoomQuadSustainHigh, &kAmbientQuadSustainHigh, &kHallQuadSmooth, &kChamberFDN, &kPlateCrisp, &kHallQuadBright, &kRoomBright, &kRoomFDNBright, &kChamberQuadBright, &kAmbientFDNBright, &kAmbientQuadBright, &kChamberQuadSustainHybrid,
+        // --- per-preset algorithms (auto-generated) ---
+        &kPresetHomestarBladeRunner,
+        &kPresetPadHall,
+        &kPresetConcertWave,
+        &kPresetHugeSynthHall,
+        &kPresetSmallVocalHall,
+        &kPresetFatSnareHall,
+        &kPresetSnareHall,
+        &kPresetLongSynthHall,
+        &kPresetVeryNiceHall,
+        &kPresetVocalHall,
+        &kPresetDrumPlate,
+        &kPresetFatDrums,
+        &kPresetLargePlate,
+        &kPresetSteelPlate,
+        &kPresetTightPlate,
+        &kPresetVocalPlate,
+        &kPresetVoxPlate,
+        &kPresetDarkVocalRoom,
+        &kPresetExcitingSnareRoom,
+        &kPresetFatSnareRoom,
+        &kPresetLivelySnareRoom,
+        &kPresetLongDark70sSnareRoom,
+        &kPresetShortDarkSnareRoom,
+        &kPresetAPlate,
+        &kPresetClearChamber,
+        &kPresetFatPlate,
+        &kPresetLargeChamber,
+        &kPresetLargeWoodRoom,
+        &kPresetLiveVoxChamber,
+        &kPresetMediumGate,
+        &kPresetRichChamber,
+        &kPresetSmallChamber1,
+        &kPresetSmallChamber2,
+        &kPresetSnarePlate,
+        &kPresetThinPlate,
+        &kPresetTiledRoom,
+        &kPresetAmbience,
+        &kPresetAmbiencePlate,
+        &kPresetAmbienceTiledRoom,
+        &kPresetBigAmbienceGate,
+        &kPresetCrossStickRoom,
+        &kPresetDrumAir,
+        &kPresetGatedSnare,
+        &kPresetLargeAmbience,
+        &kPresetLargeGatedSnare,
+        &kPresetMedAmbience,
+        &kPresetShortVocalAmbience,
+        &kPresetSmallAmbience,
+        &kPresetSmallDrumRoom,
+        &kPresetSnareAmbience,
+        &kPresetTightAmbienceGate,
+        &kPresetTripHopSnare,
+        &kPresetVerySmallAmbience
     };
     if (index < 0 || index >= kNumAlgorithms)
         index = 1; // Fall back to Hall
