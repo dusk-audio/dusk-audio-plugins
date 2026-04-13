@@ -10,7 +10,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "algorithm", 1 }, "Algorithm",
-        juce::StringArray { "Plate", "Hall", "Chamber", "Room", "Ambient", "PlateQuad", "HallQuad", "HallSlow", "HallFDN", "HallFDNDualSlopeBody", "HallQuadSustain", "RoomFDN", "RoomQuad", "RoomQuadSustain", "ChamberQuad", "AmbientFDN", "AmbientQuad", "ChamberQuadSustain", "AmbientQuadSustain", "HallFDNSmooth", "RoomQuadSustainHigh", "AmbientQuadSustainHigh", "HallQuadSmooth", "ChamberFDN", "PlateCrisp", "HallQuadBright", "RoomBright", "RoomFDNBright", "ChamberQuadBright", "AmbientFDNBright", "AmbientQuadBright", "ChamberQuadSustainHybrid", "PresetHomestarBladeRunner", "PresetPadHall", "PresetConcertWave", "PresetHugeSynthHall", "PresetSmallVocalHall", "PresetFatSnareHall", "PresetSnareHall", "PresetLongSynthHall", "PresetVeryNiceHall", "PresetVocalHall", "PresetDrumPlate", "PresetFatDrums", "PresetLargePlate", "PresetSteelPlate", "PresetTightPlate", "PresetVocalPlate", "PresetVoxPlate", "PresetDarkVocalRoom", "PresetExcitingSnareroom", "PresetFatSnareRoom", "PresetLivelySnareRoom", "PresetLongDark70sSnareRoom", "PresetShortDarkSnareRoom", "PresetAPlate", "PresetClearChamber", "PresetFatPlate", "PresetLargeChamber", "PresetLargeWoodRoom", "PresetLiveVoxChamber", "PresetMediumGate", "PresetRichChamber", "PresetSmallChamber1", "PresetSmallChamber2", "PresetSnarePlate", "PresetThinPlate", "PresetTiledRoom", "PresetAmbience", "PresetAmbiencePlate", "PresetAmbienceTiledRoom", "PresetBigAmbienceGate", "PresetCrossStickRoom", "PresetDrumAir", "PresetGatedSnare", "PresetLargeAmbience", "PresetLargeGatedSnare", "PresetMedAmbience", "PresetShortVocalAmbience", "PresetSmallAmbience", "PresetSmallDrumRoom", "PresetSnareAmbience", "PresetTightAmbienceGate", "PresetTripHopSnare", "PresetVerySmallAmbience" }, 1));
+        juce::StringArray { "Plate", "Hall", "Chamber", "Room", "Ambient", "PlateQuad", "HallQuad", "HallSlow", "HallFDN", "HallFDNDualSlopeBody", "HallQuadSustain", "RoomFDN", "RoomQuad", "RoomQuadSustain", "ChamberQuad", "AmbientFDN", "AmbientQuad", "ChamberQuadSustain", "AmbientQuadSustain", "HallFDNSmooth", "RoomQuadSustainHigh", "AmbientQuadSustainHigh", "HallQuadSmooth", "ChamberFDN", "PlateCrisp", "HallQuadBright", "RoomBright", "RoomFDNBright", "ChamberQuadBright", "AmbientFDNBright", "AmbientQuadBright", "ChamberQuadSustainHybrid", "PresetHomestarBladeRunner", "PresetPadHall", "PresetConcertWave", "PresetHugeSynthHall", "PresetSmallVocalHall", "PresetFatSnareHall", "PresetSnareHall", "PresetLongSynthHall", "PresetVeryNiceHall", "PresetVocalHall", "PresetDrumPlate", "PresetFatDrums", "PresetLargePlate", "PresetSteelPlate", "PresetTightPlate", "PresetVocalPlate", "PresetVoxPlate", "PresetDarkVocalRoom", "PresetExcitingSnareRoom", "PresetFatSnareRoom", "PresetLivelySnareRoom", "PresetLongDark70sSnareRoom", "PresetShortDarkSnareRoom", "PresetAPlate", "PresetClearChamber", "PresetFatPlate", "PresetLargeChamber", "PresetLargeWoodRoom", "PresetLiveVoxChamber", "PresetMediumGate", "PresetRichChamber", "PresetSmallChamber1", "PresetSmallChamber2", "PresetSnarePlate", "PresetThinPlate", "PresetTiledRoom", "PresetAmbience", "PresetAmbiencePlate", "PresetAmbienceTiledRoom", "PresetBigAmbienceGate", "PresetCrossStickRoom", "PresetDrumAir", "PresetGatedSnare", "PresetLargeAmbience", "PresetLargeGatedSnare", "PresetMedAmbience", "PresetShortVocalAmbience", "PresetSmallAmbience", "PresetSmallDrumRoom", "PresetSnareAmbience", "PresetTightAmbienceGate", "PresetTripHopSnare", "PresetVerySmallAmbience" }, 1));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "decay", 1 }, "Decay Time",
@@ -304,7 +304,7 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     // load, then bs=N to match each call's input length), we always prepare
     // with at least kMinPreparedBlockSize so subsequent calls fit without
     // forcing a re-prepare.
-    constexpr int kMinPreparedBlockSize = 65536;
+    constexpr int kMinPreparedBlockSize = 4096;
     int safeBlockSize = std::max (samplesPerBlock, kMinPreparedBlockSize);
     bool needsReallocation = (preparedSampleRate_ != sampleRate || safeBlockSize > preparedBlockSize_);
 
@@ -322,13 +322,19 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         engine_.setAlgorithm (cachedAlgorithm_);
     }
 
-    // Lightweight engine reset: re-apply algorithm to clear DSP state
-    // (delay lines, filters) even without reallocation. This prevents
-    // tail/LFO state from leaking between sessions.
+    // Sync cached algorithm on redundant prepareToPlay(). If the host
+    // restored a different algorithm (e.g. state recall before first
+    // processBlock), we must call engine_.setAlgorithm() here — otherwise
+    // processBlock() would see cachedAlgorithm_ already matching the param
+    // and skip the change, leaving the engine on the old algorithm.
     if (! needsReallocation)
     {
-        cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
-        engine_.setAlgorithm (cachedAlgorithm_);
+        int newAlgorithm = static_cast<int> (algorithmParam_->load());
+        if (newAlgorithm != cachedAlgorithm_)
+        {
+            cachedAlgorithm_ = newAlgorithm;
+            engine_.setAlgorithm (newAlgorithm);
+        }
     }
 
     // DSP reset: always runs so smoothers and state are reinitialized

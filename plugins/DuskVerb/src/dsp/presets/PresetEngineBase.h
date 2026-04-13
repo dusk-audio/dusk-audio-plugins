@@ -79,8 +79,10 @@ public:
     }
 
     // --- Onset envelope table (Fix 1: decay_ratio) ---
-    // Returns a pointer to a time-normalized (0→1) gain curve table,
-    // or nullptr if this preset uses the default squared linear ramp.
+    // Returns a VV/DV energy ratio curve applied to the FDN output.
+    // Values < 1.0 attenuate DV where it has more body energy than VV.
+    // Typical shape: 1.0 at onset, dips to 0.1-0.3 in body, recovers to 1.0.
+    // Returns nullptr if this preset uses the default squared linear ramp.
     virtual const float* getOnsetEnvelopeTable() const { return nullptr; }
     virtual int getOnsetEnvelopeTableSize() const { return 0; }
     virtual float getOnsetDurationMs() const { return 0.0f; }

@@ -115,8 +115,9 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
 
             float inputGain = frozen_ ? 0.0f : 0.25f;
             float polarity = (ch & 1) ? -1.0f : 1.0f;
-            float bias = ((delayA_[ch].writePos ^ ch) & 1)
-                        ? DspUtils::kDenormalPrevention : -DspUtils::kDenormalPrevention;
+            float bias = frozen_ ? 0.0f
+                       : (((delayA_[ch].writePos ^ ch) & 1)
+                          ? DspUtils::kDenormalPrevention : -DspUtils::kDenormalPrevention);
             delayA_[ch].buffer[static_cast<size_t> (delayA_[ch].writePos)] =
                 filtered + inL * polarity * inputGain + bias;
             delayA_[ch].writePos = (delayA_[ch].writePos + 1) & delayA_[ch].mask;
@@ -183,8 +184,9 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
             float serialIn = outA[ch] * kSerialFeedLevel;
             float inputGain = frozen_ ? 0.0f : 0.25f;
             float polarity = (ch & 1) ? -1.0f : 1.0f;
-            float bias = ((delayB_[ch].writePos ^ ch) & 1)
-                        ? DspUtils::kDenormalPrevention : -DspUtils::kDenormalPrevention;
+            float bias = frozen_ ? 0.0f
+                       : (((delayB_[ch].writePos ^ ch) & 1)
+                          ? DspUtils::kDenormalPrevention : -DspUtils::kDenormalPrevention);
             delayB_[ch].buffer[static_cast<size_t> (delayB_[ch].writePos)] =
                 filtered + serialIn + inR * polarity * inputGain + bias;
             delayB_[ch].writePos = (delayB_[ch].writePos + 1) & delayB_[ch].mask;
@@ -220,7 +222,7 @@ void TiledRoomReverb::setModRate (float hz) { modRateHz_ = hz; if (prepared_) up
 void TiledRoomReverb::setSize (float size) { sizeParam_ = std::clamp (size, 0.0f, 1.0f); if (prepared_) { updateDelayLengths(); updateDecayCoefficients(); } }
 void TiledRoomReverb::setFreeze (bool frozen) { frozen_ = frozen; }
 void TiledRoomReverb::setDecayBoost (float boost) { decayBoost_ = std::clamp (boost, 0.3f, 2.0f); if (prepared_) updateDecayCoefficients(); }
-void TiledRoomReverb::setTerminalDecay (float thresholdDB, float factor) { terminalDecayThresholdDB_ = thresholdDB; terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f); }
+void TiledRoomReverb::setTerminalDecay (float thresholdDB, float factor) { terminalDecayThresholdDB_ = -std::abs (thresholdDB); terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f); }
 void TiledRoomReverb::setStereoCoupling (float amount) { stereoCoupling_ = std::clamp (amount, 0.0f, 0.75f); }
 
 void TiledRoomReverb::clearBuffers()
