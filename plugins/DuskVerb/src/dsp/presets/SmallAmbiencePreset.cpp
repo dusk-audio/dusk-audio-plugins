@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.0696f;
+    constexpr float kVvDecayTimeScale    = 1.10208f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 10.20 dB
+    // Max correction magnitude for this preset: 9.11 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.448951f, -0.819056f, -1.40455f, -1.37646f, -2.33671f, -1.59137f, -1.96151f, 0.928396f, 1.63164f, 0.719427f, 0.692687f, 10.1994f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.359537f, -1.54394f, -2.03577f, -2.12508f, -2.575f, -1.26689f, -2.29075f, -0.015029f, 0.911647f, -0.163525f, 0.0967676f, 9.11473f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -656,7 +656,7 @@ void SmallAmbiencePresetEngine::setTrebleMultiply (float mult)
 
 void SmallAmbiencePresetEngine::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = std::max (hz, 1.0f);
+    crossoverFreq_ = hz;
     if (prepared_) updateDecayCoefficients();
 }
 
@@ -711,8 +711,8 @@ void SmallAmbiencePresetEngine::setAirDampingScale (float scale)
 
 void SmallAmbiencePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    sizeRangeMin_ = min;
+    sizeRangeMax_ = max;
     if (prepared_)
     {
         updateDelayLengths();
@@ -773,6 +773,7 @@ void SmallAmbiencePresetEngine::clearBuffers()
         structHFState_[t] = 0.0f;
         tanks_[t].lfoPhase = 0.0f;
         tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 

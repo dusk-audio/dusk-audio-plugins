@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.838181f;
+    constexpr float kVvDecayTimeScale    = 0.710844f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 8.97 dB
+    // Max correction magnitude for this preset: 5.27 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.4339f, -2.98602f, 1.7559f, -2.11224f, -1.59233f, -0.914833f, -1.02768f, 0.89077f, 1.37678f, 1.02613f, 1.31597f, 8.96666f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.645439f, -5.04934f, 0.65092f, -0.413401f, -0.638715f, -1.65962f, 0.0387393f, 1.30544f, 1.13411f, -1.26624f, -2.01035f, 5.26729f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------

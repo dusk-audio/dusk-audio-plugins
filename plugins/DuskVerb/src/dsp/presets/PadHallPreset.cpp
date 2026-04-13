@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.07934f;
+    constexpr float kVvDecayTimeScale    = 0.877135f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 8.48 dB
+    // Max correction magnitude for this preset: 9.64 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.798915f, -0.307292f, -0.451546f, 0.195825f, -1.05631f, -0.00167359f, -0.827345f, -2.85148f, -5.61718f, -6.357f, 0.85116f, 8.47572f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.4888f, -1.50089f, -1.4246f, -1.45225f, -2.90092f, 0.289423f, 1.48756f, 2.28898f, 1.41606f, -0.113181f, 2.75895f, 9.64495f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -164,7 +164,9 @@ private:
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
-    static constexpr int kMaxBaseDelay = 5521;
+    // Must be >= the largest value in any preset delay table.
+    // Currently: kPresetFatSnareHall reaches 6613.
+    static constexpr int kMaxBaseDelay = 6700;
 
     // Mutable delay and tap configuration (initialized to Hall defaults)
     int baseDelays_[N];
@@ -185,6 +187,7 @@ private:
     float sizeCompensation_ = 1.0f; // sqrt(sizeScale) — normalizes output level across sizes
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f; // Max size scale that prepare() allocated buffers for
 
     struct DelayLine
     {
@@ -204,8 +207,8 @@ private:
 
         float process (float input, float g)
         {
-            int readPos = (writePos - delaySamples) & mask;
-            float vd = buffer[static_cast<size_t> (readPos)];
+            int readIdx = (writePos - delaySamples) & mask;
+            float vd = buffer[static_cast<size_t> (readIdx)];
             float vn = input + g * vd;
             buffer[static_cast<size_t> (writePos)] = vn;
             writePos = (writePos + 1) & mask;
@@ -498,6 +501,7 @@ void PadHallPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     // Allocate buffers for worst-case delay across ALL algorithms.
     // kMaxBaseDelay covers the longest line in any algorithm config.
     float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
+    sizeRangeAllocatedMax_ = maxSizeScale;
     float maxDelay = static_cast<float> (kMaxBaseDelay)
                    * static_cast<float> (sampleRate / kBaseSampleRate) * maxSizeScale;
 
@@ -659,6 +663,9 @@ void PadHallPresetEngine::process (const float* inputL, const float* inputR,
 
             float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
             float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
+            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
+            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
+            // dropped 40dB below peak — the intended "tail has faded" condition.
             terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
                                  && (peakRMS_ > 1e-12f);
             if (terminalDecayActive_)
@@ -1010,7 +1017,11 @@ void PadHallPresetEngine::setLateGainScale (float scale)
 void PadHallPresetEngine::setSizeRange (float min, float max)
 {
     sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    float newMax = std::max (max, sizeRangeMin_);
+    // After prepare(), cap at allocated buffer size to prevent overrun
+    if (prepared_)
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    sizeRangeMax_ = newMax;
     if (prepared_)
     {
         updateDelayLengths();
@@ -1336,7 +1347,7 @@ void PadHallPresetEngine::setDecayBoost (float boost)
 void PadHallPresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = thresholdDB;
-    terminalDecayFactor_ = std::clamp (factor, 0.5f, 1.0f);
+    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
 void PadHallPresetEngine::clearBuffers()

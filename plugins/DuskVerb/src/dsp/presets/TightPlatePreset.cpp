@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.13136f;
+    constexpr float kVvDecayTimeScale    = 1.137f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 6.77 dB
+    // Max correction magnitude for this preset: 6.68 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.230304f, 5.74986f, 3.46199f, 0.12783f, 1.36399f, 2.82115f, 0.949321f, 0.598092f, 0.5645f, -1.85834f, -1.48836f, 6.76758f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.274802f, 5.61451f, 3.5367f, 0.392974f, 1.31154f, 2.84904f, 0.901608f, 0.651677f, 0.776497f, -1.73287f, -1.52703f, 6.68478f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -882,8 +882,6 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (overrideSizeRangeMax_ >= 0.0f)
-            setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
 
         // Pre-compute per-preset tilt EQ coefficients at the actual host
         // sample rate. These are derived from the VV IR's frequency
@@ -1105,12 +1103,7 @@ public:
         engine_.setStructuralHFDamping (hz);
     }
 
-    void setSizeRange (float mn, float mx) override
-    {
-        overrideSizeRangeMin_ = mn;
-        overrideSizeRangeMax_ = mx;
-        engine_.setSizeRange (mn, mx);
-    }
+    void setSizeRange (float mn, float mx) override { engine_.setSizeRange (mn, mx); }
     void setLateGainScale (float scale) override
     {
         overrideLateGain_ = scale;
@@ -1169,8 +1162,6 @@ private:
     float overrideHighCrossover_ = -1.0f;
     float overrideNoiseMod_ = -1.0f;
     float overrideLateGain_ = -1.0f;
-    float overrideSizeRangeMin_ = -1.0f;
-    float overrideSizeRangeMax_ = -1.0f;
     // Baked tilt EQ state (per-instance, not function-local statics)
     float tiltLowCoeff_ = 0.0f;
     float tiltLowGain_  = 0.0f;

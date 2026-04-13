@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.67159f;
+    constexpr float kVvDecayTimeScale    = 0.71832f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 5.31 dB
+    // Max correction magnitude for this preset: 4.41 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.18068f, -3.772f, -3.73718f, -5.30609f, -3.44708f, -3.73011f, -3.0659f, -2.10062f, -0.482621f, -1.96854f, -5.19253f, 2.76591f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.943127f, 0.666983f, 0.282578f, -2.97487f, -1.81271f, 0.682452f, 0.814592f, 1.75803f, 0.827701f, -1.96383f, -2.81081f, 4.40927f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -1039,13 +1039,8 @@ void VerySmallAmbiencePresetEngine::clearBuffers()
         tank.noiseState = seed * 2654435761u;
     };
 
-    clearTank (leftTank_, 0x12345678u);
-    clearTank (rightTank_, 0x87654321u);
-    // Restore 90° stereo decorrelation and prepare()-matching seeds
-    leftTank_.lfoPhase = 0.0f;
-    leftTank_.noiseState = 0xDEADBEEFu;
-    rightTank_.lfoPhase = 1.5707963f;
-    rightTank_.noiseState = 0xCAFEBABEu;
+    clearTank (leftTank_, 1u);
+    clearTank (rightTank_, 2u);
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;

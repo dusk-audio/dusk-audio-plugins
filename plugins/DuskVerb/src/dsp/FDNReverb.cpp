@@ -143,6 +143,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     // Allocate buffers for worst-case delay across ALL algorithms.
     // kMaxBaseDelay covers the longest line in any algorithm config.
     float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
+    sizeRangeAllocatedMax_ = maxSizeScale;
     float maxDelay = static_cast<float> (kMaxBaseDelay)
                    * static_cast<float> (sampleRate / kBaseSampleRate) * maxSizeScale;
 
@@ -175,6 +176,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP_[i].writePos = 0;
         inlineAP_[i].mask = apBufSize - 1;
+        inlineAP_[i].delaySamples = apDelay;
     }
 
     // Second inline allpass cascade: longer primes for density multiplication
@@ -186,6 +188,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP2_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP2_[i].writePos = 0;
         inlineAP2_[i].mask = apBufSize - 1;
+        inlineAP2_[i].delaySamples = apDelay;
     }
 
     // Third inline allpass cascade: even longer primes for ~8x density per cycle
@@ -197,6 +200,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP3_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP3_[i].writePos = 0;
         inlineAP3_[i].mask = apBufSize - 1;
+        inlineAP3_[i].delaySamples = apDelay;
     }
 
     // Short inline allpass cascade for Hall
@@ -208,6 +212,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAPShort_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAPShort_[i].writePos = 0;
         inlineAPShort_[i].mask = apBufSize - 1;
+        inlineAPShort_[i].delaySamples = apDelay;
     }
 
     // Anti-alias LP coefficient: ~17kHz at any sample rate
@@ -654,7 +659,11 @@ void FDNReverb::setLateGainScale (float scale)
 void FDNReverb::setSizeRange (float min, float max)
 {
     sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    float newMax = std::max (max, sizeRangeMin_);
+    // After prepare(), cap at allocated buffer size to prevent overrun
+    if (prepared_)
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    sizeRangeMax_ = newMax;
     if (prepared_)
     {
         updateDelayLengths();

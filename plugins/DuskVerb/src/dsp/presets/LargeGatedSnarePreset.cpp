@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.696727f;
+    constexpr float kVvDecayTimeScale    = 0.703208f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 4.41 dB
+    // Max correction magnitude for this preset: 4.76 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.62716f, -1.54184f, -2.54031f, -4.11723f, -4.40567f, -2.33733f, -1.7463f, 0.175351f, 0.890478f, 1.87487f, -1.3784f, 2.46979f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.33034f, -1.75272f, -3.02167f, -4.76335f, -4.62145f, -2.90169f, -1.42532f, 0.554279f, 1.78328f, 1.0188f, -0.875157f, 3.37871f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -172,7 +172,9 @@ private:
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
-    static constexpr int kMaxBaseDelay = 5521;
+    // Must be >= the largest value in any preset delay table.
+    // Currently: kPresetFatSnareHall reaches 6613.
+    static constexpr int kMaxBaseDelay = 6700;
 
     // Mutable delay and tap configuration (initialized to Hall defaults)
     int baseDelays_[N];
@@ -193,6 +195,7 @@ private:
     float sizeCompensation_ = 1.0f; // sqrt(sizeScale) — normalizes output level across sizes
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f; // Max size scale that prepare() allocated buffers for
 
     struct DelayLine
     {
@@ -208,10 +211,12 @@ private:
         std::vector<float> buffer;
         int writePos = 0;
         int mask = 0;
+        int delaySamples = 0;
 
         float process (float input, float g)
         {
-            float vd = buffer[static_cast<size_t> (writePos)];
+            int readIdx = (writePos - delaySamples) & mask;
+            float vd = buffer[static_cast<size_t> (readIdx)];
             float vn = input + g * vd;
             buffer[static_cast<size_t> (writePos)] = vn;
             writePos = (writePos + 1) & mask;
@@ -504,6 +509,7 @@ void LargeGatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize
     // Allocate buffers for worst-case delay across ALL algorithms.
     // kMaxBaseDelay covers the longest line in any algorithm config.
     float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
+    sizeRangeAllocatedMax_ = maxSizeScale;
     float maxDelay = static_cast<float> (kMaxBaseDelay)
                    * static_cast<float> (sampleRate / kBaseSampleRate) * maxSizeScale;
 
@@ -536,6 +542,7 @@ void LargeGatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize
         inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP_[i].writePos = 0;
         inlineAP_[i].mask = apBufSize - 1;
+        inlineAP_[i].delaySamples = apDelay;
     }
 
     // Second inline allpass cascade: longer primes for density multiplication
@@ -547,6 +554,7 @@ void LargeGatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize
         inlineAP2_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP2_[i].writePos = 0;
         inlineAP2_[i].mask = apBufSize - 1;
+        inlineAP2_[i].delaySamples = apDelay;
     }
 
     // Third inline allpass cascade: even longer primes for ~8x density per cycle
@@ -558,6 +566,7 @@ void LargeGatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize
         inlineAP3_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP3_[i].writePos = 0;
         inlineAP3_[i].mask = apBufSize - 1;
+        inlineAP3_[i].delaySamples = apDelay;
     }
 
     // Short inline allpass cascade for Hall
@@ -569,6 +578,7 @@ void LargeGatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize
         inlineAPShort_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAPShort_[i].writePos = 0;
         inlineAPShort_[i].mask = apBufSize - 1;
+        inlineAPShort_[i].delaySamples = apDelay;
     }
 
     // Anti-alias LP coefficient: ~17kHz at any sample rate
@@ -661,6 +671,9 @@ void LargeGatedSnarePresetEngine::process (const float* inputL, const float* inp
 
             float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
             float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
+            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
+            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
+            // dropped 40dB below peak — the intended "tail has faded" condition.
             terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
                                  && (peakRMS_ > 1e-12f);
             if (terminalDecayActive_)
@@ -1012,7 +1025,11 @@ void LargeGatedSnarePresetEngine::setLateGainScale (float scale)
 void LargeGatedSnarePresetEngine::setSizeRange (float min, float max)
 {
     sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    float newMax = std::max (max, sizeRangeMin_);
+    // After prepare(), cap at allocated buffer size to prevent overrun
+    if (prepared_)
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    sizeRangeMax_ = newMax;
     if (prepared_)
     {
         updateDelayLengths();
@@ -1338,7 +1355,7 @@ void LargeGatedSnarePresetEngine::setDecayBoost (float boost)
 void LargeGatedSnarePresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = thresholdDB;
-    terminalDecayFactor_ = std::clamp (factor, 0.5f, 1.0f);
+    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
 void LargeGatedSnarePresetEngine::clearBuffers()

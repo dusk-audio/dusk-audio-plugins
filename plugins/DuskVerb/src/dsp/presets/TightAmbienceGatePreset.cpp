@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.488305f;
+    constexpr float kVvDecayTimeScale    = 0.477341f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -74,7 +74,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.46185f, -1.16767f, -1.87634f, -2.24911f, -2.50292f, -2.1872f, -0.495479f, -0.00841206f, -1.42381f, -0.657019f, 6.15485f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.7947f, -1.09312f, -2.18303f, -2.37778f, -2.75896f, -2.58818f, -0.348638f, -0.139007f, -1.82119f, -1.1816f, 5.91657f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -1024,9 +1024,6 @@ void TightAmbienceGatePresetEngine::clearBuffers()
 
     clearTank (leftTank_, 1u);
     clearTank (rightTank_, 2u);
-    // Restore 90° stereo decorrelation from prepare()
-    leftTank_.lfoPhase = 0.0f;
-    rightTank_.lfoPhase = 1.5707963f;
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
