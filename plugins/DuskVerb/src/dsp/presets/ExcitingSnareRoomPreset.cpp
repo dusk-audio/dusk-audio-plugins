@@ -555,6 +555,8 @@ void ExcitingSnareRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSi
 
     // Re-apply mod depth scaled for the new sample rate
     setModDepth (lastModDepthRaw_);
+    if (softOnsetMs_ > 0.0f)
+        setSoftOnsetMs (softOnsetMs_);
 
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
@@ -1002,7 +1004,7 @@ void ExcitingSnareRoomPresetEngine::setStructuralHFDamping (float hz)
 
 void ExcitingSnareRoomPresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
 }
 
@@ -1198,7 +1200,19 @@ public:
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
 
-        clearBuffers();
+        // Reset wrapper-level EQ state without disturbing engine LFO/PRNG
+        // (engine_.prepare() already cleared its audio buffers).
+        tiltLpL_   = 0.0f;
+        tiltLpR_   = 0.0f;
+        tiltHpLpL_ = 0.0f;
+        tiltHpLpR_ = 0.0f;
+        for (int b = 0; b < kCorrEqBandCount; ++b)
+        {
+            corrXl1_[b] = corrXl2_[b] = 0.0f;
+            corrYl1_[b] = corrYl2_[b] = 0.0f;
+            corrXr1_[b] = corrXr2_[b] = 0.0f;
+            corrYr1_[b] = corrYr2_[b] = 0.0f;
+        }
     }
 
     void process (const float* inputL, const float* inputR,
