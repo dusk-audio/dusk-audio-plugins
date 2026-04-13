@@ -234,6 +234,7 @@ private:
     float sizeParam_ = 0.5f;
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
+    float sizeRangeAllocatedMax_ = 4.0f;
     float lateGainScale_ = 1.0f;
     bool frozen_ = false;
     bool prepared_ = false;

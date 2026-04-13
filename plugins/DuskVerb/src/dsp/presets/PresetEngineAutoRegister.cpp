@@ -14,6 +14,7 @@
 #include "PresetEngineBase.h"
 #include "PresetEngineRegistry.h"
 #include <memory>
+#include <mutex>
 
 // Forward declarations for every per-preset factory function. The
 // definitions live in <PresetName>Preset.cpp inside each anonymous
@@ -81,61 +82,61 @@ std::unique_ptr<PresetEngineBase> createVerySmallAmbiencePreset();
 // populated regardless of static-init order or LTO behavior.
 void forceLinkPresetEngines()
 {
-    static bool registered = false;
-    if (registered) return;
-    registered = true;
-    auto& reg = PresetEngineRegistry::instance();
-    reg.registerEngine ("PresetHomestarBladeRunner", &createHomestarBladeRunnerPreset);
-    reg.registerEngine ("PresetPadHall", &createPadHallPreset);
-    reg.registerEngine ("PresetConcertWave", &createConcertWavePreset);
-    reg.registerEngine ("PresetHugeSynthHall", &createHugeSynthHallPreset);
-    reg.registerEngine ("PresetSmallVocalHall", &createSmallVocalHallPreset);
-    reg.registerEngine ("PresetFatSnareHall", &createFatSnareHallPreset);
-    reg.registerEngine ("PresetSnareHall", &createSnareHallPreset);
-    reg.registerEngine ("PresetLongSynthHall", &createLongSynthHallPreset);
-    reg.registerEngine ("PresetVeryNiceHall", &createVeryNiceHallPreset);
-    reg.registerEngine ("PresetVocalHall", &createVocalHallPreset);
-    reg.registerEngine ("PresetDrumPlate", &createDrumPlatePreset);
-    reg.registerEngine ("PresetFatDrums", &createFatDrumsPreset);
-    reg.registerEngine ("PresetLargePlate", &createLargePlatePreset);
-    reg.registerEngine ("PresetSteelPlate", &createSteelPlatePreset);
-    reg.registerEngine ("PresetTightPlate", &createTightPlatePreset);
-    reg.registerEngine ("PresetVocalPlate", &createVocalPlatePreset);
-    reg.registerEngine ("PresetVoxPlate", &createVoxPlatePreset);
-    reg.registerEngine ("PresetDarkVocalRoom", &createDarkVocalRoomPreset);
-    reg.registerEngine ("PresetExcitingSnareRoom", &createExcitingSnareRoomPreset);
-    reg.registerEngine ("PresetFatSnareRoom", &createFatSnareRoomPreset);
-    reg.registerEngine ("PresetLivelySnareRoom", &createLivelySnareRoomPreset);
-    reg.registerEngine ("PresetLongDark70sSnareRoom", &createLongDark70sSnareRoomPreset);
-    reg.registerEngine ("PresetShortDarkSnareRoom", &createShortDarkSnareRoomPreset);
-    reg.registerEngine ("PresetAPlate", &createAPlatePreset);
-    reg.registerEngine ("PresetClearChamber", &createClearChamberPreset);
-    reg.registerEngine ("PresetFatPlate", &createFatPlatePreset);
-    reg.registerEngine ("PresetLargeChamber", &createLargeChamberPreset);
-    reg.registerEngine ("PresetLargeWoodRoom", &createLargeWoodRoomPreset);
-    reg.registerEngine ("PresetLiveVoxChamber", &createLiveVoxChamberPreset);
-    reg.registerEngine ("PresetMediumGate", &createMediumGatePreset);
-    reg.registerEngine ("PresetRichChamber", &createRichChamberPreset);
-    reg.registerEngine ("PresetSmallChamber1", &createSmallChamber1Preset);
-    reg.registerEngine ("PresetSmallChamber2", &createSmallChamber2Preset);
-    reg.registerEngine ("PresetSnarePlate", &createSnarePlatePreset);
-    reg.registerEngine ("PresetThinPlate", &createThinPlatePreset);
-    reg.registerEngine ("PresetTiledRoom", &createTiledRoomPreset);
-    reg.registerEngine ("PresetAmbience", &createAmbiencePreset);
-    reg.registerEngine ("PresetAmbiencePlate", &createAmbiencePlatePreset);
-    reg.registerEngine ("PresetAmbienceTiledRoom", &createAmbienceTiledRoomPreset);
-    reg.registerEngine ("PresetBigAmbienceGate", &createBigAmbienceGatePreset);
-    reg.registerEngine ("PresetCrossStickRoom", &createCrossStickRoomPreset);
-    reg.registerEngine ("PresetDrumAir", &createDrumAirPreset);
-    reg.registerEngine ("PresetGatedSnare", &createGatedSnarePreset);
-    reg.registerEngine ("PresetLargeAmbience", &createLargeAmbiencePreset);
-    reg.registerEngine ("PresetLargeGatedSnare", &createLargeGatedSnarePreset);
-    reg.registerEngine ("PresetMedAmbience", &createMedAmbiencePreset);
-    reg.registerEngine ("PresetShortVocalAmbience", &createShortVocalAmbiencePreset);
-    reg.registerEngine ("PresetSmallAmbience", &createSmallAmbiencePreset);
-    reg.registerEngine ("PresetSmallDrumRoom", &createSmallDrumRoomPreset);
-    reg.registerEngine ("PresetSnareAmbience", &createSnareAmbiencePreset);
-    reg.registerEngine ("PresetTightAmbienceGate", &createTightAmbienceGatePreset);
-    reg.registerEngine ("PresetTripHopSnare", &createTripHopSnarePreset);
-    reg.registerEngine ("PresetVerySmallAmbience", &createVerySmallAmbiencePreset);
+    static std::once_flag once;
+    std::call_once (once, [] {
+        auto& reg = PresetEngineRegistry::instance();
+        reg.registerEngine ("PresetHomestarBladeRunner", &createHomestarBladeRunnerPreset);
+        reg.registerEngine ("PresetPadHall", &createPadHallPreset);
+        reg.registerEngine ("PresetConcertWave", &createConcertWavePreset);
+        reg.registerEngine ("PresetHugeSynthHall", &createHugeSynthHallPreset);
+        reg.registerEngine ("PresetSmallVocalHall", &createSmallVocalHallPreset);
+        reg.registerEngine ("PresetFatSnareHall", &createFatSnareHallPreset);
+        reg.registerEngine ("PresetSnareHall", &createSnareHallPreset);
+        reg.registerEngine ("PresetLongSynthHall", &createLongSynthHallPreset);
+        reg.registerEngine ("PresetVeryNiceHall", &createVeryNiceHallPreset);
+        reg.registerEngine ("PresetVocalHall", &createVocalHallPreset);
+        reg.registerEngine ("PresetDrumPlate", &createDrumPlatePreset);
+        reg.registerEngine ("PresetFatDrums", &createFatDrumsPreset);
+        reg.registerEngine ("PresetLargePlate", &createLargePlatePreset);
+        reg.registerEngine ("PresetSteelPlate", &createSteelPlatePreset);
+        reg.registerEngine ("PresetTightPlate", &createTightPlatePreset);
+        reg.registerEngine ("PresetVocalPlate", &createVocalPlatePreset);
+        reg.registerEngine ("PresetVoxPlate", &createVoxPlatePreset);
+        reg.registerEngine ("PresetDarkVocalRoom", &createDarkVocalRoomPreset);
+        reg.registerEngine ("PresetExcitingSnareRoom", &createExcitingSnareRoomPreset);
+        reg.registerEngine ("PresetFatSnareRoom", &createFatSnareRoomPreset);
+        reg.registerEngine ("PresetLivelySnareRoom", &createLivelySnareRoomPreset);
+        reg.registerEngine ("PresetLongDark70sSnareRoom", &createLongDark70sSnareRoomPreset);
+        reg.registerEngine ("PresetShortDarkSnareRoom", &createShortDarkSnareRoomPreset);
+        reg.registerEngine ("PresetAPlate", &createAPlatePreset);
+        reg.registerEngine ("PresetClearChamber", &createClearChamberPreset);
+        reg.registerEngine ("PresetFatPlate", &createFatPlatePreset);
+        reg.registerEngine ("PresetLargeChamber", &createLargeChamberPreset);
+        reg.registerEngine ("PresetLargeWoodRoom", &createLargeWoodRoomPreset);
+        reg.registerEngine ("PresetLiveVoxChamber", &createLiveVoxChamberPreset);
+        reg.registerEngine ("PresetMediumGate", &createMediumGatePreset);
+        reg.registerEngine ("PresetRichChamber", &createRichChamberPreset);
+        reg.registerEngine ("PresetSmallChamber1", &createSmallChamber1Preset);
+        reg.registerEngine ("PresetSmallChamber2", &createSmallChamber2Preset);
+        reg.registerEngine ("PresetSnarePlate", &createSnarePlatePreset);
+        reg.registerEngine ("PresetThinPlate", &createThinPlatePreset);
+        reg.registerEngine ("PresetTiledRoom", &createTiledRoomPreset);
+        reg.registerEngine ("PresetAmbience", &createAmbiencePreset);
+        reg.registerEngine ("PresetAmbiencePlate", &createAmbiencePlatePreset);
+        reg.registerEngine ("PresetAmbienceTiledRoom", &createAmbienceTiledRoomPreset);
+        reg.registerEngine ("PresetBigAmbienceGate", &createBigAmbienceGatePreset);
+        reg.registerEngine ("PresetCrossStickRoom", &createCrossStickRoomPreset);
+        reg.registerEngine ("PresetDrumAir", &createDrumAirPreset);
+        reg.registerEngine ("PresetGatedSnare", &createGatedSnarePreset);
+        reg.registerEngine ("PresetLargeAmbience", &createLargeAmbiencePreset);
+        reg.registerEngine ("PresetLargeGatedSnare", &createLargeGatedSnarePreset);
+        reg.registerEngine ("PresetMedAmbience", &createMedAmbiencePreset);
+        reg.registerEngine ("PresetShortVocalAmbience", &createShortVocalAmbiencePreset);
+        reg.registerEngine ("PresetSmallAmbience", &createSmallAmbiencePreset);
+        reg.registerEngine ("PresetSmallDrumRoom", &createSmallDrumRoomPreset);
+        reg.registerEngine ("PresetSnareAmbience", &createSnareAmbiencePreset);
+        reg.registerEngine ("PresetTightAmbienceGate", &createTightAmbienceGatePreset);
+        reg.registerEngine ("PresetTripHopSnare", &createTripHopSnarePreset);
+        reg.registerEngine ("PresetVerySmallAmbience", &createVerySmallAmbiencePreset);
+    });
 }
