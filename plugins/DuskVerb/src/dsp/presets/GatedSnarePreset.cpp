@@ -62,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.505081f;
+    constexpr float kVvDecayTimeScale    = 0.524757f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -70,11 +70,11 @@ namespace {
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
     // character toward VV's. Coefficients are computed from these constants
     // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 10.06 dB
+    // Max correction magnitude for this preset: 9.74 dB
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.938079f, -3.58279f, -2.72346f, -1.7978f, -1.01352f, 0.29494f, 1.97127f, 4.86798f, 5.93888f, 2.51635f, 1.31665f, 10.0557f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -0.7261f, -3.69226f, -2.36947f, -2.02982f, -1.13572f, 1.13023f, 1.76842f, 5.20542f, 5.86092f, 2.49764f, 1.1213f, 9.73765f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -996,8 +996,8 @@ void GatedSnarePresetEngine::setLateGainScale (float scale)
 
 void GatedSnarePresetEngine::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    sizeRangeMin_ = min;
+    sizeRangeMax_ = max;
     if (prepared_)
     {
         updateDelayLengths();
@@ -1094,11 +1094,6 @@ void GatedSnarePresetEngine::updateDecayCoefficients()
     float lowXoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highXoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
-    // Compute 4-band crossover LP coefficients from baked Hz values
-    float xoverCoeff[4];
-    for (int i = 0; i < 4; ++i)
-        xoverCoeff[i] = std::exp (-kTwoPi * kFiveBandCrossoverHz[i] / sr);
-
     auto updateTankDamping = [&] (Tank& tank)
     {
         float loopLength = tank.ap1DelaySamples
@@ -1110,11 +1105,13 @@ void GatedSnarePresetEngine::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
+        float gLow = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
+        float gMid = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
+        // Air band: airDampingScale > 1 → air decays slower (brighter tail)
+        // airDampingScale = 1 → gAir == gMid → collapses to 2-band behavior
+        float gAir = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        // Use 5-band per-frequency RT60 shaping from baked multipliers
-        tank.damping.setBandMultipliers (kFiveBandMult);
-        tank.damping.setCrossovers (xoverCoeff);
-        tank.damping.computeGainsFromBase (gBase, lowXoverCoeff, highXoverCoeff);
+        tank.damping.setCoefficients (gLow, gMid, gAir, lowXoverCoeff, highXoverCoeff);
     };
 
     updateTankDamping (leftTank_);
