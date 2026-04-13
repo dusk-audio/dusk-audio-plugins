@@ -7,8 +7,14 @@
 #include "FDNReverb.h"
 #include "OutputDiffusion.h"
 #include "QuadTank.h"
+#include "TailChorus.h"
+#include "TiledRoomReverb.h"
+#include "presets/PresetEngineBase.h"
 
 #include <cmath>
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 // One-pole exponential smoother for per-sample parameter interpolation.
@@ -68,6 +74,7 @@ public:
     void setDattorroDelayScale (float scale);
     void setDattorroSoftOnsetMs (float ms);
     void setLateFeedForwardLevel (float level);
+    void resetLateFeedForwardLevel();  // Restore algorithm config default
     void setDattorroLimiter (float thresholdDb, float releaseMs);
     void updateTapPositions (float l0, float l1, float l2, float l3, float l4, float l5, float l6,
                              float r0, float r1, float r2, float r3, float r4, float r5, float r6);
@@ -81,6 +88,26 @@ public:
     void setCustomERTaps (const CustomERTap* taps, int numTaps);
     void loadPresetERTaps (const char* presetName);  // Looks up VV-extracted taps by name
 
+    // --- Optimizer-tunable overrides (runtime parameter → sub-component forwarding) ---
+    void setAirDampingOverride (float scale);
+    void setHighCrossoverOverride (float hz);
+    void setNoiseModOverride (float samples);
+    void setInlineDiffusionOverride (float coeff);
+    void setStereoCouplingOverride (float amount);
+    void setChorusDepthOverride (float depth);
+    void setChorusRateOverride (float hz);
+    void setOutputGainOverride (float gain);
+    void setERCrossfeedOverride (float amount);
+    void setDecayTimeScaleOverride (float scale);
+    void setDecayBoostOverride (float dB);
+    void setStructuralHFDampingOverride (float hz);
+    void setOutputLowShelfOverride (float dB);
+    void setOutputHighShelfOverride (float dB, float hz);
+    void setOutputMidEQOverride (float dB, float hz);
+    void setTerminalDecayOverride (float thresholdDb, float factor);
+    void setERAirCeilingOverride (float hz);
+    void setERAirFloorOverride (float hz);
+
 private:
     DiffusionStage diffuser_;
     FDNReverb fdn_;
@@ -91,6 +118,15 @@ private:
     bool useQuadTank_ = false;
     QuadTank quadTank_;
     QuadTank hybridQuadTank_;  // Dedicated secondary engine for hybrid dual-engine mode
+    TiledRoomReverb tiledRoomReverb_;  // Custom per-preset reverb engine (legacy, unused)
+    bool useCustomPresetEngine_ = false;
+
+    // Per-preset engines: every registered preset engine is constructed
+    // and prepared once during DuskVerbEngine::prepare() (off the audio
+    // thread) and stored in this map. applyAlgorithm() then just swaps
+    // the active raw pointer with no allocation.
+    std::unordered_map<std::string, std::unique_ptr<PresetEngineBase>> prebuiltPresetEngines_;
+    PresetEngineBase* presetEngine_ = nullptr;  // non-owning view into prebuiltPresetEngines_
 
     const AlgorithmConfig* config_ = &kHall;
 
@@ -145,6 +181,9 @@ private:
     float lastTrebleMult_ = 0.5f;
     float lastBassMult_ = 1.2f;
     float lastERLevel_ = 0.5f;
+    float lastSize_ = 0.5f;
+    float lastCrossoverHz_ = 1000.0f;
+    float lastDecayBoost_ = 1.0f;
 
     // Input bandwidth filter (Dattorro-style one-pole LP, ~10kHz)
     float inputBwCoeff_ = 0.0f;
@@ -218,6 +257,20 @@ private:
     float rmsSumR_ = 0.0f;
     int rmsIndex_ = 0;
 
+    // Tail chorus: stereo amplitude modulation on reverb tail
+    TailChorus tailChorus_;
+
+    // Terminal decay: when reverb tail drops below threshold, accelerate decay
+    float terminalThresholdDb_ = 0.0f; // 0 = disabled
+    float terminalFactor_ = 0.992f;
+
+    // Structural HF damping override: -1.0f means "no override, use config default".
+    // Cached so applyAlgorithm() can replay it after the config-baseline write.
+    float structuralHFOverrideHz_ = -1.0f;
+
+    // Decay time scale override: runtime multiplier (0 = use config default)
+    float decayTimeScaleOverride_ = 0.0f;
+
     // Late feed-forward: pre-diffusion late reverb blended into output
     float lateFeedForwardLevel_ = 0.0f;
 
@@ -233,6 +286,23 @@ private:
     static constexpr int kNumCorrectionStages = 8;
     Biquad correctionFilter_[kNumCorrectionStages] {};
     bool correctionFilterActive_ = false;
+
+    // Fix 4 (spectral): ER corrective EQ — applies the same per-preset 12-band
+    // correction to the ER path so the combined ER+late signal is spectrally matched.
+    // Coefficients are queried from the active PresetEngineBase at algorithm switch.
+    static constexpr int kMaxERCorrBands = 12;
+    Biquad erCorrEQ_[kMaxERCorrBands] {};
+    int erCorrEQBands_ = 0;
+    bool erCorrEQActive_ = false;
+
+    // Fix 1 (decay_ratio): per-preset onset envelope table — replaces the simple
+    // squared linear ramp with a VV-derived energy buildup curve.
+    const float* onsetEnvelopeTable_ = nullptr;
+    int onsetEnvelopeTableSize_ = 0;
+    float onsetEnvelopePhase_ = 0.0f;   // 0→1 progress through table
+    float onsetEnvelopeInc_ = 0.0f;     // per-sample increment
+    bool useOnsetTable_ = false;
+    bool onsetInputWasQuiet_ = true;  // Tracks silence→signal transition for re-triggering
 
     // Gate envelope: truncates reverb tail (gated reverb effect)
     bool gateEnabled_ = false;

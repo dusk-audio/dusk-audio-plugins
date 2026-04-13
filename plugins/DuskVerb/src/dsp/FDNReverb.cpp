@@ -155,7 +155,15 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         delayLines_[i].writePos = 0;
         delayLines_[i].mask = bufSize - 1;
         dampFilter_[i].reset();
+        structHFState_[i] = 0.0f;
+        structLFState_[i] = 0.0f;
+        antiAliasState_[i] = 0.0f;
+        dcX1_[i] = 0.0f;
+        dcY1_[i] = 0.0f;
     }
+    peakRMS_ = 0.0f;
+    currentRMS_ = 0.0f;
+    terminalDecayActive_ = false;
 
     // Inline allpass diffusers: prime delays scaled by sample rate
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
@@ -276,6 +284,32 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 lfoPhase_[ch] -= kTwoPi;
             else if (lfoPhase_[ch] < 0.0f)
                 lfoPhase_[ch] += kTwoPi;
+        }
+
+        // --- 1.25) Terminal decay: accelerate tail fadeout when below threshold ---
+        if (terminalDecayFactor_ < 1.0f && ! frozen_)
+        {
+            float sampleEnergy = 0.0f;
+            for (int ch = 0; ch < N; ++ch)
+                sampleEnergy += delayOut[ch] * delayOut[ch];
+            sampleEnergy *= (1.0f / static_cast<float> (N));
+
+            currentRMS_ = currentRMS_ * 0.9995f + sampleEnergy * 0.0005f;
+            if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
+            else peakRMS_ *= 0.99999f;
+
+            float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
+            float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
+            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
+            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
+            // dropped 40dB below peak — the intended "tail has faded" condition.
+            terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
+                                 && (peakRMS_ > 1e-12f);
+            if (terminalDecayActive_)
+            {
+                for (int ch = 0; ch < N; ++ch)
+                    delayOut[ch] *= terminalDecayFactor_;
+            }
         }
 
         // --- 1.5) Inline allpass diffusion (Dattorro "decay diffusion") ---
@@ -418,14 +452,13 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                 filtered = hp;
             }
 
-            // Anti-alias LP: gentle first-order LP accumulates across iterations
-            // to suppress modulation-induced aliasing without killing first-pass air.
-            antiAliasState_[ch] = (1.0f - antiAliasCoeff_) * filtered
-                                + antiAliasCoeff_ * antiAliasState_[ch];
-            filtered = antiAliasState_[ch];
-
-            // DC blocker: first-order highpass (~5Hz) prevents DC accumulation in feedback loop
+            // Anti-alias LP + DC blocker: bypass when frozen to prevent tail drift
+            if (! frozen_)
             {
+                antiAliasState_[ch] = (1.0f - antiAliasCoeff_) * filtered
+                                    + antiAliasCoeff_ * antiAliasState_[ch];
+                filtered = antiAliasState_[ch];
+
                 float dcOut = filtered - dcX1_[ch] + dcCoeff_ * dcY1_[ch];
                 dcX1_[ch] = filtered;
                 dcY1_[ch] = dcOut;
@@ -440,9 +473,11 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             float polarity = (ch & 1) ? -1.0f : 1.0f;
             float inputSample = stereoSplitEnabled_ ? ((ch < 8) ? inL : inR)
                                                     : ((ch & 1) ? inR : inL);
-            float denormalBias = ((dl.writePos ^ ch) & 1)
-                                     ? DspUtils::kDenormalPrevention
-                                     : -DspUtils::kDenormalPrevention;
+            // Suppress denormal bias when frozen to prevent tail mutation
+            float denormalBias = frozen_ ? 0.0f
+                                         : (((dl.writePos ^ ch) & 1)
+                                                ? DspUtils::kDenormalPrevention
+                                                : -DspUtils::kDenormalPrevention);
             dl.buffer[static_cast<size_t> (dl.writePos)] =
                 filtered + inputSample * polarity * inputGain + denormalBias;
 
@@ -508,8 +543,8 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // per unit time, producing higher energy density without compensation.
         // Soft-clip output: fastTanh knee at ~±1.0, scaled by kSafetyClip for headroom.
         // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
-        float rawL = outL * kOutputLevel * sizeCompensation_;
-        float rawR = outR * kOutputLevel * sizeCompensation_;
+        float rawL = outL * kOutputLevel * sizeCompensation_ * lateGainScale_;
+        float rawR = outR * kOutputLevel * sizeCompensation_ * lateGainScale_;
         outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip;
         outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip;
     }
@@ -618,8 +653,8 @@ void FDNReverb::setLateGainScale (float scale)
 
 void FDNReverb::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::clamp (min, 0.0f, 1.5f);
-    sizeRangeMax_ = std::clamp (max, sizeRangeMin_, 1.5f);
+    sizeRangeMin_ = std::max (min, 0.0f);
+    sizeRangeMax_ = std::max (max, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -930,11 +965,30 @@ void FDNReverb::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
+void FDNReverb::setCrossoverModDepth (float depth)
+{
+    crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+}
+
+void FDNReverb::setDecayBoost (float boost)
+{
+    decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void FDNReverb::setTerminalDecay (float thresholdDB, float factor)
+{
+    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+}
+
 void FDNReverb::clearBuffers()
 {
     for (int i = 0; i < N; ++i)
     {
         std::fill (delayLines_[i].buffer.begin(), delayLines_[i].buffer.end(), 0.0f);
+        delayLines_[i].writePos = 0;
         inlineAP_[i].clear();
         inlineAP2_[i].clear();
         inlineAP3_[i].clear();
@@ -945,7 +999,16 @@ void FDNReverb::clearBuffers()
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
+        // Deterministic LFO/PRNG reset for clean state on algorithm switch.
+        // (Wrapper prepare() no longer calls clearBuffers(), so this does not
+        // conflict with prepare()'s stochastic randomization.)
+        lfoPhase_[i] = 0.0f;
+        lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
     }
+    // Reset terminal decay RMS tracking
+    peakRMS_ = 0.0f;
+    currentRMS_ = 0.0f;
+    terminalDecayActive_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,6 +1115,7 @@ void FDNReverb::updateDecayCoefficients()
         }
         float gBase = std::pow (10.0f, -3.0f * effectiveLength
                                        / (channelRT60 * static_cast<float> (sampleRate_)));
+        gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
 
         // Bass Multiply: g_low = g_base^(1/bassMultiply)
         // bassMultiply > 1.0 → lows sustain longer (g_low > g_base)

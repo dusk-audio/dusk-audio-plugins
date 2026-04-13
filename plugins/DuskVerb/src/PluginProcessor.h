@@ -62,6 +62,12 @@ private:
     std::atomic<float>* algorithmParam_ = nullptr;
     int cachedAlgorithm_ = 1; // Hall default
 
+    // Track sample rate / block size to make prepareToPlay idempotent
+    // (pedalboard calls it before every process() which would otherwise
+    // tear down and rebuild the engine on every call).
+    double preparedSampleRate_ = 0.0;
+    int preparedBlockSize_ = 0;
+
     std::atomic<float>* decayParam_     = nullptr;
     std::atomic<float>* preDelayParam_  = nullptr;
     std::atomic<float>* sizeParam_      = nullptr;
@@ -92,6 +98,30 @@ private:
     std::atomic<float>* tapGainParams_[14] = {};
     std::atomic<float>* presetIdParam_ = nullptr;
     int lastPresetId_ = 0;
+    float lastPresetPreDelayMs_ = -1.0f;
+
+    std::atomic<float>* airDampingParam_ = nullptr;
+    std::atomic<float>* highCrossoverParam_ = nullptr;
+    std::atomic<float>* noiseModParam_ = nullptr;
+    std::atomic<float>* inlineDiffParam_ = nullptr;
+    std::atomic<float>* stereoCouplingParam_ = nullptr;
+    std::atomic<float>* chorusDepthParam_ = nullptr;
+    std::atomic<float>* chorusRateParam_ = nullptr;
+    std::atomic<float>* outputGainParam_ = nullptr;
+    std::atomic<float>* erCrossfeedParam_ = nullptr;
+    std::atomic<float>* decayTimeScaleParam_ = nullptr;
+    std::atomic<float>* decayBoostParam_ = nullptr;
+    std::atomic<float>* structHFDampParam_ = nullptr;
+    std::atomic<float>* outputLowShelfDBParam_ = nullptr;
+    std::atomic<float>* outputHighShelfDBParam_ = nullptr;
+    std::atomic<float>* outputHighShelfHzParam_ = nullptr;
+    std::atomic<float>* outputMidEQDBParam_ = nullptr;
+    std::atomic<float>* outputMidEQHzParam_ = nullptr;
+    std::atomic<float>* terminalThresholdParam_ = nullptr;
+    std::atomic<float>* terminalFactorParam_ = nullptr;
+    std::atomic<float>* erAirCeilingParam_ = nullptr;
+    std::atomic<float>* erAirFloorParam_ = nullptr;
+
     juce::AudioParameterBool* bypassParam_ = nullptr;
 
     juce::SmoothedValue<float> decaySmooth_;

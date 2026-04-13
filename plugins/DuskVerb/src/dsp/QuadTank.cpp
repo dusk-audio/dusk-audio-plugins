@@ -108,6 +108,19 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
     updateDecayCoefficients();
     updateLFORates();
     setModDepth (lastModDepthRaw_);
+
+    // Clear all per-tank stateful fields (RMS history, terminal-decay flags,
+    // structural HF damping state). Without this, a host re-prepare would
+    // start with empty delay buffers but retain the previous run's tracker
+    // state, leaking session state across reconfigure.
+    for (int t = 0; t < kNumTanks; ++t)
+    {
+        auto& tank = tanks_[t];
+        tank.currentRMS = 0.0f;
+        tank.peakRMS = 0.0f;
+        tank.terminalDecayActive = false;
+        structHFState_[t] = 0.0f;
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -116,6 +129,9 @@ void QuadTank::process (const float* inputL, const float* inputR,
 {
     if (! prepared_)
         return;
+
+    const float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
+                                  ? independentNoiseModDepth_ : noiseModDepth_;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -155,7 +171,7 @@ void QuadTank::process (const float* inputL, const float* inputR,
                 tank.lfoPhase += kTwoPi;
 
             // --- Delay 1 with noise jitter ---
-            float jitter1 = nextDrift (tank.noiseState) * noiseModDepth_;
+            float jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -172,18 +188,42 @@ void QuadTank::process (const float* inputL, const float* inputR,
             // --- Two-band damping ---
             float damped = frozen_ ? dense : tank.damping.process (dense);
 
+            // --- Structural HF damping ---
+            if (structHFCoeff_ > 0.0f && ! frozen_)
+            {
+                structHFState_[t] = (1.0f - structHFCoeff_) * damped + structHFCoeff_ * structHFState_[t];
+                damped = structHFState_[t];
+            }
+
             // --- Static allpass (decay diffusion 2) ---
             float coeff2 = frozen_ ? 0.0f : decayDiff2_;
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 with noise jitter ---
-            float jitter2 = nextDrift (tank.noiseState) * noiseModDepth_;
+            float jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
-            float bias = ((tank.delay2.writePos ^ 1) & 1) ? +DspUtils::kDenormalPrevention
-                                                            : -DspUtils::kDenormalPrevention;
+            float bias = frozen_ ? 0.0f
+                                 : (((tank.delay2.writePos ^ 1) & 1)
+                                        ? +DspUtils::kDenormalPrevention
+                                        : -DspUtils::kDenormalPrevention);
             tank.delay2.write (ap2Out + bias);
+
+            // Terminal decay: extra damping when tail is far below peak
+            // Skipped when frozen — frozen tails must not attenuate.
+            if (terminalDecayFactor_ < 1.0f && ! frozen_)
+            {
+                float sampleEnergy = del2Out * del2Out;
+                tank.currentRMS = tank.currentRMS * 0.9995f + sampleEnergy * 0.0005f;
+                if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
+                else tank.peakRMS *= 0.99999f;
+                float rmsDB = 10.0f * std::log10 (std::max (tank.currentRMS, 1e-20f));
+                float peakDB = 10.0f * std::log10 (std::max (tank.peakRMS, 1e-20f));
+                tank.terminalDecayActive = (peakDB - rmsDB > -terminalDecayThresholdDB_) && (tank.peakRMS > 1e-12f);
+                if (tank.terminalDecayActive)
+                    del2Out *= terminalDecayFactor_;
+            }
 
             // Cross-feed: feeds next tank
             tank.crossFeedState = del2Out;
@@ -205,9 +245,10 @@ void QuadTank::process (const float* inputL, const float* inputR,
         // 0.35 ≈ 1/sqrt(8) compensates for sign cancellation and the slow
         // energy buildup of long-loop tanks vs shorter-loop FDN/DattorroTank.
         constexpr float kOutputScale = 0.35f;  // ~1/sqrt(8)
+        const float outputGain = kOutputScale * lateGainScale_;
 
-        outputL[i] = std::clamp (outL * kOutputScale, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (outR * kOutputScale, -kSafetyClip, kSafetyClip);
+        outputL[i] = std::clamp (outL * outputGain, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (outR * outputGain, -kSafetyClip, kSafetyClip);
     }
 }
 
@@ -273,6 +314,14 @@ void QuadTank::setModDepth (float depth)
     noiseModDepth_ = depth * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
 }
 
+void QuadTank::setNoiseModDepth (float samples)
+{
+    // Independent noise jitter, decoupled from LFO modDepth. When set (>= 0),
+    // this overrides the modDepth-coupled noise jitter. Mirrors DattorroTank.
+    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
+    independentNoiseModDepth_ = samples * rateRatio;
+}
+
 void QuadTank::setModRate (float hz)
 {
     modRateHz_ = hz;
@@ -317,6 +366,37 @@ void QuadTank::setSizeRange (float min, float max)
     }
 }
 
+void QuadTank::setDecayBoost (float boost)
+{
+    decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void QuadTank::setStructuralHFDamping (float hz)
+{
+    if (hz <= 0.0f)
+    {
+        structHFCoeff_ = 0.0f;
+        for (int t = 0; t < kNumTanks; ++t)
+            structHFState_[t] = 0.0f;
+        return;
+    }
+    structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
+}
+
+void QuadTank::setTerminalDecay (float thresholdDB, float factor)
+{
+    terminalDecayThresholdDB_ = thresholdDB;
+    // Accept the full [0.0, 1.0] range to match DattorroTank and the
+    // wrapper's pass-through behavior. PluginProcessor already gates the
+    // override path on factor>0.001, so an inadvertent factor=0 from the
+    // automation layer cannot reach here in normal use; but if the
+    // calibrator or a future API caller wants a value below 0.8, it
+    // should be honored exactly rather than silently rounded up.
+    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+}
+
 void QuadTank::clearBuffers()
 {
     for (int t = 0; t < kNumTanks; ++t)
@@ -330,6 +410,16 @@ void QuadTank::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        tank.currentRMS = 0.0f;
+        tank.peakRMS = 0.0f;
+        tank.terminalDecayActive = false;
+    }
+    for (int t = 0; t < kNumTanks; ++t)
+    {
+        structHFState_[t] = 0.0f;
+        tanks_[t].lfoPhase = 0.0f;
+        tanks_[t].lfoPRNG = static_cast<uint32_t> (t + 1) * 2654435761u;
+        tanks_[t].noiseState = static_cast<uint32_t> (t + 1) * 2654435761u;
     }
 }
 
@@ -373,7 +463,7 @@ void QuadTank::updateDecayCoefficients()
             loopLength += static_cast<float> (tank.densityAP[i].delaySamples);
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
-        gBase = std::clamp (gBase, 0.001f, 0.9998f);  // Prevent RT60 collapse or infinite sustain (0.9998 = ~2x more sustain headroom vs 0.9995)
+        gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
         float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
         float gMid  = gBase;  // mid band decays at natural rate
         float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);

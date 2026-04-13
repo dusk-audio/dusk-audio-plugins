@@ -54,6 +54,10 @@ public:
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
+    void setFeedbackModDepth (float depth);
+    void setCrossoverModDepth (float depth);
+    void setDecayBoost (float boost);
+    void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
 private:
@@ -65,7 +69,9 @@ private:
     static constexpr int kNumOutputTaps = 8;
 
     // Worst-case base delay across all algorithms (for buffer allocation)
-    static constexpr int kMaxBaseDelay = 5521;
+    // Must be >= the largest value in any preset delay table.
+    // Currently: kPresetFatSnareHall reaches 6613.
+    static constexpr int kMaxBaseDelay = 6700;
 
     // Mutable delay and tap configuration (initialized to Hall defaults)
     int baseDelays_[N];
@@ -237,6 +243,16 @@ private:
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
     float sizeParam_ = 1.0f;
+    float feedbackModDepth_ = 0.0f;
+    float crossoverModDepth_ = 0.0f;
+    float baseLowCrossoverCoeff_ = 0.0f;
+    float baseHighCrossoverCoeff_ = 0.0f;
+    float decayBoost_ = 1.0f;
+    float terminalDecayThresholdDB_ = -40.0f;
+    float terminalDecayFactor_ = 1.0f;
+    float peakRMS_ = 0.0f;
+    float currentRMS_ = 0.0f;
+    bool terminalDecayActive_ = false;
     bool frozen_ = false;
     bool prepared_ = false;
 
