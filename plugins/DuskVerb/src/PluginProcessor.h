@@ -4,7 +4,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-class DuskVerbProcessor : public juce::AudioProcessor
+class DuskVerbProcessor : public juce::AudioProcessor,
+                          private juce::AsyncUpdater
 {
 public:
     DuskVerbProcessor();
@@ -149,6 +150,10 @@ private:
     std::atomic<float> outputLevelR_ { -100.0f };
 
     int originalLatencySamples_ = 0;
+    std::atomic<int> pendingLatency_ { -1 };  // -1 = no change pending
+
+    // AsyncUpdater: applies latency changes on the message thread
+    void handleAsyncUpdate() override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DuskVerbProcessor)
 };

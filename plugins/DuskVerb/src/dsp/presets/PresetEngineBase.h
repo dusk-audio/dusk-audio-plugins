@@ -61,7 +61,10 @@ public:
     // was applied since.
     virtual void resetAirDampingToDefault() {}
     virtual void resetHighCrossoverToDefault() {}
+    virtual void resetLowCrossoverToDefault() {}
     virtual void resetNoiseModToDefault() {}
+    virtual void resetLateGainToDefault() {}
+    virtual void resetSizeRangeToDefault() {}
 
     // --- Corrective EQ exposure (Fix 4: spectral) ---
     // Returns the number of corrective EQ bands this preset uses (0 = none).
