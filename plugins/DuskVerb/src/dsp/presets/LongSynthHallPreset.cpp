@@ -37,6 +37,8 @@ namespace {
     constexpr float kBakedTrebleMultScale    = 0.89f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
     constexpr float kBakedBassMultScale      = 0.98f;
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
+    constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
     constexpr float kBakedDecayTimeScale     = 1.5f;
@@ -62,7 +64,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.713245f;
+    constexpr float kVvDecayTimeScale    = 0.768808f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -74,7 +76,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 1.69182f, -2.54756f, -1.31667f, -0.743782f, -2.4141f, -2.87044f, -2.57789f, -1.97928f, 0.133542f, 2.77997f, 0.77208f, 9.23097f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 2.99963f, -3.26998f, 1.06443f, -1.46655f, -3.1552f, -3.80501f, -3.20809f, -3.88306f, -4.683f, -5.89721f, -4.09788f, 5.21102f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -260,7 +262,7 @@ private:
     float inlineDiffCoeff_ = 0.0f;
     float inlineDiffCoeff2_ = 0.0f;
     float inlineDiffCoeff3_ = 0.0f;
-    ThreeBandDamping dampFilter_[N];
+    FiveBandDamping dampFilter_[N];
     float lfoPhase_[N] {};
     float lfoPhaseInc_[N] {};
     uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state for LFO drift
@@ -348,6 +350,9 @@ private:
     float decayBoost_ = 1.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
+    float rmsAlpha_ = 0.9995f;
+    float peakDecayAlpha_ = 0.99999f;
+    float terminalLinearThreshold_ = 10000.0f;
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -496,17 +501,26 @@ void LongSynthHallPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
 {
     sampleRate_ = sampleRate;
 
+    // Sample-rate-invariant terminal decay smoothing coefficients
+    {
+        constexpr float kRmsTauMs = 45.0f;
+        constexpr float kPeakTauMs = 2270.0f;
+        float sr = static_cast<float> (sampleRate_);
+        rmsAlpha_ = std::exp (-1000.0f / (kRmsTauMs * sr));
+        peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
+    }
+
     updateDelayLengths();
 
     // Allocate buffers for worst-case delay across ALL algorithms.
     // kMaxBaseDelay covers the longest line in any algorithm config.
     float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
-    sizeRangeAllocatedMax_ = maxSizeScale;
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, maxSizeScale);
     float maxDelay = static_cast<float> (kMaxBaseDelay)
-                   * static_cast<float> (sampleRate / kBaseSampleRate) * maxSizeScale;
+                   * static_cast<float> (sampleRate / kBaseSampleRate) * sizeRangeAllocatedMax_;
 
-    // +12 covers max modulation depth (modDepth 2.0 -> 8 samples) + cubic interp (2) + safety (2)
-    int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + 12);
+    // +20 covers LFO modulation (8) + baked noise jitter (8) + cubic interp (2) + safety (2)
+    int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + 20);
 
     for (int i = 0; i < N; ++i)
     {
@@ -601,6 +615,15 @@ void LongSynthHallPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
             lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
     }
 
+    {
+        float fbCoeffs[4];
+        for (int b = 0; b < 4; ++b)
+            fbCoeffs[b] = std::exp (-6.283185307f * kFiveBandCrossoverHz[b]
+                                    / static_cast<float> (sampleRate_));
+        for (int i = 0; i < N; ++i)
+            dampFilter_[i].setCrossovers (fbCoeffs);
+    }
+
     updateModDepth();
     updateLFORates();
     updateDecayCoefficients();
@@ -626,11 +649,16 @@ void LongSynthHallPresetEngine::process (const float* inputL, const float* input
         {
             auto& dl = delayLines_[ch];
 
-            float mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
-            // Per-sample random jitter: fast mode blurring complementing the slow LFO.
-            // Each channel gets independent noise from its xorshift32 PRNG.
-            float jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
-            float readDelay = delayLength_[ch] + mod + jitter;
+            float mod = 0.0f;
+            float jitter = 0.0f;
+            if (! frozen_)
+            {
+                mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
+                // Per-sample random jitter: fast mode blurring complementing the slow LFO.
+                // Each channel gets independent noise from its xorshift32 PRNG.
+                jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
+            }
+            float readDelay = std::max (delayLength_[ch] + mod + jitter, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
 
             int intIdx = static_cast<int> (std::floor (readPos));
@@ -641,12 +669,15 @@ void LongSynthHallPresetEngine::process (const float* inputL, const float* input
             // Advance LFO with "Wander" drift (classic reverb technique).
             // Adds ±8% random perturbation to the phase increment each sample
             // so the modulation never exactly repeats — organic, not mechanical.
-            float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
-            lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
-            if (lfoPhase_[ch] >= kTwoPi)
-                lfoPhase_[ch] -= kTwoPi;
-            else if (lfoPhase_[ch] < 0.0f)
-                lfoPhase_[ch] += kTwoPi;
+            if (! frozen_)
+            {
+                float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
+                lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
+                if (lfoPhase_[ch] >= kTwoPi)
+                    lfoPhase_[ch] -= kTwoPi;
+                else if (lfoPhase_[ch] < 0.0f)
+                    lfoPhase_[ch] += kTwoPi;
+            }
         }
 
         // --- 1.25) Terminal decay: accelerate tail fadeout when below threshold ---
@@ -657,16 +688,16 @@ void LongSynthHallPresetEngine::process (const float* inputL, const float* input
                 sampleEnergy += delayOut[ch] * delayOut[ch];
             sampleEnergy *= (1.0f / static_cast<float> (N));
 
-            currentRMS_ = currentRMS_ * 0.9995f + sampleEnergy * 0.0005f;
+            currentRMS_ = currentRMS_ * rmsAlpha_ + sampleEnergy * (1.0f - rmsAlpha_);
             if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
-            else peakRMS_ *= 0.99999f;
+            else peakRMS_ *= peakDecayAlpha_;
 
-            float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
-            float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
+            float ratio = peakRMS_ / std::max (currentRMS_, 1e-20f);
+
             // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
             // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
             // dropped 40dB below peak — the intended "tail has faded" condition.
-            terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
+            terminalDecayActive_ = (ratio > terminalLinearThreshold_)
                                  && (peakRMS_ > 1e-12f);
             if (terminalDecayActive_)
             {
@@ -795,6 +826,22 @@ void LongSynthHallPresetEngine::process (const float* inputL, const float* input
         {
             auto& dl = delayLines_[ch];
 
+            // Per-channel LFO modulation of feedback gain and crossover frequency
+            if (feedbackModDepth_ > 0.0f && ! frozen_)
+            {
+                float lfo = std::sin (lfoPhase_[ch]);
+                float multiplier = std::min (1.0f, 1.0f + feedbackModDepth_ * lfo * 0.1f);
+                feedback[ch] *= multiplier;
+            }
+            if (crossoverModDepth_ > 0.0f && ! frozen_)
+            {
+                float lfo = std::sin (lfoPhase_[ch]);
+                float modCoeff = baseLowCrossoverCoeff_
+                               + crossoverModDepth_ * lfo * baseLowCrossoverCoeff_ * 0.1f;
+                modCoeff = std::clamp (modCoeff, 0.0f, 0.999f);
+                dampFilter_[ch].setLowCrossoverCoeff (modCoeff);
+            }
+
             // When frozen, bypass damping (unity feedback) to sustain tail indefinitely
             float filtered = frozen_ ? feedback[ch] : dampFilter_[ch].process (feedback[ch]);
 
@@ -861,10 +908,10 @@ void LongSynthHallPresetEngine::process (const float* inputL, const float* input
                 const auto& tap = multiTapsL_[t];
                 const auto& dl  = delayLines_[tap.channelIndex];
                 float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
-                int   iDelay    = static_cast<int> (readDelay);
-                float frac      = readDelay - static_cast<float> (iDelay);
-                int   i0        = (dl.writePos - 1 - iDelay) & dl.mask;
-                int   i1        = (i0 - 1) & dl.mask;
+                float readPos   = static_cast<float> (dl.writePos) - readDelay;
+                int   i0        = static_cast<int> (std::floor (readPos)) & dl.mask;
+                int   i1        = (i0 + 1) & dl.mask;
+                float frac      = readPos - std::floor (readPos);
                 float sample    = dl.buffer[static_cast<size_t> (i0)]
                                 + frac * (dl.buffer[static_cast<size_t> (i1)]
                                         - dl.buffer[static_cast<size_t> (i0)]);
@@ -875,10 +922,10 @@ void LongSynthHallPresetEngine::process (const float* inputL, const float* input
                 const auto& tap = multiTapsR_[t];
                 const auto& dl  = delayLines_[tap.channelIndex];
                 float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
-                int   iDelay    = static_cast<int> (readDelay);
-                float frac      = readDelay - static_cast<float> (iDelay);
-                int   i0        = (dl.writePos - 1 - iDelay) & dl.mask;
-                int   i1        = (i0 - 1) & dl.mask;
+                float readPos   = static_cast<float> (dl.writePos) - readDelay;
+                int   i0        = static_cast<int> (std::floor (readPos)) & dl.mask;
+                int   i1        = (i0 + 1) & dl.mask;
+                float frac      = readPos - std::floor (readPos);
                 float sample    = dl.buffer[static_cast<size_t> (i0)]
                                 + frac * (dl.buffer[static_cast<size_t> (i1)]
                                         - dl.buffer[static_cast<size_t> (i0)]);
@@ -906,10 +953,10 @@ void LongSynthHallPresetEngine::process (const float* inputL, const float* input
         // per unit time, producing higher energy density without compensation.
         // Soft-clip output: fastTanh knee at ~±1.0, scaled by kSafetyClip for headroom.
         // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
-        float rawL = outL * kOutputLevel * sizeCompensation_ * lateGainScale_;
-        float rawR = outR * kOutputLevel * sizeCompensation_ * lateGainScale_;
-        outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip;
-        outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip;
+        float rawL = outL * kOutputLevel * sizeCompensation_;
+        float rawR = outR * kOutputLevel * sizeCompensation_;
+        outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip * lateGainScale_;
+        outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip * lateGainScale_;
     }
 }
 
@@ -976,7 +1023,13 @@ void LongSynthHallPresetEngine::setFreeze (bool frozen)
         {
             structHFState_[i] = 0.0f;
             structLFState_[i] = 0.0f;
+            antiAliasState_[i] = 0.0f;
+            dcX1_[i] = 0.0f;
+            dcY1_[i] = 0.0f;
         }
+        peakRMS_ = 0.0f;
+        currentRMS_ = 0.0f;
+        terminalDecayActive_ = false;
     }
 }
 
@@ -1188,6 +1241,7 @@ void LongSynthHallPresetEngine::setHadamardPerturbation (float amount)
             }
         }
 
+        bool singular = false;
         for (int col = 0; col < N; ++col)
         {
             // Partial pivoting for numerical stability
@@ -1210,7 +1264,10 @@ void LongSynthHallPresetEngine::setHadamardPerturbation (float amount)
 
             float diag = aug[col][col];
             if (std::fabs (diag) < 1e-12f)
+            {
+                singular = true;
                 break; // Singular — bail out (shouldn't happen for perturbed Hadamard)
+            }
 
             float invDiag = 1.0f / diag;
             for (int k = 0; k < 2 * N; ++k)
@@ -1225,6 +1282,9 @@ void LongSynthHallPresetEngine::setHadamardPerturbation (float amount)
                     aug[row][k] -= factor * aug[col][k];
             }
         }
+
+        if (singular)
+            break;
 
         // M^{-1} is now in aug[i][j+N]. We need M^{-T} (transpose of inverse).
         // Compute M_{k+1} = 0.5 * (M + M^{-T})
@@ -1278,7 +1338,7 @@ void LongSynthHallPresetEngine::setStereoCoupling (float amount)
 
 void LongSynthHallPresetEngine::setNoiseModDepth (float samples)
 {
-    noiseModDepthParam_ = std::max (samples, 0.0f);
+    noiseModDepthParam_ = std::clamp (samples, 0.0f, 8.0f);
     if (prepared_)
         updateModDepth();
 }
@@ -1341,9 +1401,20 @@ void LongSynthHallPresetEngine::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
+void LongSynthHallPresetEngine::setFeedbackModDepth (float depth)
+{
+    feedbackModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+}
+
 void LongSynthHallPresetEngine::setCrossoverModDepth (float depth)
 {
+    float prev = crossoverModDepth_;
     crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+    if (prev > 0.0f && crossoverModDepth_ == 0.0f)
+    {
+        for (int ch = 0; ch < N; ++ch)
+            dampFilter_[ch].setLowCrossoverCoeff (baseLowCrossoverCoeff_);
+    }
 }
 
 void LongSynthHallPresetEngine::setDecayBoost (float boost)
@@ -1357,6 +1428,7 @@ void LongSynthHallPresetEngine::setTerminalDecay (float thresholdDB, float facto
 {
     terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void LongSynthHallPresetEngine::clearBuffers()
@@ -1371,6 +1443,10 @@ void LongSynthHallPresetEngine::clearBuffers()
         inlineAPShort_[i].clear();
         dampFilter_[i].reset();
         structHFState_[i] = 0.0f;
+        structLFState_[i] = 0.0f;
+        antiAliasState_[i] = 0.0f;
+        dcX1_[i] = 0.0f;
+        dcY1_[i] = 0.0f;
         // Deterministic LFO/PRNG reset for clean state on algorithm switch.
         // (Wrapper prepare() no longer calls clearBuffers(), so this does not
         // conflict with prepare()'s stochastic randomization.)
@@ -1421,14 +1497,14 @@ void LongSynthHallPresetEngine::updateDelayLengths()
     // accumulation per pass. This flattens the spectral envelope of the reverb tail.
     if (useWeightedGains_)
     {
-        float minDelay = delayLength_[0];
+        float minDelay = std::max (delayLength_[0], 1.0f);
         for (int i = 1; i < N; ++i)
-            minDelay = std::min (minDelay, delayLength_[i]);
+            minDelay = std::min (minDelay, std::max (delayLength_[i], 1.0f));
 
         float sumSqIn = 0.0f;
         for (int i = 0; i < N; ++i)
         {
-            inputGainScale_[i] = 1.0f / std::sqrt (delayLength_[i] / minDelay);
+            inputGainScale_[i] = 1.0f / std::sqrt (std::max (delayLength_[i], 1.0f) / minDelay);
             sumSqIn += inputGainScale_[i] * inputGainScale_[i];
         }
         // Normalize so RMS of gain vector equals 1 (preserves overall input energy)
@@ -1460,6 +1536,12 @@ void LongSynthHallPresetEngine::updateDecayCoefficients()
     float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_
                                          / static_cast<float> (sampleRate_));
 
+    // Persist into members so crossover modulation (setCrossoverModDepth /
+    // process) and the modulation-off restore path operate from the correct
+    // baseline rather than the 0.0f default.
+    baseLowCrossoverCoeff_ = lowCrossoverCoeff;
+    baseHighCrossoverCoeff_ = highCrossoverCoeff;
+
     for (int i = 0; i < N; ++i)
     {
         // Per-channel RT60: fast channels get shorter decay for dual-slope envelope
@@ -1490,21 +1572,25 @@ void LongSynthHallPresetEngine::updateDecayCoefficients()
                                        / (channelRT60 * static_cast<float> (sampleRate_)));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
 
-        // Bass Multiply: g_low = g_base^(1/bassMultiply)
-        // bassMultiply > 1.0 → lows sustain longer (g_low > g_base)
-        float gLow = std::pow (gBase, 1.0f / bassMultiply_);
+        // 5-band damping using baked kFiveBandMult[] combined with runtime controls
+        float combinedMult[5] = {
+            kFiveBandMult[0] * bassMultiply_,
+            kFiveBandMult[1] * bassMultiply_,
+            kFiveBandMult[2] * trebleMultiply_,
+            kFiveBandMult[3] * trebleMultiply_,
+            kFiveBandMult[4] * std::max (airTrebleMultiply_, 0.01f)
+        };
+        dampFilter_[i].setBandMultipliers (combinedMult);
+        dampFilter_[i].computeGainsFromBase (gBase, lowCrossoverCoeff, highCrossoverCoeff);
+    }
 
-        // Mid band (lowCrossover..highCrossover): same as old gHigh formula.
-        // Preserves the matched 4kHz RT60 from TwoBandDamping calibration.
-        float gMid = std::pow (gBase, 1.0f / trebleMultiply_);
-
-        // Air band (> highCrossover): independent damping via airTrebleMultiply_.
-        // gHigh = gBase^(1/airTrebleMultiply_): lower values = faster decay.
-        // At airTrebleMultiply_=1.0: gHigh = gBase (natural rate, no extra damping).
-        // At airTrebleMultiply_=0.70: gHigh = gBase^1.43 (significant extra damping).
-        float gHigh = std::pow (gBase, 1.0f / std::max (airTrebleMultiply_, 0.01f));
-
-        dampFilter_[i].setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
+    {
+        float fbCoeffs[4];
+        for (int b = 0; b < 4; ++b)
+            fbCoeffs[b] = std::exp (-6.283185307f * kFiveBandCrossoverHz[b]
+                                    / static_cast<float> (sampleRate_));
+        for (int i = 0; i < N; ++i)
+            dampFilter_[i].setCrossovers (fbCoeffs);
     }
 }
 
@@ -1559,8 +1645,10 @@ public:
         engine_.setCrossoverFreq     (kVvCrossoverHz);
         // Bass/treble defaults must be set BEFORE prepare so decay coefficients
         // are computed with the correct damping baseline.
-        engine_.setBassMultiply (kBakedBassMultScale);
+        float savedBass = lastBass_;
         float savedTreble = lastTreble_;
+        engine_.setBassMultiply (kBakedBassMultScale);
+        lastBass_ = 1.0f;
         engine_.setTrebleMultiply (kBakedTrebleMultScale);
         lastTreble_ = kBakedTrebleMultScale;
         engine_.setAirTrebleMultiply (kBakedAirDampingScale * kVvAirDampingScale);
@@ -1589,10 +1677,14 @@ public:
             setAirDampingScale (overrideAirDamping_);
         if (overrideHighCrossover_ >= 0.0f)
             setHighCrossoverFreq (overrideHighCrossover_);
+        if (overrideCrossover_ >= 0.0f)
+            setCrossoverFreq (overrideCrossover_);
         if (overrideNoiseMod_ >= 0.0f)
             setNoiseModDepth (overrideNoiseMod_);
         if (overrideLateGain_ >= 0.0f)
             setLateGainScale (overrideLateGain_);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
         if (lastTerminalFactor_ < 1.0f)
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
@@ -1602,6 +1694,10 @@ public:
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
         }
+        if (savedBass != 1.0f)
+            setBassMultiply (savedBass);
+        if (lastStructHFHz_ > 0.0f)
+            engine_.setStructuralHFDamping (lastStructHFHz_, lastTreble_);
 
         // Pre-compute per-preset tilt EQ coefficients at the actual host
         // sample rate. These are derived from the VV IR's frequency
@@ -1627,7 +1723,18 @@ public:
         for (int i = 0; i < kCorrEqBandCount; ++i)
         {
             const float gainDb = kCorrEqDb[i];
-            const float fc     = std::min (kCorrEqHz[i], nyquistGuard);
+            // Bands above the Nyquist guard become neutral (bypass)
+            // to avoid stacking multiple bands at the guard frequency.
+            if (kCorrEqHz[i] >= nyquistGuard)
+            {
+                corrB0_[i] = 1.0f;
+                corrB1_[i] = 0.0f;
+                corrB2_[i] = 0.0f;
+                corrA1_[i] = 0.0f;
+                corrA2_[i] = 0.0f;
+                continue;
+            }
+            const float fc     = kCorrEqHz[i];
             // RBJ peaking EQ formulas
             const float A     = std::pow (10.0f, gainDb / 40.0f);
             const float w0    = twoPi * fc / corrSr;
@@ -1639,6 +1746,18 @@ public:
             corrB2_[i] = (1.0f - alpha * A) / a0_;
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
+        }
+
+        // Compute high-shelf biquad equivalent for getCorrEQCoeffs() export.
+        // One-pole HF shelf: gain=+3dB @ 3000Hz, expressed as a 1st-order
+        // biquad so the ER path can replicate the same spectral shaping.
+        {
+            constexpr float shelfFc = 3000.0f;
+            constexpr float shelfGainLinear = 1.412538f - 1.0f;  // +3 dB
+            const float c = std::exp (-twoPi * shelfFc / corrSr);
+            shelfB0_ = 1.0f + shelfGainLinear * c;
+            shelfB1_ = -c * (1.0f + shelfGainLinear);
+            shelfA1_ = -c;
         }
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
@@ -1654,6 +1773,8 @@ public:
             corrXr1_[b] = corrXr2_[b] = 0.0f;
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
+        highShelf_prevL = 0.0f;
+        highShelf_prevR = 0.0f;
         // PATCH_POINT_PREPARE_END
     }
 
@@ -1718,6 +1839,28 @@ public:
             outputR[i] = std::clamp (mid - side * kStereoWidth, -32.0f, 32.0f);
         }
         // PATCH_POINT_POST_ENGINE
+        // <<< PATCH_BODY_BEGIN:add_output_high_shelf_patch >>>
+        // One-pole HF shelf: gain=3.0dB @ 3000.0Hz
+        {
+            const float twoPiFcOverSr = 6.283185307179586f * 3000.000f
+                                       / static_cast<float> (sampleRate_);
+            const float coeff = std::exp (-twoPiFcOverSr);
+            constexpr float shelfGain = 1.412538f - 1.0f;
+            constexpr float kSafetyCeiling = 32.0f;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float lpL = (1.0f - coeff) * outputL[i] + coeff * highShelf_prevL;
+                highShelf_prevL = lpL;
+                float l = outputL[i] + (outputL[i] - lpL) * shelfGain;
+                outputL[i] = std::clamp (l, -kSafetyCeiling, kSafetyCeiling);
+                float lpR = (1.0f - coeff) * outputR[i] + coeff * highShelf_prevR;
+                highShelf_prevR = lpR;
+                float r = outputR[i] + (outputR[i] - lpR) * shelfGain;
+                outputR[i] = std::clamp (r, -kSafetyCeiling, kSafetyCeiling);
+            }
+        }
+        // <<< PATCH_BODY_END:add_output_high_shelf_patch >>>
+
     }
 
     void clearBuffers() override
@@ -1735,6 +1878,11 @@ public:
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
         // PATCH_POINT_CLEAR
+        // <<< PATCH_CLEAR_BEGIN:add_output_high_shelf_patch >>>
+        highShelf_prevL = 0.0f;
+        highShelf_prevR = 0.0f;
+        // <<< PATCH_CLEAR_END:add_output_high_shelf_patch >>>
+
     }
 
     // --- Runtime setters ---
@@ -1757,6 +1905,7 @@ public:
         // PASS case. The VV correction is applied via tilt EQ and air
         // damping instead.
         engine_.setBassMultiply (mult * kBakedBassMultScale);
+        lastBass_ = mult;
     }
 
     void setTrebleMultiply (float mult) override
@@ -1770,9 +1919,15 @@ public:
         // Cache the SCALED engine-facing value (Invariant 2) so any
         // structural HF damping replay uses the consistent value.
         lastTreble_ = scaled;
+        if (lastStructHFHz_ > 0.0f)
+            engine_.setStructuralHFDamping (lastStructHFHz_, lastTreble_);
     }
 
-    void setCrossoverFreq (float hz) override { engine_.setCrossoverFreq (hz); }
+    void setCrossoverFreq (float hz) override
+    {
+        overrideCrossover_ = hz;
+        engine_.setCrossoverFreq (hz);
+    }
 
     void setModDepth (float depth) override
     {
@@ -1806,7 +1961,7 @@ public:
     void setAirDampingScale (float scale) override
     {
         overrideAirDamping_ = scale;
-        engine_.setAirTrebleMultiply (scale);
+        engine_.setAirTrebleMultiply (kBakedAirDampingScale * kVvAirDampingScale * scale);
     }
 
     void setNoiseModDepth (float samples) override
@@ -1821,11 +1976,16 @@ public:
         engine_.setStructuralHFDamping (hz, lastTreble_);
     }
 
-    void setSizeRange (float mn, float mx) override { engine_.setSizeRange (mn, mx); }
+    void setSizeRange (float mn, float mx) override
+    {
+        overrideSizeRangeMin_ = mn;
+        overrideSizeRangeMax_ = mx;
+        engine_.setSizeRange (mn * kVvDelayScale, mx * kVvDelayScale);
+    }
     void setLateGainScale (float scale) override
     {
         overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale);
+        engine_.setLateGainScale (scale * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1839,10 +1999,26 @@ public:
         overrideHighCrossover_ = -1.0f;
         engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
     }
+    void resetLowCrossoverToDefault() override
+    {
+        overrideCrossover_ = -1.0f;
+        engine_.setCrossoverFreq (kVvCrossoverHz);
+    }
     void resetNoiseModToDefault() override
     {
         overrideNoiseMod_ = -1.0f;
         engine_.setNoiseModDepth (kBakedNoiseModDepth);
+    }
+    void resetLateGainToDefault() override
+    {
+        overrideLateGain_ = -1.0f;
+        engine_.setLateGainScale (kBakedLateGainScale);
+    }
+    void resetSizeRangeToDefault() override
+    {
+        overrideSizeRangeMin_ = -1.0f;
+        overrideSizeRangeMax_ = -1.0f;
+        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
     }
 
     const char* getPresetName() const override { return "Long Synth Hall"; }
@@ -1850,18 +2026,31 @@ public:
 
     // Fix 4 (spectral): expose corrective EQ coefficients to DuskVerbEngine
     // so it can apply the same EQ to the ER path.
-    int getCorrEQBandCount() const override { return kCorrEqBandCount; }
+    int getCorrEQBandCount() const override { return kCorrEqBandCount + 1; }
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        int n = std::min (kCorrEqBandCount, maxBands);
+        int total = kCorrEqBandCount + 1;
+        int n = std::min (total, maxBands);
         for (int i = 0; i < n; ++i)
         {
-            b0[i] = corrB0_[i];
-            b1[i] = corrB1_[i];
-            b2[i] = corrB2_[i];
-            a1[i] = corrA1_[i];
-            a2[i] = corrA2_[i];
+            if (i < kCorrEqBandCount)
+            {
+                b0[i] = corrB0_[i];
+                b1[i] = corrB1_[i];
+                b2[i] = corrB2_[i];
+                a1[i] = corrA1_[i];
+                a2[i] = corrA2_[i];
+            }
+            else
+            {
+                // High-shelf as 1st-order biquad (b2=0, a2=0)
+                b0[i] = shelfB0_;
+                b1[i] = shelfB1_;
+                b2[i] = 0.0f;
+                a1[i] = shelfA1_;
+                a2[i] = 0.0f;
+            }
         }
         return true;
     }
@@ -1874,6 +2063,7 @@ public:
 private:
     LongSynthHallPresetEngine engine_;
     float lastTreble_ = 0.5f;
+    float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
@@ -1883,8 +2073,11 @@ private:
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;
     float overrideHighCrossover_ = -1.0f;
+    float overrideCrossover_ = -1.0f;
     float overrideNoiseMod_ = -1.0f;
     float overrideLateGain_ = -1.0f;
+    float overrideSizeRangeMin_ = -1.0f;
+    float overrideSizeRangeMax_ = -1.0f;
     // Baked tilt EQ state (per-instance, not function-local statics)
     float tiltLowCoeff_ = 0.0f;
     float tiltLowGain_  = 0.0f;
@@ -1911,6 +2104,15 @@ private:
     float corrYr1_[kCorrEqBandCount] {};
     float corrYr2_[kCorrEqBandCount] {};
     // PATCH_POINT_MEMBERS
+    // <<< PATCH_MEMBERS_BEGIN:add_output_high_shelf_patch >>>
+    float highShelf_prevL = 0.0f;
+    float highShelf_prevR = 0.0f;
+    // Precomputed biquad representation of the one-pole HF shelf for getCorrEQCoeffs()
+    float shelfB0_ = 1.0f;
+    float shelfB1_ = 0.0f;
+    float shelfA1_ = 0.0f;
+    // <<< PATCH_MEMBERS_END:add_output_high_shelf_patch >>>
+
 };
 
 } // anonymous namespace
