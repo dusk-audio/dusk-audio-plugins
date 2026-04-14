@@ -313,9 +313,18 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         preparedSampleRate_ = sampleRate;
         preparedBlockSize_ = safeBlockSize;
 
+        // Forward saved delay scale BEFORE prepare() so DattorroTank allocates
+        // buffers large enough for the restored parameter value.
+        engine_.setDattorroDelayScale (delayScaleParam_->load());
+
         engine_.prepare (sampleRate, safeBlockSize);
         originalLatencySamples_ = 0;  // FDN reverb has zero inherent latency
         setLatencySamples (originalLatencySamples_);
+
+        // Invalidate preset ER reload sentinels so loadPresetERTaps/loadCorrectionFilter
+        // run on the next processBlock after re-initialization.
+        lastPresetId_ = -1;
+        lastPresetPreDelayMs_ = -1.0f;
 
         // Initialize algorithm from saved state (edge-case: DAW restores state before first processBlock)
         cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
@@ -337,45 +346,63 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         }
     }
 
-    // DSP reset: always runs so smoothers and state are reinitialized
-    // even when the host redundantly calls prepareToPlay().
-    auto rampSamples = static_cast<double> (kSmoothingBlockSize);
+    // Only reset smoothers when the engine was actually (re)initialized.
+    // Hosts that redundantly call prepareToPlay() with the same sample rate
+    // would otherwise kill in-progress parameter ramps, causing discontinuities.
+    if (needsReallocation)
+    {
+        auto rampSamples = static_cast<double> (kSmoothingBlockSize);
 
-    decaySmooth_    .reset (sampleRate, rampSamples / sampleRate);
-    preDelaySmooth_ .reset (sampleRate, rampSamples / sampleRate);
-    sizeSmooth_     .reset (sampleRate, rampSamples / sampleRate);
-    dampingSmooth_  .reset (sampleRate, rampSamples / sampleRate);
-    bassMultSmooth_ .reset (sampleRate, rampSamples / sampleRate);
-    crossoverSmooth_.reset (sampleRate, rampSamples / sampleRate);
-    diffusionSmooth_.reset (sampleRate, rampSamples / sampleRate);
-    modDepthSmooth_ .reset (sampleRate, rampSamples / sampleRate);
-    modRateSmooth_  .reset (sampleRate, rampSamples / sampleRate);
-    erLevelSmooth_  .reset (sampleRate, rampSamples / sampleRate);
-    erSizeSmooth_   .reset (sampleRate, rampSamples / sampleRate);
-    mixSmooth_      .reset (sampleRate, rampSamples / sampleRate);
-    loCutSmooth_    .reset (sampleRate, rampSamples / sampleRate);
-    hiCutSmooth_    .reset (sampleRate, rampSamples / sampleRate);
-    widthSmooth_    .reset (sampleRate, rampSamples / sampleRate);
+        decaySmooth_    .reset (sampleRate, rampSamples / sampleRate);
+        preDelaySmooth_ .reset (sampleRate, rampSamples / sampleRate);
+        sizeSmooth_     .reset (sampleRate, rampSamples / sampleRate);
+        dampingSmooth_  .reset (sampleRate, rampSamples / sampleRate);
+        bassMultSmooth_ .reset (sampleRate, rampSamples / sampleRate);
+        crossoverSmooth_.reset (sampleRate, rampSamples / sampleRate);
+        diffusionSmooth_.reset (sampleRate, rampSamples / sampleRate);
+        modDepthSmooth_ .reset (sampleRate, rampSamples / sampleRate);
+        modRateSmooth_  .reset (sampleRate, rampSamples / sampleRate);
+        erLevelSmooth_  .reset (sampleRate, rampSamples / sampleRate);
+        erSizeSmooth_   .reset (sampleRate, rampSamples / sampleRate);
+        mixSmooth_      .reset (sampleRate, rampSamples / sampleRate);
+        loCutSmooth_    .reset (sampleRate, rampSamples / sampleRate);
+        hiCutSmooth_    .reset (sampleRate, rampSamples / sampleRate);
+        widthSmooth_    .reset (sampleRate, rampSamples / sampleRate);
 
-    decaySmooth_    .setCurrentAndTargetValue (decayParam_->load());
-    preDelaySmooth_ .setCurrentAndTargetValue (preDelayParam_->load());
-    sizeSmooth_     .setCurrentAndTargetValue (sizeParam_->load());
-    dampingSmooth_  .setCurrentAndTargetValue (dampingParam_->load());
-    bassMultSmooth_ .setCurrentAndTargetValue (bassMultParam_->load());
-    crossoverSmooth_.setCurrentAndTargetValue (crossoverParam_->load());
-    diffusionSmooth_.setCurrentAndTargetValue (diffusionParam_->load());
-    modDepthSmooth_ .setCurrentAndTargetValue (modDepthParam_->load());
-    modRateSmooth_  .setCurrentAndTargetValue (modRateParam_->load());
-    erLevelSmooth_  .setCurrentAndTargetValue (erLevelParam_->load());
-    erSizeSmooth_   .setCurrentAndTargetValue (erSizeParam_->load());
-    mixSmooth_      .setCurrentAndTargetValue (mixParam_->load());
-    loCutSmooth_    .setCurrentAndTargetValue (loCutParam_->load());
-    hiCutSmooth_    .setCurrentAndTargetValue (hiCutParam_->load());
-    widthSmooth_    .setCurrentAndTargetValue (widthParam_->load());
+        decaySmooth_    .setCurrentAndTargetValue (decayParam_->load());
+        preDelaySmooth_ .setCurrentAndTargetValue (preDelayParam_->load());
+        sizeSmooth_     .setCurrentAndTargetValue (sizeParam_->load());
+        dampingSmooth_  .setCurrentAndTargetValue (dampingParam_->load());
+        bassMultSmooth_ .setCurrentAndTargetValue (bassMultParam_->load());
+        crossoverSmooth_.setCurrentAndTargetValue (crossoverParam_->load());
+        diffusionSmooth_.setCurrentAndTargetValue (diffusionParam_->load());
+        modDepthSmooth_ .setCurrentAndTargetValue (modDepthParam_->load());
+        modRateSmooth_  .setCurrentAndTargetValue (modRateParam_->load());
+        erLevelSmooth_  .setCurrentAndTargetValue (erLevelParam_->load());
+        erSizeSmooth_   .setCurrentAndTargetValue (erSizeParam_->load());
+        mixSmooth_      .setCurrentAndTargetValue (mixParam_->load());
+        loCutSmooth_    .setCurrentAndTargetValue (loCutParam_->load());
+        hiCutSmooth_    .setCurrentAndTargetValue (hiCutParam_->load());
+        widthSmooth_    .setCurrentAndTargetValue (widthParam_->load());
+    }
 }
 
 void DuskVerbProcessor::releaseResources()
 {
+    // Invalidate prepare guard so next prepareToPlay() calls engine_.prepare()
+    preparedSampleRate_ = 0.0;
+    preparedBlockSize_ = 0;
+
+    // Invalidate preset ER sentinels so the next processBlock rebuilds ER state
+    lastPresetId_ = -1;
+    lastPresetPreDelayMs_ = -1.0f;
+}
+
+void DuskVerbProcessor::handleAsyncUpdate()
+{
+    int latency = pendingLatency_.load (std::memory_order_relaxed);
+    if (latency >= 0)
+        setLatencySamples (latency);
 }
 
 void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
@@ -398,16 +425,39 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     for (int ch = std::max (totalNumInputChannels, 2); ch < totalNumOutputChannels; ++ch)
         buffer.clear (ch, 0, numSamples);
 
-    // Bypass: pass audio through unprocessed
+    // Bypass: pass audio through unprocessed but still update input + output meters
     if (bypassParam_ != nullptr && bypassParam_->get())
     {
-        setLatencySamples (0);
+        // Schedule latency change on the message thread (not safe to call from audio thread)
+        if (pendingLatency_.load (std::memory_order_relaxed) != 0)
+        {
+            pendingLatency_.store (0, std::memory_order_relaxed);
+            triggerAsyncUpdate();
+        }
+        float* left  = buffer.getWritePointer (0);
+        float* right = buffer.getWritePointer (1);
+        float peakL = 0.0f, peakR = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            peakL = std::max (peakL, std::abs (left[i]));
+            peakR = std::max (peakR, std::abs (right[i]));
+        }
+        const float dbL = peakL > 0.0f ? juce::Decibels::gainToDecibels (peakL) : -100.0f;
+        const float dbR = peakR > 0.0f ? juce::Decibels::gainToDecibels (peakR) : -100.0f;
+        inputLevelL_.store (dbL, std::memory_order_relaxed);
+        inputLevelR_.store (dbR, std::memory_order_relaxed);
+        outputLevelL_.store (dbL, std::memory_order_relaxed);
+        outputLevelR_.store (dbR, std::memory_order_relaxed);
         return;
     }
 
-    // Restore latency after bypass
-    if (getLatencySamples() != originalLatencySamples_)
-        setLatencySamples (originalLatencySamples_);
+    // Restore latency after bypass (schedule on message thread)
+    if (getLatencySamples() != originalLatencySamples_
+        && pendingLatency_.load (std::memory_order_relaxed) != originalLatencySamples_)
+    {
+        pendingLatency_.store (originalLatencySamples_, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    }
 
     float* left  = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
@@ -523,6 +573,11 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     engine_.loadPresetERTaps (presets[static_cast<size_t> (idx)].name);
                     engine_.loadPresetTapPositions (idx);
                     engine_.loadCorrectionFilter (idx);
+                }
+                else
+                {
+                    engine_.setCustomERTaps (nullptr, 0);
+                    engine_.loadCorrectionFilter (-1);
                 }
             }
             else
