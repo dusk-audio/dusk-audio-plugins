@@ -77,6 +77,7 @@ private:
     std::unique_ptr<juce::TextButton> invertButton;
     std::unique_ptr<juce::TextButton> phaseInvertButton;
     std::unique_ptr<juce::Slider> panKnob;
+    std::unique_ptr<juce::ComboBox> routingSelector;  // Per-band channel routing
 
     // Parameter attachments (recreated when band changes)
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freqAttachment;
@@ -88,6 +89,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> invertAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> phaseInvertAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> routingAttachment;
 
     // Dynamics attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> dynEnableAttachment;

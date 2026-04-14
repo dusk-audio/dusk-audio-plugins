@@ -178,6 +178,17 @@ void BandDetailPanel::setupKnobs()
     panKnob->setDoubleClickReturnValue(true, 0.0);
     panKnob->onValueChange = [this]() { repaint(); };
     addAndMakeVisible(panKnob.get());
+
+    // Per-band channel routing selector (placed in PAN section)
+    routingSelector = std::make_unique<juce::ComboBox>();
+    routingSelector->addItem("Global", 1);
+    routingSelector->addItem("Stereo", 2);
+    routingSelector->addItem("Left", 3);
+    routingSelector->addItem("Right", 4);
+    routingSelector->addItem("Mid", 5);
+    routingSelector->addItem("Side", 6);
+    routingSelector->setTooltip("Per-band channel routing: Global follows the global mode, or override per band");
+    addAndMakeVisible(routingSelector.get());
 }
 
 void BandDetailPanel::setupMatchControls()
@@ -379,6 +390,7 @@ void BandDetailPanel::setMatchMode(bool isMatch)
     invertButton->setVisible(showEQ);
     phaseInvertButton->setVisible(showEQ);
     panKnob->setVisible(showEQ);
+    routingSelector->setVisible(showEQ);
     thresholdKnob->setVisible(showDyn);
     attackKnob->setVisible(showDyn);
     releaseKnob->setVisible(showDyn);
@@ -456,6 +468,7 @@ void BandDetailPanel::updateAttachments()
     invertAttachment.reset();
     phaseInvertAttachment.reset();
     panAttachment.reset();
+    routingAttachment.reset();
     dynEnableAttachment.reset();
     threshAttachment.reset();
     attackAttachment.reset();
@@ -496,6 +509,8 @@ void BandDetailPanel::updateAttachments()
         processor.parameters, ParamIDs::bandPhaseInvert(bandNum), *phaseInvertButton);
     panAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.parameters, ParamIDs::bandPan(bandNum), *panKnob);
+    routingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        processor.parameters, ParamIDs::bandChannelRouting(bandNum), *routingSelector);
 
     // Dynamics attachments
     dynEnableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -533,6 +548,7 @@ void BandDetailPanel::updateControlsForBandType()
     invertButton->setVisible(hasGain && !matchMode);
     phaseInvertButton->setVisible(!matchMode);
     panKnob->setVisible(!matchMode);
+    routingSelector->setVisible(!matchMode);
 
     // Ensure the visible control is on top (z-order) and force repaint
     if (isFilter)
@@ -715,14 +731,12 @@ void BandDetailPanel::paint(juce::Graphics& g)
     int knobY = 26;
     int btnWidth = 48;
     int margin = 10;
-    int invBtnW = 28;
-    int invBtnGap = 3;
 
     bool dynEnabled = isDynamicsEnabled();
 
     int eqKnobsWidth = (knobSize + knobSpacing) * 3;
-    int invPhaseWidth = invBtnW * 2 + invBtnGap;
-    int eqInnerWidth = eqKnobsWidth + 10 + invPhaseWidth;
+    int btnColWidth = 75;  // Uniform width for INV/Ø, SOLO, routing column
+    int eqInnerWidth = eqKnobsWidth + 10 + btnColWidth;
     int eqSectionWidth = bandIndicatorSize + 10 + eqInnerWidth + 10;
 
     int dynKnobsWidth = (knobSize + knobSpacing) * 5 - knobSpacing;
@@ -857,8 +871,6 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
     int knobY = 26;
     int btnWidth = 48;
     int margin = 10;
-    int invBtnW = 28;
-    int invBtnGap = 3;
 
     BandType type = getBandType(selectedBand);
     bool isFilter = (type == BandType::HighPass || type == BandType::LowPass);
@@ -869,8 +881,8 @@ void BandDetailPanel::paintOverChildren(juce::Graphics& g)
         return;
 
     int eqKnobsWidth = (knobSize + knobSpacing) * 3;
-    int invPhaseWidth = invBtnW * 2 + invBtnGap;
-    int eqInnerWidth = eqKnobsWidth + 10 + invPhaseWidth;
+    int btnColWidth = 75;  // Uniform width for INV/Ø, SOLO, routing column
+    int eqInnerWidth = eqKnobsWidth + 10 + btnColWidth;
     int eqSectionTotalWidth = bandIndicatorSize + 10 + eqInnerWidth + 10;
 
     int dynKnobsWidth = (knobSize + knobSpacing) * 5 - knobSpacing;
@@ -1079,8 +1091,8 @@ void BandDetailPanel::resized()
 
     // Section layout math (must match paint)
     int eqKnobsWidth = (knobSize + knobSpacing) * 3;
-    int invPhaseWidth = invBtnW * 2 + invBtnGap;
-    int eqInnerWidth = eqKnobsWidth + 10 + invPhaseWidth;
+    int btnColWidth = 75;  // Uniform width for INV/Ø, SOLO, routing column
+    int eqInnerWidth = eqKnobsWidth + 10 + btnColWidth;
     int eqSectionTotalWidth = bandIndicatorSize + 10 + eqInnerWidth + 10;
 
     int dynKnobsWidth = (knobSize + knobSpacing) * 5 - knobSpacing;
@@ -1158,14 +1170,16 @@ void BandDetailPanel::resized()
 
     currentX += knobSize + knobSpacing;
 
-    // INV + Phase + SOLO buttons after the 3 EQ knobs
+    // INV + Phase + SOLO + ROUTING buttons after the 3 EQ knobs
     {
         int btnStartX = currentX + 10;
-        int fxBtnY = knobY + (knobSize - invBtnH * 2 - 4) / 2;
-        invertButton->setBounds(btnStartX, fxBtnY, invBtnW, invBtnH);
-        phaseInvertButton->setBounds(btnStartX + invBtnW + invBtnGap, fxBtnY, invBtnW, invBtnH);
-        // SOLO: spans same width as INV+gap+PHASE, below them — clearly EQ section
-        soloButton->setBounds(btnStartX, fxBtnY + invBtnH + 4, invBtnW * 2 + invBtnGap, invBtnH);
+        int colW = 75;  // Uniform width for all rows
+        int fxBtnY = knobY + (knobSize - invBtnH * 3 - 4 * 2) / 2;
+        int halfW = (colW - invBtnGap) / 2;
+        invertButton->setBounds(btnStartX, fxBtnY, halfW, invBtnH);
+        phaseInvertButton->setBounds(btnStartX + halfW + invBtnGap, fxBtnY, halfW, invBtnH);
+        soloButton->setBounds(btnStartX, fxBtnY + invBtnH + 4, colW, invBtnH);
+        routingSelector->setBounds(btnStartX, fxBtnY + (invBtnH + 4) * 2, colW, invBtnH);
     }
 
     // ===== PAN SECTION (center) =====
