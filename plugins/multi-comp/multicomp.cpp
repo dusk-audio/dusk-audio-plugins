@@ -4796,11 +4796,27 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
 
-    // Pre-allocate bypass crossfade buffer (5ms fade for click-free transitions)
+    // Pre-allocate bypass crossfade buffer. Base fade is 5ms, but in Digital mode
+    // the fade extends to cover the digital lookahead (up to 10ms) so stale delay
+    // line samples are masked. Allocate for the max possible: 5ms + 10ms = 15ms.
     bypassFadeLengthSamples = juce::jlimit(64, 2048,
         static_cast<int>(sampleRate * 0.005));
-    bypassFadeBuffer.setSize(numChannels, bypassFadeLengthSamples, false, false, true);
+    int maxFadeSamples = juce::jlimit(64, 8192,
+        static_cast<int>(sampleRate * 0.015));  // 15ms max
+    bypassFadeBuffer.setSize(numChannels, maxFadeSamples, false, false, true);
     bypassFadeRemaining = 0;
+
+    // Dedicated delay line for time-aligning the bypass fade dry signal
+    // with the wet path's global lookahead (max 10ms).
+    int maxLookaheadDelay = juce::jlimit(0, 4096,
+        static_cast<int>(sampleRate * 0.01));  // 10ms max
+    bypassFadeDelaySize = maxLookaheadDelay + 1;
+    if (bypassFadeDelaySize > 1)
+    {
+        bypassFadeDelayBuf.setSize(numChannels, bypassFadeDelaySize, false, false, true);
+        bypassFadeDelayBuf.clear();
+    }
+    bypassFadeDelayWritePos.assign(static_cast<size_t>(numChannels), 0);
 
     // Initialize RMS coefficient for ~200ms averaging window
     // GR-based auto-gain: smooth the gain reduction with ~200ms time constant
@@ -4862,10 +4878,45 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         if (getLatencySamples() != 0)
             setLatencySamples(0);
 
-        // NOTE: We intentionally do NOT clear lookahead or digital compressor
-        // state on bypass. The bypass crossfade handles discontinuities, and
-        // keeping the lookahead buffer filled with recent audio ensures the wet
-        // path has valid data immediately on unbypass (no silence/dip during fade).
+        // Keep all delay paths warm during bypass: feed audio through the
+        // ring buffers (discard output) so that on unbypass the wet path has
+        // current audio instead of stale pre-bypass samples.
+        {
+            int nc = buffer.getNumChannels();
+            int ns = buffer.getNumSamples();
+
+            // Global lookahead buffer (all modes, native rate)
+            if (lookaheadBuffer)
+            {
+                float lookaheadMs = 0.0f;
+                if (auto* laParam = parameters.getRawParameterValue("global_lookahead"))
+                    lookaheadMs = laParam->load();
+                if (lookaheadMs > 0.0f)
+                    for (int ch = 0; ch < nc; ++ch)
+                        for (int i = 0; i < ns; ++i)
+                            lookaheadBuffer->processSample(buffer.getSample(ch, i), ch, lookaheadMs);
+            }
+
+            // NOTE: Digital compressor's internal lookahead is NOT warmed here.
+            // It operates at the oversampled rate (2x/4x), so feeding native-rate
+            // samples would corrupt its delay line. The crossfade is extended to
+            // cover the digital lookahead window instead.
+
+            // Also keep the bypass fade's dedicated delay line warm so it has
+            // current audio for time-aligned dry capture on unbypass.
+            if (bypassFadeDelaySize > 1)
+            {
+                for (int ch = 0; ch < nc; ++ch)
+                {
+                    int& wp = bypassFadeDelayWritePos[static_cast<size_t>(ch)];
+                    for (int i = 0; i < ns; ++i)
+                    {
+                        bypassFadeDelayBuf.setSample(ch, wp, buffer.getSample(ch, i));
+                        wp = (wp + 1) % bypassFadeDelaySize;
+                    }
+                }
+            }
+        }
 
         bypassFadeRemaining = 0;  // Cancel any in-progress fade if re-bypassed
         wasBypassedLastBlock = true;
@@ -4877,7 +4928,27 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     {
         wasBypassedLastBlock = false;
         updateLatencyReport();
-        bypassFadeRemaining = bypassFadeLengthSamples;
+
+        // In Digital mode, extend the crossfade to cover the internal lookahead
+        // delay. The digital lookahead buffer can't be warmed during bypass (it
+        // runs at oversampled rate), so stale samples persist for up to 10ms.
+        // Extending the fade masks them entirely.
+        bypassFadeActualLength = bypassFadeLengthSamples;
+        if (getCurrentMode() == CompressorMode::Digital && digitalCompressor)
+        {
+            float digitalLaMs = 0.0f;
+            if (auto* p = parameters.getRawParameterValue("digital_lookahead"))
+                digitalLaMs = p->load();
+            if (digitalLaMs > 0.0f)
+            {
+                int digitalLaSamples = static_cast<int>(getSampleRate() * digitalLaMs * 0.001);
+                bypassFadeActualLength += digitalLaSamples;
+                bypassFadeActualLength = juce::jmin(bypassFadeActualLength,
+                    bypassFadeBuffer.getNumSamples());
+            }
+        }
+        bypassFadeRemaining = bypassFadeActualLength;
+
         smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
         smoothedGrDb = 0.0f;
         primeGrAccumulator = true;
@@ -4905,8 +4976,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // for phase-coherent mixing that prevents comb filtering
     bool needsDryBuffer = (mixAmount > 0.001f && mixAmount < 0.999f);
 
-    // Save input for bypass crossfade (must be before any processing modifies buffer)
-    // Only snapshot the samples the fade will actually read, bounded by buffer sizes
+    // Save latency-aligned dry signal for bypass crossfade.
+    // The wet path includes lookahead delay, so the dry reference must be delayed
+    // by the same amount to avoid phase mismatch during the fade window.
     if (bypassFadeRemaining > 0)
     {
         const int fadeSamples = juce::jmin(bypassFadeRemaining,
@@ -4914,10 +4986,44 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         const int fadeChannels = juce::jmin(buffer.getNumChannels(),
             bypassFadeBuffer.getNumChannels());
 
-        for (int ch = 0; ch < fadeChannels; ++ch)
-            std::memcpy(bypassFadeBuffer.getWritePointer(ch),
-                         buffer.getReadPointer(ch),
-                         static_cast<size_t>(fadeSamples) * sizeof(float));
+        // Check for active global lookahead. Digital lookahead is only relevant
+        // in Digital mode and operates at the oversampled rate — we can't align
+        // against it at native rate (handled by extending the fade instead).
+        float globalLaMs = 0.0f;
+        if (auto* p = parameters.getRawParameterValue("global_lookahead"))
+            globalLaMs = p->load();
+
+        int delaySamples = 0;
+        if (globalLaMs > 0.0f && bypassFadeDelaySize > 1)
+            delaySamples = juce::jlimit(0, bypassFadeDelaySize - 1,
+                static_cast<int>(std::round(globalLaMs * 0.001f * static_cast<float>(getSampleRate()))));
+
+        if (delaySamples > 0)
+        {
+            // Feed each input sample through the dedicated delay line and capture
+            // the delayed output. This produces a properly sequenced block of
+            // time-aligned dry audio without touching the processing lookahead.
+            for (int ch = 0; ch < fadeChannels; ++ch)
+            {
+                float* dst = bypassFadeBuffer.getWritePointer(ch);
+                int& wp = bypassFadeDelayWritePos[static_cast<size_t>(ch)];
+                for (int i = 0; i < fadeSamples; ++i)
+                {
+                    int rp = (wp - delaySamples + bypassFadeDelaySize) % bypassFadeDelaySize;
+                    dst[i] = bypassFadeDelayBuf.getSample(ch, rp);
+                    bypassFadeDelayBuf.setSample(ch, wp, buffer.getSample(ch, i));
+                    wp = (wp + 1) % bypassFadeDelaySize;
+                }
+            }
+        }
+        else
+        {
+            // No lookahead — raw input is already time-aligned with wet path
+            for (int ch = 0; ch < fadeChannels; ++ch)
+                std::memcpy(bypassFadeBuffer.getWritePointer(ch),
+                             buffer.getReadPointer(ch),
+                             static_cast<size_t>(fadeSamples) * sizeof(float));
+        }
     }
 
     // At 0% mix (100% dry), skip all processing and pass through undelayed.
@@ -5643,6 +5749,24 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         outputMeterL.store(outputDbL, std::memory_order_relaxed);
         outputMeterR.store(numChannels > 1 ? outputDbR : outputDbL, std::memory_order_relaxed);
 
+        // Apply bypass crossfade for multiband mode (shared logic with other modes)
+        if (bypassFadeRemaining > 0)
+        {
+            int fadeSamples = juce::jmin(bypassFadeRemaining, numSamples);
+            float fadeLen = static_cast<float>(bypassFadeActualLength);
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* out = buffer.getWritePointer(ch);
+                const float* dry = bypassFadeBuffer.getReadPointer(ch);
+                for (int i = 0; i < fadeSamples; ++i)
+                {
+                    float wet = 1.0f - static_cast<float>(bypassFadeRemaining - i) / fadeLen;
+                    out[i] = out[i] * wet + dry[i] * (1.0f - wet);
+                }
+            }
+            bypassFadeRemaining -= fadeSamples;
+        }
+
         return;  // Skip normal processing for multiband mode
     }
 
@@ -6048,7 +6172,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (bypassFadeRemaining > 0)
     {
         int fadeSamples = juce::jmin(bypassFadeRemaining, numSamples);
-        float fadeLen = static_cast<float>(bypassFadeLengthSamples);
+        float fadeLen = static_cast<float>(bypassFadeActualLength);
         for (int ch = 0; ch < numChannels; ++ch)
         {
             float* out = buffer.getWritePointer(ch);
@@ -6255,6 +6379,11 @@ void UniversalCompressor::processBlockBypassed(juce::AudioBuffer<float>& buffer,
         setLatencySamples(0);
     // Mark as bypassed so processBlock can detect the transition and restore latency.
     wasBypassedLastBlock = true;
+    // Clear bypass fade state so stale delay-line samples don't leak into the next fade
+    bypassFadeRemaining = 0;
+    bypassFadeBuffer.clear();
+    bypassFadeDelayBuf.clear();
+    std::fill(bypassFadeDelayWritePos.begin(), bypassFadeDelayWritePos.end(), 0);
     // Audio passes through unchanged — JUCE default clears output, we just leave input as-is.
     juce::ignoreUnused(buffer);
 }
@@ -6321,6 +6450,9 @@ void UniversalCompressor::resetDSPState()
     primeGrAccumulator = true;  // Prime accumulator on first block after reset
 
     bypassFadeRemaining = 0;
+    bypassFadeBuffer.clear();
+    bypassFadeDelayBuf.clear();
+    std::fill(bypassFadeDelayWritePos.begin(), bypassFadeDelayWritePos.end(), 0);
 
     // Reset dry/wet mixer state (for oversampling latency compensation)
     dryWetMixer.reset();

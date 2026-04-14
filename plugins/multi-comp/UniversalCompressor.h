@@ -233,8 +233,15 @@ private:
 
     // Bypass crossfade state (smooth transition from bypass to active)
     int bypassFadeRemaining{0};
-    int bypassFadeLengthSamples{256};
+    int bypassFadeLengthSamples{256};   // Base fade (5ms), set in prepareToPlay
+    int bypassFadeActualLength{256};    // Per-transition length (may be extended for Digital lookahead)
     juce::AudioBuffer<float> bypassFadeBuffer;
+
+    // Dedicated delay line for time-aligning the bypass fade dry signal.
+    // Separate from the processing lookahead to avoid double-advance issues.
+    juce::AudioBuffer<float> bypassFadeDelayBuf;
+    std::vector<int> bypassFadeDelayWritePos;
+    int bypassFadeDelaySize{0};
 
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal
