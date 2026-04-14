@@ -277,8 +277,15 @@ private:
     float softOnsetEnvL_ = 0.0f;  // Current ramp value
 
     // Peak limiter: reduces transient peaks while preserving RMS (lowers crest factor).
+    float lastStructHFHz_ = 0.0f;        // Cached for replay after sample rate change
     float limiterThreshold_ = 0.0f;      // 0 = disabled. Linear amplitude threshold.
     float limiterReleaseCoeff_ = 0.999f;  // One-pole release coefficient (~50ms at 48kHz)
+    float limiterReleaseMs_ = 50.0f;      // Cached for recompute on sample rate change
+
+    // Sample-rate-invariant terminal decay smoothing (matching FDNReverb)
+    float rmsAlpha_ = 0.9995f;
+    float peakDecayAlpha_ = 0.99999f;
+    float terminalLinearThreshold_ = 0.01f;     // 10^(-40/20)
     float limiterEnv_ = 0.0f;             // Current peak envelope
 
     bool frozen_ = false;
@@ -291,7 +298,6 @@ private:
     float structHFStateR_ = 0.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
-
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
     float decayDiff2_ = 0.50f;   // Static allpass feedback

@@ -445,6 +445,26 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
+            // Per-channel LFO modulation of feedback gain and crossover frequency.
+            // feedbackModDepth_ scales feedback amplitude (subtle chorus in recirculation).
+            // crossoverModDepth_ shifts the low crossover frequency (tonal movement).
+            // Both default to 0.0f so this is a no-op unless explicitly enabled.
+            if (feedbackModDepth_ > 0.0f && ! frozen_)
+            {
+                float lfo = std::sin (lfoPhase_[ch]);
+                float multiplier = std::min (1.0f, 1.0f + feedbackModDepth_ * lfo * 0.1f);
+                feedback[ch] *= multiplier;
+            }
+            if (crossoverModDepth_ > 0.0f && ! frozen_)
+            {
+                float lfo = std::sin (lfoPhase_[ch]);
+                // Modulate the low crossover coefficient ±10% around its base value
+                float modCoeff = baseLowCrossoverCoeff_
+                               + crossoverModDepth_ * lfo * baseLowCrossoverCoeff_ * 0.1f;
+                modCoeff = std::clamp (modCoeff, 0.0f, 0.999f);
+                dampFilter_[ch].setLowCrossoverCoeff (modCoeff);
+            }
+
             // When frozen, bypass damping (unity feedback) to sustain tail indefinitely
             float filtered = frozen_ ? feedback[ch] : dampFilter_[ch].process (feedback[ch]);
 
@@ -556,11 +576,10 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // per unit time, producing higher energy density without compensation.
         // Soft-clip output: fastTanh knee at ~±1.0, scaled by kSafetyClip for headroom.
         // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
-        float rawL = outL * kOutputLevel * sizeCompensation_ * lateGainScale_;
-        float rawR = outR * kOutputLevel * sizeCompensation_ * lateGainScale_;
-        outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip;
-        outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip;
-    }
+        float rawL = outL * kOutputLevel * sizeCompensation_;
+        float rawR = outR * kOutputLevel * sizeCompensation_;
+        outputL[i] = std::clamp (DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);    }
 }
 
 // ---------------------------------------------------------------------------
@@ -618,6 +637,7 @@ void FDNReverb::setSize (float size)
 
 void FDNReverb::setFreeze (bool frozen)
 {
+    bool wasTransition = (frozen != frozen_);
     frozen_ = frozen;
     if (frozen)
     {
@@ -626,6 +646,12 @@ void FDNReverb::setFreeze (bool frozen)
             structHFState_[i] = 0.0f;
             structLFState_[i] = 0.0f;
         }
+    }
+    if (wasTransition)
+    {
+        currentRMS_ = 0.0f;
+        peakRMS_ = 0.0f;
+        terminalDecayActive_ = false;
     }
 }
 
@@ -985,9 +1011,22 @@ void FDNReverb::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
+void FDNReverb::setFeedbackModDepth (float depth)
+{
+    feedbackModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+}
+
 void FDNReverb::setCrossoverModDepth (float depth)
 {
+    float prev = crossoverModDepth_;
     crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+    // When modulation is disabled, restore the base crossover coefficient so
+    // dampFilter_ doesn't stay stuck at the last modulated value.
+    if (prev > 0.0f && crossoverModDepth_ == 0.0f)
+    {
+        for (int ch = 0; ch < N; ++ch)
+            dampFilter_[ch].setLowCrossoverCoeff (baseLowCrossoverCoeff_);
+    }
 }
 
 void FDNReverb::setDecayBoost (float boost)
@@ -1021,10 +1060,10 @@ void FDNReverb::clearBuffers()
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
-        // Deterministic LFO/PRNG reset for clean state on algorithm switch.
-        // (Wrapper prepare() no longer calls clearBuffers(), so this does not
-        // conflict with prepare()'s stochastic randomization.)
-        lfoPhase_[i] = 0.0f;
+        // Deterministic LFO phase spread for per-line decorrelation.
+        // Evenly spaced phases avoid the chorus-like artifacts that occur
+        // when all channels are phase-aligned after an algorithm switch.
+        lfoPhase_[i] = kTwoPi * static_cast<float> (i) / static_cast<float> (N);
         lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
     }
     // Reset terminal decay RMS tracking
@@ -1073,11 +1112,13 @@ void FDNReverb::updateDelayLengths()
         float minDelay = delayLength_[0];
         for (int i = 1; i < N; ++i)
             minDelay = std::min (minDelay, delayLength_[i]);
+        minDelay = std::max (minDelay, 1e-6f);  // Prevent division by zero
 
         float sumSqIn = 0.0f;
         for (int i = 0; i < N; ++i)
         {
-            inputGainScale_[i] = 1.0f / std::sqrt (delayLength_[i] / minDelay);
+            float ratio = std::max (delayLength_[i], minDelay) / minDelay;
+            inputGainScale_[i] = 1.0f / std::sqrt (ratio);
             sumSqIn += inputGainScale_[i] * inputGainScale_[i];
         }
         // Normalize so RMS of gain vector equals 1 (preserves overall input energy)
@@ -1108,6 +1149,10 @@ void FDNReverb::updateDecayCoefficients()
     // High crossover: mid/air split (per-algorithm, e.g. Room=6kHz, others=20kHz)
     float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_
                                          / static_cast<float> (sampleRate_));
+
+    // Store base crossover coefficients for per-sample modulation
+    baseLowCrossoverCoeff_  = lowCrossoverCoeff;
+    baseHighCrossoverCoeff_ = highCrossoverCoeff;
 
     for (int i = 0; i < N; ++i)
     {

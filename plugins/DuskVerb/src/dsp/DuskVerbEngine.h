@@ -11,8 +11,10 @@
 #include "TiledRoomReverb.h"
 #include "presets/PresetEngineBase.h"
 
+#include <atomic>
 #include <cmath>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -123,10 +125,25 @@ private:
 
     // Per-preset engines: every registered preset engine is constructed
     // and prepared once during DuskVerbEngine::prepare() (off the audio
-    // thread) and stored in this map. applyAlgorithm() then just swaps
-    // the active raw pointer with no allocation.
+    // thread) and stored in this map. setAlgorithm() pre-resolves the
+    // target engine pointer so applyAlgorithm() can swap it without
+    // locking prebuiltPresetEnginesMutex_ on the audio thread.
     std::unordered_map<std::string, std::unique_ptr<PresetEngineBase>> prebuiltPresetEngines_;
-    PresetEngineBase* presetEngine_ = nullptr;  // non-owning view into prebuiltPresetEngines_
+    std::mutex prebuiltPresetEnginesMutex_;  // Protects map mutations; never held on audio thread
+    std::atomic<PresetEngineBase*> presetEngine_ { nullptr };  // non-owning; written in applyAlgorithm (audio thread)
+
+    // Pending algorithm handoff: seqlock ensures the audio thread reads a
+    // consistent (algorithmIndex, engine*, presetClearDone) triple even when
+    // setAlgorithm() is called repeatedly from the message thread.
+    struct PendingSwap
+    {
+        int algorithmIndex = -1;
+        PresetEngineBase* engine = nullptr;
+        bool presetClearDone = false;
+    };
+    PendingSwap pendingSwap_;                               // Written under seqlock by message thread
+    std::atomic<unsigned> pendingSwapSeq_ { 0 };            // Even = stable, odd = write in progress
+    std::atomic<bool> pendingPresetClear_ { false }; // Deferred clearBuffers() fallback (same-engine case only)
 
     const AlgorithmConfig* config_ = &kHall;
 
@@ -268,8 +285,31 @@ private:
     // Cached so applyAlgorithm() can replay it after the config-baseline write.
     float structuralHFOverrideHz_ = -1.0f;
 
+    // Cached runtime overrides: -1.0f sentinel means "no override, use config default".
+    // Stored by the override setters and replayed after applyAlgorithm() writes
+    // config-baseline values, so optimizer/host overrides persist across algorithm switches.
+    float cachedOutputGainOverride_ = -1.0f;
+    float cachedErCrossfeedOverride_ = -1.0f;
+    float cachedAirDampingOverride_ = -1.0f;
+    float cachedHighCrossoverOverride_ = -1.0f;
+    float cachedNoiseModOverride_ = -1.0f;
+    float cachedLateGainScaleOverride_ = -1.0f;
+    float cachedErLevelScaleOverride_ = -1.0f;
+
     // Decay time scale override: runtime multiplier (0 = use config default)
     float decayTimeScaleOverride_ = 0.0f;
+
+    // Cached overrides for setters that mutate live DSP state without caching.
+    // Sentinel values chosen to avoid colliding with valid parameter ranges.
+    float cachedInlineDiffusionOverride_ = -1.0f;   // valid range >= 0
+    float cachedStereoCouplingOverride_ = -2.0f;     // valid range -1..+1, sentinel <= -1.5
+    float cachedERAirCeilingOverride_ = -1.0f;       // valid range > 0
+    float cachedERAirFloorOverride_ = -1.0f;         // valid range > 0
+    float cachedOutputLowShelfDb_ = 0.0f;            // 0 dB = no override (bypass)
+    float cachedOutputHighShelfDb_ = 0.0f;           // 0 dB = no override (bypass)
+    float cachedOutputHighShelfHz_ = 8000.0f;
+    float cachedOutputMidEQDb_ = 0.0f;               // 0 dB = no override (bypass)
+    float cachedOutputMidEQHz_ = 1000.0f;
 
     // Late feed-forward: pre-diffusion late reverb blended into output
     float lateFeedForwardLevel_ = 0.0f;
@@ -312,12 +352,14 @@ private:
     int gateHoldCounter_ = 0;
     bool gateTriggered_ = false;
 
-    // Algorithm crossfade: mute-and-morph to prevent clicks on algorithm switch
+    // Algorithm crossfade: mute-and-morph to prevent clicks on algorithm switch.
+    // These fields are accessed from setAlgorithm() (message thread) and
+    // process() (audio thread), so they use atomics to avoid data races.
     static constexpr int kFadeSamples = 64;
-    int pendingAlgorithm_ = -1;
-    int fadeCounter_ = 0;
-    bool fadingOut_ = false;
-    bool firstAlgorithmSet_ = true;
+    // pendingAlgorithm_ removed — now part of pendingSwap_ seqlock triple
+    std::atomic<int> fadeCounter_ { 0 };
+    std::atomic<bool> fadingOut_ { false };
+    std::atomic<bool> firstAlgorithmSet_ { true };
 
-    void applyAlgorithm (int index);
+    void applyAlgorithm (int index, PresetEngineBase* resolvedEngine, bool alreadyCleared);
 };

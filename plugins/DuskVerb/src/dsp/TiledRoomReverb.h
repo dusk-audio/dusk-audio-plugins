@@ -30,6 +30,7 @@ public:
     void setModRate (float hz);
     void setSize (float size);
     void setFreeze (bool frozen);
+    void setNoiseModDepth (float depth);
     void setDecayBoost (float boost);
     void setTerminalDecay (float thresholdDB, float factor);
     void setStereoCoupling (float amount);
@@ -47,7 +48,7 @@ private:
     // Stage B: long delays (tail sustain, progressive buildup from Stage A feed)
     static constexpr int kStageBDelays[kStageSize] = { 1088, 1361, 2044, 2396, 2606, 2981, 3204, 3470 };
 
-    // Output taps from Stage B only (decorrelated stereo)
+    // Output tap signs (decorrelated stereo, applied to both stages)
     static constexpr float kLeftSigns[kStageSize]  = {  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f };
     static constexpr float kRightSigns[kStageSize] = { -1.0f,  1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f };
 
@@ -91,12 +92,20 @@ private:
     float sizeRangeMax_ = 1.5f;
     float decayBoost_ = 1.0f;
     float noiseModDepth_ = 1.2f;
+    float maxNoiseModDepth_ = 32.0f;  // Set in prepare() from modulation headroom
     float stereoCoupling_ = 0.15f;
 
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-thresholdDB * 0.1) — precomputed
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
+
+    // Sample-rate-invariant smoothing coefficients for terminal decay detector
+    // Computed in prepare() from time constants so behaviour is identical at any rate
+    float rmsAlpha_ = 0.9995f;   // currentRMS_ retention per sample
+    float rmsBeta_ = 0.0005f;    // currentRMS_ input weight (1 - rmsAlpha_)
+    float peakDecay_ = 0.99999f; // peakRMS_ decay per sample
 
     bool frozen_ = false;
     bool prepared_ = false;

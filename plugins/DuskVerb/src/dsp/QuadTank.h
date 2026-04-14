@@ -245,6 +245,9 @@ private:
     float structHFState_[4] {};
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40)*0.1) — precomputed from thresholdDB
+    float rmsAlpha_ = 0.9995f;           // Exponential smoothing for RMS tracking
+    float peakDecayAlpha_ = 0.99999f;    // Peak envelope decay coefficient
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -254,6 +257,8 @@ private:
     float densityDiffCoeff_ = 0.10f;  // Reduced from 0.25 to slow density buildup (100ms→~250ms)
     float noiseModDepth_ = 2.0f;
     float independentNoiseModDepth_ = -1.0f;  // -1 = use modDepth-coupled value
+    float lastNoiseModRawSamples_ = -1.0f;    // Raw caller value for replay after sample-rate change
+    float lastStructHFRawHz_ = 0.0f;          // Raw caller value for replay after sample-rate change
 
     void updateDelayLengths();
     void updateDecayCoefficients();

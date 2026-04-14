@@ -34,32 +34,24 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     er_.prepare (sampleRate, maxBlockSize);
     tailChorus_.prepare (sampleRate, maxBlockSize);
 
-    // Pre-build every registered per-preset engine ONCE on this (non-audio)
-    // thread so applyAlgorithm() can swap pointers without allocating.
-    // Without this, applyAlgorithm() would call registry.create() and
-    // engine->prepare() (both heap-allocating) on the audio thread during
-    // the algorithm crossfade — a real-time safety violation.
-    // LINKER FIX: directly populate the preset engine registry by calling
-    // the generated forceLinkPresetEngines() stub. This bypasses the
-    // unreliable static-init `PresetEngineRegistrar` mechanism, which
-    // failed because the per-preset .cpp files were being dropped by the
-    // linker (their .o files had no externally-referenced symbols when
-    // compiled into a static library, so dead-strip removed them along
-    // with their static initializers). The stub explicitly registers all
-    // 53 factories on the first call.
+    // Register all 53 preset engine factories (no allocation — just populates
+    // the registry's factory map). The generated forceLinkPresetEngines() stub
+    // bypasses the unreliable static-init mechanism to ensure all factories are
+    // available for on-demand instantiation.
     extern void forceLinkPresetEngines();
     forceLinkPresetEngines();
 
-    if (prebuiltPresetEngines_.empty())
+    // Lazy cache: only re-prepare engines that were previously instantiated on
+    // demand (by setAlgorithm). Avoids allocating all 53 engines on startup.
     {
-        prebuiltPresetEngines_ = PresetEngineRegistry::instance().instantiateAll();
+        std::lock_guard<std::mutex> lock (prebuiltPresetEnginesMutex_);
+        for (auto& kv : prebuiltPresetEngines_)
+        {
+            if (kv.second)
+                kv.second->prepare (sampleRate, maxBlockSize);
+        }
+        presetEngine_.store (nullptr, std::memory_order_relaxed);  // applyAlgorithm() will set the active pointer
     }
-    for (auto& kv : prebuiltPresetEngines_)
-    {
-        if (kv.second)
-            kv.second->prepare (sampleRate, maxBlockSize);
-    }
-    presetEngine_ = nullptr;  // applyAlgorithm() will set the active pointer
 
     scratchL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
     scratchR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -142,14 +134,27 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     gateTriggered_ = false;
 
     // Reset algorithm crossfade state so first setAlgorithm applies immediately
-    pendingAlgorithm_ = -1;
-    fadeCounter_ = kFadeSamples;
-    fadingOut_ = false;
-    firstAlgorithmSet_ = true;
+    pendingSwap_ = { -1, nullptr, false };
+    pendingSwapSeq_.store (0, std::memory_order_relaxed);
+    fadeCounter_.store (kFadeSamples, std::memory_order_relaxed);
+    fadingOut_.store (false, std::memory_order_relaxed);
+    firstAlgorithmSet_.store (true, std::memory_order_release);
 }
 
 void DuskVerbEngine::process (float* left, float* right, int numSamples)
 {
+    // Fallback deferred clearBuffers(): only runs when setAlgorithm()
+    // couldn't pre-clear on the message thread (same-engine re-selection
+    // or firstAlgorithmSet_ path). The common case (different preset) is
+    // cleared off the audio thread in setAlgorithm() before the crossfade.
+    if (pendingPresetClear_.load (std::memory_order_acquire))
+    {
+        auto* pe = presetEngine_.load (std::memory_order_acquire);
+        if (pe)
+            pe->clearBuffers();
+        pendingPresetClear_.store (false, std::memory_order_release);
+    }
+
     // Copy input to scratch for the wet processing path.
     // The original left/right buffers are preserved as the dry signal for mixing.
     std::memcpy (scratchL_.data(), left,  static_cast<size_t> (numSamples) * sizeof (float));
@@ -266,9 +271,10 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
 
     // Late reverb: route to per-preset engine first (if registered),
     // then legacy TiledRoomReverb, then one of the shared engines.
-    if (presetEngine_)
-        presetEngine_->process (scratchL_.data(), scratchR_.data(),
-                                scratchL_.data(), scratchR_.data(), numSamples);
+    auto* activePreset = presetEngine_.load (std::memory_order_acquire);
+    if (activePreset)
+        activePreset->process (scratchL_.data(), scratchR_.data(),
+                               scratchL_.data(), scratchR_.data(), numSamples);
     else if (useCustomPresetEngine_)
         tiledRoomReverb_.process (scratchL_.data(), scratchR_.data(),
                                   scratchL_.data(), scratchR_.data(), numSamples);
@@ -343,7 +349,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // NOTE: terminal decay is handled inside each reverb engine's feedback loop
     // (DattorroTank and FDN track peak/RMS internally). No engine-level post-
     // processing here — that would double-attenuate the already-decayed signal.
-    tailChorus_.process (scratchL_.data(), scratchR_.data(), numSamples);
+    if (! frozen_)
+        tailChorus_.process (scratchL_.data(), scratchR_.data(), numSamples);
 
     // Scale late reverb and ER SEPARATELY. ERs bypass the output diffuser
     // to preserve their sharp transient peaks (matching VV's onset timing).
@@ -538,31 +545,45 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             wetR = mid - side * w;
 
             // Algorithm crossfade: ramp wet signal to avoid clicks on switch
-            if (fadingOut_)
+            if (fadingOut_.load (std::memory_order_acquire))
             {
-                float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
+                int fc = fadeCounter_.load (std::memory_order_relaxed);
+                float fadeGain = static_cast<float> (fc) / static_cast<float> (kFadeSamples);
                 wetL *= fadeGain;
                 wetR *= fadeGain;
 
-                if (--fadeCounter_ <= 0)
+                if (--fc <= 0)
                 {
-                    // At zero crossing, apply the new algorithm config
-                    if (pendingAlgorithm_ >= 0)
-                    {
-                        applyAlgorithm (pendingAlgorithm_);
-                        pendingAlgorithm_ = -1;
-                    }
-                    fadingOut_ = false;
-                    fadeCounter_ = 0; // Start fade-in from silence
+                    // At zero crossing, read the pending swap atomically via seqlock
+                    PendingSwap snap;
+                    unsigned seq0, seq1;
+                    do {
+                        seq0 = pendingSwapSeq_.load (std::memory_order_acquire);
+                        snap = pendingSwap_;  // plain read — seqlock validates consistency
+                        seq1 = pendingSwapSeq_.load (std::memory_order_acquire);
+                    } while (seq0 != seq1 || (seq0 & 1u));
+
+                    if (snap.algorithmIndex >= 0)
+                        applyAlgorithm (snap.algorithmIndex, snap.engine, snap.presetClearDone);
+                    fadingOut_.store (false, std::memory_order_release);
+                    fadeCounter_.store (0, std::memory_order_relaxed);
+                }
+                else
+                {
+                    fadeCounter_.store (fc, std::memory_order_relaxed);
                 }
             }
-            else if (fadeCounter_ < kFadeSamples)
+            else
             {
-                // Fade back in after algorithm switch
-                float fadeGain = static_cast<float> (fadeCounter_) / static_cast<float> (kFadeSamples);
-                wetL *= fadeGain;
-                wetR *= fadeGain;
-                ++fadeCounter_;
+                int fc = fadeCounter_.load (std::memory_order_relaxed);
+                if (fc < kFadeSamples)
+                {
+                    // Fade back in after algorithm switch
+                    float fadeGain = static_cast<float> (fc) / static_cast<float> (kFadeSamples);
+                    wetL *= fadeGain;
+                    wetR *= fadeGain;
+                    fadeCounter_.store (fc + 1, std::memory_order_relaxed);
+                }
             }
 
             // Gate envelope: truncate reverb tail for gated reverb presets
@@ -618,58 +639,116 @@ void DuskVerbEngine::setAlgorithm (int index)
 {
     // During initial setup (right after prepare), apply immediately with no fade.
     // During playback, defer to process() with crossfade to avoid clicks.
-    if (firstAlgorithmSet_)
+    // Lazy instantiation: ensure the target preset engine exists and is prepared
+    // on the message thread BEFORE queueing the crossfade to the audio thread.
+    // This keeps applyAlgorithm() allocation-free on the audio thread.
+    const auto& targetConfig = getAlgorithmConfig (index);
     {
-        firstAlgorithmSet_ = false;
-        applyAlgorithm (index);
+        bool needsCreation = false;
+        {
+            std::lock_guard<std::mutex> lock (prebuiltPresetEnginesMutex_);
+            needsCreation = (prebuiltPresetEngines_.find (targetConfig.name) == prebuiltPresetEngines_.end());
+        }
+        if (needsCreation)
+        {
+            auto engine = PresetEngineRegistry::instance().create (targetConfig.name);
+            if (engine)
+            {
+                engine->prepare (sampleRate_, maxBlockSize_);
+                std::lock_guard<std::mutex> lock (prebuiltPresetEnginesMutex_);
+                if (prebuiltPresetEngines_.find (targetConfig.name) == prebuiltPresetEngines_.end())
+                    prebuiltPresetEngines_[targetConfig.name] = std::move (engine);
+            }
+        }
+    }
+
+    // Pre-resolve the target engine pointer on the message thread so
+    // applyAlgorithm() (which runs on the audio thread during crossfade)
+    // never needs to lock prebuiltPresetEnginesMutex_.  The pointer is
+    // stable: engines are created above and never destroyed until the
+    // next prepare().  The release/acquire chain on fadingOut_ (crossfade
+    // path) or firstAlgorithmSet_ (initial path) guarantees visibility
+    // of this write to the audio thread.
+    PresetEngineBase* resolved = nullptr;
+    {
+        std::lock_guard<std::mutex> lock (prebuiltPresetEnginesMutex_);
+        auto it = prebuiltPresetEngines_.find (targetConfig.name);
+        resolved = (it != prebuiltPresetEngines_.end() && it->second)
+                 ? it->second.get() : nullptr;
+    }
+    if (firstAlgorithmSet_.load (std::memory_order_acquire))
+    {
+        firstAlgorithmSet_.store (false, std::memory_order_release);
+        applyAlgorithm (index, resolved, false);
         return;
     }
 
-    if (pendingAlgorithm_ < 0 && ! fadingOut_)
+    // Always accept the new algorithm request — even during an active fade,
+    // the latest request wins when the audio thread finishes fading out.
+    auto* localPreset = presetEngine_.load (std::memory_order_acquire);
+    bool cleared = false;
+    if (resolved != nullptr && resolved != localPreset)
     {
-        pendingAlgorithm_ = index;
-        fadingOut_ = true;
-        fadeCounter_ = kFadeSamples;
+        resolved->clearBuffers();
+        cleared = true;
+    }
+
+    // Publish the (algorithmIndex, engine*, presetClearDone) triple atomically
+    // via seqlock so the audio thread always reads a consistent set.
+    unsigned seq = pendingSwapSeq_.load (std::memory_order_relaxed);
+    // Round up to next even number, then go odd to signal write-in-progress
+    seq = (seq + 2u) & ~1u;
+    pendingSwapSeq_.store (seq + 1, std::memory_order_release);  // odd = writing
+    pendingSwap_.algorithmIndex = index;
+    pendingSwap_.engine = resolved;
+    pendingSwap_.presetClearDone = cleared;
+    pendingSwapSeq_.store (seq + 2, std::memory_order_release);  // even = stable
+
+    // Only start a new fade if one isn't already running
+    if (! fadingOut_.load (std::memory_order_acquire))
+    {
+        fadeCounter_.store (kFadeSamples, std::memory_order_relaxed);
+        fadingOut_.store (true, std::memory_order_release);
     }
 }
 
-void DuskVerbEngine::applyAlgorithm (int index)
+void DuskVerbEngine::applyAlgorithm (int index, PresetEngineBase* resolvedEngine, bool alreadyCleared)
 {
     config_ = &getAlgorithmConfig (index);
     useDattorroTank_ = config_->useDattorroTank;
     useQuadTank_ = config_->useQuadTank;
 
-    // Per-preset engine lookup: every registered preset engine was already
-    // instantiated and prepared in DuskVerbEngine::prepare() (off the audio
-    // thread). Here we just look up the prebuilt instance and swap a raw
-    // pointer — no allocation, no engine prepare(), so this is real-time
-    // safe to call from process() during the algorithm crossfade.
-    presetEngine_ = nullptr;
+    // The engine pointer and clear-state arrive together from the seqlock
+    // triple, guaranteeing consistency even under rapid setAlgorithm() calls.
+    presetEngine_.store (resolvedEngine, std::memory_order_release);
+    if (resolvedEngine)
     {
-        auto it = prebuiltPresetEngines_.find (config_->name);
-        if (it != prebuiltPresetEngines_.end() && it->second)
-        {
-            presetEngine_ = it->second.get();
-            // Reset the engine's internal state (LFO phase, filter buffers,
-            // delay lines) so a switch always starts cleanly. clearBuffers()
-            // is required to be allocation-free per PresetEngineBase's
-            // contract.
-            presetEngine_->clearBuffers();
-            // Re-apply full cached runtime state to the engine so it picks up
-            // any parameter changes or overrides that were in effect before the
-            // algorithm switch. Missing setters would leave the engine at its
-            // preset defaults until the next parameter change.
-            presetEngine_->setDecayTime (decayTime_);
-            presetEngine_->setBassMultiply (lastBassMult_);
-            presetEngine_->setTrebleMultiply (lastTrebleMult_);
-            presetEngine_->setModDepth (lastModDepth_);
-            presetEngine_->setModRate (lastModRate_);
-            presetEngine_->setSize (lastSize_);
-            presetEngine_->setCrossoverFreq (lastCrossoverHz_);
-            presetEngine_->setDecayBoost (lastDecayBoost_);
-            presetEngine_->setFreeze (frozen_);
-            presetEngine_->setTerminalDecay (terminalThresholdDb_, terminalFactor_);
-        }
+        // If setAlgorithm() already cleared this engine on the message
+        // thread, skip the deferred audio-thread clear. Otherwise (same-
+        // engine re-selection or firstAlgorithmSet_ path), defer to
+        // the start of the next process() block.
+        if (alreadyCleared)
+            ; // nothing to do — already cleared before the seqlock publish
+        else
+            pendingPresetClear_.store (true, std::memory_order_release);
+        // Re-apply full cached runtime state to the engine so it picks up
+        // any parameter changes or overrides that were in effect before the
+        // algorithm switch. Missing setters would leave the engine at its
+        // preset defaults until the next parameter change.
+        resolvedEngine->setDecayTime (decayTime_);
+        resolvedEngine->setBassMultiply (lastBassMult_);
+        resolvedEngine->setTrebleMultiply (lastTrebleMult_);
+        resolvedEngine->setModDepth (lastModDepth_);
+        resolvedEngine->setModRate (lastModRate_);
+        resolvedEngine->setSize (lastSize_);
+        resolvedEngine->setCrossoverFreq (lastCrossoverHz_);
+        resolvedEngine->setDecayBoost (lastDecayBoost_);
+        resolvedEngine->setFreeze (frozen_);
+        // Only override the preset engine's terminal decay if the host has
+        // explicitly set a non-default value.  Preset engines can set their
+        // own baked terminal decay in prepare() — we must not clobber it.
+        if (terminalFactor_ < 1.0f)
+            resolvedEngine->setTerminalDecay (terminalThresholdDb_, terminalFactor_);
     }
 
     // Fix 4 (spectral): ER corrective EQ infrastructure.
@@ -687,11 +766,11 @@ void DuskVerbEngine::applyAlgorithm (int index)
     onsetEnvelopeTableSize_ = 0;
     onsetEnvelopePhase_ = 0.0f;
     onsetEnvelopeInc_ = 0.0f;
-    if (presetEngine_ != nullptr)
+    if (resolvedEngine != nullptr)
     {
-        const float* table = presetEngine_->getOnsetEnvelopeTable();
-        int tableSize = presetEngine_->getOnsetEnvelopeTableSize();
-        float durationMs = presetEngine_->getOnsetDurationMs();
+        const float* table = resolvedEngine->getOnsetEnvelopeTable();
+        int tableSize = resolvedEngine->getOnsetEnvelopeTableSize();
+        float durationMs = resolvedEngine->getOnsetDurationMs();
         if (table != nullptr && tableSize > 1 && durationMs > 0.0f)
         {
             onsetEnvelopeTable_ = table;
@@ -801,7 +880,7 @@ void DuskVerbEngine::applyAlgorithm (int index)
     erLevelScale_ = config_->erLevelScale;
     // When a per-preset engine is active, it applies lateGainScale_ internally
     // in its own process() output path. DuskVerbEngine must NOT double-apply.
-    lateGainScale_ = presetEngine_ ? 1.0f : config_->lateGainScale;
+    lateGainScale_ = resolvedEngine ? 1.0f : config_->lateGainScale;
     erCrossfeed_ = config_->erCrossfeed;
     outputGainSmoother_.setTarget (config_->outputGain);
 
@@ -885,9 +964,62 @@ void DuskVerbEngine::applyAlgorithm (int index)
         fdn_.setStructuralHFDamping (structuralHFOverrideHz_, lastTrebleMult_);
         dattorroTank_.setStructuralHFDamping (structuralHFOverrideHz_);
         quadTank_.setStructuralHFDamping (structuralHFOverrideHz_);
-        if (presetEngine_) presetEngine_->setStructuralHFDamping (structuralHFOverrideHz_);
+        if (resolvedEngine) resolvedEngine->setStructuralHFDamping (structuralHFOverrideHz_);
         if (hybridConfig_) hybridQuadTank_.setStructuralHFDamping (structuralHFOverrideHz_);
     }
+    else
+    {
+        // Restore config baseline for structural HF
+        float baseHz = config_->structuralHFDampingHz;
+        fdn_.setStructuralHFDamping (baseHz, lastTrebleMult_);
+        dattorroTank_.setStructuralHFDamping (baseHz);
+        quadTank_.setStructuralHFDamping (baseHz);
+        if (resolvedEngine) resolvedEngine->setStructuralHFDamping (baseHz);
+        if (hybridConfig_) hybridQuadTank_.setStructuralHFDamping (hybridConfig_->structuralHFDampingHz);
+    }
+
+    // Replay cached runtime overrides that would otherwise be stomped by the
+    // config-baseline writes above (erLevelScale_, erCrossfeed_, outputGain, etc.).
+    if (cachedOutputGainOverride_ >= 0.0f)
+        outputGainSmoother_.setTarget (cachedOutputGainOverride_);
+    else
+        outputGainSmoother_.setTarget (config_->outputGain);
+    if (cachedErCrossfeedOverride_ >= 0.0f)
+        erCrossfeed_ = cachedErCrossfeedOverride_;
+    else
+        erCrossfeed_ = config_->erCrossfeed;
+    if (cachedAirDampingOverride_ >= 0.0f)
+        setAirDampingOverride (cachedAirDampingOverride_);
+    else if (resolvedEngine)
+        resolvedEngine->resetAirDampingToDefault();
+    if (cachedHighCrossoverOverride_ >= 0.0f)
+        setHighCrossoverOverride (cachedHighCrossoverOverride_);
+    else if (resolvedEngine)
+        resolvedEngine->resetHighCrossoverToDefault();
+    if (cachedNoiseModOverride_ >= 0.0f)
+        setNoiseModOverride (cachedNoiseModOverride_);
+    else if (resolvedEngine)
+        resolvedEngine->resetNoiseModToDefault();
+    if (cachedLateGainScaleOverride_ >= 0.0f && resolvedEngine)
+        resolvedEngine->setLateGainScale (cachedLateGainScaleOverride_);
+    else if (resolvedEngine)
+        resolvedEngine->resetLateGainToDefault();
+
+    // Replay cached overrides for setters that only mutate live DSP state.
+    if (cachedInlineDiffusionOverride_ >= 0.0f)
+        setInlineDiffusionOverride (cachedInlineDiffusionOverride_);
+    if (cachedStereoCouplingOverride_ > -1.5f)
+        setStereoCouplingOverride (cachedStereoCouplingOverride_);
+    if (cachedERAirCeilingOverride_ > 0.0f)
+        setERAirCeilingOverride (cachedERAirCeilingOverride_);
+    if (cachedERAirFloorOverride_ > 0.0f)
+        setERAirFloorOverride (cachedERAirFloorOverride_);
+    if (cachedOutputLowShelfDb_ != 0.0f)
+        setOutputLowShelfOverride (cachedOutputLowShelfDb_);
+    if (cachedOutputHighShelfDb_ != 0.0f)
+        setOutputHighShelfOverride (cachedOutputHighShelfDb_, cachedOutputHighShelfHz_);
+    if (cachedOutputMidEQDb_ != 0.0f)
+        setOutputMidEQOverride (cachedOutputMidEQDb_, cachedOutputMidEQHz_);
 }
 
 void DuskVerbEngine::setDecayTime (float seconds)
@@ -907,16 +1039,20 @@ void DuskVerbEngine::setDecayTime (float seconds)
     //     re-apply its baked scale and arrive at the same scaledDecay).
     //   - If a runtime override is active, forward `seconds * (override / baked)`
     //     so the wrapper's internal multiply lands on `seconds * override`.
-    if (presetEngine_)
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire))
     {
         const float presetSeconds =
             (decayTimeScaleOverride_ > 0.0f && config_->decayTimeScale > 0.0f)
                 ? seconds * (decayTimeScaleOverride_ / config_->decayTimeScale)
                 : seconds;
-        presetEngine_->setDecayTime (presetSeconds);
+        pe->setDecayTime (presetSeconds);
     }
     if (hybridConfig_ != nullptr)
-        hybridQuadTank_.setDecayTime (seconds * hybridConfig_->decayTimeScale);
+    {
+        float hybridDts = (decayTimeScaleOverride_ > 0.0f)
+                        ? decayTimeScaleOverride_ : hybridConfig_->decayTimeScale;
+        hybridQuadTank_.setDecayTime (seconds * hybridDts);
+    }
 
     // Decay-dependent output compensation: boost at short decay times to match
     // reference reverb's higher energy density at low feedback coefficients.
@@ -940,7 +1076,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
     dattorroTank_.setBassMultiply (mult * config_->bassMultScale);
     quadTank_.setBassMultiply (mult * config_->bassMultScale);
     tiledRoomReverb_.setBassMultiply (mult * config_->bassMultScale);
-    if (presetEngine_) presetEngine_->setBassMultiply (mult);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setBassMultiply (mult);
     if (hybridConfig_) hybridQuadTank_.setBassMultiply (mult * hybridConfig_->bassMultScale);
 }
 
@@ -958,7 +1094,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
     dattorroTank_.setTrebleMultiply (scaledTreble);
     quadTank_.setTrebleMultiply (scaledTreble);
     tiledRoomReverb_.setTrebleMultiply (scaledTreble);
-    if (presetEngine_) presetEngine_->setTrebleMultiply (mult);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setTrebleMultiply (mult);
     if (hybridConfig_)
     {
         float hTreble = hybridConfig_->trebleMultScale * (1.0f - trebleCurve)
@@ -978,7 +1114,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
     dattorroTank_.setCrossoverFreq (hz);
     quadTank_.setCrossoverFreq (hz);
     tiledRoomReverb_.setCrossoverFreq (hz);
-    if (presetEngine_) presetEngine_->setCrossoverFreq (hz);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setCrossoverFreq (hz);
     if (hybridConfig_) hybridQuadTank_.setCrossoverFreq (hz);
 }
 
@@ -989,7 +1125,7 @@ void DuskVerbEngine::setModDepth (float depth)
     dattorroTank_.setModDepth (depth * config_->modDepthScale);
     quadTank_.setModDepth (depth * config_->modDepthScale);
     tiledRoomReverb_.setModDepth (depth * config_->modDepthScale);
-    if (presetEngine_) presetEngine_->setModDepth (depth);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setModDepth (depth);
     if (hybridConfig_) hybridQuadTank_.setModDepth (depth * hybridConfig_->modDepthScale);
 }
 
@@ -1000,7 +1136,7 @@ void DuskVerbEngine::setModRate (float hz)
     dattorroTank_.setModRate (hz * config_->modRateScale);
     quadTank_.setModRate (hz * config_->modRateScale);
     tiledRoomReverb_.setModRate (hz * config_->modRateScale);
-    if (presetEngine_) presetEngine_->setModRate (hz);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setModRate (hz);
     if (hybridConfig_) hybridQuadTank_.setModRate (hz * hybridConfig_->modRateScale);
 }
 
@@ -1011,7 +1147,7 @@ void DuskVerbEngine::setSize (float size)
     dattorroTank_.setSize (size);
     quadTank_.setSize (size);
     tiledRoomReverb_.setSize (size);
-    if (presetEngine_) presetEngine_->setSize (size);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setSize (size);
     if (hybridConfig_) hybridQuadTank_.setSize (size);
 }
 
@@ -1076,7 +1212,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
         dattorroTank_.setFreeze (frozen);
         quadTank_.setFreeze (frozen);
         tiledRoomReverb_.setFreeze (frozen);
-        if (presetEngine_) presetEngine_->setFreeze (frozen);
+        if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setFreeze (frozen);
     }
 }
 
@@ -1150,64 +1286,78 @@ void DuskVerbEngine::setAirDampingOverride (float scale)
     // engines, restore the baked value (not config_->...) so the per-preset
     // calibrated air damping is recovered instead of the shared baseline.
     bool isSentinel = (scale < 0.0f);
+    cachedAirDampingOverride_ = isSentinel ? -1.0f : scale;
     if (isSentinel && config_) scale = config_->airDampingScale;
     fdn_.setAirTrebleMultiply (scale);
     dattorroTank_.setAirDampingScale (scale);
     quadTank_.setAirDampingScale (scale);
     tiledRoomReverb_.setAirDampingScale (scale);
-    if (presetEngine_)
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire))
     {
         if (isSentinel)
-            presetEngine_->resetAirDampingToDefault();
+            pe->resetAirDampingToDefault();
         else
-            presetEngine_->setAirDampingScale (scale);
+            pe->setAirDampingScale (scale);
     }
-    if (hybridConfig_) hybridQuadTank_.setAirDampingScale (scale);
+    if (hybridConfig_)
+    {
+        float hybridScale = isSentinel ? hybridConfig_->airDampingScale : scale;
+        hybridQuadTank_.setAirDampingScale (hybridScale);
+    }
 }
 
 void DuskVerbEngine::setHighCrossoverOverride (float hz)
 {
     bool isSentinel = (hz < 0.0f);
+    cachedHighCrossoverOverride_ = isSentinel ? -1.0f : hz;
     if (isSentinel && config_) hz = config_->highCrossoverHz;
     fdn_.setHighCrossoverFreq (hz);
     dattorroTank_.setHighCrossoverFreq (hz);
     quadTank_.setHighCrossoverFreq (hz);
     tiledRoomReverb_.setHighCrossoverFreq (hz);
-    if (presetEngine_)
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire))
     {
         if (isSentinel)
-            presetEngine_->resetHighCrossoverToDefault();
+            pe->resetHighCrossoverToDefault();
         else
-            presetEngine_->setHighCrossoverFreq (hz);
+            pe->setHighCrossoverFreq (hz);
     }
-    if (hybridConfig_) hybridQuadTank_.setHighCrossoverFreq (hz);
+    if (hybridConfig_)
+    {
+        float hybridHz = isSentinel ? hybridConfig_->highCrossoverHz : hz;
+        hybridQuadTank_.setHighCrossoverFreq (hybridHz);
+    }
 }
 
 void DuskVerbEngine::setNoiseModOverride (float samples)
 {
     bool isSentinel = (samples < 0.0f);
+    cachedNoiseModOverride_ = isSentinel ? -1.0f : samples;
     if (isSentinel && config_) samples = config_->noiseModDepth;
     fdn_.setNoiseModDepth (samples);
     dattorroTank_.setNoiseModDepth (samples);
     quadTank_.setNoiseModDepth (samples);
+    tiledRoomReverb_.setNoiseModDepth (samples);
     if (hybridConfig_) hybridQuadTank_.setNoiseModDepth (samples);
-    if (presetEngine_)
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire))
     {
         if (isSentinel)
-            presetEngine_->resetNoiseModToDefault();
+            pe->resetNoiseModToDefault();
         else
-            presetEngine_->setNoiseModDepth (samples);
+            pe->setNoiseModDepth (samples);
     }
 }
 
 void DuskVerbEngine::setInlineDiffusionOverride (float coeff)
 {
+    cachedInlineDiffusionOverride_ = coeff;
     if (coeff < 0.0f && config_) coeff = config_->inlineDiffusionCoeff;
     fdn_.setInlineDiffusion (coeff);
 }
 
 void DuskVerbEngine::setStereoCouplingOverride (float amount)
 {
+    cachedStereoCouplingOverride_ = amount;
     // stereo_coupling sentinel is <= -1.5 (valid range includes -1..+1).
     if (amount <= -1.5f && config_) amount = config_->stereoCoupling;
     fdn_.setStereoCoupling (amount);
@@ -1227,12 +1377,14 @@ void DuskVerbEngine::setChorusRateOverride (float hz)
 
 void DuskVerbEngine::setOutputGainOverride (float gain)
 {
+    cachedOutputGainOverride_ = gain;
     if (gain < 0.0f && config_) gain = config_->outputGain;
     outputGainSmoother_.setTarget (gain);
 }
 
 void DuskVerbEngine::setERCrossfeedOverride (float amount)
 {
+    cachedErCrossfeedOverride_ = amount;
     if (amount < 0.0f && config_) amount = config_->erCrossfeed;
     erCrossfeed_ = amount;
 }
@@ -1252,7 +1404,7 @@ void DuskVerbEngine::setDecayBoostOverride (float boost)
     dattorroTank_.setDecayBoost (boost);
     quadTank_.setDecayBoost (boost);
     tiledRoomReverb_.setDecayBoost (boost);
-    if (presetEngine_) presetEngine_->setDecayBoost (boost);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setDecayBoost (boost);
     if (hybridConfig_) hybridQuadTank_.setDecayBoost (boost);
 }
 
@@ -1272,12 +1424,17 @@ void DuskVerbEngine::setStructuralHFDampingOverride (float hz)
     fdn_.setStructuralHFDamping (hz, lastTrebleMult_);
     dattorroTank_.setStructuralHFDamping (hz);
     quadTank_.setStructuralHFDamping (hz);
-    if (presetEngine_) presetEngine_->setStructuralHFDamping (hz);
-    if (hybridConfig_) hybridQuadTank_.setStructuralHFDamping (hz);
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire)) pe->setStructuralHFDamping (hz);
+    if (hybridConfig_)
+    {
+        float hybridHz = (structuralHFOverrideHz_ < 0.0f) ? hybridConfig_->structuralHFDampingHz : hz;
+        hybridQuadTank_.setStructuralHFDamping (hybridHz);
+    }
 }
 
 void DuskVerbEngine::setOutputLowShelfOverride (float dB)
 {
+    cachedOutputLowShelfDb_ = dB;
     float sr = static_cast<float> (sampleRate_);
     lowShelfEnabled_ = (dB != 0.0f);
     if (lowShelfEnabled_)
@@ -1290,6 +1447,8 @@ void DuskVerbEngine::setOutputLowShelfOverride (float dB)
 
 void DuskVerbEngine::setOutputHighShelfOverride (float dB, float hz)
 {
+    cachedOutputHighShelfDb_ = dB;
+    cachedOutputHighShelfHz_ = hz;
     float sr = static_cast<float> (sampleRate_);
     float nyquist = sr * 0.5f;
     hz = std::clamp (hz, 1.0f, nyquist);
@@ -1304,6 +1463,8 @@ void DuskVerbEngine::setOutputHighShelfOverride (float dB, float hz)
 
 void DuskVerbEngine::setOutputMidEQOverride (float dB, float hz)
 {
+    cachedOutputMidEQDb_ = dB;
+    cachedOutputMidEQHz_ = hz;
     float sr = static_cast<float> (sampleRate_);
     float nyquist = sr * 0.5f;
     hz = std::clamp (hz, 1.0f, nyquist);
@@ -1347,18 +1508,25 @@ void DuskVerbEngine::setTerminalDecayOverride (float thresholdDb, float factor)
     dattorroTank_.setTerminalDecay (thresholdDb, factor);
     quadTank_.setTerminalDecay (thresholdDb, factor);
     tiledRoomReverb_.setTerminalDecay (thresholdDb, factor);
-    if (presetEngine_) presetEngine_->setTerminalDecay (thresholdDb, factor);
+    // Only override the preset engine's terminal decay when the host has
+    // explicitly set non-default values. Preset engines can bake their own
+    // terminal decay in prepare() — the default sentinel (factor=1.0) must
+    // not clobber it.
+    if (auto* pe = presetEngine_.load (std::memory_order_acquire); pe && factor < 1.0f)
+        pe->setTerminalDecay (thresholdDb, factor);
     if (hybridConfig_) hybridQuadTank_.setTerminalDecay (thresholdDb, factor);
 }
 
 void DuskVerbEngine::setERAirCeilingOverride (float hz)
 {
+    cachedERAirCeilingOverride_ = hz;
     if (hz <= 0.0f && config_) hz = config_->erAirAbsorptionCeilingHz;
     er_.setAirAbsorptionCeiling (hz);
 }
 
 void DuskVerbEngine::setERAirFloorOverride (float hz)
 {
+    cachedERAirFloorOverride_ = hz;
     if (hz <= 0.0f && config_) hz = config_->erAirAbsorptionFloorHz;
     er_.setAirAbsorptionFloor (hz);
 }

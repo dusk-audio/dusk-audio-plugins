@@ -110,6 +110,21 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
     updateLFORates();
     setModDepth (lastModDepthRaw_);
 
+    // Replay sample-rate-dependent setters so their scaled state is correct
+    // after a host re-prepare at a different sample rate.
+    if (lastNoiseModRawSamples_ >= 0.0f)
+        setNoiseModDepth (lastNoiseModRawSamples_);
+    if (lastStructHFRawHz_ > 0.0f)
+        setStructuralHFDamping (lastStructHFRawHz_);
+
+    // Terminal decay: sample-rate-invariant smoothing coefficients.
+    // At 44.1kHz these produce the same behavior as the original constants.
+    constexpr float kRmsTauMs  = 45.0f;   // RMS window ~45ms (was 0.9995/0.0005)
+    constexpr float kPeakTauMs = 2270.0f;  // Peak decay ~2.27s (was 0.99999)
+    float sr = static_cast<float> (sampleRate);
+    rmsAlpha_       = std::exp (-1000.0f / (kRmsTauMs * sr));
+    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
+
     // Clear all per-tank stateful fields (RMS history, terminal-decay flags,
     // structural HF damping state). Without this, a host re-prepare would
     // start with empty delay buffers but retain the previous run's tracker
@@ -153,7 +168,7 @@ void QuadTank::process (const float* inputL, const float* inputR,
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);
 
@@ -163,16 +178,19 @@ void QuadTank::process (const float* inputL, const float* inputR,
             tank.ap1Buffer.write (ap1In);
             float ap1Out = ap1Delayed - coeff1 * ap1In;
 
-            // Advance LFO with drift
-            float drift = nextDrift (tank.lfoPRNG) * tank.lfoPhaseInc * 0.08f;
-            tank.lfoPhase += tank.lfoPhaseInc + drift;
-            if (tank.lfoPhase >= kTwoPi)
-                tank.lfoPhase -= kTwoPi;
-            else if (tank.lfoPhase < 0.0f)
-                tank.lfoPhase += kTwoPi;
+            // Advance LFO with drift (skip when frozen to hold static tail)
+            if (! frozen_)
+            {
+                float drift = nextDrift (tank.lfoPRNG) * tank.lfoPhaseInc * 0.08f;
+                tank.lfoPhase += tank.lfoPhaseInc + drift;
+                if (tank.lfoPhase >= kTwoPi)
+                    tank.lfoPhase -= kTwoPi;
+                else if (tank.lfoPhase < 0.0f)
+                    tank.lfoPhase += kTwoPi;
+            }
 
             // --- Delay 1 with noise jitter ---
-            float jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -201,7 +219,7 @@ void QuadTank::process (const float* inputL, const float* inputR,
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 with noise jitter ---
-            float jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -216,12 +234,11 @@ void QuadTank::process (const float* inputL, const float* inputR,
             if (terminalDecayFactor_ < 1.0f && ! frozen_)
             {
                 float sampleEnergy = del2Out * del2Out;
-                tank.currentRMS = tank.currentRMS * 0.9995f + sampleEnergy * 0.0005f;
+                tank.currentRMS = rmsAlpha_ * tank.currentRMS + (1.0f - rmsAlpha_) * sampleEnergy;
                 if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
-                else tank.peakRMS *= 0.99999f;
-                float rmsDB = 10.0f * std::log10 (std::max (tank.currentRMS, 1e-20f));
-                float peakDB = 10.0f * std::log10 (std::max (tank.peakRMS, 1e-20f));
-                tank.terminalDecayActive = (peakDB - rmsDB > -terminalDecayThresholdDB_) && (tank.peakRMS > 1e-12f);
+                else tank.peakRMS *= peakDecayAlpha_;
+                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
+                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
                 if (tank.terminalDecayActive)
                     del2Out *= terminalDecayFactor_;
             }
@@ -319,8 +336,11 @@ void QuadTank::setNoiseModDepth (float samples)
 {
     // Independent noise jitter, decoupled from LFO modDepth. When set (>= 0),
     // this overrides the modDepth-coupled noise jitter. Mirrors DattorroTank.
+    lastNoiseModRawSamples_ = samples;
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    independentNoiseModDepth_ = samples * rateRatio;
+    // Clamp to the modulation headroom reserved in prepare() (32 samples at base rate)
+    float maxAllowed = 32.0f * rateRatio;
+    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxAllowed);
 }
 
 void QuadTank::setModRate (float hz)
@@ -383,6 +403,7 @@ void QuadTank::setDecayBoost (float boost)
 
 void QuadTank::setStructuralHFDamping (float hz)
 {
+    lastStructHFRawHz_ = hz;
     if (hz <= 0.0f)
     {
         structHFCoeff_ = 0.0f;
@@ -403,6 +424,7 @@ void QuadTank::setTerminalDecay (float thresholdDB, float factor)
     // calibrator or a future API caller wants a value below 0.8, it
     // should be honored exactly rather than silently rounded up.
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void QuadTank::clearBuffers()
