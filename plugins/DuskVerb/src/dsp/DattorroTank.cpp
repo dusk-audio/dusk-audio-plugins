@@ -119,7 +119,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
     // Track allocation ceiling for runtime setSizeRange() bounds checking
-    sizeRangeAllocatedMax_ = std::max (sizeRangeMax_, 1.5f);
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, std::max (sizeRangeMax_, 1.5f));
 
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
@@ -186,6 +186,19 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.terminalDecayActive = false;
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
+    // Sample-rate-invariant terminal decay smoothing coefficients
+    constexpr float kRmsTauMs = 45.0f;    // RMS window ~45ms/tracking
+    constexpr float kPeakTauMs = 2270.0f; // Peak decay ~2.27s hold decay
+    float sr = static_cast<float> (sampleRate_);
+    rmsAlpha_ = std::exp (-1000.0f / (kRmsTauMs * sr));
+    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
+
+    // Recompute limiter release coefficient for new sample rate
+    if (limiterThreshold_ > 0.0f)
+    {
+        float releaseSamples = limiterReleaseMs_ * 0.001f * static_cast<float> (sampleRate_);
+        limiterReleaseCoeff_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -217,7 +230,8 @@ void DattorroTank::process (const float* inputL, const float* inputR,
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
+            // When frozen, skip modulation so the tail remains static.
+            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -227,18 +241,22 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             tank.ap1Buffer.write (ap1In);
             float ap1Out = ap1Delayed - coeff1 * ap1In;
 
-            // Advance LFO with drift
-            float drift = nextDrift (tank.lfoPRNG) * tank.lfoPhaseInc * 0.08f;
-            tank.lfoPhase += tank.lfoPhaseInc + drift;
-            if (tank.lfoPhase >= kTwoPi)
-                tank.lfoPhase -= kTwoPi;
-            else if (tank.lfoPhase < 0.0f)
-                tank.lfoPhase += kTwoPi;
+            // Advance LFO with drift (skip when frozen to keep tail static)
+            if (! frozen_)
+            {
+                float drift = nextDrift (tank.lfoPRNG) * tank.lfoPhaseInc * 0.08f;
+                tank.lfoPhase += tank.lfoPhaseInc + drift;
+                if (tank.lfoPhase >= kTwoPi)
+                    tank.lfoPhase -= kTwoPi;
+                else if (tank.lfoPhase < 0.0f)
+                    tank.lfoPhase += kTwoPi;
+            }
 
             // --- Delay 1 (with per-sample noise jitter) ---
+            // Skip jitter when frozen to keep tail static (no PRNG state advance).
             float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
                                     ? independentNoiseModDepth_ : noiseModDepth_;
-            float jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -268,7 +286,7 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 (with per-sample noise jitter) ---
-            float jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -279,17 +297,18 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                                         : -DspUtils::kDenormalPrevention);
             tank.delay2.write (ap2Out + bias);
 
-            // Terminal decay: extra damping when tail is far below peak
-            // Skipped when frozen — frozen tails must not attenuate.
+            // Terminal decay: extra damping when tail is far below peak.
+            // Uses sample-rate-invariant smoothing (rmsAlpha_/peakDecayAlpha_
+            // computed in prepare()) and linear-domain ratio test.
             if (terminalDecayFactor_ < 1.0f && ! frozen_)
             {
                 float sampleEnergy = del2Out * del2Out;
-                tank.currentRMS = tank.currentRMS * 0.9995f + sampleEnergy * 0.0005f;
+                tank.currentRMS = tank.currentRMS * rmsAlpha_ + sampleEnergy * (1.0f - rmsAlpha_);
                 if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
-                else tank.peakRMS *= 0.99999f;
-                float rmsDB = 10.0f * std::log10 (std::max (tank.currentRMS, 1e-20f));
-                float peakDB = 10.0f * std::log10 (std::max (tank.peakRMS, 1e-20f));
-                tank.terminalDecayActive = (peakDB - rmsDB > -terminalDecayThresholdDB_) && (tank.peakRMS > 1e-12f);
+                else tank.peakRMS *= peakDecayAlpha_;
+                // Linear-domain ratio test: peak/current > threshold (avoids per-sample log10)
+                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
+                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
                 if (tank.terminalDecayActive)
                     del2Out *= terminalDecayFactor_;
             }
@@ -432,14 +451,14 @@ void DattorroTank::setTrebleMultiply (float mult)
 
 void DattorroTank::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = hz;
+    crossoverFreq_ = std::min (std::max (hz, 1.0f), highCrossoverFreq_);
     if (prepared_)
         updateDecayCoefficients();
 }
 
 void DattorroTank::setHighCrossoverFreq (float hz)
 {
-    highCrossoverFreq_ = std::max (hz, 1.0f);
+    highCrossoverFreq_ = std::max (hz, std::max (crossoverFreq_, 1.0f));
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -476,6 +495,7 @@ void DattorroTank::setLimiter (float thresholdDb, float releaseMs)
         return;
     }
     limiterThreshold_ = std::pow (10.0f, thresholdDb / 20.0f);
+    limiterReleaseMs_ = releaseMs;
     if (prepared_)
     {
         float releaseSamples = releaseMs * 0.001f * static_cast<float> (sampleRate_);
@@ -580,6 +600,17 @@ void DattorroTank::applyTapGains (const float* leftGains, const float* rightGain
 void DattorroTank::setFreeze (bool frozen)
 {
     frozen_ = frozen;
+    if (frozen)
+    {
+        structHFStateL_ = 0.0f;
+        structHFStateR_ = 0.0f;
+        leftTank_.currentRMS = 0.0f;
+        leftTank_.peakRMS = 0.0f;
+        leftTank_.terminalDecayActive = false;
+        rightTank_.currentRMS = 0.0f;
+        rightTank_.peakRMS = 0.0f;
+        rightTank_.terminalDecayActive = false;
+    }
 }
 
 void DattorroTank::setLateGainScale (float scale)
@@ -628,6 +659,7 @@ void DattorroTank::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void DattorroTank::clearBuffers()
