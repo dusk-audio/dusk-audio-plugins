@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(MULTICOMP_DEFAULT_VERSION "1.2.7")
+set(MULTICOMP_DEFAULT_VERSION "1.2.8")
 get_plugin_version("multi-comp" MULTICOMP_VERSION)
 if(NOT MULTICOMP_VERSION OR MULTICOMP_VERSION STREQUAL "0.0.0")
     set(MULTICOMP_VERSION ${MULTICOMP_DEFAULT_VERSION})
@@ -158,6 +158,45 @@ set_target_properties(MultiComp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# --- Bypass + Auto Gain Integration Test (JUCE-linked) ---
+if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+    add_executable(MultiCompBypassAutoGainTest
+        tests/test_bypass_autogain.cpp
+    )
+
+    target_include_directories(MultiCompBypassAutoGainTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/MultiComp_artefacts/JuceLibraryCode
+    )
+
+    target_compile_definitions(MultiCompBypassAutoGainTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_STANDALONE_APPLICATION=1
+    )
+
+    target_compile_features(MultiCompBypassAutoGainTest PRIVATE cxx_std_17)
+
+    target_link_libraries(MultiCompBypassAutoGainTest
+        PRIVATE
+            MultiComp
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+
+    add_dependencies(MultiCompBypassAutoGainTest MultiComp_All)
+endif()
 
 # Optional: Build unit tests
 option(BUILD_MULTI_COMP_TESTS "Build Multi-Comp unit tests" OFF)
