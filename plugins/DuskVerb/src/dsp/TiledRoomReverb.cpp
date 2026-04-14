@@ -47,6 +47,20 @@ void TiledRoomReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     currentRMS_ = 0.0f;
     peakRMS_ = 0.0f;
 
+    // Compute sample-rate-invariant smoothing coefficients for terminal decay.
+    // Time constants chosen to match original behaviour at 44100 Hz:
+    //   rmsAlpha  = 0.9995  → tau ≈ 1/(1-0.9995)/44100 ≈ 0.0454 s
+    //   peakDecay = 0.99999 → tau ≈ 1/(1-0.00001)/44100 ≈ 2.268 s
+    constexpr float kRmsTau  = 0.0454f;   // RMS integration time constant (seconds)
+    constexpr float kPeakTau = 2.268f;    // Peak hold decay time constant (seconds)
+    float sr = static_cast<float> (sampleRate);
+    rmsAlpha_ = std::exp (-1.0f / (kRmsTau * sr));
+    rmsBeta_  = 1.0f - rmsAlpha_;
+    peakDecay_ = std::exp (-1.0f / (kPeakTau * sr));
+
+    // Modulation headroom: same 32-sample base budget used for delay allocation
+    maxNoiseModDepth_ = 32.0f * static_cast<float> (sampleRate / kBaseSampleRate);
+
     prepared_ = true;
     updateDelayLengths();
     updateDecayCoefficients();
@@ -62,8 +76,7 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
     if (! prepared_)
         return;
 
-    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    float noiseJitter = noiseModDepth_ * rateRatio;
+    float noiseJitter = noiseModDepth_;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -77,20 +90,27 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
         for (int ch = 0; ch < kStageSize; ++ch)
         {
             auto& dl = delayA_[ch];
-            float lfo = std::sin (lfoPhase_[ch]) * modDepthSamples_;
-            float jitter = nextDrift (noiseState_[ch]) * noiseJitter;
-            float readDelay = delayLenA_[ch] + lfo + jitter;
-            readDelay = std::max (readDelay, 1.0f);
+            float readDelay;
+            if (frozen_)
+            {
+                readDelay = std::max (delayLenA_[ch], 1.0f);
+            }
+            else
+            {
+                float lfo = std::sin (lfoPhase_[ch]) * modDepthSamples_;
+                float jitter = nextDrift (noiseState_[ch]) * noiseJitter;
+                readDelay = std::max (delayLenA_[ch] + lfo + jitter, 1.0f);
+
+                float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
+                lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
+                if (lfoPhase_[ch] >= kTwoPi) lfoPhase_[ch] -= kTwoPi;
+                else if (lfoPhase_[ch] < 0.0f) lfoPhase_[ch] += kTwoPi;
+            }
 
             float readPos = static_cast<float> (dl.writePos) - readDelay;
             int intIdx = static_cast<int> (std::floor (readPos));
             float frac = readPos - static_cast<float> (intIdx);
             outA[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
-
-            float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
-            lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
-            if (lfoPhase_[ch] >= kTwoPi) lfoPhase_[ch] -= kTwoPi;
-            else if (lfoPhase_[ch] < 0.0f) lfoPhase_[ch] += kTwoPi;
         }
 
         // Stage A: neighbour-pair feedback via orthogonal rotation
@@ -110,8 +130,12 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
         for (int ch = 0; ch < kStageSize; ++ch)
         {
             float filtered = frozen_ ? fbA[ch] : dampA_[ch].process (fbA[ch]);
-            float dcOut = filtered - dcX1_[ch] + kDCCoeff * dcY1_[ch];
-            dcX1_[ch] = filtered; dcY1_[ch] = dcOut; filtered = dcOut;
+            // Bypass DC blocker when frozen to prevent held tail from drifting
+            if (! frozen_)
+            {
+                float dcOut = filtered - dcX1_[ch] + kDCCoeff * dcY1_[ch];
+                dcX1_[ch] = filtered; dcY1_[ch] = dcOut; filtered = dcOut;
+            }
 
             float inputGain = frozen_ ? 0.0f : 0.25f;
             float polarity = (ch & 1) ? -1.0f : 1.0f;
@@ -131,20 +155,27 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
         {
             int lfoIdx = ch + kStageSize;
             auto& dl = delayB_[ch];
-            float lfo = std::sin (lfoPhase_[lfoIdx]) * modDepthSamples_;
-            float jitter = nextDrift (noiseState_[lfoIdx]) * noiseJitter;
-            float readDelay = delayLenB_[ch] + lfo + jitter;
-            readDelay = std::max (readDelay, 1.0f);
+            float readDelay;
+            if (frozen_)
+            {
+                readDelay = std::max (delayLenB_[ch], 1.0f);
+            }
+            else
+            {
+                float lfo = std::sin (lfoPhase_[lfoIdx]) * modDepthSamples_;
+                float jitter = nextDrift (noiseState_[lfoIdx]) * noiseJitter;
+                readDelay = std::max (delayLenB_[ch] + lfo + jitter, 1.0f);
+
+                float drift = nextDrift (lfoPRNG_[lfoIdx]) * lfoPhaseInc_[lfoIdx] * 0.08f;
+                lfoPhase_[lfoIdx] += lfoPhaseInc_[lfoIdx] + drift;
+                if (lfoPhase_[lfoIdx] >= kTwoPi) lfoPhase_[lfoIdx] -= kTwoPi;
+                else if (lfoPhase_[lfoIdx] < 0.0f) lfoPhase_[lfoIdx] += kTwoPi;
+            }
 
             float readPos = static_cast<float> (dl.writePos) - readDelay;
             int intIdx = static_cast<int> (std::floor (readPos));
             float frac = readPos - static_cast<float> (intIdx);
             outB[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
-
-            float drift = nextDrift (lfoPRNG_[lfoIdx]) * lfoPhaseInc_[lfoIdx] * 0.08f;
-            lfoPhase_[lfoIdx] += lfoPhaseInc_[lfoIdx] + drift;
-            if (lfoPhase_[lfoIdx] >= kTwoPi) lfoPhase_[lfoIdx] -= kTwoPi;
-            else if (lfoPhase_[lfoIdx] < 0.0f) lfoPhase_[lfoIdx] += kTwoPi;
         }
 
         // Terminal decay on Stage B — skipped when frozen
@@ -154,12 +185,11 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
             for (int ch = 0; ch < kStageSize; ++ch)
                 energy += outB[ch] * outB[ch];
             energy *= (1.0f / static_cast<float> (kStageSize));
-            currentRMS_ = currentRMS_ * 0.9995f + energy * 0.0005f;
+            currentRMS_ = currentRMS_ * rmsAlpha_ + energy * rmsBeta_;
             if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
-            else peakRMS_ *= 0.99999f;
-            float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
-            float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
-            if ((peakDB - rmsDB > -terminalDecayThresholdDB_) && peakRMS_ > 1e-12f)
+            else peakRMS_ *= peakDecay_;
+            float ratio = peakRMS_ / std::max (currentRMS_, 1e-20f);
+            if ((ratio > terminalLinearThreshold_) && peakRMS_ > 1e-12f)
                 for (int ch = 0; ch < kStageSize; ++ch)
                     outB[ch] *= terminalDecayFactor_;
         }
@@ -178,8 +208,12 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
         {
             int dcIdx = ch + kStageSize;
             float filtered = frozen_ ? fbB[ch] : dampB_[ch].process (fbB[ch]);
-            float dcOut = filtered - dcX1_[dcIdx] + kDCCoeff * dcY1_[dcIdx];
-            dcX1_[dcIdx] = filtered; dcY1_[dcIdx] = dcOut; filtered = dcOut;
+            // Bypass DC blocker when frozen to prevent held tail from drifting
+            if (! frozen_)
+            {
+                float dcOut = filtered - dcX1_[dcIdx] + kDCCoeff * dcY1_[dcIdx];
+                dcX1_[dcIdx] = filtered; dcY1_[dcIdx] = dcOut; filtered = dcOut;
+            }
 
             float serialIn = outA[ch] * kSerialFeedLevel;
             float inputGain = frozen_ ? 0.0f : 0.25f;
@@ -193,18 +227,19 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
         }
 
         // ============================================================
-        // OUTPUT: L sums Stage A, R sums Stage B (independent groups)
-        // Each stage processes a different input AND has independent feedback,
-        // giving natural L/R independence without needing cross-mixing.
+        // OUTPUT: Both stages contribute to both channels.
+        // Stage A (short/onset) and Stage B (long/tail) are summed
+        // into L and R using decorrelated sign patterns, so the
+        // serial tail energy appears equally in both outputs.
         // ============================================================
         float outL = 0.0f, outR = 0.0f;
         for (int t = 0; t < kStageSize; ++t)
         {
-            outL += outA[t] * kLeftSigns[t];
-            outR += outB[t] * kRightSigns[t];
+            outL += outA[t] * kLeftSigns[t] + outB[t] * kLeftSigns[t];
+            outR += outA[t] * kRightSigns[t] + outB[t] * kRightSigns[t];
         }
 
-        constexpr float kOutputScale = 1.0f / static_cast<float> (kStageSize);
+        constexpr float kOutputScale = 1.0f / static_cast<float> (kStageSize * 2);
         outputL[i] = std::clamp (outL * kOutputScale, -kSafetyClip, kSafetyClip);
         outputR[i] = std::clamp (outR * kOutputScale, -kSafetyClip, kSafetyClip);
     }
@@ -214,15 +249,31 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
 void TiledRoomReverb::setDecayTime (float seconds) { decayTime_ = std::clamp (seconds, 0.2f, 600.0f); if (prepared_) updateDecayCoefficients(); }
 void TiledRoomReverb::setBassMultiply (float mult) { bassMultiply_ = std::clamp (mult, 0.5f, 2.5f); if (prepared_) updateDecayCoefficients(); }
 void TiledRoomReverb::setTrebleMultiply (float mult) { trebleMultiply_ = std::clamp (mult, 0.1f, 1.5f); if (prepared_) updateDecayCoefficients(); }
-void TiledRoomReverb::setCrossoverFreq (float hz) { crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f); if (prepared_) updateDecayCoefficients(); }
-void TiledRoomReverb::setHighCrossoverFreq (float hz) { highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f); if (prepared_) updateDecayCoefficients(); }
+void TiledRoomReverb::setCrossoverFreq (float hz) { crossoverFreq_ = std::min (std::clamp (hz, 200.0f, 4000.0f), highCrossoverFreq_ - 10.0f); if (prepared_) updateDecayCoefficients(); }
+void TiledRoomReverb::setHighCrossoverFreq (float hz) { highCrossoverFreq_ = std::max (std::clamp (hz, 1000.0f, 20000.0f), crossoverFreq_ + 10.0f); if (prepared_) updateDecayCoefficients(); }
 void TiledRoomReverb::setAirDampingScale (float scale) { airDampingScale_ = std::max (scale, 0.01f); if (prepared_) updateDecayCoefficients(); }
-void TiledRoomReverb::setModDepth (float depth) { lastModDepthRaw_ = depth; float clamped = std::min (depth, 2.0f); modDepthSamples_ = clamped * 16.0f * static_cast<float> (sampleRate_ / kBaseSampleRate); }
+void TiledRoomReverb::setModDepth (float depth) { lastModDepthRaw_ = std::min (depth, 2.0f); modDepthSamples_ = lastModDepthRaw_ * 16.0f * static_cast<float> (sampleRate_ / kBaseSampleRate); }
 void TiledRoomReverb::setModRate (float hz) { modRateHz_ = hz; if (prepared_) updateLFORates(); }
 void TiledRoomReverb::setSize (float size) { sizeParam_ = std::clamp (size, 0.0f, 1.0f); if (prepared_) { updateDelayLengths(); updateDecayCoefficients(); } }
-void TiledRoomReverb::setFreeze (bool frozen) { frozen_ = frozen; }
+void TiledRoomReverb::setFreeze (bool frozen)
+{
+    if (frozen && ! frozen_)
+    {
+        // Entering freeze: clear DC blocker history and RMS trackers
+        // so stale state doesn't leak into the frozen tail.
+        for (int ch = 0; ch < N; ++ch)
+        {
+            dcX1_[ch] = 0.0f;
+            dcY1_[ch] = 0.0f;
+        }
+        currentRMS_ = 0.0f;
+        peakRMS_ = 0.0f;
+    }
+    frozen_ = frozen;
+}
+void TiledRoomReverb::setNoiseModDepth (float depth) { noiseModDepth_ = std::clamp (depth, -maxNoiseModDepth_, maxNoiseModDepth_); }
 void TiledRoomReverb::setDecayBoost (float boost) { decayBoost_ = std::clamp (boost, 0.3f, 2.0f); if (prepared_) updateDecayCoefficients(); }
-void TiledRoomReverb::setTerminalDecay (float thresholdDB, float factor) { terminalDecayThresholdDB_ = -std::abs (thresholdDB); terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f); }
+void TiledRoomReverb::setTerminalDecay (float thresholdDB, float factor) { terminalDecayThresholdDB_ = -std::abs (thresholdDB); terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f); terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f); }
 void TiledRoomReverb::setStereoCoupling (float amount) { stereoCoupling_ = std::clamp (amount, 0.0f, 0.75f); }
 
 void TiledRoomReverb::clearBuffers()
