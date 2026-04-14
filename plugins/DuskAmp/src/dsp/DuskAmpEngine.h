@@ -1,8 +1,9 @@
 #pragma once
 
 #include "InputSection.h"
-#include "PreampDSP.h"
-#include "ToneStack.h"
+#include "StompBox.h"
+#include "PreampModel.h"
+#include "ToneStackModel.h"
 #include "PowerAmp.h"
 #include "CabinetIR.h"
 #include "PostFX.h"
@@ -31,13 +32,14 @@ public:
     void setGateThreshold (float dB);
     void setGateRelease (float ms);
 
+    // Amp type (controls preamp model + tone stack topology + power amp config)
+    void setAmpType (int type); // 0=Fender, 1=Marshall, 2=Vox
+
     // Preamp (DSP mode)
     void setPreampGain (float gain01);
-    void setPreampChannel (int channel); // 0=Clean, 1=Crunch, 2=Lead
     void setPreampBright (bool on);
 
-    // Tone stack
-    void setToneStackType (int type); // 0=American, 1=British, 2=AC
+    // Tone stack (topology is set automatically by setAmpType)
     void setBass (float value01);
     void setMid (float value01);
     void setTreble (float value01);
@@ -54,14 +56,26 @@ public:
     void setCabinetHiCut (float hz);
     void setCabinetLoCut (float hz);
 
-    // Post FX
+    // Stomp box (before amp)
+    void setBoostEnabled (bool on);
+    void setBoostGain (float gain01);
+    void setBoostTone (float tone01);
+    void setBoostLevel (float level01);
+
+    // Post FX — Delay
     void setDelayEnabled (bool on);
+    void setDelayType (int type); // 0=Digital, 1=Analog, 2=Tape
     void setDelayTime (float ms);
     void setDelayFeedback (float fb01);
     void setDelayMix (float mix01);
+
+    // Post FX — Reverb
     void setReverbEnabled (bool on);
     void setReverbMix (float mix01);
     void setReverbDecay (float decay01);
+    void setReverbPreDelay (float ms);
+    void setReverbDamping (float damping01);
+    void setReverbSize (float size01);
 
     // Output
     void setOutputLevel (float dB);
@@ -82,8 +96,11 @@ public:
 
 private:
     InputSection input_;
-    PreampDSP preamp_;
-    ToneStack toneStack_;
+    StompBox stompBox_;
+    std::unique_ptr<PreampModel> preampPool_[3];  // Pre-created models: [Fender, Marshall, Vox]
+    PreampModel* preamp_ = nullptr;               // Active model (borrowed from pool, not owned)
+    AmpType currentAmpType_ = AmpType::Marshall;
+    ToneStackModel toneStack_;
     PowerAmp powerAmp_;
     CabinetIR cabinet_;
     PostFX postFx_;
