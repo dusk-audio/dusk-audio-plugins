@@ -41,6 +41,10 @@ namespace {
     constexpr float kBakedModRateScale       = 13.0f;
     constexpr float kBakedDecayTimeScale     = 1.5f;
 
+    // Post-engine safety ceiling — must match engine's kSafetyClip for
+    // consistent clamping after corrective EQ + stereo width processing.
+    constexpr float kWrapperSafetyClip       = 4.0f;
+
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
     // (from vv_topology_baked.json — derived from VV IR analysis).
@@ -62,7 +66,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.520424f;
+    constexpr float kVvDecayTimeScale    = 0.528398f;
 
     // -----------------------------------------------------------------
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
@@ -74,7 +78,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.729211f, 0.629531f, 1.6516f, 1.09373f, -0.232697f, -1.79562f, -2.19536f, -2.84135f, -3.02457f, -3.61032f, -3.3085f, 4.5477f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.61751f, -9.64368f, -6.02399f, 3.79306f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -83,7 +87,7 @@ namespace {
     // mult > 1.0 = longer decay, < 1.0 = shorter decay in that band.
     // Crossover frequencies define the band boundaries.
     // -----------------------------------------------------------------
-    constexpr float kFiveBandMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
 
     // -----------------------------------------------------------------
@@ -394,6 +398,8 @@ private:
     float structHFStateR_ = 0.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
+    float rmsAlpha_ = 0.9995f;
+    float peakDecayAlpha_ = 0.99999f;
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
@@ -533,8 +539,14 @@ void GatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 
     // FiveBandDamping: set inner crossover coefficients and band multipliers.
     {
-        float fbCrossHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
-        float fbMult[5] = { 1.20f, 1.00f, 1.00f, 0.80f, 0.50f };
+        float fbCrossHz[4] = {
+            kFiveBandCrossoverHz[0], kFiveBandCrossoverHz[1],
+            kFiveBandCrossoverHz[2], kFiveBandCrossoverHz[3]
+        };
+        float fbMult[5] = {
+            kFiveBandMult[0], kFiveBandMult[1], kFiveBandMult[2],
+            kFiveBandMult[3], kFiveBandMult[4]
+        };
         float coeffs[4];
         for (int b = 0; b < 4; ++b)
             coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
@@ -550,7 +562,8 @@ void GatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
     // Track allocation ceiling for runtime setSizeRange() bounds checking
-    sizeRangeAllocatedMax_ = std::max (sizeRangeMax_, 1.5f);
+    // Preserve headroom for post-prepare size-range overrides.
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, sizeRangeMax_);
 
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
@@ -562,7 +575,7 @@ void GatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
 
         tank.ap1Buffer.allocate (ap1Max);
-        tank.delay1.allocate (del1Max + maxModExcursion);  // Extra headroom for noise jitter
+        tank.delay1.allocate (del1Max);  // Extra headroom for noise jitter
         tank.ap2.allocate (ap2Max);
         tank.delay2.allocate (del2Max + maxModExcursion);
 
@@ -572,7 +585,7 @@ void GatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
             int dapMax = static_cast<int> (std::ceil (
-                tank.densityAPBase[i] * rateRatio * sizeRangeMax_ * delayScale_)) + 4;
+                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * delayScale_)) + 4;
             tank.densityAP[i].allocate (dapMax);
         }
 
@@ -592,6 +605,13 @@ void GatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.noiseState = 0xCAFEBABEu;
 
     prepared_ = true;
+
+    // Sample-rate-invariant terminal decay smoothing
+    constexpr float kRmsTauMs = 45.0f;
+    constexpr float kPeakTauMs = 2270.0f;
+    float sr = static_cast<float> (sampleRate);
+    rmsAlpha_ = std::exp (-1000.0f / (kRmsTauMs * sr));
+    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
 
     updateDelayLengths();
     updateDecayCoefficients();
@@ -613,10 +633,9 @@ void GatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.terminalDecayActive = false;
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
-    // Recompute soft onset coefficient for the current sample rate so
-    // setSoftOnsetMs() calls before prepare() take effect.
+    // Recompute soft onset coefficient at the current sample rate.
     if (softOnsetMs_ > 0.0f)
-        softOnsetCoeff_ = 1.0f / (softOnsetMs_ * 0.001f * static_cast<float> (sampleRate_) + 1.0f);
+        setSoftOnsetMs (softOnsetMs_);
 }
 
 // -----------------------------------------------------------------------
@@ -658,18 +677,21 @@ void GatedSnarePresetEngine::process (const float* inputL, const float* inputR,
             tank.ap1Buffer.write (ap1In);
             float ap1Out = ap1Delayed - coeff1 * ap1In;
 
-            // Advance LFO with drift
-            float drift = nextDrift (tank.lfoPRNG) * tank.lfoPhaseInc * 0.08f;
-            tank.lfoPhase += tank.lfoPhaseInc + drift;
-            if (tank.lfoPhase >= kTwoPi)
-                tank.lfoPhase -= kTwoPi;
-            else if (tank.lfoPhase < 0.0f)
-                tank.lfoPhase += kTwoPi;
+            // Advance LFO with drift (frozen tail holds steady)
+            if (! frozen_)
+            {
+                float drift = nextDrift (tank.lfoPRNG) * tank.lfoPhaseInc * 0.08f;
+                tank.lfoPhase += tank.lfoPhaseInc + drift;
+                if (tank.lfoPhase >= kTwoPi)
+                    tank.lfoPhase -= kTwoPi;
+                else if (tank.lfoPhase < 0.0f)
+                    tank.lfoPhase += kTwoPi;
+            }
 
             // --- Delay 1 (with per-sample noise jitter) ---
             float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
                                     ? independentNoiseModDepth_ : noiseModDepth_;
-            float jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -699,7 +721,7 @@ void GatedSnarePresetEngine::process (const float* inputL, const float* inputR,
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 (with per-sample noise jitter) ---
-            float jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -715,9 +737,9 @@ void GatedSnarePresetEngine::process (const float* inputL, const float* inputR,
             if (terminalDecayFactor_ < 1.0f && ! frozen_)
             {
                 float sampleEnergy = del2Out * del2Out;
-                tank.currentRMS = tank.currentRMS * 0.9995f + sampleEnergy * 0.0005f;
+                tank.currentRMS = rmsAlpha_ * tank.currentRMS + (1.0f - rmsAlpha_) * sampleEnergy;
                 if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
-                else tank.peakRMS *= 0.99999f;
+                else tank.peakRMS *= peakDecayAlpha_;
                 float rmsDB = 10.0f * std::log10 (std::max (tank.currentRMS, 1e-20f));
                 float peakDB = 10.0f * std::log10 (std::max (tank.peakRMS, 1e-20f));
                 tank.terminalDecayActive = (peakDB - rmsDB > -terminalDecayThresholdDB_) && (tank.peakRMS > 1e-12f);
@@ -871,7 +893,7 @@ void GatedSnarePresetEngine::setCrossoverFreq (float hz)
 
 void GatedSnarePresetEngine::setHighCrossoverFreq (float hz)
 {
-    highCrossoverFreq_ = std::max (hz, 1.0f);
+    highCrossoverFreq_ = std::max (hz, std::max (crossoverFreq_ + 1.0f, 1.0f));
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -885,12 +907,12 @@ void GatedSnarePresetEngine::setAirDampingScale (float scale)
 
 void GatedSnarePresetEngine::setModDepth (float depth)
 {
-    lastModDepthRaw_ = depth;
+    lastModDepthRaw_ = std::clamp (depth, 0.0f, 2.0f);
     // Map 0-1 knob range to 0-16 samples peak excursion (Dattorro: 8 samples typical)
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = depth * 16.0f * rateRatio;
+    modDepthSamples_ = lastModDepthRaw_ * 16.0f * rateRatio;
     // Noise jitter scales with depth and sample rate
-    noiseModDepth_ = depth * 12.0f * rateRatio;  // 12 samples peak at depth=1.0
+    noiseModDepth_ = lastModDepthRaw_ * 12.0f * rateRatio;  // 12 samples peak at depth=1.0
 }
 
 void GatedSnarePresetEngine::setModRate (float hz)
@@ -902,7 +924,7 @@ void GatedSnarePresetEngine::setModRate (float hz)
 
 void GatedSnarePresetEngine::setLimiter (float thresholdDb, float releaseMs)
 {
-    if (thresholdDb <= -60.0f || thresholdDb >= 0.0f)
+    if (thresholdDb >= 0.0f)
     {
         limiterThreshold_ = 0.0f;  // Disabled
         return;
@@ -965,7 +987,8 @@ void GatedSnarePresetEngine::setNoiseModDepth (float samples)
     // Critical for algorithms with low modDepth (e.g., Chamber=0.05) that
     // still need aggressive jitter to suppress modal resonances.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    independentNoiseModDepth_ = samples * rateRatio;
+    float maxJitter = 32.0f * rateRatio;
+    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxJitter);
 }
 
 void GatedSnarePresetEngine::setOutputTaps (const OutputTap* left, const OutputTap* right)
@@ -1012,6 +1035,17 @@ void GatedSnarePresetEngine::applyTapGains (const float* leftGains, const float*
 void GatedSnarePresetEngine::setFreeze (bool frozen)
 {
     frozen_ = frozen;
+    if (frozen)
+    {
+        structHFStateL_ = 0.0f;
+        structHFStateR_ = 0.0f;
+        leftTank_.currentRMS = 0.0f;
+        leftTank_.peakRMS = 0.0f;
+        leftTank_.terminalDecayActive = false;
+        rightTank_.currentRMS = 0.0f;
+        rightTank_.peakRMS = 0.0f;
+        rightTank_.terminalDecayActive = false;
+    }
 }
 
 void GatedSnarePresetEngine::setLateGainScale (float scale)
@@ -1140,13 +1174,17 @@ void GatedSnarePresetEngine::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
-        float gLow = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
-        float gMid = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
-        // Air band: airDampingScale > 1 → air decays slower (brighter tail)
-        // airDampingScale = 1 → gAir == gMid → collapses to 2-band behavior
-        float gAir = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        tank.damping.setCoefficients (gLow, gMid, gAir, lowXoverCoeff, highXoverCoeff);
+        // 5-band damping using baked kFiveBandMult[] combined with runtime controls
+        float combinedMult[5] = {
+            kFiveBandMult[0] * bassMultiply_,
+            kFiveBandMult[1] * bassMultiply_,
+            kFiveBandMult[2] * trebleMultiply_,
+            kFiveBandMult[3] * trebleMultiply_,
+            kFiveBandMult[4] * std::max (trebleMultiply_ * airDampingScale_, 0.01f)
+        };
+        tank.damping.setBandMultipliers (combinedMult);
+        tank.damping.computeGainsFromBase (gBase, lowXoverCoeff, highXoverCoeff);
     };
 
     updateTankDamping (leftTank_);
@@ -1188,8 +1226,10 @@ public:
         engine_.setCrossoverFreq     (kVvCrossoverHz);
         // Bass/treble defaults must be set BEFORE prepare so decay coefficients
         // are computed with the correct damping baseline.
-        engine_.setBassMultiply (kBakedBassMultScale);
+        float savedBass = lastBass_;
         float savedTreble = lastTreble_;
+        engine_.setBassMultiply (kBakedBassMultScale);
+        lastBass_ = 1.0f;
         engine_.setTrebleMultiply (kBakedTrebleMultScale);
         lastTreble_ = kBakedTrebleMultScale;
         engine_.setAirDampingScale (kBakedAirDampingScale * kVvAirDampingScale);
@@ -1218,10 +1258,14 @@ public:
             setAirDampingScale (overrideAirDamping_);
         if (overrideHighCrossover_ >= 0.0f)
             setHighCrossoverFreq (overrideHighCrossover_);
+        if (overrideCrossover_ >= 0.0f)
+            setCrossoverFreq (overrideCrossover_);
         if (overrideNoiseMod_ >= 0.0f)
             setNoiseModDepth (overrideNoiseMod_);
         if (overrideLateGain_ >= 0.0f)
             setLateGainScale (overrideLateGain_);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
         if (lastTerminalFactor_ < 1.0f)
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
@@ -1231,6 +1275,10 @@ public:
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
         }
+        if (savedBass != 1.0f)
+            setBassMultiply (savedBass);
+        if (lastStructHFHz_ > 0.0f)
+            setStructuralHFDamping (lastStructHFHz_);
 
         // Pre-compute per-preset tilt EQ coefficients at the actual host
         // sample rate. These are derived from the VV IR's frequency
@@ -1256,7 +1304,18 @@ public:
         for (int i = 0; i < kCorrEqBandCount; ++i)
         {
             const float gainDb = kCorrEqDb[i];
-            const float fc     = std::min (kCorrEqHz[i], nyquistGuard);
+            // Bands above the Nyquist guard become neutral (bypass)
+            // to avoid stacking multiple bands at the guard frequency.
+            if (kCorrEqHz[i] >= nyquistGuard)
+            {
+                corrB0_[i] = 1.0f;
+                corrB1_[i] = 0.0f;
+                corrB2_[i] = 0.0f;
+                corrA1_[i] = 0.0f;
+                corrA2_[i] = 0.0f;
+                continue;
+            }
+            const float fc     = kCorrEqHz[i];
             // RBJ peaking EQ formulas
             const float A     = std::pow (10.0f, gainDb / 40.0f);
             const float w0    = twoPi * fc / corrSr;
@@ -1343,8 +1402,8 @@ public:
             float side = 0.5f * (yL - yR);
             // Re-limit after corrective EQ + stereo width to prevent
             // clipping from up to +12dB of per-band boost.
-            outputL[i] = std::clamp (mid + side * kStereoWidth, -32.0f, 32.0f);
-            outputR[i] = std::clamp (mid - side * kStereoWidth, -32.0f, 32.0f);
+            outputL[i] = std::clamp (mid + side * kStereoWidth, -kWrapperSafetyClip, kWrapperSafetyClip);
+            outputR[i] = std::clamp (mid - side * kStereoWidth, -kWrapperSafetyClip, kWrapperSafetyClip);
         }
         // PATCH_POINT_POST_ENGINE
     }
@@ -1386,6 +1445,7 @@ public:
         // PASS case. The VV correction is applied via tilt EQ and air
         // damping instead.
         engine_.setBassMultiply (mult * kBakedBassMultScale);
+        lastBass_ = mult;
     }
 
     void setTrebleMultiply (float mult) override
@@ -1399,9 +1459,15 @@ public:
         // Cache the SCALED engine-facing value (Invariant 2) so any
         // structural HF damping replay uses the consistent value.
         lastTreble_ = scaled;
+        if (lastStructHFHz_ > 0.0f)
+            setStructuralHFDamping (lastStructHFHz_);
     }
 
-    void setCrossoverFreq (float hz) override { engine_.setCrossoverFreq (hz); }
+    void setCrossoverFreq (float hz) override
+    {
+        overrideCrossover_ = hz;
+        engine_.setCrossoverFreq (hz);
+    }
 
     void setModDepth (float depth) override
     {
@@ -1435,7 +1501,7 @@ public:
     void setAirDampingScale (float scale) override
     {
         overrideAirDamping_ = scale;
-        engine_.setAirDampingScale (scale);
+        engine_.setAirDampingScale (kBakedAirDampingScale * kVvAirDampingScale * scale);
     }
 
     void setNoiseModDepth (float samples) override
@@ -1450,11 +1516,16 @@ public:
         engine_.setStructuralHFDamping (hz);
     }
 
-    void setSizeRange (float mn, float mx) override { engine_.setSizeRange (mn, mx); }
+    void setSizeRange (float mn, float mx) override
+    {
+        overrideSizeRangeMin_ = mn;
+        overrideSizeRangeMax_ = mx;
+        engine_.setSizeRange (mn, mx);
+    }
     void setLateGainScale (float scale) override
     {
         overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale);
+        engine_.setLateGainScale (scale * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1472,6 +1543,17 @@ public:
     {
         overrideNoiseMod_ = -1.0f;
         engine_.setNoiseModDepth (kBakedNoiseModDepth);
+    }
+    void resetLateGainToDefault() override
+    {
+        overrideLateGain_ = -1.0f;
+        engine_.setLateGainScale (kBakedLateGainScale);
+    }
+    void resetSizeRangeToDefault() override
+    {
+        overrideSizeRangeMin_ = -1.0f;
+        overrideSizeRangeMax_ = -1.0f;
+        engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
     }
 
     const char* getPresetName() const override { return "Gated Snare"; }
@@ -1502,6 +1584,7 @@ public:
 
 private:
     GatedSnarePresetEngine engine_;
+    float lastBass_ = 1.0f;
     float lastTreble_ = 0.5f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
@@ -1512,8 +1595,11 @@ private:
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;
     float overrideHighCrossover_ = -1.0f;
+    float overrideCrossover_ = -1.0f;
     float overrideNoiseMod_ = -1.0f;
     float overrideLateGain_ = -1.0f;
+    float overrideSizeRangeMin_ = -1.0f;
+    float overrideSizeRangeMax_ = -1.0f;
     // Baked tilt EQ state (per-instance, not function-local statics)
     float tiltLowCoeff_ = 0.0f;
     float tiltLowGain_  = 0.0f;
