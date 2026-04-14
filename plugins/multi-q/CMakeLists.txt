@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(MULTIQ_DEFAULT_VERSION "0.10.3")
+set(MULTIQ_DEFAULT_VERSION "0.10.4")
 get_plugin_version("multi-q" MULTIQ_VERSION)
 if(NOT MULTIQ_VERSION OR MULTIQ_VERSION STREQUAL "0.0.0")
     set(MULTIQ_VERSION ${MULTIQ_DEFAULT_VERSION})
@@ -230,6 +230,45 @@ if(NOT CMAKE_CROSSCOMPILING)
     )
 
     add_dependencies(MultiQIntegrationTest MultiQ_All)
+endif()
+
+# --- M/S Routing Test (JUCE-linked, verifies per-band mid/side routing) ---
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(MultiQMSRoutingTest
+        tests/test_ms_routing.cpp
+    )
+
+    target_include_directories(MultiQMSRoutingTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/MultiQ_artefacts/JuceLibraryCode
+    )
+
+    target_compile_definitions(MultiQMSRoutingTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_STANDALONE_APPLICATION=1
+    )
+
+    target_compile_features(MultiQMSRoutingTest PRIVATE cxx_std_17)
+
+    target_link_libraries(MultiQMSRoutingTest
+        PRIVATE
+            MultiQ
+            juce::juce_core
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_data_structures
+            juce::juce_dsp
+            juce::juce_events
+            juce::juce_graphics
+            juce::juce_gui_basics
+            juce::juce_gui_extra
+    )
+
+    add_dependencies(MultiQMSRoutingTest MultiQ_All)
 endif()
 
 # --- Transfer-to-Digital Test (JUCE-linked, verifies cross-mode EQ transfer) ---

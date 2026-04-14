@@ -107,13 +107,9 @@ struct CytomicSVF
 
     void setSmoothCoeff(float c) { smoothCoeff = juce::jlimit(0.0f, 1.0f, c); }
 
-    float processSample(float x)
+    // Advance coefficient interpolation toward target (call once per sample)
+    void stepSmoothing()
     {
-        // Sanitize input to prevent NaN/Inf from entering or passing through the filter
-        if (!safeIsFinite(x))
-            x = 0.0f;
-
-        // Per-sample coefficient interpolation (skip when converged)
         if (!converged)
         {
             float s = smoothCoeff;
@@ -124,7 +120,6 @@ struct CytomicSVF
             coeffs.m1 += s * (target.m1 - coeffs.m1);
             coeffs.m2 += s * (target.m2 - coeffs.m2);
 
-            // Check convergence (all coefficients within epsilon of target)
             constexpr float eps = 1e-7f;
             if (std::abs(coeffs.a1 - target.a1) < eps &&
                 std::abs(coeffs.a2 - target.a2) < eps &&
@@ -133,10 +128,19 @@ struct CytomicSVF
                 std::abs(coeffs.m1 - target.m1) < eps &&
                 std::abs(coeffs.m2 - target.m2) < eps)
             {
-                coeffs = target;  // Snap to exact values
+                coeffs = target;
                 converged = true;
             }
         }
+    }
+
+    // Process a single sample. Caller must call stepSmoothing() beforehand
+    // (StereoSVF::stepSmoothing advances both L and R each sample).
+    float processSample(float x)
+    {
+        // Sanitize input to prevent NaN/Inf from entering or passing through the filter
+        if (!safeIsFinite(x))
+            x = 0.0f;
 
         // SVF tick (linear trapezoidal integration)
         float v3 = x - ic2eq;
@@ -186,6 +190,14 @@ struct StereoSVF
         filterR.setSmoothCoeff(c);
     }
 
+    // Advance coefficient smoothing on both channels so the idle side
+    // converges even when routing processes only one channel per sample.
+    void stepSmoothing()
+    {
+        filterL.stepSmoothing();
+        filterR.stepSmoothing();
+    }
+
     float processSampleL(float s) { return filterL.processSample(s); }
     float processSampleR(float s) { return filterR.processSample(s); }
 };
@@ -217,12 +229,16 @@ struct StereoBiquad
     void snapToTarget() { coeffs = target; }
     void setSmoothCoeff(float c) { smoothCoeff = c; }
 
+    // Advance coefficient smoothing once per sample (call before processSampleL/R)
+    void stepSmoothing()
+    {
+        for (int i = 0; i < 6; ++i)
+            coeffs.coeffs[i] += smoothCoeff * (target.coeffs[i] - coeffs.coeffs[i]);
+    }
+
     float processSampleL(float x)
     {
         if (!safeIsFinite(x)) x = 0.0f;
-        // Step coefficients toward target
-        for (int i = 0; i < 6; ++i)
-            coeffs.coeffs[i] += smoothCoeff * (target.coeffs[i] - coeffs.coeffs[i]);
         float y = coeffs.coeffs[0] * x + s1L;
         s1L = coeffs.coeffs[1] * x - coeffs.coeffs[4] * y + s2L;
         s2L = coeffs.coeffs[2] * x - coeffs.coeffs[5] * y;
@@ -537,6 +553,9 @@ private:
             for (auto& f : stagesL) f.prepare(spec);
             for (auto& f : stagesR) f.prepare(spec);
         }
+
+        // No-op: JUCE IIR filters set coefficients directly (no per-sample smoothing)
+        void stepSmoothing() {}
 
         float processSampleL(float sample)
         {
