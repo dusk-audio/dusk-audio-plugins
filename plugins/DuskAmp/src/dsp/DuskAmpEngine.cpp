@@ -22,7 +22,18 @@ void DuskAmpEngine::prepare (double sampleRate, int maxBlockSize)
     double oversampledRate = oversampling_.getOversampledSampleRate();
 
     input_.prepare (sampleRate);
-    preamp_.prepare (oversampledRate);
+    stompBox_.prepare (sampleRate);
+
+    // Pre-create all three preamp models so setAmpType() can swap without heap allocation
+    for (int i = 0; i < 3; ++i)
+    {
+        auto type = static_cast<AmpType> (i);
+        if (! preampPool_[i] || preampPool_[i]->getAmpType() != type)
+            preampPool_[i] = PreampModel::create (type);
+        preampPool_[i]->prepare (oversampledRate);
+    }
+    preamp_ = preampPool_[static_cast<int> (currentAmpType_)].get();
+
     powerAmp_.prepare (oversampledRate);
     cabinet_.prepare (sampleRate, maxBlockSize);
     postFx_.prepare (sampleRate, maxBlockSize);
@@ -47,6 +58,9 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
     // 2. Input section: gain + noise gate (runs at base rate)
     input_.process (monoBuffer_.data(), numSamples);
 
+    // 3. Stomp box (before amp, runs at base rate)
+    stompBox_.process (monoBuffer_.data(), numSamples);
+
     // Deferred mode switch from crossfade completion
     if (modeSwitchPending_)
     {
@@ -69,7 +83,7 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
         int oversampledNumSamples = static_cast<int> (oversampledBlock.getNumSamples());
         float* oversampledData = oversampledBlock.getChannelPointer (0);
 
-        preamp_.process (oversampledData, oversampledNumSamples);
+        preamp_->process (oversampledData, oversampledNumSamples);
         toneStack_.process (oversampledData, oversampledNumSamples);
         powerAmp_.process (oversampledData, oversampledNumSamples);
 
@@ -143,7 +157,8 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
 void DuskAmpEngine::reset()
 {
     input_.reset();
-    preamp_.reset();
+    stompBox_.reset();
+    if (preamp_) preamp_->reset();
     toneStack_.reset();
     powerAmp_.reset();
     cabinet_.reset();
@@ -205,28 +220,35 @@ void DuskAmpEngine::setGateRelease (float ms)
     input_.setGateRelease (ms);
 }
 
+// --- Amp Type (controls preamp model + tone stack topology) ---
+
+void DuskAmpEngine::setAmpType (int type)
+{
+    auto newType = static_cast<AmpType> (std::clamp (type, 0, 2));
+    if (newType == currentAmpType_ && preamp_) return;
+
+    currentAmpType_ = newType;
+
+    // Swap to pre-created model from pool (no heap allocation on audio thread)
+    preamp_ = preampPool_[static_cast<int> (newType)].get();
+
+    // Sync tone stack topology to match the amp type
+    toneStack_.setTopology (static_cast<ToneStackModel::Topology> (newType));
+
+    // Sync power amp configuration to match the amp type
+    powerAmp_.setAmpType (newType);
+}
+
 // --- Preamp ---
 
 void DuskAmpEngine::setPreampGain (float gain01)
 {
-    preamp_.setGain (gain01);
-}
-
-void DuskAmpEngine::setPreampChannel (int channel)
-{
-    preamp_.setChannel (static_cast<PreampDSP::Channel> (std::clamp (channel, 0, 2)));
+    if (preamp_) preamp_->setGain (gain01);
 }
 
 void DuskAmpEngine::setPreampBright (bool on)
 {
-    preamp_.setBright (on);
-}
-
-// --- Tone Stack ---
-
-void DuskAmpEngine::setToneStackType (int type)
-{
-    toneStack_.setType (static_cast<ToneStack::Type> (std::clamp (type, 0, 2)));
+    if (preamp_) preamp_->setBright (on);
 }
 
 void DuskAmpEngine::setBass (float value01)
@@ -288,42 +310,29 @@ void DuskAmpEngine::setCabinetLoCut (float hz)
     cabinet_.setLoCut (hz);
 }
 
-// --- Post FX ---
+// --- Stomp Box ---
 
-void DuskAmpEngine::setDelayEnabled (bool on)
-{
-    postFx_.setDelayEnabled (on);
-}
+void DuskAmpEngine::setBoostEnabled (bool on) { stompBox_.setEnabled (on); }
+void DuskAmpEngine::setBoostGain (float gain01) { stompBox_.setGain (gain01); }
+void DuskAmpEngine::setBoostTone (float tone01) { stompBox_.setTone (tone01); }
+void DuskAmpEngine::setBoostLevel (float level01) { stompBox_.setLevel (level01); }
 
-void DuskAmpEngine::setDelayTime (float ms)
-{
-    postFx_.setDelayTime (ms);
-}
+// --- Post FX: Delay ---
 
-void DuskAmpEngine::setDelayFeedback (float fb01)
-{
-    postFx_.setDelayFeedback (fb01);
-}
+void DuskAmpEngine::setDelayEnabled (bool on) { postFx_.setDelayEnabled (on); }
+void DuskAmpEngine::setDelayType (int type) { postFx_.setDelayType (type); }
+void DuskAmpEngine::setDelayTime (float ms) { postFx_.setDelayTime (ms); }
+void DuskAmpEngine::setDelayFeedback (float fb01) { postFx_.setDelayFeedback (fb01); }
+void DuskAmpEngine::setDelayMix (float mix01) { postFx_.setDelayMix (mix01); }
 
-void DuskAmpEngine::setDelayMix (float mix01)
-{
-    postFx_.setDelayMix (mix01);
-}
+// --- Post FX: Reverb ---
 
-void DuskAmpEngine::setReverbEnabled (bool on)
-{
-    postFx_.setReverbEnabled (on);
-}
-
-void DuskAmpEngine::setReverbMix (float mix01)
-{
-    postFx_.setReverbMix (mix01);
-}
-
-void DuskAmpEngine::setReverbDecay (float decay01)
-{
-    postFx_.setReverbDecay (decay01);
-}
+void DuskAmpEngine::setReverbEnabled (bool on) { postFx_.setReverbEnabled (on); }
+void DuskAmpEngine::setReverbMix (float mix01) { postFx_.setReverbMix (mix01); }
+void DuskAmpEngine::setReverbDecay (float decay01) { postFx_.setReverbDecay (decay01); }
+void DuskAmpEngine::setReverbPreDelay (float ms) { postFx_.setReverbPreDelay (ms); }
+void DuskAmpEngine::setReverbDamping (float damping01) { postFx_.setReverbDamping (damping01); }
+void DuskAmpEngine::setReverbSize (float size01) { postFx_.setReverbSize (size01); }
 
 // --- NAM ---
 
@@ -355,7 +364,8 @@ void DuskAmpEngine::setOversamplingFactor (int factor)
     oversampling_.setFactor (factor);
 
     double oversampledRate = oversampling_.getOversampledSampleRate();
-    preamp_.prepare (oversampledRate);
+    for (auto& model : preampPool_)
+        if (model) model->prepare (oversampledRate);
     powerAmp_.prepare (oversampledRate);
 
     // Tone stack rate depends on current amp mode

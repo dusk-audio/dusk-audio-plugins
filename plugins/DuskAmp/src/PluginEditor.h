@@ -90,9 +90,9 @@ private:
 
     // -- AMP section --
     KnobWithLabel preampGain_;
-    // Channel selector
-    juce::ComboBox channelBox_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> channelAttachment_;
+    // Amp type selector (Clean / British Crunch / British Chime)
+    juce::ComboBox ampTypeBox_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ampTypeAttachment_;
     // Bright toggle
     juce::ToggleButton brightButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> brightAttachment_;
@@ -101,14 +101,19 @@ private:
     KnobWithLabel bass_;
     KnobWithLabel mid_;
     KnobWithLabel treble_;
-    juce::ComboBox toneTypeBox_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> toneTypeAttachment_;
 
     // -- POWER AMP section --
     KnobWithLabel powerDrive_;
     KnobWithLabel presence_;
     KnobWithLabel resonance_;
     KnobWithLabel sag_;
+
+    // -- STOMP BOX section --
+    juce::ToggleButton boostEnabled_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> boostEnabledAttachment_;
+    KnobWithLabel boostGain_;
+    KnobWithLabel boostTone_;
+    KnobWithLabel boostLevel_;
 
     // -- CABINET section --
     juce::ToggleButton cabEnabled_;
@@ -118,16 +123,23 @@ private:
     KnobWithLabel cabLoCut_;
     CabBrowser cabBrowser_;
 
-    // -- EFFECTS section --
+    // -- DELAY section --
     juce::ToggleButton delayEnabled_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> delayEnabledAttachment_;
+    juce::ComboBox delayTypeBox_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> delayTypeAttachment_;
     KnobWithLabel delayTime_;
     KnobWithLabel delayFeedback_;
     KnobWithLabel delayMix_;
+
+    // -- REVERB section --
     juce::ToggleButton reverbEnabled_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> reverbEnabledAttachment_;
     KnobWithLabel reverbMix_;
     KnobWithLabel reverbDecay_;
+    KnobWithLabel reverbPreDelay_;
+    KnobWithLabel reverbDamping_;
+    KnobWithLabel reverbSize_;
 
     // -- NAM browser --
     NAMBrowser namBrowser_;
@@ -150,7 +162,8 @@ private:
     // Stored group box bounds (set in resized, drawn in paint)
     juce::Rectangle<int> inputGroupBounds_, outputGroupBounds_;
     juce::Rectangle<int> centerTopBounds_, centerMidBounds_, centerBotBounds_;
-    juce::Rectangle<int> cabGroupBounds_, fxGroupBounds_;
+    juce::Rectangle<int> boostGroupBounds_, cabGroupBounds_;
+    juce::Rectangle<int> delayGroupBounds_, reverbGroupBounds_;
     bool layoutIsNamMode_ = false;
 
     // Tooltip
