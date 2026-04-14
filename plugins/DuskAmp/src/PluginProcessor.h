@@ -77,47 +77,55 @@ private:
 
     // Discrete / choice parameter pointers
     std::atomic<float>* ampModeParam_       = nullptr;
-    std::atomic<float>* preampChannelParam_ = nullptr;
-    std::atomic<float>* toneTypeParam_      = nullptr;
+    std::atomic<float>* ampTypeParam_       = nullptr;
     std::atomic<float>* oversamplingParam_  = nullptr;
     std::atomic<float>* cabEnabledParam_    = nullptr;
     std::atomic<float>* brightParam_        = nullptr;
+    std::atomic<float>* boostEnabledParam_  = nullptr;
     std::atomic<float>* delayEnabledParam_  = nullptr;
+    std::atomic<float>* delayTypeParam_     = nullptr;
     std::atomic<float>* reverbEnabledParam_ = nullptr;
 
     // Continuous float parameter pointers
-    std::atomic<float>* inputGainParam_     = nullptr;
-    std::atomic<float>* gateThresholdParam_ = nullptr;
-    std::atomic<float>* gateReleaseParam_   = nullptr;
-    std::atomic<float>* preampGainParam_    = nullptr;
-    std::atomic<float>* bassParam_          = nullptr;
-    std::atomic<float>* midParam_           = nullptr;
-    std::atomic<float>* trebleParam_        = nullptr;
-    std::atomic<float>* powerDriveParam_    = nullptr;
-    std::atomic<float>* presenceParam_      = nullptr;
-    std::atomic<float>* resonanceParam_     = nullptr;
-    std::atomic<float>* sagParam_           = nullptr;
-    std::atomic<float>* cabMixParam_        = nullptr;
-    std::atomic<float>* cabHiCutParam_      = nullptr;
-    std::atomic<float>* cabLoCutParam_      = nullptr;
-    std::atomic<float>* delayTimeParam_     = nullptr;
-    std::atomic<float>* delayFeedbackParam_ = nullptr;
-    std::atomic<float>* delayMixParam_      = nullptr;
-    std::atomic<float>* reverbMixParam_     = nullptr;
-    std::atomic<float>* reverbDecayParam_   = nullptr;
-    std::atomic<float>* outputLevelParam_   = nullptr;
+    std::atomic<float>* inputGainParam_      = nullptr;
+    std::atomic<float>* gateThresholdParam_  = nullptr;
+    std::atomic<float>* gateReleaseParam_    = nullptr;
+    std::atomic<float>* preampGainParam_     = nullptr;
+    std::atomic<float>* bassParam_           = nullptr;
+    std::atomic<float>* midParam_            = nullptr;
+    std::atomic<float>* trebleParam_         = nullptr;
+    std::atomic<float>* powerDriveParam_     = nullptr;
+    std::atomic<float>* presenceParam_       = nullptr;
+    std::atomic<float>* resonanceParam_      = nullptr;
+    std::atomic<float>* sagParam_            = nullptr;
+    std::atomic<float>* cabMixParam_         = nullptr;
+    std::atomic<float>* cabHiCutParam_       = nullptr;
+    std::atomic<float>* cabLoCutParam_       = nullptr;
+    std::atomic<float>* boostGainParam_      = nullptr;
+    std::atomic<float>* boostToneParam_      = nullptr;
+    std::atomic<float>* boostLevelParam_     = nullptr;
+    std::atomic<float>* delayTimeParam_      = nullptr;
+    std::atomic<float>* delayFeedbackParam_  = nullptr;
+    std::atomic<float>* delayMixParam_       = nullptr;
+    std::atomic<float>* reverbMixParam_      = nullptr;
+    std::atomic<float>* reverbDecayParam_    = nullptr;
+    std::atomic<float>* reverbPreDelayParam_ = nullptr;
+    std::atomic<float>* reverbDampingParam_  = nullptr;
+    std::atomic<float>* reverbSizeParam_     = nullptr;
+    std::atomic<float>* outputLevelParam_    = nullptr;
 
     juce::AudioParameterBool* bypassParam_  = nullptr;
 
     // Cached discrete values
-    int cachedAmpMode_       = 0;
-    int cachedPreampChannel_ = 1;
-    int cachedToneType_      = 1;
-    int cachedOversampling_  = 0;
-    bool cachedCabEnabled_   = true;
-    bool cachedBright_       = false;
-    bool cachedDelayEnabled_ = false;
-    bool cachedReverbEnabled_= false;
+    int cachedAmpMode_        = 0;
+    int cachedAmpType_        = 1;
+    int cachedOversampling_   = 0;
+    int cachedDelayType_      = 0;
+    bool cachedCabEnabled_    = true;
+    bool cachedBright_        = false;
+    bool cachedBoostEnabled_  = false;
+    bool cachedDelayEnabled_  = false;
+    bool cachedReverbEnabled_ = false;
 
     // Smoothed values for continuous parameters
     juce::SmoothedValue<float> inputGainSmooth_;
@@ -134,11 +142,17 @@ private:
     juce::SmoothedValue<float> cabMixSmooth_;
     juce::SmoothedValue<float> cabHiCutSmooth_;
     juce::SmoothedValue<float> cabLoCutSmooth_;
+    juce::SmoothedValue<float> boostGainSmooth_;
+    juce::SmoothedValue<float> boostToneSmooth_;
+    juce::SmoothedValue<float> boostLevelSmooth_;
     juce::SmoothedValue<float> delayTimeSmooth_;
     juce::SmoothedValue<float> delayFeedbackSmooth_;
     juce::SmoothedValue<float> delayMixSmooth_;
     juce::SmoothedValue<float> reverbMixSmooth_;
     juce::SmoothedValue<float> reverbDecaySmooth_;
+    juce::SmoothedValue<float> reverbPreDelaySmooth_;
+    juce::SmoothedValue<float> reverbDampingSmooth_;
+    juce::SmoothedValue<float> reverbSizeSmooth_;
     juce::SmoothedValue<float> outputLevelSmooth_;
 
     static constexpr int kSmoothingBlockSize = 32;
