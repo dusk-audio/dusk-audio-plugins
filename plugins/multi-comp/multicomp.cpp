@@ -4796,6 +4796,12 @@ void UniversalCompressor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedAutoMakeupGain.reset(sampleRate, 0.05);
     smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
 
+    // Pre-allocate bypass crossfade buffer (5ms fade for click-free transitions)
+    bypassFadeLengthSamples = juce::jlimit(64, 2048,
+        static_cast<int>(sampleRate * 0.005));
+    bypassFadeBuffer.setSize(numChannels, bypassFadeLengthSamples, false, false, true);
+    bypassFadeRemaining = 0;
+
     // Initialize RMS coefficient for ~200ms averaging window
     // GR-based auto-gain: smooth the gain reduction with ~200ms time constant
     // For 99% convergence in 200ms, use timeConstant ≈ 200ms / 4.6 ≈ 43ms
@@ -4856,24 +4862,25 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         if (getLatencySamples() != 0)
             setLatencySamples(0);
 
-        // Clear lookahead buffer state so stale pre-bypass audio doesn't
-        // bleed into the first non-bypassed block when bypass is turned off.
-        if (lookaheadBuffer)
-            lookaheadBuffer->reset();
+        // NOTE: We intentionally do NOT clear lookahead or digital compressor
+        // state on bypass. The bypass crossfade handles discontinuities, and
+        // keeping the lookahead buffer filled with recent audio ensures the wet
+        // path has valid data immediately on unbypass (no silence/dip during fade).
 
-        // Also clear Digital mode's internal delay state (separate circular buffer)
-        if (digitalCompressor)
-            digitalCompressor->reset();
-
+        bypassFadeRemaining = 0;  // Cancel any in-progress fade if re-bypassed
         wasBypassedLastBlock = true;
         return;
     }
 
-    // Restore latency on bypass→active transition
+    // Restore latency on bypass→active transition with smooth crossfade
     if (wasBypassedLastBlock)
     {
         wasBypassedLastBlock = false;
         updateLatencyReport();
+        bypassFadeRemaining = bypassFadeLengthSamples;
+        smoothedAutoMakeupGain.setCurrentAndTargetValue(1.0f);
+        smoothedGrDb = 0.0f;
+        primeGrAccumulator = true;
     }
 
     // Get stereo link and mix parameters with proper null checks
@@ -4897,6 +4904,21 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // The actual dry capture happens at oversampled rate (in the oversampling section)
     // for phase-coherent mixing that prevents comb filtering
     bool needsDryBuffer = (mixAmount > 0.001f && mixAmount < 0.999f);
+
+    // Save input for bypass crossfade (must be before any processing modifies buffer)
+    // Only snapshot the samples the fade will actually read, bounded by buffer sizes
+    if (bypassFadeRemaining > 0)
+    {
+        const int fadeSamples = juce::jmin(bypassFadeRemaining,
+            juce::jmin(buffer.getNumSamples(), bypassFadeBuffer.getNumSamples()));
+        const int fadeChannels = juce::jmin(buffer.getNumChannels(),
+            bypassFadeBuffer.getNumChannels());
+
+        for (int ch = 0; ch < fadeChannels; ++ch)
+            std::memcpy(bypassFadeBuffer.getWritePointer(ch),
+                         buffer.getReadPointer(ch),
+                         static_cast<size_t>(fadeSamples) * sizeof(float));
+    }
 
     // At 0% mix (100% dry), skip all processing and pass through undelayed.
     // Report 0 latency so DAW doesn't apply PDC (same approach as bypass).
@@ -5546,8 +5568,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 {
                     smoothedGrDb = avgGrDb;
                     primeGrAccumulator = false;
-                    smoothedAutoMakeupGain.setCurrentAndTargetValue(
-                        juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 40.0f, -avgGrDb)));
+                    float primedGain = juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 40.0f, -avgGrDb));
+                    float mbMixNorm = mbMix * 0.01f;
+                    primedGain = 1.0f + (primedGain - 1.0f) * mbMixNorm;
+                    smoothedAutoMakeupGain.setCurrentAndTargetValue(primedGain);
                 }
                 else
                 {
@@ -5558,6 +5582,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 float autoGainDb = -smoothedGrDb;
                 autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
                 targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
+
+                // Scale auto-gain by mix amount: dry signal doesn't need compensation
+                float mbMixNorm = mbMix * 0.01f;
+                targetAutoGain = 1.0f + (targetAutoGain - 1.0f) * mbMixNorm;
             }
 
             smoothedAutoMakeupGain.setTargetValue(targetAutoGain);
@@ -5949,8 +5977,9 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 if (mode == CompressorMode::Opto)
                     autoGainDb -= std::min(1.5f, std::abs(avgGrDb) * 0.25f);
                 autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
-                smoothedAutoMakeupGain.setCurrentAndTargetValue(
-                    juce::Decibels::decibelsToGain(autoGainDb));
+                float primedGain = juce::Decibels::decibelsToGain(autoGainDb);
+                primedGain = 1.0f + (primedGain - 1.0f) * mixAmount;
+                smoothedAutoMakeupGain.setCurrentAndTargetValue(primedGain);
             }
             else
             {
@@ -5971,6 +6000,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
             autoGainDb = juce::jlimit(-40.0f, 40.0f, autoGainDb);
             targetAutoGain = juce::Decibels::decibelsToGain(autoGainDb);
+
+            // Scale auto-gain by mix amount: dry signal doesn't need compensation
+            // At 100% wet = full auto-gain, at 100% dry = unity, at 50/50 = half
+            targetAutoGain = 1.0f + (targetAutoGain - 1.0f) * mixAmount;
         }
 
         // Update target and apply smoothed gain sample-by-sample
@@ -6009,6 +6042,24 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 }
             }
         }
+    }
+
+    // Apply bypass crossfade (smooth transition from bypassed to active)
+    if (bypassFadeRemaining > 0)
+    {
+        int fadeSamples = juce::jmin(bypassFadeRemaining, numSamples);
+        float fadeLen = static_cast<float>(bypassFadeLengthSamples);
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float* out = buffer.getWritePointer(ch);
+            const float* dry = bypassFadeBuffer.getReadPointer(ch);
+            for (int i = 0; i < fadeSamples; ++i)
+            {
+                float wet = 1.0f - static_cast<float>(bypassFadeRemaining - i) / fadeLen;
+                out[i] = out[i] * wet + dry[i] * (1.0f - wet);
+            }
+        }
+        bypassFadeRemaining -= fadeSamples;
     }
 
     // NOTE: Output distortion is now applied in the oversampled domain (inside the
@@ -6268,6 +6319,8 @@ void UniversalCompressor::resetDSPState()
     smoothedGrDb = 0.0f;
     lastCompressorMode = -1;  // Force mode change detection on next processBlock
     primeGrAccumulator = true;  // Prime accumulator on first block after reset
+
+    bypassFadeRemaining = 0;
 
     // Reset dry/wet mixer state (for oversampling latency compensation)
     dryWetMixer.reset();
