@@ -231,6 +231,11 @@ private:
     bool primeGrAccumulator = true;     // Flag to instantly prime on mode change
     bool wasBypassedLastBlock = false;
 
+    // Bypass crossfade state (smooth transition from bypass to active)
+    int bypassFadeRemaining{0};
+    int bypassFadeLengthSamples{256};
+    juce::AudioBuffer<float> bypassFadeBuffer;
+
     // Pre-allocated buffers for processBlock (avoids allocation in audio thread)
     juce::AudioBuffer<float> filteredSidechain;   // HP-filtered sidechain signal
     juce::AudioBuffer<float> linkedSidechain;     // Stereo-linked sidechain signal
