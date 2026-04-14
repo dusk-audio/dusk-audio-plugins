@@ -1139,6 +1139,10 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
                 // routing: 0=Stereo, 1=Left, 2=Right, 3=Mid, 4=Side
                 // Applies the filter to the appropriate channel(s) with M/S encode/decode as needed
                 auto applyFilterWithRouting = [&](auto& filter, int routing) {
+                    // Advance coefficient smoothing once per sample on both channels,
+                    // independent of which channel(s) are routed. This ensures the idle
+                    // side converges toward its target even in Left/Right/Mid/Side routing.
+                    filter.stepSmoothing();
                     switch (routing)
                     {
                         case 0:  // Stereo
@@ -1174,6 +1178,7 @@ void MultiQ::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*
 
                 // Stereo-only filter application (no routing switch, no M/S encode/decode)
                 auto applyFilterStereo = [&](auto& filter) {
+                    filter.stepSmoothing();
                     sampleL = filter.processSampleL(sampleL);
                     sampleR = filter.processSampleR(sampleR);
                 };
@@ -3925,6 +3930,8 @@ void MultiQ::resetToInit()
             p->setValueNotifyingHost(0.0f);
         if (auto* p = parameters.getParameter(ParamIDs::bandPan(i)))
             p->setValueNotifyingHost(parameters.getParameterRange(ParamIDs::bandPan(i)).convertTo0to1(0.0f));
+        if (auto* p = parameters.getParameter(ParamIDs::bandChannelRouting(i)))
+            p->setValueNotifyingHost(0.0f);  // Global
     }
 
     if (auto* p = parameters.getParameter(ParamIDs::masterGain))
