@@ -362,7 +362,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
@@ -553,6 +553,9 @@ void ExcitingSnareRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSi
     rightTank_.lfoPRNG = 0x87654321u;
     rightTank_.noiseState = 0xCAFEBABEu;
 
+    structHFStateL_ = 0.0f;
+    structHFStateR_ = 0.0f;
+
     prepared_ = true;
 
 
@@ -568,8 +571,6 @@ void ExcitingSnareRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSi
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
     // empty delay buffers but retain the previous run's tracker state.
-    structHFStateL_ = 0.0f;
-    structHFStateR_ = 0.0f;
     leftTank_.currentRMS = 0.0f;
     leftTank_.peakRMS = 0.0f;
     leftTank_.terminalDecayActive = false;
@@ -618,7 +619,7 @@ void ExcitingSnareRoomPresetEngine::process (const float* inputL, const float* i
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -989,8 +990,6 @@ void ExcitingSnareRoomPresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        structHFStateL_ = 0.0f;
-        structHFStateR_ = 0.0f;
         leftTank_.currentRMS = 0.0f;
         leftTank_.peakRMS = 0.0f;
         leftTank_.terminalDecayActive = false;
@@ -1170,7 +1169,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
         engine_.setDelayScale (kVvDelayScale);
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1180,12 +1182,8 @@ public:
         // Seed baked bass/treble BEFORE prepare() so updateDecayCoefficients()
         // inside prepare uses the calibrated values, not constructor defaults.
         {
-            const float neutralBass = 0.5f * kBakedBassMultScale;
-            const float curve = 0.5f * 0.5f;
-            const float neutralTreble = kBakedTrebleMultScale * (1.0f - curve)
-                                      + kBakedTrebleMultScaleMax * curve;
-            engine_.setBassMultiply (neutralBass);
-            engine_.setTrebleMultiply (neutralTreble);
+            engine_.setBassMultiply (kBakedBassMultScale);
+            engine_.setTrebleMultiply (kBakedTrebleMultScale);
         }
         engine_.prepare (sampleRate, maxBlockSize);
         // setNoiseModDepth scales by the engine's stored sampleRate_, so it
@@ -1646,8 +1644,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     const char* getPresetName() const override { return "Exciting Snare Room"; }
@@ -1657,6 +1655,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

@@ -315,7 +315,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -431,6 +431,7 @@ void TightPlatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        structHFState_[t] = 0.0f;
     }
 
     // Initialize LFO and PRNG with unique seeds per tank (90° phase offsets)
@@ -462,7 +463,6 @@ void TightPlatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         tank.currentRMS = 0.0f;
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
-        structHFState_[t] = 0.0f;
     }
 }
 
@@ -495,7 +495,7 @@ void TightPlatePresetEngine::process (const float* inputL, const float* inputR,
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);
 
@@ -692,13 +692,12 @@ void TightPlatePresetEngine::setFreeze (bool frozen)
     if (frozen)
         for (int t = 0; t < kNumTanks; ++t)
         {
-            structHFState_[t] = 0.0f;
             tanks_[t].currentRMS = 0.0f;
             tanks_[t].peakRMS = 0.0f;
             tanks_[t].terminalDecayActive = false;
         }
 }
-void TightPlatePresetEngine::setLateGainScale (float scale) { lateGainScale_ = scale; }
+void TightPlatePresetEngine::setLateGainScale (float scale) { lateGainScale_ = std::max (scale, 0.0f); }
 
 void TightPlatePresetEngine::setHighCrossoverFreq (float hz)
 {
@@ -779,6 +778,7 @@ void TightPlatePresetEngine::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        structHFState_[t] = 0.0f;
         tank.currentRMS = 0.0f;
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
@@ -792,7 +792,6 @@ void TightPlatePresetEngine::clearBuffers()
     static constexpr float kHalfPi = 1.5707963267948966f;
     for (int t = 0; t < kNumTanks; ++t)
     {
-        structHFState_[t] = 0.0f;
         tanks_[t].lfoPhase  = kHalfPi * static_cast<float> (t);
         tanks_[t].lfoPRNG   = kClearLFOSeeds[t];
         tanks_[t].noiseState = kClearNoiseSeeds[t];
@@ -876,7 +875,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
+                if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
         // (no setDelayScale on this engine)
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1182,8 +1184,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1228,6 +1230,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

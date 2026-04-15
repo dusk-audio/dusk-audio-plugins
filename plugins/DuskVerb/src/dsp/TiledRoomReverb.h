@@ -97,7 +97,7 @@ private:
 
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS  // 10^(-thresholdDB * 0.1) — precomputed
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
 

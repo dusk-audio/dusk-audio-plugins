@@ -4,6 +4,8 @@
 #include "../PresetCorrectionFilters.h"
 #include "../PresetTapPositions.h"
 
+#include <juce_audio_basics/juce_audio_basics.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -50,7 +52,9 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
             if (kv.second)
                 kv.second->prepare (sampleRate, maxBlockSize);
         }
-        presetEngine_.store (nullptr, std::memory_order_relaxed);  // applyAlgorithm() will set the active pointer
+        // Don't null presetEngine_ here — the subsequent setAlgorithm() call
+        // will set the active pointer, and nulling it creates a window where
+        // the audio thread could see nullptr between prepare() and setAlgorithm().
     }
 
     scratchL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
@@ -143,16 +147,32 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
 void DuskVerbEngine::process (float* left, float* right, int numSamples)
 {
-    // Fallback deferred clearBuffers(): only runs when setAlgorithm()
-    // couldn't pre-clear on the message thread (same-engine re-selection
-    // or firstAlgorithmSet_ path). The common case (different preset) is
-    // cleared off the audio thread in setAlgorithm() before the crossfade.
+    juce::ScopedNoDenormals noDenormals;
+
+    if (numSamples == 0)
+        return;
+
+    // Deferred clearBuffers(): when setAlgorithm() couldn't pre-clear on
+    // the message thread (same-engine re-selection or firstAlgorithmSet_),
+    // the flag is set and we clear here.  clearBuffers() can memset large
+    // delay-line buffers, which is not ideal on the audio thread, but this
+    // path only fires on algorithm switches (rare, not per-block) and the
+    // alternative (keeping stale tail data) is audibly worse.
     if (pendingPresetClear_.load (std::memory_order_acquire))
     {
         auto* pe = presetEngine_.load (std::memory_order_acquire);
         if (pe)
             pe->clearBuffers();
         pendingPresetClear_.store (false, std::memory_order_release);
+    }
+
+    // Transition fadeInArmed_ → active fade-in at the start of each process() call.
+    // This ensures the fade-in only begins once the new engine has produced fresh
+    // output in scratchL_/R_, not using the stale pre-swap buffer.
+    if (fadeInArmed_)
+    {
+        fadeInArmed_ = false;
+        fadeCounter_.store (1, std::memory_order_relaxed);
     }
 
     // Copy input to scratch for the wet processing path.
@@ -558,6 +578,9 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                         applyAlgorithm (snap.algorithmIndex, snap.engine, snap.presetClearDone);
                     fadingOut_.store (false, std::memory_order_release);
                     fadeCounter_.store (0, std::memory_order_relaxed);
+                    // Arm fade-in for next block so the old wet buffer
+                    // doesn't ramp back up in the remainder of this block.
+                    fadeInArmed_ = true;
                 }
                 else
                 {
@@ -566,14 +589,25 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             }
             else
             {
-                int fc = fadeCounter_.load (std::memory_order_relaxed);
-                if (fc < kFadeSamples)
+                if (fadeInArmed_)
                 {
-                    // Fade back in after algorithm switch
-                    float fadeGain = static_cast<float> (fc) / static_cast<float> (kFadeSamples);
-                    wetL *= fadeGain;
-                    wetR *= fadeGain;
-                    fadeCounter_.store (fc + 1, std::memory_order_relaxed);
+                    // Keep wet at zero for the remainder of this block;
+                    // the actual fade-in starts at the next process() call
+                    // (fadeInArmed_ is cleared at the top of process()).
+                    wetL = 0.0f;
+                    wetR = 0.0f;
+                }
+                else
+                {
+                    int fc = fadeCounter_.load (std::memory_order_relaxed);
+                    if (fc < kFadeSamples)
+                    {
+                        // Fade back in after algorithm switch
+                        float fadeGain = static_cast<float> (fc) / static_cast<float> (kFadeSamples);
+                        wetL *= fadeGain;
+                        wetR *= fadeGain;
+                        fadeCounter_.store (fc + 1, std::memory_order_relaxed);
+                    }
                 }
             }
 

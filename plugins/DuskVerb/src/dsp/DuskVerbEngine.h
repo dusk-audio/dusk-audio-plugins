@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -331,7 +332,7 @@ private:
     // Fix 4 (spectral): ER corrective EQ — applies the same per-preset 12-band
     // correction to the ER path so the combined ER+late signal is spectrally matched.
     // Coefficients are queried from the active PresetEngineBase at algorithm switch.
-    static constexpr int kMaxERCorrBands = 12;
+    static constexpr int kMaxERCorrBands = 16;
     Biquad erCorrEQ_[kMaxERCorrBands] {};
     int erCorrEQBands_ = 0;
     bool erCorrEQActive_ = false;
@@ -361,6 +362,7 @@ private:
     std::atomic<int> fadeCounter_ { 0 };
     std::atomic<bool> fadingOut_ { false };
     std::atomic<bool> firstAlgorithmSet_ { true };
+    bool fadeInArmed_ = false;  // One-shot: delays fade-in to next process() block after algorithm swap
 
     void applyAlgorithm (int index, PresetEngineBase* resolvedEngine, bool alreadyCleared);
 };

@@ -405,9 +405,10 @@ void DuskVerbProcessor::releaseResources()
 void DuskVerbProcessor::timerCallback()
 {
     int latency = pendingLatency_.load (std::memory_order_relaxed);
-    if (latency >= 0 && latency != getLatencySamples())
+    if (latency >= 0)
     {
-        setLatencySamples (latency);
+        if (latency != getLatencySamples())
+            setLatencySamples (latency);
         pendingLatency_.store (-1, std::memory_order_relaxed);
     }
 }
@@ -420,6 +421,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     int numSamples = buffer.getNumSamples();
+
+    if (numSamples == 0)
+        return;
 
     // Handle mono input: duplicate channel 0 to channel 1 BEFORE bypass,
     // so mono-in/stereo-out bypass still outputs audio on both channels.
@@ -678,8 +682,10 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         float oMidHz = outputMidEQHzParam_->load();
         engine_.setOutputMidEQOverride (oMidDB, oMidHz > 0.0f ? oMidHz : 1000.0f);
 
-        engine_.setTerminalDecayOverride (
-            terminalThresholdParam_->load(), terminalFactorParam_->load());
+        {
+            float factor = terminalFactorParam_->load();
+            engine_.setTerminalDecayOverride (terminalThresholdParam_->load(), factor);
+        }
 
         engine_.setERAirCeilingOverride (erAirCeilingParam_->load());
         engine_.setERAirFloorOverride (erAirFloorParam_->load());

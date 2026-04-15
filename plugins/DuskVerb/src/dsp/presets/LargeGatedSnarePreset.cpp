@@ -353,7 +353,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -604,16 +604,16 @@ void LargeGatedSnarePresetEngine::prepare (double sampleRate, int /*maxBlockSize
     // modulation state (like VV's stochastic modulation). The evenly-spaced
     // offsets between channels are preserved; only the base phase is random.
     {
-        std::random_device rd;
-        float basePhase = std::uniform_real_distribution<float> (0.0f, kTwoPi) (rd);
+        // Deterministic LFO seeding: evenly-spaced phases with a fixed base.
+        // Using std::random_device made tails nondeterministic across project reloads.
+        constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
         for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (basePhase + kTwoPi * static_cast<float> (i)
-                                                         / static_cast<float> (N), kTwoPi);
+            lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
+                                                               / static_cast<float> (N), kTwoPi);
 
-        // Random PRNG seeds so drift pattern varies per prepare() call
-        uint32_t baseSeed = rd();
+        constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
         for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
+            lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
     }
 
     {
@@ -650,11 +650,11 @@ void LargeGatedSnarePresetEngine::process (const float* inputL, const float* inp
         {
             auto& dl = delayLines_[ch];
 
-            float mod = 0.0f;
+            // Preserve current LFO offset when frozen (avoids discontinuity)
+            float mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
             float jitter = 0.0f;
             if (! frozen_)
             {
-                mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
                 // Per-sample random jitter: fast mode blurring complementing the slow LFO.
                 // Each channel gets independent noise from its xorshift32 PRNG.
                 jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
@@ -940,8 +940,8 @@ void LargeGatedSnarePresetEngine::process (const float* inputL, const float* inp
         // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
         float rawL = outL * kOutputLevel * sizeCompensation_;
         float rawR = outR * kOutputLevel * sizeCompensation_;
-        outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip * lateGainScale_;
-        outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip * lateGainScale_;
+        outputL[i] = DspUtils::fastTanh (rawL * lateGainScale_ / kSafetyClip) * kSafetyClip;
+        outputR[i] = DspUtils::fastTanh (rawR * lateGainScale_ / kSafetyClip) * kSafetyClip;
     }
 }
 
@@ -1004,14 +1004,6 @@ void LargeGatedSnarePresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        for (int i = 0; i < N; ++i)
-        {
-            structHFState_[i] = 0.0f;
-            structLFState_[i] = 0.0f;
-            antiAliasState_[i] = 0.0f;
-            dcX1_[i] = 0.0f;
-            dcY1_[i] = 0.0f;
-        }
         peakRMS_ = 0.0f;
         currentRMS_ = 0.0f;
         terminalDecayActive_ = false;
@@ -1079,11 +1071,15 @@ void LargeGatedSnarePresetEngine::setInlineDiffusion (float coeff)
     // ringing for longer-delay modes (Hall, Plate). Density is instead
     // improved via 3-stage output diffusion (post-FDN, no feedback impact).
     inlineDiffCoeff3_ = 0.0f;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void LargeGatedSnarePresetEngine::setUseShortInlineAP (bool use)
 {
     useShortInlineAP_ = use;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void LargeGatedSnarePresetEngine::setMultiPointOutput (const FDNOutputTap* left, int numL,
@@ -1432,8 +1428,9 @@ void LargeGatedSnarePresetEngine::clearBuffers()
         // Deterministic LFO/PRNG reset for clean state on algorithm switch.
         // (Wrapper prepare() no longer calls clearBuffers(), so this does not
         // conflict with prepare()'s stochastic randomization.)
-        lfoPhase_[i] = kTwoPi * static_cast<float> (i) / static_cast<float> (N);
-        lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
+        lfoPhase_[i] = std::fmod (2.3561945f + kTwoPi * static_cast<float> (i)
+                                                       / static_cast<float> (N), kTwoPi);
+        lfoPRNG_[i] = 0x5A3C9E71u + static_cast<uint32_t> (i * 1847);
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
@@ -1623,7 +1620,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
+                if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
         // (no setDelayScale on this engine)
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1761,18 +1761,18 @@ public:
         
         // Harmonic AM: rectified-sine envelope modulation (Fix 3: mod_depth_delta)
         // Bypass when frozen to preserve the held tail exactly.
-        if (! frozen_)
+        for (int i = 0; i < numSamples; ++i)
         {
-            for (int i = 0; i < numSamples; ++i)
+            if (! frozen_)
             {
                 float env = std::abs (std::sin (amPhase_ * 6.283185307f));
                 float am = std::max (0.0f, 1.0f + kAmDepth * (env - 0.6366f));
                 outputL[i] *= am;
                 outputR[i] *= am;
-                amPhase_ += amPhaseInc_;
-                if (amPhase_ >= 1.0f)
-                    amPhase_ -= 1.0f;
             }
+            amPhase_ += amPhaseInc_;
+            if (amPhase_ >= 1.0f)
+                amPhase_ -= 1.0f;
         }
         // ----- Per-preset tilt EQ + 12-band correction EQ + stereo width -----
         // 1. tilt shelves (broad VV character correction)
@@ -1950,8 +1950,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1996,6 +1996,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

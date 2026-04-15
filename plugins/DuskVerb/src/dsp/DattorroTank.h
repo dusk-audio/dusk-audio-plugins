@@ -208,6 +208,9 @@ private:
         uint32_t lfoPRNG = 0;        // Shared: LFO drift + noise jitter
         uint32_t noiseState = 0;      // Dedicated PRNG for per-sample delay jitter
 
+        // Saved modulation offset: held constant when frozen to prevent read-head snap
+        float savedAP1Mod = 0.0f;
+
         // Per-tank terminal decay tracking (avoids L/R interleaving artifacts)
         float currentRMS = 0.0f;
         float peakRMS = 0.0f;
@@ -307,6 +310,7 @@ private:
     // Complements the slow sinusoidal LFO with fast aperiodic mode blurring.
     float noiseModDepth_ = 2.0f;  // Peak jitter in samples (at 44100 Hz base)
     float independentNoiseModDepth_ = -1.0f;  // Independent noise jitter (-1 = use modDepth-coupled value)
+    float lastNoiseModDepthRaw_ = -1.0f;  // Raw input to setNoiseModDepth, for reapply on sample rate change
 
     void updateDelayLengths();
     void updateDecayCoefficients();

@@ -142,13 +142,18 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
 
     // Allocate buffers for worst-case delay across ALL algorithms.
     // kMaxBaseDelay covers the longest line in any algorithm config.
-    float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
-    sizeRangeAllocatedMax_ = maxSizeScale;
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, std::max (sizeRangeMax_, 1.5f));
     float maxDelay = static_cast<float> (kMaxBaseDelay)
-                   * static_cast<float> (sampleRate / kBaseSampleRate) * maxSizeScale;
+                   * static_cast<float> (sampleRate / kBaseSampleRate) * sizeRangeAllocatedMax_;
 
-    // +12 covers max modulation depth (modDepth 2.0 -> 8 samples) + cubic interp (2) + safety (2)
-    int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + 12);
+    // Headroom for modulation excursion: LFO peak + noise jitter + cubic interp safety.
+    // All scale with sample rate (rateRatio), so compute explicitly rather than
+    // relying on a fixed +12 constant that only covered 44.1kHz.
+    float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
+    float maxModExcursion = 2.0f * 4.0f * rateRatio;   // modDepthSamples_ at max depth=2.0
+    float maxNoiseExcursion = 20.0f * rateRatio;        // max noise_mod from presets (VerySmallAmbience=20)
+    int maxExcursion = static_cast<int> (std::ceil (maxModExcursion + maxNoiseExcursion)) + 4;
+    int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + maxExcursion);
 
     for (int i = 0; i < N; ++i)
     {
@@ -167,7 +172,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     terminalDecayActive_ = false;
 
     // Inline allpass diffusers: prime delays scaled by sample rate
-    float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
+    // (rateRatio already computed above for buffer sizing)
     for (int i = 0; i < N; ++i)
     {
         int apDelay = static_cast<int> (std::ceil (
@@ -227,20 +232,17 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     std::memset (dcX1_, 0, sizeof (dcX1_));
     std::memset (dcY1_, 0, sizeof (dcY1_));
 
-    // Randomize LFO starting phases so successive IR captures see different
-    // modulation state (like VV's stochastic modulation). The evenly-spaced
-    // offsets between channels are preserved; only the base phase is random.
+    // Deterministic LFO seeding: evenly-spaced phases with a fixed base.
+    // Using std::random_device made tails nondeterministic across project reloads.
     {
-        std::random_device rd;
-        float basePhase = std::uniform_real_distribution<float> (0.0f, kTwoPi) (rd);
+        constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
         for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (basePhase + kTwoPi * static_cast<float> (i)
-                                                         / static_cast<float> (N), kTwoPi);
+            lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
+                                                               / static_cast<float> (N), kTwoPi);
 
-        // Random PRNG seeds so drift pattern varies per prepare() call
-        uint32_t baseSeed = rd();
+        constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
         for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
+            lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
     }
 
     updateModDepth();
@@ -276,11 +278,11 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
-            float mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
+            float mod = frozen_ ? 0.0f : (std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch]);
             // Per-sample random jitter: fast mode blurring complementing the slow LFO.
             // Each channel gets independent noise from its xorshift32 PRNG.
-            float jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
-            float readDelay = delayLength_[ch] + mod + jitter;
+            float jitter = frozen_ ? 0.0f : (nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch]);
+            float readDelay = std::max (delayLength_[ch] + mod + jitter, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
 
             int intIdx = static_cast<int> (std::floor (readPos));
@@ -291,12 +293,15 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             // Advance LFO with "Wander" drift (classic reverb technique).
             // Adds ±8% random perturbation to the phase increment each sample
             // so the modulation never exactly repeats — organic, not mechanical.
-            float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
-            lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
-            if (lfoPhase_[ch] >= kTwoPi)
-                lfoPhase_[ch] -= kTwoPi;
-            else if (lfoPhase_[ch] < 0.0f)
-                lfoPhase_[ch] += kTwoPi;
+            if (! frozen_)
+            {
+                float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
+                lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
+                if (lfoPhase_[ch] >= kTwoPi)
+                    lfoPhase_[ch] -= kTwoPi;
+                else if (lfoPhase_[ch] < 0.0f)
+                    lfoPhase_[ch] += kTwoPi;
+            }
         }
 
         // --- 1.25) Terminal decay: accelerate tail fadeout when below threshold ---
@@ -641,19 +646,26 @@ void FDNReverb::setFreeze (bool frozen)
 {
     bool wasTransition = (frozen != frozen_);
     frozen_ = frozen;
-    if (frozen)
-    {
-        for (int i = 0; i < N; ++i)
-        {
-            structHFState_[i] = 0.0f;
-            structLFState_[i] = 0.0f;
-        }
-    }
     if (wasTransition)
     {
         currentRMS_ = 0.0f;
         peakRMS_ = 0.0f;
         terminalDecayActive_ = false;
+
+        // Clear bypassed DSP block state so releasing freeze won't pop
+        for (int i = 0; i < N; ++i)
+        {
+            inlineAP_[i].clear();
+            inlineAP2_[i].clear();
+            inlineAP3_[i].clear();
+            inlineAPShort_[i].clear();
+            dampFilter_[i].reset();
+            structHFState_[i] = 0.0f;
+            structLFState_[i] = 0.0f;
+            antiAliasState_[i] = 0.0f;
+            dcX1_[i] = 0.0f;
+            dcY1_[i] = 0.0f;
+        }
     }
 }
 

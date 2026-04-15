@@ -149,13 +149,16 @@ public:
         g_[2] = gMid;
         g_[3] = gMid + (gHigh - gMid) * bandBlend_[3];
         g_[4] = gHigh;
-        lpCoeff_[0] = lowCrossoverCoeff;
-        lpCoeff_[3] = highCrossoverCoeff;
+        // Ensure crossover coefficients are positive and ordered (low < high)
+        float lo = std::max (lowCrossoverCoeff, 1e-6f);
+        float hi = std::max (highCrossoverCoeff, lo + 1e-6f);
+        lpCoeff_[0] = lo;
+        lpCoeff_[3] = hi;
         // Derive inner crossovers as geometric interpolation between outer pair.
         // sqrt(a*b) gives the geometric mean frequency between two LP coefficients.
-        float midCoeff = std::sqrt (lowCrossoverCoeff * highCrossoverCoeff);
-        lpCoeff_[1] = std::sqrt (lowCrossoverCoeff * midCoeff);
-        lpCoeff_[2] = std::sqrt (midCoeff * highCrossoverCoeff);
+        float midCoeff = std::sqrt (lo * hi);
+        lpCoeff_[1] = std::sqrt (lo * midCoeff);
+        lpCoeff_[2] = std::sqrt (midCoeff * hi);
     }
 
     // Set per-band blend factors for ThreeBandDamping-compatible fallback.
@@ -196,12 +199,15 @@ public:
             for (int i = 0; i < 5; ++i)
                 g_[i] = std::clamp (gBase, 0.001f, 0.9999f);
         }
-        lpCoeff_[0] = lowCoeff;
-        lpCoeff_[3] = highCoeff;
+        // Ensure crossover coefficients are positive and ordered (low < high)
+        float lo = std::max (lowCoeff, 1e-6f);
+        float hi = std::max (highCoeff, lo + 1e-6f);
+        lpCoeff_[0] = lo;
+        lpCoeff_[3] = hi;
         // Derive inner crossovers as geometric interpolation (same as 3-band setCoefficients)
-        float midCoeff = std::sqrt (lowCoeff * highCoeff);
-        lpCoeff_[1] = std::sqrt (lowCoeff * midCoeff);
-        lpCoeff_[2] = std::sqrt (midCoeff * highCoeff);
+        float midCoeff = std::sqrt (lo * hi);
+        lpCoeff_[1] = std::sqrt (lo * midCoeff);
+        lpCoeff_[2] = std::sqrt (midCoeff * hi);
     }
     float process (float input)
     {

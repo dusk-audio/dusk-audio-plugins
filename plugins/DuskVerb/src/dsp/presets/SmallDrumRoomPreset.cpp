@@ -398,7 +398,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
@@ -580,14 +580,15 @@ void SmallDrumRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
     sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, sizeRangeMax_);
     delayScaleAllocated_ = delayScale_;
 
-    // Allocate all buffers
-    auto prepareTank = [&] (Tank& tank)
+    // Allocate all buffers using worst-case (hall) base delays so runtime
+    // setHallScale() cannot exceed the allocation.
+    auto prepareTank = [&] (Tank& tank, float worstAp1, float worstDel1, float worstAp2, float worstDel2)
     {
         float maxScale = sizeRangeAllocatedMax_ * delayScale_;
-        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
-        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
-        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
-        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        int ap1Max = static_cast<int> (std::ceil (worstAp1 * rateRatio * maxScale)) + maxModExcursion;
+        int del1Max = static_cast<int> (std::ceil (worstDel1 * rateRatio * maxScale)) + maxModExcursion;
+        int ap2Max = static_cast<int> (std::ceil (worstAp2 * rateRatio * maxScale)) + maxModExcursion;
+        int del2Max = static_cast<int> (std::ceil (worstDel2 * rateRatio * maxScale)) + maxModExcursion;
 
         tank.ap1Buffer.allocate (ap1Max);
         tank.delay1.allocate (del1Max);  // Extra headroom for noise jitter
@@ -608,8 +609,16 @@ void SmallDrumRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
         tank.crossFeedState = 0.0f;
     };
 
-    prepareTank (leftTank_);
-    prepareTank (rightTank_);
+    prepareTank (leftTank_,
+                 static_cast<float> (std::max (kLeftAP1Base, kLeftAP1BaseHall)),
+                 static_cast<float> (std::max (kLeftDel1Base, kLeftDel1BaseHall)),
+                 static_cast<float> (std::max (kLeftAP2Base, kLeftAP2BaseHall)),
+                 static_cast<float> (std::max (kLeftDel2Base, kLeftDel2BaseHall)));
+    prepareTank (rightTank_,
+                 static_cast<float> (std::max (kRightAP1Base, kRightAP1BaseHall)),
+                 static_cast<float> (std::max (kRightDel1Base, kRightDel1BaseHall)),
+                 static_cast<float> (std::max (kRightAP2Base, kRightAP2BaseHall)),
+                 static_cast<float> (std::max (kRightDel2Base, kRightDel2BaseHall)));
 
     // Initialize LFO and PRNG state with different seeds per tank
     leftTank_.lfoPhase = 0.0f;
@@ -618,6 +627,9 @@ void SmallDrumRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
     rightTank_.lfoPhase = 1.5707963f;  // 90° offset for stereo decorrelation
     rightTank_.lfoPRNG = 0x87654321u;
     rightTank_.noiseState = 0xCAFEBABEu;
+
+    structHFStateL_ = 0.0f;
+    structHFStateR_ = 0.0f;
 
     prepared_ = true;
 
@@ -633,8 +645,6 @@ void SmallDrumRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
     // empty delay buffers but retain the previous run's tracker state.
-    structHFStateL_ = 0.0f;
-    structHFStateR_ = 0.0f;
     leftTank_.currentRMS = 0.0f;
     leftTank_.peakRMS = 0.0f;
     leftTank_.terminalDecayActive = false;
@@ -674,7 +684,7 @@ void SmallDrumRoomPresetEngine::process (const float* inputL, const float* input
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -1046,8 +1056,6 @@ void SmallDrumRoomPresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        structHFStateL_ = 0.0f;
-        structHFStateR_ = 0.0f;
         leftTank_.currentRMS = 0.0f;
         leftTank_.peakRMS = 0.0f;
         leftTank_.terminalDecayActive = false;
@@ -1059,7 +1067,7 @@ void SmallDrumRoomPresetEngine::setFreeze (bool frozen)
 
 void SmallDrumRoomPresetEngine::setLateGainScale (float scale)
 {
-    lateGainScale_ = scale;
+    lateGainScale_ = std::max (scale, 0.0f);
 }
 
 void SmallDrumRoomPresetEngine::setSizeRange (float min, float max)
@@ -1108,7 +1116,7 @@ void SmallDrumRoomPresetEngine::setTerminalDecay (float thresholdDB, float facto
 
 void SmallDrumRoomPresetEngine::clearBuffers()
 {
-    auto clearTank = [] (Tank& tank, uint32_t seed)
+    auto clearTank = [] (Tank& tank, uint32_t lfoPRNG, uint32_t noiseState)
     {
         tank.ap1Buffer.clear();
         tank.delay1.clear();
@@ -1122,14 +1130,12 @@ void SmallDrumRoomPresetEngine::clearBuffers()
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
         tank.lfoPhase = 0.0f;
-        tank.lfoPRNG = seed;
-        tank.noiseState = seed * 2654435761u;
+        tank.lfoPRNG = lfoPRNG;
+        tank.noiseState = noiseState;
     };
 
-    clearTank (leftTank_, 0x12345678u);
-    clearTank (rightTank_, 0x87654321u);
-    leftTank_.noiseState = 0xDEADBEEFu;
-    rightTank_.noiseState = 0xCAFEBABEu;
+    clearTank (leftTank_, 0x12345678u, 0xDEADBEEFu);
+    clearTank (rightTank_, 0x87654321u, 0xCAFEBABEu);
     // Restore 90° L/R phase offset for stereo decorrelation
     leftTank_.lfoPhase = 0.0f;
     rightTank_.lfoPhase = 1.5707963f;  // pi/2
@@ -1236,7 +1242,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
         engine_.setDelayScale (kVvDelayScale);
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1565,8 +1574,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1611,6 +1620,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

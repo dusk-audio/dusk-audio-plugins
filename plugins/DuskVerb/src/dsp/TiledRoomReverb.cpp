@@ -9,7 +9,7 @@ void TiledRoomReverb::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
-    int maxMod = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
+    int maxMod = static_cast<int> (std::ceil (64.0 * sampleRate / 44100.0));
     float maxScale = sizeRangeMax_;
 
     // Allocate Stage A (L group: short delays, fast onset)
@@ -90,17 +90,13 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
         for (int ch = 0; ch < kStageSize; ++ch)
         {
             auto& dl = delayA_[ch];
-            float readDelay;
-            if (frozen_)
-            {
-                readDelay = std::max (delayLenA_[ch], 1.0f);
-            }
-            else
-            {
-                float lfo = std::sin (lfoPhase_[ch]) * modDepthSamples_;
-                float jitter = nextDrift (noiseState_[ch]) * noiseJitter;
-                readDelay = std::max (delayLenA_[ch] + lfo + jitter, 1.0f);
+            // Compute LFO offset unconditionally so freeze preserves current phase offset
+            float lfo = std::sin (lfoPhase_[ch]) * modDepthSamples_;
+            float jitter = frozen_ ? 0.0f : (nextDrift (noiseState_[ch]) * noiseJitter);
+            float readDelay = std::max (delayLenA_[ch] + lfo + jitter, 1.0f);
 
+            if (! frozen_)
+            {
                 float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
                 lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
                 if (lfoPhase_[ch] >= kTwoPi) lfoPhase_[ch] -= kTwoPi;
@@ -155,17 +151,13 @@ void TiledRoomReverb::process (const float* inputL, const float* inputR,
         {
             int lfoIdx = ch + kStageSize;
             auto& dl = delayB_[ch];
-            float readDelay;
-            if (frozen_)
-            {
-                readDelay = std::max (delayLenB_[ch], 1.0f);
-            }
-            else
-            {
-                float lfo = std::sin (lfoPhase_[lfoIdx]) * modDepthSamples_;
-                float jitter = nextDrift (noiseState_[lfoIdx]) * noiseJitter;
-                readDelay = std::max (delayLenB_[ch] + lfo + jitter, 1.0f);
+            // Compute LFO offset unconditionally so freeze preserves current phase offset
+            float lfo = std::sin (lfoPhase_[lfoIdx]) * modDepthSamples_;
+            float jitter = frozen_ ? 0.0f : (nextDrift (noiseState_[lfoIdx]) * noiseJitter);
+            float readDelay = std::max (delayLenB_[ch] + lfo + jitter, 1.0f);
 
+            if (! frozen_)
+            {
                 float drift = nextDrift (lfoPRNG_[lfoIdx]) * lfoPhaseInc_[lfoIdx] * 0.08f;
                 lfoPhase_[lfoIdx] += lfoPhaseInc_[lfoIdx] + drift;
                 if (lfoPhase_[lfoIdx] >= kTwoPi) lfoPhase_[lfoIdx] -= kTwoPi;
@@ -252,20 +244,13 @@ void TiledRoomReverb::setTrebleMultiply (float mult) { trebleMultiply_ = std::cl
 void TiledRoomReverb::setCrossoverFreq (float hz) { crossoverFreq_ = std::min (std::clamp (hz, 200.0f, 4000.0f), highCrossoverFreq_ - 10.0f); if (prepared_) updateDecayCoefficients(); }
 void TiledRoomReverb::setHighCrossoverFreq (float hz) { highCrossoverFreq_ = std::max (std::clamp (hz, 1000.0f, 20000.0f), crossoverFreq_ + 10.0f); if (prepared_) updateDecayCoefficients(); }
 void TiledRoomReverb::setAirDampingScale (float scale) { airDampingScale_ = std::max (scale, 0.01f); if (prepared_) updateDecayCoefficients(); }
-void TiledRoomReverb::setModDepth (float depth) { lastModDepthRaw_ = std::min (depth, 2.0f); modDepthSamples_ = lastModDepthRaw_ * 16.0f * static_cast<float> (sampleRate_ / kBaseSampleRate); }
+void TiledRoomReverb::setModDepth (float depth) { lastModDepthRaw_ = std::clamp (depth, 0.0f, 2.0f); modDepthSamples_ = lastModDepthRaw_ * 16.0f * static_cast<float> (sampleRate_ / kBaseSampleRate); }
 void TiledRoomReverb::setModRate (float hz) { modRateHz_ = hz; if (prepared_) updateLFORates(); }
 void TiledRoomReverb::setSize (float size) { sizeParam_ = std::clamp (size, 0.0f, 1.0f); if (prepared_) { updateDelayLengths(); updateDecayCoefficients(); } }
 void TiledRoomReverb::setFreeze (bool frozen)
 {
     if (frozen && ! frozen_)
     {
-        // Entering freeze: clear DC blocker history and RMS trackers
-        // so stale state doesn't leak into the frozen tail.
-        for (int ch = 0; ch < N; ++ch)
-        {
-            dcX1_[ch] = 0.0f;
-            dcY1_[ch] = 0.0f;
-        }
         currentRMS_ = 0.0f;
         peakRMS_ = 0.0f;
     }
