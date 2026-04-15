@@ -21,7 +21,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <chrono>
 #include <cstring>
 
 
@@ -380,7 +379,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
@@ -590,15 +589,17 @@ void CrossStickRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
     // discontinuities in the modulation pattern.
     if (! modSeeded_)
     {
-        auto timeSeed = static_cast<uint32_t> (std::chrono::steady_clock::now().time_since_epoch().count());
         leftTank_.lfoPhase = 0.0f;
-        leftTank_.lfoPRNG = timeSeed ^ 0x12345678u;
-        leftTank_.noiseState = timeSeed ^ 0xDEADBEEFu;
+        leftTank_.lfoPRNG = 0x12345678u;
+        leftTank_.noiseState = 0xDEADBEEFu;
         rightTank_.lfoPhase = 1.5707963f;  // 90° offset for stereo decorrelation
-        rightTank_.lfoPRNG = timeSeed ^ 0x87654321u;
-        rightTank_.noiseState = timeSeed ^ 0xCAFEBABEu;
+        rightTank_.lfoPRNG = 0x87654321u;
+        rightTank_.noiseState = 0xCAFEBABEu;
         modSeeded_ = true;
     }
+
+    structHFStateL_ = 0.0f;
+    structHFStateR_ = 0.0f;
 
     prepared_ = true;
 
@@ -614,8 +615,6 @@ void CrossStickRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
     // empty delay buffers but retain the previous run's tracker state.
-    structHFStateL_ = 0.0f;
-    structHFStateR_ = 0.0f;
     leftTank_.currentRMS = 0.0f;
     leftTank_.peakRMS = 0.0f;
     leftTank_.terminalDecayActive = false;
@@ -655,7 +654,7 @@ void CrossStickRoomPresetEngine::process (const float* inputL, const float* inpu
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -679,7 +678,7 @@ void CrossStickRoomPresetEngine::process (const float* inputL, const float* inpu
             // --- Delay 1 (with per-sample noise jitter) ---
             float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
                                     ? independentNoiseModDepth_ : noiseModDepth_;
-            float jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter1 = frozen_ ? 0.0f : (nextDrift (tank.noiseState) * effectiveNoiseMod);
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -709,7 +708,7 @@ void CrossStickRoomPresetEngine::process (const float* inputL, const float* inpu
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 (with per-sample noise jitter) ---
-            float jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter2 = frozen_ ? 0.0f : (nextDrift (tank.noiseState) * effectiveNoiseMod);
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -1025,8 +1024,6 @@ void CrossStickRoomPresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        structHFStateL_ = 0.0f;
-        structHFStateR_ = 0.0f;
         leftTank_.currentRMS = 0.0f;
         leftTank_.peakRMS = 0.0f;
         leftTank_.terminalDecayActive = false;
@@ -1038,7 +1035,7 @@ void CrossStickRoomPresetEngine::setFreeze (bool frozen)
 
 void CrossStickRoomPresetEngine::setLateGainScale (float scale)
 {
-    lateGainScale_ = scale;
+    lateGainScale_ = std::max (scale, 0.0f);
 }
 
 void CrossStickRoomPresetEngine::setSizeRange (float min, float max)
@@ -1087,7 +1084,7 @@ void CrossStickRoomPresetEngine::setTerminalDecay (float thresholdDB, float fact
 
 void CrossStickRoomPresetEngine::clearBuffers()
 {
-    auto clearTank = [] (Tank& tank, uint32_t seed)
+    auto clearTank = [] (Tank& tank, uint32_t lfoPRNG, uint32_t noiseState)
     {
         tank.ap1Buffer.clear();
         tank.delay1.clear();
@@ -1101,14 +1098,12 @@ void CrossStickRoomPresetEngine::clearBuffers()
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
         tank.lfoPhase = 0.0f;
-        tank.lfoPRNG = seed;
-        tank.noiseState = seed * 2654435761u;
+        tank.lfoPRNG = lfoPRNG;
+        tank.noiseState = noiseState;
     };
 
-    clearTank (leftTank_, 0x12345678u);
-    clearTank (rightTank_, 0x87654321u);
-    leftTank_.noiseState = 0xDEADBEEFu;
-    rightTank_.noiseState = 0xCAFEBABEu;
+    clearTank (leftTank_, 0x12345678u, 0xDEADBEEFu);
+    clearTank (rightTank_, 0x87654321u, 0xCAFEBABEu);
     // Restore 90° L/R phase offset for stereo decorrelation
     leftTank_.lfoPhase = 0.0f;
     rightTank_.lfoPhase = 1.5707963f;  // pi/2
@@ -1218,7 +1213,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
         engine_.setDelayScale (kVvDelayScale);
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1545,8 +1543,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1591,6 +1589,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

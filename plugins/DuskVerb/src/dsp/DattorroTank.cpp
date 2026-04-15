@@ -106,6 +106,11 @@ void DattorroTank::setHallScale (bool enable)
             rightTank_.densityAPBase[i] = kRightDensityAPBase[i];
         }
     }
+    if (prepared_)
+    {
+        updateDelayLengths();
+        updateDecayCoefficients();
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -124,7 +129,8 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
     {
-        float maxScale = sizeRangeAllocatedMax_ * delayScale_;
+        constexpr float kMaxDelayScale = 4.0f;  // Must match setDelayScale() clamp
+        float maxScale = sizeRangeAllocatedMax_ * kMaxDelayScale;
         int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
@@ -141,7 +147,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
             int dapMax = static_cast<int> (std::ceil (
-                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * delayScale_)) + 4;
+                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale)) + 4;
             tank.densityAP[i].allocate (dapMax);
         }
 
@@ -168,6 +174,12 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
 
     // Re-apply mod depth scaled for the new sample rate
     setModDepth (lastModDepthRaw_);
+
+    // Re-apply noise mod depth and structural HF damping for new sample rate
+    if (lastNoiseModDepthRaw_ >= 0.0f)
+        setNoiseModDepth (lastNoiseModDepthRaw_);
+    if (lastStructHFHz_ > 0.0f)
+        setStructuralHFDamping (lastStructHFHz_);
 
     // Recompute soft-onset coefficient for the new sample rate
     if (softOnsetMs_ > 0.0f)
@@ -230,8 +242,12 @@ void DattorroTank::process (const float* inputL, const float* inputR,
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            // When frozen, skip modulation so the tail remains static.
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            // When frozen, hold the last modulation offset so the read head
+            // doesn't snap to the unmodulated position (avoids click).
+            float currentMod = std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = frozen_ ? tank.savedAP1Mod : currentMod;
+            if (! frozen_)
+                tank.savedAP1Mod = currentMod;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -451,14 +467,14 @@ void DattorroTank::setTrebleMultiply (float mult)
 
 void DattorroTank::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = std::min (std::max (hz, 1.0f), highCrossoverFreq_);
+    crossoverFreq_ = std::min (std::max (hz, 1.0f), highCrossoverFreq_ - 10.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
 
 void DattorroTank::setHighCrossoverFreq (float hz)
 {
-    highCrossoverFreq_ = std::max (hz, std::max (crossoverFreq_, 1.0f));
+    highCrossoverFreq_ = std::max (hz, crossoverFreq_ + 10.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -472,16 +488,19 @@ void DattorroTank::setAirDampingScale (float scale)
 
 void DattorroTank::setModDepth (float depth)
 {
+    // Cache the original requested value so prepare() can replay it at a new
+    // sample rate without losing precision from clamping.
+    lastModDepthRaw_ = depth;
+
     // Clamp depth so modDepthSamples_ cannot exceed the ±32-sample modulation
     // headroom reserved in prepare()'s buffer allocation.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     float maxDepth = 32.0f / (16.0f * std::max (rateRatio, 1.0f));
-    depth = std::clamp (depth, 0.0f, maxDepth);
-    lastModDepthRaw_ = depth;
+    float clampedDepth = std::clamp (depth, 0.0f, maxDepth);
     // Map 0-1 knob range to 0-16 samples peak excursion (Dattorro: 8 samples typical)
-    modDepthSamples_ = depth * 16.0f * rateRatio;
+    modDepthSamples_ = clampedDepth * 16.0f * rateRatio;
     // Noise jitter scales with depth and sample rate
-    noiseModDepth_ = depth * 12.0f * rateRatio;  // 12 samples peak at depth=1.0
+    noiseModDepth_ = clampedDepth * 12.0f * rateRatio;  // 12 samples peak at depth=1.0
 }
 
 void DattorroTank::setModRate (float hz)
@@ -556,6 +575,7 @@ void DattorroTank::setNoiseModDepth (float samples)
     // When set (>= 0), this overrides the modDepth-coupled noise jitter.
     // Critical for algorithms with low modDepth (e.g., Chamber=0.05) that
     // still need aggressive jitter to suppress modal resonances.
+    lastNoiseModDepthRaw_ = samples;
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     // Clamp to the modulation headroom reserved in prepare() (32 samples at base rate)
     float maxAllowed = 32.0f * rateRatio;
@@ -605,8 +625,9 @@ void DattorroTank::applyTapGains (const float* leftGains, const float* rightGain
 
 void DattorroTank::setFreeze (bool frozen)
 {
+    bool wasTransition = (frozen != frozen_);
     frozen_ = frozen;
-    if (frozen)
+    if (wasTransition)
     {
         structHFStateL_ = 0.0f;
         structHFStateR_ = 0.0f;
@@ -621,7 +642,7 @@ void DattorroTank::setFreeze (bool frozen)
 
 void DattorroTank::setLateGainScale (float scale)
 {
-    lateGainScale_ = scale;
+    lateGainScale_ = std::max (scale, 0.0f);
 }
 
 void DattorroTank::setSizeRange (float min, float max)
@@ -651,6 +672,7 @@ void DattorroTank::setDecayBoost (float boost)
 
 void DattorroTank::setStructuralHFDamping (float hz)
 {
+    lastStructHFHz_ = hz;
     if (hz <= 0.0f)
     {
         structHFCoeff_ = 0.0f;

@@ -341,7 +341,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -612,16 +612,16 @@ void ShortVocalAmbiencePresetEngine::prepare (double sampleRate, int /*maxBlockS
     // modulation state (like VV's stochastic modulation). The evenly-spaced
     // offsets between channels are preserved; only the base phase is random.
     {
-        std::random_device rd;
-        float basePhase = std::uniform_real_distribution<float> (0.0f, kTwoPi) (rd);
+        // Deterministic LFO seeding: evenly-spaced phases with a fixed base.
+        // Using std::random_device made tails nondeterministic across project reloads.
+        constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
         for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (basePhase + kTwoPi * static_cast<float> (i)
-                                                         / static_cast<float> (N), kTwoPi);
+            lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
+                                                               / static_cast<float> (N), kTwoPi);
 
-        // Random PRNG seeds so drift pattern varies per prepare() call
-        uint32_t baseSeed = rd();
+        constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
         for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
+            lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
     }
 
     updateModDepth();
@@ -1009,14 +1009,6 @@ void ShortVocalAmbiencePresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        for (int i = 0; i < N; ++i)
-        {
-            structHFState_[i] = 0.0f;
-            structLFState_[i] = 0.0f;
-            antiAliasState_[i] = 0.0f;
-            dcX1_[i] = 0.0f;
-            dcY1_[i] = 0.0f;
-        }
         peakRMS_ = 0.0f;
         currentRMS_ = 0.0f;
         terminalDecayActive_ = false;
@@ -1432,8 +1424,9 @@ void ShortVocalAmbiencePresetEngine::clearBuffers()
         dcY1_[i] = 0.0f;
         // Distribute LFO phases evenly and use unique seeds so algorithm-switch
         // resets don't produce correlated modulation across channels.
-        lfoPhase_[i] = static_cast<float> (i) * (6.283185307f / static_cast<float> (N));
-        lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
+        lfoPhase_[i] = std::fmod (2.3561945f + 6.283185307f * static_cast<float> (i)
+                                                       / static_cast<float> (N), 6.283185307f);
+        lfoPRNG_[i] = 0x5A3C9E71u + static_cast<uint32_t> (i * 1847);
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
@@ -1613,7 +1606,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
+                if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
         // (no setDelayScale on this engine)
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -2022,7 +2018,9 @@ public:
         if (frozen)
         {
             // Clear post-FX state so unfreeze resumes with clean buffers
-            stereoDecorr_apState = 0.0f;
+            // NOTE: stereoDecorr_apState is intentionally NOT cleared here —
+            // the allpass state must persist during freeze to maintain the
+            // right channel's phase relationship.
             for (int j = 0; j < kChorusBufSize; ++j) { chorusBufL_[j] = 0.0f; chorusBufR_[j] = 0.0f; }
             chorusWritePos_ = 0;
             chorusPhaseL_ = 0.0f;
@@ -2071,8 +2069,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -2117,6 +2115,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

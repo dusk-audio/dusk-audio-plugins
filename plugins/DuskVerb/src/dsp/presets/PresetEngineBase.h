@@ -52,6 +52,8 @@ public:
         (void) minVal; (void) maxVal;
     }
     virtual void setLateGainScale (float scale)            { (void) scale; }
+    virtual void setInlineDiffusion (float amount)         { (void) amount; }
+    virtual void setStereoCoupling (float coupling)        { (void) coupling; }
 
     // Reset overrideable parameters to the values baked during prepare().
     // Called by DuskVerbEngine when an override sentinel fires (< 0) so the
