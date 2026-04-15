@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.22f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 4000.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.71f;
@@ -51,8 +50,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 1.0f;
-    constexpr float kVvTrebleMultiply    = 0.903317f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 1.0f;
@@ -66,9 +63,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.528398f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 0.181474f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -78,7 +73,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.61751f, -9.64368f, -6.02399f, 3.79306f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 1.11996f, -4.77716f, -0.453874f, -2.03391f, -1.6837f, -1.08815f, -1.16645f, 1.63297f, 3.62633f, -0.781068f, -1.88595f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -200,7 +195,6 @@ private:
     static constexpr int kRightDel2Base = 1559;   // ~35.3ms delay
 
     // Worst-case base delay for buffer allocation (hall-scale is larger)
-    static constexpr int kMaxBaseDelay = 18028;  // 4507 * 4 (max delayScale=4.0)
 
     // -----------------------------------------------------------------------
     // Circular delay line with power-of-2 masking.
@@ -392,7 +386,6 @@ private:
     bool prepared_ = false;
 
     float decayBoost_ = 1.0f;
-    float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFStateL_ = 0.0f;
     float structHFStateR_ = 0.0f;
@@ -667,7 +660,7 @@ void GatedSnarePresetEngine::process (const float* inputL, const float* inputR,
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -1189,6 +1182,15 @@ void GatedSnarePresetEngine::updateDecayCoefficients()
 
     updateTankDamping (leftTank_);
     updateTankDamping (rightTank_);
+
+    // Re-apply 5-band crossovers: computeGainsFromBase() overwrites inner
+    // crossover coefficients with geometric interpolation from the outer pair.
+    // The explicit kFiveBandCrossoverHz values set in prepare() must survive.
+    float fbCoeffs[4];
+    for (int b = 0; b < 4; ++b)
+        fbCoeffs[b] = std::exp (-6.283185307f * kFiveBandCrossoverHz[b] / sr);
+    leftTank_.damping.setCrossovers (fbCoeffs);
+    rightTank_.damping.setCrossovers (fbCoeffs);
 }
 
 void GatedSnarePresetEngine::updateLFORates()
@@ -1538,6 +1540,11 @@ public:
     {
         overrideHighCrossover_ = -1.0f;
         engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
+    }
+    void resetLowCrossoverToDefault() override
+    {
+        overrideCrossover_ = -1.0f;
+        engine_.setCrossoverFreq (kVvCrossoverHz);
     }
     void resetNoiseModToDefault() override
     {

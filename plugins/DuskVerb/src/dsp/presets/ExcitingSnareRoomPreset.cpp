@@ -31,9 +31,8 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.63f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 6000.0f;
     constexpr float kBakedAirDampingScale    = 0.75f;
-    constexpr float kBakedNoiseModDepth      = 1.5f;
+    constexpr float kBakedNoiseModDepth      = 12.0f;
     constexpr float kBakedTrebleMultScale    = 0.45f;
     constexpr float kBakedTrebleMultScaleMax = 0.82f;
     constexpr float kBakedBassMultScale      = 0.85f;
@@ -47,8 +46,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 1.18195f;
-    constexpr float kVvTrebleMultiply    = 0.853641f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 1.02593f;
@@ -62,9 +59,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.639868f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 0.336526f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -74,7 +69,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 9.37314f, 5.45447f, 1.21335f, -1.28166f, -0.804076f, -2.79287f, -7.1946f, -8.95849f, -9.60344f, -7.91623f, 1.78744f, 7.38521f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -4.93441f, -8.78355f, 0.182755f, 2.38519f, 12.0f, -8.07375f, -2.90708f, -6.59967f, -12.0f, -12.0f, 2.476f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -168,7 +163,6 @@ private:
     static constexpr int kRightDel2Base = 1559;   // ~35.3ms delay
 
     // Worst-case base delay for buffer allocation (hall-scale is larger)
-    static constexpr int kMaxBaseDelay = 18028;  // 4507 * 4 (max delayScale=4.0)
 
     // -----------------------------------------------------------------------
     // Circular delay line with power-of-2 masking.
@@ -361,7 +355,6 @@ private:
     bool prepared_ = false;
 
     float decayBoost_ = 1.0f;
-    float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFStateL_ = 0.0f;
     float structHFStateR_ = 0.0f;
@@ -369,7 +362,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
@@ -625,7 +618,7 @@ void ExcitingSnareRoomPresetEngine::process (const float* inputL, const float* i
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -1212,20 +1205,11 @@ public:
         //   - kVvTiltLow/High*   → post-engine tilt EQ
         //   - kVvStereoWidth     → post-engine mid/side mix
         //   - base engine pick   → topology selection
-        // Capture cached bass/treble before seeding so user overrides survive
-        // re-preparation (e.g. DAW sample rate change). Sentinel -1.0 means
-        // no runtime override was ever applied — skip the restore.
-        float savedBass = lastBass_;
-        float savedTreble = lastTreble_;
-        // Seed bass/treble at neutral knob position (0.5) so lastTreble_
-        // holds the correctly scaled value for the structural HF replay below.
-        // This temporarily sets lastBass_/lastTreble_ to neutral scaled values;
-        // we restore them below only if a real override was captured.
-        setBassMultiply (0.5f);
-        setTrebleMultiply (0.5f);
         // Replay any cached runtime overrides after prepare so they survive
         // re-preparation (e.g. DAW sample rate change). Without this, overrides
         // set by the host or optimizer would be silently reset to baked defaults.
+        // Note: lastBass_/lastTreble_ sentinels stay at -1.0f until a real
+        // runtime override arrives — no neutral seeding needed.
         if (overrideAirDamping_ >= 0.0f)
             setAirDampingScale (overrideAirDamping_);
         if (overrideHighCrossover_ >= 0.0f)
@@ -1243,15 +1227,12 @@ public:
         if (frozen_)
             setFreeze (true);
         // Restore cached bass/treble only if a runtime override was actually
-        // applied (sentinel -1.0 means "never overridden"). savedTreble holds
-        // the engine-facing scaled value (lastTreble_), so bypass the wrapper's
-        // nonlinear curve and call the engine directly.
-        if (savedBass >= 0.0f)
-            setBassMultiply (savedBass);
-        if (savedTreble >= 0.0f)
+        // applied (sentinel -1.0 means "never overridden").
+        if (lastBass_ >= 0.0f)
+            setBassMultiply (lastBass_);
+        if (lastTreble_ >= 0.0f)
         {
-            engine_.setTrebleMultiply (savedTreble);
-            lastTreble_ = savedTreble;
+            engine_.setTrebleMultiply (lastTreble_);
         }
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
@@ -1628,6 +1609,11 @@ public:
     {
         overrideHighCrossover_ = -1.0f;
         engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
+    }
+    void resetLowCrossoverToDefault() override
+    {
+        overrideCrossover_ = -1.0f;
+        engine_.setCrossoverFreq (kVvCrossoverHz);
     }
     void resetNoiseModToDefault() override
     {

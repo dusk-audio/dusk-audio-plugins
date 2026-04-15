@@ -472,9 +472,13 @@ void DattorroTank::setAirDampingScale (float scale)
 
 void DattorroTank::setModDepth (float depth)
 {
+    // Clamp depth so modDepthSamples_ cannot exceed the ±32-sample modulation
+    // headroom reserved in prepare()'s buffer allocation.
+    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
+    float maxDepth = 32.0f / (16.0f * std::max (rateRatio, 1.0f));
+    depth = std::clamp (depth, 0.0f, maxDepth);
     lastModDepthRaw_ = depth;
     // Map 0-1 knob range to 0-16 samples peak excursion (Dattorro: 8 samples typical)
-    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     modDepthSamples_ = depth * 16.0f * rateRatio;
     // Noise jitter scales with depth and sample rate
     noiseModDepth_ = depth * 12.0f * rateRatio;  // 12 samples peak at depth=1.0
@@ -553,7 +557,9 @@ void DattorroTank::setNoiseModDepth (float samples)
     // Critical for algorithms with low modDepth (e.g., Chamber=0.05) that
     // still need aggressive jitter to suppress modal resonances.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    independentNoiseModDepth_ = samples * rateRatio;
+    // Clamp to the modulation headroom reserved in prepare() (32 samples at base rate)
+    float maxAllowed = 32.0f * rateRatio;
+    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxAllowed);
 }
 
 void DattorroTank::setOutputTaps (const OutputTap* left, const OutputTap* right)

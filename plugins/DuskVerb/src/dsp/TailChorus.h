@@ -175,10 +175,8 @@ public:
     {
         for (int v = 0; v < kNumVoices; ++v)
         {
-            std::memset (delayBufL_[v].data(), 0,
-                         static_cast<size_t> (bufferSize_) * sizeof (float));
-            std::memset (delayBufR_[v].data(), 0,
-                         static_cast<size_t> (bufferSize_) * sizeof (float));
+            std::fill (delayBufL_[v].begin(), delayBufL_[v].end(), 0.0f);
+            std::fill (delayBufR_[v].begin(), delayBufR_[v].end(), 0.0f);
             lfoPhase_[v] = static_cast<float> (v) / static_cast<float> (kNumVoices);
         }
         writePos_ = 0;

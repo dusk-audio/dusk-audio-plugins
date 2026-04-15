@@ -8,6 +8,10 @@ PresetEngineRegistry& PresetEngineRegistry::instance()
 
 void PresetEngineRegistry::registerEngine (const std::string& algorithmName, FactoryFn factory)
 {
+    // Idempotent: skip if already registered (prevents double-registration
+    // from PresetEngineRegistrar static initializers + forceLinkPresetEngines).
+    if (factories_.find (algorithmName) != factories_.end())
+        return;
     factories_[algorithmName] = factory;
 }
 

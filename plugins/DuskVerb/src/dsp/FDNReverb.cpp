@@ -607,6 +607,8 @@ void FDNReverb::setTrebleMultiply (float mult)
 void FDNReverb::setCrossoverFreq (float hz)
 {
     crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f);
+    if (crossoverFreq_ > highCrossoverFreq_)
+        highCrossoverFreq_ = crossoverFreq_;
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -863,6 +865,7 @@ void FDNReverb::setHadamardPerturbation (float amount)
             }
         }
 
+        bool gaussJordanSucceeded = true;
         for (int col = 0; col < N; ++col)
         {
             // Partial pivoting for numerical stability
@@ -885,7 +888,10 @@ void FDNReverb::setHadamardPerturbation (float amount)
 
             float diag = aug[col][col];
             if (std::fabs (diag) < 1e-12f)
-                break; // Singular — bail out (shouldn't happen for perturbed Hadamard)
+            {
+                gaussJordanSucceeded = false;
+                break; // Singular — preserve previous perturbMatrix_
+            }
 
             float invDiag = 1.0f / diag;
             for (int k = 0; k < 2 * N; ++k)
@@ -903,9 +909,13 @@ void FDNReverb::setHadamardPerturbation (float amount)
 
         // M^{-1} is now in aug[i][j+N]. We need M^{-T} (transpose of inverse).
         // Compute M_{k+1} = 0.5 * (M + M^{-T})
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
-                perturbMatrix_[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
+        // Only update if inversion fully succeeded; otherwise keep previous matrix.
+        if (gaussJordanSucceeded)
+        {
+            for (int i = 0; i < N; ++i)
+                for (int j = 0; j < N; ++j)
+                    perturbMatrix_[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
+        }
     }
 }
 
@@ -968,6 +978,8 @@ void FDNReverb::setModDepthFloor (float floor)
 void FDNReverb::setHighCrossoverFreq (float hz)
 {
     highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f);
+    if (highCrossoverFreq_ < crossoverFreq_)
+        crossoverFreq_ = highCrossoverFreq_;
     if (prepared_)
         updateDecayCoefficients();
 }

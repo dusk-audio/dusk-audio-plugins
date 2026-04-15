@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.22f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 4000.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.99f;
@@ -49,8 +48,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 1.42308f;
-    constexpr float kVvTrebleMultiply    = 0.593331f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.439555f;
@@ -64,9 +61,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.962847f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 0.965301f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -76,7 +71,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.79502f, -1.91113f, -0.851157f, 0.249515f, -1.51772f, 0.177494f, 1.58741f, 4.33189f, 4.57902f, 3.08872f, 4.85189f, 9.4123f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.68766f, -2.67985f, -1.90954f, 1.12496f, -4.55544f, 0.621679f, -0.859571f, 1.69127f, 1.21294f, -5.60155f, 2.18078f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -88,14 +83,14 @@ namespace {
     constexpr float kOnsetDurationMs = 300.0f;
     constexpr int kOnsetTableSize = 64;
     constexpr float kOnsetEnvelope[kOnsetTableSize] = {
+        1.0000f, 0.5327f, 0.5591f, 0.4540f, 0.3486f, 0.3391f, 0.4050f, 0.4388f,
+        0.4380f, 0.3846f, 0.3595f, 0.3370f, 0.3572f, 0.3856f, 0.4304f, 0.3807f,
+        0.4036f, 0.4684f, 0.5362f, 0.4908f, 0.3551f, 0.3144f, 0.3634f, 0.3913f,
+        0.5404f, 0.4717f, 0.6048f, 0.4157f, 0.3691f, 0.2645f, 0.2800f, 0.2968f,
+        0.2907f, 0.2458f, 0.1711f, 0.1218f, 0.0878f, 0.0598f, 0.0387f, 0.0015f,
+        0.0078f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f,
         1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f,
-        1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f,
-        1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 0.0078f,
-        0.0015f, 0.0387f, 0.0598f, 0.0878f, 0.1218f, 0.1711f, 0.2458f, 0.2907f,
-        0.2968f, 0.2800f, 0.2645f, 0.3691f, 0.4157f, 0.6048f, 0.4717f, 0.5404f,
-        0.3913f, 0.3634f, 0.3144f, 0.3551f, 0.4908f, 0.5362f, 0.4684f, 0.4036f,
-        0.3807f, 0.4304f, 0.3856f, 0.3572f, 0.3370f, 0.3595f, 0.3846f, 0.4380f,
-        0.4388f, 0.4050f, 0.3391f, 0.3486f, 0.4540f, 0.5591f, 0.5327f, 1.0000f
+        1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f
     };
 
 // ==========================================================================
@@ -352,7 +347,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -1077,11 +1072,15 @@ void PadHallPresetEngine::setInlineDiffusion (float coeff)
     // ringing for longer-delay modes (Hall, Plate). Density is instead
     // improved via 3-stage output diffusion (post-FDN, no feedback impact).
     inlineDiffCoeff3_ = 0.0f;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void PadHallPresetEngine::setUseShortInlineAP (bool use)
 {
     useShortInlineAP_ = use;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void PadHallPresetEngine::setMultiPointOutput (const FDNOutputTap* left, int numL,

@@ -385,10 +385,14 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         hiCutSmooth_    .setCurrentAndTargetValue (hiCutParam_->load());
         widthSmooth_    .setCurrentAndTargetValue (widthParam_->load());
     }
+
+    startTimerHz (30);
 }
 
 void DuskVerbProcessor::releaseResources()
 {
+    stopTimer();
+
     // Invalidate prepare guard so next prepareToPlay() calls engine_.prepare()
     preparedSampleRate_ = 0.0;
     preparedBlockSize_ = 0;
@@ -398,11 +402,14 @@ void DuskVerbProcessor::releaseResources()
     lastPresetPreDelayMs_ = -1.0f;
 }
 
-void DuskVerbProcessor::handleAsyncUpdate()
+void DuskVerbProcessor::timerCallback()
 {
     int latency = pendingLatency_.load (std::memory_order_relaxed);
-    if (latency >= 0)
+    if (latency >= 0 && latency != getLatencySamples())
+    {
         setLatencySamples (latency);
+        pendingLatency_.store (-1, std::memory_order_relaxed);
+    }
 }
 
 void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
@@ -428,12 +435,9 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Bypass: pass audio through unprocessed but still update input + output meters
     if (bypassParam_ != nullptr && bypassParam_->get())
     {
-        // Schedule latency change on the message thread (not safe to call from audio thread)
+        // Signal latency change for timer to pick up on the message thread
         if (pendingLatency_.load (std::memory_order_relaxed) != 0)
-        {
             pendingLatency_.store (0, std::memory_order_relaxed);
-            triggerAsyncUpdate();
-        }
         float* left  = buffer.getWritePointer (0);
         float* right = buffer.getWritePointer (1);
         float peakL = 0.0f, peakR = 0.0f;
@@ -451,13 +455,10 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         return;
     }
 
-    // Restore latency after bypass (schedule on message thread)
+    // Restore latency after bypass (timer will apply on the message thread)
     if (getLatencySamples() != originalLatencySamples_
         && pendingLatency_.load (std::memory_order_relaxed) != originalLatencySamples_)
-    {
         pendingLatency_.store (originalLatencySamples_, std::memory_order_relaxed);
-        triggerAsyncUpdate();
-    }
 
     float* left  = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
@@ -553,14 +554,15 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // (VV tap times are absolute; DV's pre-delay is subtracted).
     {
         int presetId = static_cast<int> (presetIdParam_->load());
+        bool presetChanged = presetId != lastPresetId_;
         bool preDelayChanged = std::abs (preDelayMs - lastPresetPreDelayMs_) > 0.001f;
-        if (presetId != lastPresetId_ || preDelayChanged)
+
+        if (presetChanged)
         {
+            // Full preset update: tap positions, correction filter, and ER taps
             lastPresetId_ = presetId;
             lastPresetPreDelayMs_ = preDelayMs;
 
-            // Apply pre-delay immediately (skip smoothing) so the engine
-            // has the correct value when computing tap delay offsets.
             engine_.setPreDelay (preDelayMs);
             preDelaySmooth_.setCurrentAndTargetValue (preDelayMs);
 
@@ -584,6 +586,28 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             {
                 engine_.setCustomERTaps (nullptr, 0);  // Revert to generated
                 engine_.loadCorrectionFilter (-1);      // Disable correction
+            }
+        }
+        else if (preDelayChanged)
+        {
+            // Pre-delay only: update timing without reloading tap positions or correction filter
+            lastPresetPreDelayMs_ = preDelayMs;
+
+            engine_.setPreDelay (preDelayMs);
+            preDelaySmooth_.setCurrentAndTargetValue (preDelayMs);
+
+            if (presetId > 0 && presetId <= 53)
+            {
+                const auto& presets = getFactoryPresets();
+                int idx = presetId - 1;
+                if (idx < static_cast<int> (presets.size()))
+                    engine_.loadPresetERTaps (presets[static_cast<size_t> (idx)].name);
+                else
+                    engine_.setCustomERTaps (nullptr, 0);
+            }
+            else
+            {
+                engine_.setCustomERTaps (nullptr, 0);
             }
         }
     }

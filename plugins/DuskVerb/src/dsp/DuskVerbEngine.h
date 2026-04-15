@@ -120,8 +120,7 @@ private:
     bool useQuadTank_ = false;
     QuadTank quadTank_;
     QuadTank hybridQuadTank_;  // Dedicated secondary engine for hybrid dual-engine mode
-    TiledRoomReverb tiledRoomReverb_;  // Custom per-preset reverb engine (legacy, unused)
-    bool useCustomPresetEngine_ = false;
+    TiledRoomReverb tiledRoomReverb_;  // Legacy engine — process path removed, setters kept for parameter forwarding
 
     // Per-preset engines: every registered preset engine is constructed
     // and prepared once during DuskVerbEngine::prepare() (off the audio
@@ -132,7 +131,7 @@ private:
     std::mutex prebuiltPresetEnginesMutex_;  // Protects map mutations; never held on audio thread
     std::atomic<PresetEngineBase*> presetEngine_ { nullptr };  // non-owning; written in applyAlgorithm (audio thread)
 
-    // Pending algorithm handoff: seqlock ensures the audio thread reads a
+    // Pending algorithm handoff: atomic struct ensures the audio thread reads a
     // consistent (algorithmIndex, engine*, presetClearDone) triple even when
     // setAlgorithm() is called repeatedly from the message thread.
     struct PendingSwap
@@ -141,8 +140,10 @@ private:
         PresetEngineBase* engine = nullptr;
         bool presetClearDone = false;
     };
-    PendingSwap pendingSwap_;                               // Written under seqlock by message thread
-    std::atomic<unsigned> pendingSwapSeq_ { 0 };            // Even = stable, odd = write in progress
+    static_assert (std::is_trivially_copyable<PendingSwap>::value,
+                   "PendingSwap must be trivially copyable for std::atomic");
+    std::atomic<PendingSwap> pendingSwap_ { PendingSwap { -1, nullptr, false } };
+    std::atomic<unsigned> pendingSwapSeq_ { 0 };            // Kept for ABI compat; no longer load-bearing
     std::atomic<bool> pendingPresetClear_ { false }; // Deferred clearBuffers() fallback (same-engine case only)
 
     const AlgorithmConfig* config_ = &kHall;
