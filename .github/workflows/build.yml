@@ -103,7 +103,7 @@ jobs:
               NAME="DuskVerb"
               RELEASE_NAME="duskverb"
             elif [[ "$TAG" == chord-analyzer-v* ]]; then
-              TARGET="ChordAnalyzer_All"
+              TARGET="ChordAnalyzer_All ChordAnalyzerFX_All"
               NAME="Chord Analyzer"
               RELEASE_NAME="chord-analyzer"
             fi
@@ -117,7 +117,7 @@ jobs:
               convolution-reverb) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
               duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
-              chord-analyzer) TARGET="ChordAnalyzer_All"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
+              chord-analyzer) TARGET="ChordAnalyzer_All ChordAnalyzerFX_All"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
             esac
           fi
 
