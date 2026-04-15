@@ -222,8 +222,8 @@ jobs:
           fi
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
-            echo "Building specific target: $TARGET"
-            cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(nproc)
+            echo "Building specific target(s): $TARGET"
+            for t in $TARGET; do cmake --build build --config ${{ env.BUILD_TYPE }} --target "$t" -j$(nproc); done
           else
             echo "Building all plugins"
             cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
@@ -399,8 +399,8 @@ jobs:
           fi
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
-            echo "Building specific target: $TARGET"
-            cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(nproc)
+            echo "Building specific target(s): $TARGET"
+            for t in $TARGET; do cmake --build build --config ${{ env.BUILD_TYPE }} --target "$t" -j$(nproc); done
           else
             echo "Building all plugins"
             cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
@@ -515,8 +515,10 @@ jobs:
           }
           $target = "${{ needs.setup.outputs.plugin_target }}"
           if ($target) {
-            Write-Host "Building specific target: $target"
-            cmake --build build --target $target -j $env:NUMBER_OF_PROCESSORS
+            Write-Host "Building specific target(s): $target"
+            foreach ($t in $target.Split(' ')) {
+              cmake --build build --target $t -j $env:NUMBER_OF_PROCESSORS
+            }
           } else {
             Write-Host "Building all plugins"
             cmake --build build -j $env:NUMBER_OF_PROCESSORS
@@ -621,8 +623,8 @@ jobs:
           fi
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
-            echo "Building specific target: $TARGET"
-            cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(sysctl -n hw.ncpu)
+            echo "Building specific target(s): $TARGET"
+            for t in $TARGET; do cmake --build build --config ${{ env.BUILD_TYPE }} --target "$t" -j$(sysctl -n hw.ncpu); done
           else
             echo "Building all plugins"
             cmake --build build --config ${{ env.BUILD_TYPE }} -j$(sysctl -n hw.ncpu)
