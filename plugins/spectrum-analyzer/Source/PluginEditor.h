@@ -6,9 +6,11 @@
 #include "SpectrumAnalyzerLookAndFeel.h"
 #include "UI/SpectrumDisplay.h"
 #include "UI/MeterPanel.h"
-#include "UI/ToolbarComponent.h"
+#include "UI/HeaderBar.h"
+#include "UI/SettingsOverlay.h"
 #include "../../shared/SupportersOverlay.h"
 #include "../../shared/LEDMeter.h"
+#include "../../shared/ScalableEditorHelper.h"
 
 //==============================================================================
 class SpectrumAnalyzerEditor : public juce::AudioProcessorEditor,
@@ -31,20 +33,18 @@ private:
     // UI Components
     SpectrumDisplay spectrumDisplay;
     MeterPanel meterPanel;
-    ToolbarComponent toolbar;
+    HeaderBar headerBar;
 
     // LED meters on right side
     LEDMeter outputMeterL{LEDMeter::Vertical};
     LEDMeter outputMeterR{LEDMeter::Vertical};
 
-    // Header components
-    juce::ComboBox channelModeCombo;
-    juce::Label channelModeLabel;
+    // Settings overlay (always exists, shown/hidden on gear click)
+    std::unique_ptr<SettingsOverlay> settingsOverlay;
 
     //==========================================================================
     // Supporters overlay
     std::unique_ptr<SupportersOverlay> supportersOverlay;
-    juce::Rectangle<int> titleClickArea;
 
     //==========================================================================
     // Parameter attachments
@@ -57,12 +57,15 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> rangeAttachment;
 
     //==========================================================================
-    void setupHeader();
     void setupAttachments();
     void updateMeters();
 
     void showSupportersPanel();
     void hideSupportersPanel();
+    void showSettings();
+    void hideSettings();
+
+    ScalableEditorHelper resizeHelper;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumAnalyzerEditor)
 };

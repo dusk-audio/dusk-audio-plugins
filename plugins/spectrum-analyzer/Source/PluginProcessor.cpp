@@ -76,7 +76,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumAnalyzerProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID(PARAM_PEAK_HOLD, 1),
         "Peak Hold",
-        true));
+        false));
 
     // Peak hold time
     params.push_back(std::make_unique<juce::AudioParameterFloat>(

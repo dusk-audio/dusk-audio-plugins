@@ -149,7 +149,7 @@ public:
         g.setColour(shouldDrawButtonAsHighlighted ?
             juce::Colour(Colors::textPrimary) :
             button.findColour(juce::ToggleButton::textColourId));
-        g.setFont(12.0f);
+        g.setFont(14.0f);
         g.drawText(button.getButtonText(), bounds.reduced(4.0f, 0.0f),
             juce::Justification::centredLeft);
     }
