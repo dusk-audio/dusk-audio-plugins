@@ -245,7 +245,7 @@ private:
     float structHFState_[4] {};
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
-    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40)*0.1) — precomputed from thresholdDB
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS  // 10^(-(-40)*0.1) — precomputed from thresholdDB
     float rmsAlpha_ = 0.9995f;           // Exponential smoothing for RMS tracking
     float peakDecayAlpha_ = 0.99999f;    // Peak envelope decay coefficient
     float peakRMS_ = 0.0f;

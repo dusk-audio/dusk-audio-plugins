@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.22f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 4000.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.88f;
@@ -47,8 +46,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 1.07463f;
-    constexpr float kVvTrebleMultiply    = 0.959242f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.881795f;
@@ -62,9 +59,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.485665f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 0.357953f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -74,7 +69,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -8.0f, -3.5f, -3.0f, -5.23016f, -3.78944f, -3.24319f, -3.58664f, -2.86371f, -2.44466f, -3.64866f, -3.97039f, 3.85582f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.05397f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -10.2876f, -12.0f, -12.0f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -341,14 +336,12 @@ private:
     float sizeParam_ = 1.0f;
     float feedbackModDepth_ = 0.0f;
     float crossoverModDepth_ = 0.0f;
-    float baseLowCrossoverCoeff_ = 0.0f;
-    float baseHighCrossoverCoeff_ = 0.0f;
     float decayBoost_ = 1.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -1091,11 +1084,15 @@ void ShortVocalAmbiencePresetEngine::setInlineDiffusion (float coeff)
     // ringing for longer-delay modes (Hall, Plate). Density is instead
     // improved via 3-stage output diffusion (post-FDN, no feedback impact).
     inlineDiffCoeff3_ = 0.0f;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void ShortVocalAmbiencePresetEngine::setUseShortInlineAP (bool use)
 {
     useShortInlineAP_ = use;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void ShortVocalAmbiencePresetEngine::setMultiPointOutput (const FDNOutputTap* left, int numL,
@@ -1561,6 +1558,16 @@ void ShortVocalAmbiencePresetEngine::updateDecayCoefficients()
         dampFilter_[i].setBandMultipliers (combinedMult);
         dampFilter_[i].computeGainsFromBase (gBase, lowCrossoverCoeff, highCrossoverCoeff);
     }
+
+    // Re-apply 5-band crossovers: computeGainsFromBase() overwrites inner
+    // crossover coefficients with geometric interpolation from the outer pair.
+    // The explicit kFiveBandCrossoverHz values set in prepare() must survive.
+    float fbCoeffs[4];
+    for (int b = 0; b < 4; ++b)
+        fbCoeffs[b] = std::exp (-6.283185307f * kFiveBandCrossoverHz[b]
+                                / static_cast<float> (sampleRate_));
+    for (int i = 0; i < N; ++i)
+        dampFilter_[i].setCrossovers (fbCoeffs);
 }
 
 void ShortVocalAmbiencePresetEngine::updateModDepth()
@@ -1860,7 +1867,7 @@ public:
         if (! frozen_)
         {
             constexpr float kChorusRateHz = 1.5f;
-            constexpr float kChorusDepthMs = 5.0f;  // ±5ms delay modulation for strong chorus effect
+            constexpr float kChorusDepthMs = 7.0f;  // ±7ms — increased to push modulation above -10dB threshold
             const float chorusInc = 6.283185307f * kChorusRateHz
                                   / static_cast<float> (sampleRate_);
             const float maxDelay = std::min (kChorusDepthMs * 0.001f * static_cast<float> (sampleRate_),
@@ -2079,6 +2086,11 @@ public:
         overrideHighCrossover_ = -1.0f;
         engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
     }
+    void resetLowCrossoverToDefault() override
+    {
+        overrideCrossover_ = -1.0f;
+        engine_.setCrossoverFreq (kVvCrossoverHz);
+    }
     void resetNoiseModToDefault() override
     {
         overrideNoiseMod_ = -1.0f;
@@ -2165,7 +2177,7 @@ private:
     float amPhase_ = 0.0f;
     float amPhaseInc_ = 0.0f;
     // Output-side chorus state
-    static constexpr int kChorusBufSize = 2048;  // Must hold 2 * maxDelay samples at 192kHz (2 * 960 = 1920)
+    static constexpr int kChorusBufSize = 4096;  // Covers 2 * 7ms at 192kHz with margin (2 * 1344 = 2688)
     static constexpr int kChorusMask = kChorusBufSize - 1;
     float chorusBufL_[kChorusBufSize] {};
     float chorusBufR_[kChorusBufSize] {};

@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.22f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 4000.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.85f;
@@ -49,8 +48,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 1.29266f;
-    constexpr float kVvTrebleMultiply    = 0.944586f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.919453f;
@@ -64,9 +61,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.986087f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 0.852705f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -76,7 +71,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 12.0f, 12.0f, 12.0f, 12.0f, -2.02166f, -8.45461f, -9.24697f, -8.06044f, -4.35051f, -3.50853f, -8.04585f, -3.69002f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.27527f, -5.28954f, -1.63714f, -2.60784f, 0.085376f, -2.93072f, -2.47496f, -0.6654f, 1.1757f, -0.602428f, -7.26757f, -7.31784f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -326,14 +321,12 @@ private:
     float sizeParam_ = 1.0f;
     float feedbackModDepth_ = 0.0f;
     float crossoverModDepth_ = 0.0f;
-    float baseLowCrossoverCoeff_ = 0.0f;
-    float baseHighCrossoverCoeff_ = 0.0f;
     float decayBoost_ = 1.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -630,11 +623,13 @@ void SnareAmbiencePresetEngine::process (const float* inputL, const float* input
         {
             auto& dl = delayLines_[ch];
 
-            float mod = 0.0f;
+            // Compute mod from preserved LFO phase even when frozen so the
+            // read offset holds steady (zeroing mod would snap to center and click).
+            float mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
+            // Jitter is suppressed when frozen to prevent pitch-smear.
             float jitter = 0.0f;
             if (! frozen_)
             {
-                mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
                 // Per-sample random jitter: fast mode blurring complementing the slow LFO.
                 // Each channel gets independent noise from its xorshift32 PRNG.
                 jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
@@ -1909,6 +1904,11 @@ public:
     {
         overrideHighCrossover_ = -1.0f;
         engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
+    }
+    void resetLowCrossoverToDefault() override
+    {
+        overrideCrossover_ = -1.0f;
+        engine_.setCrossoverFreq (kVvCrossoverHz);
     }
     void resetNoiseModToDefault() override
     {

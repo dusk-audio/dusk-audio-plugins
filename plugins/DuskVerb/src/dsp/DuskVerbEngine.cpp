@@ -134,7 +134,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     gateTriggered_ = false;
 
     // Reset algorithm crossfade state so first setAlgorithm applies immediately
-    pendingSwap_ = { -1, nullptr, false };
+    pendingSwap_.store (PendingSwap { -1, nullptr, false }, std::memory_order_relaxed);
     pendingSwapSeq_.store (0, std::memory_order_relaxed);
     fadeCounter_.store (kFadeSamples, std::memory_order_relaxed);
     fadingOut_.store (false, std::memory_order_relaxed);
@@ -270,14 +270,11 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     }
 
     // Late reverb: route to per-preset engine first (if registered),
-    // then legacy TiledRoomReverb, then one of the shared engines.
+    // then one of the shared engines.
     auto* activePreset = presetEngine_.load (std::memory_order_acquire);
     if (activePreset)
         activePreset->process (scratchL_.data(), scratchR_.data(),
                                scratchL_.data(), scratchR_.data(), numSamples);
-    else if (useCustomPresetEngine_)
-        tiledRoomReverb_.process (scratchL_.data(), scratchR_.data(),
-                                  scratchL_.data(), scratchR_.data(), numSamples);
     else if (useQuadTank_)
         quadTank_.process (scratchL_.data(), scratchR_.data(),
                            scratchL_.data(), scratchR_.data(), numSamples);
@@ -554,14 +551,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
 
                 if (--fc <= 0)
                 {
-                    // At zero crossing, read the pending swap atomically via seqlock
-                    PendingSwap snap;
-                    unsigned seq0, seq1;
-                    do {
-                        seq0 = pendingSwapSeq_.load (std::memory_order_acquire);
-                        snap = pendingSwap_;  // plain read — seqlock validates consistency
-                        seq1 = pendingSwapSeq_.load (std::memory_order_acquire);
-                    } while (seq0 != seq1 || (seq0 & 1u));
+                    // At zero crossing, read the pending swap atomically
+                    PendingSwap snap = pendingSwap_.load (std::memory_order_acquire);
 
                     if (snap.algorithmIndex >= 0)
                         applyAlgorithm (snap.algorithmIndex, snap.engine, snap.presetClearDone);
@@ -693,16 +684,8 @@ void DuskVerbEngine::setAlgorithm (int index)
         cleared = true;
     }
 
-    // Publish the (algorithmIndex, engine*, presetClearDone) triple atomically
-    // via seqlock so the audio thread always reads a consistent set.
-    unsigned seq = pendingSwapSeq_.load (std::memory_order_relaxed);
-    // Round up to next even number, then go odd to signal write-in-progress
-    seq = (seq + 2u) & ~1u;
-    pendingSwapSeq_.store (seq + 1, std::memory_order_release);  // odd = writing
-    pendingSwap_.algorithmIndex = index;
-    pendingSwap_.engine = resolved;
-    pendingSwap_.presetClearDone = cleared;
-    pendingSwapSeq_.store (seq + 2, std::memory_order_release);  // even = stable
+    // Publish the (algorithmIndex, engine*, presetClearDone) triple atomically.
+    pendingSwap_.store (PendingSwap { index, resolved, cleared }, std::memory_order_release);
 
     // Only start a new fade if one isn't already running
     if (! fadingOut_.load (std::memory_order_acquire))
@@ -782,8 +765,6 @@ void DuskVerbEngine::applyAlgorithm (int index, PresetEngineBase* resolvedEngine
         }
     }
 
-    // Legacy flag kept for backwards compatibility with TiledRoomReverb.
-    useCustomPresetEngine_ = false;
     enableSaturation_ = config_->enableSaturation;
     lateFeedForwardLevel_ = config_->lateFeedForwardLevel;
     crestLimitRatio_ = config_->crestLimitRatio;
