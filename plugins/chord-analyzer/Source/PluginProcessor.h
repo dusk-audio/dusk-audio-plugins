@@ -22,7 +22,7 @@ public:
     //==========================================================================
     // MIDI effect characteristics
     bool acceptsMidi() const override { return true; }
-    bool producesMidi() const override { return false; }
+    bool producesMidi() const override { return true; }  // MIDI pass-through
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 

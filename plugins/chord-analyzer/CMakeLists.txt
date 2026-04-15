@@ -43,7 +43,7 @@ juce_add_plugin(ChordAnalyzer
     BUNDLE_ID "com.DuskAudio.ChordAnalyzer"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
-    NEEDS_MIDI_OUTPUT FALSE
+    NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
@@ -128,5 +128,83 @@ target_compile_definitions(ChordAnalyzerTest PRIVATE
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(ChordAnalyzer PRIVATE -O3 -ffast-math -fno-finite-math-only)
+    endif()
+endif()
+
+# ===== FX variant (audio effect with MIDI input/output) =====
+# For Reaper, Bitwig, Logic, LV2, Cubase — sits in FX chain, passes audio and MIDI through.
+# Same source code as the instrument variant, with CHORD_ANALYZER_FX_MODE=1 to control
+# bus layout (audio pass-through instead of silence) and plugin classification.
+juce_add_plugin(ChordAnalyzerFX
+    COMPANY_NAME "Dusk Audio"
+    BUNDLE_ID "com.DuskAudio.ChordAnalyzerFX"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT TRUE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
+    PLUGIN_MANUFACTURER_CODE Dusk
+    PLUGIN_CODE ChFx
+    FORMATS ${PLUGIN_FORMATS}
+    LV2URI "https://dusk-audio.github.io/plugins/chord-analyzer-fx"
+    PRODUCT_NAME "Chord Analyzer FX"
+    VST3_CAN_REPLACE_VST2 FALSE
+    VST3_AUTO_MANIFEST FALSE
+)
+
+juce_generate_juce_header(ChordAnalyzerFX)
+
+target_sources(ChordAnalyzerFX
+    PRIVATE
+        Source/PluginProcessor.cpp
+        Source/PluginProcessor.h
+        Source/PluginEditor.cpp
+        Source/PluginEditor.h
+        Source/ChordAnalyzer.cpp
+        Source/ChordAnalyzer.h
+        Source/ChordRecorder.cpp
+        Source/ChordRecorder.h
+        Source/TheoryTooltips.h
+        Source/ChordAnalyzerLookAndFeel.h
+)
+
+target_include_directories(ChordAnalyzerFX
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+)
+
+target_compile_definitions(ChordAnalyzerFX
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
+        CHORD_ANALYZER_FX_MODE=1
+)
+
+target_link_libraries(ChordAnalyzerFX
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_plugin_client
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(ChordAnalyzerFX PRIVATE -O3 -ffast-math -fno-finite-math-only)
     endif()
 endif()

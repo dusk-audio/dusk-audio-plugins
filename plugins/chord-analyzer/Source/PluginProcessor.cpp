@@ -150,8 +150,12 @@ void ChordAnalyzerProcessor::releaseResources()
 void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                            juce::MidiBuffer& midiMessages)
 {
-    // Clear audio buffer - this is a MIDI effect
+#if CHORD_ANALYZER_FX_MODE
+    // FX mode: pass audio through unchanged (acts as an insert effect)
+#else
+    // Instrument mode: produce silence (no audio to generate)
     buffer.clear();
+#endif
 
     // Process MIDI input
     processMidiInput(midiMessages);
