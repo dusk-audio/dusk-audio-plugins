@@ -4,7 +4,7 @@ A collection of professional audio VST3/LV2 plugins built with JUCE.
 
 > **Note:** These plugins are developed with the assistance of AI tools. If that bothers you, these aren't for you.
 
-> **Production Ready:** Only **4K EQ**, **Multi-Comp**, and **TapeMachine** are currently released and recommended for production use. All other plugins are in active development.
+> **Production Ready:** **4K EQ**, **Multi-Comp**, **TapeMachine**, **Multi-Q**, and **Chord Analyzer** are currently released and recommended for production use. All other plugins are in active development.
 
 ## Plugins
 
@@ -42,20 +42,53 @@ Analog tape machine emulation featuring:
 - Dual stereo VU meters with animated reels
 - 2x/4x oversampling for alias-free processing
 
+### Multi-Q - RELEASED
+Universal EQ with multiple modes:
+- **Digital Mode**: Clean 8-band parametric with color-coded bands, per-band M/S channel routing
+- **British Mode**: Classic console EQ with two console voicings
+- **Tube Mode**: Warm analog-style EQ with harmonic saturation
+- Real-time FFT analyzer with pre/post display
+- Q-coupling modes for natural EQ response
+- Interactive graphic display with draggable points
+- HQ mode with 2x oversampling
+
+### Chord Analyzer - RELEASED
+Real-time MIDI chord detection and music theory analysis:
+- 45 chord patterns (triads, 7ths, extended, altered, sus, add)
+- Roman numeral analysis in any key (major and minor)
+- Harmonic function labels (Tonic, Subdominant, Dominant)
+- Inversion detection with slash notation
+- 3-tier chord suggestions (Basic, Intermediate, Advanced)
+- Session recording with JSON export
+- Two versions: instrument (FL Studio, Ableton) and FX (Reaper, Bitwig, Logic, Cubase, LV2)
+
 ### Convolution Reverb - IN DEVELOPMENT
 Zero-latency IR-based reverb:
 - Supports WAV, AIFF, AIFC, SDIR impulse responses
 - Waveform display
 - Size, pre-delay, damping, width, mix controls
 
-### Multi-Q - IN DEVELOPMENT
-Universal EQ with multiple modes:
-- **Digital Mode**: Clean 8-band parametric with color-coded bands
-- **British Mode**: Classic console EQ with two console voicings
-- Real-time FFT analyzer with pre/post display
-- Q-coupling modes for natural EQ response
-- Interactive graphic display with draggable points
-- HQ mode with 2x oversampling
+### DuskVerb - IN DEVELOPMENT
+Algorithmic reverb with 53 factory presets:
+- Hadamard FDN, QuadTank, and Dattorro tank algorithms
+- Per-preset tuned engine wrappers with corrective EQ
+- Size, pre-delay, damping, modulation, and mix controls
+- Early reflections with configurable patterns
+
+### DuskAmp - IN DEVELOPMENT
+Guitar amp simulator:
+- Wave Digital Filter (WDF) circuit-modeled amp stages
+- Neural Amp Modeler (NAM) integration for loading community amp profiles
+- Procedural cabinet simulation
+
+### Spectrum Analyzer - IN DEVELOPMENT
+Professional FFT spectrum analyzer with metering:
+- Real-time FFT spectrum display
+- LUFS integrated and short-term metering
+- True peak detection
+- K-System metering (K-12, K-14, K-20)
+- Stereo correlation meter
+- Mid/Side and Left/Right channel routing
 
 ### Tape Echo - IN DEVELOPMENT
 Classic tape delay with spring reverb:
@@ -85,9 +118,12 @@ For consistent, distributable binaries:
 ./docker/build_release.sh 4keq         # 4K EQ
 ./docker/build_release.sh compressor   # Multi-Comp
 ./docker/build_release.sh tape         # TapeMachine
+./docker/build_release.sh multiq       # Multi-Q
+./docker/build_release.sh chord        # Chord Analyzer
 
 # Build a single plugin (in development)
-./docker/build_release.sh multiq       # Multi-Q
+./docker/build_release.sh duskverb     # DuskVerb
+./docker/build_release.sh spectrum     # Spectrum Analyzer
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh tapeecho     # Tape Echo
 ./docker/build_release.sh groovemind   # GrooveMind
@@ -110,17 +146,23 @@ cd build
 cmake --build . --target FourKEQ_All
 cmake --build . --target MultiComp_All
 cmake --build . --target TapeMachine_All
+cmake --build . --target MultiQ_All
+cmake --build . --target ChordAnalyzer_All
 
 # In development
-cmake --build . --target MultiQ_All
+cmake --build . --target DuskVerb_All
+cmake --build . --target SpectrumAnalyzer_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target GrooveMind_All
 ```
 
 ### Installation Paths
-- **VST3**: `~/.vst3/`
-- **LV2**: `~/.lv2/`
+- **VST3 (Linux)**: `~/.vst3/`
+- **LV2 (Linux)**: `~/.lv2/`
+- **AU (macOS)**: `~/Library/Audio/Plug-Ins/Components/`
+- **VST3 (macOS)**: `~/Library/Audio/Plug-Ins/VST3/`
+- **VST3 (Windows)**: `C:\Program Files\Common Files\VST3\`
 
 ## Shared Libraries
 
