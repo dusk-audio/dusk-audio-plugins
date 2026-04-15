@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.22f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 4000.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.83f;
@@ -49,8 +48,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 1.167f;
-    constexpr float kVvTrebleMultiply    = 0.860708f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.853502f;
@@ -64,9 +61,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 2.0f;  // boosted from 1.137 to fix decay_ratio (0.43x)
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 1.32244f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -76,7 +71,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.06333f, -0.438279f, -1.15594f, -1.28902f, -2.23104f, -1.17584f, -0.638617f, -0.270309f, -0.521239f, -1.19901f, -2.41302f, -3.75449f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 5.824f, 6.59973f, 12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -11.0155f, -10.4909f, -12.0f, -12.0f, -12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -352,7 +347,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -1753,6 +1748,16 @@ public:
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
 
+        // Precompute HF shelf as biquad for getCorrEQCoeffs() export
+        {
+            constexpr float shelfFc = 3000.0f;
+            constexpr float shelfGainLinear = 1.412538f - 1.0f;  // +3 dB
+            const float c = std::exp (-6.283185307f * shelfFc / corrSr);
+            shelfB0_ = 1.0f + shelfGainLinear * c;
+            shelfB1_ = -c * (1.0f + shelfGainLinear);
+            shelfA1_ = -c;
+        }
+
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
         // clearBuffers() would erase the randomized modulation state.
@@ -1771,6 +1776,8 @@ public:
         highShelf_prevR = 0.0f;
         sustainRMS_ = 0.0f;
         sustainPeakRMS_ = 0.0f;
+        sustainLpL_ = 0.0f;
+        sustainLpR_ = 0.0f;
         // PATCH_POINT_PREPARE_END
     }
 
@@ -1859,34 +1866,45 @@ public:
 
         // --- Output-side tail sustainer (fixes decay_ratio) ---
         // DV's body/tail ratio is 0.43x VV's — tail dies too fast relative to body.
-        // After the onset peak, gradually boost the tail to extend perceived decay.
-        // Uses sample counter from peak to target the 200-1000ms tail window.
+        // --- Output-side tail sustainer (fixes decay_ratio) ---
+        // Frequency-selective boost: low-passed signal gets more boost than HF.
+        // This compensates for the FDN's naturally slower HF decay rate.
         if (! frozen_)
         {
-            constexpr float kTailBoostDbPerSec = 37.5f;  // reaches 30 dB cap around 0.8-1.0s tail window
-            const int tailStartSamples = static_cast<int> (0.2f * static_cast<float> (sampleRate_));
+            constexpr float kTailBoostDbPerSec = 42.0f;
+            constexpr float kTailStartSec = 0.20f;
+            constexpr float kMaxBoostDb = 15.0f;
+            constexpr float kBoostEndSec = 1.5f;
+            // LP coefficient for ~2kHz at 48kHz: higher frequencies get less boost
+            const float lpCoeff = std::exp (-6.283185307f * 2000.0f / static_cast<float> (sampleRate_));
             for (int i = 0; i < numSamples; ++i)
             {
-                float a = std::max (std::abs (outputL[i]), std::abs (outputR[i]));
-                sustainPeakRMS_ *= sustainPeakDecayAlpha_;  // Slow decay so future transients can re-trigger
-                sustainPeakRMS_ = std::max (sustainPeakRMS_, 0.0f);
-                if (a > sustainPeakRMS_ * 3.0f && a > 0.02f)
+                // Onset detection: reset tail timer when output transient exceeds envelope
+                float sampleLevel = std::max (std::abs (outputL[i]), std::abs (outputR[i]));
+                constexpr float kOnsetThreshold = 0.005f;
+                constexpr float kOnsetRatio = 4.0f;
+                sustainOnsetEnv_ = 0.999f * sustainOnsetEnv_ + 0.001f * sampleLevel;
+                if (sampleLevel > kOnsetThreshold && sampleLevel > sustainOnsetEnv_ * kOnsetRatio)
+                    sustainRMS_ = 0.0f;
+
+                sustainRMS_ += 1.0f;
+                float timeSec = sustainRMS_ / static_cast<float> (sampleRate_);
+                float boostDb = 0.0f;
+                if (timeSec > kTailStartSec)
+                    boostDb = std::min ((std::min (timeSec, kBoostEndSec) - kTailStartSec) * kTailBoostDbPerSec, kMaxBoostDb);
+                if (boostDb > 0.01f)
                 {
-                    sustainPeakRMS_ = a;
-                    sustainRMS_ = 0.0f;  // reset counter on new peak (onset)
-                }
-                else
-                {
-                    sustainRMS_ += 1.0f;  // use as sample counter
-                }
-                if (sustainRMS_ > static_cast<float> (tailStartSamples))
-                {
-                    float timeSinceTail = (sustainRMS_ - static_cast<float> (tailStartSamples))
-                                        / static_cast<float> (sampleRate_);
-                    float boostDb = std::min (timeSinceTail * kTailBoostDbPerSec, 30.0f);
                     float gain = std::pow (10.0f, boostDb / 20.0f);
-                    outputL[i] *= gain;
-                    outputR[i] *= gain;
+                    // Blend: LP signal gets full boost, HP gets partial boost
+                    // This reduces the effective boost on high frequencies
+                    sustainLpL_ = (1.0f - lpCoeff) * outputL[i] + lpCoeff * sustainLpL_;
+                    sustainLpR_ = (1.0f - lpCoeff) * outputR[i] + lpCoeff * sustainLpR_;
+                    float hpL = outputL[i] - sustainLpL_;
+                    float hpR = outputR[i] - sustainLpR_;
+                    // LP gets full gain, HP gets sqrt(gain) — halved boost in dB
+                    float hpGain = std::sqrt (gain);
+                    outputL[i] = sustainLpL_ * gain + hpL * hpGain;
+                    outputR[i] = sustainLpR_ * gain + hpR * hpGain;
                 }
             }
         }
@@ -1921,6 +1939,8 @@ public:
         // <<< PATCH_CLEAR_END:add_output_high_shelf_patch >>>
         sustainRMS_ = 0.0f;
         sustainPeakRMS_ = 0.0f;
+        sustainLpL_ = 0.0f;
+        sustainLpR_ = 0.0f;
 
     }
 
@@ -2065,18 +2085,31 @@ public:
 
     // Fix 4 (spectral): expose corrective EQ coefficients to DuskVerbEngine
     // so it can apply the same EQ to the ER path.
-    int getCorrEQBandCount() const override { return kCorrEqBandCount; }
+    int getCorrEQBandCount() const override { return kCorrEqBandCount + 1; }
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        int n = std::min (kCorrEqBandCount, maxBands);
+        int total = kCorrEqBandCount + 1;
+        int n = std::min (total, maxBands);
         for (int i = 0; i < n; ++i)
         {
-            b0[i] = corrB0_[i];
-            b1[i] = corrB1_[i];
-            b2[i] = corrB2_[i];
-            a1[i] = corrA1_[i];
-            a2[i] = corrA2_[i];
+            if (i < kCorrEqBandCount)
+            {
+                b0[i] = corrB0_[i];
+                b1[i] = corrB1_[i];
+                b2[i] = corrB2_[i];
+                a1[i] = corrA1_[i];
+                a2[i] = corrA2_[i];
+            }
+            else
+            {
+                // High-shelf as 1st-order biquad (b2=0, a2=0)
+                b0[i] = shelfB0_;
+                b1[i] = shelfB1_;
+                b2[i] = 0.0f;
+                a1[i] = shelfA1_;
+                a2[i] = 0.0f;
+            }
         }
         return true;
     }
@@ -2133,10 +2166,17 @@ private:
     float sustainRMS_ = 0.0f;
     float sustainPeakRMS_ = 0.0f;
     float sustainPeakDecayAlpha_ = 0.99999f;
+    float sustainLpL_ = 0.0f;
+    float sustainLpR_ = 0.0f;
+    float sustainOnsetEnv_ = 0.0f;  // Slow envelope for onset detection
     // PATCH_POINT_MEMBERS
     // <<< PATCH_MEMBERS_BEGIN:add_output_high_shelf_patch >>>
     float highShelf_prevL = 0.0f;
     float highShelf_prevR = 0.0f;
+    // Precomputed biquad representation of the one-pole HF shelf for getCorrEQCoeffs()
+    float shelfB0_ = 1.0f;
+    float shelfB1_ = 0.0f;
+    float shelfA1_ = 0.0f;
     // <<< PATCH_MEMBERS_END:add_output_high_shelf_patch >>>
 
 };

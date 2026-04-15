@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 1.23f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 6000.0f;
     constexpr float kBakedAirDampingScale    = 0.5f;
     constexpr float kBakedNoiseModDepth      = 1.2f;
     constexpr float kBakedTrebleMultScale    = 0.6f;
@@ -49,8 +48,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 1.0393f;
-    constexpr float kVvTrebleMultiply    = 0.873302f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.8028f;
@@ -64,9 +61,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.832641f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 0.835413f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -76,7 +71,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -4.94148f, -9.35475f, -6.92975f, 4.78004f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 5.87478f, -3.51363f, 3.37761f, 1.95725f, 1.29633f, 2.92372f, 4.47717f, 3.3818f, 3.27455f, 3.03865f, 2.13811f, 2.79461f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -334,14 +329,12 @@ private:
     float sizeParam_ = 1.0f;
     float feedbackModDepth_ = 0.0f;
     float crossoverModDepth_ = 0.0f;
-    float baseLowCrossoverCoeff_ = 0.0f;
-    float baseHighCrossoverCoeff_ = 0.0f;
     float decayBoost_ = 1.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
