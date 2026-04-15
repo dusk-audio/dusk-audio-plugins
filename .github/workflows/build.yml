@@ -13,6 +13,7 @@ on:
       - 'groovemind-v*'         # GrooveMind only
       - 'duskverb-v*'           # DuskVerb only
       - 'chord-analyzer-v*'    # Chord Analyzer only
+      - 'spectrum-analyzer-v*' # Spectrum Analyzer only
   workflow_dispatch:
     inputs:
       plugin:
@@ -31,6 +32,7 @@ on:
           - 'groovemind'
           - 'duskverb'
           - 'chord-analyzer'
+          - 'spectrum-analyzer'
 
 env:
   BUILD_TYPE: Release
@@ -106,6 +108,10 @@ jobs:
               TARGET="ChordAnalyzer_All ChordAnalyzerFX_All"
               NAME="Chord Analyzer"
               RELEASE_NAME="chord-analyzer"
+            elif [[ "$TAG" == spectrum-analyzer-v* ]]; then
+              TARGET="SpectrumAnalyzer_All"
+              NAME="Spectrum Analyzer"
+              RELEASE_NAME="spectrum-analyzer"
             fi
           elif [[ -n "$MANUAL_PLUGIN" ]]; then
             case "$MANUAL_PLUGIN" in
@@ -118,6 +124,7 @@ jobs:
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
               duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
               chord-analyzer) TARGET="ChordAnalyzer_All ChordAnalyzerFX_All"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
+              spectrum-analyzer) TARGET="SpectrumAnalyzer_All"; NAME="Spectrum Analyzer"; RELEASE_NAME="spectrum-analyzer" ;;
             esac
           fi
 
