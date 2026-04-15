@@ -14,7 +14,7 @@ juce_add_plugin(${PLUGIN_NAME}
     COMPANY_NAME "${PLUGIN_MANUFACTURER}"
     PLUGIN_MANUFACTURER_CODE ${PLUGIN_MANUFACTURER_CODE}
     PLUGIN_CODE ${PLUGIN_CODE}
-    FORMATS VST3 LV2 Standalone
+    FORMATS AU VST3 LV2 Standalone
     PRODUCT_NAME "Spectrum Analyzer"
     PLUGIN_NAME "Spectrum Analyzer"
     DESCRIPTION "Professional FFT spectrum analyzer with LUFS metering"
@@ -23,8 +23,9 @@ juce_add_plugin(${PLUGIN_NAME}
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    BUNDLE_ID "com.DuskAudio.SpectrumAnalyzer"
     VST3_CATEGORIES "Fx" "Analyzer"
-    LV2URI "https://lunaco.audio/plugins/spectrum-analyzer"
+    LV2URI "https://dusk-audio.github.io/plugins/spectrum-analyzer"
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
@@ -49,7 +50,8 @@ target_sources(${PLUGIN_NAME}
         Source/UI/SpectrumDisplay.h
         Source/UI/MeterPanel.cpp
         Source/UI/MeterPanel.h
-        Source/UI/ToolbarComponent.h
+        Source/UI/HeaderBar.h
+        Source/UI/SettingsOverlay.h
         ../shared/LEDMeter.cpp
 )
 
