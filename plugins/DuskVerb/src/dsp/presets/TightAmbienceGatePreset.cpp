@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.22f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 4000.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.51f;
@@ -47,8 +46,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 0.765119f;
-    constexpr float kVvTrebleMultiply    = 1.00501f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.99435f;
@@ -62,9 +59,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.479833f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 0.139414f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -74,7 +69,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -7.68928f, -7.53287f, -8.6504f, -4.19886f, 9.35032f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.34036f, -0.13587f, -4.70806f, -0.241201f, -3.9101f, -3.15577f, -2.2695f, -2.39992f, -4.31118f, -5.9407f, 5.19714f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -168,7 +163,6 @@ private:
     static constexpr int kRightDel2Base = 1559;   // ~35.3ms delay
 
     // Worst-case base delay for buffer allocation (hall-scale is larger)
-    static constexpr int kMaxBaseDelay = 18028;  // 4507 * 4 (max delayScale=4.0)
 
     // -----------------------------------------------------------------------
     // Circular delay line with power-of-2 masking.
@@ -360,7 +354,6 @@ private:
     bool prepared_ = false;
 
     float decayBoost_ = 1.0f;
-    float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFStateL_ = 0.0f;
     float structHFStateR_ = 0.0f;
@@ -368,7 +361,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
@@ -1276,6 +1269,16 @@ public:
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
 
+        // Precompute HF shelf as biquad for getCorrEQCoeffs() export
+        {
+            constexpr float shelfFc = 3000.0f;
+            constexpr float shelfGainLinear = 1.412538f - 1.0f;  // +3 dB
+            const float c = std::exp (-6.283185307f * shelfFc / corrSr);
+            shelfB0_ = 1.0f + shelfGainLinear * c;
+            shelfB1_ = -c * (1.0f + shelfGainLinear);
+            shelfA1_ = -c;
+        }
+
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
         // clearBuffers() would erase the randomized modulation state.
@@ -1570,18 +1573,31 @@ public:
 
     // Fix 4 (spectral): expose corrective EQ coefficients to DuskVerbEngine
     // so it can apply the same EQ to the ER path.
-    int getCorrEQBandCount() const override { return kCorrEqBandCount; }
+    int getCorrEQBandCount() const override { return kCorrEqBandCount + 1; }
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        int n = std::min (kCorrEqBandCount, maxBands);
+        int total = kCorrEqBandCount + 1;
+        int n = std::min (total, maxBands);
         for (int i = 0; i < n; ++i)
         {
-            b0[i] = corrB0_[i];
-            b1[i] = corrB1_[i];
-            b2[i] = corrB2_[i];
-            a1[i] = corrA1_[i];
-            a2[i] = corrA2_[i];
+            if (i < kCorrEqBandCount)
+            {
+                b0[i] = corrB0_[i];
+                b1[i] = corrB1_[i];
+                b2[i] = corrB2_[i];
+                a1[i] = corrA1_[i];
+                a2[i] = corrA2_[i];
+            }
+            else
+            {
+                // High-shelf as 1st-order biquad (b2=0, a2=0)
+                b0[i] = shelfB0_;
+                b1[i] = shelfB1_;
+                b2[i] = 0.0f;
+                a1[i] = shelfA1_;
+                a2[i] = 0.0f;
+            }
         }
         return true;
     }
@@ -1633,6 +1649,10 @@ private:
     // <<< PATCH_MEMBERS_BEGIN:add_output_high_shelf_patch >>>
     float highShelf_prevL = 0.0f;
     float highShelf_prevR = 0.0f;
+    // Precomputed biquad representation of the one-pole HF shelf for getCorrEQCoeffs()
+    float shelfB0_ = 1.0f;
+    float shelfB1_ = 0.0f;
+    float shelfA1_ = 0.0f;
     // <<< PATCH_MEMBERS_END:add_output_high_shelf_patch >>>
 
 };

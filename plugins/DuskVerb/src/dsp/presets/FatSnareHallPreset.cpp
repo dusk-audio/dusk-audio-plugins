@@ -31,7 +31,6 @@ namespace {
     constexpr float kBakedLateGainScale      = 0.22f;
     constexpr float kBakedSizeRangeMin       = 0.5f;
     constexpr float kBakedSizeRangeMax       = 1.5f;
-    constexpr float kBakedHighCrossoverHz    = 4000.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.8f;
@@ -47,8 +46,6 @@ namespace {
     // These set the engine to a per-preset target at prepare() time;
     // runtime setters layer relative scaling on top of them.
     // -----------------------------------------------------------------
-    constexpr float kVvBassMultiply      = 0.944051f;
-    constexpr float kVvTrebleMultiply    = 0.783125f;
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.817692f;
@@ -62,9 +59,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.964961f;
-
-    // -----------------------------------------------------------------
+    constexpr float kVvDecayTimeScale    = 1.08529f;
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -74,7 +69,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 8.69371f, 1.86801f, 3.48769f, 3.87634f, -1.55193f, -5.84098f, -5.31499f, -6.2035f, -4.67418f, 1.88128f, 10.0214f, 8.27622f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 12.0f, -12.0f, 12.0f, -3.57416f, -4.31273f, -9.1794f, 8.43158f, -12.0f, -12.0f, -10.8855f, 12.0f, 12.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -150,7 +145,6 @@ private:
         { 1049, 3989, { 347, 449, 557 }, 2393, 3067 },  // Tank 3 (~270ms)
     };
 
-    static constexpr int kMaxBaseDelay = 4637;  // Largest delay across all tanks
 
     // -----------------------------------------------------------------------
     struct DelayLine
@@ -315,14 +309,13 @@ private:
     bool prepared_ = false;
 
     float decayBoost_ = 1.0f;
-    float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFState_[4] {};
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;
+    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -502,7 +495,7 @@ void FatSnareHallPresetEngine::process (const float* inputL, const float* inputR
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);
 
