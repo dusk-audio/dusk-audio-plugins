@@ -170,8 +170,9 @@ private:
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr double kBaseSampleRate = 44100.0;
 
-    // Safety clamp (~+12dBFS), matches FDNReverb
-    static constexpr float kSafetyClip = 4.0f;
+    // High-headroom safety clamp — keeps signal safe without baking
+    // distortion before the wrapper's EQ/tilt/width stages.
+    static constexpr float kSafetyClip = 32.0f;
 
     // Output tap count per channel (Dattorro uses 7)
     static constexpr int kNumOutputTaps = 7;
@@ -377,6 +378,7 @@ private:
 
     // Peak limiter: reduces transient peaks while preserving RMS (lowers crest factor).
     float limiterThreshold_ = 0.0f;      // 0 = disabled. Linear amplitude threshold.
+    float limiterReleaseMs_ = 50.0f;      // Raw release time for recomputation on prepare()
     float limiterReleaseCoeff_ = 0.999f;  // One-pole release coefficient (~50ms at 48kHz)
     float limiterEnv_ = 0.0f;             // Current peak envelope
 
@@ -389,6 +391,7 @@ private:
     float structHFStateR_ = 0.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
 
@@ -595,6 +598,9 @@ void MediumGatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.lfoPRNG = 0x87654321u;
     rightTank_.noiseState = 0xCAFEBABEu;
 
+    structHFStateL_ = 0.0f;
+    structHFStateR_ = 0.0f;
+
     prepared_ = true;
 
     // Sample-rate-invariant terminal decay smoothing
@@ -616,8 +622,6 @@ void MediumGatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
     // empty delay buffers but retain the previous run's tracker state.
-    structHFStateL_ = 0.0f;
-    structHFStateR_ = 0.0f;
     leftTank_.currentRMS = 0.0f;
     leftTank_.peakRMS = 0.0f;
     leftTank_.terminalDecayActive = false;
@@ -626,6 +630,13 @@ void MediumGatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     rightTank_.terminalDecayActive = false;
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
+
+    // Recompute limiter release coefficient for new sample rate
+    if (limiterThreshold_ > 0.0f)
+    {
+        float releaseSamples = limiterReleaseMs_ * 0.001f * static_cast<float> (sampleRate_);
+        limiterReleaseCoeff_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -657,7 +668,7 @@ void MediumGatePresetEngine::process (const float* inputL, const float* inputR,
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -730,9 +741,9 @@ void MediumGatePresetEngine::process (const float* inputL, const float* inputR,
                 tank.currentRMS = rmsAlpha_ * tank.currentRMS + (1.0f - rmsAlpha_) * sampleEnergy;
                 if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
                 else tank.peakRMS *= peakDecayAlpha_;
-                float rmsDB = 10.0f * std::log10 (std::max (tank.currentRMS, 1e-20f));
-                float peakDB = 10.0f * std::log10 (std::max (tank.peakRMS, 1e-20f));
-                tank.terminalDecayActive = (peakDB - rmsDB > -terminalDecayThresholdDB_) && (tank.peakRMS > 1e-12f);
+                // Compare peak/rms ratio in linear space (avoids per-sample log10)
+                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
+                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
                 if (tank.terminalDecayActive)
                     del2Out *= terminalDecayFactor_;
             }
@@ -914,6 +925,7 @@ void MediumGatePresetEngine::setModRate (float hz)
 
 void MediumGatePresetEngine::setLimiter (float thresholdDb, float releaseMs)
 {
+    limiterReleaseMs_ = releaseMs;
     if (thresholdDb >= 0.0f)
     {
         limiterThreshold_ = 0.0f;  // Disabled
@@ -1027,8 +1039,6 @@ void MediumGatePresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        structHFStateL_ = 0.0f;
-        structHFStateR_ = 0.0f;
         leftTank_.currentRMS = 0.0f;
         leftTank_.peakRMS = 0.0f;
         leftTank_.terminalDecayActive = false;
@@ -1040,7 +1050,7 @@ void MediumGatePresetEngine::setFreeze (bool frozen)
 
 void MediumGatePresetEngine::setLateGainScale (float scale)
 {
-    lateGainScale_ = scale;
+    lateGainScale_ = std::max (scale, 0.0f);
 }
 
 void MediumGatePresetEngine::setSizeRange (float min, float max)
@@ -1084,11 +1094,12 @@ void MediumGatePresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void MediumGatePresetEngine::clearBuffers()
 {
-    auto clearTank = [] (Tank& tank, uint32_t seed)
+    auto clearTank = [] (Tank& tank, uint32_t lfoPRNG, uint32_t noiseState)
     {
         tank.ap1Buffer.clear();
         tank.delay1.clear();
@@ -1102,12 +1113,12 @@ void MediumGatePresetEngine::clearBuffers()
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
         tank.lfoPhase = 0.0f;
-        tank.lfoPRNG = seed;
-        tank.noiseState = seed * 2654435761u;
+        tank.lfoPRNG = lfoPRNG;
+        tank.noiseState = noiseState;
     };
 
-    clearTank (leftTank_, 1u);
-    clearTank (rightTank_, 2u);
+    clearTank (leftTank_, 0x12345678u, 0xDEADBEEFu);
+    clearTank (rightTank_, 0x87654321u, 0xCAFEBABEu);
     // Restore 90° L/R phase offset for stereo decorrelation
     leftTank_.lfoPhase = 0.0f;
     rightTank_.lfoPhase = 1.5707963f;  // pi/2
@@ -1214,7 +1225,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
         engine_.setDelayScale (kVvDelayScale);
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1520,8 +1534,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1566,6 +1580,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

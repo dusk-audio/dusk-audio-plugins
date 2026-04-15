@@ -313,6 +313,7 @@ private:
     float structHFState_[4] {};
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -421,6 +422,7 @@ void DarkVocalRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
 
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        structHFState_[t] = 0.0f;
     }
 
     // Initialize LFO and PRNG with unique seeds per tank (90° phase offsets)
@@ -461,7 +463,6 @@ void DarkVocalRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
         tank.currentRMS = 0.0f;
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
-        structHFState_[t] = 0.0f;
     }
 }
 
@@ -494,7 +495,7 @@ void DarkVocalRoomPresetEngine::process (const float* inputL, const float* input
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);
 
@@ -563,9 +564,8 @@ void DarkVocalRoomPresetEngine::process (const float* inputL, const float* input
                 tank.currentRMS = tank.currentRMS * rmsAlpha_ + sampleEnergy * (1.0f - rmsAlpha_);
                 if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
                 else tank.peakRMS *= peakDecayAlpha_;
-                float rmsDB = 10.0f * std::log10 (std::max (tank.currentRMS, 1e-20f));
-                float peakDB = 10.0f * std::log10 (std::max (tank.peakRMS, 1e-20f));
-                tank.terminalDecayActive = (peakDB - rmsDB > -terminalDecayThresholdDB_) && (tank.peakRMS > 1e-12f);
+                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
+                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
                 if (tank.terminalDecayActive)
                     del2Out *= terminalDecayFactor_;
             }
@@ -691,7 +691,6 @@ void DarkVocalRoomPresetEngine::setFreeze (bool frozen)
     if (frozen)
         for (int t = 0; t < kNumTanks; ++t)
         {
-            structHFState_[t] = 0.0f;
             tanks_[t].currentRMS = 0.0f;
             tanks_[t].peakRMS = 0.0f;
             tanks_[t].terminalDecayActive = false;
@@ -762,6 +761,7 @@ void DarkVocalRoomPresetEngine::setTerminalDecay (float thresholdDB, float facto
     // calibrator or a future API caller wants a value below 0.8, it
     // should be honored exactly rather than silently rounded up.
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void DarkVocalRoomPresetEngine::clearBuffers()
@@ -777,13 +777,13 @@ void DarkVocalRoomPresetEngine::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        structHFState_[t] = 0.0f;
         tank.currentRMS = 0.0f;
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
     }
     for (int t = 0; t < kNumTanks; ++t)
     {
-        structHFState_[t] = 0.0f;
         // Restore the same quadrature LFO offsets and PRNG seeds used in prepare()
         // so modulation decorrelation is preserved after clear.
         static constexpr float    kPhaseOffsets[] = { 0.0f, 1.5707963f, 3.1415927f, 4.7123890f };
@@ -872,7 +872,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
+                if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
         // (no setDelayScale on this engine)
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1178,8 +1181,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1224,6 +1227,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

@@ -365,6 +365,7 @@ private:
     // Peak limiter: reduces transient peaks while preserving RMS (lowers crest factor).
     float limiterThreshold_ = 0.0f;      // 0 = disabled. Linear amplitude threshold.
     float limiterReleaseCoeff_ = 0.999f;  // One-pole release coefficient (~50ms at 48kHz)
+    float limiterReleaseMs_ = 50.0f;      // Cached release time for sample-rate recomputation
     float limiterEnv_ = 0.0f;             // Current peak envelope
 
     bool frozen_ = false;
@@ -378,7 +379,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
 
     // Dattorro coefficients
     float decayDiff1_ = 0.70f;   // Modulated allpass feedback
@@ -591,6 +592,9 @@ void VerySmallAmbiencePresetEngine::prepare (double sampleRate, int /*maxBlockSi
     rightTank_.lfoPRNG = 0x87654321u;
     rightTank_.noiseState = 0xCAFEBABEu;
 
+    structHFStateL_ = 0.0f;
+    structHFStateR_ = 0.0f;
+
     prepared_ = true;
 
     updateDelayLengths();
@@ -605,8 +609,6 @@ void VerySmallAmbiencePresetEngine::prepare (double sampleRate, int /*maxBlockSi
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
     // empty delay buffers but retain the previous run's tracker state.
-    structHFStateL_ = 0.0f;
-    structHFStateR_ = 0.0f;
     leftTank_.currentRMS = 0.0f;
     leftTank_.peakRMS = 0.0f;
     leftTank_.terminalDecayActive = false;
@@ -615,6 +617,12 @@ void VerySmallAmbiencePresetEngine::prepare (double sampleRate, int /*maxBlockSi
     rightTank_.terminalDecayActive = false;
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
+    // Recompute limiter release coefficient for new sample rate
+    if (limiterThreshold_ > 0.0f)
+    {
+        float releaseSamples = limiterReleaseMs_ * 0.001f * static_cast<float> (sampleRate_);
+        limiterReleaseCoeff_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+    }
     // Recompute soft onset coefficient at the current sample rate.
     if (softOnsetMs_ > 0.0f)
         setSoftOnsetMs (softOnsetMs_);
@@ -649,7 +657,7 @@ void VerySmallAmbiencePresetEngine::process (const float* inputL, const float* i
 
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
@@ -910,9 +918,11 @@ void VerySmallAmbiencePresetEngine::setLimiter (float thresholdDb, float release
     if (thresholdDb >= 0.0f)
     {
         limiterThreshold_ = 0.0f;  // Disabled
+        limiterReleaseMs_ = 0.0f;
         return;
     }
     limiterThreshold_ = std::pow (10.0f, thresholdDb / 20.0f);
+    limiterReleaseMs_ = releaseMs;
     if (prepared_)
     {
         float releaseSamples = releaseMs * 0.001f * static_cast<float> (sampleRate_);
@@ -1020,8 +1030,6 @@ void VerySmallAmbiencePresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        structHFStateL_ = 0.0f;
-        structHFStateR_ = 0.0f;
         leftTank_.currentRMS = 0.0f;
         leftTank_.peakRMS = 0.0f;
         leftTank_.terminalDecayActive = false;
@@ -1033,7 +1041,7 @@ void VerySmallAmbiencePresetEngine::setFreeze (bool frozen)
 
 void VerySmallAmbiencePresetEngine::setLateGainScale (float scale)
 {
-    lateGainScale_ = scale;
+    lateGainScale_ = std::max (scale, 0.0f);
 }
 
 void VerySmallAmbiencePresetEngine::setSizeRange (float min, float max)
@@ -1208,7 +1216,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
         engine_.setDelayScale (kVvDelayScale);
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1427,8 +1438,9 @@ public:
             float side = 0.5f * (yL - yR);
             // Re-limit after corrective EQ + stereo width to prevent
             // clipping from up to +12dB of per-band boost.
-            outputL[i] = std::clamp (mid + side * kStereoWidth, -32.0f, 32.0f);
-            outputR[i] = std::clamp (mid - side * kStereoWidth, -32.0f, 32.0f);
+            constexpr float kWrapperSafetyClip = 4.0f;  // Must match engine kSafetyClip
+            outputL[i] = std::clamp (mid + side * kStereoWidth, -kWrapperSafetyClip, kWrapperSafetyClip);
+            outputR[i] = std::clamp (mid - side * kStereoWidth, -kWrapperSafetyClip, kWrapperSafetyClip);
         }
         // PATCH_POINT_POST_ENGINE
 
@@ -1534,8 +1546,17 @@ public:
     void setSize (float size) override { engine_.setSize (size); }
     void setFreeze (bool frozen) override
     {
+        bool wasTransition = (frozen != frozen_);
         frozen_ = frozen;
         engine_.setFreeze (frozen);
+        if (wasTransition)
+        {
+            // Reset envelope/AM state so unfreezing doesn't use stale history
+            gateRMS_ = 0.0f;
+            gatePeakRMS_ = 0.0f;
+            gateGainEnv_ = 1.0f;
+            amPhase_ = 0.0f;
+        }
     }
     void setDecayBoost (float boost) override { engine_.setDecayBoost (boost); }
     void setTerminalDecay (float td, float f) override
@@ -1576,8 +1597,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1622,6 +1643,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {
