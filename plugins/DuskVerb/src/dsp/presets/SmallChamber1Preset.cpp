@@ -352,7 +352,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -623,16 +623,16 @@ void SmallChamber1PresetEngine::prepare (double sampleRate, int /*maxBlockSize*/
     // modulation state (like VV's stochastic modulation). The evenly-spaced
     // offsets between channels are preserved; only the base phase is random.
     {
-        std::random_device rd;
-        float basePhase = std::uniform_real_distribution<float> (0.0f, kTwoPi) (rd);
+        // Deterministic LFO seeding: evenly-spaced phases with a fixed base.
+        // Using std::random_device made tails nondeterministic across project reloads.
+        constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
         for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (basePhase + kTwoPi * static_cast<float> (i)
-                                                         / static_cast<float> (N), kTwoPi);
+            lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
+                                                               / static_cast<float> (N), kTwoPi);
 
-        // Random PRNG seeds so drift pattern varies per prepare() call
-        uint32_t baseSeed = rd();
+        constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
         for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
+            lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
     }
 
     updateModDepth();
@@ -1014,14 +1014,6 @@ void SmallChamber1PresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        for (int i = 0; i < N; ++i)
-        {
-            structHFState_[i] = 0.0f;
-            structLFState_[i] = 0.0f;
-            antiAliasState_[i] = 0.0f;
-            dcX1_[i] = 0.0f;
-            dcY1_[i] = 0.0f;
-        }
         peakRMS_ = 0.0f;
         currentRMS_ = 0.0f;
         terminalDecayActive_ = false;
@@ -1089,11 +1081,15 @@ void SmallChamber1PresetEngine::setInlineDiffusion (float coeff)
     // ringing for longer-delay modes (Hall, Plate). Density is instead
     // improved via 3-stage output diffusion (post-FDN, no feedback impact).
     inlineDiffCoeff3_ = 0.0f;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void SmallChamber1PresetEngine::setUseShortInlineAP (bool use)
 {
     useShortInlineAP_ = use;
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void SmallChamber1PresetEngine::setMultiPointOutput (const FDNOutputTap* left, int numL,
@@ -1434,8 +1430,9 @@ void SmallChamber1PresetEngine::clearBuffers()
         // Deterministic LFO/PRNG reset for clean state on algorithm switch.
         // (Wrapper prepare() no longer calls clearBuffers(), so this does not
         // conflict with prepare()'s stochastic randomization.)
-        lfoPhase_[i] = kTwoPi * static_cast<float> (i) / static_cast<float> (N);
-        lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
+        lfoPhase_[i] = std::fmod (2.3561945f + kTwoPi * static_cast<float> (i)
+                                                       / static_cast<float> (N), kTwoPi);
+        lfoPRNG_[i] = 0x5A3C9E71u + static_cast<uint32_t> (i * 1847);
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
@@ -1616,7 +1613,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
+                if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
         // (no setDelayScale on this engine)
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1745,6 +1745,7 @@ public:
         sustainCounter_ = 0.0f;
         sustainLpL_ = 0.0f;
         sustainLpR_ = 0.0f;
+        sustainOnsetEnv_ = 0.0f;
         // PATCH_POINT_PREPARE_END
     }
 
@@ -1829,7 +1830,9 @@ public:
                 if (sampleLevel > kOnsetThreshold && sampleLevel > sustainOnsetEnv_ * kOnsetRatio)
                     sustainCounter_ = 0.0f;
 
-                sustainCounter_ += 1.0f;
+                // Only advance tail timer when signal is decaying (below onset envelope)
+                if (sampleLevel < sustainOnsetEnv_ * kOnsetRatio)
+                    sustainCounter_ += 1.0f;
                 float timeSec = sustainCounter_ / static_cast<float> (sampleRate_);
                 float boostDb = 0.0f;
                 if (timeSec > kTailStartSec)
@@ -1874,6 +1877,7 @@ public:
         sustainCounter_ = 0.0f;
         sustainLpL_ = 0.0f;
         sustainLpR_ = 0.0f;
+        sustainOnsetEnv_ = 0.0f;
         // PATCH_POINT_CLEAR
 
     }
@@ -1938,8 +1942,16 @@ public:
     void setSize (float size) override { engine_.setSize (size); }
     void setFreeze (bool frozen) override
     {
+        bool wasTransition = (frozen != frozen_);
         frozen_ = frozen;
         engine_.setFreeze (frozen);
+        if (wasTransition)
+        {
+            // Reset sustainer state to avoid stale boosted tail on unfreeze
+            sustainCounter_ = 0.0f;
+            sustainLpL_ = 0.0f;
+            sustainLpR_ = 0.0f;
+        }
     }
     void setDecayBoost (float boost) override { engine_.setDecayBoost (boost); }
     void setTerminalDecay (float td, float f) override
@@ -1980,8 +1992,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -2026,6 +2038,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {

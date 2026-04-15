@@ -63,7 +63,7 @@ QuadTank::QuadTank()
 void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
-    sizeRangeAllocatedMax_ = std::max (sizeRangeMax_, 1.5f);
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, std::max (sizeRangeMax_, 1.5f));
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
@@ -168,7 +168,9 @@ void QuadTank::process (const float* inputL, const float* inputR,
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            float mod = frozen_ ? 0.0f : std::sin (tank.lfoPhase) * modDepthSamples_;
+            // Compute mod from current (held) LFO phase even when frozen,
+            // so the read position doesn't snap to center on freeze entry.
+            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);
 
@@ -359,8 +361,22 @@ void QuadTank::setSize (float size)
     }
 }
 
-void QuadTank::setFreeze (bool frozen) { frozen_ = frozen; }
-void QuadTank::setLateGainScale (float scale) { lateGainScale_ = scale; }
+void QuadTank::setFreeze (bool frozen)
+{
+    bool wasTransition = (frozen != frozen_);
+    frozen_ = frozen;
+    if (wasTransition)
+    {
+        for (int t = 0; t < kNumTanks; ++t)
+        {
+            structHFState_[t] = 0.0f;
+            tanks_[t].currentRMS = 0.0f;
+            tanks_[t].peakRMS = 0.0f;
+            tanks_[t].terminalDecayActive = false;
+        }
+    }
+}
+void QuadTank::setLateGainScale (float scale) { lateGainScale_ = std::max (scale, 0.0f); }
 
 void QuadTank::setHighCrossoverFreq (float hz)
 {

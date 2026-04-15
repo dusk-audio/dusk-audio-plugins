@@ -69,10 +69,11 @@ namespace {
     // in prepare() at the host sample rate so the EQ is correct at any rate.
     // Corrective EQ disabled: spectral deltas exceed correction range (-51 to -81 dB).
     // Level mismatch is handled by gain_trim; per-band EQ cannot bridge this gap.
+    // All bands zeroed to bypass correction while keeping the band structure intact.
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -5.96378f, -0.138993f, -3.34245f, 0.557613f, -2.41904f, -2.62349f, -2.01738f, -1.58505f, -3.32635f, -10.2226f, -2.53435f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -327,7 +328,7 @@ private:
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 100.0f;  // 10^(-(-40dB)/20) — amplitude ratio for peak/current RMS
+    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
     float peakRMS_ = 0.0f;
     float currentRMS_ = 0.0f;
     bool terminalDecayActive_ = false;
@@ -578,16 +579,16 @@ void HomestarBladeRunnerPresetEngine::prepare (double sampleRate, int /*maxBlock
     // modulation state (like VV's stochastic modulation). The evenly-spaced
     // offsets between channels are preserved; only the base phase is random.
     {
-        std::random_device rd;
-        float basePhase = std::uniform_real_distribution<float> (0.0f, kTwoPi) (rd);
+        // Deterministic LFO seeding: evenly-spaced phases with a fixed base.
+        // Using std::random_device made tails nondeterministic across project reloads.
+        constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
         for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (basePhase + kTwoPi * static_cast<float> (i)
-                                                         / static_cast<float> (N), kTwoPi);
+            lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
+                                                               / static_cast<float> (N), kTwoPi);
 
-        // Random PRNG seeds so drift pattern varies per prepare() call
-        uint32_t baseSeed = rd();
+        constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
         for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
+            lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
     }
 
     {
@@ -624,11 +625,11 @@ void HomestarBladeRunnerPresetEngine::process (const float* inputL, const float*
         {
             auto& dl = delayLines_[ch];
 
-            float mod = 0.0f;
+            // Preserve current LFO offset when frozen (avoids discontinuity)
+            float mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
             float jitter = 0.0f;
             if (! frozen_)
             {
-                mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
                 // Per-sample random jitter: fast mode blurring complementing the slow LFO.
                 // Each channel gets independent noise from its xorshift32 PRNG.
                 jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
@@ -978,14 +979,6 @@ void HomestarBladeRunnerPresetEngine::setFreeze (bool frozen)
     frozen_ = frozen;
     if (frozen)
     {
-        for (int i = 0; i < N; ++i)
-        {
-            structHFState_[i] = 0.0f;
-            structLFState_[i] = 0.0f;
-            antiAliasState_[i] = 0.0f;
-            dcX1_[i] = 0.0f;
-            dcY1_[i] = 0.0f;
-        }
         peakRMS_ = 0.0f;
         currentRMS_ = 0.0f;
         terminalDecayActive_ = false;
@@ -1402,8 +1395,9 @@ void HomestarBladeRunnerPresetEngine::clearBuffers()
         // Deterministic LFO/PRNG reset for clean state on algorithm switch.
         // (Wrapper prepare() no longer calls clearBuffers(), so this does not
         // conflict with prepare()'s stochastic randomization.)
-        lfoPhase_[i] = kTwoPi * static_cast<float> (i) / static_cast<float> (N);
-        lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
+        lfoPhase_[i] = std::fmod (2.3561945f + kTwoPi * static_cast<float> (i)
+                                                       / static_cast<float> (N), kTwoPi);
+        lfoPRNG_[i] = 0x5A3C9E71u + static_cast<uint32_t> (i * 1847);
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
@@ -1582,7 +1576,10 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
+                if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
+        else
+            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
         // (no setDelayScale on this engine)
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
@@ -1888,8 +1885,8 @@ public:
     }
     void setLateGainScale (float scale) override
     {
-        overrideLateGain_ = scale;
-        engine_.setLateGainScale (scale * kBakedLateGainScale);
+        overrideLateGain_ = std::max (scale, 0.0f);
+        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
     }
 
     // Reset hooks: restore baked defaults when override sentinel fires
@@ -1934,6 +1931,8 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
+        if (sampleRate_ == 0)
+            return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
         {
