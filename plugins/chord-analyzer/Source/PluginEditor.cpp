@@ -189,8 +189,13 @@ void ChordAnalyzerEditor::paint(juce::Graphics& g)
 
     // Header
     auto headerArea = bounds.removeFromTop(45);
+#if CHORD_ANALYZER_FX_MODE
+    ChordAnalyzerLookAndFeel::drawPluginHeader(g, headerArea,
+                                                "CHORD ANALYZER FX", "Dusk Audio");
+#else
     ChordAnalyzerLookAndFeel::drawPluginHeader(g, headerArea,
                                                 "CHORD ANALYZER", "Dusk Audio");
+#endif
     titleClickArea = headerArea.reduced(10, 5).withWidth(180);
 
     // Main chord display section - taller for better spacing
@@ -557,7 +562,11 @@ void ChordAnalyzerEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
+#if CHORD_ANALYZER_FX_MODE
+        supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer FX", JucePlugin_VersionString);
+#else
         supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer", JucePlugin_VersionString);
+#endif
         supportersOverlay->onDismiss = [this]() { hideSupportersPanel(); };
         addAndMakeVisible(supportersOverlay.get());
     }
