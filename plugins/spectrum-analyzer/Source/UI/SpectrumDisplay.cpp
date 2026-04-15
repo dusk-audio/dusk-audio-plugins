@@ -75,7 +75,7 @@ void SpectrumDisplay::drawGrid(juce::Graphics& g)
 
     // Draw labels
     g.setColour(labelColor);
-    g.setFont(10.0f);
+    g.setFont(13.0f);
 
     // Frequency labels
     const std::array<std::pair<float, const char*>, 8> freqLabels = {{
@@ -186,7 +186,7 @@ void SpectrumDisplay::drawHoverInfo(juce::Graphics& g)
         displayArea.getX(), displayArea.getRight());
 
     // Draw info box
-    g.setFont(11.0f);
+    g.setFont(13.0f);
     int textWidth = g.getCurrentFont().getStringWidth(infoStr) + 10;
 
     float boxX = hoverPosition.x + 10;
