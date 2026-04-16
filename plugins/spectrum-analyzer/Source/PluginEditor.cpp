@@ -20,6 +20,9 @@ SpectrumAnalyzerEditor::SpectrumAnalyzerEditor(SpectrumAnalyzerProcessor& p)
     // Gear button opens settings
     headerBar.getGearButton().onClick = [this]() { showSettings(); };
 
+    // Title click opens supporters panel
+    headerBar.onTitleClick = [this]() { showSupportersPanel(); };
+
     // Setup parameter attachments
     setupAttachments();
 
@@ -67,7 +70,7 @@ void SpectrumAnalyzerEditor::setupAttachments()
         apvts, SpectrumAnalyzerProcessor::PARAM_DECAY_RATE, settingsOverlay->getDecaySlider());
 
     peakHoldAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        apvts, SpectrumAnalyzerProcessor::PARAM_PEAK_HOLD, settingsOverlay->getPeakHoldButton());
+        apvts, SpectrumAnalyzerProcessor::PARAM_PEAK_HOLD, headerBar.getPeakHoldButton());
 
     rangeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, SpectrumAnalyzerProcessor::PARAM_DISPLAY_MIN, settingsOverlay->getRangeSlider());
@@ -186,13 +189,6 @@ void SpectrumAnalyzerEditor::updateMeters()
 }
 
 //==============================================================================
-void SpectrumAnalyzerEditor::mouseDown(const juce::MouseEvent& e)
-{
-    auto titleArea = headerBar.getBounds().withWidth(200).withX(headerBar.getX() + 15);
-    if (titleArea.contains(e.getPosition()))
-        showSupportersPanel();
-}
-
 void SpectrumAnalyzerEditor::showSupportersPanel()
 {
     if (!supportersOverlay)

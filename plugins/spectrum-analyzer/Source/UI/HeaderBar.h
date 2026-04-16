@@ -25,6 +25,12 @@ public:
         channelCombo.addItem("Side", 4);
         addAndMakeVisible(channelCombo);
 
+        // Peak Hold toggle
+        peakHoldButton.setButtonText("Peak Hold");
+        peakHoldButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xff888888));
+        peakHoldButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xff00aaff));
+        addAndMakeVisible(peakHoldButton);
+
         // Gear button (painted manually in paint(), click handled here)
         gearButton.setButtonText("");
         gearButton.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
@@ -53,6 +59,10 @@ public:
 
         // FFT combo
         fftCombo.setBounds(bounds.removeFromRight(80).reduced(0, 3));
+        bounds.removeFromRight(8);
+
+        // Peak Hold toggle
+        peakHoldButton.setBounds(bounds.removeFromRight(100).reduced(0, 3));
     }
 
     void paint(juce::Graphics& g) override
@@ -83,10 +93,20 @@ public:
         g.drawHorizontalLine(getHeight() - 1, 0.0f, static_cast<float>(getWidth()));
     }
 
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        auto titleArea = getLocalBounds().reduced(15, 0).withWidth(200);
+        if (titleArea.contains(e.getPosition()) && onTitleClick)
+            onTitleClick();
+    }
+
     //==========================================================================
     juce::ComboBox& getFFTCombo() { return fftCombo; }
     juce::ComboBox& getChannelCombo() { return channelCombo; }
+    juce::ToggleButton& getPeakHoldButton() { return peakHoldButton; }
     juce::TextButton& getGearButton() { return gearButton; }
+
+    std::function<void()> onTitleClick;
 
     juce::Rectangle<int> getTitleArea() const
     {
@@ -96,6 +116,7 @@ public:
 private:
     juce::ComboBox fftCombo;
     juce::ComboBox channelCombo;
+    juce::ToggleButton peakHoldButton;
     juce::TextButton gearButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HeaderBar)

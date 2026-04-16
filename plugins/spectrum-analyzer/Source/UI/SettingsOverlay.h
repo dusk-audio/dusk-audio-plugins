@@ -73,17 +73,6 @@ public:
         rangeSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         panel.addAndMakeVisible(rangeSlider);
 
-        // Peak Hold
-        peakHoldLabel.setText("Peak Hold", juce::dontSendNotification);
-        peakHoldLabel.setColour(juce::Label::textColourId, juce::Colour(0xff888888));
-        peakHoldLabel.setJustificationType(juce::Justification::centredRight);
-        panel.addAndMakeVisible(peakHoldLabel);
-
-        peakHoldButton.setButtonText("Enabled");
-        peakHoldButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xff888888));
-        peakHoldButton.setColour(juce::ToggleButton::tickColourId, juce::Colour(0xff00aaff));
-        panel.addAndMakeVisible(peakHoldButton);
-
         addAndMakeVisible(panel);
     }
 
@@ -138,7 +127,6 @@ public:
         layoutRow(slopeLabel, slopeSlider);
         layoutRow(decayLabel, decaySlider);
         layoutRow(rangeLabel, rangeSlider);
-        layoutRow(peakHoldLabel, peakHoldButton);
     }
 
     void mouseDown(const juce::MouseEvent& e) override
@@ -156,7 +144,6 @@ public:
     juce::Slider& getSlopeSlider() { return slopeSlider; }
     juce::Slider& getDecaySlider() { return decaySlider; }
     juce::Slider& getRangeSlider() { return rangeSlider; }
-    juce::ToggleButton& getPeakHoldButton() { return peakHoldButton; }
 
     std::function<void()> onDismiss;
 
@@ -164,7 +151,7 @@ private:
     juce::Rectangle<int> getPanelBounds() const
     {
         constexpr int panelW = 360;
-        constexpr int panelH = 240;
+        constexpr int panelH = 204;
         return getLocalBounds().withSizeKeepingCentre(panelW, panelH);
     }
 
@@ -181,9 +168,6 @@ private:
 
     juce::Label rangeLabel;
     juce::Slider rangeSlider;
-
-    juce::Label peakHoldLabel;
-    juce::ToggleButton peakHoldButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsOverlay)
 };

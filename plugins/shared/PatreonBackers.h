@@ -43,6 +43,7 @@ namespace PatreonCredits
 
     // Patron ($5/month)
     inline const std::vector<juce::String> patrons = {
+        "David",
     };
 
     // Supporter ($3/month)
@@ -50,12 +51,11 @@ namespace PatreonCredits
         "Eblen Macari",
         "Jano",
         "Stefan Windus",
-        "S C",
     };
 
     // Past Supporters — thank you for your support!
     inline const std::vector<juce::String> pastSupporters = {
-        
+        "S C",
     };
 
     //==========================================================================
