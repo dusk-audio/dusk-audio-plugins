@@ -1,3 +1,16 @@
+// ToneStack.h — Circuit-derived tone stack using Yeh/Smith transfer functions
+//
+// Implements the 3rd-order transfer function derived from real passive RC
+// tone stack circuits. All three controls interact — turning up bass changes
+// the treble response — because the transfer function is derived from the
+// actual circuit equations, not independent parametric EQ bands.
+//
+// Discretized via bilinear transform, implemented as a direct 3rd-order
+// Transposed Direct Form II filter (3 state variables, no biquad factoring).
+//
+// Reference: Yeh & Smith, "Discretization of the '59 Fender Bassman Tone Stack"
+//            Proceedings of DAFx-06, Montreal, Canada.
+
 #pragma once
 
 #include <cmath>
@@ -20,30 +33,29 @@ private:
     Type currentType_ = Type::British;
     double sampleRate_ = 44100.0;
     float bass_ = 0.5f, mid_ = 0.5f, treble_ = 0.5f;
-
-    // Transposed Direct Form II biquad
-    struct Biquad
-    {
-        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
-        float a1 = 0.0f, a2 = 0.0f;
-        float z1 = 0.0f, z2 = 0.0f;
-
-        float process (float x)
-        {
-            float out = b0 * x + z1;
-            z1 = b1 * x - a1 * out + z2;
-            z2 = b2 * x - a2 * out;
-            return out;
-        }
-
-        void reset() { z1 = z2 = 0.0f; }
-    };
-
-    Biquad bassFilter_, midFilter_, trebleFilter_;
     bool coeffsDirty_ = true;
 
+    // Component values per topology
+    struct Components
+    {
+        double R1;   // Treble pot max (Ω)
+        double R2;   // Bass pot max (Ω)
+        double R3;   // Mid pot max (Ω)
+        double R4;   // Fixed resistor (Ω)
+        double C1;   // Treble cap (F)
+        double C2;   // Bass cap (F)
+        double C3;   // Mid cap (F)
+    };
+
+    static Components getComponents (Type type);
+
+    // 3rd-order IIR coefficients (after bilinear transform)
+    // H(z) = (B0 + B1*z^-1 + B2*z^-2 + B3*z^-3) / (1 + A1*z^-1 + A2*z^-2 + A3*z^-3)
+    float B0_ = 0, B1_ = 0, B2_ = 0, B3_ = 0;
+    float A1_ = 0, A2_ = 0, A3_ = 0;
+
+    // Transposed Direct Form II state variables
+    float w1_ = 0, w2_ = 0, w3_ = 0;
+
     void recomputeCoefficients();
-    void computeLowShelf (Biquad& bq, float freq, float gainDB, float Q);
-    void computePeaking (Biquad& bq, float freq, float gainDB, float Q);
-    void computeHighShelf (Biquad& bq, float freq, float gainDB, float Q);
 };
