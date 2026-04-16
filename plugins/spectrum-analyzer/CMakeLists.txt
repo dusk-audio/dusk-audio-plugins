@@ -10,11 +10,31 @@ set(PLUGIN_MANUFACTURER_CODE "Dusk")
 set(PLUGIN_MANUFACTURER "Dusk Audio")
 set(PLUGIN_VERSION "1.0.0")
 
+# Build format options (matches other plugins)
+option(BUILD_VST3 "Build VST3 format" ON)
+option(BUILD_LV2 "Build LV2 format" ON)
+if(APPLE)
+    option(BUILD_AU "Build AU format" ON)
+else()
+    option(BUILD_AU "Build AU format" OFF)
+endif()
+
+set(PLUGIN_FORMATS "")
+if(BUILD_VST3)
+    list(APPEND PLUGIN_FORMATS VST3)
+endif()
+if(BUILD_LV2)
+    list(APPEND PLUGIN_FORMATS LV2)
+endif()
+if(BUILD_AU)
+    list(APPEND PLUGIN_FORMATS AU)
+endif()
+
 juce_add_plugin(${PLUGIN_NAME}
     COMPANY_NAME "${PLUGIN_MANUFACTURER}"
     PLUGIN_MANUFACTURER_CODE ${PLUGIN_MANUFACTURER_CODE}
     PLUGIN_CODE ${PLUGIN_CODE}
-    FORMATS AU VST3 LV2 Standalone
+    FORMATS ${PLUGIN_FORMATS}
     PRODUCT_NAME "Spectrum Analyzer"
     PLUGIN_NAME "Spectrum Analyzer"
     DESCRIPTION "Professional FFT spectrum analyzer with LUFS metering"
@@ -28,6 +48,7 @@ juce_add_plugin(${PLUGIN_NAME}
     LV2URI "https://dusk-audio.github.io/plugins/spectrum-analyzer"
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
     VST3_AUTO_MANIFEST FALSE
+    VST3_CAN_REPLACE_VST2 FALSE
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
     VST3_CAN_REPLACE_VST2 FALSE
