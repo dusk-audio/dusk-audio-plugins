@@ -92,31 +92,42 @@ void PreampDSP::process (float* buffer, int numSamples)
 
 void PreampDSP::updateGainStaging()
 {
-    // Distribute gain across active stages
-    // Clean: single stage gets moderate drive
-    // Crunch: two stages, first medium, second higher
-    // Lead: three stages, cascaded gain builds up
-    float drivePerStage = 0.0f;
+    // Distribute gain across active stages.
+    // Real preamp tubes have ~35-70x voltage gain per stage, but we're
+    // working with normalized ±1 signals. The drive parameter controls
+    // how hard each stage is hit, but we need to keep the overall output
+    // reasonable so the power amp (and eventually the DAC) isn't clipped.
+    //
+    // At gain=0 (clean), the preamp should add minimal distortion (<5% THD).
+    // At gain=1 (full), significant harmonic content is expected.
+    //
+    // Key: TubeEmulation::setDrive maps to inputGain = 1 + drive*2,
+    // and outputScaling = 0.8 for 12AX7. So at drive=0, throughput ≈ 0.8x.
+    // Multiple stages cascade this gain, so we need lower per-stage drive
+    // values to keep the total chain under control.
 
     switch (currentChannel_)
     {
         case Channel::Clean:
-            // Single stage: map gain 0-1 to drive 0-0.4
-            drivePerStage = gain_ * 0.4f;
-            stages_[0].setDrive (drivePerStage);
+            // Single stage: gain 0-1 → drive 0-0.25
+            // At gain=0: drive=0 → inputGain=1.0 → output ≈ 0.8x input (clean)
+            // At gain=1: drive=0.25 → inputGain=1.5 → mild breakup
+            stages_[0].setDrive (gain_ * 0.25f);
             break;
 
         case Channel::Crunch:
-            // Two stages: first gets moderate drive, second gets more
-            stages_[0].setDrive (gain_ * 0.3f);
-            stages_[1].setDrive (gain_ * 0.6f);
+            // Two stages: moderate cascaded gain
+            // Combined output ≈ 0.8 * 0.8 = 0.64x at zero drive (below unity)
+            stages_[0].setDrive (gain_ * 0.15f);
+            stages_[1].setDrive (gain_ * 0.35f);
             break;
 
         case Channel::Lead:
-            // Three stages: progressive drive increase
-            stages_[0].setDrive (gain_ * 0.25f);
-            stages_[1].setDrive (gain_ * 0.5f);
-            stages_[2].setDrive (gain_ * 0.8f);
+            // Three stages: progressive drive, but restrained per-stage
+            // Combined output ≈ 0.8^3 = 0.51x at zero drive
+            stages_[0].setDrive (gain_ * 0.12f);
+            stages_[1].setDrive (gain_ * 0.25f);
+            stages_[2].setDrive (gain_ * 0.5f);
             break;
     }
 }

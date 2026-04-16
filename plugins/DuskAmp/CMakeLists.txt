@@ -146,6 +146,8 @@ target_compile_definitions(DuskAmp
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1
 )
 
 if(NAM_ENABLED)
@@ -196,4 +198,31 @@ endif()
 set_target_properties(DuskAmp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# DSP test harness — standalone tool for physics validation
+# Processes test signals through DSP classes directly, no plugin wrapper
+add_executable(DuskAmp_DSPTest
+    tests/comparison/dsp_test_harness.cpp
+    src/dsp/ToneStack.cpp
+    src/dsp/PowerAmp.cpp
+    src/dsp/PreampDSP.cpp
+)
+target_include_directories(DuskAmp_DSPTest PRIVATE
+    src/dsp
+    ${CMAKE_SOURCE_DIR}/plugins/shared
+)
+target_link_libraries(DuskAmp_DSPTest PRIVATE
+    juce::juce_audio_utils
+    juce::juce_dsp
+    juce::juce_recommended_config_flags
+)
+target_compile_definitions(DuskAmp_DSPTest PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+set_target_properties(DuskAmp_DSPTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
