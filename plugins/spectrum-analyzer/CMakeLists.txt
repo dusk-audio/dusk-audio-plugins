@@ -27,6 +27,7 @@ juce_add_plugin(${PLUGIN_NAME}
     VST3_CATEGORIES "Fx" "Analyzer"
     LV2URI "https://dusk-audio.github.io/plugins/spectrum-analyzer"
     COPY_PLUGIN_AFTER_BUILD ${DUSK_COPY_AFTER_BUILD}
+    VST3_AUTO_MANIFEST FALSE
     VST3_COPY_DIR "$ENV{HOME}/.vst3"
     LV2_COPY_DIR "$ENV{HOME}/.lv2"
     VST3_CAN_REPLACE_VST2 FALSE
