@@ -221,9 +221,10 @@ endif()
 # the detected chord without our editor).
 if("LV2" IN_LIST PLUGIN_FORMATS)
     # Locate the LV2 SDK headers bundled inside JUCE.
-    # JUCE 8.0.4 (CI baseline) ships the SDK under juce_audio_processors/.
-    # Newer JUCE 8.x renamed it to juce_audio_processors_headless/ — we try both,
-    # against every JUCE root the top-level CMakeLists supports.
+    # - JUCE 8.0.4 (CI baseline): modules/juce_audio_processors/format_types/LV2_SDK/
+    # - JUCE 8.0.11+: SDK relocated into a new modules/juce_audio_processors_headless/
+    #   module (the original location no longer contains LV2_SDK).
+    # We try both layouts against every JUCE root the top-level CMakeLists supports.
     set(_juce_roots
         "${JUCE_PATH}"
         "${CMAKE_SOURCE_DIR}/../JUCE"
