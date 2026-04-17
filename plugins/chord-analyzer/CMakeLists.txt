@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(CHORDANALYZER_DEFAULT_VERSION "1.0.2")
+set(CHORDANALYZER_DEFAULT_VERSION "1.1.0")
 get_plugin_version("chord-analyzer" CHORDANALYZER_VERSION)
 if(NOT CHORDANALYZER_VERSION OR CHORDANALYZER_VERSION STREQUAL "0.0.0")
     set(CHORDANALYZER_VERSION ${CHORDANALYZER_DEFAULT_VERSION})
