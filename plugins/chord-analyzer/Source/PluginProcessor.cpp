@@ -303,9 +303,13 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
             const bool nowDown   = msg.getControllerValue() >= 64;
             sustainPedalDown     = nowDown;
 
-            if (wasDown && ! nowDown && sustainEnabled)
+            if (wasDown && ! nowDown)
             {
-                // Pedal release: drop every note that was released-while-sustained
+                // Pedal release: drop every note whose note-off was deferred.
+                // We always flush regardless of the current sustainEnabled state —
+                // those entries reflect real player-released note-offs from when
+                // sustain was on, and would otherwise stay stuck in activeNotes
+                // if the user toggled "Respect Sustain" off while pedalling.
                 const juce::SpinLock::ScopedLockType lock(notesLock);
                 for (int sustainedNote : sustainedReleasedNotes)
                 {
