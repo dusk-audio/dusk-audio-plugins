@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // PreampModel.cpp — Amp-specific preamp implementations
 
 #include "PreampModel.h"
