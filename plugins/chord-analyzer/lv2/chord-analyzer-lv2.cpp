@@ -223,8 +223,12 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
             const bool nowDown = data2 >= 64;
             self->sustainPedalDown = nowDown;
 
-            if (wasDown && ! nowDown && sustainEnabled)
+            if (wasDown && ! nowDown)
             {
+                // Always flush deferred releases on pedal-up regardless of
+                // sustainEnabled — entries here reflect real player note-offs
+                // captured while sustain was on, and would otherwise stay
+                // stuck in activeNotes if the user toggled the param off.
                 for (int sustainedNote : self->sustainedReleasedNotes)
                 {
                     auto it = std::find (self->activeNotes.begin(), self->activeNotes.end(), sustainedNote);
