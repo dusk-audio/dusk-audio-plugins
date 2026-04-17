@@ -192,4 +192,14 @@
                        [ rdfs:label "1st"  ; rdf:value 2 ] ,
                        [ rdfs:label "2nd"  ; rdf:value 3 ] ,
                        [ rdfs:label "3rd"  ; rdf:value 4 ]
+    ] , [
+        a lv2:InputPort , lv2:ControlPort ;
+        lv2:index 10 ;
+        lv2:symbol "respect_sustain" ;
+        lv2:name "Respect Sustain" ;
+        lv2:default 1 ;
+        lv2:minimum 0 ;
+        lv2:maximum 1 ;
+        lv2:portProperty lv2:integer , lv2:toggled ;
+        rdfs:comment "When on, MIDI CC 64 (sustain pedal) holds the detected chord until the pedal is released."
     ] .
