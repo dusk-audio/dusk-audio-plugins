@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // ToneStackModel.h — Circuit-modeled guitar amp tone stacks
 //
 // Implements the Yeh/Smith bilinear transform method (Stanford DAFx 2006-2008)

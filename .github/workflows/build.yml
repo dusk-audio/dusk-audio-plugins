@@ -12,6 +12,7 @@ on:
       - 'convolution-reverb-v*' # Convolution Reverb only
       - 'groovemind-v*'         # GrooveMind only
       - 'duskverb-v*'           # DuskVerb only
+      - 'duskamp-v*'            # DuskAmp only
       - 'chord-analyzer-v*'    # Chord Analyzer only
   workflow_dispatch:
     inputs:
@@ -30,6 +31,7 @@ on:
           - 'convolution-reverb'
           - 'groovemind'
           - 'duskverb'
+          - 'duskamp'
           - 'chord-analyzer'
 
 env:
@@ -97,6 +99,10 @@ jobs:
               TARGET="DuskVerb_All"
               NAME="DuskVerb"
               RELEASE_NAME="duskverb"
+            elif [[ "$TAG" == duskamp-v* ]]; then
+              TARGET="DuskAmp_All"
+              NAME="DuskAmp"
+              RELEASE_NAME="duskamp"
             elif [[ "$TAG" == chord-analyzer-v* ]]; then
               TARGET="ChordAnalyzer_All"
               NAME="Chord Analyzer"
@@ -112,6 +118,7 @@ jobs:
               convolution-reverb) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
               duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
+              duskamp) TARGET="DuskAmp_All"; NAME="DuskAmp"; RELEASE_NAME="duskamp" ;;
               chord-analyzer) TARGET="ChordAnalyzer_All"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
             esac
           fi

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // PowerAmp.h — Amp-specific power amplifier with negative feedback loop
 //
 // The power amp is where "feel" comes from. Three critical differences per amp:
