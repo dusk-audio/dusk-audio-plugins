@@ -220,15 +220,26 @@ endif()
 # control ports in its own UI (this is the entire point: lets Zynthian display
 # the detected chord without our editor).
 if("LV2" IN_LIST PLUGIN_FORMATS)
-    # Locate the LV2 SDK headers bundled inside JUCE. Try every path the
-    # top-level CMakeLists supports for finding JUCE itself, plus the legacy
-    # "headless" wrapper directory name used by JUCE 8.x.
-    set(LV2_SDK_CANDIDATES
-        "${JUCE_PATH}/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
-        "${CMAKE_SOURCE_DIR}/../JUCE/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
-        "${CMAKE_SOURCE_DIR}/external/JUCE/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
-        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
+    # Locate the LV2 SDK headers bundled inside JUCE.
+    # JUCE 8.0.4 (CI baseline) ships the SDK under juce_audio_processors/.
+    # Newer JUCE 8.x renamed it to juce_audio_processors_headless/ — we try both,
+    # against every JUCE root the top-level CMakeLists supports.
+    set(_juce_roots
+        "${JUCE_PATH}"
+        "${CMAKE_SOURCE_DIR}/../JUCE"
+        "${CMAKE_SOURCE_DIR}/external/JUCE"
+        "${CMAKE_SOURCE_DIR}/JUCE"
     )
+    set(_juce_subdirs
+        "modules/juce_audio_processors/format_types/LV2_SDK/lv2"
+        "modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
+    )
+    set(LV2_SDK_CANDIDATES "")
+    foreach(_root ${_juce_roots})
+        foreach(_sub ${_juce_subdirs})
+            list(APPEND LV2_SDK_CANDIDATES "${_root}/${_sub}")
+        endforeach()
+    endforeach()
     set(LV2_SDK_DIR "")
     foreach(_candidate ${LV2_SDK_CANDIDATES})
         if(EXISTS "${_candidate}/lv2/core/lv2.h")
