@@ -7,7 +7,8 @@
 
 //==============================================================================
 class ChordAnalyzerProcessor : public juce::AudioProcessor,
-                                public juce::AudioProcessorValueTreeState::Listener
+                                public juce::AudioProcessorValueTreeState::Listener,
+                                private juce::Timer
 {
 public:
     ChordAnalyzerProcessor();
@@ -23,7 +24,14 @@ public:
     // MIDI effect characteristics
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }  // MIDI pass-through
-    bool isMidiEffect() const override { return false; }
+    bool isMidiEffect() const override
+    {
+       #if CHORD_ANALYZER_MIDI_MODE
+        return true;
+       #else
+        return false;
+       #endif
+    }
     double getTailLengthSeconds() const override { return 0.0; }
 
     //==========================================================================
@@ -79,6 +87,14 @@ public:
     static constexpr const char* PARAM_SUGGESTION_LEVEL = "suggestionLevel";
     static constexpr const char* PARAM_SHOW_INVERSIONS = "showInversions";
 
+    // Output (read-only) parameters — populated by the processor so headless
+    // hosts (e.g. Zynthian, generic Reaper view) can display detection results
+    // without instantiating the editor.
+    static constexpr const char* PARAM_DETECTED_ROOT      = "detectedRoot";
+    static constexpr const char* PARAM_DETECTED_QUALITY   = "detectedQuality";
+    static constexpr const char* PARAM_DETECTED_BASS      = "detectedBass";
+    static constexpr const char* PARAM_DETECTED_INVERSION = "detectedInversion";
+
 private:
     juce::AudioProcessorValueTreeState parameters;
 
@@ -118,6 +134,24 @@ private:
     //==========================================================================
     void processMidiInput(const juce::MidiBuffer& midi);
     void updateAnalysis();
+    void stageDetectedChord(const ChordInfo& chord);   // audio thread: store atomic snapshot
+    void timerCallback() override;                     // message thread: publish to host params
+
+    //==========================================================================
+    // Cached pointers to output parameters (populated in ctor).
+    juce::AudioParameterChoice* detectedRootParam = nullptr;
+    juce::AudioParameterChoice* detectedQualityParam = nullptr;
+    juce::AudioParameterChoice* detectedBassParam = nullptr;
+    juce::AudioParameterChoice* detectedInversionParam = nullptr;
+
+    // Atomic snapshot of detection results, written from the audio thread and
+    // published to the host on the message thread (Reaper and others don't
+    // refresh their parameter display from audio-thread setValueNotifyingHost).
+    std::atomic<int>  pendingRootIndex{0};
+    std::atomic<int>  pendingQualityIndex{0};
+    std::atomic<int>  pendingBassIndex{0};
+    std::atomic<int>  pendingInversionIndex{0};
+    std::atomic<bool> detectionDirty{false};
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
