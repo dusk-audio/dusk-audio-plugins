@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // PreampModel.h — Amp-specific preamp topologies
 //
 // Each real amplifier has a unique preamp circuit that defines its character.

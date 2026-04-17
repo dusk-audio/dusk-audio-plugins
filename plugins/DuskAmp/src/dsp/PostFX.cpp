@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // PostFX.cpp — Delay types + Dattorro plate reverb
 
 #include "PostFX.h"
@@ -366,7 +368,9 @@ void PostFX::updateDattorroParams()
     tankDecay_ = 0.1f + reverbDecay_ * 0.85f * sizeScale;
     tankDecay_ = std::clamp (tankDecay_, 0.0f, 0.95f);
 
-    // Damping: higher damping → lower LPF cutoff in tank
-    // Map 0-1 to coefficient (0.1 = very bright, 0.9 = very dark)
+    // Damping one-pole LPF: state += coeff * (input - state).
+    // dampCoeff_ = 0.9 - reverbDamping_ * 0.8, so higher reverbDamping_
+    // produces a lower dampCoeff_ (range 0.1–0.9).
+    // Higher coeff = faster tracking = brighter; lower coeff = darker.
     dampCoeff_ = 0.9f - reverbDamping_ * 0.8f;
 }

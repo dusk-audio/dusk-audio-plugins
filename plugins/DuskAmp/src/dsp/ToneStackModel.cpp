@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // ToneStackModel.cpp — Circuit-modeled tone stack coefficient computation
 //
 // Fender & Marshall: The classic 3-knob tone stack is a passive RC network

@@ -73,6 +73,17 @@ ML-powered intelligent drum pattern generator:
 - Context-aware fills
 - Style classification
 
+### DuskAmp - IN DEVELOPMENT
+Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution cab, and post-FX:
+- Three preamp topologies (Fender Twin / Marshall Plexi / Vox AC30)
+- Yeh/Smith bilinear tone stack
+- Power amp with negative-feedback presence/resonance and sag
+- Convolution cab with hi/lo cut
+- Optional NAM (Neural Amp Modeler) integration
+- Built-in delay + plate reverb + noise gate + Tube Screamer-style stompbox
+- 2x/4x oversampling on nonlinear stages
+- See the [v5 roadmap](https://github.com/dusk-audio/plugins) for the path to commercial-tier quality
+
 ## Building
 
 ### Recommended: Docker/Podman Build
@@ -91,6 +102,7 @@ For consistent, distributable binaries:
 ./docker/build_release.sh convolution  # Convolution Reverb
 ./docker/build_release.sh tapeecho     # Tape Echo
 ./docker/build_release.sh groovemind   # GrooveMind
+./docker/build_release.sh duskamp      # DuskAmp
 
 # Show all available shortcuts
 ./docker/build_release.sh --help
@@ -116,11 +128,48 @@ cmake --build . --target MultiQ_All
 cmake --build . --target ConvolutionReverb_All
 cmake --build . --target TapeEcho_All
 cmake --build . --target GrooveMind_All
+cmake --build . --target DuskAmp_All
 ```
 
 ### Installation Paths
-- **VST3**: `~/.vst3/`
-- **LV2**: `~/.lv2/`
+- **macOS AU**: `~/Library/Audio/Plug-Ins/Components/`
+- **macOS VST3**: `~/Library/Audio/Plug-Ins/VST3/`
+- **Linux VST3**: `~/.vst3/`
+- **Linux LV2**: `~/.lv2/`
+- **Windows VST3**: `C:\Program Files\Common Files\VST3\`
+
+## Installing Unsigned Binaries
+
+These plugins are distributed as unsigned binaries via [GitHub Releases](https://github.com/dusk-audio/plugins/releases). Both macOS Gatekeeper and Windows SmartScreen will block first-run by default — that's normal for unsigned builds.
+
+### macOS
+
+After copying the `.component` (AU) or `.vst3` to its install path, the OS may quarantine it. Clear the quarantine attribute:
+
+```bash
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/DuskAmp.component
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/DuskAmp.vst3
+```
+
+Alternatively, right-click the plugin file in Finder → Open. macOS will prompt once, after which the plugin loads normally in any DAW.
+
+### Windows
+
+The first time the plugin loads in a DAW, SmartScreen may pop a "Windows protected your PC" dialog. Click **More info** → **Run anyway**. After this one-time confirmation, the plugin loads silently on subsequent launches.
+
+## Pro Tools (AAX) Support
+
+These plugins do not ship in AAX format. AAX requires Avid's PACE iLok DRM, which is not compatible with GPLv3 distribution.
+
+To use these plugins in Pro Tools, route the VST3 build through a wrapper such as:
+
+- [Blue Cat PatchWork](https://www.bluecataudio.com/Products/Product_PatchWork/)
+- [ddmf Metaplugin](https://ddmf.eu/metaplugin-chainer-vst-au-aax-plugin/)
+- [Element](https://kushview.net/element/)
+
+## Supporting Development
+
+These plugins are free and open source. If you'd like to support continued development, please consider becoming a [Patreon supporter](https://patreon.com/duskaudio). Supporters get their name in the About panel of every plugin (click the title bar to view credits).
 
 ## Shared Libraries
 
@@ -138,6 +187,10 @@ Reusable analog hardware emulation components:
 ### Shared UI Components
 - `DuskLookAndFeel.h` - Base look-and-feel for consistent styling
 - `LEDMeter.h/cpp` - Shared LED-style level meter component
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, coding conventions, and the pull request checklist.
 
 ## License
 
