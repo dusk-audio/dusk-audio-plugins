@@ -3,9 +3,15 @@
 
 //==============================================================================
 ChordAnalyzerProcessor::ChordAnalyzerProcessor()
-    : AudioProcessor(BusesProperties()
-        .withInput("Input", juce::AudioChannelSet::stereo(), true)
-        .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor(
+#if CHORD_ANALYZER_MIDI_MODE
+        BusesProperties()
+#else
+        BusesProperties()
+            .withInput("Input", juce::AudioChannelSet::stereo(), true)
+            .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+#endif
+      ),
       parameters(*this, nullptr, juce::Identifier("ChordAnalyzerState"),
                  createParameterLayout())
 {
@@ -22,6 +28,52 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     showInversions.store(*parameters.getRawParameterValue(PARAM_SHOW_INVERSIONS) > 0.5f);
 
     analyzer.setKey(keyRoot.load(), keyMinor.load());
+
+    // Output parameters (detection results) — added directly to the processor
+    // rather than via APVTS. APVTS's ValueTree sync was silently overwriting
+    // setValueNotifyingHost writes, so detected values never reached the host.
+    // Using ASCII "-" for the "no chord" label: Reaper's parameter strip renders
+    // multibyte UTF-8 (em-dash) as Latin-1 mojibake.
+    const juce::StringArray pitchClassChoices{
+        "-", "C", "C#/Db", "D", "D#/Eb", "E", "F",
+        "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B" };
+
+    // Quality choices: index 0 = "-" (no chord). Indices 1..N follow ChordQuality
+    // enum order — keep these in sync if the enum is ever reordered.
+    const juce::StringArray qualityChoices{
+        "-",
+        "maj", "m", "dim", "aug",
+        "7", "maj7", "m7", "mMaj7", "dim7", "m7b5", "aug7", "augMaj7",
+        "sus2", "sus4", "7sus4",
+        "add9", "add11",
+        "6", "m6",
+        "maj9", "m9", "9",
+        "maj11", "m11", "11",
+        "maj13", "m13", "13",
+        "5",
+        "7b5", "7#5", "7b9", "7#9" };
+
+    const juce::StringArray inversionChoices{ "-", "Root", "1st", "2nd", "3rd" };
+
+    detectedRootParam = new juce::AudioParameterChoice(
+        juce::ParameterID(PARAM_DETECTED_ROOT, 1),
+        "Detected Root", pitchClassChoices, 0);
+    detectedQualityParam = new juce::AudioParameterChoice(
+        juce::ParameterID(PARAM_DETECTED_QUALITY, 1),
+        "Detected Quality", qualityChoices, 0);
+    detectedBassParam = new juce::AudioParameterChoice(
+        juce::ParameterID(PARAM_DETECTED_BASS, 1),
+        "Detected Bass", pitchClassChoices, 0);
+    detectedInversionParam = new juce::AudioParameterChoice(
+        juce::ParameterID(PARAM_DETECTED_INVERSION, 1),
+        "Detected Inversion", inversionChoices, 0);
+
+    addParameter(detectedRootParam);
+    addParameter(detectedQualityParam);
+    addParameter(detectedBassParam);
+    addParameter(detectedInversionParam);
+
+    startTimer(50);  // 20Hz publishing of detection results to host parameters
 }
 
 ChordAnalyzerProcessor::~ChordAnalyzerProcessor()
@@ -64,6 +116,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ChordAnalyzerProcessor::crea
         juce::ParameterID(PARAM_SHOW_INVERSIONS, 1),
         "Show Inversions",
         true));  // Default to showing inversions
+
+    // NOTE: detection-output parameters are added directly to the processor
+    // (not APVTS-managed) in the constructor body — see ctor for rationale.
 
     return {params.begin(), params.end()};
 }
@@ -150,10 +205,11 @@ void ChordAnalyzerProcessor::releaseResources()
 void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                            juce::MidiBuffer& midiMessages)
 {
-#if CHORD_ANALYZER_FX_MODE
-    // FX mode: pass audio through unchanged (acts as an insert effect)
+#if CHORD_ANALYZER_MIDI_MODE
+    // MIDI-only mode: no audio buses (buffer is empty)
+    juce::ignoreUnused(buffer);
 #else
-    // Instrument mode: produce silence (no audio to generate)
+    // Instrument mode (synth): produce silence
     buffer.clear();
 #endif
 
@@ -253,6 +309,8 @@ void ChordAnalyzerProcessor::updateAnalysis()
             currentChord = newChord;
             chordChangedFlag.store(true);
 
+            stageDetectedChord(newChord);
+
             // Record the chord if recording
             const juce::SpinLock::ScopedLockType recLock(recorderLock);
             if (recorder.isRecording())
@@ -263,6 +321,39 @@ void ChordAnalyzerProcessor::updateAnalysis()
 
         currentSuggestions = std::move(newSuggestions);
     }
+}
+
+//==============================================================================
+void ChordAnalyzerProcessor::stageDetectedChord(const ChordInfo& chord)
+{
+    // Audio thread: stage detection results into atomics. The Timer publishes
+    // them on the message thread (where setValueNotifyingHost is host-safe).
+    // Choice index 0 always represents "no chord / unknown".
+    const int rootIndex      = (chord.isValid && chord.rootNote >= 0 && chord.rootNote < 12)
+                                  ? chord.rootNote + 1 : 0;
+    const int bassIndex      = (chord.isValid && chord.bassNote >= 0 && chord.bassNote < 12)
+                                  ? chord.bassNote + 1 : 0;
+    const int qualityIndex   = (chord.isValid && chord.quality != ChordQuality::Unknown)
+                                  ? static_cast<int>(chord.quality) + 1 : 0;
+    const int inversionIndex = chord.isValid
+                                  ? juce::jlimit(0, 4, chord.inversion + 1) : 0;
+
+    pendingRootIndex.store(rootIndex);
+    pendingQualityIndex.store(qualityIndex);
+    pendingBassIndex.store(bassIndex);
+    pendingInversionIndex.store(inversionIndex);
+    detectionDirty.store(true);
+}
+
+void ChordAnalyzerProcessor::timerCallback()
+{
+    if (! detectionDirty.exchange(false))
+        return;
+
+    if (detectedRootParam      != nullptr) *detectedRootParam      = pendingRootIndex.load();
+    if (detectedQualityParam   != nullptr) *detectedQualityParam   = pendingQualityIndex.load();
+    if (detectedBassParam      != nullptr) *detectedBassParam      = pendingBassIndex.load();
+    if (detectedInversionParam != nullptr) *detectedInversionParam = pendingInversionIndex.load();
 }
 
 //==============================================================================

@@ -562,8 +562,8 @@ void ChordAnalyzerEditor::showSupportersPanel()
 {
     if (!supportersOverlay)
     {
-#if CHORD_ANALYZER_FX_MODE
-        supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer FX", JucePlugin_VersionString);
+#if CHORD_ANALYZER_MIDI_MODE
+        supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer MIDI", JucePlugin_VersionString);
 #else
         supportersOverlay = std::make_unique<SupportersOverlay>("Chord Analyzer", JucePlugin_VersionString);
 #endif

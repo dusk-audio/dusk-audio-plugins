@@ -1,0 +1,195 @@
+@prefix atom: <http://lv2plug.in/ns/ext/atom#> .
+@prefix doap: <http://usefulinc.com/ns/doap#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix lv2:  <http://lv2plug.in/ns/lv2core#> .
+@prefix midi: <http://lv2plug.in/ns/ext/midi#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rsz:  <http://lv2plug.in/ns/ext/resize-port#> .
+@prefix urid: <http://lv2plug.in/ns/ext/urid#> .
+
+<https://dusk-audio.github.io/plugins/chord-analyzer-headless>
+    a lv2:Plugin , lv2:MIDIPlugin ;
+    doap:name "Chord Analyzer Headless" ;
+    doap:license <http://opensource.org/licenses/MIT> ;
+    doap:maintainer [
+        a foaf:Person ;
+        foaf:name "Dusk Audio" ;
+        foaf:homepage <https://dusk-audio.github.io/> ;
+    ] ;
+    lv2:requiredFeature urid:map ;
+    lv2:optionalFeature lv2:hardRTCapable ;
+
+    lv2:port [
+        a lv2:InputPort , atom:AtomPort ;
+        atom:bufferType atom:Sequence ;
+        atom:supports midi:MidiEvent ;
+        rsz:minimumSize 8192 ;
+        lv2:designation lv2:control ;
+        lv2:index 0 ;
+        lv2:symbol "midi_in" ;
+        lv2:name "MIDI In"
+    ] , [
+        a lv2:OutputPort , atom:AtomPort ;
+        atom:bufferType atom:Sequence ;
+        atom:supports midi:MidiEvent ;
+        rsz:minimumSize 8192 ;
+        lv2:designation lv2:control ;
+        lv2:index 1 ;
+        lv2:symbol "midi_out" ;
+        lv2:name "MIDI Out"
+    ] , [
+        a lv2:InputPort , lv2:ControlPort ;
+        lv2:index 2 ;
+        lv2:symbol "key_root" ;
+        lv2:name "Key Root" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 11 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "C"     ; rdf:value 0 ] ,
+                       [ rdfs:label "C#/Db" ; rdf:value 1 ] ,
+                       [ rdfs:label "D"     ; rdf:value 2 ] ,
+                       [ rdfs:label "D#/Eb" ; rdf:value 3 ] ,
+                       [ rdfs:label "E"     ; rdf:value 4 ] ,
+                       [ rdfs:label "F"     ; rdf:value 5 ] ,
+                       [ rdfs:label "F#/Gb" ; rdf:value 6 ] ,
+                       [ rdfs:label "G"     ; rdf:value 7 ] ,
+                       [ rdfs:label "G#/Ab" ; rdf:value 8 ] ,
+                       [ rdfs:label "A"     ; rdf:value 9 ] ,
+                       [ rdfs:label "A#/Bb" ; rdf:value 10 ] ,
+                       [ rdfs:label "B"     ; rdf:value 11 ]
+    ] , [
+        a lv2:InputPort , lv2:ControlPort ;
+        lv2:index 3 ;
+        lv2:symbol "key_mode" ;
+        lv2:name "Key Mode" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 1 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "Major" ; rdf:value 0 ] ,
+                       [ rdfs:label "Minor" ; rdf:value 1 ]
+    ] , [
+        a lv2:InputPort , lv2:ControlPort ;
+        lv2:index 4 ;
+        lv2:symbol "suggestion_level" ;
+        lv2:name "Suggestion Level" ;
+        lv2:default 2 ;
+        lv2:minimum 0 ;
+        lv2:maximum 2 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "Basic"                ; rdf:value 0 ] ,
+                       [ rdfs:label "Basic + Intermediate" ; rdf:value 1 ] ,
+                       [ rdfs:label "All (+ Advanced)"     ; rdf:value 2 ]
+    ] , [
+        a lv2:InputPort , lv2:ControlPort ;
+        lv2:index 5 ;
+        lv2:symbol "show_inversions" ;
+        lv2:name "Show Inversions" ;
+        lv2:default 1 ;
+        lv2:minimum 0 ;
+        lv2:maximum 1 ;
+        lv2:portProperty lv2:integer , lv2:toggled
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 6 ;
+        lv2:symbol "detected_root" ;
+        lv2:name "Detected Root" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 12 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "-"     ; rdf:value 0 ] ,
+                       [ rdfs:label "C"     ; rdf:value 1 ] ,
+                       [ rdfs:label "C#/Db" ; rdf:value 2 ] ,
+                       [ rdfs:label "D"     ; rdf:value 3 ] ,
+                       [ rdfs:label "D#/Eb" ; rdf:value 4 ] ,
+                       [ rdfs:label "E"     ; rdf:value 5 ] ,
+                       [ rdfs:label "F"     ; rdf:value 6 ] ,
+                       [ rdfs:label "F#/Gb" ; rdf:value 7 ] ,
+                       [ rdfs:label "G"     ; rdf:value 8 ] ,
+                       [ rdfs:label "G#/Ab" ; rdf:value 9 ] ,
+                       [ rdfs:label "A"     ; rdf:value 10 ] ,
+                       [ rdfs:label "A#/Bb" ; rdf:value 11 ] ,
+                       [ rdfs:label "B"     ; rdf:value 12 ]
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 7 ;
+        lv2:symbol "detected_quality" ;
+        lv2:name "Detected Quality" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 33 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "-"       ; rdf:value 0 ] ,
+                       [ rdfs:label "maj"     ; rdf:value 1 ] ,
+                       [ rdfs:label "m"       ; rdf:value 2 ] ,
+                       [ rdfs:label "dim"     ; rdf:value 3 ] ,
+                       [ rdfs:label "aug"     ; rdf:value 4 ] ,
+                       [ rdfs:label "7"       ; rdf:value 5 ] ,
+                       [ rdfs:label "maj7"    ; rdf:value 6 ] ,
+                       [ rdfs:label "m7"      ; rdf:value 7 ] ,
+                       [ rdfs:label "mMaj7"   ; rdf:value 8 ] ,
+                       [ rdfs:label "dim7"    ; rdf:value 9 ] ,
+                       [ rdfs:label "m7b5"    ; rdf:value 10 ] ,
+                       [ rdfs:label "aug7"    ; rdf:value 11 ] ,
+                       [ rdfs:label "augMaj7" ; rdf:value 12 ] ,
+                       [ rdfs:label "sus2"    ; rdf:value 13 ] ,
+                       [ rdfs:label "sus4"    ; rdf:value 14 ] ,
+                       [ rdfs:label "7sus4"   ; rdf:value 15 ] ,
+                       [ rdfs:label "add9"    ; rdf:value 16 ] ,
+                       [ rdfs:label "add11"   ; rdf:value 17 ] ,
+                       [ rdfs:label "6"       ; rdf:value 18 ] ,
+                       [ rdfs:label "m6"      ; rdf:value 19 ] ,
+                       [ rdfs:label "maj9"    ; rdf:value 20 ] ,
+                       [ rdfs:label "m9"      ; rdf:value 21 ] ,
+                       [ rdfs:label "9"       ; rdf:value 22 ] ,
+                       [ rdfs:label "maj11"   ; rdf:value 23 ] ,
+                       [ rdfs:label "m11"     ; rdf:value 24 ] ,
+                       [ rdfs:label "11"      ; rdf:value 25 ] ,
+                       [ rdfs:label "maj13"   ; rdf:value 26 ] ,
+                       [ rdfs:label "m13"     ; rdf:value 27 ] ,
+                       [ rdfs:label "13"      ; rdf:value 28 ] ,
+                       [ rdfs:label "5"       ; rdf:value 29 ] ,
+                       [ rdfs:label "7b5"     ; rdf:value 30 ] ,
+                       [ rdfs:label "7#5"     ; rdf:value 31 ] ,
+                       [ rdfs:label "7b9"     ; rdf:value 32 ] ,
+                       [ rdfs:label "7#9"     ; rdf:value 33 ]
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 8 ;
+        lv2:symbol "detected_bass" ;
+        lv2:name "Detected Bass" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 12 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "-"     ; rdf:value 0 ] ,
+                       [ rdfs:label "C"     ; rdf:value 1 ] ,
+                       [ rdfs:label "C#/Db" ; rdf:value 2 ] ,
+                       [ rdfs:label "D"     ; rdf:value 3 ] ,
+                       [ rdfs:label "D#/Eb" ; rdf:value 4 ] ,
+                       [ rdfs:label "E"     ; rdf:value 5 ] ,
+                       [ rdfs:label "F"     ; rdf:value 6 ] ,
+                       [ rdfs:label "F#/Gb" ; rdf:value 7 ] ,
+                       [ rdfs:label "G"     ; rdf:value 8 ] ,
+                       [ rdfs:label "G#/Ab" ; rdf:value 9 ] ,
+                       [ rdfs:label "A"     ; rdf:value 10 ] ,
+                       [ rdfs:label "A#/Bb" ; rdf:value 11 ] ,
+                       [ rdfs:label "B"     ; rdf:value 12 ]
+    ] , [
+        a lv2:OutputPort , lv2:ControlPort ;
+        lv2:index 9 ;
+        lv2:symbol "detected_inversion" ;
+        lv2:name "Detected Inversion" ;
+        lv2:default 0 ;
+        lv2:minimum 0 ;
+        lv2:maximum 4 ;
+        lv2:portProperty lv2:integer , lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "-"    ; rdf:value 0 ] ,
+                       [ rdfs:label "Root" ; rdf:value 1 ] ,
+                       [ rdfs:label "1st"  ; rdf:value 2 ] ,
+                       [ rdfs:label "2nd"  ; rdf:value 3 ] ,
+                       [ rdfs:label "3rd"  ; rdf:value 4 ]
+    ] .
