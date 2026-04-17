@@ -105,7 +105,7 @@ jobs:
               NAME="DuskVerb"
               RELEASE_NAME="duskverb"
             elif [[ "$TAG" == chord-analyzer-v* ]]; then
-              TARGET="ChordAnalyzer_All ChordAnalyzerFX_All"
+              TARGET="ChordAnalyzer_All ChordAnalyzerMIDI_All ChordAnalyzerHeadless_LV2"
               NAME="Chord Analyzer"
               RELEASE_NAME="chord-analyzer"
             elif [[ "$TAG" == spectrum-analyzer-v* ]]; then
@@ -123,7 +123,7 @@ jobs:
               convolution-reverb) TARGET="ConvolutionReverb_All"; NAME="Convolution Reverb"; RELEASE_NAME="convolution-reverb" ;;
               groovemind) TARGET="GrooveMind_All"; NAME="GrooveMind"; RELEASE_NAME="groovemind" ;;
               duskverb) TARGET="DuskVerb_All"; NAME="DuskVerb"; RELEASE_NAME="duskverb" ;;
-              chord-analyzer) TARGET="ChordAnalyzer_All ChordAnalyzerFX_All"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
+              chord-analyzer) TARGET="ChordAnalyzer_All ChordAnalyzerMIDI_All ChordAnalyzerHeadless_LV2"; NAME="Chord Analyzer"; RELEASE_NAME="chord-analyzer" ;;
               spectrum-analyzer) TARGET="SpectrumAnalyzer_All"; NAME="Spectrum Analyzer"; RELEASE_NAME="spectrum-analyzer" ;;
             esac
           fi
@@ -850,6 +850,22 @@ jobs:
           echo "Slug: $SLUG"
           echo "Version: $VERSION"
 
+          # Helper: when releasing chord-analyzer, carve out the headless LV2 bundle
+          # into its own zip so Zynthian users can grab a clean, self-contained
+          # download without the desktop variants. The headless bundle is the only
+          # one that ships native LV2 output ControlPorts for headless host UIs.
+          carve_headless() {
+            local release_dir="$1"
+            local out_zip="$2"
+            local bundle="$release_dir/LV2/Chord Analyzer Headless.lv2"
+            if [ -d "$bundle" ]; then
+              local headless_dir="${release_dir}-headless"
+              mkdir -p "$headless_dir/LV2"
+              mv "$bundle" "$headless_dir/LV2/"
+              ( cd "$headless_dir" && zip -r "../../${out_zip}" . )
+            fi
+          }
+
           # Linux: Create zip with VST3/ and LV2/ folders at root (not nested in plugins-linux/)
           # This allows users to extract directly and copy the appropriate format
           mkdir -p linux-release
@@ -859,6 +875,7 @@ jobs:
           if [ -d "plugins-linux/LV2" ]; then
             cp -r plugins-linux/LV2 linux-release/
           fi
+          carve_headless linux-release "${SLUG}-headless-linux.zip"
           cd linux-release
           zip -r "../../${SLUG}-linux.zip" .
           cd ..
@@ -871,6 +888,7 @@ jobs:
           if [ -d "plugins-linux-arm64/LV2" ]; then
             cp -r plugins-linux-arm64/LV2 linux-arm64-release/
           fi
+          carve_headless linux-arm64-release "${SLUG}-headless-linux-arm64.zip"
           cd linux-arm64-release
           zip -r "../../${SLUG}-linux-arm64.zip" .
           cd ..
@@ -967,6 +985,21 @@ jobs:
               echo "- Tape Echo - Vintage tape delay"
               echo "- Convolution Reverb - IR-based reverb"
               echo "- GrooveMind - ML drum generator"
+            fi
+
+            # Chord Analyzer ships three plugin variants — give users a quick map
+            if [ "$RELEASE_NAME" = "chord-analyzer" ]; then
+              echo ""
+              echo "### Chord Analyzer Variants"
+              echo ""
+              echo "The main \`chord-analyzer-*\` zips contain two variants:"
+              echo "- **Chord Analyzer** — instrument variant for FL Studio / Ableton"
+              echo "- **Chord Analyzer MIDI** — MIDI effect for Logic, Reaper, Bitwig, Cubase, Ardour, Carla (full UI)"
+              echo ""
+              echo "The separate \`chord-analyzer-headless-*\` zips contain:"
+              echo "- **Chord Analyzer Headless** — native LV2 with output ControlPorts for headless hosts (Zynthian)"
+              echo ""
+              echo "Most users want the main zip. If you're on Zynthian or another headless LV2 host, grab the \`-headless-\` zip instead."
             fi
           } > release_body.md
 
