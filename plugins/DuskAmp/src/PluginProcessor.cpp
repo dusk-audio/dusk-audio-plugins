@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "ParamIDs.h"
+#include "CrashLog.h"
 
 #include <cstring>
 
@@ -166,6 +169,10 @@ DuskAmpProcessor::DuskAmpProcessor()
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       parameters (*this, nullptr, juce::Identifier ("DuskAmp"), createParameterLayout())
 {
+    // Register with the shared crash-log handler so any segfault/illegal-instr
+    // dumps a stack trace + plugin info to ~/Library/Application Support/Dusk Audio/crash.log.
+    DuskCrashLog::install ("DuskAmp", JucePlugin_VersionString);
+
     // Discrete / choice params
     ampModeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_MODE);
     ampTypeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_TYPE);
@@ -523,9 +530,26 @@ void DuskAmpProcessor::loadNAMModel (const juce::File& file)
 #endif
 }
 
+namespace
+{
+    // Migrate an XML state in place from `fromVersion` up to
+    // DuskAmpStateFormat::kCurrentVersion. State written before versioning was
+    // added is treated as version 0; v1 is the first tracked version and
+    // requires no transformation. When kCurrentVersion increases, add chained
+    // migrate_vN_to_vN_plus_1 calls here.
+    void migrate (juce::XmlElement& xml, int fromVersion)
+    {
+        // No-op until a breaking change ships. Pattern for future use:
+        //   if (fromVersion < 1) migrate_v0_to_v1 (xml);
+        //   if (fromVersion < 2) migrate_v1_to_v2 (xml);
+        juce::ignoreUnused (xml, fromVersion);
+    }
+}
+
 void DuskAmpProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
+    state.setProperty ("formatVersion", DuskAmpStateFormat::kCurrentVersion, nullptr);
     // Store file paths as properties
     state.setProperty ("cabIRPath", cabIRPath_, nullptr);
     state.setProperty ("namModelPath", namModelPath_, nullptr);
@@ -542,6 +566,7 @@ void DuskAmpProcessor::setStateInformation (const void* data, int sizeInBytes)
 std::unique_ptr<juce::XmlElement> DuskAmpProcessor::getStateXML()
 {
     auto state = parameters.copyState();
+    state.setProperty ("formatVersion", DuskAmpStateFormat::kCurrentVersion, nullptr);
     state.setProperty ("cabIRPath", cabIRPath_, nullptr);
     state.setProperty ("namModelPath", namModelPath_, nullptr);
     return state.createXml();
@@ -551,7 +576,20 @@ void DuskAmpProcessor::setStateXML (const juce::XmlElement& xml)
 {
     if (xml.hasTagName (parameters.state.getType()))
     {
-        parameters.replaceState (juce::ValueTree::fromXml (xml));
+        // Pre-versioning state has no formatVersion property; treat as v0 and
+        // run all migrations forward. State written by this build has the
+        // current version and is left untouched.
+        const int fromVersion = xml.getIntAttribute ("formatVersion", 0);
+        if (fromVersion < DuskAmpStateFormat::kCurrentVersion)
+        {
+            juce::XmlElement migrated (xml);
+            migrate (migrated, fromVersion);
+            parameters.replaceState (juce::ValueTree::fromXml (migrated));
+        }
+        else
+        {
+            parameters.replaceState (juce::ValueTree::fromXml (xml));
+        }
 
         // Restore cab IR path from saved state
         cabIRPath_ = parameters.state.getProperty ("cabIRPath", "").toString();
