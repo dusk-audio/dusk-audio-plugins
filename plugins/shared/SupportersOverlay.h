@@ -22,6 +22,17 @@ public:
     void setPluginName(const juce::String& name) { pluginDisplayName = name; }
     void setVersion(const juce::String& version) { pluginVersion = version; }
 
+    // Optional action link shown above the "Click anywhere to close" hint.
+    // When set, clicks inside its hit region fire onActionClick instead of
+    // dismissing the overlay. Plugins use this for things like
+    // "Open log folder" without each having its own About panel.
+    void setActionLink(const juce::String& label, std::function<void()> onClick)
+    {
+        actionLabel = label;
+        onActionClick = std::move(onClick);
+        repaint();
+    }
+
     void paint(juce::Graphics& g) override
     {
         int w = getWidth();
@@ -84,10 +95,24 @@ public:
         g.setColour(juce::Colour(0xff404040));
         g.fillRect(panelBounds.getX() + 40, panelBounds.getBottom() - 55, panelBounds.getWidth() - 80, 1);
 
+        // Optional action link (e.g. "Open log folder"); cached for hit-test in mouseDown.
+        actionHitRegion = juce::Rectangle<int>{};
+        if (actionLabel.isNotEmpty())
+        {
+            g.setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Underlined")));
+            g.setColour(juce::Colour(0xffb89060));
+            const juce::Rectangle<int> linkBounds(
+                panelBounds.getX(), panelBounds.getBottom() - 65,
+                panelBounds.getWidth(), 16);
+            g.drawText(actionLabel, linkBounds, juce::Justification::centred);
+            // Hit-region with a little vertical padding so it's easy to click.
+            actionHitRegion = linkBounds.expanded(0, 4);
+        }
+
         // Footer with click-to-close hint
         g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.setColour(juce::Colour(0xff808080));
-        g.drawText("Click anywhere to close",
+        g.drawText("Click anywhere else to close",
                    panelBounds.getX(), panelBounds.getBottom() - 45,
                    panelBounds.getWidth(), 20, juce::Justification::centred);
 
@@ -106,8 +131,13 @@ public:
                    panelBounds.getWidth(), 18, juce::Justification::centred);
     }
 
-    void mouseDown(const juce::MouseEvent&) override
+    void mouseDown(const juce::MouseEvent& e) override
     {
+        if (onActionClick && actionHitRegion.contains(e.getPosition()))
+        {
+            onActionClick();
+            return;
+        }
         if (onDismiss)
             onDismiss();
     }
@@ -117,6 +147,9 @@ public:
 private:
     juce::String pluginDisplayName;
     juce::String pluginVersion;
+    juce::String actionLabel;
+    std::function<void()> onActionClick;
+    juce::Rectangle<int> actionHitRegion; // recomputed in paint()
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SupportersOverlay)
 };
