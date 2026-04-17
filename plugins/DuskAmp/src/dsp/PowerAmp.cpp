@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // PowerAmp.cpp — Per-amp power amplifier with negative feedback loop
 //
 // The key innovation over the old implementation is the negative feedback loop:
