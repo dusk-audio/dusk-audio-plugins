@@ -20,12 +20,16 @@ ChordAnalyzerProcessor::ChordAnalyzerProcessor()
     parameters.addParameterListener(PARAM_KEY_MODE, this);
     parameters.addParameterListener(PARAM_SUGGESTION_LEVEL, this);
     parameters.addParameterListener(PARAM_SHOW_INVERSIONS, this);
+    parameters.addParameterListener(PARAM_RESPECT_SUSTAIN, this);
 
     // Initialize from current parameter values
     keyRoot.store(static_cast<int>(*parameters.getRawParameterValue(PARAM_KEY_ROOT)));
     keyMinor.store(*parameters.getRawParameterValue(PARAM_KEY_MODE) > 0.5f);
     suggestionLevel.store(static_cast<int>(*parameters.getRawParameterValue(PARAM_SUGGESTION_LEVEL)));
     showInversions.store(*parameters.getRawParameterValue(PARAM_SHOW_INVERSIONS) > 0.5f);
+    respectSustain.store(*parameters.getRawParameterValue(PARAM_RESPECT_SUSTAIN) > 0.5f);
+
+    sustainedReleasedNotes.reserve(16);
 
     analyzer.setKey(keyRoot.load(), keyMinor.load());
 
@@ -82,6 +86,7 @@ ChordAnalyzerProcessor::~ChordAnalyzerProcessor()
     parameters.removeParameterListener(PARAM_KEY_MODE, this);
     parameters.removeParameterListener(PARAM_SUGGESTION_LEVEL, this);
     parameters.removeParameterListener(PARAM_SHOW_INVERSIONS, this);
+    parameters.removeParameterListener(PARAM_RESPECT_SUSTAIN, this);
 }
 
 //==============================================================================
@@ -116,6 +121,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout ChordAnalyzerProcessor::crea
         juce::ParameterID(PARAM_SHOW_INVERSIONS, 1),
         "Show Inversions",
         true));  // Default to showing inversions
+
+    // Respect sustain pedal — when on, MIDI CC 64 holds the detected chord
+    // until the pedal is released (matches piano hardware behaviour, useful
+    // for transcription workflows where players want to lift their hands).
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID(PARAM_RESPECT_SUSTAIN, 1),
+        "Respect Sustain",
+        true));
 
     // NOTE: detection-output parameters are added directly to the processor
     // (not APVTS-managed) in the constructor body — see ctor for rationale.
@@ -152,6 +165,10 @@ void ChordAnalyzerProcessor::parameterChanged(const juce::String& parameterID, f
     else if (parameterID == PARAM_SHOW_INVERSIONS)
     {
         showInversions.store(newValue > 0.5f);
+    }
+    else if (parameterID == PARAM_RESPECT_SUSTAIN)
+    {
+        respectSustain.store(newValue > 0.5f);
     }
 }
 
@@ -232,6 +249,7 @@ void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
 {
     bool notesChanged = false;
+    const bool sustainEnabled = respectSustain.load();
 
     for (const auto metadata : midi)
     {
@@ -239,10 +257,15 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
 
         if (msg.isNoteOn())
         {
-            int noteNumber = msg.getNoteNumber();
+            const int noteNumber = msg.getNoteNumber();
             const juce::SpinLock::ScopedLockType lock(notesLock);
 
-            // Add note if not already present
+            // Re-pressing a sustained-released note cancels its deferred release
+            auto sustainedIt = std::find(sustainedReleasedNotes.begin(),
+                                         sustainedReleasedNotes.end(), noteNumber);
+            if (sustainedIt != sustainedReleasedNotes.end())
+                sustainedReleasedNotes.erase(sustainedIt);
+
             if (std::find(activeNotes.begin(), activeNotes.end(), noteNumber) == activeNotes.end())
             {
                 activeNotes.push_back(noteNumber);
@@ -251,10 +274,21 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
         }
         else if (msg.isNoteOff())
         {
-            int noteNumber = msg.getNoteNumber();
-            const juce::SpinLock::ScopedLockType lock(notesLock);
+            const int noteNumber = msg.getNoteNumber();
 
-            // Remove note
+            if (sustainEnabled && sustainPedalDown)
+            {
+                // Defer the release: keep the note in activeNotes until the pedal lifts
+                if (std::find(sustainedReleasedNotes.begin(),
+                              sustainedReleasedNotes.end(), noteNumber)
+                    == sustainedReleasedNotes.end())
+                {
+                    sustainedReleasedNotes.push_back(noteNumber);
+                }
+                continue;
+            }
+
+            const juce::SpinLock::ScopedLockType lock(notesLock);
             auto it = std::find(activeNotes.begin(), activeNotes.end(), noteNumber);
             if (it != activeNotes.end())
             {
@@ -262,10 +296,38 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
                 notesChanged = true;
             }
         }
+        else if (msg.isController() && msg.getControllerNumber() == 64)
+        {
+            // Sustain pedal: MIDI convention is value >= 64 → down, < 64 → up
+            const bool wasDown   = sustainPedalDown;
+            const bool nowDown   = msg.getControllerValue() >= 64;
+            sustainPedalDown     = nowDown;
+
+            if (wasDown && ! nowDown)
+            {
+                // Pedal release: drop every note whose note-off was deferred.
+                // We always flush regardless of the current sustainEnabled state —
+                // those entries reflect real player-released note-offs from when
+                // sustain was on, and would otherwise stay stuck in activeNotes
+                // if the user toggled "Respect Sustain" off while pedalling.
+                const juce::SpinLock::ScopedLockType lock(notesLock);
+                for (int sustainedNote : sustainedReleasedNotes)
+                {
+                    auto it = std::find(activeNotes.begin(), activeNotes.end(), sustainedNote);
+                    if (it != activeNotes.end())
+                    {
+                        activeNotes.erase(it);
+                        notesChanged = true;
+                    }
+                }
+                sustainedReleasedNotes.clear();
+            }
+        }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff())
         {
             const juce::SpinLock::ScopedLockType lock(notesLock);
             activeNotes.clear();
+            sustainedReleasedNotes.clear();
             notesChanged = true;
         }
     }
