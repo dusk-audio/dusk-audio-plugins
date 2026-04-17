@@ -1,8 +1,20 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #pragma once
 
 #include "dsp/DuskAmpEngine.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
+
+namespace DuskAmpStateFormat
+{
+    // Bump whenever the persisted APVTS / property shape changes in a way that
+    // breaks loading older presets verbatim (parameter rename, type change,
+    // value-range remap, removed field, etc). When you bump, also add a
+    // migrate_vN_to_vN_plus_1 helper and dispatch it from migrate() in
+    // PluginProcessor.cpp.
+    constexpr int kCurrentVersion = 1;
+}
 
 class DuskAmpProcessor : public juce::AudioProcessor
 {

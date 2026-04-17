@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "PluginEditor.h"
 #include "FactoryPresets.h"
 #include "ParamIDs.h"
+#include "CrashLog.h"
 
 // =============================================================================
 // KnobWithLabel
@@ -1051,6 +1054,8 @@ void DuskAmpEditor::showSupportersPanel()
     {
         supportersOverlay_ = std::make_unique<SupportersOverlay> ("DuskAmp", JucePlugin_VersionString);
         supportersOverlay_->onDismiss = [this] { hideSupportersPanel(); };
+        supportersOverlay_->setActionLink ("Open crash log folder",
+                                           [] { DuskCrashLog::openLogFolder(); });
         addAndMakeVisible (supportersOverlay_.get());
     }
     supportersOverlay_->setBounds (getLocalBounds());
