@@ -524,6 +524,14 @@ jobs:
           if ($target) {
             Write-Host "Building specific target(s): $target"
             foreach ($t in $target.Split(' ')) {
+              # Windows configures with -DBUILD_LV2=OFF, so any *_LV2 targets
+              # (including the hand-rolled ChordAnalyzerHeadless_LV2) don't
+              # exist in the generated build files. Skip them silently rather
+              # than letting ninja fail with "unknown target".
+              if ($t -like "*_LV2") {
+                Write-Host "Skipping $t (LV2 disabled on Windows)"
+                continue
+              }
               cmake --build build --target $t -j $env:NUMBER_OF_PROCESSORS
             }
           } else {
