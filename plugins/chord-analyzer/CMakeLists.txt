@@ -220,11 +220,27 @@ endif()
 # control ports in its own UI (this is the entire point: lets Zynthian display
 # the detected chord without our editor).
 if("LV2" IN_LIST PLUGIN_FORMATS)
-    set(LV2_SDK_DIR "${CMAKE_SOURCE_DIR}/../JUCE/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2")
-    if(NOT EXISTS "${LV2_SDK_DIR}/lv2/core/lv2.h")
-        # When JUCE_PATH is set explicitly the SDK lives under that path
-        set(LV2_SDK_DIR "${JUCE_PATH}/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2")
+    # Locate the LV2 SDK headers bundled inside JUCE. Try every path the
+    # top-level CMakeLists supports for finding JUCE itself, plus the legacy
+    # "headless" wrapper directory name used by JUCE 8.x.
+    set(LV2_SDK_CANDIDATES
+        "${JUCE_PATH}/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
+        "${CMAKE_SOURCE_DIR}/../JUCE/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
+        "${CMAKE_SOURCE_DIR}/external/JUCE/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors_headless/format_types/LV2_SDK/lv2"
+    )
+    set(LV2_SDK_DIR "")
+    foreach(_candidate ${LV2_SDK_CANDIDATES})
+        if(EXISTS "${_candidate}/lv2/core/lv2.h")
+            set(LV2_SDK_DIR "${_candidate}")
+            break()
+        endif()
+    endforeach()
+    if(NOT LV2_SDK_DIR)
+        message(FATAL_ERROR
+            "Could not locate LV2 SDK headers in JUCE. Searched: ${LV2_SDK_CANDIDATES}")
     endif()
+    message(STATUS "ChordAnalyzerHeadless_LV2: using LV2 SDK at ${LV2_SDK_DIR}")
 
     add_library(ChordAnalyzerHeadless_LV2 MODULE
         lv2/chord-analyzer-lv2.cpp
