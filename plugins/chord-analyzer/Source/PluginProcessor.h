@@ -86,6 +86,7 @@ public:
     static constexpr const char* PARAM_KEY_MODE = "keyMode";
     static constexpr const char* PARAM_SUGGESTION_LEVEL = "suggestionLevel";
     static constexpr const char* PARAM_SHOW_INVERSIONS = "showInversions";
+    static constexpr const char* PARAM_RESPECT_SUSTAIN = "respectSustain";
 
     // Output (read-only) parameters — populated by the processor so headless
     // hosts (e.g. Zynthian, generic Reaper view) can display detection results
@@ -119,6 +120,12 @@ private:
     std::atomic<bool> keyMinor{false};
     std::atomic<int> suggestionLevel{2};  // 0=Basic, 1=+Inter, 2=All
     std::atomic<bool> showInversions{true};
+    std::atomic<bool> respectSustain{true};
+
+    //==========================================================================
+    // Sustain pedal (CC 64) state — audio-thread only, mutated in processMidiInput.
+    bool sustainPedalDown = false;
+    std::vector<int> sustainedReleasedNotes;  // notes released while pedal was down
 
     //==========================================================================
     // Timing

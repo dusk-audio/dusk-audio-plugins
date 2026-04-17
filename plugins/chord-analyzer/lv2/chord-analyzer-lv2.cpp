@@ -40,6 +40,9 @@ enum PortIndex : uint32_t
     PORT_DETECTED_QUALITY   = 7,
     PORT_DETECTED_BASS      = 8,
     PORT_DETECTED_INVERSION = 9,
+    PORT_RESPECT_SUSTAIN    = 10,  // appended after detection ports to keep
+                                    // existing port indices stable for hosts
+                                    // that already cached the v1.1.0 layout
 };
 
 struct ChordAnalyzerLV2
@@ -54,6 +57,7 @@ struct ChordAnalyzerLV2
     const float* keyMode         = nullptr;
     const float* suggestionLevel = nullptr;
     const float* showInversions  = nullptr;
+    const float* respectSustain  = nullptr;
 
     float* detectedRoot      = nullptr;
     float* detectedQuality   = nullptr;
@@ -63,6 +67,10 @@ struct ChordAnalyzerLV2
     ChordAnalyzer    analyzer;
     std::vector<int> activeNotes;
     ChordInfo        currentChord;
+
+    // Sustain pedal (CC 64) state — single audio thread, no synchronisation needed.
+    bool             sustainPedalDown = false;
+    std::vector<int> sustainedReleasedNotes;  // notes released while pedal was down
 };
 
 void publishDetectedChord (ChordAnalyzerLV2& self, const ChordInfo& chord)
@@ -107,6 +115,7 @@ LV2_Handle instantiate (const LV2_Descriptor*,
 
     self->midiEventURID = self->map->map (self->map->handle, LV2_MIDI__MidiEvent);
     self->activeNotes.reserve (16);
+    self->sustainedReleasedNotes.reserve (16);
 
     return static_cast<LV2_Handle> (self);
 }
@@ -127,6 +136,7 @@ void connect_port (LV2_Handle instance, uint32_t port, void* data)
         case PORT_DETECTED_QUALITY:   self->detectedQuality   = static_cast<float*>                   (data); break;
         case PORT_DETECTED_BASS:      self->detectedBass      = static_cast<float*>                   (data); break;
         case PORT_DETECTED_INVERSION: self->detectedInversion = static_cast<float*>                   (data); break;
+        case PORT_RESPECT_SUSTAIN:    self->respectSustain    = static_cast<const float*>             (data); break;
     }
 }
 
@@ -152,7 +162,8 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
     lv2_atom_sequence_clear (self->midiOut);
     self->midiOut->atom.type = self->midiIn->atom.type;
 
-    bool notesChanged = false;
+    bool       notesChanged    = false;
+    const bool sustainEnabled  = (self->respectSustain != nullptr) && (*self->respectSustain) > 0.5f;
 
     LV2_ATOM_SEQUENCE_FOREACH (self->midiIn, ev)
     {
@@ -167,25 +178,63 @@ void run (LV2_Handle instance, uint32_t /*nSamples*/)
             continue;
 
         const uint8_t status   = static_cast<uint8_t> (msg[0] & 0xF0);
-        const int     noteNum  = msg[1] & 0x7F;
-        const uint8_t velocity = msg[2] & 0x7F;
+        const int     data1    = msg[1] & 0x7F;
+        const uint8_t data2    = msg[2] & 0x7F;
 
-        if (status == LV2_MIDI_MSG_NOTE_ON && velocity > 0)
+        if (status == LV2_MIDI_MSG_NOTE_ON && data2 > 0)
         {
-            if (std::find (self->activeNotes.begin(), self->activeNotes.end(), noteNum) == self->activeNotes.end())
+            // Re-pressing a sustained-released note cancels its deferred release
+            auto sustainedIt = std::find (self->sustainedReleasedNotes.begin(),
+                                          self->sustainedReleasedNotes.end(), data1);
+            if (sustainedIt != self->sustainedReleasedNotes.end())
+                self->sustainedReleasedNotes.erase (sustainedIt);
+
+            if (std::find (self->activeNotes.begin(), self->activeNotes.end(), data1) == self->activeNotes.end())
             {
-                self->activeNotes.push_back (noteNum);
+                self->activeNotes.push_back (data1);
                 notesChanged = true;
             }
         }
         else if (status == LV2_MIDI_MSG_NOTE_OFF
-                 || (status == LV2_MIDI_MSG_NOTE_ON && velocity == 0))
+                 || (status == LV2_MIDI_MSG_NOTE_ON && data2 == 0))
         {
-            auto it = std::find (self->activeNotes.begin(), self->activeNotes.end(), noteNum);
+            if (sustainEnabled && self->sustainPedalDown)
+            {
+                if (std::find (self->sustainedReleasedNotes.begin(),
+                               self->sustainedReleasedNotes.end(), data1)
+                    == self->sustainedReleasedNotes.end())
+                {
+                    self->sustainedReleasedNotes.push_back (data1);
+                }
+                continue;
+            }
+
+            auto it = std::find (self->activeNotes.begin(), self->activeNotes.end(), data1);
             if (it != self->activeNotes.end())
             {
                 self->activeNotes.erase (it);
                 notesChanged = true;
+            }
+        }
+        else if (status == LV2_MIDI_MSG_CONTROLLER && data1 == 64)
+        {
+            // Sustain pedal: MIDI convention is value >= 64 → down, < 64 → up
+            const bool wasDown = self->sustainPedalDown;
+            const bool nowDown = data2 >= 64;
+            self->sustainPedalDown = nowDown;
+
+            if (wasDown && ! nowDown && sustainEnabled)
+            {
+                for (int sustainedNote : self->sustainedReleasedNotes)
+                {
+                    auto it = std::find (self->activeNotes.begin(), self->activeNotes.end(), sustainedNote);
+                    if (it != self->activeNotes.end())
+                    {
+                        self->activeNotes.erase (it);
+                        notesChanged = true;
+                    }
+                }
+                self->sustainedReleasedNotes.clear();
             }
         }
     }
