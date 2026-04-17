@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // PostFX.h — Delay (Digital/Analog/Tape) + Dattorro plate reverb
 
 #pragma once

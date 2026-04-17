@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // StompBox.h — Tube Screamer-style boost/overdrive pedal
 //
 // Signal chain: Input gain → bandpass "mid hump" (720Hz) → asymmetric
