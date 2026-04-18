@@ -3,16 +3,20 @@
 #include "AnalogEmulation/WaveshaperCurves.h"
 #include "AnalogEmulation/TransformerEmulation.h"
 #include "AnalogEmulation/DCBlocker.h"
+#include <atomic>
 
 class PowerAmp
 {
 public:
+    enum class TubeType { EL34 = 0, Tube6L6 = 1, EL84 = 2, KT88 = 3 };
+
     void prepare (double sampleRate);
     void reset();
     void setDrive (float drive01);
     void setPresence (float value01);
     void setResonance (float value01);
     void setSag (float sag01);
+    void setTubeType (TubeType t);
     void process (float* buffer, int numSamples);
 
 private:
@@ -40,6 +44,8 @@ private:
 
     AnalogEmulation::TransformerEmulation transformer_;
     AnalogEmulation::DCBlocker dcBlocker_;
+
+    std::atomic<TubeType> tubeType_ { TubeType::EL34 };
 
     void updatePresenceCoeff();
     void updateResonanceCoeff();
