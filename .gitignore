@@ -139,3 +139,6 @@ plugins/DuskVerb/tests/reference_comparison
 *.zip
 tests/test_linear_phase
 tests/velvet90_match/
+
+# DuskAmp DSP comparison artifacts (regenerated locally per developer)
+plugins/DuskAmp/tests/comparison/
