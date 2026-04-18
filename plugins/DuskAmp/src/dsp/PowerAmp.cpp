@@ -26,17 +26,16 @@ void PowerAmp::prepare (double sampleRate)
     transformer_.prepare (sampleRate, 1);
     dcBlocker_.prepare (sampleRate, 10.0f);
 
+    powerSupply_.prepare (sampleRate);
     updateAmpTypeParams();
     updatePresenceCoeff();
     updateResonanceCoeff();
-    updateSagCoeffs();
     reset();
 }
 
 void PowerAmp::reset()
 {
-    sagEnvelope_ = 0.0f;
-    inputEnvelope_ = 0.0f;
+    powerSupply_.reset();
     presenceState_ = 0.0f;
     resonanceState_ = 0.0f;
     transformer_.reset();
@@ -64,7 +63,7 @@ void PowerAmp::setResonance (float value01)
 void PowerAmp::setSag (float sag01)
 {
     sagAmount_ = std::clamp (sag01, 0.0f, 1.0f);
-    updateSagCoeffs();
+    powerSupply_.setDepth (sagAmount_);
 }
 
 void PowerAmp::setAmpType (AmpType type)
@@ -87,6 +86,7 @@ void PowerAmp::updateAmpTypeParams()
             // Need ~80x to bring signal to ±0.3 at the waveshaper input
             stageGain_ = 80.0f;
             outputGain_ = 0.5f;  // Attenuate after waveshaper to stay < 0dBFS
+            powerSupply_.setType (PowerSupply::Type::Tube5AR4);
             break;
 
         case AmpType::Vox:
@@ -99,6 +99,7 @@ void PowerAmp::updateAmpTypeParams()
             // won't squash it as badly
             stageGain_ = 8.0f;        // Very low — keep signal in waveshaper's linear region at clean
             outputGain_ = 4.0f;      // High post-waveshaper gain to compensate
+            powerSupply_.setType (PowerSupply::Type::TubeGZ34);
             break;
 
         case AmpType::Marshall:
@@ -108,6 +109,7 @@ void PowerAmp::updateAmpTypeParams()
             maxDriveGain_ = 3.0f;
             stageGain_ = 35.0f;      // Pentode curve is very sensitive — low stageGain needed
             outputGain_ = 0.8f;
+            powerSupply_.setType (PowerSupply::Type::Silicon);
             break;
     }
 }
@@ -121,27 +123,14 @@ void PowerAmp::process (float* buffer, int numSamples)
     {
         float sample = buffer[i];
 
-        // --- 1. Input envelope (for sag + Class A compression) ---
-        // Track the input signal level. This runs before the waveshaper
-        // so it responds to playing dynamics, not waveshaper output.
-        // The signal reaching the power amp is typically very low (~0.001 to 0.05)
-        // after preamp and tone stack attenuation, so we scale up aggressively.
-        {
-            // Use power-law (squared) detection. Sensitivity scaled per amp
-            // to avoid the compression envelope itself creating distortion.
-            float sagSensitivity = (ampType_ == AmpType::Vox) ? 500.0f : 5000.0f;
-            float absIn = sample * sample * sagSensitivity;
-            if (absIn > inputEnvelope_)
-                inputEnvelope_ = sagAttackCoeff_ * inputEnvelope_ + (1.0f - sagAttackCoeff_) * absIn;
-            else
-                inputEnvelope_ = sagReleaseCoeff_ * inputEnvelope_;
-            if (inputEnvelope_ < 1e-15f) inputEnvelope_ = 0.0f;
-        }
-
-        // --- 2. Drive + stage gain ---
+        // --- 1. Drive + stage gain ---
         // stageGain_ provides the missing voltage amplification that a real
         // preamp/phase-inverter delivers but our normalized chain doesn't.
         float driven = sample * stageGain_ * driveGain_;
+
+        // --- 2. Power supply: RC-model B+ sag driven by power-tube load ---
+        // Returns normalized rail voltage in [vFloor, 1.0]. Lower = more sag.
+        float vBplus = powerSupply_.processSample (driven);
 
         // --- 3. Power tube stage ---
         float saturated;
@@ -166,16 +155,11 @@ void PowerAmp::process (float* buffer, int numSamples)
         else
         {
             // Class A (Vox): single-ended, no push-pull cancellation.
-            // 1. Bias offset creates asymmetric clipping → even harmonics.
-            // 2. Class A tubes always conduct, drawing constant high current.
-            //    As the signal gets louder, the tube can't increase current
-            //    much further → natural compression at lower thresholds.
-            //
-            // Class A (Vox): single-ended, no push-pull cancellation.
-            // Gentle envelope-based compression BEFORE the waveshaper.
-            // Using a very low multiplier to avoid per-sample distortion.
-            float gentleComp = 1.0f / (1.0f + inputEnvelope_ * 0.4f);
-            float compDriven = driven * gentleComp;
+            // Class A tubes always conduct near max current; when B+ sags,
+            // the tube can't swing as far, so the signal compresses.
+            // vBplus (∈ [vFloor, 1.0]) drives this naturally — stiff rail =
+            // no compression, sagged rail = proportional headroom loss.
+            float compDriven = driven * vBplus;
 
             // Waveshaper then asymmetry
             saturated = waveshaper.process (compDriven, curveType_);
@@ -192,26 +176,11 @@ void PowerAmp::process (float* buffer, int numSamples)
                 saturated = std::tanh (saturated * negScale) / negScale;
         }
 
-        // --- 3b. Output scaling ---
-        saturated *= outputGain_;
-
-        // --- 4. Sag ---
-        // Power supply sag depth varies by amp type:
-        //   GZ34 rectifier (Fender): up to 50% sag under heavy load
-        //   GZ34 + Class A (Vox): up to 60% sag (constant high current draw)
-        //   Silicon rectifier (Marshall): up to 15% sag (tight, minimal)
-        {
-            float maxSagDepth;
-            switch (ampType_)
-            {
-                case AmpType::Fender:  maxSagDepth = 0.70f; break; // GZ34 — deep sag
-                case AmpType::Vox:     maxSagDepth = 0.80f; break; // GZ34 + Class A — deepest
-                case AmpType::Marshall:
-                default:               maxSagDepth = 0.20f; break; // Silicon — tight
-            }
-            float sagReduction = 1.0f - sagAmount_ * std::min (inputEnvelope_, 1.0f) * maxSagDepth;
-            saturated *= sagReduction;
-        }
+        // --- 3b. Output scaling + supply sag ---
+        // Real physics: power-tube plate swing is bounded by B+. When the
+        // supply sags, maximum output amplitude drops in proportion. Per-amp
+        // sag depth and time constants are baked into PowerSupply by ampType.
+        saturated *= outputGain_ * vBplus;
 
         // --- 5. Presence + Resonance ---
         float hpOut = saturated - presenceState_;
@@ -246,30 +215,3 @@ void PowerAmp::updateResonanceCoeff()
     resonanceCoeff_ = w / (w + 1.0f);
 }
 
-void PowerAmp::updateSagCoeffs()
-{
-    // Per-amp sag time constants
-    float attackMs, releaseMs;
-    switch (ampType_)
-    {
-        case AmpType::Fender:
-            attackMs = 15.0f;   // GZ34 — moderate attack
-            releaseMs = 150.0f; // Slow recovery (musical bloom)
-            break;
-        case AmpType::Vox:
-            attackMs = 5.0f;    // GZ34 under Class A load — fast attack
-            releaseMs = 80.0f;  // Moderate recovery
-            break;
-        case AmpType::Marshall:
-        default:
-            attackMs = 3.0f;    // Silicon — very fast attack
-            releaseMs = 25.0f;  // Fast recovery (tight feel)
-            break;
-    }
-
-    if (sampleRate_ > 0.0)
-    {
-        sagAttackCoeff_ = std::exp (-1000.0f / (attackMs * static_cast<float> (sampleRate_)));
-        sagReleaseCoeff_ = std::exp (-1000.0f / (releaseMs * static_cast<float> (sampleRate_)));
-    }
-}

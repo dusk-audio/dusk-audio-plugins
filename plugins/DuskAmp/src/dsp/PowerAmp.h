@@ -10,6 +10,7 @@
 #include "AnalogEmulation/WaveshaperCurves.h"
 #include "AnalogEmulation/TransformerEmulation.h"
 #include "AnalogEmulation/DCBlocker.h"
+#include "PowerSupply.h"
 
 class PowerAmp
 {
@@ -33,10 +34,7 @@ private:
     float drive_ = 0.3f;
     float driveGain_ = 1.0f;
     float sagAmount_ = 0.3f;
-    float sagEnvelope_ = 0.0f;       // Post-output sag envelope (for push-pull sag)
-    float sagAttackCoeff_ = 0.0f;
-    float sagReleaseCoeff_ = 0.0f;
-    float inputEnvelope_ = 0.0f;     // Pre-waveshaper envelope (for Class A compression)
+    PowerSupply powerSupply_;
 
     // Per-amp-type settings
     AnalogEmulation::WaveshaperCurves::CurveType curveType_
@@ -65,6 +63,5 @@ private:
 
     void updatePresenceCoeff();
     void updateResonanceCoeff();
-    void updateSagCoeffs();
     void updateAmpTypeParams();
 };
