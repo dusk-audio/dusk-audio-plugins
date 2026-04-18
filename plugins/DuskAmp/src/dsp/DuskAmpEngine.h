@@ -43,6 +43,7 @@ public:
     void setTreble (float value01);
 
     // Power amp
+    void setTubeType (int t); // 0=EL34, 1=6L6, 2=EL84, 3=KT88
     void setPowerDrive (float drive01);
     void setPresence (float value01);
     void setResonance (float value01);

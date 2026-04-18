@@ -56,6 +56,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
     // Power Amp
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { DuskAmpParams::TUBE_TYPE, 1 }, "Tube",
+        juce::StringArray { "EL34", "6L6", "EL84", "KT88" }, 0));
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::POWER_DRIVE, 1 }, "Power Drive",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.3f));
@@ -142,6 +146,7 @@ DuskAmpProcessor::DuskAmpProcessor()
     ampModeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_MODE);
     preampChannelParam_ = parameters.getRawParameterValue (DuskAmpParams::PREAMP_CHANNEL);
     toneTypeParam_      = parameters.getRawParameterValue (DuskAmpParams::TONE_TYPE);
+    tubeTypeParam_      = parameters.getRawParameterValue (DuskAmpParams::TUBE_TYPE);
     oversamplingParam_  = parameters.getRawParameterValue (DuskAmpParams::OVERSAMPLING);
     cabEnabledParam_    = parameters.getRawParameterValue (DuskAmpParams::CAB_ENABLED);
     brightParam_        = parameters.getRawParameterValue (DuskAmpParams::PREAMP_BRIGHT);
@@ -195,6 +200,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cachedAmpMode_       = static_cast<int> (ampModeParam_->load());
     cachedPreampChannel_ = static_cast<int> (preampChannelParam_->load());
     cachedToneType_      = static_cast<int> (toneTypeParam_->load());
+    cachedTubeType_      = static_cast<int> (tubeTypeParam_->load());
     cachedOversampling_  = static_cast<int> (oversamplingParam_->load());
     cachedCabEnabled_    = cabEnabledParam_->load() >= 0.5f;
     cachedBright_        = brightParam_->load() >= 0.5f;
@@ -204,6 +210,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine_.setAmpMode (static_cast<DuskAmpEngine::AmpMode> (cachedAmpMode_));
     engine_.setPreampChannel (cachedPreampChannel_);
     engine_.setToneStackType (cachedToneType_);
+    engine_.setTubeType (cachedTubeType_);
     engine_.setOversamplingFactor (cachedOversampling_ >= 1 ? 4 : 2);
     engine_.setCabinetEnabled (cachedCabEnabled_);
     engine_.setPreampBright (cachedBright_);
@@ -319,6 +326,13 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         cachedToneType_ = toneType;
         engine_.setToneStackType (toneType);
+    }
+
+    int tubeType = static_cast<int> (tubeTypeParam_->load());
+    if (tubeType != cachedTubeType_)
+    {
+        cachedTubeType_ = tubeType;
+        engine_.setTubeType (tubeType);
     }
 
     int oversampling = static_cast<int> (oversamplingParam_->load());

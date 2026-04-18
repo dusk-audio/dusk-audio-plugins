@@ -246,6 +246,11 @@ void DuskAmpEngine::setTreble (float value01)
 
 // --- Power Amp ---
 
+void DuskAmpEngine::setTubeType (int t)
+{
+    powerAmp_.setTubeType (static_cast<PowerAmp::TubeType> (std::clamp (t, 0, 3)));
+}
+
 void DuskAmpEngine::setPowerDrive (float drive01)
 {
     powerAmp_.setDrive (drive01);

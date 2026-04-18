@@ -79,6 +79,7 @@ private:
     std::atomic<float>* ampModeParam_       = nullptr;
     std::atomic<float>* preampChannelParam_ = nullptr;
     std::atomic<float>* toneTypeParam_      = nullptr;
+    std::atomic<float>* tubeTypeParam_      = nullptr;
     std::atomic<float>* oversamplingParam_  = nullptr;
     std::atomic<float>* cabEnabledParam_    = nullptr;
     std::atomic<float>* brightParam_        = nullptr;
@@ -113,6 +114,7 @@ private:
     int cachedAmpMode_       = 0;
     int cachedPreampChannel_ = 1;
     int cachedToneType_      = 1;
+    int cachedTubeType_      = 0;
     int cachedOversampling_  = 0;
     bool cachedCabEnabled_   = true;
     bool cachedBright_       = false;
