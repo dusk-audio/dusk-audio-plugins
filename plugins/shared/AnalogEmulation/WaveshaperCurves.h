@@ -23,8 +23,10 @@ public:
         Transformer,    // Generic transformer saturation
         Tape,           // Tape saturation (similar to opto tube but smoother)
         Triode,         // Generic triode tube saturation
-        Pentode,        // Pentode tube saturation (more aggressive)
-        EL84,           // EL84 power tube (chimey breakup, between Triode and Pentode)
+        Pentode,        // EL34-family pentode (alias of EL34, kept for back-compat)
+        EL84,           // EL84 power tube (chimey breakup)
+        Tube6L6,        // 6L6GC power tube (Fender-family, clean headroom)
+        KT88,           // KT88 power tube (big headroom, firm bass)
         Linear          // Bypass (no saturation)
     };
 
@@ -44,6 +46,8 @@ public:
         initializeTriodeCurve();
         initializePentodeCurve();
         initializeEL84Curve();
+        initialize6L6Curve();
+        initializeKT88Curve();
         initializeLinearCurve();
     }
 
@@ -93,6 +97,8 @@ public:
             case CurveType::Triode:      return triodeCurve;
             case CurveType::Pentode:     return pentodeCurve;
             case CurveType::EL84:        return el84Curve;
+            case CurveType::Tube6L6:     return tube6L6Curve;
+            case CurveType::KT88:        return kt88Curve;
             case CurveType::Linear:
             default:                     return linearCurve;
         }
@@ -108,6 +114,8 @@ private:
     std::array<float, TABLE_SIZE> triodeCurve;
     std::array<float, TABLE_SIZE> pentodeCurve;
     std::array<float, TABLE_SIZE> el84Curve;
+    std::array<float, TABLE_SIZE> tube6L6Curve;
+    std::array<float, TABLE_SIZE> kt88Curve;
     std::array<float, TABLE_SIZE> linearCurve;
 
     // Convert table index to input value (-2 to +2)
@@ -373,6 +381,66 @@ private:
 
             float Vout = Vb - Ip * Rp;
             el84Curve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
+        }
+    }
+
+    // 6L6GC power tube — Koren pentode model
+    // Parameters from Ayumi tube-curves / Duncan SPICE: mu=8.7, Kp=48, Kvb=12, Ex=1.35, Kg1=1460
+    // Fender Deluxe Reverb operating point: Vb=450V, Rp=4.3kΩ
+    void initialize6L6Curve()
+    {
+        float mu = 8.7f, Kp = 48.0f, Kvb = 12.0f, Ex = 1.35f, Kg1 = 1460.0f;
+        float Vb = 450.0f, Rp = 4300.0f;
+        float Vgk_bias = -38.0f;
+        float Ip_q = 0.040f; // ~40mA quiescent
+        float Vp_q = Vb - Ip_q * Rp;
+
+        for (int i = 0; i < TABLE_SIZE; ++i)
+        {
+            float x = indexToInput(i);
+            float Vgk = Vgk_bias + x * 42.0f; // ±84V grid swing
+
+            float Vp = Vp_q;
+            float E1inner = Kp * (1.0f / mu + Vgk / std::sqrt(Kvb + Vp * Vp));
+            E1inner = std::clamp(E1inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(E1inner));
+            E1 = std::max(0.0f, E1);
+
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+
+            float Vout = Vb - Ip * Rp;
+            tube6L6Curve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
+        }
+    }
+
+    // KT88 power tube — Koren pentode model
+    // Parameters from Ayumi tube-curves / Duncan SPICE: mu=8.8, Kp=32, Kvb=14, Ex=1.35, Kg1=730
+    // Marshall Major-class operating point: Vb=560V, Rp=4.5kΩ
+    void initializeKT88Curve()
+    {
+        float mu = 8.8f, Kp = 32.0f, Kvb = 14.0f, Ex = 1.35f, Kg1 = 730.0f;
+        float Vb = 560.0f, Rp = 4500.0f;
+        float Vgk_bias = -55.0f;
+        float Ip_q = 0.060f; // ~60mA quiescent
+        float Vp_q = Vb - Ip_q * Rp;
+
+        for (int i = 0; i < TABLE_SIZE; ++i)
+        {
+            float x = indexToInput(i);
+            float Vgk = Vgk_bias + x * 60.0f; // ±120V grid swing (KT88 headroom)
+
+            float Vp = Vp_q;
+            float E1inner = Kp * (1.0f / mu + Vgk / std::sqrt(Kvb + Vp * Vp));
+            E1inner = std::clamp(E1inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(E1inner));
+            E1 = std::max(0.0f, E1);
+
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+
+            float Vout = Vb - Ip * Rp;
+            kt88Curve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
         }
     }
 
