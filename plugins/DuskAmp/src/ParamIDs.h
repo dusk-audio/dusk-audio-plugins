@@ -13,6 +13,7 @@ namespace DuskAmpParams
     static constexpr const char* BASS            = "bass";
     static constexpr const char* MID             = "mid";
     static constexpr const char* TREBLE          = "treble";
+    static constexpr const char* TUBE_TYPE       = "tube_type";
     static constexpr const char* POWER_DRIVE     = "power_drive";
     static constexpr const char* PRESENCE        = "presence";
     static constexpr const char* RESONANCE       = "resonance";
