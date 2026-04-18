@@ -109,6 +109,8 @@ private:
     KnobWithLabel presence_;
     KnobWithLabel resonance_;
     KnobWithLabel sag_;
+    juce::ComboBox tubeTypeBox_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tubeTypeAttachment_;
 
     // -- CABINET section --
     juce::ToggleButton cabEnabled_;

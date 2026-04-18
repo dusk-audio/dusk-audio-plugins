@@ -223,6 +223,13 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     toneTypeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
         params, DuskAmpParams::TONE_TYPE, toneTypeBox_);
 
+    // --- Tube type selector ---
+    tubeTypeBox_.addItemList ({ "EL34", "6L6", "EL84", "KT88" }, 1);
+    tubeTypeBox_.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (tubeTypeBox_);
+    tubeTypeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+        params, DuskAmpParams::TUBE_TYPE, tubeTypeBox_);
+
     // --- Bright toggle ---
     brightButton_.setButtonText ("BRIGHT");
     brightButton_.setClickingTogglesState (true);
@@ -744,10 +751,18 @@ void DuskAmpEditor::resized()
             toneTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
         }
 
-        // Power amp
-        layoutKnobsInGroup ({ centerX, powY, centerW, powH }, topPad,
-            { { &powerDrive_, mediumKnob }, { &presence_, smallKnob },
-              { &resonance_, smallKnob }, { &sag_, smallKnob } }, sf);
+        // Power amp (knobs take top portion, tube selector pinned at bottom)
+        {
+            int powKnobH = powH - controlsH - scaler_.scaled (4);
+            layoutKnobsInGroup ({ centerX, powY, centerW, powKnobH }, topPad,
+                { { &powerDrive_, mediumKnob }, { &presence_, smallKnob },
+                  { &resonance_, smallKnob }, { &sag_, smallKnob } }, sf);
+
+            int ctrlY = powY + powH - controlsH - scaler_.scaled (4);
+            int ctrlW = scaler_.scaled (130);
+            int ctrlX = centerX + (centerW - ctrlW) / 2;
+            tubeTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
+        }
 
         // Hide DSP preamp controls
         preampGain_.slider.setVisible (false);
@@ -784,10 +799,18 @@ void DuskAmpEditor::resized()
             brightButton_.setBounds (ctrlX + 2 * (ctrlW + controlsGap), ctrlY, ctrlW, controlsH);
         }
 
-        // Power amp
-        layoutKnobsInGroup ({ centerX, powY, centerW, powH }, topPad,
-            { { &powerDrive_, mediumKnob }, { &presence_, smallKnob },
-              { &resonance_, smallKnob }, { &sag_, smallKnob } }, sf);
+        // Power amp (knobs take top portion, tube selector pinned at bottom)
+        {
+            int powKnobH = powH - controlsH - scaler_.scaled (4);
+            layoutKnobsInGroup ({ centerX, powY, centerW, powKnobH }, topPad,
+                { { &powerDrive_, mediumKnob }, { &presence_, smallKnob },
+                  { &resonance_, smallKnob }, { &sag_, smallKnob } }, sf);
+
+            int ctrlY = powY + powH - controlsH - scaler_.scaled (4);
+            int ctrlW = scaler_.scaled (130);
+            int ctrlX = centerX + (centerW - ctrlW) / 2;
+            tubeTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
+        }
 
         // Show DSP preamp controls, hide NAM browser
         preampGain_.slider.setVisible (true);
