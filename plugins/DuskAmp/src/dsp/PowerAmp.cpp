@@ -67,9 +67,20 @@ void PowerAmp::setSag (float sag01)
     updateSagCoeffs();
 }
 
+void PowerAmp::setTubeType (TubeType t)
+{
+    tubeType_.store (t, std::memory_order_relaxed);
+}
+
+static AnalogEmulation::WaveshaperCurves::CurveType curveForTube (PowerAmp::TubeType)
+{
+    return AnalogEmulation::WaveshaperCurves::CurveType::Pentode;
+}
+
 void PowerAmp::process (float* buffer, int numSamples)
 {
     auto& waveshaper = AnalogEmulation::getWaveshaperCurves();
+    const auto tubeCurve = curveForTube (tubeType_.load (std::memory_order_relaxed));
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -90,8 +101,8 @@ void PowerAmp::process (float* buffer, int numSamples)
         // 2. Apply drive gain, reduced by sag
         float driven = sample * driveGain_ * sagReduction;
 
-        // 3. Pentode waveshaper (power tube saturation)
-        float saturated = waveshaper.process (driven, AnalogEmulation::WaveshaperCurves::CurveType::Pentode);
+        // 3. Power tube waveshaper
+        float saturated = waveshaper.process (driven, tubeCurve);
 
         // 4. Presence + Resonance EQ (feedforward — filters track pre-boost signal)
         float preBoosted = saturated;
