@@ -808,18 +808,19 @@ void DuskAmpEditor::resized()
     fxGroupBounds_  = { fxX, bottomY, fxW, bottomH };
 
     // CABINET section: toggle + 3 knobs | browser
+    // innerY clears the 20-pixel group-title strip drawn by drawGroupBox().
     {
         int cabX = contentX;
         int toggleW = scaler_.scaled (50);
         int toggleH = scaler_.scaled (22);
         int innerX = cabX + scaler_.scaled (8);
-        int innerY = bottomY + scaler_.scaled (4);
+        int innerY = bottomY + scaler_.scaled (22);
 
         cabEnabled_.setBounds (innerX, innerY + scaler_.scaled (2), toggleW, toggleH);
 
         int knobStartX = innerX + toggleW + btnGap;
         int knobColW = scaler_.scaled (70);
-        int knobAreaH = bottomH - scaler_.scaled (8);
+        int knobAreaH = bottomH - scaler_.scaled (26);
 
         placeKnob (cabMix_,   { knobStartX, innerY, knobColW, knobAreaH }, smallKnob, sf);
         placeKnob (cabHiCut_, { knobStartX + knobColW, innerY, knobColW, knobAreaH }, smallKnob, sf);
@@ -827,20 +828,21 @@ void DuskAmpEditor::resized()
 
         int browserX = knobStartX + 3 * knobColW + gap;
         int browserW = cabX + cabW - browserX - scaler_.scaled (4);
-        cabBrowser_.setBounds (browserX, bottomY + scaler_.scaled (4), browserW, bottomH - scaler_.scaled (8));
+        cabBrowser_.setBounds (browserX, innerY, browserW, knobAreaH);
     }
 
     // EFFECTS section: delay | reverb
+    // innerY clears the 20-pixel group-title strip drawn by drawGroupBox().
     {
         int innerX = fxX + scaler_.scaled (8);
-        int innerY = bottomY + scaler_.scaled (4);
+        int innerY = bottomY + scaler_.scaled (22);
         int toggleW = scaler_.scaled (60);
         int toggleH = scaler_.scaled (22);
         int halfW = (fxW - scaler_.scaled (16)) / 2;
 
         delayEnabled_.setBounds (innerX, innerY + scaler_.scaled (2), toggleW, toggleH);
         int dKnobY = innerY + toggleH + scaler_.scaled (6);
-        int dKnobH = bottomH - toggleH - scaler_.scaled (14);
+        int dKnobH = bottomH - toggleH - scaler_.scaled (32);
         int dColW = halfW / 3;
 
         placeKnob (delayTime_,     { innerX, dKnobY, dColW, dKnobH }, smallKnob, sf);
