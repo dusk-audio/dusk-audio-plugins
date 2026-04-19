@@ -84,15 +84,19 @@ private:
     static constexpr float kTopBoostBassMaxDb   = 12.0f;
     static constexpr float kTopBoostTrebleMaxDb = 15.0f; // Top Boost is bright
 
-    // Baseline attenuation for AC path. Real Top Boost at flat knobs is
-    // nearly unity, but the downstream PowerAmp kPreampMakeup is calibrated
-    // for the -22 dB loss of a 3-band Fender/Marshall network. Pending a
-    // proper tone-stack-aware makeup (Phase α.4), pad the AC output so its
-    // level matches the other tonestack types entering the power amp.
-    static constexpr float kTopBoostOutputPadDb = -28.0f;
+    // Midband (1 kHz) magnitude compensation. Yeh/Smith networks have
+    // ~-22 dB insertion loss at flat; Top Boost is ~0 dB. Compensating each
+    // to unity midband means the user's tone knobs change tonal balance but
+    // not perceived overall volume, and the downstream PowerAmp sees
+    // similar levels regardless of which tonestack is selected.
+    float outputGain_ = 1.0f;
+
+    static constexpr float kCompensationFreqHz = 1000.0f;
+    static constexpr float kCompensationMaxGain = 32.0f; // +30 dB cap
 
     void recomputeCoefficients();
     void recomputeTopBoost();
+    void recomputeMidbandCompensation();
     static void designLowShelf  (Biquad& bq, float fc, float gainDb, double sr);
     static void designHighShelf (Biquad& bq, float fc, float gainDb, double sr);
 };

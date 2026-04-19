@@ -53,10 +53,13 @@ private:
     // waveshaper at every drive level even with preamp Clean selected.
     float inputScale_ = 1.0f;
 
-    // Phase-inverter + power-tube voltage gain. Picked to undo the tone-stack
-    // loss at flat settings so a Lead-channel signal post-tone-stack arrives
-    // at the waveshaper around ±1.
-    static constexpr float kPreampMakeup = 35.0f;
+    // Phase-inverter + power-tube voltage gain. The tone stack now
+    // self-compensates to unity midband (see ToneStack::outputGain_), so this
+    // is purely the PI voltage gain — no longer has to undo 30 dB of network
+    // loss. Calibrated so Lead-channel cranked drive peaks near ±1.5 into
+    // the waveshaper (heavy saturation), Clean-channel clean drive stays
+    // near ±0.3 (mild saturation).
+    static constexpr float kPreampMakeup = 1.0f;
 
     // Presence: high shelf in negative feedback
     float presenceFreq_ = 3500.0f;
