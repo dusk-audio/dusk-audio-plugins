@@ -38,6 +38,7 @@ void PowerAmp::reset()
     powerSupply_.reset();
     presenceState_ = 0.0f;
     resonanceState_ = 0.0f;
+    nfbState_ = 0.0f;
     transformer_.reset();
     dcBlocker_.reset();
 }
@@ -87,7 +88,8 @@ void PowerAmp::updateAmpTypeParams()
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Tube6V6;
             biasAsymmetry_ = 0.0f;
             maxDriveGain_ = 2.0f;
-            inputScale_ = 1.0f; // 6V6 lowest Gm — reference sensitivity
+            inputScale_ = 1.0f;  // 6V6 lowest Gm — reference sensitivity
+            nfbRatio_ = 0.30f;   // ≈ 12 dB (AB763 820Ω / 47Ω)
             powerSupply_.setType (PowerSupply::Type::Tube5AR4);
             break;
 
@@ -99,7 +101,8 @@ void PowerAmp::updateAmpTypeParams()
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::EL84;
             biasAsymmetry_ = 0.1f;
             maxDriveGain_ = 2.5f;
-            inputScale_ = 0.7f; // EL84 higher Gm than 6V6
+            inputScale_ = 0.7f;  // EL84 higher Gm than 6V6
+            nfbRatio_ = 0.0f;    // AC30 has NO negative feedback loop
             powerSupply_.setType (PowerSupply::Type::TubeGZ34);
             break;
 
@@ -109,6 +112,7 @@ void PowerAmp::updateAmpTypeParams()
             biasAsymmetry_ = 0.0f;
             maxDriveGain_ = 4.0f;
             inputScale_ = 0.25f; // EL34 highest Gm (~11 mA/V, 3× 6V6); widen drive range
+            nfbRatio_ = 0.25f;   // ≈ 10 dB (JTM45/1959 27kΩ / 5kΩ presence)
             powerSupply_.setType (PowerSupply::Type::Silicon);
             break;
     }
@@ -129,7 +133,10 @@ void PowerAmp::process (float* buffer, int numSamples)
         // voltage gain. inputScale_ accounts for per-tube-type Gm differences
         // so Marshall's EL34 doesn't slam the waveshaper just because it has
         // 3× the transconductance of Fender's 6V6.
-        float driven = sample * kPreampMakeup * inputScale_ * driveGain_;
+        // NFB: attenuated output subtracted from input, 1-sample delay
+        // (at oversampled rate — inaudible).
+        float driven = sample * kPreampMakeup * inputScale_ * driveGain_
+                     - nfbRatio_ * nfbState_;
 
         // --- 2. Power supply: RC-model B+ sag driven by power-tube load ---
         // Returns normalized rail voltage in [vFloor, 1.0]. Lower = more sag.
@@ -178,6 +185,9 @@ void PowerAmp::process (float* buffer, int numSamples)
         // supply sags, maximum output amplitude drops in proportion. Per-amp
         // sag depth and time constants are baked into PowerSupply by ampType.
         saturated *= vBplus;
+
+        // --- 3c. Capture NFB state for next sample ---
+        nfbState_ = saturated;
 
         // --- 5. Presence + Resonance ---
         float hpOut = saturated - presenceState_;
