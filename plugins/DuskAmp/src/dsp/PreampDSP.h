@@ -27,6 +27,11 @@ private:
     int numActiveStages_ = 2;
     double sampleRate_ = 44100.0;
 
+    // Per-channel output makeup so Clean / Crunch / Lead deliver monotonically
+    // rising level into the tone stack. Replaces the per-amp stageGain fudge in
+    // PowerAmp that used to compensate for the preamp's net attenuation.
+    float outputMakeup_ = 1.0f;
+
     // Coupling cap HPF between stages (simple one-pole)
     float couplingCapState_[kMaxStages] = {};
     float couplingCapCoeff_ = 0.995f;

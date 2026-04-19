@@ -75,30 +75,23 @@ void PowerAmp::setAmpType (AmpType type)
 
 void PowerAmp::updateAmpTypeParams()
 {
+    // stageGain/outputGain used to vary per amp to patch preamp attenuation —
+    // that work has moved to PreampDSP::outputMakeup_. Here each amp only
+    // picks its waveshaper curve, Class-A asymmetry, drive-knob range, and
+    // power-supply character. All amps run at the same kPreampMakeup.
     switch (ampType_)
     {
         case AmpType::Fender:
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Opto_Tube;
             biasAsymmetry_ = 0.0f;
             maxDriveGain_ = 2.0f;
-            // Fender: 1 preamp stage (Clean) ≈ 35x gain, tone stack ≈ -20dB
-            // Net preamp gain ≈ 35 * 0.1 = 3.5x, but we get ~0.004 peak from 0.25 input
-            // Need ~80x to bring signal to ±0.3 at the waveshaper input
-            stageGain_ = 80.0f;
-            outputGain_ = 0.5f;  // Attenuate after waveshaper to stay < 0dBFS
             powerSupply_.setType (PowerSupply::Type::Tube5AR4);
             break;
 
         case AmpType::Vox:
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::EL84;
-            biasAsymmetry_ = 0.35f;  // Asymmetry for Class A even harmonics
+            biasAsymmetry_ = 0.35f; // Class A even-harmonic asymmetry
             maxDriveGain_ = 2.5f;
-            // Vox signal levels: input ~0.001 (weakest after preamp+tonestack)
-            // Need stageGain to bring to ~0.5-1.0 at waveshaper input
-            // 0.001 * 40 * 1.65 = 0.066 — still low, but Class A compression
-            // won't squash it as badly
-            stageGain_ = 8.0f;        // Very low — keep signal in waveshaper's linear region at clean
-            outputGain_ = 4.0f;      // High post-waveshaper gain to compensate
             powerSupply_.setType (PowerSupply::Type::TubeGZ34);
             break;
 
@@ -107,8 +100,6 @@ void PowerAmp::updateAmpTypeParams()
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Pentode;
             biasAsymmetry_ = 0.0f;
             maxDriveGain_ = 3.0f;
-            stageGain_ = 35.0f;      // Pentode curve is very sensitive — low stageGain needed
-            outputGain_ = 0.8f;
             powerSupply_.setType (PowerSupply::Type::Silicon);
             break;
     }
@@ -123,10 +114,12 @@ void PowerAmp::process (float* buffer, int numSamples)
     {
         float sample = buffer[i];
 
-        // --- 1. Drive + stage gain ---
-        // stageGain_ provides the missing voltage amplification that a real
-        // preamp/phase-inverter delivers but our normalized chain doesn't.
-        float driven = sample * stageGain_ * driveGain_;
+        // --- 1. Drive + preamp-makeup gain ---
+        // kPreampMakeup compensates the tone-stack insertion loss (~30 dB at
+        // flat settings) and represents the phase-inverter + power-tube
+        // voltage gain. Same across all amps — character lives in the
+        // waveshaper and power-supply profile.
+        float driven = sample * kPreampMakeup * driveGain_;
 
         // --- 2. Power supply: RC-model B+ sag driven by power-tube load ---
         // Returns normalized rail voltage in [vFloor, 1.0]. Lower = more sag.
@@ -176,11 +169,11 @@ void PowerAmp::process (float* buffer, int numSamples)
                 saturated = std::tanh (saturated * negScale) / negScale;
         }
 
-        // --- 3b. Output scaling + supply sag ---
+        // --- 3b. Supply sag on output ---
         // Real physics: power-tube plate swing is bounded by B+. When the
         // supply sags, maximum output amplitude drops in proportion. Per-amp
         // sag depth and time constants are baked into PowerSupply by ampType.
-        saturated *= outputGain_ * vBplus;
+        saturated *= vBplus;
 
         // --- 5. Presence + Resonance ---
         float hpOut = saturated - presenceState_;
