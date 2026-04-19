@@ -91,6 +91,9 @@ void PowerAmp::updateAmpTypeParams()
             inputScale_ = 1.0f;  // 6V6 lowest Gm — reference sensitivity
             nfbRatio_ = 0.30f;   // ≈ 12 dB (AB763 820Ω / 47Ω)
             powerSupply_.setType (PowerSupply::Type::Tube5AR4);
+            // Fender 40W OT: darker (8 kHz HF), early saturation, asymmetric
+            transformer_.setProfile (AnalogEmulation::TransformerProfile::createActive (
+                0.72f, 0.14f, 1.30f, 8000.0f, 20.0f, 0.012f, 0.004f, 0.75f));
             break;
 
         case AmpType::Vox:
@@ -104,6 +107,9 @@ void PowerAmp::updateAmpTypeParams()
             inputScale_ = 0.7f;  // EL84 higher Gm than 6V6
             nfbRatio_ = 0.0f;    // AC30 has NO negative feedback loop
             powerSupply_.setType (PowerSupply::Type::TubeGZ34);
+            // Vox 30W OT: darker (9 kHz HF), earliest saturation, asymmetric
+            transformer_.setProfile (AnalogEmulation::TransformerProfile::createActive (
+                0.70f, 0.16f, 1.25f, 9000.0f, 25.0f, 0.013f, 0.004f, 0.78f));
             break;
 
         case AmpType::Marshall:
@@ -114,6 +120,9 @@ void PowerAmp::updateAmpTypeParams()
             inputScale_ = 0.25f; // EL34 highest Gm (~11 mA/V, 3× 6V6); widen drive range
             nfbRatio_ = 0.25f;   // ≈ 10 dB (JTM45/1959 27kΩ / 5kΩ presence)
             powerSupply_.setType (PowerSupply::Type::Silicon);
+            // Marshall 50W OT: brighter (11 kHz HF), later saturation, more symmetric
+            transformer_.setProfile (AnalogEmulation::TransformerProfile::createActive (
+                0.80f, 0.10f, 1.20f, 11000.0f, 18.0f, 0.008f, 0.006f, 0.55f));
             break;
     }
 }
