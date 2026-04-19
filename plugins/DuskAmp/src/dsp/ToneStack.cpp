@@ -52,6 +52,8 @@ void ToneStack::prepare (double sampleRate)
 void ToneStack::reset()
 {
     w1_ = w2_ = w3_ = 0.0f;
+    tbBass_.clear();
+    tbTreble_.clear();
 }
 
 void ToneStack::setType (Type type)
@@ -93,19 +95,28 @@ void ToneStack::process (float* buffer, int numSamples)
         coeffsDirty_ = false;
     }
 
+    if (currentType_ == Type::AC)
+    {
+        const float pad = std::pow (10.0f, kTopBoostOutputPadDb / 20.0f);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float y = tbBass_.processSample (buffer[i]);
+            y = tbTreble_.processSample (y);
+            buffer[i] = y * pad;
+        }
+        return;
+    }
+
+    // American / British: Yeh/Smith 3rd-order TDF-II.
     for (int i = 0; i < numSamples; ++i)
     {
         float x = buffer[i];
-
-        // TDF-II: y = B0*x + w1
         float y = B0_ * x + w1_;
 
-        // Update state variables
         w1_ = B1_ * x - A1_ * y + w2_;
         w2_ = B2_ * x - A2_ * y + w3_;
         w3_ = B3_ * x - A3_ * y;
 
-        // Flush denormals
         if (std::abs (w1_) < 1e-15f) w1_ = 0.0f;
         if (std::abs (w2_) < 1e-15f) w2_ = 0.0f;
         if (std::abs (w3_) < 1e-15f) w3_ = 0.0f;
@@ -118,8 +129,83 @@ void ToneStack::process (float* buffer, int numSamples)
 // Yeh/Smith coefficient computation + bilinear transform
 // ============================================================================
 
+// ============================================================================
+// Top Boost (AC) — RBJ shelving biquads
+// ============================================================================
+
+void ToneStack::designLowShelf (Biquad& bq, float fc, float gainDb, double sr)
+{
+    constexpr double kPi = 3.14159265358979323846;
+    const double A      = std::pow (10.0, static_cast<double> (gainDb) / 40.0);
+    const double omega  = 2.0 * kPi * static_cast<double> (fc) / sr;
+    const double cosw   = std::cos (omega);
+    const double sinw   = std::sin (omega);
+    // RBJ shelf slope S=1: alpha = sin(w)/2 * sqrt(A + 1/A + 2)
+    const double alpha  = sinw * 0.5 * std::sqrt (A + 1.0 / A + 2.0);
+    const double sqrtA  = std::sqrt (A);
+
+    const double b0 = A * ((A + 1.0) - (A - 1.0) * cosw + 2.0 * sqrtA * alpha);
+    const double b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosw);
+    const double b2 = A * ((A + 1.0) - (A - 1.0) * cosw - 2.0 * sqrtA * alpha);
+    const double a0 = (A + 1.0) + (A - 1.0) * cosw + 2.0 * sqrtA * alpha;
+    const double a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosw);
+    const double a2 = (A + 1.0) + (A - 1.0) * cosw - 2.0 * sqrtA * alpha;
+
+    const double inv = 1.0 / a0;
+    bq.b0 = static_cast<float> (b0 * inv);
+    bq.b1 = static_cast<float> (b1 * inv);
+    bq.b2 = static_cast<float> (b2 * inv);
+    bq.a1 = static_cast<float> (a1 * inv);
+    bq.a2 = static_cast<float> (a2 * inv);
+}
+
+void ToneStack::designHighShelf (Biquad& bq, float fc, float gainDb, double sr)
+{
+    constexpr double kPi = 3.14159265358979323846;
+    const double A      = std::pow (10.0, static_cast<double> (gainDb) / 40.0);
+    const double omega  = 2.0 * kPi * static_cast<double> (fc) / sr;
+    const double cosw   = std::cos (omega);
+    const double sinw   = std::sin (omega);
+    const double alpha  = sinw * 0.5 * std::sqrt (A + 1.0 / A + 2.0);
+    const double sqrtA  = std::sqrt (A);
+
+    const double b0 = A * ((A + 1.0) + (A - 1.0) * cosw + 2.0 * sqrtA * alpha);
+    const double b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosw);
+    const double b2 = A * ((A + 1.0) + (A - 1.0) * cosw - 2.0 * sqrtA * alpha);
+    const double a0 = (A + 1.0) - (A - 1.0) * cosw + 2.0 * sqrtA * alpha;
+    const double a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosw);
+    const double a2 = (A + 1.0) - (A - 1.0) * cosw - 2.0 * sqrtA * alpha;
+
+    const double inv = 1.0 / a0;
+    bq.b0 = static_cast<float> (b0 * inv);
+    bq.b1 = static_cast<float> (b1 * inv);
+    bq.b2 = static_cast<float> (b2 * inv);
+    bq.a1 = static_cast<float> (a1 * inv);
+    bq.a2 = static_cast<float> (a2 * inv);
+}
+
+void ToneStack::recomputeTopBoost()
+{
+    // Knob 0..1 → shelf gain -max..+max dB, with knob=0.5 = flat (0 dB).
+    const float bassDb   = (bass_   - 0.5f) * 2.0f * kTopBoostBassMaxDb;
+    const float trebleDb = (treble_ - 0.5f) * 2.0f * kTopBoostTrebleMaxDb;
+
+    designLowShelf  (tbBass_,   kTopBoostBassHz,   bassDb,   sampleRate_);
+    designHighShelf (tbTreble_, kTopBoostTrebleHz, trebleDb, sampleRate_);
+}
+
+// ============================================================================
+// Yeh/Smith 3-knob network (American / British)
+// ============================================================================
+
 void ToneStack::recomputeCoefficients()
 {
+    if (currentType_ == Type::AC)
+    {
+        recomputeTopBoost();
+        return;
+    }
+
     auto c = getComponents (currentType_);
 
     // Pot wiper positions (0-1 mapped to resistance)

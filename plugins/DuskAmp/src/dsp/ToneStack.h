@@ -19,13 +19,16 @@
 class ToneStack
 {
 public:
+    // American/British = Yeh/Smith 3-knob passive Fender/Marshall network.
+    // AC = Vox AC30 Top Boost — a cathode-follower-driven James network
+    // (2-band Baxandall: bass + treble shelves, NO mid control).
     enum class Type { American = 0, British = 1, AC = 2 };
 
     void prepare (double sampleRate);
     void reset();
     void setType (Type type);
     void setBass (float value01);
-    void setMid (float value01);
+    void setMid (float value01);     // ignored for AC (Top Boost has no mid)
     void setTreble (float value01);
     void process (float* buffer, int numSamples);
 
@@ -49,13 +52,47 @@ private:
 
     static Components getComponents (Type type);
 
-    // 3rd-order IIR coefficients (after bilinear transform)
+    // American / British path: 3rd-order IIR (Yeh/Smith bilinear transform).
     // H(z) = (B0 + B1*z^-1 + B2*z^-2 + B3*z^-3) / (1 + A1*z^-1 + A2*z^-2 + A3*z^-3)
     float B0_ = 0, B1_ = 0, B2_ = 0, B3_ = 0;
     float A1_ = 0, A2_ = 0, A3_ = 0;
-
-    // Transposed Direct Form II state variables
     float w1_ = 0, w2_ = 0, w3_ = 0;
 
+    // AC / Top Boost path: two RBJ shelving biquads cascaded (bass then treble).
+    // Corner frequencies and max boost/cut match the Top Boost James-network
+    // behavior without modeling every coupling interaction — good first-order
+    // emulation that fixes the wrong-topology issue (mid-knob-kills-volume).
+    struct Biquad
+    {
+        float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+        float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+        float processSample (float x)
+        {
+            float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1; x1 = x;
+            y2 = y1; y1 = y;
+            return y;
+        }
+
+        void clear() { x1 = x2 = y1 = y2 = 0; }
+    };
+    Biquad tbBass_, tbTreble_;
+
+    static constexpr float kTopBoostBassHz   = 100.0f;
+    static constexpr float kTopBoostTrebleHz = 3000.0f;
+    static constexpr float kTopBoostBassMaxDb   = 12.0f;
+    static constexpr float kTopBoostTrebleMaxDb = 15.0f; // Top Boost is bright
+
+    // Baseline attenuation for AC path. Real Top Boost at flat knobs is
+    // nearly unity, but the downstream PowerAmp kPreampMakeup is calibrated
+    // for the -22 dB loss of a 3-band Fender/Marshall network. Pending a
+    // proper tone-stack-aware makeup (Phase α.4), pad the AC output so its
+    // level matches the other tonestack types entering the power amp.
+    static constexpr float kTopBoostOutputPadDb = -28.0f;
+
     void recomputeCoefficients();
+    void recomputeTopBoost();
+    static void designLowShelf  (Biquad& bq, float fc, float gainDb, double sr);
+    static void designHighShelf (Biquad& bq, float fc, float gainDb, double sr);
 };
