@@ -87,6 +87,7 @@ void PowerAmp::updateAmpTypeParams()
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Tube6V6;
             biasAsymmetry_ = 0.0f;
             maxDriveGain_ = 2.0f;
+            inputScale_ = 1.0f; // 6V6 lowest Gm — reference sensitivity
             powerSupply_.setType (PowerSupply::Type::Tube5AR4);
             break;
 
@@ -94,6 +95,7 @@ void PowerAmp::updateAmpTypeParams()
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::EL84;
             biasAsymmetry_ = 0.35f; // Class A even-harmonic asymmetry
             maxDriveGain_ = 2.5f;
+            inputScale_ = 0.7f; // EL84 higher Gm than 6V6
             powerSupply_.setType (PowerSupply::Type::TubeGZ34);
             break;
 
@@ -101,7 +103,8 @@ void PowerAmp::updateAmpTypeParams()
         default:
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Pentode;
             biasAsymmetry_ = 0.0f;
-            maxDriveGain_ = 3.0f;
+            maxDriveGain_ = 4.0f;
+            inputScale_ = 0.25f; // EL34 highest Gm (~11 mA/V, 3× 6V6); widen drive range
             powerSupply_.setType (PowerSupply::Type::Silicon);
             break;
     }
@@ -116,12 +119,13 @@ void PowerAmp::process (float* buffer, int numSamples)
     {
         float sample = buffer[i];
 
-        // --- 1. Drive + preamp-makeup gain ---
+        // --- 1. Drive + preamp-makeup gain + per-amp tube sensitivity ---
         // kPreampMakeup compensates the tone-stack insertion loss (~30 dB at
         // flat settings) and represents the phase-inverter + power-tube
-        // voltage gain. Same across all amps — character lives in the
-        // waveshaper and power-supply profile.
-        float driven = sample * kPreampMakeup * driveGain_;
+        // voltage gain. inputScale_ accounts for per-tube-type Gm differences
+        // so Marshall's EL34 doesn't slam the waveshaper just because it has
+        // 3× the transconductance of Fender's 6V6.
+        float driven = sample * kPreampMakeup * inputScale_ * driveGain_;
 
         // --- 2. Power supply: RC-model B+ sag driven by power-tube load ---
         // Returns normalized rail voltage in [vFloor, 1.0]. Lower = more sag.

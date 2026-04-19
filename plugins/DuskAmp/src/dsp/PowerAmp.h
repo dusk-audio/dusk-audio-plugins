@@ -46,6 +46,13 @@ private:
     float biasAsymmetry_ = 0.0f;  // Class A offset (Vox only)
     float maxDriveGain_ = 2.5f;   // Maximum drive multiplier (amp-type-dependent character)
 
+    // Per-amp input scaler into the waveshaper. Reflects different tube
+    // transconductances: EL34 is ~3× more sensitive (Gm ≈ 11 mA/V) than 6V6
+    // (Gm ≈ 4.1 mA/V), so Marshall's Pentode curve saturates earlier at
+    // equivalent pre-stage signal. Without this, Marshall would slam the
+    // waveshaper at every drive level even with preamp Clean selected.
+    float inputScale_ = 1.0f;
+
     // Phase-inverter + power-tube voltage gain. Picked to undo the tone-stack
     // loss at flat settings so a Lead-channel signal post-tone-stack arrives
     // at the waveshaper around ±1.
