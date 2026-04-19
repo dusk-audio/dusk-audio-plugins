@@ -18,6 +18,8 @@
 #include "PowerAmp.h"
 
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include <fstream>
 #include <vector>
 #include <cmath>
@@ -292,6 +294,94 @@ static std::vector<float> processToneStackOnly (
 }
 
 // ============================================================================
+// Stage-level audit: measure peak + RMS between each DSP section so we can
+// see where signal-level imbalance (Clean more saturated than Lead, NAM path
+// overdriven by PowerAmp::stageGain, tone stack loss, etc.) lives.
+// ============================================================================
+
+struct Levels { float peak; float rms; };
+
+static Levels peakRMS (const std::vector<float>& buf, int skipSamples)
+{
+    float peak = 0.0f;
+    double sumSq = 0.0;
+    int count = 0;
+    int n = static_cast<int> (buf.size());
+    for (int i = std::min (skipSamples, n); i < n; ++i)
+    {
+        float a = std::abs (buf[static_cast<size_t> (i)]);
+        peak = std::max (peak, a);
+        sumSq += static_cast<double> (buf[static_cast<size_t> (i)])
+               * static_cast<double> (buf[static_cast<size_t> (i)]);
+        ++count;
+    }
+    float rms = count > 0 ? static_cast<float> (std::sqrt (sumSq / count)) : 0.0f;
+    return { peak, rms };
+}
+
+struct StageLevels { Levels input, preamp, toneStack, powerAmp; };
+
+static StageLevels measureStageLevels (const AmpConfig& amp, const DriveConfig& drive, double sr)
+{
+    // 220 Hz @ 0.25 amplitude ≈ a moderate guitar pick. 300 ms gives
+    // allpass/IIR state plenty of time to settle before we measure.
+    auto input = generateTestTone (sr, 220.0, 0.25f, 0.3);
+
+    PreampDSP preamp;
+    ToneStack toneStack;
+    PowerAmp powerAmp;
+    preamp.prepare (sr);
+    toneStack.prepare (sr);
+    powerAmp.prepare (sr);
+
+    preamp.setChannel (amp.preampChannel);
+    preamp.setGain (drive.preampDrive);
+    preamp.setBright (false);
+
+    toneStack.setType (amp.toneType);
+    toneStack.setBass (0.5f);
+    toneStack.setMid (0.5f);
+    toneStack.setTreble (0.5f);
+
+    powerAmp.setAmpType (amp.powerAmpType);
+    powerAmp.setDrive (drive.powerDrive);
+    powerAmp.setPresence (0.5f);
+    powerAmp.setResonance (0.5f);
+    powerAmp.setSag (0.3f);
+
+    const int skip = static_cast<int> (0.05 * sr); // skip 50 ms of settling
+    const int n = static_cast<int> (input.size());
+    constexpr int blockSize = 512;
+
+    StageLevels L;
+    L.input = peakRMS (input, skip);
+
+    std::vector<float> buf = input;
+    for (int off = 0; off < n; off += blockSize)
+    {
+        int bs = std::min (blockSize, n - off);
+        preamp.process (buf.data() + off, bs);
+    }
+    L.preamp = peakRMS (buf, skip);
+
+    for (int off = 0; off < n; off += blockSize)
+    {
+        int bs = std::min (blockSize, n - off);
+        toneStack.process (buf.data() + off, bs);
+    }
+    L.toneStack = peakRMS (buf, skip);
+
+    for (int off = 0; off < n; off += blockSize)
+    {
+        int bs = std::min (blockSize, n - off);
+        powerAmp.process (buf.data() + off, bs);
+    }
+    L.powerAmp = peakRMS (buf, skip);
+
+    return L;
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -310,8 +400,51 @@ int main (int argc, char* argv[])
     std::cout << "Sample rate: " << sr << " Hz" << std::endl;
     std::cout << "Output dir: " << outputDir << std::endl << std::endl;
 
+    // --- 0. Stage-level audit (peak + RMS between DSP sections) ---
+    std::cout << "=== STAGE LEVEL AUDIT (220 Hz @ 0.25 input, tone knobs @ 0.5) ===" << std::endl;
+    {
+        std::ofstream csv (outputDir + "/stage_levels.csv");
+        csv << "amp,drive,input_peak,input_rms,"
+               "preamp_peak,preamp_rms,"
+               "tonestack_peak,tonestack_rms,"
+               "poweramp_peak,poweramp_rms\n";
+
+        auto fmt = [] (float v) {
+            std::ostringstream s;
+            s << std::fixed << std::setprecision (3) << std::setw (7) << v;
+            return s.str();
+        };
+
+        std::cout << "  amp       drive     | input         | preamp        "
+                     "| tonestack     | poweramp" << std::endl;
+        std::cout << "  " << std::string (10 + 9 + 15 + 15 + 15 + 15, '-') << std::endl;
+
+        for (const auto& amp : kAmps)
+        {
+            for (const auto& drive : kDrives)
+            {
+                auto L = measureStageLevels (amp, drive, sr);
+
+                std::cout << "  " << std::setw (8) << std::left << amp.name
+                          << "  " << std::setw (7) << std::left << drive.name
+                          << " | " << fmt (L.input.peak)     << " " << fmt (L.input.rms)
+                          << " | " << fmt (L.preamp.peak)    << " " << fmt (L.preamp.rms)
+                          << " | " << fmt (L.toneStack.peak) << " " << fmt (L.toneStack.rms)
+                          << " | " << fmt (L.powerAmp.peak)  << " " << fmt (L.powerAmp.rms)
+                          << std::endl;
+
+                csv << amp.name << "," << drive.name
+                    << "," << L.input.peak     << "," << L.input.rms
+                    << "," << L.preamp.peak    << "," << L.preamp.rms
+                    << "," << L.toneStack.peak << "," << L.toneStack.rms
+                    << "," << L.powerAmp.peak  << "," << L.powerAmp.rms << "\n";
+            }
+        }
+        std::cout << "  (csv: " << outputDir << "/stage_levels.csv)" << std::endl;
+    }
+
     // --- 1. Tone stack impulse responses ---
-    std::cout << "=== TONE STACK IMPULSE RESPONSES ===" << std::endl;
+    std::cout << std::endl << "=== TONE STACK IMPULSE RESPONSES ===" << std::endl;
     {
         auto impulse = generateImpulse (sr);
         const char* typeNames[] = { "American", "British", "AC" };
