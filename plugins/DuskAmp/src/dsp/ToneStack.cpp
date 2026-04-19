@@ -97,12 +97,11 @@ void ToneStack::process (float* buffer, int numSamples)
 
     if (currentType_ == Type::AC)
     {
-        const float pad = std::pow (10.0f, kTopBoostOutputPadDb / 20.0f);
         for (int i = 0; i < numSamples; ++i)
         {
             float y = tbBass_.processSample (buffer[i]);
             y = tbTreble_.processSample (y);
-            buffer[i] = y * pad;
+            buffer[i] = y * outputGain_;
         }
         return;
     }
@@ -121,7 +120,7 @@ void ToneStack::process (float* buffer, int numSamples)
         if (std::abs (w2_) < 1e-15f) w2_ = 0.0f;
         if (std::abs (w3_) < 1e-15f) w3_ = 0.0f;
 
-        buffer[i] = y;
+        buffer[i] = y * outputGain_;
     }
 }
 
@@ -194,6 +193,55 @@ void ToneStack::recomputeTopBoost()
     designHighShelf (tbTreble_, kTopBoostTrebleHz, trebleDb, sampleRate_);
 }
 
+void ToneStack::recomputeMidbandCompensation()
+{
+    const double omega = 2.0 * 3.14159265358979323846 * kCompensationFreqHz / sampleRate_;
+    const double cosW  = std::cos (omega);
+    const double sinW  = std::sin (omega);
+
+    double numMag = 0.0, denMag = 0.0;
+
+    if (currentType_ == Type::AC)
+    {
+        // Magnitude of cascaded biquads = product of magnitudes.
+        auto biquadMag = [cosW, sinW] (const Biquad& bq) {
+            // z^-k at ω: cos(kω) - j sin(kω); compute cos(2ω), sin(2ω)
+            const double cos2 = 2.0 * cosW * cosW - 1.0;
+            const double sin2 = 2.0 * sinW * cosW;
+            const double nR = bq.b0 + bq.b1 * cosW + bq.b2 * cos2;
+            const double nI = -(bq.b1 * sinW + bq.b2 * sin2);
+            const double dR = 1.0 + bq.a1 * cosW + bq.a2 * cos2;
+            const double dI = -(bq.a1 * sinW + bq.a2 * sin2);
+            const double nM = std::sqrt (nR * nR + nI * nI);
+            const double dM = std::sqrt (dR * dR + dI * dI);
+            return dM > 1.0e-12 ? (nM / dM) : 0.0;
+        };
+        const double mag = biquadMag (tbBass_) * biquadMag (tbTreble_);
+        numMag = 1.0;
+        denMag = mag;
+    }
+    else
+    {
+        // Yeh/Smith 3rd-order: z^-k at ω for k = 1, 2, 3.
+        const double cos2 = 2.0 * cosW * cosW - 1.0;
+        const double sin2 = 2.0 * sinW * cosW;
+        const double cos3 = 4.0 * cosW * cosW * cosW - 3.0 * cosW;
+        const double sin3 = 3.0 * sinW - 4.0 * sinW * sinW * sinW;
+
+        const double nR = B0_ + B1_ * cosW + B2_ * cos2 + B3_ * cos3;
+        const double nI = -(B1_ * sinW + B2_ * sin2 + B3_ * sin3);
+        const double dR = 1.0 + A1_ * cosW + A2_ * cos2 + A3_ * cos3;
+        const double dI = -(A1_ * sinW + A2_ * sin2 + A3_ * sin3);
+
+        numMag = std::sqrt (nR * nR + nI * nI);
+        denMag = std::sqrt (dR * dR + dI * dI);
+    }
+
+    const double mag = (numMag > 1.0e-12) ? (numMag / denMag) : 1.0;
+    float gain = (mag > 1.0e-6) ? static_cast<float> (1.0 / mag) : 1.0f;
+    outputGain_ = std::clamp (gain, 0.1f, kCompensationMaxGain);
+}
+
 // ============================================================================
 // Yeh/Smith 3-knob network (American / British)
 // ============================================================================
@@ -203,6 +251,7 @@ void ToneStack::recomputeCoefficients()
     if (currentType_ == Type::AC)
     {
         recomputeTopBoost();
+        recomputeMidbandCompensation();
         return;
     }
 
@@ -263,4 +312,6 @@ void ToneStack::recomputeCoefficients()
     A1_ = static_cast<float> (dA1 * invA0);
     A2_ = static_cast<float> (dA2 * invA0);
     A3_ = static_cast<float> (dA3 * invA0);
+
+    recomputeMidbandCompensation();
 }
