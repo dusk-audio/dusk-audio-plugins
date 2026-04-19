@@ -81,11 +81,13 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
 #if DUSKAMP_NAM_SUPPORT
     else if (currentMode_ == AmpMode::NAM)
     {
-        // NAM mode: NAM processor at base rate (replaces preamp),
-        // then tone stack + power amp at base rate (no oversampling)
+        // NAM mode: neural capture already includes the full signal chain
+        // (preamp + power amp + often the OT). Running it through our
+        // DSP PowerAmp would double-saturate. Keep the tone stack as an
+        // optional post-NAM EQ voicing so the user's bass/mid/treble
+        // knobs still do something. Cab IR comes next (step 5).
         nam_.process (monoBuffer_.data(), numSamples);
         toneStack_.process (monoBuffer_.data(), numSamples);
-        powerAmp_.process (monoBuffer_.data(), numSamples);
     }
 #endif
 
