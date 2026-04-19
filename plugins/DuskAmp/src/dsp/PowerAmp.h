@@ -36,13 +36,20 @@ private:
     float sagAmount_ = 0.3f;
     PowerSupply powerSupply_;
 
-    // Per-amp-type settings
+    // Per-amp-type settings. stageGain/outputGain used to vary 80/35/8 and
+    // 0.5/0.8/4 per amp to patch the preamp's net attenuation — that's now the
+    // PreampDSP::outputMakeup_'s job. Here we use a single constant that
+    // compensates the ~-30 dB tone-stack loss and represents the phase
+    // inverter + power-tube voltage gain, same across all amps.
     AnalogEmulation::WaveshaperCurves::CurveType curveType_
         = AnalogEmulation::WaveshaperCurves::CurveType::Pentode;
     float biasAsymmetry_ = 0.0f;  // Class A offset (Vox only)
-    float maxDriveGain_ = 2.5f;   // Maximum drive multiplier
-    float stageGain_ = 100.0f;    // Makeup gain — represents missing voltage gain from normalized chain
-    float outputGain_ = 1.0f;     // Post-waveshaper output scaling
+    float maxDriveGain_ = 2.5f;   // Maximum drive multiplier (amp-type-dependent character)
+
+    // Phase-inverter + power-tube voltage gain. Picked to undo the tone-stack
+    // loss at flat settings so a Lead-channel signal post-tone-stack arrives
+    // at the waveshaper around ±1.
+    static constexpr float kPreampMakeup = 35.0f;
 
     // Presence: high shelf in negative feedback
     float presenceFreq_ = 3500.0f;

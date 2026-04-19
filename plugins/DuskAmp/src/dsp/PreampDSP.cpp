@@ -86,7 +86,7 @@ void PreampDSP::process (float* buffer, int numSamples)
             sample = interStageDC_[stage].processSample (sample);
         }
 
-        buffer[i] = sample;
+        buffer[i] = sample * outputMakeup_;
     }
 }
 
@@ -106,28 +106,28 @@ void PreampDSP::updateGainStaging()
     // Multiple stages cascade this gain, so we need lower per-stage drive
     // values to keep the total chain under control.
 
+    // Makeup gains chosen so post-preamp peak at moderate drive sits roughly at
+    // Clean=0.35, Crunch=0.65, Lead=1.0 — giving Lead more headroom loss into
+    // the waveshaper downstream, matching user expectation that higher-gain
+    // channels sound both louder and more saturated.
     switch (currentChannel_)
     {
         case Channel::Clean:
-            // Single stage: gain 0-1 → drive 0-0.25
-            // At gain=0: drive=0 → inputGain=1.0 → output ≈ 0.8x input (clean)
-            // At gain=1: drive=0.25 → inputGain=1.5 → mild breakup
             stages_[0].setDrive (gain_ * 0.25f);
+            outputMakeup_ = 2.0f;
             break;
 
         case Channel::Crunch:
-            // Two stages: moderate cascaded gain
-            // Combined output ≈ 0.8 * 0.8 = 0.64x at zero drive (below unity)
             stages_[0].setDrive (gain_ * 0.15f);
             stages_[1].setDrive (gain_ * 0.35f);
+            outputMakeup_ = 4.0f;
             break;
 
         case Channel::Lead:
-            // Three stages: progressive drive, but restrained per-stage
-            // Combined output ≈ 0.8^3 = 0.51x at zero drive
             stages_[0].setDrive (gain_ * 0.12f);
             stages_[1].setDrive (gain_ * 0.25f);
             stages_[2].setDrive (gain_ * 0.5f);
+            outputMakeup_ = 8.0f;
             break;
     }
 }
