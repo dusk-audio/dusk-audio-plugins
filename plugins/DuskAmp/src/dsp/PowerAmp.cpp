@@ -92,8 +92,12 @@ void PowerAmp::updateAmpTypeParams()
             break;
 
         case AmpType::Vox:
+            // EL84 waveshaper has inherent asymmetry from Koren curve; the
+            // biasAsymmetry tanh trick was stacking on top, double-distorting.
+            // Reduced to a gentle 0.1 for subtle Class A character — a proper
+            // cathode-bias load-line solver lands in Phase α.7.
             curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::EL84;
-            biasAsymmetry_ = 0.35f; // Class A even-harmonic asymmetry
+            biasAsymmetry_ = 0.1f;
             maxDriveGain_ = 2.5f;
             inputScale_ = 0.7f; // EL84 higher Gm than 6V6
             powerSupply_.setType (PowerSupply::Type::TubeGZ34);
@@ -153,26 +157,20 @@ void PowerAmp::process (float* buffer, int numSamples)
         }
         else
         {
-            // Class A (Vox): single-ended, no push-pull cancellation.
-            // Class A tubes always conduct near max current; when B+ sags,
-            // the tube can't swing as far, so the signal compresses.
-            // vBplus (∈ [vFloor, 1.0]) drives this naturally — stiff rail =
-            // no compression, sagged rail = proportional headroom loss.
-            float compDriven = driven * vBplus;
-
-            // Waveshaper then asymmetry
-            saturated = waveshaper.process (compDriven, curveType_);
-
-            // Even harmonics: asymmetric soft-clip where positive clips softer.
-            // Use different tanh coefficients for positive and negative halves.
-            // This ALWAYS creates even harmonics regardless of signal level.
-            float k = biasAsymmetry_;
-            float posScale = 1.0f - k;   // e.g. 0.9 — positive clips earlier
-            float negScale = 1.0f + k;   // e.g. 1.1 — negative clips later
-            if (saturated >= 0.0f)
-                saturated = std::tanh (saturated * posScale) / posScale;
-            else
-                saturated = std::tanh (saturated * negScale) / negScale;
+            // Class A (Vox): single-ended, DC-biased. Real cathode-bias
+            // pushes the DC grid operating point into the waveshaper's
+            // asymmetric region — AC signal rides on top, + and - halves
+            // hit different curve slopes → natural even harmonics.
+            // Coupling cap post-stage removes the DC, leaving AC with
+            // Class A even-harmonic content.
+            //
+            // Headroom loss under sag: B+ drop attenuates pre-drive so
+            // the tube can't swing as far.
+            const float compDriven = driven * vBplus;
+            const float biasOffset = biasAsymmetry_ * 2.0f; // Vox uses 0.1 → ±0.2 shift
+            const float biased = compDriven + biasOffset;
+            saturated = waveshaper.process (biased, curveType_)
+                      - waveshaper.process (biasOffset, curveType_);
         }
 
         // --- 3b. Supply sag on output ---
