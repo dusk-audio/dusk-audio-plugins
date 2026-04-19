@@ -82,7 +82,9 @@ void PowerAmp::updateAmpTypeParams()
     switch (ampType_)
     {
         case AmpType::Fender:
-            curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Opto_Tube;
+            // 6V6GT beam tetrode curve (Deluxe Reverb). Previously Opto_Tube,
+            // which is an optical-compressor asymmetric curve — wrong family.
+            curveType_ = AnalogEmulation::WaveshaperCurves::CurveType::Tube6V6;
             biasAsymmetry_ = 0.0f;
             maxDriveGain_ = 2.0f;
             powerSupply_.setType (PowerSupply::Type::Tube5AR4);

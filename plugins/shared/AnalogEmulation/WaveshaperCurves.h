@@ -23,8 +23,9 @@ public:
         Transformer,    // Generic transformer saturation
         Tape,           // Tape saturation (similar to opto tube but smoother)
         Triode,         // Generic triode tube saturation
-        Pentode,        // Pentode tube saturation (more aggressive)
-        EL84,           // EL84 power tube (chimey breakup, between Triode and Pentode)
+        Pentode,        // EL34-family pentode (aggressive)
+        EL84,           // EL84 power tube (chimey breakup)
+        Tube6V6,        // 6V6GT beam tetrode — Fender Deluxe Reverb character
         Linear          // Bypass (no saturation)
     };
 
@@ -44,6 +45,7 @@ public:
         initializeTriodeCurve();
         initializePentodeCurve();
         initializeEL84Curve();
+        initialize6V6Curve();
         initializeLinearCurve();
     }
 
@@ -93,6 +95,7 @@ public:
             case CurveType::Triode:      return triodeCurve;
             case CurveType::Pentode:     return pentodeCurve;
             case CurveType::EL84:        return el84Curve;
+            case CurveType::Tube6V6:     return tube6V6Curve;
             case CurveType::Linear:
             default:                     return linearCurve;
         }
@@ -108,6 +111,7 @@ private:
     std::array<float, TABLE_SIZE> triodeCurve;
     std::array<float, TABLE_SIZE> pentodeCurve;
     std::array<float, TABLE_SIZE> el84Curve;
+    std::array<float, TABLE_SIZE> tube6V6Curve;
     std::array<float, TABLE_SIZE> linearCurve;
 
     // Convert table index to input value (-2 to +2)
@@ -373,6 +377,36 @@ private:
 
             float Vout = Vb - Ip * Rp;
             el84Curve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
+        }
+    }
+
+    // 6V6GT beam tetrode — Koren pentode fit (diyAudio / Ayumi community)
+    // Parameters: mu=10.7, Kp=46.44, Kvb=1412.81, Ex=1.306, Kg1=1676.38
+    // Fender Deluxe Reverb AB763 operating point: Vb=415V, Rp=3.3kΩ, Vgk_bias=-34V
+    void initialize6V6Curve()
+    {
+        float mu = 10.7f, Kp = 46.44f, Kvb = 1412.81f, Ex = 1.306f, Kg1 = 1676.38f;
+        float Vb = 415.0f, Rp = 3300.0f;
+        float Vgk_bias = -34.0f;
+        float Ip_q = 0.025f; // ~25 mA per tube (Deluxe Reverb idle)
+        float Vp_q = Vb - Ip_q * Rp;
+
+        for (int i = 0; i < TABLE_SIZE; ++i)
+        {
+            float x = indexToInput(i);
+            float Vgk = Vgk_bias + x * 22.0f; // ±44V grid swing
+
+            float Vp = Vp_q;
+            float E1inner = Kp * (1.0f / mu + Vgk / std::sqrt(Kvb + Vp * Vp));
+            E1inner = std::clamp(E1inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(E1inner));
+            E1 = std::max(0.0f, E1);
+
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+
+            float Vout = Vb - Ip * Rp;
+            tube6V6Curve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
         }
     }
 
