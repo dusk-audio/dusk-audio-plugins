@@ -53,6 +53,14 @@ private:
     // waveshaper at every drive level even with preamp Clean selected.
     float inputScale_ = 1.0f;
 
+    // Global negative feedback loop: output attenuated and subtracted from
+    // the phase-inverter input. Fender Deluxe ≈ 12 dB (820 Ω / 47 Ω),
+    // Marshall JTM/1959 ≈ 10 dB (27 kΩ / 5 kΩ), Vox AC30 = 0 dB (no NFB).
+    // Effects: tightens lows, reduces LF distortion, improves damping.
+    // 1-sample delay is at oversampled rate — inaudible.
+    float nfbRatio_ = 0.0f;   // 0 = no feedback, higher = more
+    float nfbState_ = 0.0f;   // previous output sample (post-waveshaper)
+
     // Phase-inverter + power-tube voltage gain. The tone stack now
     // self-compensates to unity midband (see ToneStack::outputGain_), so this
     // is purely the PI voltage gain — no longer has to undo 30 dB of network
