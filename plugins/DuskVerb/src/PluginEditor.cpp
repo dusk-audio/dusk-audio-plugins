@@ -59,94 +59,6 @@ void KnobWithLabel::init (juce::Component& parent,
 }
 
 // =============================================================================
-// AlgorithmSelector
-// =============================================================================
-
-AlgorithmSelector::AlgorithmSelector (juce::RangedAudioParameter& param)
-    : param_ (param),
-      attachment_ (param,
-                   [this] (float v) {
-                       currentIndex_ = juce::roundToInt (v);
-                       repaint();
-                   },
-                   nullptr)
-{
-    currentIndex_ = juce::roundToInt (param.convertFrom0to1 (param.getValue()));
-    setRepaintsOnMouseActivity (true);
-}
-
-void AlgorithmSelector::resized()
-{
-    segmentBounds_.clear();
-    auto bounds = getLocalBounds();
-    int numSegs = labels_.size();
-    int segW = bounds.getWidth() / numSegs;
-
-    for (int i = 0; i < numSegs; ++i)
-    {
-        int x = i * segW;
-        int w = (i == numSegs - 1) ? bounds.getWidth() - x : segW;
-        segmentBounds_.push_back ({ x, 0, w, bounds.getHeight() });
-    }
-}
-
-void AlgorithmSelector::paint (juce::Graphics& g)
-{
-    float cornerRadius = static_cast<float> (getHeight()) * 0.35f;
-
-    // Outer container background
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kPanel));
-    g.fillRoundedRectangle (getLocalBounds().toFloat(), cornerRadius);
-
-    // Outer border
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kBorder));
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), cornerRadius, 1.0f);
-
-    for (int i = 0; i < static_cast<int> (segmentBounds_.size()); ++i)
-    {
-        auto seg = segmentBounds_[static_cast<size_t> (i)].toFloat();
-        bool selected = (i == currentIndex_);
-        bool hovered = segmentBounds_[static_cast<size_t> (i)].contains (getMouseXYRelative())
-                       && ! selected;
-
-        if (selected)
-        {
-            g.setColour (juce::Colour (DuskVerbLookAndFeel::kAccent));
-            g.fillRoundedRectangle (seg.reduced (2.0f), cornerRadius - 2.0f);
-        }
-        else if (hovered)
-        {
-            g.setColour (juce::Colour (DuskVerbLookAndFeel::kAccent).withAlpha (0.15f));
-            g.fillRoundedRectangle (seg.reduced (2.0f), cornerRadius - 2.0f);
-        }
-
-        g.setColour (selected ? juce::Colours::white
-                     : hovered ? juce::Colour (0xffd0d0d0)
-                               : juce::Colour (DuskVerbLookAndFeel::kGroupText));
-        g.setFont (juce::FontOptions (11.0f, selected ? juce::Font::bold : juce::Font::plain));
-        g.drawText (labels_[i], segmentBounds_[static_cast<size_t> (i)],
-                    juce::Justification::centred);
-    }
-}
-
-void AlgorithmSelector::mouseDown (const juce::MouseEvent& e)
-{
-    for (int i = 0; i < static_cast<int> (segmentBounds_.size()); ++i)
-    {
-        if (segmentBounds_[static_cast<size_t> (i)].contains (e.getPosition()))
-        {
-            if (i != currentIndex_)
-            {
-                currentIndex_ = i;
-                attachment_.setValueAsCompleteGesture (static_cast<float> (i));
-                repaint();
-            }
-            break;
-        }
-    }
-}
-
-// =============================================================================
 // DuskVerbLookAndFeel
 // =============================================================================
 
@@ -382,20 +294,12 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     width_     .init (*this, p.parameters, "width",      "WIDTH",        "%",
         "Stereo width: 0% mono, 100% normal, 150% wide");
 
-    // Cache raw parameter pointer (stable for APVTS lifetime)
-    algoParamPtr_ = p.parameters.getRawParameterValue ("algorithm");
-
-    // Algorithm selector (segmented button strip)
-    auto* algoParam = p.parameters.getParameter ("algorithm");
-    jassert (algoParam != nullptr);
-    algorithmSelector_ = std::make_unique<AlgorithmSelector> (*algoParam);
-    addAndMakeVisible (*algorithmSelector_);
-
     // User preset manager
     userPresetManager_ = std::make_unique<UserPresetManager> ("DuskVerb");
 
     // Preset browser (factory + user presets)
     presetBox_.setJustificationType (juce::Justification::centred);
+    presetBox_.setTextWhenNothingSelected ("Preset");
     presetBox_.onChange = [this]
     {
         int id = presetBox_.getSelectedId();
@@ -411,10 +315,23 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         {
             loadPreset (id - 2);
         }
+        // Preset supersedes any active mode selection
+        modeBox_.setSelectedId (0, juce::dontSendNotification);
         updateDeleteButtonVisibility();
     };
     addAndMakeVisible (presetBox_);
     refreshPresetList();
+
+    // Mode dropdown — engine-type shortcut (swaps engine, keeps user's knobs)
+    modeBox_.setJustificationType (juce::Justification::centred);
+    modeBox_.setTextWhenNothingSelected ("Mode");
+    modeBox_.addItem ("FDN",      1);
+    modeBox_.addItem ("Dattorro", 2);
+    modeBox_.addItem ("QuadTank", 3);
+    modeBox_.setTooltip ("Swap reverb engine. Knob positions are preserved — pick a preset or "
+                         "tweak knobs to taste. FDN=Concert Wave, Dattorro=Drum Air, QuadTank=Small Vocal Hall.");
+    modeBox_.onChange = [this] { selectEngineMode (modeBox_.getSelectedId()); };
+    addAndMakeVisible (modeBox_);
 
     // Restore preset selection from saved state
     {
@@ -445,6 +362,17 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         }
         updateDeleteButtonVisibility();
     }
+
+    // Prev/next preset nav buttons
+    prevPresetButton_.setButtonText ("<");
+    prevPresetButton_.setTooltip ("Previous preset");
+    prevPresetButton_.onClick = [this] { stepFactoryPreset (-1); };
+    addAndMakeVisible (prevPresetButton_);
+
+    nextPresetButton_.setButtonText (">");
+    nextPresetButton_.setTooltip ("Next preset");
+    nextPresetButton_.onClick = [this] { stepFactoryPreset (+1); };
+    addAndMakeVisible (nextPresetButton_);
 
     // Save preset button
     savePresetButton_.setButtonText ("Save");
@@ -556,12 +484,6 @@ void DuskVerbEditor::timerCallback()
     update (hiCut_);
     update (width_);
 
-    // Dim ER group when algorithm has no early reflections (Plate=0, Ambient=4)
-    int algoIndex = (algoParamPtr_ != nullptr) ? juce::roundToInt (algoParamPtr_->load()) : 1;
-    bool erDisabled = (algoIndex == 0 || algoIndex == 4);
-    erLevel_.setDimmed (erDisabled);
-    erSize_.setDimmed (erDisabled);
-
     // Gray out mix knob when bus mode is active
     bool busMode = busModeButton_.getToggleState();
     mix_.slider.setEnabled (! busMode);
@@ -584,7 +506,7 @@ void DuskVerbEditor::timerCallback()
 // =============================================================================
 
 static void drawGroupBox (juce::Graphics& g, juce::Rectangle<int> bounds,
-                          const juce::String& title)
+                          const juce::String& title, int titleBandH)
 {
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kPanel));
     g.fillRoundedRectangle (bounds.toFloat(), 6.0f);
@@ -592,7 +514,10 @@ static void drawGroupBox (juce::Graphics& g, juce::Rectangle<int> bounds,
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kBorder));
     g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 6.0f, 1.0f);
 
-    // Group title with letter spacing, left-aligned
+    // Group title with letter spacing, left-aligned. Title band must match the
+    // `topPad` value used by `layoutKnobsInGroup` — otherwise the knob name
+    // labels end up overlapping the title at smaller scale factors (since
+    // topPad scales with the editor but a hardcoded band height wouldn't).
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
     g.setFont (juce::FontOptions (10.0f));
 
@@ -604,7 +529,7 @@ static void drawGroupBox (juce::Graphics& g, juce::Rectangle<int> bounds,
             spaced += ' ';
     }
 
-    auto titleArea = bounds.withHeight (20).withTrimmedLeft (10);
+    auto titleArea = bounds.withHeight (titleBandH).withTrimmedLeft (10);
     g.drawText (spaced, titleArea, juce::Justification::centredLeft);
 }
 
@@ -639,8 +564,12 @@ void DuskVerbEditor::paint (juce::Graphics& g)
                           static_cast<float> (contentX + contentW));
 
     // --- Group box positions (must match resized()) ---
-    int topY   = scaler_.scaled (112);
-    int gap    = scaler_.scaled (8);
+    // topY and titleBandH MUST stay in sync with the values used in resized()
+    // — otherwise the group title band and the knob name labels fall out of
+    // alignment and overlap visually.
+    int topY       = scaler_.scaled (84);
+    int gap        = scaler_.scaled (8);
+    int titleBandH = scaler_.scaled (20);  // keep == topPad in resized()
 
     // Proportional split matching resized() (base: 200 top + 250 bottom = 450)
     int availH  = getHeight() - topY - gap - margin;
@@ -657,9 +586,9 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    drawGroupBox (g, { inputX, topY, inputW, topRowH }, "INPUT");
-    drawGroupBox (g, { timeX, topY, timeW, topRowH }, "TIME");
-    drawGroupBox (g, { characterX, topY, characterW, topRowH }, "CHARACTER");
+    drawGroupBox (g, { inputX, topY, inputW, topRowH }, "INPUT", titleBandH);
+    drawGroupBox (g, { timeX, topY, timeW, topRowH }, "TIME", titleBandH);
+    drawGroupBox (g, { characterX, topY, characterW, topRowH }, "CHARACTER", titleBandH);
 
     int bottomUsable = contentW - gap * 3;
     int modW    = static_cast<int> (bottomUsable * 0.22f);
@@ -672,10 +601,10 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int eqX     = erX + erW + gap;
     int outputX = eqX + eqW + gap;
 
-    drawGroupBox (g, { modX, bottomY, modW, bottomH }, "MODULATION");
-    drawGroupBox (g, { erX, bottomY, erW, bottomH }, "EARLY REFLECTIONS");
-    drawGroupBox (g, { eqX, bottomY, eqW, bottomH }, "OUTPUT EQ");
-    drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT");
+    drawGroupBox (g, { modX, bottomY, modW, bottomH }, "MODULATION", titleBandH);
+    drawGroupBox (g, { erX, bottomY, erW, bottomH }, "EARLY REFLECTIONS", titleBandH);
+    drawGroupBox (g, { eqX, bottomY, eqW, bottomH }, "OUTPUT EQ", titleBandH);
+    drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT", titleBandH);
 
     // Meter labels
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
@@ -753,24 +682,25 @@ void DuskVerbEditor::resized()
     titleClickArea_ = { (getWidth() - titleW) / 2, scaler_.scaled (6),
                          titleW, scaler_.scaled (38) };
 
-    // --- Header: preset + save/delete buttons + algorithm strip ---
+    // --- Header: mode | preset | < > | save | del ---
     int presetW = scaler_.scaled (200);
     int presetH = scaler_.scaled (24);
     int presetY = scaler_.scaled (52);
+    int modeW   = scaler_.scaled (90);
+    int arrowW  = scaler_.scaled (24);
     int saveW   = scaler_.scaled (50);
     int delW    = scaler_.scaled (36);
     int btnGap  = scaler_.scaled (4);
-    int totalPresetW = presetW + btnGap + saveW + btnGap + delW;
-    int presetStartX = (getWidth() - totalPresetW) / 2;
-    presetBox_.setBounds (presetStartX, presetY, presetW, presetH);
-    savePresetButton_.setBounds (presetStartX + presetW + btnGap, presetY, saveW, presetH);
-    deletePresetButton_.setBounds (presetStartX + presetW + btnGap + saveW + btnGap,
-                                   presetY, delW, presetH);
-
-    int algoW = scaler_.scaled (500);
-    int algoH = scaler_.scaled (28);
-    int algoY = scaler_.scaled (80);
-    algorithmSelector_->setBounds ((getWidth() - algoW) / 2, algoY, algoW, algoH);
+    int arrowGap = scaler_.scaled (1);  // arrows sit tight together as a pair
+    int totalPresetW = modeW + btnGap + presetW + btnGap + arrowW + arrowGap + arrowW
+                       + btnGap + saveW + btnGap + delW;
+    int x = (getWidth() - totalPresetW) / 2;
+    modeBox_.setBounds (x, presetY, modeW, presetH);             x += modeW + btnGap;
+    presetBox_.setBounds (x, presetY, presetW, presetH);         x += presetW + btnGap;
+    prevPresetButton_.setBounds (x, presetY, arrowW, presetH);   x += arrowW + arrowGap;
+    nextPresetButton_.setBounds (x, presetY, arrowW, presetH);   x += arrowW + btnGap;
+    savePresetButton_.setBounds (x, presetY, saveW, presetH);    x += saveW + btnGap;
+    deletePresetButton_.setBounds (x, presetY, delW, presetH);
 
     // --- Knob sizes (3 tiers) ---
     int smallKnob  = scaler_.scaled (52);
@@ -778,8 +708,11 @@ void DuskVerbEditor::resized()
     int largeKnob  = scaler_.scaled (80);
 
     // --- Vertical layout: proportional split avoids rounding-error accumulation ---
-    // Base values: topY=112, topRowH=200, gap=8, bottomH=250, margin=10
-    int topY   = scaler_.scaled (112);
+    // Header row ends at y=76 (52 + 24). Previously knob groups started at y=112
+    // (36 px empty band under the algorithm strip that used to live there).
+    // Compact to y=84 so the empty band shrinks to ~8 px and the knob rows get
+    // the reclaimed ~28 px, making the panel feel denser and less empty.
+    int topY   = scaler_.scaled (84);
     int gap    = scaler_.scaled (8);
     int topPad = scaler_.scaled (20);
 
@@ -887,6 +820,72 @@ void DuskVerbEditor::loadPreset (int index)
         if (auto* p = processorRef.parameters.getParameter ("preset_id"))
             p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (index + 1)));
     }
+}
+
+void DuskVerbEditor::stepFactoryPreset (int delta)
+{
+    const int factoryCount = static_cast<int> (getFactoryPresets().size());
+    if (factoryCount <= 0)
+        return;
+
+    // Current selection: factory IDs are 2..factoryCount+1. Anything else (user
+    // preset, Mode dropdown, nothing selected) means the user is outside the
+    // factory list, so stepping should land on preset[0] or preset[last] directly
+    // rather than advancing past an implicit "current = 0".
+    int id = presetBox_.getSelectedId();
+    int nextIdx;
+    if (id >= 2 && id < 2 + factoryCount)
+    {
+        int currentIdx = id - 2;
+        nextIdx = (currentIdx + delta + factoryCount) % factoryCount;
+    }
+    else
+    {
+        nextIdx = (delta >= 0) ? 0 : factoryCount - 1;
+    }
+    presetBox_.setSelectedId (nextIdx + 2, juce::sendNotificationSync);
+}
+
+void DuskVerbEditor::selectEngineMode (int modeId)
+{
+    if (modeId < 1 || modeId > 3)
+        return;
+
+    // Mode → anchor preset (one representative per engine type). Looked up by
+    // name so the mapping survives reordering in AlgorithmConfig's lookup table.
+    static const juce::String kAnchorName[] = {
+        "Concert Wave",     // FDN
+        "Drum Air",         // Dattorro
+        "Small Vocal Hall"  // QuadTank
+    };
+
+    const auto& presets = getFactoryPresets();
+    int anchorAlgo = -1;
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        if (kAnchorName[modeId - 1] == presets[i].name)
+        {
+            anchorAlgo = presets[i].algorithm;
+            break;
+        }
+    }
+    if (anchorAlgo < 0)
+        return;
+
+    // Swap engine only — keep user's current knob positions.
+    if (auto* p = processorRef.parameters.getParameter ("algorithm"))
+        p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (anchorAlgo)));
+
+    // preset_id drives per-preset ER-tap loading in processBlock; a stale id
+    // would leave the ER path wired for the previous preset. Clearing it (=0)
+    // tells DuskVerbEngine to use the new algorithm's built-in taps.
+    if (auto* p = processorRef.parameters.getParameter ("preset_id"))
+        p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
+
+    // Mode replaces any active preset selection.
+    presetBox_.setSelectedId (0, juce::dontSendNotification);
+    processorRef.parameters.state.setProperty ("presetName", "", nullptr);
+    updateDeleteButtonVisibility();
 }
 
 // =============================================================================

@@ -48,34 +48,6 @@ struct KnobWithLabel
     void init (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
                const juce::String& paramID, const juce::String& displayName,
                const juce::String& suffix, const juce::String& tooltip = {});
-
-    void setDimmed (bool dimmed)
-    {
-        float alpha = dimmed ? 0.4f : 1.0f;
-        slider.setAlpha (alpha);
-        nameLabel.setAlpha (alpha);
-        valueLabel.setAlpha (alpha);
-    }
-};
-
-// 5-segment horizontal button strip for algorithm selection
-class AlgorithmSelector : public juce::Component
-{
-public:
-    AlgorithmSelector (juce::RangedAudioParameter& param);
-
-    void resized() override;
-    void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseMove (const juce::MouseEvent&) override { repaint(); }
-    void mouseExit (const juce::MouseEvent&) override { repaint(); }
-
-private:
-    juce::RangedAudioParameter& param_;
-    juce::ParameterAttachment attachment_;
-    int currentIndex_ = 1;
-    juce::StringArray labels_ { "Plate", "Hall", "Chamber", "Room", "Ambient" };
-    std::vector<juce::Rectangle<int>> segmentBounds_;
 };
 
 class DuskVerbEditor : public juce::AudioProcessorEditor,
@@ -98,13 +70,15 @@ private:
     DuskVerbLookAndFeel lnf_;
     ScalableEditorHelper scaler_;
 
-    // Algorithm selector (segmented button strip)
-    std::unique_ptr<AlgorithmSelector> algorithmSelector_;
-
     // Preset browser
     juce::ComboBox presetBox_;
+    juce::ComboBox modeBox_;
+    juce::TextButton prevPresetButton_;
+    juce::TextButton nextPresetButton_;
     void loadPreset (int index);
     void refreshPresetList();
+    void stepFactoryPreset (int delta);
+    void selectEngineMode (int modeId);
 
     // User preset management
     std::unique_ptr<UserPresetManager> userPresetManager_;
@@ -151,9 +125,6 @@ private:
     // Supporters overlay
     std::unique_ptr<SupportersOverlay> supportersOverlay_;
     juce::Rectangle<int> titleClickArea_;
-
-    // Cached parameter pointer (stable for APVTS lifetime)
-    std::atomic<float>* algoParamPtr_ { nullptr };
 
     // Tooltip window (required for setTooltip to display in plugin editors)
     juce::TooltipWindow tooltipWindow_ { this, 500 };
