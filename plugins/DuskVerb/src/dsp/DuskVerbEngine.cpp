@@ -23,6 +23,12 @@ static void computeShelfCoeffs (float& b0, float& b1, float& b2,
 
 void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 {
+    // Audio-thread safety: the std::atomic<PendingSwap> handoff must be
+    // lock-free in hardware (16-byte atomic). On any target where libc++
+    // falls back to an internal lock pool, fire a debug assert before the
+    // host ever calls processBlock.
+    jassert (pendingSwap_.is_lock_free());
+
     maxBlockSize_ = maxBlockSize;
     sampleRate_ = sampleRate;
 
@@ -138,7 +144,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     gateTriggered_ = false;
 
     // Reset algorithm crossfade state so first setAlgorithm applies immediately
-    pendingSwap_.store (PendingSwap { -1, nullptr, false }, std::memory_order_relaxed);
+    pendingSwap_.store (PendingSwap { nullptr, -1, false }, std::memory_order_relaxed);
     pendingSwapSeq_.store (0, std::memory_order_relaxed);
     fadeCounter_.store (kFadeSamples, std::memory_order_relaxed);
     fadingOut_.store (false, std::memory_order_relaxed);
@@ -183,7 +189,10 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // Fix 1 (decay_ratio): re-trigger onset envelope on silence→signal transition.
     // This ensures each new transient (note, snare hit) gets a fresh onset ramp
     // rather than only firing once after algorithm switch.
-    if (useOnsetTable_ && onsetEnvelopePhase_ >= 1.0f)
+    // Late-bloom envelope uses the same transient detection.
+    const bool wantOnsetRetrigger = (useOnsetTable_ && onsetEnvelopePhase_ >= 1.0f);
+    const bool wantBloomRetrigger = (lateBloomLevel_ > 0.001f || lateBloomPerBand_);
+    if (wantOnsetRetrigger || wantBloomRetrigger)
     {
         float inputPeak = 0.0f;
         for (int i = 0; i < numSamples; ++i)
@@ -191,9 +200,13 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             float a = std::abs (left[i]) + std::abs (right[i]);
             if (a > inputPeak) inputPeak = a;
         }
-        if (inputPeak > 0.001f && onsetInputWasQuiet_)
-            onsetEnvelopePhase_ = 0.0f;  // re-trigger
+        const bool transient = (inputPeak > 0.001f);
+        if (wantOnsetRetrigger && transient && onsetInputWasQuiet_)
+            onsetEnvelopePhase_ = 0.0f;
+        if (wantBloomRetrigger && transient && lateBloomInputWasQuiet_)
+            lateBloomPhaseSamples_ = 0;
         onsetInputWasQuiet_ = (inputPeak < 0.0001f);
+        lateBloomInputWasQuiet_ = (inputPeak < 0.0001f);
     }
 
     // Pre-delay
@@ -514,6 +527,109 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
     }
 
+    // Late-bloom envelope: if armed, multiply the wet path by a unity→peak→unity
+    // curve starting at the last transient trigger. Shape is linear attack over
+    // lateBloomAttackSamples_, hold at peak for lateBloomHoldSamples_, linear
+    // release over lateBloomReleaseSamples_, then back to unity.
+    const bool bloomActive = (lateBloomLevel_ > 0.001f || lateBloomPerBand_)
+                           && lateBloomPhaseSamples_ >= 0;
+    if (bloomActive)
+    {
+        const int delay   = lateBloomDelaySamples_;
+        const int attack  = lateBloomAttackSamples_;
+        const int hold    = lateBloomHoldSamples_;
+        const int release = lateBloomReleaseSamples_;
+        const int total   = delay + attack + hold + release;
+        // envelopeShape(p) returns a 0..1 curve (delay → attack → hold → release)
+        // that caller multiplies by its per-band peak level. Caller is responsible
+        // for clearing phaseSamples when p >= total.
+        auto envShape = [&] (int p) -> float
+        {
+            if (p < delay) return 0.0f;
+            if (p < delay + attack)
+                return static_cast<float> (p - delay) / static_cast<float> (std::max (attack, 1));
+            if (p < delay + attack + hold) return 1.0f;
+            if (p < total)
+                return 1.0f - static_cast<float> (p - delay - attack - hold) / static_cast<float> (std::max (release, 1));
+            return 0.0f;
+        };
+
+        if (lateBloomPerBand_)
+        {
+            const float a0 = bloomSplitA_[0];  // 315 Hz
+            const float a1 = bloomSplitA_[1];  // 1250 Hz
+            const float a2 = bloomSplitA_[2];  // 5000 Hz
+            for (int i = 0; i < numSamples; ++i)
+            {
+                int p = lateBloomPhaseSamples_;
+                float shape;
+                if (p >= total)
+                {
+                    shape = 0.0f;
+                    lateBloomPhaseSamples_ = -1;
+                }
+                else
+                {
+                    shape = envShape (p);
+                }
+                // Per-band gains: 1 + level*shape, computed independently per band.
+                const float g0 = 1.0f + lateBloomBandLevel_[0] * shape;
+                const float g1 = 1.0f + lateBloomBandLevel_[1] * shape;
+                const float g2 = 1.0f + lateBloomBandLevel_[2] * shape;
+                const float g3 = 1.0f + lateBloomBandLevel_[3] * shape;
+
+                auto si = static_cast<size_t> (i);
+                // L channel band split via cascaded LPFs (subtraction gives bandpasses).
+                const float xL = scratchL_[si];
+                const float lp0L = (1.0f - a0) * xL + a0 * bloomSplitStateL_[0]; bloomSplitStateL_[0] = lp0L;
+                const float lp1L = (1.0f - a1) * xL + a1 * bloomSplitStateL_[1]; bloomSplitStateL_[1] = lp1L;
+                const float lp2L = (1.0f - a2) * xL + a2 * bloomSplitStateL_[2]; bloomSplitStateL_[2] = lp2L;
+                const float bL0 = lp0L;            // lo_mid
+                const float bL1 = lp1L - lp0L;     // mid
+                const float bL2 = lp2L - lp1L;     // hi_mid
+                const float bL3 = xL   - lp2L;     // hi
+                scratchL_[si] = bL0 * g0 + bL1 * g1 + bL2 * g2 + bL3 * g3;
+
+                const float xR = scratchR_[si];
+                const float lp0R = (1.0f - a0) * xR + a0 * bloomSplitStateR_[0]; bloomSplitStateR_[0] = lp0R;
+                const float lp1R = (1.0f - a1) * xR + a1 * bloomSplitStateR_[1]; bloomSplitStateR_[1] = lp1R;
+                const float lp2R = (1.0f - a2) * xR + a2 * bloomSplitStateR_[2]; bloomSplitStateR_[2] = lp2R;
+                const float bR0 = lp0R;
+                const float bR1 = lp1R - lp0R;
+                const float bR2 = lp2R - lp1R;
+                const float bR3 = xR   - lp2R;
+                scratchR_[si] = bR0 * g0 + bR1 * g1 + bR2 * g2 + bR3 * g3;
+
+                if (lateBloomPhaseSamples_ >= 0)
+                    ++lateBloomPhaseSamples_;
+            }
+        }
+        else
+        {
+            // Scalar bloom — uniform gain across all bands. Cheaper path.
+            for (int i = 0; i < numSamples; ++i)
+            {
+                int p = lateBloomPhaseSamples_;
+                float shape;
+                if (p >= total)
+                {
+                    shape = 0.0f;
+                    lateBloomPhaseSamples_ = -1;
+                }
+                else
+                {
+                    shape = envShape (p);
+                }
+                const float gain = 1.0f + lateBloomLevel_ * shape;
+                auto si = static_cast<size_t> (i);
+                scratchL_[si] *= gain;
+                scratchR_[si] *= gain;
+                if (lateBloomPhaseSamples_ >= 0)
+                    ++lateBloomPhaseSamples_;
+            }
+        }
+    }
+
     // Apply output EQ + width, then dry/wet mix.
     // All output-stage parameters are smoothed per-sample to prevent zipper noise.
     // Filter coefficients are updated at sub-block boundaries (every 32 samples)
@@ -628,6 +744,10 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                         --gateHoldCounter_;
                     else
                         gateEnvelope_ *= gateReleaseCoeff_;
+                    // Hard floor: snap to zero when envelope is below -40dB
+                    // to match VV's abrupt gate termination
+                    if (gateEnvelope_ < 0.01f)
+                        gateEnvelope_ = 0.0f;
                 }
 
                 wetL *= gateEnvelope_;
@@ -718,8 +838,8 @@ void DuskVerbEngine::setAlgorithm (int index)
         cleared = true;
     }
 
-    // Publish the (algorithmIndex, engine*, presetClearDone) triple atomically.
-    pendingSwap_.store (PendingSwap { index, resolved, cleared }, std::memory_order_release);
+    // Publish the (engine*, algorithmIndex, presetClearDone) triple atomically.
+    pendingSwap_.store (PendingSwap { resolved, index, cleared }, std::memory_order_release);
 
     // Only start a new fade if one isn't already running
     if (! fadingOut_.load (std::memory_order_acquire))
@@ -830,6 +950,38 @@ void DuskVerbEngine::applyAlgorithm (int index, PresetEngineBase* resolvedEngine
                         ? (1.0f / static_cast<float> (lateOnsetSamples_))
                         : 0.0f;
     lateOnsetRamp_ = (lateOnsetSamples_ > 0) ? 0.0f : 1.0f;
+
+    // Late-bloom envelope: compensates for DV's inability to match VV's late-bloom
+    // signature. Triggered by input transient; unity-hold during delay, then
+    // attack to peak, hold, release back to unity.
+    lateBloomLevel_ = config_->lateBloomLevel;
+    lateBloomDelaySamples_   = static_cast<int> (config_->lateBloomDelayMs   * 0.001f * static_cast<float> (sampleRate_));
+    lateBloomAttackSamples_  = static_cast<int> (config_->lateBloomAttackMs  * 0.001f * static_cast<float> (sampleRate_));
+    lateBloomHoldSamples_    = static_cast<int> (config_->lateBloomHoldMs    * 0.001f * static_cast<float> (sampleRate_));
+    lateBloomReleaseSamples_ = static_cast<int> (config_->lateBloomReleaseMs * 0.001f * static_cast<float> (sampleRate_));
+    lateBloomPhaseSamples_ = -1;
+    lateBloomInputWasQuiet_ = true;
+
+    // Per-band bloom: when any band offset is non-zero, apply per-band gains via
+    // cascaded 1-pole LPF split (315 Hz, 1250 Hz, 5000 Hz → 4 bands matching metric).
+    lateBloomPerBand_ = false;
+    for (int b = 0; b < 4; ++b)
+    {
+        lateBloomBandLevel_[b] = lateBloomLevel_ + config_->lateBloomBandOffset[b];
+        if (std::abs (config_->lateBloomBandOffset[b]) > 0.001f)
+            lateBloomPerBand_ = true;
+    }
+    // 1-pole LPF: y[n] = (1-a)*x[n] + a*y[n-1]  where a = exp(-2*pi*fc/sr)
+    constexpr float kTwoPi = 6.283185307f;
+    const float sr = static_cast<float> (sampleRate_);
+    bloomSplitA_[0] = std::exp (-kTwoPi *  315.0f / sr);
+    bloomSplitA_[1] = std::exp (-kTwoPi * 1250.0f / sr);
+    bloomSplitA_[2] = std::exp (-kTwoPi * 5000.0f / sr);
+    for (int i = 0; i < 3; ++i)
+    {
+        bloomSplitStateL_[i] = 0.0f;
+        bloomSplitStateR_[i] = 0.0f;
+    }
 
     // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
     // Must set scale and delayScale BEFORE prepare() so buffers are allocated correctly.

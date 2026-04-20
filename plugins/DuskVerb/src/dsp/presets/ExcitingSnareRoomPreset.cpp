@@ -29,16 +29,22 @@ namespace {
     // Baked algorithm-config constants from kPresetExcitingSnareRoom in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.63f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 0.2f;
+    constexpr float kBakedSizeRangeMax       = 0.6f;
     constexpr float kBakedAirDampingScale    = 0.75f;
-    constexpr float kBakedNoiseModDepth      = 12.0f;
+    constexpr float kBakedNoiseModDepth      = 25.0f;
     constexpr float kBakedTrebleMultScale    = 0.45f;
     constexpr float kBakedTrebleMultScaleMax = 0.82f;
-    constexpr float kBakedBassMultScale      = 0.85f;
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 0.85f — bass knob now shows real multiplier
     constexpr float kBakedModDepthScale      = 1.3f;
     constexpr float kBakedModRateScale       = 1.0f;
-    constexpr float kBakedDecayTimeScale     = 1.37f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.37f — factory decay now displays real RT60
+
+    // Per-preset FiveBandDamping: attenuates 2.5-8kHz presence band to fix
+    // +6dB spectral excess at 5-8kHz that the ±12dB corrective EQ can't reach.
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.05f, 5.00f, 0.45f };
+    constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 3500.0f, 9000.0f };
+
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -49,7 +55,7 @@ namespace {
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 1.02593f;
-    constexpr float kVvDelayScale        = 0.4f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.4f — size range now absolute
     constexpr float kVvTiltLowDb         = -2.87411f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -6.0000f;
@@ -59,7 +65,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.336526f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 0.336526f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -69,7 +75,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -4.93441f, -8.78355f, 0.182755f, 2.38519f, 12.0f, -8.07375f, -2.90708f, -6.59967f, -12.0f, -12.0f, 2.476f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -4.93441f, -8.78355f, 0.182755f, 2.38519f, 22.82f, -8.07375f, -2.90708f, -6.59967f, -12.0f, -24.0f, 2.476f, 24.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -242,6 +248,8 @@ private:
     // Each cross-coupled feedback loop.
     struct Tank
     {
+        float inputLpState = 0.0f;  // Input HF filter state
+
         // Modulated allpass (decay diffusion 1)
         DelayLine ap1Buffer;       // Buffer for modulated allpass
         int ap1BaseDelay = 0;      // Base delay at 44100 Hz
@@ -255,9 +263,10 @@ private:
         // Density cascade: 3 allpasses for echo density multiplication
         Allpass densityAP[kNumDensityAPs];
         int densityAPBase[kNumDensityAPs] = {};
+        float preDensityOut = 0.0f;  // Output before density cascade (for onset tap reading)
 
-        // Three-band damping (bass / mid / air with independent per-band decay)
-        ThreeBandDamping damping;
+        // Five-band damping (per-band decay with presence attenuation)
+        FiveBandDamping damping;
 
         // Static allpass (decay diffusion 2)
         Allpass ap2;
@@ -353,6 +362,11 @@ private:
 
     bool frozen_ = false;
     bool prepared_ = false;
+
+    // Time-varying input HF filter: strong at onset, relaxes over ~80ms
+    float onsetLpCoeff_ = 0.0f;       // exp(-2pi*fc/sr) for onset LP
+    int onsetTotalSamples_ = 0;       // total onset duration in samples
+    int onsetSamplesRemaining_ = 0;   // countdown
 
     float decayBoost_ = 1.0f;
     float structHFCoeff_ = 0.0f;
@@ -556,8 +570,34 @@ void ExcitingSnareRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSi
     structHFStateL_ = 0.0f;
     structHFStateR_ = 0.0f;
 
-    prepared_ = true;
+    // Time-varying input HF filter: LP at 4kHz, relaxes over 80ms onset
+    onsetLpCoeff_ = std::exp (-6.283185307f * 4000.0f / static_cast<float> (sampleRate_));
+    onsetTotalSamples_ = static_cast<int> (0.150f * static_cast<float> (sampleRate_));
+    onsetSamplesRemaining_ = onsetTotalSamples_;
+    leftTank_.inputLpState = 0.0f;
+    rightTank_.inputLpState = 0.0f;
 
+    // FiveBandDamping: set crossovers and band multipliers before decay computation
+    {
+        float fbCrossHz[4] = {
+            kFiveBandCrossoverHz[0], kFiveBandCrossoverHz[1],
+            kFiveBandCrossoverHz[2], kFiveBandCrossoverHz[3]
+        };
+        float fbMult[5] = {
+            kFiveBandMult[0], kFiveBandMult[1], kFiveBandMult[2],
+            kFiveBandMult[3], kFiveBandMult[4]
+        };
+        float coeffs[4];
+        for (int b = 0; b < 4; ++b)
+            coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
+                                  / static_cast<float> (sampleRate_));
+        leftTank_.damping.setCrossovers (coeffs);
+        leftTank_.damping.setBandMultipliers (fbMult);
+        rightTank_.damping.setCrossovers (coeffs);
+        rightTank_.damping.setBandMultipliers (fbMult);
+    }
+
+    prepared_ = true;
 
     updateDelayLengths();
     updateDecayCoefficients();
@@ -617,6 +657,17 @@ void ExcitingSnareRoomPresetEngine::process (const float* inputL, const float* i
             // Tank input: new audio + cross-fed signal from the other tank
             float tankIn = input + otherCrossFeed;
 
+            // Time-varying input HF cut: strong LP at onset, relaxes to passthrough.
+            // Fixes 5-8kHz onset excess where FDN fills instantly vs VV's gradual buildup.
+            if (onsetSamplesRemaining_ > 0)
+            {
+                float envelope = static_cast<float> (onsetSamplesRemaining_) / static_cast<float> (onsetTotalSamples_);
+                float hpAtten = 1.0f - envelope * 0.85f;  // starts at 0.15, ramps to 1.0
+                tank.inputLpState = (1.0f - onsetLpCoeff_) * tankIn + onsetLpCoeff_ * tank.inputLpState;
+                float hpPart = tankIn - tank.inputLpState;
+                tankIn = tank.inputLpState + hpPart * hpAtten;
+            }
+
             // --- Modulated allpass (decay diffusion 1) ---
             // LFO modulation with "Wander" drift (classic reverb technique)
             float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
@@ -651,6 +702,7 @@ void ExcitingSnareRoomPresetEngine::process (const float* inputL, const float* i
 
             // --- Density cascade: 3 allpasses to multiply echo density ---
             float dense = del1Out;
+            tank.preDensityOut = del1Out;  // Store pre-cascade for onset tap reading
             if (! frozen_)
             {
                 for (int d = 0; d < kNumDensityAPs; ++d)
@@ -708,6 +760,9 @@ void ExcitingSnareRoomPresetEngine::process (const float* inputL, const float* i
 
         processTank (leftTank_, rightCrossFeed);
         processTank (rightTank_, leftCrossFeed);
+
+        if (onsetSamplesRemaining_ > 0)
+            --onsetSamplesRemaining_;
 
         // ------------------------------------------------------------------
         // Output: sum 7 signed taps from both tanks per channel.
@@ -1067,6 +1122,9 @@ void ExcitingSnareRoomPresetEngine::clearBuffers()
 
     clearTank (leftTank_);
     clearTank (rightTank_);
+    leftTank_.inputLpState = 0.0f;
+    rightTank_.inputLpState = 0.0f;
+    onsetSamplesRemaining_ = onsetTotalSamples_;
 
     // Reset modulation state to deterministic seeds (must match prepare())
     leftTank_.lfoPhase    = 0.0f;
@@ -1129,17 +1187,28 @@ void ExcitingSnareRoomPresetEngine::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
-        float gLow = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
-        float gMid = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
-        // Air band: airDampingScale > 1 → air decays slower (brighter tail)
-        // airDampingScale = 1 → gAir == gMid → collapses to 2-band behavior
-        float gAir = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        tank.damping.setCoefficients (gLow, gMid, gAir, lowXoverCoeff, highXoverCoeff);
+        // 5-band damping: combine baked per-band multipliers with runtime controls
+        float combinedMult[5] = {
+            kFiveBandMult[0] * bassMultiply_,
+            kFiveBandMult[1] * bassMultiply_,
+            kFiveBandMult[2] * trebleMultiply_,
+            kFiveBandMult[3] * trebleMultiply_,
+            kFiveBandMult[4] * std::max (airDampingScale_, 0.01f)
+        };
+        tank.damping.setBandMultipliers (combinedMult);
+        tank.damping.computeGainsFromBase (gBase, lowXoverCoeff, highXoverCoeff);
     };
 
     updateTankDamping (leftTank_);
     updateTankDamping (rightTank_);
+
+    // Re-apply 5-band crossovers (computeGainsFromBase overwrites inner crossovers)
+    float fbCoeffs[4];
+    for (int b = 0; b < 4; ++b)
+        fbCoeffs[b] = std::exp (-6.283185307f * kFiveBandCrossoverHz[b] / sr);
+    leftTank_.damping.setCrossovers (fbCoeffs);
+    rightTank_.damping.setCrossovers (fbCoeffs);
 }
 
 void ExcitingSnareRoomPresetEngine::updateLFORates()
@@ -1283,6 +1352,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Reset wrapper-level EQ state without disturbing engine LFO/PRNG
         // (engine_.prepare() already cleared its audio buffers).
@@ -1297,6 +1367,16 @@ public:
             corrXr1_[b] = corrXr2_[b] = 0.0f;
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
+
+        // Notch filters disabled — 5-8kHz excess needs inner-loop damping fix
+        notchB0_ = 1.0f; notchB1_ = 0.0f; notchB2_ = 0.0f;
+        notchA1_ = 0.0f; notchA2_ = 0.0f;
+        notch2B0_ = 1.0f; notch2B1_ = 0.0f; notch2B2_ = 0.0f;
+        notch2A1_ = 0.0f; notch2A2_ = 0.0f;
+        notchXl1_ = notchXl2_ = notchYl1_ = notchYl2_ = 0.0f;
+        notchXr1_ = notchXr2_ = notchYr1_ = notchYr2_ = 0.0f;
+        notch2Xl1_ = notch2Xl2_ = notch2Yl1_ = notch2Yl2_ = 0.0f;
+        notch2Xr1_ = notch2Xr2_ = notch2Yr1_ = notch2Yr2_ = 0.0f;
 
         // Reset patch-local state so re-preparation doesn't carry stale
         // LFO / filter state across sample-rate changes or DAW resets.
@@ -1335,6 +1415,10 @@ public:
                 mbEq_a2_[b] = (1.0f - al / A) / a0;
             }
         }
+        onsetHfCutSamples_ = 0.0f;
+        onsetHfCutEnv_ = 0.0f;
+        onsetHfLpL_ = 0.0f;
+        onsetHfLpR_ = 0.0f;
         // PATCH_POINT_PREPARE_END
     }
 
@@ -1388,6 +1472,34 @@ public:
                 corrXr1_[b] = xRb;
                 corrYr2_[b] = corrYr1_[b];
                 corrYr1_[b] = yR;
+            }
+
+            // ---- Dual notch cuts at 5.5kHz + 7.5kHz to fix 5-8kHz spectral excess ----
+            {
+                float xLn = yL;
+                yL = notchB0_ * xLn + notchB1_ * notchXl1_ + notchB2_ * notchXl2_
+                   - notchA1_ * notchYl1_ - notchA2_ * notchYl2_;
+                notchXl2_ = notchXl1_; notchXl1_ = xLn;
+                notchYl2_ = notchYl1_; notchYl1_ = yL;
+
+                float xRn = yR;
+                yR = notchB0_ * xRn + notchB1_ * notchXr1_ + notchB2_ * notchXr2_
+                   - notchA1_ * notchYr1_ - notchA2_ * notchYr2_;
+                notchXr2_ = notchXr1_; notchXr1_ = xRn;
+                notchYr2_ = notchYr1_; notchYr1_ = yR;
+
+                // Second notch (7.5kHz)
+                xLn = yL;
+                yL = notch2B0_ * xLn + notch2B1_ * notch2Xl1_ + notch2B2_ * notch2Xl2_
+                   - notch2A1_ * notch2Yl1_ - notch2A2_ * notch2Yl2_;
+                notch2Xl2_ = notch2Xl1_; notch2Xl1_ = xLn;
+                notch2Yl2_ = notch2Yl1_; notch2Yl1_ = yL;
+
+                xRn = yR;
+                yR = notch2B0_ * xRn + notch2B1_ * notch2Xr1_ + notch2B2_ * notch2Xr2_
+                   - notch2A1_ * notch2Yr1_ - notch2A2_ * notch2Yr2_;
+                notch2Xr2_ = notch2Xr1_; notch2Xr1_ = xRn;
+                notch2Yr2_ = notch2Yr1_; notch2Yr1_ = yR;
             }
 
             // ---- Stage 3: stereo width ----
@@ -1492,6 +1604,10 @@ public:
             corrXr1_[b] = corrXr2_[b] = 0.0f;
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
+        onsetHfCutSamples_ = 0.0f;
+        onsetHfCutEnv_ = 0.0f;
+        onsetHfLpL_ = 0.0f;
+        onsetHfLpR_ = 0.0f;
         // PATCH_POINT_CLEAR
         // <<< PATCH_CLEAR_BEGIN:add_late_tail_modulation >>>
         lateTailMod_lfoPhaseL = 0.0f;
@@ -1538,15 +1654,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
     }
@@ -1655,7 +1767,9 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
+        // check. Use an explicit corrEqReady_ flag set at end of prepare().
+        if (! corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1687,6 +1801,7 @@ private:
     float overrideSizeRangeMin_ = -1.0f;
     float overrideSizeRangeMax_ = -1.0f;
     double sampleRate_ = 48000.0;
+    bool   corrEqReady_ = false;
     // Baked tilt EQ state (per-instance, not function-local statics)
     float tiltLowCoeff_ = 0.0f;
     float tiltLowGain_  = 0.0f;
@@ -1712,6 +1827,11 @@ private:
     float corrXr2_[kCorrEqBandCount] {};
     float corrYr1_[kCorrEqBandCount] {};
     float corrYr2_[kCorrEqBandCount] {};
+    // Onset HF cut state
+    float onsetHfCutSamples_ = 0.0f;
+    float onsetHfCutEnv_ = 0.0f;
+    float onsetHfLpL_ = 0.0f;
+    float onsetHfLpR_ = 0.0f;
     // PATCH_POINT_MEMBERS
     // <<< PATCH_MEMBERS_BEGIN:add_late_tail_modulation >>>
     float lateTailMod_lfoPhaseL = 0.0f;
@@ -1732,6 +1852,16 @@ private:
     float mbEq_3_xL1 = 0.0f, mbEq_3_xL2 = 0.0f, mbEq_3_yL1 = 0.0f, mbEq_3_yL2 = 0.0f;
     float mbEq_3_xR1 = 0.0f, mbEq_3_xR2 = 0.0f, mbEq_3_yR1 = 0.0f, mbEq_3_yR2 = 0.0f;
     // <<< PATCH_MEMBERS_END:add_multiband_eq >>>
+
+    // Dual peaking cuts spanning 5-8kHz — fixes spectral excess beyond corrective EQ cap
+    float notchB0_ = 1.0f, notchB1_ = 0.0f, notchB2_ = 0.0f;
+    float notchA1_ = 0.0f, notchA2_ = 0.0f;
+    float notchXl1_ = 0.0f, notchXl2_ = 0.0f, notchYl1_ = 0.0f, notchYl2_ = 0.0f;
+    float notchXr1_ = 0.0f, notchXr2_ = 0.0f, notchYr1_ = 0.0f, notchYr2_ = 0.0f;
+    float notch2B0_ = 1.0f, notch2B1_ = 0.0f, notch2B2_ = 0.0f;
+    float notch2A1_ = 0.0f, notch2A2_ = 0.0f;
+    float notch2Xl1_ = 0.0f, notch2Xl2_ = 0.0f, notch2Yl1_ = 0.0f, notch2Yl2_ = 0.0f;
+    float notch2Xr1_ = 0.0f, notch2Xr2_ = 0.0f, notch2Yr1_ = 0.0f, notch2Yr2_ = 0.0f;
 
 };
 

@@ -29,18 +29,19 @@ namespace {
     // Baked algorithm-config constants from kPresetTripHopSnare in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 0.175f;
+    constexpr float kBakedSizeRangeMax       = 0.525f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.84f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.02f;
-    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.02f — bass knob now shows real multiplier
+    // Air band sustained to lift 12-20kHz (was -7.1dB below VV).
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 4.00f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -51,7 +52,9 @@ namespace {
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.893081f;
-    constexpr float kVvDelayScale        = 0.932504f;
+    // Reduced from 0.932504f — DV onset was +72ms, onset_shape correlation
+    // 0.36. Shorter delays fix both.
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.35f — size range now absolute
     constexpr float kVvTiltLowDb         = -0.1332f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -2.77796f;
@@ -61,7 +64,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.891971f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 0.891971f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -71,7 +74,8 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.28149f, -8.2758f, -0.145058f, -2.9217f, -5.31571f, -2.84001f, -2.76805f, -1.97761f, -1.09042f, -7.53162f, 4.69744f, 12.0f };
+    // Band 11 (15492Hz) pushed to +20dB to lift 12-20k band (was -7.1 dB).
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.28149f, -8.2758f, -0.145058f, -2.9217f, -5.31571f, -2.84001f, -2.76805f, -1.97761f, -1.09042f, -7.53162f, 4.69744f, 20.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
@@ -1096,6 +1100,9 @@ void TripHopSnarePresetEngine::setMultiPointOutput (const FDNOutputTap* left, in
             return;
         }
         multiTapsL_[i] = left[i];
+        // positionFrac indexes a circular delay line — out-of-range values wrap
+        // through the buffer mask and read unrelated samples. Clamp at ingest.
+        multiTapsL_[i].positionFrac = std::clamp (multiTapsL_[i].positionFrac, 0.0f, 1.0f);
     }
     for (int i = 0; i < numMultiTapsR_; ++i)
     {
@@ -1107,6 +1114,7 @@ void TripHopSnarePresetEngine::setMultiPointOutput (const FDNOutputTap* left, in
             return;
         }
         multiTapsR_[i] = right[i];
+        multiTapsR_[i].positionFrac = std::clamp (multiTapsR_[i].positionFrac, 0.0f, 1.0f);
     }
     useMultiPointOutput_ = true;
 }
@@ -1663,7 +1671,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1721,6 +1729,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
@@ -1843,15 +1852,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             engine_.setStructuralHFDamping (lastStructHFHz_, lastTreble_);
     }
@@ -1963,7 +1968,9 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
+        // check. Use an explicit corrEqReady_ flag set at end of prepare().
+        if (! corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1979,13 +1986,14 @@ public:
 
 private:
     TripHopSnarePresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
     bool  frozen_ = false;
     double sampleRate_ = 48000.0;
+    bool   corrEqReady_ = false;
     // Cached runtime overrides — replayed after prepare() to survive re-preparation.
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;

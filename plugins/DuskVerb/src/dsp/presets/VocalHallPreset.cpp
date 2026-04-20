@@ -28,18 +28,23 @@ namespace {
     // Baked algorithm-config constants from kPresetVocalHall in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 1.047275f;
+    constexpr float kBakedSizeRangeMax       = 3.141825f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.87f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.0f;
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.0f — bass knob now shows real multiplier
     constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
+
+    // ChamberFDN: dual-slope with band coupling
+    constexpr float kVvDualSlopeRatio        = 0.0f;   // ChamberFDN disabled
+    constexpr float kVvDualSlopeFastGain     = 1.0f;   // Full output from fast group (boosts body)
+    constexpr float kVvBandCoupling          = 0.10f;  // Low coupling to isolate groups
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -50,7 +55,7 @@ namespace {
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.779659f;
-    constexpr float kVvDelayScale        = 2.09455f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 2.09455f — size range now absolute
     constexpr float kVvTiltLowDb         = -0.992229f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -3.41255f;
@@ -60,7 +65,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.744175f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 0.744175f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -126,8 +131,6 @@ public:
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
-    void setFeedbackModDepth (float depth);
-    void setCrossoverModDepth (float depth);
     void setDecayBoost (float boost);
     void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
@@ -318,8 +321,6 @@ private:
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
     float sizeParam_ = 1.0f;
-    float feedbackModDepth_ = 0.0f;
-    float crossoverModDepth_ = 0.0f;
     float decayBoost_ = 1.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
@@ -781,12 +782,21 @@ void VocalHallPresetEngine::process (const float* inputL, const float* inputR,
         }
         else if (dualSlopeFastCount_ == 8)
         {
-            // Dual-slope: two independent 8×8 Hadamards.
-            // Decouples fast-decay (0-7) and slow-decay (8-15) channel groups
-            // so each maintains its own RT60 without cross-contamination.
             std::memcpy (feedback, delayOut, sizeof (feedback));
             hadamardInPlace8 (feedback);
             hadamardInPlace8 (feedback + 8);
+            if (stereoCoupling_ > 0.0f)
+            {
+                float sinC = stereoCoupling_;
+                float cosC = std::sqrt (1.0f - sinC * sinC);
+                for (int ch = 0; ch < 8; ++ch)
+                {
+                    float a = feedback[ch];
+                    float b = feedback[ch + 8];
+                    feedback[ch]     =  a * cosC + b * sinC;
+                    feedback[ch + 8] = -a * sinC + b * cosC;
+                }
+            }
         }
         else
         {
@@ -1354,11 +1364,6 @@ void VocalHallPresetEngine::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
-void VocalHallPresetEngine::setCrossoverModDepth (float depth)
-{
-    crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
-}
-
 void VocalHallPresetEngine::setDecayBoost (float boost)
 {
     decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
@@ -1598,6 +1603,11 @@ public:
         // setNoiseModDepth scales by the engine's stored sampleRate_, so it
         // must run AFTER prepare() or the baked jitter is locked to 44.1kHz.
         engine_.setNoiseModDepth (kBakedNoiseModDepth);
+        if (kVvDualSlopeRatio > 0.0f)
+        {
+            engine_.setDualSlope (kVvDualSlopeRatio, 8, kVvDualSlopeFastGain);
+            engine_.setStereoCoupling (kVvBandCoupling);
+        }
 
         // The bass/treble multipliers are LEFT at the legacy
         // AlgorithmConfig defaults (kBakedBassMultScale, kBakedTrebleMultScale)
@@ -1631,7 +1641,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1689,6 +1699,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
@@ -1811,15 +1822,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             engine_.setStructuralHFDamping (lastStructHFHz_, lastTreble_);
     }
@@ -1931,7 +1938,9 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
+        // check. Use an explicit corrEqReady_ flag set at end of prepare().
+        if (! corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1947,13 +1956,14 @@ public:
 
 private:
     VocalHallPresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
     bool  frozen_ = false;
     double sampleRate_ = 48000.0;
+    bool   corrEqReady_ = false;
     // Cached runtime overrides — replayed after prepare() to survive re-preparation.
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;

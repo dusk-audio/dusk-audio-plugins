@@ -29,16 +29,16 @@ namespace {
     // Baked algorithm-config constants from kPresetAPlate in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 0.390159f;
+    constexpr float kBakedSizeRangeMax       = 1.170477f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 1.0f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.04f;
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.04f — bass knob now shows real multiplier
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -49,7 +49,7 @@ namespace {
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 1.01552f;
-    constexpr float kVvDelayScale        = 0.780318f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.780318f — size range now absolute
     constexpr float kVvTiltLowDb         = -0.909034f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -0.301471f;
@@ -59,7 +59,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.805621f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 0.805621f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -69,7 +69,9 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, 4.10959f, 12.0f, 0.108423f };
+    // Boosting 2-5 kHz bands fills the DV HF deficit (late reverb dropped
+    // mid-HF by 6-10 dB relative to VV). Lows kept neutral; HF preserved.
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 3.57f, 2.17f, 2.19f, 0.0f, 0.0f, 0.0f, 5.24f, 5.0f, 8.0f, 7.5f, 8.0f, 0.108423f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -238,6 +240,12 @@ private:
         float lfoPhaseInc = 0.0f;
         uint32_t lfoPRNG = 0;
         uint32_t noiseState = 0;
+
+        // Body-tail shaper (see process()): tracks samples since the last
+        // external-input peak so cross-feed can be attenuated in the body
+        // window to lift decay_ratio toward VV.
+        int samplesSinceInputPeak = 1 << 30;
+        float inputPeakTracker = 0.0f;
 
         // Per-tank terminal decay tracking
         float currentRMS = 0.0f;
@@ -454,6 +462,8 @@ void APlatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        tank.lastJitter1 = 0.0f;
+        tank.lastJitter2 = 0.0f;
         structHFState_[t] = 0.0f;
     }
 
@@ -515,6 +525,43 @@ void APlatePresetEngine::process (const float* inputL, const float* inputR,
         {
             auto& tank = tanks_[t];
             float otherCrossFeed = cf[(t + kNumTanks - 1) % kNumTanks];
+
+            // Body-tail shaper: track external input peaks, then apply a
+            // time-varying attenuation to cross-feed so the tail matches
+            // VV's body/tail balance. At factory erLevel=0.75, DV's body
+            // dominates (decay_ratio 0.43x). The shaper starts attenuating
+            // cross-feed at 50ms and ramps to a floor by 1.3s, which raises
+            // decay_ratio without the ER-side regressions that erLevel
+            // reduction causes on its own.
+            {
+                const float localIn = std::abs (input);
+                if (localIn > tank.inputPeakTracker * 1.5f && localIn > 0.001f)
+                {
+                    tank.samplesSinceInputPeak = 0;
+                    tank.inputPeakTracker = localIn;
+                }
+                else
+                {
+                    if (tank.samplesSinceInputPeak < (1 << 30))
+                        ++tank.samplesSinceInputPeak;
+                    tank.inputPeakTracker *= 0.99999f;
+                }
+                constexpr float kShaperStartSec = 0.05f;
+                constexpr float kShaperEndSec   = 1.30f;
+                constexpr float kShaperFloor    = 0.05f;
+                if (! frozen_)
+                {
+                    const float tSec = static_cast<float> (tank.samplesSinceInputPeak)
+                                     / static_cast<float> (sampleRate_);
+                    if (tSec > kShaperStartSec)
+                    {
+                        const float ramp = std::min (1.0f,
+                            (tSec - kShaperStartSec) / (kShaperEndSec - kShaperStartSec));
+                        otherCrossFeed *= 1.0f - ramp * (1.0f - kShaperFloor);
+                    }
+                }
+            }
+
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
@@ -951,7 +998,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1132,15 +1179,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
     }
@@ -1272,7 +1315,7 @@ public:
 
 private:
     APlatePresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;

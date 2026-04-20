@@ -73,7 +73,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 1.11996f, -4.77716f, -0.453874f, -2.03391f, -1.6837f, -1.08815f, -1.16645f, 1.63297f, 3.62633f, -0.781068f, -1.88595f, 12.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 1.11996f, -4.77716f, -0.453874f, -2.03391f, -1.6837f, -1.08815f, -1.16645f, 1.63297f, 3.62633f, -0.781068f, -1.88595f, 24.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -1275,7 +1275,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1597,7 +1597,7 @@ public:
 private:
     GatedSnarePresetEngine engine_;
     float lastBass_ = 1.0f;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
