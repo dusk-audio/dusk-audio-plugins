@@ -29,16 +29,19 @@ namespace {
     // Baked algorithm-config constants from kPresetFatSnareRoom in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 0.53597f;
+    constexpr float kBakedSizeRangeMax       = 1.60791f;
     constexpr float kBakedAirDampingScale    = 0.8f;
-    constexpr float kBakedNoiseModDepth      = 8.0f;
+    constexpr float kBakedNoiseModDepth      = 1.0f;  // reduced from 8.0 to match VV modulation
     constexpr float kBakedTrebleMultScale    = 0.86f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.02f;
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.02f — bass knob now shows real multiplier
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
+    constexpr float kVvFbGainBass            = 1.0f;
+    constexpr float kVvFbGainMidHigh         = 1.0f;
+    constexpr float kVvFbSplitHz             = 200.0f;
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -48,8 +51,8 @@ namespace {
     // -----------------------------------------------------------------
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
-    constexpr float kVvAirDampingScale   = 0.906446f;
-    constexpr float kVvDelayScale        = 1.07194f;
+    constexpr float kVvAirDampingScale   = 1.0f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 1.07194f — size range now absolute
     constexpr float kVvTiltLowDb         = -0.908264f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -4.04329f;
@@ -59,7 +62,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.272949f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 0.272949f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -67,9 +70,9 @@ namespace {
     // in prepare() at the host sample rate so the EQ is correct at any rate.
     // Max correction magnitude for this preset: 11.48 dB
     // -----------------------------------------------------------------
-    constexpr int kCorrEqBandCount = 12;
-    constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 12.0f, -12.0f, -9.08823f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, 7.34861f, 12.0f };
+    constexpr int kCorrEqBandCount = 14;
+    constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 12000.0f, 15492.0f, 18500.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 12.0f, -12.0f, -9.08823f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, 7.34861f, 20.0f, 22.0f, 20.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -78,7 +81,7 @@ namespace {
     // mult > 1.0 = longer decay, < 1.0 = shorter decay in that band.
     // Crossover frequencies define the band boundaries.
     // -----------------------------------------------------------------
-    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 5.00f, 1.00f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
 
     // -----------------------------------------------------------------
@@ -153,9 +156,8 @@ public:
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
-    void setFeedbackModDepth (float depth);
-    void setCrossoverModDepth (float depth);
     void setDecayBoost (float boost);
+    void setPerBandFeedbackGain (float bassGain, float midHighGain, float splitHz);
     void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
@@ -345,9 +347,11 @@ private:
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
     float sizeParam_ = 1.0f;
-    float feedbackModDepth_ = 0.0f;
-    float crossoverModDepth_ = 0.0f;
     float decayBoost_ = 1.0f;
+    float fbGainBass_ = 1.0f;
+    float fbGainMidHigh_ = 1.0f;
+    float fbSplitCoeff_ = 0.0f;
+    float fbSplitState_[16] {};
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
@@ -635,6 +639,9 @@ void FatSnareRoomPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
             lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
     }
 
+    for (int i = 0; i < N; ++i)
+        fbSplitState_[i] = 0.0f;
+
     updateModDepth();
     updateLFORates();
     updateDecayCoefficients();
@@ -883,6 +890,15 @@ void FatSnareRoomPresetEngine::process (const float* inputL, const float* inputR
                                          : (((dl.writePos ^ ch) & 1)
                                                 ? DspUtils::kDenormalPrevention
                                                 : -DspUtils::kDenormalPrevention);
+            if (fbSplitCoeff_ > 0.0f && ! frozen_)
+            {
+                fbSplitState_[ch] = (1.0f - fbSplitCoeff_) * filtered
+                                  + fbSplitCoeff_ * fbSplitState_[ch];
+                float bass = fbSplitState_[ch];
+                float midHigh = filtered - bass;
+                filtered = bass * fbGainBass_ + midHigh * fbGainMidHigh_;
+            }
+
             dl.buffer[static_cast<size_t> (dl.writePos)] =
                 filtered + inputSample * polarity * inputGain + denormalBias;
 
@@ -1392,16 +1408,18 @@ void FatSnareRoomPresetEngine::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
-void FatSnareRoomPresetEngine::setCrossoverModDepth (float depth)
-{
-    crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
-}
-
 void FatSnareRoomPresetEngine::setDecayBoost (float boost)
 {
     decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
     if (prepared_)
         updateDecayCoefficients();
+}
+
+void FatSnareRoomPresetEngine::setPerBandFeedbackGain (float bassGain, float midHighGain, float splitHz)
+{
+    fbGainBass_ = std::clamp (bassGain, 0.5f, 1.5f);
+    fbGainMidHigh_ = std::clamp (midHighGain, 0.5f, 1.5f);
+    fbSplitCoeff_ = std::exp (-6.283185307f * splitHz / static_cast<float> (sampleRate_));
 }
 
 void FatSnareRoomPresetEngine::setTerminalDecay (float thresholdDB, float factor)
@@ -1427,6 +1445,7 @@ void FatSnareRoomPresetEngine::clearBuffers()
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
+        fbSplitState_[i] = 0.0f;
         // Deterministic LFO/PRNG reset for clean state on algorithm switch.
         // (Wrapper prepare() no longer calls clearBuffers(), so this does not
         // conflict with prepare()'s stochastic randomization.)
@@ -1634,6 +1653,7 @@ public:
         // setNoiseModDepth scales by the engine's stored sampleRate_, so it
         // must run AFTER prepare() or the baked jitter is locked to 44.1kHz.
         engine_.setNoiseModDepth (kBakedNoiseModDepth);
+        engine_.setPerBandFeedbackGain (kVvFbGainBass, kVvFbGainMidHigh, kVvFbSplitHz);
 
         // The bass/treble multipliers are LEFT at the legacy
         // AlgorithmConfig defaults (kBakedBassMultScale, kBakedTrebleMultScale)
@@ -1669,7 +1689,7 @@ public:
             engine_.setStructuralHFDamping (lastStructHFHz_, lastTreble_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1727,6 +1747,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
@@ -1849,18 +1870,12 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: curve & kBakedTrebleMultScale interpolation
+        // were un-baked into the factory damping values.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
-        // Recompute structural HF damping with updated treble (2-param engine)
         if (lastStructHFHz_ > 0.0f)
             engine_.setStructuralHFDamping (lastStructHFHz_, lastTreble_);
     }
@@ -1972,7 +1987,9 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
+        // check. Use an explicit corrEqReady_ flag set at end of prepare().
+        if (! corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1993,13 +2010,14 @@ public:
 
 private:
     FatSnareRoomPresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
     bool  frozen_ = false;
     double sampleRate_ = 48000.0;
+    bool   corrEqReady_ = false;
     // Cached runtime overrides — replayed after prepare() to survive re-preparation.
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;

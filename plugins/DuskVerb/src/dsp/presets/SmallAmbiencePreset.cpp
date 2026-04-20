@@ -29,16 +29,16 @@ namespace {
     // Baked algorithm-config constants from kPresetSmallAmbience in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 0.397664f;
+    constexpr float kBakedSizeRangeMax       = 1.192992f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 1.0f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.14f;
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.14f — bass knob now shows real multiplier
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -49,17 +49,17 @@ namespace {
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.895832f;
-    constexpr float kVvDelayScale        = 0.795328f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.795328f — size range now absolute
     constexpr float kVvTiltLowDb         = 0.384729f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -3.77877f;
     constexpr float kVvTiltHighHz        = 5000.0f;
-    constexpr float kVvStereoWidth       = 0.910172f;
+    constexpr float kVvStereoWidth       = 0.75f;
     // Decay-time correction: multiplied into the user knob in setDecayTime()
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.26948f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 1.26948f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -946,7 +946,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1004,6 +1004,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
@@ -1018,6 +1019,9 @@ public:
             corrXr1_[b] = corrXr2_[b] = 0.0f;
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
+        onsetNoiseSamples_ = 0.0f;
+        onsetNoiseEnv_ = 0.0f;
+        onsetNoisePRNG_ = 0xBEEFCAFEu;
         // PATCH_POINT_PREPARE_END
     }
 
@@ -1082,6 +1086,40 @@ public:
             outputR[i] = std::clamp (mid - side * kStereoWidth, -32.0f, 32.0f);
         }
         // PATCH_POINT_POST_ENGINE
+
+        // --- Onset noise injection (fixes onsetRing) ---
+        // Fills spectral nulls in the QuadTank's comb-filtered onset.
+        {
+            constexpr float kNoiseLevel = 0.0008f;
+            constexpr float kOnsetWindowMs = 200.0f;
+            constexpr float kOnsetThresh = 0.005f;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float peakLR = std::max (std::abs (outputL[i]), std::abs (outputR[i]));
+                if (peakLR > kOnsetThresh && peakLR > onsetNoiseEnv_ * 3.0f)
+                    onsetNoiseSamples_ = 0.0f;
+                onsetNoiseEnv_ = 0.999f * onsetNoiseEnv_ + 0.001f * peakLR;
+                onsetNoiseSamples_ += 1.0f;
+
+                float windowMs = onsetNoiseSamples_ / static_cast<float> (sampleRate_) * 1000.0f;
+                if (windowMs < kOnsetWindowMs && peakLR > 1e-6f)
+                {
+                    float fade = 1.0f - windowMs / kOnsetWindowMs;
+                    onsetNoisePRNG_ ^= onsetNoisePRNG_ << 13;
+                    onsetNoisePRNG_ ^= onsetNoisePRNG_ >> 17;
+                    onsetNoisePRNG_ ^= onsetNoisePRNG_ << 5;
+                    float noiseL = static_cast<float> (static_cast<int32_t> (onsetNoisePRNG_))
+                                 * (1.0f / 2147483648.0f) * kNoiseLevel * fade;
+                    onsetNoisePRNG_ ^= onsetNoisePRNG_ << 13;
+                    onsetNoisePRNG_ ^= onsetNoisePRNG_ >> 17;
+                    onsetNoisePRNG_ ^= onsetNoisePRNG_ << 5;
+                    float noiseR = static_cast<float> (static_cast<int32_t> (onsetNoisePRNG_))
+                                 * (1.0f / 2147483648.0f) * kNoiseLevel * fade;
+                    outputL[i] += noiseL;
+                    outputR[i] += noiseR;
+                }
+            }
+        }
     }
 
     void clearBuffers() override
@@ -1098,6 +1136,9 @@ public:
             corrXr1_[b] = corrXr2_[b] = 0.0f;
             corrYr1_[b] = corrYr2_[b] = 0.0f;
         }
+        onsetNoiseSamples_ = 0.0f;
+        onsetNoiseEnv_ = 0.0f;
+        onsetNoisePRNG_ = 0xBEEFCAFEu;
         // PATCH_POINT_CLEAR
     }
 
@@ -1126,15 +1167,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
     }
@@ -1246,7 +1283,9 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
+        // check. Use an explicit corrEqReady_ flag set at end of prepare().
+        if (! corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1267,13 +1306,14 @@ public:
 
 private:
     SmallAmbiencePresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
     bool  frozen_ = false;
     double sampleRate_ = 48000.0;
+    bool   corrEqReady_ = false;
     // Cached runtime overrides — replayed after prepare() to survive re-preparation.
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;
@@ -1308,6 +1348,10 @@ private:
     float corrXr2_[kCorrEqBandCount] {};
     float corrYr1_[kCorrEqBandCount] {};
     float corrYr2_[kCorrEqBandCount] {};
+    // Onset noise injection state
+    float onsetNoiseSamples_ = 0.0f;
+    float onsetNoiseEnv_ = 0.0f;
+    uint32_t onsetNoisePRNG_ = 0xBEEFCAFEu;
     // PATCH_POINT_MEMBERS
 };
 
