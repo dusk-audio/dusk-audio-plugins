@@ -135,15 +135,26 @@ private:
     // Pending algorithm handoff: atomic struct ensures the audio thread reads a
     // consistent (algorithmIndex, engine*, presetClearDone) triple even when
     // setAlgorithm() is called repeatedly from the message thread.
+    //
+    // Fields are ordered so the struct packs into 16 bytes — the largest size
+    // x86-64 (CMPXCHG16B) and ARM64 (LDP/STP) handle lock-free in hardware. A
+    // 24-byte layout would fall back to libc++'s internal lock pool, which we
+    // must not touch on the audio thread.
+    //
+    // `is_always_lock_free` is a stricter compile-time guarantee than we need
+    // (libc++ returns false for any struct >8 bytes regardless of platform), so
+    // we verify with a runtime check in prepare() on each build instead.
     struct PendingSwap
     {
-        int algorithmIndex = -1;
-        PresetEngineBase* engine = nullptr;
-        bool presetClearDone = false;
+        PresetEngineBase* engine = nullptr;  // 8 B
+        int algorithmIndex = -1;             // 4 B
+        bool presetClearDone = false;        // 1 B + 3 B pad → total 16 B
     };
+    static_assert (sizeof (PendingSwap) == 16,
+                   "PendingSwap must pack to 16 bytes so hardware atomics stay lock-free");
     static_assert (std::is_trivially_copyable<PendingSwap>::value,
                    "PendingSwap must be trivially copyable for std::atomic");
-    std::atomic<PendingSwap> pendingSwap_ { PendingSwap { -1, nullptr, false } };
+    std::atomic<PendingSwap> pendingSwap_ { PendingSwap { nullptr, -1, false } };
     std::atomic<unsigned> pendingSwapSeq_ { 0 };            // Kept for ABI compat; no longer load-bearing
     std::atomic<bool> pendingPresetClear_ { false }; // Deferred clearBuffers() fallback (same-engine case only)
 
@@ -321,6 +332,25 @@ private:
     float lateOnsetRamp_ = 1.0f;      // Current envelope value (0→1)
     float lateOnsetIncrement_ = 0.0f; // Per-sample increment (1.0 / rampSamples)
     int   lateOnsetSamples_ = 0;      // Total ramp duration in samples
+
+    // Late-bloom envelope: transient-triggered unity→peak→unity curve applied to the wet path.
+    // Compensates for DV's architectural inability to reproduce VV's late-bloom/swell signature
+    // (where tail RMS equals or exceeds body RMS).
+    // Per-band variant: when any lateBloomBandOffset_[i] is non-zero, the wet signal is split
+    // into 4 bands (80-315, 315-1250, 1250-5000, 5000-12000 Hz) via cascaded 1-pole LPFs,
+    // each band receives its own envelope gain, then bands are summed.
+    float lateBloomLevel_ = 0.0f;             // Peak gain above unity (0 = disabled)
+    int   lateBloomDelaySamples_ = 0;
+    int   lateBloomAttackSamples_ = 0;
+    int   lateBloomHoldSamples_ = 0;
+    int   lateBloomReleaseSamples_ = 0;
+    int   lateBloomPhaseSamples_ = -1;        // -1 = idle, >=0 = samples since trigger
+    bool  lateBloomInputWasQuiet_ = true;
+    bool  lateBloomPerBand_ = false;          // set when any band offset is non-zero
+    float lateBloomBandLevel_[4] = { 0, 0, 0, 0 };  // effective per-band level
+    float bloomSplitA_[3] = { 0, 0, 0 };      // LPF coefficients at 315, 1250, 5000 Hz
+    float bloomSplitStateL_[3] = { 0, 0, 0 };
+    float bloomSplitStateR_[3] = { 0, 0, 0 };
 
     // Per-preset spectral correction filter: 5-stage biquad cascade that shapes
     // DattorroTank output to match VV's exact frequency response.
