@@ -10,7 +10,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "algorithm", 1 }, "Algorithm",
-        juce::StringArray { "Plate", "Hall", "Chamber", "Room", "Ambient", "PlateQuad", "HallQuad", "HallSlow", "HallFDN", "HallFDNDualSlopeBody", "HallQuadSustain", "RoomFDN", "RoomQuad", "RoomQuadSustain", "ChamberQuad", "AmbientFDN", "AmbientQuad", "ChamberQuadSustain", "AmbientQuadSustain", "HallFDNSmooth", "RoomQuadSustainHigh", "AmbientQuadSustainHigh", "HallQuadSmooth", "ChamberFDN", "PlateCrisp", "HallQuadBright", "RoomBright", "RoomFDNBright", "ChamberQuadBright", "AmbientFDNBright", "AmbientQuadBright", "ChamberQuadSustainHybrid", "PresetHomestarBladeRunner", "PresetPadHall", "PresetConcertWave", "PresetHugeSynthHall", "PresetSmallVocalHall", "PresetFatSnareHall", "PresetSnareHall", "PresetLongSynthHall", "PresetVeryNiceHall", "PresetVocalHall", "PresetDrumPlate", "PresetFatDrums", "PresetLargePlate", "PresetSteelPlate", "PresetTightPlate", "PresetVocalPlate", "PresetVoxPlate", "PresetDarkVocalRoom", "PresetExcitingSnareRoom", "PresetFatSnareRoom", "PresetLivelySnareRoom", "PresetLongDark70sSnareRoom", "PresetShortDarkSnareRoom", "PresetAPlate", "PresetClearChamber", "PresetFatPlate", "PresetLargeChamber", "PresetLargeWoodRoom", "PresetLiveVoxChamber", "PresetMediumGate", "PresetRichChamber", "PresetSmallChamber1", "PresetSmallChamber2", "PresetSnarePlate", "PresetThinPlate", "PresetTiledRoom", "PresetAmbience", "PresetAmbiencePlate", "PresetAmbienceTiledRoom", "PresetBigAmbienceGate", "PresetCrossStickRoom", "PresetDrumAir", "PresetGatedSnare", "PresetLargeAmbience", "PresetLargeGatedSnare", "PresetMedAmbience", "PresetShortVocalAmbience", "PresetSmallAmbience", "PresetSmallDrumRoom", "PresetSnareAmbience", "PresetTightAmbienceGate", "PresetTripHopSnare", "PresetVerySmallAmbience" }, 1));
+        juce::StringArray { "PresetHomestarBladeRunner", "PresetPadHall", "PresetConcertWave", "PresetHugeSynthHall", "PresetSmallVocalHall", "PresetFatSnareHall", "PresetSnareHall", "PresetLongSynthHall", "PresetVeryNiceHall", "PresetVocalHall", "PresetDrumPlate", "PresetFatDrums", "PresetLargePlate", "PresetSteelPlate", "PresetTightPlate", "PresetVocalPlate", "PresetVoxPlate", "PresetDarkVocalRoom", "PresetExcitingSnareRoom", "PresetFatSnareRoom", "PresetLivelySnareRoom", "PresetLongDark70sSnareRoom", "PresetShortDarkSnareRoom", "PresetAPlate", "PresetClearChamber", "PresetFatPlate", "PresetLargeChamber", "PresetLargeWoodRoom", "PresetLiveVoxChamber", "PresetMediumGate", "PresetRichChamber", "PresetSmallChamber1", "PresetSmallChamber2", "PresetSnarePlate", "PresetThinPlate", "PresetTiledRoom", "PresetAmbience", "PresetAmbiencePlate", "PresetAmbienceTiledRoom", "PresetBigAmbienceGate", "PresetCrossStickRoom", "PresetDrumAir", "PresetGatedSnare", "PresetLargeAmbience", "PresetLargeGatedSnare", "PresetMedAmbience", "PresetShortVocalAmbience", "PresetSmallAmbience", "PresetSmallDrumRoom", "PresetSnareAmbience", "PresetTightAmbienceGate", "PresetTripHopSnare", "PresetVerySmallAmbience" }, 0));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "decay", 1 }, "Decay Time",
@@ -24,13 +24,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "size", 1 }, "Size",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.7f));
 
+    // Treble range expanded to [0.1, 1.5] so factory values can honestly
+    // reflect the per-preset treble multiplier (the old quadratic curve in the
+    // wrapper is removed — knob now maps linearly to engine multiplier).
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "damping", 1 }, "Treble Multiply",
-        juce::NormalisableRange<float> (0.1f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.1f, 1.5f), 1.0f));
 
+    // Bass Multiply range expanded to [0.3, 2.5] so factory values can honestly
+    // reflect the per-preset kBakedBassMultScale baked into the engine.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_mult", 1 }, "Bass Multiply",
-        juce::NormalisableRange<float> (0.5f, 2.0f), 1.2f));
+        juce::NormalisableRange<float> (0.3f, 2.5f), 1.2f));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "crossover", 1 }, "Crossover",
@@ -404,13 +409,11 @@ void DuskVerbProcessor::releaseResources()
 
 void DuskVerbProcessor::timerCallback()
 {
-    int latency = pendingLatency_.load (std::memory_order_relaxed);
-    if (latency >= 0)
-    {
-        if (latency != getLatencySamples())
-            setLatencySamples (latency);
-        pendingLatency_.store (-1, std::memory_order_relaxed);
-    }
+    // exchange() atomically drains the pending value so a concurrent write
+    // from processBlock between a load and a store can't be lost.
+    int latency = pendingLatency_.exchange (-1, std::memory_order_relaxed);
+    if (latency >= 0 && latency != getLatencySamples())
+        setLatencySamples (latency);
 }
 
 void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
