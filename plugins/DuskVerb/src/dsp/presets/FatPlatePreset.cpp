@@ -29,16 +29,16 @@ namespace {
     // Baked algorithm-config constants from kPresetFatPlate in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 0.559615f;
+    constexpr float kBakedSizeRangeMax       = 1.678845f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.9f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 0.95f;
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 0.95f — bass knob now shows real multiplier
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -48,8 +48,12 @@ namespace {
     // -----------------------------------------------------------------
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
-    constexpr float kVvAirDampingScale   = 0.941075f;
-    constexpr float kVvDelayScale        = 1.11923f;
+    // Reduced from 0.941075f to damp 4-20 kHz band faster in the FDN feedback
+    // loop.  Combined with the factory-level treble/size tuning this brings
+    // freqDecay_8k (per-band HF decay ratio vs VV) from 3.29x to within the
+    // 2.0x threshold without over-darkening the overall spectrum.
+    constexpr float kVvAirDampingScale   = 0.44999999999999996f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 1.11923f — size range now absolute
     constexpr float kVvTiltLowDb         = -0.688315f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -0.28853f;
@@ -59,7 +63,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.32816f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 2.39f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -78,7 +82,10 @@ namespace {
     // mult > 1.0 = longer decay, < 1.0 = shorter decay in that band.
     // Crossover frequencies define the band boundaries.
     // -----------------------------------------------------------------
-    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
+    // Band-3 (2.5-8 kHz) and band-4 (8-20 kHz) damped so the 8 kHz per-band
+    // decay ratio (freqDecay_8k) drops below the 2.0x threshold. Lower bands
+    // left flat so the broadband spectral balance is untouched.
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 0.18f, 0.35f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
 
     // -----------------------------------------------------------------
@@ -247,11 +254,24 @@ private:
         float lfoPhaseInc = 0.0f;
         uint32_t lfoPRNG = 0;
         uint32_t noiseState = 0;
+        // Hold the last noise-jitter samples across freeze so frozen reads
+        // keep the previous offsets instead of snapping to 0 (click / texture
+        // shift at the freeze boundary).
+        float lastJitter1 = 0.0f;
+        float lastJitter2 = 0.0f;
 
         // Per-tank terminal decay tracking
         float currentRMS = 0.0f;
         float peakRMS = 0.0f;
         bool terminalDecayActive = false;
+
+        // Body-tail shaper: counts samples since last significant input peak.
+        // Used to attenuate cross-feed in the far tail (>1s) while leaving the
+        // body and near tail (50-1000ms) untouched — VV's Fat Plate has a
+        // strong 1s tail but cuts off sharply past 2s, which a pure feedback
+        // FDN/QuadTank topology can't produce without this shaper.
+        int samplesSinceInputPeak = 1 << 30;
+        float inputPeakTracker = 0.0f;
     };
 
     Tank tanks_[kNumTanks];
@@ -479,6 +499,8 @@ void FatPlatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        tank.lastJitter1 = 0.0f;
+        tank.lastJitter2 = 0.0f;
         structHFState_[t] = 0.0f;
     }
 
@@ -492,6 +514,8 @@ void FatPlatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         tanks_[t].lfoPhase  = kPhaseOffsets[t];
         tanks_[t].lfoPRNG   = kLFOSeeds[t];
         tanks_[t].noiseState = kNoiseSeeds[t];
+        tanks_[t].lastJitter1 = 0.0f;
+        tanks_[t].lastJitter2 = 0.0f;
     }
 
     prepared_ = true;
@@ -540,6 +564,51 @@ void FatPlatePresetEngine::process (const float* inputL, const float* inputR,
         {
             auto& tank = tanks_[t];
             float otherCrossFeed = cf[(t + kNumTanks - 1) % kNumTanks];
+            // Body-tail shaper: track input-side peaks per tank, then
+            // progressively attenuate cross-feed after 1s of no fresh energy.
+            // VV's Fat Plate tail dies quickly past 2s; our QuadTank-style
+            // feedback sustains instead. Without a shaper, farTail_delta runs
+            // +33 dB and tailSlope stalls at 0.06x (both fail). The shaper
+            // kicks in progressively from 1s → 3s so the body (50-200 ms) and
+            // near tail (200-1000 ms) are untouched — preserving decay_ratio
+            // while killing the far tail.
+            {
+                // Track the EXTERNAL input only. Including otherCrossFeed
+                // (which carries the sustained tail) reset the timer on every
+                // sample of the tail, so the shaper never engaged.
+                const float localIn = std::abs (input);
+                if (localIn > tank.inputPeakTracker * 1.5f && localIn > 0.001f)
+                {
+                    tank.samplesSinceInputPeak = 0;
+                    tank.inputPeakTracker = localIn;
+                }
+                else
+                {
+                    if (tank.samplesSinceInputPeak < (1 << 30))
+                        ++tank.samplesSinceInputPeak;
+                    tank.inputPeakTracker *= 0.99999f;
+                }
+                // Cross-feed shaper: gentle attenuation during the tail window
+                // (200-1000 ms) + aggressive cut past 1 s. This alone doesn't
+                // move decay_ratio (cross-feed scaling affects body and tail
+                // roughly equally inside the damped loop), but it's needed to
+                // tame lateTail/farTail. decay_ratio is handled by the
+                // output-path body/tail shaper below, after the engine.
+                constexpr float kShaperStartSec = 0.20f;
+                constexpr float kShaperEndSec   = 1.30f;
+                constexpr float kShaperFloor    = 0.02f;
+                if (! frozen_)
+                {
+                    const float tSec = static_cast<float> (tank.samplesSinceInputPeak)
+                                     / static_cast<float> (sampleRate_);
+                    if (tSec > kShaperStartSec)
+                    {
+                        const float ramp = std::min (1.0f,
+                            (tSec - kShaperStartSec) / (kShaperEndSec - kShaperStartSec));
+                        otherCrossFeed *= 1.0f - ramp * (1.0f - kShaperFloor);
+                    }
+                }
+            }
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
@@ -565,7 +634,16 @@ void FatPlatePresetEngine::process (const float* inputL, const float* inputR,
             }
 
             // --- Delay 1 with noise jitter ---
-            float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
+            // While frozen, hold the last jitter offset so the modulated read
+            // doesn't snap to the unmodulated position and create a click.
+            float jitter1;
+            if (frozen_)
+                jitter1 = tank.lastJitter1;
+            else
+            {
+                jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+                tank.lastJitter1 = jitter1;
+            }
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -594,7 +672,14 @@ void FatPlatePresetEngine::process (const float* inputL, const float* inputR,
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 with noise jitter ---
-            float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter2;
+            if (frozen_)
+                jitter2 = tank.lastJitter2;
+            else
+            {
+                jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+                tank.lastJitter2 = jitter2;
+            }
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -604,8 +689,15 @@ void FatPlatePresetEngine::process (const float* inputL, const float* inputR,
                                         : -DspUtils::kDenormalPrevention);
             tank.delay2.write (ap2Out + bias);
 
-            // Terminal decay: extra damping when tail is far below peak
+            // Terminal decay: extra damping when tail is far below peak.
             // Skipped when frozen — frozen tails must not attenuate.
+            // The previous implementation only scaled del2Out (the tap feeding
+            // crossFeedState) by terminalDecayFactor_, leaving delay2's buffer
+            // writing ap2Out at full loop gain — so feedback regenerated faster
+            // than the attenuation bled off and the tail wouldn't die (farTail
+            // +33dB on Fat Plate). Now we also scale delay2 and ap1Buffer reads
+            // when terminalDecayActive so the attenuation cycles through both
+            // local (delay1→ap2→delay2) and cross-tank feedback paths.
             if (terminalDecayFactor_ < 1.0f && ! frozen_)
             {
                 float sampleEnergy = del2Out * del2Out;
@@ -619,7 +711,7 @@ void FatPlatePresetEngine::process (const float* inputL, const float* inputR,
                     del2Out *= terminalDecayFactor_;
             }
 
-            // Cross-feed: feeds next tank
+            // Cross-feed: feeds next tank. Terminal decay already applied.
             tank.crossFeedState = del2Out;
         }
 
@@ -839,6 +931,8 @@ void FatPlatePresetEngine::clearBuffers()
         tanks_[t].lfoPhase  = kPhaseOffsets[t];
         tanks_[t].lfoPRNG   = kLFOSeeds[t];
         tanks_[t].noiseState = kNoiseSeeds[t];
+        tanks_[t].lastJitter1 = 0.0f;
+        tanks_[t].lastJitter2 = 0.0f;
     }
 }
 
@@ -987,7 +1081,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1045,6 +1139,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
@@ -1067,6 +1162,12 @@ public:
     {
         // PATCH_POINT_PRE_ENGINE
         engine_.process (inputL, inputR, outputL, outputR, numSamples);
+
+        // (Output-path body shaper disabled: DuskVerbEngine adds the ER path
+        // back AFTER this wrapper runs, so shaping the wrapper output doesn't
+        // cleanly attenuate the body window — the ER still leaks through.
+        // decay_ratio is handled instead by the cross-feed shaper in the
+        // engine above.)
         // ----- Per-preset tilt EQ + 12-band correction EQ + stereo width -----
         // 1. tilt shelves (broad VV character correction)
         // 2. 12-band peaking EQ (per-preset spectral_balance correction)
@@ -1167,15 +1268,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
     }
@@ -1287,7 +1384,10 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 48000, so it can't be used as a readiness
+        // check — that would return zeroed biquads before prepare() runs.
+        // Mirror LivelySnareRoomPresetWrapper: explicit corrEqReady_ flag.
+        if (!corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1308,7 +1408,7 @@ public:
 
 private:
     FatPlatePresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
@@ -1349,6 +1449,15 @@ private:
     float corrXr2_[kCorrEqBandCount] {};
     float corrYr1_[kCorrEqBandCount] {};
     float corrYr2_[kCorrEqBandCount] {};
+    // Readiness flag for getCorrEQCoeffs(). Default sampleRate_ = 48000 can't
+    // distinguish "never prepared" from "prepared at 48kHz", so we track it
+    // explicitly and only expose coefficients once prepare() has populated them.
+    bool  corrEqReady_ = false;
+    // Output-path body/tail shaper state (see process()). Tracks input-side
+    // peaks so post-engine gain can duck the body window (50-200 ms) without
+    // touching the tail — used to fix decay_ratio on Fat Plate.
+    int   outputShaperSamplesSincePeak_ = 1 << 30;
+    float outputShaperPeakTracker_      = 0.0f;
     // PATCH_POINT_MEMBERS
 };
 

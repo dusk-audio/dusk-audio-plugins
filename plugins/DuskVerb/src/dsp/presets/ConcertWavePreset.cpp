@@ -29,18 +29,23 @@ namespace {
     // Baked algorithm-config constants from kPresetConcertWave in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 2.0f;
+    constexpr float kBakedSizeRangeMax       = 6.0f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
     constexpr float kBakedTrebleMultScale    = 0.99f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.0f;
-    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.0f — bass knob now shows real multiplier
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 0.70f, 0.45f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
+    // Frequency-Split FDN: crossover-based band splitting before Hadamard
+    constexpr bool  kFreqSplitEnabled        = false;  // Disabled (freqDecay also ratio-invariant)
+    constexpr float kFreqSplitHz             = 4000.0f;   // Split at 4kHz (below the 8k problem band)
+    constexpr float kFreqSplitBassDecay      = 1.0f;      // Bass+mid at unity
+    constexpr float kFreqSplitMidHighDecay   = 0.50f;     // Extreme test: 50% HF attenuation per loop
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -51,7 +56,7 @@ namespace {
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 1.00029f;
-    constexpr float kVvDelayScale        = 4.0f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 4.0f — size range now absolute
     constexpr float kVvTiltLowDb         = 0.181169f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -0.517183f;
@@ -61,7 +66,7 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.08037f;
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 1.08037f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -127,10 +132,9 @@ public:
     void setStructuralLFDamping (float hz);
     void setDualSlope (float ratio, int fastCount, float fastGain);
     void setStereoCoupling (float amount);
-    void setFeedbackModDepth (float depth);
-    void setCrossoverModDepth (float depth);
     void setDecayBoost (float boost);
     void setTerminalDecay (float thresholdDB, float factor);
+    void setFreqSplit (bool enabled, float splitHz, float bassDecay, float midHighDecay);
     void clearBuffers();
 
 private:
@@ -319,9 +323,13 @@ private:
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;
     float sizeParam_ = 1.0f;
-    float feedbackModDepth_ = 0.0f;
-    float crossoverModDepth_ = 0.0f;
     float decayBoost_ = 1.0f;
+    // Frequency-Split FDN: per-channel crossover for pre-Hadamard band splitting
+    bool freqSplitEnabled_ = false;
+    float freqSplitCoeff_ = 0.0f;      // 1st-order LP coefficient
+    float freqSplitBassDecay_ = 1.0f;  // Per-loop bass decay multiplier
+    float freqSplitMidHighDecay_ = 1.0f;
+    float freqSplitLpState_[16] {};    // Per-channel LP filter state
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
@@ -602,6 +610,9 @@ void ConcertWavePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     updateLFORates();
     updateDecayCoefficients();
 
+    for (int i = 0; i < N; ++i)
+        freqSplitLpState_[i] = 0.0f;
+
     prepared_ = true;
 }
 
@@ -789,6 +800,23 @@ void ConcertWavePresetEngine::process (const float* inputL, const float* inputR,
             hadamardInPlace8 (feedback);
             hadamardInPlace8 (feedback + 8);
         }
+        else if (freqSplitEnabled_)
+        {
+            // Frequency-Split FDN: split each channel into bass/midHigh,
+            // apply independent Hadamards, then recombine with per-band decay.
+            float bass[N], midHigh[N];
+            for (int ch = 0; ch < N; ++ch)
+            {
+                freqSplitLpState_[ch] = (1.0f - freqSplitCoeff_) * delayOut[ch]
+                                      + freqSplitCoeff_ * freqSplitLpState_[ch];
+                bass[ch] = freqSplitLpState_[ch];
+                midHigh[ch] = delayOut[ch] - bass[ch];
+            }
+            hadamardInPlace16 (bass);
+            hadamardInPlace16 (midHigh);
+            for (int ch = 0; ch < N; ++ch)
+                feedback[ch] = bass[ch] * freqSplitBassDecay_ + midHigh[ch] * freqSplitMidHighDecay_;
+        }
         else
         {
             std::memcpy (feedback, delayOut, sizeof (feedback));
@@ -913,8 +941,8 @@ void ConcertWavePresetEngine::process (const float* inputL, const float* inputR,
         // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
         float rawL = outL * kOutputLevel * sizeCompensation_;
         float rawR = outR * kOutputLevel * sizeCompensation_;
-        outputL[i] = DspUtils::fastTanh (rawL * lateGainScale_ / kSafetyClip) * kSafetyClip;
-        outputR[i] = DspUtils::fastTanh (rawR * lateGainScale_ / kSafetyClip) * kSafetyClip;
+        outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip * lateGainScale_;
+        outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip * lateGainScale_;
     }
 }
 
@@ -1358,11 +1386,6 @@ void ConcertWavePresetEngine::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
-void ConcertWavePresetEngine::setCrossoverModDepth (float depth)
-{
-    crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
-}
-
 void ConcertWavePresetEngine::setDecayBoost (float boost)
 {
     decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
@@ -1375,6 +1398,14 @@ void ConcertWavePresetEngine::setTerminalDecay (float thresholdDB, float factor)
     terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
     terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
+}
+
+void ConcertWavePresetEngine::setFreqSplit (bool enabled, float splitHz, float bassDecay, float midHighDecay)
+{
+    freqSplitEnabled_ = enabled;
+    freqSplitCoeff_ = std::exp (-6.283185307f * splitHz / static_cast<float> (sampleRate_));
+    freqSplitBassDecay_ = std::clamp (bassDecay, 0.5f, 1.5f);
+    freqSplitMidHighDecay_ = std::clamp (midHighDecay, 0.5f, 1.5f);
 }
 
 void ConcertWavePresetEngine::clearBuffers()
@@ -1393,6 +1424,7 @@ void ConcertWavePresetEngine::clearBuffers()
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
+        freqSplitLpState_[i] = 0.0f;
         // Deterministic LFO/PRNG reset for clean state on algorithm switch.
         // (Wrapper prepare() no longer calls clearBuffers(), so this does not
         // conflict with prepare()'s stochastic randomization.)
@@ -1610,6 +1642,8 @@ public:
         // setNoiseModDepth scales by the engine's stored sampleRate_, so it
         // must run AFTER prepare() or the baked jitter is locked to 44.1kHz.
         engine_.setNoiseModDepth (kBakedNoiseModDepth);
+        if (kFreqSplitEnabled)
+            engine_.setFreqSplit (true, kFreqSplitHz, kFreqSplitBassDecay, kFreqSplitMidHighDecay);
 
         // The bass/treble multipliers are LEFT at the legacy
         // AlgorithmConfig defaults (kBakedBassMultScale, kBakedTrebleMultScale)
@@ -1643,7 +1677,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1701,6 +1735,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
@@ -1823,15 +1858,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             engine_.setStructuralHFDamping (lastStructHFHz_, lastTreble_);
     }
@@ -1943,7 +1974,9 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
+        // check. Use an explicit corrEqReady_ flag set at end of prepare().
+        if (! corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1959,13 +1992,14 @@ public:
 
 private:
     ConcertWavePresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
     bool  frozen_ = false;
     double sampleRate_ = 48000.0;
+    bool   corrEqReady_ = false;
     // Cached runtime overrides — replayed after prepare() to survive re-preparation.
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;

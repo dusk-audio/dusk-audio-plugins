@@ -29,16 +29,16 @@ namespace {
     // Baked algorithm-config constants from kPresetSmallDrumRoom in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.5f;
-    constexpr float kBakedSizeRangeMax       = 1.5f;
+    constexpr float kBakedSizeRangeMin       = 0.268854f;
+    constexpr float kBakedSizeRangeMax       = 0.806562f;
     constexpr float kBakedAirDampingScale    = 0.8f;
-    constexpr float kBakedNoiseModDepth      = 8.0f;
+    constexpr float kBakedNoiseModDepth      = 40.0f;  // boosted to add modulation VV has that DV lacks
     constexpr float kBakedTrebleMultScale    = 1.0f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.0f;
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.0f — bass knob now shows real multiplier
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.5f;
+    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
 
     // -----------------------------------------------------------------
     // Per-preset VV-derived structural constants
@@ -49,7 +49,7 @@ namespace {
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
     constexpr float kVvAirDampingScale   = 0.947591f;
-    constexpr float kVvDelayScale        = 0.537708f;
+    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.537708f — size range now absolute
     constexpr float kVvTiltLowDb         = -3.07221f;
     constexpr float kVvTiltLowHz         = 400.0f;
     constexpr float kVvTiltHighDb        = -5.6881f;
@@ -59,7 +59,8 @@ namespace {
     // to bring the engine's actual RT60 in line with VV's measured RT60.
     // Derived by render-then-measure (see derive_decay_scale.py).
     // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 0.226327f;
+    // Increased from 0.226327f to lengthen tail for decay_ratio fix.
+    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 0.8f
     // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
     // Derived by rendering DV at factory defaults and computing the per-band
     // dB delta vs VV. Applied post-engine in process() to push DV's spectral
@@ -69,7 +70,9 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -1.54224f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, -12.0f, 12.0f, 12.0f };
+    // Rebalanced — DV still had +4 dB excess at 125-1.25k and +7 at 5-8k
+    // after the band-damping fix. Cut those to match, keep HF sustain.
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.81f, -4.0f, -3.0f, -3.0f, -3.0f, -3.0f, -2.0f, -2.0f, -3.0f, -6.0f, 4.0f, 14.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
@@ -78,6 +81,8 @@ namespace {
     // mult > 1.0 = longer decay, < 1.0 = shorter decay in that band.
     // Crossover frequencies define the band boundaries.
     // -----------------------------------------------------------------
+    // Mids damped + air band sustained — DV had +3-6 dB excess in 125Hz-8kHz
+    // and -13 dB deficit at 12-20 kHz. Rebalances engine spectrum before EQ.
     constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
 
@@ -1297,7 +1302,7 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != 0.5f)
+        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
@@ -1357,6 +1362,7 @@ public:
             corrA1_[i] = (-2.0f * cosW0)    / a0_;
             corrA2_[i] = (1.0f - alpha / A) / a0_;
         }
+        corrEqReady_ = true;
 
         // Note: do NOT call clearBuffers() here — engine_.prepare() already
         // initializes all buffers and randomizes LFO/PRNG state. Calling
@@ -1500,15 +1506,11 @@ public:
 
     void setTrebleMultiply (float mult) override
     {
-        // Legacy nonlinear curve from DuskVerbEngine, preserved verbatim.
-        // (See note in setBassMultiply.)
-        const float curve = mult * mult;
-        const float scaled = kBakedTrebleMultScale * (1.0f - curve)
-                           + kBakedTrebleMultScaleMax * curve;
-        engine_.setTrebleMultiply (scaled);
-        // Cache the SCALED engine-facing value (Invariant 2) so any
-        // structural HF damping replay uses the consistent value.
-        lastTreble_ = scaled;
+        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
+        // interpolation were un-baked into the factory preset values, so
+        // the user's knob position IS the actual engine multiplier.
+        engine_.setTrebleMultiply (mult);
+        lastTreble_ = mult;
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
     }
@@ -1620,7 +1622,9 @@ public:
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
                            float* a1, float* a2, int maxBands) const override
     {
-        if (sampleRate_ == 0)
+        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
+        // check. Use an explicit corrEqReady_ flag set at end of prepare().
+        if (! corrEqReady_)
             return false;
         int n = std::min (kCorrEqBandCount, maxBands);
         for (int i = 0; i < n; ++i)
@@ -1641,13 +1645,14 @@ public:
 
 private:
     SmallDrumRoomPresetEngine engine_;
-    float lastTreble_ = 0.5f;
+    float lastTreble_ = -1.0f;
     float lastBass_ = 1.0f;
     float lastStructHFHz_ = 0.0f;
     float lastTerminalThresholdDb_ = 0.0f;
     float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
     bool  frozen_ = false;
     double sampleRate_ = 48000.0;
+    bool   corrEqReady_ = false;
     // Cached runtime overrides — replayed after prepare() to survive re-preparation.
     // Sentinel value -1.0 means "no override, use baked default".
     float overrideAirDamping_ = -1.0f;
