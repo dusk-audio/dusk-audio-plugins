@@ -193,9 +193,11 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     leftTank_.currentRMS = 0.0f;
     leftTank_.peakRMS = 0.0f;
     leftTank_.terminalDecayActive = false;
+    leftTank_.savedAP1Mod = 0.0f;
     rightTank_.currentRMS = 0.0f;
     rightTank_.peakRMS = 0.0f;
     rightTank_.terminalDecayActive = false;
+    rightTank_.savedAP1Mod = 0.0f;
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
     // Sample-rate-invariant terminal decay smoothing coefficients
@@ -702,6 +704,7 @@ void DattorroTank::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        tank.savedAP1Mod = 0.0f;  // keep from the code-review fix
         tank.currentRMS = 0.0f;
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
