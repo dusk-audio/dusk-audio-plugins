@@ -817,8 +817,6 @@ void FDNReverb::setHadamardPerturbation (float amount)
         return;
     }
 
-    usePerturbedMatrix_ = true;
-
     // Build 16x16 Hadamard matrix (Sylvester construction)
     float H[N][N];
     H[0][0] = 1.0f;
@@ -835,6 +833,12 @@ void FDNReverb::setHadamardPerturbation (float amount)
         }
     }
 
+    // Work entirely in a local temp matrix. Only commit to perturbMatrix_
+    // (and flip usePerturbedMatrix_) if every polar iteration's Gauss-Jordan
+    // inversion converged — otherwise the engine keeps its previous matrix
+    // (either the last good perturbed one or the untouched Hadamard path).
+    float newPerturb[N][N];
+
     // Apply deterministic perturbations (seeded PRNG for reproducibility)
     constexpr float kNorm = 0.25f; // 1/sqrt(16)
     uint32_t seed = 0xDEADBEEF;
@@ -847,7 +851,7 @@ void FDNReverb::setHadamardPerturbation (float amount)
             seed ^= seed << 5;
             float noise = static_cast<float> (static_cast<int32_t> (seed))
                         * (1.0f / 2147483648.0f);
-            perturbMatrix_[i][j] = (H[i][j] + noise * amount) * kNorm;
+            newPerturb[i][j] = (H[i][j] + noise * amount) * kNorm;
         }
     }
 
@@ -858,13 +862,14 @@ void FDNReverb::setHadamardPerturbation (float amount)
     // For a 16x16 nearly-orthogonal matrix, 4 iterations suffice for convergence.
     constexpr int kPolarIters = 4;
 
+    bool allIterationsSucceeded = true;
     for (int iter = 0; iter < kPolarIters; ++iter)
     {
-        // Copy current matrix M
+        // Copy current temp matrix M
         float M[N][N];
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j)
-                M[i][j] = perturbMatrix_[i][j];
+                M[i][j] = newPerturb[i][j];
 
         // Compute M^{-1} via Gauss-Jordan elimination on [M | I]
         float aug[N][2 * N];
@@ -902,7 +907,7 @@ void FDNReverb::setHadamardPerturbation (float amount)
             if (std::fabs (diag) < 1e-12f)
             {
                 gaussJordanSucceeded = false;
-                break; // Singular — preserve previous perturbMatrix_
+                break; // Singular — leave perturbMatrix_ untouched.
             }
 
             float invDiag = 1.0f / diag;
@@ -919,15 +924,27 @@ void FDNReverb::setHadamardPerturbation (float amount)
             }
         }
 
-        // M^{-1} is now in aug[i][j+N]. We need M^{-T} (transpose of inverse).
-        // Compute M_{k+1} = 0.5 * (M + M^{-T})
-        // Only update if inversion fully succeeded; otherwise keep previous matrix.
-        if (gaussJordanSucceeded)
+        if (! gaussJordanSucceeded)
         {
-            for (int i = 0; i < N; ++i)
-                for (int j = 0; j < N; ++j)
-                    perturbMatrix_[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
+            allIterationsSucceeded = false;
+            break;
         }
+
+        // M^{-1} is now in aug[i][j+N]. We need M^{-T} (transpose of inverse).
+        // Compute M_{k+1} = 0.5 * (M + M^{-T}) into the temp matrix.
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                newPerturb[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
+    }
+
+    // Only publish the new matrix if the polar projection converged on every
+    // iteration — otherwise leave perturbMatrix_ and usePerturbedMatrix_ alone.
+    if (allIterationsSucceeded)
+    {
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                perturbMatrix_[i][j] = newPerturb[i][j];
+        usePerturbedMatrix_ = true;
     }
 }
 
@@ -1084,11 +1101,17 @@ void FDNReverb::clearBuffers()
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
-        // Deterministic LFO phase spread for per-line decorrelation.
-        // Evenly spaced phases avoid the chorus-like artifacts that occur
-        // when all channels are phase-aligned after an algorithm switch.
-        lfoPhase_[i] = kTwoPi * static_cast<float> (i) / static_cast<float> (N);
-        lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
+    }
+    // Match prepare() exactly so a clearBuffers() reproduces the identical
+    // LFO/PRNG start state — otherwise transport resets diverge from a fresh
+    // prepare for the same preset/state.
+    constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
+    constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
+    for (int i = 0; i < N; ++i)
+    {
+        lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
+                                                             / static_cast<float> (N), kTwoPi);
+        lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
