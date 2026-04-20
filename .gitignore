@@ -139,3 +139,6 @@ plugins/DuskVerb/tests/reference_comparison
 *.zip
 tests/test_linear_phase
 tests/velvet90_match/
+calibration.db
+calibration.db-shm
+calibration.db-wal
