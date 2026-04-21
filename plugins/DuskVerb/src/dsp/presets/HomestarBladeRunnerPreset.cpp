@@ -79,7 +79,7 @@ namespace {
     // Previous -5 cut at 6325 Hz collapsed onset HF; reverting that cut and
     // adding small lift at 9.8 kHz recovers the transient brightness VV has
     // without amplifying the tail noise floor (tail_flatness still 0.03× VV).
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 3.0f, 5.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 7.0f, 16.0f };  // air boost, tuned
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
 // ==========================================================================
