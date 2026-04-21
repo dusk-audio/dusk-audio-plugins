@@ -217,6 +217,78 @@ struct AlgorithmConfig
     // Positive = extra boost in that band. Negative = reduce (or disable) bloom in band.
     // All 0 (default) = uniform bloom (scalar lateBloomLevel applied flat).
     float lateBloomBandOffset[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    // Body-bloom envelope (body-window counterpart to lateBloom). Triggered by the same
+    // input transient; shaped to cover the window_buildup metric's body region
+    // (100–500 ms, NOT the decay_ratio metric's 50–200 ms body — window_buildup is what
+    // the body_vs_onset failures are measured against). Default timing: 100 ms delay
+    // → 50 ms attack → 300 ms hold → 100 ms release (peak 150–450 ms, within the
+    // 100–500 ms body window). bodyBloomLevel <0 dips body (cuts band RMS); >0 boosts.
+    // Band offsets layer on top (same layout as lateBloomBandOffset).
+    float bodyBloomLevel = 0.0f;
+    float bodyBloomDelayMs = 100.0f;
+    float bodyBloomAttackMs = 50.0f;
+    float bodyBloomHoldMs = 300.0f;
+    float bodyBloomReleaseMs = 100.0f;
+    float bodyBloomBandOffset[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    // Tail-notch filter: narrow-band peaking biquad with envelope-modulated dry-wet blend.
+    // Targets freqDecay metric failures where one octave band sustains too long in DV's
+    // feedback loop. Coefficients computed once at algorithm-switch from (freq, Q, gainDb);
+    // envelope modulates the blend: 0=bypass, 1=full-wet-filtered. Same attack/hold/release
+    // timing semantics as lateBloom. When tailNotchFreqHz <= 0 the feature is disabled.
+    float tailNotchFreqHz = 0.0f;        // 0 or negative = disabled
+    float tailNotchQ = 2.0f;
+    float tailNotchGainDb = 0.0f;        // negative = dip (cut that band), positive = boost
+    float tailNotchDelayMs = 500.0f;
+    float tailNotchAttackMs = 100.0f;
+    float tailNotchHoldMs = 800.0f;
+    float tailNotchReleaseMs = 400.0f;
+
+    // Chorus AM defaults: applied at applyAlgorithm. Acts as a floor — if the user's
+    // chorus_depth/rate APVTS knobs are above, user wins. Targets the `modulation`
+    // metric (envelope variance in 1-4kHz band, 300-1500ms) which VV achieves via
+    // chorus AM on the wet output. 0 = disabled.
+    float chorusDepthDefault = 0.0f;
+    float chorusRateDefault = 1.0f;
+
+    // Tail floor gate: threshold-triggered hard-zero on wet output.
+    // Used for the `modulation` metric which is secretly a tail-silence detector —
+    // VV's 1-4kHz band hits digital silence (<1e-10) at 800ms+, DV's residual
+    // feedback tail keeps the trend above the 1e-10 floor. This gate mimics VV's
+    // natural silence: envelope-follower gate that only closes when signal has
+    // already decayed below threshold.
+    //  0 (default) = disabled.
+    //  Set to e.g. -70 for heavy gate (matches digital noise floor).
+    float tailFloorGateDb = 0.0f;
+    // One-pole release time for the envelope follower (fast attack, exponential release).
+    // Longer = gate stays open through brief dips in the signal envelope.
+    float tailFloorGateReleaseMs = 30.0f;
+
+    // Onset noise-burst generator: bandpass-filtered PRNG burst triggered on input
+    // transient, additively mixed into the wet output. Targets `onsetRing` /
+    // `tailRing` metrics where DV's FDN tank produces tonal onset content that
+    // VV hides with broadband noise (ER density). Independent L/R PRNGs add
+    // stereo decorrelation. peakDb <= -59 disables. Typical: -32 dB peak,
+    // 20 ms delay / 2 ms attack / 20 ms hold / 80 ms release, 2000-12000 Hz band, Q=0.5.
+    // `onsetBurstDelayMs` = silence-before-burst (matches tank natural onset latency;
+    // too-early burst is flagged by onset_delta_ms metric).
+    float onsetBurstPeakDb = -60.0f;       // disabled sentinel
+    float onsetBurstDelayMs = 20.0f;
+    float onsetBurstAttackMs = 2.0f;
+    float onsetBurstHoldMs = 20.0f;
+    float onsetBurstReleaseMs = 80.0f;
+    float onsetBurstBandLoHz = 2000.0f;
+    float onsetBurstBandHiHz = 12000.0f;
+    float onsetBurstQ = 0.5f;
+
+    // Post-FDN stereo decorrelator: nested allpass network with asymmetric L/R
+    // delays. Spreads channels further than FDN Hadamard + width matrix can
+    // achieve. Applied after FDN output scaling, before output EQ. Preserves
+    // envelope / decay / RMS (allpass is magnitude-flat). amount 0 = disabled,
+    // typical 0.5-0.8. baseDelayMs scales L/R delay templates.
+    float stereoDecorrAmount = 0.0f;
+    float stereoDecorrBaseDelayMs = 10.0f;
 };
 
 // DattorroTank output tap positions — shifted late in the loop to match VV's
@@ -439,11 +511,18 @@ static constexpr AlgorithmConfig kPresetHomestarBladeRunner = {
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    150.0f,          // lateOnsetMs: ramp reduces windowed-spectral peaks
-    0.35f,           // lateFeedForwardLevel
-    0.0f,            // crestLimitRatio: disabled — 1.6 pumped the floor, making the tail sound like white noise
+    50.0f,           // lateOnsetMs: fast onset (reduced from 150 for more hi onset content)
+    0.70f,           // lateFeedForwardLevel: raised from 0.35 for more pre-diff at onset
+    0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
     nullptr, nullptr,
+    1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
+    0.55f,  // lateBloomLevel
+    500.0f, 100.0f, 1000.0f, 400.0f,  // tail-isolated bloom
+    { 0.10f, 0.10f, 0.10f, -1.25f },  // lateBloomBandOffset: slight hi_mid + deeper hi
+    0.0f,  // bodyBloomLevel (per-band only)
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+    { 0.00f, 0.00f, 0.00f, -0.80f },  // bodyBloomBandOffset: hi body cut
 };
 
 // Preset "Pad Hall" (VV-derived FDN)
@@ -493,9 +572,12 @@ static constexpr AlgorithmConfig kPresetPadHall = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.00f,  // lateBloomLevel (0 = no scalar bloom, only per-band)
-    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
-    { 0.00f, 0.00f, 0.45f, 0.00f },  // lateBloomBandOffset
+    0.00f,  // lateBloomLevel
+    500.0f, 100.0f, 1000.0f, 400.0f,  // tail-only bloom (500-2000ms)
+    { 0.00f, 0.00f, 1.15f, -0.25f },  // lateBloomBandOffset (hi dip for spillover)
+    0.0f,  // bodyBloomLevel
+    110.0f, 30.0f, 80.0f, 20.0f,  // post-onset sharp body
+    { 0.00f, 1.80f, 0.00f, 0.00f },  // bodyBloomBandOffset (very strong mid)
 };
 
 // Preset "Concert Wave" (VV-derived FDN)
@@ -544,6 +626,13 @@ static constexpr AlgorithmConfig kPresetConcertWave = {
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
     nullptr, nullptr,
+    1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
+    0.00f,  // lateBloomLevel
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+    { -0.40f, -0.20f, 0.00f, 0.00f },  // lateBloomBandOffset (bass dip to raise centroid)
+    0.0f,  // bodyBloomLevel (per-band only)
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+    { -0.40f, -0.20f, 0.20f, -0.10f },  // bodyBloomBandOffset (bass dip, softer hi dip)
 };
 
 // Preset "Huge Synth Hall" (VV-derived FDN)
@@ -639,11 +728,26 @@ static constexpr AlgorithmConfig kPresetSmallVocalHall = {
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    0.0f,            // lateOnsetMs (does not move decay_ratio for this preset)
+    0.0f,            // lateOnsetMs
     0.35f,           // lateFeedForwardLevel
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
     nullptr, nullptr,
+    1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
+    0.30f,           // lateBloomLevel — for hi_tail reduction
+    500.0f, 100.0f, 1000.0f, 400.0f,  // tail-isolated bloom
+    { 0.10f, 0.10f, 0.10f, -1.20f },  // lateBloomBandOffset: hi dip for hi_tail
+    0.0f,            // bodyBloomLevel
+    100.0f, 50.0f, 300.0f, 100.0f,
+    { 0.00f, 0.00f, 0.00f, 0.00f },
+    0.0f, 2.00f, 0.0f,  // tailNotch disabled
+    500.0f, 100.0f, 800.0f, 400.0f,
+    0.0f, 1.0f,      // chorusDepthDefault, chorusRateDefault
+    0.0f, 30.0f,     // tailFloorGate disabled
+    -28.0f,          // onsetBurstPeakDb
+    30.0f,           // onsetBurstDelayMs — match tank natural onset latency
+    2.0f, 20.0f, 80.0f,  // attack/hold/release ms
+    3000.0f, 18000.0f, 0.3f,  // band 3-18kHz broadband, wide Q
 };
 
 // Preset "Fat Snare Hall" (VV-derived FDN)
@@ -693,11 +797,16 @@ static constexpr AlgorithmConfig kPresetFatSnareHall = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.15f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
+    0.22f,           // lateBloomLevel
 
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
 
-    { 0.00f, 0.00f, 0.40f, 0.70f },  // lateBloomBandOffset
+    { 0.00f, 0.45f, 1.30f, 1.70f },  // lateBloomBandOffset
+    0.0f,  // bodyBloomLevel
+    110.0f, 30.0f, 80.0f, 20.0f,  // post-onset body timing
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // bodyBloomBandOffset (disabled)
+    3500.0f, 1.80f, -9.0f,  // tailNotch: freq, Q, gainDb
+    500.0f, 100.0f, 800.0f, 400.0f,  // tailNotch timing
 };
 
 // Preset "Snare Hall" (VV-derived FDN)
@@ -796,6 +905,15 @@ static constexpr AlgorithmConfig kPresetLongSynthHall = {
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
     nullptr, nullptr,
+    1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
+    0.00f,  // lateBloomLevel — disabled
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // lateBloomBandOffset
+    0.12f,  // bodyBloomLevel — gentle mid-body fill for buildup metric
+    80.0f, 60.0f, 250.0f, 150.0f,  // body bloom timing
+    { 0.00f, 0.10f, 0.05f, 0.00f },  // bodyBloomBandOffset: gentle mid emphasis
+    0.0f, 2.00f, 0.0f,  // tailNotch disabled
+    500.0f, 100.0f, 800.0f, 400.0f,  // tailNotch timing
 };
 
 // Preset "Very Nice Hall" (VV-derived FDN)
@@ -942,6 +1060,16 @@ static constexpr AlgorithmConfig kPresetDrumPlate = {
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
     0.10f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
+
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // lateBloomBandOffset
+
+    0.0f,  // bodyBloomLevel (per-band only)
+
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+
+    { -0.30f, 0.00f, 0.00f, 0.00f },  // bodyBloomBandOffset
 };
 
 // Preset "Fat Drums" (VV-derived FDN)
@@ -1041,7 +1169,7 @@ static constexpr AlgorithmConfig kPresetLargePlate = {
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
     0.00f,  // lateBloomLevel (0 = no scalar bloom, only per-band)
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
-    { 0.00f, 0.00f, 0.00f, -0.35f },  // lateBloomBandOffset
+    { 0.00f, 0.00f, 0.00f, -0.20f },  // lateBloomBandOffset (softer LR2)
 };
 
 // Preset "Steel Plate" (VV-derived FDN)
@@ -1335,7 +1463,12 @@ static constexpr AlgorithmConfig kPresetExcitingSnareRoom = {
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
     0.00f,  // lateBloomLevel (0 = no scalar bloom, only per-band)
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
-    { 0.00f, 0.00f, 0.55f, 0.00f },  // lateBloomBandOffset
+    { 0.00f, 0.00f, 0.95f, 0.00f },  // lateBloomBandOffset: hi_mid boost
+    0.0f,  // bodyBloomLevel (disabled)
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // bodyBloomBandOffset (disabled)
+    6300.0f, 1.20f, -8.0f,  // tailNotch: freq, Q, gainDb (wide cut 5-8k)
+    500.0f, 100.0f, 800.0f, 400.0f,  // tailNotch timing
 };
 
 // Preset "Fat Snare Room" (VV-derived FDN)
@@ -1389,7 +1522,12 @@ static constexpr AlgorithmConfig kPresetFatSnareRoom = {
 
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
 
-    { 0.00f, 0.00f, 0.50f, 0.00f },  // lateBloomBandOffset
+    { 0.30f, 0.10f, 0.72f, 0.62f },  // lateBloomBandOffset
+    0.0f,  // bodyBloomLevel (disabled)
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // bodyBloomBandOffset (disabled)
+    0.0f, 1.20f, 0.0f,  // tailNotch: disabled (bloom does the work)
+    500.0f, 100.0f, 800.0f, 400.0f,  // tailNotch timing
 };
 
 // Preset "Lively Snare Room" (VV-derived FDN)
@@ -1679,7 +1817,17 @@ static constexpr AlgorithmConfig kPresetFatPlate = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.12f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
+    0.05f,           // lateBloomLevel (reduced to tame lateTail overshoot)
+
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+
+    { 0.00f, 0.00f, 0.00f, -0.30f },  // lateBloomBandOffset (dip 8k tail for freqDecay)
+
+    0.0f,  // bodyBloomLevel (per-band only)
+
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+
+    { 0.00f, 0.45f, 0.00f, 0.00f },  // bodyBloomBandOffset
 };
 
 // Preset "Large Chamber" (VV-derived FDN)
@@ -1831,7 +1979,7 @@ static constexpr AlgorithmConfig kPresetLiveVoxChamber = {
 
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
 
-    { 0.00f, 0.65f, 0.00f, 0.00f },  // lateBloomBandOffset
+    { -0.15f, 1.10f, 0.55f, 0.00f },  // lateBloomBandOffset
 };
 
 // Preset "Medium Gate" (VV-derived FDN)
@@ -1931,7 +2079,17 @@ static constexpr AlgorithmConfig kPresetRichChamber = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.25f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
+    0.15f,           // lateBloomLevel
+
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+
+    { 0.00f, 0.30f, 0.00f, 0.00f },  // lateBloomBandOffset (boost mid_tail)
+
+    0.0f,  // bodyBloomLevel (per-band only)
+
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+
+    { 0.00f, 0.40f, 0.00f, 0.00f },  // bodyBloomBandOffset
 };
 
 // Preset "Small Chamber1" (VV-derived FDN)
@@ -1985,7 +2143,7 @@ static constexpr AlgorithmConfig kPresetSmallChamber1 = {
 
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
 
-    { 0.00f, 0.00f, 0.40f, 0.00f },  // lateBloomBandOffset
+    { 0.00f, 0.00f, 0.55f, 0.00f },  // lateBloomBandOffset
 };
 
 // Preset "Small Chamber2" (VV-derived FDN)
@@ -2037,11 +2195,14 @@ static constexpr AlgorithmConfig kPresetSmallChamber2 = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.25f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
-
+    0.32f,           // lateBloomLevel — known-good for SC2 decay pass
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
-
-    { 0.00f, 0.30f, 0.00f, 0.00f },  // lateBloomBandOffset
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // lateBloomBandOffset: flat
+    0.0f,  // bodyBloomLevel (disabled)
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // bodyBloomBandOffset (disabled)
+    125.0f, 2.00f, -2.5f,  // tailNotch: narrow shallow 125 Hz dip
+    500.0f, 100.0f, 800.0f, 400.0f,  // tailNotch timing
 };
 
 // Preset "Snare Plate" (VV-derived FDN)
@@ -2338,7 +2499,7 @@ static constexpr AlgorithmConfig kPresetAmbienceTiledRoom = {
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
     0.00f,  // lateBloomLevel (0 = no scalar bloom, only per-band)
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
-    { 0.00f, 0.00f, 0.00f, -0.50f },  // lateBloomBandOffset
+    { 0.00f, 0.00f, 0.00f, -0.30f },  // lateBloomBandOffset (softer LR2)
 };
 
 // Preset "Big Ambience Gate" (VV-derived FDN)
@@ -2388,7 +2549,9 @@ static constexpr AlgorithmConfig kPresetBigAmbienceGate = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.15f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
+    0.30f,           // lateBloomLevel
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+    { 0.75f, 0.30f, 0.15f, 0.20f },  // lateBloomBandOffset: lo_mid strong + mid moderate + hi support for centroid
 };
 
 // Preset "Cross Stick Room" (VV-derived FDN)
@@ -2438,7 +2601,14 @@ static constexpr AlgorithmConfig kPresetCrossStickRoom = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.15f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
+    0.25f,           // lateBloomLevel — for decay(0.80)
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+    { 0.10f, 0.15f, -0.20f, -0.45f },  // bloom
+    0.0f,  // bodyBloomLevel
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // bodyBloomBandOffset
+    0.0f, 2.0f, 0.0f,  // tailNotch disabled
+    500.0f, 100.0f, 800.0f, 400.0f,  // tailNotch timing
 };
 
 // Preset "Drum Air" (VV-derived FDN)
@@ -2588,7 +2758,7 @@ static constexpr AlgorithmConfig kPresetLargeAmbience = {
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
     0.00f,  // lateBloomLevel (0 = no scalar bloom, only per-band)
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
-    { -0.30f, 0.00f, 0.00f, -0.35f },  // lateBloomBandOffset
+    { -0.10f, 0.00f, 0.00f, -0.20f },  // lateBloomBandOffset — softer LR2
 };
 
 // Preset "Large Gated Snare" (VV-derived FDN)
@@ -2640,7 +2810,7 @@ static constexpr AlgorithmConfig kPresetLargeGatedSnare = {
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
     0.00f,  // lateBloomLevel (0 = no scalar bloom, only per-band)
     150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
-    { 0.00f, 0.70f, 0.00f, 0.00f },  // lateBloomBandOffset
+    { 0.00f, 0.90f, 0.00f, 0.00f },  // lateBloomBandOffset
 };
 
 // Preset "Med Ambience" (VV-derived FDN)
@@ -2788,7 +2958,14 @@ static constexpr AlgorithmConfig kPresetSmallAmbience = {
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.08f,           // lateBloomLevel — compensate DV decay_ratio shortfall vs VV
+    0.05f,           // lateBloomLevel — with band 3 dip
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing
+    { 0.00f, 0.00f, 0.00f, -0.35f },  // lateBloomBandOffset (dip hi_tail excess)
+    0.0f,  // bodyBloomLevel (disabled)
+    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
+    { 0.00f, 0.00f, 0.00f, 0.00f },  // bodyBloomBandOffset (disabled)
+    8000.0f, 2.00f, -4.0f,  // tailNotch: freq, Q, gainDb (for freqDecay 8k)
+    500.0f, 100.0f, 800.0f, 400.0f,  // tailNotch timing
 };
 
 // Preset "Small Drum Room" (VV-derived FDN)
@@ -2823,7 +3000,7 @@ static constexpr AlgorithmConfig kPresetSmallDrumRoom = {
     false,           // useDattorroTank: OFF -- native FDN
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
-    0.0f, 0, 1.0f,  // dual-slope: disabled
+    0.0f, 0, 1.0f,  // dual-slope disabled
     0.0f, 0.0f,     // short-decay boost: disabled
     0.0f, 0.0f,     // gate: disabled
     12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
@@ -2837,6 +3014,21 @@ static constexpr AlgorithmConfig kPresetSmallDrumRoom = {
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
     nullptr, nullptr,
+    1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
+    0.32f,           // lateBloomLevel — spectral-safe
+    150.0f, 200.0f, 600.0f, 800.0f,  // bloom timing — short to keep spectrum steady
+    { 0.05f, 0.10f, 0.00f, -0.15f },  // lateBloomBandOffset: mild profile
+    0.0f,            // bodyBloomLevel
+    100.0f, 50.0f, 300.0f, 100.0f,
+    { 0.00f, 0.00f, 0.00f, 0.00f },
+    0.0f, 2.00f, 0.0f,  // tailNotch disabled
+    500.0f, 100.0f, 800.0f, 400.0f,
+    0.0f, 1.0f,      // chorusDepthDefault, chorusRateDefault
+    -30.0f, 30.0f,   // tailFloorGate for modulation
+    -60.0f,          // onsetBurstPeakDb: disabled
+    20.0f, 2.0f, 20.0f, 80.0f,
+    2000.0f, 12000.0f, 0.5f,
+    0.40f, 0.8f,     // stereoDecorrAmount: light + ultra-short delay (best spectral/stereo balance)
 };
 
 // Preset "Snare Ambience" (VV-derived FDN)
