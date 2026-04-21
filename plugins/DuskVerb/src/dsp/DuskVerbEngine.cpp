@@ -41,6 +41,8 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     outputDiffuser_.prepare (sampleRate, maxBlockSize);
     er_.prepare (sampleRate, maxBlockSize);
     tailChorus_.prepare (sampleRate, maxBlockSize);
+    onsetBurst_.prepare (sampleRate);
+    stereoDecorr_.prepare (sampleRate);
 
     // Register all 53 preset engine factories (no allocation — just populates
     // the registry's factory map). The generated forceLinkPresetEngines() stub
@@ -191,8 +193,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // rather than only firing once after algorithm switch.
     // Late-bloom envelope uses the same transient detection.
     const bool wantOnsetRetrigger = (useOnsetTable_ && onsetEnvelopePhase_ >= 1.0f);
-    const bool wantBloomRetrigger = (lateBloomLevel_ > 0.001f || lateBloomPerBand_);
-    if (wantOnsetRetrigger || wantBloomRetrigger)
+    const bool wantBloomRetrigger = (std::abs (lateBloomLevel_) > 0.001f || lateBloomPerBand_);
+    const bool wantBodyBloomRetrigger = (std::abs (bodyBloomLevel_) > 0.001f || bodyBloomPerBand_);
+    const bool wantTailNotchRetrigger = tailNotchEnabled_;
+    const bool wantOnsetBurstRetrigger = onsetBurst_.isEnabled();
+    if (wantOnsetRetrigger || wantBloomRetrigger || wantBodyBloomRetrigger
+        || wantTailNotchRetrigger || wantOnsetBurstRetrigger)
     {
         float inputPeak = 0.0f;
         for (int i = 0; i < numSamples; ++i)
@@ -205,6 +211,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             onsetEnvelopePhase_ = 0.0f;
         if (wantBloomRetrigger && transient && lateBloomInputWasQuiet_)
             lateBloomPhaseSamples_ = 0;
+        if (wantBodyBloomRetrigger && transient && lateBloomInputWasQuiet_)
+            bodyBloomPhaseSamples_ = 0;
+        if (wantTailNotchRetrigger && transient && lateBloomInputWasQuiet_)
+            tailNotchPhaseSamples_ = 0;
+        if (wantOnsetBurstRetrigger && transient && lateBloomInputWasQuiet_)
+            onsetBurst_.trigger();
         onsetInputWasQuiet_ = (inputPeak < 0.0001f);
         lateBloomInputWasQuiet_ = (inputPeak < 0.0001f);
     }
@@ -375,6 +387,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         }
     }
 
+    // Onset noise-burst: bandpass-filtered PRNG burst additively mixed into the
+    // wet output. Flattens onset spectrum for presets whose FDN tank produces
+    // tonal onset ringing. Triggered by the shared input-transient detector.
+    if (onsetBurst_.isEnabled() && ! frozen_)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            onsetBurst_.processSample (scratchL_[si], scratchR_[si]);
+        }
+    }
+
     // Tail chorus: stereo AM on late reverb (before scaling/diffusion).
     // NOTE: terminal decay is handled inside each reverb engine's feedback loop
     // (DattorroTank and FDN track peak/RMS internally). No engine-level post-
@@ -531,7 +555,85 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // curve starting at the last transient trigger. Shape is linear attack over
     // lateBloomAttackSamples_, hold at peak for lateBloomHoldSamples_, linear
     // release over lateBloomReleaseSamples_, then back to unity.
-    const bool bloomActive = (lateBloomLevel_ > 0.001f || lateBloomPerBand_)
+    // Body-bloom: shapes 50–200 ms body window. Applied before tail-bloom so a preset
+    // can use both (they don't overlap in time so per-band gains compose cleanly).
+    const bool bodyBloomActive = (std::abs (bodyBloomLevel_) > 0.001f || bodyBloomPerBand_)
+                               && bodyBloomPhaseSamples_ >= 0;
+    if (bodyBloomActive)
+    {
+        const int bd = bodyBloomDelaySamples_;
+        const int ba = bodyBloomAttackSamples_;
+        const int bh = bodyBloomHoldSamples_;
+        const int br = bodyBloomReleaseSamples_;
+        const int btotal = bd + ba + bh + br;
+        auto bodyShape = [&] (int p) -> float
+        {
+            if (p < bd) return 0.0f;
+            if (p < bd + ba)
+                return static_cast<float> (p - bd) / static_cast<float> (std::max (ba, 1));
+            if (p < bd + ba + bh) return 1.0f;
+            if (p < btotal)
+                return 1.0f - static_cast<float> (p - bd - ba - bh) / static_cast<float> (std::max (br, 1));
+            return 0.0f;
+        };
+        if (bodyBloomPerBand_)
+        {
+            const float a0 = bloomSplitA_[0];
+            const float a1 = bloomSplitA_[1];
+            const float a2 = bloomSplitA_[2];
+            for (int i = 0; i < numSamples; ++i)
+            {
+                int p = bodyBloomPhaseSamples_;
+                float shape;
+                if (p >= btotal) { shape = 0.0f; bodyBloomPhaseSamples_ = -1; }
+                else shape = bodyShape (p);
+                const float g0 = 1.0f + bodyBloomBandLevel_[0] * shape;
+                const float g1 = 1.0f + bodyBloomBandLevel_[1] * shape;
+                const float g2 = 1.0f + bodyBloomBandLevel_[2] * shape;
+                const float g3 = 1.0f + bodyBloomBandLevel_[3] * shape;
+                auto si = static_cast<size_t> (i);
+                // LR2 crossovers: two cascaded 1-pole LPFs per corner (12 dB/oct).
+                // State layout: [0..2] first pass, [3..5] second pass.
+                const float xL = scratchL_[si];
+                const float lp0aL = (1.0f - a0) * xL   + a0 * bloomSplitStateL_[0]; bloomSplitStateL_[0] = lp0aL;
+                const float lp0L  = (1.0f - a0) * lp0aL + a0 * bloomSplitStateL_[3]; bloomSplitStateL_[3] = lp0L;
+                const float lp1aL = (1.0f - a1) * xL   + a1 * bloomSplitStateL_[1]; bloomSplitStateL_[1] = lp1aL;
+                const float lp1L  = (1.0f - a1) * lp1aL + a1 * bloomSplitStateL_[4]; bloomSplitStateL_[4] = lp1L;
+                const float lp2aL = (1.0f - a2) * xL   + a2 * bloomSplitStateL_[2]; bloomSplitStateL_[2] = lp2aL;
+                const float lp2L  = (1.0f - a2) * lp2aL + a2 * bloomSplitStateL_[5]; bloomSplitStateL_[5] = lp2L;
+                scratchL_[si] = lp0L * g0 + (lp1L - lp0L) * g1 + (lp2L - lp1L) * g2 + (xL - lp2L) * g3;
+                const float xR = scratchR_[si];
+                const float lp0aR = (1.0f - a0) * xR   + a0 * bloomSplitStateR_[0]; bloomSplitStateR_[0] = lp0aR;
+                const float lp0R  = (1.0f - a0) * lp0aR + a0 * bloomSplitStateR_[3]; bloomSplitStateR_[3] = lp0R;
+                const float lp1aR = (1.0f - a1) * xR   + a1 * bloomSplitStateR_[1]; bloomSplitStateR_[1] = lp1aR;
+                const float lp1R  = (1.0f - a1) * lp1aR + a1 * bloomSplitStateR_[4]; bloomSplitStateR_[4] = lp1R;
+                const float lp2aR = (1.0f - a2) * xR   + a2 * bloomSplitStateR_[2]; bloomSplitStateR_[2] = lp2aR;
+                const float lp2R  = (1.0f - a2) * lp2aR + a2 * bloomSplitStateR_[5]; bloomSplitStateR_[5] = lp2R;
+                scratchR_[si] = lp0R * g0 + (lp1R - lp0R) * g1 + (lp2R - lp1R) * g2 + (xR - lp2R) * g3;
+                if (bodyBloomPhaseSamples_ >= 0) ++bodyBloomPhaseSamples_;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                int p = bodyBloomPhaseSamples_;
+                float shape;
+                if (p >= btotal) { shape = 0.0f; bodyBloomPhaseSamples_ = -1; }
+                else shape = bodyShape (p);
+                const float gain = 1.0f + bodyBloomLevel_ * shape;
+                auto si = static_cast<size_t> (i);
+                scratchL_[si] *= gain;
+                scratchR_[si] *= gain;
+                if (bodyBloomPhaseSamples_ >= 0) ++bodyBloomPhaseSamples_;
+            }
+        }
+    }
+
+    // Allow negative lateBloomLevel (down to -1.0) for tail-silence effect: at peak
+    // shape, gain = 1 + level*1 = 1 + level. With level = -1.0, output is fully
+    // silenced during bloom hold — used to satisfy tail-silence metrics (modulation).
+    const bool bloomActive = (std::abs (lateBloomLevel_) > 0.001f || lateBloomPerBand_)
                            && lateBloomPhaseSamples_ >= 0;
     if (bloomActive)
     {
@@ -579,11 +681,18 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 const float g3 = 1.0f + lateBloomBandLevel_[3] * shape;
 
                 auto si = static_cast<size_t> (i);
-                // L channel band split via cascaded LPFs (subtraction gives bandpasses).
+                // LR2 (12 dB/oct) band split via cascaded 1-pole LPFs — subtraction
+                // between adjacent cut-offs gives bandpasses with sharper crossover
+                // than the single-pole version. State layout: [0..2] first stage,
+                // [3..5] second stage; shared between body-bloom and tail-bloom
+                // (they don't overlap in time so shared state is safe).
                 const float xL = scratchL_[si];
-                const float lp0L = (1.0f - a0) * xL + a0 * bloomSplitStateL_[0]; bloomSplitStateL_[0] = lp0L;
-                const float lp1L = (1.0f - a1) * xL + a1 * bloomSplitStateL_[1]; bloomSplitStateL_[1] = lp1L;
-                const float lp2L = (1.0f - a2) * xL + a2 * bloomSplitStateL_[2]; bloomSplitStateL_[2] = lp2L;
+                const float lp0aL = (1.0f - a0) * xL   + a0 * bloomSplitStateL_[0]; bloomSplitStateL_[0] = lp0aL;
+                const float lp0L  = (1.0f - a0) * lp0aL + a0 * bloomSplitStateL_[3]; bloomSplitStateL_[3] = lp0L;
+                const float lp1aL = (1.0f - a1) * xL   + a1 * bloomSplitStateL_[1]; bloomSplitStateL_[1] = lp1aL;
+                const float lp1L  = (1.0f - a1) * lp1aL + a1 * bloomSplitStateL_[4]; bloomSplitStateL_[4] = lp1L;
+                const float lp2aL = (1.0f - a2) * xL   + a2 * bloomSplitStateL_[2]; bloomSplitStateL_[2] = lp2aL;
+                const float lp2L  = (1.0f - a2) * lp2aL + a2 * bloomSplitStateL_[5]; bloomSplitStateL_[5] = lp2L;
                 const float bL0 = lp0L;            // lo_mid
                 const float bL1 = lp1L - lp0L;     // mid
                 const float bL2 = lp2L - lp1L;     // hi_mid
@@ -591,9 +700,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 scratchL_[si] = bL0 * g0 + bL1 * g1 + bL2 * g2 + bL3 * g3;
 
                 const float xR = scratchR_[si];
-                const float lp0R = (1.0f - a0) * xR + a0 * bloomSplitStateR_[0]; bloomSplitStateR_[0] = lp0R;
-                const float lp1R = (1.0f - a1) * xR + a1 * bloomSplitStateR_[1]; bloomSplitStateR_[1] = lp1R;
-                const float lp2R = (1.0f - a2) * xR + a2 * bloomSplitStateR_[2]; bloomSplitStateR_[2] = lp2R;
+                const float lp0aR = (1.0f - a0) * xR   + a0 * bloomSplitStateR_[0]; bloomSplitStateR_[0] = lp0aR;
+                const float lp0R  = (1.0f - a0) * lp0aR + a0 * bloomSplitStateR_[3]; bloomSplitStateR_[3] = lp0R;
+                const float lp1aR = (1.0f - a1) * xR   + a1 * bloomSplitStateR_[1]; bloomSplitStateR_[1] = lp1aR;
+                const float lp1R  = (1.0f - a1) * lp1aR + a1 * bloomSplitStateR_[4]; bloomSplitStateR_[4] = lp1R;
+                const float lp2aR = (1.0f - a2) * xR   + a2 * bloomSplitStateR_[2]; bloomSplitStateR_[2] = lp2aR;
+                const float lp2R  = (1.0f - a2) * lp2aR + a2 * bloomSplitStateR_[5]; bloomSplitStateR_[5] = lp2R;
                 const float bR0 = lp0R;
                 const float bR1 = lp1R - lp0R;
                 const float bR2 = lp2R - lp1R;
@@ -627,6 +739,101 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
                 if (lateBloomPhaseSamples_ >= 0)
                     ++lateBloomPhaseSamples_;
             }
+        }
+    }
+
+    // Tail-notch filter: envelope-modulated dry-wet blend with a peaking biquad.
+    // At env=0 the biquad is bypassed AND its state is held (so when env ramps in we
+    // have a fresh filter rather than mixing in a partially-filled memory). The filter
+    // is only run during the active phase of the envelope; outside that window the
+    // filter state is zeroed so the next trigger starts clean.
+    if (tailNotchEnabled_ && tailNotchPhaseSamples_ >= 0)
+    {
+        const int delay   = tailNotchDelaySamples_;
+        const int attack  = tailNotchAttackSamples_;
+        const int hold    = tailNotchHoldSamples_;
+        const int release = tailNotchReleaseSamples_;
+        const int total   = delay + attack + hold + release;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            int p = tailNotchPhaseSamples_;
+            float env;
+            bool inDelay = false;
+            if (p >= total)
+            {
+                env = 0.0f;
+                tailNotchPhaseSamples_ = -1;
+                tailNotchFilter_.reset();  // clean for next trigger
+            }
+            else if (p < delay)
+            {
+                env = 0.0f;
+                inDelay = true;
+            }
+            else if (p < delay + attack)
+                env = static_cast<float> (p - delay) / static_cast<float> (std::max (attack, 1));
+            else if (p < delay + attack + hold)
+                env = 1.0f;
+            else
+                env = 1.0f - static_cast<float> (p - delay - attack - hold) / static_cast<float> (std::max (release, 1));
+
+            auto si = static_cast<size_t> (i);
+            const float xL = scratchL_[si];
+            const float xR = scratchR_[si];
+            if (env > 0.0f)
+            {
+                // Run the biquad only while the envelope is active — avoids the filter
+                // processing body-window signal and introducing group-delay artifacts
+                // into metrics that straddle the delay boundary.
+                const float yL = tailNotchFilter_.processL (xL);
+                const float yR = tailNotchFilter_.processR (xR);
+                scratchL_[si] = (1.0f - env) * xL + env * yL;
+                scratchR_[si] = (1.0f - env) * xR + env * yR;
+            }
+            else if (inDelay)
+            {
+                // In pre-attack delay: keep filter state zeroed so attack starts clean.
+                // (Skipping processL/R also keeps the wet signal bit-identical to
+                //  bypass during the body-metric window, which is critical for presets
+                //  where the body metric is delicate.)
+                tailNotchFilter_.reset();
+            }
+            if (tailNotchPhaseSamples_ >= 0)
+                ++tailNotchPhaseSamples_;
+        }
+    }
+
+    // Post-FDN stereo decorrelator: nested allpass with asymmetric L/R delays.
+    // Spreads channels beyond Hadamard + width-matrix can achieve. Magnitude-flat
+    // (preserves RMS / decay metrics) — only phase-scrambles. Applied before
+    // tail floor gate so gated zero regions stay zero.
+    if (stereoDecorr_.amount() > 0.001f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            stereoDecorr_.processSample (scratchL_[si], scratchR_[si]);
+        }
+    }
+
+    // Tail floor gate: envelope-follower hard-zero below threshold. Mimics VV's
+    // digital silence (<1e-10) in decayed regions. Fast peak attack (tracks the
+    // signal instantaneously on rise) + exponential release (slow decay) → gate
+    // only closes after signal has genuinely faded below threshold, so no audible
+    // click on fresh transients.
+    if (tailFloorGateEnabled_)
+    {
+        const float thresh = tailFloorGateThreshold_;
+        const float rel = tailFloorGateReleaseCoeff_;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            auto si = static_cast<size_t> (i);
+            const float absL = std::abs (scratchL_[si]);
+            const float absR = std::abs (scratchR_[si]);
+            tailFloorGateEnvL_ = absL > tailFloorGateEnvL_ ? absL : tailFloorGateEnvL_ * rel;
+            tailFloorGateEnvR_ = absR > tailFloorGateEnvR_ ? absR : tailFloorGateEnvR_ * rel;
+            if (tailFloorGateEnvL_ < thresh) scratchL_[si] = 0.0f;
+            if (tailFloorGateEnvR_ < thresh) scratchR_[si] = 0.0f;
         }
     }
 
@@ -977,10 +1184,86 @@ void DuskVerbEngine::applyAlgorithm (int index, PresetEngineBase* resolvedEngine
     bloomSplitA_[0] = std::exp (-kTwoPi *  315.0f / sr);
     bloomSplitA_[1] = std::exp (-kTwoPi * 1250.0f / sr);
     bloomSplitA_[2] = std::exp (-kTwoPi * 5000.0f / sr);
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 6; ++i)
     {
         bloomSplitStateL_[i] = 0.0f;
         bloomSplitStateR_[i] = 0.0f;
+    }
+
+    // Tail-notch filter: peaking biquad with envelope-modulated dry-wet blend.
+    tailNotchEnabled_ = (config_->tailNotchFreqHz > 0.0f && std::abs (config_->tailNotchGainDb) > 0.01f);
+    if (tailNotchEnabled_)
+    {
+        // Peaking EQ (Audio EQ Cookbook) — same formulation as midEQFilter_
+        const float A     = std::pow (10.0f, config_->tailNotchGainDb / 40.0f);
+        const float omega = kTwoPi * config_->tailNotchFreqHz / sr;
+        const float sn    = std::sin (omega);
+        const float cs    = std::cos (omega);
+        const float alpha = sn / (2.0f * std::max (config_->tailNotchQ, 0.1f));
+        const float a0    = 1.0f + alpha / A;
+        tailNotchFilter_.b0 = (1.0f + alpha * A) / a0;
+        tailNotchFilter_.b1 = (-2.0f * cs) / a0;
+        tailNotchFilter_.b2 = (1.0f - alpha * A) / a0;
+        tailNotchFilter_.a1 = (-2.0f * cs) / a0;
+        tailNotchFilter_.a2 = (1.0f - alpha / A) / a0;
+        tailNotchFilter_.reset();
+    }
+    tailNotchDelaySamples_   = static_cast<int> (config_->tailNotchDelayMs   * 0.001f * sr);
+    tailNotchAttackSamples_  = static_cast<int> (config_->tailNotchAttackMs  * 0.001f * sr);
+    tailNotchHoldSamples_    = static_cast<int> (config_->tailNotchHoldMs    * 0.001f * sr);
+    tailNotchReleaseSamples_ = static_cast<int> (config_->tailNotchReleaseMs * 0.001f * sr);
+    tailNotchPhaseSamples_ = -1;
+    tailNotchInputWasQuiet_ = true;
+
+    // Chorus AM default: apply on algorithm switch so it's active from the first block,
+    // before any setChorusDepthOverride call from the host's processBlock.
+    if (config_->chorusDepthDefault > 0.0f)
+    {
+        tailChorus_.setDepth (config_->chorusDepthDefault);
+        tailChorus_.setRate (config_->chorusRateDefault);
+    }
+
+    // Tail floor gate: envelope-follower hard-zero below threshold. Threshold stored
+    // linear to avoid pow() per sample.
+    tailFloorGateEnabled_ = config_->tailFloorGateDb < -0.1f;
+    tailFloorGateThreshold_ = tailFloorGateEnabled_
+        ? std::pow (10.0f, config_->tailFloorGateDb / 20.0f)
+        : 0.0f;
+    // One-pole exponential release: env *= coeff per sample.
+    // coeff = exp(-1 / (release_sec * sampleRate)) → envelope decays to ~37% in release time.
+    {
+        const float releaseSec = std::max (0.001f, config_->tailFloorGateReleaseMs * 0.001f);
+        tailFloorGateReleaseCoeff_ = std::exp (-1.0f / (releaseSec * static_cast<float> (sampleRate_)));
+    }
+    tailFloorGateEnvL_ = 0.0f;
+    tailFloorGateEnvR_ = 0.0f;
+
+    // Onset noise-burst generator.
+    onsetBurst_.configure (config_->onsetBurstPeakDb, config_->onsetBurstDelayMs,
+                           config_->onsetBurstAttackMs, config_->onsetBurstHoldMs,
+                           config_->onsetBurstReleaseMs,
+                           config_->onsetBurstBandLoHz, config_->onsetBurstBandHiHz,
+                           config_->onsetBurstQ);
+    onsetBurst_.reset();
+
+    // Post-FDN stereo decorrelator.
+    stereoDecorr_.configure (config_->stereoDecorrAmount, config_->stereoDecorrBaseDelayMs);
+    stereoDecorr_.reset();
+
+    // Body-bloom: shares the band-split filters with late-bloom (they don't overlap
+    // in time — body 20–220 ms, tail 150–1750 ms — so sharing state is safe).
+    bodyBloomLevel_           = config_->bodyBloomLevel;
+    bodyBloomDelaySamples_    = static_cast<int> (config_->bodyBloomDelayMs   * 0.001f * sr);
+    bodyBloomAttackSamples_   = static_cast<int> (config_->bodyBloomAttackMs  * 0.001f * sr);
+    bodyBloomHoldSamples_     = static_cast<int> (config_->bodyBloomHoldMs    * 0.001f * sr);
+    bodyBloomReleaseSamples_  = static_cast<int> (config_->bodyBloomReleaseMs * 0.001f * sr);
+    bodyBloomPhaseSamples_    = -1;
+    bodyBloomPerBand_ = false;
+    for (int b = 0; b < 4; ++b)
+    {
+        bodyBloomBandLevel_[b] = bodyBloomLevel_ + config_->bodyBloomBandOffset[b];
+        if (std::abs (config_->bodyBloomBandOffset[b]) > 0.001f)
+            bodyBloomPerBand_ = true;
     }
 
     // Hall uses Dattorro with hall-scale delays (~280ms loops vs room's ~135ms).
@@ -1532,13 +1815,22 @@ void DuskVerbEngine::setStereoCouplingOverride (float amount)
 
 void DuskVerbEngine::setChorusDepthOverride (float depth)
 {
-    if (depth < 0.0f) depth = 0.0f;  // Default: chorus off
+    if (depth < 0.0f) depth = 0.0f;
+    // Per-preset floor: if the preset has a non-zero chorusDepthDefault, that's the minimum.
+    // Lets the user dial chorus *up* but not below the preset's required level (needed to
+    // match VV's mandatory chorus AM on presets like Small Drum Room).
+    if (config_ && config_->chorusDepthDefault > depth)
+        depth = config_->chorusDepthDefault;
     tailChorus_.setDepth (depth);
 }
 
 void DuskVerbEngine::setChorusRateOverride (float hz)
 {
-    if (hz < 0.0f) hz = 1.0f;  // Default rate
+    if (hz <= 0.0f) hz = 1.0f;
+    // Per-preset floor: if user leaves chorus rate at default (1.0), the preset default wins.
+    if (config_ && config_->chorusRateDefault > 0.0f
+        && std::abs (hz - 1.0f) < 1e-4f) // user at default
+        hz = config_->chorusRateDefault;
     tailChorus_.setRate (hz);
 }
 

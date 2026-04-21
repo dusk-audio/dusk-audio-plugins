@@ -36,7 +36,7 @@ namespace {
     constexpr float kBakedTrebleMultScale    = 0.89f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
     constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 0.98f — bass knob now shows real multiplier
-    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 0.60f, 0.70f, 1.00f };
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 0.60f, 0.34f, 1.00f };
     constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
