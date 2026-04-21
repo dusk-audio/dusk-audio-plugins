@@ -7,6 +7,8 @@
 #include "FDNReverb.h"
 #include "OutputDiffusion.h"
 #include "QuadTank.h"
+#include "OnsetBurst.h"
+#include "StereoDecorrelator.h"
 #include "TailChorus.h"
 #include "TiledRoomReverb.h"
 #include "presets/PresetEngineBase.h"
@@ -289,6 +291,8 @@ private:
 
     // Tail chorus: stereo amplitude modulation on reverb tail
     TailChorus tailChorus_;
+    OnsetBurst onsetBurst_;
+    StereoDecorrelator stereoDecorr_;
 
     // Terminal decay: when reverb tail drops below threshold, accelerate decay
     float terminalThresholdDb_ = 0.0f; // 0 = disabled
@@ -349,8 +353,37 @@ private:
     bool  lateBloomPerBand_ = false;          // set when any band offset is non-zero
     float lateBloomBandLevel_[4] = { 0, 0, 0, 0 };  // effective per-band level
     float bloomSplitA_[3] = { 0, 0, 0 };      // LPF coefficients at 315, 1250, 5000 Hz
-    float bloomSplitStateL_[3] = { 0, 0, 0 };
-    float bloomSplitStateR_[3] = { 0, 0, 0 };
+    // LR2 band-split: each crossover is two 1-pole LPFs in series (12 dB/oct),
+    // so 6 state vars per channel — stages [0..2] are the first pass, [3..5] the second.
+    float bloomSplitStateL_[6] = { 0, 0, 0, 0, 0, 0 };
+    float bloomSplitStateR_[6] = { 0, 0, 0, 0, 0, 0 };
+
+    // Body-bloom envelope: body-window counterpart to lateBloom. Shapes the 50–200 ms
+    // body region to fix body-specific buildup (e.g. hi_body_vs_onset too loud,
+    // mid_body_vs_onset too thin) that lateBloom's 150 ms delay can't reach.
+    float bodyBloomLevel_ = 0.0f;
+    int   bodyBloomDelaySamples_ = 0;
+    int   bodyBloomAttackSamples_ = 0;
+    int   bodyBloomHoldSamples_ = 0;
+    int   bodyBloomReleaseSamples_ = 0;
+    int   bodyBloomPhaseSamples_ = -1;
+    bool  bodyBloomPerBand_ = false;
+    float bodyBloomBandLevel_[4] = { 0, 0, 0, 0 };
+    // Body-bloom and tail-bloom share the same band-split filters (bloomSplitA_/State)
+    // when both are active in the same block — they don't overlap in time so states
+    // remain consistent across the transition.
+
+    // Tail-notch filter: envelope-modulated peaking biquad applied to wet path.
+    // Coefficients computed once at applyAlgorithm from (freq, Q, gainDb). Envelope
+    // blends between bypass (env=0, original wet) and full filtered (env=1).
+    bool  tailNotchEnabled_ = false;
+    Biquad tailNotchFilter_;
+    int   tailNotchDelaySamples_ = 0;
+    int   tailNotchAttackSamples_ = 0;
+    int   tailNotchHoldSamples_ = 0;
+    int   tailNotchReleaseSamples_ = 0;
+    int   tailNotchPhaseSamples_ = -1;
+    bool  tailNotchInputWasQuiet_ = true;
 
     // Per-preset spectral correction filter: 5-stage biquad cascade that shapes
     // DattorroTank output to match VV's exact frequency response.
@@ -383,6 +416,15 @@ private:
     float gateEnvelope_ = 0.0f;
     int gateHoldCounter_ = 0;
     bool gateTriggered_ = false;
+
+    // Tail floor gate: envelope-follower hard-zero. Zero output when the tracked
+    // envelope falls below tailFloorGateThreshold_. Fast attack keeps active signal
+    // through, exponential release matches natural decay so no click.
+    bool tailFloorGateEnabled_ = false;
+    float tailFloorGateThreshold_ = 0.0f;
+    float tailFloorGateReleaseCoeff_ = 0.999f;
+    float tailFloorGateEnvL_ = 0.0f;
+    float tailFloorGateEnvR_ = 0.0f;
 
     // Algorithm crossfade: mute-and-morph to prevent clicks on algorithm switch.
     // These fields are accessed from setAlgorithm() (message thread) and
