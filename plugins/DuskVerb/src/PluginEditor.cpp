@@ -1,6 +1,19 @@
 #include "PluginEditor.h"
 #include "FactoryPresets.h"
 #include "VVERTapData.h"
+#include "dsp/AlgorithmConfig.h"
+
+namespace {
+    // Returns the modeBox_ id (1=FDN, 2=Dattorro, 3=QuadTank) that matches the
+    // engine type baked into the AlgorithmConfig for the given algorithm index.
+    int engineModeIdForAlgorithm (int algorithmIndex)
+    {
+        const auto& cfg = getAlgorithmConfig (algorithmIndex);
+        if (cfg.useDattorroTank) return 2;
+        if (cfg.useQuadTank)     return 3;
+        return 1;  // FDN default
+    }
+}
 
 // =============================================================================
 // KnobWithLabel
@@ -403,8 +416,8 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         {
             loadPreset (id - 2);
         }
-        // Preset supersedes any active mode selection
-        modeBox_.setSelectedId (0, juce::dontSendNotification);
+        // loadPreset() now syncs modeBox_ to the preset's engine type, so we
+        // do not clear it here (previous behaviour was to wipe it to "Mode").
         updateDeleteButtonVisibility();
     };
     addAndMakeVisible (presetBox_);
@@ -449,6 +462,14 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
             }
         }
         updateDeleteButtonVisibility();
+
+        // Sync the Mode dropdown from whatever algorithm the host restored.
+        if (auto* algoParam = processorRef.parameters.getRawParameterValue ("algorithm"))
+        {
+            int algoIdx = static_cast<int> (algoParam->load());
+            modeBox_.setSelectedId (engineModeIdForAlgorithm (algoIdx),
+                                    juce::dontSendNotification);
+        }
     }
 
     // Prev/next preset nav buttons
@@ -1017,13 +1038,18 @@ void DuskVerbEditor::loadPreset (int index)
     const auto& presets = getFactoryPresets();
     if (index >= 0 && index < static_cast<int> (presets.size()))
     {
-        presets[static_cast<size_t> (index)].applyTo (processorRef.parameters);
+        const auto& preset = presets[static_cast<size_t> (index)];
+        preset.applyTo (processorRef.parameters);
         processorRef.parameters.state.setProperty ("presetName",
-            juce::String (presets[static_cast<size_t> (index)].name), nullptr);
+            juce::String (preset.name), nullptr);
 
         // Set preset_id to trigger per-preset ER tap loading in processBlock
         if (auto* p = processorRef.parameters.getParameter ("preset_id"))
             p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (index + 1)));
+
+        // Sync Mode dropdown with the preset's underlying engine type
+        modeBox_.setSelectedId (engineModeIdForAlgorithm (preset.algorithm),
+                                juce::dontSendNotification);
     }
 }
 
