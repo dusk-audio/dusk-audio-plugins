@@ -1,9 +1,9 @@
 // GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
 //
-// Per-preset reverb engine for "Thin Plate".
-// Base engine: QuadTank
+// Per-preset reverb engine for "Bright Plate".
+// Base engine: DattorroTank
 //
-// This file contains a full private copy of the QuadTank DSP in an
+// This file contains a full private copy of the DattorroTank DSP in an
 // anonymous namespace, so modifications to this preset's DSP cannot affect
 // any other preset. The class has been renamed to BrightPlatePresetEngine to avoid
 // ODR conflicts.
@@ -29,87 +29,69 @@ namespace {
     // Baked algorithm-config constants from kPresetBrightPlate in AlgorithmConfig.h
     // at generation time. Editing these here has no effect on other presets.
     constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.247382f;
-    constexpr float kBakedSizeRangeMax       = 0.742144f;
+    constexpr float kBakedSizeRangeMin       = 0.205897f;
+    constexpr float kBakedSizeRangeMax       = 0.61769f;
     constexpr float kBakedAirDampingScale    = 0.8f;
     constexpr float kBakedNoiseModDepth      = 8.0f;
-    constexpr float kBakedTrebleMultScale    = 1.0f;
+    constexpr float kBakedTrebleMultScale    = 0.81f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 0.75f — bass knob now shows real multiplier
+    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 0.65f — bass knob now shows real multiplier
     constexpr float kBakedModDepthScale      = 0.75f;
     constexpr float kBakedModRateScale       = 13.0f;
     constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
 
     // -----------------------------------------------------------------
-    // Per-preset VV-derived structural constants
-    // (from vv_topology_baked.json — derived from VV IR analysis).
-    // These set the engine to a per-preset target at prepare() time;
-    // runtime setters layer relative scaling on top of them.
+    // Structural constants — Bright Plate (extended bright tail).
+    // Target: EMT 140 "bright" damper, variant 3 → RT60 ~4.6s, centroid ~6.3 kHz.
+    // Longer than Drum Plate, slightly less brilliant top-end.
     // -----------------------------------------------------------------
     constexpr float kVvCrossoverHz       = 1000.0f;
-    constexpr float kVvHighCrossoverHz   = 6000.0f;
-    constexpr float kVvAirDampingScale   = 0.938447f;
-    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.494763f — size range now absolute
-    constexpr float kVvTiltLowDb         = -0.755086f;
+    constexpr float kVvHighCrossoverHz   = 6000.0f;   // mid-air split, tracks 6.3 kHz centroid
+    constexpr float kVvAirDampingScale   = 0.85f;     // moderate HF damping over the long tail
+    constexpr float kVvDelayScale        = 1.0f;
+    constexpr float kVvTiltLowDb         = 0.0f;
     constexpr float kVvTiltLowHz         = 400.0f;
-    constexpr float kVvTiltHighDb        = -2.04669f;
-    constexpr float kVvTiltHighHz        = 5000.0f;
-    constexpr float kVvStereoWidth       = 0.926493f;
-    // Decay-time correction: multiplied into the user knob in setDecayTime()
-    // to bring the engine's actual RT60 in line with VV's measured RT60.
-    // Derived by render-then-measure (see derive_decay_scale.py).
-    // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 0.951767f
-    // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
-    // Derived by rendering DV at factory defaults and computing the per-band
-    // dB delta vs VV. Applied post-engine in process() to push DV's spectral
-    // character toward VV's. Coefficients are computed from these constants
-    // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Max correction magnitude for this preset: 12.0 dB
-    // -----------------------------------------------------------------
+    constexpr float kVvTiltHighDb        = -4.5f;     // HF cut to land centroid at ~6.3 kHz target
+    constexpr float kVvTiltHighHz        = 6000.0f;
+    constexpr float kVvStereoWidth       = 0.90f;
+    constexpr float kVvDecayTimeScale    = 1.38f;     // same Dattorro RT60 calibration
+
+    // Post-engine 12-band peaking EQ — disabled at baseline (all 0 dB).
+    // Enable only if broadband spectral shaping is needed after engine tuning.
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { 2.6147f, -2.79335f, 2.21032f, -1.34604f, 0.787962f, -1.52315f, 3.13665f, 2.75727f, 2.53447f, 2.25763f, 0.789156f, -2.6438f };
-    constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    constexpr float kCorrEqQ = 1.41f;
 
     // -----------------------------------------------------------------
-    // Per-preset onset envelope table (from VV reference audio).
-    // Applied to FDN input in DuskVerbEngine to match VV's serial tank
-    // energy buildup. Table is time-normalized 0→1 gain curve.
-    // Duration: 300ms, 64 points.
+    // Per-preset FiveBandDamping: 5-band per-frequency-band RT60 control.
+    // Band multipliers: g[band] = gBase^(1/mult[band]).
+    // mult > 1.0 = longer decay, < 1.0 = shorter decay in that band.
+    // Crossover frequencies define the band boundaries.
     // -----------------------------------------------------------------
-    constexpr float kOnsetDurationMs = 300.0f;
-    constexpr int kOnsetTableSize = 64;
-    constexpr float kOnsetEnvelope[kOnsetTableSize] = {
-        1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f,
-        1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 1.0000f, 0.9454f, 0.8320f,
-        0.7301f, 0.5721f, 0.5929f, 0.5923f, 0.5218f, 0.5319f, 0.4723f, 0.5777f,
-        0.5950f, 0.7923f, 0.9049f, 0.8806f, 0.9048f, 0.9158f, 0.8545f, 0.8925f,
-        0.9701f, 0.9855f, 0.9392f, 0.7933f, 0.6812f, 0.5532f, 0.5835f, 0.8370f,
-        0.8244f, 1.0000f, 0.9978f, 1.0000f, 1.0000f, 0.8361f, 0.7361f, 0.9219f,
-        0.9963f, 0.9526f, 0.7645f, 0.9570f, 0.9737f, 0.8988f, 0.7575f, 0.8394f,
-        0.8375f, 0.7624f, 0.8604f, 0.7871f, 0.8019f, 0.6960f, 0.8192f, 1.0000f
-    };
+    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
+    constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
 
 // ==========================================================================
-//  BEGIN PRIVATE COPY OF QuadTank (QuadTank.h)
+//  BEGIN PRIVATE COPY OF DattorroTank (DattorroTank.h)
 // ==========================================================================
 
-// 4-tank cross-coupled allpass reverb for Hall algorithm.
+// Dattorro-inspired cross-coupled tank reverb for Room algorithm.
 //
-// Extends the DattorroTank concept from 2 tanks to 4, providing 4x more
-// output tap points (14 per channel vs 7) and circular cross-coupling
-// (0→1→2→3→0) for naturally smooth tails without discrete recirculation peaks.
+// Enhanced topology: two asymmetric feedback loops cross-coupled in a figure-8.
+// Each loop contains: modulated allpass → delay → density cascade (3 allpasses)
+// → two-band damping → static allpass → delay.
 //
-// Each tank: modulated allpass → delay → 3 density allpasses → damping →
-//            static allpass → delay → cross-feed to next tank.
+// The density cascade multiplies echo density by ~8× per loop pass compared
+// to the basic Dattorro topology (which only has 2 allpasses per loop).
+// This is critical for room-scale delays where mode spacing is wider.
 //
-// The allpass-embedded topology produces continuous smooth decay (no discrete
-// bumps in the delay buffers) — unlike the FDN where 16 parallel delay lines
-// each produce visible recirculation peaks.
+// Output is formed by summing 7 signed taps from various internal
+// points in both tanks, creating naturally decorrelated stereo.
 //
-// Target: match Valhalla VintageVerb's ~20 early peaks (0-200ms) for
-// Hall presets, vs FDN's ~130 peaks that no output processing can eliminate.
+// Reference: Dattorro, "Effect Design Part 1" (JAES 1997), adapted
+// for room-scale delays, extended density cascades, and per-sample
+// noise modulation for aggressive mode smearing.
 class BrightPlatePresetEngine
 {
 public:
@@ -131,8 +113,25 @@ public:
     void setFreeze (bool frozen);
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
-    void setDecayBoost (float boost);
+    void setHallScale (bool enable);   // Switch to hall-scale delay lengths (2x room)
+    // Output tap specification (moved to public for per-algorithm configuration)
+    struct OutputTap
+    {
+        int bufferIndex;     // Which delay buffer (0-5: L/R delay1/delay2/AP2)
+        float positionFrac;  // Fractional position (0.0-1.0) within the delay
+        float sign;          // ±1.0 for decorrelation
+        float gain;          // Per-tap amplitude (0.0-2.0). Shapes onset envelope.
+                             // < 1.0 attenuates (slows onset), > 1.0 boosts (faster onset).
+                             // Default 1.0 = equal weight (original behavior).
+    };
+
+    void setOutputTaps (const OutputTap* left, const OutputTap* right);
+    void applyTapGains (const float* leftGains, const float* rightGains);  // Update gain field only
     void setNoiseModDepth (float samples);
+    void setDelayScale (float scale);  // Multiplies ALL base delays (controls loop length)
+    void setSoftOnsetMs (float ms);    // Output onset smoothing time (0 = off)
+    void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
+    void setDecayBoost (float boost);
     void setStructuralHFDamping (float hz);
     void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
@@ -140,32 +139,33 @@ public:
 private:
     static constexpr float kTwoPi = 6.283185307179586f;
     static constexpr double kBaseSampleRate = 44100.0;
-    static constexpr float kSafetyClip = 32.0f;  // Raised from 4.0 to avoid THD from hard clipping at hot inputs
-    static constexpr int kNumTanks = 4;
-    static constexpr int kNumOutputTaps = 48;
-    static constexpr int kNumDensityAPs = 3;
+
+    // Safety clamp (~+12dBFS), matches FDNReverb
+    static constexpr float kSafetyClip = 4.0f;
+
+    // Output tap count per channel (Dattorro uses 7)
+    static constexpr int kNumOutputTaps = 7;
 
     // -----------------------------------------------------------------------
-    // Hall-scale delay constants for 4 tanks (all prime, mutually coprime).
-    // Total loops: ~250-300ms per tank for 1-12s RT60 range.
-    struct TankConfig
-    {
-        int ap1Base;
-        int del1Base;
-        int densityAPBase[3];
-        int ap2Base;
-        int del2Base;
-    };
+    // Base delay lengths at 44100 Hz (all prime, room-scaled from Dattorro plate).
+    // Asymmetric L/R prevents correlated modal peaks.
 
-    static constexpr TankConfig kTankConfigs[kNumTanks] = {
-        { 709,  4507, { 307, 421, 577 }, 1871, 3769 },  // Tank 0 (~275ms)
-        { 953,  4219, { 337, 461, 541 }, 2749, 3299 },  // Tank 1 (~285ms)
-        { 797,  4637, { 317, 433, 563 }, 2111, 3583 },  // Tank 2 (~280ms)
-        { 1049, 3989, { 347, 449, 557 }, 2393, 3067 },  // Tank 3 (~270ms)
-    };
+    // Left tank
+    static constexpr int kLeftAP1Base  = 331;   // ~7.5ms  modulated allpass
+    static constexpr int kLeftDel1Base = 2203;   // ~50ms   delay
+    static constexpr int kLeftAP2Base  = 887;    // ~20ms   static allpass
+    static constexpr int kLeftDel2Base = 1831;   // ~41.5ms delay
 
+    // Right tank
+    static constexpr int kRightAP1Base  = 443;   // ~10ms   modulated allpass
+    static constexpr int kRightDel1Base = 2081;   // ~47ms   delay
+    static constexpr int kRightAP2Base  = 1307;   // ~29.6ms static allpass
+    static constexpr int kRightDel2Base = 1559;   // ~35.3ms delay
+
+    // Worst-case base delay for buffer allocation (hall-scale is larger)
 
     // -----------------------------------------------------------------------
+    // Circular delay line with power-of-2 masking.
     struct DelayLine
     {
         std::vector<float> buffer;
@@ -181,14 +181,17 @@ private:
             writePos = (writePos + 1) & mask;
         }
 
+        // Read at a fixed integer offset behind the write head.
         float read (int delaySamples) const
         {
             return buffer[static_cast<size_t> ((writePos - delaySamples) & mask)];
         }
 
+        // Read at a fractional offset (cubic Hermite interpolation).
         float readInterpolated (float delaySamples) const;
     };
 
+    // Non-modulated Schroeder allpass (same as FDNReverb::InlineAllpass).
     struct Allpass
     {
         std::vector<float> buffer;
@@ -210,96 +213,108 @@ private:
     };
 
     // -----------------------------------------------------------------------
+    // Density cascade: 3 additional allpasses between delay1 and damping.
+    // Multiplies echo density ~8× per loop pass (each AP doubles mode count).
+    // Delays are prime and coprime to all other elements.
+    static constexpr int kNumDensityAPs = 3;
+
+    // Left tank density AP delays (at 44100 Hz)
+    static constexpr int kLeftDensityAPBase[kNumDensityAPs] = { 137, 199, 281 };
+    // Right tank density AP delays (at 44100 Hz)
+    static constexpr int kRightDensityAPBase[kNumDensityAPs] = { 149, 211, 263 };
+
+    // Hall-scale delays: ~2x room for 1-12s RT60 (all prime, coprime to room delays)
+    // Total loop: left=12161 (275.8ms), right=12559 (284.8ms)
+    // Per-algorithm temporal scaling is done via sizeRange in AlgorithmConfig,
+    // NOT by changing these base constants.
+    static constexpr int kLeftAP1BaseHall  = 709;    // ~16.1ms
+    static constexpr int kLeftDel1BaseHall = 4507;   // ~102.2ms
+    static constexpr int kLeftAP2BaseHall  = 1871;   // ~42.4ms
+    static constexpr int kLeftDel2BaseHall = 3769;   // ~85.4ms
+    static constexpr int kRightAP1BaseHall  = 953;   // ~21.6ms
+    static constexpr int kRightDel1BaseHall = 4219;  // ~95.7ms
+    static constexpr int kRightAP2BaseHall  = 2749;  // ~62.3ms
+    static constexpr int kRightDel2BaseHall = 3299;  // ~74.8ms
+    static constexpr int kLeftDensityAPBaseHall[kNumDensityAPs]  = { 307, 421, 577 };
+    static constexpr int kRightDensityAPBaseHall[kNumDensityAPs] = { 337, 461, 541 };
+
+    // -----------------------------------------------------------------------
+    // Each cross-coupled feedback loop.
     struct Tank
     {
-        DelayLine ap1Buffer;
-        int ap1BaseDelay = 0;
-        float ap1DelaySamples = 0;
+        // Modulated allpass (decay diffusion 1)
+        DelayLine ap1Buffer;       // Buffer for modulated allpass
+        int ap1BaseDelay = 0;      // Base delay at 44100 Hz
+        float ap1DelaySamples = 0; // Current delay (scaled by rate + size)
 
+        // First delay line
         DelayLine delay1;
         int delay1BaseDelay = 0;
         float delay1Samples = 0;
 
-        Allpass densityAP[3];
-        int densityAPBase[3] = {};
+        // Density cascade: 3 allpasses for echo density multiplication
+        Allpass densityAP[kNumDensityAPs];
+        int densityAPBase[kNumDensityAPs] = {};
 
-        ThreeBandDamping damping;
+        // Three-band damping (bass / mid / air with independent per-band decay)
+        FiveBandDamping damping;
 
+        // Static allpass (decay diffusion 2)
         Allpass ap2;
         int ap2BaseDelay = 0;
 
+        // Second delay line
         DelayLine delay2;
         int delay2BaseDelay = 0;
         float delay2Samples = 0;
 
+        // Cross-feed state (output of this tank feeds other tank's input)
         float crossFeedState = 0.0f;
 
+        // LFO for modulated allpass
         float lfoPhase = 0.0f;
         float lfoPhaseInc = 0.0f;
-        uint32_t lfoPRNG = 0;
-        uint32_t noiseState = 0;
+        uint32_t lfoPRNG = 0;        // Shared: LFO drift + noise jitter
+        uint32_t noiseState = 0;      // Dedicated PRNG for per-sample delay jitter
 
-        // Per-tank terminal decay tracking
+        // Per-tank terminal decay tracking (avoids L/R interleaving artifacts)
         float currentRMS = 0.0f;
         float peakRMS = 0.0f;
         bool terminalDecayActive = false;
     };
 
-    Tank tanks_[kNumTanks];
+    Tank leftTank_;
+    Tank rightTank_;
 
     // -----------------------------------------------------------------------
-    // Output taps: 14 per channel from all 4 tanks.
-    // Buffer indices: 0-3=Delay1 (tanks 0-3), 4-7=Delay2 (tanks 0-3),
-    //                 8-11=AP2 (tanks 0-3)
-    struct OutputTap
-    {
-        int bufferIndex;
-        float positionFrac;
-        float sign;
-    };
-
-    // Left output: 12 taps per tank (4×del1 + 4×del2 + 4×AP2), 48 total.
-    // Dense fractional reads maximize averaging for peak suppression.
+    // Default output tap positions (early Dattorro-style, read from both tanks).
+    // Tap indices: 0=leftDelay1, 1=leftDelay2, 2=leftAP2,
+    //              3=rightDelay1, 4=rightDelay2, 5=rightAP2
+    // 7 taps per channel, tapping from BOTH tanks for stereo decorrelation.
+    // Positions are fractions of each delay's current length, so they scale with size.
     static constexpr OutputTap kLeftOutputTaps[kNumOutputTaps] = {
-        // Tank 0: 12 taps
-        { 0, 0.13f,  1.0f },  { 0, 0.38f, -1.0f },  { 0, 0.62f,  1.0f },  { 0, 0.87f, -1.0f },
-        { 4, 0.18f, -1.0f },  { 4, 0.43f,  1.0f },  { 4, 0.68f, -1.0f },  { 4, 0.93f,  1.0f },
-        { 8, 0.15f,  1.0f },  { 8, 0.40f, -1.0f },  { 8, 0.65f,  1.0f },  { 8, 0.90f, -1.0f },
-        // Tank 1: 12 taps
-        { 1, 0.11f,  1.0f },  { 1, 0.36f, -1.0f },  { 1, 0.61f,  1.0f },  { 1, 0.86f, -1.0f },
-        { 5, 0.16f, -1.0f },  { 5, 0.41f,  1.0f },  { 5, 0.66f, -1.0f },  { 5, 0.91f,  1.0f },
-        { 9, 0.13f,  1.0f },  { 9, 0.38f, -1.0f },  { 9, 0.63f,  1.0f },  { 9, 0.88f, -1.0f },
-        // Tank 2: 12 taps
-        { 2, 0.15f,  1.0f },  { 2, 0.40f, -1.0f },  { 2, 0.65f,  1.0f },  { 2, 0.90f, -1.0f },
-        { 6, 0.20f, -1.0f },  { 6, 0.45f,  1.0f },  { 6, 0.70f, -1.0f },  { 6, 0.95f,  1.0f },
-        {10, 0.17f,  1.0f },  {10, 0.42f, -1.0f },  {10, 0.67f,  1.0f },  {10, 0.92f, -1.0f },
-        // Tank 3: 12 taps
-        { 3, 0.09f,  1.0f },  { 3, 0.34f, -1.0f },  { 3, 0.59f,  1.0f },  { 3, 0.84f, -1.0f },
-        { 7, 0.14f, -1.0f },  { 7, 0.39f,  1.0f },  { 7, 0.64f, -1.0f },  { 7, 0.89f,  1.0f },
-        {11, 0.11f,  1.0f },  {11, 0.36f, -1.0f },  {11, 0.61f,  1.0f },  {11, 0.86f, -1.0f },
+        { 3, 0.120f,  1.0f, 1.0f },  // right delay1, early
+        { 3, 0.675f,  1.0f, 1.0f },  // right delay1, late
+        { 5, 0.480f, -1.0f, 1.0f },  // right AP2
+        { 0, 0.450f,  1.0f, 1.0f },  // left delay1, mid
+        { 1, 0.540f, -1.0f, 1.0f },  // left delay2, mid
+        { 2, 0.210f, -1.0f, 1.0f },  // left AP2
+        { 4, 0.310f, -1.0f, 1.0f },  // right delay2, early
     };
 
-    // Right output: offset positions for L/R decorrelation
     static constexpr OutputTap kRightOutputTaps[kNumOutputTaps] = {
-        // Tank 0: 12 taps (offset from L by ~0.12)
-        { 0, 0.25f,  1.0f },  { 0, 0.50f, -1.0f },  { 0, 0.75f,  1.0f },  { 0, 0.95f, -1.0f },
-        { 4, 0.30f, -1.0f },  { 4, 0.55f,  1.0f },  { 4, 0.80f, -1.0f },  { 4, 0.10f,  1.0f },
-        { 8, 0.27f,  1.0f },  { 8, 0.52f, -1.0f },  { 8, 0.77f,  1.0f },  { 8, 0.08f, -1.0f },
-        // Tank 1: 12 taps
-        { 1, 0.23f,  1.0f },  { 1, 0.48f, -1.0f },  { 1, 0.73f,  1.0f },  { 1, 0.93f, -1.0f },
-        { 5, 0.28f, -1.0f },  { 5, 0.53f,  1.0f },  { 5, 0.78f, -1.0f },  { 5, 0.08f,  1.0f },
-        { 9, 0.25f,  1.0f },  { 9, 0.50f, -1.0f },  { 9, 0.75f,  1.0f },  { 9, 0.06f, -1.0f },
-        // Tank 2: 12 taps
-        { 2, 0.27f,  1.0f },  { 2, 0.52f, -1.0f },  { 2, 0.77f,  1.0f },  { 2, 0.07f, -1.0f },
-        { 6, 0.32f, -1.0f },  { 6, 0.57f,  1.0f },  { 6, 0.82f, -1.0f },  { 6, 0.12f,  1.0f },
-        {10, 0.29f,  1.0f },  {10, 0.54f, -1.0f },  {10, 0.79f,  1.0f },  {10, 0.09f, -1.0f },
-        // Tank 3: 12 taps
-        { 3, 0.21f,  1.0f },  { 3, 0.46f, -1.0f },  { 3, 0.71f,  1.0f },  { 3, 0.91f, -1.0f },
-        { 7, 0.26f, -1.0f },  { 7, 0.51f,  1.0f },  { 7, 0.76f, -1.0f },  { 7, 0.06f,  1.0f },
-        {11, 0.23f,  1.0f },  {11, 0.48f, -1.0f },  {11, 0.73f,  1.0f },  {11, 0.03f, -1.0f },
+        { 0, 0.140f,  1.0f, 1.0f },  // left delay1, early
+        { 0, 0.710f,  1.0f, 1.0f },  // left delay1, late
+        { 2, 0.520f, -1.0f, 1.0f },  // left AP2
+        { 3, 0.410f,  1.0f, 1.0f },  // right delay1, mid
+        { 4, 0.580f, -1.0f, 1.0f },  // right delay2, mid
+        { 5, 0.240f, -1.0f, 1.0f },  // right AP2
+        { 1, 0.350f, -1.0f, 1.0f },  // left delay2, early
     };
 
     // -----------------------------------------------------------------------
+    // Cheap xorshift32 PRNG returning float in [-1, +1].
+    // Used for aperiodic LFO drift ("Wander").
     static float nextDrift (uint32_t& state)
     {
         state ^= state << 13;
@@ -309,55 +324,74 @@ private:
     }
 
     // -----------------------------------------------------------------------
+    // Parameters
     double sampleRate_ = 44100.0;
     float decayTime_ = 1.0f;
     float bassMultiply_ = 1.0f;
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
-    float highCrossoverFreq_ = 4000.0f;
-    float airDampingScale_ = 0.70f;
-    float modDepthSamples_ = 8.0f;
-    float lastModDepthRaw_ = 0.5f;
+    float highCrossoverFreq_ = 20000.0f;  // Second crossover for 3-band damping (Hz)
+    float airDampingScale_ = 1.0f;        // Independent HF air band damping multiplier
+    float modDepthSamples_ = 8.0f;  // Peak excursion in samples
+    float lastModDepthRaw_ = 0.5f;  // Raw 0-1 depth before sample rate scaling
     float modRateHz_ = 1.0f;
     float sizeParam_ = 0.5f;
     float sizeRangeMin_ = 0.5f;
     float sizeRangeMax_ = 1.5f;
     float sizeRangeAllocatedMax_ = 4.0f;
     float lateGainScale_ = 1.0f;
+    float delayScale_ = 1.0f;  // Global delay multiplier (set before prepare)
+    float softOnsetMs_ = 0.0f;    // Output onset ramp time (ms). Smooths early transient spike.
+    float softOnsetCoeff_ = 1.0f; // Per-sample increment for onset ramp
+    float softOnsetEnvL_ = 0.0f;  // Current ramp value
+
+    // Peak limiter: reduces transient peaks while preserving RMS (lowers crest factor).
+    float limiterThreshold_ = 0.0f;      // 0 = disabled. Linear amplitude threshold.
+    float limiterReleaseCoeff_ = 0.999f;  // One-pole release coefficient (~50ms at 48kHz)
+    float limiterEnv_ = 0.0f;             // Current peak envelope
+
     bool frozen_ = false;
     bool prepared_ = false;
 
     float decayBoost_ = 1.0f;
     float structHFCoeff_ = 0.0f;
-    float structHFState_[4] {};
+    float structHFStateL_ = 0.0f;
+    float structHFStateR_ = 0.0f;
     float terminalDecayThresholdDB_ = -40.0f;
     float terminalDecayFactor_ = 1.0f;
     float rmsAlpha_ = 0.9995f;
     float peakDecayAlpha_ = 0.99999f;
     float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
-    float peakRMS_ = 0.0f;
-    float currentRMS_ = 0.0f;
-    bool terminalDecayActive_ = false;
 
-    float decayDiff1_ = 0.70f;
-    float decayDiff2_ = 0.50f;
-    float densityDiffCoeff_ = 0.10f;  // Reduced from 0.25 to slow density buildup (100ms→~250ms)
-    float noiseModDepth_ = 2.0f;
-    float independentNoiseModDepth_ = -1.0f;  // -1 = use modDepth-coupled value
+    // Dattorro coefficients
+    float decayDiff1_ = 0.70f;   // Modulated allpass feedback
+    float decayDiff2_ = 0.50f;   // Static allpass feedback
+    float densityDiffCoeff_ = 0.18f;  // Density cascade feedback (higher = more echo density)
+
+    // Per-sample noise modulation: random jitter on delay reads.
+    // Complements the slow sinusoidal LFO with fast aperiodic mode blurring.
+    float noiseModDepth_ = 2.0f;  // Peak jitter in samples (at 44100 Hz base)
+    float independentNoiseModDepth_ = -1.0f;  // Independent noise jitter (-1 = use modDepth-coupled value)
 
     void updateDelayLengths();
     void updateDecayCoefficients();
     void updateLFORates();
 
+    // Resolves an output tap to an actual sample offset for the current delay lengths.
     float readOutputTap (const OutputTap& tap) const;
+
+    // Per-algorithm configurable output taps (override static defaults)
+    OutputTap customLeftTaps_[kNumOutputTaps] {};
+    OutputTap customRightTaps_[kNumOutputTaps] {};
+    bool useCustomTaps_ = false;
 };
 
 // ==========================================================================
-//  BEGIN PRIVATE COPY OF QuadTank IMPLEMENTATION (QuadTank.cpp)
+//  BEGIN PRIVATE COPY OF DattorroTank IMPLEMENTATION (DattorroTank.cpp)
 // ==========================================================================
 
 // -----------------------------------------------------------------------
-// DelayLine helpers (same as DattorroTank)
+// DelayLine helpers
 
 void BrightPlatePresetEngine::DelayLine::allocate (int maxSamples)
 {
@@ -382,6 +416,8 @@ float BrightPlatePresetEngine::DelayLine::readInterpolated (float delaySamples) 
 }
 
 // -----------------------------------------------------------------------
+// Allpass helpers
+
 void BrightPlatePresetEngine::Allpass::allocate (int maxSamples)
 {
     int bufSize = DspUtils::nextPowerOf2 (maxSamples + 1);
@@ -397,24 +433,71 @@ void BrightPlatePresetEngine::Allpass::clear()
 }
 
 // -----------------------------------------------------------------------
+// Constructor
+
 BrightPlatePresetEngine::BrightPlatePresetEngine()
 {
-    for (int t = 0; t < kNumTanks; ++t)
+    leftTank_.ap1BaseDelay  = kLeftAP1Base;
+    leftTank_.delay1BaseDelay = kLeftDel1Base;
+    leftTank_.ap2BaseDelay  = kLeftAP2Base;
+    leftTank_.delay2BaseDelay = kLeftDel2Base;
+
+    rightTank_.ap1BaseDelay  = kRightAP1Base;
+    rightTank_.delay1BaseDelay = kRightDel1Base;
+    rightTank_.ap2BaseDelay  = kRightAP2Base;
+    rightTank_.delay2BaseDelay = kRightDel2Base;
+
+    // Density cascade base delays
+    for (int i = 0; i < kNumDensityAPs; ++i)
     {
-        tanks_[t].ap1BaseDelay     = kTankConfigs[t].ap1Base;
-        tanks_[t].delay1BaseDelay  = kTankConfigs[t].del1Base;
-        tanks_[t].ap2BaseDelay     = kTankConfigs[t].ap2Base;
-        tanks_[t].delay2BaseDelay  = kTankConfigs[t].del2Base;
-        for (int i = 0; i < kNumDensityAPs; ++i)
-            tanks_[t].densityAPBase[i] = kTankConfigs[t].densityAPBase[i];
+        leftTank_.densityAPBase[i]  = kLeftDensityAPBase[i];
+        rightTank_.densityAPBase[i] = kRightDensityAPBase[i];
     }
 }
 
 // -----------------------------------------------------------------------
+
+void BrightPlatePresetEngine::setHallScale (bool enable)
+{
+    if (enable)
+    {
+        leftTank_.ap1BaseDelay     = kLeftAP1BaseHall;
+        leftTank_.delay1BaseDelay  = kLeftDel1BaseHall;
+        leftTank_.ap2BaseDelay     = kLeftAP2BaseHall;
+        leftTank_.delay2BaseDelay  = kLeftDel2BaseHall;
+        rightTank_.ap1BaseDelay    = kRightAP1BaseHall;
+        rightTank_.delay1BaseDelay = kRightDel1BaseHall;
+        rightTank_.ap2BaseDelay    = kRightAP2BaseHall;
+        rightTank_.delay2BaseDelay = kRightDel2BaseHall;
+        for (int i = 0; i < kNumDensityAPs; ++i)
+        {
+            leftTank_.densityAPBase[i]  = kLeftDensityAPBaseHall[i];
+            rightTank_.densityAPBase[i] = kRightDensityAPBaseHall[i];
+        }
+    }
+    else
+    {
+        leftTank_.ap1BaseDelay     = kLeftAP1Base;
+        leftTank_.delay1BaseDelay  = kLeftDel1Base;
+        leftTank_.ap2BaseDelay     = kLeftAP2Base;
+        leftTank_.delay2BaseDelay  = kLeftDel2Base;
+        rightTank_.ap1BaseDelay    = kRightAP1Base;
+        rightTank_.delay1BaseDelay = kRightDel1Base;
+        rightTank_.ap2BaseDelay    = kRightAP2Base;
+        rightTank_.delay2BaseDelay = kRightDel2Base;
+        for (int i = 0; i < kNumDensityAPs; ++i)
+        {
+            leftTank_.densityAPBase[i]  = kLeftDensityAPBase[i];
+            rightTank_.densityAPBase[i] = kRightDensityAPBase[i];
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+
 void BrightPlatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
-
     // Sample-rate-invariant terminal decay smoothing coefficients
     {
         constexpr float kRmsTauMs = 45.0f;
@@ -423,101 +506,133 @@ void BrightPlatePresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         rmsAlpha_ = std::exp (-1000.0f / (kRmsTauMs * sr));
         peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
     }
-    // Preserve headroom for post-prepare size-range overrides.
-    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, sizeRangeMax_);
+
+    // FiveBandDamping: set inner crossover coefficients and band multipliers.
+    {
+        float fbCrossHz[4] = {
+            kFiveBandCrossoverHz[0], kFiveBandCrossoverHz[1],
+            kFiveBandCrossoverHz[2], kFiveBandCrossoverHz[3]
+        };
+        float fbMult[5] = {
+            kFiveBandMult[0], kFiveBandMult[1], kFiveBandMult[2],
+            kFiveBandMult[3], kFiveBandMult[4]
+        };
+        float coeffs[4];
+        for (int b = 0; b < 4; ++b)
+            coeffs[b] = std::exp (-6.283185307f * fbCrossHz[b]
+                                  / static_cast<float> (sampleRate_));
+        leftTank_.damping.setCrossovers (coeffs);
+        leftTank_.damping.setBandMultipliers (fbMult);
+        rightTank_.damping.setCrossovers (coeffs);
+        rightTank_.damping.setBandMultipliers (fbMult);
+    }
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
+
+    // Modulation headroom beyond the max scaled delay (scale with sample rate)
     const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
 
-    for (int t = 0; t < kNumTanks; ++t)
-    {
-        auto& tank = tanks_[t];
+    // Track allocation ceiling for runtime setSizeRange() bounds checking
+    // Preserve headroom for post-prepare size-range overrides.
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, sizeRangeMax_);
 
-        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
-        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
-        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
-        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * sizeRangeAllocatedMax_)) + maxModExcursion;
+    // Allocate all buffers
+    auto prepareTank = [&] (Tank& tank)
+    {
+        float maxScale = sizeRangeAllocatedMax_ * delayScale_;
+        int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
+        int del2Max = static_cast<int> (std::ceil (tank.delay2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
 
         tank.ap1Buffer.allocate (ap1Max);
-        tank.delay1.allocate (del1Max);
+        tank.delay1.allocate (del1Max);  // Extra headroom for noise jitter
         tank.ap2.allocate (ap2Max);
         tank.delay2.allocate (del2Max + maxModExcursion);
 
+        // Density cascade allpasses. updateDelayLengths() scales these by
+        // delayScale_ too, so the max allocation must include it to avoid
+        // buffer underruns when delayScale_ > 1.
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
-            int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_)) + 4;
+            int dapMax = static_cast<int> (std::ceil (
+                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * delayScale_)) + 4;
             tank.densityAP[i].allocate (dapMax);
         }
 
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
-        structHFState_[t] = 0.0f;
-    }
+    };
 
-    // Initialize LFO and PRNG with unique seeds per tank (90° phase offsets)
-    static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
-    static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
-    static constexpr float    kPhaseOffsets[kNumTanks] = { 0.0f, 1.5707963f, 3.1415927f, 4.7123890f };
+    prepareTank (leftTank_);
+    prepareTank (rightTank_);
 
-    for (int t = 0; t < kNumTanks; ++t)
-    {
-        tanks_[t].lfoPhase  = kPhaseOffsets[t];
-        tanks_[t].lfoPRNG   = kLFOSeeds[t];
-        tanks_[t].noiseState = kNoiseSeeds[t];
-    }
+    // Initialize LFO and PRNG state with different seeds per tank
+    leftTank_.lfoPhase = 0.0f;
+    leftTank_.lfoPRNG = 0x12345678u;
+    leftTank_.noiseState = 0xDEADBEEFu;
+    rightTank_.lfoPhase = 1.5707963f;  // 90° offset for stereo decorrelation
+    rightTank_.lfoPRNG = 0x87654321u;
+    rightTank_.noiseState = 0xCAFEBABEu;
+
+    structHFStateL_ = 0.0f;
+    structHFStateR_ = 0.0f;
 
     prepared_ = true;
 
     updateDelayLengths();
     updateDecayCoefficients();
     updateLFORates();
-    setModDepth (lastModDepthRaw_);
 
-    // Clear all per-tank stateful fields (RMS history, terminal-decay flags,
-    // structural HF damping state). Without this, a host re-prepare would
-    // start with empty delay buffers but retain the previous run's tracker
-    // state, leaking session state across reconfigure.
-    for (int t = 0; t < kNumTanks; ++t)
-    {
-        auto& tank = tanks_[t];
-        tank.currentRMS = 0.0f;
-        tank.peakRMS = 0.0f;
-        tank.terminalDecayActive = false;
-    }
+    // Re-apply mod depth scaled for the new sample rate
+    setModDepth (lastModDepthRaw_);
+    if (softOnsetMs_ > 0.0f)
+        setSoftOnsetMs (softOnsetMs_);
+
+    // Clear all stateful trackers (structural HF damping state, terminal
+    // decay RMS history). Without this, a host re-prepare would start with
+    // empty delay buffers but retain the previous run's tracker state.
+    leftTank_.currentRMS = 0.0f;
+    leftTank_.peakRMS = 0.0f;
+    leftTank_.terminalDecayActive = false;
+    rightTank_.currentRMS = 0.0f;
+    rightTank_.peakRMS = 0.0f;
+    rightTank_.terminalDecayActive = false;
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------
+
 void BrightPlatePresetEngine::process (const float* inputL, const float* inputR,
-                        float* outputL, float* outputR, int numSamples)
+                            float* outputL, float* outputR, int numSamples)
 {
     if (! prepared_)
         return;
 
-    const float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
-                                  ? independentNoiseModDepth_ : noiseModDepth_;
-
     for (int i = 0; i < numSamples; ++i)
     {
+        // Mono sum of stereo input (Dattorro tank is internally mono,
+        // stereo comes from decorrelated output tapping)
         float input = (inputL[i] + inputR[i]) * 0.5f;
+
         if (frozen_)
             input = 0.0f;
 
-        // Save all cross-feed states before processing
-        float cf[kNumTanks];
-        for (int t = 0; t < kNumTanks; ++t)
-            cf[t] = tanks_[t].crossFeedState;
+        // ------------------------------------------------------------------
+        // Process both tanks. Each receives the other's cross-feed state.
+        // Order: left first, then right. The one-sample delay in cross-feed
+        // is intentional (Dattorro's figure-8 topology).
 
-        // Process each tank with circular cross-coupling (0←3, 1←0, 2←1, 3←2)
-        for (int t = 0; t < kNumTanks; ++t)
+        auto processTank = [&] (Tank& tank, float otherCrossFeed)
         {
-            auto& tank = tanks_[t];
-            float otherCrossFeed = cf[(t + kNumTanks - 1) % kNumTanks];
+            // Tank input: new audio + cross-fed signal from the other tank
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            // Preserve current LFO offset when frozen (avoids discontinuity)
+            // LFO modulation with "Wander" drift (classic reverb technique)
             float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
             float ap1ReadDelay = tank.ap1DelaySamples + mod;
-            ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);
+            ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
             float ap1Delayed = tank.ap1Buffer.readInterpolated (ap1ReadDelay);
             float coeff1 = frozen_ ? 0.0f : decayDiff1_;
@@ -536,14 +651,16 @@ void BrightPlatePresetEngine::process (const float* inputL, const float* inputR,
                     tank.lfoPhase += kTwoPi;
             }
 
-            // --- Delay 1 with noise jitter ---
+            // --- Delay 1 (with per-sample noise jitter) ---
+            float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
+                                    ? independentNoiseModDepth_ : noiseModDepth_;
             float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
             tank.delay1.write (ap1Out);
 
-            // --- Density cascade: 3 allpasses ---
+            // --- Density cascade: 3 allpasses to multiply echo density ---
             float dense = del1Out;
             if (! frozen_)
             {
@@ -557,19 +674,21 @@ void BrightPlatePresetEngine::process (const float* inputL, const float* inputR,
             // --- Structural HF damping ---
             if (structHFCoeff_ > 0.0f && ! frozen_)
             {
-                structHFState_[t] = (1.0f - structHFCoeff_) * damped + structHFCoeff_ * structHFState_[t];
-                damped = structHFState_[t];
+                float& hfState = (&tank == &leftTank_) ? structHFStateL_ : structHFStateR_;
+                hfState = (1.0f - structHFCoeff_) * damped + structHFCoeff_ * hfState;
+                damped = hfState;
             }
 
             // --- Static allpass (decay diffusion 2) ---
             float coeff2 = frozen_ ? 0.0f : decayDiff2_;
             float ap2Out = tank.ap2.process (damped, coeff2);
 
-            // --- Delay 2 with noise jitter ---
+            // --- Delay 2 (with per-sample noise jitter) ---
             float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
+            // Denormal prevention: tiny alternating bias
             float bias = frozen_ ? 0.0f
                                  : (((tank.delay2.writePos ^ 1) & 1)
                                         ? +DspUtils::kDenormalPrevention
@@ -591,109 +710,195 @@ void BrightPlatePresetEngine::process (const float* inputL, const float* inputR,
                     del2Out *= terminalDecayFactor_;
             }
 
-            // Cross-feed: feeds next tank
+            // Cross-feed output: end of this tank feeds the other tank's input
             tank.crossFeedState = del2Out;
-        }
+        };
+
+        // Save right tank's cross-feed state before left tank overwrites it
+        float rightCrossFeed = rightTank_.crossFeedState;
+        float leftCrossFeed = leftTank_.crossFeedState;
+
+        processTank (leftTank_, rightCrossFeed);
+        processTank (rightTank_, leftCrossFeed);
 
         // ------------------------------------------------------------------
-        // Output: sum 14 signed taps from all 4 tanks per channel
+        // Output: sum 7 signed taps from both tanks per channel.
+        const OutputTap* lTaps = useCustomTaps_ ? customLeftTaps_ : kLeftOutputTaps;
+        const OutputTap* rTaps = useCustomTaps_ ? customRightTaps_ : kRightOutputTaps;
+
         float outL = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
-            outL += readOutputTap (kLeftOutputTaps[t]) * kLeftOutputTaps[t].sign;
+            outL += readOutputTap (lTaps[t]) * lTaps[t].sign * lTaps[t].gain;
 
         float outR = 0.0f;
         for (int t = 0; t < kNumOutputTaps; ++t)
-            outR += readOutputTap (kRightOutputTaps[t]) * kRightOutputTaps[t].sign;
+            outR += readOutputTap (rTaps[t]) * rTaps[t].sign * rTaps[t].gain;
 
-        // Normalize output tap sum. With alternating signs on highly correlated
-        // taps (same tank, adjacent delay positions), effective independence is
-        // ~8 taps, not 48 — 1/sqrt(48) severely over-attenuates.
-        // 0.35 ≈ 1/sqrt(8) compensates for sign cancellation and the slow
-        // energy buildup of long-loop tanks vs shorter-loop FDN/DattorroTank.
-        constexpr float kOutputScale = 0.35f;  // ~1/sqrt(8)
+        // Normalize 7-tap sum. The tank has much higher internal energy than
+        // the FDN (2 loops vs 16 channels with Hadamard ÷4 normalization),
+        // so we use a lower output scale to match FDN output levels.
+        constexpr float kOutputScale = 0.14285714f;  // 1/7 — average of 7 taps
         const float outputGain = kOutputScale * lateGainScale_;
 
-        outputL[i] = std::clamp (outL * outputGain, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (outR * outputGain, -kSafetyClip, kSafetyClip);
+        float scaledL = outL * outputGain;
+        float scaledR = outR * outputGain;
+
+        // Soft output onset ramp: smooths the initial transient spike from early taps.
+        // Ramps from 0→1 linearly over softOnsetMs_ after reset/preset change.
+        if (softOnsetEnvL_ < 1.0f)
+        {
+            scaledL *= softOnsetEnvL_;
+            scaledR *= softOnsetEnvL_;
+            softOnsetEnvL_ = std::min (softOnsetEnvL_ + softOnsetCoeff_, 1.0f);
+        }
+
+        // Peak limiter: fast-attack / slow-release envelope follower with gain reduction.
+        // Reduces transient peaks while preserving RMS level (lowers crest factor).
+        // Attack: instant (0 samples). Release: ~50ms one-pole decay.
+        // When peak exceeds limiterThreshold_, gain is reduced to keep output at threshold.
+        if (limiterThreshold_ > 0.0f)
+        {
+            float peakLR = std::max (std::abs (scaledL), std::abs (scaledR));
+
+            // Envelope: instant attack, slow release
+            if (peakLR > limiterEnv_)
+                limiterEnv_ = peakLR;  // Instant attack
+            else
+                limiterEnv_ = limiterReleaseCoeff_ * limiterEnv_
+                            + (1.0f - limiterReleaseCoeff_) * peakLR;  // Slow release
+
+            // Gain reduction: when envelope > threshold, reduce gain
+            if (limiterEnv_ > limiterThreshold_)
+            {
+                float gain = limiterThreshold_ / limiterEnv_;
+                scaledL *= gain;
+                scaledR *= gain;
+            }
+        }
+
+        outputL[i] = std::clamp (scaledL, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (scaledR, -kSafetyClip, kSafetyClip);
     }
 }
 
 // -----------------------------------------------------------------------
+// Output tap reading
+
 float BrightPlatePresetEngine::readOutputTap (const OutputTap& tap) const
 {
-    // Buffer index mapping:
-    //   0-3:  Delay1 from tanks 0-3
-    //   4-7:  Delay2 from tanks 0-3
-    //   8-11: AP2 from tanks 0-3
-    int tankIdx = tap.bufferIndex % kNumTanks;
-    int bufType = tap.bufferIndex / kNumTanks;  // 0=del1, 1=del2, 2=ap2
+    // Map buffer index to the actual delay buffer:
+    // 0=leftDelay1, 1=leftDelay2, 2=leftAP2,
+    // 3=rightDelay1, 4=rightDelay2, 5=rightAP2
+    const DelayLine* delayBuf = nullptr;
+    float totalDelay = 0.0f;
 
-    const auto& tank = tanks_[tankIdx];
-
-    if (bufType == 2)
+    switch (tap.bufferIndex)
     {
-        // Read from AP2 internal buffer at fractional position
-        const auto& ap = tank.ap2;
-        int tapOffset = static_cast<int> (tap.positionFrac * static_cast<float> (ap.delaySamples));
-        tapOffset = std::max (tapOffset, 1);
-        return ap.buffer[static_cast<size_t> ((ap.writePos - tapOffset) & ap.mask)];
+        case 0: delayBuf = &leftTank_.delay1;  totalDelay = leftTank_.delay1Samples;  break;
+        case 1: delayBuf = &leftTank_.delay2;  totalDelay = leftTank_.delay2Samples;  break;
+        case 2:
+        {
+            // Read from AP2's internal buffer at a fractional position
+            const auto& ap = leftTank_.ap2;
+            int tapOffset = static_cast<int> (tap.positionFrac * static_cast<float> (ap.delaySamples));
+            tapOffset = std::max (tapOffset, 1);
+            return ap.buffer[static_cast<size_t> ((ap.writePos - tapOffset) & ap.mask)];
+        }
+        case 3: delayBuf = &rightTank_.delay1; totalDelay = rightTank_.delay1Samples; break;
+        case 4: delayBuf = &rightTank_.delay2; totalDelay = rightTank_.delay2Samples; break;
+        case 5:
+        {
+            const auto& ap = rightTank_.ap2;
+            int tapOffset = static_cast<int> (tap.positionFrac * static_cast<float> (ap.delaySamples));
+            tapOffset = std::max (tapOffset, 1);
+            return ap.buffer[static_cast<size_t> ((ap.writePos - tapOffset) & ap.mask)];
+        }
+        default: return 0.0f;
     }
 
-    const DelayLine* delayBuf = (bufType == 0) ? &tank.delay1 : &tank.delay2;
-    float totalDelay = (bufType == 0) ? tank.delay1Samples : tank.delay2Samples;
-
+    // Read from delay line at fractional position
     float tapDelay = tap.positionFrac * totalDelay;
     tapDelay = std::max (tapDelay, 1.0f);
     return delayBuf->readInterpolated (tapDelay);
 }
 
 // -----------------------------------------------------------------------
+// Parameter setters
+
 void BrightPlatePresetEngine::setDecayTime (float seconds)
 {
     decayTime_ = std::max (seconds, 0.1f);
-    if (prepared_) updateDecayCoefficients();
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void BrightPlatePresetEngine::setBassMultiply (float mult)
 {
     bassMultiply_ = std::max (mult, 0.1f);
-    if (prepared_) updateDecayCoefficients();
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void BrightPlatePresetEngine::setTrebleMultiply (float mult)
 {
     trebleMultiply_ = std::max (mult, 0.1f);
-    if (prepared_) updateDecayCoefficients();
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void BrightPlatePresetEngine::setCrossoverFreq (float hz)
 {
     const float maxLow = std::max (20.0f, highCrossoverFreq_ - 1.0f);
     crossoverFreq_ = std::clamp (hz, 20.0f, maxLow);
-    if (prepared_) updateDecayCoefficients();
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void BrightPlatePresetEngine::setHighCrossoverFreq (float hz)
+{
+    const float minHigh = std::max (1.0f, crossoverFreq_ + 1.0f);
+    highCrossoverFreq_ = std::max (hz, minHigh);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void BrightPlatePresetEngine::setAirDampingScale (float scale)
+{
+    airDampingScale_ = std::max (scale, 0.01f);
+    if (prepared_)
+        updateDecayCoefficients();
 }
 
 void BrightPlatePresetEngine::setModDepth (float depth)
 {
     lastModDepthRaw_ = std::clamp (depth, 0.0f, 2.0f);
+    // Map 0-1 knob range to 0-16 samples peak excursion (Dattorro: 8 samples typical)
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     modDepthSamples_ = lastModDepthRaw_ * 16.0f * rateRatio;
-    noiseModDepth_ = lastModDepthRaw_ * 12.0f * rateRatio;  // Match DattorroTank (12 samples peak)
-}
-
-void BrightPlatePresetEngine::setNoiseModDepth (float samples)
-{
-    // Independent noise jitter, decoupled from LFO modDepth. When set (>= 0),
-    // this overrides the modDepth-coupled noise jitter. Mirrors DattorroTank.
-    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    float maxJitter = 32.0f * rateRatio;
-    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxJitter);
+    // Noise jitter scales with depth and sample rate
+    noiseModDepth_ = lastModDepthRaw_ * 12.0f * rateRatio;  // 12 samples peak at depth=1.0
 }
 
 void BrightPlatePresetEngine::setModRate (float hz)
 {
     modRateHz_ = hz;
-    if (prepared_) updateLFORates();
+    if (prepared_)
+        updateLFORates();
+}
+
+void BrightPlatePresetEngine::setLimiter (float thresholdDb, float releaseMs)
+{
+    if (thresholdDb >= 0.0f)
+    {
+        limiterThreshold_ = 0.0f;  // Disabled
+        return;
+    }
+    limiterThreshold_ = std::pow (10.0f, thresholdDb / 20.0f);
+    if (prepared_)
+    {
+        float releaseSamples = releaseMs * 0.001f * static_cast<float> (sampleRate_);
+        limiterReleaseCoeff_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+    }
 }
 
 void BrightPlatePresetEngine::setSize (float size)
@@ -706,32 +911,108 @@ void BrightPlatePresetEngine::setSize (float size)
     }
 }
 
+void BrightPlatePresetEngine::setSoftOnsetMs (float ms)
+{
+    float newMs = std::max (ms, 0.0f);
+    bool changed = (newMs > 0.0f) != (softOnsetMs_ > 0.0f)
+                || std::abs (newMs - softOnsetMs_) > 0.01f;
+    softOnsetMs_ = newMs;
+
+    if (prepared_ && softOnsetMs_ > 0.0f)
+    {
+        // Per-sample increment for linear ramp from 0→1 over softOnsetMs
+        float samples = softOnsetMs_ * 0.001f * static_cast<float> (sampleRate_);
+        softOnsetCoeff_ = 1.0f / std::max (samples, 1.0f);
+        // Only reset ramp when value actually changes (not on every processBlock call)
+        if (changed)
+            softOnsetEnvL_ = 0.0f;
+    }
+    else
+    {
+        softOnsetCoeff_ = 0.0f;  // Disabled
+        softOnsetEnvL_ = 1.0f;   // Full gain immediately
+    }
+}
+
+void BrightPlatePresetEngine::setDelayScale (float scale)
+{
+    delayScale_ = std::clamp (scale, 0.25f, 4.0f);
+    if (prepared_)
+    {
+        updateDelayLengths();
+        updateDecayCoefficients();
+    }
+}
+
+void BrightPlatePresetEngine::setNoiseModDepth (float samples)
+{
+    // Independent noise jitter, decoupled from LFO modDepth.
+    // When set (>= 0), this overrides the modDepth-coupled noise jitter.
+    // Critical for algorithms with low modDepth (e.g., Chamber=0.05) that
+    // still need aggressive jitter to suppress modal resonances.
+    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
+    float maxJitter = 32.0f * rateRatio;
+    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxJitter);
+}
+
+void BrightPlatePresetEngine::setOutputTaps (const OutputTap* left, const OutputTap* right)
+{
+    if (left && right)
+    {
+        for (int i = 0; i < kNumOutputTaps; ++i)
+        {
+            customLeftTaps_[i] = left[i];
+            customRightTaps_[i] = right[i];
+        }
+        useCustomTaps_ = true;
+    }
+    else
+    {
+        useCustomTaps_ = false;
+    }
+}
+
+void BrightPlatePresetEngine::applyTapGains (const float* leftGains, const float* rightGains)
+{
+    if (leftGains && rightGains)
+    {
+        // If custom taps aren't already active, initialize from defaults
+        // so buffer indices and positions are valid before applying gains.
+        if (! useCustomTaps_)
+        {
+            for (int i = 0; i < kNumOutputTaps; ++i)
+            {
+                customLeftTaps_[i] = kLeftOutputTaps[i];
+                customRightTaps_[i] = kRightOutputTaps[i];
+            }
+        }
+
+        for (int i = 0; i < kNumOutputTaps; ++i)
+        {
+            customLeftTaps_[i].gain = leftGains[i];
+            customRightTaps_[i].gain = rightGains[i];
+        }
+        useCustomTaps_ = true;
+    }
+}
+
 void BrightPlatePresetEngine::setFreeze (bool frozen)
 {
     frozen_ = frozen;
     if (frozen)
-        for (int t = 0; t < kNumTanks; ++t)
-        {
-            tanks_[t].currentRMS = 0.0f;
-            tanks_[t].peakRMS = 0.0f;
-            tanks_[t].terminalDecayActive = false;
-        }
-}
-void BrightPlatePresetEngine::setLateGainScale (float scale) { lateGainScale_ = std::max (scale, 0.0f); }
-
-void BrightPlatePresetEngine::setHighCrossoverFreq (float hz)
-{
-    const float minHigh = std::max (100.0f, crossoverFreq_ + 1.0f);
-    highCrossoverFreq_ = std::max (hz, minHigh);
-    if (prepared_)
-        updateDecayCoefficients();
+    {
+        leftTank_.currentRMS = 0.0f;
+        leftTank_.peakRMS = 0.0f;
+        leftTank_.terminalDecayActive = false;
+        rightTank_.currentRMS = 0.0f;
+        rightTank_.peakRMS = 0.0f;
+        rightTank_.terminalDecayActive = false;
+    }
 }
 
-void BrightPlatePresetEngine::setAirDampingScale (float scale)
+void BrightPlatePresetEngine::setLateGainScale (float scale)
 {
-    airDampingScale_ = std::max (scale, 0.1f);
-    if (prepared_)
-        updateDecayCoefficients();
+    lateGainScale_ = std::max (scale, 0.0f);
 }
 
 void BrightPlatePresetEngine::setSizeRange (float min, float max)
@@ -764,32 +1045,24 @@ void BrightPlatePresetEngine::setStructuralHFDamping (float hz)
     if (hz <= 0.0f)
     {
         structHFCoeff_ = 0.0f;
-        for (int t = 0; t < kNumTanks; ++t)
-            structHFState_[t] = 0.0f;
+        structHFStateL_ = 0.0f;
+        structHFStateR_ = 0.0f;
         return;
     }
-    const float effectiveHz = hz * (0.5f + 0.5f * trebleMultiply_);
-    structHFCoeff_ = std::exp (-kTwoPi * effectiveHz / static_cast<float> (sampleRate_));
+    structHFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
 void BrightPlatePresetEngine::setTerminalDecay (float thresholdDB, float factor)
 {
     terminalDecayThresholdDB_ = -std::abs (thresholdDB);
-    // Accept the full [0.0, 1.0] range to match DattorroTank and the
-    // wrapper's pass-through behavior. PluginProcessor already gates the
-    // override path on factor>0.001, so an inadvertent factor=0 from the
-    // automation layer cannot reach here in normal use; but if the
-    // calibrator or a future API caller wants a value below 0.8, it
-    // should be honored exactly rather than silently rounded up.
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
     terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void BrightPlatePresetEngine::clearBuffers()
 {
-    for (int t = 0; t < kNumTanks; ++t)
+    auto clearTank = [] (Tank& tank, uint32_t seed, uint32_t noiseStateSeed)
     {
-        auto& tank = tanks_[t];
         tank.ap1Buffer.clear();
         tank.delay1.clear();
         for (int i = 0; i < kNumDensityAPs; ++i)
@@ -798,58 +1071,63 @@ void BrightPlatePresetEngine::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
-        structHFState_[t] = 0.0f;
         tank.currentRMS = 0.0f;
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
-    }
-    // Restore the same LFO phase offsets and PRNG seeds as prepare() so
-    // clearBuffers() produces identical modulation state to a fresh prepare().
-    // These are redeclared locally because the originals are local statics
-    // inside prepare() and cannot be referenced from here.
-    static constexpr uint32_t kClearLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
-    static constexpr uint32_t kClearNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
-    static constexpr float kHalfPi = 1.5707963267948966f;
-    for (int t = 0; t < kNumTanks; ++t)
-    {
-        tanks_[t].lfoPhase  = kHalfPi * static_cast<float> (t);
-        tanks_[t].lfoPRNG   = kClearLFOSeeds[t];
-        tanks_[t].noiseState = kClearNoiseSeeds[t];
-    }
+        tank.lfoPhase = 0.0f;
+        tank.lfoPRNG = seed;
+        tank.noiseState = noiseStateSeed;
+    };
+
+    clearTank (leftTank_, 0x12345678u, 0xDEADBEEFu);
+    clearTank (rightTank_, 0x87654321u, 0xCAFEBABEu);
+    // Restore 90° L/R phase offset for stereo decorrelation
+    leftTank_.lfoPhase = 0.0f;
+    rightTank_.lfoPhase = 1.5707963f;  // pi/2
+    // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_ = 0.0f;
+    structHFStateL_ = 0.0f;
+    structHFStateR_ = 0.0f;
 }
 
 // -----------------------------------------------------------------------
+// Internal update methods
+
 void BrightPlatePresetEngine::updateDelayLengths()
 {
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
     float sizeScale = sizeRangeMin_ + (sizeRangeMax_ - sizeRangeMin_) * sizeParam_;
+    float totalScale = sizeScale * delayScale_;  // Combined size + per-algorithm delay scaling
 
-    for (int t = 0; t < kNumTanks; ++t)
+    auto updateTank = [&] (Tank& tank)
     {
-        auto& tank = tanks_[t];
-        tank.ap1DelaySamples = static_cast<float> (tank.ap1BaseDelay) * rateRatio * sizeScale;
-        tank.delay1Samples   = static_cast<float> (tank.delay1BaseDelay) * rateRatio * sizeScale;
-        tank.delay2Samples   = static_cast<float> (tank.delay2BaseDelay) * rateRatio * sizeScale;
+        tank.ap1DelaySamples = static_cast<float> (tank.ap1BaseDelay) * rateRatio * totalScale;
+        tank.delay1Samples   = static_cast<float> (tank.delay1BaseDelay) * rateRatio * totalScale;
+        tank.delay2Samples   = static_cast<float> (tank.delay2BaseDelay) * rateRatio * totalScale;
 
+        // AP2 delay (integer, used by Allpass::process)
         tank.ap2.delaySamples = std::max (1, static_cast<int> (
-            static_cast<float> (tank.ap2BaseDelay) * rateRatio * sizeScale));
+            static_cast<float> (tank.ap2BaseDelay) * rateRatio * totalScale));
 
+        // Density cascade allpass delays (integer, scaled by rate + size + delayScale)
         for (int i = 0; i < kNumDensityAPs; ++i)
             tank.densityAP[i].delaySamples = std::max (1, static_cast<int> (
-                static_cast<float> (tank.densityAPBase[i]) * rateRatio * sizeScale));
-    }
+                static_cast<float> (tank.densityAPBase[i]) * rateRatio * totalScale));
+    };
+
+    updateTank (leftTank_);
+    updateTank (rightTank_);
 }
 
 void BrightPlatePresetEngine::updateDecayCoefficients()
 {
     float sr = static_cast<float> (sampleRate_);
-    float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
-    float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
+    float lowXoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
+    float highXoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
-    for (int t = 0; t < kNumTanks; ++t)
+    auto updateTankDamping = [&] (Tank& tank)
     {
-        auto& tank = tanks_[t];
-
         float loopLength = tank.ap1DelaySamples
                          + tank.delay1Samples
                          + static_cast<float> (tank.ap2.delaySamples)
@@ -859,23 +1137,43 @@ void BrightPlatePresetEngine::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
-        float gLow  = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
-        float gMid  = gBase;  // mid band decays at natural rate
-        float gHigh = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        tank.damping.setCoefficients (gLow, gMid, gHigh, lowCrossoverCoeff, highCrossoverCoeff);
+        // FiveBandDamping: combine baked VV-derived multipliers with runtime
+        // bass/treble/air controls, then compute per-band gains from gBase.
+        float combinedMult[5] = {
+            kFiveBandMult[0] * bassMultiply_,                                          // sub-bass
+            kFiveBandMult[1] * bassMultiply_,                                          // bass
+            kFiveBandMult[2] * trebleMultiply_,                                        // mid
+            kFiveBandMult[3] * trebleMultiply_,                                        // presence
+            kFiveBandMult[4] * std::max (trebleMultiply_ * airDampingScale_, 0.01f)    // air
+        };
+        tank.damping.setBandMultipliers (combinedMult);
+        tank.damping.computeGainsFromBase (gBase, lowXoverCoeff, highXoverCoeff);
+    };
+
+    updateTankDamping (leftTank_);
+    updateTankDamping (rightTank_);
+
+    // Restore baked 5-band crossovers after gain computation
+    // (computeGainsFromBase overwrites lpCoeff_ with geometric interpolation)
+    {
+        float coeffs[4];
+        for (int c = 0; c < 4; ++c)
+            coeffs[c] = std::exp (-kTwoPi * kFiveBandCrossoverHz[c]
+                                  / static_cast<float> (sampleRate_));
+        leftTank_.damping.setCrossovers (coeffs);
+        rightTank_.damping.setCrossovers (coeffs);
     }
 }
 
 void BrightPlatePresetEngine::updateLFORates()
 {
     float sr = static_cast<float> (sampleRate_);
-    // 4 asymmetric rates using irrational multipliers to prevent correlation
-    static constexpr float kRateMultipliers[kNumTanks] = {
-        1.0f, 1.1180339887f, 0.8944271910f, 1.2360679775f  // 1, √5/2, 2/√5, (1+√5)/2/φ
-    };
-    for (int t = 0; t < kNumTanks; ++t)
-        tanks_[t].lfoPhaseInc = kTwoPi * modRateHz_ * kRateMultipliers[t] / sr;
+
+    // Asymmetric rates: left at base, right at golden ratio offset
+    // to prevent correlated modulation between tanks.
+    leftTank_.lfoPhaseInc  = kTwoPi * modRateHz_ / sr;
+    rightTank_.lfoPhaseInc = kTwoPi * modRateHz_ * 1.1180339887f / sr;  // × sqrt(5)/2
 }
 
 // ==========================================================================
@@ -895,11 +1193,11 @@ public:
         // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
         // allocate at the right size for the actual host sample rate AND for
         // the per-preset delay scale (Invariant 3).
-                if (overrideSizeRangeMin_ >= 0.0f)
-            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
+        if (overrideSizeRangeMin_ >= 0.0f)
+            engine_.setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
         else
-            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
-        // (no setDelayScale on this engine)
+            engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
+        engine_.setDelayScale (kVvDelayScale);
         engine_.setLateGainScale (kBakedLateGainScale);
         // VV-derived crossovers (clamped >0 in setters per Invariant 4)
         engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
@@ -950,13 +1248,13 @@ public:
             setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
         if (frozen_)
             setFreeze (true);
+        if (savedBass != 1.0f)
+            setBassMultiply (savedBass);
         if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
         {
             engine_.setTrebleMultiply (savedTreble);
             lastTreble_ = savedTreble;
         }
-        if (savedBass != 1.0f)
-            setBassMultiply (savedBass);
         if (lastStructHFHz_ > 0.0f)
             setStructuralHFDamping (lastStructHFHz_);
 
@@ -1197,7 +1495,7 @@ public:
     {
         overrideSizeRangeMin_ = mn;
         overrideSizeRangeMax_ = mx;
-        engine_.setSizeRange (mn * kVvDelayScale, mx * kVvDelayScale);
+        engine_.setSizeRange (mn, mx);
     }
     void setLateGainScale (float scale) override
     {
@@ -1235,11 +1533,11 @@ public:
     {
         overrideSizeRangeMin_ = -1.0f;
         overrideSizeRangeMax_ = -1.0f;
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
+        engine_.setSizeRange (kBakedSizeRangeMin, kBakedSizeRangeMax);
     }
 
-    const char* getPresetName() const override { return "Thin Plate"; }
-    const char* getBaseEngineType() const override { return "QuadTank"; }
+    const char* getPresetName() const override { return "Bright Plate"; }
+    const char* getBaseEngineType() const override { return "DattorroTank"; }
 
     // Fix 4 (spectral): expose corrective EQ coefficients to DuskVerbEngine
     // so it can apply the same EQ to the ER path.
@@ -1262,11 +1560,6 @@ public:
         }
         return true;
     }
-
-    // Fix 1 (decay_ratio): expose VV-derived onset envelope table
-    const float* getOnsetEnvelopeTable() const override { return kOnsetEnvelope; }
-    int getOnsetEnvelopeTableSize() const override { return kOnsetTableSize; }
-    float getOnsetDurationMs() const override { return kOnsetDurationMs; }
 
 private:
     BrightPlatePresetEngine engine_;
