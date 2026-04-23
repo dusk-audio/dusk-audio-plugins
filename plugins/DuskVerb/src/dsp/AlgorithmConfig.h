@@ -778,7 +778,7 @@ static constexpr AlgorithmConfig kPresetDrumPlate = {
     0.75f, 13.0f,    // mod: depth, rate
     0.95f, 1.50f, 0.90f, // damping: treble=0.95 (brighter than Vocal Plate), bass=0.90
     7000.0f,         // high crossover — bright target
-    0.80f,           // airDampingScale
+    0.92f,           // airDampingScale (matches kVvAirDampingScale in DrumPlatePreset.cpp)
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -840,8 +840,8 @@ static constexpr AlgorithmConfig kPresetRichPlate = {
     0.22f,           // late gain
     0.75f, 13.0f,    // mod: depth, rate
     0.78f, 1.50f, 1.10f, // damping: treble=0.78 (dark-balanced), bass=1.10 (warm body)
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    3000.0f,         // high crossover (matches kVvHighCrossoverHz in RichPlatePreset.cpp)
+    0.55f,           // airDampingScale (matches kVvAirDampingScale in RichPlatePreset.cpp)
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1158,7 +1158,7 @@ static constexpr AlgorithmConfig kPresetDarkPlate = {
     0.75f, 13.0f,    // mod: depth, rate
     0.75f, 1.50f, 1.05f, // damping: treble=0.75 (dark), bass=1.05 (slight bass emphasis)
     4000.0f,         // high crossover — air split lower for dark target
-    0.80f,           // airDampingScale
+    0.70f,           // airDampingScale (matches kVvAirDampingScale in DarkPlatePreset.cpp)
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1427,7 +1427,7 @@ static constexpr AlgorithmConfig kPresetBrightPlate = {
     0.75f, 13.0f,    // mod: depth, rate
     0.92f, 1.50f, 0.85f, // damping: treble=0.92 (extended bright), bass=0.85
     6000.0f,         // high crossover — air split for 6.3 kHz centroid
-    0.80f,           // airDampingScale
+    0.85f,           // airDampingScale (matches kVvAirDampingScale in BrightPlatePreset.cpp)
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion

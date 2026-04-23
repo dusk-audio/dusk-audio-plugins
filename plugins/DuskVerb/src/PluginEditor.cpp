@@ -1050,6 +1050,40 @@ void DuskVerbEditor::loadPreset (int index)
         // Sync Mode dropdown with the preset's underlying engine type
         modeBox_.setSelectedId (engineModeIdForAlgorithm (preset.algorithm),
                                 juce::dontSendNotification);
+
+        // Populate ADV knobs from this preset's AlgorithmConfig so the
+        // Advanced panel exposes the values the engine actually uses for
+        // this preset. Without this, ADV knobs would carry over the user's
+        // last manual tweaks across preset changes.
+        const auto& cfg = getAlgorithmConfig (preset.algorithm);
+        auto setParam = [this] (const char* id, float value)
+        {
+            if (auto* p = processorRef.parameters.getParameter (id))
+                p->setValueNotifyingHost (p->convertTo0to1 (value));
+        };
+        // AlgorithmConfig-backed (ADV knob shows the preset's baked value)
+        setParam ("air_damping",        cfg.airDampingScale);
+        setParam ("high_crossover",     cfg.highCrossoverHz);
+        setParam ("noise_mod",          cfg.noiseModDepth);
+        setParam ("inline_diffusion",   cfg.inlineDiffusionCoeff);
+        setParam ("stereo_coupling",    cfg.stereoCoupling);
+        setParam ("chorus_depth",       cfg.chorusDepthDefault);
+        setParam ("chorus_rate",        cfg.chorusRateDefault);
+        setParam ("er_crossfeed",       cfg.erCrossfeed);
+        setParam ("decay_boost",        cfg.shortDecayBoostDB);
+        setParam ("structural_hf_damp", cfg.structuralHFDampingHz);
+        setParam ("delay_scale",        cfg.dattorroDelayScale);
+        setParam ("input_onset",        cfg.lateOnsetMs);
+        // No AlgorithmConfig backing — reset to neutral defaults
+        setParam ("soft_onset",          0.0f);
+        setParam ("limiter_thresh",      0.0f);
+        setParam ("output_low_shelf_db", 0.0f);
+        setParam ("output_high_shelf_db",0.0f);
+        setParam ("output_high_shelf_hz",0.0f);
+        setParam ("output_mid_eq_db",    0.0f);
+        setParam ("output_mid_eq_hz",    0.0f);
+        setParam ("terminal_factor",     0.0f);
+        setParam ("late_feed_fwd",      -1.0f);  // sentinel = use preset default
     }
 }
 
