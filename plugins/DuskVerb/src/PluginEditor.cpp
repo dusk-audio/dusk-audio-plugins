@@ -329,7 +329,7 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     modeBox_.addItem ("Dattorro", 2);
     modeBox_.addItem ("QuadTank", 3);
     modeBox_.setTooltip ("Swap reverb engine. Knob positions are preserved — pick a preset or "
-                         "tweak knobs to taste. FDN=Vocal Hall, Dattorro=Drum Air, QuadTank=Clear Chamber.");
+                         "tweak knobs to taste. FDN=Vocal Hall, Dattorro=Drum Room, QuadTank=Bright Chamber.");
     modeBox_.onChange = [this] { selectEngineMode (modeBox_.getSelectedId()); };
     addAndMakeVisible (modeBox_);
 
@@ -854,9 +854,9 @@ void DuskVerbEditor::selectEngineMode (int modeId)
     // Mode → anchor preset (one representative per engine type). Looked up by
     // name so the mapping survives reordering in AlgorithmConfig's lookup table.
     static const juce::String kAnchorName[] = {
-        "Vocal Hall",    // FDN
-        "Drum Air",      // Dattorro
-        "Clear Chamber"  // QuadTank
+        "Vocal Hall",     // FDN
+        "Drum Room",      // Dattorro
+        "Bright Chamber"  // QuadTank
     };
 
     const auto& presets = getFactoryPresets();

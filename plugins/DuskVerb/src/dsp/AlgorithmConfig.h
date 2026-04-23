@@ -491,8 +491,8 @@ static constexpr int kNumAlgorithms = 25;
 // === AUTO-GENERATED PRESET ALGORITHMS ===
 
 // Preset "Homestar Blade Runner" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetHomestarBladeRunner = {
-    "PresetHomestarBladeRunner",
+static constexpr AlgorithmConfig kPresetGated = {
+    "PresetGated",
     {   102,   260,   312,   317,   331,   336,   346,   443,
        1884,  2045,  2185,  2372,  2771,  2915,  4596,  5125 },
     { 1, 3, 5, 6, 8, 10, 12, 15 },
@@ -546,8 +546,8 @@ static constexpr AlgorithmConfig kPresetHomestarBladeRunner = {
 };
 
 // Preset "Pad Hall" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetPadHall = {
-    "PresetPadHall",
+static constexpr AlgorithmConfig kPresetCathedral = {
+    "PresetCathedral",
     {   124,   346,   668,  1715,  2040,  2175,  2372,  2708,
        2877,  3195,  3522,  3896,  4596,  5236,  5554,  5933 },
     { 0, 3, 4, 7, 8, 11, 12, 15 },
@@ -603,8 +603,8 @@ static constexpr AlgorithmConfig kPresetPadHall = {
 // Preset "Concert Wave" (VV-derived FDN)
 
 // Preset "Huge Synth Hall" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetHugeSynthHall = {
-    "PresetHugeSynthHall",
+static constexpr AlgorithmConfig kPresetLargeHall = {
+    "PresetLargeHall",
     {   336,   346,   898,  1504,  1978,  2375,  2606,  2921,
        3265,  3463,  3727,  4099,  4383,  5002,  5468,  6168 },
     { 0, 3, 4, 7, 9, 10, 12, 15 },
@@ -659,8 +659,8 @@ static constexpr AlgorithmConfig kPresetHugeSynthHall = {
 // Preset "Fat Snare Hall" (VV-derived FDN)
 
 // Preset "Snare Hall" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetSnareHall = {
-    "PresetSnareHall",
+static constexpr AlgorithmConfig kPresetMediumHall = {
+    "PresetMediumHall",
     {   124,   280,   346,   413,   695,  1846,  1997,  2131,
        2288,  2506,  2700,  2843,  3262,  4400,  4809,  5231 },
     { 0, 1, 5, 7, 9, 11, 12, 15 },
@@ -823,8 +823,8 @@ static constexpr AlgorithmConfig kPresetDrumPlate = {
 // Preset "Fat Drums" (VV-derived FDN)
 
 // Preset "Large Plate" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetLargePlate = {
-    "PresetLargePlate",
+static constexpr AlgorithmConfig kPresetRichPlate = {
+    "PresetRichPlate",
     {   103,   235,   336,   346,  1507,  1847,  2030,  2282,
        2423,  2567,  2704,  2845,  3265,  3442,  4999,  6260 },
     { 0, 2, 4, 6, 8, 10, 12, 15 },
@@ -929,8 +929,8 @@ static constexpr AlgorithmConfig kPresetVocalPlate = {
 // Preset "Vox Plate" (VV-derived FDN)
 
 // Preset "Dark Vocal Room" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetDarkVocalRoom = {
-    "PresetDarkVocalRoom",
+static constexpr AlgorithmConfig kPresetDarkChamber = {
+    "PresetDarkChamber",
     {   107,   263,   336,   346,   456,   588,  1094,  1243,
        1422,  1677,  1891,  2567,  2771,  2986,  4659,  5349 },
     { 0, 2, 5, 6, 9, 10, 12, 15 },
@@ -977,8 +977,8 @@ static constexpr AlgorithmConfig kPresetDarkVocalRoom = {
 };
 
 // Preset "Exciting Snare room" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetExcitingSnareRoom = {
-    "PresetExcitingSnareRoom",
+static constexpr AlgorithmConfig kPresetLiveRoom = {
+    "PresetLiveRoom",
     {   102,   317,   331,   336,   346,   452,   938,  1082,
        1502,  1977,  2437,  3520,  3805,  4749,  5769,  6169 },
     { 0, 2, 5, 6, 8, 11, 12, 15 },
@@ -1040,8 +1040,8 @@ static constexpr AlgorithmConfig kPresetExcitingSnareRoom = {
 // Preset "Long Dark 70s Snare Room" (VV-derived FDN)
 
 // Preset "Short Dark Snare Room" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetShortDarkSnareRoom = {
-    "PresetShortDarkSnareRoom",
+static constexpr AlgorithmConfig kPresetStudioRoom = {
+    "PresetStudioRoom",
     {   170,   307,   311,   312,   317,   331,   336,   346,
        1046,  1565,  2640,  3749,  4808,  5697,  6034,  6599 },
     { 0, 2, 4, 6, 8, 11, 12, 15 },
@@ -1090,8 +1090,8 @@ static constexpr AlgorithmConfig kPresetShortDarkSnareRoom = {
 // Preset "A Plate" (VV-derived FDN)
 
 // Preset "Clear Chamber" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetClearChamber = {
-    "PresetClearChamber",
+static constexpr AlgorithmConfig kPresetBrightChamber = {
+    "PresetBrightChamber",
     {   126,   260,   346,   440,  1085,  2287,  2436,  2569,
        2704,  3408,  3680,  3886,  4996,  5658,  6002,  6316 },
     { 2, 3, 4, 6, 9, 11, 12, 15 },
@@ -1138,8 +1138,8 @@ static constexpr AlgorithmConfig kPresetClearChamber = {
 };
 
 // Preset "Fat Plate" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetFatPlate = {
-    "PresetFatPlate",
+static constexpr AlgorithmConfig kPresetDarkPlate = {
+    "PresetDarkPlate",
     {   124,   261,   317,   331,   336,   346,   440,  1888,
        2061,  2225,  2560,  2735,  3004,  3194,  4991,  5767 },
     { 3, 4, 5, 6, 8, 10, 12, 15 },
@@ -1198,8 +1198,8 @@ static constexpr AlgorithmConfig kPresetFatPlate = {
 };
 
 // Preset "Large Chamber" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetLargeChamber = {
-    "PresetLargeChamber",
+static constexpr AlgorithmConfig kPresetLiveChamber = {
+    "PresetLiveChamber",
     {   130,   312,   317,   331,   336,   346,   477,  1263,
        2194,  2436,  3458,  3642,  3974,  5209,  5683,  6092 },
     { 0, 1, 3, 7, 9, 11, 12, 15 },
@@ -1250,8 +1250,8 @@ static constexpr AlgorithmConfig kPresetLargeChamber = {
 // Preset "Live Vox Chamber" (VV-derived FDN)
 
 // Preset "Medium Gate" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetMediumGate = {
-    "PresetMediumGate",
+static constexpr AlgorithmConfig kPresetReverse = {
+    "PresetReverse",
     {   126,   270,   336,   346,   491,   648,   797,  1042,
        1191,  2183,  2685,  2830,  3490,  3746,  4573,  5003 },
     { 1, 4, 5, 7, 8, 10, 12, 15 },
@@ -1302,8 +1302,8 @@ static constexpr AlgorithmConfig kPresetMediumGate = {
 // Preset "Rich Chamber" (VV-derived FDN)
 
 // Preset "Small Chamber1" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetSmallChamber1 = {
-    "PresetSmallChamber1",
+static constexpr AlgorithmConfig kPresetSmallHall = {
+    "PresetSmallHall",
     {   141,   312,   317,   331,   336,   346,   477,   731,
        1071,  1208,  1349,  1765,  2030,  2575,  3060,  3922 },
     { 1, 3, 5, 6, 9, 10, 12, 15 },
@@ -1358,8 +1358,8 @@ static constexpr AlgorithmConfig kPresetSmallChamber1 = {
 // Preset "Small Chamber2" (VV-derived FDN)
 
 // Preset "Snare Plate" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetSnarePlate = {
-    "PresetSnarePlate",
+static constexpr AlgorithmConfig kPresetDrumChamber = {
+    "PresetDrumChamber",
     {    92,   232,   331,   336,   346,   427,   563,  1349,
        1975,  2170,  2489,  2622,  3184,  3521,  4745,  6071 },
     { 1, 3, 5, 6, 8, 10, 12, 15 },
@@ -1406,8 +1406,8 @@ static constexpr AlgorithmConfig kPresetSnarePlate = {
 };
 
 // Preset "Thin Plate" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetThinPlate = {
-    "PresetThinPlate",
+static constexpr AlgorithmConfig kPresetBrightPlate = {
+    "PresetBrightPlate",
     {   125,   336,   346,   544,   685,   820,  1007,  1538,
        1699,  1845,  2223,  2414,  2563,  2970,  3887,  4240 },
     { 0, 2, 4, 7, 8, 11, 12, 15 },
@@ -1467,8 +1467,8 @@ static constexpr AlgorithmConfig kPresetThinPlate = {
 // Preset "Ambience Tiled Room" (VV-derived FDN)
 
 // Preset "Big Ambience Gate" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetBigAmbienceGate = {
-    "PresetBigAmbienceGate",
+static constexpr AlgorithmConfig kPresetModulated = {
+    "PresetModulated",
     {   157,   311,   312,   317,   331,   336,   346,   876,
        1009,  1813,  1957,  2134,  2561,  2703,  2933,  5665 },
     { 0, 2, 4, 6, 8, 10, 11, 15 },
@@ -1521,8 +1521,8 @@ static constexpr AlgorithmConfig kPresetBigAmbienceGate = {
 // Preset "Cross Stick Room" (VV-derived FDN)
 
 // Preset "Drum Air" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetDrumAir = {
-    "PresetDrumAir",
+static constexpr AlgorithmConfig kPresetShimmer = {
+    "PresetShimmer",
     {   206,   311,   312,   317,   331,   336,   346,   369,
         575,   939,  1302,  1457,  1593,  1824,  1971,  2182 },
     { 1, 3, 5, 7, 8, 11, 12, 15 },
@@ -1569,8 +1569,8 @@ static constexpr AlgorithmConfig kPresetDrumAir = {
 };
 
 // Preset "Gated Snare" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetGatedSnare = {
-    "PresetGatedSnare",
+static constexpr AlgorithmConfig kPresetInfinite = {
+    "PresetInfinite",
     {   133,   312,   317,   331,   336,   346,   375,   521,
         808,  1010,  2472,  2708,  2889,  3523,  3929,  4721 },
     { 0, 3, 5, 6, 9, 10, 12, 15 },
@@ -1623,8 +1623,8 @@ static constexpr AlgorithmConfig kPresetGatedSnare = {
 // Preset "Large Gated Snare" (VV-derived FDN)
 
 // Preset "Med Ambience" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetMedAmbience = {
-    "PresetMedAmbience",
+static constexpr AlgorithmConfig kPresetVocalChamber = {
+    "PresetVocalChamber",
     {   123,   261,   346,   481,   662,  1072,  1552,  1700,
        2063,  2373,  2856,  3808,  4496,  4972,  5446,  6327 },
     { 0, 2, 5, 7, 9, 10, 12, 15 },
@@ -1675,8 +1675,8 @@ static constexpr AlgorithmConfig kPresetMedAmbience = {
 // Preset "Small Ambience" (VV-derived FDN)
 
 // Preset "Small Drum Room" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetSmallDrumRoom = {
-    "PresetSmallDrumRoom",
+static constexpr AlgorithmConfig kPresetDrumRoom = {
+    "PresetDrumRoom",
     {   209,   346,   400,   721,  1079,  1222,  1830,  1974,
        2241,  2539,  2700,  2840,  3111,  3408,  3789,  4232 },
     { 0, 3, 5, 7, 8, 10, 12, 15 },
@@ -1740,8 +1740,8 @@ static constexpr AlgorithmConfig kPresetSmallDrumRoom = {
 // Preset "Snare Ambience" (VV-derived FDN)
 
 // Preset "Tight Ambience Gate" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetTightAmbienceGate = {
-    "PresetTightAmbienceGate",
+static constexpr AlgorithmConfig kPresetTightRoom = {
+    "PresetTightRoom",
     {   102,   262,   317,   331,   336,   346,   662,   890,
        1377,  1893,  2051,  2188,  2379,  2844,  3249,  5216 },
     { 0, 1, 3, 6, 8, 10, 12, 15 },
@@ -1792,8 +1792,8 @@ static constexpr AlgorithmConfig kPresetTightAmbienceGate = {
 // Preset "Trip Hop Snare" (VV-derived FDN)
 
 // Preset "Very Small Ambience" (VV-derived FDN)
-static constexpr AlgorithmConfig kPresetVerySmallAmbience = {
-    "PresetVerySmallAmbience",
+static constexpr AlgorithmConfig kPresetVocalBooth = {
+    "PresetVocalBooth",
     {   119,   292,   307,   311,   312,   317,   331,   336,
         346,   759,   997,  1136,  1285,  1824,  2182,  2783 },
     { 0, 1, 3, 6, 9, 10, 12, 15 },
@@ -1846,33 +1846,33 @@ static constexpr AlgorithmConfig kPresetVerySmallAmbience = {
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     static constexpr const AlgorithmConfig* kAlgorithms[kNumAlgorithms] = {
-        &kPresetHomestarBladeRunner,
-        &kPresetPadHall,
-        &kPresetHugeSynthHall,
-        &kPresetSnareHall,
+        &kPresetGated,
+        &kPresetCathedral,
+        &kPresetLargeHall,
+        &kPresetMediumHall,
         &kPresetVocalHall,
         &kPresetDrumPlate,
-        &kPresetLargePlate,
+        &kPresetRichPlate,
         &kPresetVocalPlate,
-        &kPresetDarkVocalRoom,
-        &kPresetExcitingSnareRoom,
-        &kPresetShortDarkSnareRoom,
-        &kPresetClearChamber,
-        &kPresetFatPlate,
-        &kPresetLargeChamber,
-        &kPresetMediumGate,
-        &kPresetSmallChamber1,
-        &kPresetSnarePlate,
-        &kPresetThinPlate,
-        &kPresetBigAmbienceGate,
-        &kPresetDrumAir,
-        &kPresetGatedSnare,
-        &kPresetMedAmbience,
-        &kPresetSmallDrumRoom,
-        &kPresetTightAmbienceGate,
-        &kPresetVerySmallAmbience
+        &kPresetDarkChamber,
+        &kPresetLiveRoom,
+        &kPresetStudioRoom,
+        &kPresetBrightChamber,
+        &kPresetDarkPlate,
+        &kPresetLiveChamber,
+        &kPresetReverse,
+        &kPresetSmallHall,
+        &kPresetDrumChamber,
+        &kPresetBrightPlate,
+        &kPresetModulated,
+        &kPresetShimmer,
+        &kPresetInfinite,
+        &kPresetVocalChamber,
+        &kPresetDrumRoom,
+        &kPresetTightRoom,
+        &kPresetVocalBooth
     };
     if (index < 0 || index >= kNumAlgorithms)
-        index = 0; // Fall back to first preset (PresetHomestarBladeRunner)
+        index = 0; // Fall back to first preset (PresetGated)
     return *kAlgorithms[index];
 }
