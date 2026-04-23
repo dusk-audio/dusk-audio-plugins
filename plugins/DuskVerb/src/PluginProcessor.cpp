@@ -10,7 +10,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "algorithm", 1 }, "Algorithm",
-        juce::StringArray { "PresetHomestarBladeRunner", "PresetPadHall", "PresetHugeSynthHall", "PresetSnareHall", "PresetVocalHall", "PresetDrumPlate", "PresetLargePlate", "PresetVocalPlate", "PresetDarkVocalRoom", "PresetExcitingSnareRoom", "PresetShortDarkSnareRoom", "PresetClearChamber", "PresetFatPlate", "PresetLargeChamber", "PresetMediumGate", "PresetSmallChamber1", "PresetSnarePlate", "PresetThinPlate", "PresetBigAmbienceGate", "PresetDrumAir", "PresetGatedSnare", "PresetMedAmbience", "PresetSmallDrumRoom", "PresetTightAmbienceGate", "PresetVerySmallAmbience" }, 0));
+        juce::StringArray { "PresetGated", "PresetCathedral", "PresetLargeHall", "PresetMediumHall", "PresetVocalHall", "PresetDrumPlate", "PresetRichPlate", "PresetVocalPlate", "PresetDarkChamber", "PresetLiveRoom", "PresetStudioRoom", "PresetBrightChamber", "PresetDarkPlate", "PresetLiveChamber", "PresetReverse", "PresetSmallHall", "PresetDrumChamber", "PresetBrightPlate", "PresetModulated", "PresetShimmer", "PresetInfinite", "PresetVocalChamber", "PresetDrumRoom", "PresetTightRoom", "PresetVocalBooth" }, 0));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "decay", 1 }, "Decay Time",
