@@ -12,16 +12,21 @@
 #include <iostream>
 #include <vector>
 
-int main()
+int main (int argc, char** argv)
 {
     // Flush denormals to zero (no ScopedNoDenormals outside of JUCE plugin context)
 #if defined(__SSE__) || defined(__SSE2__)
     _mm_setcsr (_mm_getcsr() | 0x8040); // FTZ + DAZ
 #endif
 
+    // Args: [algorithm-index] [decay-seconds] [output-path]
+    int   algoIndex   = (argc > 1) ? std::atoi (argv[1]) : 0;
+    float decayTime   = (argc > 2) ? std::atof (argv[2]) : 2.75f;
+    const char* outPath = (argc > 3) ? argv[3] : "ir_test.wav";
+
     constexpr double sampleRate  = 48000.0;
-    constexpr int    numSeconds  = 3;
-    constexpr int    totalFrames = static_cast<int> (sampleRate * numSeconds);
+    int    numSeconds  = static_cast<int> (decayTime * 1.5f) + 2;
+    int    totalFrames = static_cast<int> (sampleRate * numSeconds);
     constexpr int    blockSize   = 512;
 
     // Stereo buffer with unit impulse at sample 0
@@ -33,19 +38,19 @@ int main()
     // Configure full reverb engine
     DuskVerbEngine engine;
     engine.prepare (sampleRate, blockSize);
-    engine.setAlgorithm (1); // Explicitly select Hall
-    engine.setDecayTime (2.5f);
-    engine.setBassMultiply (1.2f);
-    engine.setTrebleMultiply (0.6f);
+    engine.setAlgorithm (algoIndex);
+    engine.setDecayTime (decayTime);
+    engine.setBassMultiply (0.893f);
+    engine.setTrebleMultiply (0.912f);
     engine.setCrossoverFreq (1000.0f);
-    engine.setModDepth (0.3f);
-    engine.setModRate (1.0f);
-    engine.setSize (0.85f);
+    engine.setModDepth (0.192f);
+    engine.setModRate (1.80f);
+    engine.setSize (0.44f);
     engine.setPreDelay (20.0f);
-    engine.setDiffusion (0.7f);
+    engine.setDiffusion (1.00f);
     engine.setOutputDiffusion (0.8f);
-    engine.setERLevel (0.5f);
-    engine.setERSize (0.5f);
+    engine.setERLevel (0.05f);
+    engine.setERSize (0.23f);
     engine.setMix (1.0f);
 
     // Process in blocks (in-place)
@@ -63,7 +68,7 @@ int main()
                  static_cast<size_t> (totalFrames) * sizeof (float));
 
     // Write WAV
-    juce::File outputFile = juce::File::getCurrentWorkingDirectory().getChildFile ("ir_test.wav");
+    juce::File outputFile = juce::File::getCurrentWorkingDirectory().getChildFile (outPath);
 
     if (outputFile.existsAsFile())
         outputFile.deleteFile();

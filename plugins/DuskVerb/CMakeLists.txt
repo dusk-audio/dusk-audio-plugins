@@ -149,7 +149,15 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
         src/dsp/EarlyReflections.cpp
+        src/dsp/presets/PresetEngineRegistry.cpp
     )
+
+    # All per-preset engines (same GLOB the DuskVerb plugin uses)
+    file(GLOB DUSKVERB_IRTEST_PRESET_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/presets/*.cpp")
+    list(REMOVE_ITEM DUSKVERB_IRTEST_PRESET_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/presets/PresetEngineRegistry.cpp")
+    target_sources(DuskVerb_IRTest PRIVATE ${DUSKVERB_IRTEST_PRESET_SOURCES})
 
     target_include_directories(DuskVerb_IRTest PRIVATE src)
 
