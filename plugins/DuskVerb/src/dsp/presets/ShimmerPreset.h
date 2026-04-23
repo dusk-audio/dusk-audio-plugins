@@ -2,7 +2,7 @@
 
 // GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
 //
-// Per-preset reverb engine for "Drum Air".
+// Per-preset reverb engine for "Shimmer".
 // Base engine: DattorroTank
 //
 // This header only exposes a factory function. The concrete engine class and

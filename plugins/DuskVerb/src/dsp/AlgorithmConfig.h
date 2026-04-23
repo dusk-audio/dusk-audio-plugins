@@ -879,6 +879,7 @@ static constexpr AlgorithmConfig kPresetRichPlate = {
 // Preset "Tight Plate" (VV-derived FDN)
 
 // Preset "Vocal Plate" (VV-derived FDN)
+// Preset "Vocal Plate" — DattorroTank, targeting EMT 140 "medium" damper (2.75s, ~5.4kHz centroid).
 static constexpr AlgorithmConfig kPresetVocalPlate = {
     "PresetVocalPlate",
     {   124,   311,   312,   317,   331,   336,   346,   761,
@@ -890,11 +891,11 @@ static constexpr AlgorithmConfig kPresetVocalPlate = {
     0.55f, 0.45f,    // input diffusion
     0.35f,           // output diffusion scale
     20000.0f,        // bandwidth
-    2.50f, 0.85f,    // ER level (boosted from 0.65 to strengthen onset), time scale
-    0.22f,           // late gain (FDN native)
-    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-4.5)
-    0.89f, 1.50f, 0.94f, // damping: treble=0.89, bass=0.94
-    4000.0f,         // high crossover
+    0.05f, 0.85f,    // ER level (low — plates have minimal early reflections), time scale
+    0.22f,           // late gain
+    0.75f, 13.0f,    // mod: depth, rate
+    0.89f, 1.50f, 0.94f, // damping: treble, ceiling, bass
+    5000.0f,         // high crossover — EMT 140 medium centroid target
     0.80f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
@@ -907,15 +908,15 @@ static constexpr AlgorithmConfig kPresetVocalPlate = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON — canonical plate algorithm
     false,           // useQuadTank: OFF
-    1.50f,           // decay time scale
+    1.00f,           // decay time scale (no multiplier — knob = literal RT60)
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
     0.0f, 0.0f,     // gate: disabled
     12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
     8.00f,           // output gain
-    -1.0f,           // stereo coupling (full 16x16 Hadamard)
+    -1.0f,           // stereo coupling
     0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
