@@ -1846,33 +1846,33 @@ static constexpr AlgorithmConfig kPresetVocalBooth = {
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     static constexpr const AlgorithmConfig* kAlgorithms[kNumAlgorithms] = {
-        &kPresetGated,
-        &kPresetCathedral,
-        &kPresetLargeHall,
-        &kPresetMediumHall,
-        &kPresetVocalHall,
-        &kPresetDrumPlate,
-        &kPresetRichPlate,
-        &kPresetVocalPlate,
-        &kPresetDarkChamber,
-        &kPresetLiveRoom,
-        &kPresetStudioRoom,
-        &kPresetBrightChamber,
-        &kPresetDarkPlate,
-        &kPresetLiveChamber,
-        &kPresetReverse,
-        &kPresetSmallHall,
-        &kPresetDrumChamber,
-        &kPresetBrightPlate,
-        &kPresetModulated,
-        &kPresetShimmer,
-        &kPresetInfinite,
-        &kPresetVocalChamber,
-        &kPresetDrumRoom,
-        &kPresetTightRoom,
-        &kPresetVocalBooth
+        &kPresetVocalPlate,     //  0 Plates
+        &kPresetDrumPlate,      //  1
+        &kPresetBrightPlate,    //  2
+        &kPresetDarkPlate,      //  3
+        &kPresetRichPlate,      //  4
+        &kPresetSmallHall,      //  5 Halls
+        &kPresetMediumHall,     //  6
+        &kPresetLargeHall,      //  7
+        &kPresetVocalHall,      //  8
+        &kPresetCathedral,      //  9
+        &kPresetDrumRoom,       // 10 Rooms
+        &kPresetVocalBooth,     // 11
+        &kPresetStudioRoom,     // 12
+        &kPresetLiveRoom,       // 13
+        &kPresetTightRoom,      // 14
+        &kPresetVocalChamber,   // 15 Chambers
+        &kPresetDrumChamber,    // 16
+        &kPresetBrightChamber,  // 17
+        &kPresetDarkChamber,    // 18
+        &kPresetLiveChamber,    // 19
+        &kPresetShimmer,        // 20 Special
+        &kPresetReverse,        // 21
+        &kPresetModulated,      // 22
+        &kPresetInfinite,       // 23
+        &kPresetGated           // 24
     };
     if (index < 0 || index >= kNumAlgorithms)
-        index = 0; // Fall back to first preset (PresetGated)
+        index = 0; // Fall back to first preset (PresetVocalPlate)
     return *kAlgorithms[index];
 }
