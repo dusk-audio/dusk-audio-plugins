@@ -1140,6 +1140,7 @@ static constexpr AlgorithmConfig kPresetBrightChamber = {
 };
 
 // Preset "Fat Plate" (VV-derived FDN)
+// Preset "Dark Plate" — DattorroTank, targeting EMT 140 "dark" damper, variant 4 (6.1s, ~4.5kHz centroid).
 static constexpr AlgorithmConfig kPresetDarkPlate = {
     "PresetDarkPlate",
     {   124,   261,   317,   331,   336,   346,   440,  1888,
@@ -1151,11 +1152,11 @@ static constexpr AlgorithmConfig kPresetDarkPlate = {
     0.55f, 0.45f,    // input diffusion
     0.35f,           // output diffusion scale
     20000.0f,        // bandwidth
-    0.65f, 0.85f,    // ER level, time scale
-    0.80f,           // late gain (boosted from 0.22 to strengthen body/tail vs onset)
-    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
-    0.90f, 1.50f, 0.95f, // damping: treble=0.90, bass=0.95
-    4000.0f,         // high crossover
+    0.05f, 0.85f,    // ER level (low — plate), time scale
+    0.22f,           // late gain
+    0.75f, 13.0f,    // mod: depth, rate
+    0.75f, 1.50f, 1.05f, // damping: treble=0.75 (dark), bass=1.05 (slight bass emphasis)
+    4000.0f,         // high crossover — air split lower for dark target
     0.80f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
@@ -1168,7 +1169,7 @@ static constexpr AlgorithmConfig kPresetDarkPlate = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
