@@ -58,6 +58,36 @@ void KnobWithLabel::init (juce::Component& parent,
     };
 }
 
+void KnobWithLabel::initWithSentinel (juce::Component& parent,
+                                      juce::AudioProcessorValueTreeState& apvts,
+                                      const juce::String& paramID,
+                                      const juce::String& displayName,
+                                      const juce::String& suffix,
+                                      double sentinelValue,
+                                      const juce::String& tooltip)
+{
+    init (parent, apvts, paramID, displayName, suffix, tooltip);
+
+    // Override the formatter so sentinel values display "default".
+    auto sfx = suffix;
+    slider.textFromValueFunction = [sfx, sentinelValue] (double v)
+    {
+        if (std::abs (v - sentinelValue) < 0.001)
+            return juce::String ("default");
+        if (sfx == " Hz")
+            return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
+                               : v < 100.0 ? juce::String (v, 2) + " Hz"
+                                           : juce::String (juce::roundToInt (v)) + " Hz";
+        if (sfx == " ms")  return juce::String (juce::roundToInt (v)) + " ms";
+        if (sfx == " dB")  return juce::String (v, 1) + " dB";
+        if (sfx == "x")    return juce::String (v, 2) + "x";
+        return juce::String (v, 2);
+    };
+    // Force the value label to refresh immediately so the text reflects
+    // the sentinel-aware formatter at construction time.
+    slider.updateText();
+}
+
 // =============================================================================
 // DuskVerbLookAndFeel
 // =============================================================================
@@ -294,6 +324,64 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     width_     .init (*this, p.parameters, "width",      "WIDTH",        "%",
         "Stereo width: 0% mono, 100% normal, 150% wide");
 
+    // --- Advanced panel knobs (sentinel-default: -1 means use preset value) ---
+    advInputOnset_   .init (*this, p.parameters, "input_onset",        "INPUT ONSET", " ms",
+        "Adds an attack ramp on the input. Softens transients feeding the reverb");
+    advSoftOnset_    .init (*this, p.parameters, "soft_onset",         "SOFT ONSET",  " ms",
+        "Smooths the DattorroTank output transient. Longer = less aggressive onset");
+    advDelayScale_   .init (*this, p.parameters, "delay_scale",        "DELAY SCALE", "x",
+        "DattorroTank loop-length multiplier. Shifts mode spacing / perceived size");
+    advNoiseMod_     .initWithSentinel (*this, p.parameters, "noise_mod",          "NOISE MOD", "",    -1.0,
+        "Per-sample noise modulation depth in samples. Higher = more mode smearing");
+    advAirDamping_   .initWithSentinel (*this, p.parameters, "air_damping",        "AIR DAMP",  "",    -1.0,
+        "Feedback HF damping strength above the high-crossover. Lower = darker tail");
+    advHighCrossover_.initWithSentinel (*this, p.parameters, "high_crossover",     "HI XOVER",  " Hz", -1.0,
+        "Split frequency between mid-band and air-band damping");
+    advStructHFDamp_ .initWithSentinel (*this, p.parameters, "structural_hf_damp", "STRUCT HF", " Hz", -1.0,
+        "Structural HF damping cutoff inside the feedback loops");
+    advInlineDiff_   .initWithSentinel (*this, p.parameters, "inline_diffusion",   "TANK DIFF", "",    -1.0,
+        "Diffusion amount inside the tank (per-tank allpass coefficient)");
+
+    advOutLowShelfDb_ .init (*this, p.parameters, "output_low_shelf_db",  "LOW dB",   " dB",
+        "Output low-shelf gain. Positive boosts low end; negative cuts");
+    advOutHighShelfDb_.init (*this, p.parameters, "output_high_shelf_db", "HI dB",    " dB",
+        "Output high-shelf gain. Positive boosts air; negative cuts");
+    advOutHighShelfHz_.init (*this, p.parameters, "output_high_shelf_hz", "HI Hz",    " Hz",
+        "Output high-shelf corner frequency (0 = bypass)");
+    advOutMidEqDb_    .init (*this, p.parameters, "output_mid_eq_db",     "MID dB",   " dB",
+        "Output mid-band peaking gain. Narrow scoop/boost in the mids");
+    advOutMidEqHz_    .init (*this, p.parameters, "output_mid_eq_hz",     "MID Hz",   " Hz",
+        "Output mid-band peaking frequency (0 = bypass)");
+
+    advStereoCoupling_.initWithSentinel (*this, p.parameters, "stereo_coupling", "STEREO",   "",    -2.0,
+        "Crossfeed between L/R feedback paths. Lower = wider; higher = more mono");
+    advERCrossfeed_   .initWithSentinel (*this, p.parameters, "er_crossfeed",    "ER XFEED", "",    -1.0,
+        "Early reflection L/R crossfeed amount");
+    advChorusDepth_   .initWithSentinel (*this, p.parameters, "chorus_depth",    "CHO DEPTH", "",   -1.0,
+        "Tail chorus modulation depth (adds movement to the tail)");
+    advChorusRate_    .initWithSentinel (*this, p.parameters, "chorus_rate",     "CHO RATE", " Hz", -1.0,
+        "Tail chorus modulation rate");
+
+    advLimiterThresh_ .init (*this, p.parameters, "limiter_thresh", "LIMITER",  " dB",
+        "Output peak limiter threshold (0 dB = disabled)");
+    advDecayBoost_    .initWithSentinel (*this, p.parameters, "decay_boost", "D.BOOST", "", -1.0,
+        "Short-decay boost amount. Extends perceived tail without extending RT60");
+    advTerminalFactor_.init (*this, p.parameters, "terminal_factor", "TERM FAC", "",
+        "Terminal-decay accelerator. >0 hard-truncates tail below the terminal threshold");
+
+    // Hide advanced knobs initially — main tab is active by default.
+    for (auto* k : { &advInputOnset_, &advSoftOnset_, &advDelayScale_, &advNoiseMod_,
+                     &advAirDamping_, &advHighCrossover_, &advStructHFDamp_, &advInlineDiff_,
+                     &advOutLowShelfDb_, &advOutHighShelfDb_, &advOutHighShelfHz_,
+                     &advOutMidEqDb_, &advOutMidEqHz_,
+                     &advStereoCoupling_, &advERCrossfeed_, &advChorusDepth_, &advChorusRate_,
+                     &advLimiterThresh_, &advDecayBoost_, &advTerminalFactor_ })
+    {
+        k->slider    .setVisible (false);
+        k->nameLabel .setVisible (false);
+        k->valueLabel.setVisible (false);
+    }
+
     // User preset manager
     userPresetManager_ = std::make_unique<UserPresetManager> ("DuskVerb");
 
@@ -411,6 +499,25 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     addAndMakeVisible (deletePresetButton_);
     deletePresetButton_.setVisible (false);
 
+    // MAIN / ADVANCED tab toggle (top-right of header). ADVANCED exposes the
+    // per-preset override knobs (air damping, output EQ, dynamics, etc.) that
+    // already exist in the processor as sentinel-default APVTS params.
+    mainTabButton_.setButtonText ("MAIN");
+    mainTabButton_.setClickingTogglesState (true);
+    mainTabButton_.setRadioGroupId (1001);
+    mainTabButton_.setToggleState (true, juce::dontSendNotification);
+    mainTabButton_.setTooltip ("Standard reverb controls");
+    mainTabButton_.onClick = [this] { setActiveTab (false); };
+    addAndMakeVisible (mainTabButton_);
+
+    advancedTabButton_.setButtonText ("ADV");
+    advancedTabButton_.setClickingTogglesState (true);
+    advancedTabButton_.setRadioGroupId (1001);
+    advancedTabButton_.setToggleState (false, juce::dontSendNotification);
+    advancedTabButton_.setTooltip ("Per-preset override controls (damping, EQ, dynamics, spatial)");
+    advancedTabButton_.onClick = [this] { setActiveTab (true); };
+    addAndMakeVisible (advancedTabButton_);
+
     // Pre-delay sync
     predelaySyncBox_.addItemList ({ "Free", "1/32", "1/16", "1/8", "1/4", "1/2", "1/1" }, 1);
     predelaySyncBox_.setJustificationType (juce::Justification::centred);
@@ -483,6 +590,34 @@ void DuskVerbEditor::timerCallback()
     update (loCut_);
     update (hiCut_);
     update (width_);
+
+    // Advanced panel knobs — use the slider's own textFromValueFunction
+    // (set in init/initWithSentinel) so sentinel values display as "default".
+    auto updateAdv = [] (KnobWithLabel& k)
+    {
+        k.valueLabel.setText (k.slider.getTextFromValue (k.slider.getValue()),
+                              juce::dontSendNotification);
+    };
+    updateAdv (advInputOnset_);
+    updateAdv (advSoftOnset_);
+    updateAdv (advDelayScale_);
+    updateAdv (advNoiseMod_);
+    updateAdv (advAirDamping_);
+    updateAdv (advHighCrossover_);
+    updateAdv (advStructHFDamp_);
+    updateAdv (advInlineDiff_);
+    updateAdv (advOutLowShelfDb_);
+    updateAdv (advOutHighShelfDb_);
+    updateAdv (advOutHighShelfHz_);
+    updateAdv (advOutMidEqDb_);
+    updateAdv (advOutMidEqHz_);
+    updateAdv (advStereoCoupling_);
+    updateAdv (advERCrossfeed_);
+    updateAdv (advChorusDepth_);
+    updateAdv (advChorusRate_);
+    updateAdv (advLimiterThresh_);
+    updateAdv (advDecayBoost_);
+    updateAdv (advTerminalFactor_);
 
     // Gray out mix knob when bus mode is active
     bool busMode = busModeButton_.getToggleState();
@@ -586,9 +721,20 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    drawGroupBox (g, { inputX, topY, inputW, topRowH }, "INPUT", titleBandH);
-    drawGroupBox (g, { timeX, topY, timeW, topRowH }, "TIME", titleBandH);
-    drawGroupBox (g, { characterX, topY, characterW, topRowH }, "CHARACTER", titleBandH);
+    if (! showingAdvanced_)
+    {
+        drawGroupBox (g, { inputX, topY, inputW, topRowH }, "INPUT", titleBandH);
+        drawGroupBox (g, { timeX, topY, timeW, topRowH }, "TIME", titleBandH);
+        drawGroupBox (g, { characterX, topY, characterW, topRowH }, "CHARACTER", titleBandH);
+    }
+    else
+    {
+        int advGroupW = (contentW - gap) / 2;
+        int onsetX    = contentX;
+        int dampingX  = onsetX + advGroupW + gap;
+        drawGroupBox (g, { onsetX,   topY, advGroupW, topRowH }, "ONSET",   titleBandH);
+        drawGroupBox (g, { dampingX, topY, advGroupW, topRowH }, "DAMPING", titleBandH);
+    }
 
     int bottomUsable = contentW - gap * 3;
     int modW    = static_cast<int> (bottomUsable * 0.22f);
@@ -601,10 +747,26 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int eqX     = erX + erW + gap;
     int outputX = eqX + eqW + gap;
 
-    drawGroupBox (g, { modX, bottomY, modW, bottomH }, "MODULATION", titleBandH);
-    drawGroupBox (g, { erX, bottomY, erW, bottomH }, "EARLY REFLECTIONS", titleBandH);
-    drawGroupBox (g, { eqX, bottomY, eqW, bottomH }, "OUTPUT EQ", titleBandH);
-    drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT", titleBandH);
+    if (! showingAdvanced_)
+    {
+        drawGroupBox (g, { modX, bottomY, modW, bottomH }, "MODULATION", titleBandH);
+        drawGroupBox (g, { erX, bottomY, erW, bottomH }, "EARLY REFLECTIONS", titleBandH);
+        drawGroupBox (g, { eqX, bottomY, eqW, bottomH }, "OUTPUT EQ", titleBandH);
+        drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT", titleBandH);
+    }
+    else
+    {
+        int advBottomUsable = contentW - gap * 2;
+        int advEqW          = static_cast<int> (advBottomUsable * 0.45f);
+        int advSpatialW     = static_cast<int> (advBottomUsable * 0.30f);
+        int advDynW         = advBottomUsable - advEqW - advSpatialW;
+        int advEqX          = contentX;
+        int advSpatialX     = advEqX + advEqW + gap;
+        int advDynX         = advSpatialX + advSpatialW + gap;
+        drawGroupBox (g, { advEqX,      bottomY, advEqW,      bottomH }, "OUTPUT EQ", titleBandH);
+        drawGroupBox (g, { advSpatialX, bottomY, advSpatialW, bottomH }, "SPATIAL",   titleBandH);
+        drawGroupBox (g, { advDynX,     bottomY, advDynW,     bottomH }, "DYNAMICS",  titleBandH);
+    }
 
     // Meter labels
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
@@ -682,19 +844,25 @@ void DuskVerbEditor::resized()
     titleClickArea_ = { (getWidth() - titleW) / 2, scaler_.scaled (6),
                          titleW, scaler_.scaled (38) };
 
-    // --- Header: mode | preset | < > | save | del ---
+    // --- Header: [main][adv] | mode | preset | < > | save | del ---
     int presetW = scaler_.scaled (200);
     int presetH = scaler_.scaled (24);
     int presetY = scaler_.scaled (52);
     int modeW   = scaler_.scaled (90);
+    int tabW    = scaler_.scaled (50);
     int arrowW  = scaler_.scaled (24);
     int saveW   = scaler_.scaled (50);
     int delW    = scaler_.scaled (36);
     int btnGap  = scaler_.scaled (4);
+    int tabGap  = scaler_.scaled (1);   // tabs sit tight together like the arrows
     int arrowGap = scaler_.scaled (1);  // arrows sit tight together as a pair
-    int totalPresetW = modeW + btnGap + presetW + btnGap + arrowW + arrowGap + arrowW
-                       + btnGap + saveW + btnGap + delW;
+    int totalPresetW = tabW + tabGap + tabW + btnGap
+                       + modeW + btnGap + presetW + btnGap
+                       + arrowW + arrowGap + arrowW + btnGap
+                       + saveW + btnGap + delW;
     int x = (getWidth() - totalPresetW) / 2;
+    mainTabButton_    .setBounds (x, presetY, tabW, presetH);    x += tabW + tabGap;
+    advancedTabButton_.setBounds (x, presetY, tabW, presetH);    x += tabW + btnGap;
     modeBox_.setBounds (x, presetY, modeW, presetH);             x += modeW + btnGap;
     presetBox_.setBounds (x, presetY, presetW, presetH);         x += presetW + btnGap;
     prevPresetButton_.setBounds (x, presetY, arrowW, presetH);   x += arrowW + arrowGap;
@@ -800,6 +968,43 @@ void DuskVerbEditor::resized()
     layoutKnobsInGroup ({ outputX, bottomY, outputW, bottomH - busH - freezeGap }, topPad,
         { { &mix_, largeKnob }, { &width_, mediumKnob } }, sf);
 
+    // --- Advanced panel layout (ONSET + DAMPING top row for Phase 2) ---
+    // Knobs sit in the same rectangles as the main panel but visibility is
+    // toggled by setActiveTab().
+    int advGroupW = (contentW - gap) / 2;
+    int onsetX    = contentX;
+    int dampingX  = onsetX + advGroupW + gap;
+
+    layoutKnobsInGroup ({ onsetX, topY, advGroupW, topRowH }, topPad,
+        { { &advInputOnset_, smallKnob }, { &advSoftOnset_, smallKnob },
+          { &advDelayScale_, smallKnob }, { &advNoiseMod_, smallKnob } }, sf);
+
+    layoutKnobsInGroup ({ dampingX, topY, advGroupW, topRowH }, topPad,
+        { { &advAirDamping_, smallKnob }, { &advHighCrossover_, smallKnob },
+          { &advStructHFDamp_, smallKnob }, { &advInlineDiff_, smallKnob } }, sf);
+
+    // Advanced bottom row: OUTPUT EQ (5) | SPATIAL (4) | DYNAMICS (3), split 45/30/25.
+    int advBottomUsable = contentW - gap * 2;
+    int advEqW          = static_cast<int> (advBottomUsable * 0.45f);
+    int advSpatialW     = static_cast<int> (advBottomUsable * 0.30f);
+    int advDynW         = advBottomUsable - advEqW - advSpatialW;
+    int advEqX          = contentX;
+    int advSpatialX     = advEqX + advEqW + gap;
+    int advDynX         = advSpatialX + advSpatialW + gap;
+
+    layoutKnobsInGroup ({ advEqX, bottomY, advEqW, bottomH }, topPad,
+        { { &advOutLowShelfDb_,  smallKnob }, { &advOutHighShelfDb_, smallKnob },
+          { &advOutHighShelfHz_, smallKnob }, { &advOutMidEqDb_,     smallKnob },
+          { &advOutMidEqHz_,     smallKnob } }, sf);
+
+    layoutKnobsInGroup ({ advSpatialX, bottomY, advSpatialW, bottomH }, topPad,
+        { { &advStereoCoupling_, smallKnob }, { &advERCrossfeed_, smallKnob },
+          { &advChorusDepth_,    smallKnob }, { &advChorusRate_,  smallKnob } }, sf);
+
+    layoutKnobsInGroup ({ advDynX, bottomY, advDynW, bottomH }, topPad,
+        { { &advLimiterThresh_, smallKnob }, { &advDecayBoost_, smallKnob },
+          { &advTerminalFactor_, smallKnob } }, sf);
+
     // Level meters (full height of content area)
     int meterTop = topY;
     int meterBot = getHeight() - margin;
@@ -886,6 +1091,46 @@ void DuskVerbEditor::selectEngineMode (int modeId)
     presetBox_.setSelectedId (0, juce::dontSendNotification);
     processorRef.parameters.state.setProperty ("presetName", "", nullptr);
     updateDeleteButtonVisibility();
+}
+
+void DuskVerbEditor::setActiveTab (bool advanced)
+{
+    if (showingAdvanced_ == advanced)
+        return;
+    showingAdvanced_ = advanced;
+
+    // IMPORTANT: apply visibility AFTER resized(), because placeKnob()
+    // unconditionally calls valueLabel.setVisible(true) during layout — setting
+    // visibility before resized() would be clobbered.
+    resized();
+
+    auto setKnobVisible = [] (KnobWithLabel& k, bool v)
+    {
+        k.slider    .setVisible (v);
+        k.nameLabel .setVisible (v);
+        k.valueLabel.setVisible (v);
+    };
+
+    const bool mainVisible = ! advanced;
+    for (auto* k : { &preDelay_, &diffusion_, &decay_, &size_, &bassMult_, &trebleMult_,
+                     &crossover_, &modDepth_, &modRate_, &erLevel_, &erSize_, &mix_,
+                     &loCut_, &hiCut_, &width_ })
+        setKnobVisible (*k, mainVisible);
+
+    freezeButton_    .setVisible (mainVisible);
+    busModeButton_   .setVisible (mainVisible);
+    predelaySyncBox_ .setVisible (mainVisible);
+
+    const bool advVisible = advanced;
+    for (auto* k : { &advInputOnset_, &advSoftOnset_, &advDelayScale_, &advNoiseMod_,
+                     &advAirDamping_, &advHighCrossover_, &advStructHFDamp_, &advInlineDiff_,
+                     &advOutLowShelfDb_, &advOutHighShelfDb_, &advOutHighShelfHz_,
+                     &advOutMidEqDb_, &advOutMidEqHz_,
+                     &advStereoCoupling_, &advERCrossfeed_, &advChorusDepth_, &advChorusRate_,
+                     &advLimiterThresh_, &advDecayBoost_, &advTerminalFactor_ })
+        setKnobVisible (*k, advVisible);
+
+    repaint();
 }
 
 // =============================================================================
