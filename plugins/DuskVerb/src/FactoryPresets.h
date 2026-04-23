@@ -61,7 +61,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets(){
     static const std::vector<FactoryPreset> presets = {
         //                                              algo  decay  pre    size   damp  bass   xover   diff  modD   modR  erLv  erSz  mix   loCut  hiCut   width  gHold  gRel   trim
         { "Vocal Plate",                              "Plates",      0, 2.7500f, 20.0f, 0.44f, 0.912f, 0.893f, 1000.0f, 1.00f, 0.192f, 1.80f, 0.05f, 0.23f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
-        { "Drum Plate",                               "Plates",      1, 2.9249f, 0.0f, 0.8f, 1.2557f, 0.35f, 1425.0f, 0.85f, 0.192f, 1.20f, 1.0f, 0.32f, 0.3f, 20.0f, 10000.0f, 1.0f, 0.0f, 50.0f, -11.65f },
+        { "Drum Plate",                               "Plates",      1, 2.2000f, 10.0f, 0.55f, 0.95f, 0.90f, 1000.0f, 1.00f, 0.144f, 2.00f, 0.05f, 0.25f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
         { "Bright Plate",                             "Plates",      2, 3.1260f, 0.0f, 0.4499f, 1.3612f, 0.375f, 354.0f, 0.85f, 0.312f, 0.50f, 0.75f, 0.18f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, -22.43f },
         { "Dark Plate",                               "Plates",      3, 27.6100f, 2.0f, 0.7f, 0.906f, 1.1495f, 1.4369f, 1.00f, 0.312f, 0.50f, 0.07f, 0.58f, 0.3f, 20.0f, 13000.0f, 1.0f, 0.0f, 50.0f, -33.65f },
         { "Rich Plate",                               "Plates",      4, 1.7986f, 10.0f, 0.75f, 1.4232f, 1.4976f, 4000.0f, 0.85f, 0.192f, 1.01f, 0.10f, 0.30f, 0.3f, 20.0f, 10000.0f, 1.0f, 0.0f, 50.0f, -10.2f },
