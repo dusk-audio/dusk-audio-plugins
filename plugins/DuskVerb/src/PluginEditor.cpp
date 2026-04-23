@@ -860,29 +860,29 @@ void DuskVerbEditor::selectEngineMode (int modeId)
     };
 
     const auto& presets = getFactoryPresets();
-    int anchorAlgo = -1;
+    int anchorIdx = -1;
     for (size_t i = 0; i < presets.size(); ++i)
     {
         if (kAnchorName[modeId - 1] == presets[i].name)
         {
-            anchorAlgo = presets[i].algorithm;
+            anchorIdx = static_cast<int> (i);
             break;
         }
     }
-    if (anchorAlgo < 0)
+    if (anchorIdx < 0)
         return;
 
-    // Swap engine only — keep user's current knob positions.
-    if (auto* p = processorRef.parameters.getParameter ("algorithm"))
-        p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (anchorAlgo)));
-
-    // preset_id drives per-preset ER-tap loading in processBlock; a stale id
-    // would leave the ER path wired for the previous preset. Clearing it (=0)
-    // tells DuskVerbEngine to use the new algorithm's built-in taps.
+    // Load the anchor preset's full parameter set so Mode immediately produces
+    // an audible, well-defined reverb for the chosen engine type. Earlier
+    // versions only swapped the algorithm index and left other knobs alone,
+    // which on a fresh plugin (bus_mode=false, mix=0.35) yielded near-silent
+    // wet output and looked like "Mode produces no reverb".
+    presets[static_cast<size_t> (anchorIdx)].applyTo (processorRef.parameters);
     if (auto* p = processorRef.parameters.getParameter ("preset_id"))
-        p->setValueNotifyingHost (p->convertTo0to1 (0.0f));
+        p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (anchorIdx + 1)));
 
-    // Mode replaces any active preset selection.
+    // Mode supersedes any explicit preset selection — keep the preset
+    // dropdown showing "Preset" rather than the loaded anchor's name.
     presetBox_.setSelectedId (0, juce::dontSendNotification);
     processorRef.parameters.state.setProperty ("presetName", "", nullptr);
     updateDeleteButtonVisibility();
