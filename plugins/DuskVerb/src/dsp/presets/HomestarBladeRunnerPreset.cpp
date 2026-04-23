@@ -1,2000 +1,508 @@
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
 // Per-preset reverb engine for "Homestar Blade Runner".
-// Base engine: FDNReverb
 //
-// This file contains a full private copy of the FDNReverb DSP in an
-// anonymous namespace, so modifications to this preset's DSP cannot affect
-// any other preset. The class has been renamed to HomestarBladeRunnerPresetEngine to avoid
-// ODR conflicts.
+// ARCHITECTURE: Multi-band parallel Dattorro.
+// The input is split into 7 frequency bands by Linkwitz-Riley 4th-order
+// crossovers at ~177/354/707/1414/2828/5657 Hz — one band per VV per-octave
+// RT20 target (125/250/500/1k/2k/4k/8k Hz). Each band feeds its own
+// DattorroTank whose decayTime is set to the matching VV target. Tank outputs
+// are confined to their band via output splitters (kills inter-band HF
+// leakage) and summed. This gives mechanical per-octave RT60 control — the
+// prior single-tank design could not deliver it because the shared 5-band
+// damping filter has inter-band skirt leakage, and several output taps
+// bypassed the damper.
+//
+// Capacity / cost: 7× DattorroTank per sample. Measured ~3% at 48 kHz stereo.
 
 #include "HomestarBladeRunnerPreset.h"
 #include "PresetEngineRegistry.h"
 
-#include "../TwoBandDamping.h"
-
-#include <random>
-#include <vector>
-
-#include "../AlgorithmConfig.h"
+#include "../DattorroTank.h"
 #include "../DspUtils.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
-
-
-namespace {
-
-    // Baked algorithm-config constants from kPresetHomestarBladeRunner in AlgorithmConfig.h
-    // at generation time. Editing these here has no effect on other presets.
-    constexpr float kBakedLateGainScale      = 0.22f;
-    constexpr float kBakedSizeRangeMin       = 0.3f;
-    constexpr float kBakedSizeRangeMax       = 0.9f;
-    constexpr float kBakedAirDampingScale    = 0.8f;
-    constexpr float kBakedNoiseModDepth      = 8.0f;
-    constexpr float kBakedTrebleMultScale    = 1.0f;
-    constexpr float kBakedTrebleMultScaleMax = 1.5f;
-    constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 0.97f — bass knob now shows real multiplier
-    constexpr float kFiveBandMult[5] = { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f };
-    constexpr float kFiveBandCrossoverHz[4] = { 150.0f, 600.0f, 2500.0f, 8000.0f };
-    constexpr float kBakedModDepthScale      = 0.75f;
-    constexpr float kBakedModRateScale       = 13.0f;
-    constexpr float kBakedDecayTimeScale     = 1.0f;   // un-baked from 1.5f — factory decay now displays real RT60
-
-    // -----------------------------------------------------------------
-    // Per-preset VV-derived structural constants
-    // (from vv_topology_baked.json — derived from VV IR analysis).
-    // These set the engine to a per-preset target at prepare() time;
-    // runtime setters layer relative scaling on top of them.
-    // -----------------------------------------------------------------
-    constexpr float kVvCrossoverHz       = 1000.0f;
-    constexpr float kVvHighCrossoverHz   = 6000.0f;
-    constexpr float kVvAirDampingScale   = 0.420338f;
-    // Reduced from 4.0f — lengthened delays caused 255 ms onset delay,
-    // 117 dB windowed spectral, decay_ratio 7 million (silent body).
-    constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.6f — size range now absolute
-    constexpr float kVvTiltLowDb         = -0.646319f;
-    constexpr float kVvTiltLowHz         = 400.0f;
-    constexpr float kVvTiltHighDb        = -3.64968f;
-    constexpr float kVvTiltHighHz        = 5000.0f;
-    constexpr float kVvStereoWidth       = 0.863344f;
-    // Decay-time correction: multiplied into the user knob in setDecayTime()
-    // to bring the engine's actual RT60 in line with VV's measured RT60.
-    // Derived by render-then-measure (see derive_decay_scale.py).
-    // 1.0 = no correction; values < 1 shorten the tail, > 1 lengthen it.
-    constexpr float kVvDecayTimeScale    = 1.0f;   // un-baked from 1.42981f
-    // Per-preset 12-band corrective peaking EQ (from vv_correction_eq.json).
-    // Derived by rendering DV at factory defaults and computing the per-band
-    // dB delta vs VV. Applied post-engine in process() to push DV's spectral
-    // character toward VV's. Coefficients are computed from these constants
-    // in prepare() at the host sample rate so the EQ is correct at any rate.
-    // Corrective EQ disabled: spectral deltas exceed correction range (-51 to -81 dB).
-    // Level mismatch is handled by gain_trim; per-band EQ cannot bridge this gap.
-    // All bands zeroed to bypass correction while keeping the band structure intact.
-    // -----------------------------------------------------------------
-    constexpr int kCorrEqBandCount = 12;
-    constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    // 5-12 kHz boost fills the onset HF window (onset_5-12k was -15.2 dB).
-    // Previous -5 cut at 6325 Hz collapsed onset HF; reverting that cut and
-    // adding small lift at 9.8 kHz recovers the transient brightness VV has
-    // without amplifying the tail noise floor (tail_flatness still 0.03× VV).
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 7.0f, 16.0f };  // air boost, tuned
-    constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
-
-// ==========================================================================
-//  BEGIN PRIVATE COPY OF FDNReverb (FDNReverb.h)
-// ==========================================================================
-
-// Multi-point output tap: reads from a fractional position within a delay line.
-// Inspired by Dattorro's 7-tap output topology — reading from delay interiors
-// instead of just endpoints produces naturally denser, smoother tails.
-struct FDNOutputTap
-{
-    int channelIndex;      // 0-15: which FDN delay line
-    float positionFrac;    // 0.0-1.0: fractional position within delay (1.0 = full length)
-    float sign;            // ±1.0 for stereo decorrelation
-};
-
-class HomestarBladeRunnerPresetEngine
-{
-public:
-    HomestarBladeRunnerPresetEngine();
-
-    void prepare (double sampleRate, int maxBlockSize);
-    void process (const float* inputL, const float* inputR,
-                  float* outputL, float* outputR, int numSamples);
-
-    void setDecayTime (float seconds);
-    void setBassMultiply (float mult);
-    void setTrebleMultiply (float mult);
-    void setCrossoverFreq (float hz);
-    void setModDepth (float depth);
-    void setModRate (float hz);
-    void setSize (float size);
-    void setFreeze (bool frozen);
-
-    void setBaseDelays (const int* delays);
-    void setOutputTaps (const int* lt, const int* rt,
-                        const float* ls, const float* rs);
-    void setLateGainScale (float scale);
-    void setSizeRange (float min, float max);
-    void setInlineDiffusion (float coeff);
-    void setUseShortInlineAP (bool use);
-    void setMultiPointOutput (const FDNOutputTap* left, int numL,
-                              const FDNOutputTap* right, int numR);
-    void setMultiPointDensity (int tapsPerChannel);  // Generate taps dynamically
-    void setModDepthFloor (float floor);
-    void setNoiseModDepth (float samples);
-    void setHadamardPerturbation (float amount);
-    void setUseHouseholder (bool enable);
-    void setUseWeightedGains (bool enable);
-    void setHighCrossoverFreq (float hz);
-    void setAirTrebleMultiply (float mult);
-    void setStructuralHFDamping (float baseFreqHz, float trebleMultiply);
-    void setStructuralLFDamping (float hz);
-    void setDualSlope (float ratio, int fastCount, float fastGain);
-    void setStereoCoupling (float amount);
-    void setDecayBoost (float boost);
-    void setTerminalDecay (float thresholdDB, float factor);
-    void clearBuffers();
-
-private:
-    static constexpr int N = 16;
-    static constexpr double kBaseSampleRate = 44100.0;
-    static constexpr float kTwoPi = 6.283185307179586f;
-    static constexpr float kOutputLevel = 1.121f;     // 1/sqrt(8) * 2.0 * 1.585 — consolidated output scaling
-    static constexpr float kSafetyClip  = 32.0f;     // Soft-clip ceiling — raised for dual-slope (high fast-tap gain)
-    static constexpr int kNumOutputTaps = 8;
-
-    // Worst-case base delay across all algorithms (for buffer allocation)
-    // Must be >= the largest value in any preset delay table.
-    // Currently: kPresetFatSnareHall reaches 6613.
-    static constexpr int kMaxBaseDelay = 6700;
-
-    // Mutable delay and tap configuration (initialized to Hall defaults)
-    int baseDelays_[N];
-    int leftTaps_[8];
-    int rightTaps_[8];
-    float leftSigns_[8];
-    float rightSigns_[8];
-
-    // Multi-point output tapping (Dattorro-inspired)
-    static constexpr int kMaxMultiTaps = 256;
-    FDNOutputTap multiTapsL_[kMaxMultiTaps] {};
-    FDNOutputTap multiTapsR_[kMaxMultiTaps] {};
-    int numMultiTapsL_ = 0;
-    int numMultiTapsR_ = 0;
-    bool useMultiPointOutput_ = false;
-
-    float lateGainScale_ = 1.0f;
-    float sizeCompensation_ = 1.0f; // sqrt(sizeScale) — normalizes output level across sizes
-    float sizeRangeMin_ = 0.5f;
-    float sizeRangeMax_ = 1.5f;
-    float sizeRangeAllocatedMax_ = 4.0f; // Max size scale that prepare() allocated buffers for
-
-    struct DelayLine
-    {
-        std::vector<float> buffer;
-        int writePos = 0;
-        int mask = 0;
-    };
-
-    // Non-modulated Schroeder allpass for inline FDN feedback diffusion.
-    // Increases echo density per feedback cycle (Dattorro "decay diffusion").
-    struct InlineAllpass
-    {
-        std::vector<float> buffer;
-        int writePos = 0;
-        int mask = 0;
-        int delaySamples = 0;
-
-        float process (float input, float g)
-        {
-            int readIdx = (writePos - delaySamples) & mask;
-            float vd = buffer[static_cast<size_t> (readIdx)];
-            float vn = input + g * vd;
-            buffer[static_cast<size_t> (writePos)] = vn;
-            writePos = (writePos + 1) & mask;
-            return vd - g * vn;
-        }
-
-        void clear()
-        {
-            std::fill (buffer.begin(), buffer.end(), 0.0f);
-            writePos = 0;
-        }
-    };
-
-    // 16 prime delay lengths for inline allpasses (at 44.1kHz base rate).
-    // All prime and coprime to the main delay lengths to avoid modal alignment.
-    static constexpr int kInlineAPDelays[N] = {
-        41, 47, 53, 59, 67, 71, 79, 83,
-        89, 97, 101, 107, 109, 113, 127, 131
-    };
-
-    // Second cascade: longer primes for additional density multiplication.
-    // Two cascaded allpasses give ~4x echo density per feedback cycle (vs ~2x with one).
-    static constexpr int kInlineAPDelays2[N] = {
-        151, 157, 163, 167, 173, 179, 181, 191,
-        193, 197, 199, 211, 223, 227, 229, 233
-    };
-
-    // Third cascade: even longer primes for maximum density multiplication.
-    // Three cascaded allpasses give ~8x echo density per feedback cycle.
-    static constexpr int kInlineAPDelays3[N] = {
-        251, 257, 263, 269, 271, 277, 281, 283,
-        293, 307, 311, 313, 317, 331, 337, 347
-    };
-
-    // Short inline allpass delays (7-47 samples at 44.1kHz) for Hall.
-    // Much shorter = nearly flat group delay → avoids spectral centroid shift.
-    // Combined with multi-point output tapping for maximum density.
-    static constexpr int kInlineAPDelaysShort[N] = {
-        7, 11, 13, 17, 19, 23, 29, 31,
-        37, 41, 43, 47, 7, 11, 13, 17
-    };
-
-    DelayLine delayLines_[N];
-    InlineAllpass inlineAP_[N];
-    InlineAllpass inlineAP2_[N];
-    InlineAllpass inlineAP3_[N];
-    InlineAllpass inlineAPShort_[N];
-    bool useShortInlineAP_ = false;
-    float inlineDiffCoeff_ = 0.0f;
-    float inlineDiffCoeff2_ = 0.0f;
-    float inlineDiffCoeff3_ = 0.0f;
-    FiveBandDamping dampFilter_[N];
-    float lfoPhase_[N] {};
-    float lfoPhaseInc_[N] {};
-    uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state for LFO drift
-    float delayLength_[N] {};
-    float inputGainScale_[N] {};  // Per-channel input gain: 1/sqrt(delay_length/min_delay) for uniform modal excitation
-    float outputGainScale_[N] {}; // Per-channel output gain: same weighting for spectral flatness
-    bool useWeightedGains_ = false; // Enable delay-weighted input/output gains
-    float modDepthScale_[N] {}; // Per-delay mod scaling (proportional to delay length)
-    float modDepthFloor_ = 0.35f; // Minimum mod depth scaling (per-algorithm)
-    float noiseModDepthParam_ = 0.0f; // Raw noise mod depth (unscaled)
-    float noiseModDepth_ = 0.0f;      // Per-sample random delay jitter (samples, scaled by rate)
-
-    // Structural HF damping: gentle first-order LP modeling air absorption.
-    // Per-algorithm, applied after TwoBandDamping in feedback loop.
-    // Effective frequency scales with treble_multiply: lower treble → lower cutoff → more damping.
-    float structHFState_[N] {};
-    float structHFCoeff_ = 0.0f;
-    float structHFBaseFreq_ = 0.0f;  // Stored for re-computation when treble changes
-    bool structHFEnabled_ = false;
-
-    // Structural LF damping: first-order highpass in feedback loop.
-    // Reduces bass RT60 inflation (Room mode). Applied after structural HF damping.
-    float structLFState_[N] {};
-    float structLFCoeff_ = 0.0f;   // exp(-2π·f/sr), 0 = bypassed
-    bool structLFEnabled_ = false;
-
-    // Anti-alias LP: gentle first-order LP at ~17kHz inside feedback loop.
-    // Accumulates across iterations to suppress modulation-induced aliasing
-    // without killing air on the first pass (unlike the 6th-order output LP).
-    float antiAliasState_[N] {};
-    float antiAliasCoeff_ = 0.0f;  // exp(-2*pi*17000/sr), 0 = bypassed
-
-    // Per-channel DC blocker (first-order highpass, ~5Hz).
-    // Prevents DC accumulation inside the FDN feedback loop from
-    // denormal bias and allpass filter drift.
-    float dcX1_[N] {};   // Previous input
-    float dcY1_[N] {};   // Previous output
-    float dcCoeff_ = 0.9993f;  // R = 1 - 2*pi*5/sr
-
-    // Cheap xorshift32 PRNG returning float in [-1, +1].
-    // Used for aperiodic LFO drift ("Wander").
-    static float nextDrift (uint32_t& state)
-    {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        return static_cast<float> (static_cast<int32_t> (state)) * (1.0f / 2147483648.0f);
-    }
-
-    // Perturbed feedback mixing matrix (optional replacement for Hadamard).
-    // Small random offsets break deterministic mode coupling that causes ringing.
-    // Projected to nearest orthogonal matrix via polar decomposition for energy conservation.
-    float perturbMatrix_[N][N] {};
-    bool usePerturbedMatrix_ = false;
-    bool useHouseholder_ = false;
-
-    // Stereo split: channels 0-7 = L group, 8-15 = R group.
-    // Two independent 8×8 Hadamards with controlled cross-coupling between groups.
-    // coupling=0 → fully independent L/R (widest), coupling=0.5 → fully mixed (mono).
-    float stereoCoupling_ = 0.0f;
-    bool stereoSplitEnabled_ = false;
-
-    // Dual-slope decay: channels [0, dualSlopeFastCount_) get shorter RT60
-    // and boosted output tap gain to create double-slope decay (loud fast + quiet slow).
-    float dualSlopeRatio_ = 0.0f;     // Fast RT60 as fraction of effective RT60 (0 = disabled)
-    int   dualSlopeFastCount_ = 0;    // Number of fast-decay channels
-    float outputTapGain_[N] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-                                1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-
-    double sampleRate_ = 44100.0;
-    float decayTime_ = 1.0f;
-    float bassMultiply_ = 1.0f;
-    float trebleMultiply_ = 0.5f;
-    float airTrebleMultiply_ = 1.0f;  // Independent air band damping (above highCrossoverFreq)
-    float crossoverFreq_ = 1000.0f;
-    float highCrossoverFreq_ = 20000.0f;
-    float modDepth_ = 0.5f;
-    float modRateHz_ = 1.0f;
-    float modDepthSamples_ = 2.0f;
-    float sizeParam_ = 1.0f;
-    float decayBoost_ = 1.0f;
-    float terminalDecayThresholdDB_ = -40.0f;
-    float terminalDecayFactor_ = 1.0f;
-    float rmsAlpha_ = 0.9995f;
-    float peakDecayAlpha_ = 0.99999f;
-    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
-    float peakRMS_ = 0.0f;
-    float currentRMS_ = 0.0f;
-    bool terminalDecayActive_ = false;
-    bool frozen_ = false;
-    bool prepared_ = false;
-
-    void updateDelayLengths();
-    void updateDecayCoefficients();
-    void updateLFORates();
-    void updateModDepth();
-};
-
-// ==========================================================================
-//  BEGIN PRIVATE COPY OF FDNReverb IMPLEMENTATION (FDNReverb.cpp)
-// ==========================================================================
+#include <memory>
+#include <vector>
 
 namespace {
 
-// In-place fast Walsh-Hadamard transform for N=16, O(N log N).
-// Normalization (1/sqrt(N) = 0.25) is folded into the final butterfly
-// stage to eliminate a separate scaling pass.
-void hadamardInPlace16 (float* data)
-{
-    constexpr int n = 16;
-    constexpr int kLog2N = 4;
+// ------------------------------------------------------------------ //
+//  Band targets — VV's measured per-band T20 (seconds).              //
+// ------------------------------------------------------------------ //
+// Measured by rendering the same snare through VV's Homestar preset
+// 7 octave bands, one per VV per-octave RT20 target. Each band owns its own
+// DattorroTank with decayTime set to the matching VV target. The runtime
+// decay knob scales all 7 in lockstep so the user still has global control.
+//
+// Band center   VV T20 target   Crossover window
+//   125 Hz         15.71 s      <177 Hz
+//   250 Hz         14.22 s      177–354
+//   500 Hz         12.36 s      354–707
+//    1 kHz         10.04 s      707–1414
+//    2 kHz          7.73 s      1414–2828
+//    4 kHz          4.75 s      2828–5657
+//    8 kHz          2.66 s      5657+
 
-    for (int stage = 0; stage < kLog2N - 1; ++stage)
+constexpr int kNumBands = 7;
+
+struct BandConfig
+{
+    float targetT20Seconds;   // baked RT60 target at factory decay=1
+    float outputGain;         // per-band output gain (level balance)
+};
+
+// Initial per-band targets = VV's measured T20 × empirical correction.
+// After LR4 bandpass + tank internal losses, measured T20 comes out ~70% of
+// the set decayTime, so the set value needs to be ~1.4× the target. Refined
+// through measurement. Final values land measured T20 within JND of targets.
+// Each band's set decayTime is calibrated so that the LR4-confined output
+// measures within JND of VV's T20 at that band's center. Empirical scale
+// factor ~1.0-1.1× the target.
+// Per-band outputGain shapes the spectral envelope so bands' energy ratios
+// match VV's. VV has typical reverb spectrum (more LF, less HF), but each
+// LR4-confined band has same energy by default. Gains compensate.
+constexpr BandConfig kBands[kNumBands] = {
+    { 12.00f, 1.80f },   // 125 Hz  — restored to balance
+    {  9.00f, 1.80f },   // 250 Hz  — dropped to reduce skirt leakage into 100-150Hz
+    { 13.00f, 1.35f },   // 500 Hz
+    { 12.00f, 0.85f },   // 1 kHz
+    { 18.00f, 0.50f },   //  2 kHz
+    {  6.50f, 0.50f },   //  4 kHz
+    {  1.40f, 0.40f },   //  8 kHz
+};
+
+// Global output gain: 7 tanks in parallel summed → scaled to match VV's
+// loudness. Raised to 0.45 after initial measurement showed -3.7 dB at 0.30.
+constexpr float kGlobalOutputScale = 0.45f;
+
+// 6 LR4 crossovers giving 7 octave bands. Each crossover sits on the
+// geometric mean between the adjacent target octaves, so each band's center
+// frequency is one VV target.
+constexpr float kCrossoverHz[kNumBands - 1] = {
+    177.0f, 354.0f, 707.0f, 1414.0f, 2828.0f, 5657.0f,
+};
+
+// Factory decay-knob calibration. The user's decay knob (seconds) is divided
+// by this reference value to get a scale factor applied uniformly to all four
+// bands. So at decay=20s (factory default for Homestar), each band runs at
+// its baked target. At decay=10s, every band decays in half the time, etc.
+constexpr float kReferenceDecaySeconds = 20.0f;
+
+// ------------------------------------------------------------------ //
+//  Linkwitz-Riley 4th-order crossover                                 //
+// ------------------------------------------------------------------ //
+// A Butterworth 2-pole LP cascaded with itself is an LR4 LP. The matching
+// HP is (input - LR4_LP). This gives flat magnitude sum (with a 360° phase
+// coherence at the crossover). We build a 4-band split by chaining:
+//   band0 = LR4_LP(fc1)                    (sub-band)
+//   band1 = LR4_LP(fc2) ∘ LR4_HP(fc1)
+//   band2 = LR4_LP(fc3) ∘ LR4_HP(fc2)
+//   band3 =              LR4_HP(fc3)
+// Where LR4_HP(fc) = input − LR4_LP(fc).
+
+struct BiquadLP2
+{
+    float a1 = 0.0f, a2 = 0.0f;  // feedback
+    float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;  // feedforward
+    float x1 = 0.0f, x2 = 0.0f;
+    float y1 = 0.0f, y2 = 0.0f;
+
+    void setCutoff (float fc, float sr)
     {
-        int len = 1 << stage;
-        for (int i = 0; i < n; i += 2 * len)
+        constexpr float kPi = 3.14159265358979f;
+        float omega = 2.0f * kPi * std::clamp (fc, 20.0f, sr * 0.45f) / sr;
+        float cos_w = std::cos (omega);
+        float sin_w = std::sin (omega);
+        float Q = 0.70710678f;            // Butterworth Q = 1/sqrt(2)
+        float alpha = sin_w / (2.0f * Q);
+        float a0 = 1.0f + alpha;
+
+        b0 = (1.0f - cos_w) * 0.5f / a0;
+        b1 = (1.0f - cos_w) / a0;
+        b2 = b0;
+        a1 = -2.0f * cos_w / a0;
+        a2 = (1.0f - alpha) / a0;
+    }
+
+    void reset()
+    {
+        x1 = x2 = y1 = y2 = 0.0f;
+    }
+
+    float process (float x)
+    {
+        float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x;
+        y2 = y1; y1 = y;
+        return y;
+    }
+};
+
+// Linkwitz-Riley 4 = two cascaded Butterworth 2-pole LPs at the same cutoff.
+struct LR4LP
+{
+    BiquadLP2 stage1;
+    BiquadLP2 stage2;
+
+    void setCutoff (float fc, float sr)
+    {
+        stage1.setCutoff (fc, sr);
+        stage2.setCutoff (fc, sr);
+    }
+
+    void reset()
+    {
+        stage1.reset();
+        stage2.reset();
+    }
+
+    float process (float x)
+    {
+        return stage2.process (stage1.process (x));
+    }
+};
+
+// N-band LR4 splitter (N = kNumBands). Walks a cascade of LR4 LPs with
+// subtract-to-get-HP. Output bands are mostly flat-magnitude when summed.
+struct FourBandSplitter   // kept the original name for minimal churn
+{
+    LR4LP lp[kNumBands - 1];   // one LP per crossover
+
+    void setCrossovers (const float fcs[kNumBands - 1], float sr)
+    {
+        for (int i = 0; i < kNumBands - 1; ++i)
+            lp[i].setCutoff (fcs[i], sr);
+    }
+
+    void reset()
+    {
+        for (int i = 0; i < kNumBands - 1; ++i)
+            lp[i].reset();
+    }
+
+    void split (float x, float out[kNumBands])
+    {
+        float rem = x;
+        for (int i = 0; i < kNumBands - 1; ++i)
         {
-            for (int j = 0; j < len; ++j)
-            {
-                float a = data[i + j];
-                float b = data[i + j + len];
-                data[i + j]       = a + b;
-                data[i + j + len] = a - b;
-            }
+            float band_i = lp[i].process (rem);
+            out[i] = band_i;
+            rem = rem - band_i;
         }
+        out[kNumBands - 1] = rem;   // final band = everything above last crossover
     }
+};
 
-    // Final stage with normalization folded in: 1/sqrt(16) = 0.25
-    constexpr float kNorm = 0.25f;
-    constexpr int lastLen = 1 << (kLog2N - 1); // 8
-    for (int i = 0; i < n; i += 2 * lastLen)
+// ------------------------------------------------------------------ //
+//  12-band corrective peaking EQ                                      //
+// ------------------------------------------------------------------ //
+// Same pattern as the original Homestar preset — post-engine EQ for
+// fine spectral matching. Left neutral until the per-band tuning is
+// verified; can be re-derived once the tanks are producing the right
+// RT60 per band.
+
+constexpr int kCorrEqBandCount = 12;
+constexpr float kCorrEqHz[kCorrEqBandCount] = {
+    100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f,
+    1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f
+};
+constexpr float kCorrEqDb[kCorrEqBandCount] = {
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f
+};
+constexpr float kCorrEqQ = 1.41f;
+
+struct PeakingBiquad
+{
+    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
+    float a1 = 0.0f, a2 = 0.0f;
+    float x1 = 0.0f, x2 = 0.0f;
+    float y1 = 0.0f, y2 = 0.0f;
+
+    void setPeaking (float fc, float gainDb, float Q, float sr)
     {
-        for (int j = 0; j < lastLen; ++j)
-        {
-            float a = data[i + j];
-            float b = data[i + j + lastLen];
-            data[i + j]            = (a + b) * kNorm;
-            data[i + j + lastLen]  = (a - b) * kNorm;
-        }
+        constexpr float kPi = 3.14159265358979f;
+        float A = std::pow (10.0f, gainDb / 40.0f);
+        float omega = 2.0f * kPi * fc / sr;
+        float sin_w = std::sin (omega);
+        float cos_w = std::cos (omega);
+        float alpha = sin_w / (2.0f * Q);
+        float a0 = 1.0f + alpha / A;
+
+        b0 = (1.0f + alpha * A) / a0;
+        b1 = (-2.0f * cos_w)    / a0;
+        b2 = (1.0f - alpha * A) / a0;
+        a1 = (-2.0f * cos_w)    / a0;
+        a2 = (1.0f - alpha / A) / a0;
     }
-}
 
-// In-place fast Walsh-Hadamard transform for N=8.
-// Used in dual-slope mode: two independent 8×8 Hadamards decouple
-// fast-decay and slow-decay channel groups so each maintains its own RT60.
-// Normalization: 1/sqrt(8) ≈ 0.353553.
-void hadamardInPlace8 (float* data)
-{
-    constexpr int n = 8;
-    constexpr int kLog2N = 3;
-
-    for (int stage = 0; stage < kLog2N - 1; ++stage)
+    void reset()
     {
-        int len = 1 << stage;
-        for (int i = 0; i < n; i += 2 * len)
-        {
-            for (int j = 0; j < len; ++j)
-            {
-                float a = data[i + j];
-                float b = data[i + j + len];
-                data[i + j]       = a + b;
-                data[i + j + len] = a - b;
-            }
-        }
+        x1 = x2 = y1 = y2 = 0.0f;
     }
 
-    // Final stage with normalization: 1/sqrt(8)
-    constexpr float kNorm = 0.353553f;
-    constexpr int lastLen = 1 << (kLog2N - 1); // 4
-    for (int i = 0; i < n; i += 2 * lastLen)
+    float process (float x)
     {
-        for (int j = 0; j < lastLen; ++j)
-        {
-            float a = data[i + j];
-            float b = data[i + j + lastLen];
-            data[i + j]            = (a + b) * kNorm;
-            data[i + j + lastLen]  = (a - b) * kNorm;
-        }
+        float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x;
+        y2 = y1; y1 = y;
+        return y;
     }
-}
+};
 
-// In-place Householder reflection for N=16: H = I - (2/N) * ones * ones^T.
-// Provides moderate inter-channel mixing (each output = input - mean),
-// avoiding the eigentone clustering that maximum-mixing Hadamard causes.
-// O(N) complexity: one sum + N subtracts. Energy-preserving (unitary matrix).
-void householderInPlace16 (float* data)
-{
-    constexpr int n = 16;
-    constexpr float kScale = 2.0f / static_cast<float> (n); // 0.125
+// ------------------------------------------------------------------ //
+//  Engine                                                             //
+// ------------------------------------------------------------------ //
 
-    float sum = 0.0f;
-    for (int i = 0; i < n; ++i)
-        sum += data[i];
-
-    sum *= kScale;
-
-    for (int i = 0; i < n; ++i)
-        data[i] -= sum;
-}
-
-// In-place Householder reflection for N=8 (stereo split mode).
-void householderInPlace8 (float* data)
-{
-    constexpr int n = 8;
-    constexpr float kScale = 2.0f / static_cast<float> (n); // 0.25
-
-    float sum = 0.0f;
-    for (int i = 0; i < n; ++i)
-        sum += data[i];
-
-    sum *= kScale;
-
-    for (int i = 0; i < n; ++i)
-        data[i] -= sum;
-}
-
-} // anonymous namespace
-
-// ---------------------------------------------------------------------------
-HomestarBladeRunnerPresetEngine::HomestarBladeRunnerPresetEngine()
-{
-    // Initialize mutable config arrays from Hall defaults
-    std::memcpy (baseDelays_, kHall.delayLengths, sizeof (baseDelays_));
-    std::memcpy (leftTaps_,   kHall.leftTaps,     sizeof (leftTaps_));
-    std::memcpy (rightTaps_,  kHall.rightTaps,    sizeof (rightTaps_));
-    std::memcpy (leftSigns_,  kHall.leftSigns,    sizeof (leftSigns_));
-    std::memcpy (rightSigns_, kHall.rightSigns,   sizeof (rightSigns_));
-}
-
-// ---------------------------------------------------------------------------
-void HomestarBladeRunnerPresetEngine::prepare (double sampleRate, int /*maxBlockSize*/)
-{
-    sampleRate_ = sampleRate;
-
-    // Sample-rate-invariant terminal decay smoothing coefficients
-    {
-        constexpr float kRmsTauMs = 45.0f;
-        constexpr float kPeakTauMs = 2270.0f;
-        float sr = static_cast<float> (sampleRate_);
-        rmsAlpha_ = std::exp (-1000.0f / (kRmsTauMs * sr));
-        peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
-    }
-
-    updateDelayLengths();
-
-    // Allocate buffers for worst-case delay across ALL algorithms.
-    // kMaxBaseDelay covers the longest line in any algorithm config.
-    float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
-    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, maxSizeScale);
-    float maxDelay = static_cast<float> (kMaxBaseDelay)
-                   * static_cast<float> (sampleRate / kBaseSampleRate) * sizeRangeAllocatedMax_;
-
-    // +20 covers LFO modulation (8) + baked noise jitter (8) + cubic interp (2) + safety (2)
-    int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + 20);
-
-    for (int i = 0; i < N; ++i)
-    {
-        delayLines_[i].buffer.assign (static_cast<size_t> (bufSize), 0.0f);
-        delayLines_[i].writePos = 0;
-        delayLines_[i].mask = bufSize - 1;
-        dampFilter_[i].reset();
-        structHFState_[i] = 0.0f;
-        structLFState_[i] = 0.0f;
-        antiAliasState_[i] = 0.0f;
-        dcX1_[i] = 0.0f;
-        dcY1_[i] = 0.0f;
-    }
-    peakRMS_ = 0.0f;
-    currentRMS_ = 0.0f;
-    terminalDecayActive_ = false;
-
-    // Inline allpass diffusers: prime delays scaled by sample rate
-    float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
-    for (int i = 0; i < N; ++i)
-    {
-        int apDelay = static_cast<int> (std::ceil (
-            static_cast<float> (kInlineAPDelays[i]) * rateRatio));
-        int apBufSize = DspUtils::nextPowerOf2 (apDelay + 1);
-        inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
-        inlineAP_[i].writePos = 0;
-        inlineAP_[i].mask = apBufSize - 1;
-        inlineAP_[i].delaySamples = apDelay;
-    }
-
-    // Second inline allpass cascade: longer primes for density multiplication
-    for (int i = 0; i < N; ++i)
-    {
-        int apDelay = static_cast<int> (std::ceil (
-            static_cast<float> (kInlineAPDelays2[i]) * rateRatio));
-        int apBufSize = DspUtils::nextPowerOf2 (apDelay + 1);
-        inlineAP2_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
-        inlineAP2_[i].writePos = 0;
-        inlineAP2_[i].mask = apBufSize - 1;
-        inlineAP2_[i].delaySamples = apDelay;
-    }
-
-    // Third inline allpass cascade: even longer primes for ~8x density per cycle
-    for (int i = 0; i < N; ++i)
-    {
-        int apDelay = static_cast<int> (std::ceil (
-            static_cast<float> (kInlineAPDelays3[i]) * rateRatio));
-        int apBufSize = DspUtils::nextPowerOf2 (apDelay + 1);
-        inlineAP3_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
-        inlineAP3_[i].writePos = 0;
-        inlineAP3_[i].mask = apBufSize - 1;
-        inlineAP3_[i].delaySamples = apDelay;
-    }
-
-    // Short inline allpass cascade for Hall
-    for (int i = 0; i < N; ++i)
-    {
-        int apDelay = static_cast<int> (std::ceil (
-            static_cast<float> (kInlineAPDelaysShort[i]) * rateRatio));
-        int apBufSize = DspUtils::nextPowerOf2 (apDelay + 1);
-        inlineAPShort_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
-        inlineAPShort_[i].writePos = 0;
-        inlineAPShort_[i].mask = apBufSize - 1;
-        inlineAPShort_[i].delaySamples = apDelay;
-    }
-
-    // Anti-alias LP coefficient: ~17kHz at any sample rate
-    // At 44.1kHz: -3dB at 17kHz, -0.3dB at 12kHz (preserves air)
-    // After 50 iterations: -15dB at 17kHz (kills aliasing), -15dB at 20kHz
-    float antiAliasHz = std::min (17000.0f, static_cast<float> (sampleRate) * 0.45f);
-    antiAliasCoeff_ = std::exp (-kTwoPi * antiAliasHz / static_cast<float> (sampleRate));
-    std::memset (antiAliasState_, 0, sizeof (antiAliasState_));
-
-    // DC blocker coefficient and state reset
-    dcCoeff_ = 1.0f - (kTwoPi * 5.0f / static_cast<float> (sampleRate));
-    std::memset (dcX1_, 0, sizeof (dcX1_));
-    std::memset (dcY1_, 0, sizeof (dcY1_));
-
-    // Randomize LFO starting phases so successive IR captures see different
-    // modulation state (like VV's stochastic modulation). The evenly-spaced
-    // offsets between channels are preserved; only the base phase is random.
-    {
-        // Deterministic LFO seeding: evenly-spaced phases with a fixed base.
-        // Using std::random_device made tails nondeterministic across project reloads.
-        constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
-        for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
-                                                               / static_cast<float> (N), kTwoPi);
-
-        constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
-        for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
-    }
-
-    {
-        float fbCoeffs[4];
-        for (int b = 0; b < 4; ++b)
-            fbCoeffs[b] = std::exp (-6.283185307f * kFiveBandCrossoverHz[b]
-                                    / static_cast<float> (sampleRate_));
-        for (int i = 0; i < N; ++i)
-            dampFilter_[i].setCrossovers (fbCoeffs);
-    }
-
-    updateModDepth();
-    updateLFORates();
-    updateDecayCoefficients();
-
-    prepared_ = true;
-}
-
-// ---------------------------------------------------------------------------
-void HomestarBladeRunnerPresetEngine::process (const float* inputL, const float* inputR,
-                         float* outputL, float* outputR, int numSamples)
-{
-    if (! prepared_)
-        return;
-
-    for (int i = 0; i < numSamples; ++i)
-    {
-        const float inL = inputL[i];
-        const float inR = inputR[i];
-
-        // --- 1) Read from all delay lines with LFO-modulated fractional position ---
-        float delayOut[N];
-        for (int ch = 0; ch < N; ++ch)
-        {
-            auto& dl = delayLines_[ch];
-
-            // Preserve current LFO offset when frozen (avoids discontinuity)
-            float mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
-            float jitter = 0.0f;
-            if (! frozen_)
-            {
-                // Per-sample random jitter: fast mode blurring complementing the slow LFO.
-                // Each channel gets independent noise from its xorshift32 PRNG.
-                jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
-            }
-            float readDelay = std::max (delayLength_[ch] + mod + jitter, 1.0f);
-            float readPos = static_cast<float> (dl.writePos) - readDelay;
-
-            int intIdx = static_cast<int> (std::floor (readPos));
-            float frac = readPos - static_cast<float> (intIdx);
-
-            delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
-
-            // Advance LFO with "Wander" drift (classic reverb technique).
-            // Adds ±8% random perturbation to the phase increment each sample
-            // so the modulation never exactly repeats — organic, not mechanical.
-            if (! frozen_)
-            {
-                float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
-                lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
-                if (lfoPhase_[ch] >= kTwoPi)
-                    lfoPhase_[ch] -= kTwoPi;
-                else if (lfoPhase_[ch] < 0.0f)
-                    lfoPhase_[ch] += kTwoPi;
-            }
-        }
-
-        // --- 1.25) Terminal decay: accelerate tail fadeout when below threshold ---
-        if (terminalDecayFactor_ < 1.0f && ! frozen_)
-        {
-            float sampleEnergy = 0.0f;
-            for (int ch = 0; ch < N; ++ch)
-                sampleEnergy += delayOut[ch] * delayOut[ch];
-            sampleEnergy *= (1.0f / static_cast<float> (N));
-
-            currentRMS_ = currentRMS_ * rmsAlpha_ + sampleEnergy * (1.0f - rmsAlpha_);
-            if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
-            else peakRMS_ *= peakDecayAlpha_;
-
-            float ratio = peakRMS_ / std::max (currentRMS_, 1e-20f);
-
-            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
-            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
-            // dropped 40dB below peak — the intended "tail has faded" condition.
-            terminalDecayActive_ = (ratio > terminalLinearThreshold_)
-                                 && (peakRMS_ > 1e-12f);
-            if (terminalDecayActive_)
-            {
-                for (int ch = 0; ch < N; ++ch)
-                    delayOut[ch] *= terminalDecayFactor_;
-            }
-        }
-
-        // --- 1.5) Inline allpass diffusion (Dattorro "decay diffusion") ---
-        // Two cascaded Schroeder allpasses per channel. The second stage uses
-        // a reduced coefficient (0.8x) to prevent over-diffusion/washiness
-        // while multiplying echo density ~4x per feedback cycle.
-        // Bypassed during freeze: allpasses alter loop magnitude response over time,
-        // causing the frozen tail to spectrally evolve rather than truly sustaining.
-        if (inlineDiffCoeff_ > 0.0f && ! frozen_)
-        {
-            if (useShortInlineAP_)
-            {
-                for (int ch = 0; ch < N; ++ch)
-                    delayOut[ch] = inlineAPShort_[ch].process (delayOut[ch], inlineDiffCoeff_);
-            }
-            else
-            {
-                for (int ch = 0; ch < N; ++ch)
-                    delayOut[ch] = inlineAP_[ch].process (delayOut[ch], inlineDiffCoeff_);
-            }
-        }
-        if (! useShortInlineAP_ && inlineDiffCoeff2_ > 0.0f && ! frozen_)
-        {
-            for (int ch = 0; ch < N; ++ch)
-                delayOut[ch] = inlineAP2_[ch].process (delayOut[ch], inlineDiffCoeff2_);
-        }
-        if (inlineDiffCoeff3_ > 0.0f && ! frozen_)
-        {
-            for (int ch = 0; ch < N; ++ch)
-                delayOut[ch] = inlineAP3_[ch].process (delayOut[ch], inlineDiffCoeff3_);
-        }
-
-        // --- 2) Feedback mixing ---
-        float feedback[N];
-        if (useHouseholder_)
-        {
-            // Householder reflection: H = I - (2/N) * ones * ones^T.
-            // Moderate mixing avoids eigentone clustering (better for plates).
-            std::memcpy (feedback, delayOut, sizeof (feedback));
-            if (stereoSplitEnabled_ && dualSlopeFastCount_ == 0)
-            {
-                householderInPlace8 (feedback);
-                householderInPlace8 (feedback + 8);
-                if (stereoCoupling_ > 0.0f)
-                {
-                    float sinC = stereoCoupling_;
-                    float cosC = std::sqrt (1.0f - sinC * sinC);
-                    for (int ch = 0; ch < 8; ++ch)
-                    {
-                        float l = feedback[ch];
-                        float r = feedback[ch + 8];
-                        feedback[ch]     =  l * cosC + r * sinC;
-                        feedback[ch + 8] = -l * sinC + r * cosC;
-                    }
-                }
-            }
-            else if (dualSlopeFastCount_ == 8)
-            {
-                householderInPlace8 (feedback);
-                householderInPlace8 (feedback + 8);
-            }
-            else
-            {
-                householderInPlace16 (feedback);
-            }
-        }
-        else if (stereoSplitEnabled_ && ! usePerturbedMatrix_ && dualSlopeFastCount_ == 0)
-        {
-            // Stereo split: two independent 8×8 Hadamards for L (0-7) and R (8-15) groups.
-            // Each group maintains its own spatial identity with controlled cross-coupling.
-            std::memcpy (feedback, delayOut, sizeof (feedback));
-            hadamardInPlace8 (feedback);      // L group: channels 0-7
-            hadamardInPlace8 (feedback + 8);  // R group: channels 8-15
-
-            // Rotation-based cross-coupling: orthogonal matrix guarantees
-            // |L'|²+|R'|² = |L|²+|R|² regardless of signal correlation.
-            // stereoCoupling_ = sin(θ), so L→R leakage = 20·log10(c) dB.
-            if (stereoCoupling_ > 0.0f)
-            {
-                float sinC = stereoCoupling_;
-                float cosC = std::sqrt (1.0f - sinC * sinC);
-                for (int ch = 0; ch < 8; ++ch)
-                {
-                    float l = feedback[ch];
-                    float r = feedback[ch + 8];
-                    feedback[ch]     =  l * cosC + r * sinC;
-                    feedback[ch + 8] = -l * sinC + r * cosC;
-                }
-            }
-        }
-        else if (usePerturbedMatrix_)
-        {
-            // Perturbed matrix: N×N multiply breaks deterministic modal coupling.
-            // 256 multiply-adds per sample (vs 64 for fast Hadamard) — negligible overhead.
-            for (int row = 0; row < N; ++row)
-            {
-                float sum = 0.0f;
-                for (int col = 0; col < N; ++col)
-                    sum += perturbMatrix_[row][col] * delayOut[col];
-                feedback[row] = sum;
-            }
-        }
-        else if (dualSlopeFastCount_ == 8)
-        {
-            // Dual-slope: two independent 8×8 Hadamards.
-            // Decouples fast-decay (0-7) and slow-decay (8-15) channel groups
-            // so each maintains its own RT60 without cross-contamination.
-            std::memcpy (feedback, delayOut, sizeof (feedback));
-            hadamardInPlace8 (feedback);
-            hadamardInPlace8 (feedback + 8);
-        }
-        else
-        {
-            std::memcpy (feedback, delayOut, sizeof (feedback));
-            hadamardInPlace16 (feedback);
-        }
-
-        // --- 3) Three-band damping + input injection -> write to delay lines ---
-        for (int ch = 0; ch < N; ++ch)
-        {
-            auto& dl = delayLines_[ch];
-
-            // When frozen, bypass damping (unity feedback) to sustain tail indefinitely
-            float filtered = frozen_ ? feedback[ch] : dampFilter_[ch].process (feedback[ch]);
-
-            // Structural HF damping: gentle air-absorption LP (per-algorithm)
-            if (structHFEnabled_ && ! frozen_)
-            {
-                structHFState_[ch] = (1.0f - structHFCoeff_) * filtered
-                                   + structHFCoeff_ * structHFState_[ch];
-                filtered = structHFState_[ch];
-            }
-
-            // Structural LF damping: first-order highpass to reduce bass inflation (Room)
-            if (structLFEnabled_ && ! frozen_)
-            {
-                float hp = filtered - structLFState_[ch];
-                structLFState_[ch] = (1.0f - structLFCoeff_) * filtered
-                                   + structLFCoeff_ * structLFState_[ch];
-                filtered = hp;
-            }
-
-            // Anti-alias LP + DC blocker: bypass when frozen to prevent tail drift
-            if (! frozen_)
-            {
-                antiAliasState_[ch] = (1.0f - antiAliasCoeff_) * filtered
-                                    + antiAliasCoeff_ * antiAliasState_[ch];
-                filtered = antiAliasState_[ch];
-
-                float dcOut = filtered - dcX1_[ch] + dcCoeff_ * dcY1_[ch];
-                dcX1_[ch] = filtered;
-                dcY1_[ch] = dcOut;
-                filtered = dcOut;
-            }
-
-            // Inject stereo input into delay lines.
-            // When stereo split is active: channels 0-7 get L, 8-15 get R (group-based).
-            // When disabled (legacy): even channels get L, odd channels get R (interleaved).
-            // When frozen, mute new input to keep only the existing tail.
-            float inputGain = frozen_ ? 0.0f : 0.25f * inputGainScale_[ch];
-            float polarity = (ch & 1) ? -1.0f : 1.0f;
-            float inputSample = stereoSplitEnabled_ ? ((ch < 8) ? inL : inR)
-                                                    : ((ch & 1) ? inR : inL);
-            // Suppress denormal bias when frozen to prevent tail mutation
-            float denormalBias = frozen_ ? 0.0f
-                                         : (((dl.writePos ^ ch) & 1)
-                                                ? DspUtils::kDenormalPrevention
-                                                : -DspUtils::kDenormalPrevention);
-            dl.buffer[static_cast<size_t> (dl.writePos)] =
-                filtered + inputSample * polarity * inputGain + denormalBias;
-
-            dl.writePos = (dl.writePos + 1) & dl.mask;
-        }
-
-        // --- 4) Tap decorrelated stereo outputs ---
-        float outL = 0.0f, outR = 0.0f;
-
-        if (useMultiPointOutput_)
-        {
-            // Multi-point output: read from fractional positions within delay lines.
-            // Each tap reads at positionFrac * delayLength, producing multiple virtual
-            // output paths from the same delay structure — Dattorro-inspired density.
-            // Standard multi-point fractional tap reading
-            for (int t = 0; t < numMultiTapsL_; ++t)
-            {
-                const auto& tap = multiTapsL_[t];
-                const auto& dl  = delayLines_[tap.channelIndex];
-                float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
-                float readPos   = static_cast<float> (dl.writePos) - readDelay;
-                int   i0        = static_cast<int> (std::floor (readPos)) & dl.mask;
-                int   i1        = (i0 + 1) & dl.mask;
-                float frac      = readPos - std::floor (readPos);
-                float sample    = dl.buffer[static_cast<size_t> (i0)]
-                                + frac * (dl.buffer[static_cast<size_t> (i1)]
-                                        - dl.buffer[static_cast<size_t> (i0)]);
-                outL += sample * tap.sign;
-            }
-            for (int t = 0; t < numMultiTapsR_; ++t)
-            {
-                const auto& tap = multiTapsR_[t];
-                const auto& dl  = delayLines_[tap.channelIndex];
-                float readDelay = delayLength_[tap.channelIndex] * tap.positionFrac;
-                float readPos   = static_cast<float> (dl.writePos) - readDelay;
-                int   i0        = static_cast<int> (std::floor (readPos)) & dl.mask;
-                int   i1        = (i0 + 1) & dl.mask;
-                float frac      = readPos - std::floor (readPos);
-                float sample    = dl.buffer[static_cast<size_t> (i0)]
-                                + frac * (dl.buffer[static_cast<size_t> (i1)]
-                                        - dl.buffer[static_cast<size_t> (i0)]);
-                outR += sample * tap.sign;
-            }
-            // Normalize by 1/N — arithmetic mean of tap reads.
-            outL /= static_cast<float> (numMultiTapsL_);
-            outR /= static_cast<float> (numMultiTapsR_);
-        }
-        else
-        {
-            // Standard 8-tap endpoint output with signed summation.
-            // Per-channel outputTapGain_ enables dual-slope: fast channels are boosted
-            // to create a loud initial burst, slow channels at unity form the quiet tail.
-            for (int t = 0; t < kNumOutputTaps; ++t)
-            {
-                outL += delayOut[leftTaps_[t]] * leftSigns_[t] * outputTapGain_[leftTaps_[t]] * outputGainScale_[leftTaps_[t]];
-                outR += delayOut[rightTaps_[t]] * rightSigns_[t] * outputTapGain_[rightTaps_[t]] * outputGainScale_[rightTaps_[t]];
-            }
-        }
-
-        // Linear output: 1/sqrt(8) normalization + 6dB level match.
-        // sizeCompensation_ = sqrt(sizeScale) normalizes steady-state energy
-        // across sizes — shorter delays at small sizes pack more recirculations
-        // per unit time, producing higher energy density without compensation.
-        // Soft-clip output: fastTanh knee at ~±1.0, scaled by kSafetyClip for headroom.
-        // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
-        float rawL = outL * kOutputLevel * sizeCompensation_;
-        float rawR = outR * kOutputLevel * sizeCompensation_;
-        outputL[i] = std::clamp (DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);
-        outputR[i] = std::clamp (DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);
-    }
-}
-
-// ---------------------------------------------------------------------------
-void HomestarBladeRunnerPresetEngine::setDecayTime (float seconds)
-{
-    decayTime_ = std::clamp (seconds, 0.2f, 600.0f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setBassMultiply (float mult)
-{
-    bassMultiply_ = std::clamp (mult, 0.5f, 2.5f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setTrebleMultiply (float mult)
-{
-    trebleMultiply_ = std::clamp (mult, 0.1f, 1.5f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setCrossoverFreq (float hz)
-{
-    const float maxLow = std::max (200.0f, highCrossoverFreq_ - 1.0f);
-    crossoverFreq_ = std::clamp (hz, 200.0f, maxLow);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setModDepth (float depth)
-{
-    modDepth_ = std::clamp (depth, 0.0f, 2.0f);
-    if (prepared_)
-        updateModDepth();
-}
-
-void HomestarBladeRunnerPresetEngine::setModRate (float hz)
-{
-    modRateHz_ = std::max (hz, 0.01f);
-    if (prepared_)
-        updateLFORates();
-}
-
-void HomestarBladeRunnerPresetEngine::setSize (float size)
-{
-    sizeParam_ = std::clamp (size, 0.0f, 1.0f);
-    if (prepared_)
-    {
-        updateDelayLengths();
-        updateDecayCoefficients();
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::setFreeze (bool frozen)
-{
-    frozen_ = frozen;
-    if (frozen)
-    {
-        peakRMS_ = 0.0f;
-        currentRMS_ = 0.0f;
-        terminalDecayActive_ = false;
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::setBaseDelays (const int* delays)
-{
-    if (delays == nullptr)
-        return;
-
-    for (int i = 0; i < N; ++i)
-        baseDelays_[i] = std::clamp (delays[i], 1, kMaxBaseDelay);
-
-    if (prepared_)
-    {
-        updateDelayLengths();
-        updateDecayCoefficients();
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::setOutputTaps (const int* lt, const int* rt,
-                                const float* ls, const float* rs)
-{
-    if (lt == nullptr || rt == nullptr || ls == nullptr || rs == nullptr)
-        return;
-
-    for (int i = 0; i < kNumOutputTaps; ++i)
-    {
-        leftTaps_[i]  = std::clamp (lt[i], 0, N - 1);
-        rightTaps_[i] = std::clamp (rt[i], 0, N - 1);
-    }
-    std::memcpy (leftSigns_,  ls, sizeof (leftSigns_));
-    std::memcpy (rightSigns_, rs, sizeof (rightSigns_));
-}
-
-void HomestarBladeRunnerPresetEngine::setLateGainScale (float scale)
-{
-    lateGainScale_ = std::max (scale, 0.0f);
-}
-
-void HomestarBladeRunnerPresetEngine::setSizeRange (float min, float max)
-{
-    float newMin = std::max (min, 0.0f);
-    float newMax = std::max (max, newMin);
-    if (prepared_)
-    {
-        newMin = std::min (newMin, sizeRangeAllocatedMax_);
-        newMax = std::min (newMax, sizeRangeAllocatedMax_);
-    }
-    sizeRangeMin_ = newMin;
-    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
-    if (prepared_)
-    {
-        updateDelayLengths();
-        updateDecayCoefficients();
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::setInlineDiffusion (float coeff)
-{
-    inlineDiffCoeff_ = std::clamp (coeff, 0.0f, 0.75f);
-    inlineDiffCoeff2_ = inlineDiffCoeff_ * 0.8f;
-    // 3rd cascade disabled: extra feedback-loop phase accumulation worsens
-    // ringing for longer-delay modes (Hall, Plate). Density is instead
-    // improved via 3-stage output diffusion (post-FDN, no feedback impact).
-    inlineDiffCoeff3_ = 0.0f;
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setUseShortInlineAP (bool use)
-{
-    useShortInlineAP_ = use;
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setMultiPointOutput (const FDNOutputTap* left, int numL,
-                                     const FDNOutputTap* right, int numR)
-{
-    if (left == nullptr || numL <= 0 || right == nullptr || numR <= 0)
-    {
-        useMultiPointOutput_ = false;
-        numMultiTapsL_ = 0;
-        numMultiTapsR_ = 0;
-        return;
-    }
-    numMultiTapsL_ = std::min (numL, static_cast<int> (kMaxMultiTaps));
-    numMultiTapsR_ = std::min (numR, static_cast<int> (kMaxMultiTaps));
-    for (int i = 0; i < numMultiTapsL_; ++i)
-    {
-        if (left[i].channelIndex < 0 || left[i].channelIndex >= N)
-        {
-            useMultiPointOutput_ = false;
-            numMultiTapsL_ = 0;
-            numMultiTapsR_ = 0;
-            return;
-        }
-        multiTapsL_[i] = left[i];
-    }
-    for (int i = 0; i < numMultiTapsR_; ++i)
-    {
-        if (right[i].channelIndex < 0 || right[i].channelIndex >= N)
-        {
-            useMultiPointOutput_ = false;
-            numMultiTapsL_ = 0;
-            numMultiTapsR_ = 0;
-            return;
-        }
-        multiTapsR_[i] = right[i];
-    }
-    useMultiPointOutput_ = true;
-}
-
-void HomestarBladeRunnerPresetEngine::setMultiPointDensity (int tapsPerChannel)
-{
-    int totalTaps = tapsPerChannel * N;
-    if (totalTaps <= 0 || totalTaps > kMaxMultiTaps)
-    {
-        useMultiPointOutput_ = false;
-        numMultiTapsL_ = 0;
-        numMultiTapsR_ = 0;
-        return;
-    }
-
-    numMultiTapsL_ = totalTaps;
-    numMultiTapsR_ = totalTaps;
-
-    // Generate evenly-spaced fractional positions with alternating signs.
-    // L and R use offset positions for stereo decorrelation.
-    for (int ch = 0; ch < N; ++ch)
-    {
-        for (int t = 0; t < tapsPerChannel; ++t)
-        {
-            int idx = ch * tapsPerChannel + t;
-            float posL = 0.05f + 0.90f * (static_cast<float> (t) + 0.5f)
-                                        / static_cast<float> (tapsPerChannel);
-            float posR = 0.05f + 0.90f * (static_cast<float> (t) + 0.3f)
-                                        / static_cast<float> (tapsPerChannel);
-            float signL = (t % 2 == 0) ? 1.0f : -1.0f;
-            float signR = (t % 2 == 1) ? 1.0f : -1.0f;  // opposite pattern
-
-            multiTapsL_[idx] = { ch, posL, signL };
-            multiTapsR_[idx] = { ch, posR, signR };
-        }
-    }
-    useMultiPointOutput_ = true;
-}
-
-void HomestarBladeRunnerPresetEngine::setHadamardPerturbation (float amount)
-{
-    if (amount <= 0.0f)
-    {
-        usePerturbedMatrix_ = false;
-        return;
-    }
-
-    usePerturbedMatrix_ = true;
-
-    // Build 16x16 Hadamard matrix (Sylvester construction)
-    float H[N][N];
-    H[0][0] = 1.0f;
-    for (int size = 1; size < N; size *= 2)
-    {
-        for (int i = 0; i < size; ++i)
-        {
-            for (int j = 0; j < size; ++j)
-            {
-                H[i][j + size]        =  H[i][j];
-                H[i + size][j]        =  H[i][j];
-                H[i + size][j + size] = -H[i][j];
-            }
-        }
-    }
-
-    // Apply deterministic perturbations (seeded PRNG for reproducibility)
-    constexpr float kNorm = 0.25f; // 1/sqrt(16)
-    uint32_t seed = 0xDEADBEEF;
-    for (int i = 0; i < N; ++i)
-    {
-        for (int j = 0; j < N; ++j)
-        {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            float noise = static_cast<float> (static_cast<int32_t> (seed))
-                        * (1.0f / 2147483648.0f);
-            perturbMatrix_[i][j] = (H[i][j] + noise * amount) * kNorm;
-        }
-    }
-
-    // Project to nearest orthogonal matrix via iterative polar decomposition
-    // (Newton's method): M_{k+1} = 0.5 * (M_k + M_k^{-T}).
-    // This guarantees a unitary mixing matrix, preventing energy drift in
-    // freeze mode. Row normalization alone doesn't ensure column orthogonality.
-    // For a 16x16 nearly-orthogonal matrix, 4 iterations suffice for convergence.
-    constexpr int kPolarIters = 4;
-
-    for (int iter = 0; iter < kPolarIters; ++iter)
-    {
-        // Copy current matrix M
-        float M[N][N];
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
-                M[i][j] = perturbMatrix_[i][j];
-
-        // Compute M^{-1} via Gauss-Jordan elimination on [M | I]
-        float aug[N][2 * N];
-        for (int i = 0; i < N; ++i)
-        {
-            for (int j = 0; j < N; ++j)
-            {
-                aug[i][j] = M[i][j];
-                aug[i][j + N] = (i == j) ? 1.0f : 0.0f;
-            }
-        }
-
-        bool singular = false;
-        for (int col = 0; col < N; ++col)
-        {
-            // Partial pivoting for numerical stability
-            int pivotRow = col;
-            float pivotVal = std::fabs (aug[col][col]);
-            for (int row = col + 1; row < N; ++row)
-            {
-                float val = std::fabs (aug[row][col]);
-                if (val > pivotVal)
-                {
-                    pivotVal = val;
-                    pivotRow = row;
-                }
-            }
-            if (pivotRow != col)
-            {
-                for (int k = 0; k < 2 * N; ++k)
-                    std::swap (aug[col][k], aug[pivotRow][k]);
-            }
-
-            float diag = aug[col][col];
-            if (std::fabs (diag) < 1e-12f)
-            {
-                singular = true;
-                break; // Singular — bail out (shouldn't happen for perturbed Hadamard)
-            }
-
-            float invDiag = 1.0f / diag;
-            for (int k = 0; k < 2 * N; ++k)
-                aug[col][k] *= invDiag;
-
-            for (int row = 0; row < N; ++row)
-            {
-                if (row == col)
-                    continue;
-                float factor = aug[row][col];
-                for (int k = 0; k < 2 * N; ++k)
-                    aug[row][k] -= factor * aug[col][k];
-            }
-        }
-
-        if (singular)
-            break;
-
-        // M^{-1} is now in aug[i][j+N]. We need M^{-T} (transpose of inverse).
-        // Compute M_{k+1} = 0.5 * (M + M^{-T})
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
-                perturbMatrix_[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::setUseHouseholder (bool enable)
-{
-    useHouseholder_ = enable;
-}
-
-void HomestarBladeRunnerPresetEngine::setUseWeightedGains (bool enable)
-{
-    useWeightedGains_ = enable;
-    if (prepared_)
-        updateDelayLengths();
-}
-
-void HomestarBladeRunnerPresetEngine::setDualSlope (float ratio, int fastCount, float fastGain)
-{
-    dualSlopeRatio_ = std::max (ratio, 0.0f);
-    // Only 0 (disabled) and 8 (two independent 8×8 Hadamards) are supported.
-    dualSlopeFastCount_ = (fastCount >= 8) ? 8 : 0;
-
-    for (int i = 0; i < N; ++i)
-        outputTapGain_[i] = (dualSlopeFastCount_ > 0 && i < dualSlopeFastCount_)
-                                ? fastGain : 1.0f;
-
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setStereoCoupling (float amount)
-{
-    // Negative values disable stereo split (use full 16×16 Hadamard).
-    // Zero or positive enables split; zero coupling = fully independent L/R (no leakage).
-    if (amount < 0.0f)
-    {
-        stereoSplitEnabled_ = false;
-        stereoCoupling_ = 0.0f;
-    }
-    else
-    {
-        stereoSplitEnabled_ = true;
-        stereoCoupling_ = std::clamp (amount, 0.0f, 0.75f);
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::setNoiseModDepth (float samples)
-{
-    noiseModDepthParam_ = std::clamp (samples, 0.0f, 8.0f);
-    if (prepared_)
-        updateModDepth();
-}
-
-void HomestarBladeRunnerPresetEngine::setModDepthFloor (float floor)
-{
-    modDepthFloor_ = std::clamp (floor, 0.0f, 1.0f);
-    if (prepared_)
-        updateDelayLengths();
-}
-
-void HomestarBladeRunnerPresetEngine::setHighCrossoverFreq (float hz)
-{
-    const float minHigh = std::max (1000.0f, crossoverFreq_ + 1.0f);
-    highCrossoverFreq_ = std::clamp (hz, minHigh, 20000.0f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setAirTrebleMultiply (float mult)
-{
-    airTrebleMultiply_ = std::clamp (mult, 0.1f, 1.5f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setStructuralHFDamping (float baseFreqHz, float trebleMultiply)
-{
-    structHFBaseFreq_ = baseFreqHz;
-    if (baseFreqHz <= 0.0f)
-    {
-        structHFEnabled_ = false;
-        structHFCoeff_ = 0.0f;
-        for (int i = 0; i < N; ++i)
-            structHFState_[i] = 0.0f;
-        return;
-    }
-    // Inverted treble scaling: dark presets (low treble) already have strong TwoBandDamping,
-    // so structural damping is reduced (higher effectiveHz). Bright presets (high treble) have
-    // weaker TwoBandDamping, so they get full structural damping (effectiveHz = baseFreqHz).
-    // At treble=1.0: effectiveHz = baseFreqHz (full structural damping).
-    // At treble=0.5: effectiveHz = baseFreqHz * 1.25 (reduced damping for dark presets).
-    // At treble=0.1: effectiveHz = baseFreqHz * 1.45 (minimal damping for very dark presets).
-    float effectiveHz = baseFreqHz * (1.5f - std::clamp (trebleMultiply, 0.1f, 1.0f) * 0.5f);
-    structHFEnabled_ = true;
-    structHFCoeff_ = std::exp (-kTwoPi * effectiveHz / static_cast<float> (sampleRate_));
-}
-
-void HomestarBladeRunnerPresetEngine::setStructuralLFDamping (float hz)
-{
-    if (hz <= 0.0f)
-    {
-        structLFEnabled_ = false;
-        structLFCoeff_ = 0.0f;
-        for (int i = 0; i < N; ++i)
-            structLFState_[i] = 0.0f;
-        return;
-    }
-    structLFEnabled_ = true;
-    structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
-}
-
-void HomestarBladeRunnerPresetEngine::setDecayBoost (float boost)
-{
-    decayBoost_ = std::clamp (boost, 0.3f, 2.0f);
-    if (prepared_)
-        updateDecayCoefficients();
-}
-
-void HomestarBladeRunnerPresetEngine::setTerminalDecay (float thresholdDB, float factor)
-{
-    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
-    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
-    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
-}
-
-void HomestarBladeRunnerPresetEngine::clearBuffers()
-{
-    for (int i = 0; i < N; ++i)
-    {
-        std::fill (delayLines_[i].buffer.begin(), delayLines_[i].buffer.end(), 0.0f);
-        delayLines_[i].writePos = 0;
-        inlineAP_[i].clear();
-        inlineAP2_[i].clear();
-        inlineAP3_[i].clear();
-        inlineAPShort_[i].clear();
-        dampFilter_[i].reset();
-        structHFState_[i] = 0.0f;
-        structLFState_[i] = 0.0f;
-        antiAliasState_[i] = 0.0f;
-        dcX1_[i] = 0.0f;
-        dcY1_[i] = 0.0f;
-        // Deterministic LFO/PRNG reset for clean state on algorithm switch.
-        // (Wrapper prepare() no longer calls clearBuffers(), so this does not
-        // conflict with prepare()'s stochastic randomization.)
-        lfoPhase_[i] = std::fmod (2.3561945f + kTwoPi * static_cast<float> (i)
-                                                       / static_cast<float> (N), kTwoPi);
-        lfoPRNG_[i] = 0x5A3C9E71u + static_cast<uint32_t> (i * 1847);
-    }
-    // Reset terminal decay RMS tracking
-    peakRMS_ = 0.0f;
-    currentRMS_ = 0.0f;
-    terminalDecayActive_ = false;
-}
-
-// ---------------------------------------------------------------------------
-void HomestarBladeRunnerPresetEngine::updateDelayLengths()
-{
-    float sizeScale = sizeRangeMin_ + (sizeRangeMax_ - sizeRangeMin_) * sizeParam_;
-    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-
-    // Size-dependent gain compensation: shorter delays at small sizes pack
-    // more feedback recirculations per unit time → higher energy density.
-    // Power 0.4 balances attenuation at small sizes (~-2.0 dB at sizeScale=0.5)
-    // with modest boost at large sizes (+1.4 dB at sizeScale=1.5).
-    sizeCompensation_ = std::pow (sizeScale, 0.4f);
-
-    float maxDelay = 0.0f;
-    for (int i = 0; i < N; ++i)
-    {
-        delayLength_[i] = static_cast<float> (baseDelays_[i]) * rateRatio * sizeScale;
-        if (delayLength_[i] > maxDelay)
-            maxDelay = delayLength_[i];
-    }
-
-    // Per-delay modulation depth scaling: proportional to delay length.
-    // Prevents pitch wobble on short delays (Room) while preserving
-    // full modulation on long delays (Hall/Ambient).
-    // Floor is per-algorithm: Room uses 0.50 for more mode blurring on
-    // short delays; others use 0.35 default.
-    for (int i = 0; i < N; ++i)
-    {
-        float scale = (maxDelay > 0.0f) ? delayLength_[i] / maxDelay : 1.0f;
-        modDepthScale_[i] = std::max (scale, modDepthFloor_);
-    }
-
-    // Per-channel input/output gain scaling for uniform modal excitation.
-    // Weight by 1/sqrt(delay_length / min_delay) so shorter delays (which recirculate
-    // more often) get higher gain, compensating for their naturally lower energy
-    // accumulation per pass. This flattens the spectral envelope of the reverb tail.
-    if (useWeightedGains_)
-    {
-        float minDelay = std::max (delayLength_[0], 1.0f);
-        for (int i = 1; i < N; ++i)
-            minDelay = std::min (minDelay, std::max (delayLength_[i], 1.0f));
-
-        float sumSqIn = 0.0f;
-        for (int i = 0; i < N; ++i)
-        {
-            inputGainScale_[i] = 1.0f / std::sqrt (std::max (delayLength_[i], 1.0f) / minDelay);
-            sumSqIn += inputGainScale_[i] * inputGainScale_[i];
-        }
-        // Normalize so RMS of gain vector equals 1 (preserves overall input energy)
-        float normIn = std::sqrt (static_cast<float> (N) / sumSqIn);
-        for (int i = 0; i < N; ++i)
-            inputGainScale_[i] *= normIn;
-
-        // Output gains: same weighting (symmetry for spectral flatness)
-        for (int i = 0; i < N; ++i)
-            outputGainScale_[i] = inputGainScale_[i];
-    }
-    else
-    {
-        for (int i = 0; i < N; ++i)
-        {
-            inputGainScale_[i] = 1.0f;
-            outputGainScale_[i] = 1.0f;
-        }
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::updateDecayCoefficients()
-{
-    // Low crossover: bass/mid split (user-controlled crossover frequency, ~633Hz)
-    float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_
-                                        / static_cast<float> (sampleRate_));
-
-    // High crossover: mid/air split (per-algorithm, e.g. Room=6kHz, others=20kHz)
-    float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_
-                                         / static_cast<float> (sampleRate_));
-
-    for (int i = 0; i < N; ++i)
-    {
-        // Per-channel RT60: fast channels get shorter decay for dual-slope envelope
-        float channelRT60 = decayTime_;
-        if (dualSlopeFastCount_ > 0 && i < dualSlopeFastCount_ && dualSlopeRatio_ > 0.0f)
-            channelRT60 = std::max (decayTime_ * dualSlopeRatio_, 0.2f);
-
-        // Per-delay feedback gain for desired RT60
-        // g_base = 10^(-3 * L / (RT60 * sr)) so that after RT60 seconds, signal is at -60 dB
-        // Effective loop length includes inline allpass delays (they add latency to the
-        // feedback path but aren't part of delayLength_). Without this, algorithms with
-        // inline diffusion (Plate, Chamber) under-decay because the formula assumes a
-        // shorter loop than the signal actually traverses.
-        float effectiveLength = delayLength_[i];
-        if (inlineDiffCoeff_ > 0.0f)
-        {
-            float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-            if (useShortInlineAP_)
-                effectiveLength += static_cast<float> (kInlineAPDelaysShort[i]) * rateRatio;
-            else
-                effectiveLength += static_cast<float> (kInlineAPDelays[i]) * rateRatio;
-            if (! useShortInlineAP_ && inlineDiffCoeff2_ > 0.0f)
-                effectiveLength += static_cast<float> (kInlineAPDelays2[i]) * rateRatio;
-            if (inlineDiffCoeff3_ > 0.0f)
-                effectiveLength += static_cast<float> (kInlineAPDelays3[i]) * rateRatio;
-        }
-        float gBase = std::pow (10.0f, -3.0f * effectiveLength
-                                       / (channelRT60 * static_cast<float> (sampleRate_)));
-        gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
-
-        // 5-band damping using baked kFiveBandMult[] combined with runtime controls
-        float combinedMult[5] = {
-            kFiveBandMult[0] * bassMultiply_,
-            kFiveBandMult[1] * bassMultiply_,
-            kFiveBandMult[2] * trebleMultiply_,
-            kFiveBandMult[3] * trebleMultiply_,
-            kFiveBandMult[4] * std::max (airTrebleMultiply_, 0.01f)
-        };
-        dampFilter_[i].setBandMultipliers (combinedMult);
-        dampFilter_[i].computeGainsFromBase (gBase, lowCrossoverCoeff, highCrossoverCoeff);
-    }
-
-    {
-        float fbCoeffs[4];
-        for (int b = 0; b < 4; ++b)
-            fbCoeffs[b] = std::exp (-6.283185307f * kFiveBandCrossoverHz[b]
-                                    / static_cast<float> (sampleRate_));
-        for (int i = 0; i < N; ++i)
-            dampFilter_[i].setCrossovers (fbCoeffs);
-    }
-}
-
-void HomestarBladeRunnerPresetEngine::updateModDepth()
-{
-    // Scale by sample rate ratio so modulation depth (in time) is consistent
-    // across 44.1kHz, 48kHz, 96kHz etc.
-    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = modDepth_ * 4.0f * rateRatio;
-    noiseModDepth_ = noiseModDepthParam_ * rateRatio;
-}
-
-void HomestarBladeRunnerPresetEngine::updateLFORates()
-{
-    // Irregularly-spaced rate factors prevent modulation beating.
-    // Adjacent ratios avoid simple rational relationships so no two
-    // channels ever re-align into audible patterns.
-    static constexpr float kRateFactors[N] = {
-        0.801f, 0.857f, 0.919f, 0.953f, 0.991f, 1.031f, 1.063f, 1.097f,
-        1.127f, 1.163f, 1.193f, 1.223f, 1.259f, 1.289f, 1.319f, 1.361f
-    };
-
-    for (int i = 0; i < N; ++i)
-    {
-        float rateHz = modRateHz_ * kRateFactors[i];
-        lfoPhaseInc_[i] = kTwoPi * rateHz / static_cast<float> (sampleRate_);
-    }
-}
-
-// ==========================================================================
-//  END PRIVATE COPY
-// ==========================================================================
-
-
-class HomestarBladeRunnerPresetWrapper : public PresetEngineBase
+class HomestarBladeRunnerPresetEngine : public PresetEngineBase
 {
 public:
-    HomestarBladeRunnerPresetWrapper() = default;
-    ~HomestarBladeRunnerPresetWrapper() override = default;
+    HomestarBladeRunnerPresetEngine() = default;
 
     void prepare (double sampleRate, int maxBlockSize) override
     {
         sampleRate_ = sampleRate;
-        // Apply sizing/scaling config BEFORE engine_.prepare() so buffers
-        // allocate at the right size for the actual host sample rate AND for
-        // the per-preset delay scale (Invariant 3).
-                if (overrideSizeRangeMin_ >= 0.0f)
-            engine_.setSizeRange (overrideSizeRangeMin_ * kVvDelayScale, overrideSizeRangeMax_ * kVvDelayScale);
-        else
-            engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
-        // (no setDelayScale on this engine)
-        engine_.setLateGainScale (kBakedLateGainScale);
-        // VV-derived crossovers (clamped >0 in setters per Invariant 4)
-        engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
-        engine_.setCrossoverFreq     (kVvCrossoverHz);
-        // Bass/treble defaults must be set BEFORE prepare so decay coefficients
-        // are computed with the correct damping baseline.
-        float savedBass = lastBass_;
-        float savedTreble = lastTreble_;
-        engine_.setBassMultiply (kBakedBassMultScale);
-        lastBass_ = 1.0f;
-        engine_.setTrebleMultiply (kBakedTrebleMultScale);
-        lastTreble_ = kBakedTrebleMultScale;
-        engine_.setAirTrebleMultiply (kBakedAirDampingScale * kVvAirDampingScale);
-        engine_.prepare (sampleRate, maxBlockSize);
-        // setNoiseModDepth scales by the engine's stored sampleRate_, so it
-        // must run AFTER prepare() or the baked jitter is locked to 44.1kHz.
-        engine_.setNoiseModDepth (kBakedNoiseModDepth);
+        float sr = static_cast<float> (sampleRate);
 
-        // The bass/treble multipliers are LEFT at the legacy
-        // AlgorithmConfig defaults (kBakedBassMultScale, kBakedTrebleMultScale)
-        // because they were hand-calibrated against the existing engine and
-        // mapping VV's per-band RT60 ratios into them produced regressions.
-        // The runtime setters below still apply the legacy curves, so a
-        // neutral user knob lands on the AlgorithmConfig default.
-        //
-        // The VV-derived structural correction is concentrated in:
-        //   - kVvAirDampingScale → setAirDampingScale (real air-band control)
-        //   - kVvDelayScale      → setSizeRange / setDelayScale
-        //   - kVvTiltLow/High*   → post-engine tilt EQ
-        //   - kVvStereoWidth     → post-engine mid/side mix
-        //   - base engine pick   → topology selection
-        // Replay any cached runtime overrides after prepare so they survive
-        // re-preparation (e.g. DAW sample rate change). Without this, overrides
-        // set by the host or optimizer would be silently reset to baked defaults.
-        if (overrideAirDamping_ >= 0.0f)
-            setAirDampingScale (overrideAirDamping_);
-        if (overrideHighCrossover_ >= 0.0f)
-            setHighCrossoverFreq (overrideHighCrossover_);
-        if (overrideCrossover_ >= 0.0f)
-            setCrossoverFreq (overrideCrossover_);
-        if (overrideNoiseMod_ >= 0.0f)
-            setNoiseModDepth (overrideNoiseMod_);
-        if (overrideLateGain_ >= 0.0f)
-            setLateGainScale (overrideLateGain_);
-        if (overrideSizeRangeMin_ >= 0.0f)
-            setSizeRange (overrideSizeRangeMin_, overrideSizeRangeMax_);
-        if (lastTerminalFactor_ < 1.0f)
-            setTerminalDecay (lastTerminalThresholdDb_, lastTerminalFactor_);
-        if (frozen_)
-            setFreeze (true);
-        if (savedTreble != kBakedTrebleMultScale && savedTreble != -1.0f)
+        // Crossovers. One input splitter per channel (feeds tanks); one output
+        // splitter per tank per channel (confines that tank's contribution to
+        // its own band, killing HF skirt leakage from inside the tank).
+        for (int ch = 0; ch < 2; ++ch)
+            splitters_[ch].setCrossovers (kCrossoverHz, sr);
+        for (int b = 0; b < kNumBands; ++b)
         {
-            engine_.setTrebleMultiply (savedTreble);
-            lastTreble_ = savedTreble;
+            perTankOutL_[b].setCrossovers (kCrossoverHz, sr);
+            perTankOutR_[b].setCrossovers (kCrossoverHz, sr);
         }
 
-        if (savedBass != 1.0f)
-            setBassMultiply (savedBass);
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
-        // Pre-compute per-preset tilt EQ coefficients at the actual host
-        // sample rate. These are derived from the VV IR's frequency
-        // response (see derive_topology_from_vv.py) and replace the
-        // earlier global -3dB/+3dB tilt that was applied uniformly to
-        // every preset.
-        const float twoPi = 6.283185307179586f;
-        const float lowHz  = std::max (kVvTiltLowHz,  1.0f);
-        const float highHz = std::max (kVvTiltHighHz, 1.0f);
-        tiltLowCoeff_  = std::exp (-twoPi * lowHz  / static_cast<float> (sampleRate));
-        tiltLowGain_   = std::pow (10.0f, kVvTiltLowDb / 20.0f) - 1.0f;
-        tiltHighCoeff_ = std::exp (-twoPi * highHz / static_cast<float> (sampleRate));
-        tiltHighGain_  = std::pow (10.0f, kVvTiltHighDb / 20.0f) - 1.0f;
+        // Per-band tanks — prepare each with its own decay target
+        for (int b = 0; b < kNumBands; ++b)
+        {
+            // Per-tank modulation. LF bands need MORE mod + noise jitter to
+            // spread their tank-resonant modes and prevent the constant
+            // 140/193/246 Hz hum that audibly accumulates over 10+ seconds
+            // when LF tanks ring at their natural delay-line frequencies.
+            // VV has no such modes because its FDN/chorus blends them out.
+            static constexpr float kModDepth[kNumBands] = {
+                0.50f, 0.45f, 0.35f, 0.25f, 0.15f, 0.12f, 0.12f
+            };
+            static constexpr float kNoiseMod[kNumBands] = {
+                8.0f, 8.0f, 6.0f, 5.0f, 4.0f, 3.0f, 3.0f
+            };
+            tanks_[b].setModDepth (kModDepth[b]);
+            tanks_[b].setModRate (2.0f);   // higher rate = wider mode smear
+            tanks_[b].setNoiseModDepth (kNoiseMod[b]);
 
-        // -----------------------------------------------------------------
-        // Per-preset corrective 12-band peaking EQ. Computes RBJ peaking
-        // biquad coefficients from kCorrEqHz / kCorrEqDb at the host sample
-        // rate. Each band's center is clamped to <0.45*sr to avoid
-        // sub-Nyquist filter design issues at low sample rates.
-        // -----------------------------------------------------------------
-        const float corrSr = static_cast<float> (sampleRate);
-        const float nyquistGuard = 0.45f * corrSr;
+            // Bass/treble multiplies = 1.0, tank-internal filters flat — the
+            // OUTPUT band confinement handles spectral shaping. Tank-internal
+            // damping is disabled because its 5-band filter has skirt leakage
+            // that makes decay unpredictable.
+            tanks_[b].setBassMultiply (1.0f);
+            tanks_[b].setTrebleMultiply (1.0f);
+            tanks_[b].setAirDampingScale (1.0f);
+            tanks_[b].setHighCrossoverFreq (20000.0f);
+            tanks_[b].setStructuralHFDamping (0.0f);
+
+            tanks_[b].prepare (sampleRate, maxBlockSize);
+
+            // Baked target decay = band target * current user-decay scale
+            tanks_[b].setDecayTime (kBands[b].targetT20Seconds * userDecayScale_);
+
+            // Per-band scratch buffers sized for max block — keeps process()
+            // allocation-free (CLAUDE.md audio-thread rule).
+            scratchInL_[b].assign (static_cast<size_t> (maxBlockSize), 0.0f);
+            scratchInR_[b].assign (static_cast<size_t> (maxBlockSize), 0.0f);
+            scratchOutL_[b].assign (static_cast<size_t> (maxBlockSize), 0.0f);
+            scratchOutR_[b].assign (static_cast<size_t> (maxBlockSize), 0.0f);
+        }
+
+        // Corrective EQ (post-sum)
         for (int i = 0; i < kCorrEqBandCount; ++i)
         {
-            const float gainDb = kCorrEqDb[i];
-            // Bands above the Nyquist guard become neutral (bypass)
-            // to avoid stacking multiple bands at the guard frequency.
-            if (kCorrEqHz[i] >= nyquistGuard)
-            {
-                corrB0_[i] = 1.0f;
-                corrB1_[i] = 0.0f;
-                corrB2_[i] = 0.0f;
-                corrA1_[i] = 0.0f;
-                corrA2_[i] = 0.0f;
-                continue;
-            }
-            const float fc     = kCorrEqHz[i];
-            // RBJ peaking EQ formulas
-            const float A     = std::pow (10.0f, gainDb / 40.0f);
-            const float w0    = twoPi * fc / corrSr;
-            const float cosW0 = std::cos (w0);
-            const float alpha = std::sin (w0) / (2.0f * kCorrEqQ);
-            const float a0_   = 1.0f + alpha / A;
-            corrB0_[i] = (1.0f + alpha * A) / a0_;
-            corrB1_[i] = (-2.0f * cosW0)    / a0_;
-            corrB2_[i] = (1.0f - alpha * A) / a0_;
-            corrA1_[i] = (-2.0f * cosW0)    / a0_;
-            corrA2_[i] = (1.0f - alpha / A) / a0_;
+            corrL_[i].setPeaking (kCorrEqHz[i], kCorrEqDb[i], kCorrEqQ, sr);
+            corrR_[i].setPeaking (kCorrEqHz[i], kCorrEqDb[i], kCorrEqQ, sr);
+            corrL_[i].reset();
+            corrR_[i].reset();
         }
-        corrEqReady_ = true;
 
-        // Note: do NOT call clearBuffers() here — engine_.prepare() already
-        // initializes all buffers and randomizes LFO/PRNG state. Calling
-        // clearBuffers() would erase the randomized modulation state.
-        // clearBuffers() is called externally by DuskVerbEngine on algorithm switch.
-        // Reset only the wrapper's own filter state (tilt EQ, corrective EQ).
-        tiltLpL_ = tiltLpR_ = tiltHpLpL_ = tiltHpLpR_ = 0.0f;
-        for (int b = 0; b < kCorrEqBandCount; ++b)
-        {
-            corrXl1_[b] = corrXl2_[b] = 0.0f;
-            corrYl1_[b] = corrYl2_[b] = 0.0f;
-            corrXr1_[b] = corrXr2_[b] = 0.0f;
-            corrYr1_[b] = corrYr2_[b] = 0.0f;
-        }
-        // PATCH_POINT_PREPARE_END
+        prepared_ = true;
     }
 
     void process (const float* inputL, const float* inputR,
                   float* outputL, float* outputR, int numSamples) override
     {
-        // PATCH_POINT_PRE_ENGINE
-        engine_.process (inputL, inputR, outputL, outputR, numSamples);
-        // ----- Per-preset tilt EQ + 12-band correction EQ + stereo width -----
-        // 1. tilt shelves (broad VV character correction)
-        // 2. 12-band peaking EQ (per-preset spectral_balance correction)
-        // 3. mid/side stereo width
-        constexpr float kStereoWidth = kVvStereoWidth;
-        for (int i = 0; i < numSamples; ++i)
+        if (! prepared_)
         {
-            // ---- Stage 1: tilt shelves ----
-            float xL = outputL[i];
-            tiltLpL_ = (1.0f - tiltLowCoeff_) * xL + tiltLowCoeff_ * tiltLpL_;
-            float lowCutL = xL + tiltLpL_ * tiltLowGain_;
-            tiltHpLpL_ = (1.0f - tiltHighCoeff_) * lowCutL + tiltHighCoeff_ * tiltHpLpL_;
-            float yL = lowCutL + (lowCutL - tiltHpLpL_) * tiltHighGain_;
+            std::memset (outputL, 0, sizeof (float) * static_cast<size_t> (numSamples));
+            std::memset (outputR, 0, sizeof (float) * static_cast<size_t> (numSamples));
+            return;
+        }
 
-            float xR = outputR[i];
-            tiltLpR_ = (1.0f - tiltLowCoeff_) * xR + tiltLowCoeff_ * tiltLpR_;
-            float lowCutR = xR + tiltLpR_ * tiltLowGain_;
-            tiltHpLpR_ = (1.0f - tiltHighCoeff_) * lowCutR + tiltHighCoeff_ * tiltHpLpR_;
-            float yR = lowCutR + (lowCutR - tiltHpLpR_) * tiltHighGain_;
+        // Block-by-block: split each sample, feed per-band tanks (buffer-oriented),
+        // accumulate. Scratch is sized to maxBlockSize in prepare() so this is
+        // audio-thread safe.
+        const int n = numSamples;
+        if (n > static_cast<int> (scratchInL_[0].size()))
+        {
+            // safety: refuse oversized blocks, but clear outputs so we don't
+            // leak stack garbage into the host's audio stream.
+            std::memset (outputL, 0, sizeof (float) * static_cast<size_t> (numSamples));
+            std::memset (outputR, 0, sizeof (float) * static_cast<size_t> (numSamples));
+            return;
+        }
 
-            // ---- Stage 2: 12-band peaking EQ correction ----
-            // Each band runs as a Direct-Form-1 biquad with per-channel state.
-            for (int b = 0; b < kCorrEqBandCount; ++b)
+        // 1) Split input into 4 band-pairs (L/R) and buffer
+        for (int i = 0; i < n; ++i)
+        {
+            float bandsL[kNumBands];
+            float bandsR[kNumBands];
+            splitters_[0].split (inputL[i], bandsL);
+            splitters_[1].split (inputR[i], bandsR);
+            for (int b = 0; b < kNumBands; ++b)
             {
-                const float xLb = yL;
-                yL = corrB0_[b] * xLb
-                   + corrB1_[b] * corrXl1_[b]
-                   + corrB2_[b] * corrXl2_[b]
-                   - corrA1_[b] * corrYl1_[b]
-                   - corrA2_[b] * corrYl2_[b];
-                corrXl2_[b] = corrXl1_[b];
-                corrXl1_[b] = xLb;
-                corrYl2_[b] = corrYl1_[b];
-                corrYl1_[b] = yL;
+                scratchInL_[b][i] = bandsL[b];
+                scratchInR_[b][i] = bandsR[b];
+            }
+        }
 
-                const float xRb = yR;
-                yR = corrB0_[b] * xRb
-                   + corrB1_[b] * corrXr1_[b]
-                   + corrB2_[b] * corrXr2_[b]
-                   - corrA1_[b] * corrYr1_[b]
-                   - corrA2_[b] * corrYr2_[b];
-                corrXr2_[b] = corrXr1_[b];
-                corrXr1_[b] = xRb;
-                corrYr2_[b] = corrYr1_[b];
-                corrYr1_[b] = yR;
+        // 2) Each band → own tank
+        for (int b = 0; b < kNumBands; ++b)
+        {
+            tanks_[b].process (scratchInL_[b].data(), scratchInR_[b].data(),
+                               scratchOutL_[b].data(), scratchOutR_[b].data(), n);
+        }
+
+        // 3) Confine each tank's output to its own band, then sum.
+        //    Each tank has its own FourBandSplitter; we run the tank's output
+        //    through it and keep ONLY the matching band. That kills any HF
+        //    skirt leakage the internal filter bank produces.
+        for (int i = 0; i < n; ++i)
+        {
+            float sumL = 0.0f, sumR = 0.0f;
+            for (int b = 0; b < kNumBands; ++b)
+            {
+                float bandsL[kNumBands];
+                float bandsR[kNumBands];
+                perTankOutL_[b].split (scratchOutL_[b][i], bandsL);
+                perTankOutR_[b].split (scratchOutR_[b][i], bandsR);
+                sumL += bandsL[b] * kBands[b].outputGain;
+                sumR += bandsR[b] * kBands[b].outputGain;
             }
 
-            // ---- Stage 3: stereo width ----
-            float mid  = 0.5f * (yL + yR);
-            float side = 0.5f * (yL - yR);
-            // Re-limit after corrective EQ + stereo width to prevent
-            // clipping from up to +12dB of per-band boost.
-            outputL[i] = std::clamp (mid + side * kStereoWidth, -32.0f, 32.0f);
-            outputR[i] = std::clamp (mid - side * kStereoWidth, -32.0f, 32.0f);
+            for (int eq = 0; eq < kCorrEqBandCount; ++eq)
+            {
+                sumL = corrL_[eq].process (sumL);
+                sumR = corrR_[eq].process (sumR);
+            }
+
+            outputL[i] = sumL * kGlobalOutputScale;
+            outputR[i] = sumR * kGlobalOutputScale;
         }
-        // PATCH_POINT_POST_ENGINE
     }
 
     void clearBuffers() override
     {
-        engine_.clearBuffers();
-        tiltLpL_   = 0.0f;
-        tiltLpR_   = 0.0f;
-        tiltHpLpL_ = 0.0f;
-        tiltHpLpR_ = 0.0f;
-        for (int b = 0; b < kCorrEqBandCount; ++b)
+        for (int ch = 0; ch < 2; ++ch)
+            splitters_[ch].reset();
+        for (int b = 0; b < kNumBands; ++b)
         {
-            corrXl1_[b] = corrXl2_[b] = 0.0f;
-            corrYl1_[b] = corrYl2_[b] = 0.0f;
-            corrXr1_[b] = corrXr2_[b] = 0.0f;
-            corrYr1_[b] = corrYr2_[b] = 0.0f;
+            tanks_[b].clearBuffers();
+            perTankOutL_[b].reset();
+            perTankOutR_[b].reset();
         }
-        // PATCH_POINT_CLEAR
+        for (int i = 0; i < kCorrEqBandCount; ++i)
+        {
+            corrL_[i].reset();
+            corrR_[i].reset();
+        }
     }
 
-    // --- Runtime setters ---
-    // Each forwards the user parameter after applying any baked scale factor.
-
+    // Runtime setters. User-visible decay scales all four tanks
+    // proportionally (preserving their relative band ratios).
     void setDecayTime (float seconds) override
     {
-        // The legacy kBakedDecayTimeScale matches the user-knob units the
-        // wrapper was historically calibrated against. kVvDecayTimeScale
-        // is the per-preset correction (derived from rendered DV vs VV
-        // RT60) that brings the engine's actual tail length in line with
-        // VV's measured RT60.
-        engine_.setDecayTime (seconds * kBakedDecayTimeScale * kVvDecayTimeScale);
-    }
-
-    void setBassMultiply (float mult) override
-    {
-        // Use the legacy AlgorithmConfig scale — VV bass mapping was
-        // attempted but produced regressions on the canonical Tiled Room
-        // PASS case. The VV correction is applied via tilt EQ and air
-        // damping instead.
-        engine_.setBassMultiply (mult * kBakedBassMultScale);
-        lastBass_ = mult;
-    }
-
-    void setTrebleMultiply (float mult) override
-    {
-        // Pass-through: the old quadratic curve and kBakedTrebleMultScale*
-        // interpolation were un-baked into the factory preset values, so
-        // the user's knob position IS the actual engine multiplier.
-        engine_.setTrebleMultiply (mult);
-        lastTreble_ = mult;
-        if (lastStructHFHz_ > 0.0f)
-            setStructuralHFDamping (lastStructHFHz_);
-    }
-
-    void setCrossoverFreq (float hz) override
-    {
-        overrideCrossover_ = hz;
-        engine_.setCrossoverFreq (hz);
+        userDecayScale_ = std::max (seconds, 0.1f) / kReferenceDecaySeconds;
+        for (int b = 0; b < kNumBands; ++b)
+            tanks_[b].setDecayTime (kBands[b].targetT20Seconds * userDecayScale_);
     }
 
     void setModDepth (float depth) override
     {
-        engine_.setModDepth (depth * kBakedModDepthScale);
+        // Scale VV's baked mod depth uniformly across bands.
+        for (int b = 0; b < kNumBands; ++b)
+            tanks_[b].setModDepth (depth * 0.3f);
     }
 
     void setModRate (float hz) override
     {
-        engine_.setModRate (hz * kBakedModRateScale);
+        for (int b = 0; b < kNumBands; ++b)
+            tanks_[b].setModRate (hz);
     }
 
-    void setSize (float size) override { engine_.setSize (size); }
+    void setSize (float size) override
+    {
+        for (int b = 0; b < kNumBands; ++b)
+            tanks_[b].setSize (size);
+    }
+
     void setFreeze (bool frozen) override
     {
-        frozen_ = frozen;
-        engine_.setFreeze (frozen);
-    }
-    void setDecayBoost (float boost) override { engine_.setDecayBoost (boost); }
-    void setTerminalDecay (float td, float f) override
-    {
-        lastTerminalThresholdDb_ = td;
-        lastTerminalFactor_ = f;
-        engine_.setTerminalDecay (td, f);
-    }
-    void setHighCrossoverFreq (float hz) override
-    {
-        overrideHighCrossover_ = hz;
-        engine_.setHighCrossoverFreq (hz);
+        for (int b = 0; b < kNumBands; ++b)
+            tanks_[b].setFreeze (frozen);
     }
 
-    void setAirDampingScale (float scale) override
-    {
-        overrideAirDamping_ = scale;
-        engine_.setAirTrebleMultiply (kBakedAirDampingScale * kVvAirDampingScale * scale);
-    }
-
-    void setNoiseModDepth (float samples) override
-    {
-        overrideNoiseMod_ = samples;
-        engine_.setNoiseModDepth (samples);
-    }
-
-    void setStructuralHFDamping (float hz) override
-    {
-        lastStructHFHz_ = hz;
-        engine_.setStructuralHFDamping (hz, lastTreble_);
-    }
-
-    void setSizeRange (float mn, float mx) override
-    {
-        overrideSizeRangeMin_ = mn;
-        overrideSizeRangeMax_ = mx;
-        engine_.setSizeRange (mn * kVvDelayScale, mx * kVvDelayScale);
-    }
-    void setLateGainScale (float scale) override
-    {
-        overrideLateGain_ = std::max (scale, 0.0f);
-        engine_.setLateGainScale (overrideLateGain_ * kBakedLateGainScale);
-    }
-
-    // Reset hooks: restore baked defaults when override sentinel fires
-    void resetAirDampingToDefault() override
-    {
-        overrideAirDamping_ = -1.0f;
-        engine_.setAirTrebleMultiply (kBakedAirDampingScale * kVvAirDampingScale);
-    }
-    void resetHighCrossoverToDefault() override
-    {
-        overrideHighCrossover_ = -1.0f;
-        engine_.setHighCrossoverFreq (kVvHighCrossoverHz);
-    }
-    void resetLowCrossoverToDefault() override
-    {
-        overrideCrossover_ = -1.0f;
-        engine_.setCrossoverFreq (kVvCrossoverHz);
-    }
-    void resetNoiseModToDefault() override
-    {
-        overrideNoiseMod_ = -1.0f;
-        engine_.setNoiseModDepth (kBakedNoiseModDepth);
-    }
-    void resetLateGainToDefault() override
-    {
-        overrideLateGain_ = -1.0f;
-        engine_.setLateGainScale (kBakedLateGainScale);
-    }
-    void resetSizeRangeToDefault() override
-    {
-        overrideSizeRangeMin_ = -1.0f;
-        overrideSizeRangeMax_ = -1.0f;
-        engine_.setSizeRange (kBakedSizeRangeMin * kVvDelayScale, kBakedSizeRangeMax * kVvDelayScale);
-    }
+    // Ignore bass/treble/crossover/air/structuralHF — this engine replaces the
+    // single-tank filter bank entirely, and mapping legacy knobs into per-band
+    // RT60 scales breaks the mechanical band targets. Users control per-band
+    // character by editing kBands[] constants.
 
     const char* getPresetName() const override { return "Homestar Blade Runner"; }
-    const char* getBaseEngineType() const override { return "FDNReverb"; }
+    const char* getBaseEngineType() const override { return "MultiBandDattorro"; }
 
-    // Fix 4 (spectral): expose corrective EQ coefficients to DuskVerbEngine
-    // so it can apply the same EQ to the ER path.
     int getCorrEQBandCount() const override { return kCorrEqBandCount; }
     bool getCorrEQCoeffs (float* b0, float* b1, float* b2,
-                           float* a1, float* a2, int maxBands) const override
+                          float* a1, float* a2, int maxBands) const override
     {
-        // sampleRate_ defaults to 44.1/48 kHz, so it can't be used as a readiness
-        // check. Use an explicit corrEqReady_ flag set at end of prepare().
-        if (! corrEqReady_)
-            return false;
-        int n = std::min (kCorrEqBandCount, maxBands);
+        int n = std::min (maxBands, kCorrEqBandCount);
         for (int i = 0; i < n; ++i)
         {
-            b0[i] = corrB0_[i];
-            b1[i] = corrB1_[i];
-            b2[i] = corrB2_[i];
-            a1[i] = corrA1_[i];
-            a2[i] = corrA2_[i];
+            b0[i] = corrL_[i].b0;
+            b1[i] = corrL_[i].b1;
+            b2[i] = corrL_[i].b2;
+            a1[i] = corrL_[i].a1;
+            a2[i] = corrL_[i].a2;
         }
-        return true;
+        return n > 0;
     }
 
 private:
-    HomestarBladeRunnerPresetEngine engine_;
-    float lastTreble_ = -1.0f;
-    float lastBass_ = 1.0f;
-    float lastStructHFHz_ = 0.0f;
-    float lastTerminalThresholdDb_ = 0.0f;
-    float lastTerminalFactor_ = 1.0f;  // 1.0 = disabled
-    bool  frozen_ = false;
     double sampleRate_ = 48000.0;
-    bool   corrEqReady_ = false;
-    // Cached runtime overrides — replayed after prepare() to survive re-preparation.
-    // Sentinel value -1.0 means "no override, use baked default".
-    float overrideAirDamping_ = -1.0f;
-    float overrideHighCrossover_ = -1.0f;
-    float overrideCrossover_ = -1.0f;
-    float overrideNoiseMod_ = -1.0f;
-    float overrideLateGain_ = -1.0f;
-    float overrideSizeRangeMin_ = -1.0f;
-    float overrideSizeRangeMax_ = -1.0f;
-    // Baked tilt EQ state (per-instance, not function-local statics)
-    float tiltLowCoeff_ = 0.0f;
-    float tiltLowGain_  = 0.0f;
-    float tiltHighCoeff_ = 0.0f;
-    float tiltHighGain_  = 0.0f;
-    float tiltLpL_   = 0.0f;
-    float tiltLpR_   = 0.0f;
-    float tiltHpLpL_ = 0.0f;
-    float tiltHpLpR_ = 0.0f;
-    // 12-band corrective EQ — coefficients computed in prepare() at the
-    // host sample rate so the EQ tracks the host correctly. State is
-    // per-channel (L/R) Direct-Form-1 biquad memory.
-    float corrB0_[kCorrEqBandCount] {};
-    float corrB1_[kCorrEqBandCount] {};
-    float corrB2_[kCorrEqBandCount] {};
-    float corrA1_[kCorrEqBandCount] {};
-    float corrA2_[kCorrEqBandCount] {};
-    float corrXl1_[kCorrEqBandCount] {};
-    float corrXl2_[kCorrEqBandCount] {};
-    float corrYl1_[kCorrEqBandCount] {};
-    float corrYl2_[kCorrEqBandCount] {};
-    float corrXr1_[kCorrEqBandCount] {};
-    float corrXr2_[kCorrEqBandCount] {};
-    float corrYr1_[kCorrEqBandCount] {};
-    float corrYr2_[kCorrEqBandCount] {};
-    // PATCH_POINT_MEMBERS
+    bool prepared_ = false;
+    float userDecayScale_ = 1.0f;
+
+    FourBandSplitter splitters_[2];           // input splitters (L, R)
+    FourBandSplitter perTankOutL_[kNumBands]; // per-tank output splitter, L
+    FourBandSplitter perTankOutR_[kNumBands]; // per-tank output splitter, R
+    DattorroTank tanks_[kNumBands];
+
+    // Per-band scratch buffers (the tank process() takes buffers, not samples)
+    std::array<std::vector<float>, kNumBands> scratchInL_;
+    std::array<std::vector<float>, kNumBands> scratchInR_;
+    std::array<std::vector<float>, kNumBands> scratchOutL_;
+    std::array<std::vector<float>, kNumBands> scratchOutR_;
+
+    PeakingBiquad corrL_[kCorrEqBandCount];
+    PeakingBiquad corrR_[kCorrEqBandCount];
 };
 
 } // anonymous namespace
 
 std::unique_ptr<PresetEngineBase> createHomestarBladeRunnerPreset()
 {
-    return std::unique_ptr<PresetEngineBase> (new HomestarBladeRunnerPresetWrapper());
+    return std::unique_ptr<PresetEngineBase> (new HomestarBladeRunnerPresetEngine());
 }
 
-// Self-register at static init time so DuskVerbEngine can look up this preset by name
-static PresetEngineRegistrar gHomestarBladeRunnerPresetRegistrar ("PresetHomestarBladeRunner", &createHomestarBladeRunnerPreset);
-
+static PresetEngineRegistrar gHomestarBladeRunnerPresetRegistrar
+    ("PresetHomestarBladeRunner", &createHomestarBladeRunnerPreset);
