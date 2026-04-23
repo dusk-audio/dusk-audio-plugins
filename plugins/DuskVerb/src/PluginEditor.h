@@ -48,6 +48,14 @@ struct KnobWithLabel
     void init (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
                const juce::String& paramID, const juce::String& displayName,
                const juce::String& suffix, const juce::String& tooltip = {});
+
+    // Variant for advanced-panel knobs that use sentinel defaults — when the
+    // slider value equals `sentinelValue`, the display shows "default" instead
+    // of the numeric value.
+    void initWithSentinel (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
+                           const juce::String& paramID, const juce::String& displayName,
+                           const juce::String& suffix, double sentinelValue,
+                           const juce::String& tooltip = {});
 };
 
 class DuskVerbEditor : public juce::AudioProcessorEditor,
@@ -117,6 +125,42 @@ private:
     // Pre-delay sync (inside INPUT group)
     juce::ComboBox predelaySyncBox_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> predelaySyncAttachment_;
+
+    // Tab toggle (header) — switches the knob area between MAIN and ADVANCED panels.
+    // ADVANCED exposes the per-preset override params (air damping, output EQ,
+    // dynamics, etc.) that already live in the processor as sentinel-default APVTS
+    // params. MAIN is the standard 15-knob reverb interface.
+    juce::TextButton mainTabButton_;
+    juce::TextButton advancedTabButton_;
+    bool             showingAdvanced_ = false;
+    void             setActiveTab (bool advanced);
+
+    // Advanced panel knobs (override controls; sentinel = use preset default).
+    // ONSET group:
+    KnobWithLabel advInputOnset_;
+    KnobWithLabel advSoftOnset_;
+    KnobWithLabel advDelayScale_;
+    KnobWithLabel advNoiseMod_;
+    // DAMPING group:
+    KnobWithLabel advAirDamping_;
+    KnobWithLabel advHighCrossover_;
+    KnobWithLabel advStructHFDamp_;
+    KnobWithLabel advInlineDiff_;
+    // OUTPUT EQ group:
+    KnobWithLabel advOutLowShelfDb_;
+    KnobWithLabel advOutHighShelfDb_;
+    KnobWithLabel advOutHighShelfHz_;
+    KnobWithLabel advOutMidEqDb_;
+    KnobWithLabel advOutMidEqHz_;
+    // SPATIAL / STEREO group:
+    KnobWithLabel advStereoCoupling_;
+    KnobWithLabel advERCrossfeed_;
+    KnobWithLabel advChorusDepth_;
+    KnobWithLabel advChorusRate_;
+    // DYNAMICS group:
+    KnobWithLabel advLimiterThresh_;
+    KnobWithLabel advDecayBoost_;
+    KnobWithLabel advTerminalFactor_;
 
     // Level meters
     LEDMeter inputMeter_  { LEDMeter::Vertical };
