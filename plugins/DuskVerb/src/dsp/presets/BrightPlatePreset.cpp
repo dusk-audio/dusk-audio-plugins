@@ -51,7 +51,7 @@ namespace {
     constexpr float kVvDelayScale        = 1.0f;
     constexpr float kVvTiltLowDb         = 0.0f;
     constexpr float kVvTiltLowHz         = 400.0f;
-    constexpr float kVvTiltHighDb        = -4.5f;     // HF cut to land centroid at ~6.3 kHz target
+    constexpr float kVvTiltHighDb        = -6.5f;     // HF cut to land centroid at ~6.3 kHz target
     constexpr float kVvTiltHighHz        = 6000.0f;
     constexpr float kVvStereoWidth       = 0.90f;
     constexpr float kVvDecayTimeScale    = 1.38f;     // same Dattorro RT60 calibration

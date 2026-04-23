@@ -2,8 +2,8 @@
 
 // GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
 //
-// Per-preset reverb engine for "Large Plate".
-// Base engine: QuadTank
+// Per-preset reverb engine for "Rich Plate".
+// Base engine: DattorroTank
 //
 // This header only exposes a factory function. The concrete engine class and
 // full DSP implementation live inside RichPlatePreset.cpp in an anonymous namespace,
