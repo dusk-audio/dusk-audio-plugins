@@ -761,6 +761,7 @@ static constexpr AlgorithmConfig kPresetVocalHall = {
 };
 
 // Preset "Drum Plate" (VV-derived FDN)
+// Preset "Drum Plate" — DattorroTank, targeting EMT 140 "bright" damper, variant 1 (2.2s, ~7.3kHz centroid).
 static constexpr AlgorithmConfig kPresetDrumPlate = {
     "PresetDrumPlate",
     {   125,   266,   346,   555,  1700,  2029,  2168,  2301,
@@ -772,11 +773,11 @@ static constexpr AlgorithmConfig kPresetDrumPlate = {
     0.55f, 0.45f,    // input diffusion
     0.35f,           // output diffusion scale
     20000.0f,        // bandwidth
-    0.65f, 0.85f,    // ER level, time scale
-    0.22f,           // late gain (FDN native)
-    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.5)
-    0.90f, 1.50f, 1.06f, // damping: treble=0.90, bass=1.06
-    4000.0f,         // high crossover
+    0.05f, 0.85f,    // ER level (low — plates have minimal early reflections), time scale
+    0.22f,           // late gain
+    0.75f, 13.0f,    // mod: depth, rate
+    0.95f, 1.50f, 0.90f, // damping: treble=0.95 (brighter than Vocal Plate), bass=0.90
+    7000.0f,         // high crossover — bright target
     0.80f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
@@ -789,7 +790,7 @@ static constexpr AlgorithmConfig kPresetDrumPlate = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
