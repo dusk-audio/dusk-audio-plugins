@@ -48,7 +48,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr float kVvCrossoverHz       = 1000.0f;
     constexpr float kVvHighCrossoverHz   = 6000.0f;
-    constexpr float kVvAirDampingScale   = 0.824172f;
+    constexpr float kVvAirDampingScale   = 0.95f;     // less aggressive air damping so RT60 isn't HF-limited
     constexpr float        kVvDelayScale        = 1.0f;  // un-baked from 0.498281f — size range now absolute
     constexpr float kVvTiltLowDb         = -0.20868f;
     constexpr float kVvTiltLowHz         = 400.0f;
@@ -69,7 +69,7 @@ namespace {
     // -----------------------------------------------------------------
     constexpr int kCorrEqBandCount = 12;
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -11.5f, -5.06f, -4.2f, -4.08653f, -12.0f, -12.0f, -9.1362f, -12.0f, -12.0f, -12.0f, -12.0f, 3.53384f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
