@@ -61,10 +61,10 @@ inline const std::vector<FactoryPreset>& getFactoryPresets(){
     static const std::vector<FactoryPreset> presets = {
         //                                              algo  decay  pre    size   damp  bass   xover   diff  modD   modR  erLv  erSz  mix   loCut  hiCut   width  gHold  gRel   trim
         { "Vocal Plate",                              "Plates",      0, 2.7500f, 20.0f, 0.44f, 0.912f, 0.893f, 1000.0f, 1.00f, 0.192f, 1.80f, 0.05f, 0.23f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
-        { "Drum Plate",                               "Plates",      1, 2.2000f, 10.0f, 0.55f, 0.95f, 0.90f, 1000.0f, 1.00f, 0.144f, 2.00f, 0.05f, 0.25f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Drum Plate",                               "Plates",      1, 2.5000f, 10.0f, 0.55f, 0.95f, 0.90f, 1000.0f, 1.00f, 0.144f, 2.00f, 0.05f, 0.25f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
         { "Bright Plate",                             "Plates",      2, 5.0000f, 15.0f, 0.65f, 0.92f, 0.85f, 1000.0f, 0.95f, 0.180f, 1.50f, 0.05f, 0.25f, 0.3f, 20.0f, 20000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
-        { "Dark Plate",                               "Plates",      3, 7.0000f, 25.0f, 0.75f, 0.75f, 1.05f, 1000.0f, 0.95f, 0.150f, 1.20f, 0.05f, 0.30f, 0.3f, 20.0f, 12000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
-        { "Rich Plate",                               "Plates",      4, 1.7986f, 10.0f, 0.75f, 1.4232f, 1.4976f, 4000.0f, 0.85f, 0.192f, 1.01f, 0.10f, 0.30f, 0.3f, 20.0f, 10000.0f, 1.0f, 0.0f, 50.0f, -10.2f },
+        { "Dark Plate",                               "Plates",      3, 5.7000f, 25.0f, 0.75f, 0.75f, 1.05f, 1000.0f, 0.95f, 0.150f, 1.20f, 0.05f, 0.30f, 0.3f, 20.0f, 12000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
+        { "Rich Plate",                               "Plates",      4, 5.8000f, 30.0f, 0.80f, 0.65f, 1.10f, 1000.0f, 1.00f, 0.150f, 1.20f, 0.05f, 0.30f, 0.3f, 20.0f, 11000.0f, 1.0f, 0.0f, 50.0f, 0.0f },
         { "Small Hall",                               "Halls",       5, 4.5110f, 30.0f, 0.4999f, 1.4681f, 1.9126f, 662.0f, 1.00f, 0.192f, 1.20f, 0.35f, 0.10f, 0.3f, 20.0f, 12502.4f, 1.0f, 0.0f, 50.0f, -23.69f },
         { "Medium Hall",                              "Halls",       6, 7.4686f, 11.0f, 0.5f, 1.5f, 0.54f, 0.6750f, 0.77f, 1.000f, 0.40f, 0.20f, 0.20f, 0.3f, 20.0f, 5004.0f, 1.0f, 0.0f, 50.0f, -30.30f },
         { "Large Hall",                               "Halls",       7, 6.2586f, 80.0f, 0.812f, 1.1333f, 1.4f, 2519.0f, 0.76f, 0.808f, 2.25f, 0.69f, 0.52f, 0.3f, 45.8f, 5504.0f, 1.0f, 0.0f, 50.0f, -7.4f },

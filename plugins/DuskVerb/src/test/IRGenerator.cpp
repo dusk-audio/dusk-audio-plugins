@@ -1,4 +1,5 @@
 #include "dsp/DuskVerbEngine.h"
+#include "FactoryPresets.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -19,10 +20,23 @@ int main (int argc, char** argv)
     _mm_setcsr (_mm_getcsr() | 0x8040); // FTZ + DAZ
 #endif
 
-    // Args: [algorithm-index] [decay-seconds] [output-path]
-    int   algoIndex   = (argc > 1) ? std::atoi (argv[1]) : 0;
-    float decayTime   = (argc > 2) ? std::atof (argv[2]) : 2.75f;
+    // Args: [algorithm-index] [decay-seconds-override] [output-path]
+    // The runtime knob values come from FactoryPresets.h (per-preset),
+    // so each preset is rendered with the same settings the plugin user
+    // would hear when selecting it. Decay can be overridden via argv[2]
+    // for sweeping; pass 0 (or omit) to use the preset's factory decay.
+    int   algoIndex     = (argc > 1) ? std::atoi (argv[1]) : 0;
+    float decayOverride = (argc > 2) ? static_cast<float> (std::atof (argv[2])) : 0.0f;
     const char* outPath = (argc > 3) ? argv[3] : "ir_test.wav";
+
+    const auto& presets = getFactoryPresets();
+    if (algoIndex < 0 || algoIndex >= static_cast<int> (presets.size()))
+    {
+        std::cerr << "Invalid algorithm index " << algoIndex << std::endl;
+        return 1;
+    }
+    const auto& preset = presets[static_cast<size_t> (algoIndex)];
+    float decayTime = (decayOverride > 0.0f) ? decayOverride : preset.decay;
 
     constexpr double sampleRate  = 48000.0;
     int    numSeconds  = static_cast<int> (decayTime * 1.5f) + 2;
@@ -35,23 +49,24 @@ int main (int argc, char** argv)
     bufferL[0] = 1.0f;
     bufferR[0] = 1.0f;
 
-    // Configure full reverb engine
+    // Configure engine using the preset's factory values so the rendered IR
+    // mirrors what the user hears when they pick this preset in the UI.
     DuskVerbEngine engine;
     engine.prepare (sampleRate, blockSize);
     engine.setAlgorithm (algoIndex);
-    engine.setDecayTime (decayTime);
-    engine.setBassMultiply (0.893f);
-    engine.setTrebleMultiply (0.912f);
-    engine.setCrossoverFreq (1000.0f);
-    engine.setModDepth (0.192f);
-    engine.setModRate (1.80f);
-    engine.setSize (0.44f);
-    engine.setPreDelay (20.0f);
-    engine.setDiffusion (1.00f);
+    engine.setDecayTime     (decayTime);
+    engine.setBassMultiply  (preset.bassMult);
+    engine.setTrebleMultiply(preset.damping);
+    engine.setCrossoverFreq (preset.crossover);
+    engine.setModDepth      (preset.modDepth);
+    engine.setModRate       (preset.modRate);
+    engine.setSize          (preset.size);
+    engine.setPreDelay      (preset.predelay);
+    engine.setDiffusion     (preset.diffusion);
     engine.setOutputDiffusion (0.8f);
-    engine.setERLevel (0.05f);
-    engine.setERSize (0.23f);
-    engine.setMix (1.0f);
+    engine.setERLevel       (preset.erLevel);
+    engine.setERSize        (preset.erSize);
+    engine.setMix           (1.0f);
 
     // Process in blocks (in-place)
     for (int pos = 0; pos < totalFrames; pos += blockSize)

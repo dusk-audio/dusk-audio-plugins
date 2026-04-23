@@ -824,6 +824,7 @@ static constexpr AlgorithmConfig kPresetDrumPlate = {
 // Preset "Fat Drums" (VV-derived FDN)
 
 // Preset "Large Plate" (VV-derived FDN)
+// Preset "Rich Plate" — DattorroTank, targeting EMT 140 "medium" damper, variant 4 (6.1s, ~4.3kHz centroid).
 static constexpr AlgorithmConfig kPresetRichPlate = {
     "PresetRichPlate",
     {   103,   235,   336,   346,  1507,  1847,  2030,  2282,
@@ -835,10 +836,10 @@ static constexpr AlgorithmConfig kPresetRichPlate = {
     0.55f, 0.45f,    // input diffusion
     0.35f,           // output diffusion scale
     20000.0f,        // bandwidth
-    2.50f, 0.85f,    // ER level (boosted from 0.65 to strengthen onset), time scale
-    0.22f,           // late gain (FDN native)
-    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
-    0.84f, 1.50f, 1.04f, // damping: treble=0.84, bass=1.04
+    0.05f, 0.85f,    // ER level (low — plate), time scale
+    0.22f,           // late gain
+    0.75f, 13.0f,    // mod: depth, rate
+    0.78f, 1.50f, 1.10f, // damping: treble=0.78 (dark-balanced), bass=1.10 (warm body)
     4000.0f,         // high crossover
     0.80f,           // airDampingScale
     0.5f, 1.5f,      // size range
@@ -852,7 +853,7 @@ static constexpr AlgorithmConfig kPresetRichPlate = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
