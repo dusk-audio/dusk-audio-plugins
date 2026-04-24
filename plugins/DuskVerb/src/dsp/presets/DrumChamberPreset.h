@@ -1,8 +1,6 @@
 #pragma once
 
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
-// Per-preset reverb engine for "Snare Plate".
+// Per-preset reverb engine for "Drum Chamber".
 // Base engine: QuadTank
 //
 // This header only exposes a factory function. The concrete engine class and

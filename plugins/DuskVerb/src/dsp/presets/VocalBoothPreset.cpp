@@ -1,6 +1,4 @@
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
-// Per-preset reverb engine for "Very Small Ambience".
+// Per-preset reverb engine for "Vocal Booth".
 // Base engine: DattorroTank
 //
 // This file contains a full private copy of the DattorroTank DSP in an

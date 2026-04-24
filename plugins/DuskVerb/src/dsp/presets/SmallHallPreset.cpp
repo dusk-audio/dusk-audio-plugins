@@ -1,6 +1,4 @@
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
-// Per-preset reverb engine for "Small Chamber1".
+// Per-preset reverb engine for "Small Hall".
 // Base engine: FDNReverb
 //
 // This file contains a full private copy of the FDNReverb DSP in an
