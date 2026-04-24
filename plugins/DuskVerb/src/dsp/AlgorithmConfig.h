@@ -519,7 +519,7 @@ static constexpr AlgorithmConfig kPresetGated = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.00f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -960,8 +960,8 @@ static constexpr AlgorithmConfig kPresetDarkChamber = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
-    false,           // useQuadTank: OFF
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
@@ -1008,7 +1008,7 @@ static constexpr AlgorithmConfig kPresetLiveRoom = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -1071,7 +1071,7 @@ static constexpr AlgorithmConfig kPresetStudioRoom = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -1121,8 +1121,8 @@ static constexpr AlgorithmConfig kPresetBrightChamber = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
-    false,           // useQuadTank: OFF
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
@@ -1230,8 +1230,8 @@ static constexpr AlgorithmConfig kPresetLiveChamber = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
-    false,           // useQuadTank: OFF
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
@@ -1282,7 +1282,7 @@ static constexpr AlgorithmConfig kPresetReverse = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -1390,8 +1390,8 @@ static constexpr AlgorithmConfig kPresetDrumChamber = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
-    false,           // useQuadTank: OFF
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
@@ -1500,7 +1500,7 @@ static constexpr AlgorithmConfig kPresetModulated = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -1554,7 +1554,7 @@ static constexpr AlgorithmConfig kPresetShimmer = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -1602,7 +1602,7 @@ static constexpr AlgorithmConfig kPresetInfinite = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -1656,8 +1656,8 @@ static constexpr AlgorithmConfig kPresetVocalChamber = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
-    false,           // useQuadTank: OFF
+    false,           // useDattorroTank: OFF
+    true,            // useQuadTank: ON
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
@@ -1708,7 +1708,7 @@ static constexpr AlgorithmConfig kPresetDrumRoom = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope disabled
@@ -1773,7 +1773,7 @@ static constexpr AlgorithmConfig kPresetTightRoom = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
@@ -1825,7 +1825,7 @@ static constexpr AlgorithmConfig kPresetVocalBooth = {
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    true,            // useDattorroTank: ON
     false,           // useQuadTank: OFF
     1.50f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
