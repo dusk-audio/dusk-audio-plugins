@@ -266,3 +266,215 @@ private:
     float bandBlend_[5] = { 0.0f, 0.5f, 0.0f, 0.5f, 0.0f };
     bool hasBandMultipliers_ = false;
 };
+
+// =====================================================================
+// EightBandDamping — per-octave (1/1) damping with band edges fixed at
+//   125 / 250 / 500 / 1000 / 2000 / 4000 / 8000 Hz
+// (matches the analyze_ir.py octave bins so each per-band RT60 from
+//  the script maps 1:1 to a band gain here.)
+//
+// Topology: 7 first-order LPFs chained Linkwitz-style. Each LPF passes
+// the band's lower portion; subtracting from the input gives the upper
+// portion which feeds the next LPF. Final residual after the 7th LPF
+// is band 7 (above 8 kHz).
+//
+// Bands:
+//   0:    63 –  125  Hz
+//   1:   125 –  250  Hz
+//   2:   250 –  500  Hz
+//   3:   500 – 1000  Hz   (mid-band — engine "DECAY" maps here)
+//   4:  1000 – 2000  Hz
+//   5:  2000 – 4000  Hz
+//   6:  4000 – 8000  Hz
+//   7:  8000 – 16000 Hz
+//
+// Use:
+//   damp.prepare (sampleRate);                 // sets fixed crossovers
+//   damp.setRt60PerBand (rt60Sec, delaySamples); // updates per-band gain
+//   float y = damp.process (x);                  // per-sample
+// =====================================================================
+class EightBandDamping
+{
+public:
+    static constexpr int kNumBands = 8;
+
+    // Crossover edges (upper bound of bands 0..6). Band 7 has no upper bound.
+    static constexpr float kBandUpperHz[kNumBands - 1] = {
+        125.0f, 250.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f
+    };
+
+    void prepare (float sampleRate)
+    {
+        sampleRate_ = sampleRate;
+        for (int i = 0; i < kNumBands - 1; ++i)
+        {
+            // First-order LPF coefficient: c = exp(-2pi * fc / sr)
+            const float twoPi = 6.283185307179586f;
+            lpCoeff_[i] = std::exp (-twoPi * kBandUpperHz[i] / sampleRate);
+        }
+        reset();
+    }
+
+    // Set per-band per-sample gain directly. Use when you have raw gains.
+    void setGains (const float g[kNumBands])
+    {
+        for (int i = 0; i < kNumBands; ++i)
+            g_[i] = std::clamp (g[i], 0.0f, 0.9999f);
+    }
+
+    // Set per-band gains derived from per-band RT60 in seconds + delay length.
+    // gain[n] = exp(-3 * ln(10) * delay / (sr * RT60[n]))
+    // Matches the standard Schroeder-FDN feedback-gain-from-RT60 formula.
+    void setRt60PerBand (const float rt60Seconds[kNumBands], float delaySamples)
+    {
+        const float numerator = -3.0f * 2.302585092994046f * delaySamples / sampleRate_;
+        for (int i = 0; i < kNumBands; ++i)
+        {
+            const float rt60 = std::max (rt60Seconds[i], 0.001f);
+            g_[i] = std::clamp (std::exp (numerator / rt60), 0.0f, 0.9999f);
+        }
+    }
+
+    // Single-band update — useful for the EQ tab updating one knob at a time.
+    void setBandRt60 (int band, float rt60Seconds, float delaySamples)
+    {
+        if (band < 0 || band >= kNumBands) return;
+        const float numerator = -3.0f * 2.302585092994046f * delaySamples / sampleRate_;
+        const float rt60 = std::max (rt60Seconds, 0.001f);
+        g_[band] = std::clamp (std::exp (numerator / rt60), 0.0f, 0.9999f);
+    }
+
+    float process (float input)
+    {
+        // Walk the LPF chain; each iteration extracts one band and forwards the
+        // remainder to the next stage.
+        float remainder = input;
+        float bandSum = 0.0f;
+        for (int i = 0; i < kNumBands - 1; ++i)
+        {
+            // Update the LPF state with the current remainder.
+            lpState_[i] = (1.0f - lpCoeff_[i]) * remainder + lpCoeff_[i] * lpState_[i];
+            // The LPF output is band i; what's left after subtracting it is
+            // the next-higher band's input.
+            bandSum += g_[i] * lpState_[i];
+            remainder -= lpState_[i];
+        }
+        // Top band (no LPF — pure residual)
+        bandSum += g_[kNumBands - 1] * remainder;
+        return bandSum;
+    }
+
+    void reset()
+    {
+        for (int i = 0; i < kNumBands - 1; ++i)
+            lpState_[i] = 0.0f;
+    }
+
+private:
+    float sampleRate_ = 48000.0f;
+    float g_[kNumBands]      = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    float lpCoeff_[kNumBands - 1] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    float lpState_[kNumBands - 1] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+};
+
+// =====================================================================
+// EightBandPeakingEQ — 8 cascaded RBJ peaking biquads at fixed octave
+// centers (89, 177, 354, 707, 1414, 2828, 5657, 11314 Hz) with Q=1.41
+// (one-octave bandwidth). Per-band gain in dB.
+//
+// Use:
+//   eq.prepare (sampleRate);
+//   eq.setBandGainDb (band, dB);     // any band, any time
+//   float yL = eq.processL (xL);     // per-sample, stereo state
+//   float yR = eq.processR (xR);
+// =====================================================================
+class EightBandPeakingEQ
+{
+public:
+    static constexpr int kNumBands = 8;
+
+    // Geometric center of each octave band (sqrt(low * high)).
+    static constexpr float kCenterHz[kNumBands] = {
+        89.0f, 177.0f, 354.0f, 707.0f, 1414.0f, 2828.0f, 5657.0f, 11314.0f
+    };
+    static constexpr float kQ = 1.41f;  // one-octave bandwidth
+
+    void prepare (float sampleRate)
+    {
+        sampleRate_ = sampleRate;
+        for (int i = 0; i < kNumBands; ++i)
+            recomputeBand (i);
+        reset();
+    }
+
+    void setBandGainDb (int band, float dB)
+    {
+        if (band < 0 || band >= kNumBands) return;
+        gainDb_[band] = std::clamp (dB, -24.0f, 24.0f);
+        recomputeBand (band);
+    }
+
+    float processL (float x)
+    {
+        for (int i = 0; i < kNumBands; ++i)
+        {
+            const float y = b0_[i] * x + b1_[i] * xL1_[i] + b2_[i] * xL2_[i]
+                            - a1_[i] * yL1_[i] - a2_[i] * yL2_[i];
+            xL2_[i] = xL1_[i]; xL1_[i] = x;
+            yL2_[i] = yL1_[i]; yL1_[i] = y;
+            x = y;
+        }
+        return x;
+    }
+
+    float processR (float x)
+    {
+        for (int i = 0; i < kNumBands; ++i)
+        {
+            const float y = b0_[i] * x + b1_[i] * xR1_[i] + b2_[i] * xR2_[i]
+                            - a1_[i] * yR1_[i] - a2_[i] * yR2_[i];
+            xR2_[i] = xR1_[i]; xR1_[i] = x;
+            yR2_[i] = yR1_[i]; yR1_[i] = y;
+            x = y;
+        }
+        return x;
+    }
+
+    void reset()
+    {
+        for (int i = 0; i < kNumBands; ++i)
+        {
+            xL1_[i] = xL2_[i] = yL1_[i] = yL2_[i] = 0.0f;
+            xR1_[i] = xR2_[i] = yR1_[i] = yR2_[i] = 0.0f;
+        }
+    }
+
+private:
+    // RBJ peaking-EQ biquad. https://www.w3.org/TR/audio-eq-cookbook/
+    void recomputeBand (int i)
+    {
+        const float A     = std::pow (10.0f, gainDb_[i] / 40.0f);
+        const float w0    = 6.283185307179586f * std::min (kCenterHz[i], 0.49f * sampleRate_) / sampleRate_;
+        const float cosw  = std::cos (w0);
+        const float sinw  = std::sin (w0);
+        const float alpha = sinw / (2.0f * kQ);
+
+        const float a0 = 1.0f + alpha / A;
+        b0_[i] = (1.0f + alpha * A) / a0;
+        b1_[i] = (-2.0f * cosw)     / a0;
+        b2_[i] = (1.0f - alpha * A) / a0;
+        a1_[i] = (-2.0f * cosw)     / a0;
+        a2_[i] = (1.0f - alpha / A) / a0;
+    }
+
+    float sampleRate_ = 48000.0f;
+    float gainDb_[kNumBands] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+
+    // Biquad coefficients per band
+    float b0_[kNumBands] {}, b1_[kNumBands] {}, b2_[kNumBands] {};
+    float a1_[kNumBands] {}, a2_[kNumBands] {};
+
+    // Per-channel direct-form-1 state per band
+    float xL1_[kNumBands] {}, xL2_[kNumBands] {}, yL1_[kNumBands] {}, yL2_[kNumBands] {};
+    float xR1_[kNumBands] {}, xR2_[kNumBands] {}, yR1_[kNumBands] {}, yR2_[kNumBands] {};
+};
