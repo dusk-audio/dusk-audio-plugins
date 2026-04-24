@@ -1,6 +1,5 @@
 #include "PluginEditor.h"
 #include "FactoryPresets.h"
-#include "VVERTapData.h"
 #include "dsp/AlgorithmConfig.h"
 
 namespace {
@@ -1043,10 +1042,6 @@ void DuskVerbEditor::loadPreset (int index)
         processorRef.parameters.state.setProperty ("presetName",
             juce::String (preset.name), nullptr);
 
-        // Set preset_id to trigger per-preset ER tap loading in processBlock
-        if (auto* p = processorRef.parameters.getParameter ("preset_id"))
-            p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (index + 1)));
-
         // Sync Mode dropdown with the preset's underlying engine type
         modeBox_.setSelectedId (engineModeIdForAlgorithm (preset.algorithm),
                                 juce::dontSendNotification);
@@ -1143,8 +1138,6 @@ void DuskVerbEditor::selectEngineMode (int modeId)
     // which on a fresh plugin (bus_mode=false, mix=0.35) yielded near-silent
     // wet output and looked like "Mode produces no reverb".
     presets[static_cast<size_t> (anchorIdx)].applyTo (processorRef.parameters);
-    if (auto* p = processorRef.parameters.getParameter ("preset_id"))
-        p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (anchorIdx + 1)));
 
     // Mode supersedes any explicit preset selection — keep the preset
     // dropdown showing "Preset" rather than the loaded anchor's name.
