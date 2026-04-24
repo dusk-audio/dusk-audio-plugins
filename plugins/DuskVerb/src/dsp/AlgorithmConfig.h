@@ -490,7 +490,7 @@ static constexpr int kNumAlgorithms = 25;
 
 // === AUTO-GENERATED PRESET ALGORITHMS ===
 
-// Preset "Homestar Blade Runner" (VV-derived FDN)
+// Preset "Gated" — short FDN tail with envelope gate for classic 80s drum gate sound.
 static constexpr AlgorithmConfig kPresetGated = {
     "PresetGated",
     {   102,   260,   312,   317,   331,   336,   346,   443,
@@ -502,47 +502,47 @@ static constexpr AlgorithmConfig kPresetGated = {
     0.55f, 0.45f,    // input diffusion
     0.35f,           // output diffusion scale
     20000.0f,        // bandwidth
-    2.50f, 0.85f,    // ER level (boosted from 0.65 to strengthen onset)
-    0.50f,           // late gain (boosted to sustain tail under strong ER)
-    0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.5)
-    1.00f, 1.50f, 0.97f, // damping: treble=1.00, bass=0.97
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    0.65f, 0.85f,    // ER level, time scale
+    0.22f,           // late gain
+    0.75f, 13.0f,    // mod: depth, rate
+    1.00f, 1.50f, 1.00f, // damping: treble, ceiling, bass
+    6000.0f,         // high crossover
+    0.95f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
     1.0f,            // mod depth floor
-    4000.0f,         // structural HF damping — tries to defeat 5-band filter skirt leakage (partial only)
+    0.0f,            // structural HF damping (was 4000, killing the gated tail)
     0.0f,            // structural LF damping
-    2.0f,            // noise mod
+    8.0f,            // noise mod
     0.10f,           // Hadamard perturbation
     1.0f,            // ER gain exponent
     false,           // useWeightedGains
     true,            // useHouseholderFeedback
-    false,           // useDattorroTank: OFF -- native FDN
+    false,           // useDattorroTank: OFF
     false,           // useQuadTank: OFF
-    3.00f,           // decay time scale (boosted from 1.50 to extend DV's body→tail slope vs VV)
+    1.00f,           // decay time scale
     0.0f, 0, 1.0f,  // dual-slope: disabled
     0.0f, 0.0f,     // short-decay boost: disabled
-    0.0f, 0.0f,     // gate: disabled
+    0.0f, 0.0f,     // gate: AlgorithmConfig gate disabled (the user-facing gate_hold/release params handle the envelope gate)
     12000.0f, 2000.0f, 0.50f,  // ER air absorption, decorr
     8.00f,           // output gain
-    -1.0f,           // stereo coupling (full 16x16 Hadamard)
-    0.0f, 0.0f, 5000.0f,  // output EQ (runtime overrides)
+    -1.0f,           // stereo coupling
+    0.0f, 0.0f, 5000.0f,  // output EQ
     0.0f, 0.0f, 0.7f,
     false,           // no saturation
-    50.0f,           // lateOnsetMs: fast onset (reduced from 150 for more hi onset content)
-    0.70f,           // lateFeedForwardLevel: raised from 0.35 for more pre-diff at onset
+    0.0f,            // lateOnsetMs (was 50, removed for clean gated transient)
+    0.35f,           // lateFeedForwardLevel
     0.0f,            // crestLimitRatio
     0, nullptr,      // custom ER
     nullptr, nullptr,
     1.0f, 0.0f, -1,  // dattorroDelayScale, hybridBlend, hybridSecondaryAlgo
-    0.55f,  // lateBloomLevel
-    500.0f, 100.0f, 1000.0f, 400.0f,  // tail-isolated bloom
-    { 0.10f, 0.10f, 0.10f, -1.25f },  // lateBloomBandOffset: slight hi_mid + deeper hi
-    0.0f,  // bodyBloomLevel (per-band only)
-    100.0f, 50.0f, 300.0f, 100.0f,  // body bloom timing
-    { 0.00f, 0.00f, 0.00f, -0.80f },  // bodyBloomBandOffset: hi body cut
+    0.0f,            // lateBloomLevel disabled (was 0.55, Homestar bloom)
+    500.0f, 100.0f, 1000.0f, 400.0f,
+    { 0.0f, 0.0f, 0.0f, 0.0f },
+    0.0f,            // bodyBloomLevel
+    100.0f, 50.0f, 300.0f, 100.0f,
+    { 0.0f, 0.0f, 0.0f, 0.0f },
 };
 
 // Preset "Pad Hall" (VV-derived FDN)
