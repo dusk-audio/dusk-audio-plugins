@@ -1,8 +1,5 @@
 #include "DuskVerbEngine.h"
 #include "DspUtils.h"
-#include "../VVERTapData.h"
-#include "../PresetCorrectionFilters.h"
-#include "../PresetTapPositions.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -445,21 +442,6 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             {
                 scratchL_[si] = highShelfFilter_.processL (scratchL_[si]);
                 scratchR_[si] = highShelfFilter_.processR (scratchR_[si]);
-            }
-        }
-    }
-
-    // Per-preset spectral correction filter: shapes DattorroTank output to match VV.
-    // Applied after output EQ, before output diffuser, to the late reverb only.
-    if (correctionFilterActive_)
-    {
-        for (int s = 0; s < kNumCorrectionStages; ++s)
-        {
-            for (int i = 0; i < numSamples; ++i)
-            {
-                auto si = static_cast<size_t> (i);
-                scratchL_[si] = correctionFilter_[s].processL (scratchL_[si]);
-                scratchR_[si] = correctionFilter_[s].processR (scratchR_[si]);
             }
         }
     }
@@ -1990,110 +1972,16 @@ void DuskVerbEngine::setERAirFloorOverride (float hz)
     er_.setAirAbsorptionFloor (hz);
 }
 
-void DuskVerbEngine::updateTapPositions (
-    float l0, float l1, float l2, float l3, float l4, float l5, float l6,
-    float r0, float r1, float r2, float r3, float r4, float r5, float r6)
-{
-    float defaultGains[14] = { 1,1,1,1,1,1,1, 1,1,1,1,1,1,1 };
-    updateTapPositionsAndGains (l0,l1,l2,l3,l4,l5,l6, r0,r1,r2,r3,r4,r5,r6,
-                                defaultGains[0],defaultGains[1],defaultGains[2],defaultGains[3],defaultGains[4],defaultGains[5],defaultGains[6],
-                                defaultGains[7],defaultGains[8],defaultGains[9],defaultGains[10],defaultGains[11],defaultGains[12],defaultGains[13]);
-}
-
-void DuskVerbEngine::updateTapPositionsAndGains (
-    float l0, float l1, float l2, float l3, float l4, float l5, float l6,
-    float r0, float r1, float r2, float r3, float r4, float r5, float r6,
-    float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
-    float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6)
-{
-    if (! config_->dattorroLeftTaps || ! config_->dattorroRightTaps)
-        return;
-
-    float lPos[7] = { l0, l1, l2, l3, l4, l5, l6 };
-    float rPos[7] = { r0, r1, r2, r3, r4, r5, r6 };
-    float lGain[7] = { gl0, gl1, gl2, gl3, gl4, gl5, gl6 };
-    float rGain[7] = { gr0, gr1, gr2, gr3, gr4, gr5, gr6 };
-
-    DattorroTank::OutputTap lTaps[7], rTaps[7];
-    for (int i = 0; i < 7; ++i)
-    {
-        lTaps[i] = { config_->dattorroLeftTaps[i].buf, lPos[i], config_->dattorroLeftTaps[i].sign, lGain[i] };
-        rTaps[i] = { config_->dattorroRightTaps[i].buf, rPos[i], config_->dattorroRightTaps[i].sign, rGain[i] };
-    }
-    dattorroTank_.setOutputTaps (lTaps, rTaps);
-}
-
-void DuskVerbEngine::loadPresetTapPositions (int presetIndex)
-{
-    if (presetIndex >= 0 && presetIndex < kNumPresetTapConfigs)
-    {
-        const auto& config = getPresetTapConfig (presetIndex);
-        // Convert PresetTapConfig taps to DattorroTank::OutputTap
-        DattorroTank::OutputTap lTaps[7], rTaps[7];
-        for (int i = 0; i < 7; ++i)
-        {
-            lTaps[i] = config.leftTaps[i];
-            rTaps[i] = config.rightTaps[i];
-        }
-        dattorroTank_.setOutputTaps (lTaps, rTaps);
-    }
-}
-
-void DuskVerbEngine::applyTapGains (
-    float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
-    float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6)
-{
-    float lGain[7] = { gl0, gl1, gl2, gl3, gl4, gl5, gl6 };
-    float rGain[7] = { gr0, gr1, gr2, gr3, gr4, gr5, gr6 };
-    dattorroTank_.applyTapGains (lGain, rGain);
-}
-
-void DuskVerbEngine::loadCorrectionFilter (int presetIndex)
-{
-    const auto& filter = getCorrectionFilter (presetIndex);
-    for (int s = 0; s < kNumCorrectionStages; ++s)
-    {
-        correctionFilter_[s].b0 = filter.stages[s].b0;
-        correctionFilter_[s].b1 = filter.stages[s].b1;
-        correctionFilter_[s].b2 = filter.stages[s].b2;
-        correctionFilter_[s].a1 = filter.stages[s].a1;
-        correctionFilter_[s].a2 = filter.stages[s].a2;
-        correctionFilter_[s].z1L = correctionFilter_[s].z2L = 0.0f;
-        correctionFilter_[s].z1R = correctionFilter_[s].z2R = 0.0f;
-    }
-    // Check if any stage is non-identity (b0 != 1 or others != 0)
-    correctionFilterActive_ = false;
-    for (int s = 0; s < kNumCorrectionStages; ++s)
-    {
-        if (filter.stages[s].b0 != 1.0f || filter.stages[s].b1 != 0.0f
-            || filter.stages[s].b2 != 0.0f || filter.stages[s].a1 != 0.0f
-            || filter.stages[s].a2 != 0.0f)
-        {
-            correctionFilterActive_ = true;
-            break;
-        }
-    }
-}
-
 void DuskVerbEngine::setCustomERTaps (const CustomERTap* taps, int numTaps)
 {
-    // Compute current pre-delay in ms for tap time adjustment.
-    // VV-extracted tap times are absolute (from IR start), but the ER engine
-    // receives already-pre-delayed input, so we subtract DV's pre-delay.
+    // AlgorithmConfig-baked custom ER taps (none of the 25 presets use this
+    // path right now, but kept for future per-preset ER taps).
     float preDelayMs = static_cast<float> (preDelaySamples_)
                      / static_cast<float> (sampleRate_) * 1000.0f;
-
     if (taps && numTaps > 0)
         er_.setCustomTaps (taps, numTaps, preDelayMs);
     else
-        er_.setCustomTaps (nullptr, 0);  // Revert to generated mode
-}
-
-void DuskVerbEngine::loadPresetERTaps (const char* presetName)
-{
-    int numTaps = 0;
-    const CustomERTap* taps = getPresetERTaps (presetName, numTaps);
-    setCustomERTaps (taps, numTaps);
+        er_.setCustomTaps (nullptr, 0);
 }
 
 // Second-order Butterworth highpass coefficients (12 dB/oct)
