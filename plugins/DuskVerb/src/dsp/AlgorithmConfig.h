@@ -561,8 +561,8 @@ static constexpr AlgorithmConfig kPresetCathedral = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
     0.99f, 1.50f, 0.99f, // damping: treble=0.99, bass=0.99
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.439555f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -618,8 +618,8 @@ static constexpr AlgorithmConfig kPresetLargeHall = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
     0.99f, 1.50f, 1.00f, // damping: treble=0.99, bass=1.00
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.508136f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -674,8 +674,8 @@ static constexpr AlgorithmConfig kPresetMediumHall = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-4.0)
     0.99f, 1.50f, 1.08f, // damping: treble=0.99, bass=1.08
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    1.0f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -728,8 +728,8 @@ static constexpr AlgorithmConfig kPresetVocalHall = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.5)
     0.87f, 1.50f, 1.00f, // damping: treble=0.87, bass=1.00
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.779659f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -947,8 +947,8 @@ static constexpr AlgorithmConfig kPresetDarkChamber = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.2)
     0.90f, 1.50f, 0.97f, // damping: treble=0.90, bass=0.97
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.816898f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -995,8 +995,8 @@ static constexpr AlgorithmConfig kPresetLiveRoom = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=9.4)
     0.88f, 1.50f, 0.79f, // damping: treble=0.88, bass=0.79
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    1.02593f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1058,8 +1058,8 @@ static constexpr AlgorithmConfig kPresetStudioRoom = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.4)
     0.65f, 1.50f, 0.76f, // damping: treble=0.65, bass=0.76
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.965234f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1108,8 +1108,8 @@ static constexpr AlgorithmConfig kPresetBrightChamber = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
     0.84f, 1.50f, 0.99f, // damping: treble=0.84, bass=0.99
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.916923f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1217,8 +1217,8 @@ static constexpr AlgorithmConfig kPresetLiveChamber = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.1)
     0.93f, 1.50f, 0.91f, // damping: treble=0.93, bass=0.91
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.868458f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1269,8 +1269,8 @@ static constexpr AlgorithmConfig kPresetReverse = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.2)
     1.00f, 1.50f, 0.96f, // damping: treble=1.00, bass=0.96
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    1.0f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1321,8 +1321,8 @@ static constexpr AlgorithmConfig kPresetSmallHall = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=1.0)
     0.96f, 1.50f, 1.31f, // damping: treble=0.96, bass=1.31
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.95f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1377,8 +1377,8 @@ static constexpr AlgorithmConfig kPresetDrumChamber = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
     0.98f, 1.50f, 1.00f, // damping: treble=0.98, bass=1.00
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.987798f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1487,8 +1487,8 @@ static constexpr AlgorithmConfig kPresetModulated = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.9)
     1.00f, 1.50f, 1.07f, // damping: treble=1.00, bass=1.07
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    1.00405f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1541,8 +1541,8 @@ static constexpr AlgorithmConfig kPresetShimmer = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.7)
     0.81f, 1.50f, 0.65f, // damping: treble=0.81, bass=0.65
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.969875f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1589,8 +1589,8 @@ static constexpr AlgorithmConfig kPresetInfinite = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.8)
     0.71f, 1.50f, 1.12f, // damping: treble=0.71, bass=1.12
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    1.0f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1643,8 +1643,8 @@ static constexpr AlgorithmConfig kPresetVocalChamber = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=-5.3)
     0.87f, 1.50f, 0.93f, // damping: treble=0.87, bass=0.93
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.871706f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1695,8 +1695,8 @@ static constexpr AlgorithmConfig kPresetDrumRoom = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.4)
     1.00f, 1.50f, 1.00f, // damping: treble=1.00, bass=1.00
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.947591f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1760,8 +1760,8 @@ static constexpr AlgorithmConfig kPresetTightRoom = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=8.8)
     0.51f, 1.50f, 0.69f, // damping: treble=0.51, bass=0.69
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    1.0f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
@@ -1812,8 +1812,8 @@ static constexpr AlgorithmConfig kPresetVocalBooth = {
     0.22f,           // late gain (FDN native)
     0.75f, 13.0f,    // mod: depth=0.75 (mod_depth_db=9.0)
     0.84f, 1.50f, 0.87f, // damping: treble=0.84, bass=0.87
-    4000.0f,         // high crossover
-    0.80f,           // airDampingScale
+    6000.0f,         // high crossover
+    0.97715f,           // airDampingScale
     0.5f, 1.5f,      // size range
     0.15f,           // ER crossfeed
     0.0f,            // inline diffusion
