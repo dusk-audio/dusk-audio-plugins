@@ -1,6 +1,4 @@
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
-// Per-preset reverb engine for "Huge Synth Hall".
+// Per-preset reverb engine for "Large Hall".
 // Base engine: FDNReverb
 //
 // This file contains a full private copy of the FDNReverb DSP in an

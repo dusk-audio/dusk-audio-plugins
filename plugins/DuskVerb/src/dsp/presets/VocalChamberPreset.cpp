@@ -1,6 +1,4 @@
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
-// Per-preset reverb engine for "Med Ambience".
+// Per-preset reverb engine for "Vocal Chamber".
 // Base engine: QuadTank
 //
 // This file contains a full private copy of the QuadTank DSP in an

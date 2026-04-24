@@ -1,4 +1,4 @@
-// Per-preset reverb engine for "Homestar Blade Runner".
+// Per-preset reverb engine for "Gated".
 //
 // ARCHITECTURE: Multi-band parallel Dattorro.
 // The input is split into 7 frequency bands by Linkwitz-Riley 4th-order

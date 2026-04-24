@@ -1,6 +1,4 @@
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
-// Per-preset reverb engine for "Small Drum Room".
+// Per-preset reverb engine for "Drum Room".
 // Base engine: DattorroTank
 //
 // This file contains a full private copy of the DattorroTank DSP in an
