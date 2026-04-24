@@ -95,11 +95,7 @@ private:
     std::atomic<float>* softOnsetParam_ = nullptr;
     std::atomic<float>* lateFeedFwdParam_ = nullptr;
     std::atomic<float>* limiterThreshParam_ = nullptr;
-    std::atomic<float>* tapPosParams_[14] = {};
-    std::atomic<float>* tapGainParams_[14] = {};
-    std::atomic<float>* presetIdParam_ = nullptr;
-    int lastPresetId_ = 0;
-    float lastPresetPreDelayMs_ = -1.0f;
+    float lastPreDelayMs_ = -1.0f;
 
     std::atomic<float>* airDampingParam_ = nullptr;
     std::atomic<float>* highCrossoverParam_ = nullptr;
