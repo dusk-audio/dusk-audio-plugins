@@ -120,34 +120,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
         juce::ParameterID { "limiter_thresh", 1 }, "Limiter Threshold",
         juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), 0.0f));  // 0 = disabled
 
-    // Hidden tap position parameters: 7 left + 7 right = 14 tap position fractions (0-1)
-    // These control WHERE in the DattorroTank's delay buffers the output is read from.
-    // Adjustable at runtime via pedalboard for closed-loop temporal envelope optimization.
-    for (int i = 0; i < 14; ++i)
-    {
-        auto id = juce::String ("tap_pos_") + juce::String (i);
-        auto name = juce::String ("Tap Pos ") + juce::String (i);
-        layout.add (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { id, 1 }, name,
-            juce::NormalisableRange<float> (0.05f, 0.99f, 0.01f), 0.75f));
-    }
-
-    // Hidden tap gain parameters: 7 left + 7 right = 14 per-tap amplitude weights (0-2)
-    // Controls HOW MUCH energy each output tap contributes. Shapes onset envelope.
-    // < 1.0 attenuates early taps (slows onset), > 1.0 boosts (faster onset).
-    for (int i = 0; i < 14; ++i)
-    {
-        auto id = juce::String ("tap_gain_") + juce::String (i);
-        auto name = juce::String ("Tap Gain ") + juce::String (i);
-        layout.add (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { id, 1 }, name,
-            juce::NormalisableRange<float> (0.0f, 2.0f, 0.01f), 1.0f));
-    }
-
-    // Hidden preset ID for triggering per-preset ER tap loading (0 = none, 1-53 = preset index)
-    layout.add (std::make_unique<juce::AudioParameterInt> (
-        juce::ParameterID { "preset_id", 1 }, "Preset ID", 0, 53, 0));
-
     // --- Optimizer-tunable overrides ---
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "air_damping", 1 }, "Air Damping",
@@ -252,13 +224,6 @@ DuskVerbProcessor::DuskVerbProcessor()
     softOnsetParam_ = parameters.getRawParameterValue ("soft_onset");
     lateFeedFwdParam_ = parameters.getRawParameterValue ("late_feed_fwd");
     limiterThreshParam_ = parameters.getRawParameterValue ("limiter_thresh");
-    for (int i = 0; i < 14; ++i)
-        tapPosParams_[i] = parameters.getRawParameterValue (
-            juce::String ("tap_pos_") + juce::String (i));
-    for (int i = 0; i < 14; ++i)
-        tapGainParams_[i] = parameters.getRawParameterValue (
-            juce::String ("tap_gain_") + juce::String (i));
-    presetIdParam_ = parameters.getRawParameterValue ("preset_id");
     airDampingParam_ = parameters.getRawParameterValue ("air_damping");
     highCrossoverParam_ = parameters.getRawParameterValue ("high_crossover");
     noiseModParam_ = parameters.getRawParameterValue ("noise_mod");
@@ -326,10 +291,7 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         originalLatencySamples_ = 0;  // FDN reverb has zero inherent latency
         setLatencySamples (originalLatencySamples_);
 
-        // Invalidate preset ER reload sentinels so loadPresetERTaps/loadCorrectionFilter
-        // run on the next processBlock after re-initialization.
-        lastPresetId_ = -1;
-        lastPresetPreDelayMs_ = -1.0f;
+        lastPreDelayMs_ = -1.0f;  // force engine.setPreDelay() on next processBlock
 
         // Initialize algorithm from saved state (edge-case: DAW restores state before first processBlock)
         cachedAlgorithm_ = static_cast<int> (algorithmParam_->load());
@@ -402,9 +364,7 @@ void DuskVerbProcessor::releaseResources()
     preparedSampleRate_ = 0.0;
     preparedBlockSize_ = 0;
 
-    // Invalidate preset ER sentinels so the next processBlock rebuilds ER state
-    lastPresetId_ = -1;
-    lastPresetPreDelayMs_ = -1.0f;
+    lastPreDelayMs_ = -1.0f;
 }
 
 void DuskVerbProcessor::timerCallback()
@@ -555,101 +515,13 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             engine_.resetLateFeedForwardLevel();
     }
 
-    // Per-preset ER taps: load VV-extracted taps when preset_id changes
-    // OR when the effective pre-delay changes (tap timing depends on it).
-    // Must apply pre-delay first so tap timing is computed correctly
-    // (VV tap times are absolute; DV's pre-delay is subtracted).
+    // Pre-delay update — push to the engine when changed (was previously gated
+    // by VV preset-id reload logic).
+    if (std::abs (preDelayMs - lastPreDelayMs_) > 0.001f)
     {
-        int presetId = static_cast<int> (presetIdParam_->load());
-        bool presetChanged = presetId != lastPresetId_;
-        bool preDelayChanged = std::abs (preDelayMs - lastPresetPreDelayMs_) > 0.001f;
-
-        if (presetChanged)
-        {
-            // Full preset update: tap positions, correction filter, and ER taps
-            lastPresetId_ = presetId;
-            lastPresetPreDelayMs_ = preDelayMs;
-
-            engine_.setPreDelay (preDelayMs);
-            preDelaySmooth_.setCurrentAndTargetValue (preDelayMs);
-
-            if (presetId > 0 && presetId <= 53)
-            {
-                const auto& presets = getFactoryPresets();
-                int idx = presetId - 1;
-                if (idx < static_cast<int> (presets.size()))
-                {
-                    engine_.loadPresetERTaps (presets[static_cast<size_t> (idx)].name);
-                    engine_.loadPresetTapPositions (idx);
-                    engine_.loadCorrectionFilter (idx);
-                }
-                else
-                {
-                    engine_.setCustomERTaps (nullptr, 0);
-                    engine_.loadCorrectionFilter (-1);
-                }
-            }
-            else
-            {
-                engine_.setCustomERTaps (nullptr, 0);  // Revert to generated
-                engine_.loadCorrectionFilter (-1);      // Disable correction
-            }
-        }
-        else if (preDelayChanged)
-        {
-            // Pre-delay only: update timing without reloading tap positions or correction filter
-            lastPresetPreDelayMs_ = preDelayMs;
-
-            engine_.setPreDelay (preDelayMs);
-            preDelaySmooth_.setCurrentAndTargetValue (preDelayMs);
-
-            if (presetId > 0 && presetId <= 53)
-            {
-                const auto& presets = getFactoryPresets();
-                int idx = presetId - 1;
-                if (idx < static_cast<int> (presets.size()))
-                    engine_.loadPresetERTaps (presets[static_cast<size_t> (idx)].name);
-                else
-                    engine_.setCustomERTaps (nullptr, 0);
-            }
-            else
-            {
-                engine_.setCustomERTaps (nullptr, 0);
-            }
-        }
-    }
-
-    // Apply runtime tap gains on top of preset tap positions.
-    // Tap positions come from PresetTapPositions.h (loaded by loadPresetTapPositions).
-    // Tap gains come from runtime parameters (tunable via pedalboard).
-    // When preset_id == 0, tap_pos params also override positions.
-    {
-        int presetId = static_cast<int> (presetIdParam_->load());
-        if (presetId == 0)
-        {
-            // No preset — use runtime tap_pos and tap_gain params directly
-            engine_.updateTapPositionsAndGains (
-                tapPosParams_[0]->load(), tapPosParams_[1]->load(), tapPosParams_[2]->load(),
-                tapPosParams_[3]->load(), tapPosParams_[4]->load(), tapPosParams_[5]->load(),
-                tapPosParams_[6]->load(), tapPosParams_[7]->load(), tapPosParams_[8]->load(),
-                tapPosParams_[9]->load(), tapPosParams_[10]->load(), tapPosParams_[11]->load(),
-                tapPosParams_[12]->load(), tapPosParams_[13]->load(),
-                tapGainParams_[0]->load(), tapGainParams_[1]->load(), tapGainParams_[2]->load(),
-                tapGainParams_[3]->load(), tapGainParams_[4]->load(), tapGainParams_[5]->load(),
-                tapGainParams_[6]->load(), tapGainParams_[7]->load(), tapGainParams_[8]->load(),
-                tapGainParams_[9]->load(), tapGainParams_[10]->load(), tapGainParams_[11]->load(),
-                tapGainParams_[12]->load(), tapGainParams_[13]->load());
-        }
-        else
-        {
-            // Preset loaded — always apply tap_gain params on top of preset's
-            // tap positions so returning all gains to 1.0 updates the engine.
-            float gains[14];
-            for (int i = 0; i < 14; ++i)
-                gains[i] = tapGainParams_[i]->load();
-            engine_.applyTapGains (gains[0], gains[1], gains[2], gains[3], gains[4], gains[5], gains[6],
-                                   gains[7], gains[8], gains[9], gains[10], gains[11], gains[12], gains[13]);
-        }
+        lastPreDelayMs_ = preDelayMs;
+        engine_.setPreDelay (preDelayMs);
+        preDelaySmooth_.setCurrentAndTargetValue (preDelayMs);
     }
 
     // Per-preset peak limiter on DattorroTank output (0 dB = disabled).
