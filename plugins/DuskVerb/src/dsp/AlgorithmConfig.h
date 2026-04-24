@@ -1735,7 +1735,7 @@ static constexpr AlgorithmConfig kPresetDrumRoom = {
     0.0f, 2.00f, 0.0f,  // tailNotch disabled
     500.0f, 100.0f, 800.0f, 400.0f,
     0.0f, 1.0f,      // chorusDepthDefault, chorusRateDefault
-    -30.0f, 30.0f,   // tailFloorGate for modulation
+    0.0f, 30.0f,     // tailFloorGate disabled (was -30 for VV-matching, killed RT60)
     -60.0f,          // onsetBurstPeakDb: disabled
     20.0f, 2.0f, 20.0f, 80.0f,
     2000.0f, 12000.0f, 0.5f,

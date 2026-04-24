@@ -32,7 +32,7 @@ namespace {
     constexpr float kBakedSizeRangeMin       = 0.268854f;
     constexpr float kBakedSizeRangeMax       = 0.806562f;
     constexpr float kBakedAirDampingScale    = 0.8f;
-    constexpr float kBakedNoiseModDepth      = 40.0f;  // boosted to add modulation VV has that DV lacks
+    constexpr float kBakedNoiseModDepth      = 8.0f;   // reset from old 40 (was destabilising the short tail)
     constexpr float kBakedTrebleMultScale    = 1.0f;
     constexpr float kBakedTrebleMultScaleMax = 1.5f;
     constexpr float kBakedBassMultScale      = 1.0f;  // un-baked from 1.0f — bass knob now shows real multiplier
@@ -72,7 +72,7 @@ namespace {
     constexpr float kCorrEqHz[kCorrEqBandCount] = { 100.0f, 158.0f, 251.0f, 397.0f, 632.0f, 1000.0f, 1581.0f, 2510.0f, 3969.0f, 6325.0f, 9798.0f, 15492.0f };
     // Rebalanced — DV still had +4 dB excess at 125-1.25k and +7 at 5-8k
     // after the band-damping fix. Cut those to match, keep HF sustain.
-    constexpr float kCorrEqDb[kCorrEqBandCount] = { -2.81f, -4.0f, -3.0f, -3.0f, -3.0f, -3.0f, -2.0f, -2.0f, -3.0f, -6.0f, 4.0f, 14.0f };
+    constexpr float kCorrEqDb[kCorrEqBandCount] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     constexpr float kCorrEqQ = 1.41f;  // moderate Q ≈ 1 octave bandwidth
 
     // -----------------------------------------------------------------
