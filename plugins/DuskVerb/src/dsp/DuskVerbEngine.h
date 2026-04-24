@@ -74,24 +74,12 @@ public:
     void setGateParams (float holdMs, float releaseMs);
     void setGainTrim (float dB);
     void setInputOnset (float ms);
-    void loadCorrectionFilter (int presetIndex);
-    void loadPresetTapPositions (int presetIndex);
     void setDattorroDelayScale (float scale);
     void setDattorroSoftOnsetMs (float ms);
     void setLateFeedForwardLevel (float level);
     void resetLateFeedForwardLevel();  // Restore algorithm config default
     void setDattorroLimiter (float thresholdDb, float releaseMs);
-    void updateTapPositions (float l0, float l1, float l2, float l3, float l4, float l5, float l6,
-                             float r0, float r1, float r2, float r3, float r4, float r5, float r6);
-    void updateTapPositionsAndGains (float l0, float l1, float l2, float l3, float l4, float l5, float l6,
-                                     float r0, float r1, float r2, float r3, float r4, float r5, float r6,
-                                     float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
-                                     float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6);
-    // Apply gains on top of existing tap positions (does not change positions)
-    void applyTapGains (float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
-                        float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6);
     void setCustomERTaps (const CustomERTap* taps, int numTaps);
-    void loadPresetERTaps (const char* presetName);  // Looks up VV-extracted taps by name
 
     // --- Optimizer-tunable overrides (runtime parameter → sub-component forwarding) ---
     void setAirDampingOverride (float scale);
@@ -384,13 +372,6 @@ private:
     int   tailNotchReleaseSamples_ = 0;
     int   tailNotchPhaseSamples_ = -1;
     bool  tailNotchInputWasQuiet_ = true;
-
-    // Per-preset spectral correction filter: 5-stage biquad cascade that shapes
-    // DattorroTank output to match VV's exact frequency response.
-    // Coefficients generated offline by generate_correction_filters.py.
-    static constexpr int kNumCorrectionStages = 8;
-    Biquad correctionFilter_[kNumCorrectionStages] {};
-    bool correctionFilterActive_ = false;
 
     // Fix 4 (spectral): ER corrective EQ — applies the same per-preset 12-band
     // correction to the ER path so the combined ER+late signal is spectrally matched.
