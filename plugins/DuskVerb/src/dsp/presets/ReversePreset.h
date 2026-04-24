@@ -1,8 +1,6 @@
 #pragma once
 
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
-// Per-preset reverb engine for "Medium Gate".
+// Per-preset reverb engine for "Reverse".
 // Base engine: DattorroTank
 //
 // This header only exposes a factory function. The concrete engine class and

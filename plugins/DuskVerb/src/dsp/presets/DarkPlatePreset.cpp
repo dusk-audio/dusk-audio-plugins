@@ -1,5 +1,3 @@
-// GENERATED FILE - do not edit by hand (use generate_preset_engines.py)
-//
 // Per-preset reverb engine for "Dark Plate".
 // Base engine: DattorroTank
 //

@@ -545,7 +545,6 @@ static constexpr AlgorithmConfig kPresetGated = {
     { 0.0f, 0.0f, 0.0f, 0.0f },
 };
 
-// Preset "Pad Hall" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetCathedral = {
     "PresetCathedral",
     {   124,   346,   668,  1715,  2040,  2175,  2372,  2708,
@@ -602,7 +601,6 @@ static constexpr AlgorithmConfig kPresetCathedral = {
 
 // Preset "Concert Wave" (VV-derived FDN)
 
-// Preset "Huge Synth Hall" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetLargeHall = {
     "PresetLargeHall",
     {   336,   346,   898,  1504,  1978,  2375,  2606,  2921,
@@ -658,7 +656,6 @@ static constexpr AlgorithmConfig kPresetLargeHall = {
 
 // Preset "Fat Snare Hall" (VV-derived FDN)
 
-// Preset "Snare Hall" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetMediumHall = {
     "PresetMediumHall",
     {   124,   280,   346,   413,   695,  1846,  1997,  2131,
@@ -712,7 +709,6 @@ static constexpr AlgorithmConfig kPresetMediumHall = {
 
 // Preset "Very Nice Hall" (VV-derived FDN)
 
-// Preset "Vocal Hall" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetVocalHall = {
     "PresetVocalHall",
     {    99,   336,   346,   441,   788,  1715,  2174,  2412,
@@ -931,7 +927,6 @@ static constexpr AlgorithmConfig kPresetVocalPlate = {
 
 // Preset "Vox Plate" (VV-derived FDN)
 
-// Preset "Dark Vocal Room" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetDarkChamber = {
     "PresetDarkChamber",
     {   107,   263,   336,   346,   456,   588,  1094,  1243,
@@ -979,7 +974,6 @@ static constexpr AlgorithmConfig kPresetDarkChamber = {
     nullptr, nullptr,
 };
 
-// Preset "Exciting Snare room" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetLiveRoom = {
     "PresetLiveRoom",
     {   102,   317,   331,   336,   346,   452,   938,  1082,
@@ -1042,7 +1036,6 @@ static constexpr AlgorithmConfig kPresetLiveRoom = {
 
 // Preset "Long Dark 70s Snare Room" (VV-derived FDN)
 
-// Preset "Short Dark Snare Room" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetStudioRoom = {
     "PresetStudioRoom",
     {   170,   307,   311,   312,   317,   331,   336,   346,
@@ -1092,7 +1085,6 @@ static constexpr AlgorithmConfig kPresetStudioRoom = {
 
 // Preset "A Plate" (VV-derived FDN)
 
-// Preset "Clear Chamber" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetBrightChamber = {
     "PresetBrightChamber",
     {   126,   260,   346,   440,  1085,  2287,  2436,  2569,
@@ -1201,7 +1193,6 @@ static constexpr AlgorithmConfig kPresetDarkPlate = {
     { 0.00f, 0.45f, 0.00f, 0.00f },  // bodyBloomBandOffset
 };
 
-// Preset "Large Chamber" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetLiveChamber = {
     "PresetLiveChamber",
     {   130,   312,   317,   331,   336,   346,   477,  1263,
@@ -1253,7 +1244,6 @@ static constexpr AlgorithmConfig kPresetLiveChamber = {
 
 // Preset "Live Vox Chamber" (VV-derived FDN)
 
-// Preset "Medium Gate" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetReverse = {
     "PresetReverse",
     {   126,   270,   336,   346,   491,   648,   797,  1042,
@@ -1305,7 +1295,6 @@ static constexpr AlgorithmConfig kPresetReverse = {
 
 // Preset "Rich Chamber" (VV-derived FDN)
 
-// Preset "Small Chamber1" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetSmallHall = {
     "PresetSmallHall",
     {   141,   312,   317,   331,   336,   346,   477,   731,
@@ -1361,7 +1350,6 @@ static constexpr AlgorithmConfig kPresetSmallHall = {
 
 // Preset "Small Chamber2" (VV-derived FDN)
 
-// Preset "Snare Plate" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetDrumChamber = {
     "PresetDrumChamber",
     {    92,   232,   331,   336,   346,   427,   563,  1349,
@@ -1471,7 +1459,6 @@ static constexpr AlgorithmConfig kPresetBrightPlate = {
 
 // Preset "Ambience Tiled Room" (VV-derived FDN)
 
-// Preset "Big Ambience Gate" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetModulated = {
     "PresetModulated",
     {   157,   311,   312,   317,   331,   336,   346,   876,
@@ -1525,7 +1512,6 @@ static constexpr AlgorithmConfig kPresetModulated = {
 
 // Preset "Cross Stick Room" (VV-derived FDN)
 
-// Preset "Drum Air" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetShimmer = {
     "PresetShimmer",
     {   206,   311,   312,   317,   331,   336,   346,   369,
@@ -1573,7 +1559,6 @@ static constexpr AlgorithmConfig kPresetShimmer = {
     nullptr, nullptr,
 };
 
-// Preset "Gated Snare" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetInfinite = {
     "PresetInfinite",
     {   133,   312,   317,   331,   336,   346,   375,   521,
@@ -1627,7 +1612,6 @@ static constexpr AlgorithmConfig kPresetInfinite = {
 
 // Preset "Large Gated Snare" (VV-derived FDN)
 
-// Preset "Med Ambience" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetVocalChamber = {
     "PresetVocalChamber",
     {   123,   261,   346,   481,   662,  1072,  1552,  1700,
@@ -1679,7 +1663,6 @@ static constexpr AlgorithmConfig kPresetVocalChamber = {
 
 // Preset "Small Ambience" (VV-derived FDN)
 
-// Preset "Small Drum Room" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetDrumRoom = {
     "PresetDrumRoom",
     {   209,   346,   400,   721,  1079,  1222,  1830,  1974,
@@ -1744,7 +1727,6 @@ static constexpr AlgorithmConfig kPresetDrumRoom = {
 
 // Preset "Snare Ambience" (VV-derived FDN)
 
-// Preset "Tight Ambience Gate" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetTightRoom = {
     "PresetTightRoom",
     {   102,   262,   317,   331,   336,   346,   662,   890,
@@ -1796,7 +1778,6 @@ static constexpr AlgorithmConfig kPresetTightRoom = {
 
 // Preset "Trip Hop Snare" (VV-derived FDN)
 
-// Preset "Very Small Ambience" (VV-derived FDN)
 static constexpr AlgorithmConfig kPresetVocalBooth = {
     "PresetVocalBooth",
     {   119,   292,   307,   311,   312,   317,   331,   336,
