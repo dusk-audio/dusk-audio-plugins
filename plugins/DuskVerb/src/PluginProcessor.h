@@ -44,9 +44,6 @@ public:
     // Per-preset level correction (called from editor on factory preset load)
     void setGainTrim (float dB) { engine_.setGainTrim (dB); }
 
-    // Per-preset custom early reflection taps (called from editor on factory preset load)
-    void setCustomERTaps (const CustomERTap* taps, int numTaps);
-
     juce::AudioProcessorValueTreeState parameters;
 
     // Level metering (audio thread writes, UI thread reads)
