@@ -650,11 +650,6 @@ void DuskVerbProcessor::setStateXML (const juce::XmlElement& xml)
     }
 }
 
-void DuskVerbProcessor::setCustomERTaps (const CustomERTap* taps, int numTaps)
-{
-    engine_.setCustomERTaps (taps, numTaps);
-}
-
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new DuskVerbProcessor();
