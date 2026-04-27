@@ -167,11 +167,255 @@ public:
         setValue(snapValue(newValue, notDragging), juce::sendNotificationSync);
     }
 
+    // Double-click anywhere on the slider → spawn the shared ValueEditor
+    // popup so the user can type an exact value. Anchored over the slider
+    // itself by default; plugins that have a separate value-label can call
+    // ValueEditor::popUp(slider, &valueLabel) from their own double-click
+    // handler instead.
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
 private:
     double lastDragProportion = 0.0;
     float lastDragY = 0.0f;
     float lastDragX = 0.0f;
 };
+
+//==============================================================================
+// Shared "type a value" popup. Spawns a temporary juce::TextEditor over an
+// anchor component, pre-fills with the slider's current displayed value,
+// commits on Enter / focus-loss, cancels on Escape. Smart-parses common
+// unit suffixes (k/kHz/Hz/ms/dB/%/x/s) so the user can type "1.5k" or
+// "85%" intuitively. Out-of-range values are silently clamped.
+//
+// Usage:
+//   • DuskSlider's own mouseDoubleClick hooks this automatically (anchor =
+//     the slider itself).
+//   • Custom layouts (e.g. DuskVerb's KnobWithLabel) call popUp explicitly
+//     from their own listeners, passing the value-label as the anchor so
+//     the editor lands exactly over the visible value text.
+class ValueEditor
+{
+public:
+    static void popUp (juce::Slider& slider, juce::Component& anchor)
+    {
+        popUp (slider, anchor, anchor.getLocalBounds());
+    }
+
+    // Overload: anchor over a sub-rectangle within `anchor`'s coordinate
+    // space. Useful when the anchor is a large composite component (e.g.
+    // DuskVerb's HeroDecay) and we only want the editor to land on the
+    // visible value-text region rather than the entire control surface.
+    static void popUp (juce::Slider& slider,
+                       juce::Component& anchor,
+                       juce::Rectangle<int> anchorLocalArea)
+    {
+        auto* topLevel = anchor.getTopLevelComponent();
+        if (topLevel == nullptr)
+            return;
+
+        // Bail if there's already an editor in flight for this slider — the
+        // tag avoids double-popups when both the slider and label fire
+        // double-click in quick succession.
+        const juce::int64 sliderTag = reinterpret_cast<juce::int64> (&slider);
+        for (int i = 0; i < topLevel->getNumChildComponents(); ++i)
+        {
+            auto* c = topLevel->getChildComponent (i);
+            if (c != nullptr
+                && static_cast<juce::int64> (c->getProperties().getWithDefault ("dusk_valeditor_for",
+                                                                                juce::var (juce::int64 (0))))
+                   == sliderTag)
+            {
+                c->grabKeyboardFocus();
+                return;
+            }
+        }
+
+        // Use a Component-owned editor so JUCE handles destruction when its
+        // parent goes away (e.g. Logic destroys the plugin window). The raw
+        // pointer survives only as long as topLevel owns it; we hand-off
+        // ownership immediately via addAndMakeVisible.
+        auto* editor = new juce::TextEditor();
+        editor->setText (slider.getTextFromValue (slider.getValue()), false);
+        editor->setMultiLine (false);
+        editor->setReturnKeyStartsNewLine (false);
+        editor->setEscapeAndReturnKeysConsumed (true);
+        editor->setBorder ({});
+        editor->setIndents (4, 2);
+        editor->setJustification (juce::Justification::centred);
+        editor->setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        editor->setSelectAllWhenFocused (true);
+        editor->setColour (juce::TextEditor::backgroundColourId,     juce::Colour (0xff1a1a2e));
+        editor->setColour (juce::TextEditor::textColourId,           juce::Colours::white);
+        editor->setColour (juce::TextEditor::outlineColourId,        juce::Colour (0xff404060));
+        editor->setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xffe89c4f));
+        editor->setColour (juce::TextEditor::highlightColourId,      juce::Colour (0x66e89c4f));
+        editor->setColour (juce::TextEditor::highlightedTextColourId, juce::Colours::white);
+
+        editor->getProperties().set ("dusk_valeditor_for", reinterpret_cast<juce::int64> (&slider));
+
+        // Convert anchor's local sub-rect to top-level coordinates and pad
+        // slightly so the editor frame is comfortably tappable.
+        auto bounds = topLevel->getLocalArea (&anchor, anchorLocalArea).expanded (4, 2);
+        editor->setBounds (bounds);
+
+        topLevel->addAndMakeVisible (editor);
+        editor->grabKeyboardFocus();
+
+        // Hardened lifecycle. Three failure modes we previously hit:
+        //   1) commit → setValue → APVTS sync notify → editor onFocusLost
+        //      fires commit again recursively → both cleanups queue
+        //      `delete editor` via callAsync → DOUBLE FREE.
+        //   2) Logic destroys the plugin window between commit and the
+        //      callAsync firing → editor already deleted by parent's
+        //      destructor → callAsync's delete is USE-AFTER-FREE.
+        //   3) sendNotificationSync invokes value-change listeners on the
+        //      message thread synchronously; if any listener tears down
+        //      part of the UI (Advanced tab rebuild on certain params),
+        //      the editor's parent goes away mid-callback.
+        //
+        // Fix:
+        //   • SafePointer<TextEditor> survives parent-destruction without
+        //     dangling — every access to the editor checks .getComponent()
+        //   • SafePointer<Slider> guards against the slider being
+        //     destroyed before commit fires
+        //   • shared `state` flag short-circuits reentrant commit/cleanup
+        //   • sendNotificationAsync defers the param update one message-
+        //     loop tick → no reentrancy from listener chains
+        //   • cleanup deletes via deleteSelf() → JUCE's safe-delete that
+        //     handles the case where the editor was already destroyed
+        juce::Component::SafePointer<juce::TextEditor> safeEditor (editor);
+        juce::Component::SafePointer<juce::Slider>     safeSlider (&slider);
+        auto state = std::make_shared<bool> (false);
+
+        auto cleanup = [safeEditor, state]()
+        {
+            if (*state) return;
+            *state = true;
+
+            if (auto* e = safeEditor.getComponent())
+            {
+                e->onReturnKey = nullptr;
+                e->onFocusLost = nullptr;
+                e->onEscapeKey = nullptr;
+
+                // Defer deletion to the next message-loop tick so we don't
+                // delete from within the editor's own callback. SafePointer
+                // protects against parent-destruction in the meantime.
+                juce::MessageManager::callAsync ([safeEditor]()
+                {
+                    if (auto* e2 = safeEditor.getComponent())
+                    {
+                        if (auto* parent = e2->getParentComponent())
+                            parent->removeChildComponent (e2);
+                        delete e2;
+                    }
+                });
+            }
+        };
+
+        auto commit = [safeEditor, safeSlider, cleanup, state]()
+        {
+            if (*state) return;
+
+            auto* e = safeEditor.getComponent();
+            if (e == nullptr) { cleanup(); return; }
+
+            const auto text = e->getText().trim();
+            if (text.isNotEmpty())
+            {
+                if (auto* s = safeSlider.getComponent())
+                {
+                    const double parsed = parseSmart (text, *s);
+                    if (std::isfinite (parsed))
+                    {
+                        const double clamped = juce::jlimit (s->getMinimum(),
+                                                             s->getMaximum(), parsed);
+                        // ASYNC notification — defers the param change one
+                        // message-loop tick so no listener fires while we're
+                        // still inside this callback. Critical for Logic where
+                        // the sync chain crosses APVTS → host → automation
+                        // listeners → repaint cascades.
+                        s->setValue (clamped, juce::sendNotificationAsync);
+                    }
+                }
+            }
+            cleanup();
+        };
+
+        editor->onReturnKey = commit;
+        editor->onFocusLost = commit;
+        editor->onEscapeKey = cleanup;
+    }
+
+private:
+    // Parse text like "1.5k", "500hz", "-3.5dB", "85%", "60ms" into a numeric
+    // value in the slider's native units. Heuristics:
+    //   • "k" or "kHz" suffix multiplies by 1000
+    //   • "%" suffix (or any % anywhere in the slider's display text) treats
+    //     the input as percent → multiplies by 0.01
+    //   • "ms" suffix when the slider's range max ≤ 60 (i.e. a seconds-scale
+    //     knob like DECAY) divides by 1000 to convert ms → s
+    //   • Other unit suffixes (Hz, dB, x, s) are stripped as decoration
+    static double parseSmart (juce::String text, juce::Slider& slider)
+    {
+        text = text.toLowerCase().trim();
+        if (text.isEmpty())
+            return slider.getValue();
+
+        const juce::String displayed = slider.getTextFromValue (slider.getValue()).toLowerCase();
+        bool isPercent = displayed.containsChar ('%');
+        // Treat slider as seconds-scale when its max ≤ 60 AND its display
+        // mentions a time unit. Catches DuskVerb's DECAY knob whose display
+        // auto-switches between "ms" and "s" depending on value.
+        const bool isSecondsScale = slider.getMaximum() <= 60.0
+                                  && (displayed.contains ("ms") || displayed.contains ("s"));
+
+        double multiplier = 1.0;
+
+        if (text.endsWithChar ('%'))
+        {
+            text = text.dropLastCharacters (1).trim();
+            isPercent = true;
+        }
+
+        if (text.endsWith ("khz"))
+        {
+            multiplier *= 1000.0;
+            text = text.dropLastCharacters (3).trim();
+        }
+        else if (text.endsWith ("hz"))
+        {
+            text = text.dropLastCharacters (2).trim();
+        }
+        else if (text.endsWith ("ms"))
+        {
+            if (isSecondsScale) multiplier *= 0.001;
+            text = text.dropLastCharacters (2).trim();
+        }
+        else if (text.endsWith ("db"))
+        {
+            text = text.dropLastCharacters (2).trim();
+        }
+        else if (text.endsWithChar ('k'))
+        {
+            multiplier *= 1000.0;
+            text = text.dropLastCharacters (1).trim();
+        }
+        else if (text.endsWithChar ('s') || text.endsWithChar ('x'))
+        {
+            text = text.dropLastCharacters (1).trim();
+        }
+
+        double value = text.getDoubleValue() * multiplier;
+        if (isPercent) value *= 0.01;
+        return value;
+    }
+};
+
+inline void DuskSlider::mouseDoubleClick (const juce::MouseEvent&)
+{
+    ValueEditor::popUp (*this, *this);
+}
 
 //==============================================================================
 struct DuskTooltips

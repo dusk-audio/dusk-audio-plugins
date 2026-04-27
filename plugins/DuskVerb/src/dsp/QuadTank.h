@@ -1,7 +1,10 @@
 #pragma once
 
+#include "DspUtils.h"
 #include "TwoBandDamping.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -32,14 +35,20 @@ public:
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);
+    void setMidMultiply (float mult);              // NEW: 3-band mid (default 1.0)
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
     void setHighCrossoverFreq (float hz);
+    void setSaturation (float amount);             // NEW: 0..1 drive softClip
     void setAirDampingScale (float scale);
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
     void setFreeze (bool frozen);
+
+    // User-facing tank density. amount is the DIFFUSION knob value [0, 1].
+    // Scales the in-loop density-AP coefficient around its baseline.
+    void setTankDiffusion (float amount);
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
     void setDecayBoost (float boost);
@@ -101,6 +110,9 @@ private:
         float readInterpolated (float delaySamples) const;
     };
 
+    // Schroeder allpass with optional Lexicon-style "spin and wander" jitter
+    // (see ModernSpaceEngine::Allpass for full rationale). Default
+    // jitterDepthFraction = 0 = static AP (back-compat).
     struct Allpass
     {
         std::vector<float> buffer;
@@ -108,13 +120,42 @@ private:
         int mask = 0;
         int delaySamples = 0;
 
+        DspUtils::RandomWalkLFO jitterLFO;
+        float                   jitterDepthFraction = 0.0f;
+
         void allocate (int maxSamples);
         void clear();
 
+        void updateJitterDepth (float sampleRate)
+        {
+            if (jitterDepthFraction <= 0.0f || delaySamples <= 0)
+                return;
+            jitterLFO.setDepth (static_cast<float> (delaySamples) * jitterDepthFraction);
+            const float period    = 2.0f * static_cast<float> (delaySamples);
+            const float lfoRateHz = sampleRate / period;
+            jitterLFO.setRate (std::min (std::max (lfoRateHz, 5.0f), 200.0f));
+        }
+
         float process (float input, float g)
         {
-            float vd = buffer[static_cast<size_t> ((writePos - delaySamples) & mask)];
-            float vn = input + g * vd;
+            float vd;
+            if (jitterDepthFraction > 0.0f)
+            {
+                const float jitter  = jitterLFO.next();
+                const float readPos = static_cast<float> (writePos)
+                                    - static_cast<float> (delaySamples)
+                                    - jitter;
+                int   intIdx = static_cast<int> (std::floor (readPos));
+                const float frac = readPos - static_cast<float> (intIdx);
+                intIdx = static_cast<int> (static_cast<unsigned int> (intIdx)
+                                            & static_cast<unsigned int> (mask));
+                vd = DspUtils::cubicHermite (buffer.data(), mask, intIdx, frac);
+            }
+            else
+            {
+                vd = buffer[static_cast<size_t> ((writePos - delaySamples) & mask)];
+            }
+            const float vn = input + g * vd;
             buffer[static_cast<size_t> (writePos)] = vn;
             writePos = (writePos + 1) & mask;
             return vd - g * vn;
@@ -146,9 +187,11 @@ private:
 
         float crossFeedState = 0.0f;
 
-        float lfoPhase = 0.0f;
-        float lfoPhaseInc = 0.0f;
-        uint32_t lfoPRNG = 0;
+        // Random-walk LFO — replaces the previous sine + drift modulator
+        // for consistency with Dattorro and ModernSpace. Aperiodic wander
+        // never beats with the tank's modal frequencies.
+        DspUtils::RandomWalkLFO lfo;
+        float savedAP1Mod = 0.0f;   // held during freeze to avoid read-head snap
         uint32_t noiseState = 0;
 
         // Per-tank terminal decay tracking
@@ -224,10 +267,12 @@ private:
     double sampleRate_ = 44100.0;
     float decayTime_ = 1.0f;
     float bassMultiply_ = 1.0f;
+    float midMultiply_ = 1.0f;            // 3-band mid (NEW)
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 4000.0f;
     float airDampingScale_ = 0.70f;
+    float saturationAmount_ = 0.0f;       // 0..1 drive (NEW)
     float modDepthSamples_ = 8.0f;
     float lastModDepthRaw_ = 0.5f;
     float modRateHz_ = 1.0f;
@@ -254,7 +299,12 @@ private:
 
     float decayDiff1_ = 0.70f;
     float decayDiff2_ = 0.50f;
-    float densityDiffCoeff_ = 0.10f;  // Reduced from 0.25 to slow density buildup (100ms→~250ms)
+    // Density cascade coefficient. Old default 0.10 was far too low to act as
+    // proper diffusion — each AP rang at its delay period instead of smearing,
+    // producing audible discrete tap echoes in the tail. 0.50 matches Lexicon
+    // hall-density convention. setTankDiffusion() scales around this baseline.
+    static constexpr float kDensityDiffBaseline_ = 0.50f;
+    float densityDiffCoeff_ = kDensityDiffBaseline_;
     float noiseModDepth_ = 2.0f;
     float independentNoiseModDepth_ = -1.0f;  // -1 = use modDepth-coupled value
     float lastNoiseModRawSamples_ = -1.0f;    // Raw caller value for replay after sample-rate change

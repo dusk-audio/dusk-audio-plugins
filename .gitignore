@@ -55,6 +55,7 @@ JuceLibraryCode/
 *.log
 *.tmp
 *.backup
+*.calibration_backup
 .*.tmp
 
 # Test output directory (generated test artifacts)

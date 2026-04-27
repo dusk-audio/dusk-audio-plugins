@@ -1,18 +1,9 @@
 #include "PluginEditor.h"
 #include "FactoryPresets.h"
-#include "dsp/AlgorithmConfig.h"
+#include "../../shared/DuskLookAndFeel.h"   // ValueEditor::popUp
 
-namespace {
-    // Returns the modeBox_ id (1=FDN, 2=Dattorro, 3=QuadTank) that matches the
-    // engine type baked into the AlgorithmConfig for the given algorithm index.
-    int engineModeIdForAlgorithm (int algorithmIndex)
-    {
-        const auto& cfg = getAlgorithmConfig (algorithmIndex);
-        if (cfg.useDattorroTank) return 2;
-        if (cfg.useQuadTank)     return 3;
-        return 1;  // FDN default
-    }
-}
+#include <algorithm>
+#include <cmath>
 
 // =============================================================================
 // KnobWithLabel
@@ -31,28 +22,57 @@ void KnobWithLabel::init (juce::Component& parent,
         slider.setTooltip (tooltip);
     parent.addAndMakeVisible (slider);
 
+    // NAME — small, dim, all-caps via the source string. Sits at the top of
+    // the column above the value readout. Lower-tier visually so the value
+    // is the dominant element.
     nameLabel.setText (displayName, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
     nameLabel.setInterceptsMouseClicks (false, false);
-    nameLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    nameLabel.setFont (juce::FontOptions (10.0f, juce::Font::bold));
     nameLabel.setColour (juce::Label::textColourId,
-                         juce::Colour (DuskVerbLookAndFeel::kLabelText));
+                         juce::Colour (DuskVerbLookAndFeel::kGroupText));
     parent.addAndMakeVisible (nameLabel);
 
+    // VALUE — accent colour, ABOVE the knob. Slightly larger than the name
+    // but not so big that it competes with the knob itself for attention.
+    // setInterceptsMouseClicks(true, false) — captures double-clicks for the
+    // ValueEditor popup but doesn't block child events (no children anyway).
     valueLabel.setJustificationType (juce::Justification::centred);
-    valueLabel.setInterceptsMouseClicks (false, false);
-    valueLabel.setFont (juce::FontOptions (11.0f));
+    valueLabel.setInterceptsMouseClicks (true, false);
+    valueLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     valueLabel.setColour (juce::Label::textColourId,
-                          juce::Colour (DuskVerbLookAndFeel::kValueText));
+                          juce::Colour (DuskVerbLookAndFeel::kAccent));
     parent.addAndMakeVisible (valueLabel);
 
-    // Store suffix in name field for formatting
+    // Double-click → spawn ValueEditor popup over the value label. Wired via
+    // a small adapter MouseListener so we don't have to subclass juce::Slider
+    // or juce::Label. addMouseListener is additive — the slider's normal
+    // drag/click behaviour is preserved, we just intercept double-click on
+    // top of it. Both the knob body AND the value label trigger the popup
+    // (per user spec) and the editor anchors over the value label so it
+    // appears exactly where the visible value text lives.
+    struct ValueEditorTrigger : public juce::MouseListener
+    {
+        juce::Slider* slider = nullptr;
+        juce::Component* anchor = nullptr;
+        void mouseDoubleClick (const juce::MouseEvent&) override
+        {
+            if (slider != nullptr && anchor != nullptr)
+                ValueEditor::popUp (*slider, *anchor);
+        }
+    };
+    valueEditorTrigger = std::make_unique<ValueEditorTrigger>();
+    auto* trig = static_cast<ValueEditorTrigger*> (valueEditorTrigger.get());
+    trig->slider = &slider;
+    trig->anchor = &valueLabel;
+    slider    .addMouseListener (trig, false);
+    valueLabel.addMouseListener (trig, false);
+
     valueLabel.setName (suffix);
 
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         apvts, paramID, slider);
 
-    // Set textFromValueFunction AFTER attachment (attachment overwrites it)
     auto sfx = suffix;
     slider.textFromValueFunction = [sfx] (double v)
     {
@@ -64,40 +84,18 @@ void KnobWithLabel::init (juce::Component& parent,
             return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
                                : v < 100.0 ? juce::String (v, 2) + " Hz"
                                            : juce::String (juce::roundToInt (v)) + " Hz";
+        if (sfx == " dB")   return juce::String (v, 1) + " dB";
         if (sfx == "x")     return juce::String (v, 2) + "x";
         if (sfx == "%")     return juce::String (v * 100.0, 1) + "%";
         return juce::String (v, 2);
     };
 }
 
-void KnobWithLabel::initWithSentinel (juce::Component& parent,
-                                      juce::AudioProcessorValueTreeState& apvts,
-                                      const juce::String& paramID,
-                                      const juce::String& displayName,
-                                      const juce::String& suffix,
-                                      double sentinelValue,
-                                      const juce::String& tooltip)
+void KnobWithLabel::setAccent (juce::Colour accent)
 {
-    init (parent, apvts, paramID, displayName, suffix, tooltip);
-
-    // Override the formatter so sentinel values display "default".
-    auto sfx = suffix;
-    slider.textFromValueFunction = [sfx, sentinelValue] (double v)
-    {
-        if (std::abs (v - sentinelValue) < 0.001)
-            return juce::String ("default");
-        if (sfx == " Hz")
-            return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
-                               : v < 100.0 ? juce::String (v, 2) + " Hz"
-                                           : juce::String (juce::roundToInt (v)) + " Hz";
-        if (sfx == " ms")  return juce::String (juce::roundToInt (v)) + " ms";
-        if (sfx == " dB")  return juce::String (v, 1) + " dB";
-        if (sfx == "x")    return juce::String (v, 2) + "x";
-        return juce::String (v, 2);
-    };
-    // Force the value label to refresh immediately so the text reflects
-    // the sentinel-aware formatter at construction time.
-    slider.updateText();
+    valueLabel.setColour (juce::Label::textColourId, accent);
+    valueLabel.repaint();
+    slider.repaint();   // arc colour comes from LookAndFeel; force redraw
 }
 
 // =============================================================================
@@ -112,13 +110,11 @@ DuskVerbLookAndFeel::DuskVerbLookAndFeel()
     setColour (juce::TooltipWindow::textColourId, juce::Colour (kText));
     setColour (juce::TooltipWindow::outlineColourId, juce::Colour (kBorder));
 
-    // ComboBox: subtle border, no accent outline
     setColour (juce::ComboBox::backgroundColourId, juce::Colour (kPanel));
     setColour (juce::ComboBox::outlineColourId, juce::Colour (kBorder));
     setColour (juce::ComboBox::textColourId, juce::Colour (kText));
     setColour (juce::ComboBox::arrowColourId, juce::Colour (kGroupText));
 
-    // TextButton: quiet styling for Save/Delete
     setColour (juce::TextButton::buttonColourId, juce::Colour (kPanel));
     setColour (juce::TextButton::buttonOnColourId, juce::Colour (kPanel));
     setColour (juce::TextButton::textColourOffId, juce::Colour (kGroupText));
@@ -140,29 +136,25 @@ void DuskVerbLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     bool isHovered  = slider.isMouseOverOrDragging();
     bool isDragging = slider.isMouseButtonDown();
 
-    // Active glow ring when dragging
     if (isDragging)
     {
         float glowRadius = radius;
-        g.setColour (juce::Colour (kAccent).withAlpha (0.12f));
+        g.setColour (currentAccent_.withAlpha (0.12f));
         g.fillEllipse (centre.x - glowRadius, centre.y - glowRadius,
                        glowRadius * 2.0f, glowRadius * 2.0f);
     }
 
-    // Outer dark ring
     float outerRadius = radius - 2.0f;
     g.setColour (juce::Colour (0xff0d0d1a));
     g.fillEllipse (centre.x - outerRadius, centre.y - outerRadius,
                    outerRadius * 2.0f, outerRadius * 2.0f);
 
-    // Knob body (brightens on hover)
     float knobRadius = outerRadius - 3.0f;
     g.setColour (isHovered ? juce::Colour (kKnobFill).brighter (0.15f)
                            : juce::Colour (kKnobFill));
     g.fillEllipse (centre.x - knobRadius, centre.y - knobRadius,
                    knobRadius * 2.0f, knobRadius * 2.0f);
 
-    // Arc track (background)
     float arcRadius = outerRadius - 1.5f;
     float lineW = 3.0f;
     juce::Path trackArc;
@@ -172,7 +164,6 @@ void DuskVerbLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     g.strokePath (trackArc, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
 
-    // Filled arc with gradient (darker at start → brighter at current position)
     float angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
     if (angle > rotaryStartAngle + 0.01f)
     {
@@ -180,7 +171,7 @@ void DuskVerbLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
         filledArc.addCentredArc (centre.x, centre.y, arcRadius, arcRadius,
                                  0.0f, rotaryStartAngle, angle, true);
 
-        auto accentCol = juce::Colour (kAccent);
+        auto accentCol = currentAccent_;
         juce::ColourGradient arcGradient (
             accentCol.darker (0.3f),
             centre.x + arcRadius * std::sin (rotaryStartAngle),
@@ -194,7 +185,6 @@ void DuskVerbLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
                                                         juce::PathStrokeType::rounded));
     }
 
-    // Dot indicator at current position (brighter when dragging)
     float dotRadius = 3.0f;
     float dotDist = knobRadius - 6.0f;
     float dotX = centre.x + dotDist * std::sin (angle);
@@ -202,14 +192,8 @@ void DuskVerbLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     g.setColour (isDragging ? juce::Colours::white : juce::Colour (kText));
     g.fillEllipse (dotX - dotRadius, dotY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
 
-    // Draw value text inside large knobs
-    if (diameter >= 70.0f)
-    {
-        auto text = slider.getTextFromValue (slider.getValue());
-        g.setColour (juce::Colour (kValueText));
-        g.setFont (juce::FontOptions (11.0f));
-        g.drawText (text, bounds.toNearestInt(), juce::Justification::centred);
-    }
+    // Value text is no longer drawn inside the knob — KnobWithLabel renders
+    // it ABOVE the knob in the accent colour for stronger visual hierarchy.
 }
 
 void DuskVerbLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
@@ -231,28 +215,18 @@ void DuskVerbLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButto
 
     if (on)
     {
-        // Active glow (2px larger pill behind)
         g.setColour (accent.withAlpha (0.4f));
         g.fillRoundedRectangle (bounds.expanded (2.0f), cornerSize + 2.0f);
-
-        // Filled pill
         g.setColour (accent);
         g.fillRoundedRectangle (bounds, cornerSize);
-
-        // Text
         g.setColour (juce::Colours::white);
     }
     else
     {
-        // Inactive background
         g.setColour (juce::Colour (kPanel));
         g.fillRoundedRectangle (bounds, cornerSize);
-
-        // Border
         g.setColour (juce::Colour (kBorder));
         g.drawRoundedRectangle (bounds.reduced (0.5f), cornerSize, 1.0f);
-
-        // Text
         g.setColour (juce::Colour (kGroupText));
     }
 
@@ -261,43 +235,56 @@ void DuskVerbLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButto
 }
 
 // =============================================================================
-// Value formatting
+// Value formatting (used by the timer to refresh the value label under each knob)
 // =============================================================================
 
-static juce::String formatValue (const juce::Slider& s, const juce::String& suffix)
+namespace
 {
-    double v = s.getValue();
-
-    if (suffix == " s")
+    juce::String formatValue (const juce::Slider& s, const juce::String& suffix)
     {
-        if (v < 1.0)
-            return juce::String (juce::roundToInt (v * 1000.0)) + " ms";
-        return juce::String (v, 2) + " s";
+        double v = s.getValue();
+        if (suffix == " s")
+            return v < 1.0 ? juce::String (juce::roundToInt (v * 1000.0)) + " ms"
+                           : juce::String (v, 2) + " s";
+        if (suffix == " ms")  return juce::String (juce::roundToInt (v)) + " ms";
+        if (suffix == " Hz")
+            return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
+                               : v < 100.0 ? juce::String (v, 2) + " Hz"
+                                           : juce::String (juce::roundToInt (v)) + " Hz";
+        if (suffix == " dB")  return juce::String (v, 1) + " dB";
+        if (suffix == "x")    return juce::String (v, 2) + "x";
+        if (suffix == "%")    return juce::String (v * 100.0, 1) + "%";
+        return juce::String (v, 2);
     }
-    if (suffix == " ms")
-        return juce::String (juce::roundToInt (v)) + " ms";
-    if (suffix == " Hz")
-    {
-        if (v >= 1000.0)
-            return juce::String (v / 1000.0, 2) + " kHz";
-        if (v < 100.0)
-            return juce::String (v, 2) + " Hz";
-        return juce::String (juce::roundToInt (v)) + " Hz";
-    }
-    if (suffix == "x")
-        return juce::String (v, 2) + "x";
-    if (suffix == "%")
-        return juce::String (v * 100.0, 1) + "%";
 
-    return juce::String (v, 2);
+    void drawGroupBox (juce::Graphics& g, juce::Rectangle<int> bounds,
+                       const juce::String& title, int titleBandH)
+    {
+        // Panel fill BRIGHTER than the editor background so the group reads
+        // as a contained surface. Previous "darker than background" attempt
+        // collapsed into the background colour and made the layout look flat.
+        g.setColour (juce::Colour (DuskVerbLookAndFeel::kPanel));
+        g.fillRoundedRectangle (bounds.toFloat(), 6.0f);
+
+        // 1 px border — gives each group a clear edge.
+        g.setColour (juce::Colour (DuskVerbLookAndFeel::kBorder));
+        g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 6.0f, 1.0f);
+
+        // Group title — bold and clearly readable, horizontally centred
+        // over the panel so the section anchors the eye symmetrically.
+        g.setColour (juce::Colour (DuskVerbLookAndFeel::kLabelText));
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawText (title, bounds.removeFromTop (titleBandH).reduced (8, 0),
+                    juce::Justification::centred);
+    }
 }
 
 // =============================================================================
 // DuskVerbEditor
 // =============================================================================
 
-static constexpr int kBaseWidth  = 780;
-static constexpr int kBaseHeight = 580;
+static constexpr int kBaseWidth  = 1400;  // 1250→1400: more breathing room for the 5-knob damping group + bottom row
+static constexpr int kBaseHeight = 640;   // 600→640 for the slightly taller damping group
 
 DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     : AudioProcessorEditor (&p),
@@ -305,99 +292,89 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
 {
     setLookAndFeel (&lnf_);
 
-    preDelay_  .init (*this, p.parameters, "predelay",   "PRE-DELAY",    " ms",
+    // ---- 16 main knobs ----
+    preDelay_ .init (*this, p.parameters, "predelay",  "PRE-DELAY",   " ms",
         "Delay before reverb starts. Creates space between dry signal and reverb tail");
-    diffusion_ .init (*this, p.parameters, "diffusion",  "DIFFUSION",    "%",
-        "Smears the reverb onset. Low = grainy echoes, High = smooth wash");
-    decay_     .init (*this, p.parameters, "decay",      "DECAY",        " s",
-        "Reverb tail length (RT60)");
-    size_      .init (*this, p.parameters, "size",       "SIZE",         "%",
-        "Virtual room size. Affects echo density and spacing");
-    bassMult_  .init (*this, p.parameters, "bass_mult",  "BASS MULT",    "x",
-        "Low-frequency decay multiplier. >1x = bass rings longer than mids");
-    trebleMult_.init (*this, p.parameters, "damping",    "TREBLE MULT",  "x",
-        "High-frequency decay multiplier. <1x = natural air absorption");
-    crossover_ .init (*this, p.parameters, "crossover",  "CROSSOVER",    " Hz",
-        "Frequency where bass and treble decay multipliers split");
-    modDepth_  .init (*this, p.parameters, "mod_depth",  "DEPTH",        "%",
+    decay_    .init (*this, p.parameters, "decay",
+        "Reverb tail length (RT60). Hero control — drag vertically.");
+    size_     .init (*this, p.parameters, "size",      "SIZE",        "%",
+        "Virtual room size — affects echo density and spacing");
+    modDepth_ .init (*this, p.parameters, "mod_depth", "DEPTH",       "%",
         "Chorus-like modulation depth. Reduces metallic ringing");
-    modRate_   .init (*this, p.parameters, "mod_rate",   "RATE",         " Hz",
+    modRate_  .init (*this, p.parameters, "mod_rate",  "RATE",        " Hz",
         "Speed of internal pitch modulation");
-    erLevel_   .init (*this, p.parameters, "er_level",   "LEVEL",        "%",
+    damping_  .init (*this, p.parameters, "damping",   "TREBLE MULT", "x",
+        "High-frequency decay multiplier. <1× = natural air absorption");
+    bassMult_ .init (*this, p.parameters, "bass_mult", "BASS MULT",   "x",
+        "Low-frequency decay multiplier. >1× = bass rings longer than mids");
+    midMult_  .init (*this, p.parameters, "mid_mult",  "MID MULT",    "x",
+        "Mid-band decay multiplier (between low and high crossovers). "
+        "1.0× = natural rate. >1× = mids ring longer; <1× = mids decay faster.");
+    crossover_.init (*this, p.parameters, "crossover", "LOW XOVER",   " Hz",
+        "Bass↔mid split frequency. Below this, bass multiplier applies.");
+    highCrossover_.init (*this, p.parameters, "high_crossover", "HIGH XOVER", " Hz",
+        "Mid↔treble split frequency. Above this, treble multiplier applies.");
+    saturation_.init (*this, p.parameters, "saturation", "SATURATION", "%",
+        "In-loop tanh drive. 0% = clean (transparent reverb). "
+        "100% = warm analog-style saturation on every loop pass.");
+    diffusion_.init (*this, p.parameters, "diffusion", "DIFFUSION",   "%",
+        "Tail density. Low = sparse, audible echo grain. High = smooth dense wash. "
+        "Affects both input transient smear and in-loop tank density across all engines.");
+    erLevel_  .init (*this, p.parameters, "er_level",  "ER LEVEL",    "%",
         "Early reflections level. First echoes that define room shape");
-    erSize_    .init (*this, p.parameters, "er_size",    "SIZE",         "%",
+    erSize_   .init (*this, p.parameters, "er_size",   "ER SIZE",     "%",
         "Early reflection spacing. Larger = bigger perceived room");
-    mix_       .init (*this, p.parameters, "mix",        "DRY/WET",      "%",
+    mix_      .init (*this, p.parameters, "mix",       "DRY/WET",     "%",
         "Balance between dry input and reverb. Use BUS mode for send/return");
-    loCut_     .init (*this, p.parameters, "lo_cut",     "LO CUT",       " Hz",
-        "High-pass filter on reverb output. Removes low-end rumble");
-    hiCut_     .init (*this, p.parameters, "hi_cut",     "HI CUT",       " Hz",
-        "Low-pass filter on reverb output. Darkens the reverb");
-    width_     .init (*this, p.parameters, "width",      "WIDTH",        "%",
-        "Stereo width: 0% mono, 100% normal, 150% wide");
+    loCut_    .init (*this, p.parameters, "lo_cut",    "LO CUT",      " Hz",
+        "High-pass filter on the wet signal");
+    hiCut_    .init (*this, p.parameters, "hi_cut",    "HI CUT",      " Hz",
+        "Low-pass filter on the wet signal");
+    monoBelow_.init (*this, p.parameters, "mono_below","MONO <",      " Hz",
+        "Sums the wet signal to MONO below this cutoff. 20 Hz = bypass. "
+        "Use 80-150 Hz to keep low-end punch tight in a mix.");
+    width_    .init (*this, p.parameters, "width",     "WIDTH",       "%",
+        "Stereo width of the wet signal");
+    gainTrim_ .init (*this, p.parameters, "gain_trim", "TRIM",        " dB",
+        "Output gain offset applied after the dry/wet mix");
 
-    // --- Advanced panel knobs (sentinel-default: -1 means use preset value) ---
-    advInputOnset_   .init (*this, p.parameters, "input_onset",        "INPUT ONSET", " ms",
-        "Adds an attack ramp on the input. Softens transients feeding the reverb");
-    advSoftOnset_    .init (*this, p.parameters, "soft_onset",         "SOFT ONSET",  " ms",
-        "Smooths the DattorroTank output transient. Longer = less aggressive onset");
-    advDelayScale_   .init (*this, p.parameters, "delay_scale",        "DELAY SCALE", "x",
-        "DattorroTank loop-length multiplier. Shifts mode spacing / perceived size");
-    advNoiseMod_     .initWithSentinel (*this, p.parameters, "noise_mod",          "NOISE MOD", "",    -1.0,
-        "Per-sample noise modulation depth in samples. Higher = more mode smearing");
-    advAirDamping_   .initWithSentinel (*this, p.parameters, "air_damping",        "AIR DAMP",  "",    -1.0,
-        "Feedback HF damping strength above the high-crossover. Lower = darker tail");
-    advHighCrossover_.initWithSentinel (*this, p.parameters, "high_crossover",     "HI XOVER",  " Hz", -1.0,
-        "Split frequency between mid-band and air-band damping");
-    advStructHFDamp_ .initWithSentinel (*this, p.parameters, "structural_hf_damp", "STRUCT HF", " Hz", -1.0,
-        "Structural HF damping cutoff inside the feedback loops");
-    advInlineDiff_   .initWithSentinel (*this, p.parameters, "inline_diffusion",   "TANK DIFF", "",    -1.0,
-        "Diffusion amount inside the tank (per-tank allpass coefficient)");
+    // ---- Algorithm selector + topology glyph ----
+    // The glyph reads the current algorithm and renders a tiny topology icon
+    // (2 dots / 6 dots / 4-grid / 16-grid) so the user sees which engine is
+    // active at a glance, not just its name. It updates whenever the
+    // dropdown changes.
+    algorithmBox_.setJustificationType (juce::Justification::centred);
+    algorithmBox_.setTooltip ("Engine architecture (Dattorro / 6-AP / QuadTank / FDN). "
+                              "Switching here changes the DSP without overwriting your knob values.");
+    for (int i = 0; i < getNumAlgorithms(); ++i)
+        algorithmBox_.addItem (getAlgorithmConfig (i).name, i + 1);
+    addAndMakeVisible (algorithmBox_);
+    algorithmAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+        p.parameters, "algorithm", algorithmBox_);
 
-    advOutLowShelfDb_ .init (*this, p.parameters, "output_low_shelf_db",  "LOW dB",   " dB",
-        "Output low-shelf gain. Positive boosts low end; negative cuts");
-    advOutHighShelfDb_.init (*this, p.parameters, "output_high_shelf_db", "HI dB",    " dB",
-        "Output high-shelf gain. Positive boosts air; negative cuts");
-    advOutHighShelfHz_.init (*this, p.parameters, "output_high_shelf_hz", "HI Hz",    " Hz",
-        "Output high-shelf corner frequency (0 = bypass)");
-    advOutMidEqDb_    .init (*this, p.parameters, "output_mid_eq_db",     "MID dB",   " dB",
-        "Output mid-band peaking gain. Narrow scoop/boost in the mids");
-    advOutMidEqHz_    .init (*this, p.parameters, "output_mid_eq_hz",     "MID Hz",   " Hz",
-        "Output mid-band peaking frequency (0 = bypass)");
-
-    advStereoCoupling_.initWithSentinel (*this, p.parameters, "stereo_coupling", "STEREO",   "",    -2.0,
-        "Crossfeed between L/R feedback paths. Lower = wider; higher = more mono");
-    advERCrossfeed_   .initWithSentinel (*this, p.parameters, "er_crossfeed",    "ER XFEED", "",    -1.0,
-        "Early reflection L/R crossfeed amount");
-    advChorusDepth_   .initWithSentinel (*this, p.parameters, "chorus_depth",    "CHO DEPTH", "",   -1.0,
-        "Tail chorus modulation depth (adds movement to the tail)");
-    advChorusRate_    .initWithSentinel (*this, p.parameters, "chorus_rate",     "CHO RATE", " Hz", -1.0,
-        "Tail chorus modulation rate");
-
-    advLimiterThresh_ .init (*this, p.parameters, "limiter_thresh", "LIMITER",  " dB",
-        "Output peak limiter threshold (0 dB = disabled)");
-    advDecayBoost_    .initWithSentinel (*this, p.parameters, "decay_boost", "D.BOOST", "", -1.0,
-        "Short-decay boost amount. Extends perceived tail without extending RT60");
-    advTerminalFactor_.init (*this, p.parameters, "terminal_factor", "TERM FAC", "",
-        "Terminal-decay accelerator. >0 hard-truncates tail below the terminal threshold");
-
-    // Hide advanced knobs initially — main tab is active by default.
-    for (auto* k : { &advInputOnset_, &advSoftOnset_, &advDelayScale_, &advNoiseMod_,
-                     &advAirDamping_, &advHighCrossover_, &advStructHFDamp_, &advInlineDiff_,
-                     &advOutLowShelfDb_, &advOutHighShelfDb_, &advOutHighShelfHz_,
-                     &advOutMidEqDb_, &advOutMidEqHz_,
-                     &advStereoCoupling_, &advERCrossfeed_, &advChorusDepth_, &advChorusRate_,
-                     &advLimiterThresh_, &advDecayBoost_, &advTerminalFactor_ })
+    addAndMakeVisible (engineGlyph_);
     {
-        k->slider    .setVisible (false);
-        k->nameLabel .setVisible (false);
-        k->valueLabel.setVisible (false);
+        const auto initialEngine = getAlgorithmConfig (
+            static_cast<int> (p.parameters.getRawParameterValue ("algorithm")->load())).engine;
+        engineGlyph_.setEngine (initialEngine);
+        applyEngineAccent (initialEngine);
     }
+    algorithmBox_.onChange = [this, &p]
+    {
+        const int idx = algorithmBox_.getSelectedId() - 1;
+        if (idx >= 0 && idx < getNumAlgorithms())
+        {
+            const auto e = getAlgorithmConfig (idx).engine;
+            engineGlyph_.setEngine (e);
+            applyEngineAccent (e);   // recolour all knobs / value labels / tail meter
+        }
+        juce::ignoreUnused (p);
+    };
 
-    // User preset manager
+
+    // ---- User preset manager ----
     userPresetManager_ = std::make_unique<UserPresetManager> ("DuskVerb");
 
-    // Preset browser (factory + user presets)
     presetBox_.setJustificationType (juce::Justification::centred);
     presetBox_.setTextWhenNothingSelected ("Preset");
     presetBox_.onChange = [this]
@@ -405,7 +382,6 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         int id = presetBox_.getSelectedId();
         if (id >= 1001)
         {
-            // User preset
             int userIdx = id - 1001;
             auto userPresets = userPresetManager_->loadUserPresets();
             if (userIdx >= 0 && userIdx < static_cast<int> (userPresets.size()))
@@ -415,25 +391,14 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
         {
             loadPreset (id - 2);
         }
-        // loadPreset() now syncs modeBox_ to the preset's engine type, so we
-        // do not clear it here (previous behaviour was to wipe it to "Mode").
         updateDeleteButtonVisibility();
     };
+    presetBox_.setTooltip ("Factory and user presets. Use < / > to step through, "
+                           "Save to capture the current settings.");
     addAndMakeVisible (presetBox_);
     refreshPresetList();
 
-    // Mode dropdown — engine-type shortcut (swaps engine, keeps user's knobs)
-    modeBox_.setJustificationType (juce::Justification::centred);
-    modeBox_.setTextWhenNothingSelected ("Mode");
-    modeBox_.addItem ("FDN",      1);
-    modeBox_.addItem ("Dattorro", 2);
-    modeBox_.addItem ("QuadTank", 3);
-    modeBox_.setTooltip ("Swap reverb engine. Knob positions are preserved — pick a preset or "
-                         "tweak knobs to taste. FDN=Vocal Hall, Dattorro=Drum Room, QuadTank=Bright Chamber.");
-    modeBox_.onChange = [this] { selectEngineMode (modeBox_.getSelectedId()); };
-    addAndMakeVisible (modeBox_);
-
-    // Restore preset selection from saved state
+    // Restore preset selection from saved state.
     {
         auto savedName = processorRef.parameters.state.getProperty ("presetName", "").toString();
         if (savedName.isNotEmpty())
@@ -454,24 +419,16 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
                 {
                     if (userPresets[i].name == savedName)
                     {
-                        presetBox_.setSelectedId (static_cast<int> (1001 + i), juce::dontSendNotification);
+                        presetBox_.setSelectedId (static_cast<int> (1001 + i),
+                                                  juce::dontSendNotification);
                         break;
                     }
                 }
             }
         }
         updateDeleteButtonVisibility();
-
-        // Sync the Mode dropdown from whatever algorithm the host restored.
-        if (auto* algoParam = processorRef.parameters.getRawParameterValue ("algorithm"))
-        {
-            int algoIdx = static_cast<int> (algoParam->load());
-            modeBox_.setSelectedId (engineModeIdForAlgorithm (algoIdx),
-                                    juce::dontSendNotification);
-        }
     }
 
-    // Prev/next preset nav buttons
     prevPresetButton_.setButtonText ("<");
     prevPresetButton_.setTooltip ("Previous preset");
     prevPresetButton_.onClick = [this] { stepFactoryPreset (-1); };
@@ -482,86 +439,87 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     nextPresetButton_.onClick = [this] { stepFactoryPreset (+1); };
     addAndMakeVisible (nextPresetButton_);
 
-    // Save preset button
     savePresetButton_.setButtonText ("Save");
+    savePresetButton_.setTooltip ("Save the current settings as a user preset");
     savePresetButton_.onClick = [this] { saveUserPreset(); };
     addAndMakeVisible (savePresetButton_);
 
-    // Delete preset button (only visible when a user preset is selected)
     deletePresetButton_.setButtonText ("Del");
+    deletePresetButton_.setTooltip ("Delete the selected user preset (factory presets cannot be deleted)");
     deletePresetButton_.onClick = [this]
     {
         int id = presetBox_.getSelectedId();
-        if (id >= 1001)
+        if (id < 1001) return;
+        int userIdx = id - 1001;
+        auto userPresets = userPresetManager_->loadUserPresets();
+        if (userIdx >= 0 && userIdx < static_cast<int> (userPresets.size()))
         {
-            int userIdx = id - 1001;
-            auto userPresets = userPresetManager_->loadUserPresets();
-            if (userIdx >= 0 && userIdx < static_cast<int> (userPresets.size()))
-            {
-                auto name = userPresets[static_cast<size_t> (userIdx)].name;
-                juce::Component::SafePointer<DuskVerbEditor> safeThis (this);
-
-                juce::AlertWindow::showOkCancelBox (
-                    juce::MessageBoxIconType::WarningIcon,
-                    "Delete Preset",
-                    "Delete \"" + name + "\"?",
-                    "Delete", "Cancel", nullptr,
-                    juce::ModalCallbackFunction::create ([safeThis, name] (int result) {
-                        if (result == 1 && safeThis != nullptr)
-                        {
-                            safeThis->deleteUserPreset (name);
-                            safeThis->updateDeleteButtonVisibility();
-                        }
-                    }));
-            }
+            auto name = userPresets[static_cast<size_t> (userIdx)].name;
+            juce::Component::SafePointer<DuskVerbEditor> safeThis (this);
+            juce::AlertWindow::showOkCancelBox (
+                juce::MessageBoxIconType::WarningIcon,
+                "Delete Preset",
+                "Delete \"" + name + "\"?",
+                "Delete", "Cancel", nullptr,
+                juce::ModalCallbackFunction::create ([safeThis, name] (int result)
+                {
+                    if (result == 1 && safeThis != nullptr)
+                    {
+                        safeThis->deleteUserPreset (name);
+                        safeThis->updateDeleteButtonVisibility();
+                    }
+                }));
         }
     };
     addAndMakeVisible (deletePresetButton_);
     deletePresetButton_.setVisible (false);
 
-    // MAIN / ADVANCED tab toggle (top-right of header). ADVANCED exposes the
-    // per-preset override knobs (air damping, output EQ, dynamics, etc.) that
-    // already exist in the processor as sentinel-default APVTS params.
-    mainTabButton_.setButtonText ("MAIN");
-    mainTabButton_.setClickingTogglesState (true);
-    mainTabButton_.setRadioGroupId (1001);
-    mainTabButton_.setToggleState (true, juce::dontSendNotification);
-    mainTabButton_.setTooltip ("Standard reverb controls");
-    mainTabButton_.onClick = [this] { setActiveTab (false); };
-    addAndMakeVisible (mainTabButton_);
+    // Pre-delay sync — combo + small "SYNC" caption above so it isn't visually orphaned
+    // next to the labelled PRE-DELAY knob.
+    predelaySyncLabel_.setText ("SYNC", juce::dontSendNotification);
+    predelaySyncLabel_.setJustificationType (juce::Justification::centred);
+    predelaySyncLabel_.setInterceptsMouseClicks (false, false);
+    predelaySyncLabel_.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    predelaySyncLabel_.setColour (juce::Label::textColourId,
+                                   juce::Colour (DuskVerbLookAndFeel::kLabelText));
+    addAndMakeVisible (predelaySyncLabel_);
 
-    advancedTabButton_.setButtonText ("ADV");
-    advancedTabButton_.setClickingTogglesState (true);
-    advancedTabButton_.setRadioGroupId (1001);
-    advancedTabButton_.setToggleState (false, juce::dontSendNotification);
-    advancedTabButton_.setTooltip ("Per-preset override controls (damping, EQ, dynamics, spatial)");
-    advancedTabButton_.onClick = [this] { setActiveTab (true); };
-    addAndMakeVisible (advancedTabButton_);
-
-    // Pre-delay sync
     predelaySyncBox_.addItemList ({ "Free", "1/32", "1/16", "1/8", "1/4", "1/2", "1/1" }, 1);
     predelaySyncBox_.setJustificationType (juce::Justification::centred);
+    predelaySyncBox_.setTooltip ("Tempo-sync pre-delay to the host's BPM. "
+                                 "When set to a note value, overrides the PRE-DELAY knob.");
     addAndMakeVisible (predelaySyncBox_);
     predelaySyncAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
         p.parameters, "predelay_sync", predelaySyncBox_);
 
-    // Freeze button (inside TIME group)
+    // Freeze
     freezeButton_.setButtonText ("FREEZE");
     freezeButton_.setName ("freeze");
     freezeButton_.setClickingTogglesState (true);
+    freezeButton_.setTooltip ("Freeze the reverb tail — input is muted and the existing tail "
+                              "loops indefinitely. Useful for ambient pads and risers.");
     addAndMakeVisible (freezeButton_);
     freezeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         p.parameters, "freeze", freezeButton_);
 
-    // Bus mode button (inside OUTPUT group)
+    // Bus mode
     busModeButton_.setButtonText ("BUS");
     busModeButton_.setName ("bus_mode");
     busModeButton_.setClickingTogglesState (true);
+    busModeButton_.setTooltip ("Bus mode — outputs 100% wet signal regardless of DRY/WET. "
+                               "Use on a send/return aux with the DRY/WET knob disabled.");
     addAndMakeVisible (busModeButton_);
     busModeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         p.parameters, "bus_mode", busModeButton_);
 
-    // Level meters
+    // Live output tail meter — sits between the header dropdowns and the
+    // group panels. Pre-fill with -100 dB so the curve starts flat at the
+    // bottom rather than spiking from the default 0 dB on the first frame.
+    addAndMakeVisible (tailMeter_);
+    for (int i = 0; i < 200; ++i)
+        tailMeter_.pushFrame (-100.0f);
+
+    // Meters
     inputMeter_.setStereoMode (true);
     inputMeter_.setRefreshRate (15.0f);
     addAndMakeVisible (inputMeter_);
@@ -570,7 +528,6 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     outputMeter_.setRefreshRate (15.0f);
     addAndMakeVisible (outputMeter_);
 
-    // Scalable editor: 780x580 base, 70%-200%, fixed aspect ratio
     scaler_.initialize (this, &p, kBaseWidth, kBaseHeight,
                         static_cast<int> (kBaseWidth * 0.7f),
                         static_cast<int> (kBaseHeight * 0.7f),
@@ -595,97 +552,18 @@ void DuskVerbEditor::timerCallback()
                               juce::dontSendNotification);
     };
 
-    update (preDelay_);
-    update (diffusion_);
-    update (decay_);
-    update (size_);
-    update (bassMult_);
-    update (trebleMult_);
-    update (crossover_);
-    update (modDepth_);
-    update (modRate_);
-    update (erLevel_);
-    update (erSize_);
-    update (mix_);
-    update (loCut_);
-    update (hiCut_);
-    update (width_);
+    // decay_ is a HeroDecay — self-updates via slider.onValueChange → repaint.
+    update (preDelay_);  update (size_);      update (modDepth_);  update (modRate_);
+    update (damping_);   update (bassMult_);  update (midMult_);   update (crossover_);
+    update (highCrossover_); update (saturation_); update (diffusion_);
+    update (erLevel_);   update (erSize_);    update (mix_);       update (loCut_);
+    update (hiCut_);     update (monoBelow_); update (width_);     update (gainTrim_);
 
-    // Advanced panel knobs — use the slider's own textFromValueFunction
-    // (set in init/initWithSentinel) so sentinel values display as "default".
-    auto updateAdv = [] (KnobWithLabel& k)
-    {
-        k.valueLabel.setText (k.slider.getTextFromValue (k.slider.getValue()),
-                              juce::dontSendNotification);
-    };
-    updateAdv (advInputOnset_);
-    updateAdv (advSoftOnset_);
-    updateAdv (advDelayScale_);
-    updateAdv (advNoiseMod_);
-    updateAdv (advAirDamping_);
-    updateAdv (advHighCrossover_);
-    updateAdv (advStructHFDamp_);
-    updateAdv (advInlineDiff_);
-    updateAdv (advOutLowShelfDb_);
-    updateAdv (advOutHighShelfDb_);
-    updateAdv (advOutHighShelfHz_);
-    updateAdv (advOutMidEqDb_);
-    updateAdv (advOutMidEqHz_);
-    updateAdv (advStereoCoupling_);
-    updateAdv (advERCrossfeed_);
-    updateAdv (advChorusDepth_);
-    updateAdv (advChorusRate_);
-    updateAdv (advLimiterThresh_);
-    updateAdv (advDecayBoost_);
-    updateAdv (advTerminalFactor_);
+    inputMeter_.setStereoLevels  (processorRef.getInputLevelL(),  processorRef.getInputLevelR());
+    outputMeter_.setStereoLevels (processorRef.getOutputLevelL(), processorRef.getOutputLevelR());
 
-    // Gray out mix knob when bus mode is active
-    bool busMode = busModeButton_.getToggleState();
-    mix_.slider.setEnabled (! busMode);
-    mix_.slider.setAlpha (busMode ? 0.3f : 1.0f);
-    mix_.nameLabel.setAlpha (busMode ? 0.3f : 1.0f);
-    if (busMode)
-        mix_.valueLabel.setText ("100% (Bus)", juce::dontSendNotification);
-
-    // Update meters
-    inputMeter_.setStereoLevels (processorRef.getInputLevelL(),
-                                 processorRef.getInputLevelR());
-    outputMeter_.setStereoLevels (processorRef.getOutputLevelL(),
-                                  processorRef.getOutputLevelR());
-    inputMeter_.repaint();
-    outputMeter_.repaint();
-}
-
-// =============================================================================
-// Paint
-// =============================================================================
-
-static void drawGroupBox (juce::Graphics& g, juce::Rectangle<int> bounds,
-                          const juce::String& title, int titleBandH)
-{
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kPanel));
-    g.fillRoundedRectangle (bounds.toFloat(), 6.0f);
-
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kBorder));
-    g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 6.0f, 1.0f);
-
-    // Group title with letter spacing, left-aligned. Title band must match the
-    // `topPad` value used by `layoutKnobsInGroup` — otherwise the knob name
-    // labels end up overlapping the title at smaller scale factors (since
-    // topPad scales with the editor but a hardcoded band height wouldn't).
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
-    g.setFont (juce::FontOptions (10.0f));
-
-    juce::String spaced;
-    for (int i = 0; i < title.length(); ++i)
-    {
-        spaced += title[i];
-        if (i < title.length() - 1)
-            spaced += ' ';
-    }
-
-    auto titleArea = bounds.withHeight (titleBandH).withTrimmedLeft (10);
-    g.drawText (spaced, titleArea, juce::Justification::centredLeft);
+    tailMeter_.pushFrame (juce::jmax (processorRef.getOutputLevelL(),
+                                       processorRef.getOutputLevelR()));
 }
 
 void DuskVerbEditor::paint (juce::Graphics& g)
@@ -699,67 +577,58 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int contentX = margin + meterW + meterGap;
     int contentW = getWidth() - contentX - margin - meterW - meterGap;
 
-    // Title
+    // Brand wordmark — large, bold, slightly compressed for visual character.
+    // The plugin name is the brand; no need to explain "Algorithmic Reverb"
+    // (Valhalla, Crystalline, Blackhole all skip the explanatory subtitle).
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kText));
-    g.setFont (juce::FontOptions (22.0f * sf, juce::Font::bold));
-    g.drawText ("DUSKVERB", 0, scaler_.scaled (8), getWidth(), scaler_.scaled (24),
+    juce::Font titleFont (juce::FontOptions (32.0f * sf, juce::Font::bold));
+    titleFont.setHorizontalScale (0.95f);
+    g.setFont (titleFont);
+    g.drawText ("DUSKVERB", 0, scaler_.scaled (4), getWidth(), scaler_.scaled (40),
                 juce::Justification::centred);
 
-    // Subtitle
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kSubtleText));
-    g.setFont (juce::FontOptions (11.0f * sf));
-    g.drawText ("Algorithmic Reverb", 0, scaler_.scaled (30), getWidth(), scaler_.scaled (16),
-                juce::Justification::centred);
-
-    // Divider line
     g.setColour (juce::Colour (DuskVerbLookAndFeel::kBorder));
     int dividerY = scaler_.scaled (46);
     g.drawHorizontalLine (dividerY,
                           static_cast<float> (contentX),
                           static_cast<float> (contentX + contentW));
 
-    // --- Group box positions (must match resized()) ---
-    // topY and titleBandH MUST stay in sync with the values used in resized()
-    // — otherwise the group title band and the knob name labels fall out of
-    // alignment and overlap visually.
-    int topY       = scaler_.scaled (84);
-    int gap        = scaler_.scaled (8);
-    int titleBandH = scaler_.scaled (20);  // keep == topPad in resized()
+    int topY       = scaler_.scaled (152);
+    int gap        = scaler_.scaled (8);   // MUST match resized()
+    int titleBandH = scaler_.scaled (20);
 
-    // Proportional split matching resized() (base: 200 top + 250 bottom = 450)
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * (200.0f / 450.0f));
+    int topRowH = juce::roundToInt (availH * 0.45f);
     int bottomH = availH - topRowH;
     int bottomY = topY + topRowH + gap;
 
+    // Group panel widths MUST match resized() exactly — knobs are placed in
+    // resized() using these same percentages. Previously paint() used a
+    // 25/30/45 split while resized() used 30/36/34, so DAMPING's drawn box
+    // overshot its knob columns by ~11 % and INPUT's knobs spilled past the
+    // INPUT box edge.
+    // 2026-04-26: TIME 36 → 28, DAMPING auto-grows 34 → 42 to give the
+    // 5-knob damping group breathing room (was visibly cramped).
     int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.28f);
-    int timeW      = static_cast<int> (topUsable * 0.36f);
+    int inputW     = static_cast<int> (topUsable * 0.30f);
+    int timeW      = static_cast<int> (topUsable * 0.28f);
     int characterW = topUsable - inputW - timeW;
 
     int inputX     = contentX;
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    if (! showingAdvanced_)
-    {
-        drawGroupBox (g, { inputX, topY, inputW, topRowH }, "INPUT", titleBandH);
-        drawGroupBox (g, { timeX, topY, timeW, topRowH }, "TIME", titleBandH);
-        drawGroupBox (g, { characterX, topY, characterW, topRowH }, "CHARACTER", titleBandH);
-    }
-    else
-    {
-        int advGroupW = (contentW - gap) / 2;
-        int onsetX    = contentX;
-        int dampingX  = onsetX + advGroupW + gap;
-        drawGroupBox (g, { onsetX,   topY, advGroupW, topRowH }, "ONSET",   titleBandH);
-        drawGroupBox (g, { dampingX, topY, advGroupW, topRowH }, "DAMPING", titleBandH);
-    }
+    drawGroupBox (g, { inputX,     topY, inputW,     topRowH }, "INPUT",     titleBandH);
+    drawGroupBox (g, { timeX,      topY, timeW,      topRowH }, "TIME",      titleBandH);
+    drawGroupBox (g, { characterX, topY, characterW, topRowH }, "DAMPING",   titleBandH);
 
+    // ER widened to 26% (was 20%) for 3 knobs (added DIFFUSION).
+    // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
+    // the largest share for its 3 knobs + bus button.
     int bottomUsable = contentW - gap * 3;
-    int modW    = static_cast<int> (bottomUsable * 0.22f);
-    int erW     = static_cast<int> (bottomUsable * 0.22f);
-    int eqW     = static_cast<int> (bottomUsable * 0.20f);
+    int modW    = static_cast<int> (bottomUsable * 0.18f);
+    int erW     = static_cast<int> (bottomUsable * 0.26f);
+    int eqW     = static_cast<int> (bottomUsable * 0.28f);
     int outputW = bottomUsable - modW - erW - eqW;
 
     int modX    = contentX;
@@ -767,90 +636,68 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int eqX     = erX + erW + gap;
     int outputX = eqX + eqW + gap;
 
-    if (! showingAdvanced_)
-    {
-        drawGroupBox (g, { modX, bottomY, modW, bottomH }, "MODULATION", titleBandH);
-        drawGroupBox (g, { erX, bottomY, erW, bottomH }, "EARLY REFLECTIONS", titleBandH);
-        drawGroupBox (g, { eqX, bottomY, eqW, bottomH }, "OUTPUT EQ", titleBandH);
-        drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT", titleBandH);
-    }
-    else
-    {
-        int advBottomUsable = contentW - gap * 2;
-        int advEqW          = static_cast<int> (advBottomUsable * 0.45f);
-        int advSpatialW     = static_cast<int> (advBottomUsable * 0.30f);
-        int advDynW         = advBottomUsable - advEqW - advSpatialW;
-        int advEqX          = contentX;
-        int advSpatialX     = advEqX + advEqW + gap;
-        int advDynX         = advSpatialX + advSpatialW + gap;
-        drawGroupBox (g, { advEqX,      bottomY, advEqW,      bottomH }, "OUTPUT EQ", titleBandH);
-        drawGroupBox (g, { advSpatialX, bottomY, advSpatialW, bottomH }, "SPATIAL",   titleBandH);
-        drawGroupBox (g, { advDynX,     bottomY, advDynW,     bottomH }, "DYNAMICS",  titleBandH);
-    }
+    drawGroupBox (g, { modX,    bottomY, modW,    bottomH }, "MODULATION",        titleBandH);
+    drawGroupBox (g, { erX,     bottomY, erW,     bottomH }, "EARLY REFLECTIONS", titleBandH);
+    drawGroupBox (g, { eqX,     bottomY, eqW,     bottomH }, "FILTER",            titleBandH);
+    drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT",            titleBandH);
 
-    // Meter labels
-    g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
-    g.setFont (juce::FontOptions (8.0f * sf));
-    g.drawText ("IN", margin, topY - scaler_.scaled (12), meterW, scaler_.scaled (12),
-                juce::Justification::centred);
-    g.drawText ("OUT", getWidth() - margin - meterW, topY - scaler_.scaled (12), meterW,
-                scaler_.scaled (12), juce::Justification::centred);
+    // IN / OUT labels — bigger and brighter, sitting just above the meters
+    // and clear of the tail-meter ribbon above. Wider than the meter column
+    // so the text isn't squashed into the 22 px LED width.
+    const int labelY     = topY - scaler_.scaled (16);
+    const int labelH_in  = scaler_.scaled (14);
+    const int labelW_in  = scaler_.scaled (40);
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kLabelText));
+    g.setFont (juce::FontOptions (12.0f * sf, juce::Font::bold));
+    g.drawText ("IN",  margin - (labelW_in - meterW) / 2,
+                labelY, labelW_in, labelH_in, juce::Justification::centred);
+    g.drawText ("OUT", getWidth() - margin - meterW - (labelW_in - meterW) / 2,
+                labelY, labelW_in, labelH_in, juce::Justification::centred);
 }
 
-// =============================================================================
-// Layout
-// =============================================================================
-
-static void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize,
-                       float scaleFactor)
+namespace
 {
-    int nameH  = juce::roundToInt (14.0f * scaleFactor);
-    bool largeKnob = (knobSize >= juce::roundToInt (70.0f * scaleFactor));
-    int valueH = largeKnob ? 0 : juce::roundToInt (14.0f * scaleFactor);
-    int totalH = nameH + knobSize + valueH;
-
-    int yPad = (area.getHeight() - totalH) / 2;
-    auto col = area;
-    if (yPad > 0)
-        col.removeFromTop (yPad);
-
-    k.nameLabel.setBounds (col.removeFromTop (nameH));
-
-    auto knobArea = col.removeFromTop (knobSize);
-    k.slider.setBounds (knobArea.withSizeKeepingCentre (knobSize, knobSize));
-
-    if (largeKnob)
+    void placeKnob (KnobWithLabel& k, juce::Rectangle<int> area, int knobSize, float scaleFactor)
     {
-        k.valueLabel.setBounds (0, 0, 0, 0);
-        k.valueLabel.setVisible (false);
-    }
-    else
-    {
+        // Logic-style stack: NAME (small dim) → VALUE (large accent) → KNOB.
+        // Putting the value ABOVE the knob makes the readout the dominant
+        // element of each control column; the rotary becomes a tactile
+        // affordance underneath.
+        const int nameH  = juce::roundToInt (12.0f * scaleFactor);
+        const int valueH = juce::roundToInt (18.0f * scaleFactor);
+        const int gap    = juce::roundToInt (2.0f  * scaleFactor);
+        const int totalH = nameH + gap + valueH + gap + knobSize;
+
+        const int yPad = (area.getHeight() - totalH) / 2;
+        auto col = area;
+        if (yPad > 0) col.removeFromTop (yPad);
+
+        k.nameLabel.setBounds (col.removeFromTop (nameH));
+        col.removeFromTop (gap);
         k.valueLabel.setVisible (true);
-        k.valueLabel.setBounds (col.removeFromTop (juce::roundToInt (14.0f * scaleFactor)));
+        k.valueLabel.setBounds (col.removeFromTop (valueH));
+        col.removeFromTop (gap);
+        auto knobArea = col.removeFromTop (knobSize);
+        k.slider.setBounds (knobArea.withSizeKeepingCentre (knobSize, knobSize));
     }
-}
 
-static void layoutKnobsInGroup (juce::Rectangle<int> groupBounds, int topPad,
-                                std::vector<std::pair<KnobWithLabel*, int>> knobs,
-                                float scaleFactor)
-{
-    auto area = groupBounds.reduced (4, 0);
-    area.removeFromTop (topPad);
-
-    int numKnobs = static_cast<int> (knobs.size());
-    int colW = area.getWidth() / numKnobs;
-
-    for (auto& [knob, knobSize] : knobs)
+    void layoutKnobsInGroup (juce::Rectangle<int> groupBounds, int topPad,
+                             std::vector<std::pair<KnobWithLabel*, int>> knobs,
+                             float scaleFactor)
     {
-        auto col = area.removeFromLeft (colW);
-        placeKnob (*knob, col, knobSize, scaleFactor);
+        auto area = groupBounds.reduced (4, 0);
+        area.removeFromTop (topPad);
+        int colW = area.getWidth() / static_cast<int> (knobs.size());
+        for (auto& [knob, knobSize] : knobs)
+        {
+            auto col = area.removeFromLeft (colW);
+            placeKnob (*knob, col, knobSize, scaleFactor);
+        }
     }
 }
 
 void DuskVerbEditor::resized()
 {
-    scaler_.updateResizer();
     auto sf = scaler_.getScaleFactor();
 
     int margin   = scaler_.scaled (10);
@@ -859,103 +706,152 @@ void DuskVerbEditor::resized()
     int contentX = margin + meterW + meterGap;
     int contentW = getWidth() - contentX - margin - meterW - meterGap;
 
-    // Title click area for supporters overlay
-    int titleW = scaler_.scaled (200);
-    titleClickArea_ = { (getWidth() - titleW) / 2, scaler_.scaled (6),
-                         titleW, scaler_.scaled (38) };
+    // Header strip — single horizontally-centred cluster:
+    //   [glyph] [algorithm] [<] [preset] [>] [Save] [Del]
+    // Glyph sits to the LEFT of the algorithm dropdown so the user sees the
+    // engine topology icon right next to its name. Total cluster width grows
+    // by `btnW + 4` when Delete is visible; recompute every resize so the
+    // row stays centred in both states without jumping.
+    int headerY = scaler_.scaled (52);
+    int headerH = scaler_.scaled (24);
 
-    // --- Header: [main][adv] | mode | preset | < > | save | del ---
-    int presetW = scaler_.scaled (200);
-    int presetH = scaler_.scaled (24);
-    int presetY = scaler_.scaled (52);
-    int modeW   = scaler_.scaled (90);
-    int tabW    = scaler_.scaled (50);
-    int arrowW  = scaler_.scaled (24);
-    int saveW   = scaler_.scaled (50);
-    int delW    = scaler_.scaled (36);
-    int btnGap  = scaler_.scaled (4);
-    int tabGap  = scaler_.scaled (1);   // tabs sit tight together like the arrows
-    int arrowGap = scaler_.scaled (1);  // arrows sit tight together as a pair
-    int totalPresetW = tabW + tabGap + tabW + btnGap
-                       + modeW + btnGap + presetW + btnGap
-                       + arrowW + arrowGap + arrowW + btnGap
-                       + saveW + btnGap + delW;
-    int x = (getWidth() - totalPresetW) / 2;
-    mainTabButton_    .setBounds (x, presetY, tabW, presetH);    x += tabW + tabGap;
-    advancedTabButton_.setBounds (x, presetY, tabW, presetH);    x += tabW + btnGap;
-    modeBox_.setBounds (x, presetY, modeW, presetH);             x += modeW + btnGap;
-    presetBox_.setBounds (x, presetY, presetW, presetH);         x += presetW + btnGap;
-    prevPresetButton_.setBounds (x, presetY, arrowW, presetH);   x += arrowW + arrowGap;
-    nextPresetButton_.setBounds (x, presetY, arrowW, presetH);   x += arrowW + btnGap;
-    savePresetButton_.setBounds (x, presetY, saveW, presetH);    x += saveW + btnGap;
-    deletePresetButton_.setBounds (x, presetY, delW, presetH);
+    int glyphW  = scaler_.scaled (24);
+    int algoW   = scaler_.scaled (180);
+    int navBtnW = scaler_.scaled (24);
+    int presetW = scaler_.scaled (210);
+    int btnW    = scaler_.scaled (52);
+    int gapGl   = scaler_.scaled (4);
+    int gapAlgo = scaler_.scaled (10);
+    int gapTiny = 2;
+    int gapSave = scaler_.scaled (10);
 
-    // --- Knob sizes (3 tiers) ---
-    int smallKnob  = scaler_.scaled (52);
-    int mediumKnob = scaler_.scaled (64);
-    int largeKnob  = scaler_.scaled (80);
+    int clusterW = glyphW + gapGl + algoW + gapAlgo + navBtnW + gapTiny
+                 + presetW + gapTiny + navBtnW + gapSave + btnW;
+    if (deletePresetButton_.isVisible())
+        clusterW += 4 + btnW;
 
-    // --- Vertical layout: proportional split avoids rounding-error accumulation ---
-    // Header row ends at y=76 (52 + 24). Previously knob groups started at y=112
-    // (36 px empty band under the algorithm strip that used to live there).
-    // Compact to y=84 so the empty band shrinks to ~8 px and the knob rows get
-    // the reclaimed ~28 px, making the panel feel denser and less empty.
-    int topY   = scaler_.scaled (84);
-    int gap    = scaler_.scaled (8);
-    int topPad = scaler_.scaled (20);
+    int x = contentX + (contentW - clusterW) / 2;
 
-    // Split available height proportionally (base: 200 top + 250 bottom = 450)
+    engineGlyph_       .setBounds (x, headerY, glyphW, headerH);  x += glyphW + gapGl;
+    algorithmBox_      .setBounds (x, headerY, algoW, headerH);   x += algoW + gapAlgo;
+    prevPresetButton_  .setBounds (x, headerY, navBtnW, headerH); x += navBtnW + gapTiny;
+    presetBox_         .setBounds (x, headerY, presetW, headerH); x += presetW + gapTiny;
+    nextPresetButton_  .setBounds (x, headerY, navBtnW, headerH); x += navBtnW + gapSave;
+    savePresetButton_  .setBounds (x, headerY, btnW,    headerH); x += btnW + 4;
+    deletePresetButton_.setBounds (x, headerY, btnW,    headerH);
+
+    // Tail meter — slim ribbon under the header dropdowns. Spans the full
+    // width of the group panels below it (no width cap) so it reads as the
+    // visual roof of the layout rather than a centred badge.
+    {
+        const int meterY = scaler_.scaled (88);
+        const int meterH = scaler_.scaled (36);
+        tailMeter_.setBounds (contentX, meterY, contentW, meterH);
+    }
+
+    // Group rows start below the tail meter (ends y=124) plus a 16 px band
+    // for the brighter IN / OUT labels (y=128–144) plus a small gap.
+    int topY       = scaler_.scaled (152);
+    int gap        = scaler_.scaled (8);
+    int titleBandH = scaler_.scaled (20);
+    int topPad     = titleBandH + scaler_.scaled (4);
+
     int availH  = getHeight() - topY - gap - margin;
-    int topRowH = juce::roundToInt (availH * (200.0f / 450.0f));
+    int topRowH = juce::roundToInt (availH * 0.45f);
     int bottomH = availH - topRowH;
     int bottomY = topY + topRowH + gap;
 
+    // Meters span the full content area.
+    inputMeter_.setBounds  (margin,                       topY, meterW, availH + gap);
+    outputMeter_.setBounds (getWidth() - margin - meterW, topY, meterW, availH + gap);
+
+    // 30 / 28 / 42 split — TIME shrunk and DAMPING widened so the 5 damping
+    // knobs (BASS / MID / TREBLE / LOW XOVER / HIGH XOVER) get breathing
+    // room. MUST stay in lock-step with paint() — see the comment block
+    // there for the original alignment-bug history.
     int topUsable  = contentW - gap * 2;
-    int inputW     = static_cast<int> (topUsable * 0.28f);
-    int timeW      = static_cast<int> (topUsable * 0.36f);
+    int inputW     = static_cast<int> (topUsable * 0.30f);
+    int timeW      = static_cast<int> (topUsable * 0.28f);
     int characterW = topUsable - inputW - timeW;
 
     int inputX     = contentX;
     int timeX      = inputX + inputW + gap;
     int characterX = timeX + timeW + gap;
 
-    // Pre-delay sync dropdown (bottom of INPUT group) — calculate first to reserve space
-    int syncH = scaler_.scaled (20);
-    int syncGap = scaler_.scaled (4);
+    // Two-tier knob hierarchy — primary (DECAY, SIZE, MIX) reads as the
+    // hero of each row; everything else sits at one consistent secondary
+    // size. The previous three-tier layout fragmented visually.
+    // Sizes bumped (70→78, 56→62) after widening to 1400 px so the knobs
+    // fill the new column widths instead of looking lost.
+    int knobBig = juce::roundToInt (78.0f * sf);
+    int knobMed = juce::roundToInt (62.0f * sf);
+
+    // INPUT: PRE-DELAY knob | SATURATION knob | SYNC label+combo.
+    // The two knobs sit adjacent so the row reads as a coherent pair, and
+    // the SYNC stack lives at the right edge where its label/combo have
+    // natural breathing room (previously sandwiched between two knobs,
+    // which crowded the combo box width).
     {
-        int syncW = inputW - scaler_.scaled (16);
-        int syncX = inputX + scaler_.scaled (8);
-        int syncY = topY + topRowH - syncH - scaler_.scaled (2);
-        predelaySyncBox_.setBounds (syncX, syncY, syncW, syncH);
+        auto inputArea = juce::Rectangle<int> (inputX, topY, inputW, topRowH).reduced (4, 0);
+        inputArea.removeFromTop (topPad);
+
+        int colW = inputArea.getWidth() / 3;
+        placeKnob (preDelay_,  inputArea.removeFromLeft (colW), knobMed, sf);
+        placeKnob (saturation_, inputArea.removeFromLeft (colW), knobMed, sf);
+
+        // Right column: SYNC label + combo, vertically centred.
+        auto syncCol = inputArea.reduced (4, 0);
+        const int labelH = scaler_.scaled (14);
+        const int comboH = scaler_.scaled (24);
+        const int stackH = labelH + scaler_.scaled (4) + comboH;
+        const int yPad = std::max ((syncCol.getHeight() - stackH) / 2, 0);
+        syncCol.removeFromTop (yPad);
+        predelaySyncLabel_.setBounds (syncCol.removeFromTop (labelH));
+        syncCol.removeFromTop (scaler_.scaled (4));
+        predelaySyncBox_.setBounds (syncCol.removeFromTop (comboH));
     }
 
-    // INPUT group: Pre-Delay (small), Diffusion (small) — shrink area to clear dropdown
-    layoutKnobsInGroup ({ inputX, topY, inputW, topRowH - syncH - syncGap }, topPad,
-        { { &preDelay_, smallKnob }, { &diffusion_, smallKnob } }, sf);
-
-    // Freeze button (bottom of TIME group) — calculate first to reserve space
-    int freezeH = scaler_.scaled (22);
-    int freezeGap = scaler_.scaled (4);
+    // TIME: decay + size knobs + bottom strip split into [DECAY LOCK | FREEZE].
+    // LOCK sits under DECAY so the visual relationship is unmistakable.
     {
-        int freezeW = timeW - scaler_.scaled (16);
-        int freezeX = timeX + scaler_.scaled (8);
-        int freezeY = topY + topRowH - freezeH - scaler_.scaled (2);
-        freezeButton_.setBounds (freezeX, freezeY, freezeW, freezeH);
+        auto timeArea = juce::Rectangle<int> (timeX, topY, timeW, topRowH).reduced (4, 0);
+        timeArea.removeFromTop (topPad);
+        auto knobArea = timeArea.removeFromTop (timeArea.getHeight() - scaler_.scaled (28));
+
+        // Hero DECAY takes the LEFT 70% of the row, SIZE takes the right 30%.
+        // The hero is the visual centrepiece of the entire plugin — its
+        // concentric-ring rendering doesn't fit the standard placeKnob
+        // template, so it's positioned manually and centered in its column.
+        const int heroW = juce::roundToInt (knobArea.getWidth() * 0.70f);
+        auto heroArea  = knobArea.removeFromLeft (heroW);
+        const int heroSize = std::min (heroArea.getWidth(), heroArea.getHeight());
+        decay_.setBounds (heroArea.withSizeKeepingCentre (heroSize, heroSize));
+
+        // SIZE remains a standard rotary at the secondary tier (knobBig = 70).
+        placeKnob (size_, knobArea, knobBig, sf);
+
+        // FREEZE spans the full bottom strip.
+        freezeButton_.setBounds (timeArea.reduced (8, 4));
     }
 
-    // TIME group: Decay (LARGE), Size (medium) — shrink area to clear freeze button
-    layoutKnobsInGroup ({ timeX, topY, timeW, topRowH - freezeH - freezeGap }, topPad,
-        { { &decay_, largeKnob }, { &size_, mediumKnob } }, sf);
-
-    // CHARACTER group: Bass Mult (small), Treble Mult (small), Crossover (small)
+    // DAMPING: full 3-band (BASS/MID/TREBLE multipliers + LOW/HIGH crossovers).
+    // Five knobs ordered low→high so the damping curve reads left-to-right.
+    // DIFFUSION moved to the EARLY REFLECTIONS group below — both are early-
+    // density character — to keep DAMPING uncrowded with proper label space.
     layoutKnobsInGroup ({ characterX, topY, characterW, topRowH }, topPad,
-        { { &bassMult_, smallKnob }, { &trebleMult_, smallKnob }, { &crossover_, smallKnob } }, sf);
+                        { { &bassMult_,      knobMed },
+                          { &midMult_,       knobMed },
+                          { &damping_,       knobMed },
+                          { &crossover_,     knobMed },
+                          { &highCrossover_, knobMed } }, sf);
 
-    // --- Bottom row ---
+    // ER widened to 26% (was 20%) for 3 knobs (added DIFFUSION).
+    // MOD trimmed to 18% (only 2 knobs); FILTER stays at 28%; OUTPUT keeps
+    // the largest share for its 3 knobs + bus button.
     int bottomUsable = contentW - gap * 3;
-    int modW    = static_cast<int> (bottomUsable * 0.22f);
-    int erW     = static_cast<int> (bottomUsable * 0.22f);
-    int eqW     = static_cast<int> (bottomUsable * 0.20f);
+    int modW    = static_cast<int> (bottomUsable * 0.18f);
+    int erW     = static_cast<int> (bottomUsable * 0.26f);
+    int eqW     = static_cast<int> (bottomUsable * 0.28f);
     int outputW = bottomUsable - modW - erW - eqW;
 
     int modX    = contentX;
@@ -963,380 +859,636 @@ void DuskVerbEditor::resized()
     int eqX     = erX + erW + gap;
     int outputX = eqX + eqW + gap;
 
-    // MODULATION group: Depth (small), Rate (small)
     layoutKnobsInGroup ({ modX, bottomY, modW, bottomH }, topPad,
-        { { &modDepth_, smallKnob }, { &modRate_, smallKnob } }, sf);
+                        { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
 
-    // EARLY REFLECTIONS group: Level (small), Size (small)
     layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
-        { { &erLevel_, smallKnob }, { &erSize_, smallKnob } }, sf);
+                        { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
 
-    // OUTPUT EQ group: Lo Cut (small), Hi Cut (small)
     layoutKnobsInGroup ({ eqX, bottomY, eqW, bottomH }, topPad,
-        { { &loCut_, smallKnob }, { &hiCut_, smallKnob } }, sf);
+                        { { &loCut_, knobMed }, { &hiCut_, knobMed }, { &monoBelow_, knobMed } }, sf);
 
-    // Bus mode toggle (bottom of OUTPUT group) — calculate first to reserve space
-    int busH = scaler_.scaled (22);
+    // OUTPUT: 3 knobs across top + bottom strip split into [MIX LOCK | BUS].
+    // LOCK sits under MIX (left third) so the visual relationship is clear.
     {
-        int busW = outputW - scaler_.scaled (16);
-        int busX = outputX + scaler_.scaled (8);
-        int busY = bottomY + bottomH - busH - scaler_.scaled (2);
-        busModeButton_.setBounds (busX, busY, busW, busH);
+        auto outArea = juce::Rectangle<int> (outputX, bottomY, outputW, bottomH).reduced (4, 0);
+        outArea.removeFromTop (topPad);
+        int knobAreaH = outArea.getHeight() - scaler_.scaled (28);
+        auto knobArea = outArea.removeFromTop (knobAreaH);
+        // MIX is primary (peer of DECAY/SIZE in TIME); WIDTH and TRIM sit
+        // at the secondary tier.
+        int mixCol  = juce::roundToInt (knobArea.getWidth() * 0.42f);
+        int restCol = (knobArea.getWidth() - mixCol) / 2;
+        placeKnob (mix_,      knobArea.removeFromLeft (mixCol),  knobBig, sf);
+        placeKnob (width_,    knobArea.removeFromLeft (restCol), knobMed, sf);
+        placeKnob (gainTrim_, knobArea,                          knobMed, sf);
+        // BUS spans the full bottom strip (locks were removed).
+        busModeButton_.setBounds (outArea.reduced (8, 4));
     }
 
-    // OUTPUT group: Mix (LARGE), Width (medium) — shrink area to clear bus button
-    layoutKnobsInGroup ({ outputX, bottomY, outputW, bottomH - busH - freezeGap }, topPad,
-        { { &mix_, largeKnob }, { &width_, mediumKnob } }, sf);
+    titleClickArea_ = { 0, 0, getWidth(), scaler_.scaled (52) };
 
-    // --- Advanced panel layout (ONSET + DAMPING top row for Phase 2) ---
-    // Knobs sit in the same rectangles as the main panel but visibility is
-    // toggled by setActiveTab().
-    int advGroupW = (contentW - gap) / 2;
-    int onsetX    = contentX;
-    int dampingX  = onsetX + advGroupW + gap;
-
-    layoutKnobsInGroup ({ onsetX, topY, advGroupW, topRowH }, topPad,
-        { { &advInputOnset_, smallKnob }, { &advSoftOnset_, smallKnob },
-          { &advDelayScale_, smallKnob }, { &advNoiseMod_, smallKnob } }, sf);
-
-    layoutKnobsInGroup ({ dampingX, topY, advGroupW, topRowH }, topPad,
-        { { &advAirDamping_, smallKnob }, { &advHighCrossover_, smallKnob },
-          { &advStructHFDamp_, smallKnob }, { &advInlineDiff_, smallKnob } }, sf);
-
-    // Advanced bottom row: OUTPUT EQ (5) | SPATIAL (4) | DYNAMICS (3), split 45/30/25.
-    int advBottomUsable = contentW - gap * 2;
-    int advEqW          = static_cast<int> (advBottomUsable * 0.45f);
-    int advSpatialW     = static_cast<int> (advBottomUsable * 0.30f);
-    int advDynW         = advBottomUsable - advEqW - advSpatialW;
-    int advEqX          = contentX;
-    int advSpatialX     = advEqX + advEqW + gap;
-    int advDynX         = advSpatialX + advSpatialW + gap;
-
-    layoutKnobsInGroup ({ advEqX, bottomY, advEqW, bottomH }, topPad,
-        { { &advOutLowShelfDb_,  smallKnob }, { &advOutHighShelfDb_, smallKnob },
-          { &advOutHighShelfHz_, smallKnob }, { &advOutMidEqDb_,     smallKnob },
-          { &advOutMidEqHz_,     smallKnob } }, sf);
-
-    layoutKnobsInGroup ({ advSpatialX, bottomY, advSpatialW, bottomH }, topPad,
-        { { &advStereoCoupling_, smallKnob }, { &advERCrossfeed_, smallKnob },
-          { &advChorusDepth_,    smallKnob }, { &advChorusRate_,  smallKnob } }, sf);
-
-    layoutKnobsInGroup ({ advDynX, bottomY, advDynW, bottomH }, topPad,
-        { { &advLimiterThresh_, smallKnob }, { &advDecayBoost_, smallKnob },
-          { &advTerminalFactor_, smallKnob } }, sf);
-
-    // Level meters (full height of content area)
-    int meterTop = topY;
-    int meterBot = getHeight() - margin;
-    inputMeter_.setBounds (margin, meterTop, meterW, meterBot - meterTop);
-    outputMeter_.setBounds (getWidth() - margin - meterW, meterTop, meterW, meterBot - meterTop);
+    if (supportersOverlay_)
+        supportersOverlay_->setBounds (getLocalBounds());
 }
 
 void DuskVerbEditor::loadPreset (int index)
 {
     const auto& presets = getFactoryPresets();
-    if (index >= 0 && index < static_cast<int> (presets.size()))
-    {
-        const auto& preset = presets[static_cast<size_t> (index)];
-        preset.applyTo (processorRef.parameters);
-        processorRef.parameters.state.setProperty ("presetName",
-            juce::String (preset.name), nullptr);
+    if (index < 0 || index >= static_cast<int> (presets.size()))
+        return;
 
-        // Sync Mode dropdown with the preset's underlying engine type
-        modeBox_.setSelectedId (engineModeIdForAlgorithm (preset.algorithm),
-                                juce::dontSendNotification);
-
-        // Populate ADV knobs from this preset's AlgorithmConfig so the
-        // Advanced panel exposes the values the engine actually uses for
-        // this preset. Without this, ADV knobs would carry over the user's
-        // last manual tweaks across preset changes.
-        const auto& cfg = getAlgorithmConfig (preset.algorithm);
-        auto setParam = [this] (const char* id, float value)
-        {
-            if (auto* p = processorRef.parameters.getParameter (id))
-                p->setValueNotifyingHost (p->convertTo0to1 (value));
-        };
-        // AlgorithmConfig-backed (ADV knob shows the preset's baked value)
-        setParam ("air_damping",        cfg.airDampingScale);
-        setParam ("high_crossover",     cfg.highCrossoverHz);
-        setParam ("noise_mod",          cfg.noiseModDepth);
-        setParam ("inline_diffusion",   cfg.inlineDiffusionCoeff);
-        setParam ("stereo_coupling",    cfg.stereoCoupling);
-        setParam ("chorus_depth",       cfg.chorusDepthDefault);
-        setParam ("chorus_rate",        cfg.chorusRateDefault);
-        setParam ("er_crossfeed",       cfg.erCrossfeed);
-        setParam ("decay_boost",        cfg.shortDecayBoostDB);
-        setParam ("structural_hf_damp", cfg.structuralHFDampingHz);
-        setParam ("delay_scale",        cfg.dattorroDelayScale);
-        setParam ("input_onset",        cfg.lateOnsetMs);
-        // No AlgorithmConfig backing — reset to neutral defaults
-        setParam ("soft_onset",          0.0f);
-        setParam ("limiter_thresh",      0.0f);
-        setParam ("output_low_shelf_db", 0.0f);
-        setParam ("output_high_shelf_db",0.0f);
-        setParam ("output_high_shelf_hz",0.0f);
-        setParam ("output_mid_eq_db",    0.0f);
-        setParam ("output_mid_eq_hz",    0.0f);
-        setParam ("terminal_factor",     0.0f);
-        setParam ("late_feed_fwd",      -1.0f);  // sentinel = use preset default
-    }
+    presets[static_cast<size_t> (index)].applyTo (processorRef.parameters);
+    processorRef.parameters.state.setProperty ("presetName",
+                                                presets[static_cast<size_t> (index)].name,
+                                                nullptr);
 }
 
 void DuskVerbEditor::stepFactoryPreset (int delta)
 {
-    const int factoryCount = static_cast<int> (getFactoryPresets().size());
-    if (factoryCount <= 0)
-        return;
-
-    // Current selection: factory IDs are 2..factoryCount+1. Anything else (user
-    // preset, Mode dropdown, nothing selected) means the user is outside the
-    // factory list, so stepping should land on preset[0] or preset[last] directly
-    // rather than advancing past an implicit "current = 0".
-    int id = presetBox_.getSelectedId();
-    int nextIdx;
-    if (id >= 2 && id < 2 + factoryCount)
-    {
-        int currentIdx = id - 2;
-        nextIdx = (currentIdx + delta + factoryCount) % factoryCount;
-    }
-    else
-    {
-        nextIdx = (delta >= 0) ? 0 : factoryCount - 1;
-    }
-    presetBox_.setSelectedId (nextIdx + 2, juce::sendNotificationSync);
-}
-
-void DuskVerbEditor::selectEngineMode (int modeId)
-{
-    if (modeId < 1 || modeId > 3)
-        return;
-
-    // Mode → anchor preset (one representative per engine type). Looked up by
-    // name so the mapping survives reordering in AlgorithmConfig's lookup table.
-    static const juce::String kAnchorName[] = {
-        "Vocal Hall",     // FDN
-        "Drum Room",      // Dattorro
-        "Bright Chamber"  // QuadTank
-    };
-
     const auto& presets = getFactoryPresets();
-    int anchorIdx = -1;
-    for (size_t i = 0; i < presets.size(); ++i)
-    {
-        if (kAnchorName[modeId - 1] == presets[i].name)
-        {
-            anchorIdx = static_cast<int> (i);
-            break;
-        }
-    }
-    if (anchorIdx < 0)
-        return;
+    if (presets.empty()) return;
 
-    // Load the anchor preset's full parameter set so Mode immediately produces
-    // an audible, well-defined reverb for the chosen engine type. Earlier
-    // versions only swapped the algorithm index and left other knobs alone,
-    // which on a fresh plugin (bus_mode=false, mix=0.35) yielded near-silent
-    // wet output and looked like "Mode produces no reverb".
-    presets[static_cast<size_t> (anchorIdx)].applyTo (processorRef.parameters);
-
-    // Mode supersedes any explicit preset selection — keep the preset
-    // dropdown showing "Preset" rather than the loaded anchor's name.
-    presetBox_.setSelectedId (0, juce::dontSendNotification);
-    processorRef.parameters.state.setProperty ("presetName", "", nullptr);
-    updateDeleteButtonVisibility();
+    int total = static_cast<int> (presets.size());
+    int currentId = presetBox_.getSelectedId();
+    int currentIdx = (currentId >= 2 && currentId < 2 + total) ? currentId - 2 : 0;
+    int next = (currentIdx + delta + total) % total;
+    presetBox_.setSelectedId (next + 2, juce::sendNotificationSync);
 }
-
-void DuskVerbEditor::setActiveTab (bool advanced)
-{
-    if (showingAdvanced_ == advanced)
-        return;
-    showingAdvanced_ = advanced;
-
-    // IMPORTANT: apply visibility AFTER resized(), because placeKnob()
-    // unconditionally calls valueLabel.setVisible(true) during layout — setting
-    // visibility before resized() would be clobbered.
-    resized();
-
-    auto setKnobVisible = [] (KnobWithLabel& k, bool v)
-    {
-        k.slider    .setVisible (v);
-        k.nameLabel .setVisible (v);
-        k.valueLabel.setVisible (v);
-    };
-
-    const bool mainVisible = ! advanced;
-    for (auto* k : { &preDelay_, &diffusion_, &decay_, &size_, &bassMult_, &trebleMult_,
-                     &crossover_, &modDepth_, &modRate_, &erLevel_, &erSize_, &mix_,
-                     &loCut_, &hiCut_, &width_ })
-        setKnobVisible (*k, mainVisible);
-
-    freezeButton_    .setVisible (mainVisible);
-    busModeButton_   .setVisible (mainVisible);
-    predelaySyncBox_ .setVisible (mainVisible);
-
-    const bool advVisible = advanced;
-    for (auto* k : { &advInputOnset_, &advSoftOnset_, &advDelayScale_, &advNoiseMod_,
-                     &advAirDamping_, &advHighCrossover_, &advStructHFDamp_, &advInlineDiff_,
-                     &advOutLowShelfDb_, &advOutHighShelfDb_, &advOutHighShelfHz_,
-                     &advOutMidEqDb_, &advOutMidEqHz_,
-                     &advStereoCoupling_, &advERCrossfeed_, &advChorusDepth_, &advChorusRate_,
-                     &advLimiterThresh_, &advDecayBoost_, &advTerminalFactor_ })
-        setKnobVisible (*k, advVisible);
-
-    repaint();
-}
-
-// =============================================================================
-// User Preset Management
-// =============================================================================
 
 void DuskVerbEditor::refreshPresetList()
 {
-    int currentId = presetBox_.getSelectedId();
     presetBox_.clear (juce::dontSendNotification);
-
-    // Factory presets grouped by category (IDs starting at 2)
     const auto& presets = getFactoryPresets();
-    juce::String lastCategory;
-    int id = 2;
 
+    // Group presets into a single heading per unique category. The source
+    // array is already arranged in contiguous category blocks
+    // (Plates → Halls → Chambers → Rooms → Ambient), so a category change
+    // emits exactly one heading per category. If the array is ever
+    // re-ordered, the de-dup logic below still groups items correctly by
+    // reading every preset whose category matches the active block.
+    juce::String currentCategory;
     for (size_t i = 0; i < presets.size(); ++i)
     {
-        juce::String cat (presets[i].category);
-        if (cat != lastCategory)
+        juce::String cat = presets[i].category;
+        if (cat != currentCategory)
         {
-            presetBox_.addSeparator();
+            currentCategory = cat;
             presetBox_.addSectionHeading (cat);
-            lastCategory = cat;
         }
-        presetBox_.addItem (presets[i].name, id++);
+        presetBox_.addItem (presets[i].name, static_cast<int> (i) + 2);
     }
 
-    // User presets (IDs starting at 1001)
     if (userPresetManager_)
     {
         auto userPresets = userPresetManager_->loadUserPresets();
         if (! userPresets.empty())
         {
-            presetBox_.addSeparator();
-            presetBox_.addSectionHeading ("User Presets");
-
+            presetBox_.addSectionHeading ("User");
             for (size_t i = 0; i < userPresets.size(); ++i)
                 presetBox_.addItem (userPresets[i].name, static_cast<int> (1001 + i));
         }
     }
-
-    // Restore selection
-    if (currentId > 0)
-        presetBox_.setSelectedId (currentId, juce::dontSendNotification);
 }
 
 void DuskVerbEditor::saveUserPreset()
 {
-    if (! userPresetManager_)
-        return;
-
-    auto* dialog = new juce::AlertWindow ("Save Preset",
-                                           "Enter a name for this preset:",
-                                           juce::MessageBoxIconType::QuestionIcon);
-    dialog->addTextEditor ("name", "My Preset", "Preset Name:");
-    dialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    dialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
     juce::Component::SafePointer<DuskVerbEditor> safeThis (this);
-    juce::Component::SafePointer<juce::AlertWindow> safeDialog (dialog);
+    auto* aw = new juce::AlertWindow ("Save Preset", "Name:",
+                                       juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor ("name", "");
+    aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
-    dialog->enterModalState (true, juce::ModalCallbackFunction::create (
-        [safeThis, safeDialog] (int result) mutable
+    // Center over the plugin window. JUCE's default places the AlertWindow
+    // at the centre of the user's display, which is jarring inside a DAW —
+    // it can land on a different monitor than the plugin editor. Position
+    // BEFORE enterModalState so the very first paint already lands at the
+    // right spot (no perceptible jump). centreAroundComponent works in
+    // screen coordinates derived from `this`, so it follows the host
+    // window even on multi-monitor setups.
+    aw->centreAroundComponent (this, aw->getWidth(), aw->getHeight());
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([safeThis, aw] (int result)
         {
-            juce::String name;
-            if (result == 1 && safeDialog != nullptr)
-                name = safeDialog->getTextEditorContents ("name").trim();
-
-            if (safeThis == nullptr || name.isEmpty())
-                return;
-
-            if (safeThis->userPresetManager_->presetExists (name))
-            {
-                juce::Component::SafePointer<DuskVerbEditor> safeInner (safeThis.getComponent());
-
-                juce::AlertWindow::showOkCancelBox (
-                    juce::MessageBoxIconType::QuestionIcon,
-                    "Overwrite Preset?",
-                    "A preset named \"" + name + "\" already exists. Overwrite it?",
-                    "Overwrite", "Cancel", nullptr,
-                    juce::ModalCallbackFunction::create ([safeInner, name] (int confirmResult) {
-                        if (confirmResult == 1 && safeInner != nullptr)
-                        {
-                            auto state = safeInner->processorRef.parameters.copyState();
-                            if (safeInner->userPresetManager_->saveUserPreset (name, state, JucePlugin_VersionString))
-                                safeInner->refreshPresetList();
-                        }
-                    }));
-            }
-            else
-            {
-                auto state = safeThis->processorRef.parameters.copyState();
-                if (safeThis->userPresetManager_->saveUserPreset (name, state, JucePlugin_VersionString))
-                    safeThis->refreshPresetList();
-            }
+            std::unique_ptr<juce::AlertWindow> owner (aw);
+            if (result != 1 || safeThis == nullptr) return;
+            auto name = owner->getTextEditorContents ("name").trim();
+            if (name.isEmpty()) return;
+            auto& proc = safeThis->processorRef;
+            safeThis->userPresetManager_->saveUserPreset (name, proc.parameters.copyState());
+            proc.parameters.state.setProperty ("presetName", name, nullptr);
+            safeThis->refreshPresetList();
         }), true);
 }
 
 void DuskVerbEditor::loadUserPreset (const juce::String& name)
 {
-    if (! userPresetManager_)
+    if (! userPresetManager_) return;
+    auto tree = userPresetManager_->loadUserPreset (name);
+    if (! (tree.isValid() && tree.hasType (processorRef.parameters.state.getType())))
         return;
 
-    auto state = userPresetManager_->loadUserPreset (name);
-    if (state.isValid())
-    {
-        processorRef.parameters.replaceState (state);
-        processorRef.setGainTrim (0.0f);
-        processorRef.parameters.state.setProperty ("presetName", name, nullptr);
-        processorRef.parameters.state.setProperty ("gainTrim", 0.0f, nullptr);
-    }
+    processorRef.parameters.replaceState (tree);
+
+    processorRef.parameters.state.setProperty ("presetName", name, nullptr);
 }
 
 void DuskVerbEditor::deleteUserPreset (const juce::String& name)
 {
-    if (! userPresetManager_)
-        return;
-
-    userPresetManager_->deleteUserPreset (name);
-    refreshPresetList();
-}
-
-// =============================================================================
-// Supporters Overlay
-// =============================================================================
-
-void DuskVerbEditor::mouseDown (const juce::MouseEvent& e)
-{
-    if (titleClickArea_.contains (e.getPosition()))
-        showSupportersPanel();
-}
-
-void DuskVerbEditor::showSupportersPanel()
-{
-    if (! supportersOverlay_)
+    if (userPresetManager_)
     {
-        supportersOverlay_ = std::make_unique<SupportersOverlay> ("DuskVerb", JucePlugin_VersionString);
-        supportersOverlay_->onDismiss = [this] { hideSupportersPanel(); };
-        addAndMakeVisible (supportersOverlay_.get());
+        userPresetManager_->deleteUserPreset (name);
+        refreshPresetList();
+        presetBox_.setSelectedId (0, juce::dontSendNotification);
     }
-    supportersOverlay_->setBounds (getLocalBounds());
-    supportersOverlay_->toFront (true);
-    supportersOverlay_->setVisible (true);
-}
-
-void DuskVerbEditor::hideSupportersPanel()
-{
-    if (supportersOverlay_)
-        supportersOverlay_->setVisible (false);
 }
 
 void DuskVerbEditor::updateDeleteButtonVisibility()
 {
-    deletePresetButton_.setVisible (presetBox_.getSelectedId() >= 1001);
+    const bool wasVisible = deletePresetButton_.isVisible();
+    const bool nowVisible = presetBox_.getSelectedId() >= 1001;
+    deletePresetButton_.setVisible (nowVisible);
+    // Re-centre the header cluster when Delete appears/disappears so the row
+    // doesn't jump asymmetrically (cluster width depends on Delete visibility).
+    if (wasVisible != nowVisible)
+        resized();
 }
+
+void DuskVerbEditor::mouseDown (const juce::MouseEvent& e)
+{
+    if (titleClickArea_.contains (e.getPosition()))
+    {
+        if (supportersOverlay_) hideSupportersPanel();
+        else                    showSupportersPanel();
+    }
+}
+
+void DuskVerbEditor::showSupportersPanel()
+{
+    if (supportersOverlay_) return;
+    supportersOverlay_ = std::make_unique<SupportersOverlay> ("DuskVerb", "");
+    // Wire the overlay's mouseDown-to-dismiss callback. SupportersOverlay's
+    // built-in mouseDown checks `onDismiss` and fires it; without the wiring
+    // the overlay catches all clicks (it sets interceptsMouseClicks(true))
+    // and never closes — the user is stuck.
+    juce::Component::SafePointer<DuskVerbEditor> safeThis (this);
+    supportersOverlay_->onDismiss = [safeThis]
+    {
+        if (safeThis != nullptr)
+            safeThis->hideSupportersPanel();
+    };
+    addAndMakeVisible (*supportersOverlay_);
+    supportersOverlay_->setBounds (getLocalBounds());
+}
+
+void DuskVerbEditor::hideSupportersPanel()
+{
+    supportersOverlay_.reset();
+}
+
+void DuskVerbEditor::applyEngineAccent (EngineType engine)
+{
+    const juce::Colour accent = getEngineAccent (engine);
+
+    // 1) LookAndFeel — drives the rotary arc colour for every knob and the
+    //    "active" pill colour for FREEZE / BUS toggles.
+    lnf_.setCurrentAccent (accent);
+
+    // 2) Per-knob value labels — they hold a hard-coded text colour, so we
+    //    have to push the accent into each one explicitly. The HeroDecay
+    //    paints itself directly from the LookAndFeel so it's already covered
+    //    by step 1 (just needs a repaint).
+    // CRITICAL: any new knob added to the editor MUST be appended here, or
+    // its value label will stay frozen at the orange `kAccent` from init()
+    // while every other label tracks the engine's current accent.
+    for (auto* k : { &preDelay_, &size_, &modDepth_, &modRate_,
+                     &damping_,  &bassMult_,  &midMult_,       &crossover_,
+                     &highCrossover_, &saturation_, &diffusion_,
+                     &erLevel_, &erSize_, &mix_, &loCut_, &hiCut_,
+                     &monoBelow_, &width_, &gainTrim_ })
+        k->setAccent (accent);
+
+    // 3) Components that paint their own accent regions.
+    decay_      .repaint();
+    engineGlyph_.repaint();
+    tailMeter_  .repaint();
+
+    // 4) Per-engine knob name relabel — some engines hijack the universal
+    //    knobs under engine-specific semantics (the underlying APVTS values
+    //    don't change, only the display label + tooltip shift). The default
+    //    branch restores all the original name strings so flipping back to
+    //    a "standard" engine fully resets the UI.
+    const bool isSpring    = (engine == EngineType::Spring);
+    const bool isNonLinear = (engine == EngineType::NonLinear);
+    const bool isShimmer   = (engine == EngineType::Shimmer);
+
+    // mod_depth hijacked by Spring (SPRING LEN) and Shimmer (PITCH)
+    modDepth_.nameLabel.setText (isSpring  ? "SPRING LEN"
+                                : isShimmer ? "PITCH"
+                                            : "DEPTH",
+                                 juce::dontSendNotification);
+    modRate_ .nameLabel.setText (isSpring  ? "DRIP"
+                                : isShimmer ? "MIX"
+                                            : "RATE",
+                                 juce::dontSendNotification);
+    modDepth_.slider.setTooltip (isSpring  ? "Spring Length: read-position LFO depth (subtle wobble that gives the tank its 'drip' character)"
+                                : isShimmer ? "Pitch: in-loop pitch interval (0 = unity, 50% = +12 semitones / +1 octave, 100% = +24 / +2 octaves)"
+                                            : "Modulation Depth");
+    modRate_ .slider.setTooltip (isSpring  ? "Drip: spring-tank LFO rate (Hz)"
+                                : isShimmer ? "Mix: blend between dry and pitched feedback (0% = dry feedback only, 100% = fully pitched-up feedback)"
+                                            : "Modulation Rate (Hz)");
+
+    // diffusion hijacked by Spring (CHIRP) and NonLinear (SHAPE); Shimmer
+    // ignores diffusion so we keep its label generic
+    diffusion_.nameLabel.setText (isNonLinear ? "SHAPE"
+                                 : isSpring   ? "CHIRP"
+                                              : "DIFFUSION",
+                                  juce::dontSendNotification);
+    diffusion_.slider.setTooltip (isNonLinear ? "Shape: TDL envelope — 0-33% Gated, 33-66% Reverse, 66-100% Decaying"
+                                 : isSpring   ? "Chirp: dispersion-AP coefficient — 0 = plain delay, 1 = full Fender 'boing' on transients"
+                                              : "Diffusion: smear amount before the late tank");
+
+    // DECAY hero hijacked by NonLinear → "LENGTH" (the TDL duration in seconds)
+    decay_.setDisplayName (isNonLinear ? "LENGTH" : "DECAY");
+
+    repaint();   // catches FREEZE / BUS toggle redraw via LookAndFeel
+}
+
+// =============================================================================
+// EngineGlyph
+// =============================================================================
+
+void EngineGlyph::paint (juce::Graphics& g)
+{
+    // Subtle panel background so the glyph reads as a control element rather
+    // than floating decoration.
+    auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kPanel).darker (0.2f));
+    g.fillRoundedRectangle (bounds, 3.0f);
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kBorder));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, 1.0f);
+
+    auto inner = bounds.reduced (4.0f);
+    const float w = inner.getWidth();
+    const float h = inner.getHeight();
+    const float cx = inner.getCentreX();
+    const float cy = inner.getCentreY();
+
+    // Pull the live engine accent from the LookAndFeel — the colour shifts
+    // when the user switches algorithms.
+    auto accent = juce::Colour (DuskVerbLookAndFeel::kAccent);
+    if (auto* lnf = dynamic_cast<DuskVerbLookAndFeel*> (&getLookAndFeel()))
+        accent = lnf->getCurrentAccent();
+    g.setColour (accent);
+
+    auto dot = [&] (float x, float y, float r)
+    {
+        g.fillEllipse (x - r, y - r, r * 2.0f, r * 2.0f);
+    };
+    auto link = [&] (float x1, float y1, float x2, float y2, float thickness)
+    {
+        g.drawLine (x1, y1, x2, y2, thickness);
+    };
+
+    switch (engine_)
+    {
+        case EngineType::Dattorro:
+        {
+            // Two big dots cross-coupled (figure-8 of 2 APs).
+            const float r = std::min (w, h) * 0.18f;
+            const float spread = w * 0.28f;
+            dot (cx - spread, cy, r);
+            dot (cx + spread, cy, r);
+            link (cx - spread, cy, cx + spread, cy, 1.0f);
+            break;
+        }
+        case EngineType::ModernSpace6AP:
+        {
+            // Six small dots in a chain — density cascade.
+            const float r = std::min (w, h) * 0.10f;
+            for (int i = 0; i < 6; ++i)
+            {
+                const float t = (i + 0.5f) / 6.0f;
+                const float x = inner.getX() + t * w;
+                dot (x, cy, r);
+                if (i > 0)
+                    link (inner.getX() + ((i - 1) + 0.5f) / 6.0f * w + r,
+                          cy,
+                          x - r, cy, 0.6f);
+            }
+            break;
+        }
+        case EngineType::QuadTank:
+        {
+            // 2×2 grid — 4 cross-coupled tanks.
+            const float r = std::min (w, h) * 0.13f;
+            const float dx = w * 0.20f;
+            const float dy = h * 0.20f;
+            dot (cx - dx, cy - dy, r);
+            dot (cx + dx, cy - dy, r);
+            dot (cx - dx, cy + dy, r);
+            dot (cx + dx, cy + dy, r);
+            // Diagonal cross to suggest coupling.
+            link (cx - dx, cy - dy, cx + dx, cy + dy, 0.6f);
+            link (cx + dx, cy - dy, cx - dx, cy + dy, 0.6f);
+            break;
+        }
+        case EngineType::FDN:
+        {
+            // 4×4 grid — 16-channel matrix.
+            const float r = std::min (w, h) * 0.06f;
+            for (int row = 0; row < 4; ++row)
+                for (int col = 0; col < 4; ++col)
+                {
+                    const float x = inner.getX() + (col + 0.5f) / 4.0f * w;
+                    const float y = inner.getY() + (row + 0.5f) / 4.0f * h;
+                    dot (x, y, r);
+                }
+            break;
+        }
+        case EngineType::Spring:
+        {
+            // Zigzag stylised spring — 5 peaks across the width, vertically
+            // centered. Reads as a side-view of a coiled spring.
+            const int zigzags = 6;
+            const float ampY = h * 0.22f;
+            juce::Path p;
+            for (int i = 0; i <= zigzags; ++i)
+            {
+                const float t = static_cast<float> (i) / static_cast<float> (zigzags);
+                const float x = inner.getX() + t * w;
+                const float y = cy + ((i % 2 == 0) ? -ampY : ampY);
+                if (i == 0) p.startNewSubPath (x, y);
+                else        p.lineTo (x, y);
+            }
+            g.strokePath (p, juce::PathStrokeType (1.4f,
+                                                    juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::rounded));
+            break;
+        }
+        case EngineType::NonLinear:
+        {
+            // Square-wave envelope — flat top then sharp drop, the iconic
+            // gated-reverb amplitude contour. Two flat segments connected
+            // by a vertical cliff visually communicates "non-decay then cut."
+            const float topY    = cy - h * 0.22f;
+            const float bottomY = cy + h * 0.22f;
+            const float xStart  = inner.getX();
+            const float xCliff  = inner.getX() + w * 0.65f;   // gate edge at 65%
+            const float xEnd    = inner.getRight();
+            juce::Path p;
+            p.startNewSubPath (xStart,  bottomY);   // baseline pre-input
+            p.lineTo          (xStart,  topY);      // sharp leading edge (input hits)
+            p.lineTo          (xCliff,  topY);      // plateau across gate
+            p.lineTo          (xCliff,  bottomY);   // gate cliff
+            p.lineTo          (xEnd,    bottomY);   // baseline tail
+            g.strokePath (p, juce::PathStrokeType (1.4f,
+                                                    juce::PathStrokeType::mitered,
+                                                    juce::PathStrokeType::rounded));
+            break;
+        }
+        case EngineType::Shimmer:
+        {
+            // Ascending-arrow staircase — three "steps" rising left-to-right,
+            // with a final arrowhead. Visually communicates "feedback that
+            // climbs" — the cascading-octaves shimmer character.
+            const float xStart  = inner.getX();
+            const float xEnd    = inner.getRight();
+            const float baseY   = cy + h * 0.30f;
+            const float topY    = cy - h * 0.30f;
+            juce::Path p;
+            const int kSteps = 3;
+            const float stepW = (xEnd - xStart) * 0.85f / static_cast<float>(kSteps);
+            const float stepH = (baseY - topY) / static_cast<float>(kSteps);
+            float x = xStart;
+            float y = baseY;
+            p.startNewSubPath (x, y);
+            for (int i = 0; i < kSteps; ++i)
+            {
+                x += stepW;            p.lineTo (x, y);
+                y -= stepH;            p.lineTo (x, y);
+            }
+            // Arrowhead at the top-right corner pointing up-right
+            const float ah = h * 0.10f;
+            p.lineTo (x + ah * 0.7f, y + ah);
+            p.startNewSubPath (x, y);
+            p.lineTo (x + ah,        y + ah * 0.7f);
+            g.strokePath (p, juce::PathStrokeType (1.4f,
+                                                    juce::PathStrokeType::mitered,
+                                                    juce::PathStrokeType::rounded));
+            break;
+        }
+    }
+}
+
+// =============================================================================
+// TailMeter
+// =============================================================================
+
+void TailMeter::pushFrame (float outputLevelDb)
+{
+    // Shift left, append newest frame on the right.
+    for (int i = 0; i < kNumFrames - 1; ++i)
+        history_[static_cast<size_t> (i)] = history_[static_cast<size_t> (i + 1)];
+    history_[kNumFrames - 1] = outputLevelDb;
+    repaint();
+}
+
+void TailMeter::paint (juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+
+    // Recessed dark panel matching the group containers' style language.
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kPanel).darker (0.4f));
+    g.fillRoundedRectangle (bounds, 4.0f);
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kBorder));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 4.0f, 1.0f);
+
+    auto plot = bounds.reduced (4.0f);
+    if (plot.isEmpty()) return;
+
+    // Map dB to plot Y. -60 dB at the bottom, 0 dB at the top, with a soft
+    // curve so the visually-interesting -40..0 range gets most of the height.
+    auto dbToY = [&] (float db) -> float
+    {
+        const float clamped = juce::jlimit (-60.0f, 0.0f, db);
+        const float norm    = (clamped + 60.0f) / 60.0f;
+        const float curved  = std::pow (norm, 1.6f);
+        return plot.getBottom() - curved * plot.getHeight();
+    };
+
+    // Filled area under the level curve.
+    const float xStep = plot.getWidth() / static_cast<float> (kNumFrames - 1);
+    juce::Path fill;
+    fill.startNewSubPath (plot.getX(), plot.getBottom());
+    for (int i = 0; i < kNumFrames; ++i)
+    {
+        const float x = plot.getX() + xStep * static_cast<float> (i);
+        const float y = dbToY (history_[static_cast<size_t> (i)]);
+        fill.lineTo (x, y);
+    }
+    fill.lineTo (plot.getRight(), plot.getBottom());
+    fill.closeSubPath();
+
+    // Live engine accent — same source as the knob arcs and value readouts.
+    auto accent = juce::Colour (DuskVerbLookAndFeel::kAccent);
+    if (auto* lnf = dynamic_cast<DuskVerbLookAndFeel*> (&getLookAndFeel()))
+        accent = lnf->getCurrentAccent();
+
+    juce::ColourGradient grad (accent,
+                               plot.getX(), plot.getY(),
+                               accent.withAlpha (0.15f),
+                               plot.getX(), plot.getBottom(), false);
+    g.setGradientFill (grad);
+    g.fillPath (fill);
+
+    // Bright stroke along the leading edge for definition.
+    juce::Path edge;
+    edge.startNewSubPath (plot.getX(), dbToY (history_[0]));
+    for (int i = 1; i < kNumFrames; ++i)
+    {
+        const float x = plot.getX() + xStep * static_cast<float> (i);
+        const float y = dbToY (history_[static_cast<size_t> (i)]);
+        edge.lineTo (x, y);
+    }
+    g.setColour (accent.brighter (0.2f));
+    g.strokePath (edge, juce::PathStrokeType (1.2f));
+}
+
+// =============================================================================
+// HeroDecay
+// =============================================================================
+
+HeroDecay::HeroDecay()
+{
+    addAndMakeVisible (slider);
+    // Whenever the value changes (via attachment OR user drag) we need to
+    // repaint the rings so they reflect the new RT60.
+    slider.onValueChange = [this] { repaint(); };
+}
+
+void HeroDecay::init (juce::Component& parent,
+                      juce::AudioProcessorValueTreeState& apvts,
+                      const juce::String& paramID,
+                      const juce::String& tooltip)
+{
+    if (tooltip.isNotEmpty())
+        slider.setTooltip (tooltip);
+    parent.addAndMakeVisible (*this);
+    attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+        apvts, paramID, slider);
+
+    // Double-click anywhere on the hero → spawn the ValueEditor popup over
+    // the value-text region at the bottom of the component (NOT the full
+    // bounds — covering the rings with a giant text field looks awful).
+    // The MouseListener pattern matches what KnobWithLabel uses; the popup
+    // helper handles parsing, clamping, commit-on-Enter etc.
+    struct HeroValueEditorTrigger : public juce::MouseListener
+    {
+        HeroDecay* hero = nullptr;
+        void mouseDoubleClick (const juce::MouseEvent&) override
+        {
+            if (hero == nullptr) return;
+            // Compute the bottom-strip "value text" area inside HeroDecay.
+            // Mirrors the layout in HeroDecay::paint — keep in sync if that
+            // changes (NAME at top 10 %, rings in middle, VALUE at bottom 14 %).
+            auto bounds = hero->getLocalBounds();
+            const int valueH = juce::jmax (16, juce::roundToInt (bounds.getHeight() * 0.14f));
+            auto valueArea = bounds.removeFromBottom (valueH);
+            ValueEditor::popUp (hero->slider, *hero, valueArea);
+        }
+    };
+    auto* trig = new HeroValueEditorTrigger();
+    trig->hero = this;
+    valueEditorTrigger.reset (trig);
+    slider.addMouseListener (trig, false);
+}
+
+void HeroDecay::resized()
+{
+    // The slider sits invisibly over the entire bounds so any drag inside
+    // the visualisation area changes the value.
+    slider.setBounds (getLocalBounds());
+}
+
+void HeroDecay::paint (juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+    if (bounds.isEmpty()) return;
+
+    // Engine accent — same source as the rest of the UI.
+    auto accent = juce::Colour (DuskVerbLookAndFeel::kAccent);
+    if (auto* lnf = dynamic_cast<DuskVerbLookAndFeel*> (&getLookAndFeel()))
+        accent = lnf->getCurrentAccent();
+
+    // ---- Layout: NAME (top) → ring area (middle) → VALUE (bottom) ----
+    const int   labelH = juce::jmax (12, juce::roundToInt (bounds.getHeight() * 0.10f));
+    const int   valueH = juce::jmax (16, juce::roundToInt (bounds.getHeight() * 0.14f));
+    auto nameRow  = bounds.removeFromTop    (static_cast<float> (labelH));
+    auto valueRow = bounds.removeFromBottom (static_cast<float> (valueH));
+    auto ringArea = bounds.reduced (4.0f);
+
+    // ---- NAME ----
+    g.setColour (juce::Colour (DuskVerbLookAndFeel::kGroupText));
+    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    g.drawText (displayName, nameRow.toNearestInt(), juce::Justification::centred);
+
+    // ---- Concentric rings ----
+    const auto centre  = ringArea.getCentre();
+    const float maxR   = std::min (ringArea.getWidth(), ringArea.getHeight()) * 0.5f;
+
+    // Map the slider's normalised value (already log-skewed by APVTS) to
+    // a ring count between 2 (very short decay) and 14 (very long decay).
+    const auto& range = slider.getNormalisableRange();
+    const float norm  = range.convertTo0to1 (static_cast<float> (slider.getValue()));
+    const int numRings = 2 + juce::roundToInt (norm * 12.0f);
+
+    // Outer dark disc — gives the rings a contained "well".
+    g.setColour (juce::Colour (0xff0d0d1a));
+    g.fillEllipse (centre.x - maxR, centre.y - maxR, maxR * 2.0f, maxR * 2.0f);
+
+    // Rings: outer = bright, inner = dimmer. Spacing is geometric so the
+    // visual gets denser toward the centre — reads as "decaying energy".
+    for (int i = 0; i < numRings; ++i)
+    {
+        const float t      = (i + 1.0f) / static_cast<float> (numRings + 1);
+        const float radius = maxR * (1.0f - t * 0.85f);
+        const float alpha  = 0.35f + (1.0f - t) * 0.55f;
+        g.setColour (accent.withAlpha (alpha));
+        g.drawEllipse (centre.x - radius, centre.y - radius,
+                       radius * 2.0f, radius * 2.0f, 1.4f);
+    }
+
+    // Centre dot — anchor.
+    const float dotR = 4.0f;
+    g.setColour (accent);
+    g.fillEllipse (centre.x - dotR, centre.y - dotR, dotR * 2.0f, dotR * 2.0f);
+
+    // Value-angle marker — same convention as the secondary rotary knobs:
+    // a small bright dot on the outer ring at the slider's rotation angle.
+    // Tells the user where DECAY sits within its range at a glance.
+    constexpr float kRotaryStart = -2.356f;  // ~−135° (7 o'clock)
+    constexpr float kRotaryEnd   =  2.356f;  // ~+135° (5 o'clock)
+    const float angle = kRotaryStart + norm * (kRotaryEnd - kRotaryStart);
+    const float markerR = maxR * 0.96f;
+    const float mx = centre.x + markerR * std::sin (angle);
+    const float my = centre.y - markerR * std::cos (angle);
+    const float mr = 4.0f;
+    g.setColour (juce::Colours::white);
+    g.fillEllipse (mx - mr, my - mr, mr * 2.0f, mr * 2.0f);
+
+    // ---- VALUE text ----
+    juce::String valueText;
+    const double v = slider.getValue();
+    if (v < 1.0)
+        valueText = juce::String (juce::roundToInt (v * 1000.0)) + " ms";
+    else
+        valueText = juce::String (v, 2) + " s";
+
+    g.setColour (accent);
+    g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    g.drawText (valueText, valueRow.toNearestInt(), juce::Justification::centred);
+}
+
