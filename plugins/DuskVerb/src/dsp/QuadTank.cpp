@@ -492,17 +492,31 @@ void QuadTank::clearBuffers()
     }
     // Re-seed the random-walk LFOs (and noise PRNGs) so each clear gives the
     // same predictable starting state — important for A/B compare and bypass
-    // toggling in DAWs.
+    // toggling in DAWs. Density-AP jitter LFOs are reseeded too so per-stage
+    // wander is also deterministic across resets (the buffer .clear() above
+    // zeros sample state but leaves the LFO phase/seed where it left off).
     static constexpr uint32_t kLFOSeeds[kNumTanks]   = { 0x12345678u, 0x87654321u, 0xABCDEF01u, 0x13579BDFu };
     static constexpr uint32_t kNoiseSeeds[kNumTanks]  = { 0xDEADBEEFu, 0xCAFEBABEu, 0xFEEDFACEu, 0xBAADF00Du };
+    const float sr = static_cast<float> (sampleRate_);
     for (int t = 0; t < kNumTanks; ++t)
     {
         structHFState_[t] = 0.0f;
-        tanks_[t].lfo.prepare (static_cast<float> (sampleRate_), kLFOSeeds[t]);
+        tanks_[t].lfo.prepare (sr, kLFOSeeds[t]);
         tanks_[t].lfo.setRate  (modRateHz_);
         tanks_[t].lfo.setDepth (modDepthSamples_);
         tanks_[t].savedAP1Mod = 0.0f;
         tanks_[t].noiseState = kNoiseSeeds[t];
+
+        // Mirror prepare()'s per-density-AP seeding scheme so each stage's
+        // jitterLFO restarts from the same deterministic state.
+        for (int i = 0; i < kNumDensityAPs; ++i)
+        {
+            const std::uint32_t s = 0xBADBEEFu
+                                    + static_cast<std::uint32_t> (t * 0x9E3779B9u)
+                                    + static_cast<std::uint32_t> (i * 31337);
+            tanks_[t].densityAP[i].jitterLFO.prepare (sr, s);
+            tanks_[t].densityAP[i].updateJitterDepth (sr);
+        }
     }
 }
 
