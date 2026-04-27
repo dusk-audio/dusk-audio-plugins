@@ -1,5 +1,4 @@
 #include "FDNReverb.h"
-#include "AlgorithmConfig.h"
 #include "DspUtils.h"
 
 #include <algorithm>
@@ -123,14 +122,28 @@ void householderInPlace8 (float* data)
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
+// Default Hall-style delay table for the 16-channel FDN. Logarithmic prime
+// spacing produces uniform modal density. Tap partition is balanced so left
+// and right output sums share the same number of contributors with alternating
+// signs for natural decorrelation.
+namespace {
+    constexpr int   kDefaultDelays[16] = {
+        1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+        3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521
+    };
+    constexpr int   kDefaultLeftTaps[8]  = { 0, 3, 5, 7, 8, 10, 12, 15 };
+    constexpr int   kDefaultRightTaps[8] = { 1, 2, 4, 6, 9, 11, 13, 14 };
+    constexpr float kDefaultLeftSigns[8]  = { 1, -1, 1, -1, 1, -1, 1, -1 };
+    constexpr float kDefaultRightSigns[8] = { -1, 1, -1, 1, -1, 1, -1, 1 };
+}
+
 FDNReverb::FDNReverb()
 {
-    // Initialize mutable config arrays from Hall defaults
-    std::memcpy (baseDelays_, kHall.delayLengths, sizeof (baseDelays_));
-    std::memcpy (leftTaps_,   kHall.leftTaps,     sizeof (leftTaps_));
-    std::memcpy (rightTaps_,  kHall.rightTaps,    sizeof (rightTaps_));
-    std::memcpy (leftSigns_,  kHall.leftSigns,    sizeof (leftSigns_));
-    std::memcpy (rightSigns_, kHall.rightSigns,   sizeof (rightSigns_));
+    std::memcpy (baseDelays_, kDefaultDelays,    sizeof (baseDelays_));
+    std::memcpy (leftTaps_,   kDefaultLeftTaps,  sizeof (leftTaps_));
+    std::memcpy (rightTaps_,  kDefaultRightTaps, sizeof (rightTaps_));
+    std::memcpy (leftSigns_,  kDefaultLeftSigns, sizeof (leftSigns_));
+    std::memcpy (rightSigns_, kDefaultRightSigns, sizeof (rightSigns_));
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +163,10 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     // All scale with sample rate (rateRatio), so compute explicitly rather than
     // relying on a fixed +12 constant that only covered 44.1kHz.
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
-    float maxModExcursion = 2.0f * 4.0f * rateRatio;   // modDepthSamples_ at max depth=2.0
+    // modDepthSamples_ peak = modDepth (max 2.0) × 16 (post-normalisation,
+    // was 4 pre-normalisation) × rateRatio. Sized for the largest possible
+    // depth so the cubic-Hermite read can never index past the buffer edge.
+    float maxModExcursion = 2.0f * 16.0f * rateRatio;
     float maxNoiseExcursion = 20.0f * rateRatio;        // max noise_mod from presets (VerySmallAmbience=20)
     int maxExcursion = static_cast<int> (std::ceil (maxModExcursion + maxNoiseExcursion)) + 4;
     int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + maxExcursion);
@@ -160,6 +176,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         delayLines_[i].buffer.assign (static_cast<size_t> (bufSize), 0.0f);
         delayLines_[i].writePos = 0;
         delayLines_[i].mask = bufSize - 1;
+        dampFilter_[i].prepare (static_cast<float> (sampleRate));
         dampFilter_[i].reset();
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
@@ -232,17 +249,17 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     std::memset (dcX1_, 0, sizeof (dcX1_));
     std::memset (dcY1_, 0, sizeof (dcY1_));
 
-    // Deterministic LFO seeding: evenly-spaced phases with a fixed base.
-    // Using std::random_device made tails nondeterministic across project reloads.
+    // Deterministic LFO seeding — fixed base + per-channel offset so each
+    // tail is reproducible across reloads. Each of the 16 channels gets its
+    // own random-walk LFO + jitter PRNG.
     {
-        constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
-        for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
-                                                               / static_cast<float> (N), kTwoPi);
-
         constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
         for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
+        {
+            const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
+            lfos_[i].prepare (static_cast<float> (sampleRate), seed);
+            lfoPRNG_[i] = seed ^ 0x9E3779B9u;  // distinct PRNG for noise jitter
+        }
     }
 
     updateModDepth();
@@ -267,6 +284,10 @@ void FDNReverb::process (const float* inputL, const float* inputR,
     if (! prepared_)
         return;
 
+    // Drive-style saturation (see DattorroTank for rationale).
+    const float satThreshold = 1.0f - saturationAmount_ * 0.6f;
+    const float satCeiling   = 2.0f;
+
     for (int i = 0; i < numSamples; ++i)
     {
         const float inL = inputL[i];
@@ -278,9 +299,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
-            float mod = frozen_ ? 0.0f : (std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch]);
-            // Per-sample random jitter: fast mode blurring complementing the slow LFO.
-            // Each channel gets independent noise from its xorshift32 PRNG.
+            // Random-walk LFO (replaces the previous sine + drift). Per-channel
+            // weight `modDepthScale_[ch]` still tapers individual delay lines
+            // by relative length so the longest channels modulate most.
+            float mod    = frozen_ ? 0.0f : (lfos_[ch].next() * modDepthScale_[ch]);
+            // Per-sample random jitter: fast mode blurring complementing the
+            // slow random-walk. Each channel has its own xorshift32 stream.
             float jitter = frozen_ ? 0.0f : (nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch]);
             float readDelay = std::max (delayLength_[ch] + mod + jitter, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
@@ -289,23 +313,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             float frac = readPos - static_cast<float> (intIdx);
 
             delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
-
-            // Advance LFO with "Wander" drift (classic reverb technique).
-            // Adds ±8% random perturbation to the phase increment each sample
-            // so the modulation never exactly repeats — organic, not mechanical.
-            if (! frozen_)
-            {
-                float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
-                lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
-                if (lfoPhase_[ch] >= kTwoPi)
-                    lfoPhase_[ch] -= kTwoPi;
-                else if (lfoPhase_[ch] < 0.0f)
-                    lfoPhase_[ch] += kTwoPi;
-            }
         }
 
-        // --- 1.25) Terminal decay: accelerate tail fadeout when below threshold ---
-        if (terminalDecayFactor_ < 1.0f && ! frozen_)
+        // --- 1.25) Terminal decay HARD-DISABLED ---
+        // Caused "thin baseline with transient bursts" — see VocalPlatePreset.cpp
+        // for rationale. State members kept for ABI compat.
+        if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
         {
             float sampleEnergy = 0.0f;
             for (int ch = 0; ch < N; ++ch)
@@ -450,25 +463,12 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
-            // Per-channel LFO modulation of feedback gain and crossover frequency.
-            // feedbackModDepth_ scales feedback amplitude (subtle chorus in recirculation).
-            // crossoverModDepth_ shifts the low crossover frequency (tonal movement).
-            // Both default to 0.0f so this is a no-op unless explicitly enabled.
-            if (feedbackModDepth_ > 0.0f && ! frozen_)
-            {
-                float lfo = std::sin (lfoPhase_[ch]);
-                float multiplier = std::min (1.0f, 1.0f + feedbackModDepth_ * lfo * 0.1f);
-                feedback[ch] *= multiplier;
-            }
-            if (crossoverModDepth_ > 0.0f && ! frozen_)
-            {
-                float lfo = std::sin (lfoPhase_[ch]);
-                // Modulate the low crossover coefficient ±10% around its base value
-                float modCoeff = baseLowCrossoverCoeff_
-                               + crossoverModDepth_ * lfo * baseLowCrossoverCoeff_ * 0.1f;
-                modCoeff = std::clamp (modCoeff, 0.0f, 0.999f);
-                dampFilter_[ch].setLowCrossoverCoeff (modCoeff);
-            }
+            // (Vestigial feedback / crossover modulation hooks removed during
+            // the LFO refactor — they referenced the now-deleted lfoPhase_
+            // array. They were unreachable: the public setFeedbackModDepth /
+            // setCrossoverModDepth setters are never invoked by anyone in the
+            // current code path, so the previous code always took the
+            // else-branch. Drop entirely rather than carry dead state.)
 
             // When frozen, bypass damping (unity feedback) to sustain tail indefinitely
             float filtered = frozen_ ? feedback[ch] : dampFilter_[ch].process (feedback[ch]);
@@ -516,8 +516,13 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                                          : (((dl.writePos ^ ch) & 1)
                                                 ? DspUtils::kDenormalPrevention
                                                 : -DspUtils::kDenormalPrevention);
+            // Soft-clip the post-filter feedback before write-back. Engages
+            // only when the loop pushes above ±1.0 — adds analog-style warmth
+            // on loud transients while leaving quiet tail samples linear
+            // (preserves RT60 calibration).
+            const float satFiltered = DspUtils::softClip (filtered, satThreshold, satCeiling);
             dl.buffer[static_cast<size_t> (dl.writePos)] =
-                filtered + inputSample * polarity * inputGain + denormalBias;
+                satFiltered + inputSample * polarity * inputGain + denormalBias;
 
             dl.writePos = (dl.writePos + 1) & dl.mask;
         }
@@ -600,6 +605,17 @@ void FDNReverb::setBassMultiply (float mult)
     bassMultiply_ = std::clamp (mult, 0.5f, 2.5f);
     if (prepared_)
         updateDecayCoefficients();
+}
+
+void FDNReverb::setMidMultiply (float mult)
+{
+    midMultiply_ = std::clamp (mult, 0.1f, 4.0f);
+    if (prepared_) updateDecayCoefficients();
+}
+
+void FDNReverb::setSaturation (float amount)
+{
+    saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
 }
 
 void FDNReverb::setTrebleMultiply (float mult)
@@ -730,6 +746,14 @@ void FDNReverb::setInlineDiffusion (float coeff)
     // ringing for longer-delay modes (Hall, Plate). Density is instead
     // improved via 3-stage output diffusion (post-FDN, no feedback impact).
     inlineDiffCoeff3_ = 0.0f;
+}
+
+void FDNReverb::setTankDiffusion (float amount)
+{
+    // Linear: knob 0 → 0 (Hadamard-only density, original behaviour),
+    // knob 1 → 0.55 (Lexicon hall-density convention).
+    float a = std::clamp (amount, 0.0f, 1.0f);
+    setInlineDiffusion (a * 0.55f);
 }
 
 void FDNReverb::setUseShortInlineAP (bool use)
@@ -1102,16 +1126,17 @@ void FDNReverb::clearBuffers()
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
     }
-    // Match prepare() exactly so a clearBuffers() reproduces the identical
-    // LFO/PRNG start state — otherwise transport resets diverge from a fresh
-    // prepare for the same preset/state.
-    constexpr float kFixedBasePhase = 2.3561945f;  // 3pi/4
+    // Match prepare() exactly so clearBuffers() reproduces the identical
+    // LFO + jitter PRNG start state — otherwise transport resets would
+    // diverge from a fresh prepare for the same preset.
     constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
     for (int i = 0; i < N; ++i)
     {
-        lfoPhase_[i] = std::fmod (kFixedBasePhase + kTwoPi * static_cast<float> (i)
-                                                             / static_cast<float> (N), kTwoPi);
-        lfoPRNG_[i] = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
+        const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
+        lfos_[i].prepare (static_cast<float> (sampleRate_), seed);
+        lfos_[i].setRate  (modRateHz_);
+        lfos_[i].setDepth (modDepthSamples_);
+        lfoPRNG_[i] = seed ^ 0x9E3779B9u;
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
@@ -1235,9 +1260,9 @@ void FDNReverb::updateDecayCoefficients()
         // bassMultiply > 1.0 → lows sustain longer (g_low > g_base)
         float gLow = std::pow (gBase, 1.0f / bassMultiply_);
 
-        // Mid band (lowCrossover..highCrossover): same as old gHigh formula.
-        // Preserves the matched 4kHz RT60 from TwoBandDamping calibration.
-        float gMid = std::pow (gBase, 1.0f / trebleMultiply_);
+        // True 3-band: mid band uses midMultiply_ (default 1.0 = natural rate).
+        // Previously locked to trebleMultiply_, which collapsed mid into treble.
+        float gMid = std::pow (gBase, 1.0f / midMultiply_);
 
         // Air band (> highCrossover): independent damping via airTrebleMultiply_.
         // gHigh = gBase^(1/airTrebleMultiply_): lower values = faster decay.
@@ -1252,10 +1277,22 @@ void FDNReverb::updateDecayCoefficients()
 void FDNReverb::updateModDepth()
 {
     // Scale by sample rate ratio so modulation depth (in time) is consistent
-    // across 44.1kHz, 48kHz, 96kHz etc.
+    // across 44.1 k / 48 k / 96 k etc.
+    // Normalised across all four engines: depth × 16 samples peak at 44.1 k.
+    // (Was 4 — a quarter of the others — which made the FDN's modulation
+    // feel almost off when the user dialled the knob midway. The per-channel
+    // modDepthScale_[ch] still tapers individual channels by delay length so
+    // longer delays modulate more, shorter less — that proportional shape
+    // is preserved on top of the new base.)
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = modDepth_ * 4.0f * rateRatio;
+    modDepthSamples_ = modDepth_ * 16.0f * rateRatio;
     noiseModDepth_ = noiseModDepthParam_ * rateRatio;
+    // Push the new depth to every per-channel random-walk LFO. The
+    // process loop multiplies by modDepthScale_[ch] so we set the LFOs
+    // to the broadband depth and let the per-channel weighting happen
+    // at the read site.
+    for (int i = 0; i < N; ++i)
+        lfos_[i].setDepth (modDepthSamples_);
 }
 
 void FDNReverb::updateLFORates()
@@ -1269,8 +1306,5 @@ void FDNReverb::updateLFORates()
     };
 
     for (int i = 0; i < N; ++i)
-    {
-        float rateHz = modRateHz_ * kRateFactors[i];
-        lfoPhaseInc_[i] = kTwoPi * rateHz / static_cast<float> (sampleRate_);
-    }
+        lfos_[i].setRate (modRateHz_ * kRateFactors[i]);
 }

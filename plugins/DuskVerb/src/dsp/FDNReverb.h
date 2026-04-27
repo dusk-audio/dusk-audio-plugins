@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DspUtils.h"
 #include "TwoBandDamping.h"
 
 #include <random>
@@ -26,8 +27,10 @@ public:
 
     void setDecayTime (float seconds);
     void setBassMultiply (float mult);
+    void setMidMultiply (float mult);              // NEW: 3-band mid (default 1.0)
     void setTrebleMultiply (float mult);
     void setCrossoverFreq (float hz);
+    void setSaturation (float amount);             // NEW: 0..1 drive softClip
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -39,6 +42,11 @@ public:
     void setLateGainScale (float scale);
     void setSizeRange (float min, float max);
     void setInlineDiffusion (float coeff);
+    // User-facing tank density. amount is the DIFFUSION knob value [0, 1].
+    // Linear map to inline-AP coefficient: knob 0 → off (Hadamard-only density,
+    // current behaviour), knob 1 → 0.55 (Lexicon hall-density convention).
+    // Routes through setInlineDiffusion which also updates inlineDiffCoeff2_/3_.
+    void setTankDiffusion (float amount);
     void setUseShortInlineAP (bool use);
     void setMultiPointOutput (const FDNOutputTap* left, int numL,
                               const FDNOutputTap* right, int numR);
@@ -166,9 +174,14 @@ private:
     float inlineDiffCoeff2_ = 0.0f;
     float inlineDiffCoeff3_ = 0.0f;
     ThreeBandDamping dampFilter_[N];
-    float lfoPhase_[N] {};
-    float lfoPhaseInc_[N] {};
-    uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state for LFO drift
+    // Random-walk LFO per channel — replaces the previous sine + drift
+    // pattern for consistency with the other engines. Aperiodic wander
+    // never beats with the FDN's modal frequencies. The noise PRNG below
+    // (lfoPRNG_) is REPURPOSED as the per-channel jitter PRNG that
+    // complements the LFO with fast aperiodic delay-read jitter.
+    DspUtils::RandomWalkLFO lfos_[N];
+    uint32_t lfoPRNG_[N] {};   // Per-channel xorshift32 state — used ONLY
+                               // for the per-sample jitter now.
     float delayLength_[N] {};
     float inputGainScale_[N] {};  // Per-channel input gain: 1/sqrt(delay_length/min_delay) for uniform modal excitation
     float outputGainScale_[N] {}; // Per-channel output gain: same weighting for spectral flatness
@@ -238,10 +251,12 @@ private:
     double sampleRate_ = 44100.0;
     float decayTime_ = 1.0f;
     float bassMultiply_ = 1.0f;
+    float midMultiply_ = 1.0f;            // 3-band mid (NEW)
     float trebleMultiply_ = 0.5f;
     float airTrebleMultiply_ = 1.0f;  // Independent air band damping (above highCrossoverFreq)
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 20000.0f;
+    float saturationAmount_ = 0.0f;       // 0..1 drive (NEW)
     float modDepth_ = 0.5f;
     float modRateHz_ = 1.0f;
     float modDepthSamples_ = 2.0f;

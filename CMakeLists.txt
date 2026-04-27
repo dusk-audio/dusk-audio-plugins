@@ -113,3 +113,9 @@ if(BUILD_DUSKAMP AND BUILD_DUSKAMP_TESTS)
     add_subdirectory(tests/duskamp_golden_render)
     add_subdirectory(tests/duskamp_cpu_harness)
 endif()
+
+# DuskVerb measurement tool — hosts the AU bundle to render test signals.
+option(BUILD_DUSKVERB_RENDER "Build DuskVerb plugin-host render tool" OFF)
+if(BUILD_DUSKVERB_RENDER)
+    add_subdirectory(tests/duskverb_render)
+endif()

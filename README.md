@@ -75,7 +75,7 @@ ML-powered intelligent drum pattern generator:
 
 ### DuskAmp - IN DEVELOPMENT
 Guitar amp plugin with WDF-modeled preamps, tone stack, power amp, convolution cab, and post-FX:
-- Three preamp topologies (Fender Twin / Marshall Plexi / Vox AC30)
+- Three preamp topologies: Clean (Fender Twin), British Crunch (Marshall Plexi), British Chime (Vox AC30)
 - Yeh/Smith bilinear tone stack
 - Power amp with negative-feedback presence/resonance and sag
 - Convolution cab with hi/lo cut
