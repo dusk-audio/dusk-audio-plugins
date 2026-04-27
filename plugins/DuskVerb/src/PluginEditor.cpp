@@ -93,6 +93,7 @@ void KnobWithLabel::init (juce::Component& parent,
 
 void KnobWithLabel::setAccent (juce::Colour accent)
 {
+    currentAccent = accent;
     valueLabel.setColour (juce::Label::textColourId, accent);
     valueLabel.repaint();
     slider.repaint();   // arc colour comes from LookAndFeel; force redraw
@@ -550,6 +551,12 @@ void DuskVerbEditor::timerCallback()
     {
         k.valueLabel.setText (formatValue (k.slider, k.valueLabel.getName()),
                               juce::dontSendNotification);
+        // Re-assert accent every tick. The value-editor overlay's focus loss
+        // was flipping labels to white and not restoring (Logic + JUCE Label
+        // interaction). Cheap to re-set the colour each tick — it's a no-op
+        // when nothing has changed.
+        if (k.valueLabel.findColour (juce::Label::textColourId) != k.currentAccent)
+            k.valueLabel.setColour (juce::Label::textColourId, k.currentAccent);
     };
 
     // decay_ is a HeroDecay — self-updates via slider.onValueChange → repaint.

@@ -83,6 +83,12 @@ struct KnobWithLabel
     // in DuskLookAndFeel.h.
     std::unique_ptr<juce::MouseListener> valueEditorTrigger;
 
+    // Stored accent so it survives any code path that resets label colours
+    // (e.g. the value-editor close path was leaving labels white because the
+    // overlay TextEditor's focus loss touched the parent label colours).
+    // The timer callback re-asserts this colour on every tick.
+    juce::Colour currentAccent { 0xffff7a3d };
+
     void init (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
                const juce::String& paramID, const juce::String& displayName,
                const juce::String& suffix, const juce::String& tooltip = {});

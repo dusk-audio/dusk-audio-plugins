@@ -24,7 +24,13 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-inline int getNumAlgorithms() { return 7; }
+// Shimmer (Eno FDN) is currently disabled — the in-loop modulation +
+// granular pitch shifter combination has too many open issues to ship
+// in this release. The engine code stays compiled so factory presets
+// that reference it don't break the build, but it's hidden from the UI
+// dropdown and no factory presets target it. Re-enable by bumping this
+// to 7 once the cascade artefacts are resolved.
+inline int getNumAlgorithms() { return 6; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
@@ -35,9 +41,9 @@ inline const AlgorithmConfig& getAlgorithmConfig (int index)
         { "Realistic Space (FDN)",    EngineType::FDN            },
         { "Spring Tank (6G15)",       EngineType::Spring         },
         { "Non-Linear (RMX16)",       EngineType::NonLinear      },
-        { "Shimmer (Eno FDN)",        EngineType::Shimmer        },
+        { "Shimmer (Eno FDN)",        EngineType::Shimmer        },   // hidden — see getNumAlgorithms()
     };
-    if (index < 0 || index >= getNumAlgorithms())
+    if (index < 0 || index >= 7)   // bound to FULL array, not dropdown count
         index = 0;
     return kEngines[index];
 }
