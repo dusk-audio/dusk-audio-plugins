@@ -7,7 +7,7 @@
 void OutputDiffusion::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     static constexpr float kTwoPi = 6.283185307179586f;
-    float ratio = static_cast<float> (sampleRate / 44100.0);
+    float ratio = static_cast<float> (sampleRate / DspUtils::kBaseSampleRate);
 
     float totalAPs = static_cast<float> (kNumStages * 2);
 

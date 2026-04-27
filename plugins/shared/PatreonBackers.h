@@ -5,12 +5,18 @@
 
     Special thanks to our Patreon supporters who make these plugins possible!
 
-    This file is shared across all Dusk Audio plugins.
-    Edit this single file to update credits in all plugins.
+    ⚠  IMPORTANT: this file exists in THREE git worktrees and must stay in sync:
+        - plugins/plugins/shared/PatreonBackers.h                (main)
+        - plugins-worktree/plugins/shared/PatreonBackers.h
+        - plugins-multi-synth/plugins/shared/PatreonBackers.h
+    Whichever worktree you edit, copy the change to the other two before
+    rebuilding; otherwise plugins built from different worktrees will show
+    inconsistent credits.
 
     To add new backers:
     1. Add names to the appropriate tier array below
-    2. Rebuild all plugins
+    2. Copy this file to the other two worktrees (see paths above)
+    3. Rebuild all plugins
 
     Tier Benefits:
     - Supporter ($3/month):  Development updates, name in credits
@@ -43,6 +49,7 @@ namespace PatreonCredits
 
     // Patron ($5/month)
     inline const std::vector<juce::String> patrons = {
+        "David",
     };
 
     // Supporter ($3/month)
@@ -50,12 +57,11 @@ namespace PatreonCredits
         "Eblen Macari",
         "Jano",
         "Stefan Windus",
-        "S C",
     };
 
     // Past Supporters — thank you for your support!
     inline const std::vector<juce::String> pastSupporters = {
-        
+        "S C",
     };
 
     //==========================================================================
