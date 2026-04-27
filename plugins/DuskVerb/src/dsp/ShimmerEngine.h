@@ -93,12 +93,38 @@ private:
     public:
         static constexpr int kGrainSize = 4096;
 
-        void prepare();
+        void prepare (double sampleRate);
         void clear();
         void setPitchRatio (float ratio);
         float process (float input);
 
     private:
+        // RBJ biquad in Direct Form II Transposed. We cascade TWO of these
+        // at the input of process() to form a 4-pole Butterworth LP whose
+        // cutoff dynamically tracks pitchRatio_ — anti-aliasing for the
+        // granular pitch shift. Without this, content above Nyquist/ratio
+        // mirrors back into the audible band on every loop iteration and
+        // recirculating aliasing collapses extreme presets to sub-bass.
+        struct BiquadLP
+        {
+            float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
+            float a1 = 0.0f, a2 = 0.0f;
+            float z1 = 0.0f, z2 = 0.0f;
+            void setCoeffs (double sampleRate, float fc, float Q);
+            inline float process (float x) noexcept
+            {
+                const float y = b0 * x + z1;
+                z1 = b1 * x - a1 * y + z2;
+                z2 = b2 * x - a2 * y;
+                return y;
+            }
+            void clear() { z1 = z2 = 0.0f; }
+        };
+
+        // Update LP cutoff for the current pitchRatio_. Cutoff = min(SR/2·0.9,
+        // SR/2 / pitchRatio_) so we never sample content that would alias.
+        void updateAntiAliasCutoff();
+
         std::vector<float> buffer_;
         int   mask_     = 0;
         int   writePos_ = 0;
@@ -107,6 +133,13 @@ private:
         float readPos1_ = 0.0f;
         float readPos2_ = static_cast<float> (kGrainSize) * 0.5f;
         float pitchRatio_ = 1.0f;
+        double sampleRate_ = 44100.0;
+
+        // Two cascaded biquads = 4-pole Butterworth (24 dB/oct).
+        // Butterworth Q values for the 4-pole pair: 0.5412, 1.3066.
+        BiquadLP aaStage1_, aaStage2_;
+        static constexpr float kButterworthQ1 = 0.5411961f;
+        static constexpr float kButterworthQ2 = 1.3065630f;
 
         void startNewGrain (int& phase, float& readPos);
         float readLinear (float pos) const;
@@ -187,6 +220,26 @@ private:
     float dampCoeff_     = 0.5f;
     float dampStateOutL_ = 0.0f;
     float dampStateOutR_ = 0.0f;
+
+    // ── Phase 3: RMS envelope-follower auto-level ────────────────────
+    // Replaces the broken empirical pitch-loss compensation. Tracks the
+    // pre- and post-pitch-shifter signal envelopes; the ratio (preEnv /
+    // postEnv) IS the measured loss factor, which we then feed back as
+    // a feedback-gain compensation. Loss varies with pitch ratio + cycle
+    // period, so an analytical model can't predict it — measuring it
+    // is the only correct approach.
+    //
+    // Smoothing: 50 ms attack so we react to sudden energy spikes
+    // (cascade buildup) without overshoot, 400 ms release so cascade-
+    // recovery doesn't pump audibly. The compensation gain itself is
+    // additionally slewed at 100 ms to prevent zipper noise on the
+    // feedback bus.
+    float autoLevelEnvPre_  = 0.0f;
+    float autoLevelEnvPost_ = 0.0f;
+    float autoLevelGain_    = 1.0f;
+    float envAttackCoeff_   = 0.0f;     // computed in prepare()
+    float envReleaseCoeff_  = 0.0f;
+    float gainSlewCoeff_    = 0.0f;
 
     void updateFeedback();
     void updateDelays();
