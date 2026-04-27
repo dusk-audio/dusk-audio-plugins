@@ -129,9 +129,18 @@ def iterate_once(preset_cpp, build_dir, algo_idx, target_ir, damping,
 
     build(build_dir)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        render(algo_idx, tmp.name)
-        meas = measure(tmp.name)
-    os.unlink(tmp.name)
+        tmp_path = tmp.name
+    try:
+        render(algo_idx, tmp_path)
+        meas = measure(tmp_path)
+    finally:
+        # Always remove the temp WAV — render() or measure() can raise (e.g.
+        # IRTest binary missing, scipy load error) and leaving a 6-second
+        # 48 k float32 WAV around per failed iteration adds up fast.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     # Targets derived from the reference IR on demand
     sr_t, data_t = ai.load_ir(target_ir)

@@ -20,6 +20,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
 
+#include <cstdlib>
 #include <iostream>
 #include <map>
 
@@ -30,9 +31,15 @@ namespace
     constexpr int    kRenderSec    = 6;
     constexpr int    kTotalSamples = static_cast<int> (kSampleRate * kRenderSec);
 
-    // Hard-coded path to the built AU. Matches `cmake --build ... --target DuskVerb_AU`
-    // install destination on macOS.
-    const juce::String kAUPath = "/Users/marckorte/Library/Audio/Plug-Ins/Components/DuskVerb.component";
+    // Default AU path: per-user Components folder under $HOME — matches
+    // `cmake --build ... --target DuskVerb_AU`'s install destination on
+    // macOS and works for any developer (no hard-coded username). The
+    // `--au <path>` CLI flag overrides this when the AU lives elsewhere
+    // (e.g. /Library/Audio/Plug-Ins/Components for a system install).
+    const juce::String kAUPath =
+        juce::File::getSpecialLocation (juce::File::userHomeDirectory)
+            .getChildFile ("Library/Audio/Plug-Ins/Components/DuskVerb.component")
+            .getFullPathName();
 
     // Factory preset definitions — mirror FactoryPresets.h (we don't link
     // against the plugin's source, so we duplicate just the values we need).
@@ -623,6 +630,7 @@ int main (int argc, char** argv)
     juce::String vpresetPath;
     juce::String aupresetPath;
     juce::String slugArg;
+    juce::String outDirArg;
     bool listParamsOnly = false;
     for (int i = 1; i < argc; ++i)
     {
@@ -631,6 +639,7 @@ int main (int argc, char** argv)
         else if (a == "--vpreset" && i + 1 < argc)  vpresetPath  = argv[++i];
         else if (a == "--aupreset" && i + 1 < argc) aupresetPath = argv[++i];
         else if (a == "--slug" && i + 1 < argc)     slugArg      = argv[++i];
+        else if (a == "--output-dir" && i + 1 < argc) outDirArg  = argv[++i];
         else if (a == "--list-params")              listParamsOnly = true;
         else if (! a.startsWith ("--"))             presetName   = a;
     }
@@ -761,8 +770,30 @@ int main (int argc, char** argv)
         renderThroughPlugin (*plugin, preRoll);
     }
 
-    juce::File outDir = juce::File ("/Users/marckorte/projects/Luna/plugins/tests/duskverb_render/output");
+    // Output directory resolution priority:
+    //   1. --output-dir CLI flag
+    //   2. DUSKVERB_RENDER_OUT environment variable
+    //   3. Default: <cwd>/tests/duskverb_render/output (matches the analyze
+    //      scripts' Path(__file__).parent / "output" assumption when run from
+    //      the repo root). Falls back to <cwd>/duskverb_render_output if the
+    //      tests/ folder isn't reachable from cwd.
+    juce::String outDirPath = outDirArg;
+    if (outDirPath.isEmpty())
+    {
+        if (auto* env = std::getenv ("DUSKVERB_RENDER_OUT"))
+            outDirPath = juce::String::fromUTF8 (env);
+    }
+    if (outDirPath.isEmpty())
+    {
+        auto cwd     = juce::File::getCurrentWorkingDirectory();
+        auto repoOut = cwd.getChildFile ("tests/duskverb_render/output");
+        outDirPath = repoOut.getParentDirectory().isDirectory()
+                   ? repoOut.getFullPathName()
+                   : cwd.getChildFile ("duskverb_render_output").getFullPathName();
+    }
+    juce::File outDir (outDirPath);
     outDir.createDirectory();
+    std::cout << "Output directory: " << outDir.getFullPathName() << std::endl;
 
     const juce::String slug = slugArg.isNotEmpty()
                             ? slugArg

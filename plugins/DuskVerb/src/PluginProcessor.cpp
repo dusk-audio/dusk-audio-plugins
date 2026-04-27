@@ -14,105 +14,110 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     for (int i = 0; i < getNumAlgorithms(); ++i)
         algorithmNames.add (getAlgorithmConfig (i).name);
 
+    // Seed every default from factory preset 0 so a host "reset to defaults"
+    // matches the startup voicing the constructor would otherwise apply
+    // post-hoc. Single source of truth — if preset 0 changes, defaults track.
+    const auto& fp0 = getFactoryPresets().front();
+
     layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { "algorithm", 1 }, "Algorithm", algorithmNames, 0));
+        juce::ParameterID { "algorithm", 1 }, "Algorithm", algorithmNames, fp0.algorithm));
 
     // ---- The 21 parameters ----
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mix", 1 }, "Dry/Wet",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.40f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), fp0.mix));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { "bus_mode", 1 }, "Bus Mode", false));
+        juce::ParameterID { "bus_mode", 1 }, "Bus Mode", fp0.busMode));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bypass", 1 }, "Bypass", false));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "predelay", 1 }, "Pre-Delay",
-        juce::NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.4f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 250.0f, 0.0f, 0.4f), fp0.predelay));
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "predelay_sync", 1 }, "Pre-Delay Sync",
-        juce::StringArray { "Free", "1/32", "1/16", "1/8", "1/4", "1/2", "1/1" }, 0));
+        juce::StringArray { "Free", "1/32", "1/16", "1/8", "1/4", "1/2", "1/1" }, fp0.predelaySync));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "decay", 1 }, "Decay Time",
-        juce::NormalisableRange<float> (0.2f, 30.0f, 0.0f, 0.4f), 2.0f));
+        juce::NormalisableRange<float> (0.2f, 30.0f, 0.0f, 0.4f), fp0.decay));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "size", 1 }, "Size",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), fp0.size));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mod_depth", 1 }, "Mod Depth",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.25f));
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), fp0.modDepth));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mod_rate", 1 }, "Mod Rate",
-        juce::NormalisableRange<float> (0.10f, 10.0f, 0.0f, 0.5f), 0.8f));
+        juce::NormalisableRange<float> (0.10f, 10.0f, 0.0f, 0.5f), fp0.modRate));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "bass_mult", 1 }, "Bass Multiply",
-        juce::NormalisableRange<float> (0.3f, 2.5f), 1.0f));
+        juce::NormalisableRange<float> (0.3f, 2.5f), fp0.bassMult));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mid_mult", 1 }, "Mid Multiply",
-        juce::NormalisableRange<float> (0.3f, 2.5f), 1.0f));
+        juce::NormalisableRange<float> (0.3f, 2.5f), fp0.midMult));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "damping", 1 }, "Treble Multiply",
-        juce::NormalisableRange<float> (0.1f, 1.5f), 0.7f));
+        juce::NormalisableRange<float> (0.1f, 1.5f), fp0.damping));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "crossover", 1 }, "Low Crossover",
-        juce::NormalisableRange<float> (200.0f, 4000.0f, 0.0f, 0.5f), 1000.0f));
+        juce::NormalisableRange<float> (200.0f, 4000.0f, 0.0f, 0.5f), fp0.crossover));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "high_crossover", 1 }, "High Crossover",
-        juce::NormalisableRange<float> (1000.0f, 12000.0f, 0.0f, 0.5f), 4000.0f));
+        juce::NormalisableRange<float> (1000.0f, 12000.0f, 0.0f, 0.5f), fp0.highCrossover));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "saturation", 1 }, "Saturation",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), fp0.saturation));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "diffusion", 1 }, "Diffusion",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.7f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), fp0.diffusion));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "er_level", 1 }, "Early Ref Level",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), fp0.erLevel));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "er_size", 1 }, "Early Ref Size",
-        juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
+        juce::NormalisableRange<float> (0.0f, 1.0f), fp0.erSize));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "lo_cut", 1 }, "Lo Cut",
-        juce::NormalisableRange<float> (5.0f, 500.0f, 0.0f, 0.3f), 20.0f));
+        juce::NormalisableRange<float> (5.0f, 500.0f, 0.0f, 0.3f), fp0.loCut));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "hi_cut", 1 }, "Hi Cut",
-        juce::NormalisableRange<float> (1000.0f, 20000.0f, 0.0f, 0.3f), 20000.0f));
+        juce::NormalisableRange<float> (1000.0f, 20000.0f, 0.0f, 0.3f), fp0.hiCut));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "width", 1 }, "Width",
-        juce::NormalisableRange<float> (0.0f, 2.0f), 1.0f));
+        juce::NormalisableRange<float> (0.0f, 2.0f), fp0.width));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { "freeze", 1 }, "Freeze", false));
+        juce::ParameterID { "freeze", 1 }, "Freeze", fp0.freeze));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "gain_trim", 1 }, "Gain Trim",
-        juce::NormalisableRange<float> (-48.0f, 48.0f, 0.1f), 0.0f));
+        juce::NormalisableRange<float> (-48.0f, 48.0f, 0.1f), fp0.gainTrim));
 
     // Mono Maker — sums L+R below this cutoff to mono. 20 Hz = effectively
     // bypass (sub-audible). Skewed log-style to give finer control across
     // the typical 60–200 Hz mono region.
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "mono_below", 1 }, "Mono Below",
-        juce::NormalisableRange<float> (20.0f, 300.0f, 0.0f, 0.5f), 20.0f));
+        juce::NormalisableRange<float> (20.0f, 300.0f, 0.0f, 0.5f), fp0.monoBelow));
 
     return layout;
 }
@@ -150,12 +155,10 @@ DuskVerbProcessor::DuskVerbProcessor()
 
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*> (parameters.getParameter ("bypass"));
 
-    // Apply the first factory preset on construction so a fresh plugin instance
-    // sounds musical out of the box. setStateInformation() will subsequently
-    // overwrite this for hosts that restore saved state.
-    const auto& factoryPresets = getFactoryPresets();
-    if (! factoryPresets.empty())
-        factoryPresets[0].applyTo (parameters);
+    // Startup voicing comes from createParameterLayout() seeding every default
+    // from factory preset 0 — host "reset to defaults" therefore reproduces
+    // exactly what a fresh instance plays. setStateInformation() overwrites
+    // this for hosts that restore saved state.
 }
 
 bool DuskVerbProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const

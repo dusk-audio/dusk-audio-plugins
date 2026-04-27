@@ -71,8 +71,12 @@ def analyze_impulse(wav_path):
     print(f"Duration:    {samples.shape[1] / sr:.2f} s")
     print(f"Channels:    {samples.shape[0]}")
 
-    # Use mid (L+R)/2 for analysis
-    mid = (samples[0] + samples[1]) * 0.5
+    # Use mid (L+R)/2 for analysis. load_wav returns shape (1, n) for mono
+    # files; downmix degrades gracefully by treating the single channel as
+    # both L and R (no IndexError on samples[1]).
+    left  = samples[0]
+    right = samples[1] if samples.shape[0] > 1 else samples[0]
+    mid = (left + right) * 0.5
 
     env = envelope(mid)
     peak_db = 20 * np.log10(env.max() + 1e-12)
@@ -147,7 +151,10 @@ def analyze_noise_burst(wav_path):
 
     print(f"\n=== Noise Burst Tail Analysis: {wav_path.name} ===")
 
-    mid = (samples[0] + samples[1]) * 0.5
+    # Same mono-safe downmix as analyze_impulse.
+    left  = samples[0]
+    right = samples[1] if samples.shape[0] > 1 else samples[0]
+    mid = (left + right) * 0.5
 
     # The burst is 100ms. Pre-delay is 35ms. So the WET tail starts becoming
     # visible around 100+35 = 135ms. The PURE tail (input ended) begins at
