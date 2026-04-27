@@ -720,8 +720,20 @@ def analyze(path, dry_path=None):
 
     if dry_path is not None and os.path.isfile(dry_path):
         try:
-            _, dry_data = load_ir(dry_path)
+            dry_sr, dry_data = load_ir(dry_path)
             dry_mono = to_mono(dry_data)
+            if dry_sr != sr:
+                # Resample dry to wet's rate so the sample-index arithmetic in
+                # forensic_true_predelay_ms (which assumes a single sr) stays
+                # honest. Without this a 44.1 k dry vs 48 k wet would land the
+                # peak ~9 % earlier in samples and mis-report pre-delay by the
+                # same amount.
+                from scipy.signal import resample_poly
+                from math import gcd
+                g = gcd(int(sr), int(dry_sr))
+                up, down = int(sr) // g, int(dry_sr) // g
+                dry_mono = resample_poly(dry_mono, up, down).astype(np.float32)
+                print(f"  Note: dry IR resampled {dry_sr}→{sr} Hz for predelay measurement.")
             pd_ms = forensic_true_predelay_ms(mono, dry_mono, sr)
             if pd_ms is not None:
                 print(f"  True pre-delay:       {pd_ms:+.4f} ms  "

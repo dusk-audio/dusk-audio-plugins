@@ -365,10 +365,20 @@ private:
         const juce::String displayed = slider.getTextFromValue (slider.getValue()).toLowerCase();
         bool isPercent = displayed.containsChar ('%');
         // Treat slider as seconds-scale when its max ≤ 60 AND its display
-        // mentions a time unit. Catches DuskVerb's DECAY knob whose display
-        // auto-switches between "ms" and "s" depending on value.
-        const bool isSecondsScale = slider.getMaximum() <= 60.0
-                                  && (displayed.contains ("ms") || displayed.contains ("s"));
+        // ends with a real time-unit token. Catches DuskVerb's DECAY knob
+        // whose display auto-switches between "ms" and "s" depending on
+        // value. Require an *ending* token (not contains) so unrelated text
+        // — e.g. a hypothetical "samples"-suffixed knob — can't false-match
+        // by virtue of containing the letter 's'.
+        const bool endsWithSecondsToken = displayed.endsWith ("ms")
+                                        || displayed.endsWith ("milliseconds")
+                                        || displayed.endsWith ("sec")
+                                        || displayed.endsWith ("secs")
+                                        || displayed.endsWith ("seconds")
+                                        || (displayed.endsWithChar ('s')
+                                            && ! displayed.endsWith ("samples")
+                                            && ! displayed.endsWith ("sample"));
+        const bool isSecondsScale = slider.getMaximum() <= 60.0 && endsWithSecondsToken;
 
         double multiplier = 1.0;
 
