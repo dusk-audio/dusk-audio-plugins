@@ -27,8 +27,9 @@ namespace
 // GranularPitchShifter — overlapping-grain pitch shift
 // ============================================================================
 
-void ShimmerEngine::GranularPitchShifter::prepare()
+void ShimmerEngine::GranularPitchShifter::prepare (double sampleRate)
 {
+    sampleRate_ = sampleRate;
     // Buffer = 8 × grain size for plenty of lookback headroom across the
     // 1.0–4.0 pitch-ratio range. At ratio 4.0 (+2 oct), each grain consumes
     // 4 × kGrainSize input samples per kGrainSize output samples → max
@@ -37,6 +38,40 @@ void ShimmerEngine::GranularPitchShifter::prepare()
     buffer_.assign (static_cast<size_t> (bufSize), 0.0f);
     mask_ = bufSize - 1;
     clear();
+    updateAntiAliasCutoff();
+}
+
+// RBJ Audio EQ Cookbook biquad LP coefficients (Direct Form II Transposed
+// in process()). See https://www.w3.org/TR/audio-eq-cookbook/.
+void ShimmerEngine::GranularPitchShifter::BiquadLP::setCoeffs (double sampleRate, float fc, float Q)
+{
+    const float omega = 2.0f * 3.14159265358979323846f * fc / static_cast<float> (sampleRate);
+    const float cosw  = std::cos (omega);
+    const float sinw  = std::sin (omega);
+    const float alpha = sinw / (2.0f * Q);
+
+    const float a0 = 1.0f + alpha;
+    b0 = (1.0f - cosw) * 0.5f / a0;
+    b1 = (1.0f - cosw) / a0;
+    b2 = (1.0f - cosw) * 0.5f / a0;
+    a1 = -2.0f * cosw / a0;
+    a2 = (1.0f - alpha) / a0;
+}
+
+void ShimmerEngine::GranularPitchShifter::updateAntiAliasCutoff()
+{
+    // Cutoff = min(SR/2 × 0.9, SR/2 / pitchRatio_). At pitchRatio = 1.0 (no
+    // shift) the LP sits at 0.9 × Nyquist (essentially open). At pitchRatio
+    // = 4.0 (+2 oct, Cascading Heaven extreme), cutoff = SR/2 / 4 = 6 kHz
+    // at 48 kHz SR — safely below the alias-fold frequency. Two cascaded
+    // Butterworth biquads = 4-pole / 24 dB-per-octave roll-off, steep
+    // enough that anything above the cutoff is attenuated by > 30 dB
+    // before the pitch shifter sees it.
+    const float nyquist = 0.5f * static_cast<float> (sampleRate_);
+    const float fc      = std::min (nyquist * 0.9f,
+                                    nyquist / std::max (pitchRatio_, 1.0f));
+    aaStage1_.setCoeffs (sampleRate_, fc, kButterworthQ1);
+    aaStage2_.setCoeffs (sampleRate_, fc, kButterworthQ2);
 }
 
 void ShimmerEngine::GranularPitchShifter::clear()
@@ -47,11 +82,14 @@ void ShimmerEngine::GranularPitchShifter::clear()
     phase2_   = kGrainSize / 2;
     readPos1_ = 0.0f;
     readPos2_ = static_cast<float> (kGrainSize) * 0.5f;
+    aaStage1_.clear();
+    aaStage2_.clear();
 }
 
 void ShimmerEngine::GranularPitchShifter::setPitchRatio (float ratio)
 {
     pitchRatio_ = std::clamp (ratio, 0.5f, 4.0f);
+    updateAntiAliasCutoff();
 }
 
 void ShimmerEngine::GranularPitchShifter::startNewGrain (int& phase, float& readPos)
@@ -76,8 +114,16 @@ float ShimmerEngine::GranularPitchShifter::readLinear (float pos) const
 
 float ShimmerEngine::GranularPitchShifter::process (float input)
 {
-    // Write current input to buffer.
-    buffer_[static_cast<size_t> (writePos_)] = input + DspUtils::kDenormalPrevention;
+    // Phase 2 — anti-alias the input before it hits the grain buffer.
+    // 4-pole Butterworth at min(SR/2·0.9, SR/2/pitchRatio) prevents the
+    // aliasing-recirculation cascade collapse that was producing sub-bass
+    // artifacts at extreme pitch ratios. The LP is unity-gain in the
+    // passband so cascade level isn't affected — only the > Nyquist/ratio
+    // content that would alias gets removed.
+    const float filtered = aaStage2_.process (aaStage1_.process (input));
+
+    // Write filtered input to buffer.
+    buffer_[static_cast<size_t> (writePos_)] = filtered + DspUtils::kDenormalPrevention;
 
     // Read both grains with linear interpolation.
     const float v1 = readLinear (readPos1_);
@@ -145,8 +191,8 @@ void ShimmerEngine::prepare (double sampleRate, int /*maxBlockSize*/)
         delays_[i].allocate (reserve);
     }
 
-    pitchL_.prepare();
-    pitchR_.prepare();
+    pitchL_.prepare (sampleRate);
+    pitchR_.prepare (sampleRate);
 
     // ── Init the 8 in-loop LFOs with distinct seeds AND distinct rates.
     // Distinct rates (0.20, 0.27, 0.35, 0.42, 0.50, 0.57, 0.64, 0.70 Hz)
@@ -175,6 +221,20 @@ void ShimmerEngine::prepare (double sampleRate, int /*maxBlockSize*/)
     updateDamping();
     updatePitchRatio();
 
+    // Phase 3 — envelope-follower smoothing constants. exp(-1/(τ·sr)) is the
+    // standard 1-pole release coefficient where τ is the time constant. With
+    // attack 50 ms / release 400 ms we react quickly to cascade buildup but
+    // recover smoothly enough that the gain compensation doesn't pump.
+    // The gain itself is additionally slewed at 100 ms to avoid zipper noise
+    // from per-sample compensation jumps.
+    const float sr = static_cast<float> (sampleRate);
+    envAttackCoeff_  = std::exp (-1.0f / (0.050f * sr));
+    envReleaseCoeff_ = std::exp (-1.0f / (0.400f * sr));
+    gainSlewCoeff_   = std::exp (-1.0f / (0.100f * sr));
+    autoLevelEnvPre_  = 0.0f;
+    autoLevelEnvPost_ = 0.0f;
+    autoLevelGain_    = 1.0f;
+
     prepared_ = true;
 }
 
@@ -185,6 +245,9 @@ void ShimmerEngine::clearBuffers()
     pitchR_.clear();
     dampStateOutL_ = 0.0f;
     dampStateOutR_ = 0.0f;
+    autoLevelEnvPre_  = 0.0f;
+    autoLevelEnvPost_ = 0.0f;
+    autoLevelGain_    = 1.0f;
 }
 
 // ── Universal setters ──────────────────────────────────────────────────────
@@ -290,33 +353,19 @@ void ShimmerEngine::updateFeedback()
 
     feedbackGain_ = std::pow (10.0f, -3.0f * loopPeriodSec / std::max (decayTime_, 0.05f));
 
-    // Series-loop pitch-shifter compensation. The granular pitch shifter
-    // loses ~2 dB of energy per loop iteration (Hann-window crossfade
-    // overlap integral + grain-reset transients), and the equal-power
-    // crossfade contributes another small loss for the partially-correlated
-    // (y[i], pitched) signal pair. Together these compound to make
-    // measured RT60 about 2.7× shorter than the math predicts unless we
-    // pre-boost the math-derived feedback gain.
+    // Phase 3 — pitch-shifter loss compensation is now LIVE (envelope-
+    // follower based, see process()). The empirical static model that
+    // used to live here was wrong: it assumed a 1.5 dB × shimmerMix_
+    // linear loss, but actual loss depends on pitch ratio + cycle period
+    // + Hann overlap integral and varies non-linearly. Net effect was
+    // either underdamping (runaway → softClip) or overdamping (cascade
+    // dies). Replaced with a real-time follower that measures the actual
+    // loss between pre-pitch and post-pitch envelopes and feeds back the
+    // measured ratio as a per-sample gain compensation.
     //
-    // The compensation ramps with shimmerMix_: at mix=0 (pure FDN reverb)
-    // there's no pitched signal in the loop, so no compensation needed
-    // and decayTime → fb math is exact. At mix=1 the loop is fully
-    // pitched, so the maximum 2 dB compensation kicks in.
-    //
-    // Final clamp lifted from 0.97 to 0.99 to give the compensated value
-    // somewhere to live. Stability is enforced by softClip inside the
-    // per-sample loop.
-    // pitchLossDB scales linearly with mix, but the actual per-cycle loss
-    // is nonlinear (small at mix=0, grows with the wet-path weight, but
-    // also depends on pitch ratio and cycle period). Empirically a 1.5 dB
-    // ceiling at mix=1 strikes a balance: at the canonical Eno-style
-    // mix=0.5 it brings RT60 close to the dialled-in decayTime, and at
-    // higher mix it doesn't overshoot Valhalla-like 7-8 s tails by an
-    // unreasonable margin. Per-preset tuning of decayTime can fine-tune
-    // any remaining gap.
-    const float pitchLossDB        = 1.5f * shimmerMix_;
-    const float pitchCompensation  = std::pow (10.0f, pitchLossDB / 20.0f);
-    feedbackGain_ *= pitchCompensation;
+    // Clamp held at 0.99 so the compensated feedback × autoLevelGain has
+    // somewhere to live. The loop is now linear (softClip moved to output
+    // in Phase 4) so equal-power crossfade math actually holds.
     feedbackGain_ = std::clamp (feedbackGain_, 0.0f, 0.99f);
 }
 
@@ -442,6 +491,45 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         const float pitchedL = pitchL_.process (aggL);
         const float pitchedR = pitchR_.process (aggR);
 
+        // 4b) Phase 3 — measure the actual pitch-shifter loss in real time
+        //     and compute a feedback-gain compensation. The follower tracks
+        //     |signal| with attack/release smoothing; the ratio preEnv/postEnv
+        //     IS the loss factor (post < pre because the granular shifter
+        //     drops energy at grain seams). Average L/R envelopes so a single
+        //     compensation gain feeds the whole shared FDN loop.
+        const float preMag  = 0.5f * (std::abs (aggL)     + std::abs (aggR));
+        const float postMag = 0.5f * (std::abs (pitchedL) + std::abs (pitchedR));
+
+        const float preCoeff  = (preMag  > autoLevelEnvPre_)  ? envAttackCoeff_ : envReleaseCoeff_;
+        const float postCoeff = (postMag > autoLevelEnvPost_) ? envAttackCoeff_ : envReleaseCoeff_;
+        autoLevelEnvPre_  = preCoeff  * autoLevelEnvPre_  + (1.0f - preCoeff)  * preMag;
+        autoLevelEnvPost_ = postCoeff * autoLevelEnvPost_ + (1.0f - postCoeff) * postMag;
+
+        // Loss factor = pre / post (capped 1..2 = 0..6 dB max boost). At
+        // silence both envelopes are tiny and the ratio collapses toward
+        // 1.0 (no boost). At cascade buildup, post lags pre and the ratio
+        // rises toward the measured loss, then settles to the steady-state
+        // compensation. Cap at 6 dB because anything more either reflects
+        // a numerical edge case OR represents a loss too aggressive to
+        // truly compensate without making the loop unstable.
+        const float targetGain = std::clamp (
+            (autoLevelEnvPre_ + 1e-6f) / (autoLevelEnvPost_ + 1e-6f),
+            1.0f, 2.0f);
+        autoLevelGain_ = gainSlewCoeff_ * autoLevelGain_
+                       + (1.0f - gainSlewCoeff_) * targetGain;
+
+        // The crossfaded loop signal (dryGain·y + wetGain·pitched) for the
+        // CORRELATED (y, pitched) pair can exceed the per-channel RMS by
+        // up to ~6 % at mix=0.5 (math: 0.5+0.125·eff²+0.5·ρ·eff at ρ=1
+        // gives 1.125 = +6 dB ratio). To keep loop gain < 1 we apply a
+        // 0.93 attenuation here so the effective per-cycle = effectiveFb
+        // × 1.06 × 0.93 ≤ 0.99 even at fb very close to unity. This
+        // factor lets us push effectiveFb up to ~0.97 without runaway
+        // (extending the practical RT60 from ~1.4 s at the prior 0.85 cap
+        // to a usable ~5 s).
+        constexpr float kLoopStabilityScale = 0.93f;
+        const float effectiveFb = std::min (fb * autoLevelGain_, 0.97f) * kLoopStabilityScale;
+
         // 5) Per-delay feedback write — SERIES topology (canonical Eno/
         //    Lanois). The pitched feedback REPLACES a fraction `mix` of the
         //    unpitched FDN feedback rather than adding on top. Each pass
@@ -466,27 +554,20 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         //          settings. feedbackGain_ now governs RT60 directly per
         //          its math; cascade compounds on every pass since pitched
         //          signal IS the loop element, not a parallel sidechain.
+        // Phase 4 — LINEAR feedback bus. softClip is gone from the loop:
+        //   • Phase 2 (anti-alias LP) prevents aliasing accumulation
+        //   • Phase 3 (auto-level) bounds the loop signal in real time
+        // Together they make the loop stable WITHOUT a nonlinear clipper,
+        // which means the equal-power crossfade math actually holds (softClip
+        // was destroying the linearity it depends on, flattening cascades).
+        // The ONLY safety net is the output-stage softClip below.
         for (int i = 0; i < kNumChannels; ++i)
         {
             const float pitched = (i % 2 == 0 ? pitchedL : pitchedR);
             const float input_i = (i % 2 == 0 ? xL : xR) * kInputScale;
             const float loopSignal = dryGain * y[i] + wetGain * pitched;
-
-            // softClip on the feedback bus is a stability safety net. Even
-            // with the series crossfade the granular pitch shifter can
-            // produce small amplitude transients during grain crossover that
-            // briefly exceed unity; without the clip these accumulate at
-            // sub-bass via aliasing on extreme presets (Cascading Heaven
-            // at +1.6 oct). softClip(x, 1, 2) starts shaping at 1.0 and
-            // saturates at 2.0 — transparent for normal levels.
-            // softClip ceiling raised 1.0/2.0 → 1.5/3.0. With feedback now
-            // clamped to 0.99 (vs the old 0.97) the per-sample loop levels
-            // run hotter, and the previous 1.0 threshold was kicking in on
-            // legitimate cascade content rather than just on grain-crossover
-            // transients — measurably flattening the cascade without
-            // helping stability.
-            const float clippedFb = DspUtils::softClip (fb * loopSignal, 1.5f, 3.0f);
-            const float toWrite   = input_i + clippedFb + DspUtils::kDenormalPrevention;
+            const float toWrite    = input_i + effectiveFb * loopSignal
+                                   + DspUtils::kDenormalPrevention;
             delays_[i].write (toWrite);
         }
 
@@ -498,6 +579,14 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         dampStateOutR_ = (1.0f - damp) * outR[n] + damp * dampStateOutR_;
         outL[n] = dampStateOutL_;
         outR[n] = dampStateOutR_;
+
+        // 7) Phase 4 — output-stage safety softClip. The only nonlinearity
+        //    in the engine. Knee at 0.95, ceiling at 1.5: anything below
+        //    0.95 passes untouched, then a smooth tanh-like curve shapes
+        //    the rest. Catches any peaks from extreme cascade development
+        //    without imposing on normal-level operation.
+        outL[n] = DspUtils::softClip (outL[n], 0.95f, 1.5f);
+        outR[n] = DspUtils::softClip (outR[n], 0.95f, 1.5f);
     }
 
     // Bass post-shelf (same trivial flat scale used in the other engines).
