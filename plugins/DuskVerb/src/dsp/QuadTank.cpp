@@ -86,7 +86,7 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
             int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_)) + 4;
             tank.densityAP[i].allocate (dapMax);
             // Lexicon spin-and-wander on each density AP — same fix as
-            // ModernSpace + Dattorro got. Breaks AP modal phase-locking.
+            // SixAPTank + Dattorro got. Breaks AP modal phase-locking.
             tank.densityAP[i].jitterDepthFraction = 0.015f;  // 1.5 % wander
         }
 
@@ -538,7 +538,7 @@ void QuadTank::updateDelayLengths()
             static_cast<float> (tank.ap2BaseDelay) * rateRatio * sizeScale));
 
         // Refresh jitter LFO depth + rate when delay changes (matches the
-        // ModernSpace + Dattorro pattern). Without this the jitter doesn't
+        // SixAPTank + Dattorro pattern). Without this the jitter doesn't
         // track the size knob and density APs ring at large sizes.
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
@@ -555,7 +555,7 @@ void QuadTank::updateDecayCoefficients()
     float lowCrossoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
-    // Size-dependent AP energy-storage factor (mirrors ModernSpace + Dattorro).
+    // Size-dependent AP energy-storage factor (mirrors SixAPTank + Dattorro).
     // Linear interp: 2.65 at sizeParam=0.5, 1.55 at 1.0. Compensates for the
     // recursive-feedback storage in each density AP shrinking proportionally
     // as the direct loop grows.

@@ -6,7 +6,7 @@
 #include <vector>
 
 // PARALLEL all-pass input diffuser, sized strictly for the 6-AP
-// (ModernSpace) engine.
+// (SixAPTank) engine.
 //
 // Why parallel and not series (the global DiffusionStage is series):
 //   • A series Schroeder cascade has cumulative sum-of-delays peaks. With 4

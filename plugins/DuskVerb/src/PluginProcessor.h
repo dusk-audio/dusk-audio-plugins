@@ -6,6 +6,8 @@
 
 #include <atomic>
 
+struct FactoryPreset;
+
 class DuskVerbProcessor : public juce::AudioProcessor
 {
 public:
@@ -40,6 +42,12 @@ public:
 
     juce::AudioProcessorValueTreeState parameters;
 
+    // Combined preset apply: routes APVTS values + engine-specific tunables
+    // (SixAPTank brightness/density) through one entry point so the editor
+    // doesn't need to know about engine internals. Caches the per-preset
+    // engine config so it survives state save/load.
+    void applyFactoryPreset (const FactoryPreset& preset);
+
     // Level meters (audio thread writes, UI thread reads).
     float getInputLevelL()  const { return inputLevelL_.load (std::memory_order_relaxed); }
     float getInputLevelR()  const { return inputLevelR_.load (std::memory_order_relaxed); }
@@ -50,6 +58,23 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     DuskVerbEngine engine_;
+
+    // Cached SixAPTank brightness/density state. Per-preset values that
+    // travel with the project (persisted in get/setStateInformation as
+    // properties on the state ValueTree, not as APVTS parameters since
+    // they're not user-facing automation targets). Defaults match the
+    // engine's historical hardcoded constants — old save files without
+    // these properties round-trip to identical sound.
+    struct SixAPBrightnessState
+    {
+        float densityBaseline = 0.62f;
+        float bloomCeiling    = 0.85f;
+        float bloomStagger[6] = { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f };
+        float earlyMix        = 0.5f;
+        float outputTrim      = 1.3f;
+    };
+    SixAPBrightnessState sixAPBrightness_;
+    void applySixAPBrightnessToEngine();
 
     // Cached APVTS pointers — read once at construction, hot in processBlock.
     std::atomic<float>* algorithmParam_     = nullptr;
@@ -74,6 +99,7 @@ private:
     std::atomic<float>* hiCutParam_         = nullptr;
     std::atomic<float>* widthParam_         = nullptr;
     std::atomic<float>* freezeParam_        = nullptr;
+    std::atomic<float>* gateEnabledParam_   = nullptr;
     std::atomic<float>* gainTrimParam_      = nullptr;
     std::atomic<float>* monoBelowParam_     = nullptr;
 
@@ -104,6 +130,8 @@ private:
     float lastMonoBelow_   = -1.0f;
     bool  lastFreeze_      = false;
     bool  haveLastFreeze_  = false;
+    bool  lastGateEnabled_     = true;
+    bool  haveLastGateEnabled_ = false;
 
     double preparedSampleRate_ = 0.0;
     int    preparedBlockSize_  = 0;

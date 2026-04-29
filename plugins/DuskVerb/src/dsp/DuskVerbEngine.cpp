@@ -17,7 +17,7 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
 
     // All engines stay prepared so setAlgorithm() never has to allocate.
     dattorro_.prepare (sampleRate, maxBlockSize);
-    modernSpace_.prepare (sampleRate, maxBlockSize);
+    sixAPTank_.prepare (sampleRate, maxBlockSize);
     quad_.prepare (sampleRate, maxBlockSize);
     fdn_.prepare (sampleRate, maxBlockSize);
     spring_.prepare (sampleRate, maxBlockSize);
@@ -92,7 +92,7 @@ void DuskVerbEngine::setAlgorithm (int index)
     currentEngine_ = getAlgorithmConfig (index).engine;
 
     dattorro_.clearBuffers();
-    modernSpace_.clearBuffers();
+    sixAPTank_.clearBuffers();
     quad_.clearBuffers();
     fdn_.clearBuffers();
     spring_.clearBuffers();
@@ -106,7 +106,7 @@ void DuskVerbEngine::setFreeze (bool frozen)
         return;
     frozen_ = frozen;
     dattorro_.setFreeze (frozen);
-    modernSpace_.setFreeze (frozen);
+    sixAPTank_.setFreeze (frozen);
     quad_.setFreeze (frozen);
     fdn_.setFreeze (frozen);
     spring_.setFreeze (frozen);
@@ -114,10 +114,16 @@ void DuskVerbEngine::setFreeze (bool frozen)
     shimmer_.setFreeze (frozen);
 }
 
+// Forward to the NonLinear engine — it's the only algorithm with a gate.
+void DuskVerbEngine::setNonLinearGateEnabled (bool enabled)
+{
+    nonLinear_.setGateEnabled (enabled);
+}
+
 void DuskVerbEngine::setDecayTime (float seconds)
 {
     dattorro_.setDecayTime (seconds);
-    modernSpace_.setDecayTime (seconds);
+    sixAPTank_.setDecayTime (seconds);
     quad_.setDecayTime (seconds);
     fdn_.setDecayTime (seconds);
     spring_.setDecayTime (seconds);
@@ -134,7 +140,7 @@ void DuskVerbEngine::setSize (float size)
 void DuskVerbEngine::pushSizeToTanks (float size)
 {
     dattorro_.setSize (size);
-    modernSpace_.setSize (size);
+    sixAPTank_.setSize (size);
     quad_.setSize (size);
     fdn_.setSize (size);
     spring_.setSize (size);
@@ -145,7 +151,7 @@ void DuskVerbEngine::pushSizeToTanks (float size)
 void DuskVerbEngine::setBassMultiply (float mult)
 {
     dattorro_.setBassMultiply (mult);
-    modernSpace_.setBassMultiply (mult);
+    sixAPTank_.setBassMultiply (mult);
     quad_.setBassMultiply (mult);
     fdn_.setBassMultiply (mult);
     spring_.setBassMultiply (mult);
@@ -156,7 +162,7 @@ void DuskVerbEngine::setBassMultiply (float mult)
 void DuskVerbEngine::setMidMultiply (float mult)
 {
     dattorro_.setMidMultiply (mult);
-    modernSpace_.setMidMultiply (mult);
+    sixAPTank_.setMidMultiply (mult);
     quad_.setMidMultiply (mult);
     fdn_.setMidMultiply (mult);
     spring_.setMidMultiply (mult);
@@ -167,7 +173,7 @@ void DuskVerbEngine::setMidMultiply (float mult)
 void DuskVerbEngine::setTrebleMultiply (float mult)
 {
     dattorro_.setTrebleMultiply (mult);
-    modernSpace_.setTrebleMultiply (mult);
+    sixAPTank_.setTrebleMultiply (mult);
     quad_.setTrebleMultiply (mult);
     fdn_.setTrebleMultiply (mult);
     spring_.setTrebleMultiply (mult);
@@ -178,7 +184,7 @@ void DuskVerbEngine::setTrebleMultiply (float mult)
 void DuskVerbEngine::setCrossoverFreq (float hz)
 {
     dattorro_.setCrossoverFreq (hz);
-    modernSpace_.setCrossoverFreq (hz);
+    sixAPTank_.setCrossoverFreq (hz);
     quad_.setCrossoverFreq (hz);
     fdn_.setCrossoverFreq (hz);
     spring_.setCrossoverFreq (hz);
@@ -189,7 +195,7 @@ void DuskVerbEngine::setCrossoverFreq (float hz)
 void DuskVerbEngine::setHighCrossoverFreq (float hz)
 {
     dattorro_.setHighCrossoverFreq (hz);
-    modernSpace_.setHighCrossoverFreq (hz);
+    sixAPTank_.setHighCrossoverFreq (hz);
     quad_.setHighCrossoverFreq (hz);
     fdn_.setHighCrossoverFreq (hz);
     spring_.setHighCrossoverFreq (hz);
@@ -200,7 +206,7 @@ void DuskVerbEngine::setHighCrossoverFreq (float hz)
 void DuskVerbEngine::setSaturation (float amount)
 {
     dattorro_.setSaturation (amount);
-    modernSpace_.setSaturation (amount);
+    sixAPTank_.setSaturation (amount);
     quad_.setSaturation (amount);
     fdn_.setSaturation (amount);
     spring_.setSaturation (amount);
@@ -217,7 +223,7 @@ void DuskVerbEngine::setModDepth (float depth)
     // Spring engine reinterprets this as "SPRING LEN" — read-position LFO
     // depth in samples (0 = static spring, 1 = full ±6 sample drip wobble).
     dattorro_.setModDepth (depth);
-    modernSpace_.setModDepth (depth);
+    sixAPTank_.setModDepth (depth);
     quad_.setModDepth (depth);
     fdn_.setModDepth (depth);
     spring_.setModDepth (depth);
@@ -228,12 +234,12 @@ void DuskVerbEngine::setModDepth (float depth)
 void DuskVerbEngine::setModRate (float hz)
 {
     dattorro_.setModRate (hz);
-    modernSpace_.setModRate (hz);
+    sixAPTank_.setModRate (hz);
     quad_.setModRate (hz);
     fdn_.setModRate (hz);
     spring_.setModRate (hz);
     nonLinear_.setModRate (hz);
-    shimmer_.setModRate (hz);       // hijacked → MIX (0.1..10 → 0..1 shimmer mix)
+    shimmer_.setModRate (hz);       // hijacked → FEEDBACK (0.1..10 Hz → 0..0.95 cascade gain)
 }
 
 void DuskVerbEngine::setDiffusion (float amount)
@@ -248,7 +254,7 @@ void DuskVerbEngine::setDiffusion (float amount)
     // dispersion-AP coefficient magnitude (0 = no chirp, 1 = full boing).
     diffuser_.setDiffusion    (amount);
     dattorro_.setTankDiffusion    (amount);
-    modernSpace_.setTankDiffusion (amount);
+    sixAPTank_.setTankDiffusion (amount);
     quad_.setTankDiffusion        (amount);
     fdn_.setTankDiffusion         (amount);
     spring_.setTankDiffusion      (amount);
@@ -305,6 +311,18 @@ void DuskVerbEngine::setMonoBelow (float hz)
     // Target only — biquad recomputed once per block in process().
     monoBelowSmoother_.setTarget (std::clamp (hz, 20.0f, 300.0f));
 }
+
+// ── Per-preset SixAPTank brightness/density tunables ────────────────────────
+// These forward unconditionally to sixAPTank_; they only become audible when
+// SixAPTank is the active engine, but applying them at preset-load time is
+// safe (and necessary so values are in place before processing starts).
+// Defaults inside SixAPTankEngine preserve historical behavior so any preset
+// that doesn't call these gets identical sound to before this refactor.
+void DuskVerbEngine::setSixAPDensityBaseline (float v) { sixAPTank_.setDensityBaseline (v); }
+void DuskVerbEngine::setSixAPBloomCeiling    (float v) { sixAPTank_.setBloomCeiling    (v); }
+void DuskVerbEngine::setSixAPBloomStagger    (const float values[6]) { sixAPTank_.setBloomStagger (values); }
+void DuskVerbEngine::setSixAPEarlyMix        (float v) { sixAPTank_.setEarlyMix        (v); }
+void DuskVerbEngine::setSixAPOutputTrim      (float v) { sixAPTank_.setOutputTrim      (v); }
 
 void DuskVerbEngine::updateLoCutCoeffs (float hz)
 {
@@ -411,12 +429,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
     // kill, hence the explicit bypass here.
     // Bypass the global series diffuser for engines that own their own
     // input-side smearing OR shouldn't be smeared at all:
-    //   • ModernSpace6AP — has its own ParallelDiffuser (parallel-AP shatter)
+    //   • SixAPTank — has its own ParallelDiffuser (parallel-AP shatter)
     //   • Spring — 24-stage dispersion cascade IS the input-side processing,
     //              stacking the diffuser would smear the chirp character
     //   • NonLinear — feed-forward TDL with abrupt envelope edges; pre-
     //              smearing the input would round off the gate cliff
-    if (currentEngine_ != EngineType::ModernSpace6AP
+    if (currentEngine_ != EngineType::SixAPTank
         && currentEngine_ != EngineType::Spring
         && currentEngine_ != EngineType::NonLinear)
         diffuser_.process (tankInL_.data(), tankInR_.data(), numSamples);
@@ -428,8 +446,8 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
             dattorro_.process (tankInL_.data(), tankInR_.data(),
                                tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
-        case EngineType::ModernSpace6AP:
-            modernSpace_.process (tankInL_.data(), tankInR_.data(),
+        case EngineType::SixAPTank:
+            sixAPTank_.process (tankInL_.data(), tankInR_.data(),
                                   tankOutL_.data(), tankOutR_.data(), numSamples);
             break;
         case EngineType::QuadTank:
@@ -502,7 +520,12 @@ void DuskVerbEngine::process (float* left, float* right, int numSamples)
         const float dryR = right[i];
 
         const float trim = gainTrimSmoother_.next();
-        left[i]  = (dryL * dryGain + wetL * wetGain) * trim;
-        right[i] = (dryR * dryGain + wetR * wetGain) * trim;
+        // gain_trim is a WET-PATH gain — applies only to the wet signal so
+        // the dry passthrough remains unity-gain. Otherwise a preset with
+        // +17 dB trim (needed to reach the calibrated wet level) would
+        // amplify the dry by +17 dB too, clipping the output even at
+        // Dry/Wet = 0 (full passthrough).
+        left[i]  = dryL * dryGain + wetL * wetGain * trim;
+        right[i] = dryR * dryGain + wetR * wetGain * trim;
     }
 }
