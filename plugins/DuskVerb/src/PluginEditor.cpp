@@ -18,6 +18,15 @@ void KnobWithLabel::init (juce::Component& parent,
 {
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    // Disable JUCE's built-in double-click-resets-to-default. We use double-
+    // click for the value-editor popup instead. Without this, JUCE's
+    // SliderAttachment installs the param's default as the reset value, and
+    // double-click would call setValue(default, sendNotificationSync) BEFORE
+    // our MouseListener opens the editor — which then async-defers another
+    // setValue(default) that stomps any drag the user does next. Net effect
+    // (without this line): double-click + drag → knob moves visually but
+    // value snaps back to default.
+    slider.setDoubleClickReturnValue (false, 0.0);
     if (tooltip.isNotEmpty())
         slider.setTooltip (tooltip);
     parent.addAndMakeVisible (slider);
@@ -396,6 +405,10 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     };
     presetBox_.setTooltip ("Factory and user presets. Use < / > to step through, "
                            "Save to capture the current settings.");
+    // Replace the default flat dropdown with a categorized PopupMenu — each
+    // category (Plates, Halls, Ambient, etc.) becomes a nested submenu so
+    // the top-level menu fits in a small popup instead of one giant scroll.
+    presetBox_.menuBuilder = [this] { return buildPresetMenu(); };
     addAndMakeVisible (presetBox_);
     refreshPresetList();
 
@@ -503,6 +516,19 @@ DuskVerbEditor::DuskVerbEditor (DuskVerbProcessor& p)
     freezeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         p.parameters, "freeze", freezeButton_);
 
+    // Gate (NonLinear-engine only — visible always, but only changes the
+    // sound on NonLinear presets. Default ON for backward-compat).
+    gateButton_.setButtonText ("GATE");
+    gateButton_.setName ("gate_enabled");
+    gateButton_.setClickingTogglesState (true);
+    gateButton_.setTooltip ("Gate (NonLinear engine only): when ON the FIR envelope shapes "
+                            "the per-tap gains (the gated/RMX16 sound). When OFF the envelope "
+                            "is bypassed and you hear the underlying 256-tap dense FIR wash "
+                            "with no gating character. No effect on other engines.");
+    addAndMakeVisible (gateButton_);
+    gateAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        p.parameters, "gate_enabled", gateButton_);
+
     // Bus mode
     busModeButton_.setButtonText ("BUS");
     busModeButton_.setName ("bus_mode");
@@ -549,8 +575,14 @@ void DuskVerbEditor::timerCallback()
 {
     auto update = [] (KnobWithLabel& k)
     {
-        k.valueLabel.setText (formatValue (k.slider, k.valueLabel.getName()),
-                              juce::dontSendNotification);
+        // If a per-engine value override is installed (NonLinear gate
+        // re-mapping), use it; otherwise fall back to the standard
+        // suffix-based formatter. The override receives the raw APVTS
+        // value and returns the displayed string.
+        const juce::String text = k.valueOverride
+            ? k.valueOverride (k.slider.getValue())
+            : formatValue (k.slider, k.valueLabel.getName());
+        k.valueLabel.setText (text, juce::dontSendNotification);
         // Re-assert accent every tick. The value-editor overlay's focus loss
         // was flipping labels to white and not restoring (Logic + JUCE Label
         // interaction). Cheap to re-set the colour each tick — it's a no-op
@@ -643,7 +675,12 @@ void DuskVerbEditor::paint (juce::Graphics& g)
     int eqX     = erX + erW + gap;
     int outputX = eqX + eqW + gap;
 
-    drawGroupBox (g, { modX,    bottomY, modW,    bottomH }, "MODULATION",        titleBandH);
+    // MODULATION group is re-titled "GATE" on the NonLinear engine since
+    // the knobs in there are mapped to ATTACK/RELEASE/DENSITY (gate
+    // controls), not modulation. Other engines keep "MODULATION".
+    const char* modulationTitle = (currentEngine_ == EngineType::NonLinear)
+                                ? "GATE" : "MODULATION";
+    drawGroupBox (g, { modX,    bottomY, modW,    bottomH }, modulationTitle,     titleBandH);
     drawGroupBox (g, { erX,     bottomY, erW,     bottomH }, "EARLY REFLECTIONS", titleBandH);
     drawGroupBox (g, { eqX,     bottomY, eqW,     bottomH }, "FILTER",            titleBandH);
     drawGroupBox (g, { outputX, bottomY, outputW, bottomH }, "OUTPUT",            titleBandH);
@@ -837,7 +874,9 @@ void DuskVerbEditor::resized()
         // SIZE remains a standard rotary at the secondary tier (knobBig = 70).
         placeKnob (size_, knobArea, knobBig, sf);
 
-        // FREEZE spans the full bottom strip.
+        // FREEZE spans the full bottom strip of the TIME group (back to
+        // its original layout — GATE button moved to the MODULATION/GATE
+        // group below where it sits next to ATTACK/RELEASE).
         freezeButton_.setBounds (timeArea.reduced (8, 4));
     }
 
@@ -866,8 +905,18 @@ void DuskVerbEditor::resized()
     int eqX     = erX + erW + gap;
     int outputX = eqX + eqW + gap;
 
-    layoutKnobsInGroup ({ modX, bottomY, modW, bottomH }, topPad,
-                        { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
+    {
+        // Reserve a bottom strip in the MODULATION/GATE group for the GATE
+        // toggle button. Knobs lay out in the upper portion; the button
+        // sits underneath next to where the ATTACK/RELEASE values are
+        // displayed on the NonLinear engine.
+        const int gateButtonH = scaler_.scaled (24);
+        juce::Rectangle<int> modPanel { modX, bottomY, modW, bottomH };
+        auto modKnobArea = modPanel.removeFromTop (modPanel.getHeight() - gateButtonH);
+        layoutKnobsInGroup (modKnobArea, topPad,
+                            { { &modDepth_, knobMed }, { &modRate_, knobMed } }, sf);
+        gateButton_.setBounds (modPanel.reduced (8, 2));
+    }
 
     layoutKnobsInGroup ({ erX, bottomY, erW, bottomH }, topPad,
                         { { &erLevel_, knobMed }, { &erSize_, knobMed }, { &diffusion_, knobMed } }, sf);
@@ -905,7 +954,7 @@ void DuskVerbEditor::loadPreset (int index)
     if (index < 0 || index >= static_cast<int> (presets.size()))
         return;
 
-    presets[static_cast<size_t> (index)].applyTo (processorRef.parameters);
+    processorRef.applyFactoryPreset (presets[static_cast<size_t> (index)]);
     processorRef.parameters.state.setProperty ("presetName",
                                                 presets[static_cast<size_t> (index)].name,
                                                 nullptr);
@@ -928,34 +977,90 @@ void DuskVerbEditor::refreshPresetList()
     presetBox_.clear (juce::dontSendNotification);
     const auto& presets = getFactoryPresets();
 
-    // Group presets into a single heading per unique category. The source
-    // array is already arranged in contiguous category blocks
-    // (Plates → Halls → Chambers → Rooms → Ambient), so a category change
-    // emits exactly one heading per category. If the array is ever
-    // re-ordered, the de-dup logic below still groups items correctly by
-    // reading every preset whose category matches the active block.
+    // Items are still added flat so ComboBox knows the ID-to-text mapping for
+    // setSelectedId() and step navigation. The categorized presentation lives
+    // in buildPresetMenu() / CategoryComboBox::showPopup() — section headings
+    // are NOT added here because the ComboBox's auto-built popup is bypassed.
+    for (size_t i = 0; i < presets.size(); ++i)
+        presetBox_.addItem (presets[i].name, static_cast<int> (i) + 2);
+
+    if (userPresetManager_)
+    {
+        auto userPresets = userPresetManager_->loadUserPresets();
+        for (size_t i = 0; i < userPresets.size(); ++i)
+            presetBox_.addItem (userPresets[i].name, static_cast<int> (1001 + i));
+    }
+}
+
+juce::PopupMenu DuskVerbEditor::buildPresetMenu()
+{
+    juce::PopupMenu menu;
+    const auto& presets = getFactoryPresets();
+    const int currentId = presetBox_.getSelectedId();
+
+    // Group presets contiguously by category and emit one submenu per category.
+    // Categories appear in the order they first show up in the source array.
     juce::String currentCategory;
+    juce::PopupMenu categorySub;
+    auto flushCategory = [&]
+    {
+        if (currentCategory.isNotEmpty())
+            menu.addSubMenu (currentCategory, categorySub);
+        categorySub.clear();
+    };
     for (size_t i = 0; i < presets.size(); ++i)
     {
-        juce::String cat = presets[i].category;
+        const juce::String cat = presets[i].category;
         if (cat != currentCategory)
         {
+            flushCategory();
             currentCategory = cat;
-            presetBox_.addSectionHeading (cat);
         }
-        presetBox_.addItem (presets[i].name, static_cast<int> (i) + 2);
+        const int id = static_cast<int> (i) + 2;
+        categorySub.addItem (id, presets[i].name, /*enabled*/ true,
+                             /*ticked*/ id == currentId);
     }
+    flushCategory();
 
     if (userPresetManager_)
     {
         auto userPresets = userPresetManager_->loadUserPresets();
         if (! userPresets.empty())
         {
-            presetBox_.addSectionHeading ("User");
+            juce::PopupMenu userSub;
             for (size_t i = 0; i < userPresets.size(); ++i)
-                presetBox_.addItem (userPresets[i].name, static_cast<int> (1001 + i));
+            {
+                const int id = static_cast<int> (1001 + i);
+                userSub.addItem (id, userPresets[i].name, true, id == currentId);
+            }
+            menu.addSubMenu ("User", userSub);
         }
     }
+    return menu;
+}
+
+// CategoryComboBox::showPopup — overrides the default flat popup with a
+// categorized one (categories as nested submenus). On selection, route the
+// chosen ID through setSelectedId() so the existing onChange callback fires
+// exactly as if the user had picked from a flat list.
+void DuskVerbEditor::CategoryComboBox::showPopup()
+{
+    if (! menuBuilder)
+    {
+        juce::ComboBox::showPopup();
+        return;
+    }
+    auto menu = menuBuilder();
+    juce::Component::SafePointer<CategoryComboBox> safe (this);
+    menu.showMenuAsync (
+        juce::PopupMenu::Options()
+            .withTargetComponent (this)
+            .withMinimumWidth (getWidth()),
+        [safe] (int result)
+        {
+            if (safe != nullptr && result > 0)
+                safe->setSelectedId (result, juce::sendNotification);
+        });
 }
 
 void DuskVerbEditor::saveUserPreset()
@@ -1087,38 +1192,119 @@ void DuskVerbEditor::applyEngineAccent (EngineType engine)
     //    don't change, only the display label + tooltip shift). The default
     //    branch restores all the original name strings so flipping back to
     //    a "standard" engine fully resets the UI.
+    currentEngine_ = engine;   // remembered for paint()'s group-title switch
     const bool isSpring    = (engine == EngineType::Spring);
     const bool isNonLinear = (engine == EngineType::NonLinear);
     const bool isShimmer   = (engine == EngineType::Shimmer);
 
-    // mod_depth hijacked by Spring (SPRING LEN) and Shimmer (PITCH)
-    modDepth_.nameLabel.setText (isSpring  ? "SPRING LEN"
-                                : isShimmer ? "PITCH"
-                                            : "DEPTH",
+    // mod_depth hijacked by Spring (SPRING LEN), Shimmer (PITCH), NonLinear (ATTACK)
+    modDepth_.nameLabel.setText (isSpring    ? "SPRING LEN"
+                                : isShimmer   ? "PITCH"
+                                : isNonLinear ? "ATTACK"
+                                              : "DEPTH",
                                  juce::dontSendNotification);
-    modRate_ .nameLabel.setText (isSpring  ? "DRIP"
-                                : isShimmer ? "MIX"
-                                            : "RATE",
+    modRate_ .nameLabel.setText (isSpring    ? "DRIP"
+                                : isShimmer   ? "FEEDBACK"
+                                : isNonLinear ? "RELEASE"
+                                              : "RATE",
                                  juce::dontSendNotification);
-    modDepth_.slider.setTooltip (isSpring  ? "Spring Length: read-position LFO depth (subtle wobble that gives the tank its 'drip' character)"
-                                : isShimmer ? "Pitch: in-loop pitch interval (0 = unity, 50% = +12 semitones / +1 octave, 100% = +24 / +2 octaves)"
-                                            : "Modulation Depth");
-    modRate_ .slider.setTooltip (isSpring  ? "Drip: spring-tank LFO rate (Hz)"
-                                : isShimmer ? "Mix: blend between dry and pitched feedback (0% = dry feedback only, 100% = fully pitched-up feedback)"
-                                            : "Modulation Rate (Hz)");
+    modDepth_.slider.setTooltip (isSpring    ? "Spring Length: read-position LFO depth (subtle wobble that gives the tank its 'drip' character)"
+                                : isShimmer   ? "Pitch: in-loop pitch interval (0 = unity, 50% = +12 semitones / +1 octave, 100% = +24 / +2 octaves)"
+                                : isNonLinear ? "Attack: gate open time (1 - 50 ms). 1-3 ms gives the classic Phil Collins instant-snap; longer for a softer breathing feel."
+                                              : "Modulation Depth");
+    modRate_ .slider.setTooltip (isSpring    ? "Drip: spring-tank LFO rate (Hz)"
+                                : isShimmer   ? "Feedback: cascade strength (0 = single pitched pass, 95% = long cascading octaves a la Eno/Lanois). Higher feedback builds more shimmer at the cost of slower decay."
+                                : isNonLinear ? "Release: gate close time (5 - 2000 ms). Short values (5-50 ms) = the classic 80s gated-snare cliff; longer values let the hall tail fade naturally after the gate."
+                                              : "Modulation Rate (Hz)");
 
-    // diffusion hijacked by Spring (CHIRP) and NonLinear (SHAPE); Shimmer
+    // diffusion hijacked by Spring (CHIRP) and NonLinear (HOLD); Shimmer
     // ignores diffusion so we keep its label generic
-    diffusion_.nameLabel.setText (isNonLinear ? "SHAPE"
+    diffusion_.nameLabel.setText (isNonLinear ? "HOLD"
                                  : isSpring   ? "CHIRP"
                                               : "DIFFUSION",
                                   juce::dontSendNotification);
-    diffusion_.slider.setTooltip (isNonLinear ? "Shape: TDL envelope — 0-33% Gated, 33-66% Reverse, 66-100% Decaying"
+    diffusion_.slider.setTooltip (isNonLinear ? "Hold: how long the gate stays fully open after the dry input drops below threshold (0 - 500 ms). 100-200 ms is classic gated-snare territory."
                                  : isSpring   ? "Chirp: dispersion-AP coefficient — 0 = plain delay, 1 = full Fender 'boing' on transients"
                                               : "Diffusion: smear amount before the late tank");
 
-    // DECAY hero hijacked by NonLinear → "LENGTH" (the TDL duration in seconds)
-    decay_.setDisplayName (isNonLinear ? "LENGTH" : "DECAY");
+    // mid_mult hijacked by NonLinear → THRESHOLD (the gate's sidechain
+    // sensitivity). On other engines mid_mult is the 3-band mid damping
+    // multiplier and stays labeled "MID MULT".
+    midMult_.nameLabel.setText (isNonLinear ? "THRESHOLD" : "MID MULT",
+                                 juce::dontSendNotification);
+    midMult_.slider.setTooltip (isNonLinear ? "Threshold: dry-input level above which the gate opens. -32 dB is typical for snare; lower triggers on quieter hits, higher only on loud transients."
+                                            : "Mid-band damping multiplier (3-band damping)");
+
+    // DECAY hero stays "DECAY" — it controls the hall reverb's RT60 (FDN
+    // setDecayTime) on the NonLinear engine, just like every other engine.
+    decay_.setDisplayName ("DECAY");
+
+    // ── Per-engine value-text overrides ──
+    // NonLinear v7 architecture: mod_depth/mod_rate/diffusion/mid_mult are
+    // re-purposed as gate parameters. Display them in their actual meaningful
+    // units (ms / dB) instead of the default raw-APVTS formatters.
+    if (isNonLinear)
+    {
+        modDepth_.valueOverride = [] (double v)
+        {
+            // ATTACK: 1 + depth*49 ms (matches NonLinearEngine::setModDepth)
+            const int ms = juce::roundToInt (1.0 + juce::jlimit (0.0, 1.0, v) * 49.0);
+            return juce::String (ms) + " ms";
+        };
+        modRate_.valueOverride = [] (double v)
+        {
+            // RELEASE: 5 + (Hz-0.1)/9.9 * 1995 ms — across mod_rate's 0.1-10 Hz
+            // APVTS range, full 5-2000 ms gate release range.
+            const double hz = juce::jlimit (0.1, 10.0, v);
+            const int ms = juce::roundToInt (5.0 + (hz - 0.1) / 9.9 * 1995.0);
+            return juce::String (ms) + " ms";
+        };
+        diffusion_.valueOverride = [] (double v)
+        {
+            // HOLD: diffusion * 500 ms (matches NonLinearEngine::setTankDiffusion)
+            const int ms = juce::roundToInt (juce::jlimit (0.0, 1.0, v) * 500.0);
+            return juce::String (ms) + " ms";
+        };
+        midMult_.valueOverride = [] (double v)
+        {
+            // THRESHOLD: mid_mult 0.1..1.5 → -60..0 dB
+            const double m = juce::jlimit (0.1, 1.5, v);
+            const double dB = -60.0 + (m - 0.1) / 1.4 * 60.0;
+            return juce::String (dB, 1) + " dB";
+        };
+    }
+    else if (isShimmer)
+    {
+        modDepth_.valueOverride = [] (double v)
+        {
+            // PITCH: depth 0..1 → 0..24 semitones (matches ShimmerEngine::setModDepth)
+            const int semis = juce::roundToInt (juce::jlimit (0.0, 1.0, v) * 24.0);
+            return (semis > 0 ? juce::String ("+") : juce::String()) + juce::String (semis) + " st";
+        };
+        modRate_.valueOverride = [] (double v)
+        {
+            // FEEDBACK: 0.1..10 Hz → 0..95% (matches ShimmerEngine::setModRate
+            // → feedbackGain_, presented as a percentage of kFeedbackMax = 0.95).
+            const double hz = juce::jlimit (0.1, 10.0, v);
+            const int pct = juce::roundToInt ((hz - 0.1) / 9.9 * 95.0);
+            return juce::String (pct) + " %";
+        };
+        diffusion_.valueOverride = nullptr;
+        midMult_  .valueOverride = nullptr;
+    }
+    else
+    {
+        modDepth_.valueOverride = nullptr;
+        modRate_ .valueOverride = nullptr;
+        diffusion_.valueOverride = nullptr;
+        midMult_  .valueOverride = nullptr;
+    }
+
+    // GATE button only makes sense on the NonLinear engine — it controls the
+    // FIR envelope bypass. On other engines it's a no-op so we hide it
+    // entirely (the MODULATION group goes back to its original look with
+    // just DEPTH/RATE knobs and no button below them).
+    gateButton_.setVisible (isNonLinear);
 
     repaint();   // catches FREEZE / BUS toggle redraw via LookAndFeel
 }
@@ -1171,7 +1357,7 @@ void EngineGlyph::paint (juce::Graphics& g)
             link (cx - spread, cy, cx + spread, cy, 1.0f);
             break;
         }
-        case EngineType::ModernSpace6AP:
+        case EngineType::SixAPTank:
         {
             // Six small dots in a chain — density cascade.
             const float r = std::min (w, h) * 0.10f;

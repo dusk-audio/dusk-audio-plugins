@@ -1,11 +1,11 @@
-#include "ModernSpaceEngine.h"
+#include "SixAPTankEngine.h"
 #include "DspUtils.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
-void ModernSpaceEngine::DelayLine::allocate (int maxSamples)
+void SixAPTankEngine::DelayLine::allocate (int maxSamples)
 {
     int size = DspUtils::nextPowerOf2 (std::max (maxSamples + 4, 16));
     buffer.assign (static_cast<size_t> (size), 0.0f);
@@ -13,13 +13,13 @@ void ModernSpaceEngine::DelayLine::allocate (int maxSamples)
     writePos = 0;
 }
 
-void ModernSpaceEngine::DelayLine::clear()
+void SixAPTankEngine::DelayLine::clear()
 {
     std::fill (buffer.begin(), buffer.end(), 0.0f);
     writePos = 0;
 }
 
-float ModernSpaceEngine::DelayLine::readInterpolated (float delaySamples) const
+float SixAPTankEngine::DelayLine::readInterpolated (float delaySamples) const
 {
     int   intPart  = static_cast<int> (delaySamples);
     float fracPart = delaySamples - static_cast<float> (intPart);
@@ -27,7 +27,7 @@ float ModernSpaceEngine::DelayLine::readInterpolated (float delaySamples) const
     return DspUtils::cubicHermite (buffer.data(), mask, readPos, 1.0f - fracPart);
 }
 
-void ModernSpaceEngine::Allpass::allocate (int maxSamples)
+void SixAPTankEngine::Allpass::allocate (int maxSamples)
 {
     int size = DspUtils::nextPowerOf2 (std::max (maxSamples + 4, 16));
     buffer.assign (static_cast<size_t> (size), 0.0f);
@@ -35,13 +35,13 @@ void ModernSpaceEngine::Allpass::allocate (int maxSamples)
     writePos = 0;
 }
 
-void ModernSpaceEngine::Allpass::clear()
+void SixAPTankEngine::Allpass::clear()
 {
     std::fill (buffer.begin(), buffer.end(), 0.0f);
     writePos = 0;
 }
 
-ModernSpaceEngine::ModernSpaceEngine()
+SixAPTankEngine::SixAPTankEngine()
 {
     // Distinct seeds so the L/R LFOs trace independent random paths from the
     // first sample; identical seeds would correlate the two tanks until they
@@ -50,7 +50,7 @@ ModernSpaceEngine::ModernSpaceEngine()
     rightTank_.lfo.prepare (static_cast<float> (kBaseSampleRate), 0xBADBEEFu);
 }
 
-void ModernSpaceEngine::prepare (double sampleRate, int maxBlockSize)
+void SixAPTankEngine::prepare (double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
 
@@ -141,7 +141,7 @@ void ModernSpaceEngine::prepare (double sampleRate, int maxBlockSize)
     prepared_ = true;
 }
 
-void ModernSpaceEngine::clearBuffers()
+void SixAPTankEngine::clearBuffers()
 {
     auto clearTank = [] (Tank& t)
     {
@@ -159,42 +159,42 @@ void ModernSpaceEngine::clearBuffers()
     parallelDiffuser_.clear();
 }
 
-void ModernSpaceEngine::setDecayTime (float seconds)
+void SixAPTankEngine::setDecayTime (float seconds)
 {
     decayTime_ = std::max (0.05f, seconds);
     if (prepared_)
         updateDecayCoefficients();
 }
 
-void ModernSpaceEngine::setBassMultiply (float mult)
+void SixAPTankEngine::setBassMultiply (float mult)
 {
     bassMultiply_ = std::clamp (mult, 0.1f, 4.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
 
-void ModernSpaceEngine::setMidMultiply (float mult)
+void SixAPTankEngine::setMidMultiply (float mult)
 {
     midMultiply_ = std::clamp (mult, 0.1f, 4.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
 
-void ModernSpaceEngine::setTrebleMultiply (float mult)
+void SixAPTankEngine::setTrebleMultiply (float mult)
 {
     trebleMultiply_ = std::clamp (mult, 0.05f, 4.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
 
-void ModernSpaceEngine::setCrossoverFreq (float hz)
+void SixAPTankEngine::setCrossoverFreq (float hz)
 {
     crossoverFreq_ = std::clamp (hz, 100.0f, 8000.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
 
-void ModernSpaceEngine::setHighCrossoverFreq (float hz)
+void SixAPTankEngine::setHighCrossoverFreq (float hz)
 {
     // Clamp above the low crossover so the two filters don't invert.
     highCrossoverFreq_ = std::clamp (hz, std::max (crossoverFreq_ + 100.0f, 1000.0f), 12000.0f);
@@ -202,12 +202,12 @@ void ModernSpaceEngine::setHighCrossoverFreq (float hz)
         updateDecayCoefficients();
 }
 
-void ModernSpaceEngine::setSaturation (float amount)
+void SixAPTankEngine::setSaturation (float amount)
 {
     saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
 }
 
-void ModernSpaceEngine::setModDepth (float depth)
+void SixAPTankEngine::setModDepth (float depth)
 {
     lastModDepthRaw_ = std::clamp (depth, 0.0f, 1.0f);
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
@@ -219,14 +219,14 @@ void ModernSpaceEngine::setModDepth (float depth)
     rightTank_.lfo.setDepth (modDepthSamples_);
 }
 
-void ModernSpaceEngine::setModRate (float hz)
+void SixAPTankEngine::setModRate (float hz)
 {
     modRateHz_ = std::clamp (hz, 0.05f, 12.0f);
     if (prepared_)
         updateLFORates();
 }
 
-void ModernSpaceEngine::setSize (float size)
+void SixAPTankEngine::setSize (float size)
 {
     sizeParam_ = std::clamp (size, 0.0f, 1.0f);
     if (prepared_)
@@ -236,23 +236,56 @@ void ModernSpaceEngine::setSize (float size)
     }
 }
 
-void ModernSpaceEngine::setTankDiffusion (float amount)
+void SixAPTankEngine::setTankDiffusion (float amount)
 {
     // knob 0 → 0.5×, knob 0.5 → 1.0×, knob 0.85 (typical preset) → 1.095×,
-    // knob 1.0 → 1.2×. Capped at 0.85 absolute for AP stability.
+    // knob 1.0 → 1.2×. Capped at bloomCoeffCeiling_ absolute for AP stability.
     float a = std::clamp (amount, 0.0f, 1.0f);
+    lastTankDiffusionAmount_ = a;
     float scale = 0.5f + a * 0.7f;
-    densityDiffCoeff_ = std::clamp (kDensityDiffBaseline_ * scale, 0.0f, 0.85f);
+    densityDiffCoeff_ = std::clamp (densityDiffBaseline_ * scale, 0.0f, bloomCoeffCeiling_);
 }
 
-void ModernSpaceEngine::setFreeze (bool frozen)
+void SixAPTankEngine::setDensityBaseline (float v)
+{
+    densityDiffBaseline_ = std::clamp (v, 0.30f, 0.90f);
+    // Re-apply the diffusion-knob scaling around the new baseline so the
+    // user-facing knob continues to behave consistently.
+    setTankDiffusion (lastTankDiffusionAmount_);
+}
+
+void SixAPTankEngine::setBloomCeiling (float v)
+{
+    bloomCoeffCeiling_ = std::clamp (v, 0.70f, 0.95f);
+    // Re-apply the diffusion-knob scaling so densityDiffCoeff_ respects the
+    // new ceiling on the working coefficient as well.
+    setTankDiffusion (lastTankDiffusionAmount_);
+}
+
+void SixAPTankEngine::setBloomStagger (const float values[6])
+{
+    for (int i = 0; i < kNumDensityAPs; ++i)
+        bloomStagger_[i] = std::clamp (values[i], 0.0f, 2.0f);
+}
+
+void SixAPTankEngine::setEarlyMix (float v)
+{
+    earlyMix_ = std::clamp (v, 0.0f, 1.5f);
+}
+
+void SixAPTankEngine::setOutputTrim (float v)
+{
+    outputTrim_ = std::clamp (v, 0.5f, 2.0f);
+}
+
+void SixAPTankEngine::setFreeze (bool frozen)
 {
     frozen_ = frozen;
     if (prepared_)
         updateDecayCoefficients();
 }
 
-void ModernSpaceEngine::updateDelayLengths()
+void SixAPTankEngine::updateDelayLengths()
 {
     // Size knob spans 0.2× to 1.5× of the baked tank delays. The minimum
     // 0.2× was 0.5× before; at the bottom of the range the loop is now
@@ -295,7 +328,7 @@ void ModernSpaceEngine::updateDelayLengths()
     setTankDelays (rightTank_);
 }
 
-void ModernSpaceEngine::updateDecayCoefficients()
+void SixAPTankEngine::updateDecayCoefficients()
 {
     if (frozen_)
     {
@@ -370,7 +403,7 @@ void ModernSpaceEngine::updateDecayCoefficients()
     applyToTank (rightTank_);
 }
 
-void ModernSpaceEngine::updateLFORates()
+void SixAPTankEngine::updateLFORates()
 {
     // Slight L/R detune (1.13× on the right tank) so the two random walks
     // never settle into a beating pattern even if their seeds happen to align
@@ -379,7 +412,7 @@ void ModernSpaceEngine::updateLFORates()
     rightTank_.lfo.setRate (modRateHz_ * 1.13f);
 }
 
-void ModernSpaceEngine::process (const float* inputL, const float* inputR,
+void SixAPTankEngine::process (const float* inputL, const float* inputR,
                                  float* outputL, float* outputR, int numSamples)
 {
     if (! prepared_)
@@ -393,15 +426,14 @@ void ModernSpaceEngine::process (const float* inputL, const float* inputR,
     const float satThreshold = 1.0f - saturationAmount_ * 0.6f;
     const float satCeiling   = 2.0f;
 
-    // ---- BLOOM stagger ----
-    // Per-stage multipliers applied to densityDiffCoeff_ inside each density
-    // AP. Earlier stages run gentler, later stages bite harder — stretches
-    // the transient through the cascade so the output volume "blooms" up
-    // through the chain instead of presenting a flat smear. Each effective
-    // coefficient is HARD-clamped to 0.85 so the 1.2× tail stage cannot
-    // push an AP into self-oscillation territory.
-    static constexpr float kBloomStagger[kNumDensityAPs] = { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f };
-    static constexpr float kBloomCoeffCeiling = 0.85f;
+    // ---- BLOOM stagger (now per-instance via bloomStagger_ / bloomCoeffCeiling_) ----
+    // Earlier stages run gentler (more transient spread), later stages bite
+    // harder (more late-tail ring). Each effective coefficient is hard-
+    // clamped to bloomCoeffCeiling_ so even the largest late-stage
+    // multiplier × densityDiffCoeff_ cannot push an AP toward self-
+    // oscillation. Defaults preserve the historical {0.7..1.2}/0.85 values;
+    // Black Hole opts in to a steeper stagger + higher ceiling for VS
+    // BlackHole-character late-tail density.
 
     // ---- Step 0: shatter the input through the parallel diffuser ----
     // The 6-AP-specific input shatter replaces the global series diffuser
@@ -444,8 +476,8 @@ void ModernSpaceEngine::process (const float* inputL, const float* inputR,
         float density = del1;
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
-            const float coeff = std::min (densityDiffCoeff_ * kBloomStagger[i],
-                                          kBloomCoeffCeiling);
+            const float coeff = std::min (densityDiffCoeff_ * bloomStagger_[i],
+                                          bloomCoeffCeiling_);
             density = leftTank_.densityAP[i].process (density, coeff);
         }
 
@@ -469,8 +501,8 @@ void ModernSpaceEngine::process (const float* inputL, const float* inputR,
         float densityR = del1R;
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
-            const float coeff = std::min (densityDiffCoeff_ * kBloomStagger[i],
-                                          kBloomCoeffCeiling);
+            const float coeff = std::min (densityDiffCoeff_ * bloomStagger_[i],
+                                          bloomCoeffCeiling_);
             densityR = rightTank_.densityAP[i].process (densityR, coeff);
         }
 
@@ -522,13 +554,13 @@ void ModernSpaceEngine::process (const float* inputL, const float* inputR,
         // 23, 32, 45, 60 ms) the whole time but feeding only the tank input;
         // routing some of it to the output too gives instant early reflections
         // that bridge T+0 to T+~90 ms before the cascade tail kicks in.
-        // 0.5 mix factor keeps the early reflections audible (~-17 dB peak
-        // for an impulse) without dominating the late tail.
-        constexpr float kOutputTrim = 1.3f;
-        constexpr float kEarlyMix   = 0.5f;
+        // EarlyMix and OutputTrim are now per-instance (earlyMix_ / outputTrim_)
+        // so individual presets can opt in to brighter onsets / different
+        // trim balance without affecting other presets sharing this engine.
+        // Defaults preserve the historical 0.5 / 1.3 values.
         const float earlyL = diffusedL_[static_cast<size_t> (n)];
         const float earlyR = diffusedR_[static_cast<size_t> (n)];
-        outputL[n] = (damped  + rightLoop * 0.5f + earlyL * kEarlyMix) * kOutputTrim;
-        outputR[n] = (dampedR - leftLoop  * 0.5f + earlyR * kEarlyMix) * kOutputTrim;
+        outputL[n] = (damped  + rightLoop * 0.5f + earlyL * earlyMix_) * outputTrim_;
+        outputR[n] = (dampedR - leftLoop  * 0.5f + earlyR * earlyMix_) * outputTrim_;
     }
 }

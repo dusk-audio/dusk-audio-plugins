@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-// "Modern Space" 6-AP cross-coupled tank reverb.
+// 6-AP cross-coupled tank reverb (user-facing dropdown name: "High Density (6-AP)").
 //
 // Topology: two cross-coupled feedback loops (figure-8). Each loop runs
 // modulated allpass → delay → 6-allpass density cascade → two-band damping
@@ -20,10 +20,10 @@
 // Mutually-prime delay lengths across both tanks + density cascades break
 // modal phase-locking, so the late tail rings as continuous wash rather
 // than discrete echoes.
-class ModernSpaceEngine
+class SixAPTankEngine
 {
 public:
-    ModernSpaceEngine();
+    SixAPTankEngine();
 
     void prepare (double sampleRate, int maxBlockSize);
     void process (const float* inputL, const float* inputR,
@@ -43,6 +43,17 @@ public:
     // User-facing tank density. amount is the DIFFUSION knob value [0, 1].
     // Scales the 6-AP density-cascade coefficient around its baseline.
     void setTankDiffusion (float amount);
+
+    // Per-preset brightness/density tunables (default values match the
+    // engine's historical hardcoded constants, so any preset that doesn't
+    // call these gets identical sound to before). Black Hole opts in to
+    // brighter/denser values to match VS BlackHole's late-tail content.
+    void setDensityBaseline (float v);          // default 0.62, range [0.30, 0.90]
+    void setBloomCeiling (float v);             // default 0.85, range [0.70, 0.95]
+    void setBloomStagger (const float values[6]); // per-stage [0..2] coeff multipliers
+    void setEarlyMix (float v);                 // default 0.5, range [0, 1.5]
+    void setOutputTrim (float v);               // default 1.3, range [0.5, 2.0]
+
     void clearBuffers();
 
 private:
@@ -274,14 +285,29 @@ private:
     // updateDecayCoefficients(). setTankDiffusion() scales around this.
     float decayDiff1_ = 0.70f;
     float decayDiff2_ = 0.50f;
-    // Bumped 0.55 → 0.62 on 2026-04-26 alongside the super-sized density
-    // AP arrays. Slightly longer ring-time per stage further fills the
-    // micro-gaps between cascade outputs. Per-stage AP coeff is still
-    // hard-clamped to kBloomCoeffCeiling (0.85) in process(), so even at
-    // max diffusion (1.2× scale) × max bloom multiplier (1.2×) the worst-
-    // case stage coeff = 0.62 × 1.2 × 1.2 = 0.893 → clamped safe at 0.85.
-    static constexpr float kDensityDiffBaseline_ = 0.62f;
-    float densityDiffCoeff_ = kDensityDiffBaseline_;
+    // Density baseline + working coefficient. baseline was originally a
+    // static constexpr; converted to a regular member on 2026-04-28 so
+    // individual presets can opt in to brighter/denser late-tail character
+    // (Black Hole) without affecting other presets that share this engine.
+    // Default 0.62 preserves prior behavior. setDensityBaseline() updates
+    // the baseline AND re-runs the same scale logic that setTankDiffusion()
+    // uses, so the diffusion knob still works as expected on top of any
+    // baseline override.
+    float densityDiffBaseline_ = 0.62f;
+    float densityDiffCoeff_    = 0.62f;
+    float lastTankDiffusionAmount_ = 0.5f;  // last setTankDiffusion arg, used to re-scale on baseline change
+
+    // Per-stage bloom stagger applied to the density cascade. Earlier stages
+    // weaker (more transient spread), later stages stronger (more late-tail
+    // ring). Hard-clamped to bloomCoeffCeiling_. Per-preset tunable.
+    float bloomStagger_[kNumDensityAPs] = { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f };
+    float bloomCoeffCeiling_ = 0.85f;
+
+    // Output mix balance: how much of the bright ParallelDiffuser output
+    // is routed directly to the wet output (early-fill, brightens onset)
+    // and the post-mix output trim. Per-preset tunable.
+    float earlyMix_   = 0.5f;
+    float outputTrim_ = 1.3f;
 
     bool frozen_ = false;
     bool prepared_ = false;
