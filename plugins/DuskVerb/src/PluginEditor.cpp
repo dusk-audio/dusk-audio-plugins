@@ -1043,6 +1043,14 @@ juce::PopupMenu DuskVerbEditor::buildPresetMenu()
 // categorized one (categories as nested submenus). On selection, route the
 // chosen ID through setSelectedId() so the existing onChange callback fires
 // exactly as if the user had picked from a flat list.
+//
+// hidePopup() in the async callback is ESSENTIAL: ComboBox tracks an
+// internal "menu is showing" flag (set when showPopup runs, cleared by
+// hidePopup). JUCE's default ComboBox::showPopup uses a static
+// popupMenuFinishedCallback that calls hidePopup() on dismiss. Without
+// that call, the second click after a selection finds the flag still set
+// and silently no-ops — the dropdown works once per editor lifetime,
+// then stops responding until the editor is reopened.
 void DuskVerbEditor::CategoryComboBox::showPopup()
 {
     if (! menuBuilder)
@@ -1058,8 +1066,12 @@ void DuskVerbEditor::CategoryComboBox::showPopup()
             .withMinimumWidth (getWidth()),
         [safe] (int result)
         {
-            if (safe != nullptr && result > 0)
-                safe->setSelectedId (result, juce::sendNotification);
+            if (safe != nullptr)
+            {
+                safe->hidePopup();
+                if (result > 0)
+                    safe->setSelectedId (result, juce::sendNotification);
+            }
         });
 }
 
