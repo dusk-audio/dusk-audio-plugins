@@ -144,7 +144,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // gives the smoother gold-anodized character. Tiny mod for a long
         // tail that doesn't glass up.
         { "Gold Plate",           "Plates",
-          0,  1.00f, false,  0.0f, 0,
+          0,  0.30f, false,  0.0f, 0,
           1.96f, 0.357f, 0.12f, 0.35f, 1.00f, 0.55f,  600.0f,
           0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, false, 16.0f,
           /* mono */ 20.0f, /* mid */ 0.80f, /* highX */ 3000.0f, /* sat */ 0.00f },
@@ -610,12 +610,12 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // v7: REAL hall + sidechain noise gate (Townhouse Studios technique).
         //   HALL: decay 1.5 s, size 0.70, bass 1.0, treble 0.80 (slight darkening)
         //   GATE: threshold -32 dB (mid 0.75), attack 1 ms (mod_depth 0.0),
-        //         hold 150 ms (diffusion 0.30), release 50 ms (mod_rate 0.32)
+        //         hold 150 ms (diffusion 0.30), release 210 ms (mod_rate 1.117)
         //   This is the "In The Air Tonight" Phil Collins/Padgham/Townhouse sound:
-        //   thick hall bloom for 150 ms then a clean cliff to silence.
+        //   thick hall bloom for 150 ms then a longer fade to silence.
         { "1981 Gated Snare",     "Rooms",
           5,  1.00f, false,  0.0f, 0,
-          1.50f, 0.70f, 0.00f, 0.32f, 0.80f, 1.00f,  500.0f,
+          1.50f, 0.70f, 0.00f, 1.117f, 0.80f, 1.00f,  500.0f,
           0.30f, 0.00f, 0.00f,  60.0f, 14000.0f, 1.40f, false, 0.0f,
           /* mono */ 100.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── In The Air Tonight ──────────────────────────────────────────────
@@ -762,8 +762,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // decay (6 s) for the stacked-octave swell, slightly darker hi-cut
         // (6 kHz) to keep the upper-octave stack from glassing up.
         { "Cascading Heaven",     "Shimmer",
-          6,  0.70f, false,  60.0f, 0,
-          6.00f, 0.85f, 1.00f, 6.00f, 0.95f, 1.10f,  800.0f,
+          6,  0.361f, false,  60.0f, 0,
+          6.00f, 0.85f, 1.00f, 2.705f, 0.95f, 1.10f,  800.0f,
           0.85f, 0.20f, 0.50f,  60.0f,  6000.0f, 1.40f, false, -3.0f,
           /* mono */ 60.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── Deep Blue Day ────────────────────────────────────────────────
@@ -775,8 +775,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // the pitched recirculation.
         // mod_depth 0.5 = +12 st; mod_rate 4.5 Hz maps to feedback ≈ 0.42.
         { "Deep Blue Day",        "Shimmer",
-          6,  0.80f, false,  25.0f, 0,
-          10.30f, 1.00f, 0.50f, 4.50f, 1.00f, 1.10f,  800.0f,
+          6,  0.38f, false,  25.0f, 0,
+          10.30f, 1.00f, 0.50f, 2.395f, 1.00f, 1.10f,  800.0f,
           0.85f, 0.20f, 0.50f,  60.0f,  7000.0f, 1.30f, false, 0.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.05f },
     };

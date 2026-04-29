@@ -1152,7 +1152,7 @@ void DuskVerbEditor::mouseDown (const juce::MouseEvent& e)
 void DuskVerbEditor::showSupportersPanel()
 {
     if (supportersOverlay_) return;
-    supportersOverlay_ = std::make_unique<SupportersOverlay> ("DuskVerb", "");
+    supportersOverlay_ = std::make_unique<SupportersOverlay> ("DuskVerb", JucePlugin_VersionString);
     // Wire the overlay's mouseDown-to-dismiss callback. SupportersOverlay's
     // built-in mouseDown checks `onDismiss` and fires it; without the wiring
     // the overlay catches all clicks (it sets interceptsMouseClicks(true))

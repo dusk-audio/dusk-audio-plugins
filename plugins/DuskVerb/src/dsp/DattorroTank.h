@@ -69,7 +69,6 @@ public:
 
     void setOutputTaps (const OutputTap* left, const OutputTap* right);
     void applyTapGains (const float* leftGains, const float* rightGains);  // Update gain field only
-    void setNoiseModDepth (float samples);
     void setDelayScale (float scale);  // Multiplies ALL base delays (controls loop length)
     void setSoftOnsetMs (float ms);    // Output onset smoothing time (0 = off)
     void setLimiter (float thresholdDb, float releaseMs);  // Peak limiter (0 thresholdDb = off)
@@ -254,7 +253,17 @@ private:
         // against the tank's modal frequencies, eliminating the audible
         // "warble" on long decays.
         DspUtils::RandomWalkLFO lfo;
-        uint32_t noiseState = 0;      // Dedicated PRNG for per-sample delay jitter
+
+        // Independent random-walk LFOs for delay1 and delay2 read taps.
+        // Replaces the per-sample white-noise jitter that used to modulate
+        // these reads — white noise on a delay-read is audio-rate phase
+        // modulation, which generates broadband FM sidebands (heard as
+        // "tape hiss"). Smoothstep-interpolated wander gives the same
+        // mode-breaking benefit without the HF artifacts. Distinct seeds
+        // and slightly detuned rates ensure all three modulators in the
+        // tank trace independent paths ("spin and wander").
+        DspUtils::RandomWalkLFO delay1Lfo;
+        DspUtils::RandomWalkLFO delay2Lfo;
 
         // Saved modulation offset: held constant when frozen to prevent read-head snap
         float savedAP1Mod = 0.0f;
@@ -293,17 +302,6 @@ private:
         { 5, 0.240f, -1.0f, 1.0f },  // right AP2
         { 1, 0.350f, -1.0f, 1.0f },  // left delay2, early
     };
-
-    // -----------------------------------------------------------------------
-    // Cheap xorshift32 PRNG returning float in [-1, +1].
-    // Used for aperiodic LFO drift ("Wander").
-    static float nextDrift (uint32_t& state)
-    {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        return static_cast<float> (static_cast<int32_t> (state)) * (1.0f / 2147483648.0f);
-    }
 
     // -----------------------------------------------------------------------
     // Parameters
@@ -362,11 +360,11 @@ private:
     static constexpr float kDensityDiffBaseline_ = 0.55f;
     float densityDiffCoeff_ = kDensityDiffBaseline_;
 
-    // Per-sample noise modulation: random jitter on delay reads.
-    // Complements the slow sinusoidal LFO with fast aperiodic mode blurring.
-    float noiseModDepth_ = 2.0f;  // Peak jitter in samples (at 44100 Hz base)
-    float independentNoiseModDepth_ = -1.0f;  // Independent noise jitter (-1 = use modDepth-coupled value)
-    float lastNoiseModDepthRaw_ = -1.0f;  // Raw input to setNoiseModDepth, for reapply on sample rate change
+    // Delay-read modulation depth (peak excursion in samples). Applied to
+    // delay1 and delay2 read taps via per-tank RandomWalkLFOs. Replaces the
+    // earlier per-sample white-noise jitter; the smooth wander breaks modal
+    // resonances without producing audible FM sidebands.
+    float delayModDepthSamples_ = 4.0f;
 
     void updateDelayLengths();
     void updateDecayCoefficients();

@@ -57,6 +57,19 @@ public:
     void setDiffusion (float amount);
     void setMaxCoefficients (float max12, float max34);
 
+    // Zero every allpass delay buffer + write position. LFO phases keep their
+    // state (they track musical time, not signal energy). Used by the
+    // processor's preset-swap path to flush stale signal content before an
+    // idle engine is brought back online.
+    void clear()
+    {
+        for (int s = 0; s < kNumStages; ++s)
+        {
+            leftAP_[s] .clear();
+            rightAP_[s].clear();
+        }
+    }
+
 private:
     static constexpr int kNumStages = 4;
     // {142, 107, 211, 167} samples at 44.1k base — chosen to balance two
