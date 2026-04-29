@@ -106,6 +106,11 @@ void DattorroTank::setHallScale (bool enable)
             rightTank_.densityAPBase[i] = kRightDensityAPBase[i];
         }
     }
+    if (prepared_)
+    {
+        updateDelayLengths();
+        updateDecayCoefficients();
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -116,12 +121,16 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
 
     // Modulation headroom beyond the max scaled delay (scale with sample rate)
-    const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / 44100.0));
+    const int maxModExcursion = static_cast<int> (std::ceil (32.0 * sampleRate / kBaseSampleRate));
+
+    // Track allocation ceiling for runtime setSizeRange() bounds checking
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, std::max (sizeRangeMax_, 1.5f));
 
     // Allocate all buffers
     auto prepareTank = [&] (Tank& tank)
     {
-        float maxScale = sizeRangeMax_ * delayScale_;
+        constexpr float kMaxDelayScale = 4.0f;  // Must match setDelayScale() clamp
+        float maxScale = sizeRangeAllocatedMax_ * kMaxDelayScale;
         int ap1Max = static_cast<int> (std::ceil (tank.ap1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int del1Max = static_cast<int> (std::ceil (tank.delay1BaseDelay * rateRatio * maxScale)) + maxModExcursion;
         int ap2Max = static_cast<int> (std::ceil (tank.ap2BaseDelay * rateRatio * maxScale)) + maxModExcursion;
@@ -138,10 +147,17 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
         for (int i = 0; i < kNumDensityAPs; ++i)
         {
             int dapMax = static_cast<int> (std::ceil (
-                tank.densityAPBase[i] * rateRatio * sizeRangeMax_ * delayScale_)) + 4;
+                tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale)) + 4;
             tank.densityAP[i].allocate (dapMax);
+            // Lexicon spin-and-wander on each density AP — same fix as
+            // SixAPTank got. Breaks the AP's modal phase-locking which
+            // otherwise leaks its delay period into the tail as an audible
+            // 26-30 ms ring on plate presets (verified by render-tool
+            // measurement on Vintage Vocal Plate / Bright Drum Plate).
+            tank.densityAP[i].jitterDepthFraction = 0.015f;  // 1.5 % wander
         }
 
+        tank.damping.prepare (static_cast<float> (sampleRate));
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
     };
@@ -149,13 +165,23 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     prepareTank (leftTank_);
     prepareTank (rightTank_);
 
-    // Initialize LFO and PRNG state with different seeds per tank
-    leftTank_.lfoPhase = 0.0f;
-    leftTank_.lfoPRNG = 0x12345678u;
-    leftTank_.noiseState = 0xDEADBEEFu;
-    rightTank_.lfoPhase = 1.5707963f;  // 90° offset for stereo decorrelation
-    rightTank_.lfoPRNG = 0x87654321u;
+    // Initialize LFO and noise PRNG state with different seeds per tank so
+    // L/R modulators trace independent paths.
+    leftTank_.lfo.prepare        (static_cast<float> (sampleRate), 0x12345678u);
+    leftTank_.noiseState  = 0xDEADBEEFu;
+    rightTank_.lfo.prepare       (static_cast<float> (sampleRate), 0x87654321u);
     rightTank_.noiseState = 0xCAFEBABEu;
+
+    // Per-density-AP jitter LFOs — distinct seeds per stage and per L/R tank
+    // so every AP wanders independently. Rate is set later in updateJitterDepth
+    // (called from updateDelayLengths) based on actual delaySamples.
+    for (int i = 0; i < kNumDensityAPs; ++i)
+    {
+        const std::uint32_t lSeed = 0xBADBEEFu + static_cast<std::uint32_t> (i * 31337);
+        const std::uint32_t rSeed = 0xC0FFEEu  + static_cast<std::uint32_t> (i * 27449);
+        leftTank_ .densityAP[i].jitterLFO.prepare (static_cast<float> (sampleRate), lSeed);
+        rightTank_.densityAP[i].jitterLFO.prepare (static_cast<float> (sampleRate), rSeed);
+    }
 
     prepared_ = true;
 
@@ -166,6 +192,16 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     // Re-apply mod depth scaled for the new sample rate
     setModDepth (lastModDepthRaw_);
 
+    // Re-apply noise mod depth and structural HF damping for new sample rate
+    if (lastNoiseModDepthRaw_ >= 0.0f)
+        setNoiseModDepth (lastNoiseModDepthRaw_);
+    if (lastStructHFHz_ > 0.0f)
+        setStructuralHFDamping (lastStructHFHz_);
+
+    // Recompute soft-onset coefficient for the new sample rate
+    if (softOnsetMs_ > 0.0f)
+        setSoftOnsetMs (softOnsetMs_);
+
     // Clear all stateful trackers (structural HF damping state, terminal
     // decay RMS history). Without this, a host re-prepare would start with
     // empty delay buffers but retain the previous run's tracker state.
@@ -174,9 +210,26 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     leftTank_.currentRMS = 0.0f;
     leftTank_.peakRMS = 0.0f;
     leftTank_.terminalDecayActive = false;
+    leftTank_.savedAP1Mod = 0.0f;
     rightTank_.currentRMS = 0.0f;
     rightTank_.peakRMS = 0.0f;
     rightTank_.terminalDecayActive = false;
+    rightTank_.savedAP1Mod = 0.0f;
+    softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
+    limiterEnv_ = 0.0f;
+    // Sample-rate-invariant terminal decay smoothing coefficients
+    constexpr float kRmsTauMs = 45.0f;    // RMS window ~45ms/tracking
+    constexpr float kPeakTauMs = 2270.0f; // Peak decay ~2.27s hold decay
+    float sr = static_cast<float> (sampleRate_);
+    rmsAlpha_ = std::exp (-1000.0f / (kRmsTauMs * sr));
+    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
+
+    // Recompute limiter release coefficient for new sample rate
+    if (limiterThreshold_ > 0.0f)
+    {
+        float releaseSamples = limiterReleaseMs_ * 0.001f * static_cast<float> (sampleRate_);
+        limiterReleaseCoeff_ = std::exp (-1.0f / std::max (releaseSamples, 1.0f));
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -186,6 +239,13 @@ void DattorroTank::process (const float* inputL, const float* inputR,
 {
     if (! prepared_)
         return;
+
+    // Drive-style saturation: amount=0 → clean (threshold 1.0, no audible
+    // effect on quiet tail); amount=1 → threshold 0.4 (aggressive, every loop
+    // pass touches the soft knee). Ceiling stays at 2.0 so the softClip's
+    // upper asymptote remains stable across drive settings.
+    const float satThreshold = 1.0f - saturationAmount_ * 0.6f;
+    const float satCeiling   = 2.0f;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -207,9 +267,15 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float tankIn = input + otherCrossFeed;
 
             // --- Modulated allpass (decay diffusion 1) ---
-            // LFO modulation with "Wander" drift (classic reverb technique)
-            float mod = std::sin (tank.lfoPhase) * modDepthSamples_;
-            float ap1ReadDelay = tank.ap1DelaySamples + mod;
+            // Random-walk LFO replaces the previous std::sin(phase) + drift
+            // chain. The smoothed-noise modulator never settles into a
+            // perceptible periodic warble — gives the "expensive shimmer" of
+            // high-end random-hall hardware. When frozen, hold the last
+            // modulation offset so the read head doesn't snap (avoids click).
+            float currentMod = frozen_ ? tank.savedAP1Mod : tank.lfo.next();
+            if (! frozen_)
+                tank.savedAP1Mod = currentMod;
+            float ap1ReadDelay = tank.ap1DelaySamples + currentMod;
             ap1ReadDelay = std::max (ap1ReadDelay, 1.0f);  // Never read ahead of write
 
             float ap1Delayed = tank.ap1Buffer.readInterpolated (ap1ReadDelay);
@@ -218,18 +284,11 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             tank.ap1Buffer.write (ap1In);
             float ap1Out = ap1Delayed - coeff1 * ap1In;
 
-            // Advance LFO with drift
-            float drift = nextDrift (tank.lfoPRNG) * tank.lfoPhaseInc * 0.08f;
-            tank.lfoPhase += tank.lfoPhaseInc + drift;
-            if (tank.lfoPhase >= kTwoPi)
-                tank.lfoPhase -= kTwoPi;
-            else if (tank.lfoPhase < 0.0f)
-                tank.lfoPhase += kTwoPi;
-
             // --- Delay 1 (with per-sample noise jitter) ---
+            // Skip jitter when frozen to keep tail static (no PRNG state advance).
             float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
                                     ? independentNoiseModDepth_ : noiseModDepth_;
-            float jitter1 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -259,7 +318,7 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float ap2Out = tank.ap2.process (damped, coeff2);
 
             // --- Delay 2 (with per-sample noise jitter) ---
-            float jitter2 = nextDrift (tank.noiseState) * effectiveNoiseMod;
+            float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -270,23 +329,30 @@ void DattorroTank::process (const float* inputL, const float* inputR,
                                         : -DspUtils::kDenormalPrevention);
             tank.delay2.write (ap2Out + bias);
 
-            // Terminal decay: extra damping when tail is far below peak
-            // Skipped when frozen — frozen tails must not attenuate.
-            if (terminalDecayFactor_ < 1.0f && ! frozen_)
+            // Terminal decay: extra damping when tail is far below peak.
+            // Uses sample-rate-invariant smoothing (rmsAlpha_/peakDecayAlpha_
+            // computed in prepare()) and linear-domain ratio test.
+            // Terminal decay HARD-DISABLED — see VocalPlatePreset.cpp for rationale.
+            if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
             {
                 float sampleEnergy = del2Out * del2Out;
-                tank.currentRMS = tank.currentRMS * 0.9995f + sampleEnergy * 0.0005f;
+                tank.currentRMS = tank.currentRMS * rmsAlpha_ + sampleEnergy * (1.0f - rmsAlpha_);
                 if (tank.currentRMS > tank.peakRMS) tank.peakRMS = tank.currentRMS;
-                else tank.peakRMS *= 0.99999f;
-                float rmsDB = 10.0f * std::log10 (std::max (tank.currentRMS, 1e-20f));
-                float peakDB = 10.0f * std::log10 (std::max (tank.peakRMS, 1e-20f));
-                tank.terminalDecayActive = (peakDB - rmsDB > -terminalDecayThresholdDB_) && (tank.peakRMS > 1e-12f);
+                else tank.peakRMS *= peakDecayAlpha_;
+                // Linear-domain ratio test: peak/current > threshold (avoids per-sample log10)
+                float ratio = tank.peakRMS / std::max (tank.currentRMS, 1e-20f);
+                tank.terminalDecayActive = (ratio > terminalLinearThreshold_) && (tank.peakRMS > 1e-12f);
                 if (tank.terminalDecayActive)
                     del2Out *= terminalDecayFactor_;
             }
 
-            // Cross-feed output: end of this tank feeds the other tank's input
-            tank.crossFeedState = del2Out;
+            // Cross-feed output: end of this tank feeds the other tank's input.
+            // softClip on the cross-feed write delivers analog-style soft
+            // saturation that engages only when transients drive the loop above
+            // ±1.0 (quiet tail samples pass through linearly, so RT60 is
+            // preserved). Hard kSafetyClip stays as the stability backstop.
+            tank.crossFeedState = std::clamp (DspUtils::softClip (del2Out, satThreshold, satCeiling),
+                                              -kSafetyClip, kSafetyClip);
         };
 
         // Save right tank's cross-feed state before left tank overwrites it
@@ -414,6 +480,19 @@ void DattorroTank::setBassMultiply (float mult)
         updateDecayCoefficients();
 }
 
+void DattorroTank::setMidMultiply (float mult)
+{
+    midMultiply_ = std::clamp (mult, 0.1f, 4.0f);
+    if (prepared_)
+        updateDecayCoefficients();
+}
+
+void DattorroTank::setSaturation (float amount)
+{
+    saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
+    // Wired into the per-sample softClip in process() — no recomputation needed.
+}
+
 void DattorroTank::setTrebleMultiply (float mult)
 {
     trebleMultiply_ = std::max (mult, 0.1f);
@@ -423,14 +502,14 @@ void DattorroTank::setTrebleMultiply (float mult)
 
 void DattorroTank::setCrossoverFreq (float hz)
 {
-    crossoverFreq_ = hz;
+    crossoverFreq_ = std::min (std::max (hz, 1.0f), highCrossoverFreq_ - 10.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
 
 void DattorroTank::setHighCrossoverFreq (float hz)
 {
-    highCrossoverFreq_ = std::max (hz, 1.0f);
+    highCrossoverFreq_ = std::max (hz, crossoverFreq_ + 10.0f);
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -444,12 +523,27 @@ void DattorroTank::setAirDampingScale (float scale)
 
 void DattorroTank::setModDepth (float depth)
 {
+    // Cache the original requested value so prepare() can replay it at a new
+    // sample rate without losing precision from clamping.
     lastModDepthRaw_ = depth;
-    // Map 0-1 knob range to 0-16 samples peak excursion (Dattorro: 8 samples typical)
+
+    // Clamp depth so modDepthSamples_ cannot exceed the ±32-sample modulation
+    // headroom reserved in prepare()'s buffer allocation.
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = depth * 16.0f * rateRatio;
-    // Noise jitter scales with depth and sample rate
-    noiseModDepth_ = depth * 12.0f * rateRatio;  // 12 samples peak at depth=1.0
+    float maxDepth = 32.0f / (16.0f * std::max (rateRatio, 1.0f));
+    float clampedDepth = std::clamp (depth, 0.0f, maxDepth);
+    // Map 0-1 knob range to 0-16 samples peak excursion (Dattorro: 8 samples typical)
+    modDepthSamples_ = clampedDepth * 16.0f * rateRatio;
+    leftTank_.lfo.setDepth  (modDepthSamples_);
+    rightTank_.lfo.setDepth (modDepthSamples_);
+    // Noise jitter uses a SQUARED depth mapping (was linear ×12). At full
+    // depth=1.0 the maximum is unchanged (12 samples) so plate/chamber
+    // presets that need aggressive jitter to suppress modal ringing still
+    // get it. At low depths (e.g. Blade Runner 224 at 0.03) the squared
+    // curve drops noise from 0.36 samples to 0.011 — eliminating the
+    // wandering LR-correlation jitter that was 2.3× too noisy vs the
+    // Arturia LX-24 reference (stddev 0.066 vs target 0.028).
+    noiseModDepth_ = clampedDepth * clampedDepth * 12.0f * rateRatio;
 }
 
 void DattorroTank::setModRate (float hz)
@@ -467,6 +561,7 @@ void DattorroTank::setLimiter (float thresholdDb, float releaseMs)
         return;
     }
     limiterThreshold_ = std::pow (10.0f, thresholdDb / 20.0f);
+    limiterReleaseMs_ = releaseMs;
     if (prepared_)
     {
         float releaseSamples = releaseMs * 0.001f * static_cast<float> (sampleRate_);
@@ -523,8 +618,11 @@ void DattorroTank::setNoiseModDepth (float samples)
     // When set (>= 0), this overrides the modDepth-coupled noise jitter.
     // Critical for algorithms with low modDepth (e.g., Chamber=0.05) that
     // still need aggressive jitter to suppress modal resonances.
+    lastNoiseModDepthRaw_ = samples;
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    independentNoiseModDepth_ = samples * rateRatio;
+    // Clamp to the modulation headroom reserved in prepare() (32 samples at base rate)
+    float maxAllowed = 32.0f * rateRatio;
+    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxAllowed);
 }
 
 void DattorroTank::setOutputTaps (const OutputTap* left, const OutputTap* right)
@@ -568,20 +666,49 @@ void DattorroTank::applyTapGains (const float* leftGains, const float* rightGain
     }
 }
 
+void DattorroTank::setTankDiffusion (float amount)
+{
+    // Scale around baseline: knob 0 → 0.5×, knob 0.5 → 1.0× (= 0.55 baseline),
+    // knob 0.85 (typical preset) → 1.095×, knob 1.0 → 1.2×. Hard cap at 0.85
+    // keeps the AP comfortably inside its stable range.
+    float a = std::clamp (amount, 0.0f, 1.0f);
+    float scale = 0.5f + a * 0.7f;
+    densityDiffCoeff_ = std::clamp (kDensityDiffBaseline_ * scale, 0.0f, 0.85f);
+}
+
 void DattorroTank::setFreeze (bool frozen)
 {
+    bool wasTransition = (frozen != frozen_);
     frozen_ = frozen;
+    if (wasTransition)
+    {
+        structHFStateL_ = 0.0f;
+        structHFStateR_ = 0.0f;
+        leftTank_.currentRMS = 0.0f;
+        leftTank_.peakRMS = 0.0f;
+        leftTank_.terminalDecayActive = false;
+        rightTank_.currentRMS = 0.0f;
+        rightTank_.peakRMS = 0.0f;
+        rightTank_.terminalDecayActive = false;
+    }
 }
 
 void DattorroTank::setLateGainScale (float scale)
 {
-    lateGainScale_ = scale;
+    lateGainScale_ = std::max (scale, 0.0f);
 }
 
 void DattorroTank::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = min;
-    sizeRangeMax_ = max;
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
+    if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -598,6 +725,7 @@ void DattorroTank::setDecayBoost (float boost)
 
 void DattorroTank::setStructuralHFDamping (float hz)
 {
+    lastStructHFHz_ = hz;
     if (hz <= 0.0f)
     {
         structHFCoeff_ = 0.0f;
@@ -610,13 +738,14 @@ void DattorroTank::setStructuralHFDamping (float hz)
 
 void DattorroTank::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void DattorroTank::clearBuffers()
 {
-    auto clearTank = [] (Tank& tank, uint32_t seed)
+    auto clearTank = [this] (Tank& tank, uint32_t seed)
     {
         tank.ap1Buffer.clear();
         tank.delay1.clear();
@@ -626,16 +755,18 @@ void DattorroTank::clearBuffers()
         tank.delay2.clear();
         tank.damping.reset();
         tank.crossFeedState = 0.0f;
+        tank.savedAP1Mod = 0.0f;  // keep from the code-review fix
         tank.currentRMS = 0.0f;
         tank.peakRMS = 0.0f;
         tank.terminalDecayActive = false;
-        tank.lfoPhase = 0.0f;
-        tank.lfoPRNG = seed;
+        tank.lfo.prepare (static_cast<float> (sampleRate_), seed);
+        tank.lfo.setRate (modRateHz_);
+        tank.lfo.setDepth (modDepthSamples_);
         tank.noiseState = seed * 2654435761u;
     };
 
-    clearTank (leftTank_, 1u);
-    clearTank (rightTank_, 2u);
+    clearTank (leftTank_, 0x12345678u);
+    clearTank (rightTank_, 0x87654321u);
     // Reset soft onset ramp (starts from 0 if enabled, 1 if disabled)
     softOnsetEnvL_ = (softOnsetMs_ > 0.0f) ? 0.0f : 1.0f;
     limiterEnv_ = 0.0f;
@@ -663,9 +794,15 @@ void DattorroTank::updateDelayLengths()
             static_cast<float> (tank.ap2BaseDelay) * rateRatio * totalScale));
 
         // Density cascade allpass delays (integer, scaled by rate + size + delayScale)
+        // After updating delaySamples we MUST refresh the jitter LFO depth+rate
+        // so the spin-and-wander modulation tracks the new delay length.
+        const float sr = static_cast<float> (sampleRate_);
         for (int i = 0; i < kNumDensityAPs; ++i)
+        {
             tank.densityAP[i].delaySamples = std::max (1, static_cast<int> (
                 static_cast<float> (tank.densityAPBase[i]) * rateRatio * totalScale));
+            tank.densityAP[i].updateJitterDepth (sr);
+        }
     };
 
     updateTank (leftTank_);
@@ -678,6 +815,13 @@ void DattorroTank::updateDecayCoefficients()
     float lowXoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highXoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
+    // NOTE: SixAPTank uses a size-dependent AP energy-storage factor for
+    // its 6-AP cascade. We tried it here too but it OVER-compensated short-
+    // decay plate presets (Bright Drum Plate went from -2 % to -20 % off).
+    // Dattorro has only 3 density APs and a different decay-diff structure,
+    // so its empirical storage factor is much closer to 1.0. Use the simple
+    // sum (storage factor = 1.0) — measured to be the best fit across the
+    // 4 plate presets that depend on this engine.
     auto updateTankDamping = [&] (Tank& tank)
     {
         float loopLength = tank.ap1DelaySamples
@@ -689,13 +833,14 @@ void DattorroTank::updateDecayCoefficients()
 
         float gBase = std::pow (10.0f, -3.0f * loopLength / (decayTime_ * sr));
         gBase = std::clamp (std::pow (gBase, decayBoost_), 0.001f, 0.9999f);
+        // Per-band gains using true 3-band multipliers. The legacy
+        // airDampingScale_ is now folded into trebleMultiply for back-compat —
+        // call setMidMultiply explicitly for true mid-band control.
         float gLow = std::clamp (std::pow (gBase, 1.0f / bassMultiply_), 0.001f, 0.9999f);
-        float gMid = std::clamp (std::pow (gBase, 1.0f / trebleMultiply_), 0.001f, 0.9999f);
-        // Air band: airDampingScale > 1 → air decays slower (brighter tail)
-        // airDampingScale = 1 → gAir == gMid → collapses to 2-band behavior
-        float gAir = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
+        float gMid = std::clamp (std::pow (gBase, 1.0f / midMultiply_), 0.001f, 0.9999f);
+        float gHi  = std::clamp (std::pow (gBase, 1.0f / (trebleMultiply_ * airDampingScale_)), 0.001f, 0.9999f);
 
-        tank.damping.setCoefficients (gLow, gMid, gAir, lowXoverCoeff, highXoverCoeff);
+        tank.damping.setCoefficients (gLow, gMid, gHi, lowXoverCoeff, highXoverCoeff);
     };
 
     updateTankDamping (leftTank_);
@@ -704,10 +849,19 @@ void DattorroTank::updateDecayCoefficients()
 
 void DattorroTank::updateLFORates()
 {
-    float sr = static_cast<float> (sampleRate_);
-
-    // Asymmetric rates: left at base, right at golden ratio offset
-    // to prevent correlated modulation between tanks.
-    leftTank_.lfoPhaseInc  = kTwoPi * modRateHz_ / sr;
-    rightTank_.lfoPhaseInc = kTwoPi * modRateHz_ * 1.1180339887f / sr;  // × sqrt(5)/2
+    // Both tanks at the SAME rate. Originally we used asymmetric L/R rates
+    // (×√5/2 offset) to "prevent correlated modulation paths," but this
+    // turned out to be the dominant source of LR-correlation jitter — over
+    // time the two LFOs drift in and out of phase, causing the late-field
+    // L/R correlation to wander. Measured against Arturia LX-24 BladeRunner
+    // (LR stddev 0.028), our wandering of 0.066 is audibly less stable
+    // than a true random late field.
+    //
+    // The LFOs already use distinct PRNG seeds (0x12345678u vs 0x87654321u
+    // in prepare()), so the per-sample modulation paths are decorrelated
+    // even at the same rate. Setting equal rates keeps the average
+    // modulation magnitude in phase between tanks while letting the
+    // per-sample noise produce natural micro-variance.
+    leftTank_.lfo.setRate  (modRateHz_);
+    rightTank_.lfo.setRate (modRateHz_);
 }

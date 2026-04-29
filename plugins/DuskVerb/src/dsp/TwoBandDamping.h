@@ -2,261 +2,191 @@
 
 #include <algorithm>
 #include <cmath>
-// Two-band shelving damping filter for FDN feedback loops.
-// Uses a first-order lowpass at the crossover frequency to split the signal,
-// then applies independent gains below (g_low) and above (g_high) the crossover.
+
+// =====================================================================
+// ShelfBiquad — internal helper. RBJ-cookbook 2nd-order shelving filter
+// (low-shelf or high-shelf at Q = 1/√2 for Butterworth-aligned response).
 //
-// Classic "Bass Multiply / Treble Multiply" architecture: lows can sustain longer
-// than mids (bassMultiply > 1) while highs roll off faster (trebleMultiply < 1).
+// Used by TwoBandDamping and ThreeBandDamping below. Direct-form-1 with
+// scalar mono state. Allocation-free.
+// =====================================================================
+struct ShelfBiquad
+{
+    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+    float z1 = 0.0f, z2 = 0.0f;
+
+    static constexpr float kTwoPi  = 6.283185307179586f;
+    static constexpr float kSqrt12 = 0.7071067811865475f;  // 1/√2
+
+    void designHighShelf (float gainLin, float fcHz, float sampleRate)
+    {
+        const float A     = std::sqrt (std::max (gainLin, 1.0e-12f));
+        const float sqrtA = std::sqrt (A);
+        const float w0    = kTwoPi * std::min (fcHz, 0.49f * sampleRate) / sampleRate;
+        const float cosw  = std::cos (w0);
+        const float sinw  = std::sin (w0);
+        const float alpha = sinw / (2.0f * kSqrt12);
+        const float a0    = (A + 1.0f) - (A - 1.0f) * cosw + 2.0f * sqrtA * alpha;
+        b0 =  A * ((A + 1.0f) + (A - 1.0f) * cosw + 2.0f * sqrtA * alpha) / a0;
+        b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cosw)                 / a0;
+        b2 =  A * ((A + 1.0f) + (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) / a0;
+        a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cosw)                      / a0;
+        a2 =        ((A + 1.0f) - (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) / a0;
+    }
+
+    void designLowShelf (float gainLin, float fcHz, float sampleRate)
+    {
+        const float A     = std::sqrt (std::max (gainLin, 1.0e-12f));
+        const float sqrtA = std::sqrt (A);
+        const float w0    = kTwoPi * std::min (fcHz, 0.49f * sampleRate) / sampleRate;
+        const float cosw  = std::cos (w0);
+        const float sinw  = std::sin (w0);
+        const float alpha = sinw / (2.0f * kSqrt12);
+        const float a0    = (A + 1.0f) + (A - 1.0f) * cosw + 2.0f * sqrtA * alpha;
+        b0 =  A * ((A + 1.0f) - (A - 1.0f) * cosw + 2.0f * sqrtA * alpha) / a0;
+        b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw)                 / a0;
+        b2 =  A * ((A + 1.0f) - (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) / a0;
+        a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw)                    / a0;
+        a2 =         ((A + 1.0f) + (A - 1.0f) * cosw - 2.0f * sqrtA * alpha) / a0;
+    }
+
+    float process (float x)
+    {
+        // Direct-form-1. State variables hold the delay-line samples.
+        const float y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+
+    void reset() { z1 = z2 = 0.0f; }
+};
+
+// =====================================================================
+// TwoBandDamping — feedback-loop damping with a 2nd-order RBJ high-shelf.
+//
+// Replaces the previous 1st-order LP cross-mix (6 dB/oct skirt) with a
+// proper 2nd-order shelving biquad (12 dB/oct skirt around the corner).
+// The transition between bass and treble is sharper and more musical —
+// the "air" frequencies shape with definition rather than a slow analog
+// tilt. DC and Nyquist asymptotes match the previous class exactly so
+// per-band RT60 calibration carries over.
+//
+// API preserved: setCoefficients(gLow, gHigh, crossoverCoeff).
+// crossoverCoeff is the historical exp(-2π·fc/sr) value — fc is recovered
+// from it so existing engine call-sites don't need to change. prepare(sr)
+// MUST be called before setCoefficients so the biquad knows the host
+// sample rate.
+// =====================================================================
 class TwoBandDamping
 {
 public:
-    // crossoverCoeff = exp(-2*pi*fc/sr), gLow/gHigh are per-delay-pass gains
+    void prepare (float sampleRate)
+    {
+        sampleRate_ = sampleRate;
+        reset();
+    }
+
     void setCoefficients (float gLow, float gHigh, float crossoverCoeff)
     {
-        gLow_ = gLow;
-        gHigh_ = gHigh;
-        lpCoeff_ = crossoverCoeff;
+        broadbandGain_ = gLow;
+        // Above the corner, the shelf scales the broadband gain by gHigh/gLow
+        // so the frequency response asymptotes to gHigh — preserves the API
+        // semantics of the old 1st-order shelf.
+        const float coeff = std::clamp (crossoverCoeff, 1.0e-6f, 1.0f - 1.0e-6f);
+        const float fc    = -std::log (coeff) * sampleRate_
+                          * (1.0f / 6.283185307179586f);
+        const float shelfGain = gHigh / std::max (gLow, 1.0e-12f);
+        shelf_.designHighShelf (shelfGain, fc, sampleRate_);
     }
 
     float process (float input)
     {
-        // First-order lowpass at crossover: lp[n] = (1-c)*x[n] + c*lp[n-1]
-        lpState_ = (1.0f - lpCoeff_) * input + lpCoeff_ * lpState_;
-
-        // output = gHigh * x + (gLow - gHigh) * lp
-        // At DC: lp → x, so output → gHigh*x + (gLow-gHigh)*x = gLow*x
-        // At Nyquist: lp → 0, so output → gHigh*x
-        return gHigh_ * input + (gLow_ - gHigh_) * lpState_;
+        return broadbandGain_ * shelf_.process (input);
     }
 
-    void reset() { lpState_ = 0.0f; }
+    void reset() { shelf_.reset(); }
 
 private:
-    float gLow_ = 1.0f;
-    float gHigh_ = 1.0f;
-    float lpCoeff_ = 0.0f;
-    float lpState_ = 0.0f;
+    float       sampleRate_    = 44100.0f;
+    float       broadbandGain_ = 1.0f;
+    ShelfBiquad shelf_;
 };
 
-// Three-band shelving damping filter for FDN feedback loops.
-// Extends TwoBandDamping with a second crossover to separate mid and high bands:
-//   Low  (< lowCrossover):   gLow  = gBase^(1/bassMultiply)  — bass decay
-//   Mid  (lowCrossover..highCrossover): gMid = gBase           — broadband reference
-//   High (> highCrossover):  gHigh = gBase^(1/trebleMultiply) — treble decay
+// =====================================================================
+// ThreeBandDamping — feedback-loop damping with a low-shelf + high-shelf
+// 2nd-order RBJ biquad cascade.
 //
-// This allows finer spectral control: mid frequencies (2.5-6kHz) decay at the
-// natural rate while HF damping (treble multiply) only affects very high frequencies.
-// When highCrossoverHz >= Nyquist, the high band is empty and this collapses to
-// two-band behavior with gMid replacing gHigh.
+// Replaces the previous cascaded 1st-order LP splits. Mid frequencies pass
+// at gMid (broadband multiplier); the low-shelf scales below the low corner
+// to gLow, the high-shelf scales above the high corner to gHigh. The
+// transitions are 12 dB/oct each — sharper, more musical "air" management
+// than the old 6 dB/oct cross-mix.
+//
+// API preserved: setCoefficients(gLow, gMid, gHigh, lowCoeff, highCoeff).
+// Both crossover coeffs are exp(-2π·fc/sr) values; fc is recovered for
+// the biquad design. prepare(sr) MUST be called before setCoefficients.
+// =====================================================================
 class ThreeBandDamping
 {
 public:
+    void prepare (float sampleRate)
+    {
+        sampleRate_ = sampleRate;
+        reset();
+    }
+
     void setCoefficients (float gLow, float gMid, float gHigh,
                           float lowCrossoverCoeff, float highCrossoverCoeff)
     {
-        gLow_ = gLow;
-        gMid_ = gMid;
-        gHigh_ = gHigh;
-        lpCoeff1_ = lowCrossoverCoeff;
-        lpCoeff2_ = highCrossoverCoeff;
+        broadbandGain_ = gMid;
+        const float lowCoeff  = std::clamp (lowCrossoverCoeff,  1.0e-6f, 1.0f - 1.0e-6f);
+        const float highCoeff = std::clamp (highCrossoverCoeff, 1.0e-6f, 1.0f - 1.0e-6f);
+        const float lowFc  = -std::log (lowCoeff)  * sampleRate_ * (1.0f / 6.283185307179586f);
+        const float highFc = -std::log (highCoeff) * sampleRate_ * (1.0f / 6.283185307179586f);
+        lastLowShelfGain_  = gLow  / std::max (gMid, 1.0e-12f);
+        lastHighShelfGain_ = gHigh / std::max (gMid, 1.0e-12f);
+        lastLowFcHz_       = lowFc;
+        lastHighFcHz_      = highFc;
+        lowShelf_ .designLowShelf  (lastLowShelfGain_,  lowFc,  sampleRate_);
+        highShelf_.designHighShelf (lastHighShelfGain_, highFc, sampleRate_);
     }
 
     void setLowCrossoverCoeff (float coeff)
     {
-        constexpr float eps = 1e-6f;
-        lpCoeff1_ = std::clamp (coeff, eps, 1.0f - eps);
+        const float c = std::clamp (coeff, 1.0e-6f, 1.0f - 1.0e-6f);
+        lastLowFcHz_ = -std::log (c) * sampleRate_ * (1.0f / 6.283185307179586f);
+        lowShelf_.designLowShelf (lastLowShelfGain_, lastLowFcHz_, sampleRate_);
     }
 
     void setHighCrossoverCoeff (float coeff)
     {
-        constexpr float eps = 1e-6f;
-        lpCoeff2_ = std::clamp (coeff, eps, 1.0f - eps);
+        const float c = std::clamp (coeff, 1.0e-6f, 1.0f - 1.0e-6f);
+        lastHighFcHz_ = -std::log (c) * sampleRate_ * (1.0f / 6.283185307179586f);
+        highShelf_.designHighShelf (lastHighShelfGain_, lastHighFcHz_, sampleRate_);
     }
 
     float process (float input)
     {
-        // LP1: split into low band and mid+high
-        lp1State_ = (1.0f - lpCoeff1_) * input + lpCoeff1_ * lp1State_;
-        float midHigh = input - lp1State_;
-
-        // LP2: split mid+high into mid band and high band
-        lp2State_ = (1.0f - lpCoeff2_) * midHigh + lpCoeff2_ * lp2State_;
-        float high = midHigh - lp2State_;
-
-        return gLow_ * lp1State_ + gMid_ * lp2State_ + gHigh_ * high;
+        // Cascade order doesn't affect magnitude response; pick high-shelf
+        // first so the low-shelf operates on a slightly pre-shaped spectrum
+        // (matches Lexicon-style serial topology).
+        return broadbandGain_ * lowShelf_.process (highShelf_.process (input));
     }
 
     void reset()
     {
-        lp1State_ = 0.0f;
-        lp2State_ = 0.0f;
+        lowShelf_.reset();
+        highShelf_.reset();
     }
 
 private:
-    float gLow_ = 1.0f;
-    float gMid_ = 1.0f;
-    float gHigh_ = 1.0f;
-    float lpCoeff1_ = 0.0f;  // Low crossover coefficient
-    float lpCoeff2_ = 0.0f;  // High crossover coefficient
-    float lp1State_ = 0.0f;
-    float lp2State_ = 0.0f;
-};
-
-// Five-band shelving damping filter for per-preset FDN feedback loops.
-// Extends ThreeBandDamping with two additional crossover splits:
-//   Band 1: < f1  (sub-bass)   → g[0]
-//   Band 2: f1..f2 (bass)      → g[1]
-//   Band 3: f2..f3 (mid)       → g[2]
-//   Band 4: f3..f4 (presence)  → g[3]
-//   Band 5: > f4   (air)       → g[4]
-//
-// Per-band decay multipliers allow matching VV's frequency-dependent RT60
-// profile. Used only in per-preset wrappers for tailSlope calibration.
-class FiveBandDamping
-{
-public:
-    void setCoefficients (const float g[5], const float lpCoeff[4])
-    {
-        for (int i = 0; i < 5; ++i)
-            g_[i] = g[i];
-        for (int i = 0; i < 4; ++i)
-            lpCoeff_[i] = lpCoeff[i];
-    }
-
-    // Convenience: set gains only (crossovers unchanged)
-    void setGains (const float g[5])
-    {
-        for (int i = 0; i < 5; ++i)
-            g_[i] = g[i];
-    }
-
-    // Convenience: set crossover coefficients only (gains unchanged)
-    void setCrossovers (const float lpCoeff[4])
-    {
-        for (int i = 0; i < 4; ++i)
-            lpCoeff_[i] = lpCoeff[i];
-    }
-
-    // ThreeBandDamping-compatible setter (maps to bands 0, 2, 4; bands 1, 3 interpolated).
-    // Inner crossovers (1, 2) are derived as geometric interpolation between the
-    // outer pair when not explicitly set via setCrossovers().
-    void setCoefficients (float gLow, float gMid, float gHigh,
-                          float lowCrossoverCoeff, float highCrossoverCoeff)
-    {
-        g_[0] = gLow;
-        g_[1] = gLow + (gMid - gLow) * bandBlend_[1];
-        g_[2] = gMid;
-        g_[3] = gMid + (gHigh - gMid) * bandBlend_[3];
-        g_[4] = gHigh;
-        lpCoeff_[0] = lowCrossoverCoeff;
-        lpCoeff_[3] = highCrossoverCoeff;
-        // Derive inner crossovers as geometric interpolation between outer pair.
-        // sqrt(a*b) gives the geometric mean frequency between two LP coefficients.
-        float midCoeff = std::sqrt (lowCrossoverCoeff * highCrossoverCoeff);
-        lpCoeff_[1] = std::sqrt (lowCrossoverCoeff * midCoeff);
-        lpCoeff_[2] = std::sqrt (midCoeff * highCrossoverCoeff);
-    }
-
-    // Set per-band blend factors for ThreeBandDamping-compatible fallback.
-    // bandBlend[1] blends band 1 between gLow and gMid.
-    // bandBlend[3] blends band 3 between gMid and gHigh.
-    void setBandBlend (float blend1, float blend3)
-    {
-        bandBlend_[1] = std::clamp (blend1, 0.0f, 1.0f);
-        bandBlend_[3] = std::clamp (blend3, 0.0f, 1.0f);
-    }
-
-    // Per-band decay multiplier overrides: g[band] = gBase^(1/multiplier[band])
-    // Set by the per-preset wrapper from baked VV-derived constants.
-    void setBandMultipliers (const float mult[5])
-    {
-        for (int i = 0; i < 5; ++i)
-            bandMult_[i] = mult[i];
-        hasBandMultipliers_ = true;
-    }
-
-    void clearBandMultipliers()
-    {
-        hasBandMultipliers_ = false;
-    }
-
-    // Compute per-band gains from gBase using band multipliers.
-    // Call this from updateDecayCoefficients() instead of the standard formula.
-    void computeGainsFromBase (float gBase, float lowCoeff, float highCoeff)
-    {
-        if (hasBandMultipliers_)
-        {
-            for (int i = 0; i < 5; ++i)
-                g_[i] = std::clamp (std::pow (gBase, 1.0f / std::max (bandMult_[i], 0.01f)),
-                                    0.001f, 0.9999f);
-        }
-        else
-        {
-            for (int i = 0; i < 5; ++i)
-                g_[i] = std::clamp (gBase, 0.001f, 0.9999f);
-        }
-        lpCoeff_[0] = lowCoeff;
-        lpCoeff_[3] = highCoeff;
-        // Derive inner crossovers as geometric interpolation (same as 3-band setCoefficients)
-        float midCoeff = std::sqrt (lowCoeff * highCoeff);
-        lpCoeff_[1] = std::sqrt (lowCoeff * midCoeff);
-        lpCoeff_[2] = std::sqrt (midCoeff * highCoeff);
-    }
-    float process (float input)
-    {
-        // LP1: split into band 0 (sub-bass) and remainder
-        lpState_[0] = (1.0f - lpCoeff_[0]) * input + lpCoeff_[0] * lpState_[0];
-        float rem1 = input - lpState_[0];
-
-        // LP2: split remainder into band 1 (bass) and remainder
-        lpState_[1] = (1.0f - lpCoeff_[1]) * rem1 + lpCoeff_[1] * lpState_[1];
-        float rem2 = rem1 - lpState_[1];
-
-        // LP3: split remainder into band 2 (mid) and remainder
-        lpState_[2] = (1.0f - lpCoeff_[2]) * rem2 + lpCoeff_[2] * lpState_[2];
-        float rem3 = rem2 - lpState_[2];
-
-        // LP4: split remainder into band 3 (presence) and band 4 (air)
-        lpState_[3] = (1.0f - lpCoeff_[3]) * rem3 + lpCoeff_[3] * lpState_[3];
-        float air = rem3 - lpState_[3];
-
-        return g_[0] * lpState_[0] + g_[1] * lpState_[1] + g_[2] * lpState_[2]
-             + g_[3] * lpState_[3] + g_[4] * air;
-    }
-
-    void reset()
-    {
-        for (int i = 0; i < 4; ++i)
-            lpState_[i] = 0.0f;
-    }
-
-    void setLowCrossoverCoeff (float coeff)
-    {
-        constexpr float eps = 1e-6f;
-        lpCoeff_[0] = std::clamp (coeff, eps, 1.0f - eps);
-        recomputeInnerCrossovers();
-    }
-
-    void setHighCrossoverCoeff (float coeff)
-    {
-        constexpr float eps = 1e-6f;
-        lpCoeff_[3] = std::clamp (coeff, eps, 1.0f - eps);
-        recomputeInnerCrossovers();
-    }
-
-private:
-    void recomputeInnerCrossovers()
-    {
-        float midCoeff = std::sqrt (lpCoeff_[0] * lpCoeff_[3]);
-        lpCoeff_[1] = std::sqrt (lpCoeff_[0] * midCoeff);
-        lpCoeff_[2] = std::sqrt (midCoeff * lpCoeff_[3]);
-    }
-
-    float g_[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-    float lpCoeff_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    float lpState_[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    float bandMult_[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-    float bandBlend_[5] = { 0.0f, 0.5f, 0.0f, 0.5f, 0.0f };
-    bool hasBandMultipliers_ = false;
+    float       sampleRate_         = 44100.0f;
+    float       broadbandGain_      = 1.0f;
+    float       lastLowShelfGain_   = 1.0f;
+    float       lastHighShelfGain_  = 1.0f;
+    float       lastLowFcHz_        = 250.0f;
+    float       lastHighFcHz_       = 4000.0f;
+    ShelfBiquad lowShelf_;
+    ShelfBiquad highShelf_;
 };

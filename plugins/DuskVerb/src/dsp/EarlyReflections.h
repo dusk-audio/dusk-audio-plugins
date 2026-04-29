@@ -1,19 +1,12 @@
 #pragma once
 
-#include "AlgorithmConfig.h"
-#include "DspUtils.h"
-
 #include <algorithm>
 #include <atomic>
 #include <vector>
 
 // Multi-tap delay line generating discrete early reflections.
-//
-// Two modes:
-// 1. **Generated** (default): 24 taps per channel with exponentially-distributed
-//    delay times (8-80ms), inverse distance gain rolloff, and per-tap air absorption.
-// 2. **Custom** (when setCustomTaps is called): uses a fixed mono-panned tap table
-//    from AlgorithmConfig. Each tap outputs to L or R only (never both).
+// 24 taps per channel with exponentially-distributed delay times (8-80ms),
+// inverse distance gain rolloff, and per-tap air absorption.
 class EarlyReflections
 {
 public:
@@ -28,25 +21,14 @@ public:
     void setAirAbsorptionCeiling (float hz);
     void setDecorrCoeff (float coeff);
 
-    // Load a custom mono-panned tap table from AlgorithmConfig.
-    // When numTaps > 0, the custom table overrides the generated tap formula.
-    // Pass numTaps=0 to revert to generated mode.
-    // preDelayMs: DV's current pre-delay in ms. VV-extracted tap times are absolute
-    // (include VV's pre-delay), so we subtract DV's pre-delay to compensate since
-    // the ER engine receives already-pre-delayed input. Taps that would go negative
-    // are clamped to 1 sample.
-    void setCustomTaps (const CustomERTap* taps, int numTaps, float preDelayMs = 0.0f);
-
 private:
     static constexpr int kNumTaps = 24;
     static constexpr float kMinTimeMs = 8.0f;
     static constexpr float kMaxTimeMs = 80.0f;
-    static constexpr float kMaxBufferMs = 120.0f; // Buffer headroom for erTimeScale up to 1.5
+    static constexpr float kMaxBufferMs = 120.0f;
     static constexpr float kTwoPi = 6.283185307179586f;
 
-    // Polarity signs per tap — 12 positive, 12 negative per channel.
-    // Breaks up comb filtering from closely-spaced all-positive taps.
-    // L/R patterns differ for stereo decorrelation.
+    // 12 positive / 12 negative per channel breaks comb filtering.
     static constexpr float kSignsL[kNumTaps] = {
          1, -1,  1,  1, -1,  1, -1, -1,
          1, -1, -1,  1,  1, -1,  1, -1,
@@ -66,17 +48,6 @@ private:
         float lpState = 0.0f;
     };
 
-    // Mono-panned custom tap (used in custom mode).
-    struct MonoTap
-    {
-        int delaySamples = 0;
-        float gain = 0.0f;     // Amplitude (sign included)
-        int channel = 0;       // 0 = left, 1 = right
-        float lpCoeff = 0.0f;  // Air absorption per tap
-        float lpState = 0.0f;
-    };
-
-    // Post-tap decorrelation allpass (Schroeder)
     struct DecorrAllpass
     {
         std::vector<float> buffer;
@@ -112,14 +83,8 @@ private:
     int writePos_ = 0;
     int mask_ = 0;
 
-    // Generated mode taps
     Tap tapsL_[kNumTaps] {};
     Tap tapsR_[kNumTaps] {};
-
-    // Custom mode taps
-    MonoTap customTaps_[kMaxCustomERTaps] {};
-    int numCustomTaps_ = 0;
-    bool useCustomTaps_ = false;
 
     // Two cascaded allpasses per channel, different prime delays for L vs R
     DecorrAllpass decorr_L1_, decorr_L2_;
@@ -136,5 +101,4 @@ private:
     std::atomic<bool> tapsNeedUpdate_ { false };
 
     void updateTaps();
-    void updateCustomTaps();
 };
