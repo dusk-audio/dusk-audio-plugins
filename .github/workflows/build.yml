@@ -558,8 +558,15 @@ jobs:
                 continue
               }
               cmake --build build --target $t -j $env:NUMBER_OF_PROCESSORS
+              if ($LASTEXITCODE -ne 0) {
+                Write-Error "Build failed for target $t (exit code $LASTEXITCODE)"
+                exit $LASTEXITCODE
+              }
               # Also build matching CLAP target (FourKEQ_All -> FourKEQ_CLAP).
               # CLAP targets are not part of the JUCE-generated _All aggregate.
+              # Unlike the main target above, a missing CLAP target is OK
+              # (e.g. when the submodule is absent) — reset $LASTEXITCODE
+              # so the step doesn't fail solely on missing CLAP.
               if ($t -like "*_All") {
                 $clapTarget = $t -replace '_All$', '_CLAP'
                 Write-Host "Building CLAP target: $clapTarget"
