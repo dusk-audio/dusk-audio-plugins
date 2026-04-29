@@ -165,12 +165,16 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     prepareTank (leftTank_);
     prepareTank (rightTank_);
 
-    // Initialize LFO and noise PRNG state with different seeds per tank so
-    // L/R modulators trace independent paths.
+    // Initialize LFOs with different seeds per tank and per delay tap so
+    // every modulator wanders along an independent path. The two delay-tap
+    // LFOs are derived from the AP1 seed via XOR-mixed constants — keeps
+    // them deterministic and decorrelated from the AP1 LFO.
     leftTank_.lfo.prepare        (static_cast<float> (sampleRate), 0x12345678u);
-    leftTank_.noiseState  = 0xDEADBEEFu;
+    leftTank_.delay1Lfo.prepare  (static_cast<float> (sampleRate), 0x12345678u ^ 0xA5A5A5A5u);
+    leftTank_.delay2Lfo.prepare  (static_cast<float> (sampleRate), 0x12345678u ^ 0x5A5A5A5Au);
     rightTank_.lfo.prepare       (static_cast<float> (sampleRate), 0x87654321u);
-    rightTank_.noiseState = 0xCAFEBABEu;
+    rightTank_.delay1Lfo.prepare (static_cast<float> (sampleRate), 0x87654321u ^ 0xA5A5A5A5u);
+    rightTank_.delay2Lfo.prepare (static_cast<float> (sampleRate), 0x87654321u ^ 0x5A5A5A5Au);
 
     // Per-density-AP jitter LFOs — distinct seeds per stage and per L/R tank
     // so every AP wanders independently. Rate is set later in updateJitterDepth
@@ -189,12 +193,13 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
     updateDecayCoefficients();
     updateLFORates();
 
-    // Re-apply mod depth scaled for the new sample rate
+    // Re-apply mod depth scaled for the new sample rate. setModDepth() also
+    // updates delay1Lfo / delay2Lfo depths (no separate noise-jitter setter
+    // any more — the white-noise modulation has been replaced by the
+    // smoothstep-interpolated delay LFOs).
     setModDepth (lastModDepthRaw_);
 
-    // Re-apply noise mod depth and structural HF damping for new sample rate
-    if (lastNoiseModDepthRaw_ >= 0.0f)
-        setNoiseModDepth (lastNoiseModDepthRaw_);
+    // Re-apply structural HF damping for new sample rate
     if (lastStructHFHz_ > 0.0f)
         setStructuralHFDamping (lastStructHFHz_);
 
@@ -284,11 +289,14 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             tank.ap1Buffer.write (ap1In);
             float ap1Out = ap1Delayed - coeff1 * ap1In;
 
-            // --- Delay 1 (with per-sample noise jitter) ---
-            // Skip jitter when frozen to keep tail static (no PRNG state advance).
-            float effectiveNoiseMod = (independentNoiseModDepth_ >= 0.0f)
-                                    ? independentNoiseModDepth_ : noiseModDepth_;
-            float jitter1 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
+            // --- Delay 1 (with smooth random-walk modulation) ---
+            // Skip when frozen to keep tail static (no LFO advance). The
+            // LFO output is bounded to ±delayModDepthSamples_ and band-
+            // limited by smoothstep interpolation, so it wanders the read
+            // tap enough to break modal resonances without producing audio-
+            // rate FM sidebands (the "tape hiss" that per-sample white-noise
+            // jitter generated).
+            float jitter1 = frozen_ ? 0.0f : tank.delay1Lfo.next();
             float del1Read = tank.delay1Samples + jitter1;
             del1Read = std::max (del1Read, 1.0f);
             float del1Out = tank.delay1.readInterpolated (del1Read);
@@ -317,8 +325,8 @@ void DattorroTank::process (const float* inputL, const float* inputR,
             float coeff2 = frozen_ ? 0.0f : decayDiff2_;
             float ap2Out = tank.ap2.process (damped, coeff2);
 
-            // --- Delay 2 (with per-sample noise jitter) ---
-            float jitter2 = frozen_ ? 0.0f : nextDrift (tank.noiseState) * effectiveNoiseMod;
+            // --- Delay 2 (with smooth random-walk modulation) ---
+            float jitter2 = frozen_ ? 0.0f : tank.delay2Lfo.next();
             float del2Read = tank.delay2Samples + jitter2;
             del2Read = std::max (del2Read, 1.0f);
             float del2Out = tank.delay2.readInterpolated (del2Read);
@@ -536,14 +544,17 @@ void DattorroTank::setModDepth (float depth)
     modDepthSamples_ = clampedDepth * 16.0f * rateRatio;
     leftTank_.lfo.setDepth  (modDepthSamples_);
     rightTank_.lfo.setDepth (modDepthSamples_);
-    // Noise jitter uses a SQUARED depth mapping (was linear ×12). At full
-    // depth=1.0 the maximum is unchanged (12 samples) so plate/chamber
-    // presets that need aggressive jitter to suppress modal ringing still
-    // get it. At low depths (e.g. Blade Runner 224 at 0.03) the squared
-    // curve drops noise from 0.36 samples to 0.011 — eliminating the
-    // wandering LR-correlation jitter that was 2.3× too noisy vs the
-    // Arturia LX-24 reference (stddev 0.066 vs target 0.028).
-    noiseModDepth_ = clampedDepth * clampedDepth * 12.0f * rateRatio;
+
+    // Delay-tap modulation depth. Half of the AP1 LFO depth so the long
+    // delay reads don't pitch-warp on sustained content (a 100 ms delay
+    // wandering ±8 samples at 0.85 Hz is ~5 cents peak detune, well below
+    // detection threshold), while still moving the read tap enough to
+    // disrupt modal resonances on long decays.
+    delayModDepthSamples_ = clampedDepth * 8.0f * rateRatio;
+    leftTank_.delay1Lfo .setDepth (delayModDepthSamples_);
+    leftTank_.delay2Lfo .setDepth (delayModDepthSamples_);
+    rightTank_.delay1Lfo.setDepth (delayModDepthSamples_);
+    rightTank_.delay2Lfo.setDepth (delayModDepthSamples_);
 }
 
 void DattorroTank::setModRate (float hz)
@@ -612,18 +623,13 @@ void DattorroTank::setDelayScale (float scale)
     }
 }
 
-void DattorroTank::setNoiseModDepth (float samples)
-{
-    // Independent noise jitter, decoupled from LFO modDepth.
-    // When set (>= 0), this overrides the modDepth-coupled noise jitter.
-    // Critical for algorithms with low modDepth (e.g., Chamber=0.05) that
-    // still need aggressive jitter to suppress modal resonances.
-    lastNoiseModDepthRaw_ = samples;
-    float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    // Clamp to the modulation headroom reserved in prepare() (32 samples at base rate)
-    float maxAllowed = 32.0f * rateRatio;
-    independentNoiseModDepth_ = std::clamp (samples * rateRatio, -1.0f, maxAllowed);
-}
+// setNoiseModDepth() removed in v0.5.3: the per-sample white-noise jitter
+// it controlled has been replaced by smoothstep-interpolated random-walk
+// LFOs on delay1 and delay2 (see Tank::delay1Lfo / delay2Lfo). White noise
+// on a delay-line read tap is audio-rate phase modulation, which generates
+// broadband FM sidebands audible as tape-style hiss; the LFO output is
+// band-limited and produces no such sidebands while still wandering the
+// read position enough to break modal resonances.
 
 void DattorroTank::setOutputTaps (const OutputTap* left, const OutputTap* right)
 {
@@ -762,7 +768,19 @@ void DattorroTank::clearBuffers()
         tank.lfo.prepare (static_cast<float> (sampleRate_), seed);
         tank.lfo.setRate (modRateHz_);
         tank.lfo.setDepth (modDepthSamples_);
-        tank.noiseState = seed * 2654435761u;
+
+        // Reset the delay-tap LFOs too. Re-prepare with the same XOR-derived
+        // seeds used in prepare() so each engine instance produces the same
+        // wander pattern from a clean state — important during the
+        // dual-engine preset crossfade so the swapped-in engine starts
+        // deterministically rather than carrying stale LFO phase from a
+        // previous use.
+        tank.delay1Lfo.prepare (static_cast<float> (sampleRate_), seed ^ 0xA5A5A5A5u);
+        tank.delay1Lfo.setRate (modRateHz_ * 0.83f);
+        tank.delay1Lfo.setDepth (delayModDepthSamples_);
+        tank.delay2Lfo.prepare (static_cast<float> (sampleRate_), seed ^ 0x5A5A5A5Au);
+        tank.delay2Lfo.setRate (modRateHz_ * 1.27f);
+        tank.delay2Lfo.setDepth (delayModDepthSamples_);
     };
 
     clearTank (leftTank_, 0x12345678u);
@@ -864,4 +882,16 @@ void DattorroTank::updateLFORates()
     // per-sample noise produce natural micro-variance.
     leftTank_.lfo.setRate  (modRateHz_);
     rightTank_.lfo.setRate (modRateHz_);
+
+    // Detune the delay-tap LFOs from the AP1 rate. Slightly slower on
+    // delay1, slightly faster on delay2 — the three modulators in each
+    // tank then trace incommensurable paths and don't beat against each
+    // other periodically (the source of perceptible "warble" on long
+    // tails).
+    constexpr float kDelay1RateScale = 0.83f;
+    constexpr float kDelay2RateScale = 1.27f;
+    leftTank_.delay1Lfo .setRate (modRateHz_ * kDelay1RateScale);
+    leftTank_.delay2Lfo .setRate (modRateHz_ * kDelay2RateScale);
+    rightTank_.delay1Lfo.setRate (modRateHz_ * kDelay1RateScale);
+    rightTank_.delay2Lfo.setRate (modRateHz_ * kDelay2RateScale);
 }

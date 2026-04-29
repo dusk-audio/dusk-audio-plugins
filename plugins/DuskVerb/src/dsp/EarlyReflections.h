@@ -21,6 +21,27 @@ public:
     void setAirAbsorptionCeiling (float hz);
     void setDecorrCoeff (float coeff);
 
+    // Zero the multi-tap delay buffers, per-tap lowpass states, and the
+    // decorrelating allpass buffers. Tap geometry (delay, gain, lpCoeff) is
+    // preserved — only signal-carrying state is reset. Used by the
+    // processor's preset-swap path so an idle engine can be brought back
+    // online without leaking stale audio through the ER stage.
+    void clear()
+    {
+        std::fill (bufferL_.begin(), bufferL_.end(), 0.0f);
+        std::fill (bufferR_.begin(), bufferR_.end(), 0.0f);
+        writePos_ = 0;
+        for (int i = 0; i < kNumTaps; ++i)
+        {
+            tapsL_[i].lpState = 0.0f;
+            tapsR_[i].lpState = 0.0f;
+        }
+        decorr_L1_.clear();
+        decorr_L2_.clear();
+        decorr_R1_.clear();
+        decorr_R2_.clear();
+    }
+
 private:
     static constexpr int kNumTaps = 24;
     static constexpr float kMinTimeMs = 8.0f;
