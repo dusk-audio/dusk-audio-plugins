@@ -298,9 +298,18 @@ public:
                 e->onFocusLost = nullptr;
                 e->onEscapeKey = nullptr;
 
-                // Defer deletion to the next message-loop tick so we don't
-                // delete from within the editor's own callback. SafePointer
-                // protects against parent-destruction in the meantime.
+                // Move off-screen synchronously so the editor frame
+                // disappears the instant the user commits, without invoking
+                // JUCE's focus-loss machinery. setVisible(false) on a
+                // focused TextEditor calls giveAwayKeyboardFocus() →
+                // focusLost() → triggers parent listeners; that races with
+                // DuskVerb's 15 Hz repaint timer while the editor is still
+                // in the parent's child list (deletion is async-deferred)
+                // and crashes Logic on Decay/Size where listener chains
+                // are heaviest. setBounds is a pure layout op — no focus
+                // dispatch, no reentrancy.
+                e->setBounds (-10000, -10000, 0, 0);
+
                 juce::MessageManager::callAsync ([safeEditor]()
                 {
                     if (auto* e2 = safeEditor.getComponent())
