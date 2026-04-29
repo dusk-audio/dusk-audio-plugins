@@ -189,7 +189,23 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     {
         preparedSampleRate_ = sampleRate;
         preparedBlockSize_  = safeBlockSize;
-        engine_.prepare (sampleRate, safeBlockSize);
+        // Both engines stay prepared for the lifetime of the session — only
+        // one runs at any moment except during the brief preset-fade window.
+        engineA_.prepare (sampleRate, safeBlockSize);
+        engineB_.prepare (sampleRate, safeBlockSize);
+
+        // Fade scratch buffers: sized to the largest block we'll ever see so
+        // processBlock never reallocates. The fade window itself is ~50 ms,
+        // but the buffers only need to hold one block's worth of previous-
+        // engine output at a time.
+        fadeBufL_.assign (static_cast<size_t> (safeBlockSize), 0.0f);
+        fadeBufR_.assign (static_cast<size_t> (safeBlockSize), 0.0f);
+
+        // Cancel any in-flight fade — both engines are reset, no tail to
+        // continue.
+        previousEngine_ = nullptr;
+        presetFadeRemaining_ = 0;
+        presetFadeTotal_     = 0;
 
         // Force re-push of every cached value next process() call.
         cachedAlgorithm_ = -1;
@@ -268,6 +284,14 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                             std::memory_order_relaxed);
     }
 
+    // ---- Detect preset-apply request from the message thread ----
+    // Acquire pairs with the release store in applyFactoryPreset() so the
+    // SixAPBrightnessState writes preceding the flag are visible here. The
+    // swap reconfigures the idle engine from the just-applied APVTS values
+    // and arms the equal-power crossfade window.
+    if (pendingPresetSwap_.exchange (false, std::memory_order_acquire))
+        performPresetSwap();
+
     // ---- Push parameter changes to the engine on edges only ----
 
     // Algorithm
@@ -275,7 +299,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (algoIdx != cachedAlgorithm_)
     {
         cachedAlgorithm_ = algoIdx;
-        engine_.setAlgorithm (algoIdx);
+        activeEngine_->setAlgorithm (algoIdx);
     }
 
     // Pre-delay (with optional tempo sync)
@@ -295,7 +319,7 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (preDelayMs != lastPreDelayMs_)
     {
         lastPreDelayMs_ = preDelayMs;
-        engine_.setPreDelay (preDelayMs);
+        activeEngine_->setPreDelay (preDelayMs);
     }
 
     // Tank parameters
@@ -303,35 +327,35 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         if (current != last) { last = current; setter (current); }
     };
 
-    pushIfChanged (lastDecaySec_,  decayParam_->load(),     [this] (float v) { engine_.setDecayTime (v); });
-    pushIfChanged (lastSize_,      sizeParam_->load(),      [this] (float v) { engine_.setSize (v); });
-    pushIfChanged (lastDamping_,   dampingParam_->load(),   [this] (float v) { engine_.setTrebleMultiply (v); });
-    pushIfChanged (lastBassMult_,  bassMultParam_->load(),  [this] (float v) { engine_.setBassMultiply (v); });
-    pushIfChanged (lastMidMult_,   midMultParam_->load(),   [this] (float v) { engine_.setMidMultiply (v); });
-    pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { engine_.setCrossoverFreq (v); });
-    pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { engine_.setHighCrossoverFreq (v); });
-    pushIfChanged (lastSaturation_,    saturationParam_->load(),    [this] (float v) { engine_.setSaturation (v); });
-    pushIfChanged (lastDiffusion_, diffusionParam_->load(), [this] (float v) { engine_.setDiffusion (v); });
-    pushIfChanged (lastModDepth_,  modDepthParam_->load(),  [this] (float v) { engine_.setModDepth (v); });
-    pushIfChanged (lastModRate_,   modRateParam_->load(),   [this] (float v) { engine_.setModRate (v); });
-    pushIfChanged (lastERSize_,    erSizeParam_->load(),    [this] (float v) { engine_.setERSize (v); });
-    pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { engine_.setERLevel (v); });
-    pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { engine_.setLoCut (v); });
-    pushIfChanged (lastHiCut_,     hiCutParam_->load(),     [this] (float v) { engine_.setHiCut (v); });
-    pushIfChanged (lastWidth_,     widthParam_->load(),     [this] (float v) { engine_.setWidth (v); });
-    pushIfChanged (lastGainTrim_,  gainTrimParam_->load(),  [this] (float v) { engine_.setGainTrim (v); });
-    pushIfChanged (lastMonoBelow_, monoBelowParam_->load(), [this] (float v) { engine_.setMonoBelow (v); });
+    pushIfChanged (lastDecaySec_,  decayParam_->load(),     [this] (float v) { activeEngine_->setDecayTime (v); });
+    pushIfChanged (lastSize_,      sizeParam_->load(),      [this] (float v) { activeEngine_->setSize (v); });
+    pushIfChanged (lastDamping_,   dampingParam_->load(),   [this] (float v) { activeEngine_->setTrebleMultiply (v); });
+    pushIfChanged (lastBassMult_,  bassMultParam_->load(),  [this] (float v) { activeEngine_->setBassMultiply (v); });
+    pushIfChanged (lastMidMult_,   midMultParam_->load(),   [this] (float v) { activeEngine_->setMidMultiply (v); });
+    pushIfChanged (lastCrossover_, crossoverParam_->load(), [this] (float v) { activeEngine_->setCrossoverFreq (v); });
+    pushIfChanged (lastHighCrossover_, highCrossoverParam_->load(), [this] (float v) { activeEngine_->setHighCrossoverFreq (v); });
+    pushIfChanged (lastSaturation_,    saturationParam_->load(),    [this] (float v) { activeEngine_->setSaturation (v); });
+    pushIfChanged (lastDiffusion_, diffusionParam_->load(), [this] (float v) { activeEngine_->setDiffusion (v); });
+    pushIfChanged (lastModDepth_,  modDepthParam_->load(),  [this] (float v) { activeEngine_->setModDepth (v); });
+    pushIfChanged (lastModRate_,   modRateParam_->load(),   [this] (float v) { activeEngine_->setModRate (v); });
+    pushIfChanged (lastERSize_,    erSizeParam_->load(),    [this] (float v) { activeEngine_->setERSize (v); });
+    pushIfChanged (lastERLevel_,   erLevelParam_->load(),   [this] (float v) { activeEngine_->setERLevel (v); });
+    pushIfChanged (lastLoCut_,     loCutParam_->load(),     [this] (float v) { activeEngine_->setLoCut (v); });
+    pushIfChanged (lastHiCut_,     hiCutParam_->load(),     [this] (float v) { activeEngine_->setHiCut (v); });
+    pushIfChanged (lastWidth_,     widthParam_->load(),     [this] (float v) { activeEngine_->setWidth (v); });
+    pushIfChanged (lastGainTrim_,  gainTrimParam_->load(),  [this] (float v) { activeEngine_->setGainTrim (v); });
+    pushIfChanged (lastMonoBelow_, monoBelowParam_->load(), [this] (float v) { activeEngine_->setMonoBelow (v); });
 
     // Mix: bus_mode forces 100 % wet (override of user mix knob).
     const bool busMode = busModeParam_->load() >= 0.5f;
     const float mixVal = busMode ? 1.0f : mixParam_->load();
-    pushIfChanged (lastMix_, mixVal, [this] (float v) { engine_.setMix (v); });
+    pushIfChanged (lastMix_, mixVal, [this] (float v) { activeEngine_->setMix (v); });
 
     // Freeze (boolean — push only on transitions).
     const bool freezeNow = freezeParam_->load() >= 0.5f;
     if (! haveLastFreeze_ || freezeNow != lastFreeze_)
     {
-        engine_.setFreeze (freezeNow);
+        activeEngine_->setFreeze (freezeNow);
         lastFreeze_     = freezeNow;
         haveLastFreeze_ = true;
     }
@@ -341,12 +365,55 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const bool gateEnabledNow = gateEnabledParam_->load() >= 0.5f;
     if (! haveLastGateEnabled_ || gateEnabledNow != lastGateEnabled_)
     {
-        engine_.setNonLinearGateEnabled (gateEnabledNow);
+        activeEngine_->setNonLinearGateEnabled (gateEnabledNow);
         lastGateEnabled_     = gateEnabledNow;
         haveLastGateEnabled_ = true;
     }
 
-    engine_.process (left, right, numSamples);
+    // Save a copy of the input for the previous engine before the active
+    // engine consumes the buffer in place. Only needed during a preset
+    // crossfade — outside that window the second engine sits idle.
+    const bool fading = (presetFadeRemaining_ > 0 && previousEngine_ != nullptr);
+    if (fading)
+    {
+        std::memcpy (fadeBufL_.data(), left,  static_cast<size_t> (numSamples) * sizeof (float));
+        std::memcpy (fadeBufR_.data(), right, static_cast<size_t> (numSamples) * sizeof (float));
+    }
+
+    activeEngine_->process (left, right, numSamples);
+
+    if (fading)
+    {
+        // Run the saved input through the previous engine so its tail keeps
+        // evolving (modulation, internal feedback) instead of being a static
+        // snapshot. Then equal-power crossfade the two engines' outputs.
+        previousEngine_->process (fadeBufL_.data(), fadeBufR_.data(), numSamples);
+
+        const int samplesToCrossfade = std::min (numSamples, presetFadeRemaining_);
+        const float invTotal = (presetFadeTotal_ > 0)
+                                  ? 1.0f / static_cast<float> (presetFadeTotal_)
+                                  : 0.0f;
+        const int idxBase = presetFadeTotal_ - presetFadeRemaining_;
+        constexpr float kHalfPi = 1.5707963267948966f;
+
+        for (int i = 0; i < samplesToCrossfade; ++i)
+        {
+            const float t    = static_cast<float> (idxBase + i) * invTotal;
+            const float gNew = std::sin (t * kHalfPi);
+            const float gOld = std::cos (t * kHalfPi);
+            left[i]  = left[i]  * gNew + fadeBufL_[i] * gOld;
+            right[i] = right[i] * gNew + fadeBufR_[i] * gOld;
+        }
+
+        presetFadeRemaining_ -= samplesToCrossfade;
+        if (presetFadeRemaining_ <= 0)
+        {
+            previousEngine_      = nullptr;
+            presetFadeRemaining_ = 0;
+        }
+        // Samples past samplesToCrossfade in this block are pure activeEngine_
+        // output (already in left/right) — leave them alone.
+    }
 
     // Output metering.
     {
@@ -443,31 +510,147 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
         if (tree.hasProperty (id))
             sixAPBrightness_.bloomStagger[i] = static_cast<float> (tree.getProperty (id));
     }
-    applySixAPBrightnessToEngine();
+    // State load happens before audio starts (or via host-driven message-thread
+    // call). Push to both engines so the idle one is in sync for the next
+    // preset swap. No fade involved — this is a hard reset to the saved state.
+    pushSixAPBrightnessTo (engineA_);
+    pushSixAPBrightnessTo (engineB_);
 }
 
-void DuskVerbProcessor::applySixAPBrightnessToEngine()
+void DuskVerbProcessor::pushSixAPBrightnessTo (DuskVerbEngine& target)
 {
-    engine_.setSixAPDensityBaseline (sixAPBrightness_.densityBaseline);
-    engine_.setSixAPBloomCeiling    (sixAPBrightness_.bloomCeiling);
-    engine_.setSixAPBloomStagger    (sixAPBrightness_.bloomStagger);
-    engine_.setSixAPEarlyMix        (sixAPBrightness_.earlyMix);
-    engine_.setSixAPOutputTrim      (sixAPBrightness_.outputTrim);
+    target.setSixAPDensityBaseline (sixAPBrightness_.densityBaseline);
+    target.setSixAPBloomCeiling    (sixAPBrightness_.bloomCeiling);
+    target.setSixAPBloomStagger    (sixAPBrightness_.bloomStagger);
+    target.setSixAPEarlyMix        (sixAPBrightness_.earlyMix);
+    target.setSixAPOutputTrim      (sixAPBrightness_.outputTrim);
+}
+
+void DuskVerbProcessor::forcePushAllParametersTo (DuskVerbEngine* target)
+{
+    // Audio thread. Reads the current APVTS values + cached SixAPBrightness
+    // state and pushes everything unconditionally. Used at preset-swap time
+    // so the freshly-cleared idle engine starts the fade already configured
+    // with the new preset's voicing — no edge-detection-driven trickle-in.
+    target->setAlgorithm (static_cast<int> (algorithmParam_->load()));
+
+    // Pre-delay: push the raw param value (without tempo-sync resolution).
+    // Any sync-driven delta will be picked up by the next processBlock's
+    // edge detection — a 1-2 sample drift is inaudible and avoids duplicating
+    // the playhead/BPM lookup logic here.
+    target->setPreDelay (preDelayParam_->load());
+
+    target->setDecayTime         (decayParam_->load());
+    target->setSize              (sizeParam_->load());
+    target->setTrebleMultiply    (dampingParam_->load());
+    target->setBassMultiply      (bassMultParam_->load());
+    target->setMidMultiply       (midMultParam_->load());
+    target->setCrossoverFreq     (crossoverParam_->load());
+    target->setHighCrossoverFreq (highCrossoverParam_->load());
+    target->setSaturation        (saturationParam_->load());
+    target->setDiffusion         (diffusionParam_->load());
+    target->setModDepth          (modDepthParam_->load());
+    target->setModRate           (modRateParam_->load());
+    target->setERSize            (erSizeParam_->load());
+    target->setERLevel           (erLevelParam_->load());
+    target->setLoCut             (loCutParam_->load());
+    target->setHiCut             (hiCutParam_->load());
+    target->setWidth             (widthParam_->load());
+    target->setGainTrim          (gainTrimParam_->load());
+    target->setMonoBelow         (monoBelowParam_->load());
+
+    const bool busMode = busModeParam_->load() >= 0.5f;
+    target->setMix (busMode ? 1.0f : mixParam_->load());
+
+    target->setFreeze              (freezeParam_->load() >= 0.5f);
+    target->setNonLinearGateEnabled(gateEnabledParam_->load() >= 0.5f);
+
+    pushSixAPBrightnessTo (*target);
+}
+
+void DuskVerbProcessor::syncParameterCacheToCurrent()
+{
+    // Update edge-detection cache so the next processBlock doesn't re-push
+    // values we just force-pushed to the new active engine.
+    cachedAlgorithm_   = static_cast<int> (algorithmParam_->load());
+    lastPreDelayMs_    = preDelayParam_->load();
+    lastDecaySec_      = decayParam_->load();
+    lastSize_          = sizeParam_->load();
+    lastDamping_       = dampingParam_->load();
+    lastBassMult_      = bassMultParam_->load();
+    lastMidMult_       = midMultParam_->load();
+    lastCrossover_     = crossoverParam_->load();
+    lastHighCrossover_ = highCrossoverParam_->load();
+    lastSaturation_    = saturationParam_->load();
+    lastDiffusion_     = diffusionParam_->load();
+    lastModDepth_      = modDepthParam_->load();
+    lastModRate_       = modRateParam_->load();
+    lastERSize_        = erSizeParam_->load();
+    lastERLevel_       = erLevelParam_->load();
+    lastLoCut_         = loCutParam_->load();
+    lastHiCut_         = hiCutParam_->load();
+    lastWidth_         = widthParam_->load();
+    lastGainTrim_      = gainTrimParam_->load();
+    lastMonoBelow_     = monoBelowParam_->load();
+
+    const bool busMode = busModeParam_->load() >= 0.5f;
+    lastMix_ = busMode ? 1.0f : mixParam_->load();
+
+    lastFreeze_          = freezeParam_->load()      >= 0.5f;
+    haveLastFreeze_      = true;
+    lastGateEnabled_     = gateEnabledParam_->load() >= 0.5f;
+    haveLastGateEnabled_ = true;
+}
+
+void DuskVerbProcessor::performPresetSwap()
+{
+    // Audio thread. Pick the idle engine (the one not currently producing
+    // output), reset it to silence, force-push the just-applied parameters
+    // and brightness state, snap its shell smoothers to the new targets,
+    // then swap pointers and arm the equal-power crossfade.
+    DuskVerbEngine* newActive = (activeEngine_ == &engineA_) ? &engineB_ : &engineA_;
+
+    newActive->clearAllBuffers();
+    forcePushAllParametersTo (newActive);
+    newActive->snapSmoothersToTargets();
+
+    // If a fade was already in progress, the prior fading-out engine gets
+    // dropped here — the current active becomes the new fading-out engine
+    // instead. Cleaner than queuing fades, and rapid preset cycling stays
+    // responsive (the user hears the latest preset within one fade window).
+    previousEngine_ = activeEngine_;
+    activeEngine_   = newActive;
+
+    // ~50 ms equal-power fade. Long enough to mask the swap transient,
+    // short enough that the new preset's onset is audible quickly. Clamped
+    // to the prepared block size lower bound so fades complete within a
+    // few processBlock calls even on tiny buffer sizes.
+    constexpr float kFadeSeconds = 0.050f;
+    presetFadeTotal_     = std::max (1, static_cast<int> (preparedSampleRate_ * kFadeSeconds));
+    presetFadeRemaining_ = presetFadeTotal_;
+
+    syncParameterCacheToCurrent();
 }
 
 void DuskVerbProcessor::applyFactoryPreset (const FactoryPreset& preset)
 {
-    // 1) APVTS path: existing UI-parameter setup.
+    // Message thread. Update APVTS + cache the engine-config state, then arm
+    // the swap flag. The audio thread picks it up at the top of the next
+    // processBlock(), runs performPresetSwap() to reconfigure the idle engine
+    // from the just-applied APVTS values, and starts the crossfade. Touching
+    // the engine directly here would race with processBlock.
     preset.applyTo (parameters);
-    // 2) Cache engine-config values for state save/load round-trip.
+
     sixAPBrightness_.densityBaseline = preset.sixAPDensityBaseline;
     sixAPBrightness_.bloomCeiling    = preset.sixAPBloomCeiling;
     sixAPBrightness_.earlyMix        = preset.sixAPEarlyMix;
     sixAPBrightness_.outputTrim      = preset.sixAPOutputTrim;
     for (int i = 0; i < 6; ++i)
         sixAPBrightness_.bloomStagger[i] = preset.sixAPBloomStagger[i];
-    // 3) Push to engine.
-    applySixAPBrightnessToEngine();
+
+    // Release ordering pairs with the acquire load in processBlock to publish
+    // the brightness writes above.
+    pendingPresetSwap_.store (true, std::memory_order_release);
 }
 
 // Out-of-line definition of FactoryPreset::applyEngineConfig — placed here

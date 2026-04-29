@@ -57,7 +57,33 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    DuskVerbEngine engine_;
+    // Dual-engine crossfade architecture. Both engines stay prepared for the
+    // session. Normally only activeEngine_ runs; when applyFactoryPreset()
+    // fires, the audio thread copies all current parameters into the idle
+    // engine, swaps the pointers, and runs both engines in parallel for a
+    // short equal-power crossfade window so the old preset's reverb tail
+    // decays naturally while the new preset's tail builds up. Eliminates
+    // the click that was caused by simultaneous (a) buffer-clear on the
+    // algorithm swap inside DuskVerbEngine::setAlgorithm() and (b) instant
+    // parameter snaps on every tank-coefficient setter.
+    DuskVerbEngine engineA_, engineB_;
+    DuskVerbEngine* activeEngine_   = &engineA_;
+    DuskVerbEngine* previousEngine_ = nullptr;  // valid only during fade-out
+
+    // Set by applyFactoryPreset() on the message thread, consumed at the top
+    // of the next processBlock() on the audio thread. Release/acquire ordering
+    // ensures the SixAPBrightnessState writes that precede the flag-set are
+    // visible to the audio thread when it picks up the swap.
+    std::atomic<bool> pendingPresetSwap_ { false };
+
+    // Crossfade state (audio thread only).
+    int presetFadeRemaining_ = 0;
+    int presetFadeTotal_     = 0;
+
+    // Scratch buffers for the previous engine's output during a fade. Sized
+    // in prepareToPlay() to safeBlockSize so they're never reallocated on
+    // the audio thread.
+    std::vector<float> fadeBufL_, fadeBufR_;
 
     // Cached SixAPTank brightness/density state. Per-preset values that
     // travel with the project (persisted in get/setStateInformation as
@@ -74,7 +100,27 @@ private:
         float outputTrim      = 1.3f;
     };
     SixAPBrightnessState sixAPBrightness_;
-    void applySixAPBrightnessToEngine();
+
+    // Pushes the cached brightness state to a target engine. Called for both
+    // engines on state load and for the new active engine during a preset
+    // swap.
+    void pushSixAPBrightnessTo (DuskVerbEngine& target);
+
+    // Force-pushes every current APVTS parameter and the cached SixAPTank
+    // brightness state to a target engine. Called from the audio thread at
+    // preset-swap time so the freshly-cleared idle engine starts the fade
+    // already configured for the new preset.
+    void forcePushAllParametersTo (DuskVerbEngine* target);
+
+    // Resets the parameter-edge-detection cache to the current APVTS values
+    // so the next processBlock doesn't re-push parameters we just force-
+    // pushed during a swap.
+    void syncParameterCacheToCurrent();
+
+    // Audio-thread side of preset apply: clear new active engine's buffers,
+    // force-push current parameters, snap shell smoothers, swap pointers,
+    // arm the fade counter.
+    void performPresetSwap();
 
     // Cached APVTS pointers — read once at construction, hot in processBlock.
     std::atomic<float>* algorithmParam_     = nullptr;
