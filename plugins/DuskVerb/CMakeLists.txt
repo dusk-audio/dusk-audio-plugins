@@ -73,7 +73,7 @@ target_sources(DuskVerb
         src/dsp/FDNReverb.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/QuadTank.cpp
-        src/dsp/ModernSpaceEngine.cpp
+        src/dsp/SixAPTankEngine.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp

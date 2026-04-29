@@ -8,6 +8,7 @@
 #include "SupportersOverlay.h"
 
 #include <array>
+#include <functional>
 
 // Forward declaration so the engine-accent helper can take an EngineType.
 enum class EngineType : int;
@@ -20,7 +21,7 @@ inline juce::Colour getEngineAccent (EngineType engine)
     switch (engine)
     {
         case EngineType::Dattorro:        return juce::Colour (0xffffb84d);  // warm gold — vintage plate
-        case EngineType::ModernSpace6AP:  return juce::Colour (0xffd950c0);  // deep magenta — lush halls
+        case EngineType::SixAPTank:  return juce::Colour (0xffd950c0);  // deep magenta — lush halls
         case EngineType::QuadTank:        return juce::Colour (0xff4dd99e);  // emerald — natural rooms
         case EngineType::FDN:             return juce::Colour (0xffff7a3d);  // orange — realistic / Bricasti-like
         case EngineType::Spring:          return juce::Colour (0xff4dd9b8);  // teal — springy mechanical character
@@ -88,6 +89,14 @@ struct KnobWithLabel
     // overlay TextEditor's focus loss touched the parent label colours).
     // The timer callback re-asserts this colour on every tick.
     juce::Colour currentAccent { 0xffff7a3d };
+
+    // Per-engine value-text override. When non-null, the timer uses this
+    // lambda instead of the default suffix-based formatter. Used by the
+    // NonLinear engine to display gate parameters (e.g. "−32 dB") on
+    // knobs whose underlying APVTS values mean something different
+    // (e.g. size = 0.467). Set in applyEngineAccent(), cleared on engine
+    // change to other algorithms.
+    std::function<juce::String(double)> valueOverride;
 
     void init (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
                const juce::String& paramID, const juce::String& displayName,
@@ -212,6 +221,11 @@ private:
     DuskVerbLookAndFeel lnf_;
     ScalableEditorHelper scaler_;
 
+    // Tracks the currently-selected engine. Updated by applyEngineAccent()
+    // and read by paint() so engine-specific group titles can swap (e.g.
+    // "MODULATION" → "GATE" when NonLinear is selected).
+    EngineType currentEngine_ = EngineType::Dattorro;
+
     // Algorithm dropdown (= engine selector). Mirrors the algorithm APVTS choice.
     juce::ComboBox algorithmBox_;
     EngineGlyph    engineGlyph_;
@@ -220,13 +234,29 @@ private:
     // Live output-tail histogram, painted under the header dropdowns.
     TailMeter tailMeter_;
 
-    // Preset browser
-    juce::ComboBox presetBox_;
+    // Preset browser. CategoryComboBox is a thin subclass of juce::ComboBox
+    // that overrides showPopup() to display a categorized PopupMenu
+    // (categories as nested submenus) instead of the default flat popup.
+    // Items are still registered via addItem() so the ComboBox's selected-
+    // text display + setSelectedId() / step navigation continue to work;
+    // the override only changes how the popup is presented.
+    class CategoryComboBox : public juce::ComboBox
+    {
+    public:
+        // Editor sets this to a lambda that returns the popup menu to show.
+        // If unset, falls back to the default flat ComboBox popup.
+        std::function<juce::PopupMenu()> menuBuilder;
+        void showPopup() override;
+    };
+    CategoryComboBox presetBox_;
     juce::TextButton prevPresetButton_;
     juce::TextButton nextPresetButton_;
     void loadPreset (int index);
     void refreshPresetList();
     void stepFactoryPreset (int delta);
+    // Builds a PopupMenu that mirrors the current preset list with categories
+    // as nested submenus. Used by CategoryComboBox::showPopup.
+    juce::PopupMenu buildPresetMenu();
 
     // User preset management
     std::unique_ptr<UserPresetManager> userPresetManager_;
@@ -261,6 +291,10 @@ private:
 
     juce::ToggleButton freezeButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment_;
+
+    // Gate enable (NonLinear engine only — no-op on other algorithms).
+    juce::ToggleButton gateButton_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> gateAttachment_;
 
     juce::ToggleButton busModeButton_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> busModeAttachment_;

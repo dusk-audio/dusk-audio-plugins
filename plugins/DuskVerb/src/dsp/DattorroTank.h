@@ -135,7 +135,7 @@ private:
     };
 
     // Non-modulated Schroeder allpass with optional Lexicon-style "spin and
-    // wander" jitter (see ModernSpaceEngine::Allpass for the full rationale).
+    // wander" jitter (see SixAPTankEngine::Allpass for the full rationale).
     // Default jitterDepthFraction = 0 = static AP (back-compat).
     struct Allpass
     {

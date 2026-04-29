@@ -3,6 +3,11 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <vector>
 
+// Forward declaration — applyEngineConfig() needs to call SixAPTank-specific
+// setters on DuskVerbEngine without dragging the engine header into every
+// include of FactoryPresets.h.
+class DuskVerbEngine;
+
 // Factory presets — 16 hardware-anchored voicings.
 // `algorithm` is the engine index (0..3) per AlgorithmConfig.h:
 //   0 = Vintage Plate (Dattorro)
@@ -47,6 +52,20 @@ struct FactoryPreset
     float midMult        = 1.0f;     // 3-band mid multiplier (1.0 = natural)
     float highCrossover  = 4000.0f;  // mid↔high split (Hz)
     float saturation     = 0.0f;     // 0..1 drive softClip
+    bool  gateEnabled    = true;     // NonLinear engine: true = gate active.
+                                     // No-op on other engines but written
+                                     // anyway so loading a preset always
+                                     // sets the toggle to a known state.
+
+    // SixAPTank-specific engine tunables. Defaults match the engine's
+    // historical hardcoded constants — so any preset that doesn't override
+    // these gets identical sound to before. Black Hole opts in to brighter,
+    // denser values for VS BlackHole-character late-tail content.
+    float sixAPDensityBaseline = 0.62f;
+    float sixAPBloomCeiling    = 0.85f;
+    float sixAPBloomStagger[6] = { 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f };
+    float sixAPEarlyMix        = 0.5f;
+    float sixAPOutputTrim      = 1.3f;
 
     void applyTo (juce::AudioProcessorValueTreeState& apvts) const
     {
@@ -57,8 +76,9 @@ struct FactoryPreset
             p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (algorithm)));
         if (auto* p = apvts.getParameter ("predelay_sync"))
             p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (predelaySync)));
-        if (auto* p = apvts.getParameter ("bus_mode"))   p->setValueNotifyingHost (busMode ? 1.0f : 0.0f);
-        if (auto* p = apvts.getParameter ("freeze"))     p->setValueNotifyingHost (freeze  ? 1.0f : 0.0f);
+        if (auto* p = apvts.getParameter ("bus_mode"))     p->setValueNotifyingHost (busMode     ? 1.0f : 0.0f);
+        if (auto* p = apvts.getParameter ("freeze"))       p->setValueNotifyingHost (freeze      ? 1.0f : 0.0f);
+        if (auto* p = apvts.getParameter ("gate_enabled")) p->setValueNotifyingHost (gateEnabled ? 1.0f : 0.0f);
         setIfExists ("mix",       mix);
         setIfExists ("predelay",  predelay);
         setIfExists ("decay",     decay);
@@ -80,12 +100,88 @@ struct FactoryPreset
         setIfExists ("gain_trim", gainTrim);
         setIfExists ("mono_below", monoBelow);
     }
+
+    // Apply engine-specific (non-APVTS) tunables. Currently only the
+    // SixAPTank brightness/density fields. Defined out-of-line in
+    // PluginProcessor.cpp where DuskVerbEngine's full type is visible.
+    void applyEngineConfig (DuskVerbEngine& engine) const;
 };
 
 inline const std::vector<FactoryPreset>& getFactoryPresets()
 {
     static const std::vector<FactoryPreset> presets = {
-
+        // ── Vocal Plate (PCM 90) ─────────────────────────────────────────────
+        // Engine: Dattorro. Anchor: PCM 90 "Vocal Plate" (Bank P2 1.0). Short
+        // plate with notoriously LOW diffusion — keeps consonants intact.
+        //   RT60 0.88 s   bass_mult 0.99 (flat)   treble_mult 0.83 (some HF damp)
+        //   centroid 50ms 11.0 kHz   diffusion-proxy 0.67 (LOW — vocal-clear)
+        //   predelay 4 ms
+        // Distinct from "Vintage Vocal Plate" (EMT-140 anchor): this is the
+        // Lexicon PCM digital-plate sound — brighter, shorter, less diffused.
+        { "Vocal Plate",          "Plates",
+          0,  0.35f, false,  4.0f, 0,
+          0.95f, 0.45f, 0.05f, 0.50f, 0.85f, 1.00f,  700.0f,
+          0.55f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, false, 16.5f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
+        // ── Rich Plate (PCM 90) ──────────────────────────────────────────────
+        // Engine: Dattorro. Anchor: Lexicon PCM 90 "Rich Plate" (Bank P2 0.1)
+        // — the industry-standard bright + diffuse Lexicon plate. Measured
+        // against the PCM 90 IR set:
+        //   RT60 1.52 s   bass_mult 0.98 (flat)   treble_mult 0.96 (almost flat)
+        //   centroid 50ms 10.8 kHz   diffusion-proxy 2.04 (dense)   predelay 0
+        // The flat per-band decay + bright top is the "Rich" character.
+        { "Rich Plate",           "Plates",
+          0,  0.40f, false,  0.0f, 0,
+          1.60f, 0.55f, 0.10f, 0.45f, 0.95f, 1.00f,  600.0f,
+          0.85f, 0.00f, 0.30f,  80.0f, 14000.0f, 1.10f, false, 14.5f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
+        // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
+        // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,
+        // smooth, classic Lexicon plate.
+        //   RT60 1.76 s   bass_mult 0.85   treble_mult 0.84 (uniformly slightly damped)
+        //   centroid 50ms 10.5 kHz   diffusion-proxy 4.47 (very dense)   predelay 0
+        // Higher diffusion + slight bass-and-treble roll-off vs Rich Plate
+        // gives the smoother gold-anodized character. Tiny mod for a long
+        // tail that doesn't glass up.
+        { "Gold Plate",           "Plates",
+          0,  1.00f, false,  0.0f, 0,
+          1.96f, 0.357f, 0.12f, 0.35f, 1.00f, 0.55f,  600.0f,
+          0.80f, 0.00f, 0.00f, 200.0f, 20000.0f, 1.15f, false, 16.0f,
+          /* mono */ 20.0f, /* mid */ 0.80f, /* highX */ 3000.0f, /* sat */ 0.00f },
+        // ── Fat Pop Plate ────────────────────────────────────────────────────
+        // Anchor: Lexicon 480L "Fat Plate" pop-vocal setting.
+        // 480L "Fat Plate" actually used 40-55 % modulation depth (0-99
+        // scale). Bumped from 0.25 to 0.35 — 0.25 was too tame for the
+        // signature 80s/90s pop-vocal "fat wall". Crossover 480 Hz matches
+        // documented 400-550 Hz range.
+        // ER zeroed: 480L "Fat Plate" added density and bass weight to the
+        // plate algorithm but kept the same plate signal flow — no ER section.
+        // Tightened against VVV Fat Plate render comparison:
+        //   • decay 2.80 → 2.10 — Dattorro broadband-RMS measured 3.72s vs
+        //     UI 2.80 (+33% off!). Bumping UI decay DOWN so measured lands
+        //     near the perceived 2.8s.
+        //   • hi_cut 8500 → 14000 — VVV Fat Plate is much brighter (-3.4 dB
+        //     at 8 kHz vs DV's -10 dB). Pop plates need air for snare snap.
+        //   • bassMult 1.45 → 1.10 — DV had +2.3 dB bass body vs VVV's
+        //     -0.2 dB. Tighter mix bass, less mud on busy material.
+        { "Fat Pop Plate",        "Plates",
+          0,  0.40f, false, 18.0f, 0,
+          2.10f, 0.55f, 0.35f, 0.85f, 0.55f, 1.10f,  480.0f,
+          0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, false, 13.0f,
+          /* mono */ 20.0f, /* mid */ 1.20f, /* highX */ 4500.0f, /* sat */ 0.30f },
+        // ── Modulated Plate ──────────────────────────────────────────────────
+        // Anchor: Lexicon PCM-70 / PCM-80 "Plate" with chorus depth.
+        // Mod 0.40 — recalibrated after the all-engine depth normalisation
+        // (FDN's per-sample excursion was 4× before, now ×16, so the old
+        // 0.65 became over-saturated chorus). 0.40 still carries the
+        // signature PCM-series swirl on top of FDN density.
+        // ER zeroed: PCM-70/80 plate algorithms layer chorus on the plate
+        // tank itself — no ER stage. Keep the FDN density doing the work.
+        { "Modulated Plate",      "Plates",
+          3,  0.40f, false,  8.0f, 0,
+          2.40f, 0.50f, 0.40f, 1.40f, 0.85f, 1.00f, 1300.0f,
+          0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, false, 0.5f,
+          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4500.0f, /* sat */ 0.25f },
         // ═══════════ PLATES ═══════════
         // ── Vintage Vocal Plate ──────────────────────────────────────────────
         // Anchor: EMT 140 steel plate (1957), medium damper, vocal channel.
@@ -117,114 +213,20 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vintage Vocal Plate",  "Plates",
           0,  0.32f, false, 18.0f, 0,
           3.20f, 0.50f, 0.05f, 0.40f, 0.65f, 0.75f,  800.0f,
-          0.85f, 0.00f, 0.30f, 90.0f, 14000.0f, 1.10f, false, 9.0f,
+          0.85f, 0.00f, 0.30f, 90.0f, 14000.0f, 1.10f, false, 12.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 5000.0f, /* sat */ 0.20f },
-
-        // ── Bright Drum Plate ────────────────────────────────────────────────
-        // Anchor: Lexicon PCM-70 "Bright Plate" / EMT 140 bright damper.
-        // Tight 1.4 s for snare/percussion; very high diffusion smears
-        // transients into a sheen. Low-end thinned to keep kick out of the way.
-        // ER zeroed: PCM-70 "Bright Plate" and EMT 140 are pure plate
-        // algorithms — no early-reflection stage in the original signal flow.
-        // Tightened against VVV Drum Plate render comparison:
-        //   • decay 1.40 → 1.65 — match VVV's 1.68s measured RT60
-        //   • mod_depth 0.10 → 0.20 — bring σ from 0.62 toward VVV's 2.20 dB
-        { "Bright Drum Plate",    "Plates",
-          0,  0.28f, false,  6.0f, 0,
-          1.65f, 0.40f, 0.20f, 0.70f, 1.05f, 0.70f, 1500.0f,
-          0.90f, 0.00f, 0.25f, 150.0f, 16000.0f, 1.20f, false, 9.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.15f },
-
-        // ── Modulated Plate ──────────────────────────────────────────────────
-        // Anchor: Lexicon PCM-70 / PCM-80 "Plate" with chorus depth.
-        // Mod 0.40 — recalibrated after the all-engine depth normalisation
-        // (FDN's per-sample excursion was 4× before, now ×16, so the old
-        // 0.65 became over-saturated chorus). 0.40 still carries the
-        // signature PCM-series swirl on top of FDN density.
-        // ER zeroed: PCM-70/80 plate algorithms layer chorus on the plate
-        // tank itself — no ER stage. Keep the FDN density doing the work.
-        { "Modulated Plate",      "Plates",
-          3,  0.40f, false,  8.0f, 0,
-          2.40f, 0.50f, 0.40f, 1.40f, 0.85f, 1.00f, 1300.0f,
-          0.80f, 0.00f, 0.45f, 70.0f, 14000.0f, 1.20f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4500.0f, /* sat */ 0.25f },
-
-        // ── Fat Pop Plate ────────────────────────────────────────────────────
-        // Anchor: Lexicon 480L "Fat Plate" pop-vocal setting.
-        // 480L "Fat Plate" actually used 40-55 % modulation depth (0-99
-        // scale). Bumped from 0.25 to 0.35 — 0.25 was too tame for the
-        // signature 80s/90s pop-vocal "fat wall". Crossover 480 Hz matches
-        // documented 400-550 Hz range.
-        // ER zeroed: 480L "Fat Plate" added density and bass weight to the
-        // plate algorithm but kept the same plate signal flow — no ER section.
-        // Tightened against VVV Fat Plate render comparison:
-        //   • decay 2.80 → 2.10 — Dattorro broadband-RMS measured 3.72s vs
-        //     UI 2.80 (+33% off!). Bumping UI decay DOWN so measured lands
-        //     near the perceived 2.8s.
-        //   • hi_cut 8500 → 14000 — VVV Fat Plate is much brighter (-3.4 dB
-        //     at 8 kHz vs DV's -10 dB). Pop plates need air for snare snap.
-        //   • bassMult 1.45 → 1.10 — DV had +2.3 dB bass body vs VVV's
-        //     -0.2 dB. Tighter mix bass, less mud on busy material.
-        { "Fat Pop Plate",        "Plates",
-          0,  0.40f, false, 18.0f, 0,
-          2.10f, 0.55f, 0.35f, 0.85f, 0.55f, 1.10f,  480.0f,
-          0.85f, 0.00f, 0.40f, 50.0f, 14000.0f, 1.30f, false, 10.0f,
-          /* mono */ 20.0f, /* mid */ 1.20f, /* highX */ 4500.0f, /* sat */ 0.30f },
-
         // ── Snare Plate XL ───────────────────────────────────────────────────
         // Long-decay plate for '80s big-snare/tom slap. Engine matched to
         // VVV's DrumPlate / FatPlate architecture (forensic L/R-correlation
         // analysis confirmed both VVV plates use FDN, not Dattorro). FDN
-        // gives the modern smooth-plate alternative to Bright Drum Plate's
-        // vintage Dattorro character. Bright top + controlled bass + a
-        // touch of saturation evoke the JBL-tape-into-EMT-140 era.
+        // gives the modern smooth-plate alternative to the Dattorro plates'
+        // vintage character. Bright top + controlled bass + a touch of
+        // saturation evoke the JBL-tape-into-EMT-140 era.
         { "Snare Plate XL",       "Plates",
           3,  0.42f, false, 12.0f, 0,
           4.50f, 0.65f, 0.15f, 0.50f, 0.85f, 0.65f,  600.0f,
-          0.75f, 0.30f, 0.55f, 180.0f, 14000.0f, 1.30f, false, 0.0f,
+          0.75f, 0.30f, 0.55f, 180.0f, 14000.0f, 1.30f, false, 1.0f,
           /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 5000.0f, /* sat */ 0.20f },
-
-        // ── Rich Plate (PCM 90) ──────────────────────────────────────────────
-        // Engine: Dattorro. Anchor: Lexicon PCM 90 "Rich Plate" (Bank P2 0.1)
-        // — the industry-standard bright + diffuse Lexicon plate. Measured
-        // against the PCM 90 IR set:
-        //   RT60 1.52 s   bass_mult 0.98 (flat)   treble_mult 0.96 (almost flat)
-        //   centroid 50ms 10.8 kHz   diffusion-proxy 2.04 (dense)   predelay 0
-        // The flat per-band decay + bright top is the "Rich" character.
-        { "Rich Plate",           "Plates",
-          0,  0.40f, false,  0.0f, 0,
-          1.60f, 0.55f, 0.10f, 0.45f, 0.95f, 1.00f,  600.0f,
-          0.85f, 0.00f, 0.30f,  80.0f, 14000.0f, 1.10f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
-
-        // ── Gold Plate (PCM 90) ──────────────────────────────────────────────
-        // Engine: Dattorro. Anchor: PCM 90 "Gold Plate" (Bank P2 0.2). Long,
-        // smooth, classic Lexicon plate.
-        //   RT60 1.76 s   bass_mult 0.85   treble_mult 0.84 (uniformly slightly damped)
-        //   centroid 50ms 10.5 kHz   diffusion-proxy 4.47 (very dense)   predelay 0
-        // Higher diffusion + slight bass-and-treble roll-off vs Rich Plate
-        // gives the smoother gold-anodized character. Tiny mod for a long
-        // tail that doesn't glass up.
-        { "Gold Plate",           "Plates",
-          0,  0.40f, false,  0.0f, 0,
-          2.00f, 0.65f, 0.12f, 0.35f, 0.85f, 0.85f,  600.0f,
-          0.95f, 0.00f, 0.30f,  80.0f, 12000.0f, 1.15f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.15f },
-
-        // ── Vocal Plate (PCM 90) ─────────────────────────────────────────────
-        // Engine: Dattorro. Anchor: PCM 90 "Vocal Plate" (Bank P2 1.0). Short
-        // plate with notoriously LOW diffusion — keeps consonants intact.
-        //   RT60 0.88 s   bass_mult 0.99 (flat)   treble_mult 0.83 (some HF damp)
-        //   centroid 50ms 11.0 kHz   diffusion-proxy 0.67 (LOW — vocal-clear)
-        //   predelay 4 ms
-        // Distinct from "Vintage Vocal Plate" (EMT-140 anchor): this is the
-        // Lexicon PCM digital-plate sound — brighter, shorter, less diffused.
-        { "Vocal Plate",          "Plates",
-          0,  0.35f, false,  4.0f, 0,
-          0.95f, 0.45f, 0.05f, 0.50f, 0.85f, 1.00f,  700.0f,
-          0.55f, 0.00f, 0.30f, 100.0f, 11000.0f, 1.10f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
-
         // ═══════════ SPRINGS ═══════════
         // ── Surf '63 Spring ──────────────────────────────────────────────────
         // Engine: SpringEngine (algo 4). Reference: Fender 6G15 outboard
@@ -236,9 +238,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Surf '63 Spring",      "Springs",
           4,  0.35f, false,  0.0f, 0,
           1.60f, 0.40f, 0.20f, 1.50f, 1.00f, 0.85f, 1000.0f,
-          0.45f, 0.10f, 0.30f,  80.0f,  4000.0f, 1.10f, false, 0.0f,
+          0.45f, 0.10f, 0.30f,  80.0f,  4000.0f, 1.10f, false, 2.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
-
         // ── Tank Drip ────────────────────────────────────────────────────────
         // Engine: SpringEngine. Reference: Twin Reverb / Pro Reverb onboard
         // tank cranked — heavy chirp, longer springs, darker top, pronounced
@@ -247,9 +248,99 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Tank Drip",            "Springs",
           4,  0.40f, false,  0.0f, 0,
           2.20f, 0.65f, 0.30f, 0.80f, 0.70f, 1.10f, 1000.0f,
-          0.85f, 0.10f, 0.30f, 100.0f,  3000.0f, 1.20f, false, 0.0f,
+          0.85f, 0.10f, 0.30f, 100.0f,  3000.0f, 1.20f, false, 2.5f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.20f },
-
+        // ── Utility Hall (PCM 90) ────────────────────────────────────────────
+        // Engine: FDN. Anchor: PCM 90 "Utility Hall" (Bank P0 2.9) — designed
+        // to sit invisibly behind a mix. Despite the user-facing description
+        // being "dark", the IR measurement reveals it's actually balanced
+        // with bright initial transient and slight HF-persistent tail —
+        // the "invisible" character comes from the FAST bass decay (kills
+        // the bottom-end mud) plus a moderate hi_cut that takes the edge
+        // off without killing air.
+        //   RT60 1.06 s   bass_mult 0.76 (bass dies fast)   treble_mult 1.12
+        //   centroid 50ms 10.5 kHz   centroid 1s 10.6 kHz (bright sustained)
+        //   diffusion-proxy 2.07 (dense)   predelay 1 ms
+        { "Utility Hall",         "Halls",
+          3,  0.40f, false,  1.0f, 0,
+          1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f,
+          0.75f, 0.50f, 0.50f, 100.0f,  8000.0f, 1.10f, false, 2.5f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.05f },
+        // ── Bright Studio Hall ───────────────────────────────────────────────
+        // Fills the bright-hall gap. Pop/rock vocals and acoustic instruments
+        // — the rest of the Halls roster skews dark (Lush Dark Hall, Cathedral,
+        // Blade Runner, Vocal Hall). FDN engine matches VVV's VocalHall
+        // architecture (forensic L/R-correlation analysis confirmed FDN).
+        // Articulate top, present mids, ER tap density on the higher side
+        // for that "I can hear the room shape" quality on pop arrangements.
+        { "Bright Studio Hall",   "Halls",
+          3,  0.40f, false, 18.0f, 0,
+          1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f,  400.0f,
+          0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, false, 1.5f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5500.0f, /* sat */ 0.05f },
+        // ── Bright Hall (PCM 90) ─────────────────────────────────────────────
+        // Engine: FDN. Anchor: PCM 90 "Bright Hall" (Bank P0 2.8) — Lexicon
+        // "sizzle" character, treble actually rings LONGER than mid.
+        //   RT60 1.69 s   bass_mult 0.98 (flat)   treble_mult 1.16 (HF persists!)
+        //   centroid 50ms 10.9 kHz   centroid 1s 12.0 kHz (gets brighter late!)
+        //   diffusion-proxy 0.69 (low — sparkly, not smeared)
+        // The treble_mult > 1.0 is the key — this preset's identity is
+        // brighter-than-mid HF persistence. FDN engine handles that better
+        // than the Dattorro tank's bass-favouring damping curve.
+        { "Bright Hall",          "Halls",
+          3,  0.40f, false,  0.0f, 0,
+          1.80f, 0.65f, 0.12f, 0.50f, 1.20f, 1.00f, 1000.0f,
+          0.75f, 0.50f, 0.50f,  80.0f, 18000.0f, 1.20f, false, 1.5f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.05f },
+        // ── Smooth Concert Hall ──────────────────────────────────────────────
+        // Anchor: Lexicon 480L "Smooth Hall" no-mod variant + Bricasti M7 hall.
+        // 5 % LFO at 0.6 Hz is sub-audible vibrato but breaks the static
+        // phase-locks that make a perfectly-deterministic tank ring metallically.
+        // High diffusion (0.85) smooths modal grain; mild bass bloom (×1.2).
+        { "Smooth Concert Hall",  "Halls",
+          2,  0.35f, false, 28.0f, 0,
+          2.60f, 0.65f, 0.05f, 0.60f, 0.75f, 1.20f,  900.0f,
+          0.85f, 0.45f, 0.65f, 60.0f, 13000.0f, 1.25f, false, -0.5f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
+        // ── Blade Runner Concert (PCM 90) ────────────────────────────────────
+        // Engine: SixAPTank. Anchor: PCM 90 "Concert Hall" (Bank P0,
+        // preset 574) — the purest vanilla form of the algorithm Vangelis
+        // used. A SHORTER, DARKER companion to "Blade Runner 224", tuned to
+        // the actual Lexicon hardware spec rather than the user-extended
+        // Arturia LX-24 saved preset.
+        //
+        // Direct port of the IR measurements:
+        //   RT60 3.09 s   bass_mult 1.25   treble_mult 0.52 (the exact
+        //   Lexicon "two-stage decay" — bass rings 25 % longer than mid,
+        //   treble HALF as long: that's the dark-cinematic-cathedral
+        //   character measured straight off the PCM 90)
+        //   centroid 50ms 8.1 kHz → 1s 3.1 kHz (the iconic darkening tail)
+        //   diffusion-proxy 0.76   predelay 5 ms
+        //
+        // Use this when you want the historically-accurate Lexicon Concert
+        // Hall sound — closer to the studio reference Vangelis would've
+        // dialled in. "Blade Runner 224" remains the long-decay extended
+        // version for sustained-pad cinematic use.
+        { "Blade Runner Concert", "Halls",
+          1,  0.45f, false,  5.0f, 0,
+          3.00f, 0.85f, 0.10f, 0.40f, 0.52f, 1.25f,  700.0f,
+          0.85f, 0.45f, 0.55f,  60.0f,  8000.0f, 1.20f, false, 8.5f,
+          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
+        // ── Deep Blue (PCM 90) ───────────────────────────────────────────────
+        // Engine: SixAPTank. Anchor: PCM 90 "Deep Blue" (Bank P0 0.0)
+        // — Lexicon's "impossibly massive" Concert Hall preset, the literal
+        // first preset in their Hall bank. The 6-AP density cascade matches
+        // the PCM's late-tail thickness better than FDN.
+        //   RT60 2.63 s   bass_mult 1.10   treble_mult 0.64 (DARK!)
+        //   centroid 50ms 5.9 kHz (already dark on the transient)
+        //   centroid 1s   3.6 kHz (continues to darken)
+        //   shape: REVERSE — energy builds late (the "swelling cathedral" character)
+        //   predelay 10 ms
+        { "Deep Blue",            "Halls",
+          1,  0.45f, false, 10.0f, 0,
+          3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f,  600.0f,
+          0.85f, 0.40f, 0.65f,  60.0f,  8500.0f, 1.30f, false, 9.0f,
+          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ═══════════ HALLS ═══════════
         // ── Lush Dark Hall ───────────────────────────────────────────────────
         // Anchor: Lexicon 480L "Hall A" warm dark variant.
@@ -278,9 +369,23 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Lush Dark Hall",       "Halls",
           3,  0.40f, false, 35.0f, 0,
           3.30f, 0.75f, 0.12f, 0.55f, 0.35f, 1.40f,  550.0f,
-          0.75f, 0.25f, 0.55f, 150.0f, 7000.0f, 1.40f, false, 0.0f,
+          0.75f, 0.25f, 0.55f, 150.0f, 7000.0f, 1.40f, false, -0.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 2700.0f, /* sat */ 0.20f },
-
+        // ── Vocal Hall ───────────────────────────────────────────────────────
+        // Anchor: Bricasti M7 "Vocal Hall".
+        // Mid-size hall (2.2 s) with subtle modulation (0.20 / 0.7 Hz) for
+        // movement without chorus. Lo-cut at 100 Hz keeps low rumble out of
+        // the vocal mix. Diffusion 0.78 — smooth but not glassy.
+        // Tightened against VVV Vocal Hall render comparison:
+        //   • decay 2.20 → 3.50 — VVV's Vocal Hall measured 4.64s; ours was
+        //     2.27s. Vocal halls in M7/Lex catalogues live at 3-5s, not 2s.
+        //   • hi_cut 12500 → 9000 — VVV is much darker (-11.6 dB at 8 kHz
+        //     vs our -3.7 dB). Tames sibilance on vocal returns.
+        { "Vocal Hall",           "Halls",
+          3,  0.35f, false, 22.0f, 0,
+          3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f,
+          0.78f, 0.45f, 0.55f, 100.0f,  9000.0f, 1.15f, false, -1.5f,
+          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── Cathedral ────────────────────────────────────────────────────────
         // Anchor: Lexicon 224 "Concert Hall A" Notre-Dame setting (~6.5 s).
         // Migrated from 6-AP (algo 1) → FDN (algo 3) on 2026-04-26 because
@@ -304,9 +409,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Cathedral",            "Halls",
           3,  0.45f, false, 30.0f, 0,
           6.50f, 0.95f, 0.15f, 0.45f, 0.40f, 1.30f,  750.0f,
-          0.78f, 0.30f, 0.85f, 60.0f,  8500.0f, 1.50f, false, 0.0f,
+          0.78f, 0.30f, 0.85f, 60.0f,  8500.0f, 1.50f, false, -3.5f,
           /* mono */ 20.0f, /* mid */ 1.20f, /* highX */ 2400.0f, /* sat */ 0.15f },
-
         // ── Blade Runner 224 ─────────────────────────────────────────────────
         // Anchor: Vangelis on the Lexicon 224 (Hall A / Constellation) —
         // "Tears in Rain" / "Memories of Green". Validated against the
@@ -363,122 +467,18 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Blade Runner 224",     "Halls",
           0,  0.45f, false, 24.0f, 0,
           9.00f, 1.00f, 0.03f, 0.45f, 0.50f, 2.00f,  800.0f,
-          0.85f, 1.00f, 1.00f, 60.0f,  6500.0f, 1.00f, false, -5.0f,
+          0.85f, 1.00f, 1.00f, 60.0f,  6500.0f, 1.00f, false, 7.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.00f },
-
-        // ── Blade Runner Concert (PCM 90) ────────────────────────────────────
-        // Engine: ModernSpace 6-AP. Anchor: PCM 90 "Concert Hall" (Bank P0,
-        // preset 574) — the purest vanilla form of the algorithm Vangelis
-        // used. A SHORTER, DARKER companion to "Blade Runner 224", tuned to
-        // the actual Lexicon hardware spec rather than the user-extended
-        // Arturia LX-24 saved preset.
-        //
-        // Direct port of the IR measurements:
-        //   RT60 3.09 s   bass_mult 1.25   treble_mult 0.52 (the exact
-        //   Lexicon "two-stage decay" — bass rings 25 % longer than mid,
-        //   treble HALF as long: that's the dark-cinematic-cathedral
-        //   character measured straight off the PCM 90)
-        //   centroid 50ms 8.1 kHz → 1s 3.1 kHz (the iconic darkening tail)
-        //   diffusion-proxy 0.76   predelay 5 ms
-        //
-        // Use this when you want the historically-accurate Lexicon Concert
-        // Hall sound — closer to the studio reference Vangelis would've
-        // dialled in. "Blade Runner 224" remains the long-decay extended
-        // version for sustained-pad cinematic use.
-        { "Blade Runner Concert", "Halls",
-          1,  0.45f, false,  5.0f, 0,
-          3.00f, 0.85f, 0.10f, 0.40f, 0.52f, 1.25f,  700.0f,
-          0.85f, 0.45f, 0.55f,  60.0f,  8000.0f, 1.20f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
-
-        // ── Smooth Concert Hall ──────────────────────────────────────────────
-        // Anchor: Lexicon 480L "Smooth Hall" no-mod variant + Bricasti M7 hall.
-        // 5 % LFO at 0.6 Hz is sub-audible vibrato but breaks the static
-        // phase-locks that make a perfectly-deterministic tank ring metallically.
-        // High diffusion (0.85) smooths modal grain; mild bass bloom (×1.2).
-        { "Smooth Concert Hall",  "Halls",
-          2,  0.35f, false, 28.0f, 0,
-          2.60f, 0.65f, 0.05f, 0.60f, 0.75f, 1.20f,  900.0f,
-          0.85f, 0.45f, 0.65f, 60.0f, 13000.0f, 1.25f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
-
-        // ── Vocal Hall ───────────────────────────────────────────────────────
-        // Anchor: Bricasti M7 "Vocal Hall".
-        // Mid-size hall (2.2 s) with subtle modulation (0.20 / 0.7 Hz) for
-        // movement without chorus. Lo-cut at 100 Hz keeps low rumble out of
-        // the vocal mix. Diffusion 0.78 — smooth but not glassy.
-        // Tightened against VVV Vocal Hall render comparison:
-        //   • decay 2.20 → 3.50 — VVV's Vocal Hall measured 4.64s; ours was
-        //     2.27s. Vocal halls in M7/Lex catalogues live at 3-5s, not 2s.
-        //   • hi_cut 12500 → 9000 — VVV is much darker (-11.6 dB at 8 kHz
-        //     vs our -3.7 dB). Tames sibilance on vocal returns.
-        { "Vocal Hall",           "Halls",
-          3,  0.35f, false, 22.0f, 0,
-          3.50f, 0.55f, 0.20f, 0.70f, 0.70f, 1.15f, 1000.0f,
-          0.78f, 0.45f, 0.55f, 100.0f,  9000.0f, 1.15f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
-
-        // ── Bright Studio Hall ───────────────────────────────────────────────
-        // Fills the bright-hall gap. Pop/rock vocals and acoustic instruments
-        // — the rest of the Halls roster skews dark (Lush Dark Hall, Cathedral,
-        // Blade Runner, Vocal Hall). FDN engine matches VVV's VocalHall
-        // architecture (forensic L/R-correlation analysis confirmed FDN).
-        // Articulate top, present mids, ER tap density on the higher side
-        // for that "I can hear the room shape" quality on pop arrangements.
-        { "Bright Studio Hall",   "Halls",
-          3,  0.40f, false, 18.0f, 0,
-          1.80f, 0.55f, 0.10f, 0.55f, 0.85f, 1.05f,  400.0f,
-          0.65f, 0.40f, 0.50f, 120.0f, 14000.0f, 1.30f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5500.0f, /* sat */ 0.05f },
-
-        // ── Deep Blue (PCM 90) ───────────────────────────────────────────────
-        // Engine: ModernSpace 6-AP. Anchor: PCM 90 "Deep Blue" (Bank P0 0.0)
-        // — Lexicon's "impossibly massive" Concert Hall preset, the literal
-        // first preset in their Hall bank. The 6-AP density cascade matches
-        // the PCM's late-tail thickness better than FDN.
-        //   RT60 2.63 s   bass_mult 1.10   treble_mult 0.64 (DARK!)
-        //   centroid 50ms 5.9 kHz (already dark on the transient)
-        //   centroid 1s   3.6 kHz (continues to darken)
-        //   shape: REVERSE — energy builds late (the "swelling cathedral" character)
-        //   predelay 10 ms
-        { "Deep Blue",            "Halls",
-          1,  0.45f, false, 10.0f, 0,
-          3.00f, 0.85f, 0.15f, 0.40f, 0.65f, 1.10f,  600.0f,
-          0.85f, 0.40f, 0.65f,  60.0f,  8500.0f, 1.30f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.10f },
-
-        // ── Bright Hall (PCM 90) ─────────────────────────────────────────────
-        // Engine: FDN. Anchor: PCM 90 "Bright Hall" (Bank P0 2.8) — Lexicon
-        // "sizzle" character, treble actually rings LONGER than mid.
-        //   RT60 1.69 s   bass_mult 0.98 (flat)   treble_mult 1.16 (HF persists!)
-        //   centroid 50ms 10.9 kHz   centroid 1s 12.0 kHz (gets brighter late!)
-        //   diffusion-proxy 0.69 (low — sparkly, not smeared)
-        // The treble_mult > 1.0 is the key — this preset's identity is
-        // brighter-than-mid HF persistence. FDN engine handles that better
-        // than the Dattorro tank's bass-favouring damping curve.
-        { "Bright Hall",          "Halls",
-          3,  0.40f, false,  0.0f, 0,
-          1.80f, 0.65f, 0.12f, 0.50f, 1.20f, 1.00f, 1000.0f,
-          0.75f, 0.50f, 0.50f,  80.0f, 18000.0f, 1.20f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 6000.0f, /* sat */ 0.05f },
-
-        // ── Utility Hall (PCM 90) ────────────────────────────────────────────
-        // Engine: FDN. Anchor: PCM 90 "Utility Hall" (Bank P0 2.9) — designed
-        // to sit invisibly behind a mix. Despite the user-facing description
-        // being "dark", the IR measurement reveals it's actually balanced
-        // with bright initial transient and slight HF-persistent tail —
-        // the "invisible" character comes from the FAST bass decay (kills
-        // the bottom-end mud) plus a moderate hi_cut that takes the edge
-        // off without killing air.
-        //   RT60 1.06 s   bass_mult 0.76 (bass dies fast)   treble_mult 1.12
-        //   centroid 50ms 10.5 kHz   centroid 1s 10.6 kHz (bright sustained)
-        //   diffusion-proxy 2.07 (dense)   predelay 1 ms
-        { "Utility Hall",         "Halls",
-          3,  0.40f, false,  1.0f, 0,
-          1.10f, 0.55f, 0.08f, 0.45f, 1.10f, 0.75f, 1000.0f,
-          0.75f, 0.50f, 0.50f, 100.0f,  8000.0f, 1.10f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.05f },
-
+        // ── Realistic Chamber ────────────────────────────────────────────────
+        // Anchor: Bricasti M7 "Chamber" preset.
+        // Clean and high-diffusion (0.85), almost no modulation (0.10 / 0.8 Hz),
+        // full top-end response, prominent realistic ER pattern. Sounds like
+        // a real room.
+        { "Realistic Chamber",    "Chambers",
+          3,  0.30f, false, 14.0f, 0,
+          1.40f, 0.50f, 0.10f, 0.80f, 0.85f, 1.10f, 1100.0f,
+          0.85f, 0.65f, 0.50f, 60.0f, 14000.0f, 1.10f, false, 2.0f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.05f },
         // ═══════════ CHAMBERS ═══════════
         // ── Wood Chamber ─────────────────────────────────────────────────────
         // Anchor: Capitol Records / Abbey Road live wooden chambers (1950s-60s).
@@ -493,51 +493,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Wood Chamber",         "Chambers",
           2,  0.30f, false, 18.0f, 0,
           2.30f, 0.40f, 0.05f, 0.60f, 0.65f, 1.20f,  850.0f,
-          0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, false, 0.0f,
+          0.80f, 0.55f, 0.45f, 150.0f, 11500.0f, 1.15f, false, 0.5f,
           /* mono */ 20.0f, /* mid */ 1.10f, /* highX */ 4000.0f, /* sat */ 0.20f },
-
-        // ── Realistic Chamber ────────────────────────────────────────────────
-        // Anchor: Bricasti M7 "Chamber" preset.
-        // Clean and high-diffusion (0.85), almost no modulation (0.10 / 0.8 Hz),
-        // full top-end response, prominent realistic ER pattern. Sounds like
-        // a real room.
-        { "Realistic Chamber",    "Chambers",
-          3,  0.30f, false, 14.0f, 0,
-          1.40f, 0.50f, 0.10f, 0.80f, 0.85f, 1.10f, 1100.0f,
-          0.85f, 0.65f, 0.50f, 60.0f, 14000.0f, 1.10f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.05f },
-
-        // ═══════════ ROOMS ═══════════
-        // ── Tight Drum Room ──────────────────────────────────────────────────
-        // Anchor: AMS RMX16 "Ambience" / classic small wooden booth.
-        // QuadTank delivers the tight character of small spaces. Strong ER
-        // (0.65) defines the room; the 0.5 s late tail is almost incidental.
-        // 5 % LFO at 0.6 Hz breaks tank phase-locks — required for QuadTank
-        // to avoid the metallic ring on short decays.
-        // Mod 0.10 (was 0.05): same modal-locking-margin bump as Bright
-        // Drum Plate; QuadTank measured σ 1.12 dB at 0.05 → just above floor.
-        { "Tight Drum Room",      "Rooms",
-          2,  0.25f, false,  4.0f, 0,
-          0.50f, 0.20f, 0.10f, 0.60f, 0.95f, 0.95f, 1500.0f,
-          0.65f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, false, -5.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
-
-        // ── Studio Room ──────────────────────────────────────────────────────
-        // Anchor: Quantec QRS "Studio Room" (1982) — first true room simulator.
-        // Dense realistic early reflections, very high diffusion (0.85), no
-        // modulation, wide stereo from natural decorrelation. 0.9 s decay
-        // emulates a controlled tracking room.
-        // Tightened against VVV 84 Small Room render comparison:
-        //   • decay 0.90 → 0.60 — VVV's tight studio rooms live at 0.4-0.6s.
-        //     Ours at 0.9s read more like a "medium room" than "studio room".
-        //   • hi_cut 14500 → 9000 — VVV is much darker (-10 dB at 8 kHz vs
-        //     ours -1.9 dB). Tight rooms in pro work are darker not brighter.
-        { "Studio Room",          "Rooms",
-          3,  0.30f, false,  8.0f, 0,
-          0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f,
-          0.85f, 0.60f, 0.40f, 80.0f,  9000.0f, 1.05f, false, -4.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.05f },
-
         // ── 80s Non-Lin Drum ─────────────────────────────────────────────────
         // Anchor: AMS RMX16 "NonLin 2" (Phil Collins / Genesis snare).
         // Brutally tight (0.3 s), zero modulation, MAXED diffusion, MASSIVE
@@ -553,9 +510,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "80s Non-Lin Drum",     "Rooms",
           2,  0.30f, false,  0.0f, 0,
           0.30f, 0.15f, 0.20f, 1.00f, 0.95f, 0.85f, 1500.0f,
-          1.00f, 0.85f, 0.20f, 120.0f,  8000.0f, 1.20f, false, 0.0f,
+          1.00f, 0.85f, 0.20f, 120.0f,  8000.0f, 1.20f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 0.80f, /* highX */ 3500.0f, /* sat */ 0.40f },
-
         // ── Vocal Booth ──────────────────────────────────────────────────────
         // Sub-second tight close-mic room for intimate vocals / podcasts /
         // dialogue. Engine matched to VVV's 84SmallRoom architecture
@@ -568,35 +524,37 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Vocal Booth",          "Rooms",
           3,  0.30f, false,  2.0f, 0,
           0.40f, 0.20f, 0.05f, 0.40f, 0.80f, 0.95f,  800.0f,
-          0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f, false, -5.0f,
+          0.65f, 0.55f, 0.20f, 120.0f, 12000.0f, 1.00f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.05f },
-
-        // ── Phil Collins Gated ──────────────────────────────────────────────
-        // Engine: NonLinearEngine (algo 5). Reference: AMS RMX16 NonLin 2
-        // algorithm via Hugh Padgham → "In the Air Tonight" (1981) snare,
-        // every Phil Collins / Genesis production 1981-88. Plateau-then-cliff
-        // envelope at 350 ms via the SHAPE knob's Gated region (diffusion
-        // < 0.33). 100 % wet via Bus Mode for send/return placement; the
-        // dry path stays clean and the gated tail sits as a parallel layer.
-        { "Phil Collins Gated",   "Rooms",
-          5,  0.45f, true,   0.0f, 0,
-          0.35f, 0.50f, 0.00f, 0.50f, 0.85f, 1.00f, 1000.0f,
-          0.15f, 0.00f, 0.30f,  60.0f,  8000.0f, 1.30f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.05f },
-
-        // ── Reverse Snare ────────────────────────────────────────────────────
-        // Engine: NonLinearEngine. Reference: pre-fader send technique used
-        // for the classic "reverse snare swell" (Beatles "Tomorrow Never
-        // Knows", U2 "Where The Streets Have No Name", every Trevor Horn
-        // production 1983-89). SHAPE knob in the Reverse region (diffusion
-        // 0.33-0.66) gives a 0→cliff ramp envelope across 550 ms — taps at
-        // the END of the buffer fire loudest, simulating tape-reverse swell.
-        { "Reverse Snare",        "Rooms",
-          5,  0.45f, true,   0.0f, 0,
-          0.55f, 0.55f, 0.00f, 0.50f, 0.90f, 0.80f, 1000.0f,
-          0.50f, 0.00f, 0.30f,  60.0f, 12000.0f, 1.15f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.05f },
-
+        // ═══════════ ROOMS ═══════════
+        // ── Tight Drum Room ──────────────────────────────────────────────────
+        // Anchor: AMS RMX16 "Ambience" / classic small wooden booth.
+        // QuadTank delivers the tight character of small spaces. Strong ER
+        // (0.65) defines the room; the 0.5 s late tail is almost incidental.
+        // 5 % LFO at 0.6 Hz breaks tank phase-locks — required for QuadTank
+        // to avoid the metallic ring on short decays.
+        // Mod 0.10 (was 0.05): same modal-locking-margin bump as Bright
+        // Drum Plate; QuadTank measured σ 1.12 dB at 0.05 → just above floor.
+        { "Tight Drum Room",      "Rooms",
+          2,  0.25f, false,  4.0f, 0,
+          0.50f, 0.20f, 0.10f, 0.60f, 0.95f, 0.95f, 1500.0f,
+          0.65f, 0.65f, 0.30f, 100.0f, 14000.0f, 1.05f, false, 4.0f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4500.0f, /* sat */ 0.10f },
+        // ── Studio Room ──────────────────────────────────────────────────────
+        // Anchor: Quantec QRS "Studio Room" (1982) — first true room simulator.
+        // Dense realistic early reflections, very high diffusion (0.85), no
+        // modulation, wide stereo from natural decorrelation. 0.9 s decay
+        // emulates a controlled tracking room.
+        // Tightened against VVV 84 Small Room render comparison:
+        //   • decay 0.90 → 0.60 — VVV's tight studio rooms live at 0.4-0.6s.
+        //     Ours at 0.9s read more like a "medium room" than "studio room".
+        //   • hi_cut 14500 → 9000 — VVV is much darker (-10 dB at 8 kHz vs
+        //     ours -1.9 dB). Tight rooms in pro work are darker not brighter.
+        { "Studio Room",          "Rooms",
+          3,  0.30f, false,  8.0f, 0,
+          0.60f, 0.30f, 0.00f, 1.00f, 0.85f, 1.05f, 1300.0f,
+          0.85f, 0.60f, 0.40f, 80.0f,  9000.0f, 1.05f, false, 4.5f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 5000.0f, /* sat */ 0.05f },
         // ── Ambience (PCM 90) ────────────────────────────────────────────────
         // Engine: QuadTank. Anchor: PCM 90 "Ambience" (Bank P1) — the famous
         // Lexicon 300L algorithm imported into the PCM 90. The QuadTank's
@@ -613,9 +571,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "Ambience",             "Rooms",
           2,  0.40f, false,  1.0f, 0,
           0.60f, 0.40f, 0.05f, 0.45f, 1.05f, 0.90f,  900.0f,
-          0.65f, 0.70f, 0.50f, 100.0f, 14000.0f, 1.20f, false, 0.0f,
+          0.65f, 0.70f, 0.50f, 100.0f, 14000.0f, 1.20f, false, 3.5f,
           /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 5000.0f, /* sat */ 0.10f },
-
         // ── Drum Room (PCM 90) ───────────────────────────────────────────────
         // Engine: QuadTank. Anchor: PCM 90 "Drum Room" (Bank P1) — physical
         // weight for acoustic drums without washing them out.
@@ -627,26 +584,54 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         { "PCM Drum Room",        "Rooms",
           2,  0.40f, false,  0.0f, 0,
           0.60f, 0.35f, 0.10f, 0.50f, 0.90f, 1.10f,  900.0f,
-          0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, false, 0.0f,
+          0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, false, 4.0f,
           /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 5000.0f, /* sat */ 0.10f },
-
-        // ── Snare Gate (PCM 90) ──────────────────────────────────────────────
-        // Engine: NonLinear (algo 5) in GATED mode (diffusion 0.0-0.33 selects
-        // the gated envelope). Anchor: PCM 90 "Snare Gate" (Bank P0 3.1) —
-        // tight, gated hall reverb specifically for snares.
-        //   RT60 3.65 s (the underlying hall, before the gate cuts)
-        //   bass_mult 1.49 (BIG bass body)   treble_mult 0.55 (dark tail)
-        //   centroid 50ms 11.2 kHz (bright snare crack passes)
-        //   shape: cliff cutoff at gate length
-        // For NonLinear the "decay" knob is the GATE WINDOW length, not
-        // the underlying RT60. 0.45s = classic Phil Collins-style snare gate.
-        // diffusion 0.15 selects the Gated envelope shape in our engine.
-        { "Snare Gate",           "Rooms",
-          5,  0.40f, false,  0.0f, 0,
-          0.45f, 0.60f, 0.50f, 0.00f, 0.60f, 1.30f, 1000.0f,
-          0.15f, 0.00f, 0.30f,  80.0f, 12000.0f, 1.20f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.05f, /* highX */ 4000.0f, /* sat */ 0.10f },
-
+        // ── 1981 Gated Snare ─────────────────────────────────────────────────
+        // Engine: NonLinear v6 (algo 5) — TRUE STATIC FIR. The envelope
+        // (attack ramp → flat plateau → mathematical cliff) is baked into
+        // the per-tap gains, so EVERY input sample is convolved with the
+        // same fixed-shape FIR. No trigger, no envelope follower — this is
+        // the AMS RMX16 NonLin algorithm exactly as Hugh Padgham used it
+        // on Phil Collins's "In The Air Tonight" (1981).
+        //
+        // FIR ENVELOPE PARAMETERS (re-purposed UI knobs on this engine —
+        // see PluginEditor::applyEngineAccent for the visible labels):
+        //   ATTACK    mod_depth 0.15  →   3 ms ramp up
+        //   HOLD      decay 0.150     → 150 ms flat plateau
+        //   RELEASE   mod_rate 2.30   →  15 ms hard cliff to silence
+        //   DENSITY   diffusion 0.50  → 50% tap jitter / L-R decorrelation
+        //
+        // Other voicing:
+        //   bass_mult 1.00       → neutral output gain
+        //   hi_cut 14000         → bright snare crack passes through
+        //   width 1.40           → wide stereo (per-tap L/R decorrelation)
+        //   mono < 100 Hz        → tight bass focus
+        //   saturation 0.20      → analog crunch (RMX16 had a noisy front-end)
+        // v7: REAL hall + sidechain noise gate (Townhouse Studios technique).
+        //   HALL: decay 1.5 s, size 0.70, bass 1.0, treble 0.80 (slight darkening)
+        //   GATE: threshold -32 dB (mid 0.75), attack 1 ms (mod_depth 0.0),
+        //         hold 150 ms (diffusion 0.30), release 50 ms (mod_rate 0.32)
+        //   This is the "In The Air Tonight" Phil Collins/Padgham/Townhouse sound:
+        //   thick hall bloom for 150 ms then a clean cliff to silence.
+        { "1981 Gated Snare",     "Rooms",
+          5,  1.00f, false,  0.0f, 0,
+          1.50f, 0.70f, 0.00f, 0.32f, 0.80f, 1.00f,  500.0f,
+          0.30f, 0.00f, 0.00f,  60.0f, 14000.0f, 1.40f, false, 0.0f,
+          /* mono */ 100.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
+        // ── In The Air Tonight ──────────────────────────────────────────────
+        // Engine: NonLinearEngine v7 (algo 5). Reference: Hugh Padgham's
+        // Townhouse Studios technique on Phil Collins's "In The Air Tonight"
+        // (1981) — the iconic gated snare sound. Big hall + sidechain
+        // noise gate. Tuned by ear:
+        //   HALL: decay 2.61 s, size 0.80, bass 1.10, treble 0.75 (slight darkness)
+        //   GATE: enabled, threshold via mid (0.75), attack 8 ms (mod_depth 0.092),
+        //         hold 250 ms (diffusion 0.50), release 150 ms (mod_rate 0.794)
+        //   Mix 22 % — light send/return blend, dry-forward.
+        { "In The Air Tonight",   "Rooms",
+          5,  0.216f, false,  0.0f, 0,
+          2.608f, 0.80f, 0.092f, 0.794f, 0.75f, 1.10f,  500.0f,
+          0.50f, 0.00f, 0.30f,  60.0f, 10000.0f, 1.30f, false, 0.0f,
+          /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
         // ── Reverse Taps (PCM 90) ────────────────────────────────────────────
         // Engine: NonLinear (algo 5) in REVERSE mode (diffusion 0.33-0.66
         // selects the reverse envelope). Anchor: PCM 90 "Reverse Taps"
@@ -659,13 +644,34 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   predelay slot is for the small offset before the reverse build
         //   begins; the engine handles the swell shape itself.
         //   LR correlation -0.21 (slightly anti-correlated for stereo width)
-        // Distinct from "Reverse Snare" (sharper, more drum-focused).
+        // Most ambient of the gated presets — long swell + long fade.
+        // v7: REAL hall + gate. The most ambient of the gated presets —
+        // long hall + slow attack + max hold + long release = a swelling
+        // wash that fades naturally rather than a hard cliff.
+        //   HALL: decay 3.0 s, size 0.85, bass 1.0, treble 0.70
+        //   GATE: threshold -32 dB (mid 0.75), attack 25 ms (mod_depth 0.49),
+        //         hold 500 ms (diffusion 1.0, max), release 1500 ms (mod_rate 7.52)
         { "Reverse Taps",         "Rooms",
-          5,  0.40f, false, 30.0f, 0,
-          0.65f, 0.65f, 0.55f, 0.00f, 0.65f, 1.00f, 1000.0f,
-          0.50f, 0.00f, 0.30f,  80.0f,  8000.0f, 1.30f, false, 0.0f,
-          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
-
+          5,  1.00f, false, 30.0f, 0,
+          3.00f, 0.85f, 0.49f, 7.52f, 0.70f, 1.00f,  500.0f,
+          1.00f, 0.00f, 0.30f,  80.0f,  8000.0f, 1.30f, false, 0.0f,
+          /* mono */ 20.0f, /* mid */ 0.75f, /* highX */ 4000.0f, /* sat */ 0.10f },
+        // ── Mobius Pad ───────────────────────────────────────────────────────
+        // Named after the Möbius Twist DSP (sign-inverted cross-feedback —
+        // see SixAPTankEngine.cpp). Showcases the 6-AP engine's new
+        // Möbius Twist + Bloom + Stereo Bind architecture. 5.5 s decay
+        // positioned between Ambient Swell (8 s) and Infinite Blackhole
+        // (18 s) so it stays playable for synth players who want infinite
+        // stereo width without committing to film-score-length tails.
+        // Perpetually anti-correlated stereo (won't collapse to mono on
+        // long sustains), volume blooms 200-300 ms into the tail. For
+        // sustained synth pads, ambient guitar swells, evolving textures.
+        // (ASCII name — keeps shell + UTF-8 toolchain matching reliable.)
+        { "Mobius Pad",           "Ambient",
+          1,  0.45f, false, 45.0f, 0,
+          5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f,  500.0f,
+          0.85f, 0.20f, 0.85f,  80.0f,  9000.0f, 1.50f, false, 4.5f,
+          /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3200.0f, /* sat */ 0.10f },
         // ═══════════ AMBIENT ═══════════
         // ── Ambient Swell ────────────────────────────────────────────────────
         // Anchor: Lexicon 480L "Random Hall" toward infinite reverb.
@@ -681,11 +687,55 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //   • lo_cut 80 → 150 — keeps cinematic low end clean instead of
         //     building up muddy bass over the long tail.
         { "Ambient Swell",        "Ambient",
-          1,  0.50f, true,  60.0f, 0,
+          1,  0.50f, false, 60.0f, 0,
           8.00f, 0.92f, 0.28f, 0.40f, 0.60f, 1.50f,  600.0f,
-          0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, false, 8.0f,
+          0.80f, 0.10f, 0.75f, 150.0f, 5500.0f, 1.45f, false, 4.0f,
           /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3500.0f, /* sat */ 0.15f },
-
+        // ── Black Hole ───────────────────────────────────────────────────────
+        // Reference: Valhalla Shimmer "BlackHole" factory preset — one of
+        // the 8 stock presets shipped with VS. Huge dark deep ambient void;
+        // signature VS sound for cinematic sustains, drones, and synth pads.
+        // Tuned against VS reference render (DBG_BlackHole_*):
+        //   • Algorithm 1 (SixAPTank, 6-allpass cascaded diffuser) —
+        //     structurally matches VS BlackHole's Schroeder cascaded-allpass
+        //     architecture. Algorithm 3 (FDN) had a 30 ms silence gap before
+        //     the burst onset that didn't match VS's continuous early rise.
+        //   • Zero pre-delay — VS BlackHole has reverb starting immediately.
+        //   • 14 s decay + size 0.95 for the slow tail decay (~4 dB/s).
+        //   • Brightness profile (post-engine-tuning iteration):
+        //     - damping (treble multiply) = 1.0 — treble decays at same rate
+        //       as mid; air persists into deep tail to match VS's broadband
+        //       sustain. Earlier iteration (0.45) had treble decaying 2.2×
+        //       faster, killing >6 kHz content by 1-2 s in.
+        //     - midMult = 1.10 — mid decay 10% slower; presence band rings
+        //       longer, adds "information" to the tail.
+        //     - highCrossover = 8 kHz — pushes mid-shelf turnover above the
+        //       presence peak; sparkle band stops getting damped early.
+        //     - hiCut = 18 kHz (effectively bypassed) — VS BlackHole has
+        //       full-bandwidth content above 12 kHz late in the tail; lower
+        //       cuts (e.g. 6.5 kHz) collapsed the >12 kHz tail to silence.
+        //     - modRate = 0.60 Hz — slight LFO movement adds shimmer; was
+        //       0.40 Hz which felt too still.
+        // Differs from "Infinite Blackhole" (Eventide-anchored, 18 s, 6-AP
+        // with heavy modulation) by being shorter, less modulated, and
+        // tuned to VS's specific factory voicing rather than Eventide's.
+        // Engine-config overrides (sixAP*) close the >12 kHz late-tail gap
+        // (was 16 dB cold vs VS) by injecting more bright ParallelDiffuser
+        // content directly into the output (kEarlyMix 0.5→0.75) and letting
+        // the density cascade ring denser at later stages (kBloomCeiling
+        // 0.85→0.92, steeper stagger). These don't affect other SixAPTank
+        // presets because they default to the historical hardcoded values.
+        { "Black Hole",           "Ambient",
+          1,  0.50f, false,   0.0f, 0,
+          14.00f, 0.95f, 0.35f, 0.60f, 1.00f, 1.10f,  700.0f,
+          0.85f, 0.05f, 0.70f,  60.0f, 18000.0f, 1.40f, false, -2.0f,
+          /* mono */ 60.0f, /* mid */ 1.10f, /* highX */ 8000.0f, /* sat */ 0.08f,
+          /* gate */ true,
+          /* sixAPDensityBaseline */ 0.72f,
+          /* sixAPBloomCeiling    */ 0.92f,
+          /* sixAPBloomStagger    */ { 0.65f, 0.78f, 0.92f, 1.05f, 1.18f, 1.30f },
+          /* sixAPEarlyMix        */ 0.75f,
+          /* sixAPOutputTrim      */ 1.10f },
         // ── Infinite Blackhole ───────────────────────────────────────────────
         // Anchor: Eventide H8000 / Blackhole effect.
         // 18 s decay at maximum size + 6-AP density + heavy modulation
@@ -701,33 +751,34 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // transient room to breathe but lets the wall-of-sound attach to
         // the source more naturally.
         { "Infinite Blackhole",   "Ambient",
-          1,  0.55f, true,  85.0f, 0,
+          1,  0.55f, false, 85.0f, 0,
           18.00f, 1.00f, 0.35f, 0.30f, 0.55f, 1.60f,  550.0f,
-          0.90f, 0.05f, 0.80f, 100.0f,  7500.0f, 1.50f, false, 12.0f,
+          0.90f, 0.05f, 0.80f, 100.0f,  7500.0f, 1.50f, false, -1.0f,
           /* mono */ 100.0f, /* mid */ 1.30f, /* highX */ 3000.0f, /* sat */ 0.25f },
-
-        // ── Mobius Pad ───────────────────────────────────────────────────────
-        // Named after the Möbius Twist DSP (sign-inverted cross-feedback —
-        // see ModernSpaceEngine.cpp). Showcases the 6-AP engine's new
-        // Möbius Twist + Bloom + Stereo Bind architecture. 5.5 s decay
-        // positioned between Ambient Swell (8 s) and Infinite Blackhole
-        // (18 s) so it stays playable for synth players who want infinite
-        // stereo width without committing to film-score-length tails.
-        // Perpetually anti-correlated stereo (won't collapse to mono on
-        // long sustains), volume blooms 200-300 ms into the tail. For
-        // sustained synth pads, ambient guitar swells, evolving textures.
-        // (ASCII name — keeps shell + UTF-8 toolchain matching reliable.)
-        { "Mobius Pad",           "Ambient",
-          1,  0.45f, true,  45.0f, 0,
-          5.50f, 0.90f, 0.40f, 0.35f, 0.45f, 1.50f,  500.0f,
-          0.85f, 0.20f, 0.85f,  80.0f,  9000.0f, 1.50f, false, 5.0f,
-          /* mono */ 80.0f, /* mid */ 1.20f, /* highX */ 3200.0f, /* sat */ 0.10f },
-
-        // Shimmer presets ("Eno Choir", "Cascading Heaven") removed for this
-        // release — see AlgorithmConfig.h: getNumAlgorithms() returns 6
-        // (excluding Shimmer) until the cascade artefacts are resolved. The
-        // engine source stays compiled so the build still works; presets
-        // will be re-added when the engine is fixed.
+        // ── Cascading Heaven ─────────────────────────────────────────────
+        // +24 semitones (two-octave stack) at ~57% feedback. No VS factory
+        // direct equivalent — kept as our differentiator. Lower feedback
+        // than +12 (cascade builds 4× faster at 4× pitch ratio), longer
+        // decay (6 s) for the stacked-octave swell, slightly darker hi-cut
+        // (6 kHz) to keep the upper-octave stack from glassing up.
+        { "Cascading Heaven",     "Shimmer",
+          6,  0.70f, false,  60.0f, 0,
+          6.00f, 0.85f, 1.00f, 6.00f, 0.95f, 1.10f,  800.0f,
+          0.85f, 0.20f, 0.50f,  60.0f,  6000.0f, 1.40f, false, -3.0f,
+          /* mono */ 60.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.10f },
+        // ── Deep Blue Day ────────────────────────────────────────────────
+        // Reference: Valhalla Shimmer "DeepBlueDay" preset (named after the
+        // Brian Eno track on *Apollo: Atmospheres and Soundtracks*). 80% wet,
+        // +12 octave, ~45% feedback, very long sustained tail. Decay 10.3 s
+        // + size 100% gives the long sustained character; lower feedback
+        // (45%) keeps the cascade gentle so the long reverb dominates over
+        // the pitched recirculation.
+        // mod_depth 0.5 = +12 st; mod_rate 4.5 Hz maps to feedback ≈ 0.42.
+        { "Deep Blue Day",        "Shimmer",
+          6,  0.80f, false,  25.0f, 0,
+          10.30f, 1.00f, 0.50f, 4.50f, 1.00f, 1.10f,  800.0f,
+          0.85f, 0.20f, 0.50f,  60.0f,  7000.0f, 1.30f, false, 0.0f,
+          /* mono */ 20.0f, /* mid */ 1.00f, /* highX */ 4000.0f, /* sat */ 0.05f },
     };
     return presets;
 }

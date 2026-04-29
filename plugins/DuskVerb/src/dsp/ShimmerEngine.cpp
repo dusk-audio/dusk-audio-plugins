@@ -5,35 +5,25 @@
 #include <cmath>
 #include <cstring>
 
+// ============================================================================
+// ShimmerEngine v8 — classic Eno/Lanois Townhouse rig topology.
+// See header for full architecture description.
+// ============================================================================
+
 namespace
 {
     constexpr float kTwoPi = 6.283185307179586f;
-
-    // Hadamard 8×8 sequency-ordered ±1 entries. Multiply each by 1/√8 at
-    // mix time. Each row is orthogonal to every other row.
-    constexpr int kHadamardSign[8][8] = {
-        { +1, +1, +1, +1, +1, +1, +1, +1 },
-        { +1, -1, +1, -1, +1, -1, +1, -1 },
-        { +1, +1, -1, -1, +1, +1, -1, -1 },
-        { +1, -1, -1, +1, +1, -1, -1, +1 },
-        { +1, +1, +1, +1, -1, -1, -1, -1 },
-        { +1, -1, +1, -1, -1, +1, -1, +1 },
-        { +1, +1, -1, -1, -1, -1, +1, +1 },
-        { +1, -1, -1, +1, -1, +1, +1, -1 },
-    };
 }
 
 // ============================================================================
-// GranularPitchShifter — overlapping-grain pitch shift
+// GranularPitchShifter (kept verbatim from v6 — this is the part that worked)
 // ============================================================================
 
 void ShimmerEngine::GranularPitchShifter::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
     // Buffer = 8 × grain size for plenty of lookback headroom across the
-    // 1.0–4.0 pitch-ratio range. At ratio 4.0 (+2 oct), each grain consumes
-    // 4 × kGrainSize input samples per kGrainSize output samples → max
-    // lookback needed ≈ 3 × kGrainSize.
+    // 1.0–4.0 pitch-ratio range.
     const int bufSize = DspUtils::nextPowerOf2 (8 * kGrainSize);
     buffer_.assign (static_cast<size_t> (bufSize), 0.0f);
     mask_ = bufSize - 1;
@@ -41,11 +31,9 @@ void ShimmerEngine::GranularPitchShifter::prepare (double sampleRate)
     updateAntiAliasCutoff();
 }
 
-// RBJ Audio EQ Cookbook biquad LP coefficients (Direct Form II Transposed
-// in process()). See https://www.w3.org/TR/audio-eq-cookbook/.
 void ShimmerEngine::GranularPitchShifter::BiquadLP::setCoeffs (double sampleRate, float fc, float Q)
 {
-    const float omega = 2.0f * 3.14159265358979323846f * fc / static_cast<float> (sampleRate);
+    const float omega = kTwoPi * fc / static_cast<float> (sampleRate);
     const float cosw  = std::cos (omega);
     const float sinw  = std::sin (omega);
     const float alpha = sinw / (2.0f * Q);
@@ -60,13 +48,10 @@ void ShimmerEngine::GranularPitchShifter::BiquadLP::setCoeffs (double sampleRate
 
 void ShimmerEngine::GranularPitchShifter::updateAntiAliasCutoff()
 {
-    // Cutoff = min(SR/2 × 0.9, SR/2 / pitchRatio_). At pitchRatio = 1.0 (no
-    // shift) the LP sits at 0.9 × Nyquist (essentially open). At pitchRatio
-    // = 4.0 (+2 oct, Cascading Heaven extreme), cutoff = SR/2 / 4 = 6 kHz
-    // at 48 kHz SR — safely below the alias-fold frequency. Two cascaded
-    // Butterworth biquads = 4-pole / 24 dB-per-octave roll-off, steep
-    // enough that anything above the cutoff is attenuated by > 30 dB
-    // before the pitch shifter sees it.
+    // Cutoff = min(SR/2 × 0.9, SR/2 / pitchRatio_) so we never sample
+    // content that would alias when the read pointer advances by ratio
+    // samples per output sample. Two cascaded Butterworth biquads = 4-pole
+    // / 24 dB-per-octave roll-off, > 30 dB rejection above the cutoff.
     const float nyquist = 0.5f * static_cast<float> (sampleRate_);
     const float fc      = std::min (nyquist * 0.9f,
                                     nyquist / std::max (pitchRatio_, 1.0f));
@@ -92,12 +77,19 @@ void ShimmerEngine::GranularPitchShifter::setPitchRatio (float ratio)
     updateAntiAliasCutoff();
 }
 
+void ShimmerEngine::GranularPitchShifter::setModulation (float rateHz, float depth,
+                                                          std::uint32_t seed)
+{
+    ratioMod_.prepare (static_cast<float> (sampleRate_), seed);
+    ratioMod_.setRate (rateHz);
+    ratioMod_.setDepth (1.0f);
+    ratioModDepth_ = depth;
+    ratioModEnabled_ = (depth > 0.0f);
+}
+
 void ShimmerEngine::GranularPitchShifter::startNewGrain (int& phase, float& readPos)
 {
     phase = 0;
-    // Look back enough samples that the new grain won't catch the write
-    // head before its next reset. Headroom of 64 samples to avoid edge cases
-    // when pitchRatio_ moves under automation.
     const float lookback = std::ceil ((pitchRatio_ - 1.0f) * static_cast<float> (kGrainSize)) + 64.0f;
     readPos = static_cast<float> (writePos_) - lookback;
 }
@@ -114,12 +106,24 @@ float ShimmerEngine::GranularPitchShifter::readLinear (float pos) const
 
 float ShimmerEngine::GranularPitchShifter::process (float input)
 {
-    // Phase 2 — anti-alias the input before it hits the grain buffer.
-    // 4-pole Butterworth at min(SR/2·0.9, SR/2/pitchRatio) prevents the
-    // aliasing-recirculation cascade collapse that was producing sub-bass
-    // artifacts at extreme pitch ratios. The LP is unity-gain in the
-    // passband so cascade level isn't affected — only the > Nyquist/ratio
-    // content that would alias gets removed.
+    // Bypass when pitchRatio is essentially unity. Saves ~5 % CPU per
+    // sample AND avoids a known startup glitch: the dual-grain Hann
+    // overlap takes ~kGrainSize/2 samples (~43 ms at 48 k) to ramp up
+    // because grain 2 starts mid-window over zero-initialised buffer.
+    // For Shimmer's PITCH=0 setting we want the engine to behave as a
+    // plain reverb (input passes through to the reverb stage), not have
+    // the snare's onset attenuated by 30 dB through Hann ramp-up.
+    if (std::abs (pitchRatio_ - 1.0f) < 0.005f)
+    {
+        // Still keep the buffer + write-head alive so we can resume
+        // gracefully if pitchRatio changes mid-block (parameter automation).
+        const float filteredPassthrough = aaStage2_.process (aaStage1_.process (input));
+        buffer_[static_cast<size_t> (writePos_)] = filteredPassthrough + DspUtils::kDenormalPrevention;
+        writePos_ = (writePos_ + 1) & mask_;
+        return filteredPassthrough;
+    }
+
+    // Anti-alias the input before it hits the grain buffer.
     const float filtered = aaStage2_.process (aaStage1_.process (input));
 
     // Write filtered input to buffer.
@@ -129,277 +133,181 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
     const float v1 = readLinear (readPos1_);
     const float v2 = readLinear (readPos2_);
 
-    // Hann window per grain. Values at integer phase positions are pre-
-    // computed (could be cached as a LUT later if profiling demands it).
-    const float p1 = static_cast<float> (phase1_) / static_cast<float> (kGrainSize);
-    const float p2 = static_cast<float> (phase2_) / static_cast<float> (kGrainSize);
-    const float w1 = 0.5f - 0.5f * std::cos (kTwoPi * p1);
-    const float w2 = 0.5f - 0.5f * std::cos (kTwoPi * p2);
+    // Hann window per grain.
+    const float t1 = static_cast<float> (phase1_) / static_cast<float> (kGrainSize);
+    const float t2 = static_cast<float> (phase2_) / static_cast<float> (kGrainSize);
+    const float w1 = 0.5f * (1.0f - std::cos (kTwoPi * t1));
+    const float w2 = 0.5f * (1.0f - std::cos (kTwoPi * t2));
 
     const float out = v1 * w1 + v2 * w2;
 
-    // Advance write head, both read heads (at pitch ratio), both phases.
-    writePos_ = (writePos_ + 1) & mask_;
-    readPos1_ += pitchRatio_;
-    readPos2_ += pitchRatio_;
+    // Slow random-walk modulation of the per-sample read advance. At ±0.5%
+    // ratio variation (≈ ±8 cents) the pitch sounds steady, but each cascade
+    // cycle pitches by a slightly different amount — so the cumulative
+    // cascade doesn't stack on exact harmonic frequencies, which is what
+    // creates the sharp metallic peaks at e.g. 376/428/758/1314 Hz when a
+    // 200 Hz fundamental migrates octave-by-octave through the loop.
+    // Modulation smears those peaks across narrow bands so they blend with
+    // the rest of the cascade tail (the "subdued" character the user
+    // observed in Valhalla Shimmer).
+    const float effectiveRatio = ratioModEnabled_
+        ? pitchRatio_ * (1.0f + ratioModDepth_ * ratioMod_.next())
+        : pitchRatio_;
+
+    // Advance grain phases; reset when a grain reaches kGrainSize.
+    readPos1_ += effectiveRatio;
+    readPos2_ += effectiveRatio;
     ++phase1_;
     ++phase2_;
-
-    // Reset grains when phase wraps. Two grains stay 50 % out of phase so
-    // their Hann windows crossfade — at any moment exactly one is at peak
-    // window value while the other is fading, summing to a constant 1.0
-    // window envelope across grain boundaries.
     if (phase1_ >= kGrainSize) startNewGrain (phase1_, readPos1_);
     if (phase2_ >= kGrainSize) startNewGrain (phase2_, readPos2_);
 
+    writePos_ = (writePos_ + 1) & mask_;
     return out;
-}
-
-// ============================================================================
-// DelayLine helpers
-// ============================================================================
-
-void ShimmerEngine::DelayLine::allocate (int maxSamples)
-{
-    const int size = DspUtils::nextPowerOf2 (std::max (maxSamples + 8, 64));
-    buffer.assign (static_cast<size_t> (size), 0.0f);
-    mask = size - 1;
-    writePos = 0;
-}
-
-void ShimmerEngine::DelayLine::clear()
-{
-    std::fill (buffer.begin(), buffer.end(), 0.0f);
-    writePos = 0;
 }
 
 // ============================================================================
 // ShimmerEngine
 // ============================================================================
 
-void ShimmerEngine::prepare (double sampleRate, int /*maxBlockSize*/)
+void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
-
-    constexpr float kMaxSizeScale = 1.5f;
-    const float rateRatio = static_cast<float> (sampleRate / 44100.0);
-
-    for (int i = 0; i < kNumChannels; ++i)
-    {
-        const int reserve = static_cast<int> (
-            static_cast<float> (kBaseDelays[i]) * kMaxSizeScale * rateRatio + 16.0f);
-        delays_[i].allocate (reserve);
-    }
+    maxBlockSize_ = maxBlockSize;
 
     pitchL_.prepare (sampleRate);
     pitchR_.prepare (sampleRate);
 
-    // ── Init the 8 in-loop LFOs with distinct seeds AND distinct rates.
-    // Distinct rates (0.20, 0.27, 0.35, 0.42, 0.50, 0.57, 0.64, 0.70 Hz)
-    // ensure no two delays beat against each other — independent slow drift
-    // per channel produces the decorrelated wash that real Eno shimmer has.
-    // Depth = 0.8 % of each delay's length. Originally 0.3 %, bumped after
-    // VV comparison showed Valhalla's centroid spreads to fill the entire
-    // band up to hi-cut while ours stayed narrow at ~3 kHz; the wider modulation
-    // forces the granular pitch shifter to choose more random splice points,
-    // spreading sidebands per the Valhalla 2010 decorrelation writeup. Above
-    // ~1 % the modulation becomes audible as pitch warble on sustained tones.
-    static constexpr float kLfoRatesHz[8]  = { 0.20f, 0.27f, 0.35f, 0.42f, 0.50f, 0.57f, 0.64f, 0.70f };
-    static constexpr std::uint32_t kSeeds[8] = {
-        0xC0FFEEu, 0xBADBEEFu, 0xDEADBEEFu, 0xFEEDFACEu,
-        0xCAFEBABEu, 0xABCDEFu, 0x12345678u, 0x87654321u
-    };
-    for (int i = 0; i < kNumChannels; ++i)
-    {
-        lfos_[static_cast<size_t> (i)].prepare (static_cast<float> (sampleRate), kSeeds[i]);
-        lfos_[static_cast<size_t> (i)].setRate  (kLfoRatesHz[i]);
-        // Depth set below in updateDelays() — needs delaySamples populated first.
-    }
+    // Defocus the cascade peaks via random-walk pitch-ratio modulation.
+    // For peak smearing to work, the modulation must change appreciably
+    // between consecutive cascade cycles (~50 ms apart). At rates of
+    // 5-7 Hz the LFO traverses ~25-35% of its excursion in one cascade
+    // period, so consecutive cycles see distinctly different ratios.
+    // ±1.5% (~26 cents) depth is enough to noticeably smear the sharp
+    // resonant peaks of the migrated harmonics; lower depth leaves the
+    // peaks visible. Slight chorus-like wobble is the audible side
+    // effect — period-correct for analog shimmer rigs which had wow/
+    // flutter from tape and tube modulators in the loop.
+    pitchL_.setModulation (5.7f, 0.015f, 0xC0FFEEu);
+    pitchR_.setModulation (7.3f, 0.015f, 0xBADC0DEu);
 
-    updateDelays();   // populates delaySamples_ AND sets LFO depths to 0.8 % of each
-    updateFeedback();
-    updateDamping();
-    updatePitchRatio();
+    // Hall reverb baseline: long, lush, slightly dark (period-correct
+    // for the Lexicon 224 character that the original Eno/Lanois rig used).
+    reverb_.prepare (sampleRate, maxBlockSize);
+    reverb_.setDecayTime         (4.0f);
+    reverb_.setSize              (0.75f);
+    reverb_.setBassMultiply      (1.10f);
+    reverb_.setMidMultiply       (1.00f);
+    reverb_.setTrebleMultiply    (0.85f);
+    reverb_.setCrossoverFreq     (550.0f);
+    reverb_.setHighCrossoverFreq (3500.0f);
+    reverb_.setSaturation        (0.0f);
+    reverb_.setTankDiffusion     (0.85f);
 
-    // Phase 3 — envelope-follower smoothing constants. exp(-1/(τ·sr)) is the
-    // standard 1-pole release coefficient where τ is the time constant. With
-    // attack 50 ms / release 400 ms we react quickly to cascade buildup but
-    // recover smoothly enough that the gain compensation doesn't pump.
-    // The gain itself is additionally slewed at 100 ms to avoid zipper noise
-    // from per-sample compensation jumps.
+    reverbInL_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    reverbInR_.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+    wetL_.assign      (static_cast<size_t> (maxBlockSize), 0.0f);
+    wetR_.assign      (static_cast<size_t> (maxBlockSize), 0.0f);
+
+    // Feedback delay line — fixed 50 ms acoustic delay, decoupled from
+    // block size. Buffer must be ≥ maxBlockSize so that a single block's
+    // reads + writes never lap the pointer (which would corrupt the delay
+    // by overwriting a slot before the next block has read it).
+    const int requestedDelay = static_cast<int> (sampleRate * 0.050);
+    fbDelaySamples_   = std::max (requestedDelay, maxBlockSize + 1);
+    fbDelayWritePos_  = 0;
+    fbDelayLineL_.assign (static_cast<size_t> (fbDelaySamples_), 0.0f);
+    fbDelayLineR_.assign (static_cast<size_t> (fbDelaySamples_), 0.0f);
+
     const float sr = static_cast<float> (sampleRate);
-    envAttackCoeff_  = std::exp (-1.0f / (0.050f * sr));
-    envReleaseCoeff_ = std::exp (-1.0f / (0.400f * sr));
-    gainSlewCoeff_   = std::exp (-1.0f / (0.100f * sr));
-    autoLevelEnvPre_  = 0.0f;
-    autoLevelEnvPost_ = 0.0f;
-    autoLevelGain_    = 1.0f;
+    fbHpfL_.setHPCutoff (kFeedbackHpfHz, sr);
+    fbHpfR_.setHPCutoff (kFeedbackHpfHz, sr);
+    fbLpfL_.setLPCutoff (kFeedbackLpfHz, sr);
+    fbLpfR_.setLPCutoff (kFeedbackLpfHz, sr);
+    fbHpfL_.clear(); fbHpfR_.clear();
+    fbLpfL_.clear(); fbLpfR_.clear();
 
+    updatePitchRatio();
     prepared_ = true;
 }
 
 void ShimmerEngine::clearBuffers()
 {
-    for (auto& d : delays_) d.clear();
     pitchL_.clear();
     pitchR_.clear();
-    dampStateOutL_ = 0.0f;
-    dampStateOutR_ = 0.0f;
-    autoLevelEnvPre_  = 0.0f;
-    autoLevelEnvPost_ = 0.0f;
-    autoLevelGain_    = 1.0f;
+    reverb_.clearBuffers();
+    std::fill (reverbInL_.begin(), reverbInL_.end(), 0.0f);
+    std::fill (reverbInR_.begin(), reverbInR_.end(), 0.0f);
+    std::fill (wetL_.begin(),      wetL_.end(),      0.0f);
+    std::fill (wetR_.begin(),      wetR_.end(),      0.0f);
+    std::fill (fbDelayLineL_.begin(), fbDelayLineL_.end(), 0.0f);
+    std::fill (fbDelayLineR_.begin(), fbDelayLineR_.end(), 0.0f);
+    fbDelayWritePos_ = 0;
+    fbHpfL_.clear(); fbHpfR_.clear();
+    fbLpfL_.clear(); fbLpfR_.clear();
 }
 
-// ── Universal setters ──────────────────────────────────────────────────────
+// ============================================================================
+// Setters
+// ============================================================================
 
 void ShimmerEngine::setDecayTime (float seconds)
 {
-    decayTime_ = std::max (0.05f, seconds);
-    if (prepared_) updateFeedback();
+    // Pass through to the FDN reverb. The FDN has its own internal range
+    // clamping. Long decays (3-6 s) are typical for shimmer cascade.
+    reverb_.setDecayTime (seconds);
 }
 
-void ShimmerEngine::setSize (float size)
+void ShimmerEngine::setSize         (float size) { reverb_.setSize (size); }
+void ShimmerEngine::setBassMultiply (float mult) { reverb_.setBassMultiply (mult); }
+void ShimmerEngine::setMidMultiply  (float mult) { reverb_.setMidMultiply  (mult); }
+void ShimmerEngine::setTrebleMultiply (float mult) { reverb_.setTrebleMultiply (mult); }
+void ShimmerEngine::setCrossoverFreq  (float hz)   { reverb_.setCrossoverFreq  (hz); }
+void ShimmerEngine::setHighCrossoverFreq (float hz){ reverb_.setHighCrossoverFreq (hz); }
+void ShimmerEngine::setTankDiffusion (float amount){ reverb_.setTankDiffusion (amount); }
+
+void ShimmerEngine::setSaturation (float amount)
 {
-    sizeParam_ = std::clamp (size, 0.0f, 1.0f);
-    if (prepared_)
-    {
-        updateDelays();
-        updateFeedback();
-    }
+    saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
 }
 
-void ShimmerEngine::setBassMultiply  (float mult) { bassMult_ = std::clamp (mult, 0.1f, 4.0f); }
-void ShimmerEngine::setMidMultiply   (float mult) { midMult_  = std::clamp (mult, 0.1f, 4.0f); }
-
-void ShimmerEngine::setTrebleMultiply (float mult)
-{
-    trebleMult_ = std::clamp (mult, 0.05f, 4.0f);
-    if (prepared_) updateDamping();
-}
-
-void ShimmerEngine::setCrossoverFreq     (float hz) { crossoverHz_     = std::clamp (hz,  100.0f,  8000.0f); }
-void ShimmerEngine::setHighCrossoverFreq (float hz) { highCrossoverHz_ = std::clamp (hz, 1000.0f, 12000.0f); }
-void ShimmerEngine::setSaturation        (float a)  { saturationAmount_ = std::clamp (a, 0.0f, 1.0f); }
-
+// DEPTH (mod_depth, 0..1) → PITCH semitones (0..24). 0 = unity (no shift),
+// 0.5 = +12 (octave up — canonical Eno Choir), 1.0 = +24 (Cascading Heaven).
 void ShimmerEngine::setModDepth (float depth)
 {
-    // Hijack: 0..1 → 0..24 semitones (0 cents to +2 octaves).
-    pitchSemitones_ = std::clamp (depth, 0.0f, 1.0f) * 24.0f;
+    const float clamped = std::clamp (depth, 0.0f, 1.0f);
+    pitchSemitones_ = clamped * 24.0f;
     if (prepared_) updatePitchRatio();
 }
 
+// RATE (mod_rate, 0.1..10 Hz) → FEEDBACK gain (0..kFeedbackMax). Maps the
+// Hz value linearly so the user gets useful resolution across the cascade-
+// strength range. Hard-capped at kFeedbackMax (0.95) for stability.
 void ShimmerEngine::setModRate (float hz)
 {
-    // Hijack: 0.1..10 Hz range → 0..1 shimmer mix. The "Hz" display unit is
-    // a known wart (the slider's textFromValueFunction is set globally and
-    // can't be swapped per-engine without invasive plumbing) but the user
-    // sees the relabeled "MIX" name and tooltip, and the function is clear:
-    // more rotation right = more pitched feedback.
     const float clamped = std::clamp (hz, 0.1f, 10.0f);
-    shimmerMix_ = (clamped - 0.1f) / 9.9f;
-    // Mix changes the pitch-shifter loop loss compensation in updateFeedback,
-    // so the feedback gain must be recomputed any time mix changes.
-    if (prepared_) updateFeedback();
-}
-
-void ShimmerEngine::setTankDiffusion (float /*amount*/)
-{
-    // No-op: the FDN's Hadamard mixing IS the diffusion stage. Adding the
-    // global series diffuser on top would smear the pitched feedback before
-    // it cascades, blurring the shimmer character.
+    const float fb01 = (clamped - 0.1f) / 9.9f;        // 0..1
+    feedbackGain_ = std::clamp (fb01 * kFeedbackMax, 0.0f, kFeedbackMax);
 }
 
 void ShimmerEngine::setFreeze (bool frozen)
 {
     frozen_ = frozen;
-    if (prepared_) updateFeedback();
-}
-
-// ── Update helpers ─────────────────────────────────────────────────────────
-
-void ShimmerEngine::updateDelays()
-{
-    // Same size-scale curve as the other engines for muscle-memory consistency.
-    const float sizeScale = 0.5f + sizeParam_ * 1.0f;
-    const float rateRatio = static_cast<float> (sampleRate_ / 44100.0);
-
-    for (int i = 0; i < kNumChannels; ++i)
-    {
-        const int target = static_cast<int> (
-            static_cast<float> (kBaseDelays[i]) * sizeScale * rateRatio);
-        delays_[i].delaySamples = std::min (target, delays_[i].mask - 8);
-        // LFO depth tracks delay length (0.8 % of each delay's length).
-        // Set here so it stays in sync when the user moves the SIZE knob —
-        // previously this was set once in prepare() against zero-initialised
-        // delaySamples, which silently disabled all in-loop modulation.
-        lfos_[static_cast<size_t> (i)].setDepth (0.008f * static_cast<float> (delays_[i].delaySamples));
-    }
-}
-
-void ShimmerEngine::updateFeedback()
-{
-    // Mean delay across the 8 channels in seconds → solve for per-cycle
-    // gain that produces the requested RT60.
-    if (frozen_)
-    {
-        feedbackGain_ = 1.0f;
-        return;
-    }
-
-    float meanDelaySamples = 0.0f;
-    for (auto& d : delays_) meanDelaySamples += static_cast<float> (d.delaySamples);
-    meanDelaySamples /= static_cast<float> (kNumChannels);
-    const float loopPeriodSec = meanDelaySamples / static_cast<float> (sampleRate_);
-
-    feedbackGain_ = std::pow (10.0f, -3.0f * loopPeriodSec / std::max (decayTime_, 0.05f));
-
-    // Phase 3 — pitch-shifter loss compensation is now LIVE (envelope-
-    // follower based, see process()). The empirical static model that
-    // used to live here was wrong: it assumed a 1.5 dB × shimmerMix_
-    // linear loss, but actual loss depends on pitch ratio + cycle period
-    // + Hann overlap integral and varies non-linearly. Net effect was
-    // either underdamping (runaway → softClip) or overdamping (cascade
-    // dies). Replaced with a real-time follower that measures the actual
-    // loss between pre-pitch and post-pitch envelopes and feeds back the
-    // measured ratio as a per-sample gain compensation.
-    //
-    // Clamp held at 0.99 so the compensated feedback × autoLevelGain has
-    // somewhere to live. The loop is now linear (softClip moved to output
-    // in Phase 4) so equal-power crossfade math actually holds.
-    feedbackGain_ = std::clamp (feedbackGain_, 0.0f, 0.99f);
-}
-
-void ShimmerEngine::updateDamping()
-{
-    // Output-side 1-pole LP. trebleMult = 1.0 → ~16 kHz cutoff — i.e. for
-    // most of the user-facing range the LP is essentially open and the
-    // shell's hi_cut is the real brightness ceiling. With the v4 series
-    // topology each loop iteration shifts content UP by `mix·shift`
-    // semitones; even moderate mix (0.5) at +12-semi pushes accumulated
-    // content well above a 5–10 kHz cutoff within a few cycles. Damping
-    // there killed the tail (RT60 collapsed to 0.8s) — pulling the
-    // baseline up lets the cascade live in the upper octaves long enough
-    // to actually be heard before it decays out of the loop on its own.
-    // At trebleMult = 0.55 (Eno Choir) this lands at 8.8 kHz, right around
-    // Valhalla's default 8 kHz high-cut.
-    // Settled on 16 kHz baseline — diagnostic with 22 kHz showed identical
-    // RT60, so damping is no longer the bottleneck (the pitch-shifter loop
-    // loss dominates). 16 kHz keeps a gentle high-frequency tame for the
-    // top of the user's trebleMult range.
-    const float fc = std::clamp (16000.0f * trebleMult_, 200.0f,
-                                 0.45f * static_cast<float> (sampleRate_));
-    dampCoeff_ = std::exp (-kTwoPi * fc / static_cast<float> (sampleRate_));
+    reverb_.setFreeze (frozen);
 }
 
 void ShimmerEngine::updatePitchRatio()
 {
-    // semitones → ratio: r = 2^(semitones/12)
+    // Convert semitones to ratio. ratio = 2^(semitones / 12).
     const float ratio = std::pow (2.0f, pitchSemitones_ / 12.0f);
     pitchL_.setPitchRatio (ratio);
     pitchR_.setPitchRatio (ratio);
 }
 
-// ── Process ────────────────────────────────────────────────────────────────
+// ============================================================================
+// process — v9 topology: dry input → reverb (forward path);
+//                        wet → delay → pitchShift → softClip×fb → mix node.
+// ============================================================================
 
 void ShimmerEngine::process (const float* inL, const float* inR,
                              float* outL, float* outR, int numSamples)
@@ -411,191 +319,77 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         return;
     }
 
+    if (numSamples > maxBlockSize_)
+        numSamples = maxBlockSize_;
+
     const float satThreshold = 1.0f - saturationAmount_ * 0.6f;
     const float satCeiling   = 2.0f;
+    const float fb           = feedbackGain_;
 
-    // Output normaliser — sum of 4 uncorrelated channels per side ≈ scales
-    // by √4 = 2; halve to bring back to unit RMS.
-    constexpr float kOutputScale = 0.5f;
-
-    // Input distribution: L feeds even-indexed delays, R feeds odd-indexed.
-    // Each side's inputs scaled by 1/√4 to balance against the 4-way sum.
-    constexpr float kInputScale  = 0.5f;
-
-    // Local cache to avoid repeated atomic-style reads inside the per-sample loop
-    const float fb     = feedbackGain_;
-    const float mix    = shimmerMix_;
-    const float damp   = dampCoeff_;
-
-    // Equal-power crossfade gains for the series loop. y[i] (unpitched FDN
-    // feedback) and pitched are largely uncorrelated (different fundamental
-    // frequencies after the +N-semi shift), so equal-power keeps total loop
-    // RMS roughly constant across the mix range.
+    // ── Pass 1: build reverb input = drive(input) + softClipped(pitched fb).
+    // The pitch shifter NO LONGER processes the dry input — only the delayed
+    // wet feedback. That preserves the natural reverb tail for the dry
+    // signal (first-pass through reverb is unpitched) and adds the shimmer
+    // cascade purely via the feedback loop.
     //
-    // Tried boosting the loop with a (1 + 0.5·mix) makeup factor to compensate
-    // for the pitch-shifter's ~1.25 dB per-pass loss, but it interacts
-    // destructively with softClip at the canonical Eno mix (0.5–0.7) — the
-    // boosted signal saturates early, dynamic range compresses, and the
-    // cascade flattens (Cascading Heaven cascade Δ went +670 → −2 Hz).
-    // Instead the softClip ceiling is raised (1.0/2.0 → 1.5/3.0) and the
-    // feedback gain clamp is lifted (0.97 → 0.99) to give the loop more
-    // headroom; matched-RMS makeup is left for a future revision.
-    const float dryGain = std::sqrt (1.0f - mix);
-    const float wetGain = std::sqrt (mix);
-
+    // Pass 1 walks a local read cursor through the 50 ms circular delay
+    // line; Pass 3 walks the member write cursor through the same line.
+    // Both start at fbDelayWritePos_ and advance per sample, so the wet
+    // sample written at slot k in this block is the one read back at slot
+    // k after the buffer wraps once (= fbDelaySamples_ samples later).
+    int readPos = fbDelayWritePos_;
     for (int n = 0; n < numSamples; ++n)
     {
-        // Drive softClip on input.
-        const float xL = DspUtils::softClip (inL[n], satThreshold, satCeiling);
-        const float xR = DspUtils::softClip (inR[n], satThreshold, satCeiling);
+        // Drive softClip on input — the saturation knob still affects the
+        // dry path entering the reverb.
+        const float driveL = DspUtils::softClip (inL[n], satThreshold, satCeiling);
+        const float driveR = DspUtils::softClip (inR[n], satThreshold, satCeiling);
 
-        // 1) Read the 8 delay outputs WITH per-channel LFO modulation. The
-        //    LFOs run at distinct slow rates (0.20–0.70 Hz) so each delay
-        //    drifts independently → granular pitch shifter sees decorrelated
-        //    input → cascade develops the lush spread Eno shimmer needs.
-        float x[kNumChannels];
-        for (int i = 0; i < kNumChannels; ++i)
-        {
-            const float lfoOffset = lfos_[static_cast<size_t> (i)].next();
-            x[i] = delays_[i].read (lfoOffset);
-        }
+        // Pitch-shift the delayed wet directly. At PITCH=0 the shifter
+        // bypasses to a filtered passthrough, collapsing the engine to a
+        // feedback-extended reverb.
+        const float pitchedFbL = pitchL_.process (fbDelayLineL_[static_cast<size_t> (readPos)]);
+        const float pitchedFbR = pitchR_.process (fbDelayLineR_[static_cast<size_t> (readPos)]);
 
-        // 2) Outputs (pre-Hadamard) — the natural FDN tail. Even indices →
-        //    L, odd indices → R. Energy-normalised by kOutputScale.
-        float wetL = 0.0f, wetR = 0.0f;
-        for (int i = 0; i < kNumChannels; ++i)
-            (i % 2 == 0 ? wetL : wetR) += x[i];
-        outL[n] = wetL * kOutputScale;
-        outR[n] = wetR * kOutputScale;
+        // Band-pass the pitch-shifted feedback: HPF removes grain-rate
+        // sub-harmonics that would otherwise rumble up over time; LPF
+        // tames the upper-spectrum metallic ring caused by repeated
+        // pitch-up cycles concentrating energy near the AA-filter wall.
+        const float bandedL = fbLpfL_.processLP (fbHpfL_.processHP (pitchedFbL));
+        const float bandedR = fbLpfR_.processLP (fbHpfR_.processHP (pitchedFbR));
 
-        // 3) Apply Hadamard 8×8 mix to the channel signals → y[i]. This is
-        //    what scrambles the feedback so each delay sees a fresh
-        //    decorrelated sum of all 8.
-        float y[kNumChannels];
-        for (int i = 0; i < kNumChannels; ++i)
-        {
-            float acc = 0.0f;
-            for (int j = 0; j < kNumChannels; ++j)
-                acc += static_cast<float> (kHadamardSign[i][j]) * x[j];
-            y[i] = acc * kHadamardScale;
-        }
+        // Apply user feedback gain × kFeedbackLoopAttn, then softClip
+        // as a runaway safety net.
+        const float fbL = DspUtils::softClip (bandedL * fb * kFeedbackLoopAttn,
+                                              kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
+        const float fbR = DspUtils::softClip (bandedR * fb * kFeedbackLoopAttn,
+                                              kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
 
-        // 4) Aggregate per-side mixed signal → feed into the L/R pitch
-        //    shifters. Average so the pitch shifter sees a balanced signal,
-        //    not the sum (which would be hot enough to clip the grains).
-        float aggL = 0.0f, aggR = 0.0f;
-        for (int i = 0; i < kNumChannels; ++i)
-            (i % 2 == 0 ? aggL : aggR) += y[i];
-        aggL *= 0.25f;   // 1/4 = average over 4 even-indexed channels
-        aggR *= 0.25f;
-        const float pitchedL = pitchL_.process (aggL);
-        const float pitchedR = pitchR_.process (aggR);
+        // Mix node: dry input + pitched feedback → reverb input.
+        reverbInL_[static_cast<size_t> (n)] = driveL + fbL;
+        reverbInR_[static_cast<size_t> (n)] = driveR + fbR;
 
-        // 4b) Phase 3 — measure the actual pitch-shifter loss in real time
-        //     and compute a feedback-gain compensation. The follower tracks
-        //     |signal| with attack/release smoothing; the ratio preEnv/postEnv
-        //     IS the loss factor (post < pre because the granular shifter
-        //     drops energy at grain seams). Average L/R envelopes so a single
-        //     compensation gain feeds the whole shared FDN loop.
-        const float preMag  = 0.5f * (std::abs (aggL)     + std::abs (aggR));
-        const float postMag = 0.5f * (std::abs (pitchedL) + std::abs (pitchedR));
-
-        const float preCoeff  = (preMag  > autoLevelEnvPre_)  ? envAttackCoeff_ : envReleaseCoeff_;
-        const float postCoeff = (postMag > autoLevelEnvPost_) ? envAttackCoeff_ : envReleaseCoeff_;
-        autoLevelEnvPre_  = preCoeff  * autoLevelEnvPre_  + (1.0f - preCoeff)  * preMag;
-        autoLevelEnvPost_ = postCoeff * autoLevelEnvPost_ + (1.0f - postCoeff) * postMag;
-
-        // Loss factor = pre / post (capped 1..2 = 0..6 dB max boost). At
-        // silence both envelopes are tiny and the ratio collapses toward
-        // 1.0 (no boost). At cascade buildup, post lags pre and the ratio
-        // rises toward the measured loss, then settles to the steady-state
-        // compensation. Cap at 6 dB because anything more either reflects
-        // a numerical edge case OR represents a loss too aggressive to
-        // truly compensate without making the loop unstable.
-        const float targetGain = std::clamp (
-            (autoLevelEnvPre_ + 1e-6f) / (autoLevelEnvPost_ + 1e-6f),
-            1.0f, 2.0f);
-        autoLevelGain_ = gainSlewCoeff_ * autoLevelGain_
-                       + (1.0f - gainSlewCoeff_) * targetGain;
-
-        // The crossfaded loop signal (dryGain·y + wetGain·pitched) for the
-        // CORRELATED (y, pitched) pair can exceed the per-channel RMS by
-        // up to ~6 % at mix=0.5 (math: 0.5+0.125·eff²+0.5·ρ·eff at ρ=1
-        // gives 1.125 = +6 dB ratio). To keep loop gain < 1 we apply a
-        // 0.93 attenuation here so the effective per-cycle = effectiveFb
-        // × 1.06 × 0.93 ≤ 0.99 even at fb very close to unity. This
-        // factor lets us push effectiveFb up to ~0.97 without runaway
-        // (extending the practical RT60 from ~1.4 s at the prior 0.85 cap
-        // to a usable ~5 s).
-        constexpr float kLoopStabilityScale = 0.93f;
-        const float effectiveFb = std::min (fb * autoLevelGain_, 0.97f) * kLoopStabilityScale;
-
-        // 5) Per-delay feedback write — SERIES topology (canonical Eno/
-        //    Lanois). The pitched feedback REPLACES a fraction `mix` of the
-        //    unpitched FDN feedback rather than adding on top. Each pass
-        //    through the loop the loopSignal gets pitched up by `mix` of an
-        //    octave, so the cascade compounds on every iteration. At mix=1
-        //    every loop iteration shifts up the full pitchSemitones; at mix=0
-        //    the engine is a plain modulated FDN reverb with no shimmer.
-        //
-        //    History:
-        //      v1 linear crossfade ((1-mix)·y + mix·pitched, no norm)  →
-        //          halved each path's energy → RT60 cratered to 0.5s
-        //      v2 equal-power crossfade (√(1-mix)·y + √mix·pitched)    →
-        //          fixed total RMS but still attenuated dry → RT60 1s
-        //      v3 additive ((y + pitched·mix) / √(1+mix²))             →
-        //          dry stayed at unity, pitched added on top, but the
-        //          1/√(1+mix²) normaliser cut the *effective* feedback
-        //          gain at common mix=0.5 from 0.94 → 0.78, dropping
-        //          measured RT60 to ~2.5s vs Valhalla's 7.5s (and
-        //          centroid ceiling stuck at 3 kHz vs theirs at 6.3 kHz)
-        //      v4 series (this) — single loop element, blend is a true
-        //          crossfade so total energy stays constant for all mix
-        //          settings. feedbackGain_ now governs RT60 directly per
-        //          its math; cascade compounds on every pass since pitched
-        //          signal IS the loop element, not a parallel sidechain.
-        // Phase 4 — LINEAR feedback bus. softClip is gone from the loop:
-        //   • Phase 2 (anti-alias LP) prevents aliasing accumulation
-        //   • Phase 3 (auto-level) bounds the loop signal in real time
-        // Together they make the loop stable WITHOUT a nonlinear clipper,
-        // which means the equal-power crossfade math actually holds (softClip
-        // was destroying the linearity it depends on, flattening cascades).
-        // The ONLY safety net is the output-stage softClip below.
-        for (int i = 0; i < kNumChannels; ++i)
-        {
-            const float pitched = (i % 2 == 0 ? pitchedL : pitchedR);
-            const float input_i = (i % 2 == 0 ? xL : xR) * kInputScale;
-            const float loopSignal = dryGain * y[i] + wetGain * pitched;
-            const float toWrite    = input_i + effectiveFb * loopSignal
-                                   + DspUtils::kDenormalPrevention;
-            delays_[i].write (toWrite);
-        }
-
-        // 6) Output-side HF damping. Applied to the wet sum AFTER it leaves
-        //    the feedback loop. Same trebleMultiply control surface, same
-        //    user expectation ("turn TREBLE down → wet gets darker"), but
-        //    the feedback path stays full-bandwidth so cascades develop.
-        dampStateOutL_ = (1.0f - damp) * outL[n] + damp * dampStateOutL_;
-        dampStateOutR_ = (1.0f - damp) * outR[n] + damp * dampStateOutR_;
-        outL[n] = dampStateOutL_;
-        outR[n] = dampStateOutR_;
-
-        // 7) Phase 4 — output-stage safety softClip. The only nonlinearity
-        //    in the engine. Knee at 0.95, ceiling at 1.5: anything below
-        //    0.95 passes untouched, then a smooth tanh-like curve shapes
-        //    the rest. Catches any peaks from extreme cascade development
-        //    without imposing on normal-level operation.
-        outL[n] = DspUtils::softClip (outL[n], 0.95f, 1.5f);
-        outR[n] = DspUtils::softClip (outR[n], 0.95f, 1.5f);
+        if (++readPos >= fbDelaySamples_) readPos = 0;
     }
 
-    // Bass post-shelf (same trivial flat scale used in the other engines).
-    if (std::abs (bassMult_ - 1.0f) > 1e-3f)
+    // ── Pass 2: reverb on the (dry + pitched-fb) mix → wet. ──
+    reverb_.process (reverbInL_.data(), reverbInR_.data(),
+                     wetL_.data(),      wetR_.data(),      numSamples);
+
+    // ── Pass 3: emit wet (with output trim) AND write wet into the
+    // feedback delay line for next-cycle pitch + recirculation. Engine
+    // outputs WET ONLY; dry/wet mix happens in the DuskVerbEngine wrapper
+    // via setMix.
+    for (int n = 0; n < numSamples; ++n)
     {
-        for (int n = 0; n < numSamples; ++n)
-        {
-            outL[n] *= bassMult_;
-            outR[n] *= bassMult_;
-        }
+        const float wL = wetL_[static_cast<size_t> (n)];
+        const float wR = wetR_[static_cast<size_t> (n)];
+
+        fbDelayLineL_[static_cast<size_t> (fbDelayWritePos_)] = wL;
+        fbDelayLineR_[static_cast<size_t> (fbDelayWritePos_)] = wR;
+        if (++fbDelayWritePos_ >= fbDelaySamples_) fbDelayWritePos_ = 0;
+
+        outL[n] = std::tanh (wL * kWetOutputGain);
+        outR[n] = std::tanh (wR * kWetOutputGain);
     }
 }

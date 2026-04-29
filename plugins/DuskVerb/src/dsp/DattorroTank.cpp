@@ -150,7 +150,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
                 tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale)) + 4;
             tank.densityAP[i].allocate (dapMax);
             // Lexicon spin-and-wander on each density AP — same fix as
-            // ModernSpace got. Breaks the AP's modal phase-locking which
+            // SixAPTank got. Breaks the AP's modal phase-locking which
             // otherwise leaks its delay period into the tail as an audible
             // 26-30 ms ring on plate presets (verified by render-tool
             // measurement on Vintage Vocal Plate / Bright Drum Plate).
@@ -815,7 +815,7 @@ void DattorroTank::updateDecayCoefficients()
     float lowXoverCoeff = std::exp (-kTwoPi * crossoverFreq_ / sr);
     float highXoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_ / sr);
 
-    // NOTE: ModernSpace uses a size-dependent AP energy-storage factor for
+    // NOTE: SixAPTank uses a size-dependent AP energy-storage factor for
     // its 6-AP cascade. We tried it here too but it OVER-compensated short-
     // decay plate presets (Bright Drum Plate went from -2 % to -20 % off).
     // Dattorro has only 3 density APs and a different decay-diff structure,

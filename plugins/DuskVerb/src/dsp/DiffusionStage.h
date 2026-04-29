@@ -13,7 +13,7 @@
 // phase-locking when the delay is long. The jitter operates in a faster
 // band (auto-set so its period ≈ 2× delay) so it disrupts ring coherence
 // while staying inaudible as flutter — the same fix used in the density
-// cascades of ModernSpace / Dattorro / QuadTank.
+// cascades of SixAPTank / Dattorro / QuadTank.
 class ModulatedAllpass
 {
 public:
@@ -96,7 +96,7 @@ private:
     float diffusionCoeff12_ = 0.45f;  // Stages 1-2: higher diffusion (Dattorro: max 0.75)
     float diffusionCoeff34_ = 0.375f; // Stages 3-4: lower for transient clarity (Dattorro: max 0.625)
     // Restored to Dattorro 1997 values for engines that need full input
-    // diffusion (Dattorro / QuadTank / FDN). For ModernSpace 6-AP we BYPASS
+    // diffusion (Dattorro / QuadTank / FDN). For SixAPTank we BYPASS
     // the diffuser entirely — see DuskVerbEngine::process() — because the
     // 6-AP density cascade with spin-and-wander handles input smearing,
     // and the cascaded Schroeder peaks at sum-of-delays (~14 ms) produced

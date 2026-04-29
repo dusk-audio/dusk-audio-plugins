@@ -111,7 +111,7 @@ private:
     };
 
     // Schroeder allpass with optional Lexicon-style "spin and wander" jitter
-    // (see ModernSpaceEngine::Allpass for full rationale). Default
+    // (see SixAPTankEngine::Allpass for full rationale). Default
     // jitterDepthFraction = 0 = static AP (back-compat).
     struct Allpass
     {
@@ -188,7 +188,7 @@ private:
         float crossFeedState = 0.0f;
 
         // Random-walk LFO — replaces the previous sine + drift modulator
-        // for consistency with Dattorro and ModernSpace. Aperiodic wander
+        // for consistency with Dattorro and SixAPTank. Aperiodic wander
         // never beats with the tank's modal frequencies.
         DspUtils::RandomWalkLFO lfo;
         float savedAP1Mod = 0.0f;   // held during freeze to avoid read-head snap

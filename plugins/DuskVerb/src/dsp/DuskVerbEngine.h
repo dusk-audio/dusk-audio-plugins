@@ -5,7 +5,7 @@
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
-#include "ModernSpaceEngine.h"
+#include "SixAPTankEngine.h"
 #include "NonLinearEngine.h"
 #include "QuadTank.h"
 #include "ShimmerEngine.h"
@@ -61,7 +61,7 @@ struct OnePoleSmoother
 //     │
 //     └──► [DiffusionStage] (engines: Dattorro / QuadTank / FDN)
 //           ↓
-//          selected late tank (Dattorro / ModernSpace / QuadTank / FDN)
+//          selected late tank (Dattorro / 6-AP / QuadTank / FDN / Spring / NonLinear / Shimmer)
 //           ↓
 //          erL+lateL, erR+lateR
 //           ↓
@@ -82,6 +82,9 @@ public:
     // Discrete (non-smoothed) controls.
     void setAlgorithm (int index);
     void setFreeze (bool frozen);
+    // Engine-specific: only the NonLinear engine has a gate. For other
+    // engines this is a no-op (the call is forwarded but ignored).
+    void setNonLinearGateEnabled (bool enabled);
 
     // Tank parameters — propagated to whichever engine is currently active.
     void setDecayTime     (float seconds);
@@ -109,10 +112,21 @@ public:
     void setGainTrim  (float dB);
     void setMonoBelow (float hz);             // 20 = bypass; up = sums lows to mono
 
+    // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
+    // sixAPTank_ regardless of currentEngine_ — they're only audible when the
+    // SixAPTank is the active engine, but pre-applying them at preset-load
+    // time is harmless (and necessary so the values are in place before the
+    // engine starts processing).
+    void setSixAPDensityBaseline (float v);
+    void setSixAPBloomCeiling    (float v);
+    void setSixAPBloomStagger    (const float values[6]);
+    void setSixAPEarlyMix        (float v);
+    void setSixAPOutputTrim      (float v);
+
 private:
     // Engines (all owned; only one runs at a time).
     DattorroTank       dattorro_;
-    ModernSpaceEngine  modernSpace_;
+    SixAPTankEngine  sixAPTank_;
     QuadTank           quad_;
     FDNReverb          fdn_;
     SpringEngine       spring_;

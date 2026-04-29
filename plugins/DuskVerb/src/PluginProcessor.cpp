@@ -108,6 +108,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskVerbProcessor::createPar
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "freeze", 1 }, "Freeze", fp0.freeze));
 
+    // Gate enable (NonLinear engine only — no-op on other algorithms).
+    // Default true for backward compat with existing presets.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "gate_enabled", 1 }, "Gate", true));
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "gain_trim", 1 }, "Gain Trim",
         juce::NormalisableRange<float> (-48.0f, 48.0f, 0.1f), fp0.gainTrim));
@@ -150,6 +155,7 @@ DuskVerbProcessor::DuskVerbProcessor()
     hiCutParam_         = parameters.getRawParameterValue ("hi_cut");
     widthParam_         = parameters.getRawParameterValue ("width");
     freezeParam_        = parameters.getRawParameterValue ("freeze");
+    gateEnabledParam_   = parameters.getRawParameterValue ("gate_enabled");
     gainTrimParam_      = parameters.getRawParameterValue ("gain_trim");
     monoBelowParam_     = parameters.getRawParameterValue ("mono_below");
 
@@ -194,6 +200,7 @@ void DuskVerbProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         lastERLevel_ = -2.0f;
         lastGainTrim_ = -999.0f;
         haveLastFreeze_ = false;
+        haveLastGateEnabled_ = false;
     }
 
     setLatencySamples (0);
@@ -329,6 +336,16 @@ void DuskVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         haveLastFreeze_ = true;
     }
 
+    // Gate enable (NonLinear-engine only — wrapper forwards to NonLinear,
+    // no-op for other algorithms). Push only on transitions.
+    const bool gateEnabledNow = gateEnabledParam_->load() >= 0.5f;
+    if (! haveLastGateEnabled_ || gateEnabledNow != lastGateEnabled_)
+    {
+        engine_.setNonLinearGateEnabled (gateEnabledNow);
+        lastGateEnabled_     = gateEnabledNow;
+        haveLastGateEnabled_ = true;
+    }
+
     engine_.process (left, right, numSamples);
 
     // Output metering.
@@ -356,13 +373,28 @@ juce::AudioProcessorEditor* DuskVerbProcessor::createEditor()
 // plugin versions can read older states by branching on this; older plugin
 // versions reading a newer state will see the unknown number and refuse to
 // apply (preserves user's session rather than silently mis-mapping).
-static constexpr int kStateVersion = 1;
+// v2 (2026-04-28): adds per-preset SixAPTank brightness/density properties
+// (sixAPDensityBaseline, sixAPBloomCeiling, sixAPBloomStagger0..5,
+// sixAPEarlyMix, sixAPOutputTrim) to the state ValueTree. Loading a v1
+// save file is fully supported — missing properties fall through to the
+// engine's default values, which match the v1 historical behavior.
+static constexpr int kStateVersion = 2;
 static const juce::Identifier kStateVersionId { "stateVersion" };
 
 void DuskVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
     state.setProperty (kStateVersionId, kStateVersion, nullptr);
+    // SixAPTank brightness/density (per-preset, non-APVTS). Defaults equal
+    // historical engine constants — files saved with v1 won't have these
+    // and will fall through to the same defaults on load.
+    state.setProperty ("sixAPDensityBaseline", sixAPBrightness_.densityBaseline, nullptr);
+    state.setProperty ("sixAPBloomCeiling",    sixAPBrightness_.bloomCeiling,    nullptr);
+    state.setProperty ("sixAPEarlyMix",        sixAPBrightness_.earlyMix,        nullptr);
+    state.setProperty ("sixAPOutputTrim",      sixAPBrightness_.outputTrim,      nullptr);
+    for (int i = 0; i < 6; ++i)
+        state.setProperty (juce::Identifier ("sixAPBloomStagger" + juce::String (i)),
+                          sixAPBrightness_.bloomStagger[i], nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -375,7 +407,8 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     auto tree = juce::ValueTree::fromXml (*xml);
     // Pre-versioning states (no property present) default to 1; they were
-    // already wire-compatible with v1's parameter layout.
+    // already wire-compatible with v1's parameter layout. v2 added the
+    // SixAPTank brightness state — falls through to defaults if absent.
     const int version = tree.hasProperty (kStateVersionId)
                       ? static_cast<int> (tree.getProperty (kStateVersionId))
                       : 1;
@@ -383,6 +416,69 @@ void DuskVerbProcessor::setStateInformation (const void* data, int sizeInBytes)
         return;  // future state — keep current params, don't risk mis-mapping
 
     parameters.replaceState (tree);
+
+    // Reset SixAPTank brightness state to engine defaults BEFORE reading the
+    // optional v2+ properties. Without this reset, loading a v1 state file
+    // (no sixAP properties) AFTER having loaded a preset that sets brighter
+    // values (e.g. Black Hole) would silently inherit those values — applying
+    // Black Hole's brightness to a non-Black-Hole preset's reverb. The default
+    // values of SixAPBrightnessState exactly match the engine's historical
+    // hardcoded constants, so v1 states correctly round-trip to identical
+    // sound after this reset + the property reads below.
+    sixAPBrightness_ = SixAPBrightnessState{};
+
+    // Read SixAPTank brightness state — overrides defaults only if present
+    // (any subset of properties may be missing on partial v2 saves).
+    if (tree.hasProperty ("sixAPDensityBaseline"))
+        sixAPBrightness_.densityBaseline = static_cast<float> (tree.getProperty ("sixAPDensityBaseline"));
+    if (tree.hasProperty ("sixAPBloomCeiling"))
+        sixAPBrightness_.bloomCeiling = static_cast<float> (tree.getProperty ("sixAPBloomCeiling"));
+    if (tree.hasProperty ("sixAPEarlyMix"))
+        sixAPBrightness_.earlyMix = static_cast<float> (tree.getProperty ("sixAPEarlyMix"));
+    if (tree.hasProperty ("sixAPOutputTrim"))
+        sixAPBrightness_.outputTrim = static_cast<float> (tree.getProperty ("sixAPOutputTrim"));
+    for (int i = 0; i < 6; ++i)
+    {
+        const juce::Identifier id ("sixAPBloomStagger" + juce::String (i));
+        if (tree.hasProperty (id))
+            sixAPBrightness_.bloomStagger[i] = static_cast<float> (tree.getProperty (id));
+    }
+    applySixAPBrightnessToEngine();
+}
+
+void DuskVerbProcessor::applySixAPBrightnessToEngine()
+{
+    engine_.setSixAPDensityBaseline (sixAPBrightness_.densityBaseline);
+    engine_.setSixAPBloomCeiling    (sixAPBrightness_.bloomCeiling);
+    engine_.setSixAPBloomStagger    (sixAPBrightness_.bloomStagger);
+    engine_.setSixAPEarlyMix        (sixAPBrightness_.earlyMix);
+    engine_.setSixAPOutputTrim      (sixAPBrightness_.outputTrim);
+}
+
+void DuskVerbProcessor::applyFactoryPreset (const FactoryPreset& preset)
+{
+    // 1) APVTS path: existing UI-parameter setup.
+    preset.applyTo (parameters);
+    // 2) Cache engine-config values for state save/load round-trip.
+    sixAPBrightness_.densityBaseline = preset.sixAPDensityBaseline;
+    sixAPBrightness_.bloomCeiling    = preset.sixAPBloomCeiling;
+    sixAPBrightness_.earlyMix        = preset.sixAPEarlyMix;
+    sixAPBrightness_.outputTrim      = preset.sixAPOutputTrim;
+    for (int i = 0; i < 6; ++i)
+        sixAPBrightness_.bloomStagger[i] = preset.sixAPBloomStagger[i];
+    // 3) Push to engine.
+    applySixAPBrightnessToEngine();
+}
+
+// Out-of-line definition of FactoryPreset::applyEngineConfig — placed here
+// where DuskVerbEngine's full type is visible.
+void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
+{
+    engine.setSixAPDensityBaseline (sixAPDensityBaseline);
+    engine.setSixAPBloomCeiling    (sixAPBloomCeiling);
+    engine.setSixAPBloomStagger    (sixAPBloomStagger);
+    engine.setSixAPEarlyMix        (sixAPEarlyMix);
+    engine.setSixAPOutputTrim      (sixAPOutputTrim);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

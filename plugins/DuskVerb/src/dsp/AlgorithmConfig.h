@@ -9,7 +9,7 @@
 enum class EngineType : int
 {
     Dattorro       = 0,  // 2-AP cross-coupled vintage plate (Dattorro 1997).
-    ModernSpace6AP = 1,  // 6-AP density cascade tank (lush halls, dense ambience).
+    SixAPTank = 1,  // 6-AP density cascade tank (lush halls, dense ambience).
     QuadTank       = 2,  // 4 cross-coupled tanks, 48 taps, no modulation.
     FDN            = 3,  // 16-channel Hadamard feedback delay network.
     Spring         = 4,  // Fender 6G15-style 3-spring tank with dispersion-AP chirp.
@@ -24,19 +24,18 @@ struct AlgorithmConfig
     EngineType  engine;
 };
 
-// Shimmer (Eno FDN) is currently disabled — the in-loop modulation +
-// granular pitch shifter combination has too many open issues to ship
-// in this release. The engine code stays compiled so factory presets
-// that reference it don't break the build, but it's hidden from the UI
-// dropdown and no factory presets target it. Re-enable by bumping this
-// to 7 once the cascade artefacts are resolved.
-inline int getNumAlgorithms() { return 6; }
+// Shimmer (Eno FDN) — re-enabled after the v6 DSP overhaul (anti-alias LP
+// before the granular pitch shifter, RMS-follower auto-level replacing the
+// broken empirical loss model, softClip moved out of the feedback loop).
+// Validate against Valhalla Shimmer reference renders before re-adding the
+// Eno Choir / Cascading Heaven presets.
+inline int getNumAlgorithms() { return 7; }
 
 inline const AlgorithmConfig& getAlgorithmConfig (int index)
 {
     static constexpr AlgorithmConfig kEngines[] = {
         { "Vintage Plate (Dattorro)", EngineType::Dattorro       },
-        { "High Density (6-AP)",      EngineType::ModernSpace6AP },
+        { "High Density (6-AP)",      EngineType::SixAPTank },
         { "Quad Room (QuadTank)",     EngineType::QuadTank       },
         { "Realistic Space (FDN)",    EngineType::FDN            },
         { "Spring Tank (6G15)",       EngineType::Spring         },
