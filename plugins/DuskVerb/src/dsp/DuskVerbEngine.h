@@ -123,6 +123,17 @@ public:
     void setSixAPEarlyMix        (float v);
     void setSixAPOutputTrim      (float v);
 
+    // Reset all delay buffers, biquad state, pre-delay, and mono-maker LP state
+    // to silence. Used by the processor to bring an idle engine to a clean
+    // start before a preset crossfade swaps it in.
+    void clearAllBuffers();
+
+    // Snap every shell smoother (mix, width, erLevel, gainTrim, size, loCut,
+    // hiCut, monoBelow) to its current target so the next process() call uses
+    // the target values immediately instead of gliding from a stale state.
+    // Call after force-pushing parameters to a freshly-cleared engine.
+    void snapSmoothersToTargets();
+
 private:
     // Engines (all owned; only one runs at a time).
     DattorroTank       dattorro_;
