@@ -230,6 +230,9 @@ jobs:
             -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
+        # ubuntu:20.04 container's default /bin/sh is dash, which doesn't
+        # support [[ ]]. Force bash so the CLAP-target conditional works.
+        shell: bash
         run: |
           if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
             export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
@@ -425,6 +428,9 @@ jobs:
             -DJUCE_PATH=$(pwd)/JUCE
 
       - name: Build plugins
+        # ubuntu:22.04 container's default /bin/sh is dash, which doesn't
+        # support [[ ]]. Force bash so the CLAP-target conditional works.
+        shell: bash
         run: |
           if [ -n "${{ needs.setup.outputs.plugin_version }}" ]; then
             export PLUGIN_VERSION_OVERRIDE="${{ needs.setup.outputs.plugin_version }}"
@@ -432,7 +438,18 @@ jobs:
           TARGET="${{ needs.setup.outputs.plugin_target }}"
           if [ -n "$TARGET" ]; then
             echo "Building specific target(s): $TARGET"
-            for t in $TARGET; do cmake --build build --config ${{ env.BUILD_TYPE }} --target "$t" -j$(nproc); done
+            for t in $TARGET; do
+              cmake --build build --config ${{ env.BUILD_TYPE }} --target "$t" -j$(nproc)
+              # Also build matching CLAP target (FourKEQ_All -> FourKEQ_CLAP).
+              # CLAP targets are not part of the JUCE-generated _All aggregate.
+              # Skip *_LV2 targets (no CLAP form). Skip if CLAP target doesn't exist.
+              if [[ "$t" == *_All ]]; then
+                CLAP_TARGET="${t%_All}_CLAP"
+                echo "Building CLAP target: $CLAP_TARGET"
+                cmake --build build --config ${{ env.BUILD_TYPE }} --target "$CLAP_TARGET" -j$(nproc) || \
+                  echo "CLAP target $CLAP_TARGET not found, skipping"
+              fi
+            done
           else
             echo "Building all plugins"
             cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
@@ -484,7 +501,7 @@ jobs:
       - name: Prepare artifacts
         shell: bash
         run: |
-          mkdir -p artifacts/linux-arm64/VST3 artifacts/linux-arm64/LV2
+          mkdir -p artifacts/linux-arm64/VST3 artifacts/linux-arm64/LV2 artifacts/linux-arm64/CLAP
 
           find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
             if ls "$vst3/Contents/aarch64-linux/"*.so >/dev/null 2>&1; then
@@ -498,8 +515,14 @@ jobs:
             fi
           done
 
+          # Copy CLAP plugins (single .clap shared library on Linux). clap-juce-extensions
+          # writes to build/<Plugin>_artefacts/Release/CLAP/, outside the lib/bin/plugins paths.
+          find build -name "*.clap" -type f -print0 2>/dev/null | while IFS= read -r -d '' clap; do
+            cp "$clap" artifacts/linux-arm64/CLAP/
+          done
+
           echo "=== Linux ARM64 Artifacts ==="
-          find artifacts/linux-arm64 -type f -name "*.so" | head -20
+          find artifacts/linux-arm64 -type f \( -name "*.so" -o -name "*.clap" \) | head -20
 
       - name: Upload Linux ARM64 artifacts
         uses: actions/upload-artifact@v4
