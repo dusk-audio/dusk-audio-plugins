@@ -93,6 +93,13 @@ void DuskVerbEngine::clearAllBuffers()
     nonLinear_.clearBuffers();
     shimmer_  .clearBuffers();
 
+    // Pre-tank input diffuser and early reflections — both retain
+    // signal-carrying state (allpass buffers, multi-tap delay lines, per-tap
+    // LP states) that survives setAlgorithm() and would bleed stale audio
+    // into the new preset's tail when an idle engine is reused.
+    diffuser_.clear();
+    er_.clear();
+
     std::fill (preDelayBufL_.begin(), preDelayBufL_.end(), 0.0f);
     std::fill (preDelayBufR_.begin(), preDelayBufR_.end(), 0.0f);
     preDelayWritePos_ = 0;
