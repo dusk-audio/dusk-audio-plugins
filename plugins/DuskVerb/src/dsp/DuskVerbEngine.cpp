@@ -83,6 +83,51 @@ void DuskVerbEngine::prepare (double sampleRate, int maxBlockSize)
     setAlgorithm (0);
 }
 
+void DuskVerbEngine::clearAllBuffers()
+{
+    dattorro_ .clearBuffers();
+    sixAPTank_.clearBuffers();
+    quad_     .clearBuffers();
+    fdn_      .clearBuffers();
+    spring_   .clearBuffers();
+    nonLinear_.clearBuffers();
+    shimmer_  .clearBuffers();
+
+    std::fill (preDelayBufL_.begin(), preDelayBufL_.end(), 0.0f);
+    std::fill (preDelayBufR_.begin(), preDelayBufR_.end(), 0.0f);
+    preDelayWritePos_ = 0;
+
+    loCutFilter_.reset();
+    hiCutFilter_.reset();
+
+    monoLPStateL_ = 0.0f;
+    monoLPStateR_ = 0.0f;
+}
+
+void DuskVerbEngine::snapSmoothersToTargets()
+{
+    // OnePoleSmoother::current and ::target are public struct fields. Setting
+    // current = target collapses the per-sample/per-block glide so the engine
+    // produces target-value output from the next sample onward — required when
+    // an idle engine is being swapped in via crossfade and must not glide
+    // through stale shell-parameter values.
+    mixSmoother_      .current = mixSmoother_      .target;
+    widthSmoother_    .current = widthSmoother_    .target;
+    erLevelSmoother_  .current = erLevelSmoother_  .target;
+    gainTrimSmoother_ .current = gainTrimSmoother_ .target;
+    sizeSmoother_     .current = sizeSmoother_     .target;
+    loCutSmoother_    .current = loCutSmoother_    .target;
+    hiCutSmoother_    .current = hiCutSmoother_    .target;
+    monoBelowSmoother_.current = monoBelowSmoother_.target;
+
+    // Force per-block consumers (size→tank delays, lo/hi-cut biquad coeffs,
+    // mono-maker coeff) to recompute on the first block after the snap.
+    lastAppliedSize_   = -1.0f;
+    lastAppliedLoCut_  = -1.0f;
+    lastAppliedHiCut_  = -1.0f;
+    lastAppliedMonoHz_ = -1.0f;
+}
+
 void DuskVerbEngine::setAlgorithm (int index)
 {
     if (index == currentAlgorithm_)
