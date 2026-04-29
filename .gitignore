@@ -55,6 +55,7 @@ JuceLibraryCode/
 *.log
 *.tmp
 *.backup
+*.calibration_backup
 .*.tmp
 
 # Test output directory (generated test artifacts)
@@ -142,3 +143,8 @@ tests/velvet90_match/
 
 # DuskAmp DSP comparison artifacts (regenerated locally per developer)
 plugins/DuskAmp/tests/comparison/
+
+# DuskVerb calibration database (local tooling artifact)
+calibration.db
+calibration.db-shm
+calibration.db-wal

@@ -15,15 +15,34 @@ void ModulatedAllpass::prepare (int bufferSize, float delayInSamples, float lfoR
     mask_ = bufferSize - 1;
     writePos_ = 0;
     delaySamples_ = delayInSamples;
-    lfoDepth_ = lfoDepthSamples;
+    baseLfoDepth_ = lfoDepthSamples;   // retain for later setLfoDepthScale()
+    lfoDepth_     = lfoDepthSamples;
     lfoPhase_ = lfoStartPhase;
     lfoPhaseInc_ = kTwoPi * lfoRateHz / static_cast<float> (sampleRate);
+    sampleRate_ = static_cast<float> (sampleRate);
+    jitterDepthFraction_ = 0.0f;
+}
+
+void ModulatedAllpass::enableJitter (float fraction, std::uint32_t seed)
+{
+    jitterDepthFraction_ = std::max (0.0f, fraction);
+    if (jitterDepthFraction_ <= 0.0f || delaySamples_ <= 0.0f) return;
+    jitterLFO_.prepare (sampleRate_, seed);
+    jitterLFO_.setDepth (delaySamples_ * jitterDepthFraction_);
+    // Period = 2 × delay so jitter traverses range within one ring period.
+    const float period    = 2.0f * delaySamples_;
+    const float lfoRateHz = sampleRate_ / period;
+    jitterLFO_.setRate (std::min (std::max (lfoRateHz, 5.0f), 200.0f));
 }
 
 float ModulatedAllpass::process (float input, float g)
 {
-    // Modulated read position
+    // Modulated read position: sine LFO + optional spin-and-wander jitter.
+    // The jitter (per-AP RandomWalkLFO at delay-proportional rate) breaks
+    // the AP's modal phase-locking that the slow sine LFO can't disrupt.
     float mod = std::sin (lfoPhase_) * lfoDepth_;
+    if (jitterDepthFraction_ > 0.0f)
+        mod += jitterLFO_.next();
     float readDelay = delaySamples_ + mod;
     float readPos = static_cast<float> (writePos_) - readDelay;
 
@@ -67,7 +86,7 @@ void ModulatedAllpass::clear()
 void DiffusionStage::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     static constexpr float kTwoPi = 6.283185307179586f;
-    float ratio = static_cast<float> (sampleRate / 44100.0);
+    float ratio = static_cast<float> (sampleRate / DspUtils::kBaseSampleRate);
 
     for (int s = 0; s < kNumStages; ++s)
     {
@@ -82,12 +101,24 @@ void DiffusionStage::prepare (double sampleRate, int /*maxBlockSize*/)
         float depthL = (0.5f + 1.0f * static_cast<float> (s) / 7.0f) * ratio;
         leftAP_[s].prepare (bufSize, delay, rateL, depthL, phaseL, sampleRate);
 
-        // Right channel allpass (index s+4 of 8 total, different phase/rate/depth)
-        int ri = s + kNumStages;
-        float phaseR = kTwoPi * static_cast<float> (ri) / 8.0f;
-        float rateR  = 0.3f + 0.5f * static_cast<float> (ri) / 7.0f;
-        float depthR = (0.5f + 1.0f * static_cast<float> (ri) / 7.0f) * ratio;
-        rightAP_[s].prepare (bufSize, delay, rateR, depthR, phaseR, sampleRate);
+        // Right channel allpass — SAME rate and depth as left, but offset
+        // phase. Original code used fully-asymmetric (rate, depth, phase) per
+        // L/R, which let the channel modulators drift at different speeds —
+        // measured LR-correlation stddev wandered ~0.066 (vs Arturia 0.028).
+        // Locking the rate keeps the modulation cycle in phase between L
+        // and R, so the late-field correlation stays stable. The π-offset
+        // phase still gives a clear stereo image at any moment in time
+        // without introducing slow wander.
+        float phaseR = phaseL + (float) M_PI;
+        rightAP_[s].prepare (bufSize, delay, rateL, depthL, phaseR, sampleRate);
+
+        // Spin-and-wander jitter (1.5 % of delay) — lets us keep the long
+        // Dattorro-canonical delays {142, 107, 379, 277} for proper input
+        // smear width without the 8.6 ms ringing they produce as static APs.
+        const std::uint32_t lJitterSeed = 0xA5A5A5A5u + static_cast<std::uint32_t> (s * 31337);
+        const std::uint32_t rJitterSeed = 0x5A5A5A5Au + static_cast<std::uint32_t> (s * 27449);
+        leftAP_[s] .enableJitter (0.015f, lJitterSeed);
+        rightAP_[s].enableJitter (0.015f, rJitterSeed);
     }
 }
 

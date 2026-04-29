@@ -11,6 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Define the plugin
 juce_add_plugin(TapeEcho
     COMPANY_NAME "Dusk Audio"
+    VST3_AUTO_MANIFEST FALSE
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -25,6 +26,8 @@ juce_add_plugin(TapeEcho
     VST3_CAN_REPLACE_VST2 TRUE)
 
 # Generate JUCE header
+apply_clap_extension(TapeEcho tape-echo audio-effect delay mono stereo)
+
 juce_generate_juce_header(TapeEcho)
 
 # Set the C++ standard for the plugin target
