@@ -14,6 +14,7 @@ juce_add_plugin(${PLUGIN_NAME}
     COMPANY_COPYRIGHT "Copyright 2026 Dusk Audio"
     COMPANY_WEBSITE "https://dusk-audio.github.io"
     COMPANY_EMAIL "support@dusk-audio.github.io"
+    VST3_AUTO_MANIFEST FALSE
 
     PLUGIN_MANUFACTURER_CODE Dusk
     PLUGIN_CODE Grvm
@@ -37,6 +38,8 @@ juce_add_plugin(${PLUGIN_NAME}
 )
 
 # Generate JUCE header
+apply_clap_extension(${PLUGIN_NAME} groovemind instrument drum-machine drum stereo)
+
 juce_generate_juce_header(${PLUGIN_NAME})
 
 # Add source files

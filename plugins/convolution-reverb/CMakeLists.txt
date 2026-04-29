@@ -31,6 +31,7 @@ endif()
 juce_add_plugin(ConvolutionReverb
     COMPANY_NAME "Dusk Audio"
     BUNDLE_ID "com.lunaco.ConvolutionReverb"
+    VST3_AUTO_MANIFEST FALSE
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -44,6 +45,8 @@ juce_add_plugin(ConvolutionReverb
     PRODUCT_NAME "Convolution Reverb"
     DESCRIPTION "Convolution reverb with IR browser and envelope shaping"
 )
+
+apply_clap_extension(ConvolutionReverb convolution-reverb audio-effect reverb stereo)
 
 juce_generate_juce_header(ConvolutionReverb)
 

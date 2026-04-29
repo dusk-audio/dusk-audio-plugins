@@ -43,6 +43,8 @@ juce_add_plugin(FourKEQ
 )
 
 # Generate JUCE header
+apply_clap_extension(FourKEQ 4k-eq audio-effect equalizer mono stereo)
+
 juce_generate_juce_header(FourKEQ)
 
 # Add source files
