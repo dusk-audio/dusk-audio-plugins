@@ -148,3 +148,4 @@ plugins/DuskAmp/tests/comparison/
 calibration.db
 calibration.db-shm
 calibration.db-wal
+.claude/

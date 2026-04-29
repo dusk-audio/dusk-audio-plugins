@@ -306,9 +306,9 @@ namespace
         // Shimmer engine (algo 6) — v8 Eno/Lanois topology (mirrors FactoryPresets.h):
         // mod_depth = PITCH (0..1 → 0..24 semis), mod_rate Hz → FEEDBACK gain.
         if (name == "Deep Blue Day")
-            return makePreset (name.toRawUTF8(), 6, 0.80f, false, 25.0f,  10.30f, 1.00f, 0.50f, 4.50f, 1.00f, 1.10f,  800.0f, 0.85f, 0.20f, 0.50f, 60.0f, 7000.0f, 1.30f,  0.0f, 20.0f, 1.00f, 4000.0f, 0.05f);
+            return makePreset (name.toRawUTF8(), 6, 0.38f, false, 25.0f,  10.30f, 1.00f, 0.50f, 2.395f, 1.00f, 1.10f,  800.0f, 0.85f, 0.20f, 0.50f, 60.0f, 7000.0f, 1.30f,  0.0f, 20.0f, 1.00f, 4000.0f, 0.05f);
         if (name == "Cascading Heaven")
-            return makePreset (name.toRawUTF8(), 6, 0.70f, false, 60.0f,  6.00f, 0.85f, 1.00f, 6.00f, 0.95f, 1.10f,  800.0f, 0.85f, 0.20f, 0.50f, 60.0f, 6000.0f, 1.40f, -3.0f, 60.0f, 1.00f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 6, 0.361f, false, 60.0f,  6.00f, 0.85f, 1.00f, 2.705f, 0.95f, 1.10f,  800.0f, 0.85f, 0.20f, 0.50f, 60.0f, 6000.0f, 1.40f, -3.0f, 60.0f, 1.00f, 4000.0f, 0.10f);
         if (name == "Black Hole")
         {
             auto p = makePreset (name.toRawUTF8(), 1, 0.50f, false,  0.0f, 14.00f, 0.95f, 0.35f, 0.60f, 1.00f, 1.10f,  700.0f, 0.85f, 0.05f, 0.70f, 60.0f, 18000.0f, 1.40f, -2.0f, 60.0f, 1.10f, 8000.0f, 0.08f);
@@ -351,7 +351,7 @@ namespace
         if (name == "PCM Drum Room")
             return makePreset (name.toRawUTF8(), 2, 1.0f, true, 0.0f, 0.60f, 0.35f, 0.10f, 0.50f, 0.90f, 1.10f, 900.0f, 0.70f, 0.75f, 0.40f, 100.0f, 12000.0f, 1.15f, 4.0f, 20.0f, 1.05f, 5000.0f, 0.10f);
         if (name == "1981 Gated Snare")
-            return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 1.50f, 0.70f, 0.00f, 0.32f, 0.80f, 1.00f, 500.0f, 0.30f, 0.00f, 0.00f, 60.0f, 14000.0f, 1.40f, 0.0f, 100.0f, 0.75f, 4000.0f, 0.10f);
+            return makePreset (name.toRawUTF8(), 5, 1.0f, true, 0.0f, 1.50f, 0.70f, 0.00f, 1.117f, 0.80f, 1.00f, 500.0f, 0.30f, 0.00f, 0.00f, 60.0f, 14000.0f, 1.40f, 0.0f, 100.0f, 0.75f, 4000.0f, 0.10f);
         if (name == "Reverse Taps")
             return makePreset (name.toRawUTF8(), 5, 1.0f, true, 30.0f, 3.00f, 0.85f, 0.49f, 7.52f, 0.70f, 1.00f, 500.0f, 1.00f, 0.00f, 0.30f, 80.0f, 8000.0f, 1.30f, 0.0f, 20.0f, 0.75f, 4000.0f, 0.10f);
 
