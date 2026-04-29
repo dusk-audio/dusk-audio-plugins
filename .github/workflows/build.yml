@@ -226,6 +226,11 @@ jobs:
           if [ -n "$TARGET" ]; then
             echo "Building specific target: $TARGET"
             cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(nproc)
+            # Also build matching CLAP target (FourKEQ_All -> FourKEQ_CLAP).
+            # CLAP targets are not part of the JUCE-generated _All aggregate.
+            CLAP_TARGET="${TARGET%_All}_CLAP"
+            echo "Building CLAP target: $CLAP_TARGET"
+            cmake --build build --config ${{ env.BUILD_TYPE }} --target $CLAP_TARGET -j$(nproc)
           else
             echo "Building all plugins"
             cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
@@ -298,9 +303,16 @@ jobs:
             fi
           done
 
+          # Copy CLAP plugins (single .clap shared library on Linux). clap-juce-extensions
+          # writes to build/<Plugin>_artefacts/Release/CLAP/, outside the lib/bin/plugins paths.
+          mkdir -p artifacts/linux/CLAP
+          find build -name "*.clap" -type f -print0 2>/dev/null | while IFS= read -r -d '' clap; do
+            cp "$clap" artifacts/linux/CLAP/
+          done
+
           # List what we collected
           echo "=== Linux Artifacts ==="
-          find artifacts/linux -type f -name "*.so" | head -20
+          find artifacts/linux -type f \( -name "*.so" -o -name "*.clap" \) | head -20
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -350,6 +362,10 @@ jobs:
           if ($target) {
             Write-Host "Building specific target: $target"
             cmake --build build --target $target -j $env:NUMBER_OF_PROCESSORS
+            # Also build matching CLAP target (FourKEQ_All -> FourKEQ_CLAP).
+            $clapTarget = $target -replace '_All$', '_CLAP'
+            Write-Host "Building CLAP target: $clapTarget"
+            cmake --build build --target $clapTarget -j $env:NUMBER_OF_PROCESSORS
           } else {
             Write-Host "Building all plugins"
             cmake --build build -j $env:NUMBER_OF_PROCESSORS
@@ -408,8 +424,16 @@ jobs:
             }
           }
 
+          # Copy CLAP plugins (single .clap DLL on Windows)
+          New-Item -ItemType Directory -Force -Path artifacts/windows/CLAP
+          $claps = Get-ChildItem -Path build -Recurse -Filter "*.clap" -File -ErrorAction SilentlyContinue
+          foreach ($clap in $claps) {
+            Write-Host "Copying CLAP: $($clap.FullName)"
+            Copy-Item -Path $clap.FullName -Destination "artifacts/windows/CLAP/"
+          }
+
           Write-Host "=== Windows Artifacts ==="
-          Get-ChildItem -Path artifacts/windows -Recurse -Filter "*.vst3" | Select-Object FullName
+          Get-ChildItem -Path artifacts/windows -Recurse -Include "*.vst3","*.clap" | Select-Object FullName
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -456,6 +480,10 @@ jobs:
           if [ -n "$TARGET" ]; then
             echo "Building specific target: $TARGET"
             cmake --build build --config ${{ env.BUILD_TYPE }} --target $TARGET -j$(sysctl -n hw.ncpu)
+            # Also build matching CLAP target (FourKEQ_All -> FourKEQ_CLAP).
+            CLAP_TARGET="${TARGET%_All}_CLAP"
+            echo "Building CLAP target: $CLAP_TARGET"
+            cmake --build build --config ${{ env.BUILD_TYPE }} --target $CLAP_TARGET -j$(sysctl -n hw.ncpu)
           else
             echo "Building all plugins"
             cmake --build build --config ${{ env.BUILD_TYPE }} -j$(sysctl -n hw.ncpu)
@@ -561,6 +589,19 @@ jobs:
             fi
           done
 
+          # Sign CLAP plugins (bundle directory on macOS)
+          for plugin in build/*_artefacts/Release/CLAP/*.clap; do
+            if [ -d "$plugin" ]; then
+              echo "Signing: $plugin"
+              codesign --force --deep --sign "$MACOS_SIGNING_IDENTITY" \
+                --options runtime \
+                --timestamp \
+                "$plugin"
+
+              codesign --verify --verbose "$plugin"
+            fi
+          done
+
       - name: Notarize Plugins
         if: ${{ vars.MACOS_SIGNING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/v') }}
         env:
@@ -577,6 +618,7 @@ jobs:
           mkdir -p notarize_staging
           find . -path "*Release/VST3/*.vst3" -type d -exec cp -r {} notarize_staging/ \;
           find . -path "*Release/AU/*.component" -type d -exec cp -r {} notarize_staging/ \;
+          find . -path "*Release/CLAP/*.clap" -type d -exec cp -r {} notarize_staging/ \;
 
           # Create submission zip
           ditto -c -k --keepParent notarize_staging plugins-macos-notarize.zip
@@ -589,7 +631,7 @@ jobs:
             --wait
 
           # Staple the notarization ticket to each plugin
-          for plugin in notarize_staging/*.vst3 notarize_staging/*.component; do
+          for plugin in notarize_staging/*.vst3 notarize_staging/*.component notarize_staging/*.clap; do
             if [ -d "$plugin" ]; then
               echo "Stapling: $plugin"
               xcrun stapler staple "$plugin"
@@ -601,12 +643,13 @@ jobs:
       - name: Prepare artifacts
         shell: bash
         run: |
-          mkdir -p artifacts/macos/VST3 artifacts/macos/AU
+          mkdir -p artifacts/macos/VST3 artifacts/macos/AU artifacts/macos/CLAP
 
           # Copy plugins (use notarized versions if available)
           if [ -d "build/notarize_staging" ]; then
             cp -r build/notarize_staging/*.vst3 artifacts/macos/VST3/ 2>/dev/null || true
             cp -r build/notarize_staging/*.component artifacts/macos/AU/ 2>/dev/null || true
+            cp -r build/notarize_staging/*.clap artifacts/macos/CLAP/ 2>/dev/null || true
           else
             # Copy VST3 plugins from build/lib/, build/bin/, and build/plugins/ (handles spaces in names)
             find build/lib build/bin build/plugins -name "*.vst3" -type d -print0 2>/dev/null | while IFS= read -r -d '' vst3; do
@@ -623,10 +666,19 @@ jobs:
                 cp -r "$au" artifacts/macos/AU/
               fi
             done
+
+            # Copy CLAP plugins (bundle directory on macOS). clap-juce-extensions writes
+            # to build/<Plugin>_artefacts/Release/CLAP/, outside the lib/bin/plugins paths.
+            find build -name "*.clap" -type d -print0 2>/dev/null | while IFS= read -r -d '' clap; do
+              plugin_name=$(basename "$clap" .clap)
+              if [ -f "$clap/Contents/MacOS/$plugin_name" ]; then
+                cp -r "$clap" artifacts/macos/CLAP/
+              fi
+            done
           fi
 
           echo "=== macOS Artifacts ==="
-          find artifacts/macos -type d \( -name "*.vst3" -o -name "*.component" \)
+          find artifacts/macos -type d \( -name "*.vst3" -o -name "*.component" -o -name "*.clap" \)
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -674,7 +726,7 @@ jobs:
           echo "Slug: $SLUG"
           echo "Version: $VERSION"
 
-          # Linux: Create zip with VST3/ and LV2/ folders at root (not nested in plugins-linux/)
+          # Linux: Create zip with VST3/, LV2/, CLAP/ folders at root (not nested in plugins-linux/)
           # This allows users to extract directly and copy the appropriate format
           mkdir -p linux-release
           if [ -d "plugins-linux/VST3" ]; then
@@ -683,26 +735,35 @@ jobs:
           if [ -d "plugins-linux/LV2" ]; then
             cp -r plugins-linux/LV2 linux-release/
           fi
+          if [ -d "plugins-linux/CLAP" ] && [ -n "$(ls -A plugins-linux/CLAP 2>/dev/null)" ]; then
+            cp -r plugins-linux/CLAP linux-release/
+          fi
           cd linux-release
           zip -r "../../${SLUG}-linux.zip" .
           cd ..
 
-          # Windows: Create zip with VST3/ folder at root
+          # Windows: Create zip with VST3/ and CLAP/ folders at root
           mkdir -p windows-release
           if [ -d "plugins-windows/VST3" ]; then
             cp -r plugins-windows/VST3 windows-release/
+          fi
+          if [ -d "plugins-windows/CLAP" ] && [ -n "$(ls -A plugins-windows/CLAP 2>/dev/null)" ]; then
+            cp -r plugins-windows/CLAP windows-release/
           fi
           cd windows-release
           zip -r "../../${SLUG}-windows.zip" .
           cd ..
 
-          # macOS: Create zip with VST3/ and AU/ folders at root
+          # macOS: Create zip with VST3/, AU/, CLAP/ folders at root
           mkdir -p macos-release
           if [ -d "plugins-macos/VST3" ]; then
             cp -r plugins-macos/VST3 macos-release/
           fi
           if [ -d "plugins-macos/AU" ]; then
             cp -r plugins-macos/AU macos-release/
+          fi
+          if [ -d "plugins-macos/CLAP" ] && [ -n "$(ls -A plugins-macos/CLAP 2>/dev/null)" ]; then
+            cp -r plugins-macos/CLAP macos-release/
           fi
           cd macos-release
           zip -r "../../${SLUG}-macos.zip" .
@@ -747,18 +808,23 @@ jobs:
 
             echo "### Installation"
             echo ""
-            echo "Each zip contains \`VST3/\` and \`LV2/\` (Linux) or \`AU/\` (macOS) folders."
+            echo "Each zip contains \`VST3/\`, \`CLAP/\`, and \`LV2/\` (Linux) or \`AU/\` (macOS) folders."
             echo ""
             echo "**Linux:**"
             echo "- VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`~/.vst3/\`"
             echo "- LV2: Copy the \`.lv2\` folder from \`LV2/\` to \`~/.lv2/\`"
+            echo "- CLAP: Copy the \`.clap\` file from \`CLAP/\` to \`~/.clap/\`"
             echo ""
             echo "**Windows:**"
             echo "- VST3: Copy the \`.vst3\` folder from \`VST3/\` to \`C:\\Program Files\\Common Files\\VST3\\\`"
+            echo "- CLAP: Copy the \`.clap\` file from \`CLAP/\` to \`C:\\Program Files\\Common Files\\CLAP\\\`"
             echo ""
             echo "**macOS:**"
             echo "- VST3: Copy the \`.vst3\` bundle from \`VST3/\` to \`/Library/Audio/Plug-Ins/VST3/\` or \`~/Library/Audio/Plug-Ins/VST3/\`"
             echo "- AU: Copy the \`.component\` bundle from \`AU/\` to \`/Library/Audio/Plug-Ins/Components/\` or \`~/Library/Audio/Plug-Ins/Components/\`"
+            echo "- CLAP: Copy the \`.clap\` bundle from \`CLAP/\` to \`/Library/Audio/Plug-Ins/CLAP/\` or \`~/Library/Audio/Plug-Ins/CLAP/\`"
+            echo ""
+            echo "> macOS CLAP bundles are not Apple-notarized. On first load you may need to right-click → Open, or remove the quarantine flag with \`xattr -dr com.apple.quarantine /path/to/Plugin.clap\`."
 
             # Add plugin list for "all plugins" releases
             if [ "$PLUGIN_NAME" = "All Plugins" ]; then
