@@ -70,6 +70,8 @@ juce_add_plugin(DuskAmp
 )
 
 # Generate JuceHeader.h
+apply_clap_extension(DuskAmp duskamp audio-effect distortion mono stereo)
+
 juce_generate_juce_header(DuskAmp)
 
 # --- NAM source files (conditional) ---

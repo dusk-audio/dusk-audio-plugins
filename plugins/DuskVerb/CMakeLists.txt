@@ -61,6 +61,8 @@ juce_add_plugin(DuskVerb
 )
 
 # Generate JuceHeader.h
+apply_clap_extension(DuskVerb duskverb audio-effect reverb stereo)
+
 juce_generate_juce_header(DuskVerb)
 
 # Add source files

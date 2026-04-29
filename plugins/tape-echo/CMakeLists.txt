@@ -25,6 +25,8 @@ juce_add_plugin(TapeEcho
     VST3_CAN_REPLACE_VST2 TRUE)
 
 # Generate JUCE header
+apply_clap_extension(TapeEcho tape-echo audio-effect delay mono stereo)
+
 juce_generate_juce_header(TapeEcho)
 
 # Set the C++ standard for the plugin target

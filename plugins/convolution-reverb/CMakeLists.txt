@@ -45,6 +45,8 @@ juce_add_plugin(ConvolutionReverb
     DESCRIPTION "Convolution reverb with IR browser and envelope shaping"
 )
 
+apply_clap_extension(ConvolutionReverb convolution-reverb audio-effect reverb stereo)
+
 juce_generate_juce_header(ConvolutionReverb)
 
 # Source files
