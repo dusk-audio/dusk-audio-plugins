@@ -37,6 +37,8 @@ juce_add_plugin(${PLUGIN_NAME}
 )
 
 # Generate JUCE header
+apply_clap_extension(${PLUGIN_NAME} groovemind instrument drum-machine drum stereo)
+
 juce_generate_juce_header(${PLUGIN_NAME})
 
 # Add source files

@@ -56,6 +56,8 @@ juce_add_plugin(ChordAnalyzer
     VST3_AUTO_MANIFEST FALSE
 )
 
+apply_clap_extension(ChordAnalyzer chord-analyzer note-effect analyzer mono stereo)
+
 juce_generate_juce_header(ChordAnalyzer)
 
 # Source files

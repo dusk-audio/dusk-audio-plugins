@@ -37,6 +37,8 @@ juce_add_plugin(TapeMachine
     VST3_AUTO_MANIFEST FALSE)
 
 # Generate JUCE header
+apply_clap_extension(TapeMachine tapemachine audio-effect distortion saturation mono stereo)
+
 juce_generate_juce_header(TapeMachine)
 
 # Set the C++ standard for the plugin target
