@@ -65,6 +65,8 @@ juce_add_plugin(MultiQ
 )
 
 # Generate JuceHeader.h
+apply_clap_extension(MultiQ multi-q audio-effect equalizer mono stereo)
+
 juce_generate_juce_header(MultiQ)
 
 # Add source files

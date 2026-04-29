@@ -1,5 +1,4 @@
 #include "FDNReverb.h"
-#include "AlgorithmConfig.h"
 #include "DspUtils.h"
 
 #include <algorithm>
@@ -123,14 +122,28 @@ void householderInPlace8 (float* data)
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
+// Default Hall-style delay table for the 16-channel FDN. Logarithmic prime
+// spacing produces uniform modal density. Tap partition is balanced so left
+// and right output sums share the same number of contributors with alternating
+// signs for natural decorrelation.
+namespace {
+    constexpr int   kDefaultDelays[16] = {
+        1801, 1933, 2089, 2251, 2423, 2617, 2819, 3037,
+        3271, 3527, 3803, 4093, 4409, 4759, 5119, 5521
+    };
+    constexpr int   kDefaultLeftTaps[8]  = { 0, 3, 5, 7, 8, 10, 12, 15 };
+    constexpr int   kDefaultRightTaps[8] = { 1, 2, 4, 6, 9, 11, 13, 14 };
+    constexpr float kDefaultLeftSigns[8]  = { 1, -1, 1, -1, 1, -1, 1, -1 };
+    constexpr float kDefaultRightSigns[8] = { -1, 1, -1, 1, -1, 1, -1, 1 };
+}
+
 FDNReverb::FDNReverb()
 {
-    // Initialize mutable config arrays from Hall defaults
-    std::memcpy (baseDelays_, kHall.delayLengths, sizeof (baseDelays_));
-    std::memcpy (leftTaps_,   kHall.leftTaps,     sizeof (leftTaps_));
-    std::memcpy (rightTaps_,  kHall.rightTaps,    sizeof (rightTaps_));
-    std::memcpy (leftSigns_,  kHall.leftSigns,    sizeof (leftSigns_));
-    std::memcpy (rightSigns_, kHall.rightSigns,   sizeof (rightSigns_));
+    std::memcpy (baseDelays_, kDefaultDelays,    sizeof (baseDelays_));
+    std::memcpy (leftTaps_,   kDefaultLeftTaps,  sizeof (leftTaps_));
+    std::memcpy (rightTaps_,  kDefaultRightTaps, sizeof (rightTaps_));
+    std::memcpy (leftSigns_,  kDefaultLeftSigns, sizeof (leftSigns_));
+    std::memcpy (rightSigns_, kDefaultRightSigns, sizeof (rightSigns_));
 }
 
 // ---------------------------------------------------------------------------
@@ -142,18 +155,28 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
 
     // Allocate buffers for worst-case delay across ALL algorithms.
     // kMaxBaseDelay covers the longest line in any algorithm config.
-    float maxSizeScale = std::max (sizeRangeMax_, 1.5f);
+    sizeRangeAllocatedMax_ = std::max (sizeRangeAllocatedMax_, std::max (sizeRangeMax_, 1.5f));
     float maxDelay = static_cast<float> (kMaxBaseDelay)
-                   * static_cast<float> (sampleRate / kBaseSampleRate) * maxSizeScale;
+                   * static_cast<float> (sampleRate / kBaseSampleRate) * sizeRangeAllocatedMax_;
 
-    // +12 covers max modulation depth (modDepth 2.0 -> 8 samples) + cubic interp (2) + safety (2)
-    int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + 12);
+    // Headroom for modulation excursion: LFO peak + noise jitter + cubic interp safety.
+    // All scale with sample rate (rateRatio), so compute explicitly rather than
+    // relying on a fixed +12 constant that only covered 44.1kHz.
+    float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
+    // modDepthSamples_ peak = modDepth (max 2.0) × 16 (post-normalisation,
+    // was 4 pre-normalisation) × rateRatio. Sized for the largest possible
+    // depth so the cubic-Hermite read can never index past the buffer edge.
+    float maxModExcursion = 2.0f * 16.0f * rateRatio;
+    float maxNoiseExcursion = 20.0f * rateRatio;        // max noise_mod from presets (VerySmallAmbience=20)
+    int maxExcursion = static_cast<int> (std::ceil (maxModExcursion + maxNoiseExcursion)) + 4;
+    int bufSize = DspUtils::nextPowerOf2 (static_cast<int> (std::ceil (maxDelay)) + maxExcursion);
 
     for (int i = 0; i < N; ++i)
     {
         delayLines_[i].buffer.assign (static_cast<size_t> (bufSize), 0.0f);
         delayLines_[i].writePos = 0;
         delayLines_[i].mask = bufSize - 1;
+        dampFilter_[i].prepare (static_cast<float> (sampleRate));
         dampFilter_[i].reset();
         structHFState_[i] = 0.0f;
         structLFState_[i] = 0.0f;
@@ -166,7 +189,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     terminalDecayActive_ = false;
 
     // Inline allpass diffusers: prime delays scaled by sample rate
-    float rateRatio = static_cast<float> (sampleRate / kBaseSampleRate);
+    // (rateRatio already computed above for buffer sizing)
     for (int i = 0; i < N; ++i)
     {
         int apDelay = static_cast<int> (std::ceil (
@@ -175,6 +198,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP_[i].writePos = 0;
         inlineAP_[i].mask = apBufSize - 1;
+        inlineAP_[i].delaySamples = apDelay;
     }
 
     // Second inline allpass cascade: longer primes for density multiplication
@@ -186,6 +210,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP2_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP2_[i].writePos = 0;
         inlineAP2_[i].mask = apBufSize - 1;
+        inlineAP2_[i].delaySamples = apDelay;
     }
 
     // Third inline allpass cascade: even longer primes for ~8x density per cycle
@@ -197,6 +222,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAP3_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAP3_[i].writePos = 0;
         inlineAP3_[i].mask = apBufSize - 1;
+        inlineAP3_[i].delaySamples = apDelay;
     }
 
     // Short inline allpass cascade for Hall
@@ -208,6 +234,7 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         inlineAPShort_[i].buffer.assign (static_cast<size_t> (apBufSize), 0.0f);
         inlineAPShort_[i].writePos = 0;
         inlineAPShort_[i].mask = apBufSize - 1;
+        inlineAPShort_[i].delaySamples = apDelay;
     }
 
     // Anti-alias LP coefficient: ~17kHz at any sample rate
@@ -222,25 +249,30 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     std::memset (dcX1_, 0, sizeof (dcX1_));
     std::memset (dcY1_, 0, sizeof (dcY1_));
 
-    // Randomize LFO starting phases so successive IR captures see different
-    // modulation state (like VV's stochastic modulation). The evenly-spaced
-    // offsets between channels are preserved; only the base phase is random.
+    // Deterministic LFO seeding — fixed base + per-channel offset so each
+    // tail is reproducible across reloads. Each of the 16 channels gets its
+    // own random-walk LFO + jitter PRNG.
     {
-        std::random_device rd;
-        float basePhase = std::uniform_real_distribution<float> (0.0f, kTwoPi) (rd);
+        constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
         for (int i = 0; i < N; ++i)
-            lfoPhase_[i] = std::fmod (basePhase + kTwoPi * static_cast<float> (i)
-                                                         / static_cast<float> (N), kTwoPi);
-
-        // Random PRNG seeds so drift pattern varies per prepare() call
-        uint32_t baseSeed = rd();
-        for (int i = 0; i < N; ++i)
-            lfoPRNG_[i] = baseSeed + static_cast<uint32_t> (i * 1847);
+        {
+            const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
+            lfos_[i].prepare (static_cast<float> (sampleRate), seed);
+            lfoPRNG_[i] = seed ^ 0x9E3779B9u;  // distinct PRNG for noise jitter
+        }
     }
 
     updateModDepth();
     updateLFORates();
     updateDecayCoefficients();
+
+    // Terminal decay: sample-rate-invariant smoothing coefficients.
+    // At 44.1kHz these produce the same behavior as the original constants.
+    constexpr float kRmsTauMs     = 45.0f;   // RMS window ~45ms (was 0.9995/0.0005)
+    constexpr float kPeakTauMs    = 2270.0f;  // Peak decay ~2.27s (was 0.99999)
+    float sr = static_cast<float> (sampleRate);
+    rmsAlpha_      = std::exp (-1000.0f / (kRmsTauMs * sr));
+    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
 
     prepared_ = true;
 }
@@ -251,6 +283,10 @@ void FDNReverb::process (const float* inputL, const float* inputR,
 {
     if (! prepared_)
         return;
+
+    // Drive-style saturation (see DattorroTank for rationale).
+    const float satThreshold = 1.0f - saturationAmount_ * 0.6f;
+    const float satCeiling   = 2.0f;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -263,47 +299,42 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
-            float mod = std::sin (lfoPhase_[ch]) * modDepthSamples_ * modDepthScale_[ch];
-            // Per-sample random jitter: fast mode blurring complementing the slow LFO.
-            // Each channel gets independent noise from its xorshift32 PRNG.
-            float jitter = nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch];
-            float readDelay = delayLength_[ch] + mod + jitter;
+            // Random-walk LFO (replaces the previous sine + drift). Per-channel
+            // weight `modDepthScale_[ch]` still tapers individual delay lines
+            // by relative length so the longest channels modulate most.
+            float mod    = frozen_ ? 0.0f : (lfos_[ch].next() * modDepthScale_[ch]);
+            // Per-sample random jitter: fast mode blurring complementing the
+            // slow random-walk. Each channel has its own xorshift32 stream.
+            float jitter = frozen_ ? 0.0f : (nextDrift (lfoPRNG_[ch]) * noiseModDepth_ * modDepthScale_[ch]);
+            float readDelay = std::max (delayLength_[ch] + mod + jitter, 1.0f);
             float readPos = static_cast<float> (dl.writePos) - readDelay;
 
             int intIdx = static_cast<int> (std::floor (readPos));
             float frac = readPos - static_cast<float> (intIdx);
 
             delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
-
-            // Advance LFO with "Wander" drift (classic reverb technique).
-            // Adds ±8% random perturbation to the phase increment each sample
-            // so the modulation never exactly repeats — organic, not mechanical.
-            float drift = nextDrift (lfoPRNG_[ch]) * lfoPhaseInc_[ch] * 0.08f;
-            lfoPhase_[ch] += lfoPhaseInc_[ch] + drift;
-            if (lfoPhase_[ch] >= kTwoPi)
-                lfoPhase_[ch] -= kTwoPi;
-            else if (lfoPhase_[ch] < 0.0f)
-                lfoPhase_[ch] += kTwoPi;
         }
 
-        // --- 1.25) Terminal decay: accelerate tail fadeout when below threshold ---
-        if (terminalDecayFactor_ < 1.0f && ! frozen_)
+        // --- 1.25) Terminal decay HARD-DISABLED ---
+        // Caused "thin baseline with transient bursts" — see VocalPlatePreset.cpp
+        // for rationale. State members kept for ABI compat.
+        if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
         {
             float sampleEnergy = 0.0f;
             for (int ch = 0; ch < N; ++ch)
                 sampleEnergy += delayOut[ch] * delayOut[ch];
             sampleEnergy *= (1.0f / static_cast<float> (N));
 
-            currentRMS_ = currentRMS_ * 0.9995f + sampleEnergy * 0.0005f;
+            currentRMS_ = rmsAlpha_ * currentRMS_ + (1.0f - rmsAlpha_) * sampleEnergy;
             if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
-            else peakRMS_ *= 0.99999f;
+            else peakRMS_ *= peakDecayAlpha_;
 
-            float rmsDB = 10.0f * std::log10 (std::max (currentRMS_, 1e-20f));
-            float peakDB = 10.0f * std::log10 (std::max (peakRMS_, 1e-20f));
-            // Note: terminalDecayThresholdDB_ is stored as NEGATIVE (e.g. -40.0f),
-            // so -terminalDecayThresholdDB_ = +40.0f. This activates when RMS has
-            // dropped 40dB below peak — the intended "tail has faded" condition.
-            terminalDecayActive_ = (peakDB - rmsDB > -terminalDecayThresholdDB_)
+            // Compare ratio in linear domain (avoids per-sample log10).
+            // terminalDecayThresholdDB_ is stored NEGATIVE (e.g. -40.0f);
+            // terminalLinearThreshold_ = 10^4 for -40dB → activates when
+            // peak/RMS ratio exceeds threshold (tail has faded).
+            float ratio = peakRMS_ / std::max (currentRMS_, 1e-20f);
+            terminalDecayActive_ = (ratio > terminalLinearThreshold_)
                                  && (peakRMS_ > 1e-12f);
             if (terminalDecayActive_)
             {
@@ -432,6 +463,13 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         {
             auto& dl = delayLines_[ch];
 
+            // (Vestigial feedback / crossover modulation hooks removed during
+            // the LFO refactor — they referenced the now-deleted lfoPhase_
+            // array. They were unreachable: the public setFeedbackModDepth /
+            // setCrossoverModDepth setters are never invoked by anyone in the
+            // current code path, so the previous code always took the
+            // else-branch. Drop entirely rather than carry dead state.)
+
             // When frozen, bypass damping (unity feedback) to sustain tail indefinitely
             float filtered = frozen_ ? feedback[ch] : dampFilter_[ch].process (feedback[ch]);
 
@@ -478,8 +516,13 @@ void FDNReverb::process (const float* inputL, const float* inputR,
                                          : (((dl.writePos ^ ch) & 1)
                                                 ? DspUtils::kDenormalPrevention
                                                 : -DspUtils::kDenormalPrevention);
+            // Soft-clip the post-filter feedback before write-back. Engages
+            // only when the loop pushes above ±1.0 — adds analog-style warmth
+            // on loud transients while leaving quiet tail samples linear
+            // (preserves RT60 calibration).
+            const float satFiltered = DspUtils::softClip (filtered, satThreshold, satCeiling);
             dl.buffer[static_cast<size_t> (dl.writePos)] =
-                filtered + inputSample * polarity * inputGain + denormalBias;
+                satFiltered + inputSample * polarity * inputGain + denormalBias;
 
             dl.writePos = (dl.writePos + 1) & dl.mask;
         }
@@ -543,11 +586,10 @@ void FDNReverb::process (const float* inputL, const float* inputR,
         // per unit time, producing higher energy density without compensation.
         // Soft-clip output: fastTanh knee at ~±1.0, scaled by kSafetyClip for headroom.
         // Replaces hard clamp — smoother limiting prevents harsh artifacts on overloads.
-        float rawL = outL * kOutputLevel * sizeCompensation_ * lateGainScale_;
-        float rawR = outR * kOutputLevel * sizeCompensation_ * lateGainScale_;
-        outputL[i] = DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip;
-        outputR[i] = DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip;
-    }
+        float rawL = outL * kOutputLevel * sizeCompensation_;
+        float rawR = outR * kOutputLevel * sizeCompensation_;
+        outputL[i] = std::clamp (DspUtils::fastTanh (rawL / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);
+        outputR[i] = std::clamp (DspUtils::fastTanh (rawR / kSafetyClip) * kSafetyClip * lateGainScale_, -kSafetyClip, kSafetyClip);    }
 }
 
 // ---------------------------------------------------------------------------
@@ -565,6 +607,17 @@ void FDNReverb::setBassMultiply (float mult)
         updateDecayCoefficients();
 }
 
+void FDNReverb::setMidMultiply (float mult)
+{
+    midMultiply_ = std::clamp (mult, 0.1f, 4.0f);
+    if (prepared_) updateDecayCoefficients();
+}
+
+void FDNReverb::setSaturation (float amount)
+{
+    saturationAmount_ = std::clamp (amount, 0.0f, 1.0f);
+}
+
 void FDNReverb::setTrebleMultiply (float mult)
 {
     trebleMultiply_ = std::clamp (mult, 0.1f, 1.5f);
@@ -575,6 +628,8 @@ void FDNReverb::setTrebleMultiply (float mult)
 void FDNReverb::setCrossoverFreq (float hz)
 {
     crossoverFreq_ = std::clamp (hz, 200.0f, 4000.0f);
+    if (crossoverFreq_ > highCrossoverFreq_)
+        highCrossoverFreq_ = crossoverFreq_;
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -605,13 +660,27 @@ void FDNReverb::setSize (float size)
 
 void FDNReverb::setFreeze (bool frozen)
 {
+    bool wasTransition = (frozen != frozen_);
     frozen_ = frozen;
-    if (frozen)
+    if (wasTransition)
     {
+        currentRMS_ = 0.0f;
+        peakRMS_ = 0.0f;
+        terminalDecayActive_ = false;
+
+        // Clear bypassed DSP block state so releasing freeze won't pop
         for (int i = 0; i < N; ++i)
         {
+            inlineAP_[i].clear();
+            inlineAP2_[i].clear();
+            inlineAP3_[i].clear();
+            inlineAPShort_[i].clear();
+            dampFilter_[i].reset();
             structHFState_[i] = 0.0f;
             structLFState_[i] = 0.0f;
+            antiAliasState_[i] = 0.0f;
+            dcX1_[i] = 0.0f;
+            dcY1_[i] = 0.0f;
         }
     }
 }
@@ -653,8 +722,15 @@ void FDNReverb::setLateGainScale (float scale)
 
 void FDNReverb::setSizeRange (float min, float max)
 {
-    sizeRangeMin_ = std::max (min, 0.0f);
-    sizeRangeMax_ = std::max (max, sizeRangeMin_);
+    float newMin = std::max (min, 0.0f);
+    float newMax = std::max (max, newMin);
+    if (prepared_)
+    {
+        newMin = std::min (newMin, sizeRangeAllocatedMax_);
+        newMax = std::min (newMax, sizeRangeAllocatedMax_);
+    }
+    sizeRangeMin_ = newMin;
+    sizeRangeMax_ = std::max (newMax, sizeRangeMin_);
     if (prepared_)
     {
         updateDelayLengths();
@@ -670,6 +746,14 @@ void FDNReverb::setInlineDiffusion (float coeff)
     // ringing for longer-delay modes (Hall, Plate). Density is instead
     // improved via 3-stage output diffusion (post-FDN, no feedback impact).
     inlineDiffCoeff3_ = 0.0f;
+}
+
+void FDNReverb::setTankDiffusion (float amount)
+{
+    // Linear: knob 0 → 0 (Hadamard-only density, original behaviour),
+    // knob 1 → 0.55 (Lexicon hall-density convention).
+    float a = std::clamp (amount, 0.0f, 1.0f);
+    setInlineDiffusion (a * 0.55f);
 }
 
 void FDNReverb::setUseShortInlineAP (bool use)
@@ -757,8 +841,6 @@ void FDNReverb::setHadamardPerturbation (float amount)
         return;
     }
 
-    usePerturbedMatrix_ = true;
-
     // Build 16x16 Hadamard matrix (Sylvester construction)
     float H[N][N];
     H[0][0] = 1.0f;
@@ -775,6 +857,12 @@ void FDNReverb::setHadamardPerturbation (float amount)
         }
     }
 
+    // Work entirely in a local temp matrix. Only commit to perturbMatrix_
+    // (and flip usePerturbedMatrix_) if every polar iteration's Gauss-Jordan
+    // inversion converged — otherwise the engine keeps its previous matrix
+    // (either the last good perturbed one or the untouched Hadamard path).
+    float newPerturb[N][N];
+
     // Apply deterministic perturbations (seeded PRNG for reproducibility)
     constexpr float kNorm = 0.25f; // 1/sqrt(16)
     uint32_t seed = 0xDEADBEEF;
@@ -787,7 +875,7 @@ void FDNReverb::setHadamardPerturbation (float amount)
             seed ^= seed << 5;
             float noise = static_cast<float> (static_cast<int32_t> (seed))
                         * (1.0f / 2147483648.0f);
-            perturbMatrix_[i][j] = (H[i][j] + noise * amount) * kNorm;
+            newPerturb[i][j] = (H[i][j] + noise * amount) * kNorm;
         }
     }
 
@@ -798,13 +886,14 @@ void FDNReverb::setHadamardPerturbation (float amount)
     // For a 16x16 nearly-orthogonal matrix, 4 iterations suffice for convergence.
     constexpr int kPolarIters = 4;
 
+    bool allIterationsSucceeded = true;
     for (int iter = 0; iter < kPolarIters; ++iter)
     {
-        // Copy current matrix M
+        // Copy current temp matrix M
         float M[N][N];
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j)
-                M[i][j] = perturbMatrix_[i][j];
+                M[i][j] = newPerturb[i][j];
 
         // Compute M^{-1} via Gauss-Jordan elimination on [M | I]
         float aug[N][2 * N];
@@ -817,6 +906,7 @@ void FDNReverb::setHadamardPerturbation (float amount)
             }
         }
 
+        bool gaussJordanSucceeded = true;
         for (int col = 0; col < N; ++col)
         {
             // Partial pivoting for numerical stability
@@ -839,7 +929,10 @@ void FDNReverb::setHadamardPerturbation (float amount)
 
             float diag = aug[col][col];
             if (std::fabs (diag) < 1e-12f)
-                break; // Singular — bail out (shouldn't happen for perturbed Hadamard)
+            {
+                gaussJordanSucceeded = false;
+                break; // Singular — leave perturbMatrix_ untouched.
+            }
 
             float invDiag = 1.0f / diag;
             for (int k = 0; k < 2 * N; ++k)
@@ -855,11 +948,27 @@ void FDNReverb::setHadamardPerturbation (float amount)
             }
         }
 
+        if (! gaussJordanSucceeded)
+        {
+            allIterationsSucceeded = false;
+            break;
+        }
+
         // M^{-1} is now in aug[i][j+N]. We need M^{-T} (transpose of inverse).
-        // Compute M_{k+1} = 0.5 * (M + M^{-T})
+        // Compute M_{k+1} = 0.5 * (M + M^{-T}) into the temp matrix.
         for (int i = 0; i < N; ++i)
             for (int j = 0; j < N; ++j)
-                perturbMatrix_[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
+                newPerturb[i][j] = 0.5f * (M[i][j] + aug[j][i + N]);
+    }
+
+    // Only publish the new matrix if the polar projection converged on every
+    // iteration — otherwise leave perturbMatrix_ and usePerturbedMatrix_ alone.
+    if (allIterationsSucceeded)
+    {
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                perturbMatrix_[i][j] = newPerturb[i][j];
+        usePerturbedMatrix_ = true;
     }
 }
 
@@ -922,6 +1031,8 @@ void FDNReverb::setModDepthFloor (float floor)
 void FDNReverb::setHighCrossoverFreq (float hz)
 {
     highCrossoverFreq_ = std::clamp (hz, 1000.0f, 20000.0f);
+    if (highCrossoverFreq_ < crossoverFreq_)
+        crossoverFreq_ = highCrossoverFreq_;
     if (prepared_)
         updateDecayCoefficients();
 }
@@ -965,9 +1076,22 @@ void FDNReverb::setStructuralLFDamping (float hz)
     structLFCoeff_ = std::exp (-kTwoPi * hz / static_cast<float> (sampleRate_));
 }
 
+void FDNReverb::setFeedbackModDepth (float depth)
+{
+    feedbackModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+}
+
 void FDNReverb::setCrossoverModDepth (float depth)
 {
+    float prev = crossoverModDepth_;
     crossoverModDepth_ = std::clamp (depth, 0.0f, 1.0f);
+    // When modulation is disabled, restore the base crossover coefficient so
+    // dampFilter_ doesn't stay stuck at the last modulated value.
+    if (prev > 0.0f && crossoverModDepth_ == 0.0f)
+    {
+        for (int ch = 0; ch < N; ++ch)
+            dampFilter_[ch].setLowCrossoverCoeff (baseLowCrossoverCoeff_);
+    }
 }
 
 void FDNReverb::setDecayBoost (float boost)
@@ -979,8 +1103,10 @@ void FDNReverb::setDecayBoost (float boost)
 
 void FDNReverb::setTerminalDecay (float thresholdDB, float factor)
 {
-    terminalDecayThresholdDB_ = thresholdDB;
+    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
     terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
+    // Precompute linear threshold to avoid per-sample log10
+    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
 }
 
 void FDNReverb::clearBuffers()
@@ -999,11 +1125,18 @@ void FDNReverb::clearBuffers()
         antiAliasState_[i] = 0.0f;
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
-        // Deterministic LFO/PRNG reset for clean state on algorithm switch.
-        // (Wrapper prepare() no longer calls clearBuffers(), so this does not
-        // conflict with prepare()'s stochastic randomization.)
-        lfoPhase_[i] = 0.0f;
-        lfoPRNG_[i] = static_cast<uint32_t> (i + 1) * 2654435761u;
+    }
+    // Match prepare() exactly so clearBuffers() reproduces the identical
+    // LFO + jitter PRNG start state — otherwise transport resets would
+    // diverge from a fresh prepare for the same preset.
+    constexpr uint32_t kFixedBaseSeed = 0x5A3C9E71u;
+    for (int i = 0; i < N; ++i)
+    {
+        const uint32_t seed = kFixedBaseSeed + static_cast<uint32_t> (i * 1847);
+        lfos_[i].prepare (static_cast<float> (sampleRate_), seed);
+        lfos_[i].setRate  (modRateHz_);
+        lfos_[i].setDepth (modDepthSamples_);
+        lfoPRNG_[i] = seed ^ 0x9E3779B9u;
     }
     // Reset terminal decay RMS tracking
     peakRMS_ = 0.0f;
@@ -1051,11 +1184,13 @@ void FDNReverb::updateDelayLengths()
         float minDelay = delayLength_[0];
         for (int i = 1; i < N; ++i)
             minDelay = std::min (minDelay, delayLength_[i]);
+        minDelay = std::max (minDelay, 1e-6f);  // Prevent division by zero
 
         float sumSqIn = 0.0f;
         for (int i = 0; i < N; ++i)
         {
-            inputGainScale_[i] = 1.0f / std::sqrt (delayLength_[i] / minDelay);
+            float ratio = std::max (delayLength_[i], minDelay) / minDelay;
+            inputGainScale_[i] = 1.0f / std::sqrt (ratio);
             sumSqIn += inputGainScale_[i] * inputGainScale_[i];
         }
         // Normalize so RMS of gain vector equals 1 (preserves overall input energy)
@@ -1086,6 +1221,10 @@ void FDNReverb::updateDecayCoefficients()
     // High crossover: mid/air split (per-algorithm, e.g. Room=6kHz, others=20kHz)
     float highCrossoverCoeff = std::exp (-kTwoPi * highCrossoverFreq_
                                          / static_cast<float> (sampleRate_));
+
+    // Store base crossover coefficients for per-sample modulation
+    baseLowCrossoverCoeff_  = lowCrossoverCoeff;
+    baseHighCrossoverCoeff_ = highCrossoverCoeff;
 
     for (int i = 0; i < N; ++i)
     {
@@ -1121,9 +1260,9 @@ void FDNReverb::updateDecayCoefficients()
         // bassMultiply > 1.0 → lows sustain longer (g_low > g_base)
         float gLow = std::pow (gBase, 1.0f / bassMultiply_);
 
-        // Mid band (lowCrossover..highCrossover): same as old gHigh formula.
-        // Preserves the matched 4kHz RT60 from TwoBandDamping calibration.
-        float gMid = std::pow (gBase, 1.0f / trebleMultiply_);
+        // True 3-band: mid band uses midMultiply_ (default 1.0 = natural rate).
+        // Previously locked to trebleMultiply_, which collapsed mid into treble.
+        float gMid = std::pow (gBase, 1.0f / midMultiply_);
 
         // Air band (> highCrossover): independent damping via airTrebleMultiply_.
         // gHigh = gBase^(1/airTrebleMultiply_): lower values = faster decay.
@@ -1138,10 +1277,22 @@ void FDNReverb::updateDecayCoefficients()
 void FDNReverb::updateModDepth()
 {
     // Scale by sample rate ratio so modulation depth (in time) is consistent
-    // across 44.1kHz, 48kHz, 96kHz etc.
+    // across 44.1 k / 48 k / 96 k etc.
+    // Normalised across all four engines: depth × 16 samples peak at 44.1 k.
+    // (Was 4 — a quarter of the others — which made the FDN's modulation
+    // feel almost off when the user dialled the knob midway. The per-channel
+    // modDepthScale_[ch] still tapers individual channels by delay length so
+    // longer delays modulate more, shorter less — that proportional shape
+    // is preserved on top of the new base.)
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = modDepth_ * 4.0f * rateRatio;
+    modDepthSamples_ = modDepth_ * 16.0f * rateRatio;
     noiseModDepth_ = noiseModDepthParam_ * rateRatio;
+    // Push the new depth to every per-channel random-walk LFO. The
+    // process loop multiplies by modDepthScale_[ch] so we set the LFOs
+    // to the broadband depth and let the per-channel weighting happen
+    // at the read site.
+    for (int i = 0; i < N; ++i)
+        lfos_[i].setDepth (modDepthSamples_);
 }
 
 void FDNReverb::updateLFORates()
@@ -1155,8 +1306,5 @@ void FDNReverb::updateLFORates()
     };
 
     for (int i = 0; i < N; ++i)
-    {
-        float rateHz = modRateHz_ * kRateFactors[i];
-        lfoPhaseInc_[i] = kTwoPi * rateHz / static_cast<float> (sampleRate_);
-    }
+        lfos_[i].setRate (modRateHz_ * kRateFactors[i]);
 }

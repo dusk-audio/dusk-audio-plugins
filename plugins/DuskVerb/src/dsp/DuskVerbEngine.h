@@ -5,20 +5,17 @@
 #include "DiffusionStage.h"
 #include "EarlyReflections.h"
 #include "FDNReverb.h"
-#include "OutputDiffusion.h"
+#include "SixAPTankEngine.h"
+#include "NonLinearEngine.h"
 #include "QuadTank.h"
-#include "TailChorus.h"
-#include "TiledRoomReverb.h"
-#include "presets/PresetEngineBase.h"
+#include "ShimmerEngine.h"
+#include "SpringEngine.h"
 
+#include <algorithm>
 #include <cmath>
-#include <memory>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 // One-pole exponential smoother for per-sample parameter interpolation.
-// Prevents zipper noise when parameters change between processing sub-blocks.
 struct OnePoleSmoother
 {
     float current = 0.0f;
@@ -40,168 +37,165 @@ struct OnePoleSmoother
         current = target + coeff * (current - target);
         return current;
     }
+
+    // Advance the smoother by `n` samples in O(1) using coeff^n. Used at the
+    // top of each process block for parameters whose downstream consumers
+    // (filter coefficients, tank delay lengths) are too expensive to
+    // recompute per-sample.
+    float skip (int n)
+    {
+        if (n <= 0) return current;
+        float multiplier = std::pow (coeff, static_cast<float> (n));
+        current = target + multiplier * (current - target);
+        return current;
+    }
 };
 
+// DuskVerb Shell engine.
+//
+// Routing (every algorithm):
+//
+//   in (L,R)
+//     ↓ pre-delay
+//     ├──► EarlyReflections ── (er_size, er_level)
+//     │
+//     └──► [DiffusionStage] (engines: Dattorro / QuadTank / FDN)
+//           ↓
+//          selected late tank (Dattorro / 6-AP / QuadTank / FDN / Spring / NonLinear / Shimmer)
+//           ↓
+//          erL+lateL, erR+lateR
+//           ↓
+//          Lo Cut → Hi Cut → Width → Mix (equal-power) → Gain Trim
+//           ↓
+//          out (L, R)
+//
+// All four sub-engines are owned (never allocated on the audio thread). The
+// `algorithm` parameter selects which one consumes the post-predelay signal;
+// the others sleep but stay prepared so a switch only takes a buffer-clear
+// + setAlgorithm pointer flip.
 class DuskVerbEngine
 {
 public:
     void prepare (double sampleRate, int maxBlockSize);
     void process (float* left, float* right, int numSamples);
 
+    // Discrete (non-smoothed) controls.
     void setAlgorithm (int index);
-    void setDecayTime (float seconds);
-    void setBassMultiply (float mult);
-    void setTrebleMultiply (float mult);
-    void setCrossoverFreq (float hz);
-    void setModDepth (float depth);
-    void setModRate (float hz);
-    void setSize (float size);
-    void setPreDelay (float milliseconds);
-    void setDiffusion (float amount);
-    void setOutputDiffusion (float amount);
-    void setERLevel (float level);
-    void setERSize (float size);
-    void setMix (float dryWet);
-    void setLoCut (float hz);
-    void setHiCut (float hz);
-    void setWidth (float width);
     void setFreeze (bool frozen);
-    void setGateParams (float holdMs, float releaseMs);
-    void setGainTrim (float dB);
-    void setInputOnset (float ms);
-    void loadCorrectionFilter (int presetIndex);
-    void loadPresetTapPositions (int presetIndex);
-    void setDattorroDelayScale (float scale);
-    void setDattorroSoftOnsetMs (float ms);
-    void setLateFeedForwardLevel (float level);
-    void resetLateFeedForwardLevel();  // Restore algorithm config default
-    void setDattorroLimiter (float thresholdDb, float releaseMs);
-    void updateTapPositions (float l0, float l1, float l2, float l3, float l4, float l5, float l6,
-                             float r0, float r1, float r2, float r3, float r4, float r5, float r6);
-    void updateTapPositionsAndGains (float l0, float l1, float l2, float l3, float l4, float l5, float l6,
-                                     float r0, float r1, float r2, float r3, float r4, float r5, float r6,
-                                     float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
-                                     float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6);
-    // Apply gains on top of existing tap positions (does not change positions)
-    void applyTapGains (float gl0, float gl1, float gl2, float gl3, float gl4, float gl5, float gl6,
-                        float gr0, float gr1, float gr2, float gr3, float gr4, float gr5, float gr6);
-    void setCustomERTaps (const CustomERTap* taps, int numTaps);
-    void loadPresetERTaps (const char* presetName);  // Looks up VV-extracted taps by name
+    // Engine-specific: only the NonLinear engine has a gate. For other
+    // engines this is a no-op (the call is forwarded but ignored).
+    void setNonLinearGateEnabled (bool enabled);
 
-    // --- Optimizer-tunable overrides (runtime parameter → sub-component forwarding) ---
-    void setAirDampingOverride (float scale);
-    void setHighCrossoverOverride (float hz);
-    void setNoiseModOverride (float samples);
-    void setInlineDiffusionOverride (float coeff);
-    void setStereoCouplingOverride (float amount);
-    void setChorusDepthOverride (float depth);
-    void setChorusRateOverride (float hz);
-    void setOutputGainOverride (float gain);
-    void setERCrossfeedOverride (float amount);
-    void setDecayTimeScaleOverride (float scale);
-    void setDecayBoostOverride (float dB);
-    void setStructuralHFDampingOverride (float hz);
-    void setOutputLowShelfOverride (float dB);
-    void setOutputHighShelfOverride (float dB, float hz);
-    void setOutputMidEQOverride (float dB, float hz);
-    void setTerminalDecayOverride (float thresholdDb, float factor);
-    void setERAirCeilingOverride (float hz);
-    void setERAirFloorOverride (float hz);
+    // Tank parameters — propagated to whichever engine is currently active.
+    void setDecayTime     (float seconds);
+    void setSize          (float size);
+    void setBassMultiply  (float mult);
+    void setMidMultiply   (float mult);            // 3-band mid multiplier
+    void setTrebleMultiply(float mult);
+    void setCrossoverFreq (float hz);              // bass↔mid (legacy "crossover")
+    void setHighCrossoverFreq (float hz);          // mid↔high (3-band)
+    void setSaturation    (float amount);          // 0..1 drive-style softClip
+    void setModDepth      (float depth);
+    void setModRate       (float hz);
+    void setDiffusion     (float amount);
+
+    // Early reflections.
+    void setERLevel (float level);
+    void setERSize  (float size);
+
+    // Shell parameters (smoothed in process()).
+    void setPreDelay  (float milliseconds);
+    void setMix       (float dryWet);
+    void setLoCut     (float hz);
+    void setHiCut     (float hz);
+    void setWidth     (float width);
+    void setGainTrim  (float dB);
+    void setMonoBelow (float hz);             // 20 = bypass; up = sums lows to mono
+
+    // Per-preset SixAPTank brightness/density tunables. Forwarded directly to
+    // sixAPTank_ regardless of currentEngine_ — they're only audible when the
+    // SixAPTank is the active engine, but pre-applying them at preset-load
+    // time is harmless (and necessary so the values are in place before the
+    // engine starts processing).
+    void setSixAPDensityBaseline (float v);
+    void setSixAPBloomCeiling    (float v);
+    void setSixAPBloomStagger    (const float values[6]);
+    void setSixAPEarlyMix        (float v);
+    void setSixAPOutputTrim      (float v);
 
 private:
+    // Engines (all owned; only one runs at a time).
+    DattorroTank       dattorro_;
+    SixAPTankEngine  sixAPTank_;
+    QuadTank           quad_;
+    FDNReverb          fdn_;
+    SpringEngine       spring_;
+    NonLinearEngine    nonLinear_;
+    ShimmerEngine      shimmer_;
+
+    // Pre-tank input diffuser, applied to every engine. Smears transients
+    // before they hit the tank so onsets bloom into the tail rather than
+    // arriving as discrete clicks.
     DiffusionStage diffuser_;
-    FDNReverb fdn_;
-    DattorroTank dattorroTank_;
-    OutputDiffusion outputDiffuser_;
     EarlyReflections er_;
-    bool useDattorroTank_ = false;
-    bool useQuadTank_ = false;
-    QuadTank quadTank_;
-    QuadTank hybridQuadTank_;  // Dedicated secondary engine for hybrid dual-engine mode
-    TiledRoomReverb tiledRoomReverb_;  // Custom per-preset reverb engine (legacy, unused)
-    bool useCustomPresetEngine_ = false;
 
-    // Per-preset engines: every registered preset engine is constructed
-    // and prepared once during DuskVerbEngine::prepare() (off the audio
-    // thread) and stored in this map. applyAlgorithm() then just swaps
-    // the active raw pointer with no allocation.
-    std::unordered_map<std::string, std::unique_ptr<PresetEngineBase>> prebuiltPresetEngines_;
-    PresetEngineBase* presetEngine_ = nullptr;  // non-owning view into prebuiltPresetEngines_
+    EngineType currentEngine_ = EngineType::Dattorro;
+    int currentAlgorithm_ = 0;
 
-    const AlgorithmConfig* config_ = &kHall;
-
-    std::vector<float> scratchL_;
-    std::vector<float> scratchR_;
-    std::vector<float> erOutL_;
-    std::vector<float> erOutR_;
-
-    // Hybrid dual-engine: secondary engine scratch buffers
-    std::vector<float> hybridL_;
-    std::vector<float> hybridR_;
-    float hybridBlend_ = 0.0f;
-    const AlgorithmConfig* hybridConfig_ = nullptr;
-    std::vector<float> preDiffL_;
-    std::vector<float> preDiffR_;
-
+    // Pre-delay ring buffer.
     std::vector<float> preDelayBufL_;
     std::vector<float> preDelayBufR_;
     int preDelayWritePos_ = 0;
     int preDelayMask_ = 0;
     int preDelaySamples_ = 0;
 
-    double sampleRate_ = 44100.0;
-    int maxBlockSize_ = 0;
+    // Scratch buffers (sized by prepare()).
+    std::vector<float> tankInL_, tankInR_;
+    std::vector<float> tankOutL_, tankOutR_;
+    std::vector<float> erOutL_, erOutR_;
 
-    // Per-sample smoothed output parameters (prevents zipper noise on fast automation)
+    // Per-sample smoothed shell parameters (consumed inside the per-sample loop).
     OnePoleSmoother mixSmoother_;
-    OnePoleSmoother erLevelSmoother_;
     OnePoleSmoother widthSmoother_;
+    OnePoleSmoother erLevelSmoother_;
+    OnePoleSmoother gainTrimSmoother_;
+
+    // Per-BLOCK smoothed parameters (advanced once per process() call). These
+    // drive expensive recomputes (filter biquad coeffs / tank delay lengths)
+    // that would cost too much per-sample, so we cap their evolution at the
+    // block boundary instead.
+    OnePoleSmoother sizeSmoother_;
     OnePoleSmoother loCutSmoother_;
     OnePoleSmoother hiCutSmoother_;
+    OnePoleSmoother monoBelowSmoother_;
+    float lastAppliedSize_      = -1.0f;
+    float lastAppliedLoCut_     = -1.0f;
+    float lastAppliedHiCut_     = -1.0f;
+    float lastAppliedMonoHz_    = -1.0f;
 
-    float erLevelScale_ = 1.0f;
-    float lateGainScale_ = 1.0f;
-    float decayGainComp_ = 1.0f; // Decay-dependent output compensation (short-decay boost)
-    float erCrossfeed_ = 0.0f;
-    OnePoleSmoother outputGainSmoother_; // Per-algorithm output gain (smoothed to avoid clicks)
+    // Mono Maker — 1st-order matched-phase complementary split. Below the
+    // cutoff, L+R are summed to mono; above stays stereo. Magnitude-flat
+    // because we use input − lowpass for the high band (only 1st-order
+    // satisfies perfect reconstruction).
+    bool  monoMakerEnabled_ = false;
+    float monoLPCoeff_      = 0.0f;
+    float monoLPStateL_     = 0.0f;
+    float monoLPStateR_     = 0.0f;
 
-    float decayTime_ = 2.5f; // Cached for decay-linked output diffusion
-    float gainTrimLinear_ = 1.0f; // Per-preset level correction (linear multiplier from dB)
+    double sampleRate_ = 44100.0;
+    int    maxBlockSize_ = 0;
 
-    // Per-preset output peak limiter (applied after late gain, before output diffuser)
-    float outputLimiterThreshold_ = 0.0f; // 0 = disabled. Linear amplitude.
-    float outputLimiterRelease_ = 0.999f; // One-pole release (~30ms at 48kHz)
-    float outputLimiterEnv_ = 0.0f;       // Current peak envelope
+    bool   frozen_ = false;
 
-    // Cached raw param values for re-application after algorithm switch
-    float lastDiffusion_ = 0.75f;
-    float lastOutputDiffusion_ = 0.5f;
-    float lastModDepth_ = 0.4f;
-    float lastModRate_ = 0.8f;
-    float lastTrebleMult_ = 0.5f;
-    float lastBassMult_ = 1.2f;
-    float lastERLevel_ = 0.5f;
-    float lastSize_ = 0.5f;
-    float lastCrossoverHz_ = 1000.0f;
-    float lastDecayBoost_ = 1.0f;
+    void pushSizeToTanks (float size);  // helper — internal use only
 
-    // Input bandwidth filter (Dattorro-style one-pole LP, ~10kHz)
-    float inputBwCoeff_ = 0.0f;
-    float inputBwStateL_ = 0.0f;
-    float inputBwStateR_ = 0.0f;
-
-    // DC blocker (first-order highpass, ~5Hz cutoff)
-    float dcCoeff_ = 0.9993f;
-    float dcX1L_ = 0.0f, dcY1L_ = 0.0f;
-    float dcX1R_ = 0.0f, dcY1R_ = 0.0f;
-
-    // Output EQ: second-order Butterworth biquads (wet signal only)
+    // Output IIR filters (Butterworth biquad cookbook).
     struct Biquad
     {
-        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
-        float a1 = 0.0f, a2 = 0.0f;
-        float z1L = 0.0f, z2L = 0.0f;
-        float z1R = 0.0f, z2R = 0.0f;
+        float b0 = 1, b1 = 0, b2 = 0;
+        float a1 = 0, a2 = 0;
+        float z1L = 0, z2L = 0;
+        float z1R = 0, z2R = 0;
 
         float processL (float x)
         {
@@ -222,102 +216,7 @@ private:
 
     Biquad loCutFilter_;
     Biquad hiCutFilter_;
-    Biquad hiCutFilter2_;  // Second cascade stage: 4-pole (24 dB/oct) total for vintage anti-aliasing
-    float loCutHz_ = 20.0f;
-    float hiCutHz_ = 20000.0f;
-    void updateLoCutCoeffs();
-    void updateHiCutCoeffs();
 
-    // Per-algorithm output EQ: low shelf at 250Hz + mid parametric + high shelf.
-    Biquad lowShelfFilter_;
-    Biquad highShelfFilter_;
-    Biquad midEQFilter_;
-    bool lowShelfEnabled_ = false;
-    bool highShelfEnabled_ = false;
-    bool midEQEnabled_ = false;
-    void updateOutputEQCoeffs();
-
-    // Anti-alias filtering is handled inside the FDN feedback loop (first-order LP at ~17kHz).
-    // Accumulates naturally across iterations — no output-stage filter needed.
-
-    // Freeze mode
-    bool frozen_ = false;
-
-    // Saturation: when false, bypass fastTanh for clean linear output
-    bool enableSaturation_ = false;
-
-    // RMS-tracking peak limiter: reduces crest factor by limiting instantaneous
-    // peaks relative to short-term RMS. Targets FDN's Hadamard peak correlation.
-    float crestLimitRatio_ = 0.0f;   // 0 = disabled, 1.5 = limit peaks to 1.5× RMS
-    static constexpr float kRmsWindowMs = 5.0f;
-    int rmsWindowSamples_ = 0;
-    std::vector<float> rmsBufferL_;
-    std::vector<float> rmsBufferR_;
-    float rmsSumL_ = 0.0f;
-    float rmsSumR_ = 0.0f;
-    int rmsIndex_ = 0;
-
-    // Tail chorus: stereo amplitude modulation on reverb tail
-    TailChorus tailChorus_;
-
-    // Terminal decay: when reverb tail drops below threshold, accelerate decay
-    float terminalThresholdDb_ = 0.0f; // 0 = disabled
-    float terminalFactor_ = 0.992f;
-
-    // Structural HF damping override: -1.0f means "no override, use config default".
-    // Cached so applyAlgorithm() can replay it after the config-baseline write.
-    float structuralHFOverrideHz_ = -1.0f;
-
-    // Decay time scale override: runtime multiplier (0 = use config default)
-    float decayTimeScaleOverride_ = 0.0f;
-
-    // Late feed-forward: pre-diffusion late reverb blended into output
-    float lateFeedForwardLevel_ = 0.0f;
-
-    // Late reverb onset envelope: ramps FDN output from 0→1 to match VV's
-    // slower density buildup (parallel FDN inherently produces too much early energy)
-    float lateOnsetRamp_ = 1.0f;      // Current envelope value (0→1)
-    float lateOnsetIncrement_ = 0.0f; // Per-sample increment (1.0 / rampSamples)
-    int   lateOnsetSamples_ = 0;      // Total ramp duration in samples
-
-    // Per-preset spectral correction filter: 5-stage biquad cascade that shapes
-    // DattorroTank output to match VV's exact frequency response.
-    // Coefficients generated offline by generate_correction_filters.py.
-    static constexpr int kNumCorrectionStages = 8;
-    Biquad correctionFilter_[kNumCorrectionStages] {};
-    bool correctionFilterActive_ = false;
-
-    // Fix 4 (spectral): ER corrective EQ — applies the same per-preset 12-band
-    // correction to the ER path so the combined ER+late signal is spectrally matched.
-    // Coefficients are queried from the active PresetEngineBase at algorithm switch.
-    static constexpr int kMaxERCorrBands = 12;
-    Biquad erCorrEQ_[kMaxERCorrBands] {};
-    int erCorrEQBands_ = 0;
-    bool erCorrEQActive_ = false;
-
-    // Fix 1 (decay_ratio): per-preset onset envelope table — replaces the simple
-    // squared linear ramp with a VV-derived energy buildup curve.
-    const float* onsetEnvelopeTable_ = nullptr;
-    int onsetEnvelopeTableSize_ = 0;
-    float onsetEnvelopePhase_ = 0.0f;   // 0→1 progress through table
-    float onsetEnvelopeInc_ = 0.0f;     // per-sample increment
-    bool useOnsetTable_ = false;
-    bool onsetInputWasQuiet_ = true;  // Tracks silence→signal transition for re-triggering
-
-    // Gate envelope: truncates reverb tail (gated reverb effect)
-    bool gateEnabled_ = false;
-    int gateHoldSamples_ = 0;
-    float gateReleaseCoeff_ = 0.0f;
-    float gateEnvelope_ = 0.0f;
-    int gateHoldCounter_ = 0;
-    bool gateTriggered_ = false;
-
-    // Algorithm crossfade: mute-and-morph to prevent clicks on algorithm switch
-    static constexpr int kFadeSamples = 64;
-    int pendingAlgorithm_ = -1;
-    int fadeCounter_ = 0;
-    bool fadingOut_ = false;
-    bool firstAlgorithmSet_ = true;
-
-    void applyAlgorithm (int index);
+    void updateLoCutCoeffs (float hz);
+    void updateHiCutCoeffs (float hz);
 };

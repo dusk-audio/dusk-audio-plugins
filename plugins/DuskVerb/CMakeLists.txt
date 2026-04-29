@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 include(${CMAKE_SOURCE_DIR}/cmake/PluginVersion.cmake)
 
 # Get version from git tag or CI environment (fallback to default version)
-set(DUSKVERB_DEFAULT_VERSION "0.3.1")
+set(DUSKVERB_DEFAULT_VERSION "0.4.0")
 get_plugin_version("duskverb" DUSKVERB_VERSION)
 if(NOT DUSKVERB_VERSION OR DUSKVERB_VERSION STREQUAL "0.0.0")
     set(DUSKVERB_VERSION ${DUSKVERB_DEFAULT_VERSION})
@@ -61,6 +61,8 @@ juce_add_plugin(DuskVerb
 )
 
 # Generate JuceHeader.h
+apply_clap_extension(DuskVerb duskverb audio-effect reverb stereo)
+
 juce_generate_juce_header(DuskVerb)
 
 # Add source files
@@ -71,19 +73,16 @@ target_sources(DuskVerb
         src/dsp/FDNReverb.cpp
         src/dsp/DattorroTank.cpp
         src/dsp/QuadTank.cpp
-        src/dsp/TiledRoomReverb.cpp
+        src/dsp/SixAPTankEngine.cpp
         src/dsp/DiffusionStage.cpp
         src/dsp/DuskVerbEngine.cpp
         src/dsp/OutputDiffusion.cpp
         src/dsp/EarlyReflections.cpp
-        src/dsp/presets/PresetEngineRegistry.cpp
+        src/dsp/SpringEngine.cpp
+        src/dsp/NonLinearEngine.cpp
+        src/dsp/ShimmerEngine.cpp
         ../shared/LEDMeter.cpp
 )
-
-# Per-preset engine implementations (glob: one .cpp per factory preset)
-file(GLOB DUSKVERB_PRESET_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/presets/*.cpp")
-list(REMOVE_ITEM DUSKVERB_PRESET_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/presets/PresetEngineRegistry.cpp")
-target_sources(DuskVerb PRIVATE ${DUSKVERB_PRESET_SOURCES})
 
 # Set include directories
 target_include_directories(DuskVerb
@@ -98,6 +97,10 @@ target_compile_definitions(DuskVerb
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
+        # We've never released a VST2 of DuskVerb — silence JUCE's
+        # automation-ID compatibility warning that fires when
+        # VST3_CAN_REPLACE_VST2 is TRUE.
+        JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1
 )
 
 # Set version compile definitions (from git tag or CI)
@@ -137,33 +140,6 @@ set_target_properties(DuskVerb PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# --- IR Test Tool (standalone, no plugin wrapper) ---
-if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
-    add_executable(DuskVerb_IRTest
-        src/test/IRGenerator.cpp
-        src/dsp/FDNReverb.cpp
-        src/dsp/DattorroTank.cpp
-        src/dsp/QuadTank.cpp
-        src/dsp/TiledRoomReverb.cpp
-        src/dsp/DiffusionStage.cpp
-        src/dsp/DuskVerbEngine.cpp
-        src/dsp/OutputDiffusion.cpp
-        src/dsp/EarlyReflections.cpp
-    )
-
-    target_include_directories(DuskVerb_IRTest PRIVATE src)
-
-    target_compile_definitions(DuskVerb_IRTest PRIVATE
-        JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
-    )
-
-    target_link_libraries(DuskVerb_IRTest
-        PRIVATE
-            juce::juce_audio_basics
-            juce::juce_audio_formats
-            juce::juce_core
-            juce::juce_dsp
-    )
-endif()
+# Test/IR helper binaries removed during the v2 soft reset — they referenced
+# the SDIR-matching infrastructure (per-preset engines, analyze_ir.py outputs)
+# that was nuked. Re-add against the new clean engine when needed.

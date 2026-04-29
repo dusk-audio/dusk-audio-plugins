@@ -10,6 +10,17 @@ public:
     void prepare (double sampleRate, int maxBlockSize);
     void process (float* left, float* right, int numSamples);
     void setDiffusion (float amount);
+    // 0 disables the built-in LFO wobble on every output allpass (the
+    // cumulative effect across 4 stages × 2 channels can cause pitch
+    // smearing for presets that stack this on top of a modulated tank).
+    void setLfoDepthScale (float scale)
+    {
+        for (int s = 0; s < kNumStages; ++s)
+        {
+            leftAP_[s].setLfoDepthScale (scale);
+            rightAP_[s].setLfoDepthScale (scale);
+        }
+    }
 
 private:
     static constexpr int kNumStages = 4;

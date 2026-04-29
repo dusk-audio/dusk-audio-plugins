@@ -1,0 +1,308 @@
+{
+  "platform": "macOS / Apple Silicon",
+  "sample_rate": 48000,
+  "block_size": 256,
+  "warmup_blocks": 64,
+  "presets": [
+    {
+      "name": "Clean",
+      "category": "Clean",
+      "samples": 5561,
+      "p50_ms": 0.050,
+      "p95_ms": 0.052,
+      "p99_ms": 0.061,
+      "mean_ms": 0.051,
+      "max_ms": 0.107
+    },
+    {
+      "name": "Sparkle",
+      "category": "Clean",
+      "samples": 5561,
+      "p50_ms": 0.050,
+      "p95_ms": 0.052,
+      "p99_ms": 0.056,
+      "mean_ms": 0.050,
+      "max_ms": 0.098
+    },
+    {
+      "name": "Edge of Breakup",
+      "category": "Clean",
+      "samples": 5561,
+      "p50_ms": 0.048,
+      "p95_ms": 0.052,
+      "p99_ms": 0.060,
+      "mean_ms": 0.049,
+      "max_ms": 0.161
+    },
+    {
+      "name": "Blues Clean",
+      "category": "Clean",
+      "samples": 5561,
+      "p50_ms": 0.051,
+      "p95_ms": 0.055,
+      "p99_ms": 0.065,
+      "mean_ms": 0.052,
+      "max_ms": 0.156
+    },
+    {
+      "name": "Country Twang",
+      "category": "Clean",
+      "samples": 5561,
+      "p50_ms": 0.049,
+      "p95_ms": 0.053,
+      "p99_ms": 0.066,
+      "mean_ms": 0.050,
+      "max_ms": 0.157
+    },
+    {
+      "name": "Clean Ambient",
+      "category": "Clean",
+      "samples": 5561,
+      "p50_ms": 0.048,
+      "p95_ms": 0.051,
+      "p99_ms": 0.068,
+      "mean_ms": 0.049,
+      "max_ms": 0.245
+    },
+    {
+      "name": "Chime",
+      "category": "Chime",
+      "samples": 5561,
+      "p50_ms": 0.054,
+      "p95_ms": 0.057,
+      "p99_ms": 0.072,
+      "mean_ms": 0.055,
+      "max_ms": 0.181
+    },
+    {
+      "name": "Jangle",
+      "category": "Chime",
+      "samples": 5561,
+      "p50_ms": 0.053,
+      "p95_ms": 0.057,
+      "p99_ms": 0.059,
+      "mean_ms": 0.054,
+      "max_ms": 0.149
+    },
+    {
+      "name": "Chime Crunch",
+      "category": "Chime",
+      "samples": 5561,
+      "p50_ms": 0.054,
+      "p95_ms": 0.057,
+      "p99_ms": 0.070,
+      "mean_ms": 0.054,
+      "max_ms": 0.154
+    },
+    {
+      "name": "Desert Crunch",
+      "category": "Chime",
+      "samples": 5561,
+      "p50_ms": 0.056,
+      "p95_ms": 0.059,
+      "p99_ms": 0.070,
+      "mean_ms": 0.056,
+      "max_ms": 0.154
+    },
+    {
+      "name": "Boost Lead",
+      "category": "Chime",
+      "samples": 5561,
+      "p50_ms": 0.056,
+      "p95_ms": 0.059,
+      "p99_ms": 0.113,
+      "mean_ms": 0.058,
+      "max_ms": 5.896
+    },
+    {
+      "name": "Chime Shimmer",
+      "category": "Chime",
+      "samples": 5561,
+      "p50_ms": 0.054,
+      "p95_ms": 0.057,
+      "p99_ms": 0.065,
+      "mean_ms": 0.055,
+      "max_ms": 0.150
+    },
+    {
+      "name": "Stack Clean",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.056,
+      "p95_ms": 0.106,
+      "p99_ms": 0.225,
+      "mean_ms": 0.072,
+      "max_ms": 6.545
+    },
+    {
+      "name": "Crunch",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.054,
+      "p95_ms": 0.058,
+      "p99_ms": 0.067,
+      "mean_ms": 0.055,
+      "max_ms": 0.163
+    },
+    {
+      "name": "Classic Rock",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.055,
+      "p95_ms": 0.058,
+      "p99_ms": 0.069,
+      "mean_ms": 0.056,
+      "max_ms": 0.152
+    },
+    {
+      "name": "Classic Lead",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.054,
+      "p95_ms": 0.057,
+      "p99_ms": 0.066,
+      "mean_ms": 0.055,
+      "max_ms": 0.149
+    },
+    {
+      "name": "Hot Rod",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.059,
+      "p95_ms": 0.115,
+      "p99_ms": 0.135,
+      "mean_ms": 0.066,
+      "max_ms": 3.387
+    },
+    {
+      "name": "High Gain",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.056,
+      "p95_ms": 0.059,
+      "p99_ms": 0.072,
+      "mean_ms": 0.057,
+      "max_ms": 0.170
+    },
+    {
+      "name": "Shred",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.057,
+      "p95_ms": 0.061,
+      "p99_ms": 0.079,
+      "mean_ms": 0.058,
+      "max_ms": 0.227
+    },
+    {
+      "name": "Sludge",
+      "category": "Crunch",
+      "samples": 5561,
+      "p50_ms": 0.057,
+      "p95_ms": 0.060,
+      "p99_ms": 0.077,
+      "mean_ms": 0.058,
+      "max_ms": 0.153
+    },
+    {
+      "name": "Blues Harp",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.052,
+      "p95_ms": 0.054,
+      "p99_ms": 0.063,
+      "mean_ms": 0.052,
+      "max_ms": 0.133
+    },
+    {
+      "name": "Indie Clean",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.054,
+      "p95_ms": 0.058,
+      "p99_ms": 0.069,
+      "mean_ms": 0.055,
+      "max_ms": 0.153
+    },
+    {
+      "name": "Ambient Pad",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.050,
+      "p95_ms": 0.052,
+      "p99_ms": 0.059,
+      "mean_ms": 0.050,
+      "max_ms": 0.149
+    },
+    {
+      "name": "Post-Rock Swell",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.058,
+      "p95_ms": 0.060,
+      "p99_ms": 0.112,
+      "mean_ms": 0.059,
+      "max_ms": 0.277
+    },
+    {
+      "name": "80s Arena Rock",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.055,
+      "p95_ms": 0.058,
+      "p99_ms": 0.109,
+      "mean_ms": 0.057,
+      "max_ms": 2.779
+    },
+    {
+      "name": "Tape Echo Lead",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.054,
+      "p95_ms": 0.058,
+      "p99_ms": 0.081,
+      "mean_ms": 0.055,
+      "max_ms": 0.161
+    },
+    {
+      "name": "Surf Rock",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.050,
+      "p95_ms": 0.052,
+      "p99_ms": 0.062,
+      "mean_ms": 0.050,
+      "max_ms": 0.130
+    },
+    {
+      "name": "Metal Rhythm",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.057,
+      "p95_ms": 0.060,
+      "p99_ms": 0.076,
+      "mean_ms": 0.063,
+      "max_ms": 7.457
+    },
+    {
+      "name": "Doom",
+      "category": "Genre",
+      "samples": 5561,
+      "p50_ms": 0.057,
+      "p95_ms": 0.060,
+      "p99_ms": 0.074,
+      "mean_ms": 0.057,
+      "max_ms": 0.144
+    },
+    {
+      "name": "NAM Default",
+      "category": "NAM",
+      "samples": 5561,
+      "p50_ms": 0.002,
+      "p95_ms": 0.002,
+      "p99_ms": 0.002,
+      "mean_ms": 0.002,
+      "max_ms": 0.040
+    }
+  ]
+}

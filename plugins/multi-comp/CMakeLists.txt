@@ -64,6 +64,8 @@ juce_add_plugin(MultiComp
 )
 
 # Generate JuceHeader.h
+apply_clap_extension(MultiComp multi-comp audio-effect compressor dynamics mono stereo)
+
 juce_generate_juce_header(MultiComp)
 
 # Add source files

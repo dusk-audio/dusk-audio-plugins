@@ -1,23 +1,94 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// PowerAmp.cpp — Per-amp power amplifier with negative feedback loop
+//
+// The key innovation over the old implementation is the negative feedback loop:
+//
+//   feedback = nfbRatio * presenceFilter(previousOutput)
+//   driven = (input - feedback) * driveGain * sagReduction
+//   output = waveshaper(driven) → transformer
+//
+// Presence/Resonance modify the frequency content of the feedback signal.
+// Higher Presence → less HF feedback → more HF distortion (brighter breakup).
+// Higher Resonance → less LF feedback → more LF energy (tighter low end).
+
 #include "PowerAmp.h"
-#include "AnalogEmulation/HardwareProfiles.h"
 #include <cmath>
 #include <algorithm>
 
-static constexpr float kPi = 3.14159265358979323846f;
+static constexpr float kPi = 3.14159265359f;
+
+// ============================================================================
+// Per-amp configurations
+// ============================================================================
+
+PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
+{
+    switch (type)
+    {
+        case AmpType::Fender:
+            return {
+                AnalogEmulation::WaveshaperCurves::CurveType::Triode,
+                0.7f,       // Heavy NFB → clean headroom, lots of control
+                20.0f,      // Slow sag attack (20ms) — 6L6 tubes are beefy
+                200.0f,     // Slow sag release — gentle recovery
+                3.0f,       // Max drive gain (less aggressive than Marshall)
+                0.0f,       // Symmetric push-pull (Class AB)
+                0.80f,      // Transformer: high saturation threshold
+                0.10f,      // Moderate saturation amount
+                1.2f,       // LF saturation multiplier
+                12000.0f    // Output transformer HF rolloff
+            };
+
+        case AmpType::Vox:
+            return {
+                AnalogEmulation::WaveshaperCurves::CurveType::EL84,
+                0.0f,       // NO NFB — raw, harmonically rich (Class A)
+                5.0f,       // Fast sag attack (5ms) — EL84s compress quickly
+                60.0f,      // Fast sag release — bouncy feel
+                3.5f,       // More drive available (single-ended needs it)
+                0.15f,      // Class A bias asymmetry → 2nd harmonic content
+                0.65f,      // Lower saturation threshold (EL84 clips earlier)
+                0.15f,      // More saturation
+                1.4f,       // More LF saturation (loose bottom end)
+                10000.0f    // Earlier HF rolloff (darker transformer)
+            };
+
+        case AmpType::Marshall:
+        default:
+            return {
+                AnalogEmulation::WaveshaperCurves::CurveType::Pentode,
+                0.3f,       // Moderate NFB → controlled bark
+                10.0f,      // Moderate sag attack (10ms)
+                100.0f,     // Moderate sag release
+                4.0f,       // More drive headroom (for high gain)
+                0.0f,       // Symmetric push-pull (Class AB)
+                0.70f,      // Moderate saturation threshold
+                0.12f,      // Moderate saturation
+                1.3f,       // Moderate LF saturation
+                14000.0f    // Later HF rolloff (brighter transformer)
+            };
+    }
+}
+
+// ============================================================================
+// Lifecycle
+// ============================================================================
 
 void PowerAmp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
+    config_ = getConfigForAmpType (currentType_);
 
-    // Configure transformer for output transformer character
+    // Configure output transformer for this amp type
     auto profile = AnalogEmulation::TransformerProfile::createActive (
-        0.75f,    // saturation threshold
-        0.12f,    // saturation amount
-        1.3f,     // low freq saturation
-        14000.0f, // HF rolloff (output transformer rolls off earlier)
+        config_.xfmrSatThreshold,
+        config_.xfmrSatAmount,
+        config_.xfmrLFSat,
+        config_.xfmrHFRolloff,
         15.0f,    // DC blocking freq
-        0.01f,    // h2
-        0.005f,   // h3
+        0.01f,    // h2 harmonic
+        0.005f,   // h3 harmonic
         0.7f);    // even/odd ratio
 
     transformer_.setProfile (profile);
@@ -25,120 +96,181 @@ void PowerAmp::prepare (double sampleRate)
 
     dcBlocker_.prepare (sampleRate, 10.0f);
 
-    updatePresenceCoeff();
-    updateResonanceCoeff();
+    updateDriveGain();
     updateSagCoeffs();
+    updateFilterCoeffs();
     reset();
 }
 
 void PowerAmp::reset()
 {
     sagEnvelope_ = 0.0f;
-    presenceState_ = 0.0f;
-    resonanceState_ = 0.0f;
+    presenceFilterState_ = 0.0f;
+    resonanceFilterState_ = 0.0f;
+    previousOutput_ = 0.0f;
     transformer_.reset();
     dcBlocker_.reset();
 }
 
+// ============================================================================
+// Setters
+// ============================================================================
+
 void PowerAmp::setDrive (float drive01)
 {
     drive_ = std::clamp (drive01, 0.0f, 1.0f);
-    // Map 0-1 to gain multiplier 1.0 to 4.0
-    driveGain_ = 1.0f + drive_ * 3.0f;
+    updateDriveGain();
 }
 
 void PowerAmp::setPresence (float value01)
 {
-    // Map 0-1 to 0dB to +6dB presence boost
-    presenceGain_ = std::clamp (value01, 0.0f, 1.0f) * 6.0f;
-    updatePresenceCoeff();
+    presenceAmount_ = std::clamp (value01, 0.0f, 1.0f);
 }
 
 void PowerAmp::setResonance (float value01)
 {
-    // Map 0-1 to 0dB to +6dB resonance boost
-    resonanceGain_ = std::clamp (value01, 0.0f, 1.0f) * 6.0f;
-    updateResonanceCoeff();
+    resonanceAmount_ = std::clamp (value01, 0.0f, 1.0f);
 }
 
 void PowerAmp::setSag (float sag01)
 {
     sagAmount_ = std::clamp (sag01, 0.0f, 1.0f);
-    updateSagCoeffs();
 }
+
+void PowerAmp::setAmpType (AmpType type)
+{
+    if (type == currentType_) return;
+    currentType_ = type;
+    config_ = getConfigForAmpType (type);
+
+    // Update transformer profile without calling prepare() — setProfile is a
+    // lightweight parameter copy (no allocation), and the transformer is already
+    // prepared at the correct sample rate from the last prepare() call.
+    auto profile = AnalogEmulation::TransformerProfile::createActive (
+        config_.xfmrSatThreshold,
+        config_.xfmrSatAmount,
+        config_.xfmrLFSat,
+        config_.xfmrHFRolloff,
+        15.0f,    // DC blocking freq
+        0.01f,    // h2 harmonic
+        0.005f,   // h3 harmonic
+        0.7f);    // even/odd ratio
+    transformer_.setProfile (profile);
+
+    updateDriveGain();
+    updateSagCoeffs();
+    updateFilterCoeffs();
+
+    // Reset filter state so new coefficients start clean (avoids discontinuities)
+    presenceFilterState_ = 0.0f;
+    resonanceFilterState_ = 0.0f;
+    previousOutput_ = 0.0f;
+}
+
+// ============================================================================
+// Process — the core power amp with negative feedback loop
+// ============================================================================
 
 void PowerAmp::process (float* buffer, int numSamples)
 {
     auto& waveshaper = AnalogEmulation::getWaveshaperCurves();
 
+    float nfb = config_.nfbRatio;
+    float biasOffset = config_.biasAsymmetry;
+
     for (int i = 0; i < numSamples; ++i)
     {
-        float sample = buffer[i];
+        float input = buffer[i];
 
-        // 1. Sag: envelope follows abs(input), reduces available headroom
-        float absInput = std::abs (sample);
+        // --- 1. Compute negative feedback signal from previous output ---
+        // Presence filter: HPF in feedback path
+        // Higher presenceAmount_ → less HF in feedback → more HF distortion
+        float hpFb = previousOutput_ - presenceFilterState_;
+        presenceFilterState_ += hpFb * presenceFilterCoeff_;
 
+        // Resonance filter: LPF in feedback path
+        // Higher resonanceAmount_ → less LF in feedback → more bass energy
+        resonanceFilterState_ += (previousOutput_ - resonanceFilterState_) * resonanceFilterCoeff_;
+
+        // Construct the feedback signal:
+        // Start with full-band feedback, then subtract the controlled bands
+        float feedbackSignal = previousOutput_;
+        // Presence: remove HF from feedback (adds HF distortion)
+        feedbackSignal -= hpFb * presenceAmount_ * 0.5f;
+        // Resonance: remove LF from feedback (adds LF energy)
+        feedbackSignal -= resonanceFilterState_ * resonanceAmount_ * 0.5f;
+
+        // Apply NFB ratio (0 for Vox = no feedback, 0.7 for Fender = heavy)
+        float feedback = nfb * feedbackSignal;
+
+        // --- 2. Sag: envelope follows input level, reduces headroom ---
+        float absInput = std::abs (input);
         if (absInput > sagEnvelope_)
             sagEnvelope_ = sagAttackCoeff_ * sagEnvelope_ + (1.0f - sagAttackCoeff_) * absInput;
         else
             sagEnvelope_ = sagReleaseCoeff_ * sagEnvelope_;
         if (sagEnvelope_ < 1e-15f) sagEnvelope_ = 0.0f;
 
-        // Sag reduces drive gain proportionally
         float sagReduction = 1.0f - sagAmount_ * std::min (sagEnvelope_, 1.0f) * 0.3f;
 
-        // 2. Apply drive gain, reduced by sag
-        float driven = sample * driveGain_ * sagReduction;
+        // --- 3. Drive stage with feedback subtraction ---
+        float driven = (input - feedback) * driveGain_ * sagReduction;
 
-        // 3. Pentode waveshaper (power tube saturation)
-        float saturated = waveshaper.process (driven, AnalogEmulation::WaveshaperCurves::CurveType::Pentode);
+        // Class A bias asymmetry (Vox): offset the signal to create
+        // asymmetric clipping → even harmonics (2nd, 4th)
+        driven += biasOffset;
 
-        // 4. Presence + Resonance EQ (feedforward — filters track pre-boost signal)
-        float preBoosted = saturated;
+        // --- 4. Power tube saturation (waveshaper) ---
+        float saturated = waveshaper.process (driven, config_.curveType);
 
-        float hpOut = preBoosted - presenceState_;
-        presenceState_ += hpOut * presenceCoeff_;
-        if (std::abs (presenceState_) < 1e-15f) presenceState_ = 0.0f;
+        // Remove bias offset after saturation (keeps the harmonic content,
+        // removes DC offset)
+        saturated -= biasOffset * 0.5f;
 
-        resonanceState_ += (preBoosted - resonanceState_) * resonanceCoeff_;
-        if (std::abs (resonanceState_) < 1e-15f) resonanceState_ = 0.0f;
-
-        saturated += hpOut * (presenceGain_ / 6.0f) * 0.3f;
-        saturated += resonanceState_ * (resonanceGain_ / 6.0f) * 0.3f;
-
-        // 6. Output transformer
+        // --- 5. Output transformer ---
         saturated = transformer_.processSample (saturated, 0);
 
-        // 7. DC block
+        // --- 6. DC block ---
         saturated = dcBlocker_.processSample (saturated);
+
+        // Flush denormals
+        if (std::abs (presenceFilterState_) < 1e-15f) presenceFilterState_ = 0.0f;
+        if (std::abs (resonanceFilterState_) < 1e-15f) resonanceFilterState_ = 0.0f;
+
+        // Store for next sample's feedback loop
+        previousOutput_ = saturated;
 
         buffer[i] = saturated;
     }
 }
 
-void PowerAmp::updatePresenceCoeff()
-{
-    // One-pole highpass coefficient for presence frequency
-    float w = 2.0f * kPi * presenceFreq_ / static_cast<float> (sampleRate_);
-    presenceCoeff_ = w / (w + 1.0f);
-}
+// ============================================================================
+// Coefficient updates
+// ============================================================================
 
-void PowerAmp::updateResonanceCoeff()
+void PowerAmp::updateDriveGain()
 {
-    // One-pole lowpass coefficient for resonance frequency
-    float w = 2.0f * kPi * resonanceFreq_ / static_cast<float> (sampleRate_);
-    resonanceCoeff_ = w / (w + 1.0f);
+    driveGain_ = 1.0f + drive_ * (config_.maxDriveGain - 1.0f);
 }
 
 void PowerAmp::updateSagCoeffs()
 {
-    // Sag attack ~10ms, release ~100ms
-    float attackMs = 10.0f;
-    float releaseMs = 100.0f;
-
-    if (sampleRate_ > 0.0)
+    float sr = static_cast<float> (sampleRate_);
+    if (sr > 0.0f)
     {
-        sagAttackCoeff_ = std::exp (-1000.0f / (attackMs * static_cast<float> (sampleRate_)));
-        sagReleaseCoeff_ = std::exp (-1000.0f / (releaseMs * static_cast<float> (sampleRate_)));
+        sagAttackCoeff_ = std::exp (-1000.0f / (config_.sagAttackMs * sr));
+        sagReleaseCoeff_ = std::exp (-1000.0f / (config_.sagReleaseMs * sr));
     }
+}
+
+void PowerAmp::updateFilterCoeffs()
+{
+    float sr = static_cast<float> (sampleRate_);
+    if (sr <= 0.0f) return;
+    // Presence HPF coefficient
+    float wP = 2.0f * kPi * kPresenceFreq / sr;
+    presenceFilterCoeff_ = wP / (wP + 1.0f);
+    // Resonance LPF coefficient
+    float wR = 2.0f * kPi * kResonanceFreq / sr;
+    resonanceFilterCoeff_ = wR / (wR + 1.0f);
 }

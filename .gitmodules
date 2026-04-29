@@ -1,3 +1,6 @@
 [submodule "external/NeuralAmpModelerCore"]
 	path = external/NeuralAmpModelerCore
 	url = https://github.com/sdatkinson/NeuralAmpModelerCore.git
+[submodule "external/clap-juce-extensions"]
+	path = external/clap-juce-extensions
+	url = https://github.com/free-audio/clap-juce-extensions.git

@@ -9,6 +9,9 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GlobalSettings.cmake)
 # Include common JUCE defaults
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JuceDefaults.cmake)
 
+# Include CLAP helper (apply_clap_extension)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ClapDefaults.cmake)
+
 # Build system notes:
 # - JUCE path: configurable via JUCE_PATH variable
 # - Default: ../JUCE (sibling directory for local dev)
@@ -34,6 +37,22 @@ else()
         "  1. Set -DJUCE_PATH=/path/to/JUCE\n"
         "  2. Clone JUCE to ../JUCE (sibling directory)\n"
         "  3. Add as submodule: git submodule add https://github.com/juce-framework/JUCE.git external/JUCE")
+endif()
+
+# CLAP format support (clap-juce-extensions wrapper around JUCE plugins).
+# When ON we pull in the submodule under external/clap-juce-extensions; if the
+# submodule isn't checked out we silently fall back to OFF so local devs who
+# haven't run `git submodule update` can still build VST3/AU/LV2.
+option(BUILD_CLAP "Build CLAP format for all plugins" ON)
+if(BUILD_CLAP)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/clap-juce-extensions/CMakeLists.txt")
+        message(STATUS "CLAP: using external/clap-juce-extensions")
+        add_subdirectory(external/clap-juce-extensions EXCLUDE_FROM_ALL)
+    else()
+        message(WARNING "BUILD_CLAP=ON but external/clap-juce-extensions not found — disabling CLAP. "
+            "Run: git submodule update --init --recursive")
+        set(BUILD_CLAP OFF CACHE BOOL "Build CLAP format for all plugins" FORCE)
+    endif()
 endif()
 
 # CI builds don't need to install plugins to system directories
@@ -105,4 +124,17 @@ endif()
 option(BUILD_DUSKAMP "Build DuskAmp plugin" ON)
 if(BUILD_DUSKAMP)
     add_subdirectory(plugins/DuskAmp)
+endif()
+
+# DuskAmp test harnesses (golden render generator, CPU harness, etc.)
+option(BUILD_DUSKAMP_TESTS "Build DuskAmp test executables (golden render generator, CPU harness)" OFF)
+if(BUILD_DUSKAMP AND BUILD_DUSKAMP_TESTS)
+    add_subdirectory(tests/duskamp_golden_render)
+    add_subdirectory(tests/duskamp_cpu_harness)
+endif()
+
+# DuskVerb measurement tool — hosts the AU bundle to render test signals.
+option(BUILD_DUSKVERB_RENDER "Build DuskVerb plugin-host render tool" OFF)
+if(BUILD_DUSKVERB_RENDER)
+    add_subdirectory(tests/duskverb_render)
 endif()

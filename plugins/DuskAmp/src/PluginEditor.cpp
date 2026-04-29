@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "PluginEditor.h"
 #include "FactoryPresets.h"
 #include "ParamIDs.h"
+#include "CrashLog.h"
 
 // =============================================================================
 // KnobWithLabel
@@ -196,10 +199,22 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
         "Delay feedback amount");
     delayMix_      .init (*this, params, DuskAmpParams::DELAY_MIX,       "MIX",        "%",
         "Delay wet/dry mix");
+    boostGain_     .init (*this, params, DuskAmpParams::BOOST_GAIN,       "GAIN",       "%",
+        "Boost pedal drive amount");
+    boostTone_     .init (*this, params, DuskAmpParams::BOOST_TONE,      "TONE",       "%",
+        "Boost pedal tone (dark to bright)");
+    boostLevel_    .init (*this, params, DuskAmpParams::BOOST_LEVEL,     "LEVEL",      "%",
+        "Boost pedal output level");
     reverbMix_     .init (*this, params, DuskAmpParams::REVERB_MIX,      "MIX",        "%",
         "Reverb wet/dry mix");
     reverbDecay_   .init (*this, params, DuskAmpParams::REVERB_DECAY,    "DECAY",      "%",
         "Reverb tail length");
+    reverbPreDelay_.init (*this, params, DuskAmpParams::REVERB_PREDELAY, "PRE-DLY",    " ms",
+        "Reverb pre-delay time");
+    reverbDamping_ .init (*this, params, DuskAmpParams::REVERB_DAMPING,  "DAMP",       "%",
+        "Reverb high-frequency damping");
+    reverbSize_    .init (*this, params, DuskAmpParams::REVERB_SIZE,     "SIZE",       "%",
+        "Reverb room size");
     outputLevel_   .init (*this, params, DuskAmpParams::OUTPUT_LEVEL,    "OUTPUT",     " dB",
         "Master output level");
 
@@ -209,19 +224,12 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     modeSelector_ = std::make_unique<AmpModeSelector> (*modeParam);
     addAndMakeVisible (*modeSelector_);
 
-    // --- Channel selector ---
-    channelBox_.addItemList ({ "Clean", "Crunch", "Lead" }, 1);
-    channelBox_.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (channelBox_);
-    channelAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-        params, DuskAmpParams::PREAMP_CHANNEL, channelBox_);
-
-    // --- Tone type selector ---
-    toneTypeBox_.addItemList ({ "American", "British", "AC" }, 1);
-    toneTypeBox_.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (toneTypeBox_);
-    toneTypeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-        params, DuskAmpParams::TONE_TYPE, toneTypeBox_);
+    // --- Amp type selector ---
+    ampTypeBox_.addItemList ({ "Clean", "British Crunch", "British Chime" }, 1);
+    ampTypeBox_.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (ampTypeBox_);
+    ampTypeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+        params, DuskAmpParams::AMP_TYPE, ampTypeBox_);
 
     // --- Bright toggle ---
     brightButton_.setButtonText ("BRIGHT");
@@ -281,12 +289,26 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
         }
     }
 
+    // --- Boost enabled toggle ---
+    boostEnabled_.setButtonText ("BOOST");
+    boostEnabled_.setClickingTogglesState (true);
+    addAndMakeVisible (boostEnabled_);
+    boostEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        params, DuskAmpParams::BOOST_ENABLED, boostEnabled_);
+
     // --- Delay enabled toggle ---
     delayEnabled_.setButtonText ("DELAY");
     delayEnabled_.setClickingTogglesState (true);
     addAndMakeVisible (delayEnabled_);
     delayEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         params, DuskAmpParams::DELAY_ENABLED, delayEnabled_);
+
+    // --- Delay type selector ---
+    delayTypeBox_.addItemList ({ "Digital", "Analog", "Tape" }, 1);
+    delayTypeBox_.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (delayTypeBox_);
+    delayTypeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+        params, DuskAmpParams::DELAY_TYPE, delayTypeBox_);
 
     // --- Reverb enabled toggle ---
     reverbEnabled_.setButtonText ("REVERB");
@@ -436,9 +458,21 @@ void DuskAmpEditor::timerCallback()
     update (delayTime_);
     update (delayFeedback_);
     update (delayMix_);
+    update (boostGain_);
+    update (boostTone_);
+    update (boostLevel_);
     update (reverbMix_);
     update (reverbDecay_);
+    update (reverbPreDelay_);
+    update (reverbDamping_);
+    update (reverbSize_);
     update (outputLevel_);
+
+    // Dim boost knobs when boost is disabled
+    bool boostOff = ! boostEnabled_.getToggleState();
+    boostGain_.setDimmed (boostOff);
+    boostTone_.setDimmed (boostOff);
+    boostLevel_.setDimmed (boostOff);
 
     // Dim cabinet knobs when cab is disabled
     bool cabOff = ! cabEnabled_.getToggleState();
@@ -453,11 +487,16 @@ void DuskAmpEditor::timerCallback()
     delayTime_.setDimmed (delayOff);
     delayFeedback_.setDimmed (delayOff);
     delayMix_.setDimmed (delayOff);
+    delayTypeBox_.setEnabled (! delayOff);
+    delayTypeBox_.setAlpha (delayOff ? 0.4f : 1.0f);
 
     // Dim reverb knobs when reverb is disabled
     bool reverbOff = ! reverbEnabled_.getToggleState();
     reverbMix_.setDimmed (reverbOff);
     reverbDecay_.setDimmed (reverbOff);
+    reverbPreDelay_.setDimmed (reverbOff);
+    reverbDamping_.setDimmed (reverbOff);
+    reverbSize_.setDimmed (reverbOff);
 
     // NAM mode: show/hide controls and trigger relayout when mode changes
     bool namMode = processorRef.parameters.getRawParameterValue (DuskAmpParams::AMP_MODE)->load() >= 0.5f;
@@ -471,8 +510,8 @@ void DuskAmpEditor::timerCallback()
     // Dim preamp controls in NAM mode (for any visible ones)
     preampGain_.setDimmed (namMode);
     preampGain_.slider.setEnabled (! namMode);
-    channelBox_.setEnabled (! namMode);
-    channelBox_.setAlpha (namMode ? 0.4f : 1.0f);
+    ampTypeBox_.setEnabled (! namMode);
+    ampTypeBox_.setAlpha (namMode ? 0.4f : 1.0f);
     brightButton_.setEnabled (! namMode);
     brightButton_.setAlpha (namMode ? 0.4f : 1.0f);
 
@@ -566,8 +605,10 @@ void DuskAmpEditor::paint (juce::Graphics& g)
         drawGroupBox (g, centerTopBounds_, "AMP / TONE");
     }
     drawGroupBox (g, centerBotBounds_, "POWER AMP");
+    drawGroupBox (g, boostGroupBounds_, "BOOST");
     drawGroupBox (g, cabGroupBounds_, "CABINET");
-    drawGroupBox (g, fxGroupBounds_, "EFFECTS");
+    drawGroupBox (g, delayGroupBounds_, "DELAY");
+    drawGroupBox (g, reverbGroupBounds_, "REVERB");
 
     // Meter labels
     int mainY = inputGroupBounds_.getY();
@@ -741,7 +782,7 @@ void DuskAmpEditor::resized()
             int ctrlY = toneY + toneH - controlsH - scaler_.scaled (4);
             int ctrlW = scaler_.scaled (130);
             int ctrlX = centerX + (centerW - ctrlW) / 2;
-            toneTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
+            ampTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
         }
 
         // Power amp
@@ -753,7 +794,7 @@ void DuskAmpEditor::resized()
         preampGain_.slider.setVisible (false);
         preampGain_.nameLabel.setVisible (false);
         preampGain_.valueLabel.setVisible (false);
-        channelBox_.setVisible (false);
+        ampTypeBox_.setVisible (false);
         brightButton_.setVisible (false);
         namBrowser_.setVisible (true);
     }
@@ -774,14 +815,13 @@ void DuskAmpEditor::resized()
             { { &preampGain_, mediumKnob }, { &bass_, mediumKnob },
               { &mid_, mediumKnob }, { &treble_, mediumKnob } }, sf);
 
-        // Controls row: channel, tone type, bright
+        // Controls row: amp type + bright
         {
             int ctrlY = mainY + ampToneH - controlsH - scaler_.scaled (2);
-            int ctrlW = (centerW - scaler_.scaled (16) - controlsGap * 2) / 3;
+            int ctrlW = (centerW - scaler_.scaled (16) - controlsGap) / 2;
             int ctrlX = centerX + scaler_.scaled (8);
-            channelBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
-            toneTypeBox_.setBounds (ctrlX + ctrlW + controlsGap, ctrlY, ctrlW, controlsH);
-            brightButton_.setBounds (ctrlX + 2 * (ctrlW + controlsGap), ctrlY, ctrlW, controlsH);
+            ampTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
+            brightButton_.setBounds (ctrlX + ctrlW + controlsGap, ctrlY, ctrlW, controlsH);
         }
 
         // Power amp
@@ -793,66 +833,95 @@ void DuskAmpEditor::resized()
         preampGain_.slider.setVisible (true);
         preampGain_.nameLabel.setVisible (true);
         preampGain_.valueLabel.setVisible (true);
-        channelBox_.setVisible (true);
+        ampTypeBox_.setVisible (true);
         brightButton_.setVisible (true);
         namBrowser_.setVisible (false);
     }
 
-    // --- Bottom row ---
+    // --- Bottom row: BOOST | CABINET | DELAY | REVERB ---
     int bottomY = mainY + mainH + gap;
-    int cabW = (contentW - gap) / 2;
-    int fxW  = contentW - cabW - gap;
-    int fxX  = contentX + cabW + gap;
+    int toggleW = scaler_.scaled (56);
+    int toggleH = scaler_.scaled (22);
+    int pad = scaler_.scaled (8);
 
-    cabGroupBounds_ = { contentX, bottomY, cabW, bottomH };
-    fxGroupBounds_  = { fxX, bottomY, fxW, bottomH };
+    // 4-column layout: boost (15%) | cab (35%) | delay (25%) | reverb (25%)
+    int boostW  = static_cast<int> (contentW * 0.15f);
+    int cabW    = static_cast<int> (contentW * 0.35f);
+    int delayW  = static_cast<int> (contentW * 0.25f);
+    int reverbW = contentW - boostW - cabW - delayW - gap * 3;
+
+    int boostX  = contentX;
+    int cabX    = boostX + boostW + gap;
+    int delayX  = cabX + cabW + gap;
+    int reverbX = delayX + delayW + gap;
+
+    boostGroupBounds_  = { boostX, bottomY, boostW, bottomH };
+    cabGroupBounds_    = { cabX, bottomY, cabW, bottomH };
+    delayGroupBounds_  = { delayX, bottomY, delayW, bottomH };
+    reverbGroupBounds_ = { reverbX, bottomY, reverbW, bottomH };
+
+    // BOOST section: toggle + 3 knobs
+    {
+        int innerX = boostX + pad;
+        int innerY = bottomY + pad;
+        boostEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
+        int kY = innerY + toggleH + scaler_.scaled (4);
+        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
+        int colW = (boostW - pad * 2) / 3;
+        int knobSize = std::min (smallKnob, colW - scaler_.scaled (4));
+        placeKnob (boostGain_,  { innerX, kY, colW, kH }, knobSize, sf);
+        placeKnob (boostTone_,  { innerX + colW, kY, colW, kH }, knobSize, sf);
+        placeKnob (boostLevel_, { innerX + 2 * colW, kY, colW, kH }, knobSize, sf);
+    }
 
     // CABINET section: toggle + 3 knobs | browser
     {
-        int cabX = contentX;
-        int toggleW = scaler_.scaled (50);
-        int toggleH = scaler_.scaled (22);
-        int innerX = cabX + scaler_.scaled (8);
-        int innerY = bottomY + scaler_.scaled (4);
-
-        cabEnabled_.setBounds (innerX, innerY + scaler_.scaled (2), toggleW, toggleH);
-
-        int knobStartX = innerX + toggleW + btnGap;
-        int knobColW = scaler_.scaled (70);
-        int knobAreaH = bottomH - scaler_.scaled (8);
-
-        placeKnob (cabMix_,   { knobStartX, innerY, knobColW, knobAreaH }, smallKnob, sf);
-        placeKnob (cabHiCut_, { knobStartX + knobColW, innerY, knobColW, knobAreaH }, smallKnob, sf);
-        placeKnob (cabLoCut_, { knobStartX + 2 * knobColW, innerY, knobColW, knobAreaH }, smallKnob, sf);
-
-        int browserX = knobStartX + 3 * knobColW + gap;
-        int browserW = cabX + cabW - browserX - scaler_.scaled (4);
-        cabBrowser_.setBounds (browserX, bottomY + scaler_.scaled (4), browserW, bottomH - scaler_.scaled (8));
+        int innerX = cabX + pad;
+        int innerY = bottomY + pad;
+        cabEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
+        int kY = innerY + toggleH + scaler_.scaled (4);
+        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
+        int knobColW = scaler_.scaled (62);
+        placeKnob (cabMix_,   { innerX, kY, knobColW, kH }, smallKnob, sf);
+        placeKnob (cabHiCut_, { innerX + knobColW, kY, knobColW, kH }, smallKnob, sf);
+        placeKnob (cabLoCut_, { innerX + 2 * knobColW, kY, knobColW, kH }, smallKnob, sf);
+        int browserX = innerX + 3 * knobColW + scaler_.scaled (4);
+        int browserW = cabX + cabW - browserX - pad;
+        cabBrowser_.setBounds (browserX, bottomY + pad, browserW, bottomH - pad * 2);
     }
 
-    // EFFECTS section: delay | reverb
+    // DELAY section: toggle + type selector + 3 knobs
     {
-        int innerX = fxX + scaler_.scaled (8);
-        int innerY = bottomY + scaler_.scaled (4);
-        int toggleW = scaler_.scaled (60);
-        int toggleH = scaler_.scaled (22);
-        int halfW = (fxW - scaler_.scaled (16)) / 2;
+        int innerX = delayX + pad;
+        int innerY = bottomY + pad;
+        delayEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
+        int typeW = delayW - pad * 2 - toggleW - scaler_.scaled (4);
+        delayTypeBox_.setBounds (innerX + toggleW + scaler_.scaled (4), innerY, typeW, toggleH);
+        int kY = innerY + toggleH + scaler_.scaled (4);
+        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
+        int colW = (delayW - pad * 2) / 3;
+        placeKnob (delayTime_,     { innerX, kY, colW, kH }, smallKnob, sf);
+        placeKnob (delayFeedback_, { innerX + colW, kY, colW, kH }, smallKnob, sf);
+        placeKnob (delayMix_,      { innerX + 2 * colW, kY, colW, kH }, smallKnob, sf);
+    }
 
-        delayEnabled_.setBounds (innerX, innerY + scaler_.scaled (2), toggleW, toggleH);
-        int dKnobY = innerY + toggleH + scaler_.scaled (6);
-        int dKnobH = bottomH - toggleH - scaler_.scaled (14);
-        int dColW = halfW / 3;
-
-        placeKnob (delayTime_,     { innerX, dKnobY, dColW, dKnobH }, smallKnob, sf);
-        placeKnob (delayFeedback_, { innerX + dColW, dKnobY, dColW, dKnobH }, smallKnob, sf);
-        placeKnob (delayMix_,      { innerX + 2 * dColW, dKnobY, dColW, dKnobH }, smallKnob, sf);
-
-        int revX = innerX + halfW + scaler_.scaled (8);
-        reverbEnabled_.setBounds (revX, innerY + scaler_.scaled (2), toggleW, toggleH);
-        int rColW = (fxW - scaler_.scaled (16) - halfW - scaler_.scaled (8)) / 2;
-
-        placeKnob (reverbMix_,   { revX, dKnobY, rColW, dKnobH }, smallKnob, sf);
-        placeKnob (reverbDecay_, { revX + rColW, dKnobY, rColW, dKnobH }, smallKnob, sf);
+    // REVERB section: toggle + 5 knobs (2 rows: 3 top, 2 bottom)
+    {
+        int innerX = reverbX + pad;
+        int innerY = bottomY + pad;
+        reverbEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
+        int kY = innerY + toggleH + scaler_.scaled (4);
+        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
+        int rowH = kH / 2;
+        int colW3 = (reverbW - pad * 2) / 3;
+        int colW2 = (reverbW - pad * 2) / 2;
+        int knobSize = std::min (smallKnob, colW3 - scaler_.scaled (4));
+        placeKnob (reverbMix_,      { innerX, kY, colW3, rowH }, knobSize, sf);
+        placeKnob (reverbDecay_,    { innerX + colW3, kY, colW3, rowH }, knobSize, sf);
+        placeKnob (reverbPreDelay_, { innerX + 2 * colW3, kY, colW3, rowH }, knobSize, sf);
+        int row2Y = kY + rowH;
+        placeKnob (reverbDamping_,  { innerX, row2Y, colW2, rowH }, knobSize, sf);
+        placeKnob (reverbSize_,     { innerX + colW2, row2Y, colW2, rowH }, knobSize, sf);
     }
 
     // --- Level meters ---
@@ -985,6 +1054,8 @@ void DuskAmpEditor::showSupportersPanel()
     {
         supportersOverlay_ = std::make_unique<SupportersOverlay> ("DuskAmp", JucePlugin_VersionString);
         supportersOverlay_->onDismiss = [this] { hideSupportersPanel(); };
+        supportersOverlay_->setActionLink ("Open crash log folder",
+                                           [] { DuskCrashLog::openLogFolder(); });
         addAndMakeVisible (supportersOverlay_.get());
     }
     supportersOverlay_->setBounds (getLocalBounds());
