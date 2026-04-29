@@ -4,6 +4,11 @@
 #include <algorithm>
 #include <cmath>
 
+// MSVC's <cmath> doesn't expose M_PI by default (it's a GNU extension).
+// Define a local constexpr to keep this file portable across MSVC / GCC /
+// Clang without forcing every translation unit to set _USE_MATH_DEFINES.
+namespace { constexpr float kPi = 3.14159265358979323846f; }
+
 // ==========================================================================
 // ModulatedAllpass
 // ==========================================================================
@@ -109,7 +114,7 @@ void DiffusionStage::prepare (double sampleRate, int /*maxBlockSize*/)
         // and R, so the late-field correlation stays stable. The π-offset
         // phase still gives a clear stereo image at any moment in time
         // without introducing slow wander.
-        float phaseR = phaseL + (float) M_PI;
+        float phaseR = phaseL + kPi;
         rightAP_[s].prepare (bufSize, delay, rateL, depthL, phaseR, sampleRate);
 
         // Spin-and-wander jitter (1.5 % of delay) — lets us keep the long
