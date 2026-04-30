@@ -227,3 +227,99 @@ target_compile_definitions(DuskAmp_DSPTest PRIVATE
 set_target_properties(DuskAmp_DSPTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# Tone stack sweep probe — measures each knob's actual effect on magnitude
+add_executable(DuskAmp_ToneSweep
+    tests/comparison/tonestack_sweep.cpp
+    src/dsp/ToneStack.cpp
+)
+target_include_directories(DuskAmp_ToneSweep PRIVATE src/dsp)
+target_link_libraries(DuskAmp_ToneSweep PRIVATE juce::juce_recommended_config_flags)
+set_target_properties(DuskAmp_ToneSweep PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+add_executable(DuskAmp_UserConfigProbe
+    tests/comparison/user_config_probe.cpp
+    src/dsp/ToneStack.cpp
+    src/dsp/PreampDSP.cpp
+    src/dsp/PowerAmp.cpp
+)
+target_include_directories(DuskAmp_UserConfigProbe PRIVATE
+    src/dsp
+    ${CMAKE_SOURCE_DIR}/plugins/shared
+)
+target_link_libraries(DuskAmp_UserConfigProbe PRIVATE
+    juce::juce_dsp
+    juce::juce_recommended_config_flags
+)
+target_compile_definitions(DuskAmp_UserConfigProbe PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+set_target_properties(DuskAmp_UserConfigProbe PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# Full knob-audit probe — sweeps every continuous parameter and reports
+# PASS/FAIL so regressions show up as a single-line diff.
+add_executable(DuskAmp_KnobAudit
+    tests/comparison/knob_audit.cpp
+    src/dsp/ToneStack.cpp
+    src/dsp/PreampDSP.cpp
+    src/dsp/PowerAmp.cpp
+    src/dsp/CabinetIR.cpp
+    src/dsp/PostFX.cpp
+    ../shared/SpringEngine.cpp
+)
+target_include_directories(DuskAmp_KnobAudit PRIVATE
+    src/dsp
+    ${CMAKE_SOURCE_DIR}/plugins/shared
+)
+target_link_libraries(DuskAmp_KnobAudit PRIVATE
+    juce::juce_audio_utils
+    juce::juce_audio_formats
+    juce::juce_dsp
+    juce::juce_recommended_config_flags
+)
+target_compile_definitions(DuskAmp_KnobAudit PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+set_target_properties(DuskAmp_KnobAudit PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# Safety scan — NaN/Inf, sample-rate parametric, reset purge, click-free
+# parameter modulation, and denormal handling.
+add_executable(DuskAmp_SafetyScan
+    tests/comparison/safety_scan.cpp
+    src/dsp/ToneStack.cpp
+    src/dsp/PreampDSP.cpp
+    src/dsp/PowerAmp.cpp
+    src/dsp/PostFX.cpp
+    ../shared/SpringEngine.cpp
+)
+target_include_directories(DuskAmp_SafetyScan PRIVATE
+    src/dsp
+    ${CMAKE_SOURCE_DIR}/plugins/shared
+)
+target_link_libraries(DuskAmp_SafetyScan PRIVATE
+    juce::juce_audio_utils
+    juce::juce_audio_formats
+    juce::juce_dsp
+    juce::juce_recommended_config_flags
+)
+target_compile_definitions(DuskAmp_SafetyScan PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+set_target_properties(DuskAmp_SafetyScan PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

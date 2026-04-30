@@ -15,6 +15,7 @@
 
 #include "ToneStack.h"
 #include "PreampDSP.h"
+#include "PhaseInverter.h"
 #include "PowerAmp.h"
 
 #include <iostream>
@@ -222,16 +223,44 @@ static const DriveConfig kDrives[] = {
     { "cranked", 0.85f, 0.75f },
 };
 
+// Configure a PhaseInverter to match the same amp type the engine sets up
+// in DuskAmpEngine::setToneStackType. Keep these two in sync — the harness
+// must mirror the live signal chain or THD numbers diverge from reality.
+static void configurePhaseInverter (PhaseInverter& pi, PowerAmp::AmpType amp)
+{
+    switch (amp)
+    {
+        case PowerAmp::AmpType::Fender:
+            pi.setTopology (PhaseInverter::Topology::LongTailPair);
+            pi.setGain (2.5f);
+            pi.setHeadroom (2.2f);
+            break;
+        case PowerAmp::AmpType::Marshall:
+            pi.setTopology (PhaseInverter::Topology::LongTailPair);
+            pi.setGain (4.0f);
+            pi.setHeadroom (1.6f);
+            break;
+        case PowerAmp::AmpType::Vox:
+        default:
+            pi.setTopology (PhaseInverter::Topology::Cathodyne);
+            pi.setGain (1.6f);
+            pi.setHeadroom (2.4f);
+            break;
+    }
+}
+
 static std::vector<float> processThroughChain (
     const std::vector<float>& input, double sr,
     const AmpConfig& amp, const DriveConfig& drive)
 {
     PreampDSP preamp;
     ToneStack toneStack;
+    PhaseInverter phaseInverter;
     PowerAmp powerAmp;
 
     preamp.prepare (sr);
     toneStack.prepare (sr);
+    phaseInverter.prepare (sr);
     powerAmp.prepare (sr);
 
     preamp.setChannel (amp.preampChannel);
@@ -242,6 +271,8 @@ static std::vector<float> processThroughChain (
     toneStack.setBass (0.5f);
     toneStack.setMid (0.5f);
     toneStack.setTreble (0.5f);
+
+    configurePhaseInverter (phaseInverter, amp.powerAmpType);
 
     powerAmp.setAmpType (amp.powerAmpType);
     powerAmp.setDrive (drive.powerDrive);
@@ -263,6 +294,7 @@ static std::vector<float> processThroughChain (
 
         preamp.process (ptr, thisBlock);
         toneStack.process (ptr, thisBlock);
+        phaseInverter.process (ptr, thisBlock);
         powerAmp.process (ptr, thisBlock);
     }
 
@@ -329,9 +361,11 @@ static StageLevels measureStageLevels (const AmpConfig& amp, const DriveConfig& 
 
     PreampDSP preamp;
     ToneStack toneStack;
+    PhaseInverter phaseInverter;
     PowerAmp powerAmp;
     preamp.prepare (sr);
     toneStack.prepare (sr);
+    phaseInverter.prepare (sr);
     powerAmp.prepare (sr);
 
     preamp.setChannel (amp.preampChannel);
@@ -342,6 +376,8 @@ static StageLevels measureStageLevels (const AmpConfig& amp, const DriveConfig& 
     toneStack.setBass (0.5f);
     toneStack.setMid (0.5f);
     toneStack.setTreble (0.5f);
+
+    configurePhaseInverter (phaseInverter, amp.powerAmpType);
 
     powerAmp.setAmpType (amp.powerAmpType);
     powerAmp.setDrive (drive.powerDrive);
@@ -368,6 +404,7 @@ static StageLevels measureStageLevels (const AmpConfig& amp, const DriveConfig& 
     {
         int bs = std::min (blockSize, n - off);
         toneStack.process (buf.data() + off, bs);
+        phaseInverter.process (buf.data() + off, bs); // PI runs in same column as tonestack for the audit
     }
     L.toneStack = peakRMS (buf, skip);
 
