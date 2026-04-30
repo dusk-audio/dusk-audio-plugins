@@ -46,6 +46,7 @@ void ToneStack::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate;
     coeffsDirty_ = true;
+    recomputeFlatMakeup();
     reset();
 }
 
@@ -61,6 +62,7 @@ void ToneStack::setType (Type type)
     if (type != currentType_)
     {
         currentType_ = type;
+        recomputeFlatMakeup();
         coeffsDirty_ = true;
     }
 }
@@ -97,11 +99,30 @@ void ToneStack::process (float* buffer, int numSamples)
 
     if (currentType_ == Type::AC)
     {
+        // Cathode follower (ECC83 triode wired as a buffer driving the Top
+        // Boost network in the real AC30). Voltage gain ≈ 0.95, asymmetric
+        // soft-clip — positive grid swing runs into grid-current limit
+        // earlier than negative swing, contributing AC30's subtle even-
+        // harmonic grit at clean drive levels.
+        //
+        // The 0.95 unity-region gain is applied to ALL branches (linear and
+        // saturated alike) so the transfer function is C0-continuous at the
+        // soft-clip thresholds. Without that, crossings at ±0.6/-0.85 would
+        // produce step jumps of ~0.03-0.04 → audible clicks.
         for (int i = 0; i < numSamples; ++i)
         {
-            float y = tbBass_.processSample (buffer[i]);
+            const float x = buffer[i];
+            float cf;
+            if (x > 0.6f)
+                cf = (0.6f + std::tanh ((x - 0.6f) * 1.5f) * 0.25f) * 0.95f;
+            else if (x < -0.85f)
+                cf = (-0.85f + std::tanh ((x + 0.85f) * 1.0f) * 0.20f) * 0.95f;
+            else
+                cf = x * 0.95f;
+
+            float y = tbBass_.processSample (cf);
             y = tbTreble_.processSample (y);
-            buffer[i] = y * outputGain_;
+            buffer[i] = y * flatMakeup_;
         }
         return;
     }
@@ -120,7 +141,7 @@ void ToneStack::process (float* buffer, int numSamples)
         if (std::abs (w2_) < 1e-15f) w2_ = 0.0f;
         if (std::abs (w3_) < 1e-15f) w3_ = 0.0f;
 
-        buffer[i] = y * outputGain_;
+        buffer[i] = y * flatMakeup_;
     }
 }
 
@@ -183,63 +204,94 @@ void ToneStack::designHighShelf (Biquad& bq, float fc, float gainDb, double sr)
     bq.a2 = static_cast<float> (a2 * inv);
 }
 
+void ToneStack::designPeakingEQ (Biquad& bq, float fc, float gainDb, float q, double sr)
+{
+    // RBJ peaking-EQ biquad: boost or cut at fc with bandwidth set by Q.
+    // Used here for the AC Top Boost treble band — the real circuit has a
+    // characteristic resonance peak around 6-8 kHz from cap-pot interaction
+    // that a flat shelf can't reproduce; a peaking filter at fc=6.5k Q=1.4
+    // gives the right "chime" character.
+    constexpr double kPi = 3.14159265358979323846;
+    const double A     = std::pow (10.0, static_cast<double> (gainDb) / 40.0);
+    const double omega = 2.0 * kPi * static_cast<double> (fc) / sr;
+    const double cosw  = std::cos (omega);
+    const double sinw  = std::sin (omega);
+    const double alpha = sinw / (2.0 * static_cast<double> (q));
+
+    const double b0 = 1.0 + alpha * A;
+    const double b1 = -2.0 * cosw;
+    const double b2 = 1.0 - alpha * A;
+    const double a0 = 1.0 + alpha / A;
+    const double a1 = -2.0 * cosw;
+    const double a2 = 1.0 - alpha / A;
+
+    const double inv = 1.0 / a0;
+    bq.b0 = static_cast<float> (b0 * inv);
+    bq.b1 = static_cast<float> (b1 * inv);
+    bq.b2 = static_cast<float> (b2 * inv);
+    bq.a1 = static_cast<float> (a1 * inv);
+    bq.a2 = static_cast<float> (a2 * inv);
+}
+
 void ToneStack::recomputeTopBoost()
 {
-    // Knob 0..1 → shelf gain -max..+max dB, with knob=0.5 = flat (0 dB).
+    // Knob 0..1 → ±max dB, with knob=0.5 = flat (0 dB).
+    // Bass: low-shelf at 100 Hz — straightforward shelving.
+    // Treble: PEAKING filter at 6.5 kHz with Q=1.4. The real AC30 Top Boost
+    // has an HF resonance peak (cap × pot × load impedance), not a flat
+    // shelf — that's the source of the AC30 "chime". A peaking biquad
+    // approximates this with one filter; the treble knob controls the peak
+    // gain (boost above flat = chime, cut below = darker).
     const float bassDb   = (bass_   - 0.5f) * 2.0f * kTopBoostBassMaxDb;
     const float trebleDb = (treble_ - 0.5f) * 2.0f * kTopBoostTrebleMaxDb;
 
     designLowShelf  (tbBass_,   kTopBoostBassHz,   bassDb,   sampleRate_);
-    designHighShelf (tbTreble_, kTopBoostTrebleHz, trebleDb, sampleRate_);
+    designPeakingEQ (tbTreble_, kTopBoostTrebleHz, trebleDb, kTopBoostTrebleQ, sampleRate_);
 }
 
-void ToneStack::recomputeMidbandCompensation()
+void ToneStack::recomputeFlatMakeup()
 {
+    // Top Boost shelves are flat-by-design at knob=0.5 — no makeup needed.
+    if (currentType_ == Type::AC)
+    {
+        flatMakeup_ = 1.0f;
+        return;
+    }
+
+    // Temporarily pin knobs to 0.5 so we can measure the circuit's insertion
+    // loss at flat settings, cache 1/|H(1kHz)| as the fixed makeup, then
+    // restore user settings. This gain does not move with the knobs — so the
+    // mid control actually scoops mids, and bass/treble produce the real
+    // Yeh/Smith EQ curve (with its natural knob-dependent level variation)
+    // rather than being flattened by a knob-tracking compensator.
+    const float savedBass   = bass_;
+    const float savedMid    = mid_;
+    const float savedTreble = treble_;
+    bass_ = mid_ = treble_ = 0.5f;
+
+    recomputeCoefficients();
+
     const double omega = 2.0 * 3.14159265358979323846 * kCompensationFreqHz / sampleRate_;
     const double cosW  = std::cos (omega);
     const double sinW  = std::sin (omega);
+    const double cos2  = 2.0 * cosW * cosW - 1.0;
+    const double sin2  = 2.0 * sinW * cosW;
+    const double cos3  = 4.0 * cosW * cosW * cosW - 3.0 * cosW;
+    const double sin3  = 3.0 * sinW - 4.0 * sinW * sinW * sinW;
 
-    double numMag = 0.0, denMag = 0.0;
+    const double nR = B0_ + B1_ * cosW + B2_ * cos2 + B3_ * cos3;
+    const double nI = -(B1_ * sinW + B2_ * sin2 + B3_ * sin3);
+    const double dR = 1.0 + A1_ * cosW + A2_ * cos2 + A3_ * cos3;
+    const double dI = -(A1_ * sinW + A2_ * sin2 + A3_ * sin3);
+    const double mag = std::sqrt ((nR * nR + nI * nI) / std::max (dR * dR + dI * dI, 1e-30));
 
-    if (currentType_ == Type::AC)
-    {
-        // Magnitude of cascaded biquads = product of magnitudes.
-        auto biquadMag = [cosW, sinW] (const Biquad& bq) {
-            // z^-k at ω: cos(kω) - j sin(kω); compute cos(2ω), sin(2ω)
-            const double cos2 = 2.0 * cosW * cosW - 1.0;
-            const double sin2 = 2.0 * sinW * cosW;
-            const double nR = bq.b0 + bq.b1 * cosW + bq.b2 * cos2;
-            const double nI = -(bq.b1 * sinW + bq.b2 * sin2);
-            const double dR = 1.0 + bq.a1 * cosW + bq.a2 * cos2;
-            const double dI = -(bq.a1 * sinW + bq.a2 * sin2);
-            const double nM = std::sqrt (nR * nR + nI * nI);
-            const double dM = std::sqrt (dR * dR + dI * dI);
-            return dM > 1.0e-12 ? (nM / dM) : 0.0;
-        };
-        const double mag = biquadMag (tbBass_) * biquadMag (tbTreble_);
-        numMag = 1.0;
-        denMag = mag;
-    }
-    else
-    {
-        // Yeh/Smith 3rd-order: z^-k at ω for k = 1, 2, 3.
-        const double cos2 = 2.0 * cosW * cosW - 1.0;
-        const double sin2 = 2.0 * sinW * cosW;
-        const double cos3 = 4.0 * cosW * cosW * cosW - 3.0 * cosW;
-        const double sin3 = 3.0 * sinW - 4.0 * sinW * sinW * sinW;
+    const float gain = (mag > 1.0e-6) ? static_cast<float> (1.0 / mag) : 1.0f;
+    flatMakeup_ = std::clamp (gain, 0.1f, kFlatMakeupMaxGain);
 
-        const double nR = B0_ + B1_ * cosW + B2_ * cos2 + B3_ * cos3;
-        const double nI = -(B1_ * sinW + B2_ * sin2 + B3_ * sin3);
-        const double dR = 1.0 + A1_ * cosW + A2_ * cos2 + A3_ * cos3;
-        const double dI = -(A1_ * sinW + A2_ * sin2 + A3_ * sin3);
-
-        numMag = std::sqrt (nR * nR + nI * nI);
-        denMag = std::sqrt (dR * dR + dI * dI);
-    }
-
-    const double mag = (numMag > 1.0e-12) ? (numMag / denMag) : 1.0;
-    float gain = (mag > 1.0e-6) ? static_cast<float> (1.0 / mag) : 1.0f;
-    outputGain_ = std::clamp (gain, 0.1f, kCompensationMaxGain);
+    bass_   = savedBass;
+    mid_    = savedMid;
+    treble_ = savedTreble;
+    coeffsDirty_ = true;
 }
 
 // ============================================================================
@@ -251,16 +303,22 @@ void ToneStack::recomputeCoefficients()
     if (currentType_ == Type::AC)
     {
         recomputeTopBoost();
-        recomputeMidbandCompensation();
         return;
     }
 
     auto c = getComponents (currentType_);
 
-    // Pot wiper positions (0-1 mapped to resistance)
-    double R1 = std::max (c.R1 * treble_, 100.0);
-    double R2 = std::max (c.R2 * bass_,   100.0);
-    double R3 = std::max (c.R3 * mid_,    100.0);
+    // Pot wiper positions (0-1 mapped to resistance).
+    // Yeh/Smith convention: the bass pot's "R2" in the transfer function is
+    // the resistance from the wiper to the top (signal side), so the knob
+    // value is inverted relative to treble/mid. Knob 1.0 → wiper at top →
+    // R2 = 0 (minimum series resistance) → more LF reaches output; knob
+    // 0.0 → wiper at ground → R2 = full pot → low frequencies shunted.
+    // Without this flip, the bass knob was backwards: bass=0 produced the
+    // hottest, treble-heavy response and bass=1 produced the quiet one.
+    double R1 = std::max (c.R1 * treble_,           100.0);
+    double R2 = std::max (c.R2 * (1.0 - bass_),     100.0);
+    double R3 = std::max (c.R3 * mid_,              100.0);
     double R4 = c.R4;
     double C1 = c.C1, C2 = c.C2, C3 = c.C3;
 
@@ -312,6 +370,4 @@ void ToneStack::recomputeCoefficients()
     A1_ = static_cast<float> (dA1 * invA0);
     A2_ = static_cast<float> (dA2 * invA0);
     A3_ = static_cast<float> (dA3 * invA0);
-
-    recomputeMidbandCompensation();
 }

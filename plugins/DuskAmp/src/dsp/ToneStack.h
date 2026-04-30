@@ -79,24 +79,27 @@ private:
     };
     Biquad tbBass_, tbTreble_;
 
-    static constexpr float kTopBoostBassHz   = 100.0f;
-    static constexpr float kTopBoostTrebleHz = 3000.0f;
+    static constexpr float kTopBoostBassHz      = 100.0f;
+    static constexpr float kTopBoostTrebleHz    = 6500.0f; // peak of the AC30 chime
+    static constexpr float kTopBoostTrebleQ     = 1.4f;    // peaking filter Q
     static constexpr float kTopBoostBassMaxDb   = 12.0f;
     static constexpr float kTopBoostTrebleMaxDb = 15.0f; // Top Boost is bright
 
-    // Midband (1 kHz) magnitude compensation. Yeh/Smith networks have
-    // ~-22 dB insertion loss at flat; Top Boost is ~0 dB. Compensating each
-    // to unity midband means the user's tone knobs change tonal balance but
-    // not perceived overall volume, and the downstream PowerAmp sees
-    // similar levels regardless of which tonestack is selected.
-    float outputGain_ = 1.0f;
+    // Fixed per-type midband makeup. Computed ONCE at prepare()/setType() using
+    // flat knob settings (0.5/0.5/0.5): flatMakeup_ = 1 / |H(1kHz)|_flat. This
+    // restores ~unity midband at flat positions without fighting the knobs —
+    // so the mid control actually scoops mids, and bass/treble shape the
+    // circuit's real analog EQ curve rather than being flattened by a
+    // knob-tracking compensator.
+    float flatMakeup_ = 1.0f;
 
     static constexpr float kCompensationFreqHz = 1000.0f;
-    static constexpr float kCompensationMaxGain = 32.0f; // +30 dB cap
+    static constexpr float kFlatMakeupMaxGain  = 64.0f; // +36 dB safety cap
 
     void recomputeCoefficients();
     void recomputeTopBoost();
-    void recomputeMidbandCompensation();
+    void recomputeFlatMakeup();
     static void designLowShelf  (Biquad& bq, float fc, float gainDb, double sr);
     static void designHighShelf (Biquad& bq, float fc, float gainDb, double sr);
+    static void designPeakingEQ (Biquad& bq, float fc, float gainDb, float q, double sr);
 };
