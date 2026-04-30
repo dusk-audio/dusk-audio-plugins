@@ -43,7 +43,30 @@ private:
     // inverter + power-tube voltage gain, same across all amps.
     AnalogEmulation::WaveshaperCurves::CurveType curveType_
         = AnalogEmulation::WaveshaperCurves::CurveType::Pentode;
-    float biasAsymmetry_ = 0.0f;  // Class A offset (Vox only)
+    float biasAsymmetry_ = 0.0f;  // Class A push-pull bias offset (Vox only)
+
+    // Push-pull bias mismatch: real-world matched pairs sit at 2-3% Ip
+    // imbalance even after biasing. Models that as a small even-harmonic
+    // injection on top of the otherwise-perfect sign(x)·(f(|x|)−f(0))
+    // cancellation. Zero gives mathematically-perfect cancellation; 0.025
+    // gives audible warmth without breaking the push-pull character.
+    float pushPullAsymmetry_ = 0.0f;
+
+    // Phase-inverter output asymmetry. The cathodyne PI on Vox AC30 sends
+    // a slightly smaller signal to one power tube than the other (the
+    // anode-output and cathode-output of a cathode-coupled splitter aren't
+    // perfectly balanced — typical 3-5% offset). LTP PIs (Fender, Marshall)
+    // are nearly perfectly balanced, so this is 0 there.
+    float phaseInvAsymmetry_ = 0.0f;
+
+    // Cathode-bias bloom (Vox AC30): the cathode resistor on cathode-biased
+    // power amps heats up under sustained heavy playing and shifts the bias
+    // more negative, slowly reducing tube gain. Models the famous "AC30
+    // bloom" / dynamic compression. 0 disables; ~0.4 gives audible bloom.
+    float cathodeBloomAmount_ = 0.0f;
+    float cathodeEnv_         = 0.0f;
+    float cathodeAttackCoeff_ = 0.0f; // ~500 ms attack
+    float cathodeReleaseCoeff_= 0.0f; // ~2 s release
     float maxDriveGain_ = 2.5f;   // Maximum drive multiplier (amp-type-dependent character)
 
     // Per-amp input scaler into the waveshaper. Reflects different tube
@@ -53,6 +76,24 @@ private:
     // waveshaper at every drive level even with preamp Clean selected.
     float inputScale_ = 1.0f;
 
+    // Post-waveshaper makeup per amp. The Koren-derived curves have slope
+    // 0.3-0.5 at the bias-point origin (push-pull reconstruction uses
+    // sign(x)·(f(|x|)−f(0)) and cancels even harmonics, which also cancels
+    // DC gain), plus NFB subtracts ~2-3 dB, plus Marshall's inputScale=0.25
+    // attenuates by -12 dB. Net: the power amp stage currently LOSES ~11 dB
+    // at clean signal levels. Real phase-inverter + power-tube stages have
+    // NET GAIN (+10 to +20 dB clean). This linear makeup brings clean-level
+    // output into the real-amp range without altering harmonic content
+    // (applied after the waveshaper so distortion percentages stay the same).
+    float postMakeup_ = 1.0f;
+
+    // Per-amp tanh soft-limit ceiling. Push-pull amps with global NFB
+    // (Fender/Marshall) need a tighter ceiling so cranked drive doesn't
+    // hit the DAW with hard clips. Class A amps without NFB (Vox) need
+    // more headroom so the EL84 curve's natural saturation isn't squashed
+    // by the limiter — the AC30's character is the curve, not the limit.
+    float outputLimitK_ = 1.1f;
+
     // Global negative feedback loop: output attenuated and subtracted from
     // the phase-inverter input. Fender Deluxe ≈ 12 dB (820 Ω / 47 Ω),
     // Marshall JTM/1959 ≈ 10 dB (27 kΩ / 5 kΩ), Vox AC30 = 0 dB (no NFB).
@@ -60,6 +101,15 @@ private:
     // 1-sample delay is at oversampled rate — inaudible.
     float nfbRatio_ = 0.0f;   // 0 = no feedback, higher = more
     float nfbState_ = 0.0f;   // previous output sample (post-waveshaper)
+
+    // Presence-cap in feedback divider: a small cap (5 nF on AB763, similar
+    // on Marshall) bypasses the feedback resistor at HF, reducing how much
+    // HF is fed back. Less HF feedback ⇒ more HF in output. Modeled as a
+    // one-pole LPF on the feedback signal — only the LF/MF content of the
+    // output is fed back, HF passes through to the output unaffected.
+    float nfbLpfState_ = 0.0f;
+    float nfbLpfCoeff_ = 1.0f;     // 1.0 = wide-open, no LPF
+    float nfbLpfFreq_  = 5000.0f;  // per-amp presence-cap effective cutoff
 
     // Phase-inverter + power-tube voltage gain. The tone stack now
     // self-compensates to unity midband (see ToneStack::outputGain_), so this
@@ -86,7 +136,35 @@ private:
     AnalogEmulation::TransformerEmulation transformer_;
     AnalogEmulation::DCBlocker dcBlocker_;
 
+    // Output-transformer HF resonance peak. Real OTs have a leakage-
+    // inductance × inter-winding-capacitance resonance that produces a
+    // characteristic peak above the audio band — Plexi at ~4-5 kHz with
+    // ~+3 dB gives the famous "Plexi bite". Implemented as a peaking biquad
+    // applied after the simple OT saturation model in TransformerEmulation.
+    struct OtPeak
+    {
+        float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+        float z1 = 0, z2 = 0;
+        float process (float x)
+        {
+            const float out = b0 * x + z1;
+            z1 = b1 * x - a1 * out + z2;
+            z2 = b2 * x - a2 * out;
+            if (std::abs (z1) < 1.0e-15f) z1 = 0.0f;
+            if (std::abs (z2) < 1.0e-15f) z2 = 0.0f;
+            return out;
+        }
+        void clear() { z1 = z2 = 0.0f; }
+    };
+    OtPeak otPeak_;
+    float  otPeakFreq_   = 5000.0f;
+    float  otPeakGainDb_ = 0.0f;
+    float  otPeakQ_      = 1.0f;
+
     void updatePresenceCoeff();
     void updateResonanceCoeff();
+    void updateNfbLpfCoeff();
+    void updateCathodeBloomCoeffs();
+    void updateOtPeak();
     void updateAmpTypeParams();
 };
