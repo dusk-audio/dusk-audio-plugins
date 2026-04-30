@@ -81,27 +81,40 @@ private:
 
     void updateCoeffs()
     {
+        // Real power-supply physics: when a loud chord is played, the filter
+        // cap bleeds down SLOWLY through the power-tube load (discharge τ ≈
+        // tens of ms → "bloom" as compression builds over the note). When the
+        // note releases, the rectifier QUICKLY refills the cap (recharge τ =
+        // R_rect × C, a few ms for tube rectifiers, <1 ms for silicon). The
+        // previous values had these inverted — voltage ducked fast and
+        // recovered slowly, which felt like a compressor pumping on every
+        // transient instead of musical sag.
+        //
+        // loadGain scales |x|² to load fraction — with the old value of 20+,
+        // even a −12 dBFS signal saturated the load calc and triggered full
+        // sag on every note. Reduced so only loud, sustained signals pull the
+        // supply down meaningfully.
         float dischargeMs, rechargeMs, loadGain, maxDepth;
         switch (type_)
         {
-            case Type::Tube5AR4:  // Fender Deluxe Reverb (5AR4 / GZ34-family, 32 μF filter)
-                dischargeMs = 8.0f;
-                rechargeMs  = 35.0f;
-                loadGain    = 20.0f;
-                maxDepth    = 0.35f;
+            case Type::Tube5AR4:  // Fender Deluxe Reverb (5AR4, 32 μF filter)
+                dischargeMs = 25.0f;
+                rechargeMs  = 5.0f;
+                loadGain    = 4.0f;
+                maxDepth    = 0.20f;
                 break;
-            case Type::TubeGZ34:  // Vox AC30 (GZ34, 32 μF, higher idle current, Class A)
-                dischargeMs = 5.0f;
-                rechargeMs  = 50.0f;
-                loadGain    = 30.0f;
-                maxDepth    = 0.40f;
+            case Type::TubeGZ34:  // Vox AC30 (GZ34, 32 μF, Class A — slower bloom, more depth)
+                dischargeMs = 35.0f;
+                rechargeMs  = 8.0f;
+                loadGain    = 5.0f;
+                maxDepth    = 0.25f;
                 break;
-            case Type::Silicon:   // Marshall Plexi (silicon bridge, 100 μF)
+            case Type::Silicon:   // Marshall Plexi (silicon bridge, 100 μF — stiff supply)
             default:
-                dischargeMs = 2.0f;
-                rechargeMs  = 6.0f;
-                loadGain    = 8.0f;
-                maxDepth    = 0.10f;
+                dischargeMs = 15.0f;
+                rechargeMs  = 1.0f;
+                loadGain    = 3.0f;
+                maxDepth    = 0.06f;
                 break;
         }
 
