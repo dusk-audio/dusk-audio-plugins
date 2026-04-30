@@ -33,11 +33,15 @@ private:
     juce::File loadedFile_;
 
     // Loudness-match makeup: cab IRs are bandpass — lots of spectral content
-    // gets cut. Computed at load time as L1/L2 ratio of the raw IR samples,
-    // which converts JUCE's default L1-normalised output to broadband-RMS
-    // unity. Toggled by setNormalize(); 1.0 when off.
+    // gets cut. Computed at IR load time by running pink noise through a
+    // separate juce::dsp::Convolution loaded with the same IR (so the
+    // makeup is measured against JUCE's exact normalise+trim+convolve path)
+    // and storing inputRms / outputRms as the broadband-RMS makeup gain.
+    // Toggled by setNormalize(); 1.0 when off.
     bool  normalize_ = false;
     float normalizeMakeup_ = 1.0f;
+
+    void measureNormalizeMakeup (const juce::File& file);
 
     // Post-cab EQ (manual biquad to avoid heap allocation from juce::dsp::IIR)
     struct Biquad

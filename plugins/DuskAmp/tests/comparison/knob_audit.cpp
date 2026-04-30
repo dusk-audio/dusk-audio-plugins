@@ -506,13 +506,49 @@ static juce::File makeTempIR()
     return tempFile;
 }
 
+// Synthetic guitar-cab IR: low-passed exponentially-decaying noise, ~50 ms tail.
+// Realistic enough to exercise the NORM loudness-match math (a unit impulse is
+// trivial — its sum-of-squares is 1, so the real bug only shows on broadband
+// IRs where JUCE's energy normalisation diverges sharply from peak).
+static juce::File makeTempCabIR()
+{
+    auto tempFile = juce::File::createTempFile ("duskamp_audit_cab_ir.wav");
+    const int n = int (kSr * 0.05); // 50 ms
+    juce::AudioBuffer<float> buf (1, n);
+    auto* data = buf.getWritePointer (0);
+    juce::Random rng { 0xCAB1DEA5 };
+    float lp = 0.0f;
+    for (int i = 0; i < n; ++i)
+    {
+        const float w = rng.nextFloat() * 2.0f - 1.0f;
+        lp += 0.20f * (w - lp); // ~one-pole LPF
+        const float env = std::exp (-3.0f * float (i) / float (n));
+        data[i] = lp * env;
+    }
+    juce::WavAudioFormat wav;
+    if (auto os = std::unique_ptr<juce::FileOutputStream> (tempFile.createOutputStream()))
+    {
+        if (auto w = std::unique_ptr<juce::AudioFormatWriter> (
+                wav.createWriterFor (os.get(), kSr, 1, 32, {}, 0)))
+        {
+            os.release();
+            w->writeFromAudioSampleBuffer (buf, 0, n);
+        }
+    }
+    return tempFile;
+}
+
 // Fused cab-section test — single IR, single CabinetIR, so the async
 // convolution lifecycle doesn't get double-initialised and segfault.
 static void testCabSection()
 {
     auto ir = makeTempIR();
     CabinetIR cab;
-    cab.prepare (kSr, 512);
+    // prepare with a max block size large enough for any of the test buffers
+    // below (rmsAtSine uses 0.5 s = 22050 samples; runMix uses 0.3 s = 13230).
+    // juce::dsp::Convolution treats maximumBlockSize as a hard contract — feeding
+    // larger blocks corrupts its internal partition state and segfaults.
+    cab.prepare (kSr, int (kSr));
     cab.loadIR (ir);
     cab.setEnabled (true);
     cab.setMix (1.0f);
@@ -579,6 +615,46 @@ static void testCabSection()
     add ("CAB_MIX (mix=0 passes dry)", ratio > 0.9f && ratio < 1.1f, dm.str());
 
     ir.deleteFile();
+
+    // CAB_LOUDNESS — confirm the NORM toggle actually keeps perceived
+    // loudness within ±2 dB of dry when convolving a realistic broadband
+    // cab IR (where JUCE's energy-normalisation differs sharply from peak,
+    // exposing any mismatch between the offline makeup measurement and
+    // JUCE's actual scaling).
+    auto cabIr = makeTempCabIR();
+    CabinetIR cab2;
+    cab2.prepare (kSr, int (kSr));
+    cab2.loadIR (cabIr);
+    cab2.setEnabled (true);
+    cab2.setMix (1.0f);
+    cab2.setHiCut (20000.0f);
+    cab2.setLoCut (20.0f);
+
+    auto cabDb = [&] (bool normOn) {
+        cab2.setNormalize (normOn);
+        // warm convolution
+        for (int i = 0; i < 50; ++i) {
+            juce::AudioBuffer<float> w (1, 512); w.clear();
+            cab2.process (w);
+        }
+        auto pink = pinkBuf (int (kSr * 0.5), 0.15f, 0xCAFEC0DE);
+        juce::AudioBuffer<float> jb (1, int (pink.size()));
+        jb.copyFrom (0, 0, pink.data(), int (pink.size()));
+        cab2.process (jb);
+        return dbfs (rms (jb.getReadPointer (0), int (pink.size()), int (kSr * 0.1)));
+    };
+    const float dryRefDb = dbfs (rms (pinkBuf (int (kSr * 0.5), 0.15f, 0xCAFEC0DE).data(),
+                                       int (kSr * 0.5), int (kSr * 0.1)));
+    const float normOffDb = cabDb (false);
+    const float normOnDb  = cabDb (true);
+    const float diffOff   = normOffDb - dryRefDb;
+    const float diffOn    = normOnDb  - dryRefDb;
+    std::ostringstream dnL;
+    dnL << "vs dry: NORM off = " << std::fixed << std::setprecision (1) << diffOff
+        << " dB, NORM on = " << diffOn << " dB (need |on| <= 2 dB)";
+    add ("CAB_LOUDNESS (NORM matches dry)", std::abs (diffOn) <= 2.0f, dnL.str());
+
+    cabIr.deleteFile();
 }
 
 // ---------------------------------------------------------------------------

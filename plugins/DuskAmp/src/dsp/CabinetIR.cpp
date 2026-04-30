@@ -96,75 +96,128 @@ void CabinetIR::loadIR (const juce::File& file)
     loadedFileName_ = file.getFileNameWithoutExtension();
     irLoaded_ = true;
 
-    // Loudness-match makeup: convolve a pink-noise test signal with the
-    // peak-normalised IR (matches JUCE's internal Normalise::yes behaviour)
-    // and compute makeup = input_RMS / output_RMS. Pink noise is close enough
-    // to a guitar's spectrum that toggling NORM on produces "cab on ≈ cab
-    // off" perceived loudness — rather than a broadband boost that over-lifts
-    // mid-heavy guitar content.
-    juce::AudioFormatManager formatManager;
-    formatManager.registerBasicFormats();
-    if (std::unique_ptr<juce::AudioFormatReader> reader { formatManager.createReaderFor (file) })
+    // Loudness-match makeup: measure the cab's actual RMS attenuation by
+    // running pink noise through a SEPARATE juce::dsp::Convolution instance
+    // loaded with the same IR. Doing it through the real JUCE path (rather
+    // than re-implementing trim+normalise+convolve offline) guarantees the
+    // makeup matches what the live convolution_ in process() actually does.
+    measureNormalizeMakeup (file);
+}
+
+void CabinetIR::measureNormalizeMakeup (const juce::File& file)
+{
+    if (currentSpec_.sampleRate <= 0.0)
+        return; // not yet prepared — leave makeup at default 1.0
+
+    juce::dsp::ConvolutionMessageQueue mq;
+    juce::dsp::Convolution measureConv { juce::dsp::Convolution::NonUniform { 256 }, mq };
+
+    // Same pink noise the audit's CAB_LOUDNESS test uses (so any spectral
+    // difference between offline measurement and live test path is ruled out).
+    const int kTestLen = static_cast<int> (currentSpec_.sampleRate * 0.5); // 22050 @ 44.1k
+    constexpr float kTestScale = 0.15f;
+
+    // Match the live convolution_'s prepare exactly so JUCE's partition
+    // layout + zero-latency engine path are identical to what the user's
+    // process() will hit at runtime. JUCE's NonUniform behaviour does
+    // change with maxBlockSize (different head/tail engine sizing).
+    juce::dsp::ProcessSpec spec;
+    spec.sampleRate       = currentSpec_.sampleRate;
+    spec.maximumBlockSize = currentSpec_.maximumBlockSize;
+    spec.numChannels      = 1;
+    measureConv.prepare (spec);
+
+    // JUCE installs the new engine at the start of process(), not when the
+    // background load finishes — getCurrentIRSize() reflects whatever was
+    // current the last time process() ran (a fresh prepared instance shows
+    // a unit-impulse placeholder of size 1). So we drive zero-buffer
+    // process() calls until either the engine swaps (size changes) or we
+    // give up.
+    const int placeholderSize = measureConv.getCurrentIRSize();
+    measureConv.loadImpulseResponse (file,
+                                     juce::dsp::Convolution::Stereo::no,
+                                     juce::dsp::Convolution::Trim::yes,
+                                     0);
+
+    juce::AudioBuffer<float> warmBuf (1, 2048);
+    auto irSamples = placeholderSize;
+    for (int attempt = 0; attempt < 200; ++attempt)
     {
-        const auto numSamples = static_cast<int> (reader->lengthInSamples);
-        if (numSamples > 0)
+        warmBuf.clear();
+        juce::dsp::AudioBlock<float> b (warmBuf);
+        juce::dsp::ProcessContextReplacing<float> ctx (b);
+        measureConv.process (ctx);
+        irSamples = measureConv.getCurrentIRSize();
+        if (irSamples != placeholderSize)
+            break;
+        juce::Thread::sleep (5);
+    }
+    if (irSamples == placeholderSize)
+        return; // load timed out
+
+    std::vector<float> pinkIn (static_cast<size_t> (kTestLen));
+    std::vector<float> pinkOut (static_cast<size_t> (kTestLen));
+    {
+        juce::Random rng { 0xCAFEC0DE };
+        float b0 = 0, b1 = 0, b2 = 0;
+        for (int i = 0; i < kTestLen; ++i)
         {
-            juce::AudioBuffer<float> irBuf (1, numSamples);
-            reader->read (&irBuf, 0, numSamples, 0, true, false);
-            auto* ir = irBuf.getWritePointer (0);
-
-            // Peak-normalise the IR so our offline measurement matches what
-            // JUCE's convolution will actually output.
-            float peak = 0.0f;
-            for (int i = 0; i < numSamples; ++i)
-                peak = std::max (peak, std::abs (ir[i]));
-            if (peak > 1.0e-9f)
-                for (int i = 0; i < numSamples; ++i)
-                    ir[i] /= peak;
-
-            // Paul Kellet's 3-biquad pink-noise filter, 16k samples.
-            constexpr int kTestLen = 16384;
-            std::vector<float> pink (kTestLen);
-            {
-                juce::Random rng { 0xDE51FE7E };
-                float b0 = 0, b1 = 0, b2 = 0;
-                for (int i = 0; i < kTestLen; ++i)
-                {
-                    float w = rng.nextFloat() * 2.0f - 1.0f;
-                    b0 = 0.99886f * b0 + w * 0.0555179f;
-                    b1 = 0.99332f * b1 + w * 0.0750759f;
-                    b2 = 0.96900f * b2 + w * 0.1538520f;
-                    pink[static_cast<size_t> (i)] = (b0 + b1 + b2 + w * 0.1848f) * 0.11f;
-                }
-            }
-
-            // Direct time-domain convolution.
-            std::vector<float> out (kTestLen, 0.0f);
-            for (int i = 0; i < kTestLen; ++i)
-            {
-                float y = 0.0f;
-                const int jMax = std::min (numSamples, i + 1);
-                for (int j = 0; j < jMax; ++j)
-                    y += pink[static_cast<size_t> (i - j)] * ir[j];
-                out[static_cast<size_t> (i)] = y;
-            }
-
-            // RMS ratio, skipping the IR-length transient at the start.
-            const int skip = std::min (numSamples, kTestLen / 4);
-            double inSumSq = 0.0, outSumSq = 0.0;
-            for (int i = skip; i < kTestLen; ++i)
-            {
-                const double p = pink[static_cast<size_t> (i)];
-                const double o = out[static_cast<size_t> (i)];
-                inSumSq  += p * p;
-                outSumSq += o * o;
-            }
-            const double inRms  = std::sqrt (inSumSq);
-            const double outRms = std::sqrt (outSumSq);
-            normalizeMakeup_ = (outRms > 1.0e-9 && inRms > 1.0e-9)
-                             ? static_cast<float> (inRms / outRms) : 1.0f;
+            const float w = rng.nextFloat() * 2.0f - 1.0f;
+            b0 = 0.99886f * b0 + w * 0.0555179f;
+            b1 = 0.99332f * b1 + w * 0.0750759f;
+            b2 = 0.96900f * b2 + w * 0.1538520f;
+            pinkIn[static_cast<size_t> (i)] = (b0 + b1 + b2 + w * 0.1848f) * kTestScale;
         }
     }
+
+    // Process pink through the FULL pipeline (convolution + post-cab EQ
+    // biquads at the user's current cut frequencies). Otherwise the measured
+    // ratio reflects only the convolution and misses the few-dB attenuation
+    // the user actually hears, leading to under-correction.
+    if (filtersDirty_)
+    {
+        updateFilters();
+        filtersDirty_ = false;
+    }
+    Biquad measHi = hiCutFilter_; // copy coeffs (state starts fresh)
+    Biquad measLo = loCutFilter_;
+    measHi.reset();
+    measLo.reset();
+
+    const int blockSize = std::min (static_cast<int> (currentSpec_.maximumBlockSize), kTestLen);
+    juce::AudioBuffer<float> blockBuf (1, blockSize);
+    for (int total = 0; total < kTestLen; total += blockSize)
+    {
+        const int n = std::min (blockSize, kTestLen - total);
+        blockBuf.copyFrom (0, 0, pinkIn.data() + total, n);
+        juce::dsp::AudioBlock<float> block (blockBuf);
+        auto sub = block.getSubBlock (0, static_cast<size_t> (n));
+        juce::dsp::ProcessContextReplacing<float> ctx (sub);
+        measureConv.process (ctx);
+        float* p = blockBuf.getWritePointer (0);
+        for (int i = 0; i < n; ++i)
+        {
+            p[i] = measHi.process (p[i]);
+            p[i] = measLo.process (p[i]);
+        }
+        std::copy_n (blockBuf.getReadPointer (0), n, pinkOut.data() + total);
+    }
+
+    // Skip the IR-length transient + a small head latency margin so RMS
+    // averages over the steady-state portion of the convolution output.
+    const int skip = std::min (irSamples + 256, kTestLen / 4);
+    double inSumSq = 0.0, outSumSq = 0.0;
+    for (int i = skip; i < kTestLen; ++i)
+    {
+        const double p = pinkIn[static_cast<size_t> (i)];
+        const double o = pinkOut[static_cast<size_t> (i)];
+        inSumSq  += p * p;
+        outSumSq += o * o;
+    }
+    const double inRms  = std::sqrt (inSumSq);
+    const double outRms = std::sqrt (outSumSq);
+    if (outRms > 1.0e-9 && inRms > 1.0e-9)
+        normalizeMakeup_ = static_cast<float> (inRms / outRms);
 }
 
 void CabinetIR::setEnabled (bool on)
