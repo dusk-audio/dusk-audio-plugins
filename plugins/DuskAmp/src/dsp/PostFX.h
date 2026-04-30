@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SpringEngine.h"   // from plugins/shared
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
 #include <cmath>
@@ -37,10 +38,12 @@ private:
     float delayFbFilterStateR_ = 0.0f;
     float delayFbFilterCoeff_ = 0.7f; // ~4kHz rolloff
 
-    // Reverb
+    // Reverb — shared SpringEngine (Fender 6G15 model: 3 parallel springs
+    // per channel, 24-stage AP dispersion cascade, RT60-tracked feedback,
+    // random-walk LFO drip). Lives in plugins/shared/ so DuskAmp + DuskVerb
+    // share the same implementation rather than maintaining two copies.
     bool reverbEnabled_ = false;
-    juce::dsp::Reverb reverb_;
-    juce::dsp::Reverb::Parameters reverbParams_;
+    SpringEngine reverb_;
     float reverbMix_ = 0.15f;
     juce::AudioBuffer<float> reverbBuffer_; // Pre-allocated for audio-thread use
 

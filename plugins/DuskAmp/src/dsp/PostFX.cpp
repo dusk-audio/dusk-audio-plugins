@@ -9,22 +9,9 @@ void PostFX::prepare (double sampleRate, int maxBlockSize)
     delayBufL_.assign (static_cast<size_t> (maxSamples), 0.0f);
     delayBufR_.assign (static_cast<size_t> (maxSamples), 0.0f);
 
-    // Prepare reverb
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate = sampleRate;
-    spec.maximumBlockSize = static_cast<juce::uint32> (maxBlockSize);
-    spec.numChannels = 2;
-    reverb_.prepare (spec);
-
+    // Spring tank — handles its own internal sizing/state.
+    reverb_.prepare (sampleRate, maxBlockSize);
     reverbBuffer_.setSize (2, maxBlockSize, false, true, true);
-
-    reverbParams_.roomSize = 0.5f;
-    reverbParams_.damping = 0.5f;
-    reverbParams_.width = 1.0f;
-    reverbParams_.wetLevel = 1.0f;  // We handle mix externally
-    reverbParams_.dryLevel = 0.0f;
-    reverbParams_.freezeMode = 0.0f;
-    reverb_.setParameters (reverbParams_);
 
     updateDelayFbFilterCoeff();
     reset();
@@ -37,7 +24,7 @@ void PostFX::reset()
     delayWritePos_ = 0;
     delayFbFilterStateL_ = 0.0f;
     delayFbFilterStateR_ = 0.0f;
-    reverb_.reset();
+    reverb_.clearBuffers();
 }
 
 void PostFX::setDelayEnabled (bool on)
@@ -74,8 +61,11 @@ void PostFX::setReverbMix (float mix01)
 
 void PostFX::setReverbDecay (float decay01)
 {
-    reverbParams_.roomSize = std::clamp (decay01, 0.0f, 1.0f);
-    reverb_.setParameters (reverbParams_);
+    // Map 0..1 user knob to seconds: 0 → 0.5 s (short tank flutter), 1 → 5 s
+    // (long, sustained spring tail). SpringEngine's per-spring feedback is
+    // computed from this RT60 target.
+    const float seconds = 0.5f + std::clamp (decay01, 0.0f, 1.0f) * 4.5f;
+    reverb_.setDecayTime (seconds);
 }
 
 void PostFX::process (float* left, float* right, int numSamples)
@@ -119,26 +109,23 @@ void PostFX::process (float* left, float* right, int numSamples)
         }
     }
 
-    // --- Reverb ---
+    // --- Reverb (spring tank, shared SpringEngine) ---
     if (reverbEnabled_ && reverbMix_ > 0.0f)
     {
-        // Process reverb on pre-allocated buffer for separate wet/dry mixing
-        reverbBuffer_.copyFrom (0, 0, left, numSamples);
-        reverbBuffer_.copyFrom (1, 0, right, numSamples);
+        // SpringEngine takes separate L/R buffers for in/out. Use the
+        // pre-allocated reverbBuffer_ as the wet destination so the dry
+        // signal in left[]/right[] stays intact for the mix below.
+        float* wetL = reverbBuffer_.getWritePointer (0);
+        float* wetR = reverbBuffer_.getWritePointer (1);
+        reverb_.process (left, right, wetL, wetR, numSamples);
 
-        juce::dsp::AudioBlock<float> block (reverbBuffer_);
-        auto subBlock = block.getSubBlock (0, static_cast<size_t> (numSamples));
-        juce::dsp::ProcessContextReplacing<float> context (subBlock);
-        reverb_.process (context);
-
-        // Mix: keep dry signal at unity, add wet at reverbMix_ level
-        const float* wetL = reverbBuffer_.getReadPointer (0);
-        const float* wetR = reverbBuffer_.getReadPointer (1);
-
+        // Crossfade: keep dry at (1 − mix), add wet at mix.
+        const float wet = reverbMix_;
+        const float dry = 1.0f - reverbMix_;
         for (int i = 0; i < numSamples; ++i)
         {
-            left[i]  = left[i]  * (1.0f - reverbMix_) + wetL[i] * reverbMix_;
-            right[i] = right[i] * (1.0f - reverbMix_) + wetR[i] * reverbMix_;
+            left[i]  = left[i]  * dry + wetL[i] * wet;
+            right[i] = right[i] * dry + wetR[i] * wet;
         }
     }
 }
