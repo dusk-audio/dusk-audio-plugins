@@ -108,6 +108,7 @@ target_sources(DuskAmp
         src/dsp/CabinetIR.cpp
         src/dsp/PostFX.cpp
         ../shared/LEDMeter.cpp
+        ../shared/SpringEngine.cpp
         ${NAM_SOURCES}
 )
 
