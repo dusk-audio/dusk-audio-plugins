@@ -15,6 +15,7 @@ public:
     void setMix (float mix01);
     void setHiCut (float hz);
     void setLoCut (float hz);
+    void setNormalize (bool on);
 
     bool isLoaded() const { return irLoaded_; }
     juce::String getLoadedFileName() const { return loadedFileName_; }
@@ -30,6 +31,13 @@ private:
     float mix_ = 1.0f;
     juce::String loadedFileName_;
     juce::File loadedFile_;
+
+    // Loudness-match makeup: cab IRs are bandpass — lots of spectral content
+    // gets cut. Computed at load time as L1/L2 ratio of the raw IR samples,
+    // which converts JUCE's default L1-normalised output to broadband-RMS
+    // unity. Toggled by setNormalize(); 1.0 when off.
+    bool  normalize_ = false;
+    float normalizeMakeup_ = 1.0f;
 
     // Post-cab EQ (manual biquad to avoid heap allocation from juce::dsp::IIR)
     struct Biquad

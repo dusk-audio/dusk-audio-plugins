@@ -54,6 +54,7 @@ public:
     void setCabinetMix (float mix01);
     void setCabinetHiCut (float hz);
     void setCabinetLoCut (float hz);
+    void setCabinetNormalize (bool on);
 
     // Post FX
     void setDelayEnabled (bool on);

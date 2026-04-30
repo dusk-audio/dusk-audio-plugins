@@ -352,6 +352,11 @@ void DuskAmpEngine::setCabinetLoCut (float hz)
     cabinet_.setLoCut (hz);
 }
 
+void DuskAmpEngine::setCabinetNormalize (bool on)
+{
+    cabinet_.setNormalize (on);
+}
+
 // --- Post FX ---
 
 void DuskAmpEngine::setDelayEnabled (bool on)

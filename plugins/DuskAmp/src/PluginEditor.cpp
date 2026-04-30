@@ -237,6 +237,14 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     cabEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         params, DuskAmpParams::CAB_ENABLED, cabEnabled_);
 
+    // --- Cabinet normalize toggle ---
+    cabNormalize_.setButtonText ("NORM");
+    cabNormalize_.setClickingTogglesState (true);
+    cabNormalize_.setTooltip ("Match cab loudness to pre-cab level. Useful when the IR drops the volume significantly.");
+    addAndMakeVisible (cabNormalize_);
+    cabNormalizeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        params, DuskAmpParams::CAB_NORMALIZE, cabNormalize_);
+
     // --- Cab browser ---
     cabBrowser_.onFileSelected = [this] (const juce::File& file)
     {
@@ -447,6 +455,8 @@ void DuskAmpEditor::timerCallback()
     cabLoCut_.setDimmed (cabOff);
     cabBrowser_.setEnabled (! cabOff);
     cabBrowser_.setAlpha (cabOff ? 0.4f : 1.0f);
+    cabNormalize_.setEnabled (! cabOff);
+    cabNormalize_.setAlpha (cabOff ? 0.4f : 1.0f);
 
     // Dim delay knobs when delay is disabled
     bool delayOff = ! delayEnabled_.getToggleState();
@@ -817,6 +827,8 @@ void DuskAmpEditor::resized()
         int innerY = bottomY + scaler_.scaled (22);
 
         cabEnabled_.setBounds (innerX, innerY + scaler_.scaled (2), toggleW, toggleH);
+        cabNormalize_.setBounds (innerX, innerY + scaler_.scaled (2) + toggleH + scaler_.scaled (4),
+                                 toggleW, toggleH);
 
         int knobStartX = innerX + toggleW + btnGap;
         int knobColW = scaler_.scaled (70);

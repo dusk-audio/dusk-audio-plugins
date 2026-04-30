@@ -21,6 +21,7 @@ namespace DuskAmpParams
     static constexpr const char* CAB_MIX         = "cab_mix";
     static constexpr const char* CAB_HICUT       = "cab_hicut";
     static constexpr const char* CAB_LOCUT       = "cab_locut";
+    static constexpr const char* CAB_NORMALIZE   = "cab_normalize";
     static constexpr const char* DELAY_ENABLED   = "delay_enabled";
     static constexpr const char* DELAY_TIME      = "delay_time";
     static constexpr const char* DELAY_FEEDBACK  = "delay_feedback";

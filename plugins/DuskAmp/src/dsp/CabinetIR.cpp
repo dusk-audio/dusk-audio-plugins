@@ -1,4 +1,5 @@
 #include "CabinetIR.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 
 CabinetIR::CabinetIR()
     : convolution_ (juce::dsp::Convolution::NonUniform { 256 }, messageQueue_)
@@ -44,12 +45,16 @@ void CabinetIR::process (juce::AudioBuffer<float>& buffer)
     juce::dsp::ProcessContextReplacing<float> context (block);
     convolution_.process (context);
 
-    // Apply post-cab EQ (hi-cut and lo-cut) — mono processing
+    // Apply post-cab EQ (hi-cut and lo-cut) — mono processing, then apply
+    // the optional loudness-match makeup to the wet signal (only when enabled)
+    // so the dry/wet mix still crossfades against an un-boosted dry.
     float* data = buffer.getWritePointer (0);
+    const float gain = normalize_ ? normalizeMakeup_ : 1.0f;
     for (int i = 0; i < numSamples; ++i)
     {
         data[i] = hiCutFilter_.process (data[i]);
         data[i] = loCutFilter_.process (data[i]);
+        data[i] *= gain;
     }
 
     // Apply dry/wet mix
@@ -90,6 +95,76 @@ void CabinetIR::loadIR (const juce::File& file)
     loadedFile_ = file;
     loadedFileName_ = file.getFileNameWithoutExtension();
     irLoaded_ = true;
+
+    // Loudness-match makeup: convolve a pink-noise test signal with the
+    // peak-normalised IR (matches JUCE's internal Normalise::yes behaviour)
+    // and compute makeup = input_RMS / output_RMS. Pink noise is close enough
+    // to a guitar's spectrum that toggling NORM on produces "cab on ≈ cab
+    // off" perceived loudness — rather than a broadband boost that over-lifts
+    // mid-heavy guitar content.
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
+    if (std::unique_ptr<juce::AudioFormatReader> reader { formatManager.createReaderFor (file) })
+    {
+        const auto numSamples = static_cast<int> (reader->lengthInSamples);
+        if (numSamples > 0)
+        {
+            juce::AudioBuffer<float> irBuf (1, numSamples);
+            reader->read (&irBuf, 0, numSamples, 0, true, false);
+            auto* ir = irBuf.getWritePointer (0);
+
+            // Peak-normalise the IR so our offline measurement matches what
+            // JUCE's convolution will actually output.
+            float peak = 0.0f;
+            for (int i = 0; i < numSamples; ++i)
+                peak = std::max (peak, std::abs (ir[i]));
+            if (peak > 1.0e-9f)
+                for (int i = 0; i < numSamples; ++i)
+                    ir[i] /= peak;
+
+            // Paul Kellet's 3-biquad pink-noise filter, 16k samples.
+            constexpr int kTestLen = 16384;
+            std::vector<float> pink (kTestLen);
+            {
+                juce::Random rng { 0xDE51FE7E };
+                float b0 = 0, b1 = 0, b2 = 0;
+                for (int i = 0; i < kTestLen; ++i)
+                {
+                    float w = rng.nextFloat() * 2.0f - 1.0f;
+                    b0 = 0.99886f * b0 + w * 0.0555179f;
+                    b1 = 0.99332f * b1 + w * 0.0750759f;
+                    b2 = 0.96900f * b2 + w * 0.1538520f;
+                    pink[static_cast<size_t> (i)] = (b0 + b1 + b2 + w * 0.1848f) * 0.11f;
+                }
+            }
+
+            // Direct time-domain convolution.
+            std::vector<float> out (kTestLen, 0.0f);
+            for (int i = 0; i < kTestLen; ++i)
+            {
+                float y = 0.0f;
+                const int jMax = std::min (numSamples, i + 1);
+                for (int j = 0; j < jMax; ++j)
+                    y += pink[static_cast<size_t> (i - j)] * ir[j];
+                out[static_cast<size_t> (i)] = y;
+            }
+
+            // RMS ratio, skipping the IR-length transient at the start.
+            const int skip = std::min (numSamples, kTestLen / 4);
+            double inSumSq = 0.0, outSumSq = 0.0;
+            for (int i = skip; i < kTestLen; ++i)
+            {
+                const double p = pink[static_cast<size_t> (i)];
+                const double o = out[static_cast<size_t> (i)];
+                inSumSq  += p * p;
+                outSumSq += o * o;
+            }
+            const double inRms  = std::sqrt (inSumSq);
+            const double outRms = std::sqrt (outSumSq);
+            normalizeMakeup_ = (outRms > 1.0e-9 && inRms > 1.0e-9)
+                             ? static_cast<float> (inRms / outRms) : 1.0f;
+        }
+    }
 }
 
 void CabinetIR::setEnabled (bool on)
@@ -112,6 +187,11 @@ void CabinetIR::setLoCut (float hz)
 {
     loCutFreq_ = std::clamp (hz, 20.0f, 500.0f);
     filtersDirty_ = true;
+}
+
+void CabinetIR::setNormalize (bool on)
+{
+    normalize_ = on;
 }
 
 void CabinetIR::updateFilters()

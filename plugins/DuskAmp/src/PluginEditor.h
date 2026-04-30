@@ -113,6 +113,8 @@ private:
     // -- CABINET section --
     juce::ToggleButton cabEnabled_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> cabEnabledAttachment_;
+    juce::ToggleButton cabNormalize_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> cabNormalizeAttachment_;
     KnobWithLabel cabMix_;
     KnobWithLabel cabHiCut_;
     KnobWithLabel cabLoCut_;

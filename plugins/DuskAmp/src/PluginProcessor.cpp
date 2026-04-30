@@ -88,6 +88,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
         juce::ParameterID { DuskAmpParams::CAB_LOCUT, 1 }, "Cab Lo Cut",
         juce::NormalisableRange<float> (20.0f, 500.0f, 0.0f, 0.5f), 60.0f));
 
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { DuskAmpParams::CAB_NORMALIZE, 1 }, "Cab Normalize", true));
+
     // Effects - Delay
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { DuskAmpParams::DELAY_ENABLED, 1 }, "Delay", false));
@@ -144,6 +147,7 @@ DuskAmpProcessor::DuskAmpProcessor()
     toneTypeParam_      = parameters.getRawParameterValue (DuskAmpParams::TONE_TYPE);
     oversamplingParam_  = parameters.getRawParameterValue (DuskAmpParams::OVERSAMPLING);
     cabEnabledParam_    = parameters.getRawParameterValue (DuskAmpParams::CAB_ENABLED);
+    cabNormalizeParam_  = parameters.getRawParameterValue (DuskAmpParams::CAB_NORMALIZE);
     brightParam_        = parameters.getRawParameterValue (DuskAmpParams::PREAMP_BRIGHT);
     delayEnabledParam_  = parameters.getRawParameterValue (DuskAmpParams::DELAY_ENABLED);
     reverbEnabledParam_ = parameters.getRawParameterValue (DuskAmpParams::REVERB_ENABLED);
@@ -197,6 +201,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cachedToneType_      = static_cast<int> (toneTypeParam_->load());
     cachedOversampling_  = static_cast<int> (oversamplingParam_->load());
     cachedCabEnabled_    = cabEnabledParam_->load() >= 0.5f;
+    cachedCabNormalize_  = cabNormalizeParam_->load() >= 0.5f;
     cachedBright_        = brightParam_->load() >= 0.5f;
     cachedDelayEnabled_  = delayEnabledParam_->load() >= 0.5f;
     cachedReverbEnabled_ = reverbEnabledParam_->load() >= 0.5f;
@@ -206,6 +211,7 @@ void DuskAmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine_.setToneStackType (cachedToneType_);
     engine_.setOversamplingFactor (cachedOversampling_ >= 1 ? 4 : 2);
     engine_.setCabinetEnabled (cachedCabEnabled_);
+    engine_.setCabinetNormalize (cachedCabNormalize_);
     engine_.setPreampBright (cachedBright_);
     engine_.setDelayEnabled (cachedDelayEnabled_);
     engine_.setReverbEnabled (cachedReverbEnabled_);
@@ -268,19 +274,19 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     int numSamples = buffer.getNumSamples();
 
-    // Clear any unused output channels
-    for (int ch = totalNumInputChannels; ch < totalNumOutputChannels; ++ch)
+    // Handle mono input: duplicate ch0 to ch1 BEFORE bypass so a bypass'd
+    // mono-input track produces full stereo passthrough rather than a silent
+    // right channel.
+    if (totalNumInputChannels == 1 && totalNumOutputChannels >= 2)
+        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
+
+    // Clear any extra output channels beyond stereo (rare, e.g. 2-in-4-out).
+    for (int ch = 2; ch < totalNumOutputChannels; ++ch)
         buffer.clear (ch, 0, numSamples);
 
     // Bypass: pass audio through unprocessed
     if (bypassParam_ != nullptr && bypassParam_->get())
         return;
-
-    // Handle mono input: duplicate channel 0 to channel 1
-    if (totalNumInputChannels == 1 && totalNumOutputChannels == 2)
-    {
-        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
-    }
 
     float* left  = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
@@ -334,6 +340,13 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         cachedCabEnabled_ = cabEnabled;
         engine_.setCabinetEnabled (cabEnabled);
+    }
+
+    bool cabNormalize = cabNormalizeParam_->load() >= 0.5f;
+    if (cabNormalize != cachedCabNormalize_)
+    {
+        cachedCabNormalize_ = cabNormalize;
+        engine_.setCabinetNormalize (cabNormalize);
     }
 
     bool bright = brightParam_->load() >= 0.5f;

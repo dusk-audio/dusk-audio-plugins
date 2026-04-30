@@ -81,6 +81,7 @@ private:
     std::atomic<float>* toneTypeParam_      = nullptr;
     std::atomic<float>* oversamplingParam_  = nullptr;
     std::atomic<float>* cabEnabledParam_    = nullptr;
+    std::atomic<float>* cabNormalizeParam_  = nullptr;
     std::atomic<float>* brightParam_        = nullptr;
     std::atomic<float>* delayEnabledParam_  = nullptr;
     std::atomic<float>* reverbEnabledParam_ = nullptr;
@@ -115,6 +116,7 @@ private:
     int cachedToneType_      = 1;
     int cachedOversampling_  = 0;
     bool cachedCabEnabled_   = true;
+    bool cachedCabNormalize_ = true;
     bool cachedBright_       = false;
     bool cachedDelayEnabled_ = false;
     bool cachedReverbEnabled_= false;
