@@ -3,6 +3,7 @@
 #include "InputSection.h"
 #include "PreampDSP.h"
 #include "ToneStack.h"
+#include "PhaseInverter.h"
 #include "PowerAmp.h"
 #include "CabinetIR.h"
 #include "PostFX.h"
@@ -84,6 +85,7 @@ private:
     InputSection input_;
     PreampDSP preamp_;
     ToneStack toneStack_;
+    PhaseInverter phaseInverter_;
     PowerAmp powerAmp_;
     CabinetIR cabinet_;
     PostFX postFx_;

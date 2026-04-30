@@ -23,6 +23,7 @@ void DuskAmpEngine::prepare (double sampleRate, int maxBlockSize)
 
     input_.prepare (sampleRate);
     preamp_.prepare (oversampledRate);
+    phaseInverter_.prepare (oversampledRate);
     powerAmp_.prepare (oversampledRate);
     cabinet_.prepare (sampleRate, maxBlockSize);
     postFx_.prepare (sampleRate, maxBlockSize);
@@ -71,6 +72,7 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
 
         preamp_.process (oversampledData, oversampledNumSamples);
         toneStack_.process (oversampledData, oversampledNumSamples);
+        phaseInverter_.process (oversampledData, oversampledNumSamples);
         powerAmp_.process (oversampledData, oversampledNumSamples);
 
         oversampling_.processSamplesDown (inputBlock);
@@ -134,11 +136,18 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
     // 7. Post FX: delay + reverb (stereo processing)
     postFx_.process (left, right, numSamples);
 
-    // 8. Apply output gain
+    // 8. Final soft-limit + output gain. Power amp already does per-amp
+    // tanh limiting at its output, so this is a chain-end SAFETY NET for
+    // peak amplification introduced downstream — cab convolution can
+    // amplify transients (constructive impulse-response interference),
+    // delay feedback can push tail level near 1.0, and reverb wet adds
+    // on top of that. Loose K=1.6 so signals up to ~0.8 RMS pass through
+    // essentially un-touched and only true overloads (>1.0) get caught.
+    constexpr float kLimitK = 1.6f;
     for (int i = 0; i < numSamples; ++i)
     {
-        left[i]  *= outputGain_;
-        right[i] *= outputGain_;
+        left[i]  = std::tanh (left[i]  / kLimitK) * kLimitK * outputGain_;
+        right[i] = std::tanh (right[i] / kLimitK) * kLimitK * outputGain_;
     }
 }
 
@@ -228,7 +237,60 @@ void DuskAmpEngine::setPreampBright (bool on)
 
 void DuskAmpEngine::setToneStackType (int type)
 {
-    toneStack_.setType (static_cast<ToneStack::Type> (std::clamp (type, 0, 2)));
+    const int t = std::clamp (type, 0, 2);
+    toneStack_.setType (static_cast<ToneStack::Type> (t));
+
+    // Couple the power-amp character to the tone stack family so the user's
+    // single AMP/TONE selector picks an actually-different amp model rather
+    // than just a tone-stack tweak with a hardcoded Marshall power section.
+    //   American → Fender 6V6 push-pull + LTP phase inverter
+    //   British  → Marshall EL34 push-pull + LTP phase inverter
+    //   AC       → Vox EL84 Class A + cathodyne phase splitter
+    PowerAmp::AmpType paType = PowerAmp::AmpType::Fender;
+    switch (t)
+    {
+        case 0: paType = PowerAmp::AmpType::Fender;   break;
+        case 1: paType = PowerAmp::AmpType::Marshall; break;
+        case 2: paType = PowerAmp::AmpType::Vox;      break;
+    }
+    powerAmp_.setAmpType (paType);
+
+    // Marshall-only preamp voicing (V1A cathode-bypass shelf + Channel-II
+    // jumper LM mix). Other amps run the generic preamp path.
+    preamp_.setMarshallVoicing (paType == PowerAmp::AmpType::Marshall);
+
+    // Configure the phase inverter to match the amp's topology. The PI
+    // sits between the tonestack and the power-tube waveshaper (where it
+    // physically belongs), providing the +30 dB driver gain that used to
+    // live as a static postMakeup multiplier inside PowerAmp. Saturating
+    // here at heavy drive contributes the harmonics + dynamic compression
+    // that real PI clipping adds to a cranked amp.
+    switch (paType)
+    {
+        case PowerAmp::AmpType::Fender:
+            phaseInverter_.setTopology (PhaseInverter::Topology::LongTailPair);
+            phaseInverter_.setGain (2.5f);     // ≈ +8 dB, replaces postMakeup
+            phaseInverter_.setHeadroom (2.2f); // higher headroom: PI stays linear at clean drive,
+                                                // 6V6 waveshaper gets the harder signal at cranked
+            break;
+        case PowerAmp::AmpType::Marshall:
+            phaseInverter_.setTopology (PhaseInverter::Topology::LongTailPair);
+            phaseInverter_.setGain (4.0f);     // compensates Marshall's 0.25 inputScale
+            phaseInverter_.setHeadroom (1.6f); // a touch more headroom — 1959 PI runs higher Vp
+            break;
+        case PowerAmp::AmpType::Vox:
+        default:
+            // Cathodyne PI is a single-triode split-load: ~unity differential
+            // gain. We use moderate gain + generous headroom so PI stays
+            // mostly transparent; the AC30 character comes from the cathode
+            // follower (in Top Boost) + the asymmetric EL84 curve seen by
+            // Class A push-pull, not from PI clipping. Pushing the PI too
+            // hard makes clean settings buzzy.
+            phaseInverter_.setTopology (PhaseInverter::Topology::Cathodyne);
+            phaseInverter_.setGain (1.6f);
+            phaseInverter_.setHeadroom (2.4f);
+            break;
+    }
 }
 
 void DuskAmpEngine::setBass (float value01)
