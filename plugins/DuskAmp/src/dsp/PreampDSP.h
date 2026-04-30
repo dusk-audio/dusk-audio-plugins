@@ -13,6 +13,7 @@ public:
     void setGain (float gain01);
     void setChannel (Channel ch);
     void setBright (bool on);
+    void setMarshallVoicing (bool on);   // V1A cathode-bypass-cap LF cut + jumper LM mix
     void process (float* buffer, int numSamples);
 
 private:
@@ -40,7 +41,17 @@ private:
     float brightBoostState_ = 0.0f;
     float brightBoostCoeff_ = 0.0f;
 
+    // Marshall V1A cathode-bypass cap (~7 dB low-shelf cut at 285 Hz) and
+    // channel-jumper LM mix (50% Channel-II low-mid added to bright path,
+    // simulating the Hendrix-trick of bridging both inputs).
+    bool  marshallVoicing_      = false;
+    float cathodeShelfState_    = 0.0f;
+    float cathodeShelfCoeff_    = 0.0f;
+    float jumperLpfState_       = 0.0f;
+    float jumperLpfCoeff_       = 0.0f;
+
     void updateGainStaging();
     void updateCouplingCapCoeff();
     void updateBrightCoeff();
+    void updateMarshallVoicingCoeffs();
 };

@@ -15,6 +15,7 @@ void PreampDSP::prepare (double sampleRate)
 
     updateCouplingCapCoeff();
     updateBrightCoeff();
+    updateMarshallVoicingCoeffs();
     updateGainStaging();
     reset();
 }
@@ -28,7 +29,9 @@ void PreampDSP::reset()
         couplingCapState_[i] = 0.0f;
     }
 
-    brightBoostState_ = 0.0f;
+    brightBoostState_   = 0.0f;
+    cathodeShelfState_  = 0.0f;
+    jumperLpfState_     = 0.0f;
 }
 
 void PreampDSP::setGain (float gain01)
@@ -56,19 +59,54 @@ void PreampDSP::setBright (bool on)
     bright_ = on;
 }
 
+void PreampDSP::setMarshallVoicing (bool on)
+{
+    marshallVoicing_ = on;
+}
+
 void PreampDSP::process (float* buffer, int numSamples)
 {
+    // Bright-cap mix amount scales with gain knob: at low gain (volume pot
+    // far from the cap end) the cap bypasses MORE of the pot's resistance
+    // → the bright effect is strongest. At high gain (wiper near the cap
+    // end) the cap has less effect → minimal bright boost. This is the
+    // hallmark Marshall (and Fender to a lesser extent) "you only hear the
+    // bright cap at low volumes" interaction.
+    const float brightMix = bright_ ? (0.45f * (1.0f - 0.7f * gain_)) : 0.0f;
+
     for (int i = 0; i < numSamples; ++i)
     {
         float sample = buffer[i];
 
-        // Bright cap: mix in a highpass-filtered version before the first stage
+        // Bright cap (gain-modulated): mix HPF of input before the first stage
         if (bright_)
         {
             float hpOut = sample - brightBoostState_;
             brightBoostState_ += hpOut * brightBoostCoeff_;
-            // Mix treble boost in (add ~30% of the highpassed signal)
-            sample += hpOut * 0.3f;
+            sample += hpOut * brightMix;
+        }
+
+        // Marshall-only voicing: V1A cathode-bypass cap (LF cut at ~285 Hz)
+        // and channel-jumper LM mix (Channel-II low-mid content blended in).
+        // Applied here before the tube stages so the saturation sees the
+        // full Marshall-flavoured signal.
+        if (marshallVoicing_)
+        {
+            // ~−7 dB low-shelf at 285 Hz: track LPF state, subtract a fraction
+            // to reduce LF without affecting HF. Net low-band gain = 1 − 0.55
+            // = 0.45 (~−7 dB), matching real V1A 0.68 µF / 820 Ω network.
+            cathodeShelfState_ += cathodeShelfCoeff_ * (sample - cathodeShelfState_);
+            if (std::abs (cathodeShelfState_) < 1e-15f) cathodeShelfState_ = 0.0f;
+            sample -= cathodeShelfState_ * 0.55f;
+
+            // Channel-jumper: add 25% of a low-passed (~600 Hz) input as
+            // Channel-II low-mid content. Both bright (HF emphasis) and
+            // jumper (LM emphasis) signals end up in the same tube — the
+            // sum-then-saturate behaviour of the real Hendrix-trick patch
+            // bridge.
+            jumperLpfState_ += jumperLpfCoeff_ * (buffer[i] - jumperLpfState_);
+            if (std::abs (jumperLpfState_) < 1e-15f) jumperLpfState_ = 0.0f;
+            sample += jumperLpfState_ * 0.25f;
         }
 
         // Process through each active tube stage
@@ -110,24 +148,32 @@ void PreampDSP::updateGainStaging()
     // Clean=0.35, Crunch=0.65, Lead=1.0 — giving Lead more headroom loss into
     // the waveshaper downstream, matching user expectation that higher-gain
     // channels sound both louder and more saturated.
+    //
+    // The gain knob also scales the channel's final makeup so it acts like a
+    // real amp's volume control (not just a "saturation amount" knob). Range
+    // chosen for ~20 dB of useful knob travel: gain=0 → 10% of max (quiet but
+    // not silent), gain=1 → full channel makeup (matches the previous fixed
+    // value so THD calibration stays valid at the top of the knob).
+    const float gainMakeup = 0.1f + gain_ * 0.9f;
+
     switch (currentChannel_)
     {
         case Channel::Clean:
             stages_[0].setDrive (gain_ * 0.25f);
-            outputMakeup_ = 2.0f;
+            outputMakeup_ = 2.0f * gainMakeup;
             break;
 
         case Channel::Crunch:
             stages_[0].setDrive (gain_ * 0.15f);
             stages_[1].setDrive (gain_ * 0.35f);
-            outputMakeup_ = 4.0f;
+            outputMakeup_ = 4.0f * gainMakeup;
             break;
 
         case Channel::Lead:
             stages_[0].setDrive (gain_ * 0.12f);
             stages_[1].setDrive (gain_ * 0.25f);
             stages_[2].setDrive (gain_ * 0.5f);
-            outputMakeup_ = 8.0f;
+            outputMakeup_ = 8.0f * gainMakeup;
             break;
     }
 }
@@ -146,4 +192,21 @@ void PreampDSP::updateBrightCoeff()
     float fc = 1500.0f;
     float w = 2.0f * 3.14159265359f * fc / static_cast<float> (sampleRate_);
     brightBoostCoeff_ = w / (w + 1.0f);
+}
+
+void PreampDSP::updateMarshallVoicingCoeffs()
+{
+    // Cathode-bypass shelf corner: 285 Hz (set by V1A's 0.68 µF on 820 Ω).
+    {
+        const float fc = 285.0f;
+        const float w = 2.0f * 3.14159265359f * fc / static_cast<float> (sampleRate_);
+        cathodeShelfCoeff_ = w / (w + 1.0f);
+    }
+    // Jumper LM corner: ~600 Hz — matches Channel-II's perceived low-mid
+    // emphasis (warmth without muddy bass).
+    {
+        const float fc = 600.0f;
+        const float w = 2.0f * 3.14159265359f * fc / static_cast<float> (sampleRate_);
+        jumperLpfCoeff_ = w / (w + 1.0f);
+    }
 }
