@@ -26,6 +26,7 @@ public:
         Pentode,        // EL34-family pentode (aggressive)
         EL84,           // EL84 power tube (chimey breakup)
         Tube6V6,        // 6V6GT beam tetrode — Fender Deluxe Reverb character
+        EL34_Plexi,     // EL34 Koren-fit at Plexi 1959 operating point
         Linear          // Bypass (no saturation)
     };
 
@@ -46,6 +47,7 @@ public:
         initializePentodeCurve();
         initializeEL84Curve();
         initialize6V6Curve();
+        initializeEL34PlexiCurve();
         initializeLinearCurve();
     }
 
@@ -96,6 +98,7 @@ public:
             case CurveType::Pentode:     return pentodeCurve;
             case CurveType::EL84:        return el84Curve;
             case CurveType::Tube6V6:     return tube6V6Curve;
+            case CurveType::EL34_Plexi:  return el34PlexiCurve;
             case CurveType::Linear:
             default:                     return linearCurve;
         }
@@ -112,6 +115,7 @@ private:
     std::array<float, TABLE_SIZE> pentodeCurve;
     std::array<float, TABLE_SIZE> el84Curve;
     std::array<float, TABLE_SIZE> tube6V6Curve;
+    std::array<float, TABLE_SIZE> el34PlexiCurve;
     std::array<float, TABLE_SIZE> linearCurve;
 
     // Convert table index to input value (-2 to +2)
@@ -407,6 +411,40 @@ private:
 
             float Vout = Vb - Ip * Rp;
             tube6V6Curve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
+        }
+    }
+
+    // EL34 power tube — Norman Koren's 1996 fit for the EL34, evaluated at
+    // the Marshall 1959 Plexi operating point.
+    // Parameters: mu=11, Kp=70, Kvb=24, Ex=1.35, Kg1=1500
+    // Plexi-100W approx operating point: Vb=460V, Rp=1.7kΩ (effective per-tube
+    // plate load on the OT primary half), Vgk_bias=-36V, Ip_q=70mA per tube.
+    // Generic 'Pentode' was a reasonable proxy but didn't have the right
+    // saturation knee shape or asymmetry near cutoff that defines EL34 bark.
+    void initializeEL34PlexiCurve()
+    {
+        const float mu = 11.0f, Kp = 70.0f, Kvb = 24.0f, Ex = 1.35f, Kg1 = 1500.0f;
+        const float Vb = 460.0f, Rp = 1700.0f;
+        const float Vgk_bias = -36.0f;
+        const float Ip_q = 0.070f;
+        const float Vp_q = Vb - Ip_q * Rp;
+
+        for (int i = 0; i < TABLE_SIZE; ++i)
+        {
+            const float x = indexToInput(i);
+            const float Vgk = Vgk_bias + x * 25.0f; // ±50 V grid swing for full output
+
+            const float Vp = Vp_q;
+            float E1inner = Kp * (1.0f / mu + Vgk / std::sqrt(Kvb + Vp * Vp));
+            E1inner = std::clamp(E1inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(E1inner));
+            E1 = std::max(0.0f, E1);
+
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+
+            const float Vout = Vb - Ip * Rp;
+            el34PlexiCurve[i] = std::clamp((Vp_q - Vout) / (Vp_q * 0.5f), -1.35f, 1.35f);
         }
     }
 
