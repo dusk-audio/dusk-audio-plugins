@@ -16,6 +16,7 @@ void PreampDSP::prepare (double sampleRate)
     updateCouplingCapCoeff();
     updateBrightCoeff();
     updateMarshallVoicingCoeffs();
+    updateCathodeEnvCoeffs();
     updateGainStaging();
     reset();
 }
@@ -32,6 +33,7 @@ void PreampDSP::reset()
     brightBoostState_   = 0.0f;
     cathodeShelfState_  = 0.0f;
     jumperLpfState_     = 0.0f;
+    cathodeEnv_         = 0.0f;
 }
 
 void PreampDSP::setGain (float gain01)
@@ -92,12 +94,31 @@ void PreampDSP::process (float* buffer, int numSamples)
         // full Marshall-flavoured signal.
         if (marshallVoicing_)
         {
-            // ~−7 dB low-shelf at 285 Hz: track LPF state, subtract a fraction
-            // to reduce LF without affecting HF. Net low-band gain = 1 − 0.55
-            // = 0.45 (~−7 dB), matching real V1A 0.68 µF / 820 Ω network.
+            // Envelope follower for the dynamic-cap behaviour. Real V1A
+            // bypass caps slowly charge with sustained signal — once
+            // charged the cap is closer to a short and the LF shelf
+            // flattens, giving the "compression on transients, bloom on
+            // sustain" feel. Track |sample| with slow attack/release
+            // matching cap RC.
+            const float instLevel = std::abs (sample);
+            const float coeff = (instLevel > cathodeEnv_)
+                ? cathodeEnvAttackCoeff_ : cathodeEnvReleaseCoeff_;
+            cathodeEnv_ += (instLevel - cathodeEnv_) * coeff;
+            if (cathodeEnv_ < 1.0e-15f) cathodeEnv_ = 0.0f;
+
+            // Map env (0..~0.4 typical playing) to a shelf-cut multiplier
+            // around the static 0.55 baseline. envScaled clamped to [0,1].
+            // Sustained loud (envScaled=1) → cut = 0.41 (≈ -4.7 dB LF).
+            // Silent / transient (envScaled=0) → cut = 0.55 (≈ -7.0 dB LF).
+            // ~2 dB LF dynamic — subtle but audible "chord-bloom" character.
+            const float envScaled = std::min (cathodeEnv_ * 2.5f, 1.0f);
+            const float dynamicCut = 0.55f * (1.0f - 0.25f * envScaled);
+
+            // Static 285 Hz LPF state (the cap's voltage) — subtract from
+            // signal to produce the low-shelf cut.
             cathodeShelfState_ += cathodeShelfCoeff_ * (sample - cathodeShelfState_);
             if (std::abs (cathodeShelfState_) < 1e-15f) cathodeShelfState_ = 0.0f;
-            sample -= cathodeShelfState_ * 0.55f;
+            sample -= cathodeShelfState_ * dynamicCut;
 
             // Channel-jumper: add 25% of a low-passed (~600 Hz) input as
             // Channel-II low-mid content. Both bright (HF emphasis) and
@@ -209,4 +230,18 @@ void PreampDSP::updateMarshallVoicingCoeffs()
         const float w = 2.0f * 3.14159265359f * fc / static_cast<float> (sampleRate_);
         jumperLpfCoeff_ = w / (w + 1.0f);
     }
+}
+
+void PreampDSP::updateCathodeEnvCoeffs()
+{
+    // 50 ms attack — the cap charges at ~5τ for full charge, but audibly
+    // most of the bloom kicks in within the first τ.
+    // 200 ms release — roughly the discharge through the next-stage's
+    // grid-leak resistor (typically ~1 MΩ × 0.68 μF ≈ 680 ms full RC,
+    // but we hear about ~1τ before perceived "back to clean").
+    const float attackMs  = 50.0f;
+    const float releaseMs = 200.0f;
+    const float sr = static_cast<float> (sampleRate_);
+    cathodeEnvAttackCoeff_  = 1.0f - std::exp (-1000.0f / (attackMs  * sr));
+    cathodeEnvReleaseCoeff_ = 1.0f - std::exp (-1000.0f / (releaseMs * sr));
 }

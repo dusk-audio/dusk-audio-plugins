@@ -19,6 +19,10 @@
 #include <algorithm>
 #include <cmath>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 class PowerSupply
 {
 public:
@@ -27,6 +31,7 @@ public:
     void prepare (double sampleRate)
     {
         sampleRate_ = sampleRate;
+        ripplePhaseInc_ = static_cast<float> (2.0 * M_PI * 120.0 / sampleRate);
         updateCoeffs();
         reset();
     }
@@ -34,6 +39,7 @@ public:
     void reset()
     {
         vBplus_ = 1.0f;
+        ripplePhase_ = 0.0f;
     }
 
     void setType (Type type)
@@ -63,7 +69,22 @@ public:
         vBplus_ = std::clamp (vBplus_, vFloor, 1.0f);
         if (std::abs (vBplus_) < 1.0e-15f) vBplus_ = 0.0f;
 
-        return vBplus_;
+        // 120 Hz ripple — full-wave-rectified mains modulation that real
+        // tube amps have on the B+ rail. Magnitude scales with sag depth
+        // so that ripple is louder when the supply is loaded (filter caps
+        // are draining faster). Per-amp depth: silicon rectifier (Marshall)
+        // has the stiffest supply with smallest ripple; tube rectifiers
+        // (Fender, Vox) ripple more, especially Class-A Vox which draws
+        // continuous high current. Tiny absolute values (0.1-0.5%) keep
+        // it subliminal but contributes the "alive" feel of real iron.
+        ripplePhase_ += ripplePhaseInc_;
+        if (ripplePhase_ > 2.0f * static_cast<float> (M_PI))
+            ripplePhase_ -= 2.0f * static_cast<float> (M_PI);
+        const float sagFraction = (1.0f - vBplus_) / std::max (maxSagDepth_ * depth_, 1.0e-6f);
+        const float rippleAmp   = rippleDepth_ * (0.5f + 0.5f * sagFraction);
+        const float ripple      = rippleAmp * std::sin (ripplePhase_);
+
+        return vBplus_ + ripple;
     }
 
     float getBplus() const { return vBplus_; }
@@ -78,6 +99,12 @@ private:
     float rechargeCoeff_ = 0.0f;
     float loadGain_ = 1.0f;
     float maxSagDepth_ = 0.1f;
+
+    // 120 Hz mains-ripple state. ripplePhase_ tracks position in the
+    // full-wave-rectified sine; rippleDepth_ is per-amp peak amplitude.
+    float ripplePhase_     = 0.0f;
+    float ripplePhaseInc_  = 0.0f;
+    float rippleDepth_     = 0.0f; // 0 = no ripple; 0.001-0.005 = subtle
 
     void updateCoeffs()
     {
@@ -94,7 +121,7 @@ private:
         // even a −12 dBFS signal saturated the load calc and triggered full
         // sag on every note. Reduced so only loud, sustained signals pull the
         // supply down meaningfully.
-        float dischargeMs, rechargeMs, loadGain, maxDepth;
+        float dischargeMs, rechargeMs, loadGain, maxDepth, rippleDepth;
         switch (type_)
         {
             case Type::Tube5AR4:  // Fender Deluxe Reverb (5AR4, 32 μF filter)
@@ -102,12 +129,14 @@ private:
                 rechargeMs  = 5.0f;
                 loadGain    = 4.0f;
                 maxDepth    = 0.20f;
+                rippleDepth = 0.0030f; // 0.3% — moderate tube-rectifier ripple
                 break;
             case Type::TubeGZ34:  // Vox AC30 (GZ34, 32 μF, Class A — slower bloom, more depth)
                 dischargeMs = 35.0f;
                 rechargeMs  = 8.0f;
                 loadGain    = 5.0f;
                 maxDepth    = 0.25f;
+                rippleDepth = 0.0050f; // 0.5% — Class A draws continuous current → biggest ripple
                 break;
             case Type::Silicon:   // Marshall Plexi (silicon bridge, 100 μF — stiff supply)
             default:
@@ -115,11 +144,13 @@ private:
                 rechargeMs  = 1.0f;
                 loadGain    = 3.0f;
                 maxDepth    = 0.06f;
+                rippleDepth = 0.0010f; // 0.1% — silicon bridge + big cap = stiffest, smallest ripple
                 break;
         }
 
-        loadGain_ = loadGain;
+        loadGain_    = loadGain;
         maxSagDepth_ = maxDepth;
+        rippleDepth_ = rippleDepth;
 
         if (sampleRate_ > 0.0)
         {

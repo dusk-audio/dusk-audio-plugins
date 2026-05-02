@@ -50,8 +50,20 @@ private:
     float jumperLpfState_       = 0.0f;
     float jumperLpfCoeff_       = 0.0f;
 
+    // Dynamic-cathode-cap envelope follower. Real V1A bypass caps slowly
+    // charge with sustained signal level; while charging, less LF is
+    // shunted (cap is closer to "open" → bigger shelf cut); once charged,
+    // the cap is closer to a short and the shelf flattens. Audible as
+    // "compression on transients, bloom on sustain". Slow attack/release
+    // (~50 ms / 200 ms) match real RC time constants of the bypass cap
+    // through the cathode resistor + grid resistor of the next stage.
+    float cathodeEnv_              = 0.0f;
+    float cathodeEnvAttackCoeff_   = 0.0f;
+    float cathodeEnvReleaseCoeff_  = 0.0f;
+
     void updateGainStaging();
     void updateCouplingCapCoeff();
     void updateBrightCoeff();
     void updateMarshallVoicingCoeffs();
+    void updateCathodeEnvCoeffs();
 };

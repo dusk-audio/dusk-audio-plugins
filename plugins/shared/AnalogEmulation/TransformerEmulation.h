@@ -41,6 +41,7 @@ public:
             dcBlocker[ch].reset();
             hfEstimator[ch].reset();
             hfFilterState[ch] = 0.0f;
+            hysteresisState[ch] = 0.0f;
         }
     }
 
@@ -104,6 +105,18 @@ public:
         // 6. Apply high-frequency rolloff (transformer inductance)
         output = applyHFRolloff(output, channel);
 
+        // 6b. Magnetic-core hysteresis (B-H curve memory). 1st-order memory:
+        // the OT's response depends on its recent output state, not just
+        // current input. Adds 3rd-order character / "thickness" that a
+        // memoryless saturator can't produce. Per-amp tuning via profile.
+        if (profile.hysteresisAmount > 0.0f)
+        {
+            output += profile.hysteresisAmount * hysteresisState[channel];
+            hysteresisState[channel] = output;
+            if (std::abs (hysteresisState[channel]) < 1.0e-15f)
+                hysteresisState[channel] = 0.0f;
+        }
+
         // 7. DC blocking
         output = dcBlocker[channel].processSample(output);
 
@@ -137,6 +150,7 @@ private:
     HighFrequencyEstimator hfEstimator[2];
     float hfFilterState[2] = {0.0f, 0.0f};
     float hfRolloffCoeff = 0.99f;
+    float hysteresisState[2] = {0.0f, 0.0f};
 
     void updateHFRolloff(float cutoffFreq)
     {

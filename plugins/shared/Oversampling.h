@@ -24,7 +24,7 @@ namespace DuskAudio
 
 //==============================================================================
 /**
-    High-quality oversampling manager with 2x/4x selection.
+    High-quality oversampling manager with 2x/4x/8x selection.
 
     Uses FIR equiripple filters which provide superior alias rejection compared
     to IIR filters. This is essential for saturation, tape emulation, and other
@@ -51,8 +51,9 @@ class OversamplingManager
 public:
     enum class Quality
     {
-        x2 = 0,    // 2x oversampling (1 stage)
-        x4 = 1     // 4x oversampling (2 stages)
+        x2 = 0,    // 2x oversampling (1 stage)  — lowest CPU
+        x4 = 1,    // 4x oversampling (2 stages)
+        x8 = 2     // 8x oversampling (3 stages) — modern best-practice for nonlinear stages
     };
 
     OversamplingManager() = default;
@@ -76,7 +77,7 @@ public:
         bool needsRecreate = (std::abs(sampleRate - lastSampleRate) > 0.01) ||
                              (numChannels != lastNumChannels) ||
                              (samplesPerBlock != lastBlockSize) ||
-                             !oversampler2x || !oversampler4x;
+                             !oversampler2x || !oversampler4x || !oversampler8x;
 
         if (needsRecreate)
         {
@@ -90,8 +91,13 @@ public:
                 static_cast<size_t>(numChannels), 2,
                 juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
 
+            oversampler8x = std::make_unique<juce::dsp::Oversampling<float>>(
+                static_cast<size_t>(numChannels), 3,
+                juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple);
+
             oversampler2x->initProcessing(static_cast<size_t>(samplesPerBlock));
             oversampler4x->initProcessing(static_cast<size_t>(samplesPerBlock));
+            oversampler8x->initProcessing(static_cast<size_t>(samplesPerBlock));
 
             lastSampleRate = sampleRate;
             lastNumChannels = numChannels;
@@ -101,6 +107,7 @@ public:
         {
             oversampler2x->reset();
             oversampler4x->reset();
+            oversampler8x->reset();
         }
 
         baseSampleRate = sampleRate;
@@ -112,6 +119,7 @@ public:
     {
         if (oversampler2x) oversampler2x->reset();
         if (oversampler4x) oversampler4x->reset();
+        if (oversampler8x) oversampler8x->reset();
     }
 
     //==============================================================================
@@ -123,18 +131,26 @@ public:
         currentQuality = quality;
     }
 
-    /** Sets the oversampling factor directly (2 or 4).
-        @param factor  2 for 2x, 4 for 4x oversampling
+    /** Sets the oversampling factor directly (2, 4, or 8).
+        @param factor  2 for 2x, 4 for 4x, 8 for 8x oversampling
     */
     void setFactor(int factor)
     {
-        currentQuality = (factor >= 4) ? Quality::x4 : Quality::x2;
+        if (factor >= 8)      currentQuality = Quality::x8;
+        else if (factor >= 4) currentQuality = Quality::x4;
+        else                  currentQuality = Quality::x2;
     }
 
-    /** Gets the current oversampling factor (2 or 4). */
+    /** Gets the current oversampling factor (2, 4, or 8). */
     int getOversamplingFactor() const
     {
-        return (currentQuality == Quality::x4) ? 4 : 2;
+        switch (currentQuality)
+        {
+            case Quality::x8: return 8;
+            case Quality::x4: return 4;
+            case Quality::x2:
+            default:          return 2;
+        }
     }
 
     /** Gets the effective sample rate after oversampling. */
@@ -146,9 +162,11 @@ public:
     /** Gets the latency introduced by oversampling in samples. */
     int getLatencyInSamples() const
     {
+        if (currentQuality == Quality::x8 && oversampler8x)
+            return static_cast<int>(oversampler8x->getLatencyInSamples());
         if (currentQuality == Quality::x4 && oversampler4x)
             return static_cast<int>(oversampler4x->getLatencyInSamples());
-        else if (oversampler2x)
+        if (oversampler2x)
             return static_cast<int>(oversampler2x->getLatencyInSamples());
         return 0;
     }
@@ -160,9 +178,11 @@ public:
     */
     juce::dsp::AudioBlock<float> processSamplesUp(juce::dsp::AudioBlock<float>& inputBlock)
     {
+        if (currentQuality == Quality::x8 && oversampler8x)
+            return oversampler8x->processSamplesUp(inputBlock);
         if (currentQuality == Quality::x4 && oversampler4x)
             return oversampler4x->processSamplesUp(inputBlock);
-        else if (oversampler2x)
+        if (oversampler2x)
             return oversampler2x->processSamplesUp(inputBlock);
 
         return inputBlock;
@@ -183,7 +203,9 @@ public:
     */
     void processSamplesDown(juce::dsp::AudioBlock<float>& outputBlock)
     {
-        if (currentQuality == Quality::x4 && oversampler4x)
+        if (currentQuality == Quality::x8 && oversampler8x)
+            oversampler8x->processSamplesDown(outputBlock);
+        else if (currentQuality == Quality::x4 && oversampler4x)
             oversampler4x->processSamplesDown(outputBlock);
         else if (oversampler2x)
             oversampler2x->processSamplesDown(outputBlock);
@@ -228,12 +250,13 @@ public:
     /** Checks if the oversampling is properly initialized. */
     bool isInitialized() const
     {
-        return oversampler2x != nullptr && oversampler4x != nullptr;
+        return oversampler2x != nullptr && oversampler4x != nullptr && oversampler8x != nullptr;
     }
 
 private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler2x;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler4x;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler8x;
 
     Quality currentQuality = Quality::x2;
     double baseSampleRate = 44100.0;

@@ -18,14 +18,16 @@ namespace
 void SpringEngine::Spring::allocate (int maxSamples)
 {
     const int size = DspUtils::nextPowerOf2 (std::max (maxSamples + 8, 64));
-    delayBuf.assign (static_cast<size_t> (size), 0.0f);
+    fwdDelay.assign (static_cast<size_t> (size), 0.0f);
+    bwdDelay.assign (static_cast<size_t> (size), 0.0f);
     mask = size - 1;
     writePos = 0;
 }
 
 void SpringEngine::Spring::clear()
 {
-    std::fill (delayBuf.begin(), delayBuf.end(), 0.0f);
+    std::fill (fwdDelay.begin(), fwdDelay.end(), 0.0f);
+    std::fill (bwdDelay.begin(), bwdDelay.end(), 0.0f);
     writePos = 0;
     dampState = 0.0f;
     for (auto& ap : dispersionAPs)
@@ -34,36 +36,73 @@ void SpringEngine::Spring::clear()
 
 float SpringEngine::Spring::process (float input, float lfoOffset) noexcept
 {
-    // 1) Dispersion cascade — feed the input through 24 1st-order all-passes.
-    //    Each AP rotates phase frequency-dependently; cascading them builds a
-    //    quadratic-ish group-delay curve (the chirp).
-    float disp = input;
+    // ---- Bidirectional digital waveguide -------------------------------
+    //
+    // The spring is modelled as a 1-D waveguide of length lengthSamples
+    // carrying two travelling waves. Excitation enters at the left end
+    // and adds to the rightward wave; the rightward wave reflects off the
+    // right end (with damping + dispersion + sign inversion for clamped
+    // physics); that reflection becomes a leftward wave; the leftward
+    // wave reflects off the left end (sign inversion) to become a new
+    // rightward wave, and so on. Pickup is the post-damping forward
+    // wave arriving at the right end.
+    //
+    //   left end   [ input ]                       right end  [ pickup ]
+    //                 │                                          │
+    //                 ▼                                          ▼
+    //   wRight: ────────────────── fwdDelay (length L) ──────────────► fwdAtRight
+    //                                                                  │
+    //                                                                  ▼
+    //                                                          dispersion + damping
+    //                                                                  │
+    //                                                                  ▼ (sign-flip × reflR)
+    //   wLeft:  bwdAtLeft ◄────── bwdDelay (length L) ───────── bwdNew ◄─
+    //                 │
+    //                 ▼ (sign-flip × reflL)
+    //              fwdNew = -reflLeft × bwdAtLeft + input
+    //
+    // This gives arrivals at the pickup at L, 3L, 5L… with sign alternation
+    // (real clamped-string physics), instead of single-loop's L, 2L, 3L…
+    // pattern that collapses two reflections into one round trip.
+
+    // 1) Read arriving waves at the far ends. lfoOffset modulates the
+    //    forward-arrival position only — modulating both would double-
+    //    track and mute the audible drip.
+    const float readPosFwd = static_cast<float> (writePos)
+                           - static_cast<float> (lengthSamples)
+                           - lfoOffset;
+    const int   idxFwd     = static_cast<int> (std::floor (readPosFwd));
+    const float fracFwd    = readPosFwd - static_cast<float> (idxFwd);
+    const float fwdAtRight = fwdDelay[static_cast<size_t> ( idxFwd      & mask)] * (1.0f - fracFwd)
+                           + fwdDelay[static_cast<size_t> ((idxFwd + 1) & mask)] *         fracFwd;
+
+    const int   idxBwd  = (writePos - lengthSamples) & mask;
+    const float bwdAtLeft = bwdDelay[static_cast<size_t> (idxBwd)];
+
+    // 2) Right-end junction: apply dispersion + HF damping to the arriving
+    //    forward wave, then reflect (sign inversion + magnitude loss) to
+    //    become the new leftward wave departing the right end.
+    float fwdProcessed = fwdAtRight;
     for (auto& ap : dispersionAPs)
-        disp = ap.process (disp, dispersionA);
+        fwdProcessed = ap.process (fwdProcessed, dispersionA);
+    dampState = (1.0f - dampCoeff) * fwdProcessed + dampCoeff * dampState;
+    fwdProcessed = dampState;
+    const float bwdNewAtRight = -reflRight * fwdProcessed;
 
-    // 2) Read from delay line at the modulated position. lfoOffset is in
-    //    samples (signed); we use linear interpolation between two reads
-    //    for sub-sample positioning.
-    const float readPosF = static_cast<float> (writePos)
-                         - static_cast<float> (delaySamples)
-                         - lfoOffset;
-    const int   intIdx   = static_cast<int> (std::floor (readPosF));
-    const float frac     = readPosF - static_cast<float> (intIdx);
-    const int   idx0     = intIdx & mask;
-    const int   idx1     = (intIdx + 1) & mask;
-    const float read = delayBuf[static_cast<size_t> (idx0)] * (1.0f - frac)
-                     + delayBuf[static_cast<size_t> (idx1)] *         frac;
+    // 3) Left-end junction: arriving backward wave reflects (sign + loss)
+    //    and the input is injected into the rightward wave.
+    const float fwdNewAtLeft = -reflLeft * bwdAtLeft + input;
 
-    // 3) Write input + feedback × read into the buffer (Karplus-Strong style).
-    //    Feedback gain scales per-spring so all springs hit the same RT60.
-    const float bufIn = disp + feedback * read;
-    delayBuf[static_cast<size_t> (writePos)] = bufIn + DspUtils::kDenormalPrevention;
+    // 4) Write the new wave amplitudes into their respective delay lines.
+    fwdDelay[static_cast<size_t> (writePos)] = fwdNewAtLeft   + DspUtils::kDenormalPrevention;
+    bwdDelay[static_cast<size_t> (writePos)] = bwdNewAtRight  + DspUtils::kDenormalPrevention;
     writePos = (writePos + 1) & mask;
 
-    // 4) HF damping — 1-pole LP on the read path emulates the spring's high-
-    //    frequency roll-off (real Fender 6G15 dies above ~4-5 kHz).
-    dampState = (1.0f - dampCoeff) * read + dampCoeff * dampState;
-    return dampState;
+    // 5) Pickup at the right end — the post-damping forward wave (the
+    //    same value that's about to reflect into the bwd line). Returning
+    //    fwdProcessed instead of fwdAtRight gives the user the spring's
+    //    HF-rolled tone at every arrival.
+    return fwdProcessed;
 }
 
 void SpringEngine::prepare (double sampleRate, int /*maxBlockSize*/)
@@ -191,10 +230,10 @@ void SpringEngine::updateSpringLengths()
 
     for (int i = 0; i < kNumSprings; ++i)
     {
-        leftSprings_ [i].delaySamples = std::min (
+        leftSprings_ [i].lengthSamples = std::min (
             static_cast<int> (static_cast<float> (kLeftBaseDelays [i]) * sizeScale * rateRatio),
             leftSprings_ [i].mask - 8);
-        rightSprings_[i].delaySamples = std::min (
+        rightSprings_[i].lengthSamples = std::min (
             static_cast<int> (static_cast<float> (kRightBaseDelays[i]) * sizeScale * rateRatio),
             rightSprings_[i].mask - 8);
     }
@@ -202,23 +241,31 @@ void SpringEngine::updateSpringLengths()
 
 void SpringEngine::updateFeedback()
 {
-    // Per-spring feedback to hit the requested RT60 across all 3 springs
-    // (different lengths → different feedback values for matched decay).
-    //   gain^N = 10^(-60/20)   where N = RT60 / loopPeriod
-    //   gain   = 10^(-3 × loopPeriod / RT60)
-    // Freeze pins feedback at 1.0 for infinite sustain.
-    auto computeFb = [this] (int delaySamples) -> float
+    // Per-spring reflection coefficients to hit the requested RT60.
+    // For amplitude to decay by 60 dB (factor of 10^-3) over RT60 seconds:
+    //   N round trips in RT60 = RT60·sr / (2L)
+    //   each round trip applies R² gain (one reflection at each end)
+    //   (R²)^N = 10^-3
+    //   R = 10^(-3·L / (sr·RT60))
+    // Loss is split evenly between the two ends (R_left = R_right) so
+    // neither dominates the energy balance. Freeze pins both reflections
+    // at 1.0 for infinite sustain.
+    auto computeRefl = [this] (int lengthSamples) -> float
     {
         if (frozen_) return 1.0f;
-        const float loopPeriod = static_cast<float> (delaySamples) / static_cast<float> (sampleRate_);
-        const float fb = std::pow (10.0f, -3.0f * loopPeriod / std::max (decayTime_, 0.05f));
-        return std::clamp (fb, 0.0f, 0.97f);   // hard cap below 1.0 for stability
+        const float oneWay = static_cast<float> (lengthSamples) / static_cast<float> (sampleRate_);
+        const float r = std::pow (10.0f, -3.0f * oneWay / std::max (decayTime_, 0.05f));
+        return std::clamp (r, 0.0f, 0.985f); // hard cap below 1.0 for stability
     };
 
     for (int i = 0; i < kNumSprings; ++i)
     {
-        leftSprings_ [i].feedback = computeFb (leftSprings_ [i].delaySamples);
-        rightSprings_[i].feedback = computeFb (rightSprings_[i].delaySamples);
+        const float rL = computeRefl (leftSprings_ [i].lengthSamples);
+        const float rR = computeRefl (rightSprings_[i].lengthSamples);
+        leftSprings_ [i].reflLeft  = rL;
+        leftSprings_ [i].reflRight = rL;
+        rightSprings_[i].reflLeft  = rR;
+        rightSprings_[i].reflRight = rR;
     }
 }
 
