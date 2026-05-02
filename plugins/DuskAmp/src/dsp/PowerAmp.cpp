@@ -32,7 +32,9 @@ void PowerAmp::prepare (double sampleRate)
     updateResonanceCoeff();
     updateNfbLpfCoeff();
     updateCathodeBloomCoeffs();
+    updateGridCurrentCoeffs();
     updateOtPeak();
+    updateSpkPeak();
     reset();
 }
 
@@ -44,7 +46,9 @@ void PowerAmp::reset()
     nfbState_ = 0.0f;
     nfbLpfState_ = 0.0f;
     cathodeEnv_ = 0.0f;
+    gridCharge_ = 0.0f;
     otPeak_.clear();
+    spkPeak_.clear();
     transformer_.reset();
     dcBlocker_.reset();
 }
@@ -80,7 +84,9 @@ void PowerAmp::setAmpType (AmpType type)
     driveGain_ = 0.8f + drive_ * (maxDriveGain_ - 0.8f);
     updateNfbLpfCoeff();
     updateCathodeBloomCoeffs();
+    updateGridCurrentCoeffs();
     updateOtPeak();
+    updateSpkPeak();
 }
 
 void PowerAmp::updateAmpTypeParams()
@@ -99,19 +105,31 @@ void PowerAmp::updateAmpTypeParams()
             pushPullAsymmetry_ = 0.025f; // 2.5% mismatch — typical AB763 pair
             phaseInvAsymmetry_ = 0.0f;   // LTP PI is balanced
             cathodeBloomAmount_ = 0.0f;  // fixed-bias amp — no cathode bloom
-            maxDriveGain_ = 2.0f;
+            maxDriveGain_ = 3.5f; // widened drive range — cranked AB763 hits 12-18% THD
             inputScale_ = 1.0f;  // 6V6 lowest Gm — reference sensitivity
             nfbRatio_ = 0.30f;   // ≈ 12 dB (AB763 820Ω / 47Ω)
             nfbLpfFreq_ = 4000.0f; // AB763 5 nF presence cap effective cutoff
-            postMakeup_ = 1.0f;  // PI now provides the driver gain (replaces former 2.5)
-            outputLimitK_ = 1.1f;
+            postMakeup_ = 1.0f;  // reference level — Fender is the loudness anchor
+            // Loose tanh — the per-amp limiter used to be tight at K=1.1 which
+            // smoothed away the 6V6 curve's saturation harmonics ("lifeless").
+            // K=2.0 is nearly transparent; chain-end limiter at K=1.6 in the
+            // engine catches actual peaks.
+            outputLimitK_ = 2.0f;
+            gridChargeThreshold_ = 1.5f; // 6V6 has higher grid headroom — milder blocking
+            gridChargeAmount_    = 0.18f;
             otPeakFreq_   = 3500.0f;     // Fender 40W OT — modest HF resonance
             otPeakGainDb_ = 1.5f;
             otPeakQ_      = 1.0f;
+            // 12" Jensen-style cone: ~95 Hz fundamental. Strong NFB (12 dB)
+            // damps the impedance peak heavily — only a small audible bump.
+            spkPeakFreq_   = 95.0f;
+            spkPeakGainDb_ = 1.5f;
+            spkPeakQ_      = 1.5f;
             powerSupply_.setType (PowerSupply::Type::Tube5AR4);
-            // Fender 40W OT: darker (8 kHz HF), early saturation, asymmetric
+            // Fender 40W OT: darker (8 kHz HF), early saturation, asymmetric.
+            // Hysteresis 0.10 — moderate iron mass, audible 3rd-order memory.
             transformer_.setProfile (AnalogEmulation::TransformerProfile::createActive (
-                0.72f, 0.14f, 1.30f, 8000.0f, 20.0f, 0.012f, 0.004f, 0.75f));
+                0.72f, 0.14f, 1.30f, 8000.0f, 20.0f, 0.012f, 0.004f, 0.75f, 0.10f));
             break;
 
         case AmpType::Vox:
@@ -125,19 +143,28 @@ void PowerAmp::updateAmpTypeParams()
             pushPullAsymmetry_ = 0.0f;   // tubes are well-matched
             phaseInvAsymmetry_ = 0.04f;  // cathodyne 4% imbalance: anode/cathode outputs
             cathodeBloomAmount_ = 0.4f;  // AC30 cathode-bias bloom — slow gain reduction
-            maxDriveGain_ = 2.5f;
+            maxDriveGain_ = 5.0f; // widened — AC30 cranked is genuinely choking
             inputScale_ = 0.7f;  // EL84 higher Gm than 6V6
             nfbRatio_ = 0.0f;    // AC30 has NO negative feedback loop
             nfbLpfFreq_ = 20000.0f; // unused (no NFB) — wide-open sentinel
-            postMakeup_ = 1.0f;  // PI now provides the driver gain
-            outputLimitK_ = 1.6f;        // loose ceiling — let the EL84 curve drive THD
+            postMakeup_ = 1.15f; // +1.2 dB to match Fender's clean RMS at matched user settings
+            outputLimitK_ = 2.0f;        // loose — EL84 curve is the saturation source, not tanh
+            gridChargeThreshold_ = 1.1f; // EL84 small-tube — lower grid headroom, blocks earlier
+            gridChargeAmount_    = 0.20f;
             otPeakFreq_   = 5500.0f;     // Vox 30W OT — small resonance, contributes chime
             otPeakGainDb_ = 1.5f;
             otPeakQ_      = 1.2f;
+            // 12" Celestion Blue: ~110 Hz fundamental, low Q. NO global NFB
+            // means the impedance peak rings pretty hard — the AC30 LF
+            // "bloom" lives here, not in the cathode-bias dynamic alone.
+            spkPeakFreq_   = 110.0f;
+            spkPeakGainDb_ = 5.0f;
+            spkPeakQ_      = 2.0f;
             powerSupply_.setType (PowerSupply::Type::TubeGZ34);
-            // Vox 30W OT: darker (9 kHz HF), earliest saturation, asymmetric
+            // Vox 30W OT: darker (9 kHz HF), earliest saturation, asymmetric.
+            // Hysteresis 0.07 — smaller iron, lighter memory term.
             transformer_.setProfile (AnalogEmulation::TransformerProfile::createActive (
-                0.70f, 0.16f, 1.25f, 9000.0f, 25.0f, 0.013f, 0.004f, 0.78f));
+                0.70f, 0.16f, 1.25f, 9000.0f, 25.0f, 0.013f, 0.004f, 0.78f, 0.07f));
             break;
 
         case AmpType::Marshall:
@@ -147,19 +174,35 @@ void PowerAmp::updateAmpTypeParams()
             pushPullAsymmetry_ = 0.020f; // ~2% — Marshall production pairs run tight
             phaseInvAsymmetry_ = 0.0f;   // LTP PI is balanced
             cathodeBloomAmount_ = 0.0f;  // fixed-bias amp — no cathode bloom
-            maxDriveGain_ = 4.0f;
+            maxDriveGain_ = 6.0f; // widened — cranked Plexi is screaming, not polite
             inputScale_ = 0.25f; // EL34 highest Gm (~11 mA/V, 3× 6V6); widen drive range
             nfbRatio_ = 0.25f;   // ≈ 10 dB (JTM45/1959 27kΩ / 5kΩ presence)
             nfbLpfFreq_ = 5500.0f; // 1959 presence cap — slightly brighter than Fender
-            postMakeup_ = 1.0f;  // PI now provides the driver gain (replaces former 4.0)
-            outputLimitK_ = 1.1f;
+            // +12 dB to match Fender's clean RMS at matched user settings.
+            // Marshall's chain attenuates heavily at clean drive (V1A cathode-bypass
+            // shelf cuts ~7 dB LF + EL34 inputScale=0.25 cuts another ~12 dB into the
+            // waveshaper). Pre-tanh makeup brings clean output up; the loose tanh
+            // ceiling at outputLimitK_ lets the EL34_Plexi curve's saturation
+            // harmonics through unmolested at cranked drive.
+            postMakeup_ = 4.0f;
+            outputLimitK_ = 2.0f; // loose — EL34_Plexi curve provides the Plexi bite
+            gridChargeThreshold_ = 1.2f; // EL34 grids hard-block on hot input — Plexi "bark"
+            gridChargeAmount_    = 0.30f;
             otPeakFreq_   = 4500.0f;     // Marshall Drake OT — pronounced HF peak ("Plexi bite")
             otPeakGainDb_ = 3.0f;
             otPeakQ_      = 1.5f;
+            // 4×12 Celestion: ~100 Hz fundamental, sharper than open-back combos
+            // because of the closed cab loading. Moderate NFB (10 dB) gives
+            // partial damping — audible LF bump but not as pronounced as Vox.
+            spkPeakFreq_   = 100.0f;
+            spkPeakGainDb_ = 2.5f;
+            spkPeakQ_      = 1.8f;
             powerSupply_.setType (PowerSupply::Type::Silicon);
-            // Marshall 50W OT: brighter (11 kHz HF), later saturation, more symmetric
+            // Marshall 50W OT: brighter (11 kHz HF), later saturation, more symmetric.
+            // Hysteresis 0.12 — biggest iron, most pronounced memory contribution
+            // (part of the "Plexi thickness" character at cranked drive).
             transformer_.setProfile (AnalogEmulation::TransformerProfile::createActive (
-                0.80f, 0.10f, 1.20f, 11000.0f, 18.0f, 0.008f, 0.006f, 0.55f));
+                0.80f, 0.10f, 1.20f, 11000.0f, 18.0f, 0.008f, 0.006f, 0.55f, 0.12f));
             break;
     }
 }
@@ -179,10 +222,30 @@ void PowerAmp::process (float* buffer, int numSamples)
         // voltage gain. inputScale_ accounts for per-tube-type Gm differences
         // so Marshall's EL34 doesn't slam the waveshaper just because it has
         // 3× the transconductance of Fender's 6V6.
+        //
+        // Grid-current ducking: the previous sample's grid-charge state ducks
+        // this sample's input, simulating the coupling-cap RC pulling down the
+        // previous stage's plate when the grid drew current. Subtle (-1 to
+        // -3 dB transient duck on hot input) but contributes the "ghost note"
+        // / sustainer character pure waveshapers can't produce.
+        const float duckGain = 1.0f - gridChargeAmount_ * std::min (gridCharge_, 1.0f);
+
         // NFB: attenuated output subtracted from input, 1-sample delay
         // (at oversampled rate — inaudible).
-        float driven = sample * kPreampMakeup * inputScale_ * driveGain_
+        float driven = sample * duckGain * kPreampMakeup * inputScale_ * driveGain_
                      - nfbRatio_ * nfbState_;
+
+        // Update grid-charge envelope from the actual grid voltage (= driven).
+        // Excess above threshold → grid draws current (fast-attack accumulation);
+        // excess below → cap discharges through the next stage's grid resistor
+        // (slow release). No-op when amount=0.
+        if (gridChargeAmount_ > 0.0f)
+        {
+            const float excess = std::max (std::abs (driven) - gridChargeThreshold_, 0.0f);
+            const float coeff = (excess > gridCharge_) ? gridAttackCoeff_ : gridReleaseCoeff_;
+            gridCharge_ += (excess - gridCharge_) * coeff;
+            if (gridCharge_ < 1.0e-15f) gridCharge_ = 0.0f;
+        }
 
         // --- 2. Power supply: RC-model B+ sag driven by power-tube load ---
         // Returns normalized rail voltage in [vFloor, 1.0]. Lower = more sag.
@@ -288,6 +351,14 @@ void PowerAmp::process (float* buffer, int numSamples)
         // --- 5. Output transformer ---
         saturated = transformer_.processSample (saturated, 0);
 
+        // --- 5a. Speaker-impedance LF resonance ---
+        // Cab impedance peaks at the cone's fundamental (~95-110 Hz), and
+        // the OT primary load follows that — small LF bump the cab IR
+        // can't deliver alone (IRs are measured at fixed impedance load).
+        // Per-amp damping reflects how much the global NFB tames the peak:
+        // Vox (no NFB) lets it ring; Fender / Marshall damp it heavily.
+        saturated = spkPeak_.process (saturated);
+
         // --- 5b. OT leakage-inductance HF resonance peak ---
         // Real OTs aren't flat-frequency: leakage inductance × inter-winding
         // capacitance produces a resonance peak above the audio band that
@@ -340,6 +411,20 @@ void PowerAmp::updateCathodeBloomCoeffs()
     cathodeReleaseCoeff_ = 1.0f - std::exp (-1000.0f / (releaseMs * sr));
 }
 
+void PowerAmp::updateGridCurrentCoeffs()
+{
+    // Fast attack (~1 ms) — grid current draw starts almost instantly when
+    // the grid swings positive of cathode. Slow release (~30 ms) — modelling
+    // the coupling-cap RC discharge through the next-stage grid resistor.
+    // The release time is roughly the time it takes for the previous stage's
+    // plate to recover from a transient grid-current pull.
+    const float attackMs  = 1.0f;
+    const float releaseMs = 30.0f;
+    const float sr = static_cast<float> (sampleRate_);
+    gridAttackCoeff_  = 1.0f - std::exp (-1000.0f / (attackMs  * sr));
+    gridReleaseCoeff_ = 1.0f - std::exp (-1000.0f / (releaseMs * sr));
+}
+
 void PowerAmp::updateOtPeak()
 {
     // RBJ peaking-EQ biquad — designs in place into otPeak_'s coefficients.
@@ -364,5 +449,35 @@ void PowerAmp::updateOtPeak()
     otPeak_.b2 = static_cast<float> (b2 * inv);
     otPeak_.a1 = static_cast<float> (a1 * inv);
     otPeak_.a2 = static_cast<float> (a2 * inv);
+}
+
+void PowerAmp::updateSpkPeak()
+{
+    // Same RBJ peaking-EQ form as updateOtPeak, but at LF for the speaker
+    // cone fundamental resonance. Per-amp gain captures NFB damping in a
+    // single coefficient (real NFB would damp the resonance dynamically;
+    // we precompute the post-damping audible peak instead — cheaper +
+    // user can't dial NFB at runtime anyway).
+    const double A     = std::pow (10.0, static_cast<double> (spkPeakGainDb_) / 40.0);
+    const double omega = 2.0 * static_cast<double> (kPi)
+                       * static_cast<double> (spkPeakFreq_)
+                       / sampleRate_;
+    const double cosw  = std::cos (omega);
+    const double sinw  = std::sin (omega);
+    const double alpha = sinw / (2.0 * static_cast<double> (spkPeakQ_));
+
+    const double b0 = 1.0 + alpha * A;
+    const double b1 = -2.0 * cosw;
+    const double b2 = 1.0 - alpha * A;
+    const double a0 = 1.0 + alpha / A;
+    const double a1 = -2.0 * cosw;
+    const double a2 = 1.0 - alpha / A;
+
+    const double inv = 1.0 / a0;
+    spkPeak_.b0 = static_cast<float> (b0 * inv);
+    spkPeak_.b1 = static_cast<float> (b1 * inv);
+    spkPeak_.b2 = static_cast<float> (b2 * inv);
+    spkPeak_.a1 = static_cast<float> (a1 * inv);
+    spkPeak_.a2 = static_cast<float> (a2 * inv);
 }
 

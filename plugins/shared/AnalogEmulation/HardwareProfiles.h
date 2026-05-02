@@ -88,11 +88,19 @@ struct TransformerProfile
     float lowFreqSaturation = 1.0f;    // LF saturates more (core physics)
     float highFreqRolloff = 20000.0f;  // -3dB Hz
     float dcBlockingFreq = 10.0f;
+    // Magnetic-core hysteresis amount [0..1]. Models the B-H curve "memory":
+    // the magnetic core's response depends not just on the current signal
+    // but also on its recent history. Implemented as a 1st-order memory
+    // term on the OT output (a fraction of the previous output sample is
+    // added back). 0 disables; 0.05-0.15 gives audible 3rd-order character
+    // ("thickness") that a memoryless saturator can't produce.
+    float hysteresisAmount = 0.0f;
     HarmonicProfile harmonics;
 
     static TransformerProfile createActive(float satThresh, float satAmt, float lfSat,
                                             float hfRolloff, float dcBlock,
-                                            float h2, float h3, float evenOdd)
+                                            float h2, float h3, float evenOdd,
+                                            float hyst = 0.0f)
     {
         TransformerProfile tp;
         tp.hasTransformer = true;
@@ -101,6 +109,7 @@ struct TransformerProfile
         tp.lowFreqSaturation = lfSat;
         tp.highFreqRolloff = hfRolloff;
         tp.dcBlockingFreq = dcBlock;
+        tp.hysteresisAmount = hyst;
         tp.harmonics = HarmonicProfile::create(h2, h3, evenOdd);
         return tp;
     }

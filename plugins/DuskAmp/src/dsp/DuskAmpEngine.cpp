@@ -21,18 +21,33 @@ void DuskAmpEngine::prepare (double sampleRate, int maxBlockSize)
     // Prepare all sub-components at the oversampled rate for the nonlinear stages
     double oversampledRate = oversampling_.getOversampledSampleRate();
 
-    input_.prepare (sampleRate);
+    input_.prepare    (sampleRate);
+    inputNam_.prepare (sampleRate);
     preamp_.prepare (oversampledRate);
     phaseInverter_.prepare (oversampledRate);
-    powerAmp_.prepare (oversampledRate);
+
+    // Three independent power amps — pin each one to its amp type at prepare,
+    // then leave the type fixed. Crossfade between them on amp-model switch.
+    powerAmpFender_.prepare   (oversampledRate);
+    powerAmpVox_.prepare      (oversampledRate);
+    powerAmpMarshall_.prepare (oversampledRate);
+    powerAmpFender_.setAmpType   (PowerAmp::AmpType::Fender);
+    powerAmpVox_.setAmpType      (PowerAmp::AmpType::Vox);
+    powerAmpMarshall_.setAmpType (PowerAmp::AmpType::Marshall);
+
+    // Scratch buffer for the target amp's output during a crossfade. Sized
+    // for the maximum oversampled block (8× factor cap). Pre-allocated to
+    // avoid audio-thread allocation when a fade kicks off.
+    ampScratchBuffer_.setSize (1, maxBlockSize * 8, false, true, true);
+
     cabinet_.prepare (sampleRate, maxBlockSize);
     postFx_.prepare (sampleRate, maxBlockSize);
 
-    // Tone stack rate depends on amp mode: oversampled in DSP, base rate in NAM
-    if (currentMode_ == AmpMode::NAM)
-        toneStack_.prepare (sampleRate);
-    else
-        toneStack_.prepare (oversampledRate);
+    // DSP tonestack runs oversampled (sits between preamp and phase inverter
+    // at the oversampled rate). NAM tonestack runs at base SR (post-NAM,
+    // before cab — NAM itself is non-oversampled).
+    toneStack_.prepare    (oversampledRate);
+    toneStackNam_.prepare (sampleRate);
 
 #if DUSKAMP_NAM_SUPPORT
     nam_.prepare (sampleRate, maxBlockSize);
@@ -45,14 +60,23 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
     for (int i = 0; i < numSamples; ++i)
         monoBuffer_[static_cast<size_t> (i)] = (left[i] + right[i]) * 0.5f;
 
-    // 2. Input section: gain + noise gate (runs at base rate)
-    input_.process (monoBuffer_.data(), numSamples);
+    // 2. Input section: gain + noise gate (runs at base rate). Two
+    // separate InputSection instances so DSP and NAM modes have
+    // independent gain/gate settings — switching modes never carries the
+    // wrong gain over and can't blast the user. The crossfade in step 4
+    // muting the audio across the actual mode swap, so the change of
+    // which input runs is silent.
+    if (currentMode_ == AmpMode::NAM)
+        inputNam_.process (monoBuffer_.data(), numSamples);
+    else
+        input_.process    (monoBuffer_.data(), numSamples);
 
     // Deferred mode switch from crossfade completion
     if (modeSwitchPending_)
     {
         currentMode_ = targetMode_;
         toneStack_.reset();
+        toneStackNam_.reset();
         modeSwitchPending_ = false;
     }
 
@@ -73,7 +97,44 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
         preamp_.process (oversampledData, oversampledNumSamples);
         toneStack_.process (oversampledData, oversampledNumSamples);
         phaseInverter_.process (oversampledData, oversampledNumSamples);
-        powerAmp_.process (oversampledData, oversampledNumSamples);
+
+        // Power-amp dispatch with optional crossfade between OLD and NEW amp
+        // models. During a fade, both amps process the same input; outputs
+        // are linearly blended over the fade window. Once the fade completes,
+        // currentAmpType_ snaps to targetAmpType_ and only that amp runs.
+        if (ampCrossfadeSamples_ > 0)
+        {
+            // Capture the post-PI input for the target amp BEFORE current amp
+            // overwrites the buffer in place.
+            float* scratch = ampScratchBuffer_.getWritePointer (0);
+            std::copy (oversampledData, oversampledData + oversampledNumSamples, scratch);
+
+            ampForType (currentAmpType_).process (oversampledData, oversampledNumSamples);
+            ampForType (targetAmpType_).process  (scratch,         oversampledNumSamples);
+
+            // Blend: t goes 0 → 1 as crossfade progresses.
+            const float invTotal = 1.0f / static_cast<float> (ampCrossfadeTotalSamples_);
+            for (int i = 0; i < oversampledNumSamples; ++i)
+            {
+                if (ampCrossfadeSamples_ > 0)
+                {
+                    const float t = 1.0f - static_cast<float> (ampCrossfadeSamples_) * invTotal;
+                    oversampledData[i] = oversampledData[i] * (1.0f - t) + scratch[i] * t;
+                    --ampCrossfadeSamples_;
+                }
+                else
+                {
+                    oversampledData[i] = scratch[i];
+                }
+            }
+
+            if (ampCrossfadeSamples_ <= 0)
+                currentAmpType_ = targetAmpType_;
+        }
+        else
+        {
+            ampForType (currentAmpType_).process (oversampledData, oversampledNumSamples);
+        }
 
         oversampling_.processSamplesDown (inputBlock);
 
@@ -85,11 +146,12 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
     {
         // NAM mode: neural capture already includes the full signal chain
         // (preamp + power amp + often the OT). Running it through our
-        // DSP PowerAmp would double-saturate. Keep the tone stack as an
-        // optional post-NAM EQ voicing so the user's bass/mid/treble
-        // knobs still do something. Cab IR comes next (step 5).
+        // DSP PowerAmp would double-saturate. Use the dedicated NAM
+        // tonestack as a post-NAM EQ voicing so the user's bass/mid/treble
+        // settings persist independently of the DSP-mode tonestack. Cab
+        // IR comes next (step 5).
         nam_.process (monoBuffer_.data(), numSamples);
-        toneStack_.process (monoBuffer_.data(), numSamples);
+        toneStackNam_.process (monoBuffer_.data(), numSamples);
     }
 #endif
 
@@ -143,23 +205,31 @@ void DuskAmpEngine::process (float* left, float* right, int numSamples)
     // delay feedback can push tail level near 1.0, and reverb wet adds
     // on top of that. Loose K=1.6 so signals up to ~0.8 RMS pass through
     // essentially un-touched and only true overloads (>1.0) get caught.
+    // Output gain is per-mode so DSP and NAM keep independent levels —
+    // crossfade above already handles the swap silently.
     constexpr float kLimitK = 1.6f;
+    const float outGain = (currentMode_ == AmpMode::NAM) ? outputGainNam_ : outputGain_;
     for (int i = 0; i < numSamples; ++i)
     {
-        left[i]  = std::tanh (left[i]  / kLimitK) * kLimitK * outputGain_;
-        right[i] = std::tanh (right[i] / kLimitK) * kLimitK * outputGain_;
+        left[i]  = std::tanh (left[i]  / kLimitK) * kLimitK * outGain;
+        right[i] = std::tanh (right[i] / kLimitK) * kLimitK * outGain;
     }
 }
 
 void DuskAmpEngine::reset()
 {
     input_.reset();
+    inputNam_.reset();
     preamp_.reset();
     toneStack_.reset();
-    powerAmp_.reset();
+    toneStackNam_.reset();
+    powerAmpFender_.reset();
+    powerAmpVox_.reset();
+    powerAmpMarshall_.reset();
     cabinet_.reset();
     postFx_.reset();
     oversampling_.reset();
+    ampCrossfadeSamples_ = 0;
 #if DUSKAMP_NAM_SUPPORT
     nam_.reset();
 #endif
@@ -189,13 +259,9 @@ void DuskAmpEngine::setAmpMode (AmpMode mode)
         crossfadeSamplesRemaining_ = kCrossfadeSamples;
         crossfadeDirection_ = -1;
         crossfadeGain_ = 1.0f;
-
-        // Pre-prepare tone stack for the target mode's sample rate
-        // (safe here — called from processBlock's discrete param section, not per-sample)
-        if (mode == AmpMode::NAM)
-            toneStack_.prepare (sampleRate_);
-        else
-            toneStack_.prepare (oversampling_.getOversampledSampleRate());
+        // Both tonestacks were prepared at their fixed rates in prepare();
+        // mode switch only changes which one runs in process(). No re-prepare
+        // needed.
     }
 }
 
@@ -214,6 +280,21 @@ void DuskAmpEngine::setGateThreshold (float dB)
 void DuskAmpEngine::setGateRelease (float ms)
 {
     input_.setGateRelease (ms);
+}
+
+void DuskAmpEngine::setInputGainNam (float dB)
+{
+    inputNam_.setInputGain (dB);
+}
+
+void DuskAmpEngine::setGateThresholdNam (float dB)
+{
+    inputNam_.setGateThreshold (dB);
+}
+
+void DuskAmpEngine::setGateReleaseNam (float ms)
+{
+    inputNam_.setGateRelease (ms);
 }
 
 // --- Preamp ---
@@ -253,7 +334,22 @@ void DuskAmpEngine::setToneStackType (int type)
         case 1: paType = PowerAmp::AmpType::Marshall; break;
         case 2: paType = PowerAmp::AmpType::Vox;      break;
     }
-    powerAmp_.setAmpType (paType);
+
+    // Trigger a crossfade between the OLD power-amp instance and the NEW one
+    // if the user actually changed amp models. Each amp keeps its own filter
+    // state across switches; the fade window blends their outputs so there's
+    // no click. Crossfade runs at the oversampled rate where the power amps
+    // live (~256 oversampled samples ≈ 1.5 ms at 4× / 0.7 ms at 8×).
+    if (paType != currentAmpType_ && ampCrossfadeSamples_ <= 0)
+    {
+        targetAmpType_ = paType;
+        // Reset target's filters so the crossfade starts from a clean state
+        // (avoids any DC step from stale state in the long-idle amp).
+        ampForType (paType).reset();
+        constexpr int kAmpCrossfadeOversampledSamples = 256;
+        ampCrossfadeSamples_      = kAmpCrossfadeOversampledSamples;
+        ampCrossfadeTotalSamples_ = kAmpCrossfadeOversampledSamples;
+    }
 
     // Marshall-only preamp voicing (V1A cathode-bypass shelf + Channel-II
     // jumper LM mix). Other amps run the generic preamp path.
@@ -308,26 +404,73 @@ void DuskAmpEngine::setTreble (float value01)
     toneStack_.setTreble (value01);
 }
 
+// --- Tone Stack (NAM) — purely an EQ voicing post-NAM, no amp model coupling ---
+
+void DuskAmpEngine::setToneStackTypeNam (int type)
+{
+    const int t = std::clamp (type, 0, 2);
+    toneStackNam_.setType (static_cast<ToneStack::Type> (t));
+}
+
+void DuskAmpEngine::setBassNam (float value01)
+{
+    toneStackNam_.setBass (value01);
+}
+
+void DuskAmpEngine::setMidNam (float value01)
+{
+    toneStackNam_.setMid (value01);
+}
+
+void DuskAmpEngine::setTrebleNam (float value01)
+{
+    toneStackNam_.setTreble (value01);
+}
+
 // --- Power Amp ---
+//
+// Knob setters dispatch to ALL three power-amp instances so each amp is
+// always primed with the user's current settings. When the user switches
+// amp models, the new amp's drive/presence/resonance/sag are already up
+// to date — no need to re-push the knobs at switch time.
+
+PowerAmp& DuskAmpEngine::ampForType (PowerAmp::AmpType t)
+{
+    switch (t)
+    {
+        case PowerAmp::AmpType::Fender:   return powerAmpFender_;
+        case PowerAmp::AmpType::Vox:      return powerAmpVox_;
+        case PowerAmp::AmpType::Marshall:
+        default:                          return powerAmpMarshall_;
+    }
+}
 
 void DuskAmpEngine::setPowerDrive (float drive01)
 {
-    powerAmp_.setDrive (drive01);
+    powerAmpFender_.setDrive   (drive01);
+    powerAmpVox_.setDrive      (drive01);
+    powerAmpMarshall_.setDrive (drive01);
 }
 
 void DuskAmpEngine::setPresence (float value01)
 {
-    powerAmp_.setPresence (value01);
+    powerAmpFender_.setPresence   (value01);
+    powerAmpVox_.setPresence      (value01);
+    powerAmpMarshall_.setPresence (value01);
 }
 
 void DuskAmpEngine::setResonance (float value01)
 {
-    powerAmp_.setResonance (value01);
+    powerAmpFender_.setResonance   (value01);
+    powerAmpVox_.setResonance      (value01);
+    powerAmpMarshall_.setResonance (value01);
 }
 
 void DuskAmpEngine::setSag (float sag01)
 {
-    powerAmp_.setSag (sag01);
+    powerAmpFender_.setSag   (sag01);
+    powerAmpVox_.setSag      (sag01);
+    powerAmpMarshall_.setSag (sag01);
 }
 
 // --- Cabinet ---
@@ -417,6 +560,13 @@ void DuskAmpEngine::setOutputLevel (float dB)
     outputGain_ = std::pow (10.0f, dB / 20.0f);
 }
 
+void DuskAmpEngine::setOutputLevelNam (float dB)
+{
+    if (dB == prevOutputDBNam_) return;
+    prevOutputDBNam_ = dB;
+    outputGainNam_ = std::pow (10.0f, dB / 20.0f);
+}
+
 // --- Oversampling ---
 
 void DuskAmpEngine::setOversamplingFactor (int factor)
@@ -425,13 +575,14 @@ void DuskAmpEngine::setOversamplingFactor (int factor)
 
     double oversampledRate = oversampling_.getOversampledSampleRate();
     preamp_.prepare (oversampledRate);
-    powerAmp_.prepare (oversampledRate);
+    phaseInverter_.prepare (oversampledRate);
+    powerAmpFender_.prepare   (oversampledRate);
+    powerAmpVox_.prepare      (oversampledRate);
+    powerAmpMarshall_.prepare (oversampledRate);
 
-    // Tone stack rate depends on current amp mode
-    if (currentMode_ == AmpMode::NAM)
-        toneStack_.prepare (sampleRate_);
-    else
-        toneStack_.prepare (oversampledRate);
+    // DSP tonestack follows the oversampled rate; NAM tonestack runs at base
+    // (NAM is non-oversampled) and isn't affected by the oversampling factor.
+    toneStack_.prepare (oversampledRate);
 }
 
 int DuskAmpEngine::getLatencyInSamples() const

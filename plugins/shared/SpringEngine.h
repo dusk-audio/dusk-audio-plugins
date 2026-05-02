@@ -5,24 +5,34 @@
 #include <vector>
 
 // SpringEngine — physical-spring-tank emulation modelled on the Fender 6G15
-// reverb unit (1961-65) and its descendants. Three parallel "spring" lines
-// per channel; each spring is a delay line with a 24-stage cascaded
-// 1st-order all-pass dispersion network at its input and a 1-pole HF
-// damping LP at its output, plus a small read-position LFO for the
-// characteristic ambient micro-vibration ("drip").
+// reverb unit (1961-65) and its descendants. Three parallel waveguide
+// springs per channel.
 //
-// Physical model:
+// Physical model (bidirectional digital waveguide — Smith 1992):
+//   • Each spring is a 1-D mechanical waveguide carrying two travelling
+//     waves: w⁺ (left→right) and w⁻ (right→left). Two delay lines of length
+//     L (one-way travel time) carry these waves; reflection coefficients at
+//     each end (sign-inverted, magnitude < 1) couple them. Excitation at
+//     the left end injects into w⁺; pickup at the right end senses the
+//     post-damping/post-dispersion forward-arriving wave. This produces
+//     the canonical clamped-string echo pattern with arrivals at L, 3L,
+//     5L… and sign alternation, rather than the single-loop Karplus-Strong
+//     pattern at L, 2L, 3L… which collapses two physical reflections into
+//     one round-trip and gives a less authentic transient response.
 //   • Dispersion: high frequencies travel slower than low frequencies along
 //     a transverse-wave spring. The classic "boing" of a tapped spring is
-//     the impulse dispersing into a chirp. We synthesize this with cascaded
-//     1st-order APs (Välimäki/Parker 2010) — coefficient `a` near −1 gives
-//     a quadratic-ish group-delay curve over the audio band.
+//     the impulse dispersing into a chirp. We synthesise this with cascaded
+//     1st-order APs (Välimäki/Parker 2010) lumped at the right-end junction
+//     — equivalent to spreading them throughout the waveguide for steady-
+//     state but cheaper in CPU. Coefficient `a` near −1 gives a quadratic-
+//     ish group-delay curve over the audio band.
 //   • Multiple springs: the 6G15 used three mechanical springs of different
 //     lengths in parallel; their summed output produces the characteristic
-//     dense-but-uneven shimmer. We use mutually-prime delay lengths per
-//     spring for natural decorrelation.
+//     dense-but-uneven shimmer. Mutually-prime delay lengths per spring for
+//     natural decorrelation.
 //   • HF damping: real springs roll off above ~4-5 kHz; modelled with a
-//     1-pole LP per spring controlled by the trebleMultiply parameter.
+//     1-pole LP at the right-end reflection junction controlled by the
+//     trebleMultiply parameter.
 //
 // Knob hijacking (per the v3.0 plan — engine sees the standard setters but
 // reinterprets them under engine-specific UI labels):
@@ -82,11 +92,20 @@ private:
 
     struct Spring
     {
-        std::vector<float> delayBuf;
-        int   writePos     = 0;
-        int   mask         = 0;
-        int   delaySamples = 0;
-        float feedback     = 0.5f;
+        // Two delay lines: forward (left→right) and backward (right→left).
+        // Both share writePos/mask and have length lengthSamples at most.
+        std::vector<float> fwdDelay;
+        std::vector<float> bwdDelay;
+        int   writePos      = 0;
+        int   mask          = 0;
+        int   lengthSamples = 0;          // one-way travel time in samples
+
+        // End-reflection magnitudes. Sign-inversion (clamped-end physics) is
+        // applied in process() — these are positive magnitudes < 1. Computed
+        // per-spring from decayTime (target RT60) and the spring's length so
+        // that a full round trip (2L samples) gives the right energy loss.
+        float reflLeft  = 0.95f;
+        float reflRight = 0.95f;
 
         AllPass1 dispersionAPs[kNumDispersionStages];
         float    dispersionA = -0.7f;     // base dispersion coefficient
@@ -96,8 +115,9 @@ private:
 
         void allocate (int maxSamples);
         void clear();
-        // process() is per-sample. lfoOffset is in samples (signed) and
-        // shifts the read head by ±lfoOffset for the "drip" wobble.
+        // Per-sample. lfoOffset is in samples (signed) and modulates the
+        // forward-wave read position for the "drip" wobble. Returns the
+        // post-damping forward wave at the right pickup.
         float process (float input, float lfoOffset) noexcept;
     };
 

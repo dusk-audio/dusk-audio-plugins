@@ -67,6 +67,21 @@ private:
     float cathodeEnv_         = 0.0f;
     float cathodeAttackCoeff_ = 0.0f; // ~500 ms attack
     float cathodeReleaseCoeff_= 0.0f; // ~2 s release
+
+    // Grid current / blocking distortion. Real power-tube grids draw current
+    // when the grid voltage swings positive of the cathode (typically when
+    // |driven| exceeds gridChargeThreshold_). That current flows back through
+    // the coupling-cap RC network and depresses the previous stage's DC
+    // operating point — a transient "ducking" of the next several ms of
+    // input that recovers slowly. This is the ghost-note / sustainer "tube
+    // feel" that pure waveshapers can't replicate. Per-amp threshold and
+    // amount: Marshall most aggressive (EL34 grids hard-block on hot input),
+    // Vox lowest threshold (EL84 less headroom), Fender mildest.
+    float gridChargeThreshold_ = 1.5f; // |driven| above which grid draws current
+    float gridChargeAmount_    = 0.0f; // 0 = disabled; 0.2-0.3 audible
+    float gridCharge_          = 0.0f; // envelope state
+    float gridAttackCoeff_     = 0.0f; // ~1 ms attack — fast, transient detection
+    float gridReleaseCoeff_    = 0.0f; // ~30 ms release — coupling-cap RC recovery
     float maxDriveGain_ = 2.5f;   // Maximum drive multiplier (amp-type-dependent character)
 
     // Per-amp input scaler into the waveshaper. Reflects different tube
@@ -161,10 +176,25 @@ private:
     float  otPeakGainDb_ = 0.0f;
     float  otPeakQ_      = 1.0f;
 
+    // Speaker-impedance-feedback peak. Real guitar cabs have a sharp
+    // impedance peak at the cone's fundamental resonance (~80-150 Hz) and
+    // the OT's primary load follows that — meaning more voltage swing,
+    // hence a small LF gain bump that's NOT in our cab IR (the IR is just
+    // a fixed-impedance-load measurement). Implemented as a peaking biquad
+    // before the OT HF peak. Per-amp gain reflects how much the global NFB
+    // damps the resonance: low NFB (Vox) → strong peak audibly "blooms" at
+    // LF; medium NFB (Marshall) → moderate; high NFB (Fender) → minimal.
+    OtPeak spkPeak_;
+    float  spkPeakFreq_   = 100.0f;
+    float  spkPeakGainDb_ = 0.0f;
+    float  spkPeakQ_      = 1.5f;
+
     void updatePresenceCoeff();
     void updateResonanceCoeff();
     void updateNfbLpfCoeff();
     void updateCathodeBloomCoeffs();
+    void updateGridCurrentCoeffs();
     void updateOtPeak();
+    void updateSpkPeak();
     void updateAmpTypeParams();
 };
