@@ -101,10 +101,48 @@ void CabinetIR::loadIR (const juce::File& file)
     // loaded with the same IR. Doing it through the real JUCE path (rather
     // than re-implementing trim+normalise+convolve offline) guarantees the
     // makeup matches what the live convolution_ in process() actually does.
-    measureNormalizeMakeup (file);
+    measureNormalizeMakeup ([&file] (juce::dsp::Convolution& c)
+    {
+        c.loadImpulseResponse (file,
+                                juce::dsp::Convolution::Stereo::no,
+                                juce::dsp::Convolution::Trim::yes,
+                                0);
+    });
 }
 
-void CabinetIR::measureNormalizeMakeup (const juce::File& file)
+void CabinetIR::loadIR (const void* data, size_t sizeInBytes,
+                        const juce::String& displayName)
+{
+    if (data == nullptr || sizeInBytes == 0)
+        return;
+
+    // The pointer comes from BinaryData (read-only, lifetime = process).
+    // JUCE's raw-pointer overload of loadImpulseResponse copies internally,
+    // so we don't need to keep a live MemoryBlock around.
+    convolution_.loadImpulseResponse (data, sizeInBytes,
+                                       juce::dsp::Convolution::Stereo::no,
+                                       juce::dsp::Convolution::Trim::yes,
+                                       0,
+                                       juce::dsp::Convolution::Normalise::yes);
+
+    loadedFile_ = juce::File();
+    loadedFileName_ = displayName;
+    irLoaded_ = true;
+
+    // Same loudness-match procedure as the file path — measure pink-noise
+    // RMS attenuation through a parallel Convolution loaded from the same
+    // memory block.
+    measureNormalizeMakeup ([data, sizeInBytes] (juce::dsp::Convolution& c)
+    {
+        c.loadImpulseResponse (data, sizeInBytes,
+                                juce::dsp::Convolution::Stereo::no,
+                                juce::dsp::Convolution::Trim::yes,
+                                0,
+                                juce::dsp::Convolution::Normalise::yes);
+    });
+}
+
+void CabinetIR::measureNormalizeMakeup (std::function<void (juce::dsp::Convolution&)> loader)
 {
     if (currentSpec_.sampleRate <= 0.0)
         return; // not yet prepared — leave makeup at default 1.0
@@ -117,13 +155,15 @@ void CabinetIR::measureNormalizeMakeup (const juce::File& file)
     const int kTestLen = static_cast<int> (currentSpec_.sampleRate * 0.5); // 22050 @ 44.1k
     constexpr float kTestScale = 0.15f;
 
-    // Match the live convolution_'s prepare exactly so JUCE's partition
-    // layout + zero-latency engine path are identical to what the user's
-    // process() will hit at runtime. JUCE's NonUniform behaviour does
-    // change with maxBlockSize (different head/tail engine sizing).
+    // Prepare measureConv with a maxBlockSize large enough for both the
+    // 2048-sample warmup buffer (driving engine swap) and the kTestLen
+    // pink-noise burst chunked below. juce::dsp::Convolution treats
+    // maximumBlockSize as a hard contract — feeding larger blocks corrupts
+    // partition state and segfaults.
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = currentSpec_.sampleRate;
-    spec.maximumBlockSize = currentSpec_.maximumBlockSize;
+    spec.maximumBlockSize = static_cast<juce::uint32> (
+        std::max (kTestLen, std::max (2048, static_cast<int> (currentSpec_.maximumBlockSize))));
     spec.numChannels      = 1;
     measureConv.prepare (spec);
 
@@ -134,10 +174,7 @@ void CabinetIR::measureNormalizeMakeup (const juce::File& file)
     // process() calls until either the engine swaps (size changes) or we
     // give up.
     const int placeholderSize = measureConv.getCurrentIRSize();
-    measureConv.loadImpulseResponse (file,
-                                     juce::dsp::Convolution::Stereo::no,
-                                     juce::dsp::Convolution::Trim::yes,
-                                     0);
+    loader (measureConv);
 
     juce::AudioBuffer<float> warmBuf (1, 2048);
     auto irSamples = placeholderSize;

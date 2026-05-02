@@ -67,20 +67,31 @@ struct DuskAmpPreset
     }
 };
 
-// Factory presets
+// Factory presets — a 3 × 3 matrix (American/British/AC × Clean/Crunch/Lead).
+// Each preset's TONE_TYPE drives the bundled IR auto-load:
+//   tType 0 (American) → Twin Reverb 1x12 SM57
+//   tType 1 (British)  → Marshall JCM800 4x12 NT1-A
+//   tType 2 (AC)       → Vox AC30 2x12 Celestion Blue
+// The editor calls processor.clearUserIROverride() before applyTo so the
+// preset's TONE_TYPE swap re-triggers loadDefaultIRForCurrentToneType.
 static const DuskAmpPreset kFactoryPresets[] =
 {
-    //                                          mode inG  gateThr gateRel gain ch  brt tType  B    M    T   pDrv pres reso sag  cMix cHiC  cLoC  dTm  dFb  dMix rMix rDec outLv
-    { "Clean American",        "Clean",          0,  0.0f, -60.0f, 50.0f, 0.2f, 0, false, 0, 0.6f, 0.5f, 0.6f, 0.2f, 0.5f, 0.5f, 0.2f, 1.0f, 12000, 60, 0, 0, 0, 0, 0, 0.0f },
-    { "Clean AC Chime",        "Clean",          0,  0.0f, -60.0f, 50.0f, 0.3f, 0, true,  2, 0.4f, 0.6f, 0.7f, 0.2f, 0.6f, 0.4f, 0.2f, 1.0f, 12000, 60, 0, 0, 0, 0, 0, 0.0f },
-    { "Crunch British",        "Crunch",         0,  0.0f, -60.0f, 50.0f, 0.6f, 1, false, 1, 0.5f, 0.6f, 0.5f, 0.3f, 0.5f, 0.5f, 0.3f, 1.0f, 10000, 80, 0, 0, 0, 0, 0, 0.0f },
-    { "Blues Breakup",         "Crunch",         0,  0.0f, -60.0f, 50.0f, 0.5f, 1, true,  0, 0.6f, 0.4f, 0.5f, 0.3f, 0.4f, 0.5f, 0.4f, 1.0f, 11000, 70, 0, 0, 0, 0, 0, 0.0f },
-    { "Classic Rock",          "Crunch",         0,  0.0f, -55.0f, 40.0f, 0.7f, 1, false, 1, 0.6f, 0.7f, 0.5f, 0.4f, 0.5f, 0.5f, 0.3f, 1.0f, 10000, 80, 0, 0, 0, 0, 0, 0.0f },
-    { "Lead British",          "High Gain",      0,  0.0f, -50.0f, 35.0f, 0.8f, 2, false, 1, 0.5f, 0.7f, 0.6f, 0.4f, 0.6f, 0.5f, 0.3f, 1.0f,  9000, 80, 0, 0, 0, 0, 0, 0.0f },
-    { "Modern High Gain",      "High Gain",      0,  2.0f, -50.0f, 30.0f, 0.9f, 2, false, 1, 0.6f, 0.5f, 0.6f, 0.5f, 0.7f, 0.6f, 0.2f, 1.0f,  8000, 100, 0, 0, 0, 0, 0, 0.0f },
-    { "Shred Lead",            "High Gain",      0,  3.0f, -45.0f, 25.0f, 1.0f, 2, true,  1, 0.5f, 0.6f, 0.7f, 0.5f, 0.7f, 0.5f, 0.2f, 1.0f,  8500, 90, 0, 0, 0, 0, 0, 1.0f },
-    { "Ambient Clean",         "Ambient",        0,  0.0f, -60.0f, 50.0f, 0.2f, 0, false, 0, 0.5f, 0.5f, 0.6f, 0.2f, 0.5f, 0.5f, 0.2f, 1.0f, 12000, 60, 400, 0.3f, 0.3f, 0.25f, 0.5f, 0.0f },
-    { "Ambient Crunch",        "Ambient",        0,  0.0f, -55.0f, 40.0f, 0.5f, 1, false, 1, 0.5f, 0.6f, 0.5f, 0.3f, 0.5f, 0.5f, 0.3f, 1.0f, 10000, 80, 350, 0.25f, 0.2f, 0.2f, 0.4f, 0.0f },
+    // OUTPUT_LEVEL trims set so Clean/Crunch/Lead sit within ~3 dB of each
+    // other. Without trims, the matrix spans 25 dB (Lead at -0.7 dBFS,
+    // basically peaking). Trims balance the increased saturation/level
+    // boost from the higher gain settings.
+    //                          mode inG  gateThr gateRel gain ch  brt tType  B    M    T    pDrv pres reso sag  cMix cHiC  cLoC dTm dFb dMix rMix rDec outLv
+    { "American Clean", "Clean", 0,  0.0f, -60.0f, 50.0f, 0.40f, 0, false, 0, 0.50f, 0.50f, 0.55f, 0.20f, 0.50f, 0.50f, 0.30f, 1.0f, 12000, 60,  0, 0, 0, 0, 0,   0.0f },
+    { "American Crunch","Crunch",0,  0.0f, -60.0f, 50.0f, 0.60f, 1, false, 0, 0.50f, 0.55f, 0.55f, 0.30f, 0.50f, 0.50f, 0.30f, 1.0f, 12000, 60,  0, 0, 0, 0, 0,  -3.0f },
+    { "American Lead",  "Lead",  0,  0.0f, -55.0f, 40.0f, 0.80f, 2, false, 0, 0.50f, 0.60f, 0.50f, 0.40f, 0.50f, 0.50f, 0.30f, 1.0f, 11000, 70,  0, 0, 0, 0, 0, -10.0f },
+
+    { "British Clean",  "Clean", 0,  0.0f, -60.0f, 50.0f, 0.30f, 0, false, 1, 0.50f, 0.55f, 0.55f, 0.20f, 0.50f, 0.50f, 0.30f, 1.0f, 12000, 60,  0, 0, 0, 0, 0,   3.0f },
+    { "British Crunch", "Crunch",0,  0.0f, -60.0f, 50.0f, 0.60f, 1, false, 1, 0.50f, 0.60f, 0.55f, 0.40f, 0.50f, 0.50f, 0.30f, 1.0f, 11000, 70,  0, 0, 0, 0, 0,  -5.0f },
+    { "British Lead",   "Lead",  0,  0.0f, -55.0f, 40.0f, 0.85f, 2, false, 1, 0.50f, 0.65f, 0.55f, 0.50f, 0.55f, 0.50f, 0.30f, 1.0f,  9500, 80,  0, 0, 0, 0, 0, -12.0f },
+
+    { "AC Clean",       "Clean", 0,  0.0f, -60.0f, 50.0f, 0.35f, 0, true,  2, 0.45f, 0.55f, 0.60f, 0.20f, 0.55f, 0.45f, 0.30f, 1.0f, 12000, 60,  0, 0, 0, 0, 0,   0.0f },
+    { "AC Crunch",      "Crunch",0,  0.0f, -60.0f, 50.0f, 0.60f, 1, false, 2, 0.45f, 0.60f, 0.60f, 0.35f, 0.55f, 0.45f, 0.30f, 1.0f, 11000, 70,  0, 0, 0, 0, 0,  -3.0f },
+    { "AC Lead",        "Lead",  0,  0.0f, -55.0f, 40.0f, 0.85f, 2, false, 2, 0.45f, 0.65f, 0.55f, 0.45f, 0.60f, 0.50f, 0.30f, 1.0f, 10000, 80,  0, 0, 0, 0, 0, -10.0f },
 };
 
 static constexpr int kNumFactoryPresets = static_cast<int> (sizeof (kFactoryPresets) / sizeof (kFactoryPresets[0]));

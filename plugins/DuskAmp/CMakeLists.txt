@@ -125,6 +125,17 @@ if(NAM_ENABLED)
     )
 endif()
 
+# Bundled cabinet IRs — three captures used with explicit permission from
+# their creators (see Resources/cabs/NOTICE.txt). JUCE generates a header
+# named BinaryData.h exposing each WAV as a const char* + size_t pair.
+juce_add_binary_data(DuskAmpCabIRs
+    SOURCES
+        Resources/cabs/Twin_Reverb_SM57_A.wav
+        Resources/cabs/JCM800_NT1A_B.wav
+        Resources/cabs/AC30_Blue_1.wav
+)
+target_link_libraries(DuskAmp PRIVATE DuskAmpCabIRs)
+
 # Set include directories
 target_include_directories(DuskAmp
     PUBLIC
@@ -321,5 +332,32 @@ target_compile_definitions(DuskAmp_SafetyScan PRIVATE
     JUCE_STANDALONE_APPLICATION=1
 )
 set_target_properties(DuskAmp_SafetyScan PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# DI render tool — render an arbitrary input WAV through DuskAmpProcessor with
+# user-specified amp/channel/knob/IR config, write output WAV. Built for A/B
+# comparison against commercial amp sims (AmpliTube, Helix, Neural DSP).
+# Links against the JUCE-generated DuskAmp shared-code library so we get the
+# full DuskAmpProcessor + APVTS surface (not just standalone DSP classes).
+add_executable(DuskAmp_DIRender
+    tests/comparison/duskamp_di_render.cpp
+)
+target_link_libraries(DuskAmp_DIRender
+    PRIVATE
+        DuskAmp
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_events
+        juce::juce_recommended_config_flags
+)
+target_compile_definitions(DuskAmp_DIRender PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_USE_MP3AUDIOFORMAT=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+set_target_properties(DuskAmp_DIRender PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )

@@ -115,6 +115,11 @@ docs/_build/
 *.MID
 *.midi
 *.MIDI
+
+# Exception: bundled cabinet IRs that ship inside the plugin binary
+# (DuskAmp's juce_add_binary_data target). Each WAV is small (~50-150 KB)
+# and is required at build time.
+!plugins/DuskAmp/Resources/cabs/*.wav
 *.aif
 *.aiff
 *.mp3

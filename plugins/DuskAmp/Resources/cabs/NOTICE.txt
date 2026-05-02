@@ -1,0 +1,19 @@
+DuskAmp ships three cabinet impulse responses, used with permission from
+their original creators. All bundled IRs remain the property of their
+respective creators; redistribution outside DuskAmp's distribution channel
+is not authorized by this NOTICE.
+
+  Twin_Reverb_SM57_A.wav
+    Source: Fender Twin Reverb 1x12, Shure SM57 cap-A position
+    Captured by: Rocksta Reactions
+    Used with permission from the creator.
+
+  JCM800_NT1A_B.wav
+    Source: Marshall JCM800 Lead Series 4x12, Rode NT1-A cap-B position
+    Captured by: Rocksta Reactions
+    Used with permission from the creator.
+
+  AC30_Blue_1.wav
+    Source: Vox AC30 2x12 Celestion Alnico Blue
+    Captured by: Vulterized
+    Used with permission from the creator.

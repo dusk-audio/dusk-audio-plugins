@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_dsp/juce_dsp.h>
+#include <functional>
 
 class CabinetIR
 {
@@ -10,7 +11,14 @@ public:
     void process (juce::AudioBuffer<float>& buffer);
     void reset();
 
+    // Disk-loaded IR (user-picked file).
     void loadIR (const juce::File& file);
+
+    // Memory-loaded IR (bundled BinaryData). `displayName` is shown in the
+    // editor; the file accessor returns an invalid juce::File since the
+    // source isn't on disk.
+    void loadIR (const void* data, size_t sizeInBytes, const juce::String& displayName);
+
     void setEnabled (bool on);
     void setMix (float mix01);
     void setHiCut (float hz);
@@ -41,7 +49,10 @@ private:
     bool  normalize_ = false;
     float normalizeMakeup_ = 1.0f;
 
-    void measureNormalizeMakeup (const juce::File& file);
+    // Loader is a callable that knows how to call loadImpulseResponse on
+    // the given measureConv (file-based or memory-based). The rest of the
+    // pink-noise-RMS measurement is loader-agnostic.
+    void measureNormalizeMakeup (std::function<void (juce::dsp::Convolution&)> loader);
 
     // Post-cab EQ (manual biquad to avoid heap allocation from juce::dsp::IIR)
     struct Biquad
