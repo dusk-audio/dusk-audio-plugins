@@ -12,7 +12,7 @@
 #include <vector>
 #include <cmath>
 
-static constexpr double kSr = 176400.0; // tone stack runs oversampled in the plugin
+static constexpr double kSr = 352800.0; // tonestack now runs at 8× of 44.1k by default
 
 static float measureGainDb (ToneStack& ts, double freqHz, double seconds = 0.3)
 {

@@ -12,6 +12,7 @@
 #include "InputSection.h"
 #include "PreampDSP.h"
 #include "ToneStack.h"
+#include "PhaseInverter.h"
 #include "PowerAmp.h"
 #include "CabinetIR.h"
 #include "PostFX.h"
@@ -822,6 +823,84 @@ static void testReverb()
 // Selector / toggle tests (quick sanity)
 // ---------------------------------------------------------------------------
 
+// Full-chain RMS for a given amp model at matched user-facing settings.
+// Mirrors DuskAmpEngine::setToneStackType's amp/PI pairing:
+//   Fender   ↔ American tonestack ↔ LongTailPair PI gain 2.5
+//   Marshall ↔ British  tonestack ↔ LongTailPair PI gain 4.0  + Marshall preamp voicing
+//   Vox      ↔ AC       tonestack ↔ Cathodyne   PI gain 1.6
+static float fullChainRms (PowerAmp::AmpType amp)
+{
+    PreampDSP preamp;
+    ToneStack ts;
+    PhaseInverter pi;
+    PowerAmp pa;
+    preamp.prepare (kSr); ts.prepare (kSr); pi.prepare (kSr); pa.prepare (kSr);
+
+    preamp.setChannel (PreampDSP::Channel::Clean);
+    preamp.setGain (0.7f);
+    preamp.setBright (false);
+    preamp.setMarshallVoicing (amp == PowerAmp::AmpType::Marshall);
+
+    switch (amp)
+    {
+        case PowerAmp::AmpType::Fender:
+            ts.setType (ToneStack::Type::American);
+            pi.setTopology (PhaseInverter::Topology::LongTailPair);
+            pi.setGain (2.5f); pi.setHeadroom (2.2f);
+            break;
+        case PowerAmp::AmpType::Marshall:
+            ts.setType (ToneStack::Type::British);
+            pi.setTopology (PhaseInverter::Topology::LongTailPair);
+            pi.setGain (4.0f); pi.setHeadroom (1.6f);
+            break;
+        case PowerAmp::AmpType::Vox:
+        default:
+            ts.setType (ToneStack::Type::AC);
+            pi.setTopology (PhaseInverter::Topology::Cathodyne);
+            pi.setGain (1.6f); pi.setHeadroom (2.4f);
+            break;
+    }
+    ts.setBass (0.5f); ts.setMid (0.5f); ts.setTreble (0.5f);
+
+    pa.setAmpType (amp);
+    pa.setDrive (0.3f); pa.setPresence (0.5f); pa.setResonance (0.5f); pa.setSag (0.0f);
+
+    // 220 Hz sine, -12 dBFS (peak 0.25), 1 second — typical guitar DI.
+    auto buf = sineBuf (220.0, 0.25f, 1.0);
+    constexpr int block = 512;
+    for (int off = 0; off < int (buf.size()); off += block)
+    {
+        const int n = std::min (block, int (buf.size()) - off);
+        preamp.process (buf.data() + off, n);
+        ts.process     (buf.data() + off, n);
+        pi.process     (buf.data() + off, n);
+        pa.process     (buf.data() + off, n);
+    }
+    return rms (buf.data(), int (buf.size()), int (kSr * 0.1));
+}
+
+static void testAmpLevelsMatched()
+{
+    const float fRms = fullChainRms (PowerAmp::AmpType::Fender);
+    const float mRms = fullChainRms (PowerAmp::AmpType::Marshall);
+    const float vRms = fullChainRms (PowerAmp::AmpType::Vox);
+
+    const float fDb = dbfs (fRms);
+    const float mDb = dbfs (mRms);
+    const float vDb = dbfs (vRms);
+
+    const float maxDb = std::max ({ fDb, mDb, vDb });
+    const float minDb = std::min ({ fDb, mDb, vDb });
+    const float spread = maxDb - minDb;
+
+    std::ostringstream d;
+    d << "Fender=" << std::fixed << std::setprecision (1) << fDb
+      << " Marshall=" << mDb
+      << " Vox=" << vDb
+      << " dB | spread=" << spread << " dB (need <= 2 dB)";
+    add ("AMP_LEVELS_MATCHED", spread <= 2.0f, d.str());
+}
+
 static void testAmpTypeDistinct()
 {
     // RMS can coincide across amps (post-makeup is tuned so flat-level
@@ -890,6 +969,7 @@ int main()
     testReverb();
 
     std::cout << "\n-- Selectors --\n";
+    testAmpLevelsMatched();
     testAmpTypeDistinct();
 
     std::cout << "\n-- Cabinet --\n";

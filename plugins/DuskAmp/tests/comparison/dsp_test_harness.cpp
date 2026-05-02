@@ -220,7 +220,7 @@ struct DriveConfig
 static const DriveConfig kDrives[] = {
     { "clean",   0.20f, 0.20f },
     { "crunch",  0.55f, 0.50f },
-    { "cranked", 0.85f, 0.75f },
+    { "cranked", 1.00f, 1.00f },  // genuinely cranked — both knobs maxed
 };
 
 // Configure a PhaseInverter to match the same amp type the engine sets up
