@@ -4,6 +4,7 @@
 #include "ui/DuskAmpLookAndFeel.h"
 #include "ui/CabBrowser.h"
 #include "ui/NAMBrowser.h"
+#include "ui/TunerOverlay.h"
 #include "LEDMeter.h"
 #include "ScalableEditorHelper.h"
 #include "UserPresetManager.h"
@@ -16,10 +17,21 @@ struct KnobWithLabel
     juce::Label  nameLabel;
     juce::Label  valueLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+    juce::String boundParamID_;
+    juce::String suffix_;
 
     void init (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
                const juce::String& paramID, const juce::String& displayName,
                const juce::String& suffix, const juce::String& tooltip = {});
+
+    // Re-bind the slider to a different APVTS parameter (used to swap
+    // bass/mid/treble between DSP and NAM tonestack params on mode change).
+    void rebind (juce::AudioProcessorValueTreeState& apvts, const juce::String& paramID);
+
+    // Re-installs the unit-aware formatter on slider.textFromValueFunction.
+    // Must be called after every SliderAttachment (re)creation — the
+    // attachment's constructor wipes any prior textFromValueFunction.
+    void applyFormatter();
 
     void setDimmed (bool dimmed)
     {
@@ -72,6 +84,14 @@ private:
     // Mode selector
     std::unique_ptr<AmpModeSelector> modeSelector_;
 
+    // Tuner — button in the top bar opens a full-editor modal that mutes
+    // the audio. Detection runs continuously on the audio thread; the
+    // overlay polls via the same timer that drives knob value labels.
+    juce::TextButton tunerButton_;
+    std::unique_ptr<TunerOverlay> tunerOverlay_;
+    void showTunerPanel();
+    void hideTunerPanel();
+
     // Preset browser
     juce::ComboBox presetBox_;
     std::unique_ptr<UserPresetManager> userPresetManager_;
@@ -103,6 +123,9 @@ private:
     KnobWithLabel treble_;
     juce::ComboBox toneTypeBox_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> toneTypeAttachment_;
+    int  toneTypeBoundMode_ = -1; // 0 = DSP, 1 = NAM; tracks which APVTS param toneTypeBox is bound to
+
+    void rebindToneStackForMode (int ampMode); // 0 = DSP, 1 = NAM
 
     // -- POWER AMP section --
     KnobWithLabel powerDrive_;
