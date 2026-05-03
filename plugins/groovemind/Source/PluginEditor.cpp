@@ -9,6 +9,13 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "../../shared/DuskLookAndFeel.h"   // ValueEditor::popUp
+
+void GrooveMindEditor::ValueEditorTrigger::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    if (auto* s = dynamic_cast<juce::Slider*>(e.eventComponent))
+        ValueEditor::popUp(*s, *s);
+}
 
 //==============================================================================
 GrooveMindEditor::GrooveMindEditor(GrooveMindProcessor& p)
@@ -108,6 +115,14 @@ GrooveMindEditor::GrooveMindEditor(GrooveMindProcessor& p)
     addAndMakeVisible(fillIntensitySlider);
     fillIntensityAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         processor.getAPVTS(), "fill_intensity", fillIntensitySlider);
+
+    // Wire double-click on each slider to spawn the shared ValueEditor popup.
+    valueEditorTrigger = std::make_unique<ValueEditorTrigger>();
+    for (auto* s : { &energySlider, &grooveSlider, &swingSlider, &fillIntensitySlider })
+    {
+        s->setDoubleClickReturnValue(false, 0.0);
+        s->addMouseListener(valueEditorTrigger.get(), false);
+    }
 
     fillTriggerButton.setButtonText("Fill!");
     fillTriggerButton.onClick = [this]() {

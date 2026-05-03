@@ -6,10 +6,11 @@
 
 juce::Label* MultiSynthLookAndFeelBase::createSliderTextBox(juce::Slider& slider)
 {
+    // Clean text-only value, no surrounding box (matches DuskVerb style).
     auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
-    label->setColour(juce::Label::textColourId, colors.text);
-    label->setColour(juce::Label::backgroundColourId, juce::Colour(0x40000000));
-    label->setColour(juce::Label::outlineColourId, juce::Colour(0x20FFFFFF));
+    label->setColour(juce::Label::textColourId,       colors.text);
+    label->setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+    label->setColour(juce::Label::outlineColourId,    juce::Colours::transparentBlack);
     label->setFont(juce::Font(juce::FontOptions(12.0f).withStyle("Bold")));
     return label;
 }
