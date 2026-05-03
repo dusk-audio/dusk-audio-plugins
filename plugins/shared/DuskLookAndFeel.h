@@ -61,12 +61,50 @@ public:
     }
 
 private:
+    // Forwards double-clicks from child components (e.g. the inline TextBox
+    // label) up to the slider so we can open the ValueEditor popup. Skips
+    // events targeted AT the slider itself — those are handled by the
+    // mouseDoubleClick virtual override below, and double-handling would
+    // pop the editor twice.
+    struct ChildClickProxy : public juce::MouseListener
+    {
+        DuskSlider& owner;
+        explicit ChildClickProxy(DuskSlider& o) : owner(o) {}
+        void mouseDoubleClick(const juce::MouseEvent& e) override;
+    };
+    ChildClickProxy childClickProxy { *this };
+
     void initDuskSlider()
     {
         setVelocityBasedMode(false);
+
+        // Single-click on the inline TextBox should NOT focus it for editing
+        // — value editing is exclusively double-click → ValueEditor popup,
+        // matching the DuskVerb pattern and premium-plugin convention
+        // (FabFilter, iZotope, UAD, Plugin Alliance).
+        setTextBoxIsEditable(false);
+
+        // Catch double-clicks on the TextBox child too, not just the knob
+        // body. Without this, double-clicking the value text below a knob
+        // does nothing because Label consumes the event before it reaches
+        // Slider::mouseDoubleClick.
+        addMouseListener(&childClickProxy, /*wantsEventsForChildren=*/true);
     }
 
 public:
+    // juce::Slider::setTextBoxStyle stores `editableText = !isReadOnly` in
+    // its pimpl, then calls lookAndFeelChanged() to recreate the textbox.
+    // Since most call sites pass isReadOnly=false (JUCE's default), the
+    // call clobbers our setTextBoxIsEditable(false) from initDuskSlider.
+    // Re-assert non-editable here so the invariant holds regardless of
+    // when/how callers reconfigure the textbox.
+    void lookAndFeelChanged() override
+    {
+        juce::Slider::lookAndFeelChanged();
+        juce::Slider::setTextBoxIsEditable(false);
+    }
+
+
     void mouseDown(const juce::MouseEvent& e) override
     {
         if (e.mods.isCommandDown() || e.mods.isCtrlDown())
@@ -434,6 +472,15 @@ private:
 inline void DuskSlider::mouseDoubleClick (const juce::MouseEvent&)
 {
     ValueEditor::popUp (*this, *this);
+}
+
+inline void DuskSlider::ChildClickProxy::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // Skip events that came from the slider itself — the virtual override
+    // above already handles those. Only forward child-originated events
+    // (the inline value TextBox in particular).
+    if (e.eventComponent != &owner)
+        ValueEditor::popUp (owner, owner);
 }
 
 //==============================================================================

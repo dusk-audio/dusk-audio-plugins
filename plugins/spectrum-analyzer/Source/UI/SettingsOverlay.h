@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "DuskLookAndFeel.h"   // ValueEditor::popUp (../shared/ on include path)
 
 //==============================================================================
 /**
@@ -74,6 +75,18 @@ public:
         panel.addAndMakeVisible(rangeSlider);
 
         addAndMakeVisible(panel);
+
+        // Value editing is exclusively double-click → ValueEditor popup
+        // (matches DuskVerb / Multi-Comp / etc.). Disable inline TextBox
+        // editing and JUCE's default reset-on-double-click behaviour, then
+        // listen for double-clicks on the slider AND its TextBox child.
+        valueEditorTrigger_ = std::make_unique<ValueEditorTrigger>();
+        for (auto* s : { &smoothingSlider, &slopeSlider, &decaySlider, &rangeSlider })
+        {
+            s->setDoubleClickReturnValue(false, 0.0);
+            s->setTextBoxIsEditable(false);
+            s->addMouseListener(valueEditorTrigger_.get(), /*wantsForChildren=*/true);
+        }
     }
 
     void paint(juce::Graphics& g) override
@@ -168,6 +181,26 @@ private:
 
     juce::Label rangeLabel;
     juce::Slider rangeSlider;
+
+    // Double-click → ValueEditor popup. Single shared listener for all 4
+    // sliders. Walks up from the event-component so that double-clicks on
+    // the inline TextBox label (a child of the slider) still resolve to
+    // the parent Slider.
+    struct ValueEditorTrigger : public juce::MouseListener
+    {
+        void mouseDoubleClick(const juce::MouseEvent& e) override
+        {
+            for (auto* c = e.eventComponent; c != nullptr; c = c->getParentComponent())
+            {
+                if (auto* s = dynamic_cast<juce::Slider*>(c))
+                {
+                    ValueEditor::popUp(*s, *s);
+                    return;
+                }
+            }
+        }
+    };
+    std::unique_ptr<ValueEditorTrigger> valueEditorTrigger_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsOverlay)
 };
