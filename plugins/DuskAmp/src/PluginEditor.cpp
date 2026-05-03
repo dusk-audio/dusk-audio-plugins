@@ -4,6 +4,7 @@
 #include "FactoryPresets.h"
 #include "ParamIDs.h"
 #include "CrashLog.h"
+#include "../../shared/DuskLookAndFeel.h"   // ValueEditor::popUp
 
 // =============================================================================
 // KnobWithLabel
@@ -18,6 +19,9 @@ void KnobWithLabel::init (juce::Component& parent,
 {
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+    // Disable JUCE's built-in double-click-resets-to-default. We use double-
+    // click for the value-editor popup instead (see ValueEditorTrigger below).
+    slider.setDoubleClickReturnValue (false, 0.0);
     if (tooltip.isNotEmpty())
         slider.setTooltip (tooltip);
     parent.addAndMakeVisible (slider);
@@ -31,11 +35,31 @@ void KnobWithLabel::init (juce::Component& parent,
     parent.addAndMakeVisible (nameLabel);
 
     valueLabel.setJustificationType (juce::Justification::centred);
-    valueLabel.setInterceptsMouseClicks (false, false);
+    valueLabel.setInterceptsMouseClicks (true, false);
     valueLabel.setFont (juce::FontOptions (11.0f));
     valueLabel.setColour (juce::Label::textColourId,
                           juce::Colour (DuskAmpLookAndFeel::kValueText));
     parent.addAndMakeVisible (valueLabel);
+
+    // Double-click → spawn ValueEditor popup over the value label. Both the
+    // knob and the value label trigger it; editor anchors over the value
+    // label so it lands exactly on the visible text.
+    struct ValueEditorTrigger : public juce::MouseListener
+    {
+        juce::Slider* slider = nullptr;
+        juce::Component* anchor = nullptr;
+        void mouseDoubleClick (const juce::MouseEvent&) override
+        {
+            if (slider != nullptr && anchor != nullptr)
+                ValueEditor::popUp (*slider, *anchor);
+        }
+    };
+    valueEditorTrigger = std::make_unique<ValueEditorTrigger>();
+    auto* trig = static_cast<ValueEditorTrigger*> (valueEditorTrigger.get());
+    trig->slider = &slider;
+    trig->anchor = &valueLabel;
+    slider    .addMouseListener (trig, false);
+    valueLabel.addMouseListener (trig, false);
 
     // Store suffix in name field for formatting
     valueLabel.setName (suffix);
