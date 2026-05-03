@@ -92,6 +92,19 @@ private:
     }
 
 public:
+    // juce::Slider::setTextBoxStyle stores `editableText = !isReadOnly` in
+    // its pimpl, then calls lookAndFeelChanged() to recreate the textbox.
+    // Since most call sites pass isReadOnly=false (JUCE's default), the
+    // call clobbers our setTextBoxIsEditable(false) from initDuskSlider.
+    // Re-assert non-editable here so the invariant holds regardless of
+    // when/how callers reconfigure the textbox.
+    void lookAndFeelChanged() override
+    {
+        juce::Slider::lookAndFeelChanged();
+        juce::Slider::setTextBoxIsEditable(false);
+    }
+
+
     void mouseDown(const juce::MouseEvent& e) override
     {
         if (e.mods.isCommandDown() || e.mods.isCtrlDown())

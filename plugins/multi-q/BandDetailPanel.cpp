@@ -312,7 +312,7 @@ void BandDetailPanel::setupMatchControls()
     // Apply slider (-100% to +100%)
     matchApplySlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal,
                                                      juce::Slider::TextBoxRight);
-    matchApplySlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    matchApplySlider->setTextBoxStyle(juce::Slider::TextBoxRight, true, 50, 20);  // isReadOnly=true: editing is double-click → ValueEditor only
     matchApplySlider->setTooltip("Apply amount: 100% = full correction, 0% = bypass, negative = inverse");
     matchApplySlider->setVisible(false);
     matchApplySlider->onValueChange = [this]() {
@@ -326,7 +326,7 @@ void BandDetailPanel::setupMatchControls()
     // Smoothing slider (1-24 semitones)
     matchSmoothingSlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal,
                                                          juce::Slider::TextBoxRight);
-    matchSmoothingSlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    matchSmoothingSlider->setTextBoxStyle(juce::Slider::TextBoxRight, true, 50, 20);  // isReadOnly=true: editing is double-click → ValueEditor only
     matchSmoothingSlider->setTooltip("Smoothing: wider = smoother correction (in semitones, 12 = 1 octave)");
     matchSmoothingSlider->setVisible(false);
     matchSmoothingSlider->onValueChange = [this]() {
