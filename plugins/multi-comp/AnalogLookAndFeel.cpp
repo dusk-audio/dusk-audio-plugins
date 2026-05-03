@@ -126,10 +126,10 @@ juce::Label* AnalogLookAndFeelBase::createSliderTextBox(juce::Slider& slider)
 {
     auto* label = juce::LookAndFeel_V4::createSliderTextBox(slider);
 
-    // Style the text box with better contrast
-    label->setColour(juce::Label::textColourId, juce::Colours::white);
-    label->setColour(juce::Label::backgroundColourId, juce::Colour(0x40000000));  // Semi-transparent dark background
-    label->setColour(juce::Label::outlineColourId, juce::Colour(0x30FFFFFF));     // Subtle light outline
+    // Clean text-only value, no surrounding box (matches DuskVerb style).
+    label->setColour(juce::Label::textColourId,       juce::Colours::white);
+    label->setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+    label->setColour(juce::Label::outlineColourId,    juce::Colours::transparentBlack);
     label->setFont(juce::Font(juce::FontOptions(13.0f).withStyle("Bold")));
 
     return label;

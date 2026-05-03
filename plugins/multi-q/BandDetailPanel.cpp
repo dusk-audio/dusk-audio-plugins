@@ -1,6 +1,7 @@
 #include "BandDetailPanel.h"
 #include "MultiQ.h"
 #include "F6KnobLookAndFeel.h"
+#include "DuskLookAndFeel.h"   // DuskSlider — gives knobs double-click → ValueEditor
 
 // Static instance of F6 knob look and feel (shared by all instances)
 static F6KnobLookAndFeel f6KnobLookAndFeel;
@@ -62,8 +63,8 @@ void BandDetailPanel::updateBandButtonColors()
 void BandDetailPanel::setupKnobs()
 {
     auto setupRotaryKnob = [this](std::unique_ptr<juce::Slider>& knob) {
-        knob = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
-                                               juce::Slider::NoTextBox);
+        knob = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+                                             juce::Slider::NoTextBox);
         knob->setLookAndFeel(&f6KnobLookAndFeel);
         knob->setColour(juce::Slider::rotarySliderFillColourId, getBandColor(selectedBand));
         knob->setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xFF404040));
@@ -96,8 +97,8 @@ void BandDetailPanel::setupKnobs()
 
     // Dynamics knobs (use orange for dynamics section)
     auto setupDynKnob = [this](std::unique_ptr<juce::Slider>& knob) {
-        knob = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
-                                               juce::Slider::NoTextBox);
+        knob = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+                                             juce::Slider::NoTextBox);
         knob->setLookAndFeel(&f6KnobLookAndFeel);
         knob->setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xFFff8844));
         knob->setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xFF404040));
@@ -169,8 +170,8 @@ void BandDetailPanel::setupKnobs()
     addAndMakeVisible(phaseInvertButton.get());
 
     // Pan knob (stereo placement of band EQ effect)
-    panKnob = std::make_unique<juce::Slider>(juce::Slider::RotaryHorizontalVerticalDrag,
-                                              juce::Slider::NoTextBox);
+    panKnob = std::make_unique<DuskSlider>(juce::Slider::RotaryHorizontalVerticalDrag,
+                                            juce::Slider::NoTextBox);
     panKnob->setLookAndFeel(&f6KnobLookAndFeel);
     panKnob->setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xFF66aadd));
     panKnob->setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xFF404040));
@@ -309,8 +310,8 @@ void BandDetailPanel::setupMatchControls()
         processor.parameters, ParamIDs::matchLimitCut, limitCutButton);
 
     // Apply slider (-100% to +100%)
-    matchApplySlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
-                                                       juce::Slider::TextBoxRight);
+    matchApplySlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal,
+                                                     juce::Slider::TextBoxRight);
     matchApplySlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
     matchApplySlider->setTooltip("Apply amount: 100% = full correction, 0% = bypass, negative = inverse");
     matchApplySlider->setVisible(false);
@@ -323,8 +324,8 @@ void BandDetailPanel::setupMatchControls()
         processor.parameters, ParamIDs::matchApply, *matchApplySlider);
 
     // Smoothing slider (1-24 semitones)
-    matchSmoothingSlider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal,
-                                                           juce::Slider::TextBoxRight);
+    matchSmoothingSlider = std::make_unique<DuskSlider>(juce::Slider::LinearHorizontal,
+                                                         juce::Slider::TextBoxRight);
     matchSmoothingSlider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
     matchSmoothingSlider->setTooltip("Smoothing: wider = smoother correction (in semitones, 12 = 1 octave)");
     matchSmoothingSlider->setVisible(false);
