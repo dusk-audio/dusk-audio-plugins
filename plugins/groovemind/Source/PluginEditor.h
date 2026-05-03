@@ -95,5 +95,13 @@ private:
     juce::Label patternCountLabel;
     juce::Label currentPatternLabel;
 
+    // Double-click → ValueEditor popup. Single shared listener for all
+    // sliders; the popup figures out which slider was hit via the event.
+    struct ValueEditorTrigger : public juce::MouseListener
+    {
+        void mouseDoubleClick(const juce::MouseEvent& e) override;
+    };
+    std::unique_ptr<ValueEditorTrigger> valueEditorTrigger;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GrooveMindEditor)
 };

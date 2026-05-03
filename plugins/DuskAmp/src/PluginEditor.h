@@ -18,6 +18,7 @@ struct KnobWithLabel
     juce::Label  nameLabel;
     juce::Label  valueLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+    std::unique_ptr<juce::MouseListener> valueEditorTrigger;
 
     void init (juce::Component& parent, juce::AudioProcessorValueTreeState& apvts,
                const juce::String& paramID, const juce::String& displayName,
