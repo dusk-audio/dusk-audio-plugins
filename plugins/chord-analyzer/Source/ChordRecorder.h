@@ -62,6 +62,9 @@ private:
     bool recording = false;
     RecordingSession currentSession;
     double sessionStartTime = 0.0;
+    bool sessionStartCaptured = false;   // set on first recordChord() so
+                                         // events are recording-relative,
+                                         // not absolute plugin time
 
     // Current chord tracking
     ChordInfo lastChord;
