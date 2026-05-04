@@ -4,12 +4,15 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "ChordAnalyzerLookAndFeel.h"
+#include "ChordHistoryStrip.h"
+#include "ChordMidiExport.h"
 #include "TheoryTooltips.h"
 #include "../../shared/SupportersOverlay.h"
 #include "../../shared/ScalableEditorHelper.h"
 
 //==============================================================================
 class ChordAnalyzerEditor : public juce::AudioProcessorEditor,
+                             public juce::DragAndDropContainer,
                              public juce::Timer
 {
 public:
@@ -20,7 +23,9 @@ public:
     void resized() override;
     void timerCallback() override;
     void mouseDown(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
     void mouseMove(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
 
 private:
     ChordAnalyzerProcessor& audioProcessor;
@@ -55,10 +60,41 @@ private:
     juce::Label suggestionLevelLabel;
 
     //==========================================================================
-    // Recording panel
+    // Recent-chord history strip — always-on rolling window of last N
+    // detected chords, independent of the recording session.
+    ChordHistoryStrip historyStrip;
+    juce::TextButton clearHistoryButton;
+    int lastHistorySize = -1;
+
+    //==========================================================================
+    // Drag-and-drop affordances. Hit-tested rectangles so mouseDrag knows
+    // which payload to export when a drag is initiated. Updated each
+    // resized() call.
+    juce::Rectangle<int> chordDisplayDragArea;
+    bool dragInitiatedFromEditor_ = false;
+
+    // Pill-shaped drag handle for the recorded session. Custom Component
+    // (not a TextButton) so mouseDrag isn't swallowed by click handling
+    // — the entire affordance IS the drag.
+    class SessionDragHandle : public juce::Component,
+                              public juce::SettableTooltipClient
+    {
+    public:
+        std::function<void()> onDragStart;
+        void paint (juce::Graphics&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override { dragInitiated_ = false; }
+    private:
+        bool dragInitiated_ = false;
+    };
+    SessionDragHandle dragSessionHandle;
+
+    //==========================================================================
+    // Recording panel — Record / Clear only. JSON export was dropped 2026-05-04
+    // (issue #71); MIDI drag-and-drop replaces it as the way to get the
+    // recorded progression out into a DAW.
     juce::TextButton recordButton;
     juce::TextButton clearButton;
-    juce::TextButton exportButton;
     juce::Label recordingStatusLabel;
     juce::Label eventCountLabel;
 
@@ -94,6 +130,7 @@ private:
     //==========================================================================
     // Setup helpers
     void setupChordDisplay();
+    void setupHistoryStrip();
     void setupKeySelection();
     void setupSuggestionPanel();
     void setupRecordingPanel();
@@ -116,7 +153,11 @@ private:
     // Recording actions
     void toggleRecording();
     void clearRecording();
-    void exportRecording();
+
+    //==========================================================================
+    // Drag-and-drop helpers
+    void startDragForChord(const ChordInfo& chord);
+    void startDragForSession();
 
     //==========================================================================
     // Supporters overlay helpers
