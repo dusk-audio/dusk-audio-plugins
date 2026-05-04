@@ -24,8 +24,8 @@ namespace ChordMidiExport
     namespace detail
     {
         // Absolute path of the directory we drop temp .mid files into.
-        // Stays consistent across drags so a stale file from the previous
-        // drag gets overwritten rather than accumulating in /tmp.
+        // Each export gets a UUID suffix so concurrent plugin instances
+        // can't overwrite each other's in-flight drag payloads.
         inline juce::File getTempDir()
         {
             auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
@@ -75,7 +75,6 @@ namespace ChordMidiExport
             mf.setTicksPerQuarterNote (kPPQ);
             mf.addTrack (seq);
 
-            dest.deleteFile();   // overwrite previous drag's leftover
             juce::FileOutputStream out (dest);
             if (! out.openedOk())
                 return {};
@@ -111,7 +110,8 @@ namespace ChordMidiExport
         }
 
         auto seq    = detail::buildSequence (notes, tempoBPM);
-        auto fname  = "chord_" + detail::sanitiseFilename (chord.name) + ".mid";
+        auto fname  = "chord_" + detail::sanitiseFilename (chord.name)
+                    + "_" + juce::Uuid().toString() + ".mid";
         auto target = detail::getTempDir().getChildFile (fname);
         return detail::writeMidiFile (target, seq);
     }
@@ -162,7 +162,8 @@ namespace ChordMidiExport
             return {};
 
         auto seq    = detail::buildSequence (notes, bpm);
-        auto target = detail::getTempDir().getChildFile ("chord_progression.mid");
+        auto target = detail::getTempDir().getChildFile (
+                          "chord_progression_" + juce::Uuid().toString() + ".mid");
         return detail::writeMidiFile (target, seq);
     }
 }

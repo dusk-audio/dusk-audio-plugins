@@ -149,13 +149,21 @@ private:
         const int chipW   = juce::jmax (kMinChipWidth,
                                         (bounds.getWidth() - kStripPad * 2)
                                           / juce::jmax (1, juce::jmin (n, kMaxVisibleChips)));
+        const int chipH        = bounds.getHeight() - kStripPad * 2;
         const int maxFit       = juce::jmax (1, (bounds.getWidth() - kStripPad * 2) / chipW);
         const int firstVisible = juce::jmax (0, n - maxFit);
+
+        const int relY = pt.getY() - bounds.getY() - kStripPad;
+        if (relY < 0 || relY >= chipH)
+            return -1;
 
         const int relX = pt.getX() - bounds.getX() - kStripPad;
         if (relX < 0)
             return -1;
         const int displayIdx = relX / chipW;
+        const int xInCell    = relX - displayIdx * chipW;
+        if (xInCell >= chipW - kChipGap)
+            return -1;
         const int idx        = firstVisible + displayIdx;
         return (idx >= n) ? -1 : idx;
     }
