@@ -624,24 +624,18 @@ void ChordAnalyzerEditor::startDragForChord(const ChordInfo& chord)
 
 void ChordAnalyzerEditor::startDragForSession()
 {
-    auto events = audioProcessor.getRecordedEvents();
-    if (events.empty())
+    auto session = audioProcessor.getRecordingSession();
+    if (session.events.empty())
     {
         showTooltip("No chords recorded — start recording and play a progression first.");
         return;
     }
 
-    // Get tempo from the recorded session if available, else default to
-    // 120 BPM (matches the chord-clip drag behaviour for consistency).
-    double bpm = 120.0;
-    if (auto* head = audioProcessor.getPlayHead())
-    {
-        if (auto pos = head->getPosition())
-            if (auto tempo = pos->getBpm())
-                bpm = *tempo;
-    }
-
-    auto file = ChordMidiExport::writeSessionToTempFile(events, bpm);
+    // Use the BPM that was active when recording started — each event's
+    // startBeat was computed against it, and reading the live host tempo
+    // here would desync the export's tempo meta from the beat values if
+    // the user changed host tempo between stopping recording and dragging.
+    auto file = ChordMidiExport::writeSessionToTempFile(session.events, session.tempoBPM);
     if (! file.existsAsFile())
     {
         showTooltip("Failed to write temporary MIDI file.");
