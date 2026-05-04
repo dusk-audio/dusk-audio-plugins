@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
 #include <atomic>
 #include "ChordAnalyzer.h"
 #include "ChordRecorder.h"
@@ -121,7 +122,14 @@ private:
     std::atomic<bool> chordChangedFlag{false};
     ChordInfo currentChord;
     std::vector<ChordSuggestion> currentSuggestions;
-    std::vector<ChordInfo> chordHistory;   // newest at back; capped at maxHistorySize
+
+    // Ring buffer (preallocated, no reallocation on the audio thread).
+    // historyHead is the next write slot; historyCount is the number of
+    // valid entries (0..maxHistorySize). Logical order is oldest..newest
+    // = chordHistory[(historyHead - historyCount + N) % N .. historyHead).
+    std::array<ChordInfo, maxHistorySize> chordHistory{};
+    int historyHead = 0;
+    int historyCount = 0;
     mutable juce::SpinLock chordLock;
 
     //==========================================================================

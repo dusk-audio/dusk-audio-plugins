@@ -50,6 +50,7 @@ private:
     juce::Label keyRootLabel;
     juce::ComboBox keyModeCombo;
     juce::Label keyModeLabel;
+    juce::Rectangle<int> keyHoverArea;
 
     //==========================================================================
     // Suggestion panel
@@ -64,7 +65,6 @@ private:
     // detected chords, independent of the recording session.
     ChordHistoryStrip historyStrip;
     juce::TextButton clearHistoryButton;
-    int lastHistorySize = -1;
 
     //==========================================================================
     // Drag-and-drop affordances. Hit-tested rectangles so mouseDrag knows
