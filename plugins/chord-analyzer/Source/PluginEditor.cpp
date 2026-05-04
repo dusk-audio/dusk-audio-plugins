@@ -6,10 +6,14 @@ ChordAnalyzerEditor::ChordAnalyzerEditor(ChordAnalyzerProcessor& p)
       audioProcessor(p)
 {
     setLookAndFeel(&lookAndFeel);
-    resizeHelper.initialize(this, &audioProcessor, 800, 520, 600, 400, 1200, 780, false);
+    // Default 800x580 (was 520) to fit the recent-chord history strip
+    // below the main display. Min 460 (was 400) preserves a usable
+    // chord-display area at the smallest size.
+    resizeHelper.initialize(this, &audioProcessor, 800, 580, 600, 460, 1200, 840, false);
     setSize(resizeHelper.getStoredWidth(), resizeHelper.getStoredHeight());
 
     setupChordDisplay();
+    setupHistoryStrip();
     setupKeySelection();
     setupSuggestionPanel();
     setupRecordingPanel();
@@ -56,6 +60,49 @@ void ChordAnalyzerEditor::setupChordDisplay()
     notesLabel.setColour(juce::Label::textColourId, ChordAnalyzerLookAndFeel::Colors::textMuted);
     notesLabel.setText("", juce::dontSendNotification);
     addAndMakeVisible(notesLabel);
+}
+
+void ChordAnalyzerEditor::setupHistoryStrip()
+{
+    addAndMakeVisible(historyStrip);
+    historyStrip.setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    historyStrip.onChipClicked = [this](int idx)
+    {
+        auto history = audioProcessor.getChordHistory();
+        if (idx >= 0 && idx < static_cast<int>(history.size()))
+        {
+            const auto& chord = history[(size_t) idx];
+            juce::String msg = chord.name;
+            if (chord.romanNumeral.isNotEmpty())
+                msg += "  (" + chord.romanNumeral + ")";
+            if (! chord.midiNotes.empty())
+            {
+                msg += "  Notes: ";
+                for (size_t i = 0; i < chord.midiNotes.size(); ++i)
+                {
+                    if (i > 0) msg += ", ";
+                    msg += ChordAnalyzer::noteToName(chord.midiNotes[i]);
+                }
+            }
+            showTooltip(msg);
+        }
+    };
+    historyStrip.onChipDragStart = [this](const ChordInfo& chord)
+    {
+        startDragForChord(chord);
+    };
+
+    clearHistoryButton.setButtonText("Clear");
+    clearHistoryButton.setTooltip("Clear the recent-chord history strip");
+    clearHistoryButton.setColour(juce::TextButton::buttonColourId,
+                                  ChordAnalyzerLookAndFeel::Colors::bgSection);
+    clearHistoryButton.onClick = [this]()
+    {
+        audioProcessor.clearChordHistory();
+        historyStrip.setHistory({});
+        lastHistorySize = 0;
+    };
+    addAndMakeVisible(clearHistoryButton);
 }
 
 void ChordAnalyzerEditor::setupKeySelection()
@@ -139,12 +186,12 @@ void ChordAnalyzerEditor::setupRecordingPanel()
     clearButton.onClick = [this]() { clearRecording(); };
     addAndMakeVisible(clearButton);
 
-    // Export button
-    exportButton.setButtonText("EXPORT");
-    exportButton.setColour(juce::TextButton::buttonColourId, ChordAnalyzerLookAndFeel::Colors::bgSection);
-    exportButton.setTooltip("Export progression to JSON file");
-    exportButton.onClick = [this]() { exportRecording(); };
-    addAndMakeVisible(exportButton);
+    // Drag-to-DAW handle — replaces the JSON export. The whole component
+    // is a drag source; clicking does nothing.
+    dragSessionHandle.setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    dragSessionHandle.setTooltip("Drag from this pill into a DAW track to drop the recorded progression as a MIDI clip");
+    dragSessionHandle.onDragStart = [this]() { startDragForSession(); };
+    addAndMakeVisible(dragSessionHandle);
 
     // Recording status - larger and bolder
     recordingStatusLabel.setText("", juce::dontSendNotification);
@@ -202,6 +249,10 @@ void ChordAnalyzerEditor::paint(juce::Graphics& g)
     auto chordDisplayArea = bounds.removeFromTop(175);
     ChordAnalyzerLookAndFeel::drawSectionPanel(g, chordDisplayArea.reduced(10, 5));
 
+    // Recent chord history strip
+    auto historyArea = bounds.removeFromTop(60);
+    ChordAnalyzerLookAndFeel::drawSectionPanel(g, historyArea.reduced(10, 5), "RECENT");
+
     // Key selection section
     auto keySelectionArea = bounds.removeFromTop(50);
     ChordAnalyzerLookAndFeel::drawSectionPanel(g, keySelectionArea.reduced(10, 5), "KEY");
@@ -227,11 +278,21 @@ void ChordAnalyzerEditor::resized()
     bounds.removeFromTop(45);
 
     // Chord display area - more space for each element
-    auto chordArea = bounds.removeFromTop(175).reduced(20, 12);
+    auto chordSection = bounds.removeFromTop(175);
+    chordDisplayDragArea = chordSection;   // hit-test target for drag-to-DAW
+    auto chordArea = chordSection.reduced(20, 12);
     chordNameLabel.setBounds(chordArea.removeFromTop(65));
     romanNumeralLabel.setBounds(chordArea.removeFromTop(45));
     functionLabel.setBounds(chordArea.removeFromTop(28));
     notesLabel.setBounds(chordArea);  // Use remaining space
+
+    // Recent chord history strip
+    auto historyArea = bounds.removeFromTop(60).reduced(20, 8);
+    historyArea.removeFromTop(14);  // Section title space
+    auto historyClearArea = historyArea.removeFromRight(60);
+    historyArea.removeFromRight(8);  // Gap between strip and Clear button
+    clearHistoryButton.setBounds(historyClearArea.reduced(0, 4));
+    historyStrip.setBounds(historyArea);
 
     // Key selection area
     auto keyArea = bounds.removeFromTop(50).reduced(20, 8);
@@ -282,8 +343,8 @@ void ChordAnalyzerEditor::resized()
     recordingArea.removeFromLeft(10);
     clearButton.setBounds(recordingArea.removeFromLeft(recordBtnWidth).reduced(0, 2));
     recordingArea.removeFromLeft(10);
-    exportButton.setBounds(recordingArea.removeFromLeft(recordBtnWidth + 5).reduced(0, 2));
-    recordingArea.removeFromLeft(15);
+    dragSessionHandle.setBounds(recordingArea.removeFromLeft(110).reduced(0, 2));
+    recordingArea.removeFromLeft(10);
     recordingStatusLabel.setBounds(recordingArea.removeFromLeft(110));
     eventCountLabel.setBounds(recordingArea);
 
@@ -310,6 +371,17 @@ void ChordAnalyzerEditor::timerCallback()
     {
         updateChordDisplay();
         updateSuggestionButtons();
+
+        // Refresh the history strip on the same trigger — only fetches a
+        // fresh snapshot when the history actually grew, since that's the
+        // only way the strip's contents can change between ticks.
+        auto history = audioProcessor.getChordHistory();
+        const int sz = static_cast<int>(history.size());
+        if (sz != lastHistorySize)
+        {
+            historyStrip.setHistory(history);
+            lastHistorySize = sz;
+        }
     }
 
     // Update recording status (includes blinking animation)
@@ -503,39 +575,85 @@ void ChordAnalyzerEditor::clearRecording()
     showTooltip("Recording cleared.");
 }
 
-void ChordAnalyzerEditor::exportRecording()
+//==============================================================================
+void ChordAnalyzerEditor::SessionDragHandle::paint(juce::Graphics& g)
 {
-    if (audioProcessor.getRecordedEventCount() == 0)
+    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+    const float corner = bounds.getHeight() * 0.35f;
+
+    const auto base = ChordAnalyzerLookAndFeel::Colors::accentBlue.withAlpha(0.25f);
+    g.setColour(isMouseButtonDown() ? base.brighter(0.15f)
+                                     : (isMouseOver() ? base.brighter(0.08f) : base));
+    g.fillRoundedRectangle(bounds, corner);
+
+    g.setColour(ChordAnalyzerLookAndFeel::Colors::accentBlue.withAlpha(0.6f));
+    g.drawRoundedRectangle(bounds, corner, 1.0f);
+
+    g.setColour(ChordAnalyzerLookAndFeel::Colors::textBright);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)).boldened());
+    g.drawText(juce::CharPointer_UTF8("DRAG \xe2\x86\x92 DAW"),
+               getLocalBounds(), juce::Justification::centred, true);
+}
+
+void ChordAnalyzerEditor::SessionDragHandle::mouseDrag(const juce::MouseEvent& e)
+{
+    if (dragInitiated_)
+        return;
+    if (e.getDistanceFromDragStart() < 4)
+        return;
+    dragInitiated_ = true;
+    if (onDragStart)
+        onDragStart();
+}
+
+//==============================================================================
+void ChordAnalyzerEditor::startDragForChord(const ChordInfo& chord)
+{
+    if (! chord.isValid || chord.midiNotes.empty())
     {
-        showTooltip("No chords recorded. Start recording and play some chords first.");
+        showTooltip("No chord to drag — play some notes first.");
         return;
     }
 
-    // Create file chooser
-    auto fileChooser = std::make_shared<juce::FileChooser>(
-        "Export Chord Progression",
-        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-            .getChildFile("chord_progression.json"),
-        "*.json");
+    auto file = ChordMidiExport::writeChordToTempFile(chord);
+    if (! file.existsAsFile())
+    {
+        showTooltip("Failed to write temporary MIDI file.");
+        return;
+    }
 
-    fileChooser->launchAsync(juce::FileBrowserComponent::saveMode |
-                              juce::FileBrowserComponent::canSelectFiles,
-        [this, fileChooser](const juce::FileChooser& chooser)
-        {
-            auto file = chooser.getResult();
-            if (file != juce::File())
-            {
-                juce::String json = audioProcessor.exportRecordingToJSON();
-                if (file.replaceWithText(json))
-                {
-                    showTooltip("Exported to: " + file.getFileName());
-                }
-                else
-                {
-                    showTooltip("Failed to export file.");
-                }
-            }
-        });
+    juce::StringArray paths { file.getFullPathName() };
+    performExternalDragDropOfFiles(paths, /*canMoveFiles*/ false);
+}
+
+void ChordAnalyzerEditor::startDragForSession()
+{
+    auto events = audioProcessor.getRecordedEvents();
+    if (events.empty())
+    {
+        showTooltip("No chords recorded — start recording and play a progression first.");
+        return;
+    }
+
+    // Get tempo from the recorded session if available, else default to
+    // 120 BPM (matches the chord-clip drag behaviour for consistency).
+    double bpm = 120.0;
+    if (auto* head = audioProcessor.getPlayHead())
+    {
+        if (auto pos = head->getPosition())
+            if (auto tempo = pos->getBpm())
+                bpm = *tempo;
+    }
+
+    auto file = ChordMidiExport::writeSessionToTempFile(events, bpm);
+    if (! file.existsAsFile())
+    {
+        showTooltip("Failed to write temporary MIDI file.");
+        return;
+    }
+
+    juce::StringArray paths { file.getFullPathName() };
+    performExternalDragDropOfFiles(paths, /*canMoveFiles*/ false);
 }
 
 //==============================================================================
@@ -545,6 +663,12 @@ void ChordAnalyzerEditor::mouseDown(const juce::MouseEvent& e)
     {
         showSupportersPanel();
     }
+    dragInitiatedFromEditor_ = false;
+}
+
+void ChordAnalyzerEditor::mouseUp(const juce::MouseEvent&)
+{
+    dragInitiatedFromEditor_ = false;
 }
 
 void ChordAnalyzerEditor::mouseMove(const juce::MouseEvent& e)
@@ -554,6 +678,25 @@ void ChordAnalyzerEditor::mouseMove(const juce::MouseEvent& e)
     if (keyAreaApprox.contains(e.getPosition()))
     {
         showTooltip(TheoryTooltips::getKeyTip(audioProcessor.isMinorKey()));
+    }
+}
+
+void ChordAnalyzerEditor::mouseDrag(const juce::MouseEvent& e)
+{
+    // Drags originating inside the history strip / dragSessionButton are
+    // handled by those components themselves (see onChipDragStart and
+    // dragSessionButton's mouse-handling below). The editor only kicks
+    // in for the main chord display area, where there's no dedicated
+    // sub-component to catch the drag.
+    if (isDragAndDropActive() || dragInitiatedFromEditor_)
+        return;
+    if (e.getDistanceFromDragStart() < 4)
+        return;
+
+    if (chordDisplayDragArea.contains(e.getMouseDownPosition()))
+    {
+        dragInitiatedFromEditor_ = true;
+        startDragForChord(cachedChord);
     }
 }
 

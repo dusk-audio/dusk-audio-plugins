@@ -373,6 +373,22 @@ void ChordAnalyzerProcessor::updateAnalysis()
 
             stageDetectedChord(newChord);
 
+            // Always-on history — append valid chords so the editor can show
+            // the last N played even after notes are released. We accept the
+            // chord-change signal directly (newChord != currentChord); the
+            // existing analyzer already debounces by 50 ms, and ChordInfo's
+            // == compares root + quality + name so re-detecting the same
+            // chord won't bloat history.
+            if (newChord.isValid && !newChord.name.isEmpty() && newChord.name != "-")
+            {
+                if (chordHistory.empty() || chordHistory.back() != newChord)
+                {
+                    chordHistory.push_back(newChord);
+                    if (static_cast<int>(chordHistory.size()) > maxHistorySize)
+                        chordHistory.erase(chordHistory.begin());
+                }
+            }
+
             // Record the chord if recording
             const juce::SpinLock::ScopedLockType recLock(recorderLock);
             if (recorder.isRecording())
@@ -436,6 +452,18 @@ std::vector<ChordSuggestion> ChordAnalyzerProcessor::getCurrentSuggestions() con
     return currentSuggestions;
 }
 
+std::vector<ChordInfo> ChordAnalyzerProcessor::getChordHistory() const
+{
+    const juce::SpinLock::ScopedLockType lock(chordLock);
+    return chordHistory;
+}
+
+void ChordAnalyzerProcessor::clearChordHistory()
+{
+    const juce::SpinLock::ScopedLockType lock(chordLock);
+    chordHistory.clear();
+}
+
 std::vector<int> ChordAnalyzerProcessor::getActiveNotes() const
 {
     const juce::SpinLock::ScopedLockType lock(notesLock);
@@ -475,16 +503,16 @@ void ChordAnalyzerProcessor::clearRecording()
     recorder.clearSession();
 }
 
-juce::String ChordAnalyzerProcessor::exportRecordingToJSON() const
-{
-    const juce::SpinLock::ScopedLockType lock(recorderLock);
-    return recorder.exportToJSON();
-}
-
 int ChordAnalyzerProcessor::getRecordedEventCount() const
 {
     const juce::SpinLock::ScopedLockType lock(recorderLock);
     return recorder.getEventCount();
+}
+
+std::vector<RecordedChordEvent> ChordAnalyzerProcessor::getRecordedEvents() const
+{
+    const juce::SpinLock::ScopedLockType lock(recorderLock);
+    return recorder.getEvents();
 }
 
 //==============================================================================

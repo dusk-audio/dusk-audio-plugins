@@ -65,6 +65,13 @@ public:
     std::vector<ChordSuggestion> getCurrentSuggestions() const;
     std::vector<int> getActiveNotes() const;
 
+    // Recent chord history — rolling window of distinct detected chords
+    // (newest last). Always-on, independent of the recording session.
+    // Capped at maxHistorySize entries so memory is bounded.
+    static constexpr int maxHistorySize = 32;
+    std::vector<ChordInfo> getChordHistory() const;
+    void clearChordHistory();
+
     //==========================================================================
     // Key access
     int getKeyRoot() const { return keyRoot.load(); }
@@ -72,13 +79,15 @@ public:
     juce::String getKeyName() const;
 
     //==========================================================================
-    // Recording controls (thread-safe)
+    // Recording controls (thread-safe). The recording session feeds the
+    // MIDI drag-and-drop export — there is no longer a JSON file output
+    // (dropped 2026-05-04, issue #71).
     void startRecording();
     void stopRecording();
     bool isRecording() const;
     void clearRecording();
-    juce::String exportRecordingToJSON() const;
     int getRecordedEventCount() const;
+    std::vector<RecordedChordEvent> getRecordedEvents() const;
 
     //==========================================================================
     // Parameter IDs
@@ -112,6 +121,7 @@ private:
     std::atomic<bool> chordChangedFlag{false};
     ChordInfo currentChord;
     std::vector<ChordSuggestion> currentSuggestions;
+    std::vector<ChordInfo> chordHistory;   // newest at back; capped at maxHistorySize
     mutable juce::SpinLock chordLock;
 
     //==========================================================================
