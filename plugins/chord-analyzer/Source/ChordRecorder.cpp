@@ -11,19 +11,34 @@ void ChordRecorder::startRecording()
     if (recording) return;
 
     clearSession();
+    // Pre-reserve so the audio-thread push_back inside endCurrentChord()
+    // never triggers a vector reallocation during typical sessions. At
+    // ~1 chord per second this lasts ~17 minutes; sessions longer than
+    // that will still record but will pay an occasional malloc when the
+    // vector grows past this cap.
+    currentSession.events.reserve(1024);
     recording = true;
     sessionStartTime = 0.0;
+    sessionStartCaptured = false;   // anchor on first recordChord() call
     currentSession.startTime = juce::Time::getCurrentTime();
 }
 
-void ChordRecorder::stopRecording()
+void ChordRecorder::stopRecording(double currentTimeSec)
 {
     if (!recording) return;
 
-    // End any active chord
+    // End any active chord at the actual stop moment. Previously this
+    // used getRecordingDuration() which reads the last completed event's
+    // endpoint — for the still-active chord that's effectively its own
+    // start time, giving duration = 0 and dropping it via the < 0.05s
+    // guard in endCurrentChord(). Convert the absolute plugin time the
+    // caller hands us into recording-relative the same way recordChord()
+    // does.
     if (hasActiveChord)
     {
-        endCurrentChord(getRecordingDuration());
+        double relativeTime = currentTimeSec - sessionStartTime;
+        if (relativeTime < 0) relativeTime = 0;
+        endCurrentChord(relativeTime);
     }
 
     recording = false;
@@ -33,6 +48,17 @@ void ChordRecorder::stopRecording()
 void ChordRecorder::recordChord(const ChordInfo& chord, double currentTimeSec)
 {
     if (!recording) return;
+
+    // Anchor the session to the first chord we see — currentTimeSec is the
+    // plugin's wall-clock accumulator (started at prepareToPlay), not a
+    // recording-relative value, so without this anchor every event lands
+    // at its absolute plugin time and the exported MIDI clip pushes all
+    // notes to the back end of the timeline.
+    if (!sessionStartCaptured)
+    {
+        sessionStartTime = currentTimeSec;
+        sessionStartCaptured = true;
+    }
 
     // Calculate relative time
     double relativeTime = currentTimeSec - sessionStartTime;
@@ -90,6 +116,7 @@ void ChordRecorder::clearSession()
 {
     currentSession = RecordingSession();
     sessionStartTime = 0.0;
+    sessionStartCaptured = false;
     lastChord = ChordInfo();
     lastChordStartTime = 0.0;
     hasActiveChord = false;
@@ -118,136 +145,4 @@ double ChordRecorder::getRecordingDuration() const
 
     const auto& last = currentSession.events.back();
     return last.startTimeSec + last.durationSec;
-}
-
-//==============================================================================
-juce::String ChordRecorder::escapeJSON(const juce::String& str) const
-{
-    juce::String result;
-    for (int i = 0; i < str.length(); ++i)
-    {
-        juce::juce_wchar c = str[i];
-        switch (c)
-        {
-            case '"': result += "\\\""; break;
-            case '\\': result += "\\\\"; break;
-            case '\n': result += "\\n"; break;
-            case '\r': result += "\\r"; break;
-            case '\t': result += "\\t"; break;
-            default: result += c; break;
-        }
-    }
-    return result;
-}
-
-juce::String ChordRecorder::chordInfoToJSON(const ChordInfo& chord) const
-{
-    juce::String json;
-    json += "    {\n";
-    json += "      \"name\": \"" + escapeJSON(chord.name) + "\",\n";
-    json += "      \"romanNumeral\": \"" + escapeJSON(chord.romanNumeral) + "\",\n";
-    json += "      \"function\": \"" + escapeJSON(ChordAnalyzer::functionToString(chord.function)) + "\",\n";
-    json += "      \"quality\": \"" + escapeJSON(ChordAnalyzer::qualityToString(chord.quality)) + "\",\n";
-    json += "      \"rootNote\": " + juce::String(chord.rootNote) + ",\n";
-    json += "      \"rootName\": \"" + escapeJSON(ChordAnalyzer::pitchClassToName(chord.rootNote)) + "\",\n";
-
-    // MIDI notes array
-    json += "      \"midiNotes\": [";
-    for (size_t i = 0; i < chord.midiNotes.size(); ++i)
-    {
-        if (i > 0) json += ", ";
-        json += juce::String(chord.midiNotes[i]);
-    }
-    json += "],\n";
-
-    json += "      \"inversion\": " + juce::String(chord.inversion);
-
-    if (!chord.extensions.isEmpty())
-    {
-        json += ",\n      \"extensions\": \"" + escapeJSON(chord.extensions) + "\"";
-    }
-
-    json += "\n    }";
-    return json;
-}
-
-juce::String ChordRecorder::eventToJSON(const RecordedChordEvent& event) const
-{
-    juce::String json;
-    json += "  {\n";
-    json += "    \"startTimeSec\": " + juce::String(event.startTimeSec, 3) + ",\n";
-    json += "    \"durationSec\": " + juce::String(event.durationSec, 3) + ",\n";
-    json += "    \"startBeat\": " + juce::String(event.startBeat, 3) + ",\n";
-    json += "    \"durationBeats\": " + juce::String(event.durationBeats, 3) + ",\n";
-    json += "    \"chord\":\n";
-    json += chordInfoToJSON(event.chord) + "\n";
-    json += "  }";
-    return json;
-}
-
-juce::String ChordRecorder::exportToJSON() const
-{
-    juce::String json;
-
-    json += "{\n";
-    json += "  \"session\": {\n";
-    json += "    \"name\": \"" + escapeJSON(currentSession.name) + "\",\n";
-    json += "    \"timestamp\": \"" + currentSession.startTime.toISO8601(true) + "\",\n";
-    json += "    \"tempoBPM\": " + juce::String(currentSession.tempoBPM, 1) + ",\n";
-    json += "    \"key\": {\n";
-    json += "      \"root\": " + juce::String(currentSession.keyRoot) + ",\n";
-    json += "      \"rootName\": \"" + escapeJSON(ChordAnalyzer::pitchClassToName(currentSession.keyRoot)) + "\",\n";
-    json += "      \"mode\": \"" + juce::String(currentSession.isMinor ? "minor" : "major") + "\"\n";
-    json += "    },\n";
-    json += "    \"totalEvents\": " + juce::String(currentSession.events.size()) + ",\n";
-
-    // Calculate total duration
-    double totalDuration = 0.0;
-    if (!currentSession.events.empty())
-    {
-        const auto& last = currentSession.events.back();
-        totalDuration = last.startTimeSec + last.durationSec;
-    }
-    json += "    \"totalDurationSec\": " + juce::String(totalDuration, 3) + "\n";
-    json += "  },\n";
-
-    // Events array
-    json += "  \"progression\": [\n";
-    for (size_t i = 0; i < currentSession.events.size(); ++i)
-    {
-        json += eventToJSON(currentSession.events[i]);
-        if (i < currentSession.events.size() - 1)
-            json += ",";
-        json += "\n";
-    }
-    json += "  ],\n";
-
-    // Summary - just the chord names and Roman numerals
-    json += "  \"summary\": {\n";
-    json += "    \"chordNames\": [";
-    for (size_t i = 0; i < currentSession.events.size(); ++i)
-    {
-        if (i > 0) json += ", ";
-        json += "\"" + escapeJSON(currentSession.events[i].chord.name) + "\"";
-    }
-    json += "],\n";
-
-    json += "    \"romanNumerals\": [";
-    for (size_t i = 0; i < currentSession.events.size(); ++i)
-    {
-        if (i > 0) json += ", ";
-        json += "\"" + escapeJSON(currentSession.events[i].chord.romanNumeral) + "\"";
-    }
-    json += "]\n";
-    json += "  }\n";
-
-    json += "}\n";
-
-    return json;
-}
-
-bool ChordRecorder::exportToFile(const juce::File& file) const
-{
-    juce::String json = exportToJSON();
-    return file.replaceWithText(json);
 }

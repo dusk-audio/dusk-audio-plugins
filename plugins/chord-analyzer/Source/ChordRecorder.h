@@ -36,7 +36,7 @@ public:
     //==========================================================================
     // Recording control
     void startRecording();
-    void stopRecording();
+    void stopRecording(double currentTimeSec);
     bool isRecording() const { return recording; }
 
     //==========================================================================
@@ -58,26 +58,18 @@ public:
     int getEventCount() const { return static_cast<int>(currentSession.events.size()); }
     double getRecordingDuration() const;
 
-    //==========================================================================
-    // Export
-    juce::String exportToJSON() const;
-    bool exportToFile(const juce::File& file) const;
-
 private:
     bool recording = false;
     RecordingSession currentSession;
     double sessionStartTime = 0.0;
+    bool sessionStartCaptured = false;   // set on first recordChord() so
+                                         // events are recording-relative,
+                                         // not absolute plugin time
 
     // Current chord tracking
     ChordInfo lastChord;
     double lastChordStartTime = 0.0;
     bool hasActiveChord = false;
-
-    //==========================================================================
-    // JSON helpers
-    juce::String chordInfoToJSON(const ChordInfo& chord) const;
-    juce::String eventToJSON(const RecordedChordEvent& event) const;
-    juce::String escapeJSON(const juce::String& str) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordRecorder)
 };
