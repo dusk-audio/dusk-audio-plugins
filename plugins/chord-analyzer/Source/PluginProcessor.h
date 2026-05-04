@@ -153,7 +153,12 @@ private:
     //==========================================================================
     // Timing
     double currentSampleRate = 44100.0;
-    double currentTimeSec = 0.0;
+    // Accumulating wall-clock since prepareToPlay. Single-writer (the
+    // audio thread); read from the message thread by stopRecording() so
+    // the still-active chord can be closed at the actual stop moment.
+    // std::atomic<double>::fetch_add isn't available until C++20, but
+    // load+store is fine here because there's only one writer thread.
+    std::atomic<double> currentTimeSec{0.0};
     double lastAnalysisTime = 0.0;
     static constexpr double analysisIntervalSec = 0.05;  // 50ms debounce
 

@@ -36,7 +36,7 @@ public:
     //==========================================================================
     // Recording control
     void startRecording();
-    void stopRecording();
+    void stopRecording(double currentTimeSec);
     bool isRecording() const { return recording; }
 
     //==========================================================================
