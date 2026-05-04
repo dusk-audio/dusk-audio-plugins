@@ -539,10 +539,10 @@ int ChordAnalyzerProcessor::getRecordedEventCount() const
     return recorder.getEventCount();
 }
 
-std::vector<RecordedChordEvent> ChordAnalyzerProcessor::getRecordedEvents() const
+RecordingSession ChordAnalyzerProcessor::getRecordingSession() const
 {
     const juce::SpinLock::ScopedLockType lock(recorderLock);
-    return recorder.getEvents();
+    return recorder.getSession();
 }
 
 //==============================================================================

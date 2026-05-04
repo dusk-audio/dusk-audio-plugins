@@ -88,7 +88,13 @@ public:
     bool isRecording() const;
     void clearRecording();
     int getRecordedEventCount() const;
-    std::vector<RecordedChordEvent> getRecordedEvents() const;
+
+    // Atomic snapshot of the current recording — events plus the BPM that
+    // was active when recording started (which is what each event's
+    // startBeat / durationBeats were computed against). Read this rather
+    // than the live host tempo so MIDI export stays consistent if the
+    // user changes host tempo between stopping recording and dragging.
+    RecordingSession getRecordingSession() const;
 
     //==========================================================================
     // Parameter IDs
