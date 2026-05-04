@@ -140,6 +140,11 @@ private:
     std::atomic<bool> showInversions{true};
     std::atomic<bool> respectSustain{true};
 
+    // Last host BPM observed in processBlock — read by startRecording() so
+    // recorded events get beat values aligned with the DAW's tempo. Falls
+    // back to 120 if the host doesn't expose a BPM (offline render, etc).
+    std::atomic<double> hostBPM{120.0};
+
     //==========================================================================
     // Sustain pedal (CC 64) state — audio-thread only, mutated in processMidiInput.
     bool sustainPedalDown = false;
