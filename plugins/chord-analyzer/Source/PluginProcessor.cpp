@@ -374,18 +374,20 @@ void ChordAnalyzerProcessor::updateAnalysis()
             stageDetectedChord(newChord);
 
             // Always-on history — append valid chords so the editor can show
-            // the last N played even after notes are released. We accept the
-            // chord-change signal directly (newChord != currentChord); the
-            // existing analyzer already debounces by 50 ms, and ChordInfo's
-            // == compares root + quality + name so re-detecting the same
-            // chord won't bloat history.
+            // the last N played even after notes are released. Writes go
+            // into a preallocated ring buffer so the audio thread never
+            // allocates or shifts entries (the previous std::vector
+            // push_back / erase(begin()) was both heap-touching and O(N)).
             if (newChord.isValid && !newChord.name.isEmpty() && newChord.name != "-")
             {
-                if (chordHistory.empty() || chordHistory.back() != newChord)
+                const int lastIdx = (historyHead - 1 + maxHistorySize) % maxHistorySize;
+                const bool isDup = historyCount > 0 && chordHistory[lastIdx] == newChord;
+                if (!isDup)
                 {
-                    chordHistory.push_back(newChord);
-                    if (static_cast<int>(chordHistory.size()) > maxHistorySize)
-                        chordHistory.erase(chordHistory.begin());
+                    chordHistory[historyHead] = newChord;
+                    historyHead = (historyHead + 1) % maxHistorySize;
+                    if (historyCount < maxHistorySize)
+                        ++historyCount;
                 }
             }
 
@@ -455,13 +457,19 @@ std::vector<ChordSuggestion> ChordAnalyzerProcessor::getCurrentSuggestions() con
 std::vector<ChordInfo> ChordAnalyzerProcessor::getChordHistory() const
 {
     const juce::SpinLock::ScopedLockType lock(chordLock);
-    return chordHistory;
+    std::vector<ChordInfo> out;
+    out.reserve(static_cast<size_t>(historyCount));
+    const int start = (historyHead - historyCount + maxHistorySize) % maxHistorySize;
+    for (int i = 0; i < historyCount; ++i)
+        out.push_back(chordHistory[(start + i) % maxHistorySize]);
+    return out;
 }
 
 void ChordAnalyzerProcessor::clearChordHistory()
 {
     const juce::SpinLock::ScopedLockType lock(chordLock);
-    chordHistory.clear();
+    historyHead = 0;
+    historyCount = 0;
 }
 
 std::vector<int> ChordAnalyzerProcessor::getActiveNotes() const

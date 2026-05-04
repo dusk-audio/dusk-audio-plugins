@@ -100,7 +100,6 @@ void ChordAnalyzerEditor::setupHistoryStrip()
     {
         audioProcessor.clearChordHistory();
         historyStrip.setHistory({});
-        lastHistorySize = 0;
     };
     addAndMakeVisible(clearHistoryButton);
 }
@@ -295,7 +294,9 @@ void ChordAnalyzerEditor::resized()
     historyStrip.setBounds(historyArea);
 
     // Key selection area
-    auto keyArea = bounds.removeFromTop(50).reduced(20, 8);
+    auto keySection = bounds.removeFromTop(50);
+    auto keyArea = keySection.reduced(20, 8);
+    keyHoverArea = keySection;  // hit-test target for the key tooltip
     keyArea.removeFromTop(14);  // Account for section title
     keyRootLabel.setBounds(keyArea.removeFromLeft(35));
     keyRootCombo.setBounds(keyArea.removeFromLeft(90).reduced(0, 2));
@@ -372,16 +373,11 @@ void ChordAnalyzerEditor::timerCallback()
         updateChordDisplay();
         updateSuggestionButtons();
 
-        // Refresh the history strip on the same trigger — only fetches a
-        // fresh snapshot when the history actually grew, since that's the
-        // only way the strip's contents can change between ticks.
-        auto history = audioProcessor.getChordHistory();
-        const int sz = static_cast<int>(history.size());
-        if (sz != lastHistorySize)
-        {
-            historyStrip.setHistory(history);
-            lastHistorySize = sz;
-        }
+        // Refresh the history strip on the same trigger. setHistory()
+        // short-circuits on identical content, so calling unconditionally
+        // is cheap and also catches the rotated-window case where size
+        // stays at maxHistorySize but entries shift.
+        historyStrip.setHistory(audioProcessor.getChordHistory());
     }
 
     // Update recording status (includes blinking animation)
@@ -674,8 +670,7 @@ void ChordAnalyzerEditor::mouseUp(const juce::MouseEvent&)
 void ChordAnalyzerEditor::mouseMove(const juce::MouseEvent& e)
 {
     // Show key tooltip when hovering over key selection
-    auto keyAreaApprox = juce::Rectangle<int>(20, 220, 300, 45);
-    if (keyAreaApprox.contains(e.getPosition()))
+    if (keyHoverArea.contains(e.getPosition()))
     {
         showTooltip(TheoryTooltips::getKeyTip(audioProcessor.isMinorKey()));
     }
