@@ -230,6 +230,15 @@ void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     buffer.clear();
 #endif
 
+    // Sample the host tempo so startRecording() can apply it to the
+    // recorder. Cheap and safe to do every block.
+    if (auto* head = getPlayHead())
+    {
+        if (auto pos = head->getPosition())
+            if (auto bpm = pos->getBpm())
+                hostBPM.store(*bpm, std::memory_order_relaxed);
+    }
+
     // Process MIDI input
     processMidiInput(midiMessages);
 
@@ -489,8 +498,11 @@ juce::String ChordAnalyzerProcessor::getKeyName() const
 void ChordAnalyzerProcessor::startRecording()
 {
     const juce::SpinLock::ScopedLockType lock(recorderLock);
-    recorder.setKey(keyRoot.load(), keyMinor.load());
+    // Order matters: startRecording() calls clearSession() which resets
+    // the session's tempo and key fields, so apply them afterwards.
     recorder.startRecording();
+    recorder.setKey(keyRoot.load(), keyMinor.load());
+    recorder.setTempo(hostBPM.load(std::memory_order_relaxed));
 }
 
 void ChordAnalyzerProcessor::stopRecording()
