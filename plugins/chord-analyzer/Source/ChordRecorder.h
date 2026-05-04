@@ -58,11 +58,6 @@ public:
     int getEventCount() const { return static_cast<int>(currentSession.events.size()); }
     double getRecordingDuration() const;
 
-    //==========================================================================
-    // Export
-    juce::String exportToJSON() const;
-    bool exportToFile(const juce::File& file) const;
-
 private:
     bool recording = false;
     RecordingSession currentSession;
@@ -72,12 +67,6 @@ private:
     ChordInfo lastChord;
     double lastChordStartTime = 0.0;
     bool hasActiveChord = false;
-
-    //==========================================================================
-    // JSON helpers
-    juce::String chordInfoToJSON(const ChordInfo& chord) const;
-    juce::String eventToJSON(const RecordedChordEvent& event) const;
-    juce::String escapeJSON(const juce::String& str) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordRecorder)
 };
