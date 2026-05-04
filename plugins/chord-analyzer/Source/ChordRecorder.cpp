@@ -13,6 +13,7 @@ void ChordRecorder::startRecording()
     clearSession();
     recording = true;
     sessionStartTime = 0.0;
+    sessionStartCaptured = false;   // anchor on first recordChord() call
     currentSession.startTime = juce::Time::getCurrentTime();
 }
 
@@ -33,6 +34,17 @@ void ChordRecorder::stopRecording()
 void ChordRecorder::recordChord(const ChordInfo& chord, double currentTimeSec)
 {
     if (!recording) return;
+
+    // Anchor the session to the first chord we see — currentTimeSec is the
+    // plugin's wall-clock accumulator (started at prepareToPlay), not a
+    // recording-relative value, so without this anchor every event lands
+    // at its absolute plugin time and the exported MIDI clip pushes all
+    // notes to the back end of the timeline.
+    if (!sessionStartCaptured)
+    {
+        sessionStartTime = currentTimeSec;
+        sessionStartCaptured = true;
+    }
 
     // Calculate relative time
     double relativeTime = currentTimeSec - sessionStartTime;
@@ -90,6 +102,7 @@ void ChordRecorder::clearSession()
 {
     currentSession = RecordingSession();
     sessionStartTime = 0.0;
+    sessionStartCaptured = false;
     lastChord = ChordInfo();
     lastChordStartTime = 0.0;
     hasActiveChord = false;
