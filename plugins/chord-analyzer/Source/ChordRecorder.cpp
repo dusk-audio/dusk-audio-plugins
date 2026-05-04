@@ -11,6 +11,12 @@ void ChordRecorder::startRecording()
     if (recording) return;
 
     clearSession();
+    // Pre-reserve so the audio-thread push_back inside endCurrentChord()
+    // never triggers a vector reallocation during typical sessions. At
+    // ~1 chord per second this lasts ~17 minutes; sessions longer than
+    // that will still record but will pay an occasional malloc when the
+    // vector grows past this cap.
+    currentSession.events.reserve(1024);
     recording = true;
     sessionStartTime = 0.0;
     sessionStartCaptured = false;   // anchor on first recordChord() call
