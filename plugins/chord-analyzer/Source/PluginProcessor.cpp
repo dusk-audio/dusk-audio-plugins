@@ -205,7 +205,7 @@ void ChordAnalyzerProcessor::changeProgramName(int /*index*/, const juce::String
 void ChordAnalyzerProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlock*/)
 {
     currentSampleRate = sampleRate;
-    currentTimeSec = 0.0;
+    currentTimeSec.store(0.0, std::memory_order_relaxed);
     lastAnalysisTime = 0.0;
 }
 
@@ -222,6 +222,8 @@ void ChordAnalyzerProcessor::releaseResources()
 void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                            juce::MidiBuffer& midiMessages)
 {
+    juce::ScopedNoDenormals noDenormals;
+
 #if CHORD_ANALYZER_MIDI_MODE
     // MIDI-only mode: no audio buses (buffer is empty)
     juce::ignoreUnused(buffer);
@@ -230,18 +232,35 @@ void ChordAnalyzerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     buffer.clear();
 #endif
 
+    // Sample the host tempo so startRecording() can apply it to the
+    // recorder. Cheap and safe to do every block. If the host exposes a
+    // Position but no BPM (offline render, some MIDI-only hosts), fall
+    // back to 120 — without this we'd keep a stale value from whichever
+    // host last reported a tempo.
+    if (auto* head = getPlayHead())
+    {
+        if (auto pos = head->getPosition())
+        {
+            if (auto bpm = pos->getBpm())
+                hostBPM.store(*bpm, std::memory_order_relaxed);
+            else
+                hostBPM.store(120.0, std::memory_order_relaxed);
+        }
+    }
+
     // Process MIDI input
     processMidiInput(midiMessages);
 
     // Update timing
     double blockDuration = buffer.getNumSamples() / currentSampleRate;
-    currentTimeSec += blockDuration;
+    const double now = currentTimeSec.load(std::memory_order_relaxed) + blockDuration;
+    currentTimeSec.store(now, std::memory_order_relaxed);
 
     // Debounced analysis (50ms)
-    if (currentTimeSec - lastAnalysisTime >= analysisIntervalSec)
+    if (now - lastAnalysisTime >= analysisIntervalSec)
     {
         updateAnalysis();
-        lastAnalysisTime = currentTimeSec;
+        lastAnalysisTime = now;
     }
 }
 
@@ -336,7 +355,7 @@ void ChordAnalyzerProcessor::processMidiInput(const juce::MidiBuffer& midi)
     if (notesChanged)
     {
         updateAnalysis();
-        lastAnalysisTime = currentTimeSec;
+        lastAnalysisTime = currentTimeSec.load(std::memory_order_relaxed);
     }
 }
 
@@ -373,11 +392,29 @@ void ChordAnalyzerProcessor::updateAnalysis()
 
             stageDetectedChord(newChord);
 
+            // Always-on history — append valid chords so the editor can show
+            // the last N played even after notes are released. Writes go
+            // into a preallocated ring buffer so the audio thread never
+            // allocates or shifts entries (the previous std::vector
+            // push_back / erase(begin()) was both heap-touching and O(N)).
+            if (newChord.isValid && !newChord.name.isEmpty() && newChord.name != "-")
+            {
+                const int lastIdx = (historyHead - 1 + maxHistorySize) % maxHistorySize;
+                const bool isDup = historyCount > 0 && chordHistory[lastIdx] == newChord;
+                if (!isDup)
+                {
+                    chordHistory[historyHead] = newChord;
+                    historyHead = (historyHead + 1) % maxHistorySize;
+                    if (historyCount < maxHistorySize)
+                        ++historyCount;
+                }
+            }
+
             // Record the chord if recording
             const juce::SpinLock::ScopedLockType recLock(recorderLock);
             if (recorder.isRecording())
             {
-                recorder.recordChord(newChord, currentTimeSec);
+                recorder.recordChord(newChord, currentTimeSec.load(std::memory_order_relaxed));
             }
         }
 
@@ -436,6 +473,24 @@ std::vector<ChordSuggestion> ChordAnalyzerProcessor::getCurrentSuggestions() con
     return currentSuggestions;
 }
 
+std::vector<ChordInfo> ChordAnalyzerProcessor::getChordHistory() const
+{
+    const juce::SpinLock::ScopedLockType lock(chordLock);
+    std::vector<ChordInfo> out;
+    out.reserve(static_cast<size_t>(historyCount));
+    const int start = (historyHead - historyCount + maxHistorySize) % maxHistorySize;
+    for (int i = 0; i < historyCount; ++i)
+        out.push_back(chordHistory[(start + i) % maxHistorySize]);
+    return out;
+}
+
+void ChordAnalyzerProcessor::clearChordHistory()
+{
+    const juce::SpinLock::ScopedLockType lock(chordLock);
+    historyHead = 0;
+    historyCount = 0;
+}
+
 std::vector<int> ChordAnalyzerProcessor::getActiveNotes() const
 {
     const juce::SpinLock::ScopedLockType lock(notesLock);
@@ -453,14 +508,17 @@ juce::String ChordAnalyzerProcessor::getKeyName() const
 void ChordAnalyzerProcessor::startRecording()
 {
     const juce::SpinLock::ScopedLockType lock(recorderLock);
-    recorder.setKey(keyRoot.load(), keyMinor.load());
+    // Order matters: startRecording() calls clearSession() which resets
+    // the session's tempo and key fields, so apply them afterwards.
     recorder.startRecording();
+    recorder.setKey(keyRoot.load(), keyMinor.load());
+    recorder.setTempo(hostBPM.load(std::memory_order_relaxed));
 }
 
 void ChordAnalyzerProcessor::stopRecording()
 {
     const juce::SpinLock::ScopedLockType lock(recorderLock);
-    recorder.stopRecording();
+    recorder.stopRecording(currentTimeSec.load(std::memory_order_relaxed));
 }
 
 bool ChordAnalyzerProcessor::isRecording() const
@@ -475,16 +533,16 @@ void ChordAnalyzerProcessor::clearRecording()
     recorder.clearSession();
 }
 
-juce::String ChordAnalyzerProcessor::exportRecordingToJSON() const
-{
-    const juce::SpinLock::ScopedLockType lock(recorderLock);
-    return recorder.exportToJSON();
-}
-
 int ChordAnalyzerProcessor::getRecordedEventCount() const
 {
     const juce::SpinLock::ScopedLockType lock(recorderLock);
     return recorder.getEventCount();
+}
+
+RecordingSession ChordAnalyzerProcessor::getRecordingSession() const
+{
+    const juce::SpinLock::ScopedLockType lock(recorderLock);
+    return recorder.getSession();
 }
 
 //==============================================================================

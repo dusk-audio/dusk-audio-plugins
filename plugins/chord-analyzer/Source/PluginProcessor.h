@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
 #include <atomic>
 #include "ChordAnalyzer.h"
 #include "ChordRecorder.h"
@@ -65,6 +66,13 @@ public:
     std::vector<ChordSuggestion> getCurrentSuggestions() const;
     std::vector<int> getActiveNotes() const;
 
+    // Recent chord history — rolling window of distinct detected chords
+    // (newest last). Always-on, independent of the recording session.
+    // Capped at maxHistorySize entries so memory is bounded.
+    static constexpr int maxHistorySize = 32;
+    std::vector<ChordInfo> getChordHistory() const;
+    void clearChordHistory();
+
     //==========================================================================
     // Key access
     int getKeyRoot() const { return keyRoot.load(); }
@@ -72,13 +80,21 @@ public:
     juce::String getKeyName() const;
 
     //==========================================================================
-    // Recording controls (thread-safe)
+    // Recording controls (thread-safe). The recording session feeds the
+    // MIDI drag-and-drop export — there is no longer a JSON file output
+    // (dropped 2026-05-04, issue #71).
     void startRecording();
     void stopRecording();
     bool isRecording() const;
     void clearRecording();
-    juce::String exportRecordingToJSON() const;
     int getRecordedEventCount() const;
+
+    // Atomic snapshot of the current recording — events plus the BPM that
+    // was active when recording started (which is what each event's
+    // startBeat / durationBeats were computed against). Read this rather
+    // than the live host tempo so MIDI export stays consistent if the
+    // user changes host tempo between stopping recording and dragging.
+    RecordingSession getRecordingSession() const;
 
     //==========================================================================
     // Parameter IDs
@@ -112,6 +128,14 @@ private:
     std::atomic<bool> chordChangedFlag{false};
     ChordInfo currentChord;
     std::vector<ChordSuggestion> currentSuggestions;
+
+    // Ring buffer (preallocated, no reallocation on the audio thread).
+    // historyHead is the next write slot; historyCount is the number of
+    // valid entries (0..maxHistorySize). Logical order is oldest..newest
+    // = chordHistory[(historyHead - historyCount + N) % N .. historyHead).
+    std::array<ChordInfo, maxHistorySize> chordHistory{};
+    int historyHead = 0;
+    int historyCount = 0;
     mutable juce::SpinLock chordLock;
 
     //==========================================================================
@@ -122,6 +146,11 @@ private:
     std::atomic<bool> showInversions{true};
     std::atomic<bool> respectSustain{true};
 
+    // Last host BPM observed in processBlock — read by startRecording() so
+    // recorded events get beat values aligned with the DAW's tempo. Falls
+    // back to 120 if the host doesn't expose a BPM (offline render, etc).
+    std::atomic<double> hostBPM{120.0};
+
     //==========================================================================
     // Sustain pedal (CC 64) state — audio-thread only, mutated in processMidiInput.
     bool sustainPedalDown = false;
@@ -130,7 +159,12 @@ private:
     //==========================================================================
     // Timing
     double currentSampleRate = 44100.0;
-    double currentTimeSec = 0.0;
+    // Accumulating wall-clock since prepareToPlay. Single-writer (the
+    // audio thread); read from the message thread by stopRecording() so
+    // the still-active chord can be closed at the actual stop moment.
+    // std::atomic<double>::fetch_add isn't available until C++20, but
+    // load+store is fine here because there's only one writer thread.
+    std::atomic<double> currentTimeSec{0.0};
     double lastAnalysisTime = 0.0;
     static constexpr double analysisIntervalSec = 0.05;  // 50ms debounce
 
