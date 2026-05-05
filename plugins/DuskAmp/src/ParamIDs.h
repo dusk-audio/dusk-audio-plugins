@@ -19,6 +19,7 @@ namespace DuskAmpParams
     static constexpr const char* RESONANCE       = "resonance";
     static constexpr const char* SAG             = "sag";
     static constexpr const char* CAB_ENABLED     = "cab_enabled";
+    static constexpr const char* CAB_PRESET      = "cab_preset";   // bundled IR selection
     static constexpr const char* CAB_MIX         = "cab_mix";
     static constexpr const char* CAB_HICUT       = "cab_hicut";
     static constexpr const char* CAB_LOCUT       = "cab_locut";
