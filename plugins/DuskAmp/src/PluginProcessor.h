@@ -92,6 +92,8 @@ private:
     std::atomic<float>* ampTypeParam_       = nullptr;
     std::atomic<float>* oversamplingParam_  = nullptr;
     std::atomic<float>* cabEnabledParam_    = nullptr;
+    std::atomic<float>* cabPresetParam_     = nullptr;
+    int                  lastCabPreset_      = -1;   // tracks reload-on-change
     std::atomic<float>* brightParam_        = nullptr;
     std::atomic<float>* boostEnabledParam_  = nullptr;
     std::atomic<float>* delayEnabledParam_  = nullptr;

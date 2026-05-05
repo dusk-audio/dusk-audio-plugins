@@ -109,6 +109,7 @@ target_sources(DuskAmp
         src/dsp/ToneStackModel.cpp
         src/dsp/PowerAmp.cpp
         src/dsp/CabinetIR.cpp
+        src/dsp/CabinetLibrary.cpp
         src/dsp/PostFX.cpp
         ../shared/LEDMeter.cpp
         ${NAM_SOURCES}
@@ -125,6 +126,23 @@ if(NAM_ENABLED)
         PRIVATE
             src/dsp/NAMProcessor.cpp
     )
+endif()
+
+# Bundled cabinet IRs — embedded into the plugin binary so users get a
+# usable out-of-box cab without having to hunt for IRs. Drop CC0 /
+# explicitly-redistributable WAVs into resources/cabs/; the glob picks
+# them up at configure time. CabinetLibrary.cpp uses #ifdef checks on
+# JUCE_BINARYDATA_<stem>_wav to handle the empty / partial-set case
+# without compile errors.
+file(GLOB DUSKAMP_CAB_IRS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/cabs/*.wav")
+if(DUSKAMP_CAB_IRS)
+    juce_add_binary_data(DuskAmp_CabIRs SOURCES ${DUSKAMP_CAB_IRS})
+    target_link_libraries(DuskAmp PRIVATE DuskAmp_CabIRs)
+    list(LENGTH DUSKAMP_CAB_IRS _cab_count)
+    message(STATUS "DuskAmp: bundling ${_cab_count} cab IR(s) from resources/cabs/")
+else()
+    message(STATUS "DuskAmp: no bundled cab IRs (resources/cabs/ is empty); CAB_PRESET will only show '(none)'")
 endif()
 
 # Set include directories

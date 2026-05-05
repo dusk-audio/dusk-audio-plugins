@@ -13,6 +13,12 @@ public:
     void reset();
 
     void loadIR (const juce::File& file);
+
+    /** Load an IR from raw WAV bytes already in memory. Used by
+        CabinetLibrary to load bundled IRs out of JUCE BinaryData. */
+    void loadIRFromMemory (const void* data, size_t sizeBytes,
+                           const juce::String& displayName);
+
     void setEnabled (bool on);
     void setMix (float mix01);
     void setHiCut (float hz);

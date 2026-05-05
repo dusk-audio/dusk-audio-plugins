@@ -146,6 +146,12 @@ tests/velvet90_match/
 plugins/DuskAmp/tests/comparison/dsp_test_output/
 plugins/DuskAmp/tests/comparison/signals/
 
+# DuskAmp bundled cab IRs — kept out of git until per-IR redistribution
+# permission is documented (see plugins/DuskAmp/resources/cabs/README.md).
+# Once licensing clears, drop the matching pattern from this gitignore so
+# CI builds can embed the IRs into the binary.
+plugins/DuskAmp/resources/cabs/*.wav
+
 # DuskVerb calibration database (local tooling artifact)
 calibration.db
 calibration.db-shm
