@@ -41,6 +41,14 @@ private:
         float maxDriveGain;     // Maximum gain multiplier from drive knob
         float biasAsymmetry;    // Class A bias offset (0 = symmetric push-pull)
 
+        // Push-pull (Class AB) vs single-ended (Class A) topology.
+        // True for Fender / Marshall: model the phase-inverter + paired-tubes
+        // + output-transformer subtraction as out = 0.5 * (f(x) - f(-x)),
+        // which cancels even-order harmonics from the asymmetric tube curve
+        // and doubles odd-order — the defining sound of Class AB.
+        // False for Vox: single tube path keeps even harmonics (Class A).
+        bool  isPushPull;
+
         // Transformer profile
         float xfmrSatThreshold;
         float xfmrSatAmount;
