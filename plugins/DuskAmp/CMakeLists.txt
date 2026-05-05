@@ -200,3 +200,41 @@ set_target_properties(DuskAmp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ---------------------------------------------------------------------------
+# Optional: standalone DSP test harness for accuracy/regression measurement.
+# Bypasses the JUCE plugin wrapper and instantiates PreampModel /
+# ToneStackModel / PowerAmp directly. Off by default — enable with
+#   cmake -DBUILD_DUSKAMP_DSP_TEST=ON ...
+# Pairs with plugins/DuskAmp/tests/comparison/{generate_test_signals.py,
+# analyze_dsp_output.py} for end-to-end physics validation.
+# ---------------------------------------------------------------------------
+option(BUILD_DUSKAMP_DSP_TEST "Build DuskAmp standalone DSP test harness" OFF)
+
+if(BUILD_DUSKAMP_DSP_TEST)
+    add_executable(DuskAmp_DSPTest
+        tests/comparison/dsp_test_harness.cpp
+        src/dsp/PreampModel.cpp
+        src/dsp/ToneStackModel.cpp
+        src/dsp/PowerAmp.cpp
+    )
+    target_include_directories(DuskAmp_DSPTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+    )
+    target_link_libraries(DuskAmp_DSPTest PRIVATE
+        juce::juce_audio_formats
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+    )
+    target_compile_definitions(DuskAmp_DSPTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+    )
+    set_target_properties(DuskAmp_DSPTest PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endif()
