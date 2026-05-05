@@ -53,9 +53,9 @@ def yeh_smith_tonestack(freqs, R1, R2, R3, R4, C1, C2, C3, t=0.5, b=0.5, m=0.5):
 
 
 TONESTACK_COMPONENTS = {
-    "American": (250e3, 1e6, 25e3, 56e3, 250e-12, 20e-9, 20e-9),   # Fender
-    "British":  (250e3, 1e6, 25e3, 33e3, 470e-12, 22e-9, 22e-9),   # Marshall
-    "AC":       (250e3, 1e6, 50e3, 100e3, 100e-12, 47e-9, 10e-9),  # Vox
+    "Fender":   (250e3, 1e6, 25e3, 56e3, 250e-12, 20e-9, 20e-9),
+    "Marshall": (250e3, 1e6, 25e3, 33e3, 470e-12, 22e-9, 22e-9),
+    "Vox":      (250e3, 1e6, 50e3, 100e3, 100e-12, 47e-9, 10e-9),
 }
 
 
