@@ -13,8 +13,12 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_dsp/juce_dsp.h>
 
-#include "ToneStack.h"
-#include "PreampDSP.h"
+// Adapted to main's API (2026-05-05): the old PreampDSP/ToneStack pair was
+// replaced by PreampModel (factory + per-amp concrete classes) and
+// ToneStackModel (Yeh/Smith bilinear). PowerAmp's AmpType enum now lives in
+// PreampModel.h.
+#include "ToneStackModel.h"
+#include "PreampModel.h"
 #include "PowerAmp.h"
 
 #include <iostream>
@@ -195,16 +199,15 @@ static std::vector<float> generateSagBurst (double sr)
 struct AmpConfig
 {
     const char* name;
-    ToneStack::Type toneType;
-    PreampDSP::Channel preampChannel;
-    PowerAmp::AmpType powerAmpType;
-    float preampGain;
+    ToneStackModel::Topology toneTopology;
+    AmpType                  ampType;   // shared by PreampModel + PowerAmp (defined in PreampModel.h)
+    float                    preampGain;
 };
 
 static const AmpConfig kAmps[] = {
-    { "Fender",   ToneStack::Type::American, PreampDSP::Channel::Clean,  PowerAmp::AmpType::Fender,   0.3f },
-    { "Marshall",  ToneStack::Type::British,  PreampDSP::Channel::Crunch, PowerAmp::AmpType::Marshall, 0.4f },
-    { "Vox",      ToneStack::Type::AC,       PreampDSP::Channel::Clean,  PowerAmp::AmpType::Vox,      0.35f },
+    { "Fender",   ToneStackModel::Topology::Fender,   AmpType::Fender,   0.3f  },
+    { "Marshall", ToneStackModel::Topology::Marshall, AmpType::Marshall, 0.4f  },
+    { "Vox",      ToneStackModel::Topology::Vox,      AmpType::Vox,      0.35f },
 };
 
 struct DriveConfig
@@ -224,24 +227,23 @@ static std::vector<float> processThroughChain (
     const std::vector<float>& input, double sr,
     const AmpConfig& amp, const DriveConfig& drive)
 {
-    PreampDSP preamp;
-    ToneStack toneStack;
-    PowerAmp powerAmp;
+    auto           preamp    = PreampModel::create (amp.ampType);
+    ToneStackModel toneStack;
+    PowerAmp       powerAmp;
 
-    preamp.prepare (sr);
+    preamp->prepare (sr);
     toneStack.prepare (sr);
     powerAmp.prepare (sr);
 
-    preamp.setChannel (amp.preampChannel);
-    preamp.setGain (drive.preampDrive);
-    preamp.setBright (false);
+    preamp->setGain (drive.preampDrive);
+    preamp->setBright (false);
 
-    toneStack.setType (amp.toneType);
+    toneStack.setTopology (amp.toneTopology);
     toneStack.setBass (0.5f);
     toneStack.setMid (0.5f);
     toneStack.setTreble (0.5f);
 
-    powerAmp.setAmpType (amp.powerAmpType);
+    powerAmp.setAmpType (amp.ampType);
     powerAmp.setDrive (drive.powerDrive);
     powerAmp.setPresence (0.5f);
     powerAmp.setResonance (0.5f);
@@ -259,7 +261,7 @@ static std::vector<float> processThroughChain (
         int thisBlock = std::min (blockSize, numSamples - offset);
         float* ptr = buffer.data() + offset;
 
-        preamp.process (ptr, thisBlock);
+        preamp->process (ptr, thisBlock);
         toneStack.process (ptr, thisBlock);
         powerAmp.process (ptr, thisBlock);
     }
@@ -270,11 +272,12 @@ static std::vector<float> processThroughChain (
 // Process tone stack only (for tone stack validation)
 static std::vector<float> processToneStackOnly (
     const std::vector<float>& input, double sr,
-    ToneStack::Type type, float bass = 0.5f, float mid = 0.5f, float treble = 0.5f)
+    ToneStackModel::Topology topology,
+    float bass = 0.5f, float mid = 0.5f, float treble = 0.5f)
 {
-    ToneStack toneStack;
+    ToneStackModel toneStack;
     toneStack.prepare (sr);
-    toneStack.setType (type);
+    toneStack.setTopology (topology);
     toneStack.setBass (bass);
     toneStack.setMid (mid);
     toneStack.setTreble (treble);
@@ -314,8 +317,12 @@ int main (int argc, char* argv[])
     std::cout << "=== TONE STACK IMPULSE RESPONSES ===" << std::endl;
     {
         auto impulse = generateImpulse (sr);
-        const char* typeNames[] = { "American", "British", "AC" };
-        ToneStack::Type types[] = { ToneStack::Type::American, ToneStack::Type::British, ToneStack::Type::AC };
+        const char* typeNames[] = { "Fender", "Marshall", "Vox" };
+        ToneStackModel::Topology types[] = {
+            ToneStackModel::Topology::Fender,
+            ToneStackModel::Topology::Marshall,
+            ToneStackModel::Topology::Vox
+        };
 
         for (int i = 0; i < 3; ++i)
         {
@@ -401,11 +408,13 @@ int main (int argc, char* argv[])
             std::cout << "  " << amp.name << " (clean) -> " << filename << std::endl;
         }
 
-        // Cranked drive sag test — use Crunch channel for more signal through preamp
+        // Cranked drive sag test — main collapsed Clean/Crunch/Lead channels
+        // into "amp + gain"; we just lean on a higher preampGain in the
+        // DriveConfig below to push the same circuit harder.
         AmpConfig crankedAmps[] = {
-            { "Fender",   ToneStack::Type::American, PreampDSP::Channel::Crunch, PowerAmp::AmpType::Fender,   0.4f },
-            { "Marshall",  ToneStack::Type::British,  PreampDSP::Channel::Crunch, PowerAmp::AmpType::Marshall, 0.4f },
-            { "Vox",      ToneStack::Type::AC,       PreampDSP::Channel::Crunch, PowerAmp::AmpType::Vox,      0.35f },
+            { "Fender",   ToneStackModel::Topology::Fender,   AmpType::Fender,   0.55f },
+            { "Marshall", ToneStackModel::Topology::Marshall, AmpType::Marshall, 0.60f },
+            { "Vox",      ToneStackModel::Topology::Vox,      AmpType::Vox,      0.55f },
         };
         for (const auto& amp : crankedAmps)
         {
@@ -458,11 +467,11 @@ int main (int argc, char* argv[])
         float testLevel = 0.02f;  // Moderate level for the high-gain stageGain_ in the PA
         auto tone = generateTestTone (sr, 440.0, testLevel);
 
-        struct PAConfig { const char* name; PowerAmp::AmpType type; float drive; };
+        struct PAConfig { const char* name; AmpType type; float drive; };
         PAConfig paConfigs[] = {
-            { "Fender_PA",  PowerAmp::AmpType::Fender,  0.5f },
-            { "Marshall_PA", PowerAmp::AmpType::Marshall, 0.5f },
-            { "Vox_PA",     PowerAmp::AmpType::Vox,     0.7f }, // Higher drive to push into nonlinear region
+            { "Fender_PA",   AmpType::Fender,   0.5f },
+            { "Marshall_PA", AmpType::Marshall, 0.5f },
+            { "Vox_PA",      AmpType::Vox,      0.7f }, // Higher drive to push into nonlinear region
         };
 
         for (const auto& pa : paConfigs)
