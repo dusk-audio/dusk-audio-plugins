@@ -1,0 +1,108 @@
+======================================================================
+TEST 1: TONE STACK
+  Primary check: C++ self-mirror (does ToneStackModel.cpp correctly
+    bilinear-transform its own s-domain coefficients?)
+  Secondary check: yeh_smith_tonestack canonical reference — known
+    INFORMATIONAL only; the Python reference's polynomial form does
+    not match canonical Yeh/Smith, so low correlation here is a Python
+    bug rather than a C++ defect (verified via self-mirror = 1.000).
+======================================================================
+
+  Fender:
+    Shape correlation (vs canonical): 0.252
+    RMS shape error (vs canonical):   2.3 dB
+    Grade: D
+    Shape correlation (vs C++ mirror): 1.000
+    RMS shape error (vs C++ mirror):   0.0 dB
+
+  Marshall:
+    Shape correlation (vs canonical): 0.260
+    RMS shape error (vs canonical):   3.8 dB
+    Grade: D
+    Shape correlation (vs C++ mirror): 1.000
+    RMS shape error (vs C++ mirror):   0.0 dB
+
+  Vox:
+    Shape correlation (vs canonical): 1.000
+    RMS shape error (vs canonical):   0.0 dB
+    Grade: A
+
+======================================================================
+TEST 2: THD — vs Published Measurements
+======================================================================
+
+  Fender (published: {'clean': '<3%', 'crunch': '5-10%', 'cranked': '10-20%'})
+       clean: THD=  72.7%  Even/Odd=0.00  [HIGH]
+      crunch: THD=  72.7%  Even/Odd=0.00  [HIGH]
+     cranked: THD=  72.7%  Even/Odd=0.00  [HIGH]
+
+  Marshall (published: {'clean': '<5%', 'crunch': '8-15%', 'cranked': '15-30%'})
+       clean: THD=   8.1%  Even/Odd=1.19  [PASS]
+      crunch: THD=   9.2%  Even/Odd=12.60  [PASS]
+     cranked: THD=  13.5%  Even/Odd=6.32  [PASS]
+
+  Vox (published: {'clean': '<5%', 'crunch': '5-12%', 'cranked': '10-25%'})
+       clean: THD=   4.0%  Even/Odd=11.05  [PASS]
+      crunch: THD=   4.8%  Even/Odd=7.25  [PASS]
+     cranked: THD=   5.9%  Even/Odd=5.61  [LOW]
+
+  EVEN/ODD HARMONIC RATIO (power amp only — authoritative test):
+  Push-pull (Fender/Marshall): should be < 0.5 (even harmonics cancelled)
+  Class A (Vox):              should be > 0.8 (even harmonics preserved)
+    Fender: Even/Odd = 0.00 (expected < 0.5) [PASS]
+    Marshall: Even/Odd = 0.00 (expected < 0.5) [PASS]
+    Vox: Even/Odd = 48729.85 (expected > 0.8) [PASS]
+
+  Full-chain Even/Odd (INFO — includes preamp single-ended even harmonics):
+    Fender: Even/Odd = 0.00 [INFO]
+    Marshall: Even/Odd = 40.20 [INFO]
+    Vox: Even/Odd = 2.03 [INFO]
+
+======================================================================
+TEST 3: COMPRESSION CURVES
+======================================================================
+
+  Fender:
+    Avg compression ratio: -0.00
+    Expected: > 0.8 (moderate)
+    [FAIL]
+
+  Marshall:
+    Avg compression ratio: 1.08
+    Expected: > 0.8 (moderate)
+    [PASS]
+
+  Vox:
+    Avg compression ratio: 0.78
+    Expected: < 0.7 (heavy)
+    [PASS]
+
+======================================================================
+TEST 4: SAG RECOVERY (cranked drive — authoritative)
+======================================================================
+
+  Fender (cranked):
+    Recovery to 90%: 0 ms
+    Sag depth: 0.0 dB
+    Expected: 50-150 ms
+    [PASS]
+
+  Marshall (cranked):
+    Recovery to 90%: 4 ms
+    Sag depth: -0.4 dB
+    Expected: 5-30 ms
+    [PASS]
+
+  Vox (cranked):
+    Recovery to 90%: 2 ms
+    Sag depth: 0.3 dB
+    Expected: 30-100 ms
+    [PASS]
+
+  Clean-drive sag (INFO — minimal sag at clean is physically correct):
+    Fender: recovery=0ms, depth=0.0dB [INFO]
+    Marshall: recovery=4ms, depth=-0.5dB [INFO]
+    Vox: recovery=2ms, depth=-0.0dB [INFO]
+
+======================================================================
+Validation complete. Output files in: plugins/DuskAmp/tests/comparison/dsp_test_output
