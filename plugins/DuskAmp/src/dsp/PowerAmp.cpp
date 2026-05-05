@@ -34,6 +34,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 200.0f,     // Slow sag release — gentle recovery
                 3.0f,       // Max drive gain (less aggressive than Marshall)
                 0.0f,       // Symmetric push-pull (Class AB)
+                true,       // isPushPull (Class AB — pair of 6L6, transformer subtracts)
                 0.80f,      // Transformer: high saturation threshold
                 0.10f,      // Moderate saturation amount
                 1.2f,       // LF saturation multiplier
@@ -48,6 +49,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 60.0f,      // Fast sag release — bouncy feel
                 3.5f,       // More drive available (single-ended needs it)
                 0.15f,      // Class A bias asymmetry → 2nd harmonic content
+                false,      // isPushPull (Class A — single-ended EL84, even harmonics survive)
                 0.65f,      // Lower saturation threshold (EL84 clips earlier)
                 0.15f,      // More saturation
                 1.4f,       // More LF saturation (loose bottom end)
@@ -63,6 +65,7 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 100.0f,     // Moderate sag release
                 4.0f,       // More drive headroom (for high gain)
                 0.0f,       // Symmetric push-pull (Class AB)
+                true,       // isPushPull (Class AB — pair of EL34, transformer subtracts)
                 0.70f,      // Moderate saturation threshold
                 0.12f,      // Moderate saturation
                 1.3f,       // Moderate LF saturation
@@ -221,11 +224,33 @@ void PowerAmp::process (float* buffer, int numSamples)
         driven += biasOffset;
 
         // --- 4. Power tube saturation (waveshaper) ---
-        float saturated = waveshaper.process (driven, config_.curveType);
+        // Push-pull (Class AB): the phase inverter feeds two tubes 180° out
+        // of phase, the output transformer subtracts their plates. For an
+        // identical asymmetric curve f(), the result is 0.5 * (f(x) - f(-x))
+        // — even-order harmonics cancel because f(x) and f(-x) produce the
+        // same even harmonics in phase, so the subtraction kills them. Odd
+        // harmonics double. This is the canonical Class AB cancellation
+        // signature; without it Marshall/Fender power amps wrongly behave
+        // like single-ended Class A circuits.
+        // Single-ended (Class A, Vox) keeps the unprocessed asymmetric
+        // output so even harmonics survive — the chimey AC30 character.
+        float saturated;
+        if (config_.isPushPull)
+        {
+            float halfA = waveshaper.process ( driven, config_.curveType);
+            float halfB = waveshaper.process (-driven, config_.curveType);
+            saturated = 0.5f * (halfA - halfB);
+        }
+        else
+        {
+            saturated = waveshaper.process (driven, config_.curveType);
+        }
 
         // Remove bias offset after saturation (keeps the harmonic content,
-        // removes DC offset)
-        saturated -= biasOffset * 0.5f;
+        // removes DC offset). Only meaningful for the single-ended path —
+        // push-pull's subtraction has already cancelled any DC component.
+        if (! config_.isPushPull)
+            saturated -= biasOffset * 0.5f;
 
         // --- 5. Output transformer ---
         saturated = transformer_.processSample (saturated, 0);
