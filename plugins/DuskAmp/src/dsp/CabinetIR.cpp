@@ -94,6 +94,26 @@ void CabinetIR::loadIR (const juce::File& file)
     irLoaded_ = true;
 }
 
+void CabinetIR::loadIRFromMemory (const void* data, size_t sizeBytes,
+                                   const juce::String& displayName)
+{
+    if (data == nullptr || sizeBytes == 0)
+        return;
+
+    // juce::dsp::Convolution copies the buffer internally, so passing the
+    // BinaryData pointer directly is safe (the binary data lives for the
+    // lifetime of the plugin).
+    convolution_.loadImpulseResponse (data, sizeBytes,
+                                       juce::dsp::Convolution::Stereo::no,
+                                       juce::dsp::Convolution::Trim::yes,
+                                       0,
+                                       juce::dsp::Convolution::Normalise::yes);
+
+    loadedFile_ = juce::File();   // not file-backed — bundled
+    loadedFileName_ = displayName;
+    irLoaded_ = true;
+}
+
 void CabinetIR::setEnabled (bool on)
 {
     enabled_ = on;
