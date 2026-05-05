@@ -17,9 +17,18 @@
 // replaced by PreampModel (factory + per-amp concrete classes) and
 // ToneStackModel (Yeh/Smith bilinear). PowerAmp's AmpType enum now lives in
 // PreampModel.h.
+//
+// The full-chain processing path now mirrors production DuskAmpEngine: the
+// preamp / tone stack / power amp run at 4x oversampled rate via the shared
+// OversamplingManager, with up/down conversion at block boundaries. Without
+// this the waveshapers in the preamp + power amp alias heavily at 44.1kHz
+// and the THD/even-odd numbers come out as nonsense.
 #include "ToneStackModel.h"
 #include "PreampModel.h"
 #include "PowerAmp.h"
+#include "Oversampling.h"
+
+static constexpr int kOversamplingFactor = 4;  // matches production "high quality" default
 
 #include <iostream>
 #include <fstream>
@@ -227,13 +236,23 @@ static std::vector<float> processThroughChain (
     const std::vector<float>& input, double sr,
     const AmpConfig& amp, const DriveConfig& drive)
 {
-    auto           preamp    = PreampModel::create (amp.ampType);
+    constexpr int blockSize  = 512;
+    const int     numSamples = static_cast<int> (input.size());
+
+    // Oversampling wrapper — preamp/tone stack/power amp all run at the
+    // oversampled rate to match production behaviour and avoid aliasing.
+    DuskAudio::OversamplingManager oversampling;
+    oversampling.setFactor (kOversamplingFactor);
+    oversampling.prepare (sr, blockSize, /*numChannels*/ 1);
+    const double osRate = oversampling.getOversampledSampleRate();
+
+    auto           preamp = PreampModel::create (amp.ampType);
     ToneStackModel toneStack;
     PowerAmp       powerAmp;
 
-    preamp->prepare (sr);
-    toneStack.prepare (sr);
-    powerAmp.prepare (sr);
+    preamp->prepare (osRate);
+    toneStack.prepare (osRate);
+    powerAmp.prepare (osRate);
 
     preamp->setGain (drive.preampDrive);
     preamp->setBright (false);
@@ -249,24 +268,41 @@ static std::vector<float> processThroughChain (
     powerAmp.setResonance (0.5f);
     powerAmp.setSag (0.5f);
 
-    // Copy input to working buffer
-    std::vector<float> buffer (input);
+    // Working buffer for the up/downsample round-trip. JUCE oversampling
+    // requires an AudioBlock backed by mutable storage that survives
+    // between processSamplesUp and processSamplesDown.
+    juce::AudioBuffer<float> osBuf (1, blockSize);
 
-    // Process in blocks of 512
-    constexpr int blockSize = 512;
-    int numSamples = static_cast<int> (buffer.size());
+    std::vector<float> output (input);
 
     for (int offset = 0; offset < numSamples; offset += blockSize)
     {
-        int thisBlock = std::min (blockSize, numSamples - offset);
-        float* ptr = buffer.data() + offset;
+        const int thisBlock = std::min (blockSize, numSamples - offset);
 
-        preamp->process (ptr, thisBlock);
-        toneStack.process (ptr, thisBlock);
-        powerAmp.process (ptr, thisBlock);
+        // Copy this block into the oversampling buffer.
+        std::copy (output.data() + offset,
+                   output.data() + offset + thisBlock,
+                   osBuf.getWritePointer (0));
+
+        juce::dsp::AudioBlock<float> baseBlock (osBuf.getArrayOfWritePointers(),
+                                                 1, static_cast<size_t> (thisBlock));
+        auto upBlock = oversampling.processSamplesUp (baseBlock);
+
+        const int   upN  = static_cast<int> (upBlock.getNumSamples());
+        float* const upP = upBlock.getChannelPointer (0);
+
+        preamp->process    (upP, upN);
+        toneStack.process  (upP, upN);
+        powerAmp.process   (upP, upN);
+
+        oversampling.processSamplesDown (baseBlock);
+
+        std::copy (osBuf.getReadPointer (0),
+                   osBuf.getReadPointer (0) + thisBlock,
+                   output.data() + offset);
     }
 
-    return buffer;
+    return output;
 }
 
 // Process tone stack only (for tone stack validation)
@@ -474,23 +510,47 @@ int main (int argc, char* argv[])
             { "Vox_PA",      AmpType::Vox,      0.7f }, // Higher drive to push into nonlinear region
         };
 
+        constexpr int blockSize = 512;
+
         for (const auto& pa : paConfigs)
         {
+            // Match production: power-amp waveshaper runs at the
+            // oversampled rate. Without this the even/odd ratio is
+            // dominated by aliased clip products, not the actual
+            // tube-curve asymmetry.
+            DuskAudio::OversamplingManager oversampling;
+            oversampling.setFactor (kOversamplingFactor);
+            oversampling.prepare (sr, blockSize, 1);
+
             PowerAmp powerAmp;
-            powerAmp.prepare (sr);
+            powerAmp.prepare (oversampling.getOversampledSampleRate());
             powerAmp.setAmpType (pa.type);
             powerAmp.setDrive (pa.drive);
             powerAmp.setPresence (0.5f);
             powerAmp.setResonance (0.5f);
             powerAmp.setSag (0.3f);
 
+            juce::AudioBuffer<float> osBuf (1, blockSize);
             std::vector<float> buffer (tone);
-            constexpr int blockSize = 512;
             int numSamples = static_cast<int> (buffer.size());
+
             for (int offset = 0; offset < numSamples; offset += blockSize)
             {
                 int thisBlock = std::min (blockSize, numSamples - offset);
-                powerAmp.process (buffer.data() + offset, thisBlock);
+                std::copy (buffer.data() + offset,
+                           buffer.data() + offset + thisBlock,
+                           osBuf.getWritePointer (0));
+
+                juce::dsp::AudioBlock<float> baseBlock (osBuf.getArrayOfWritePointers(),
+                                                        1, static_cast<size_t> (thisBlock));
+                auto upBlock = oversampling.processSamplesUp (baseBlock);
+                powerAmp.process (upBlock.getChannelPointer (0),
+                                  static_cast<int> (upBlock.getNumSamples()));
+                oversampling.processSamplesDown (baseBlock);
+
+                std::copy (osBuf.getReadPointer (0),
+                           osBuf.getReadPointer (0) + thisBlock,
+                           buffer.data() + offset);
             }
 
             std::string filename = outputDir + "/poweramp_only_" + std::string(pa.name) + ".wav";
