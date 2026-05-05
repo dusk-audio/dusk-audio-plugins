@@ -4,6 +4,7 @@
 #include "PluginEditor.h"
 #include "ParamIDs.h"
 #include "CrashLog.h"
+#include "dsp/CabinetLibrary.h"
 
 #include <cstring>
 
@@ -74,6 +75,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout DuskAmpProcessor::createPara
     // Cabinet
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { DuskAmpParams::CAB_ENABLED, 1 }, "Cabinet", true));
+
+    {
+        // Bundled cabinet IR selector. Choice list is sourced from
+        // CabinetLibrary so adding a new bundled cab only requires editing
+        // one file (CabinetLibrary.cpp) — both the choice param and the
+        // runtime loader stay in sync automatically.
+        juce::StringArray cabChoices;
+        for (int i = 0; i < CabinetLibrary::numChoices(); ++i)
+            cabChoices.add (CabinetLibrary::displayNameForChoice (i));
+        layout.add (std::make_unique<juce::AudioParameterChoice> (
+            juce::ParameterID { DuskAmpParams::CAB_PRESET, 1 }, "Cab Preset",
+            cabChoices, /*default*/ 0));
+    }
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { DuskAmpParams::CAB_MIX, 1 }, "Cab Mix",
@@ -178,6 +192,7 @@ DuskAmpProcessor::DuskAmpProcessor()
     ampTypeParam_       = parameters.getRawParameterValue (DuskAmpParams::AMP_TYPE);
     oversamplingParam_  = parameters.getRawParameterValue (DuskAmpParams::OVERSAMPLING);
     cabEnabledParam_    = parameters.getRawParameterValue (DuskAmpParams::CAB_ENABLED);
+    cabPresetParam_     = parameters.getRawParameterValue (DuskAmpParams::CAB_PRESET);
     brightParam_        = parameters.getRawParameterValue (DuskAmpParams::PREAMP_BRIGHT);
     boostEnabledParam_  = parameters.getRawParameterValue (DuskAmpParams::BOOST_ENABLED);
     delayEnabledParam_  = parameters.getRawParameterValue (DuskAmpParams::DELAY_ENABLED);
@@ -383,6 +398,17 @@ void DuskAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         cachedCabEnabled_ = cabEnabled;
         engine_.setCabinetEnabled (cabEnabled);
+    }
+
+    // Bundled cab IR: reload only when the choice index actually changes.
+    // CabinetLibrary::loadInto handles the index==0 ("none") case by leaving
+    // the existing IR in place — the user can still load a custom file.
+    const int cabPreset = static_cast<int> (cabPresetParam_->load());
+    if (cabPreset != lastCabPreset_)
+    {
+        lastCabPreset_ = cabPreset;
+        if (cabPreset > 0)
+            CabinetLibrary::loadInto (engine_.getCabinetIR(), cabPreset);
     }
 
     bool bright = brightParam_->load() >= 0.5f;
