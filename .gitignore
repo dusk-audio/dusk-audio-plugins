@@ -141,8 +141,10 @@ plugins/DuskVerb/tests/reference_comparison
 tests/test_linear_phase
 tests/velvet90_match/
 
-# DuskAmp DSP comparison artifacts (regenerated locally per developer)
-plugins/DuskAmp/tests/comparison/
+# DuskAmp DSP comparison runtime artifacts (regenerated locally per developer)
+# Scripts, schematics, and committed baseline reports under results/ stay tracked.
+plugins/DuskAmp/tests/comparison/dsp_test_output/
+plugins/DuskAmp/tests/comparison/signals/
 
 # DuskVerb calibration database (local tooling artifact)
 calibration.db
