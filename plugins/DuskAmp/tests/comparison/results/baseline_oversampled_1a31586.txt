@@ -1,0 +1,98 @@
+======================================================================
+TEST 1: TONE STACK — vs Yeh/Smith Analytical
+======================================================================
+
+  Fender:
+    Shape correlation: 0.252
+    RMS shape error: 2.3 dB
+    Grade: D
+
+  Marshall:
+    Shape correlation: 0.267
+    RMS shape error: 4.3 dB
+    Grade: D
+
+  Vox:
+    Shape correlation: -0.896
+    RMS shape error: 2.1 dB
+    Grade: D
+
+======================================================================
+TEST 2: THD — vs Published Measurements
+======================================================================
+
+  Fender (published: {'clean': '<3%', 'crunch': '5-10%', 'cranked': '10-20%'})
+       clean: THD=  72.7%  Even/Odd=0.00  [HIGH]
+      crunch: THD=  72.7%  Even/Odd=0.00  [HIGH]
+     cranked: THD=  72.7%  Even/Odd=0.00  [HIGH]
+
+  Marshall (published: {'clean': '<5%', 'crunch': '8-15%', 'cranked': '15-30%'})
+       clean: THD=  26.3%  Even/Odd=5.78  [HIGH]
+      crunch: THD=  31.6%  Even/Odd=12.47  [HIGH]
+     cranked: THD=  30.5%  Even/Odd=7.39  [PASS]
+
+  Vox (published: {'clean': '<5%', 'crunch': '5-12%', 'cranked': '10-25%'})
+       clean: THD=   4.0%  Even/Odd=11.05  [PASS]
+      crunch: THD=   4.8%  Even/Odd=7.25  [PASS]
+     cranked: THD=   5.9%  Even/Odd=5.61  [LOW]
+
+  EVEN/ODD HARMONIC RATIO (power amp only — authoritative test):
+  Push-pull (Fender/Marshall): should be < 0.5 (even harmonics cancelled)
+  Class A (Vox):              should be > 0.8 (even harmonics preserved)
+    Fender: Even/Odd = 0.00 (expected < 0.5) [PASS]
+    Marshall: Even/Odd = 21.73 (expected < 0.5) [FAIL]
+    Vox: Even/Odd = 48729.85 (expected > 0.8) [PASS]
+
+  Full-chain Even/Odd (INFO — includes preamp single-ended even harmonics):
+    Fender: Even/Odd = 0.00 [INFO]
+    Marshall: Even/Odd = 0.33 [INFO]
+    Vox: Even/Odd = 2.03 [INFO]
+
+======================================================================
+TEST 3: COMPRESSION CURVES
+======================================================================
+
+  Fender:
+    Avg compression ratio: -0.00
+    Expected: > 0.8 (moderate)
+    [FAIL]
+
+  Marshall:
+    Avg compression ratio: 1.01
+    Expected: > 0.8 (moderate)
+    [PASS]
+
+  Vox:
+    Avg compression ratio: 0.78
+    Expected: < 0.7 (heavy)
+    [PASS]
+
+======================================================================
+TEST 4: SAG RECOVERY (cranked drive — authoritative)
+======================================================================
+
+  Fender (cranked):
+    Recovery to 90%: 0 ms
+    Sag depth: 0.0 dB
+    Expected: 50-150 ms
+    [PASS]
+
+  Marshall (cranked):
+    Recovery to 90%: 1 ms
+    Sag depth: 1.8 dB
+    Expected: 5-30 ms
+    [PASS]
+
+  Vox (cranked):
+    Recovery to 90%: 2 ms
+    Sag depth: 0.3 dB
+    Expected: 30-100 ms
+    [PASS]
+
+  Clean-drive sag (INFO — minimal sag at clean is physically correct):
+    Fender: recovery=0ms, depth=0.0dB [INFO]
+    Marshall: recovery=2ms, depth=1.0dB [INFO]
+    Vox: recovery=2ms, depth=-0.0dB [INFO]
+
+======================================================================
+Validation complete. Output files in: plugins/DuskAmp/tests/comparison/dsp_test_output
