@@ -1276,7 +1276,12 @@ void EQGraphicDisplay::mouseDown(const juce::MouseEvent& e)
 
     int hitBand = hitTestControlPoint(point);
 
-    if (hitBand < 0)
+    // Fallback proximity scan for disabled bands (so the user can click a
+    // faint indicator to re-enable). Skip in Digital mode — disabled bands
+    // are hidden there (issue #78), so an invisible target must not be
+    // clickable. Re-enable in Digital mode goes through the band strip or
+    // double-click on a parametric region.
+    if (hitBand < 0 && !processor.isDigitalMode())
     {
         for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
         {
@@ -1536,6 +1541,17 @@ void EQGraphicDisplay::mouseDoubleClick(const juce::MouseEvent& e)
             if (bandToEnable >= 0)
             {
                 setBandEnabled(bandToEnable, true);
+
+                // Reset shape to peaking (0) first — otherwise a band left in
+                // Notch / BandPass would make setBandGain() a no-op and the
+                // clicked gain would be silently dropped, producing the wrong
+                // filter type at the double-clicked location.
+                if (auto* shapeParam = processor.parameters.getParameter(ParamIDs::bandShape(bandToEnable + 1)))
+                {
+                    if (shapeParam->getNumSteps() > 1)
+                        shapeParam->setValueNotifyingHost(0.0f);
+                }
+
                 setBandFrequency(bandToEnable, clickFreq);
                 setBandGain(bandToEnable, juce::jlimit(-24.0f, 24.0f, clickGain));
                 setBandQ(bandToEnable, 0.71f);
