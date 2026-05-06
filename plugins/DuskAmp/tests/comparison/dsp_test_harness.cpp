@@ -234,7 +234,8 @@ static const DriveConfig kDrives[] = {
 
 static std::vector<float> processThroughChain (
     const std::vector<float>& input, double sr,
-    const AmpConfig& amp, const DriveConfig& drive)
+    const AmpConfig& amp, const DriveConfig& drive,
+    float sagAmount = 0.5f)
 {
     constexpr int blockSize  = 512;
     const int     numSamples = static_cast<int> (input.size());
@@ -266,7 +267,7 @@ static std::vector<float> processThroughChain (
     powerAmp.setDrive (drive.powerDrive);
     powerAmp.setPresence (0.5f);
     powerAmp.setResonance (0.5f);
-    powerAmp.setSag (0.5f);
+    powerAmp.setSag (sagAmount);
 
     // Working buffer for the up/downsample round-trip. JUCE oversampling
     // requires an AudioBlock backed by mutable storage that survives
@@ -434,6 +435,14 @@ int main (int argc, char* argv[])
     {
         auto burst = generateSagBurst (sr);
 
+        // Hotter burst for the cranked-sag stress test below — the plain
+        // generateSagBurst peaks at ~1.2 and after preamp+tone stack mid
+        // attenuation feeds the power amp at ~0.3 level, which never builds
+        // the sag envelope toward 1.0. Boost amplitude per partial to
+        // reach near-rail levels at the power amp input.
+        auto stressBurst = burst;
+        for (auto& s : stressBurst) s = std::clamp (s * 2.5f, -1.0f, 1.0f);
+
         // Clean drive sag test
         for (const auto& amp : kAmps)
         {
@@ -455,7 +464,14 @@ int main (int argc, char* argv[])
         for (const auto& amp : crankedAmps)
         {
             DriveConfig crankedDrive = { "cranked", 0.85f, 0.75f };
-            auto output = processThroughChain (burst, sr, amp, crankedDrive);
+            // Use the boosted burst for cranked tests — at the default burst
+            // level the sag envelope at the power-amp input only reaches
+            // ~0.3, hiding per-amp sag-depth differences. With the hotter
+            // burst the envelope approaches 1.0 and we actually exercise
+            // the per-amp PowerAmpConfig::sagDepth values. Also push sag
+            // knob to maximum so the per-amp depth coefficient sees its
+            // full range.
+            auto output = processThroughChain (stressBurst, sr, amp, crankedDrive, /*sagAmount*/ 1.0f);
             std::string filename = outputDir + "/sag_" + std::string(amp.name) + "_cranked.wav";
             writeWav (juce::File (filename), output, sr);
             std::cout << "  " << amp.name << " (cranked) -> " << filename << std::endl;
