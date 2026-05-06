@@ -6,7 +6,8 @@ namespace DuskAmpParams
 {
     static constexpr const char* AMP_MODE        = "amp_mode";
     static constexpr const char* AMP_TYPE        = "amp_type";
-    static constexpr const char* INPUT_GAIN      = "input_gain";
+    static constexpr const char* INPUT_GAIN      = "input_gain";       // active when AMP_MODE = DSP
+    static constexpr const char* NAM_INPUT_GAIN  = "nam_input_gain";   // active when AMP_MODE = NAM
     static constexpr const char* GATE_THRESHOLD  = "gate_threshold";
     static constexpr const char* GATE_RELEASE    = "gate_release";
     static constexpr const char* PREAMP_GAIN     = "preamp_gain";
@@ -38,7 +39,8 @@ namespace DuskAmpParams
     static constexpr const char* REVERB_PREDELAY = "reverb_predelay";
     static constexpr const char* REVERB_DAMPING  = "reverb_damping";
     static constexpr const char* REVERB_SIZE     = "reverb_size";
-    static constexpr const char* OUTPUT_LEVEL    = "output_level";
+    static constexpr const char* OUTPUT_LEVEL     = "output_level";      // active when AMP_MODE = DSP
+    static constexpr const char* NAM_OUTPUT_LEVEL = "nam_output_level";  // active when AMP_MODE = NAM
     static constexpr const char* OVERSAMPLING    = "oversampling";
     static constexpr const char* BYPASS          = "bypass";
 }
