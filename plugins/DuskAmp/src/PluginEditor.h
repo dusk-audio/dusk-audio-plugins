@@ -24,6 +24,15 @@ struct KnobWithLabel
                const juce::String& paramID, const juce::String& displayName,
                const juce::String& suffix, const juce::String& tooltip = {});
 
+    /** Recreate the slider's APVTS attachment so it tracks a different param.
+        Used when AMP_MODE switches between DSP and NAM — input/output knobs
+        bind to per-mode params (input_gain ↔ nam_input_gain, etc.) so each
+        mode has an independent persistent value. The formatting lambda is
+        re-applied here because juce::AudioProcessorValueTreeState::
+        SliderAttachment overwrites it on construction. */
+    void rebindToParam (juce::AudioProcessorValueTreeState& apvts,
+                        const juce::String& newParamID);
+
     void setDimmed (bool dimmed)
     {
         float alpha = dimmed ? 0.4f : 1.0f;
