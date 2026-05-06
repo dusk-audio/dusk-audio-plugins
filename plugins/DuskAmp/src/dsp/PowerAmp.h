@@ -54,6 +54,14 @@ private:
         // False for Vox: single tube path keeps even harmonics (Class A).
         bool  isPushPull;
 
+        // Per-amp sag depth coefficient. Total sag reduction =
+        // sagAmount * env * sagDepth. Real-amp targets at fully cranked:
+        // Fender 5AR4 tube rectifier ~5dB (deep), Marshall solid-state
+        // bridge ~1dB (shallow), Vox GZ34 ~3dB (medium). Previously a
+        // single hardcoded 0.3 across all amps gave at most -1.4dB —
+        // too gentle for vintage tube-rectified character.
+        float sagDepth;
+
         // Transformer profile
         float xfmrSatThreshold;
         float xfmrSatAmount;
