@@ -34,16 +34,18 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 200.0f,     // Slow sag release — gentle recovery
                 3.0f,       // Max drive gain (less aggressive than Marshall)
                 0.0f,       // Symmetric push-pull (Class AB)
-                false,      // isPushPull TEMPORARILY DISABLED 2026-05-05.
-                            // The real Fender Twin is Class AB push-pull, but
-                            // turning push-pull on here makes the full chain
-                            // output go to ~zero — the push-pull subtraction
-                            // interacts pathologically with the cathode-follower
-                            // compression + heavy NFB (0.7) + Triode curve in a
-                            // way that PA-only-test doesn't reproduce. Marshall
-                            // (Pentode, lower NFB) works correctly with push-pull.
-                            // Re-enable once the preamp/feedback interaction is
-                            // diagnosed — see results/post_pushpull_<sha>.txt.
+                true,       // isPushPull (Class AB — pair of 6L6, transformer subtracts).
+                            // Re-enabled after fixing the underlying bug:
+                            // WaveshaperCurves.h Koren-derived curves had
+                            // f(0) ≠ 0 (the hardcoded Ip_q didn't match what
+                            // Koren predicts at the bias-point Vgk, so the
+                            // bias point clamped to the negative rail). With
+                            // both halves of the swing sitting on the same
+                            // DC clamp for small signals, push-pull
+                            // subtraction cancelled everything and the chain
+                            // output collapsed to zero. zeroCenterCurve()
+                            // now subtracts f(0) so push-pull works for all
+                            // three Koren curves.
                 0.80f,      // Transformer: high saturation threshold
                 0.10f,      // Moderate saturation amount
                 1.2f,       // LF saturation multiplier
