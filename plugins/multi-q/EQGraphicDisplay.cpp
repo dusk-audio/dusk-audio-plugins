@@ -1494,42 +1494,54 @@ void EQGraphicDisplay::mouseDoubleClick(const juce::MouseEvent& e)
     }
     else
     {
-        // Double-click on empty area: spectrum grab — enable nearest disabled band
-        // and move it to the clicked frequency
+        // Double-click on empty area: spectrum grab — enable the disabled
+        // parametric band whose NATURAL HOME (default frequency from
+        // DefaultBandConfigs) is closest to the clicked frequency, then
+        // move it to that frequency. Each parametric band has a semantic
+        // role baked in by its default freq:
+        //   index 2: "Low"      → 200 Hz
+        //   index 3: "Low Mid"  → 500 Hz
+        //   index 4: "Mid"      → 1000 Hz
+        //   index 5: "High Mid" → 2000 Hz
+        // So clicking at 130 Hz wakes up Low, at 600 Hz Low Mid, etc.
+        // Matching by *default* (not current) freq makes the choice
+        // predictable: the band you get is the one whose name matches
+        // the area you clicked, regardless of where bands have been
+        // moved before.
+        // Shelves (Low Shelf / High Shelf) and HPF / LPF are excluded —
+        // those are special-purpose bands the user should engage via
+        // their explicit toggles in the band strip below.
         auto displayBounds = getDisplayBounds();
         if (displayBounds.contains(e.position))
         {
             float clickFreq = getFrequencyAtX(e.position.x);
             float clickGain = getDBAtY(e.position.y);
 
-            // Find nearest disabled parametric band (bands 2-7, indices 1-6)
-            int bestBand = -1;
-            float bestDist = std::numeric_limits<float>::max();
-            for (int i = 1; i <= 6; ++i)
+            int bandToEnable = -1;
+            float bestDist   = std::numeric_limits<float>::max();
+            for (int i = 2; i <= 5; ++i)   // parametric bands only
             {
-                if (!isBandEnabled(i))
+                if (! isBandEnabled(i))
                 {
-                    // Prefer bands closer to the clicked frequency
-                    float bandFreq = getBandFrequency(i);
-                    float dist = std::abs(std::log2(clickFreq) - std::log2(bandFreq));
+                    const float defaultFreq = DefaultBandConfigs[static_cast<size_t>(i)].defaultFreq;
+                    const float dist = std::abs(std::log2(clickFreq) - std::log2(defaultFreq));
                     if (dist < bestDist)
                     {
                         bestDist = dist;
-                        bestBand = i;
+                        bandToEnable = i;
                     }
                 }
             }
 
-            if (bestBand >= 0)
+            if (bandToEnable >= 0)
             {
-                setBandEnabled(bestBand, true);
-                setBandFrequency(bestBand, clickFreq);
-                if (bestBand > 0 && bestBand < 7)
-                    setBandGain(bestBand, juce::jlimit(-24.0f, 24.0f, clickGain));
-                setBandQ(bestBand, 0.71f);
-                selectedBand = bestBand;
+                setBandEnabled(bandToEnable, true);
+                setBandFrequency(bandToEnable, clickFreq);
+                setBandGain(bandToEnable, juce::jlimit(-24.0f, 24.0f, clickGain));
+                setBandQ(bandToEnable, 0.71f);
+                selectedBand = bandToEnable;
                 if (onBandSelected)
-                    onBandSelected(bestBand);
+                    onBandSelected(bandToEnable);
                 repaint();
             }
         }
