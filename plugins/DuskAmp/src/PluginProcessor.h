@@ -102,6 +102,7 @@ private:
 
     // Continuous float parameter pointers
     std::atomic<float>* inputGainParam_      = nullptr;
+    std::atomic<float>* namInputGainParam_   = nullptr;
     std::atomic<float>* gateThresholdParam_  = nullptr;
     std::atomic<float>* gateReleaseParam_    = nullptr;
     std::atomic<float>* preampGainParam_     = nullptr;
@@ -127,6 +128,7 @@ private:
     std::atomic<float>* reverbDampingParam_  = nullptr;
     std::atomic<float>* reverbSizeParam_     = nullptr;
     std::atomic<float>* outputLevelParam_    = nullptr;
+    std::atomic<float>* namOutputLevelParam_ = nullptr;
 
     juce::AudioParameterBool* bypassParam_  = nullptr;
 
