@@ -852,13 +852,21 @@ void DuskAmpEditor::resized()
             { { &preampGain_, mediumKnob }, { &bass_, mediumKnob },
               { &mid_, mediumKnob }, { &treble_, mediumKnob } }, sf);
 
-        // Controls row: amp type + bright
+        // Controls row: amp type combo (left, ~60% of row) + BRIGHT button
+        // (right, ~40%). The previous 50/50 split had the combo's right edge
+        // butting up against the BRIGHT button — visibly cramped and the
+        // combo's "British Crunch" label overran the button at typical
+        // widths. Wider gap + asymmetric split fixes both.
         {
-            int ctrlY = mainY + ampToneH - controlsH - scaler_.scaled (2);
-            int ctrlW = (centerW - scaler_.scaled (16) - controlsGap) / 2;
-            int ctrlX = centerX + scaler_.scaled (8);
-            ampTypeBox_.setBounds (ctrlX, ctrlY, ctrlW, controlsH);
-            brightButton_.setBounds (ctrlX + ctrlW + controlsGap, ctrlY, ctrlW, controlsH);
+            int margin     = scaler_.scaled (8);
+            int rowGap     = scaler_.scaled (16);
+            int ctrlY      = mainY + ampToneH - controlsH - scaler_.scaled (2);
+            int rowW       = centerW - margin * 2 - rowGap;
+            int comboW     = (rowW * 60) / 100;          // 60% to combo
+            int buttonW    = rowW - comboW;              // 40% to BRIGHT
+            int ctrlX      = centerX + margin;
+            ampTypeBox_.setBounds (ctrlX, ctrlY, comboW, controlsH);
+            brightButton_.setBounds (ctrlX + comboW + rowGap, ctrlY, buttonW, controlsH);
         }
 
         // Power amp
@@ -911,26 +919,35 @@ void DuskAmpEditor::resized()
         placeKnob (boostLevel_, { innerX + 2 * colW, kY, colW, kH }, knobSize, sf);
     }
 
-    // CABINET section: toggle + preset combo on top row, then 3 knobs | browser
+    // CABINET section: CAB toggle (top-left), 3 EQ knobs (lower-left).
+    // Right column groups the IR-selection mechanisms vertically:
+    // cabPresetBox_ (bundled IR picker) on top, cabBrowser_ (user-loaded
+    // file browser) below. Both answer "which IR is loaded" so they
+    // belong together; the previous layout had the combo overlap the
+    // browser's "Cabinet IRs" header on the same row.
     {
         int innerX = cabX + pad;
         int innerY = bottomY + pad;
         cabEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
 
-        // Preset combo sits to the right of the CAB toggle on the top row.
-        int comboX = innerX + toggleW + scaler_.scaled (4);
-        int comboW = scaler_.scaled (160);
-        cabPresetBox_.setBounds (comboX, innerY, comboW, toggleH);
-
+        // Lower-left: 3 cab EQ knobs
         int kY = innerY + toggleH + scaler_.scaled (4);
         int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
         int knobColW = scaler_.scaled (62);
         placeKnob (cabMix_,   { innerX, kY, knobColW, kH }, smallKnob, sf);
         placeKnob (cabHiCut_, { innerX + knobColW, kY, knobColW, kH }, smallKnob, sf);
         placeKnob (cabLoCut_, { innerX + 2 * knobColW, kY, knobColW, kH }, smallKnob, sf);
-        int browserX = innerX + 3 * knobColW + scaler_.scaled (4);
-        int browserW = cabX + cabW - browserX - pad;
-        cabBrowser_.setBounds (browserX, bottomY + pad, browserW, bottomH - pad * 2);
+
+        // Right column: combo above browser
+        int rightX     = innerX + 3 * knobColW + scaler_.scaled (4);
+        int rightW     = cabX + cabW - rightX - pad;
+        int comboH     = toggleH;
+        int comboGap   = scaler_.scaled (4);
+        cabPresetBox_.setBounds (rightX, bottomY + pad, rightW, comboH);
+        cabBrowser_.setBounds   (rightX,
+                                  bottomY + pad + comboH + comboGap,
+                                  rightW,
+                                  bottomH - pad * 2 - comboH - comboGap);
     }
 
     // DELAY section: toggle + type selector + 3 knobs
