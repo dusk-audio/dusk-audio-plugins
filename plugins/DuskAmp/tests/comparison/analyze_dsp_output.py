@@ -276,8 +276,13 @@ def main():
 
     for amp in ["Fender", "Marshall", "Vox"]:
         print(f"\n  {amp} (published: {published[amp]})")
+        # Match input level to drive setting — published THD specs assume
+        # appropriate playing dynamics (you don't measure a cranked Plexi
+        # at whisper-quiet pick levels). Clean/crunch are tested at normal
+        # pick attack; cranked is tested with hot-pickup input level.
+        levelForDrive = {"clean": "normal", "crunch": "normal", "cranked": "loud"}
         for drive in ["clean", "crunch", "cranked"]:
-            thd_file = output_dir / f"thd_{amp}_{drive}_normal.wav"
+            thd_file = output_dir / f"thd_{amp}_{drive}_{levelForDrive[drive]}.wav"
             if not thd_file.exists():
                 continue
             data, _ = sf.read(str(thd_file))
