@@ -100,8 +100,13 @@ void DuskAmpLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
     g.setColour (isDragging ? juce::Colours::white : juce::Colour (kText));
     g.fillEllipse (dotX - dotRadius, dotY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
 
-    // Draw value text inside large knobs
-    if (diameter >= 70.0f)
+    // Draw value text inside *large* knobs only. The threshold here must
+    // match the largeKnob threshold in PluginEditor.cpp::placeKnob() (90 px
+    // scaled), which decides whether the external valueLabel is hidden.
+    // If these thresholds disagree the value gets painted twice — once
+    // here, once via the visible label below the knob — which is what the
+    // earlier 70.0f threshold caused for knobs in the 70-89 px range.
+    if (diameter >= 90.0f)
     {
         auto text = slider.getTextFromValue (slider.getValue());
         g.setColour (juce::Colour (kValueText));
