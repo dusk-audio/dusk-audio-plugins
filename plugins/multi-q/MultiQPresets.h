@@ -136,11 +136,11 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0; // Digital
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 2 };       // HPF at 80Hz
         p.bands[1] = { true, 200.0f, -2.5f, 1.0f, 0 };      // Low shelf cut - reduce mud
-        p.bands[2] = { true, 800.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 800.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[3] = { true, 2500.0f, 2.0f, 1.2f, 0 };      // Presence boost
         p.bands[4] = { true, 5000.0f, 1.5f, 0.8f, 0 };      // Air/clarity
         p.bands[5] = { true, 10000.0f, 1.0f, 0.71f, 0 };    // Brilliance
-        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };    // High shelf (flat)
+        p.bands[6] = { false, 12000.0f, 0.0f, 0.71f, 0 };    // High shelf (flat)
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 2; // Light
@@ -156,10 +156,10 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[0] = { true, 100.0f, 0.0f, 0.71f, 2 };      // HPF
         p.bands[1] = { true, 250.0f, -3.0f, 1.5f, 0 };      // Low shelf - mud cut
         p.bands[2] = { true, 400.0f, -2.0f, 2.5f, 0 };      // Boxiness notch
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[4] = { true, 3000.0f, 1.0f, 1.0f, 0 };      // Slight presence
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
-        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };    // Flat
+        p.bands[5] = { false, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[6] = { false, 12000.0f, 0.0f, 0.71f, 0 };    // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
         p.qCoupleMode = 3; // Medium
         presets.push_back(p);
@@ -177,7 +177,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[3] = { true, 2000.0f, 1.5f, 1.5f, 0 };      // Clarity
         p.bands[4] = { true, 4500.0f, 2.5f, 1.0f, 0 };      // Presence
         p.bands[5] = { true, 8000.0f, 1.0f, 0.71f, 0 };     // Air
-        p.bands[6] = { true, 10000.0f, 0.0f, 0.71f, 0 };    // Flat
+        p.bands[6] = { false, 10000.0f, 0.0f, 0.71f, 0 };    // Flat
         p.bands[7] = { true, 15000.0f, 0.0f, 0.71f, 2 };    // LPF gentle
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
@@ -190,12 +190,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Vocals";
         p.eqType = 0;
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 2 };       // HPF at 80Hz
-        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[2] = { true, 600.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[2] = { false, 600.0f, 0.0f, 0.71f, 0 };       // Flat
         p.bands[3] = { true, 2500.0f, 2.5f, 0.8f, 0 };       // Presence boost
         p.bands[4] = { true, 3500.0f, 2.0f, 0.9f, 0 };       // Upper presence
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[5] = { false, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
@@ -210,9 +210,9 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 2 };       // HPF
         p.bands[1] = { true, 250.0f, -2.5f, 1.2f, 0 };       // Low mud cut
         p.bands[2] = { true, 350.0f, -3.0f, 1.8f, 0 };       // Mud center cut
-        p.bands[3] = { true, 800.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[4] = { true, 2000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[5] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[3] = { false, 800.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[4] = { false, 2000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[5] = { false, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[6] = { true, 12000.0f, 1.5f, 0.71f, 0 };     // Air boost
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
         presets.push_back(p);
@@ -225,12 +225,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Vocals";
         p.eqType = 0;
         p.bands[0] = { true, 100.0f, 0.0f, 0.71f, 3 };      // HPF steep
-        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[2] = { true, 800.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[2] = { false, 800.0f, 0.0f, 0.71f, 0 };       // Flat
         p.bands[3] = { true, 2500.0f, 2.0f, 0.8f, 0 };       // Intelligibility
         p.bands[4] = { true, 4000.0f, 1.5f, 0.9f, 0 };       // Clarity
         p.bands[5] = { true, 5000.0f, 1.0f, 1.0f, 0 };       // Upper clarity
-        p.bands[6] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[7] = { true, 12000.0f, 0.0f, 0.71f, 2 };     // LPF
         presets.push_back(p);
     }
@@ -249,7 +249,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[3] = { true, 350.0f, -3.0f, 2.0f, 0 };      // Remove mud
         p.bands[4] = { true, 2500.0f, 2.5f, 2.0f, 0 };      // Click/attack
         p.bands[5] = { true, 5000.0f, 1.0f, 1.0f, 0 };      // Beater
-        p.bands[6] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[6] = { false, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { true, 12000.0f, 0.0f, 0.71f, 2 };    // LPF
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
@@ -264,7 +264,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 2 };       // HPF
         p.bands[1] = { true, 150.0f, 1.0f, 1.0f, 0 };       // Body
         p.bands[2] = { true, 400.0f, -2.0f, 2.5f, 0 };      // Remove box
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[4] = { true, 2000.0f, 3.0f, 1.5f, 0 };      // Crack
         p.bands[5] = { true, 5000.0f, 2.0f, 1.2f, 0 };      // Snare wire
         p.bands[6] = { true, 10000.0f, 1.5f, 0.71f, 0 };    // High shelf air
@@ -280,7 +280,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 200.0f, 0.0f, 0.71f, 2 };      // HPF - remove kick bleed
         p.bands[1] = { true, 400.0f, -1.5f, 1.5f, 0 };      // Remove mud
-        p.bands[2] = { true, 800.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 800.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[3] = { true, 3000.0f, 1.5f, 1.2f, 0 };      // Stick definition
         p.bands[4] = { true, 6000.0f, 2.0f, 0.8f, 0 };      // Cymbal presence
         p.bands[5] = { true, 10000.0f, 2.5f, 0.71f, 0 };    // Air
@@ -298,11 +298,11 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 2 };       // HPF sub cleanup
         p.bands[1] = { true, 60.0f, 3.5f, 1.2f, 0 };         // Sub boost
-        p.bands[2] = { true, 150.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[2] = { false, 150.0f, 0.0f, 0.71f, 0 };       // Flat
         p.bands[3] = { true, 300.0f, -3.5f, 2.0f, 0 };       // Mud cut
-        p.bands[4] = { true, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[4] = { false, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[5] = { true, 3500.0f, 2.5f, 1.5f, 0 };       // Click/attack
-        p.bands[6] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[7] = { true, 10000.0f, 0.0f, 0.71f, 2 };     // LPF
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
@@ -315,9 +315,9 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Drums";
         p.eqType = 0;
         p.bands[0] = { true, 100.0f, 0.0f, 0.71f, 2 };      // HPF
-        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };       // Flat
         p.bands[2] = { true, 400.0f, -2.5f, 2.0f, 0 };       // Box cut
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[4] = { true, 2500.0f, 3.0f, 1.2f, 0 };       // Crack
         p.bands[5] = { true, 4000.0f, 2.0f, 1.0f, 0 };       // Snap
         p.bands[6] = { true, 8000.0f, 1.5f, 0.71f, 0 };      // Air
@@ -332,10 +332,10 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Drums";
         p.eqType = 0;
         p.bands[0] = { true, 200.0f, 0.0f, 0.71f, 2 };      // HPF remove lows
-        p.bands[1] = { true, 400.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[2] = { true, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[3] = { true, 3000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[4] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[1] = { false, 400.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[2] = { false, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[3] = { false, 3000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[4] = { false, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[5] = { true, 8000.0f, 2.0f, 0.5f, 0 };       // Brightness shelf
         p.bands[6] = { true, 12000.0f, 2.5f, 0.5f, 0 };      // Air shelf
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
@@ -354,10 +354,10 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 3 };       // HPF - sub cleanup
         p.bands[1] = { true, 80.0f, 2.0f, 1.0f, 0 };        // Low-end punch
         p.bands[2] = { true, 200.0f, -1.5f, 1.5f, 0 };      // Reduce mud
-        p.bands[3] = { true, 500.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[3] = { false, 500.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[4] = { true, 1200.0f, 2.5f, 1.5f, 0 };      // Growl/attack
         p.bands[5] = { true, 3000.0f, 1.0f, 1.0f, 0 };      // String noise
-        p.bands[6] = { true, 6000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[6] = { false, 6000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { true, 8000.0f, 0.0f, 0.71f, 2 };     // LPF
         presets.push_back(p);
     }
@@ -373,8 +373,8 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[2] = { true, 100.0f, 1.5f, 1.0f, 0 };       // Low punch
         p.bands[3] = { true, 300.0f, -2.0f, 1.5f, 0 };      // Clean up mud
         p.bands[4] = { true, 700.0f, -1.0f, 1.2f, 0 };      // Reduce honk
-        p.bands[5] = { true, 2000.0f, 0.0f, 0.71f, 0 };     // Flat
-        p.bands[6] = { true, 5000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[5] = { false, 2000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[6] = { false, 5000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { true, 6000.0f, 0.0f, 0.71f, 3 };     // LPF steep
         presets.push_back(p);
     }
@@ -406,7 +406,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 100.0f, 0.0f, 0.71f, 2 };      // HPF
         p.bands[1] = { true, 200.0f, -1.5f, 1.2f, 0 };      // Reduce boom
-        p.bands[2] = { true, 500.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 500.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[3] = { true, 2000.0f, 1.5f, 1.0f, 0 };      // Body
         p.bands[4] = { true, 5000.0f, 2.0f, 0.8f, 0 };      // Pick attack
         p.bands[5] = { true, 8000.0f, 2.5f, 0.71f, 0 };     // Shimmer
@@ -423,12 +423,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Guitars";
         p.eqType = 0;
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 2 };       // HPF
-        p.bands[1] = { true, 150.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[1] = { false, 150.0f, 0.0f, 0.71f, 0 };       // Flat
         p.bands[2] = { true, 400.0f, -3.0f, 1.5f, 0 };       // Scoop
         p.bands[3] = { true, 800.0f, -1.0f, 1.0f, 0 };       // Slight dip
         p.bands[4] = { true, 2000.0f, 2.0f, 1.2f, 0 };       // Presence
         p.bands[5] = { true, 4000.0f, 2.5f, 1.0f, 0 };       // Bite
-        p.bands[6] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[7] = { true, 12000.0f, 0.0f, 0.71f, 2 };     // LPF
         presets.push_back(p);
     }
@@ -441,11 +441,11 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 2 };       // HPF
         p.bands[1] = { true, 200.0f, -1.5f, 1.0f, 0 };       // Reduce boom
-        p.bands[2] = { true, 500.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[3] = { true, 2000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 500.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[3] = { false, 2000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[4] = { true, 5000.0f, 2.0f, 0.8f, 0 };       // Sparkle
         p.bands[5] = { true, 8000.0f, 1.0f, 0.71f, 0 };      // Shimmer
-        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[6] = { false, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
@@ -461,9 +461,9 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[1] = { true, 80.0f, 3.0f, 1.0f, 0 };         // Low punch
         p.bands[2] = { true, 250.0f, -2.5f, 1.5f, 0 };       // Mud cut
         p.bands[3] = { true, 700.0f, 2.0f, 1.2f, 0 };        // Growl
-        p.bands[4] = { true, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[5] = { true, 3000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[6] = { true, 5000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[4] = { false, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[5] = { false, 3000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 5000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[7] = { true, 8000.0f, 0.0f, 0.71f, 2 };      // LPF
         presets.push_back(p);
     }
@@ -479,9 +479,9 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 2 };       // HPF gentle
         p.bands[1] = { true, 60.0f, 1.0f, 0.71f, 0 };       // Low shelf warmth
         p.bands[2] = { true, 300.0f, -0.5f, 0.5f, 0 };      // Subtle mud cut
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[4] = { true, 3000.0f, 0.5f, 0.5f, 0 };      // Subtle presence
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[5] = { false, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 12000.0f, 1.5f, 0.71f, 0 };    // High shelf air
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
         p.hqEnabled = false;  // OS is user preference, not preset-driven
@@ -497,10 +497,10 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 25.0f, 0.0f, 0.71f, 2 };       // HPF
         p.bands[1] = { true, 80.0f, 2.0f, 0.71f, 0 };       // Low shelf boost
-        p.bands[2] = { true, 200.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 200.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[3] = { true, 800.0f, -0.5f, 0.5f, 0 };      // Subtle mid cut
-        p.bands[4] = { true, 2500.0f, 0.0f, 0.71f, 0 };     // Flat
-        p.bands[5] = { true, 6000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[4] = { false, 2500.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[5] = { false, 6000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 10000.0f, 2.0f, 0.71f, 0 };    // High shelf boost
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };   // LPF off
         p.hqEnabled = false;  // OS is user preference, not preset-driven
@@ -515,10 +515,10 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 25.0f, 0.0f, 0.71f, 2 };       // HPF
         p.bands[1] = { true, 80.0f, 1.5f, 0.5f, 0 };         // Bass shelf boost
-        p.bands[2] = { true, 300.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[4] = { true, 3000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[5] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 300.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[4] = { false, 3000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[5] = { false, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[6] = { true, 10000.0f, 1.5f, 0.5f, 0 };      // HF shelf boost
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
         p.hqEnabled = false;  // OS is user preference, not preset-driven
@@ -533,12 +533,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Mix Bus";
         p.eqType = 0;
         p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 2 };       // HPF
-        p.bands[1] = { true, 100.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[2] = { true, 500.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[1] = { false, 100.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[2] = { false, 500.0f, 0.0f, 0.71f, 0 };       // Flat
         p.bands[3] = { true, 1500.0f, 1.0f, 0.6f, 0 };       // Lower mid boost
         p.bands[4] = { true, 2500.0f, 1.5f, 0.7f, 0 };       // Mid presence
         p.bands[5] = { true, 3500.0f, 1.0f, 0.8f, 0 };       // Upper mid
-        p.bands[6] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
@@ -552,11 +552,11 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 3 };       // HPF at 30Hz steep
         p.bands[1] = { true, 60.0f, -1.5f, 1.5f, 0 };        // Tighten low end
-        p.bands[2] = { true, 200.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[3] = { true, 500.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[4] = { true, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[5] = { true, 4000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[6] = { true, 10000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[2] = { false, 200.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[3] = { false, 500.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[4] = { false, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[5] = { false, 4000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 10000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { false, 18000.0f, 0.0f, 0.71f, 2 };    // LPF off
         presets.push_back(p);
     }
@@ -572,9 +572,9 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[0] = { true, 25.0f, 0.0f, 0.71f, 3 };       // HPF steep
         p.bands[1] = { true, 50.0f, 0.5f, 0.5f, 0 };        // Subtle sub lift
         p.bands[2] = { true, 250.0f, -0.3f, 0.4f, 0 };      // Very gentle mud cut
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[4] = { true, 4000.0f, 0.3f, 0.4f, 0 };      // Subtle presence
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[5] = { false, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[6] = { true, 14000.0f, 0.8f, 0.71f, 0 };    // High shelf air
         p.bands[7] = { true, 20000.0f, 0.0f, 0.71f, 1 };    // LPF gentle
         p.hqEnabled = false;  // OS is user preference, not preset-driven
@@ -589,12 +589,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Mastering";
         p.eqType = 0;
         p.bands[0] = { true, 28.0f, 0.0f, 0.71f, 4 };       // HPF very steep
-        p.bands[1] = { true, 100.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[2] = { true, 300.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
-        p.bands[4] = { true, 3000.0f, 0.0f, 0.71f, 0 };     // Flat
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
-        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };    // Flat
+        p.bands[1] = { false, 100.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 300.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[4] = { false, 3000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[5] = { false, 8000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[6] = { false, 12000.0f, 0.0f, 0.71f, 0 };    // Flat
         p.bands[7] = { true, 19500.0f, 0.0f, 0.71f, 2 };    // LPF near Nyquist
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         presets.push_back(p);
@@ -607,11 +607,11 @@ inline std::vector<Preset> getFactoryPresets()
         p.category = "Mastering";
         p.eqType = 0;
         p.bands[0] = { true, 25.0f, 0.0f, 0.71f, 3 };       // HPF steep
-        p.bands[1] = { true, 100.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[2] = { true, 500.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[3] = { true, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[4] = { true, 4000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[1] = { false, 100.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[2] = { false, 500.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[3] = { false, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[4] = { false, 4000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[5] = { false, 8000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[6] = { true, 15000.0f, 1.5f, 0.4f, 0 };      // Air shelf
         p.bands[7] = { true, 20000.0f, 0.0f, 0.71f, 1 };     // LPF gentle
         p.hqEnabled = false;  // OS is user preference, not preset-driven
@@ -627,11 +627,11 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 25.0f, 0.0f, 0.71f, 3 };       // HPF steep
         p.bands[1] = { true, 100.0f, 1.0f, 0.4f, 0 };        // Warm shelf
-        p.bands[2] = { true, 300.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 300.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[4] = { true, 3000.0f, -0.5f, 0.8f, 0 };      // Gentle dip
-        p.bands[5] = { true, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[5] = { false, 6000.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[6] = { false, 12000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[7] = { true, 20000.0f, 0.0f, 0.71f, 1 };     // LPF gentle
         p.hqEnabled = false;  // OS is user preference, not preset-driven
         p.qCoupleMode = 1; // Proportional
@@ -694,7 +694,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[3] = { true, 2000.0f, 4.0f, 1.2f, 0 };      // Presence
         p.bands[4] = { true, 3500.0f, 2.0f, 1.0f, 0 };      // Upper mid
         p.bands[5] = { true, 4500.0f, -6.0f, 0.71f, 0 };    // High cut
-        p.bands[6] = { true, 5000.0f, 0.0f, 0.71f, 0 };     // Transition
+        p.bands[6] = { false, 5000.0f, 0.0f, 0.71f, 0 };     // Transition
         p.bands[7] = { true, 5500.0f, 0.0f, 0.71f, 4 };     // LPF steep
         presets.push_back(p);
     }
@@ -724,8 +724,8 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { false, 30.0f, 0.0f, 0.71f, 2 };      // HPF off
         p.bands[1] = { true, 100.0f, -2.0f, 0.71f, 0 };     // Cut sides in low
-        p.bands[2] = { true, 300.0f, 0.0f, 0.71f, 0 };      // Flat
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
+        p.bands[2] = { false, 300.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };     // Flat
         p.bands[4] = { true, 4000.0f, 2.0f, 0.8f, 0 };      // Boost upper mids
         p.bands[5] = { true, 8000.0f, 3.0f, 0.71f, 0 };     // Boost highs
         p.bands[6] = { true, 12000.0f, 2.0f, 0.71f, 0 };    // Air
@@ -982,8 +982,8 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.bands[0] = { true, 200.0f, 0.0f, 0.71f, 2 };      // HPF
         p.bands[1] = { true, 250.0f, 2.0f, 2.5f, 0 };        // Resonant bump at HPF
-        p.bands[2] = { true, 600.0f, 0.0f, 0.71f, 0 };       // Flat
-        p.bands[3] = { true, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
+        p.bands[2] = { false, 600.0f, 0.0f, 0.71f, 0 };       // Flat
+        p.bands[3] = { false, 1500.0f, 0.0f, 0.71f, 0 };      // Flat
         p.bands[4] = { true, 3000.0f, -1.0f, 0.71f, 0 };     // Slight dip
         p.bands[5] = { true, 5500.0f, 2.0f, 2.5f, 0 };       // Resonant bump at LPF
         p.bands[6] = { true, 6000.0f, -3.0f, 0.71f, 0 };     // Rolloff
@@ -1280,12 +1280,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;  // Digital
         p.hasPerBandDynamics = true;
         p.bands[0] = { false, 20.0f, 0.0f, 0.71f, 2 };
-        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
-        p.bands[2] = { true, 1000.0f, 0.0f, 0.71f, 0 };
-        p.bands[3] = { true, 3000.0f, 0.0f, 0.71f, 0 };
-        p.bands[4] = { true, 6000.0f, 0.0f, 2.0f, 0 };  // De-ess target
-        p.bands[5] = { true, 10000.0f, 0.0f, 0.71f, 0 };
-        p.bands[6] = { true, 14000.0f, 0.0f, 0.71f, 0 };
+        p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { false, 1000.0f, 0.0f, 0.71f, 0 };
+        p.bands[3] = { false, 3000.0f, 0.0f, 0.71f, 0 };
+        p.bands[4] = { true, 6000.0f, 0.0f, 2.0f, 0 };   // De-ess target (dynamics-active)
+        p.bands[5] = { false, 10000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { false, 14000.0f, 0.0f, 0.71f, 0 };
         p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
         // Dynamic on band 5 (6kHz sibilance)
         p.bandDynamics[4] = { true, -24.0f, 1.0f, 50.0f, 8.0f, 6.0f };
@@ -1300,12 +1300,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.hasPerBandDynamics = true;
         p.bands[0] = { true, 60.0f, 0.0f, 0.71f, 2 };   // HPF at 60Hz
-        p.bands[1] = { true, 100.0f, 0.0f, 1.0f, 0 };    // Dynamic low shelf
-        p.bands[2] = { true, 250.0f, 0.0f, 0.71f, 0 };
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.71f, 0 };
-        p.bands[4] = { true, 3000.0f, 0.0f, 0.71f, 0 };
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.71f, 0 };
-        p.bands[6] = { true, 12000.0f, 0.0f, 0.71f, 0 };
+        p.bands[1] = { true, 100.0f, 0.0f, 1.0f, 0 };     // Dynamic low shelf (dynamics-active)
+        p.bands[2] = { false, 250.0f, 0.0f, 0.71f, 0 };
+        p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };
+        p.bands[4] = { false, 3000.0f, 0.0f, 0.71f, 0 };
+        p.bands[5] = { false, 8000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { false, 12000.0f, 0.0f, 0.71f, 0 };
         p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
         // Dynamic cut on band 2 (low shelf - tighten lows when loud)
         p.bandDynamics[1] = { true, -18.0f, 5.0f, 80.0f, 6.0f, 4.0f };
@@ -1320,12 +1320,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.hasPerBandDynamics = true;
         p.bands[0] = { false, 20.0f, 0.0f, 0.71f, 2 };
-        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
-        p.bands[2] = { true, 500.0f, 0.0f, 0.71f, 0 };
-        p.bands[3] = { true, 1500.0f, 0.0f, 0.71f, 0 };
+        p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { false, 500.0f, 0.0f, 0.71f, 0 };
+        p.bands[3] = { false, 1500.0f, 0.0f, 0.71f, 0 };
         p.bands[4] = { true, 3000.0f, 2.0f, 1.5f, 0 };   // Static boost at 3kHz
-        p.bands[5] = { true, 5000.0f, 0.0f, 0.71f, 0 };
-        p.bands[6] = { true, 10000.0f, 0.0f, 0.71f, 0 };
+        p.bands[5] = { false, 5000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { false, 10000.0f, 0.0f, 0.71f, 0 };
         p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
         // Dynamic cut on band 5 (presence — duck when too harsh)
         p.bandDynamics[4] = { true, -15.0f, 3.0f, 80.0f, 6.0f, 3.0f };
@@ -1340,12 +1340,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.hasPerBandDynamics = true;
         p.bands[0] = { false, 20.0f, 0.0f, 0.71f, 2 };
-        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
-        p.bands[2] = { true, 400.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target
-        p.bands[3] = { true, 800.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target
-        p.bands[4] = { true, 2000.0f, 0.0f, 4.0f, 0 };  // Narrow — resonance target
-        p.bands[5] = { true, 5000.0f, 0.0f, 0.71f, 0 };
-        p.bands[6] = { true, 10000.0f, 0.0f, 0.71f, 0 };
+        p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { true, 400.0f, 0.0f, 4.0f, 0 };    // Narrow — resonance target (dynamics-active)
+        p.bands[3] = { true, 800.0f, 0.0f, 4.0f, 0 };    // Narrow — resonance target (dynamics-active)
+        p.bands[4] = { true, 2000.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target (dynamics-active)
+        p.bands[5] = { false, 5000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { false, 10000.0f, 0.0f, 0.71f, 0 };
         p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
         // Dynamic narrow cuts on resonant bands
         p.bandDynamics[2] = { true, -20.0f, 2.0f, 60.0f, 10.0f, 8.0f };
@@ -1362,12 +1362,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.hasPerBandDynamics = true;
         p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 2 };    // HPF
-        p.bands[1] = { true, 100.0f, 0.0f, 0.5f, 0 };     // Low band
-        p.bands[2] = { true, 400.0f, 0.0f, 0.5f, 0 };     // Low-mid
-        p.bands[3] = { true, 1000.0f, 0.0f, 0.5f, 0 };    // Mid
-        p.bands[4] = { true, 3000.0f, 0.0f, 0.5f, 0 };    // Hi-mid
-        p.bands[5] = { true, 8000.0f, 0.0f, 0.5f, 0 };    // High
-        p.bands[6] = { true, 14000.0f, 0.0f, 0.71f, 0 };  // Air
+        p.bands[1] = { true, 100.0f, 0.0f, 0.5f, 0 };      // Low band (dynamics-active)
+        p.bands[2] = { true, 400.0f, 0.0f, 0.5f, 0 };      // Low-mid (dynamics-active)
+        p.bands[3] = { true, 1000.0f, 0.0f, 0.5f, 0 };     // Mid (dynamics-active)
+        p.bands[4] = { true, 3000.0f, 0.0f, 0.5f, 0 };     // Hi-mid (dynamics-active)
+        p.bands[5] = { true, 8000.0f, 0.0f, 0.5f, 0 };     // High (dynamics-active)
+        p.bands[6] = { false, 14000.0f, 0.0f, 0.71f, 0 };  // Air
         p.bands[7] = { true, 18000.0f, 0.0f, 0.71f, 2 };  // LPF
         // Gentle dynamics on all main bands
         p.bandDynamics[1] = { true, -18.0f, 10.0f, 100.0f, 6.0f, 2.0f };
@@ -1387,12 +1387,12 @@ inline std::vector<Preset> getFactoryPresets()
         p.hasPerBandDynamics = false;
         p.processingMode = 4;  // Side processing
         p.bands[0] = { true, 80.0f, 0.0f, 0.71f, 3 };    // HPF (mono bass)
-        p.bands[1] = { true, 200.0f, 0.0f, 0.71f, 0 };
-        p.bands[2] = { true, 800.0f, 0.0f, 0.71f, 0 };
+        p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };
+        p.bands[2] = { false, 800.0f, 0.0f, 0.71f, 0 };
         p.bands[3] = { true, 2000.0f, 2.0f, 0.71f, 0 };   // Boost sides at 2kHz
         p.bands[4] = { true, 5000.0f, 3.0f, 0.71f, 0 };   // Boost sides at 5kHz
         p.bands[5] = { true, 10000.0f, 2.0f, 0.71f, 0 };  // Boost sides at 10kHz
-        p.bands[6] = { true, 14000.0f, 0.0f, 0.71f, 0 };
+        p.bands[6] = { false, 14000.0f, 0.0f, 0.71f, 0 };
         p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
         presets.push_back(p);
     }
