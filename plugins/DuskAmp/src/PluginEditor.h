@@ -121,6 +121,8 @@ private:
     // -- CABINET section --
     juce::ToggleButton cabEnabled_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> cabEnabledAttachment_;
+    juce::ComboBox cabPresetBox_;   // bundled-IR picker, sourced from CabinetLibrary
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> cabPresetAttachment_;
     KnobWithLabel cabMix_;
     KnobWithLabel cabHiCut_;
     KnobWithLabel cabLoCut_;
