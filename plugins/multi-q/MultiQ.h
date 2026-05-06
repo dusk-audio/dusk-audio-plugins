@@ -513,6 +513,11 @@ public:
         return static_cast<int>(safeGetParam(eqTypeParam, 0.0f)) == static_cast<int>(EQType::Match);
     }
 
+    bool isDigitalMode() const
+    {
+        return static_cast<int>(safeGetParam(eqTypeParam, 0.0f)) == static_cast<int>(EQType::Digital);
+    }
+
     // Spectrum data for display (thread-safe)
     void getMatchCurrentSpectrumDB(std::array<float, EQMatchProcessor::NUM_BINS>& out) const
     {

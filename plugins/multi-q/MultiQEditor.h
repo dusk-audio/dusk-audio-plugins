@@ -9,6 +9,7 @@
 #include "TubeEQLookAndFeel.h"
 #include "VintageTubeEQLookAndFeel.h"
 #include "BandDetailPanel.h"
+#include "BandStripComponent.h"
 #include "../shared/SupportersOverlay.h"
 #include "../shared/LEDMeter.h"
 #include "../shared/DuskLookAndFeel.h"
@@ -57,6 +58,7 @@ private:
 
     // Band detail panel (band selector + single-row controls)
     std::unique_ptr<BandDetailPanel> bandDetailPanel;
+    std::unique_ptr<BandStripComponent> bandStrip;   // 8-column band overview, sits above bandDetailPanel
 
     // British mode curve display (4K-EQ style)
     std::unique_ptr<BritishEQCurveDisplay> britishCurveDisplay;
