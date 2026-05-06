@@ -4,6 +4,7 @@
 #include "FactoryPresets.h"
 #include "ParamIDs.h"
 #include "CrashLog.h"
+#include "dsp/CabinetLibrary.h"
 #include "../../shared/DuskLookAndFeel.h"   // ValueEditor::popUp
 
 // =============================================================================
@@ -269,6 +270,16 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
     cabEnabledAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         params, DuskAmpParams::CAB_ENABLED, cabEnabled_);
 
+    // --- Bundled-IR preset picker. Choices come from CabinetLibrary so this
+    //     stays in sync with the APVTS choice list automatically. ---
+    for (int i = 0; i < CabinetLibrary::numChoices(); ++i)
+        cabPresetBox_.addItem (CabinetLibrary::displayNameForChoice (i), i + 1);
+    cabPresetBox_.setJustificationType (juce::Justification::centredLeft);
+    cabPresetBox_.setTooltip ("Bundled cabinet IR — pick a starter cab without loading a file");
+    addAndMakeVisible (cabPresetBox_);
+    cabPresetAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+        params, DuskAmpParams::CAB_PRESET, cabPresetBox_);
+
     // --- Cab browser ---
     cabBrowser_.onFileSelected = [this] (const juce::File& file)
     {
@@ -503,6 +514,8 @@ void DuskAmpEditor::timerCallback()
     cabMix_.setDimmed (cabOff);
     cabHiCut_.setDimmed (cabOff);
     cabLoCut_.setDimmed (cabOff);
+    cabPresetBox_.setEnabled (! cabOff);
+    cabPresetBox_.setAlpha (cabOff ? 0.4f : 1.0f);
     cabBrowser_.setEnabled (! cabOff);
     cabBrowser_.setAlpha (cabOff ? 0.4f : 1.0f);
 
@@ -898,11 +911,17 @@ void DuskAmpEditor::resized()
         placeKnob (boostLevel_, { innerX + 2 * colW, kY, colW, kH }, knobSize, sf);
     }
 
-    // CABINET section: toggle + 3 knobs | browser
+    // CABINET section: toggle + preset combo on top row, then 3 knobs | browser
     {
         int innerX = cabX + pad;
         int innerY = bottomY + pad;
         cabEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
+
+        // Preset combo sits to the right of the CAB toggle on the top row.
+        int comboX = innerX + toggleW + scaler_.scaled (4);
+        int comboW = scaler_.scaled (160);
+        cabPresetBox_.setBounds (comboX, innerY, comboW, toggleH);
+
         int kY = innerY + toggleH + scaler_.scaled (4);
         int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
         int knobColW = scaler_.scaled (62);
