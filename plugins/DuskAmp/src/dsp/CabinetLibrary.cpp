@@ -27,12 +27,12 @@ namespace CabinetLibrary
         //   5) document the file's licensing in resources/cabs/LICENSES.md
         const Entry kEntries[] =
         {
-            { None,                              "(none)",                         "" },
-            { FenderTwin_2x12_SM57,              "Fender Twin 2x12 — SM57 OA",     "fender_twin_2x12_sm57_oa" },
-            { Marshall_1960A_V30_SM57,           "Marshall 1960A V30 — SM57 OA",   "marshall_1960a_v30_sm57_oa" },
-            { Marshall_1960A_Greenback_OffAxis,  "Marshall 1960A Greenback — Off", "marshall_1960a_greenback_sm57_off" },
-            { Vox_AC30_2x12_Ribbon,              "Vox AC30 2x12 — Ribbon",         "vox_ac30_2x12_blue_ribbon" },
-            { Mesa_4x12_V30_Blend,               "Mesa 4x12 V30 — Blend",          "mesa_4x12_v30_57_blend" },
+            { None,                     "(none)",                       "" },
+            { FenderTwin_SM57,          "Fender Twin — SM57",           "fender_twin_sm57_oa" },
+            { Marshall1960VB_SM57_OA,   "Marshall 1960VB — SM57 OA",    "marshall_1960vb_sm57_oa" },
+            { Marshall1960VB_SM57_Off,  "Marshall 1960VB — SM57 Off",   "marshall_1960vb_sm57_off" },
+            { VoxAC15_SM57,             "Vox AC15 — SM57",              "vox_ac15_sm57" },
+            { VoxAC15_sE4_Close,        "Vox AC15 — sE4 Close",         "vox_ac15_se4_close" },
         };
 
         static_assert (sizeof (kEntries) / sizeof (kEntries[0]) == static_cast<size_t> (Count),
