@@ -23,15 +23,19 @@ namespace CabinetLibrary
 {
     // Stable index into the choice param. Index 0 is reserved for "(none)";
     // user-loaded IRs use a separate path (CabinetIR::loadIR with a file).
+    //
+    // CHANGING THE ORDER BREAKS SAVED STATE — append new entries before Count
+    // rather than reordering. The integer value of each enumerator is the
+    // value that gets serialised into projects.
     enum CabinetId
     {
         None = 0,
-        FenderTwin_2x12_SM57,
-        Marshall_1960A_V30_SM57,
-        Marshall_1960A_Greenback_OffAxis,
-        Vox_AC30_2x12_Ribbon,
-        Mesa_4x12_V30_Blend,
-        // Add new entries here AND in cabinetEntries() below.
+        FenderTwin_SM57,
+        Marshall1960VB_SM57_OA,
+        Marshall1960VB_SM57_Off,
+        VoxAC15_SM57,
+        VoxAC15_sE4_Close,
+        // Add new entries here AND in kEntries[] below.
         Count
     };
 
