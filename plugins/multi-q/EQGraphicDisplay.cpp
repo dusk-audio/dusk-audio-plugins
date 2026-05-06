@@ -843,11 +843,20 @@ void EQGraphicDisplay::drawControlPoints(juce::Graphics& g)
         }
     }
 
-    // Then draw inactive bands as faint indicators
-    for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
+    // Then draw inactive bands as faint indicators — except in Digital mode,
+    // where disabled bands disappear completely (issue #78). The faint
+    // indicators clutter the analyzer view; the user wants disabled bands
+    // gone entirely. British / Tube / Match modes keep the indicators so
+    // there's still a visual hint that the band exists and can be re-enabled
+    // by clicking the corresponding number.
+    const bool hideDisabled = processor.isDigitalMode();
+    if (! hideDisabled)
     {
-        if (!isBandEnabled(i))
-            drawInactiveBandIndicator(g, i);
+        for (int i = 0; i < MultiQ::NUM_BANDS; ++i)
+        {
+            if (!isBandEnabled(i))
+                drawInactiveBandIndicator(g, i);
+        }
     }
 
     // Finally draw active band nodes on top
