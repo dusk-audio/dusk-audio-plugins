@@ -46,6 +46,8 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                             // output collapsed to zero. zeroCenterCurve()
                             // now subtracts f(0) so push-pull works for all
                             // three Koren curves.
+                0.55f,      // sagDepth: deep — Fender's 5AR4 tube rectifier
+                            // produces 3-5dB sag at cranked operation
                 0.80f,      // Transformer: high saturation threshold
                 0.10f,      // Moderate saturation amount
                 1.2f,       // LF saturation multiplier
@@ -61,6 +63,8 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 3.5f,       // More drive available (single-ended needs it)
                 0.15f,      // Class A bias asymmetry → 2nd harmonic content
                 false,      // isPushPull (Class A — single-ended EL84, even harmonics survive)
+                0.40f,      // sagDepth: medium — Vox AC30's GZ34 rectifier
+                            // gives 2-3dB sag, less than Fender's 5AR4
                 0.65f,      // Lower saturation threshold (EL84 clips earlier)
                 0.15f,      // More saturation
                 1.4f,       // More LF saturation (loose bottom end)
@@ -77,6 +81,8 @@ PowerAmp::PowerAmpConfig PowerAmp::getConfigForAmpType (AmpType type)
                 4.0f,       // More drive headroom (for high gain)
                 0.0f,       // Symmetric push-pull (Class AB)
                 true,       // isPushPull (Class AB — pair of EL34, transformer subtracts)
+                0.12f,      // sagDepth: shallow — Marshall's solid-state bridge
+                            // rectifier delivers tight, fast response (~0.5-1dB)
                 0.70f,      // Moderate saturation threshold
                 0.12f,      // Moderate saturation
                 1.3f,       // Moderate LF saturation
@@ -225,7 +231,7 @@ void PowerAmp::process (float* buffer, int numSamples)
             sagEnvelope_ = sagReleaseCoeff_ * sagEnvelope_;
         if (sagEnvelope_ < 1e-15f) sagEnvelope_ = 0.0f;
 
-        float sagReduction = 1.0f - sagAmount_ * std::min (sagEnvelope_, 1.0f) * 0.3f;
+        float sagReduction = 1.0f - sagAmount_ * std::min (sagEnvelope_, 1.0f) * config_.sagDepth;
 
         // --- 3. Drive stage with feedback subtraction ---
         float driven = (input - feedback) * driveGain_ * sagReduction;
