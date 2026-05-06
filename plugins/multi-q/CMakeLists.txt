@@ -79,6 +79,7 @@ target_sources(MultiQ
         BritishEQCurveDisplay.cpp
         TubeEQCurveDisplay.cpp
         BandDetailPanel.cpp
+        BandStripComponent.cpp
         ../shared/LEDMeter.cpp
         ../4k-eq/FourKLookAndFeel.cpp
 )

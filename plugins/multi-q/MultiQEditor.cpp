@@ -16,6 +16,15 @@ MultiQEditor::MultiQEditor(MultiQ& p)
     bandDetailPanel->onMatchCleared = [this]() { if (graphicDisplay) graphicDisplay->repaint(); };
     addAndMakeVisible(bandDetailPanel.get());
 
+    // Always-visible 8-column band overview between the EQ graph and the
+    // BandDetailPanel. Each column has its own enable toggle + click-to-select
+    // behaviour, so the user can always see all 8 bands and re-enable any of
+    // them — even when every band is disabled and the EQ graph is otherwise
+    // empty (issue #78 + UX follow-up).
+    bandStrip = std::make_unique<BandStripComponent>(processor);
+    bandStrip->onBandSelected = [this](int band) { onBandSelected(band); };
+    addAndMakeVisible(bandStrip.get());
+
     // Create British mode curve display (4K-EQ style)
     britishCurveDisplay = std::make_unique<BritishEQCurveDisplay>(processor);
     britishCurveDisplay->setVisible(false);  // Hidden by default
@@ -820,7 +829,8 @@ void MultiQEditor::paint(juce::Graphics& g)
         if (selectedBand >= 0 && selectedBand < 8)
         {
             // Get band info for display
-            const char* bandTypeNames[] = {"HPF", "Low Shelf", "Para 1", "Para 2", "Para 3", "Para 4", "High Shelf", "LPF"};
+            // Mirrors EQBand.h DefaultBandConfigs[].name — keep in sync.
+            const char* bandTypeNames[] = {"HPF", "Low Shelf", "Low", "Low Mid", "Mid", "High Mid", "High Shelf", "LPF"};
 
             // Draw centered band indicator: "Band 3 - Para 1"
             juce::String bandText = "Band " + juce::String(selectedBand + 1) + " - " + bandTypeNames[selectedBand];
@@ -1283,6 +1293,15 @@ void MultiQEditor::resized()
         bandDetailPanel->setBounds(detailPanelArea);
         bandDetailPanel->setVisible(true);
         bandDetailPanel->setSelectedBand(selectedBand);
+
+        // ===== BAND STRIP (8-column overview, sits above BandDetailPanel) =====
+        // Placed BEFORE the meter areas are removed (below) so the strip
+        // spans the same horizontal extent as the EQ graph.
+        const int bandStripHeight = 56;
+        auto bandStripArea = bounds.removeFromBottom(bandStripHeight);
+        bandStrip->setBounds(bandStripArea);
+        bandStrip->setVisible(true);
+        bandStrip->setSelectedBand(selectedBand);
 
         // ===== METERS ON SIDES =====
         int meterWidth = 28;  // Wider meters for better visibility
@@ -1856,6 +1875,7 @@ void MultiQEditor::onBandSelected(int bandIndex)
     selectedBand = bandIndex;
     graphicDisplay->setSelectedBand(bandIndex);
     bandDetailPanel->setSelectedBand(bandIndex);
+    if (bandStrip) bandStrip->setSelectedBand(bandIndex);
     updateSelectedBandControls();
 
     if (!isBritishMode && !isTubeEQMode)
@@ -2113,6 +2133,7 @@ void MultiQEditor::updateEQModeVisibility()
 
     // BandDetailPanel - only in Digital mode
     bandDetailPanel->setVisible(isDigitalMode);
+    if (bandStrip) bandStrip->setVisible(isDigitalMode);
 
     // NOTE: A/B buttons, preset selectors, bypass, oversampling, and display scale
     // visibility is handled by layoutUnifiedToolbar() - DO NOT set visibility here!
