@@ -30,6 +30,11 @@ public:
     void setAmpType (AmpType type);
     void process (float* buffer, int numSamples);
 
+    // Diagnostic-only override of the per-amp isPushPull flag. Intended
+    // for the standalone DSP test harness; production code should leave
+    // the config-driven default in place.
+    void setIsPushPullOverride (bool on) { config_.isPushPull = on; }
+
 private:
     // Per-amp-type configuration
     struct PowerAmpConfig
