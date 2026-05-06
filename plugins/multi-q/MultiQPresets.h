@@ -1283,7 +1283,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };
         p.bands[2] = { false, 1000.0f, 0.0f, 0.71f, 0 };
         p.bands[3] = { false, 3000.0f, 0.0f, 0.71f, 0 };
-        p.bands[4] = { false, 6000.0f, 0.0f, 2.0f, 0 };  // De-ess target
+        p.bands[4] = { true, 6000.0f, 0.0f, 2.0f, 0 };   // De-ess target (dynamics-active)
         p.bands[5] = { false, 10000.0f, 0.0f, 0.71f, 0 };
         p.bands[6] = { false, 14000.0f, 0.0f, 0.71f, 0 };
         p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
@@ -1300,7 +1300,7 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.hasPerBandDynamics = true;
         p.bands[0] = { true, 60.0f, 0.0f, 0.71f, 2 };   // HPF at 60Hz
-        p.bands[1] = { false, 100.0f, 0.0f, 1.0f, 0 };    // Dynamic low shelf
+        p.bands[1] = { true, 100.0f, 0.0f, 1.0f, 0 };     // Dynamic low shelf (dynamics-active)
         p.bands[2] = { false, 250.0f, 0.0f, 0.71f, 0 };
         p.bands[3] = { false, 1000.0f, 0.0f, 0.71f, 0 };
         p.bands[4] = { false, 3000.0f, 0.0f, 0.71f, 0 };
@@ -1341,9 +1341,9 @@ inline std::vector<Preset> getFactoryPresets()
         p.hasPerBandDynamics = true;
         p.bands[0] = { false, 20.0f, 0.0f, 0.71f, 2 };
         p.bands[1] = { false, 200.0f, 0.0f, 0.71f, 0 };
-        p.bands[2] = { false, 400.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target
-        p.bands[3] = { false, 800.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target
-        p.bands[4] = { false, 2000.0f, 0.0f, 4.0f, 0 };  // Narrow — resonance target
+        p.bands[2] = { true, 400.0f, 0.0f, 4.0f, 0 };    // Narrow — resonance target (dynamics-active)
+        p.bands[3] = { true, 800.0f, 0.0f, 4.0f, 0 };    // Narrow — resonance target (dynamics-active)
+        p.bands[4] = { true, 2000.0f, 0.0f, 4.0f, 0 };   // Narrow — resonance target (dynamics-active)
         p.bands[5] = { false, 5000.0f, 0.0f, 0.71f, 0 };
         p.bands[6] = { false, 10000.0f, 0.0f, 0.71f, 0 };
         p.bands[7] = { false, 20000.0f, 0.0f, 0.71f, 2 };
@@ -1362,11 +1362,11 @@ inline std::vector<Preset> getFactoryPresets()
         p.eqType = 0;
         p.hasPerBandDynamics = true;
         p.bands[0] = { true, 30.0f, 0.0f, 0.71f, 2 };    // HPF
-        p.bands[1] = { false, 100.0f, 0.0f, 0.5f, 0 };     // Low band
-        p.bands[2] = { false, 400.0f, 0.0f, 0.5f, 0 };     // Low-mid
-        p.bands[3] = { false, 1000.0f, 0.0f, 0.5f, 0 };    // Mid
-        p.bands[4] = { false, 3000.0f, 0.0f, 0.5f, 0 };    // Hi-mid
-        p.bands[5] = { false, 8000.0f, 0.0f, 0.5f, 0 };    // High
+        p.bands[1] = { true, 100.0f, 0.0f, 0.5f, 0 };      // Low band (dynamics-active)
+        p.bands[2] = { true, 400.0f, 0.0f, 0.5f, 0 };      // Low-mid (dynamics-active)
+        p.bands[3] = { true, 1000.0f, 0.0f, 0.5f, 0 };     // Mid (dynamics-active)
+        p.bands[4] = { true, 3000.0f, 0.0f, 0.5f, 0 };     // Hi-mid (dynamics-active)
+        p.bands[5] = { true, 8000.0f, 0.0f, 0.5f, 0 };     // High (dynamics-active)
         p.bands[6] = { false, 14000.0f, 0.0f, 0.71f, 0 };  // Air
         p.bands[7] = { true, 18000.0f, 0.0f, 0.71f, 2 };  // LPF
         // Gentle dynamics on all main bands
