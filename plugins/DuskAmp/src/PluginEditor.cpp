@@ -889,15 +889,20 @@ void DuskAmpEditor::resized()
     int toggleH = scaler_.scaled (22);
     int pad = scaler_.scaled (8);
 
-    // 4-column layout: boost (15%) | cab (35%) | delay (25%) | reverb (25%)
-    int boostW  = static_cast<int> (contentW * 0.15f);
-    int cabW    = static_cast<int> (contentW * 0.35f);
-    int delayW  = static_cast<int> (contentW * 0.25f);
-    int reverbW = contentW - boostW - cabW - delayW - gap * 3;
+    // 4-column layout: cab (42%) | boost (13%) | delay (22%) | reverb (rest).
+    // CAB sits leftmost so the IR-name combo + cab browser have priority real
+    // estate — full cab IR names ("Marshall 1960VB — SM57 OA" class) need
+    // ~200 px of horizontal room in the right sub-column to display without
+    // truncation. Effects sit to the right of CAB in a logical signal-chain
+    // order: BOOST (pre-amp), DELAY, REVERB.
+    int cabW    = static_cast<int> (contentW * 0.42f);
+    int boostW  = static_cast<int> (contentW * 0.13f);
+    int delayW  = static_cast<int> (contentW * 0.22f);
+    int reverbW = contentW - cabW - boostW - delayW - gap * 3;
 
-    int boostX  = contentX;
-    int cabX    = boostX + boostW + gap;
-    int delayX  = cabX + cabW + gap;
+    int cabX    = contentX;
+    int boostX  = cabX + cabW + gap;
+    int delayX  = boostX + boostW + gap;
     int reverbX = delayX + delayW + gap;
 
     boostGroupBounds_  = { boostX, bottomY, boostW, bottomH };
