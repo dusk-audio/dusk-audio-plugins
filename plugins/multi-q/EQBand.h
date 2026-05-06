@@ -149,10 +149,14 @@ namespace BandColors
 inline const std::array<BandConfig, 8> DefaultBandConfigs = {{
     { BandType::HighPass,   juce::Colour(0xFFff5555),    20.0f,    20.0f, 20000.0f, "HPF" },         // Red
     { BandType::LowShelf,   juce::Colour(0xFFffaa00),   100.0f,    20.0f, 20000.0f, "Low Shelf" },   // Orange
-    { BandType::Parametric, juce::Colour(0xFFffee00),   200.0f,    20.0f, 20000.0f, "Para 1" },      // Yellow
-    { BandType::Parametric, juce::Colour(0xFF88ee44),   500.0f,    20.0f, 20000.0f, "Para 2" },      // Lime
-    { BandType::Parametric, juce::Colour(0xFF00ccff),  1000.0f,    20.0f, 20000.0f, "Para 3" },      // Cyan
-    { BandType::Parametric, juce::Colour(0xFF5588ff),  2000.0f,    20.0f, 20000.0f, "Para 4" },      // Blue
+    // Parametric bands named by their default frequency role rather than
+    // generic "Para 1..4" — matches the role-based naming used for HPF /
+    // Low Shelf / High Shelf / LPF and gives the user a useful hint about
+    // each band's intended job. Frequencies remain freely adjustable.
+    { BandType::Parametric, juce::Colour(0xFFffee00),   200.0f,    20.0f, 20000.0f, "Low" },         // Yellow
+    { BandType::Parametric, juce::Colour(0xFF88ee44),   500.0f,    20.0f, 20000.0f, "Low Mid" },     // Lime
+    { BandType::Parametric, juce::Colour(0xFF00ccff),  1000.0f,    20.0f, 20000.0f, "Mid" },         // Cyan
+    { BandType::Parametric, juce::Colour(0xFF5588ff),  2000.0f,    20.0f, 20000.0f, "High Mid" },    // Blue
     { BandType::HighShelf,  juce::Colour(0xFFaa66ff),  4000.0f,    20.0f, 20000.0f, "High Shelf" },  // Purple
     { BandType::LowPass,    juce::Colour(0xFFff66cc), 20000.0f,    20.0f, 20000.0f, "LPF" }          // Pink
 }};
