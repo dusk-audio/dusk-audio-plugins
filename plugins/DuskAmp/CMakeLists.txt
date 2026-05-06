@@ -65,7 +65,11 @@ juce_add_plugin(DuskAmp
     LV2URI "https://dusk-audio.github.io/plugins/duskamp"
     PRODUCT_NAME "DuskAmp"
     DESCRIPTION "Guitar amp simulator with DSP and NAM hybrid engine"
-    VST3_CAN_REPLACE_VST2 TRUE
+    VST3_CAN_REPLACE_VST2 FALSE   # DuskAmp has never shipped as VST2 — leaving
+                                  # this TRUE triggers JUCE's parameter-ID
+                                  # compatibility error (juce_audio_plugin_client_VST3.cpp:99)
+                                  # because legacy VST2 IDs would clash with the
+                                  # current VST3 hash-based IDs.
     VST3_AUTO_MANIFEST FALSE
 )
 
@@ -167,6 +171,16 @@ target_compile_definitions(DuskAmp
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_DISPLAY_SPLASH_SCREEN=0
+        # cmake/GlobalSettings.cmake sets JUCE_VST3_CAN_REPLACE_VST2=1
+        # globally, but DuskAmp is a new plugin without a VST2 history
+        # — there's no automation data to migrate from a VST2 version
+        # because there is no VST2 version. Acknowledge the
+        # parameter-ID warning explicitly so JUCE's hard error
+        # (juce_audio_plugin_client_VST3.cpp:99) lets us build the
+        # VST3 wrapper. Per-target target_compile_definitions can't
+        # undo the directory-level add_compile_definitions, so we ack
+        # rather than override.
+        JUCE_IGNORE_VST3_MISMATCHED_PARAMETER_ID_WARNING=1
 )
 
 if(NAM_ENABLED)

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""DuskAmp Physics-Based Validation.
+"""DuskAmp Physics-Based Validation (plugin-level, via pedalboard).
 
-Validates the DSP amp models against known circuit physics — not against
-NAM profiles or other models, but against independently verifiable data
-from published measurements, circuit analysis, and the laws of physics.
+Companion to dsp_test_harness.cpp + analyze_dsp_output.py. The C++ harness
+links against PreampModel/ToneStackModel/PowerAmp directly and is the
+primary physics-validation path; this script exercises the full plugin
+binary instead, so it catches APVTS-wiring or oversampling-manager
+regressions that the DSP-class-level tests can't see.
 
 Tests:
   1. TONE STACK: Compare DSP frequency response against the Yeh/Smith
@@ -14,6 +16,13 @@ Tests:
      vs Class AB behavior.
   4. SAG RECOVERY: Measure envelope recovery after transients and compare
      against known RC time constants.
+
+Status (2026-05-05): basic param-name + cross-platform plugin-lookup updates
+landed to align with main's APVTS, but pedalboard's load_plugin currently
+trips on DuskAmp's mono-in/stereo-out bus configuration. Full
+end-to-end run requires either teaching pedalboard the bus layout or
+switching to a different plugin host wrapper. The C++ harness covers
+the same physics checks today.
 
 Usage:
     python3 validate_physics.py [--plots]
@@ -34,21 +43,33 @@ SAMPLE_RATE = 44100
 SCRIPT_DIR = Path(__file__).parent
 OUTPUT_DIR = SCRIPT_DIR / "results" / "physics"
 
+# Choice values match the AmpType enum in src/dsp/PreampModel.h.
+# The earlier "Blackface"/"Plexi"/"British Combo" labels were from a
+# pre-PreampModel architecture that's no longer on main.
 AMP_MODELS = {
-    "Fender": "Blackface",
-    "Marshall": "Plexi",
-    "Vox": "British Combo",
+    "Fender": "Fender",
+    "Marshall": "Marshall",
+    "Vox": "Vox",
 }
 
 
 def find_plugin():
-    # Prefer VST3 (pedalboard handles it better), fall back to AU
-    vst3 = Path.home() / "Library/Audio/Plug-Ins/VST3/DuskAmp.vst3"
-    if vst3.exists():
-        return str(vst3)
-    au = Path.home() / "Library/Audio/Plug-Ins/Components/DuskAmp.component"
-    if au.exists():
-        return str(au)
+    """Locate the installed DuskAmp plugin across macOS/Linux/Windows."""
+    candidates = [
+        # macOS
+        Path.home() / "Library/Audio/Plug-Ins/VST3/DuskAmp.vst3",
+        Path.home() / "Library/Audio/Plug-Ins/Components/DuskAmp.component",
+        # Linux
+        Path.home() / ".vst3/DuskAmp.vst3",
+        Path.home() / ".lv2/DuskAmp.lv2",
+        Path("/usr/lib/vst3/DuskAmp.vst3"),
+        Path("/usr/local/lib/vst3/DuskAmp.vst3"),
+        # Windows (via WSL or running natively under Python)
+        Path("C:/Program Files/Common Files/VST3/DuskAmp.vst3"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
     return None
 
 
@@ -65,19 +86,26 @@ def load_duskamp(plugin_path, amp_name, drive=0.0):
         # Re-try — some versions of pedalboard handle this differently
         plugin = load_plugin(plugin_path)
 
-    plugin.amp_model = AMP_MODELS[amp_name]
-    plugin.delay = False
-    plugin.reverb = False
-    plugin.cabinet = False
-    plugin.bypass = False
-    plugin.input_gain = 0.0
-    plugin.output_level = 0.0
-    plugin.bass = 0.5
-    plugin.mid = 0.5
-    plugin.treble = 0.5
-    plugin.presence = 0.5
-    plugin.resonance = 0.5
-    plugin.drive = drive
+    # Param names match src/ParamIDs.h on main. Booleans are the
+    # *_enabled APVTS bool params; choice params take string values
+    # from the AudioParameterChoice list. drive is split between
+    # preamp_gain and power_drive — set both so this script's "drive"
+    # argument behaves like the old combined knob.
+    plugin.amp_type      = AMP_MODELS[amp_name]
+    plugin.delay_enabled  = False
+    plugin.reverb_enabled = False
+    plugin.cab_enabled    = False
+    plugin.boost_enabled  = False
+    plugin.bypass         = False
+    plugin.input_gain     = 0.0
+    plugin.output_level   = 0.0
+    plugin.bass           = 0.5
+    plugin.mid            = 0.5
+    plugin.treble         = 0.5
+    plugin.presence       = 0.5
+    plugin.resonance      = 0.5
+    plugin.preamp_gain    = drive
+    plugin.power_drive    = drive
     return plugin
 
 
