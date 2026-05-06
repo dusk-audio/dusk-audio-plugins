@@ -889,21 +889,33 @@ void DuskAmpEditor::resized()
     int toggleH = scaler_.scaled (22);
     int pad = scaler_.scaled (8);
 
-    // 4-column layout: cab (42%) | boost (13%) | delay (22%) | reverb (rest).
-    // CAB sits leftmost so the IR-name combo + cab browser have priority real
-    // estate — full cab IR names ("Marshall 1960VB — SM57 OA" class) need
-    // ~200 px of horizontal room in the right sub-column to display without
-    // truncation. Effects sit to the right of CAB in a logical signal-chain
-    // order: BOOST (pre-amp), DELAY, REVERB.
-    int cabW    = static_cast<int> (contentW * 0.42f);
-    int boostW  = static_cast<int> (contentW * 0.13f);
-    int delayW  = static_cast<int> (contentW * 0.22f);
+    // 4-column layout: cab gets the lion's share of the bottom row so the
+    // IR-name combo + cab browser have unrestricted room (full cab IR
+    // names like "Marshall 1960VB — SM57 OA" need ~250 px). The three
+    // effect sections to the right share matching small knobs (effectKnob),
+    // so DELAY and REVERB don't need extra width to fit oversized knobs.
+    int cabW    = static_cast<int> (contentW * 0.50f);
+    int boostW  = static_cast<int> (contentW * 0.14f);
+    int delayW  = static_cast<int> (contentW * 0.17f);
     int reverbW = contentW - cabW - boostW - delayW - gap * 3;
 
     int cabX    = contentX;
     int boostX  = cabX + cabW + gap;
     int delayX  = boostX + boostW + gap;
     int reverbX = delayX + delayW + gap;
+
+    // All four bottom-row sections paint a title strip in their top ~20 px
+    // (drawGroupBox titleArea = bounds.withHeight(20)). The internal
+    // toggle / combo / knob layout must start *below* that strip,
+    // otherwise the section's "CAB / BOOST / DELAY / REVERB" toggle
+    // button text overlaps the matching group title above it.
+    int titleSpace = scaler_.scaled (22);
+
+    // Effect knob size — kept small and uniform across BOOST / DELAY /
+    // REVERB so the user gets a consistent visual rhythm and the
+    // sections can be packed tighter (which is what gave CAB its extra
+    // width). Capped by per-section column width below.
+    int effectKnob = scaler_.scaled (40);
 
     boostGroupBounds_  = { boostX, bottomY, boostW, bottomH };
     cabGroupBounds_    = { cabX, bottomY, cabW, bottomH };
@@ -913,12 +925,12 @@ void DuskAmpEditor::resized()
     // BOOST section: toggle + 3 knobs
     {
         int innerX = boostX + pad;
-        int innerY = bottomY + pad;
+        int innerY = bottomY + titleSpace;
         boostEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
         int kY = innerY + toggleH + scaler_.scaled (4);
-        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
+        int kH = bottomH - titleSpace - toggleH - pad - scaler_.scaled (4);
         int colW = (boostW - pad * 2) / 3;
-        int knobSize = std::min (smallKnob, colW - scaler_.scaled (4));
+        int knobSize = std::min (effectKnob, colW - scaler_.scaled (4));
         placeKnob (boostGain_,  { innerX, kY, colW, kH }, knobSize, sf);
         placeKnob (boostTone_,  { innerX + colW, kY, colW, kH }, knobSize, sf);
         placeKnob (boostLevel_, { innerX + 2 * colW, kY, colW, kH }, knobSize, sf);
@@ -932,55 +944,59 @@ void DuskAmpEditor::resized()
     // browser's "Cabinet IRs" header on the same row.
     {
         int innerX = cabX + pad;
-        int innerY = bottomY + pad;
+        int innerY = bottomY + titleSpace;
         cabEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
 
-        // Lower-left: 3 cab EQ knobs
+        // Lower-left: 3 cab EQ knobs (use effectKnob to match boost)
         int kY = innerY + toggleH + scaler_.scaled (4);
-        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
-        int knobColW = scaler_.scaled (62);
-        placeKnob (cabMix_,   { innerX, kY, knobColW, kH }, smallKnob, sf);
-        placeKnob (cabHiCut_, { innerX + knobColW, kY, knobColW, kH }, smallKnob, sf);
-        placeKnob (cabLoCut_, { innerX + 2 * knobColW, kY, knobColW, kH }, smallKnob, sf);
+        int kH = bottomH - titleSpace - toggleH - pad - scaler_.scaled (4);
+        int knobColW = scaler_.scaled (52);
+        placeKnob (cabMix_,   { innerX, kY, knobColW, kH }, effectKnob, sf);
+        placeKnob (cabHiCut_, { innerX + knobColW, kY, knobColW, kH }, effectKnob, sf);
+        placeKnob (cabLoCut_, { innerX + 2 * knobColW, kY, knobColW, kH }, effectKnob, sf);
 
-        // Right column: combo above browser
+        // Right column: combo above browser. With CAB at 50% of contentW
+        // the right sub-column is now ~250 px wide — full IR display
+        // names ("Marshall 1960VB — SM57 OA" class) fit without
+        // truncation.
         int rightX     = innerX + 3 * knobColW + scaler_.scaled (4);
         int rightW     = cabX + cabW - rightX - pad;
         int comboH     = toggleH;
         int comboGap   = scaler_.scaled (4);
-        cabPresetBox_.setBounds (rightX, bottomY + pad, rightW, comboH);
+        cabPresetBox_.setBounds (rightX, bottomY + titleSpace, rightW, comboH);
         cabBrowser_.setBounds   (rightX,
-                                  bottomY + pad + comboH + comboGap,
+                                  bottomY + titleSpace + comboH + comboGap,
                                   rightW,
-                                  bottomH - pad * 2 - comboH - comboGap);
+                                  bottomH - titleSpace - comboH - comboGap - pad);
     }
 
     // DELAY section: toggle + type selector + 3 knobs
     {
         int innerX = delayX + pad;
-        int innerY = bottomY + pad;
+        int innerY = bottomY + titleSpace;
         delayEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
         int typeW = delayW - pad * 2 - toggleW - scaler_.scaled (4);
         delayTypeBox_.setBounds (innerX + toggleW + scaler_.scaled (4), innerY, typeW, toggleH);
         int kY = innerY + toggleH + scaler_.scaled (4);
-        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
+        int kH = bottomH - titleSpace - toggleH - pad - scaler_.scaled (4);
         int colW = (delayW - pad * 2) / 3;
-        placeKnob (delayTime_,     { innerX, kY, colW, kH }, smallKnob, sf);
-        placeKnob (delayFeedback_, { innerX + colW, kY, colW, kH }, smallKnob, sf);
-        placeKnob (delayMix_,      { innerX + 2 * colW, kY, colW, kH }, smallKnob, sf);
+        int knobSize = std::min (effectKnob, colW - scaler_.scaled (4));
+        placeKnob (delayTime_,     { innerX, kY, colW, kH }, knobSize, sf);
+        placeKnob (delayFeedback_, { innerX + colW, kY, colW, kH }, knobSize, sf);
+        placeKnob (delayMix_,      { innerX + 2 * colW, kY, colW, kH }, knobSize, sf);
     }
 
     // REVERB section: toggle + 5 knobs (2 rows: 3 top, 2 bottom)
     {
         int innerX = reverbX + pad;
-        int innerY = bottomY + pad;
+        int innerY = bottomY + titleSpace;
         reverbEnabled_.setBounds (innerX, innerY, toggleW, toggleH);
         int kY = innerY + toggleH + scaler_.scaled (4);
-        int kH = bottomH - toggleH - pad * 2 - scaler_.scaled (4);
+        int kH = bottomH - titleSpace - toggleH - pad - scaler_.scaled (4);
         int rowH = kH / 2;
         int colW3 = (reverbW - pad * 2) / 3;
         int colW2 = (reverbW - pad * 2) / 2;
-        int knobSize = std::min (smallKnob, colW3 - scaler_.scaled (4));
+        int knobSize = std::min (effectKnob, colW3 - scaler_.scaled (4));
         placeKnob (reverbMix_,      { innerX, kY, colW3, rowH }, knobSize, sf);
         placeKnob (reverbDecay_,    { innerX + colW3, kY, colW3, rowH }, knobSize, sf);
         placeKnob (reverbPreDelay_, { innerX + 2 * colW3, kY, colW3, rowH }, knobSize, sf);
