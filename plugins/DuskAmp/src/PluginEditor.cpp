@@ -11,6 +11,31 @@
 // KnobWithLabel
 // =============================================================================
 
+namespace
+{
+    // Pulled out so rebindToParam() can re-apply the formatter without
+    // duplicating the lambda body. juce::AudioProcessorValueTreeState::
+    // SliderAttachment overwrites textFromValueFunction on construction,
+    // so any rebind has to re-set the formatter immediately afterwards.
+    void applySuffixFormatter (juce::Slider& s, const juce::String& sfx)
+    {
+        s.textFromValueFunction = [sfx] (double v)
+        {
+            if (sfx == " dB")   return juce::String (v, 1) + " dB";
+            if (sfx == " ms")   return juce::String (juce::roundToInt (v)) + " ms";
+            if (sfx == " Hz")
+                return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
+                                   : v < 100.0 ? juce::String (v, 2) + " Hz"
+                                               : juce::String (juce::roundToInt (v)) + " Hz";
+            if (sfx == " s")
+                return v < 1.0 ? juce::String (juce::roundToInt (v * 1000.0)) + " ms"
+                               : juce::String (v, 2) + " s";
+            if (sfx == "%")     return juce::String (v * 100.0, 1) + "%";
+            return juce::String (v, 2);
+        };
+    }
+}
+
 void KnobWithLabel::init (juce::Component& parent,
                           juce::AudioProcessorValueTreeState& apvts,
                           const juce::String& paramID,
@@ -68,22 +93,18 @@ void KnobWithLabel::init (juce::Component& parent,
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
         apvts, paramID, slider);
 
-    // Set textFromValueFunction AFTER attachment (attachment overwrites it)
-    auto sfx = suffix;
-    slider.textFromValueFunction = [sfx] (double v)
-    {
-        if (sfx == " dB")   return juce::String (v, 1) + " dB";
-        if (sfx == " ms")   return juce::String (juce::roundToInt (v)) + " ms";
-        if (sfx == " Hz")
-            return v >= 1000.0 ? juce::String (v / 1000.0, 2) + " kHz"
-                               : v < 100.0 ? juce::String (v, 2) + " Hz"
-                                           : juce::String (juce::roundToInt (v)) + " Hz";
-        if (sfx == " s")
-            return v < 1.0 ? juce::String (juce::roundToInt (v * 1000.0)) + " ms"
-                           : juce::String (v, 2) + " s";
-        if (sfx == "%")     return juce::String (v * 100.0, 1) + "%";
-        return juce::String (v, 2);
-    };
+    applySuffixFormatter (slider, suffix);
+}
+
+void KnobWithLabel::rebindToParam (juce::AudioProcessorValueTreeState& apvts,
+                                    const juce::String& newParamID)
+{
+    // Destroy the old attachment first so it stops listening to the old
+    // parameter before the new one starts.
+    attachment.reset();
+    attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+        apvts, newParamID, slider);
+    applySuffixFormatter (slider, valueLabel.getName());   // suffix stored in init()
 }
 
 // =============================================================================
@@ -242,6 +263,20 @@ DuskAmpEditor::DuskAmpEditor (DuskAmpProcessor& p)
         "Reverb room size");
     outputLevel_   .init (*this, params, DuskAmpParams::OUTPUT_LEVEL,    "OUTPUT",     " dB",
         "Master output level");
+
+    // If the plugin is restored already in NAM mode, the init() above bound
+    // the input/output knobs to the DSP-mode params — rebind to the NAM
+    // params before the editor first paints so the user sees the correct
+    // saved values for their current mode. Subsequent mode switches go
+    // through the timerCallback rebind path below.
+    {
+        bool startsInNamMode = params.getRawParameterValue (DuskAmpParams::AMP_MODE)->load() >= 0.5f;
+        if (startsInNamMode)
+        {
+            inputGain_.rebindToParam   (params, DuskAmpParams::NAM_INPUT_GAIN);
+            outputLevel_.rebindToParam (params, DuskAmpParams::NAM_OUTPUT_LEVEL);
+        }
+    }
 
     // --- Mode selector (DSP / NAM) ---
     auto* modeParam = params.getParameter (DuskAmpParams::AMP_MODE);
@@ -540,6 +575,18 @@ void DuskAmpEditor::timerCallback()
 
     if (namMode != layoutIsNamMode_)
     {
+        // Rebind input/output knobs to the per-mode params so each
+        // AMP_MODE has its own persistent volume settings — switching
+        // modes must NEVER produce a sudden volume jump (NAM models
+        // typically run hotter than DSP and a unified knob would let
+        // the user dial a safe level in one mode and get blasted in
+        // the other on switch).
+        inputGain_.rebindToParam (processorRef.parameters,
+                                   namMode ? DuskAmpParams::NAM_INPUT_GAIN
+                                            : DuskAmpParams::INPUT_GAIN);
+        outputLevel_.rebindToParam (processorRef.parameters,
+                                     namMode ? DuskAmpParams::NAM_OUTPUT_LEVEL
+                                              : DuskAmpParams::OUTPUT_LEVEL);
         resized();
         repaint();
     }
