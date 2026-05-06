@@ -559,6 +559,133 @@ int main (int argc, char* argv[])
         }
     }
 
+    // --- 8. Fender stage-by-stage diagnostic ---
+    // The push-pull fix made Marshall correct but collapsed Fender's full-chain
+    // output to silence. Render the chain at incremental endpoints to pinpoint
+    // where the signal disappears.
+    std::cout << std::endl << "=== FENDER STAGE-BY-STAGE DIAGNOSTIC ===" << std::endl;
+    {
+        auto signal = generateTestTone (sr, 440.0, 0.25f);   // matches THD "normal"
+        constexpr int blockSize = 512;
+        const int numSamples = static_cast<int> (signal.size());
+
+        auto peakOf = [] (const std::vector<float>& v) {
+            float p = 0.0f;
+            for (float s : v) p = std::max (p, std::abs (s));
+            return p;
+        };
+
+        auto runPreampOnly = [&] () {
+            DuskAudio::OversamplingManager os;
+            os.setFactor (kOversamplingFactor);
+            os.prepare (sr, blockSize, 1);
+            auto preamp = PreampModel::create (AmpType::Fender);
+            preamp->prepare (os.getOversampledSampleRate());
+            preamp->setGain (0.55f);   // crunch
+            preamp->setBright (false);
+            juce::AudioBuffer<float> osBuf (1, blockSize);
+            std::vector<float> out (signal);
+            for (int o = 0; o < numSamples; o += blockSize)
+            {
+                int n = std::min (blockSize, numSamples - o);
+                std::copy (out.data() + o, out.data() + o + n, osBuf.getWritePointer (0));
+                juce::dsp::AudioBlock<float> bb (osBuf.getArrayOfWritePointers(),
+                                                  1, static_cast<size_t> (n));
+                auto up = os.processSamplesUp (bb);
+                preamp->process (up.getChannelPointer (0),
+                                 static_cast<int> (up.getNumSamples()));
+                os.processSamplesDown (bb);
+                std::copy (osBuf.getReadPointer (0), osBuf.getReadPointer (0) + n,
+                           out.data() + o);
+            }
+            return out;
+        };
+
+        auto runPreampToneStack = [&] () {
+            DuskAudio::OversamplingManager os;
+            os.setFactor (kOversamplingFactor);
+            os.prepare (sr, blockSize, 1);
+            auto preamp = PreampModel::create (AmpType::Fender);
+            ToneStackModel ts;
+            preamp->prepare (os.getOversampledSampleRate());
+            ts.prepare (os.getOversampledSampleRate());
+            preamp->setGain (0.55f);
+            preamp->setBright (false);
+            ts.setTopology (ToneStackModel::Topology::Fender);
+            ts.setBass (0.5f); ts.setMid (0.5f); ts.setTreble (0.5f);
+            juce::AudioBuffer<float> osBuf (1, blockSize);
+            std::vector<float> out (signal);
+            for (int o = 0; o < numSamples; o += blockSize)
+            {
+                int n = std::min (blockSize, numSamples - o);
+                std::copy (out.data() + o, out.data() + o + n, osBuf.getWritePointer (0));
+                juce::dsp::AudioBlock<float> bb (osBuf.getArrayOfWritePointers(),
+                                                  1, static_cast<size_t> (n));
+                auto up = os.processSamplesUp (bb);
+                preamp->process    (up.getChannelPointer (0),
+                                    static_cast<int> (up.getNumSamples()));
+                ts.process         (up.getChannelPointer (0),
+                                    static_cast<int> (up.getNumSamples()));
+                os.processSamplesDown (bb);
+                std::copy (osBuf.getReadPointer (0), osBuf.getReadPointer (0) + n,
+                           out.data() + o);
+            }
+            return out;
+        };
+
+        auto runFullChain = [&] (bool forcePushPull) {
+            DuskAudio::OversamplingManager os;
+            os.setFactor (kOversamplingFactor);
+            os.prepare (sr, blockSize, 1);
+            auto preamp = PreampModel::create (AmpType::Fender);
+            ToneStackModel ts;
+            PowerAmp pa;
+            preamp->prepare (os.getOversampledSampleRate());
+            ts.prepare (os.getOversampledSampleRate());
+            pa.prepare (os.getOversampledSampleRate());
+            pa.setAmpType (AmpType::Fender);
+            pa.setIsPushPullOverride (forcePushPull);
+            pa.setDrive (0.5f);
+            pa.setPresence (0.5f);
+            pa.setResonance (0.5f);
+            pa.setSag (0.5f);
+            preamp->setGain (0.55f);
+            preamp->setBright (false);
+            ts.setTopology (ToneStackModel::Topology::Fender);
+            ts.setBass (0.5f); ts.setMid (0.5f); ts.setTreble (0.5f);
+            juce::AudioBuffer<float> osBuf (1, blockSize);
+            std::vector<float> out (signal);
+            for (int o = 0; o < numSamples; o += blockSize)
+            {
+                int n = std::min (blockSize, numSamples - o);
+                std::copy (out.data() + o, out.data() + o + n, osBuf.getWritePointer (0));
+                juce::dsp::AudioBlock<float> bb (osBuf.getArrayOfWritePointers(),
+                                                  1, static_cast<size_t> (n));
+                auto up = os.processSamplesUp (bb);
+                preamp->process (up.getChannelPointer (0),
+                                 static_cast<int> (up.getNumSamples()));
+                ts.process      (up.getChannelPointer (0),
+                                 static_cast<int> (up.getNumSamples()));
+                pa.process      (up.getChannelPointer (0),
+                                 static_cast<int> (up.getNumSamples()));
+                os.processSamplesDown (bb);
+                std::copy (osBuf.getReadPointer (0), osBuf.getReadPointer (0) + n,
+                           out.data() + o);
+            }
+            return out;
+        };
+
+        auto a = runPreampOnly();        writeWav (juce::File (outputDir + "/fender_diag_1_preamp.wav"), a, sr);
+        auto b = runPreampToneStack();   writeWav (juce::File (outputDir + "/fender_diag_2_preamp_tonestack.wav"), b, sr);
+        auto c = runFullChain (false);   writeWav (juce::File (outputDir + "/fender_diag_3_full_singleended.wav"), c, sr);
+        auto d = runFullChain (true);    writeWav (juce::File (outputDir + "/fender_diag_4_full_pushpull.wav"), d, sr);
+
+        std::cout << "  Stage 1: preamp only          peak=" << peakOf (a) << std::endl;
+        std::cout << "  Stage 2: preamp + tone stack  peak=" << peakOf (b) << std::endl;
+        std::cout << "  Stage 3: full chain (single)  peak=" << peakOf (c) << std::endl;
+        std::cout << "  Stage 4: full chain (PP)      peak=" << peakOf (d) << std::endl;
+    }
+
     std::cout << std::endl << "Done! Output in: " << outputDir << std::endl;
     return 0;
 }

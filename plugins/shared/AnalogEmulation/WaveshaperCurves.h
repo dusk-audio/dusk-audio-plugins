@@ -116,6 +116,47 @@ private:
         return (static_cast<float>(index) / (TABLE_SIZE - 1)) * TABLE_RANGE - TABLE_RANGE / 2.0f;
     }
 
+    // Solve for the self-consistent quiescent plate voltage Vp_q given the
+    // grid-bias point Vgk_bias and supply / reflected impedance. The Koren
+    // model has Ip = f(Vp, Vgk) and Vp = Vb - Ip*Rp; with Ip and Vp both
+    // depending on each other, the operating point is the fixed point of
+    // that system.
+    //
+    // Why this matters: previously each tube curve hardcoded Ip_q (e.g.
+    // 0.035 for the 12AX7 Triode) and computed Vp_q = Vb - Ip_q * Rp. If
+    // the hardcoded Ip didn't match what Koren actually predicts at the
+    // bias point, the curve's "zero crossing" sat far from f(0) — for the
+    // 12AX7 the bias-point output clamped to the negative rail at -1.35.
+    // A single-ended path masks this because the downstream DC blocker
+    // strips the constant offset. Push-pull modelling cannot mask it: both
+    // halves of the swing sit on the same DC clamp for small inputs, so
+    // 0.5*(f(x) - f(-x)) cancels everything and the output collapses.
+    //
+    // Computing Vp_q via fixed-point iteration ensures f(0) = 0 by
+    // construction, restoring the curve's full ±range and making both
+    // single-ended and push-pull paths behave correctly.
+    static float solveQuiescentVp(float Vb, float Rp,
+                                   float Vgk_bias,
+                                   float mu, float Kp, float Kvb,
+                                   float Ex, float Kg1)
+    {
+        float Vp = Vb * 0.5f;   // mid-rail starting guess
+        for (int it = 0; it < 30; ++it)
+        {
+            float inner = Kp * (1.0f / mu + Vgk_bias / std::sqrt(Kvb + Vp * Vp));
+            inner = std::clamp(inner, -20.0f, 20.0f);
+            float E1 = (Vp / Kp) * std::log(1.0f + std::exp(inner));
+            E1 = std::max(0.0f, E1);
+            float Ip = (std::pow(E1, Ex) / Kg1) * std::atan(Vp / std::sqrt(Kvb));
+            Ip = std::max(0.0f, Ip);
+            float newVp = Vb - Ip * Rp;
+            if (std::abs(newVp - Vp) < 0.01f) { Vp = newVp; break; }
+            // Damped update to avoid oscillation
+            Vp = 0.5f * Vp + 0.5f * newVp;
+        }
+        return Vp;
+    }
+
     // Opto tube saturation (asymmetric, 2nd harmonic dominant)
     void initializeOptoCurve()
     {
@@ -292,8 +333,7 @@ private:
         float mu = 8.7f, Kp = 48.0f, Kvb = 12.0f, Ex = 1.35f, Kg1 = 1460.0f;
         float Vb = 417.0f, Rp = 8000.0f;
         float Vgk_bias = -14.0f;
-        float Ip_q = 0.035f; // ~35mA quiescent
-        float Vp_q = Vb - Ip_q * Rp;
+        float Vp_q = solveQuiescentVp(Vb, Rp, Vgk_bias, mu, Kp, Kvb, Ex, Kg1);
 
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
@@ -322,8 +362,7 @@ private:
         float mu = 11.5f, Kp = 60.0f, Kvb = 24.5f, Ex = 1.35f, Kg1 = 650.0f;
         float Vb = 490.0f, Rp = 4000.0f;
         float Vgk_bias = -35.0f;
-        float Ip_q = 0.050f; // ~50mA quiescent
-        float Vp_q = Vb - Ip_q * Rp;
+        float Vp_q = solveQuiescentVp(Vb, Rp, Vgk_bias, mu, Kp, Kvb, Ex, Kg1);
 
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
@@ -351,11 +390,8 @@ private:
     {
         float mu = 19.1f, Kp = 84.0f, Kvb = 25.3f, Ex = 1.35f, Kg1 = 820.0f;
         float Vb = 320.0f, Rp = 4000.0f;
-
-        // Find quiescent operating point (Vgk = -8V typical for EL84)
-        float Vgk_bias = -8.0f;
-        float Ip_q = 0.035f; // ~35mA quiescent
-        float Vp_q = Vb - Ip_q * Rp;
+        float Vgk_bias = -8.0f;   // typical EL84 Class A bias
+        float Vp_q = solveQuiescentVp(Vb, Rp, Vgk_bias, mu, Kp, Kvb, Ex, Kg1);
 
         for (int i = 0; i < TABLE_SIZE; ++i)
         {
