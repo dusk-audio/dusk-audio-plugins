@@ -535,7 +535,8 @@ private:
 //==============================================================================
 // Multiband Compressor Panel - Modern digital design with per-band controls
 //==============================================================================
-class MultibandCompressorPanel : public juce::Component, private juce::Timer
+class MultibandCompressorPanel : public juce::Component,
+                                 private juce::Timer
 {
 public:
     // Band colors (matching modern multiband compressor aesthetics)
@@ -569,6 +570,20 @@ public:
             bandSoloButtons[i].setColour(juce::TextButton::textColourOnId, juce::Colours::black);
             bandSoloButtons[i].setTooltip("Solo " + getBandName(i) + " band");
             addAndMakeVisible(bandSoloButtons[i]);
+
+            // Per-band enable toggle (issue #79) — lives in the strip ABOVE
+            // GAIN REDUCTION. Click to disable; the band's tab + meter
+            // collapse out and the remaining bands fill the width.
+            // Always at fixed 1/4 positions in the strip so the user can
+            // re-enable a hidden band by clicking its toggle.
+            bandEnableButtons[i].setButtonText(getBandName(i));
+            bandEnableButtons[i].setClickingTogglesState(true);
+            bandEnableButtons[i].setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2a2a2a));
+            bandEnableButtons[i].setColour(juce::TextButton::buttonOnColourId, juce::Colour(bandColors[i]));
+            bandEnableButtons[i].setColour(juce::TextButton::textColourOffId, juce::Colour(0xff888888));
+            bandEnableButtons[i].setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+            bandEnableButtons[i].setTooltip("Enable / disable " + getBandName(i) + " band");
+            addAndMakeVisible(bandEnableButtons[i]);
         }
         bandButtons[0].setToggleState(true, juce::dontSendNotification);
 
@@ -613,12 +628,18 @@ public:
         setupKnob(bandRelease, " ms", 100.0);
         setupKnob(bandMakeup, " dB", 0.0);
 
-        // Per-band solo attachments
+        // Per-band solo + enable attachments
         const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
         for (int i = 0; i < 4; ++i)
         {
             bandSoloAttachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
                 parameters, "mb_" + bandNames[i] + "_solo", bandSoloButtons[i]);
+            bandEnableAttachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+                parameters, "mb_" + bandNames[i] + "_enabled", bandEnableButtons[i]);
+            // No parameterChanged listener — the timer at 30 Hz polls the
+            // mask and runs the layout update when it changes. Issue #79:
+            // listener-driven resized() hung Ardour during click event
+            // dispatch.
         }
 
         // Global controls
@@ -643,8 +664,13 @@ public:
             addAndMakeVisible(knobLabels[i]);
         }
 
-        // Initialize with first band
-        selectBand(0);
+        // Initialize with first band; updateEnableButtonStates seeds the
+        // ON-button lock state based on the current enabled-band count.
+        updateEnableButtonStates();
+        int initialBand = 0;
+        for (int i = 0; i < 4; ++i)
+            if (isBandEnabled(i)) { initialBand = i; break; }
+        selectBand(initialBand);
 
         // Start timer for crossover label updates
         startTimerHz(30);
@@ -737,6 +763,24 @@ public:
 
         topSection.reduce(margin, margin);
 
+        // === Issue #79 — Enable/disable strip at the very top ===
+        // Always 4 toggles at fixed 1/4 positions so disabled bands stay
+        // discoverable / re-enableable. Strip is a separate control zone;
+        // the meter section below collapses based on enabled count.
+        const int stripHeight = static_cast<int>(22 * scaleFactor);
+        auto stripRow = topSection.removeFromTop(stripHeight);
+        topSection.removeFromTop(static_cast<int>(2 * scaleFactor));  // gap
+
+        const int stripBandWidth = stripRow.getWidth() / 4;
+        const int stripGap = static_cast<int>(2 * scaleFactor);
+        for (int i = 0; i < 4; ++i)
+        {
+            auto toggleArea = stripRow.withX(stripRow.getX() + i * stripBandWidth)
+                                       .withWidth(stripBandWidth)
+                                       .reduced(stripGap, 1);
+            bandEnableButtons[i].setBounds(toggleArea);
+        }
+
         // Add "GAIN REDUCTION" label area at top
         topSection.removeFromTop(static_cast<int>(18 * scaleFactor));
         topSection.removeFromTop(static_cast<int>(4 * scaleFactor));
@@ -744,51 +788,74 @@ public:
         // Store meter section bounds for drawing
         meterSectionBounds = topSection;
 
-        // Calculate band widths
-        int bandWidth = topSection.getWidth() / 4;
+        // === Compute the collapsed layout — only enabled bands occupy slots ===
+        std::array<int, 4> enabledIdx{0, 0, 0, 0};
+        int numEnabled = 0;
+        for (int i = 0; i < 4; ++i)
+            if (isBandEnabled(i)) enabledIdx[static_cast<size_t>(numEnabled++)] = i;
+        if (numEnabled < 1) numEnabled = 1;  // safety; DSP guarantees >= 2 in practice
+
+        for (int i = 0; i < 4; ++i)
+            bandGRBounds[i] = {};
+
+        const int slotWidth = topSection.getWidth() / numEnabled;
+        const int buttonRowHeight = static_cast<int>(26 * scaleFactor);
+        const int soloWidth = static_cast<int>(24 * scaleFactor);
+        const int buttonGap = static_cast<int>(3 * scaleFactor);
+
+        // Hide disabled bands' tab + solo first; loop below makes enabled
+        // bands visible and lays them out in the collapsed slot.
         for (int i = 0; i < 4; ++i)
         {
-            auto bandArea = topSection.withX(topSection.getX() + i * bandWidth).withWidth(bandWidth).reduced(3, 0);
+            const bool enabled = isBandEnabled(i);
+            bandButtons[i].setVisible(enabled);
+            bandSoloButtons[i].setVisible(enabled);
+        }
 
-            // Calculate meter bounds first so we can align buttons to it
+        for (int slot = 0; slot < numEnabled; ++slot)
+        {
+            const int band = enabledIdx[static_cast<size_t>(slot)];
+            auto bandArea = topSection.withX(topSection.getX() + slot * slotWidth)
+                                       .withWidth(slotWidth)
+                                       .reduced(3, 0);
+
             auto meterArea = bandArea;
-            meterArea.removeFromTop(static_cast<int>(32 * scaleFactor));  // Space for buttons + gap
-            meterArea.removeFromBottom(static_cast<int>(22 * scaleFactor));  // Space for freq label
-            auto meterBounds = meterArea.reduced(static_cast<int>(4 * scaleFactor), static_cast<int>(2 * scaleFactor));
+            meterArea.removeFromTop(static_cast<int>(32 * scaleFactor));
+            meterArea.removeFromBottom(static_cast<int>(22 * scaleFactor));
+            auto meterBounds = meterArea.reduced(static_cast<int>(4 * scaleFactor),
+                                                  static_cast<int>(2 * scaleFactor));
 
-            // Top row: Band button and Solo button side by side, centered over meter
-            int buttonRowHeight = static_cast<int>(26 * scaleFactor);
-            int soloWidth = static_cast<int>(24 * scaleFactor);
-            int buttonGap = static_cast<int>(3 * scaleFactor);
-            int totalButtonWidth = meterBounds.getWidth();  // Match meter width
-            int minBandButtonWidth = static_cast<int>(30 * scaleFactor);
-            int requiredMinWidth = minBandButtonWidth + soloWidth + buttonGap;
+            int totalButtonWidth = meterBounds.getWidth();
+            int minBandButtonWidth = static_cast<int>(24 * scaleFactor);
+            int trailingWidth = soloWidth + buttonGap;
+            int bandButtonWidth = (totalButtonWidth >= minBandButtonWidth + trailingWidth)
+                ? totalButtonWidth - trailingWidth
+                : juce::jmax(static_cast<int>(20 * scaleFactor), totalButtonWidth - trailingWidth);
 
-            // Handle narrow meter edge case - allow smaller buttons if necessary
-            int bandButtonWidth = (totalButtonWidth >= requiredMinWidth)
-                ? totalButtonWidth - soloWidth - buttonGap
-                : juce::jmax(static_cast<int>(20 * scaleFactor), totalButtonWidth - soloWidth - buttonGap);
-
-            // Center buttons over the meter
             int buttonsX = meterBounds.getX();
             int buttonsY = bandArea.getY();
 
-            bandButtons[i].setBounds(buttonsX, buttonsY, bandButtonWidth, buttonRowHeight);
-            bandSoloButtons[i].setBounds(buttonsX + bandButtonWidth + buttonGap, buttonsY, soloWidth, buttonRowHeight);
+            bandButtons[band].setBounds(buttonsX, buttonsY, bandButtonWidth, buttonRowHeight);
+            bandSoloButtons[band].setBounds(buttonsX + bandButtonWidth + buttonGap, buttonsY,
+                                            soloWidth, buttonRowHeight);
 
-            // Store meter bounds
-            bandGRBounds[i] = meterBounds;
+            bandGRBounds[band] = meterBounds;
         }
 
-        // Store meter section info for handle positioning
-        // Use the actual meter bounds to align faders with meters
+        // Store meter section info for handle positioning. Use first enabled
+        // band's meter as reference (DSP guarantees >= 2 enabled, so this
+        // exists). Falls back to 0,0 only if everything is disabled (shouldn't
+        // happen).
         crossoverAreaLeft = topSection.getX();
         crossoverAreaWidth = topSection.getWidth();
-        // Align fader top with the top of the GR meters (after buttons + gap)
-        crossoverHandleTop = bandGRBounds[0].getY();
-        crossoverHandleHeight = bandGRBounds[0].getHeight();
+        const int refBand = enabledIdx[0];
+        if (! bandGRBounds[refBand].isEmpty())
+        {
+            crossoverHandleTop = bandGRBounds[refBand].getY();
+            crossoverHandleHeight = bandGRBounds[refBand].getHeight();
+        }
 
-        // Position crossover faders between bands
+        // Position crossover faders only between consecutive enabled bands.
         updateCrossoverFaderPositions();
 
         // === Layout knobs ===
@@ -832,11 +899,11 @@ public:
         // Draw band backgrounds (colored tint for each band region)
         drawBandBackgrounds(g);
 
-        // Draw band GR meters with LED-style segments
+        // Draw band GR meters with LED-style segments. drawBandMeter skips
+        // bands whose bandGRBounds is empty (= disabled, hidden by resized()
+        // per issue #79).
         for (int i = 0; i < 4; ++i)
-        {
             drawBandMeter(g, i);
-        }
 
         // Note: Crossover faders now draw their own frequency labels
 
@@ -846,6 +913,12 @@ public:
 
     void timerCallback() override
     {
+        // Issue #79 — poll the enabled mask and update layout if it changed.
+        // ~33 ms of latency between toggle click and visual update; that's
+        // imperceptible and avoids the parameter-listener path that was
+        // hanging Ardour during click event dispatch.
+        syncEnableLayoutIfChanged();
+
         // Update crossover fader positions whenever values change
         updateCrossoverFaderPositions();
 
@@ -897,6 +970,9 @@ private:
     DuskSlider bandThreshold, bandRatio, bandAttack, bandRelease, bandMakeup;
     std::array<juce::TextButton, 4> bandSoloButtons;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 4> bandSoloAttachments;
+    std::array<juce::TextButton, 4> bandEnableButtons;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, 4> bandEnableAttachments;
+    uint8_t lastSyncedMask_ = 0xF;
     std::array<juce::Label, 7> knobLabels;
 
     // Per-band parameter attachments (recreated when band changes)
@@ -910,6 +986,68 @@ private:
     DuskSlider globalOutput, globalMix;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> outputAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mixAttachment;
+
+    // === Issue #79 — band-enable helpers + APVTS listener bridge ===
+
+    bool isBandEnabled(int band) const
+    {
+        const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
+        if (band < 0 || band >= 4) return true;
+        if (auto* p = parameters.getRawParameterValue("mb_" + bandNames[band] + "_enabled"))
+            return p->load() > 0.5f;
+        return true;
+    }
+
+    int countEnabledBands() const
+    {
+        int n = 0;
+        for (int i = 0; i < 4; ++i)
+            if (isBandEnabled(i)) ++n;
+        return n;
+    }
+
+    // Lock the strip toggles when only 2 bands remain enabled (min-2
+    // invariant). Disabled bands' tab + solo are hidden by resized() —
+    // no alpha-dim is necessary here.
+    void updateEnableButtonStates()
+    {
+        const int enabledCount_ = countEnabledBands();
+        for (int i = 0; i < 4; ++i)
+        {
+            const bool enabled = isBandEnabled(i);
+            const bool atMinimum = (enabledCount_ <= 2 && enabled);
+            bandEnableButtons[i].setEnabled(! atMinimum);
+            bandEnableButtons[i].setTooltip(atMinimum
+                ? juce::String("Multiband requires at least 2 enabled bands")
+                : "Enable / disable " + getBandName(i) + " band");
+        }
+    }
+
+    // Issue #79 — poll the enabled mask in timerCallback (30 Hz). The
+    // timer always runs on the message thread, which avoids the
+    // parameter-listener path that was hanging Ardour when the layout
+    // pass overlapped with click event dispatch.
+    void syncEnableLayoutIfChanged()
+    {
+        uint8_t mask = 0;
+        for (int i = 0; i < 4; ++i)
+            if (isBandEnabled(i)) mask |= static_cast<uint8_t>(1 << i);
+        if (mask == lastSyncedMask_)
+            return;
+        lastSyncedMask_ = mask;
+
+        updateEnableButtonStates();
+        if (currentBand < 0 || currentBand >= 4 || ! isBandEnabled(currentBand))
+        {
+            int firstEnabled = -1;
+            for (int i = 0; i < 4; ++i)
+                if (isBandEnabled(i)) { firstEnabled = i; break; }
+            if (firstEnabled >= 0)
+                selectBand(firstEnabled);
+        }
+        resized();
+        repaint();
+    }
 
     // Convert frequency to normalized position (0-1) using logarithmic scale
     float frequencyToNormalizedPosition(double freq) const
@@ -931,37 +1069,78 @@ private:
     {
         if (crossoverAreaWidth <= 0) return;
 
-        // Faders are positioned between the band meters
-        int bandWidth = meterSectionBounds.getWidth() / 4;
-        int faderWidth = static_cast<int>(40 * scaleFactor);
-        // Extend fader height to include space for frequency label below meters
-        int faderHeight = crossoverHandleHeight + static_cast<int>(22 * scaleFactor);
+        // Issue #79 — show only the crossover faders that border two
+        // consecutive enabled bands; hide the rest. CRITICAL: this runs at
+        // 30 Hz from the timer, so it MUST be idempotent. The previous
+        // hide-all-then-show-some pattern was forcing setVisible(false)
+        // → setVisible(true) on each active fader every tick, queuing two
+        // paint events per fader per tick. That flood was hanging Ardour's
+        // compositor. Compute desired state once, only mutate when it
+        // differs from current.
+        std::array<int, 4> enabledIdx{0, 0, 0, 0};
+        int numEnabled = 0;
+        for (int i = 0; i < 4; ++i)
+            if (isBandEnabled(i)) enabledIdx[static_cast<size_t>(numEnabled++)] = i;
+
+        std::array<bool, 3> desiredVisible{false, false, false};
+        std::array<juce::Rectangle<int>, 3> desiredBounds{};
+
+        if (numEnabled >= 2)
+        {
+            const int slotWidth = meterSectionBounds.getWidth() / numEnabled;
+            const int faderWidth = static_cast<int>(40 * scaleFactor);
+            const int faderHeight = crossoverHandleHeight + static_cast<int>(22 * scaleFactor);
+
+            for (int slot = 0; slot < numEnabled - 1; ++slot)
+            {
+                const int upperBand = enabledIdx[static_cast<size_t>(slot + 1)];
+                const int boundaryIdx = upperBand - 1;  // 0..2
+                if (boundaryIdx < 0 || boundaryIdx > 2) continue;
+
+                const int boundaryX = meterSectionBounds.getX() + (slot + 1) * slotWidth;
+                desiredVisible[static_cast<size_t>(boundaryIdx)] = true;
+                desiredBounds[static_cast<size_t>(boundaryIdx)]
+                    = juce::Rectangle<int>(boundaryX - faderWidth / 2,
+                                           crossoverHandleTop,
+                                           faderWidth, faderHeight);
+            }
+        }
 
         for (int i = 0; i < 3; ++i)
         {
-            if (crossoverFaders[i])
-            {
-                // Position at the boundary between band i and band i+1
-                int boundaryX = meterSectionBounds.getX() + (i + 1) * bandWidth;
+            auto* fader = crossoverFaders[i].get();
+            if (! fader) continue;
 
-                crossoverFaders[i]->setBounds(
-                    boundaryX - faderWidth / 2,
-                    crossoverHandleTop,
-                    faderWidth,
-                    faderHeight
-                );
+            const bool wantVisible = desiredVisible[static_cast<size_t>(i)];
+            if (wantVisible)
+            {
+                // setBounds is idempotent (early-returns when bounds match).
+                fader->setBounds(desiredBounds[static_cast<size_t>(i)]);
+                if (! fader->isVisible()) fader->setVisible(true);
+            }
+            else
+            {
+                if (fader->isVisible()) fader->setVisible(false);
             }
         }
     }
 
     void drawDbScale(juce::Graphics& g)
     {
-        if (bandGRBounds[0].isEmpty()) return;
+        // Issue #79 — band 0 may be disabled (its bandGRBounds is empty in
+        // that case), so find the first enabled band's meter as the
+        // reference. All enabled bands share the same Y/height by
+        // construction in resized(), so any non-empty entry works.
+        const juce::Rectangle<int>* refBounds = nullptr;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (! bandGRBounds[i].isEmpty()) { refBounds = &bandGRBounds[i]; break; }
+        }
+        if (refBounds == nullptr) return;
 
-        auto& refBounds = bandGRBounds[0];
         const float dbLevels[] = {0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f};
-        const int meterTop = refBounds.getY();
-        const int meterHeight = refBounds.getHeight();
+        const int meterTop = refBounds->getY();
+        const int meterHeight = refBounds->getHeight();
 
         g.setFont(juce::FontOptions(9.0f * scaleFactor));
 
@@ -984,19 +1163,26 @@ private:
 
     void drawBandBackgrounds(juce::Graphics& g)
     {
-        // Draw subtle colored backgrounds for each band
-        if (bandGRBounds[0].isEmpty()) return;
+        // Draw subtle colored backgrounds for each enabled band slot.
+        // Disabled bands collapse out entirely (issue #79), so we iterate
+        // only the enabled set and use the same 1/N positioning as resized().
+        if (meterSectionBounds.isEmpty()) return;
 
-        int bandWidth = meterSectionBounds.getWidth() / 4;
+        std::array<int, 4> enabledIdx{0, 0, 0, 0};
+        int numEnabled = 0;
         for (int i = 0; i < 4; ++i)
+            if (isBandEnabled(i)) enabledIdx[static_cast<size_t>(numEnabled++)] = i;
+        if (numEnabled < 1) return;
+
+        const int slotWidth = meterSectionBounds.getWidth() / numEnabled;
+        for (int slot = 0; slot < numEnabled; ++slot)
         {
-            auto bandArea = meterSectionBounds.withX(meterSectionBounds.getX() + i * bandWidth)
-                                              .withWidth(bandWidth);
+            const int band = enabledIdx[static_cast<size_t>(slot)];
+            auto bandArea = meterSectionBounds.withX(meterSectionBounds.getX() + slot * slotWidth)
+                                              .withWidth(slotWidth);
 
-            juce::Colour bandCol = juce::Colour(bandColors[i]);
-            bool isSelected = (currentBand == i);
-
-            // Very subtle band tint
+            juce::Colour bandCol = juce::Colour(bandColors[band]);
+            bool isSelected = (currentBand == band);
             g.setColour(bandCol.withAlpha(isSelected ? 0.08f : 0.03f));
             g.fillRect(bandArea.reduced(1, 0));
         }
@@ -1176,6 +1362,14 @@ private:
     void selectBand(int band)
     {
         currentBand = juce::jlimit(0, 3, band);
+
+        // Sync the radio-group toggle state so programmatic callers
+        // (constructor's initialBand walk, timer-poll auto-walk to
+        // firstEnabled) move the visible tab highlight to match
+        // currentBand. For the user-click path the radio state is already
+        // correct by the time we get here, so this is a no-op.
+        for (int i = 0; i < 4; ++i)
+            bandButtons[i].setToggleState(i == currentBand, juce::dontSendNotification);
 
         const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
         const juce::String& bandName = bandNames[currentBand];
