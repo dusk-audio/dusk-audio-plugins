@@ -121,6 +121,27 @@ public:
     juce::AudioProcessorValueTreeState& getParameters() { return parameters; }
     CompressorMode getCurrentMode() const;
 
+    // Minimal-processing fast path. When enabled, processBlock skips
+    // sidechain HP/EQ filtering, true-peak detection, transient shaper,
+    // global lookahead, mix wet/dry crossfade, auto-makeup smoothing,
+    // bypass-fade crossfader, stereo linking, and INTERNAL OVERSAMPLING.
+    // The mode-specific process() is still called per-sample at NATIVE
+    // rate using the input as its own sidechain. Intended for per-channel
+    // mixer use (host applies its own bypass/mute/solo gating, no need
+    // for the bus-grade extras). Disabled by default to preserve the
+    // existing standalone-plugin behaviour.
+    void setMinimalProcessing (bool enabled) noexcept { minimalProcessingMode.store (enabled, std::memory_order_relaxed); }
+    bool getMinimalProcessing() const noexcept       { return minimalProcessingMode.load (std::memory_order_relaxed); }
+
+    // Internal oversampling enable. Default true (preserves the donor's
+    // historical behaviour for standalone-plugin users). When false, the
+    // standard processBlock path runs the mode at native sample rate. Has
+    // no effect on the minimal-processing fast path, which is already
+    // native-rate. Hosts that want per-effect 1x default with a global
+    // quality switch can flip this from outside.
+    void setInternalOversamplingEnabled (bool enabled) noexcept { internalOversamplingEnabled.store (enabled, std::memory_order_relaxed); }
+    bool getInternalOversamplingEnabled() const noexcept       { return internalOversamplingEnabled.load (std::memory_order_relaxed); }
+
     // Preset change listener for UI updates (called on message thread)
     class PresetChangeListener
     {
@@ -168,6 +189,11 @@ private:
     std::unique_ptr<LookaheadBuffer> lookaheadBuffer;  // Global lookahead for all modes
     std::unique_ptr<class SidechainEQ> sidechainEQ;    // Low/high shelf EQ for sidechain
     std::unique_ptr<TruePeakDetector> truePeakDetector; // True-peak detection for sidechain
+
+    // Per-channel mixer fast-path flag — see public setMinimalProcessing.
+    std::atomic<bool> minimalProcessingMode{false};
+    // Internal-oversampling flag — see public setInternalOversamplingEnabled.
+    std::atomic<bool> internalOversamplingEnabled{true};
 
     // Metering (combined L/R max for backwards compatibility)
     std::atomic<float> inputMeter{-60.0f};
@@ -230,6 +256,7 @@ private:
     float grSmoothCoeff = 0.0f;         // One-pole filter coefficient for GR smoothing (~200ms)
     bool primeGrAccumulator = true;     // Flag to instantly prime on mode change
     bool wasBypassedLastBlock = false;
+    bool wasMinimalLastBlock  = false;  // Track minimal→standard transition for PDC restore
 
     // Bypass crossfade state (smooth transition from bypass to active)
     int bypassFadeRemaining{0};
