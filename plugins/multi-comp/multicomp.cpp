@@ -3635,6 +3635,91 @@ public:
         updateCrossoverFrequencies(200.0f, 2000.0f, 8000.0f);
     }
 
+    // Issue #79 — Phase 2: rebuild the active split chain from the enable
+    // mask. Each filter pool (lp1/hp1, lp2/hp2, lp3/hp3) keeps its
+    // assignment to its original boundary frequency (crossoverFreqs[0..2]).
+    // The splitter then walks ONLY the boundaries between consecutive
+    // enabled bands, addressing the matching filter pool by original
+    // boundary index. This way filter state survives a mask change because
+    // a given pool's coefficients never change just because the mask did.
+    void rebuildSplitChain(uint8_t mask)
+    {
+        // Snapshot the previous active-pool set BEFORE we mutate currentMask,
+        // so we can detect pools that transition 0→1 (re-enabled) and reset
+        // their filter state. Without this, a pool that sat idle while the
+        // user had a band disabled would resume from frozen z-1/z-2 history
+        // and produce a small click on reactivation.
+        std::array<bool, 3> oldActivePools{false, false, false};
+        {
+            std::array<int, NUM_BANDS> oldEnabled{};
+            int n = 0;
+            for (int i = 0; i < NUM_BANDS; ++i)
+                if (currentMask & (1 << i)) oldEnabled[static_cast<size_t>(n++)] = i;
+            for (int s = 0; s < n - 1; ++s)
+            {
+                const int idx = oldEnabled[static_cast<size_t>(s + 1)] - 1;
+                if (idx >= 0 && idx <= 2) oldActivePools[static_cast<size_t>(idx)] = true;
+            }
+        }
+
+        currentMask = mask;
+        numEnabledBands = 0;
+        for (int i = 0; i < NUM_BANDS; ++i)
+        {
+            if (mask & (1 << i))
+                enabledIndices[static_cast<size_t>(numEnabledBands++)] = i;
+        }
+        // Defensive — caller's processBlock guarantees popcount >= 2, but
+        // if we ever land here with <2 bands, fall back to all-enabled so
+        // the splitter has a valid topology.
+        if (numEnabledBands < 2)
+        {
+            numEnabledBands = NUM_BANDS;
+            for (int i = 0; i < NUM_BANDS; ++i)
+                enabledIndices[static_cast<size_t>(i)] = i;
+            currentMask = static_cast<uint8_t>((1 << NUM_BANDS) - 1);
+        }
+        numActiveStages = numEnabledBands - 1;
+        topBandIndex = enabledIndices[static_cast<size_t>(numEnabledBands - 1)];
+
+        // Stage k uses the original boundary at the LOW edge of the
+        // (k+1)-th enabled band, which lives in crossoverFreqs[i_{k+1} - 1].
+        // We don't move filter coefficients between pools — we just record
+        // which pool index each stage uses so the splitter can route. While
+        // we're here, mark which pools are now active so we can compare to
+        // oldActivePools and reset only the newly-activated ones.
+        std::array<bool, 3> newActivePools{false, false, false};
+        for (int stage = 0; stage < numActiveStages; ++stage)
+        {
+            const int upperEnabled = enabledIndices[static_cast<size_t>(stage + 1)];
+            const int idx = upperEnabled - 1;  // 0..2
+            stageBoundaryFilterIdx[static_cast<size_t>(stage)] = idx;
+            if (idx >= 0 && idx <= 2) newActivePools[static_cast<size_t>(idx)] = true;
+        }
+
+        // Reset filter state for pools that transitioned 0→1. RT-safe: just
+        // zeroes the IIR state vectors, no allocation. Pools that were
+        // already active keep their state so audio processing isn't
+        // disrupted when the mask change doesn't affect them.
+        for (int p = 0; p < 3; ++p)
+        {
+            if (newActivePools[static_cast<size_t>(p)] && ! oldActivePools[static_cast<size_t>(p)])
+            {
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    filterPool(p, true,  false)[static_cast<size_t>(ch)].reset();
+                    filterPool(p, true,  true) [static_cast<size_t>(ch)].reset();
+                    filterPool(p, false, false)[static_cast<size_t>(ch)].reset();
+                    filterPool(p, false, true) [static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, true,  false)[static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, true,  true) [static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, false, false)[static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, false, true) [static_cast<size_t>(ch)].reset();
+                }
+            }
+        }
+    }
+
     void updateCrossoverFrequencies(float freq1, float freq2, float freq3)
     {
         if (sampleRate <= 0.0)
@@ -3648,6 +3733,12 @@ public:
         crossoverFreqs[0] = freq1;
         crossoverFreqs[1] = freq2;
         crossoverFreqs[2] = freq3;
+
+        // Note (issue #79): no rebuildSplitChain call here. The topology
+        // (which boundary lives at which stage) is mask-driven and is set
+        // by processBlock when the mask changes. Filter pools' coefficients
+        // are assigned by ORIGINAL boundary index (xover_1/2/3 → pool
+        // 1/2/3), so updating frequencies here doesn't disturb the topology.
 
         // Create filter coefficients - Butterworth Q=0.707 for LR4 when cascaded
         auto lp1Coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, freq1, 0.707f);
@@ -3703,6 +3794,7 @@ public:
                       const std::array<float, NUM_BANDS>& makeups,
                       const std::array<bool, NUM_BANDS>& bypasses,
                       const std::array<bool, NUM_BANDS>& solos,
+                      const std::array<bool, NUM_BANDS>& enableds,
                       float outputGain, float mixPercent,
                       const juce::AudioBuffer<float>* sidechainBuffer = nullptr,
                       bool hasExternalSidechain = false)
@@ -3712,6 +3804,29 @@ public:
 
         if (numSamples <= 0 || channels <= 0)
             return;
+
+        // Issue #79 — derive the active mask, enforce minimum-2 invariant,
+        // rebuild the split chain only when the mask changed (cheap; just
+        // updates a small lookup, doesn't move filter coefficients).
+        uint8_t desiredMask = 0;
+        int enabledCount = 0;
+        for (int b = 0; b < NUM_BANDS; ++b)
+        {
+            if (enableds[b]) { desiredMask |= static_cast<uint8_t>(1 << b); ++enabledCount; }
+        }
+        if (enabledCount < 2)
+        {
+            for (int b = 0; b < NUM_BANDS && enabledCount < 2; ++b)
+            {
+                if (! (desiredMask & (1 << b)))
+                {
+                    desiredMask |= static_cast<uint8_t>(1 << b);
+                    ++enabledCount;
+                }
+            }
+        }
+        if (desiredMask != currentMask)
+            rebuildSplitChain(desiredMask);
 
         // Check for any solo bands
         bool anySolo = false;
@@ -3753,12 +3868,31 @@ public:
                                        hasExternalSidechain ? &scBandBuffers[band] : nullptr,
                                        hasExternalSidechain);
             }
-            else if (!shouldProcess)
+            else
             {
-                // Mute non-soloed bands when solo is active
-                bandBuffers[band].clear();
+                // Bypassed bands (user-bypass, solo'd-out, or caller-disabled) do
+                // no compression — zero GR so getMaxGainReduction() and auto-makeup
+                // don't see stale values from when the band was last active.
+                bandGainReduction[band] = 0.0f;
+
+                // Reset the detector envelope on ANY bypass path (user-bypass,
+                // solo-muted, or caller-disabled). Without this, a band that
+                // was under heavy GR before being taken out resumes from its
+                // stale envelope state on reactivation and the band comes
+                // back already attenuated until the old release tail decays.
+                if (isBypassed || !enableds[band])
+                {
+                    for (int ch = 0; ch < channels; ++ch)
+                        bandEnvelopes[band][static_cast<size_t>(ch)] = 1.0f;
+                }
+
+                if (!shouldProcess)
+                {
+                    // Mute non-soloed bands when solo is active
+                    bandBuffers[band].clear();
+                }
+                // If bypassed but no solo, keep the band signal as-is (no compression)
             }
-            // If bypassed but no solo, keep the band signal as-is (no compression)
         }
 
         // Sum all bands back together
@@ -3849,107 +3983,127 @@ public:
 private:
     void splitIntoBands(const juce::AudioBuffer<float>& input, int numSamples, int channels)
     {
-        // Proper Linkwitz-Riley 4th order (LR4) crossover implementation
-        // LR4 = cascaded 2nd order Butterworth filters (applied twice)
+        // Issue #79 — topology-aware Linkwitz-Riley 4th order splitter.
+        // Walks the active boundary list (built by rebuildSplitChain) and
+        // sends LP into the corresponding enabled band buffer; HP cascades
+        // into the next stage. The final stage's HP feeds the highest
+        // enabled band. Disabled bands' buffers are cleared at the top so
+        // the recombination sum picks up zero from them.
         //
-        // Signal flow for 4 bands with 3 crossover points:
-        // Band 0 (Low):      Input -> LP1a -> LP1b
-        // Band 1 (Low-Mid):  Input -> HP1a -> HP1b -> LP2a -> LP2b
-        // Band 2 (High-Mid): Input -> HP1a -> HP1b -> HP2a -> HP2b -> LP3a -> LP3b
-        // Band 3 (High):     Input -> HP1a -> HP1b -> HP2a -> HP2b -> HP3a -> HP3b
-        //
-        // Each filter path needs its own filter instances to maintain correct state!
-        // The "a" and "b" filters are the two cascaded stages for LR4 response.
+        // Filter pools (lp1/hp1, lp2/hp2, lp3/hp3) keep their original
+        // boundary assignments (xover_1, xover_2, xover_3 respectively).
+        // stageBoundaryFilterIdx[stage] selects which pool the stage uses,
+        // so changing the mask doesn't invalidate filter state.
+
+        // Clear disabled bands so recombination sees zero from them.
+        for (int b = 0; b < NUM_BANDS; ++b)
+        {
+            if (! (currentMask & (1 << b)))
+                bandBuffers[b].clear(0, numSamples);
+        }
 
         for (int ch = 0; ch < channels; ++ch)
         {
             const float* in = input.getReadPointer(ch);
-            float* band0 = bandBuffers[0].getWritePointer(ch);
-            float* band1 = bandBuffers[1].getWritePointer(ch);
-            float* band2 = bandBuffers[2].getWritePointer(ch);
-            float* band3 = bandBuffers[3].getWritePointer(ch);
+            std::array<float*, NUM_BANDS> bandPtrs{};
+            for (int b = 0; b < NUM_BANDS; ++b)
+                bandPtrs[static_cast<size_t>(b)] = bandBuffers[b].getWritePointer(ch);
+
+            // Pre-resolve filter pointers per stage so the inner loop is
+            // pointer-chasing only.
+            std::array<juce::dsp::IIR::Filter<float>*, NUM_BANDS - 1> sLpA{}, sLpB{}, sHpA{}, sHpB{};
+            for (int stage = 0; stage < numActiveStages; ++stage)
+            {
+                const int idx = stageBoundaryFilterIdx[static_cast<size_t>(stage)];
+                sLpA[static_cast<size_t>(stage)] = &filterPool(idx, /*isLp*/true,  /*isB*/false)[ch];
+                sLpB[static_cast<size_t>(stage)] = &filterPool(idx, /*isLp*/true,  /*isB*/true) [ch];
+                sHpA[static_cast<size_t>(stage)] = &filterPool(idx, /*isLp*/false, /*isB*/false)[ch];
+                sHpB[static_cast<size_t>(stage)] = &filterPool(idx, /*isLp*/false, /*isB*/true) [ch];
+            }
 
             for (int i = 0; i < numSamples; ++i)
             {
-                float sample = in[i];
+                float running = in[i];
 
-                // === Band 0: Low (below crossover 1) ===
-                // LP1 applied twice for LR4
-                float lp1 = lp1_a[ch].processSample(sample);
-                lp1 = lp1_b[ch].processSample(lp1);
-                band0[i] = lp1;
+                for (int stage = 0; stage < numActiveStages; ++stage)
+                {
+                    float lp = sLpA[static_cast<size_t>(stage)]->processSample(running);
+                    lp = sLpB[static_cast<size_t>(stage)]->processSample(lp);
+                    bandPtrs[static_cast<size_t>(enabledIndices[static_cast<size_t>(stage)])][i] = lp;
 
-                // === HP1 for bands 1-3 (above crossover 1) ===
-                float hp1 = hp1_a[ch].processSample(sample);
-                hp1 = hp1_b[ch].processSample(hp1);
+                    float hp = sHpA[static_cast<size_t>(stage)]->processSample(running);
+                    hp = sHpB[static_cast<size_t>(stage)]->processSample(hp);
+                    running = hp;
+                }
 
-                // === Band 1: Low-Mid (between crossover 1 and 2) ===
-                // HP1 output -> LP2 applied twice
-                float lp2 = lp2_a[ch].processSample(hp1);
-                lp2 = lp2_b[ch].processSample(lp2);
-                band1[i] = lp2;
-
-                // === HP2 for bands 2-3 (above crossover 2) ===
-                float hp2 = hp2_a[ch].processSample(hp1);
-                hp2 = hp2_b[ch].processSample(hp2);
-
-                // === Band 2: High-Mid (between crossover 2 and 3) ===
-                // HP2 output -> LP3 applied twice
-                float lp3 = lp3_a[ch].processSample(hp2);
-                lp3 = lp3_b[ch].processSample(lp3);
-                band2[i] = lp3;
-
-                // === Band 3: High (above crossover 3) ===
-                // HP2 output -> HP3 applied twice
-                float hp3 = hp3_a[ch].processSample(hp2);
-                hp3 = hp3_b[ch].processSample(hp3);
-                band3[i] = hp3;
+                bandPtrs[static_cast<size_t>(topBandIndex)][i] = running;
             }
         }
     }
 
+    // Pool selector for the audio splitter. boundaryIdx ∈ {0,1,2}.
+    std::vector<juce::dsp::IIR::Filter<float>>& filterPool(int boundaryIdx, bool isLp, bool isB)
+    {
+        if (boundaryIdx == 0)
+            return isLp ? (isB ? lp1_b : lp1_a) : (isB ? hp1_b : hp1_a);
+        if (boundaryIdx == 1)
+            return isLp ? (isB ? lp2_b : lp2_a) : (isB ? hp2_b : hp2_a);
+        return isLp ? (isB ? lp3_b : lp3_a) : (isB ? hp3_b : hp3_a);
+    }
+
+    // Pool selector for the sidechain splitter (parallel filter set).
+    std::vector<juce::dsp::IIR::Filter<float>>& scFilterPool(int boundaryIdx, bool isLp, bool isB)
+    {
+        if (boundaryIdx == 0)
+            return isLp ? (isB ? sc_lp1_b : sc_lp1_a) : (isB ? sc_hp1_b : sc_hp1_a);
+        if (boundaryIdx == 1)
+            return isLp ? (isB ? sc_lp2_b : sc_lp2_a) : (isB ? sc_hp2_b : sc_hp2_a);
+        return isLp ? (isB ? sc_lp3_b : sc_lp3_a) : (isB ? sc_hp3_b : sc_hp3_a);
+    }
+
     void splitSidechainIntoBands(const juce::AudioBuffer<float>& scInput, int numSamples, int channels)
     {
-        // Same LR4 crossover as splitIntoBands() but using separate sc_ filter instances
+        // Same LR4 crossover as splitIntoBands() but using separate sc_ filter instances.
+        // Topology mirrors the audio path; see splitIntoBands for the rule.
+        for (int b = 0; b < NUM_BANDS; ++b)
+        {
+            if (! (currentMask & (1 << b)))
+                scBandBuffers[b].clear(0, numSamples);
+        }
+
         for (int ch = 0; ch < channels; ++ch)
         {
             const float* in = scInput.getReadPointer(juce::jmin(ch, scInput.getNumChannels() - 1));
-            float* band0 = scBandBuffers[0].getWritePointer(ch);
-            float* band1 = scBandBuffers[1].getWritePointer(ch);
-            float* band2 = scBandBuffers[2].getWritePointer(ch);
-            float* band3 = scBandBuffers[3].getWritePointer(ch);
+            std::array<float*, NUM_BANDS> bandPtrs{};
+            for (int b = 0; b < NUM_BANDS; ++b)
+                bandPtrs[static_cast<size_t>(b)] = scBandBuffers[b].getWritePointer(ch);
+
+            std::array<juce::dsp::IIR::Filter<float>*, NUM_BANDS - 1> sLpA{}, sLpB{}, sHpA{}, sHpB{};
+            for (int stage = 0; stage < numActiveStages; ++stage)
+            {
+                const int idx = stageBoundaryFilterIdx[static_cast<size_t>(stage)];
+                sLpA[static_cast<size_t>(stage)] = &scFilterPool(idx, /*isLp*/true,  /*isB*/false)[ch];
+                sLpB[static_cast<size_t>(stage)] = &scFilterPool(idx, /*isLp*/true,  /*isB*/true) [ch];
+                sHpA[static_cast<size_t>(stage)] = &scFilterPool(idx, /*isLp*/false, /*isB*/false)[ch];
+                sHpB[static_cast<size_t>(stage)] = &scFilterPool(idx, /*isLp*/false, /*isB*/true) [ch];
+            }
 
             for (int i = 0; i < numSamples; ++i)
             {
-                float sample = in[i];
+                float running = in[i];
 
-                // Band 0: Low (below crossover 1)
-                float lp1 = sc_lp1_a[ch].processSample(sample);
-                lp1 = sc_lp1_b[ch].processSample(lp1);
-                band0[i] = lp1;
+                for (int stage = 0; stage < numActiveStages; ++stage)
+                {
+                    float lp = sLpA[static_cast<size_t>(stage)]->processSample(running);
+                    lp = sLpB[static_cast<size_t>(stage)]->processSample(lp);
+                    bandPtrs[static_cast<size_t>(enabledIndices[static_cast<size_t>(stage)])][i] = lp;
 
-                // HP1 for bands 1-3
-                float hp1 = sc_hp1_a[ch].processSample(sample);
-                hp1 = sc_hp1_b[ch].processSample(hp1);
+                    float hp = sHpA[static_cast<size_t>(stage)]->processSample(running);
+                    hp = sHpB[static_cast<size_t>(stage)]->processSample(hp);
+                    running = hp;
+                }
 
-                // Band 1: Low-Mid (between crossover 1 and 2)
-                float lp2 = sc_lp2_a[ch].processSample(hp1);
-                lp2 = sc_lp2_b[ch].processSample(lp2);
-                band1[i] = lp2;
-
-                // HP2 for bands 2-3
-                float hp2 = sc_hp2_a[ch].processSample(hp1);
-                hp2 = sc_hp2_b[ch].processSample(hp2);
-
-                // Band 2: High-Mid (between crossover 2 and 3)
-                float lp3 = sc_lp3_a[ch].processSample(hp2);
-                lp3 = sc_lp3_b[ch].processSample(lp3);
-                band2[i] = lp3;
-
-                // Band 3: High (above crossover 3)
-                float hp3 = sc_hp3_a[ch].processSample(hp2);
-                hp3 = sc_hp3_b[ch].processSample(hp3);
-                band3[i] = hp3;
+                bandPtrs[static_cast<size_t>(topBandIndex)][i] = running;
             }
         }
     }
@@ -4076,6 +4230,21 @@ private:
 
     // Crossover frequencies
     std::array<float, 3> crossoverFreqs{200.0f, 2000.0f, 8000.0f};
+
+    // Issue #79 — active topology state. currentMask is the bitmask of
+    // enabled bands (LSB = band 0). enabledIndices is the ordered list of
+    // those band indices; numActiveStages = numEnabledBands - 1 is how
+    // many LP/HP splits the splitter actually runs. stageBoundaryFilterIdx
+    // maps stage k → original boundary index (0..2) which selects the
+    // filter pool to reuse (lp1/hp1 vs lp2/hp2 vs lp3/hp3). This decoupling
+    // keeps filter state valid across mask changes since a given pool's
+    // coefficients never depend on the mask, only on its boundary frequency.
+    uint8_t currentMask = 0xF;
+    std::array<int, NUM_BANDS> enabledIndices{0, 1, 2, 3};
+    int numEnabledBands = NUM_BANDS;
+    int numActiveStages = NUM_BANDS - 1;
+    int topBandIndex = NUM_BANDS - 1;
+    std::array<int, NUM_BANDS - 1> stageBoundaryFilterIdx{0, 1, 2};
 
     double sampleRate = 0.0;
     int numChannels = 2;
@@ -4415,6 +4584,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout UniversalCompressor::createP
         // Band solo
         layout.add(std::make_unique<juce::AudioParameterBool>(
             "mb_" + name + "_solo", label + " Solo", false));
+
+        // Band enabled — when false, the band is removed from the multiband
+        // chain entirely (issue #79). Default true so existing presets are
+        // unaffected. The UI enforces a minimum of 2 enabled bands; the DSP
+        // layer also defends against <2 in case the param is driven by host
+        // automation.
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            "mb_" + name + "_enabled", label + " Enabled", true));
     }
 
     // Global multiband output
@@ -4923,6 +5100,166 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         return;
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Minimal-processing fast path (per-channel mixer use). Skips everything
+    // that earns its keep on a master/bus but is wasted CPU on a track strip:
+    //   - sidechain HP filter / shelf EQ
+    //   - true-peak detection
+    //   - transient shaper
+    //   - global lookahead
+    //   - mix wet/dry crossfade (always 100% wet here)
+    //   - auto-makeup smoother
+    //   - bypass-fade crossfader
+    //   - stereo linking (per-channel comp is mono)
+    //   - INTERNAL OVERSAMPLING (the big one — saves a 2x-4x multiplier on
+    //     mode-process() invocations for every channel-block)
+    // The mode-specific per-sample process() is still called with the same
+    // params at native rate, using the input as its own sidechain. Mode
+    // switching, GR meter update, and Multiband fallback are preserved.
+    if (minimalProcessingMode.load (std::memory_order_relaxed))
+    {
+        const int numCh = juce::jmin (buffer.getNumChannels(), 2);
+
+        // Cache active mode params once (mirrors the switch below in the
+        // standard path but only reads what THIS mode needs).
+        const CompressorMode fastMode = getCurrentMode();
+        float p0 = 0.0f, p1 = 0.0f, p2 = 0.0f, p3 = 0.0f, p4 = 0.0f, p5 = 0.0f, p6 = 0.0f;
+        switch (fastMode)
+        {
+            case CompressorMode::Opto:
+                if (auto* a = parameters.getRawParameterValue ("opto_peak_reduction")) p0 = juce::jlimit (0.0f, 100.0f, a->load());
+                if (auto* a = parameters.getRawParameterValue ("opto_gain"))           p1 = juce::jlimit (-40.0f, 40.0f, (juce::jlimit (0.0f, 100.0f, a->load()) - 50.0f) * 0.8f);
+                if (auto* a = parameters.getRawParameterValue ("opto_limit"))          p2 = a->load();
+                break;
+            case CompressorMode::FET:
+                if (auto* a = parameters.getRawParameterValue ("fet_input"))    p0 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_output"))   p1 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_attack"))   p2 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_release")) p3 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_ratio"))    p4 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_curve_mode"))      p5 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("fet_transient"))       p6 = a->load();
+                break;
+            case CompressorMode::VCA:
+                if (auto* a = parameters.getRawParameterValue ("vca_threshold")) p0 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("vca_ratio"))     p1 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("vca_attack"))    p2 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("vca_release"))  p3 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("vca_output"))    p4 = a->load();
+                if (auto* a = parameters.getRawParameterValue ("vca_overeasy"))  p5 = a->load();
+                break;
+            default:
+                // Bus / Studio / Digital / Multiband fall through to the
+                // standard path — minimal mode targets the three modes used
+                // on per-channel strips.
+                goto fastPathFallthrough;
+        }
+
+        // We're committed to the minimal path now (the switch above
+        // already routed unsupported modes to fastPathFallthrough). Force
+        // host PDC to 0 since this path skips global lookahead AND
+        // internal oversampling — otherwise the host applies a phantom
+        // delay offset that doesn't match actual output and causes phase
+        // issues on parallel buses.
+        if (getLatencySamples() != 0)
+            setLatencySamples(0);
+
+        // Keep the global-lookahead ring + the bypass-fade delay line warm
+        // by feeding raw input through them, even though we don't use
+        // their output here. Without this, the first block of the
+        // standard path on minimal→standard transition would read cold /
+        // stale samples from those buffers and glitch until they refill.
+        // Mirrors the bypass-path warming pattern. Done BEFORE in-place
+        // processing so we feed unprocessed input.
+        {
+            const int nc = buffer.getNumChannels();
+            const int ns = buffer.getNumSamples();
+
+            if (lookaheadBuffer)
+            {
+                float lookaheadMs = 0.0f;
+                if (auto* laParam = parameters.getRawParameterValue("global_lookahead"))
+                    lookaheadMs = laParam->load();
+                if (lookaheadMs > 0.0f)
+                    for (int ch = 0; ch < nc; ++ch)
+                        for (int i = 0; i < ns; ++i)
+                            lookaheadBuffer->processSample(buffer.getSample(ch, i), ch, lookaheadMs);
+            }
+
+            // Digital lookahead is intentionally NOT warmed here — minimal
+            // path falls through to standard for Digital mode anyway, and
+            // its delay line runs at the oversampled rate.
+
+            if (bypassFadeDelaySize > 1)
+            {
+                for (int ch = 0; ch < nc; ++ch)
+                {
+                    int& wp = bypassFadeDelayWritePos[static_cast<size_t>(ch)];
+                    for (int i = 0; i < ns; ++i)
+                    {
+                        bypassFadeDelayBuf.setSample(ch, wp, buffer.getSample(ch, i));
+                        wp = (wp + 1) % bypassFadeDelaySize;
+                    }
+                }
+            }
+        }
+
+        // Process each channel in place at native rate. Pass input as its
+        // own sidechain (same as standard path's "internal sidechain" =
+        // input pre-filter, but with the HP filter skipped — see comment
+        // on the fast-path at top).
+        {
+            int numSamples = buffer.getNumSamples();
+            float maxGrDb = 0.0f;
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                float* data = buffer.getWritePointer (ch);
+                switch (fastMode)
+                {
+                    case CompressorMode::Opto:
+                        for (int i = 0; i < numSamples; ++i)
+                            data[i] = optoCompressor->process (data[i], ch, p0, p1, p2 > 0.5f, false, data[i], false);
+                        break;
+                    case CompressorMode::FET:
+                        for (int i = 0; i < numSamples; ++i)
+                            data[i] = fetCompressor->process (data[i], ch, p0, p1, p2, p3, static_cast<int>(p4), false,
+                                                                lookupTables.get(), transientShaper.get(),
+                                                                p5 > 0.5f, p6, data[i], false);
+                        break;
+                    case CompressorMode::VCA:
+                        for (int i = 0; i < numSamples; ++i)
+                            data[i] = vcaCompressor->process (data[i], ch, p0, p1, p2, p3, p4, p5 > 0.5f, false, data[i], false);
+                        break;
+                    default: break;  // already filtered out above
+                }
+            }
+
+            // GR meter — read whichever mode just ran.
+            switch (fastMode)
+            {
+                case CompressorMode::Opto: maxGrDb = optoCompressor->getGainReduction(0); break;
+                case CompressorMode::FET:  maxGrDb = fetCompressor ->getGainReduction(0); break;
+                case CompressorMode::VCA:  maxGrDb = vcaCompressor ->getGainReduction(0); break;
+                default: break;
+            }
+            grMeter.store (maxGrDb, std::memory_order_relaxed);
+        }
+        wasMinimalLastBlock = true;  // Standard path will restore latency on transition.
+        return;
+    }
+    fastPathFallthrough:;
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Restore latency on minimal-mode → standard-path transition. Minimal
+    // mode forces latency to 0; standard path may need the lookahead /
+    // oversampling latency back. Mirrors the bypass-restoration pattern
+    // below but doesn't need the bypass-fade crossfade machinery.
+    if (wasMinimalLastBlock)
+    {
+        wasMinimalLastBlock = false;
+        updateLatencyReport();
+    }
+
     // Restore latency on bypass→active transition with smooth crossfade
     if (wasBypassedLastBlock)
     {
@@ -5054,8 +5391,10 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         return;
     }
 
-    // Internal oversampling is always enabled for better quality
-    bool oversample = true; // Always use oversampling internally
+    // Internal oversampling — default true, but hosts that want a 1x default
+    // (and an external/global quality switch) can flip it off via
+    // setInternalOversamplingEnabled(false).
+    bool oversample = internalOversamplingEnabled.load (std::memory_order_relaxed);
     CompressorMode mode = getCurrentMode();
 
     // Reset auto-gain state on mode change
@@ -5603,6 +5942,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         std::array<float, kBands> thresholds, ratios, attacks, releases, makeups;
         std::array<bool, kBands> bypasses, solos;
 
+        std::array<bool, kBands> enableds;
         for (int band = 0; band < kBands; ++band)
         {
             const juce::String& name = bandNames[band];
@@ -5613,6 +5953,7 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             auto* makeup = parameters.getRawParameterValue("mb_" + name + "_makeup");
             auto* bypass = parameters.getRawParameterValue("mb_" + name + "_bypass");
             auto* solo = parameters.getRawParameterValue("mb_" + name + "_solo");
+            auto* enabled = parameters.getRawParameterValue("mb_" + name + "_enabled");
 
             thresholds[band] = thresh ? thresh->load() : -20.0f;
             ratios[band] = ratio ? ratio->load() : 4.0f;
@@ -5621,11 +5962,25 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             makeups[band] = makeup ? makeup->load() : 0.0f;
             bypasses[band] = bypass ? (bypass->load() > 0.5f) : false;
             solos[band] = solo ? (solo->load() > 0.5f) : false;
+            enableds[band] = enabled ? (enabled->load() > 0.5f) : true;
         }
 
-        // Process through multiband compressor (pass sidechain for external SC detection)
+        // Issue #79 — Phase 2: the splitter inside MultibandCompressor now
+        // collapses disabled bands' frequency ranges into their nearest
+        // enabled neighbour, so disabled bands' buffers come out cleared.
+        // Force-bypass disabled bands here too so processBandCompression
+        // doesn't waste cycles compressing zero (the envelope would just
+        // sit at unity, but skipping is free and clearer in intent).
+        for (int band = 0; band < kBands; ++band)
+            if (!enableds[band])
+                bypasses[band] = true;
+
+        // Process through multiband compressor (pass sidechain for external SC detection).
+        // The multiband compressor enforces its own minimum-2 invariant on
+        // enableds[] before deriving the splitter mask.
         multibandCompressor->processBlock(buffer, thresholds, ratios, attacks, releases,
-                                          makeups, bypasses, solos, mbOutput, mbMix,
+                                          makeups, bypasses, solos, enableds,
+                                          mbOutput, mbMix,
                                           &filteredSidechain, hasExternalSidechain);
 
         // Update per-band GR meters for UI
