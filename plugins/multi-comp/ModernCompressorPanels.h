@@ -1127,12 +1127,20 @@ private:
 
     void drawDbScale(juce::Graphics& g)
     {
-        if (bandGRBounds[0].isEmpty()) return;
+        // Issue #79 — band 0 may be disabled (its bandGRBounds is empty in
+        // that case), so find the first enabled band's meter as the
+        // reference. All enabled bands share the same Y/height by
+        // construction in resized(), so any non-empty entry works.
+        const juce::Rectangle<int>* refBounds = nullptr;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (! bandGRBounds[i].isEmpty()) { refBounds = &bandGRBounds[i]; break; }
+        }
+        if (refBounds == nullptr) return;
 
-        auto& refBounds = bandGRBounds[0];
         const float dbLevels[] = {0.0f, -3.0f, -6.0f, -10.0f, -15.0f, -20.0f};
-        const int meterTop = refBounds.getY();
-        const int meterHeight = refBounds.getHeight();
+        const int meterTop = refBounds->getY();
+        const int meterHeight = refBounds->getHeight();
 
         g.setFont(juce::FontOptions(9.0f * scaleFactor));
 
@@ -1354,6 +1362,14 @@ private:
     void selectBand(int band)
     {
         currentBand = juce::jlimit(0, 3, band);
+
+        // Sync the radio-group toggle state so programmatic callers
+        // (constructor's initialBand walk, timer-poll auto-walk to
+        // firstEnabled) move the visible tab highlight to match
+        // currentBand. For the user-click path the radio state is already
+        // correct by the time we get here, so this is a no-op.
+        for (int i = 0; i < 4; ++i)
+            bandButtons[i].setToggleState(i == currentBand, juce::dontSendNotification);
 
         const juce::String bandNames[] = {"low", "lowmid", "highmid", "high"};
         const juce::String& bandName = bandNames[currentBand];

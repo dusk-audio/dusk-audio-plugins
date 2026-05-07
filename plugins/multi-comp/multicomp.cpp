@@ -3644,6 +3644,24 @@ public:
     // a given pool's coefficients never change just because the mask did.
     void rebuildSplitChain(uint8_t mask)
     {
+        // Snapshot the previous active-pool set BEFORE we mutate currentMask,
+        // so we can detect pools that transition 0→1 (re-enabled) and reset
+        // their filter state. Without this, a pool that sat idle while the
+        // user had a band disabled would resume from frozen z-1/z-2 history
+        // and produce a small click on reactivation.
+        std::array<bool, 3> oldActivePools{false, false, false};
+        {
+            std::array<int, NUM_BANDS> oldEnabled{};
+            int n = 0;
+            for (int i = 0; i < NUM_BANDS; ++i)
+                if (currentMask & (1 << i)) oldEnabled[static_cast<size_t>(n++)] = i;
+            for (int s = 0; s < n - 1; ++s)
+            {
+                const int idx = oldEnabled[static_cast<size_t>(s + 1)] - 1;
+                if (idx >= 0 && idx <= 2) oldActivePools[static_cast<size_t>(idx)] = true;
+            }
+        }
+
         currentMask = mask;
         numEnabledBands = 0;
         for (int i = 0; i < NUM_BANDS; ++i)
@@ -3667,11 +3685,38 @@ public:
         // Stage k uses the original boundary at the LOW edge of the
         // (k+1)-th enabled band, which lives in crossoverFreqs[i_{k+1} - 1].
         // We don't move filter coefficients between pools — we just record
-        // which pool index each stage uses so the splitter can route.
+        // which pool index each stage uses so the splitter can route. While
+        // we're here, mark which pools are now active so we can compare to
+        // oldActivePools and reset only the newly-activated ones.
+        std::array<bool, 3> newActivePools{false, false, false};
         for (int stage = 0; stage < numActiveStages; ++stage)
         {
             const int upperEnabled = enabledIndices[static_cast<size_t>(stage + 1)];
-            stageBoundaryFilterIdx[static_cast<size_t>(stage)] = upperEnabled - 1;  // 0..2
+            const int idx = upperEnabled - 1;  // 0..2
+            stageBoundaryFilterIdx[static_cast<size_t>(stage)] = idx;
+            if (idx >= 0 && idx <= 2) newActivePools[static_cast<size_t>(idx)] = true;
+        }
+
+        // Reset filter state for pools that transitioned 0→1. RT-safe: just
+        // zeroes the IIR state vectors, no allocation. Pools that were
+        // already active keep their state so audio processing isn't
+        // disrupted when the mask change doesn't affect them.
+        for (int p = 0; p < 3; ++p)
+        {
+            if (newActivePools[static_cast<size_t>(p)] && ! oldActivePools[static_cast<size_t>(p)])
+            {
+                for (int ch = 0; ch < numChannels; ++ch)
+                {
+                    filterPool(p, true,  false)[static_cast<size_t>(ch)].reset();
+                    filterPool(p, true,  true) [static_cast<size_t>(ch)].reset();
+                    filterPool(p, false, false)[static_cast<size_t>(ch)].reset();
+                    filterPool(p, false, true) [static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, true,  false)[static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, true,  true) [static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, false, false)[static_cast<size_t>(ch)].reset();
+                    scFilterPool(p, false, true) [static_cast<size_t>(ch)].reset();
+                }
+            }
         }
     }
 
@@ -3830,12 +3875,12 @@ public:
                 // don't see stale values from when the band was last active.
                 bandGainReduction[band] = 0.0f;
 
-                // Reset the detector envelope when the band is removed from the
-                // active path (solo-muted or user-disabled). Without this, a
-                // band that was under heavy GR before being taken out resumes
-                // from its stale envelope state on reactivation and stays
-                // attenuated until the old release tail decays.
-                if (!shouldProcess || !enableds[band])
+                // Reset the detector envelope on ANY bypass path (user-bypass,
+                // solo-muted, or caller-disabled). Without this, a band that
+                // was under heavy GR before being taken out resumes from its
+                // stale envelope state on reactivation and the band comes
+                // back already attenuated until the old release tail decays.
+                if (isBypassed || !enableds[band])
                 {
                     for (int ch = 0; ch < channels; ++ch)
                         bandEnvelopes[band][static_cast<size_t>(ch)] = 1.0f;
@@ -5110,6 +5155,55 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
                 goto fastPathFallthrough;
         }
 
+        // We're committed to the minimal path now (the switch above
+        // already routed unsupported modes to fastPathFallthrough). Force
+        // host PDC to 0 since this path skips global lookahead AND
+        // internal oversampling — otherwise the host applies a phantom
+        // delay offset that doesn't match actual output and causes phase
+        // issues on parallel buses.
+        if (getLatencySamples() != 0)
+            setLatencySamples(0);
+
+        // Keep the global-lookahead ring + the bypass-fade delay line warm
+        // by feeding raw input through them, even though we don't use
+        // their output here. Without this, the first block of the
+        // standard path on minimal→standard transition would read cold /
+        // stale samples from those buffers and glitch until they refill.
+        // Mirrors the bypass-path warming pattern. Done BEFORE in-place
+        // processing so we feed unprocessed input.
+        {
+            const int nc = buffer.getNumChannels();
+            const int ns = buffer.getNumSamples();
+
+            if (lookaheadBuffer)
+            {
+                float lookaheadMs = 0.0f;
+                if (auto* laParam = parameters.getRawParameterValue("global_lookahead"))
+                    lookaheadMs = laParam->load();
+                if (lookaheadMs > 0.0f)
+                    for (int ch = 0; ch < nc; ++ch)
+                        for (int i = 0; i < ns; ++i)
+                            lookaheadBuffer->processSample(buffer.getSample(ch, i), ch, lookaheadMs);
+            }
+
+            // Digital lookahead is intentionally NOT warmed here — minimal
+            // path falls through to standard for Digital mode anyway, and
+            // its delay line runs at the oversampled rate.
+
+            if (bypassFadeDelaySize > 1)
+            {
+                for (int ch = 0; ch < nc; ++ch)
+                {
+                    int& wp = bypassFadeDelayWritePos[static_cast<size_t>(ch)];
+                    for (int i = 0; i < ns; ++i)
+                    {
+                        bypassFadeDelayBuf.setSample(ch, wp, buffer.getSample(ch, i));
+                        wp = (wp + 1) % bypassFadeDelaySize;
+                    }
+                }
+            }
+        }
+
         // Process each channel in place at native rate. Pass input as its
         // own sidechain (same as standard path's "internal sidechain" =
         // input pre-filter, but with the HP filter skipped — see comment
@@ -5150,10 +5244,21 @@ void UniversalCompressor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             }
             grMeter.store (maxGrDb, std::memory_order_relaxed);
         }
+        wasMinimalLastBlock = true;  // Standard path will restore latency on transition.
         return;
     }
     fastPathFallthrough:;
     // ─────────────────────────────────────────────────────────────────────
+
+    // Restore latency on minimal-mode → standard-path transition. Minimal
+    // mode forces latency to 0; standard path may need the lookahead /
+    // oversampling latency back. Mirrors the bypass-restoration pattern
+    // below but doesn't need the bypass-fade crossfade machinery.
+    if (wasMinimalLastBlock)
+    {
+        wasMinimalLastBlock = false;
+        updateLatencyReport();
+    }
 
     // Restore latency on bypass→active transition with smooth crossfade
     if (wasBypassedLastBlock)
