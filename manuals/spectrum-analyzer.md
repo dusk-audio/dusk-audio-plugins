@@ -15,15 +15,16 @@ Spectrum Analyzer is a measurement plugin, not a sound-shaping plugin. Drop it o
 
 Use it to verify what your ears are telling you. The spectrum shows tonal balance and resonance; LUFS shows perceived loudness for streaming-platform targets; true-peak catches inter-sample peaks that a regular sample-peak meter misses; correlation flags phase issues before they cost you a mono fold-down.
 
-It is not a corrective EQ, and it is not a sonic-fingerprint matching tool (use Multi-Q's Match mode for that). It is a precise set of meters that gives you the numbers you need to decide what to do next.
+It is not a corrective EQ, and it is not a sonic-fingerprint matching tool. It is a precise set of meters that gives you the numbers you need to decide what to do next.
 
 ## Quick Start
 
 1. Insert Spectrum Analyzer on the track or bus you want to measure. Mastering bus is a common place to put it; it works equally well on a single instrument.
 2. Play the project. The spectrum draws across the main display. Loudness readings appear next to it.
-3. Click the gear icon (top right) to open the settings overlay.
+3. Click the gear icon (top right) to open the settings overlay. The defaults (4096 FFT, 0.5 smoothing, 0 dB/oct slope, K-14 metering) work for most program material.
 
-![Settings overlay open](screenshots/spectrum-analyzer/02-settings-overlay.png) The defaults (4096 FFT, 0.5 smoothing, 0 dB/oct slope, K-14 metering) work for most program material.
+   ![Settings overlay open](screenshots/spectrum-analyzer/02-settings-overlay.png)
+
 4. Look at the Integrated LUFS readout once the section you are checking has played for at least 10 seconds. That is your loudness number.
 5. Watch the True Peak indicator. If it lights red, your master is clipping inter-sample; pull the output back at least 1 dB.
 6. Use the Channel Mode dropdown in the header to switch between Stereo, Mono, Mid, and Side views.
@@ -59,7 +60,7 @@ Look for: a roughly even hill across 60 Hz to 10 kHz, with a small bump in the k
 ![LUFS readouts](screenshots/spectrum-analyzer/04-lufs-readouts.png)
 
 **Source:** A finished master, ready to upload.
-**Goal:** Confirm Integrated LUFS hits the streaming target (typically -14 LUFS for Spotify and Apple Music, -16 LUFS for podcasts).
+**Goal:** Confirm Integrated LUFS hits the streaming target (Spotify, YouTube, Amazon Music, and Tidal: -14 LUFS integrated; Apple Music: -16 LUFS integrated; podcasts: -16 LUFS).
 
 Settings:
 
