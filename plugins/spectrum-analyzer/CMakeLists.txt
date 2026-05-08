@@ -8,7 +8,7 @@ set(PLUGIN_NAME "SpectrumAnalyzer")
 set(PLUGIN_CODE "SpAn")
 set(PLUGIN_MANUFACTURER_CODE "Dusk")
 set(PLUGIN_MANUFACTURER "Dusk Audio")
-set(PLUGIN_VERSION "1.0.0")
+set(PLUGIN_VERSION "1.0.1")
 
 # Build format options (matches other plugins)
 option(BUILD_VST3 "Build VST3 format" ON)
