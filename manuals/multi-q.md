@@ -1,6 +1,6 @@
 ---
 slug: multi-q
-version: 0.10.4
+version: 0.10.5
 last_updated: 2026-05-08
 tagline: Universal EQ with three modes (Digital, British, Tube)
 ---
