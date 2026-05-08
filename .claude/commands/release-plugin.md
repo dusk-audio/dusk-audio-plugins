@@ -93,6 +93,18 @@ set(<VAR>_DEFAULT_VERSION "<new-version>")
 project(MultiQ VERSION <new-version>)
 ```
 
+**Manual front matter** (issue #80) — only if `manuals/<slug>.md` exists. Uses the portable `sed -i.bak ... && rm` form so this works on both macOS BSD sed and Linux GNU sed:
+```bash
+PLUGINS_REPO=$(pwd)
+MANUAL_MD="$PLUGINS_REPO/manuals/<slug>.md"
+TODAY=$(date +%Y-%m-%d)
+if [ -f "$MANUAL_MD" ]; then
+  sed -i.bak 's/^version: .*/version: <new-version>/' "$MANUAL_MD" && rm "$MANUAL_MD.bak"
+  sed -i.bak "s/^last_updated: .*/last_updated: $TODAY/" "$MANUAL_MD" && rm "$MANUAL_MD.bak"
+fi
+```
+The manual front matter `version:` is unquoted (e.g., `version: 1.0.9`); the website's `_plugins/<slug>.md` uses quotes (`version: "1.0.9"`). Match the existing format in each file.
+
 ### Step 4: Update Website (Automated)
 
 Update `~/projects/dusk-audio.github.io/_data/plugins.yml`:
@@ -123,11 +135,68 @@ If the plugin has `status: in-dev` and is being released for the first time, als
 - `featured: false` → `featured: true`
 - Add `version: <new-version>` if missing
 
+#### Step 4b: Append a new entry to the `_plugins/<slug>.md` changelog array (Automated, issue #80)
+
+Step 4 only updates the top-level `version:` field. The `changelog:` array also needs a new entry so the plugin page lists the release. Insert immediately after the `changelog:` line, in the format the existing entries use:
+
+```bash
+# Use awk (portable across BSD and GNU sed) to insert after the `changelog:` key
+WEBSITE_REPO=~/projects/dusk-audio.github.io
+PLUGIN_MD="$WEBSITE_REPO/_plugins/<slug>.md"
+TODAY=$(date +%Y-%m-%d)
+NEW_VERSION="<new-version>"
+
+# Pull each changelog line gathered in Step 2 into one bullet entry per line.
+# The CHANGELOG_BULLETS variable should be a newline-separated list, e.g.
+#   "First change"
+#   "Second change"
+#
+# If only one summary string is available, use it as a single bullet.
+
+awk -v ver="$NEW_VERSION" -v date="$TODAY" -v bullets="$CHANGELOG_BULLETS" '
+  /^changelog:$/ && !inserted {
+    print
+    print "  - version: \"" ver "\""
+    print "    date: \"" date "\""
+    print "    changes:"
+    n = split(bullets, lines, "\n")
+    for (i = 1; i <= n; i++) {
+      if (lines[i] != "") print "      - \"" lines[i] "\""
+    }
+    inserted = 1
+    next
+  }
+  { print }
+' "$PLUGIN_MD" > "$PLUGIN_MD.tmp" && mv "$PLUGIN_MD.tmp" "$PLUGIN_MD"
+```
+
+The new entry appears at the TOP of the `changelog:` array (newest first, matching existing convention).
+
+#### Step 4c: Regenerate manual PDFs (Automated, issue #80)
+
+Skip this step if `manuals/<slug>.md` does not exist (plugin has no manual yet).
+
+```bash
+PLUGINS_REPO=$(pwd)
+if [ -f "$PLUGINS_REPO/manuals/<slug>.md" ]; then
+  cd "$PLUGINS_REPO/manuals"
+  python3 build_manuals.py --slug <slug>
+  python3 build_manuals.py --combined
+  cd "$PLUGINS_REPO"
+fi
+```
+
+For batch releases (multiple plugins in one invocation), run the per-slug command for each plugin THEN run `--combined` once at the end (combined regeneration is idempotent and inexpensive, but no need to run it N times).
+
+If pandoc or xelatex is not installed locally, this step fails. The skill should report the missing tool and exit cleanly without leaving the repos in a half-staged state. The release CI workflow continues to fetch the previously-published PDF if no new one was generated.
+
 ### Step 5: Commit Everything
 
-**Plugins repo** - Stage and commit all changed CMakeLists.txt files:
+**Plugins repo** - Stage and commit all changed CMakeLists.txt files plus any bumped manual front matter:
 ```bash
 git add plugins/*/CMakeLists.txt
+# Issue #80: include any manual front-matter bumps from Step 3
+git add manuals/*.md 2>/dev/null || true
 git commit -m "<summary of version bumps>"
 ```
 
@@ -136,10 +205,12 @@ For batch: `"Bump versions: 4K EQ v1.0.8, Multi-Comp v1.2.3, ..."`
 
 **Do NOT add Co-Authored-By trailers** — they pollute changelogs and release notes.
 
-**Website repo**:
+**Website repo** - stage version + changelog edits AND any regenerated PDFs from Step 4c:
 ```bash
 cd ~/projects/dusk-audio.github.io
 git add _data/plugins.yml _plugins/*.md
+# Issue #80: include regenerated manual PDFs (per-plugin + combined)
+git add assets/manuals/*.pdf 2>/dev/null || true
 git commit -m "Update <plugin(s)> to v<version>"
 ```
 
