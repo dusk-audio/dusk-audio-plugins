@@ -18,12 +18,33 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # JUCE is already added by parent CMakeLists.txt
 
+# Build format options (matches multi-comp/multi-q so CI's -DBUILD_LV2=OFF
+# is honored on Windows, where LV2 turtle generation is unreliable)
+option(BUILD_VST3 "Build VST3 format" ON)
+option(BUILD_LV2  "Build LV2 format"  ON)
+if(APPLE)
+    option(BUILD_AU "Build AU format" ON)
+else()
+    option(BUILD_AU "Build AU format" OFF)
+endif()
+
+set(PLUGIN_FORMATS "")
+if(BUILD_VST3)
+    list(APPEND PLUGIN_FORMATS VST3)
+endif()
+if(BUILD_LV2)
+    list(APPEND PLUGIN_FORMATS LV2)
+endif()
+if(BUILD_AU)
+    list(APPEND PLUGIN_FORMATS AU)
+endif()
+
 # Define our VST3 and LV2 plugin target
 juce_add_plugin(FourKEQ
     PLUGIN_NAME "4K EQ"
     PLUGIN_CODE FKEQ
     PLUGIN_MANUFACTURER_CODE Dusk
-    FORMATS VST3 LV2 AU
+    FORMATS ${PLUGIN_FORMATS}
     PRODUCT_NAME "4K EQ"
     COMPANY_NAME "Dusk Audio"
     COMPANY_WEBSITE "https://dusk-audio.github.io"

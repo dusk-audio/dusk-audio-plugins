@@ -7,6 +7,19 @@ cmake_minimum_required(VERSION 3.15)
 set(PLUGIN_NAME "GrooveMind")
 set(PLUGIN_VERSION "0.1.0")
 
+# Build format options (matches multi-comp/multi-q so CI's -DBUILD_LV2=OFF
+# is honored on Windows, where LV2 turtle generation is unreliable)
+option(BUILD_VST3 "Build VST3 format" ON)
+option(BUILD_LV2  "Build LV2 format"  ON)
+
+set(PLUGIN_FORMATS "")
+if(BUILD_VST3)
+    list(APPEND PLUGIN_FORMATS VST3)
+endif()
+if(BUILD_LV2)
+    list(APPEND PLUGIN_FORMATS LV2)
+endif()
+
 # Create the plugin target
 juce_add_plugin(${PLUGIN_NAME}
     VERSION ${PLUGIN_VERSION}
@@ -25,7 +38,7 @@ juce_add_plugin(${PLUGIN_NAME}
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
 
-    FORMATS VST3 LV2
+    FORMATS ${PLUGIN_FORMATS}
 
     LV2URI "https://dusk-audio.github.io/plugins/groovemind"
 
