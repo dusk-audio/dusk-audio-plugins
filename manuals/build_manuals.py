@@ -80,14 +80,14 @@ def require_tool(name: str) -> str:
     path = shutil.which(name)
     if not path:
         print(f"error: required tool not found on PATH: {name}", file=sys.stderr)
-        print(f"       install hints:", file=sys.stderr)
-        print(f"         Debian/Ubuntu: sudo apt install pandoc texlive-xetex texlive-fonts-recommended",
+        print("       install hints:", file=sys.stderr)
+        print("         Debian/Ubuntu: sudo apt install pandoc texlive-xetex texlive-fonts-recommended",
               file=sys.stderr)
-        print(f"         Fedora/RHEL:   sudo dnf install pandoc texlive-xetex texlive-collection-fontsrecommended",
+        print("         Fedora/RHEL:   sudo dnf install pandoc texlive-xetex texlive-collection-fontsrecommended",
               file=sys.stderr)
-        print(f"         openSUSE:      sudo zypper install pandoc texlive-xetex texlive-collection-fontsrecommended",
+        print("         openSUSE:      sudo zypper install pandoc texlive-xetex texlive-collection-fontsrecommended",
               file=sys.stderr)
-        print(f"         macOS:         brew install pandoc && brew install --cask mactex-no-gui",
+        print("         macOS:         brew install pandoc && brew install --cask mactex-no-gui",
               file=sys.stderr)
         sys.exit(2)
     return path
