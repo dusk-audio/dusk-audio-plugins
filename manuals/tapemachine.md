@@ -1,6 +1,6 @@
 ---
 slug: tapemachine
-version: 1.0.6
+version: 1.0.7
 last_updated: 2026-05-08
 tagline: Analog tape emulation with two machines, four formulations, wow, and flutter
 ---
