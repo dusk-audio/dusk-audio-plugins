@@ -78,11 +78,12 @@ def strip_for_prose(md: str) -> str:
 EM_DASH = "—"
 EN_DASH = "–"
 
-# A bare " -- " between non-space characters becomes an en dash in LaTeX.
-# Long sequences of dashes (table separators "----", YAML delimiters "---")
-# are fine; we only flag a literal " -- " (single space, exactly two dashes,
-# single space) in prose.
-BARE_DOUBLE_DASH_RE = re.compile(r"(?<![-\w]) -- (?![-\w])")
+# A bare "--" anywhere becomes an en dash in LaTeX. Match exactly two
+# hyphens not part of a longer run; "---" (em dash), "----" (table
+# separator), and YAML delimiters "---" must not match. The lookbehind
+# and lookahead exclude any neighbouring hyphen so only a "double" run
+# is caught.
+BARE_DOUBLE_DASH_RE = re.compile(r"(?<!-)--(?!-)")
 
 
 def check_dashes(path: Path, prose: str, errors: list[str]) -> None:

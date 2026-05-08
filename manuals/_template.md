@@ -15,7 +15,7 @@ House style reminders. Delete this comment before commit.
   * Concrete numbers in workflows; no marketing adjectives.
   * Source parameter ranges from plugins/<slug>/createParameterLayout().
   * Source preset intent from plugins/<slug>/<Plugin>Presets.h.
-  * Reference screenshots from ../images/<slug>/<file>.png.
+  * Reference screenshots from screenshots/<slug>/<file>.png.
 
   Section word-count targets: see ../README.md.
 -->
