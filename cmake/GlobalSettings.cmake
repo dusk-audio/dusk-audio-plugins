@@ -16,6 +16,12 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # This prevents crashes on Windows when the redistributable is not installed
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+    # /FS: Force synchronous PDB writes via mspdbsrv.exe. Without this,
+    # concurrent ninja jobs racing on the same .pdb file cause mspdbsrv
+    # to deadlock and CI hangs after the last link step (observed: build
+    # reaches [48/50], links VST3, then sits silent until the runner
+    # timeout fires). Apply globally so every plugin benefits.
+    add_compile_options(/FS)
 endif()
 
 # Export compile commands for better IDE support
