@@ -1735,20 +1735,41 @@ void MultiQ::updateAllFilters()
     // bands — especially HPF/LPF — resets their biquad state every time any knob moves,
     // causing clicks in the audio. The dirty flags tell us exactly what changed.
 
+    // Seed the write side of the UI coefficient double buffer with the currently-active
+    // contents so non-dirty bands keep their last-known-good coefficients across this
+    // publish. The per-band updates below overwrite individual slots; any band whose
+    // dirty flag wasn't set this cycle would otherwise be exposed to the UI as the
+    // default-constructed identity coefficients, producing curve artifacts (notably
+    // orange spikes on the dynamic-EQ overlay when a single band's DYN toggle fires).
+    uiWriteBuffer() = uiReadBuffer();
+
+    bool anyDirty = false;
+
     if (bandDirty[0].exchange(false))
+    {
         updateHPFCoefficients(currentSampleRate);
+        anyDirty = true;
+    }
 
     if (bandDirty[7].exchange(false))
+    {
         updateLPFCoefficients(currentSampleRate);
+        anyDirty = true;
+    }
 
     for (int i = 1; i < 7; ++i)
     {
         if (bandDirty[static_cast<size_t>(i)].exchange(false))
+        {
             updateBandFilter(i);
+            anyDirty = true;
+        }
     }
 
-    // Publish UI coefficient double buffer (release ensures all writes above are visible)
-    publishUICoeffs();
+    // Publish UI coefficient double buffer (release ensures all writes above are visible).
+    // Skip the flip if nothing actually changed — pointless cache thrashing otherwise.
+    if (anyDirty)
+        publishUICoeffs();
 }
 
 void MultiQ::computeBandCoeffs(int bandIndex, BiquadCoeffs& c) const
