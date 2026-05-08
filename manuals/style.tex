@@ -1,0 +1,73 @@
+% style.tex — LaTeX preamble injected via pandoc --include-in-header.
+% Targets the xelatex engine. Sets typography, page layout, headers/footers,
+% and minor hyperref tweaks for the Dusk Audio plugin manual.
+%
+% Anything plugin-color-specific (e.g., chapter section breaks tinted by
+% plugin brand color) lives here; the generator does not need to know.
+
+% ----- typography -----
+\usepackage{fontspec}
+% Pandoc handles main font selection via -V mainfont if needed; we keep
+% a system-default fallback here so the build does not require a specific
+% font being installed. xelatex will use the platform's default sans/serif.
+
+\usepackage{microtype}        % subtle character spacing improvements
+\usepackage{xcolor}
+\usepackage{titlesec}
+
+% ----- page layout -----
+% Margins handled via pandoc -V geometry.
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\nouppercase{\leftmark}}
+\fancyhead[R]{Dusk Audio}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Don't fancyhdr the title page or chapter pages.
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyfoot[C]{\thepage}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+% ----- section spacing -----
+\titlespacing*{\section}{0pt}{18pt}{8pt}
+\titlespacing*{\subsection}{0pt}{12pt}{4pt}
+\titlespacing*{\subsubsection}{0pt}{8pt}{2pt}
+
+% ----- code-block style -----
+% Pandoc's default verbatim font is fine; tighten it slightly.
+\usepackage{fvextra}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\small}
+
+% ----- hyperref tweaks -----
+% pandoc loads hyperref by default. We just adjust colors via -V.
+% Bookmarks open the chapter level by default for navigability.
+\AtBeginDocument{
+  \hypersetup{bookmarksopen=true, bookmarksopenlevel=1, pdfborder={0 0 0}}
+}
+
+% ----- table styling -----
+\usepackage{booktabs}
+\usepackage{longtable}        % needed for tables that span pages
+\setlength{\tabcolsep}{8pt}
+
+% ----- callout box for the pre-release banner -----
+% Used by chapters that begin with "> Pre-release. ...".
+% Pandoc renders blockquotes with quote env; we re-skin it lightly.
+\usepackage{tcolorbox}
+\renewenvironment{quote}
+  {\begin{tcolorbox}[colback=yellow!5,colframe=orange!60,boxrule=0.5pt,
+    arc=2pt,left=8pt,right=8pt,top=4pt,bottom=4pt]}
+  {\end{tcolorbox}}
+
+% ----- avoid widows/orphans -----
+\widowpenalty=10000
+\clubpenalty=10000
+
+% ----- list spacing -----
+\usepackage{enumitem}
+\setlist{itemsep=2pt,topsep=4pt}
