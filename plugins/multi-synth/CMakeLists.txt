@@ -19,7 +19,7 @@ juce_add_plugin(MultiSynth
     PLUGIN_NAME "Multi-Synth"
     PLUGIN_CODE MSyn
     PLUGIN_MANUFACTURER_CODE Dusk
-    FORMATS VST3 LV2 AU Standalone
+    FORMATS VST3 LV2 AU
     PRODUCT_NAME "Multi-Synth"
     COMPANY_NAME "Dusk Audio"
     COMPANY_WEBSITE "https://dusk-audio.github.io"

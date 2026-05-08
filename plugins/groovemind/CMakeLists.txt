@@ -25,7 +25,7 @@ juce_add_plugin(${PLUGIN_NAME}
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
 
-    FORMATS VST3 LV2 Standalone
+    FORMATS VST3 LV2
 
     LV2URI "https://dusk-audio.github.io/plugins/groovemind"
 

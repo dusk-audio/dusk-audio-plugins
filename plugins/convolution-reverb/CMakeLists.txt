@@ -13,10 +13,8 @@ if(APPLE)
 else()
     option(BUILD_AU "Build AU format" OFF)
 endif()
-option(BUILD_STANDALONE "Build Standalone format" ON)
-
 # Build format list
-set(PLUGIN_FORMATS Standalone)
+set(PLUGIN_FORMATS "")
 if(BUILD_VST3)
     list(APPEND PLUGIN_FORMATS VST3)
 endif()
