@@ -23,7 +23,7 @@ juce_add_plugin(FourKEQ
     PLUGIN_NAME "4K EQ"
     PLUGIN_CODE FKEQ
     PLUGIN_MANUFACTURER_CODE Dusk
-    FORMATS VST3 LV2 AU Standalone
+    FORMATS VST3 LV2 AU
     PRODUCT_NAME "4K EQ"
     COMPANY_NAME "Dusk Audio"
     COMPANY_WEBSITE "https://dusk-audio.github.io"

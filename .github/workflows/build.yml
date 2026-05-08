@@ -534,9 +534,10 @@ jobs:
   build-windows:
     needs: setup
     runs-on: windows-latest
-    # 60 min: heavier plugins (4k-eq with VST3+LV2+Standalone+CLAP, multi-comp,
-    # tapemachine) hit the 30-min wall at ~96% on the windows-latest runner.
-    # Linux/macOS finish in ~15-20 min so they keep their tighter budget.
+    # 60 min: MSVC link is slow on the windows-latest runner. Standalone
+    # builds were dropped from all plugins (commit context) which should
+    # bring most plugins under 30 min, but keeping the wider budget as
+    # headroom for future format additions (CLAP, etc.).
     timeout-minutes: 60
     steps:
       - name: Checkout repository
