@@ -67,11 +67,16 @@ INDENTED_CODE_RE = re.compile(r"^(    .*\n)+", re.MULTILINE)
 
 def strip_for_prose(md: str) -> str:
     """Strip front matter, fenced code, indented code, and HTML comments
-    so the dash-check only sees user-facing prose."""
-    md = FRONT_MATTER_RE.sub("", md, count=1)
-    md = FENCED_CODE_RE.sub("", md)
-    md = HTML_COMMENT_RE.sub("", md)
-    md = INDENTED_CODE_RE.sub("", md)
+    so the dash-check only sees user-facing prose. Each removed block is
+    replaced with newlines equal to the number of lines it spanned so
+    downstream line numbers in check_dashes diagnostics stay aligned with
+    the original source file."""
+    def keep_lines(m: "re.Match[str]") -> str:
+        return "\n" * m.group(0).count("\n")
+    md = FRONT_MATTER_RE.sub(keep_lines, md, count=1)
+    md = FENCED_CODE_RE.sub(keep_lines, md)
+    md = HTML_COMMENT_RE.sub(keep_lines, md)
+    md = INDENTED_CODE_RE.sub(keep_lines, md)
     return md
 
 
