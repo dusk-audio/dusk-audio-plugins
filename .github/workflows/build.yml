@@ -978,7 +978,24 @@ jobs:
               local headless_dir="${release_dir}-headless"
               mkdir -p "$headless_dir/LV2"
               mv "$bundle" "$headless_dir/LV2/"
+              fetch_manual "$headless_dir"
               ( cd "$headless_dir" && zip -r "../../${out_zip}" . )
+            fi
+          }
+
+          # Helper: drop the per-plugin User Manual PDF into the release dir.
+          # Sourced from the dusk-audio.github.io repo's main branch (issue #80).
+          # A missing PDF is non-fatal so a first-release of a brand-new plugin
+          # does not block. /release-plugin auto-regenerates these on every tag,
+          # so the URL should be in sync with the plugin version being released.
+          fetch_manual() {
+            local release_dir="$1"
+            local manual_url="https://raw.githubusercontent.com/dusk-audio/dusk-audio.github.io/main/assets/manuals/${SLUG}-manual.pdf"
+            if curl -fL --silent --show-error "$manual_url" -o "${release_dir}/${SLUG}-manual.pdf"; then
+              echo "  bundled ${SLUG}-manual.pdf into ${release_dir}/"
+            else
+              rm -f "${release_dir}/${SLUG}-manual.pdf"
+              echo "::warning::User manual PDF not found at ${manual_url} (non-fatal)"
             fi
           }
 
@@ -995,6 +1012,7 @@ jobs:
             cp -r plugins-linux/CLAP linux-release/
           fi
           carve_headless linux-release "${SLUG}-headless-linux.zip"
+          fetch_manual linux-release
           cd linux-release
           zip -r "../../${SLUG}-linux.zip" .
           cd ..
@@ -1011,6 +1029,7 @@ jobs:
             cp -r plugins-linux-arm64/CLAP linux-arm64-release/
           fi
           carve_headless linux-arm64-release "${SLUG}-headless-linux-arm64.zip"
+          fetch_manual linux-arm64-release
           cd linux-arm64-release
           zip -r "../../${SLUG}-linux-arm64.zip" .
           cd ..
@@ -1023,6 +1042,7 @@ jobs:
           if [ -d "plugins-windows/CLAP" ] && [ -n "$(ls -A plugins-windows/CLAP 2>/dev/null)" ]; then
             cp -r plugins-windows/CLAP windows-release/
           fi
+          fetch_manual windows-release
           cd windows-release
           zip -r "../../${SLUG}-windows.zip" .
           cd ..
@@ -1038,6 +1058,7 @@ jobs:
           if [ -d "plugins-macos/CLAP" ] && [ -n "$(ls -A plugins-macos/CLAP 2>/dev/null)" ]; then
             cp -r plugins-macos/CLAP macos-release/
           fi
+          fetch_manual macos-release
           cd macos-release
           zip -r "../../${SLUG}-macos.zip" .
           cd ..
