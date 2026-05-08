@@ -5,7 +5,9 @@ preflight.py — Lint Dusk Audio plugin manual source markdowns.
 Run before build_manuals.py to fail fast on common authoring mistakes:
 
   1. No em dash (U+2014) or en dash (U+2013) in prose.
-  2. No bare " -- " ASCII surrogate in prose (LaTeX would render as en dash).
+  2. No bare "--" (double hyphen) in prose, anywhere it appears not adjacent
+     to another "-". LaTeX renders bare "--" as an en dash regardless of
+     surrounding spaces (e.g., "word -- word", "word--word", "X--Y all match).
   3. Every screenshot reference resolves on disk.
   4. Each chapter's front-matter version matches _data/plugins.yml.
 
@@ -95,7 +97,7 @@ def check_dashes(path: Path, prose: str, errors: list[str]) -> None:
             col = line.index(EN_DASH) + 1
             errors.append(f"{path}:{lineno}:{col}: en dash (U+2013) in prose: {line.strip()!r}")
         if BARE_DOUBLE_DASH_RE.search(line):
-            errors.append(f"{path}:{lineno}: bare ' -- ' in prose (LaTeX renders as en dash): {line.strip()!r}")
+            errors.append(f"{path}:{lineno}: bare '--' (double hyphen) in prose, LaTeX renders as en dash: {line.strip()!r}")
 
 
 SCREENSHOT_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
