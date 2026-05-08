@@ -1,7 +1,7 @@
 # Makefile for Dusk Audio plugin manuals.
 #
 # Sources live in this directory. Outputs land in the website repo at
-# $(WEBSITE_REPO)/assets/manuals/. Default targets:
+# $(DUSK_WEBSITE_REPO)/assets/manuals/. Default targets:
 #
 #   make preflight   - lint sources only (no PDF generation, no deps beyond Python)
 #   make all         - render combined manual + every per-plugin PDF
@@ -19,10 +19,10 @@
 #   macOS:         brew install pandoc && brew install --cask mactex-no-gui
 #
 # Override the website repo location via env var:
-#   make all DUSK_WEBSITE_REPO=/path/to/dusk-audio.github.io
+#   make all DUSK_DUSK_WEBSITE_REPO=/path/to/dusk-audio.github.io
 
-WEBSITE_REPO ?= $(HOME)/projects/dusk-audio.github.io
-OUTPUT_DIR    = $(WEBSITE_REPO)/assets/manuals
+DUSK_WEBSITE_REPO ?= $(HOME)/projects/dusk-audio.github.io
+OUTPUT_DIR    = $(DUSK_WEBSITE_REPO)/assets/manuals
 PYTHON        = python3
 
 # Discover slugs from the markdown files (excluding _template, README).

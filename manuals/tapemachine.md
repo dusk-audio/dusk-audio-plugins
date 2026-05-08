@@ -162,11 +162,13 @@ Why this works. Conservative everything: cleanest machine, fastest speed, lowest
 
 - **Auto Calibration is your friend until you want it not to be.** With Auto Calibration on, switching tape type or speed re-biases the tape for you. Turn it off when you want to creatively under-bias (40 to 45% for grit) or over-bias (55 to 60% for a darker, dulled tone).
 
-![Bias control with Auto Calibration off](screenshots/tapemachine/04-bias-manual.png)
+  ![Bias control with Auto Calibration off](screenshots/tapemachine/04-bias-manual.png)
+
 - **30 IPS forces AES.** This is hardware-accurate behavior; real machines also lock the EQ standard at 30 IPS. Pick 15 or 7.5 IPS if you want NAB or CCIR.
 - **Signal Path is not Bypass.** "Thru" is true bypass (signal passes unchanged). "Input" runs the electronics but no tape (no saturation or modulation). "Sync" uses the record head for playback (slightly different EQ). "Repro" is the full chain. Use Sync to compare what the engineer hears during tracking versus the printed tape.
 
-![Signal Path dropdown](screenshots/tapemachine/03-signal-path.png)
+  ![Signal Path dropdown](screenshots/tapemachine/03-signal-path.png)
+
 - **The default Saturation of 4% is conservative.** If you cannot hear any change versus bypass, raise it to 15 to 25% and pull Input Gain up by a few dB.
 - **Wow and Flutter are subtle by default.** 7% Wow and 3% Flutter approximate a well-maintained machine. Push to 15 to 30% for the obviously-vintage sound; below 5% you may not hear them on most material.
 - **Noise is a creative tool, not a problem to fix.** When you want the analog floor sound, enable Noise and set Noise Amount to 5 to 15%. For clean work, leave it disabled (the default).

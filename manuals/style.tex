@@ -20,7 +20,10 @@
 \usepackage{fancyhdr}
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\nouppercase{\leftmark}}
+% Pandoc defaults to article class, which populates \rightmark via
+% \sectionmark (no chapters). Use \rightmark so the running header
+% shows the current section name; \leftmark would be empty.
+\fancyhead[L]{\nouppercase{\rightmark}}
 \fancyhead[R]{Dusk Audio}
 \fancyfoot[C]{\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
