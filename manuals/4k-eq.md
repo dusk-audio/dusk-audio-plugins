@@ -1,6 +1,6 @@
 ---
 slug: 4k-eq
-version: 1.0.9
+version: 1.0.10
 last_updated: 2026-05-08
 tagline: Console-style 4-band parametric EQ with Brown and Black modes
 ---
