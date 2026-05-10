@@ -39,7 +39,6 @@ public:
     void setCrossoverFreq (float hz);
     void setHighCrossoverFreq (float hz);
     void setSaturation (float amount);             // NEW: 0..1 drive softClip
-    void setAirDampingScale (float scale);
     void setModDepth (float depth);
     void setModRate (float hz);
     void setSize (float size);
@@ -52,7 +51,6 @@ public:
     void setSizeRange (float min, float max);
     void setDecayBoost (float boost);
     void setStructuralHFDamping (float hz);
-    void setTerminalDecay (float thresholdDB, float factor);
     void clearBuffers();
 
 private:
@@ -199,11 +197,6 @@ private:
         // benefit without the HF artifacts. Mirrors DattorroTank v0.5.3.
         DspUtils::RandomWalkLFO delay1Lfo;
         DspUtils::RandomWalkLFO delay2Lfo;
-
-        // Per-tank terminal decay tracking
-        float currentRMS = 0.0f;
-        float peakRMS = 0.0f;
-        bool terminalDecayActive = false;
     };
 
     Tank tanks_[kNumTanks];
@@ -268,7 +261,6 @@ private:
     float trebleMultiply_ = 0.5f;
     float crossoverFreq_ = 1000.0f;
     float highCrossoverFreq_ = 4000.0f;
-    float airDampingScale_ = 0.70f;
     float saturationAmount_ = 0.0f;       // 0..1 drive (NEW)
     float modDepthSamples_ = 8.0f;
     float lastModDepthRaw_ = 0.5f;
@@ -285,14 +277,6 @@ private:
     float baseLowCrossoverCoeff_ = 0.85f;
     float structHFCoeff_ = 0.0f;
     float structHFState_[4] {};
-    float terminalDecayThresholdDB_ = -40.0f;
-    float terminalDecayFactor_ = 1.0f;
-    float terminalLinearThreshold_ = 10000.0f;  // 10^(-(-40dB)*0.1) — power ratio for peak/current RMS
-    float rmsAlpha_ = 0.9995f;           // Exponential smoothing for RMS tracking
-    float peakDecayAlpha_ = 0.99999f;    // Peak envelope decay coefficient
-    float peakRMS_ = 0.0f;
-    float currentRMS_ = 0.0f;
-    bool terminalDecayActive_ = false;
 
     float decayDiff1_ = 0.70f;
     float decayDiff2_ = 0.50f;
