@@ -6,7 +6,6 @@
 
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <vector>
 
 // 6-AP cross-coupled tank reverb (user-facing dropdown name: "High Density (6-AP)").
@@ -253,14 +252,6 @@ private:
     //
     // (No tap arrays, no readOutputTap, no kNorm. The output is just
     //  outputL[n] = damped, outputR[n] = dampedR. Period.)
-
-    static float nextDrift (uint32_t& state)
-    {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        return static_cast<float> (static_cast<int32_t> (state)) * (1.0f / 2147483648.0f);
-    }
 
     double sampleRate_ = 44100.0;
     float decayTime_ = 2.0f;

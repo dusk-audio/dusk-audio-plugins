@@ -184,9 +184,6 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
         dcX1_[i] = 0.0f;
         dcY1_[i] = 0.0f;
     }
-    peakRMS_ = 0.0f;
-    currentRMS_ = 0.0f;
-    terminalDecayActive_ = false;
 
     // Inline allpass diffusers: prime delays scaled by sample rate
     // (rateRatio already computed above for buffer sizing)
@@ -265,14 +262,6 @@ void FDNReverb::prepare (double sampleRate, int /*maxBlockSize*/)
     updateLFORates();
     updateDecayCoefficients();
 
-    // Terminal decay: sample-rate-invariant smoothing coefficients.
-    // At 44.1kHz these produce the same behavior as the original constants.
-    constexpr float kRmsTauMs     = 45.0f;   // RMS window ~45ms (was 0.9995/0.0005)
-    constexpr float kPeakTauMs    = 2270.0f;  // Peak decay ~2.27s (was 0.99999)
-    float sr = static_cast<float> (sampleRate);
-    rmsAlpha_      = std::exp (-1000.0f / (kRmsTauMs * sr));
-    peakDecayAlpha_ = std::exp (-1000.0f / (kPeakTauMs * sr));
-
     prepared_ = true;
 }
 
@@ -312,34 +301,6 @@ void FDNReverb::process (const float* inputL, const float* inputR,
             float frac = readPos - static_cast<float> (intIdx);
 
             delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
-        }
-
-        // --- 1.25) Terminal decay HARD-DISABLED ---
-        // Caused "thin baseline with transient bursts" — see VocalPlatePreset.cpp
-        // for rationale. State members kept for ABI compat.
-        if (false /* terminalDecayFactor_ < 1.0f */ && ! frozen_)
-        {
-            float sampleEnergy = 0.0f;
-            for (int ch = 0; ch < N; ++ch)
-                sampleEnergy += delayOut[ch] * delayOut[ch];
-            sampleEnergy *= (1.0f / static_cast<float> (N));
-
-            currentRMS_ = rmsAlpha_ * currentRMS_ + (1.0f - rmsAlpha_) * sampleEnergy;
-            if (currentRMS_ > peakRMS_) peakRMS_ = currentRMS_;
-            else peakRMS_ *= peakDecayAlpha_;
-
-            // Compare ratio in linear domain (avoids per-sample log10).
-            // terminalDecayThresholdDB_ is stored NEGATIVE (e.g. -40.0f);
-            // terminalLinearThreshold_ = 10^4 for -40dB → activates when
-            // peak/RMS ratio exceeds threshold (tail has faded).
-            float ratio = peakRMS_ / std::max (currentRMS_, 1e-20f);
-            terminalDecayActive_ = (ratio > terminalLinearThreshold_)
-                                 && (peakRMS_ > 1e-12f);
-            if (terminalDecayActive_)
-            {
-                for (int ch = 0; ch < N; ++ch)
-                    delayOut[ch] *= terminalDecayFactor_;
-            }
         }
 
         // --- 1.5) Inline allpass diffusion (Dattorro "decay diffusion") ---
@@ -663,10 +624,6 @@ void FDNReverb::setFreeze (bool frozen)
     frozen_ = frozen;
     if (wasTransition)
     {
-        currentRMS_ = 0.0f;
-        peakRMS_ = 0.0f;
-        terminalDecayActive_ = false;
-
         // Clear bypassed DSP block state so releasing freeze won't pop
         for (int i = 0; i < N; ++i)
         {
@@ -1099,14 +1056,6 @@ void FDNReverb::setDecayBoost (float boost)
         updateDecayCoefficients();
 }
 
-void FDNReverb::setTerminalDecay (float thresholdDB, float factor)
-{
-    terminalDecayThresholdDB_ = -std::abs (thresholdDB);
-    terminalDecayFactor_ = std::clamp (factor, 0.0f, 1.0f);
-    // Precompute linear threshold to avoid per-sample log10
-    terminalLinearThreshold_ = std::pow (10.0f, -terminalDecayThresholdDB_ * 0.1f);
-}
-
 void FDNReverb::clearBuffers()
 {
     for (int i = 0; i < N; ++i)
@@ -1135,10 +1084,6 @@ void FDNReverb::clearBuffers()
         lfos_[i].setRate  (modRateHz_);
         lfos_[i].setDepth (modDepthSamples_);
     }
-    // Reset terminal decay RMS tracking
-    peakRMS_ = 0.0f;
-    currentRMS_ = 0.0f;
-    terminalDecayActive_ = false;
 }
 
 // ---------------------------------------------------------------------------
