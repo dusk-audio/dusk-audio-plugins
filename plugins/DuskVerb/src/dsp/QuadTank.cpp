@@ -85,9 +85,11 @@ void QuadTank::prepare (double sampleRate, int /*maxBlockSize*/)
         {
             int dapMax = static_cast<int> (std::ceil (tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_)) + 4;
             tank.densityAP[i].allocate (dapMax);
-            // Lexicon spin-and-wander on each density AP — same fix as
-            // SixAPTank + Dattorro got. Breaks AP modal phase-locking.
-            tank.densityAP[i].jitterDepthFraction = 0.015f;  // 1.5 % wander
+            // jitterDepthFraction left at 0 — see issue #87 follow-up.
+            // The audio-band PM (5-200 Hz, 1.5 % depth) was the second
+            // source of the user-reported vibrato/bell artifact. v0.3 had
+            // non-modulated density APs; we restore that.
+            tank.densityAP[i].jitterDepthFraction = 0.0f;
         }
 
         tank.damping.prepare (static_cast<float> (sampleRate));

@@ -88,17 +88,13 @@ void SixAPTankEngine::prepare (double sampleRate, int maxBlockSize)
         {
             t.densityAP[i].allocate (static_cast<int> (
                 static_cast<float> (densBase[i]) * rateRatio * kMaxSizeScale + 16.0f));
-            // Lexicon "spin and wander". Each density AP gets a smoothed
-            // random-walk modulator on its read position. Depth scales with
-            // delay length (1.5 % of delaySamples), so the *relative*
-            // modulation stays constant across all sizes. At small size
-            // (LDH 0.75) the largest AP is ~666 samples → 10 sample jitter;
-            // at large size (Cathedral/BR 0.95) it's ~814 → 12 sample jitter.
-            // RandomWalkLFO smooths transitions via smoothstep so there is
-            // NO white-noise hash on the read pointer — the offset glides.
-            // updateJitterDepth() is called whenever delaySamples changes
-            // (in updateDelayLengths) to keep the depth tracking the size.
-            t.densityAP[i].jitterDepthFraction = 0.015f;  // 1.5% wander
+            // jitterDepthFraction left at 0 — see issue #87 follow-up.
+            // The per-AP RandomWalkLFO ran at 5-200 Hz (audio band) with
+            // 1.5 % depth, producing audible vibrato/bell-like PM artefacts
+            // at high wet levels. v0.3 had no SixAPTank, but the analogous
+            // density APs in DattorroTank and QuadTank were non-modulated;
+            // we match that here.
+            t.densityAP[i].jitterDepthFraction = 0.0f;
         }
 
         t.damping.prepare (static_cast<float> (sampleRate));
