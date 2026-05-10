@@ -149,12 +149,14 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
             int dapMax = static_cast<int> (std::ceil (
                 tank.densityAPBase[i] * rateRatio * sizeRangeAllocatedMax_ * kMaxDelayScale)) + 4;
             tank.densityAP[i].allocate (dapMax);
-            // Lexicon spin-and-wander on each density AP — same fix as
-            // SixAPTank got. Breaks the AP's modal phase-locking which
-            // otherwise leaks its delay period into the tail as an audible
-            // 26-30 ms ring on plate presets (verified by render-tool
-            // measurement on Vintage Vocal Plate / Bright Drum Plate).
-            tank.densityAP[i].jitterDepthFraction = 0.015f;  // 1.5 % wander
+            // jitterDepthFraction left at 0 — the per-AP audio-band PM
+            // (5-200 Hz, 1.5 % depth) was the second source of issue #87's
+            // vibrato/bell artifact. v0.3 had non-modulated density APs;
+            // we restore that behaviour. Short-period modal ringing may
+            // return on plate presets; acceptable trade per the user's
+            // listening evaluation. Re-enable per-AP only if a sub-audio
+            // (<= 2 Hz) variant is wanted later.
+            tank.densityAP[i].jitterDepthFraction = 0.0f;
         }
 
         tank.damping.prepare (static_cast<float> (sampleRate));
